@@ -6,9 +6,10 @@ import asyncio
 import random
 import time
 from collections.abc import Awaitable, Callable
+from dataclasses import asdict, dataclass
 from typing import Any
 
-from loom.core.engine.events import EventKind, RuntimeEvent, Status
+from loom.core.engine.events import AbandonReason, EventKind, RuntimeEvent, Status
 from loom.core.engine.metrics import MetricsAdapter, NoMetrics
 from loom.core.errors import LoomError
 from loom.core.job.delivery import JobDelivery
@@ -20,11 +21,52 @@ from loom.core.job.outcome import (
     JobPostponement,
     Postponed,
     Succeeded,
+    failure_log_fields,
 )
 from loom.core.job.policy import Redelivery, RetryPolicy
+from loom.core.logger import get_logger
+
+_log = get_logger(__name__)
 
 Invocation = Callable[[JobDelivery], Awaitable[Any]]
 """Runs the job of a delivery and returns its result, or raises what it raised."""
+
+
+@dataclass(frozen=True, slots=True)
+class _Whereabouts:
+    """Which message an abandonment log is about; a job and a queue only when it was readable."""
+
+    job: str | None
+    queue: str | None
+    attempt: int
+    postponements: int
+    task_id: str | None
+
+    @classmethod
+    def of_delivery(cls, delivery: JobDelivery) -> _Whereabouts:
+        return cls(
+            job=delivery.job_type.__qualname__,
+            queue=delivery.queue,
+            attempt=delivery.attempt,
+            postponements=delivery.postponements,
+            task_id=delivery.task_id,
+        )
+
+    @classmethod
+    def of_unrunnable(cls, attempt: int, message_id: str | None) -> _Whereabouts:
+        return cls(job=None, queue=None, attempt=attempt, postponements=0, task_id=message_id)
+
+    def log_abandoned(self, outcome: Abandoned) -> None:
+        """Write the one WARNING that says why *outcome* ended this message."""
+        error = outcome.as_exception()
+        _log.warning(
+            "Job abandoned",
+            reason=outcome.reason.value,
+            error_type=type(error).__qualname__,
+            error_message=str(error),
+            **asdict(self),
+            **failure_log_fields(error),
+        )
 
 
 class JobRunner:
@@ -33,7 +75,8 @@ class JobRunner:
     Every transport maps the returned :class:`~loom.core.job.outcome.JobOutcome`
     to its own action; none of them classifies a failure. The runner emits the
     ``JOB_STARTED`` event and one of ``JOB_SUCCEEDED``, ``JOB_POSTPONED``,
-    ``JOB_FAILED`` or ``JOB_ABANDONED`` for each run. It knows what its transport
+    ``JOB_FAILED`` or ``JOB_ABANDONED`` for each run, and logs one WARNING for
+    every message it abandons, whatever the transport. It knows what its transport
     can do with a job that must run again, so it never postpones or fails a run that
     would not come back.
 
@@ -64,8 +107,7 @@ class JobRunner:
         attempt when the transport can wait, else abandons. A
         :class:`~loom.core.job.outcome.JobAbandonment` or an error that cannot
         succeed again abandons, and any other error fails while the transport
-        retries and the policy's attempts last, then abandons with the error's
-        class as reason.
+        retries and the policy's attempts last, then abandons.
 
         Args:
             delivery: The message, its attempt and its policy.
@@ -81,6 +123,8 @@ class JobRunner:
         self._metrics.on_event(
             self._build_event(outcome, name, trace_id, (time.monotonic() - started) * 1000)
         )
+        if isinstance(outcome, Abandoned):
+            _Whereabouts.of_delivery(delivery).log_abandoned(outcome)
         return outcome
 
     async def _run_once(self, delivery: JobDelivery) -> JobOutcome:
@@ -88,19 +132,19 @@ class JobRunner:
             result = await asyncio.wait_for(self._invocation(delivery), timeout=delivery.timeout_s)
         except JobPostponement as signal:
             if not self._redelivery.can_postpone:
-                return Abandoned(f"cannot wait: {signal.reason}", signal)
+                return Abandoned(AbandonReason.CANNOT_WAIT, signal)
             delay = signal.delay or delivery.policy.backoff.delay(
                 delivery.postponements + 1, self._rng
             )
             return Postponed(delay, signal.reason)
         except JobAbandonment as signal:
-            return Abandoned(signal.reason, signal)
+            return Abandoned(AbandonReason.JOB_ASKED, signal)
         except Exception as exc:
             return self._decide(exc, delivery.attempt, delivery.policy)
         return Succeeded(result)
 
     def decide_unrunnable(
-        self, error: Exception, attempt: int, policy: RetryPolicy
+        self, error: Exception, attempt: int, policy: RetryPolicy, *, message_id: str | None = None
     ) -> Abandoned | Failed:
         """Decide a message that could not be run, and report it.
 
@@ -108,6 +152,7 @@ class JobRunner:
             error: Why the message cannot run: it is undecodable or names no job.
             attempt: The attempt number, from 1.
             policy: The policy that governs the delivery.
+            message_id: The transport's id of the message, for the abandonment log.
 
         Returns:
             What :meth:`run` would return for a job raising *error*; its event
@@ -115,22 +160,24 @@ class JobRunner:
         """
         outcome = self._decide(error, attempt, policy)
         self._metrics.on_event(self._build_event(outcome, type(error).__qualname__, None, None))
+        if isinstance(outcome, Abandoned):
+            _Whereabouts.of_unrunnable(attempt, message_id).log_abandoned(outcome)
         return outcome
 
     def _decide(self, error: Exception, attempt: int, policy: RetryPolicy) -> Abandoned | Failed:
-        can_retry = (
-            (not isinstance(error, LoomError) or error.is_retryable)
-            and self._redelivery.can_retry
-            and policy.can_retry_after(attempt)
-        )
-        if can_retry:
-            return Failed(error, policy.backoff.delay(attempt, self._rng))
-        return Abandoned(type(error).__qualname__, error)
+        if isinstance(error, LoomError) and not error.is_retryable:
+            return Abandoned(AbandonReason.NOT_RETRYABLE, error)
+        if not self._redelivery.can_retry:
+            return Abandoned(AbandonReason.CANNOT_WAIT, error)
+        if not policy.can_retry_after(attempt):
+            return Abandoned(AbandonReason.ATTEMPTS_EXHAUSTED, error)
+        return Failed(error, policy.backoff.delay(attempt, self._rng))
 
     @staticmethod
     def _build_event(
         outcome: JobOutcome, name: str, trace_id: str | None, duration_ms: float | None
     ) -> RuntimeEvent:
+        reason: AbandonReason | None = None
         match outcome:
             case Succeeded():
                 kind, status, error = EventKind.JOB_SUCCEEDED, Status.SUCCESS, None
@@ -138,8 +185,14 @@ class JobRunner:
                 kind, status, error = EventKind.JOB_POSTPONED, Status.POSTPONED, None
             case Failed(error=error):
                 kind, status = EventKind.JOB_FAILED, Status.FAILURE
-            case Abandoned(error=error):
+            case Abandoned(error=error, reason=reason):
                 kind, status = EventKind.JOB_ABANDONED, Status.ABANDONED
         return RuntimeEvent(
-            kind, name, duration_ms=duration_ms, status=status, error=error, trace_id=trace_id
+            kind,
+            name,
+            duration_ms=duration_ms,
+            status=status,
+            error=error,
+            trace_id=trace_id,
+            reason=reason,
         )

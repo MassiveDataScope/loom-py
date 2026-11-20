@@ -1,11 +1,12 @@
 from __future__ import annotations
 
 import asyncio
+import random
 from typing import Any
 
 import pytest
 
-from loom.core.engine.events import EventKind, RuntimeEvent, Status
+from loom.core.engine.events import AbandonReason, EventKind, RuntimeEvent, Status
 from loom.core.errors import SystemError
 from loom.core.job.delivery import JobDelivery
 from loom.core.job.job import Job
@@ -82,13 +83,13 @@ class TestJobRunnerOutcome:
     async def test_the_last_attempt_abandons_with_the_class_of_the_error(self) -> None:
         error = ValueError("boom")
         assert await _runner(_raising(error)).run(_DATA.delivery(attempt=3)) == Abandoned(
-            "ValueError", error
+            AbandonReason.ATTEMPTS_EXHAUSTED, error
         )
 
     async def test_an_error_that_cannot_succeed_again_abandons_at_the_first_attempt(self) -> None:
         error = UnretryableError("never")
         assert await _runner(_raising(error)).run(_DATA.delivery()) == Abandoned(
-            "UnretryableError", error
+            AbandonReason.NOT_RETRYABLE, error
         )
 
     async def test_a_job_postponement_postpones_with_its_delay(self) -> None:
@@ -123,7 +124,7 @@ class TestJobRunnerOutcome:
     async def test_a_job_abandonment_abandons_with_its_reason(self) -> None:
         signal = JobAbandonment("no such tenant")
         assert await _runner(_raising(signal)).run(_DATA.delivery()) == Abandoned(
-            "no such tenant", signal
+            AbandonReason.JOB_ASKED, signal
         )
 
     async def test_a_run_past_its_timeout_fails(self) -> None:
@@ -152,6 +153,81 @@ class TestJobRunnerDelivery:
         assert seen == [delivery]
 
 
+class TestJobRunnerAbandonmentLog:
+    @staticmethod
+    def _abandonments(caplog: pytest.LogCaptureFixture) -> list[dict[str, Any]]:
+        return [
+            record.msg
+            for record in caplog.records
+            if isinstance(record.msg, dict) and record.msg.get("event") == "Job abandoned"
+        ]
+
+    async def test_an_abandoned_run_logs_one_warning_naming_the_message_and_why(
+        self, caplog: pytest.LogCaptureFixture
+    ) -> None:
+        delivery = _DATA.delivery(attempt=3, postponements=2)
+
+        await _runner(_raising(ValueError("boom"))).run(delivery)
+
+        (logged,) = self._abandonments(caplog)
+        assert logged | {"timestamp": None} == {
+            "event": "Job abandoned",
+            "level": "warning",
+            "logger": "loom.core.job.runner",
+            "timestamp": None,
+            "job": "AcmeJob",
+            "queue": delivery.queue,
+            "attempt": 3,
+            "postponements": 2,
+            "reason": "attempts_exhausted",
+            "error_type": "ValueError",
+            "error_message": "boom",
+            "task_id": delivery.task_id,
+        }
+
+    @pytest.mark.parametrize(
+        "behaviour",
+        [_returning(1), _raising(ValueError("boom")), _raising(JobPostponement("later", 1))],
+        ids=["succeeded", "failed", "postponed"],
+    )
+    async def test_a_run_that_comes_back_logs_no_abandonment(
+        self, caplog: pytest.LogCaptureFixture, behaviour: Any
+    ) -> None:
+        await _runner(behaviour).run(_DATA.delivery())
+
+        assert self._abandonments(caplog) == []
+
+    def test_a_message_that_cannot_run_logs_why_with_its_message_id(
+        self, caplog: pytest.LogCaptureFixture
+    ) -> None:
+        _runner(_returning(1)).decide_unrunnable(
+            UnretryableError("never"), 1, POLICY, message_id="m-1"
+        )
+
+        (logged,) = self._abandonments(caplog)
+        assert (logged["reason"], logged["error_type"], logged["task_id"]) == (
+            "not_retryable",
+            "UnretryableError",
+            "m-1",
+        )
+
+
+class TestJobRunnerJitter:
+    async def test_the_delay_of_a_failure_is_drawn_from_the_runner_source(self) -> None:
+        jittered = RetryPolicy(Backoff(first_s=4, factor=2, max_s=100), max_attempts=3)
+        delivery = JobTestData().with_job_type(AcmeJob).with_policy(jittered).delivery()
+
+        async def invocation(_: JobDelivery) -> None:
+            raise ValueError("boom")
+
+        outcome = await JobRunner(
+            invocation, redelivery=Redelivery.DELAYED, rng=random.Random(5)
+        ).run(delivery)
+
+        assert isinstance(outcome, Failed)
+        assert outcome.delay.seconds == random.Random(5).randint(0, 4)
+
+
 class TestJobRunnerEvents:
     @pytest.mark.parametrize(
         ("behaviour", "kind", "status"),
@@ -176,6 +252,23 @@ class TestJobRunnerEvents:
         assert settled.trace_id == "trace-1"
         assert settled.duration_ms is not None
 
+    @pytest.mark.parametrize(
+        ("behaviour", "reason"),
+        [
+            (_raising(JobAbandonment("no")), AbandonReason.JOB_ASKED),
+            (_raising(UnretryableError("never")), AbandonReason.NOT_RETRYABLE),
+            (_raising(JobPostponement("later")), AbandonReason.CANNOT_WAIT),
+        ],
+        ids=["job asked", "not retryable", "cannot wait"],
+    )
+    async def test_an_abandoned_event_carries_the_reason(
+        self, behaviour: Any, reason: AbandonReason
+    ) -> None:
+        metrics = Metrics()
+        await _runner(behaviour, metrics, redelivery=Redelivery.NONE).run(_DATA.delivery())
+
+        assert metrics.events[-1].reason is reason
+
     async def test_a_failed_event_carries_the_error(self) -> None:
         metrics = Metrics()
         error = ValueError("boom")
@@ -194,14 +287,14 @@ class TestJobRunnerRedelivery:
         signal = JobPostponement("later", 30)
         for redelivery in (Redelivery.NONE, Redelivery.SAME):
             outcome = await _runner(_raising(signal), redelivery=redelivery).run(_DATA.delivery())
-            assert outcome == Abandoned("cannot wait: later", signal)
+            assert outcome == Abandoned(AbandonReason.CANNOT_WAIT, signal)
 
     async def test_a_transport_that_retries_nothing_abandons_a_failure_at_the_first_attempt(
         self,
     ) -> None:
         error = ValueError("boom")
         outcome = await _runner(_raising(error), redelivery=Redelivery.NONE).run(_DATA.delivery())
-        assert outcome == Abandoned("ValueError", error)
+        assert outcome == Abandoned(AbandonReason.CANNOT_WAIT, error)
 
     async def test_a_transport_that_brings_the_same_message_back_retries_a_failure(self) -> None:
         outcome = await _runner(_raising(ValueError("boom")), redelivery=Redelivery.SAME).run(
@@ -224,7 +317,7 @@ class TestJobRunnerRedelivery:
     ) -> None:
         signal = JobAbandonment("no such tenant")
         outcome = await _runner(_raising(signal), redelivery=redelivery).run(_DATA.delivery())
-        assert outcome == Abandoned("no such tenant", signal)
+        assert outcome == Abandoned(AbandonReason.JOB_ASKED, signal)
 
     async def test_an_abandoned_job_postponement_emits_the_abandonment_not_a_postponement(
         self,
@@ -251,13 +344,15 @@ class TestJobRunnerDecideUnrunnable:
     def test_a_message_that_cannot_run_is_abandoned_on_the_last_attempt(self) -> None:
         error = ValueError("garbled")
         assert _runner(_returning(1)).decide_unrunnable(error, 3, POLICY) == Abandoned(
-            "ValueError", error
+            AbandonReason.ATTEMPTS_EXHAUSTED, error
         )
 
     def test_a_transport_that_retries_nothing_abandons_it_at_once(self) -> None:
         error = ValueError("garbled")
         runner = _runner(_returning(1), redelivery=Redelivery.NONE)
-        assert runner.decide_unrunnable(error, 1, POLICY) == Abandoned("ValueError", error)
+        assert runner.decide_unrunnable(error, 1, POLICY) == Abandoned(
+            AbandonReason.CANNOT_WAIT, error
+        )
 
     def test_it_emits_the_event_of_the_outcome_named_by_the_error_class(self) -> None:
         metrics = Metrics()

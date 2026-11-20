@@ -3,7 +3,7 @@
 The ``jobs`` function runs ``TrackShipmentJob`` from an SQS record carrying
 the enqueuer's identity. A job refused for its caller is not retryable,
 so the function discards its record (the queue says ``dead_letter: discard``)
-and logs it as failed finally: that log is where the refusal surfaces. An
+and logs it as abandoned: that log is where the refusal surfaces. An
 envelope that does not decode is abandoned the same way.
 """
 
@@ -47,9 +47,9 @@ def _job(caller: Identity | None) -> LambdaEvent:
 
 def _failures(caplog: pytest.LogCaptureFixture) -> list[tuple[str, str]]:
     return [
-        (str(record.msg["event"]), str(record.msg["error_class"]))
+        (str(record.msg["event"]), str(record.msg["error_type"]))
         for record in caplog.records
-        if isinstance(record.msg, dict) and "error_class" in record.msg
+        if isinstance(record.msg, dict) and "error_type" in record.msg
     ]
 
 
@@ -57,7 +57,7 @@ def _reported(event: LambdaEvent) -> dict[str, list[dict[str, str]]]:
     return {"batchItemFailures": [{"itemIdentifier": event["Records"][0]["messageId"]}]}
 
 
-FAILED_FINALLY = "SQS job failed finally"
+FAILED_FINALLY = "Job abandoned"
 
 
 class TestTheJobsFunction:

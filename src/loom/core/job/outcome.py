@@ -5,7 +5,7 @@ from __future__ import annotations
 from dataclasses import dataclass
 from typing import Any, ClassVar
 
-from loom.core.engine.events import Status
+from loom.core.engine.events import AbandonReason, Status
 from loom.core.errors import PostCommitError
 from loom.core.job.policy import Countdown
 
@@ -66,19 +66,32 @@ class Postponed:
 
 @dataclass(frozen=True, slots=True)
 class Abandoned:
-    """The job will not run again: it gave up, its error cannot succeed, or attempts ran out.
+    """The job will not run again: it gave up, its error cannot succeed, or no run can follow.
 
     Attributes:
-        reason: The job's reason, or the class of its error.
-        error: The error or signal that ended the job.
+        reason: Why the message will not run again.
+        error: The error or signal that ended the job; its class and message say
+            what happened.
     """
 
-    reason: str
+    reason: AbandonReason
     error: Exception | None = None
 
     def as_exception(self) -> Exception:
-        """The error that ended the job, or a :class:`JobAbandonment` with its reason."""
+        """The error that ended the job, or a :class:`JobAbandonment` naming the reason."""
         return self.error or JobAbandonment(self.reason)
+
+    @property
+    def statement(self) -> str:
+        """The sentence a dead-letter message carries: the job's words, or its error's class."""
+        error = self.as_exception()
+        match error:
+            case JobAbandonment():
+                return str(error)
+            case JobPostponement():
+                return f"cannot wait: {error}"
+            case _:
+                return type(error).__qualname__
 
 
 @dataclass(frozen=True, slots=True)

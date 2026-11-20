@@ -8,7 +8,15 @@ from typing import Any
 import pytest
 
 from loom.core.connections.aws import AwsClients
-from loom.core.job.outcome import Abandoned, Failed, JobOutcome, Postponed, Succeeded
+from loom.core.engine.events import AbandonReason
+from loom.core.job.outcome import (
+    Abandoned,
+    Failed,
+    JobAbandonment,
+    JobOutcome,
+    Postponed,
+    Succeeded,
+)
 from loom.core.job.policy import Countdown
 from loom.jobs.aws.queue import (
     ABANDONMENT_REASON_ATTRIBUTE,
@@ -98,6 +106,10 @@ def _ids(records: list[SQSRecord]) -> list[str]:
     return [record.message_id for record in records]
 
 
+def _abandoned(reason: str = "tenant deleted") -> Abandoned:
+    return Abandoned(AbandonReason.JOB_ASKED, JobAbandonment(reason))
+
+
 class TestSQSJobSettlement:
     def test_a_succeeded_message_costs_no_call_and_builds_no_client(
         self, settling: Callable[..., Settling]
@@ -113,7 +125,7 @@ class TestSQSJobSettlement:
     ) -> None:
         sqs = settling()
 
-        redelivered = sqs.settle_all([(_record("a"), Abandoned("tenant deleted"))])
+        redelivered = sqs.settle_all([(_record("a"), _abandoned())])
 
         (entry,) = sqs.client.entries("send_message_batch", _DEAD)
         reason = entry["MessageAttributes"][ABANDONMENT_REASON_ATTRIBUTE]["StringValue"]
@@ -124,7 +136,7 @@ class TestSQSJobSettlement:
     ) -> None:
         sqs = settling(dead_letter="discard")
 
-        redelivered = sqs.settle_all([(_record("a"), Abandoned("tenant deleted"))])
+        redelivered = sqs.settle_all([(_record("a"), _abandoned())])
 
         assert (redelivered, sum(sqs.client.calls.values())) == ([], 0)
         assert len(_logged(caplog, outcome="discarded")) == 1
@@ -155,7 +167,7 @@ class TestSQSJobSettlement:
     ) -> None:
         sqs = settling(refuse=frozenset({"b"}))
 
-        redelivered = sqs.settle_all([(_record(name), Abandoned("no")) for name in "abc"])
+        redelivered = sqs.settle_all([(_record(name), _abandoned("no")) for name in "abc"])
 
         assert _ids(redelivered) == ["b"]
 
@@ -185,7 +197,7 @@ class TestSQSJobSettlement:
         sqs = settling(raises=RuntimeError("down"))
 
         redelivered = sqs.settle_all(
-            [(_record("a"), Abandoned("no")), (_record("b"), Postponed(Countdown(5), "wait"))]
+            [(_record("a"), _abandoned("no")), (_record("b"), Postponed(Countdown(5), "wait"))]
         )
 
         assert _ids(redelivered) == ["a", "b"]
@@ -201,7 +213,7 @@ class TestSQSJobSettlement:
         settlement = SQSJobSettlement(clients, config, "jobs")
         settlement.queue.read_dead_letter(clients.client("sqs", config))
 
-        redelivered = settlement.settle_all([(_record("a"), Abandoned("no"))])
+        redelivered = settlement.settle_all([(_record("a"), _abandoned("no"))])
 
         by_attempts = island.created_by_max_attempts()
         bounded = by_attempts.pop(1)
@@ -218,7 +230,7 @@ class TestSQSJobSettlement:
         sqs = settling(prime=False)
         sqs.client.lookup_raises = RuntimeError("must not be asked")
 
-        redelivered = sqs.settle_all([(_record(name), Abandoned("no")) for name in "ab"])
+        redelivered = sqs.settle_all([(_record(name), _abandoned("no")) for name in "ab"])
 
         assert (_ids(redelivered), sqs.client.batches) == (["a", "b"], [])
         assert len([r for r in caplog.records if "settlement call raised" in str(r.msg)]) == 1
@@ -230,7 +242,7 @@ class TestSQSJobSettlement:
         sqs = settling()
         stray = _record("a", arn=f"arn:aws:sqs:{OTHER_REGION}:{ACCOUNT}:elsewhere")
 
-        redelivered = sqs.settle_all([(stray, Abandoned("no"))])
+        redelivered = sqs.settle_all([(stray, _abandoned("no"))])
 
         assert (_ids(redelivered), sqs.client.batches) == (["a"], [])
 
@@ -239,7 +251,7 @@ class TestSQSJobSettlement:
     ) -> None:
         sqs = settling()
         foreign = f"arn:aws:sqs:{OTHER_REGION}:{ACCOUNT}:elsewhere"
-        stray = [(_record(name, arn=foreign), Abandoned("no")) for name in "ab"]
+        stray = [(_record(name, arn=foreign), _abandoned("no")) for name in "ab"]
 
         redelivered = sqs.settle_all(stray)
 
@@ -253,7 +265,7 @@ class TestSQSJobSettlement:
         sqs = settling()
         settled: list[tuple[SQSRecord, JobOutcome]] = [
             *((_record(f"f{n}"), _failed()) for n in range(25)),
-            *((_record(f"r{n}"), Abandoned("no")) for n in range(3)),
+            *((_record(f"r{n}"), _abandoned("no")) for n in range(3)),
             *((_record(f"d{n}"), Postponed(Countdown(5), "wait")) for n in range(12)),
             (_record("ok"), Succeeded(None)),
         ]

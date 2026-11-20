@@ -35,6 +35,15 @@ class Status(StrEnum):
     ABANDONED = "abandoned"
 
 
+class AbandonReason(StrEnum):
+    """Why a job message will not run again."""
+
+    ATTEMPTS_EXHAUSTED = "attempts_exhausted"
+    NOT_RETRYABLE = "not_retryable"
+    JOB_ASKED = "job_asked"
+    CANNOT_WAIT = "cannot_wait"
+
+
 class Phase(StrEnum):
     """The phase of an execution a failure is reported under, as its ``error_kind``."""
 
@@ -66,6 +75,7 @@ class RuntimeEvent:
             the pipeline did not start.
         commit_ms: Time spent closing the unit of work, or ``None`` when no
             commit was attempted.
+        reason: Why the job was abandoned on ``JOB_ABANDONED``, or ``None``.
 
     Example::
 
@@ -87,3 +97,4 @@ class RuntimeEvent:
     error_kind: Phase | None = None
     pipeline_ms: float | None = None
     commit_ms: float | None = None
+    reason: AbandonReason | None = None

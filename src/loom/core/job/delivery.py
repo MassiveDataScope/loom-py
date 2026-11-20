@@ -29,6 +29,7 @@ class JobDelivery:
         attempt: The attempt number, from 1; postponements do not advance it.
         postponements: How many times the job asked to run again.
         policy: The resolved retry policy of the job.
+        queue: The queue the job is configured for.
         timeout_s: The seconds the run may take, or ``None`` for no limit.
 
     Raises:
@@ -40,6 +41,7 @@ class JobDelivery:
     attempt: Annotated[int, msgspec.Meta(ge=MIN_ATTEMPTS)]
     postponements: Annotated[int, msgspec.Meta(ge=MIN_POSTPONEMENTS)]
     policy: RetryPolicy
+    queue: str
     timeout_s: float | None = None
 
     def __post_init__(self) -> None:

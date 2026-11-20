@@ -5,7 +5,7 @@ from __future__ import annotations
 import pytest
 from prometheus_client import CollectorRegistry
 
-from loom.core.engine.events import EventKind, RuntimeEvent
+from loom.core.engine.events import AbandonReason, EventKind, RuntimeEvent
 from loom.prometheus import PrometheusMetricsAdapter
 
 
@@ -145,3 +145,34 @@ class TestExecStart:
             {"usecase": "CreateOrder", "status": "success"},
         )
         assert val == pytest.approx(0.0)
+
+
+class TestJobEvents:
+    def test_counts_a_job_event_by_kind_job_and_reason(self) -> None:
+        adapter, registry = _adapter()
+        for _ in range(2):
+            adapter.on_event(
+                RuntimeEvent(
+                    kind=EventKind.JOB_ABANDONED,
+                    use_case_name="SendEmail",
+                    reason=AbandonReason.ATTEMPTS_EXHAUSTED,
+                )
+            )
+
+        count = _metric_value(
+            registry,
+            "loom_job_events_total",
+            {"kind": "job_abandoned", "job": "SendEmail", "reason": "attempts_exhausted"},
+        )
+        assert count == pytest.approx(2.0)
+
+    def test_counts_an_event_that_has_no_reason_under_an_empty_one(self) -> None:
+        adapter, registry = _adapter()
+        adapter.on_event(RuntimeEvent(kind=EventKind.JOB_SUCCEEDED, use_case_name="SendEmail"))
+
+        count = _metric_value(
+            registry,
+            "loom_job_events_total",
+            {"kind": "job_succeeded", "job": "SendEmail", "reason": ""},
+        )
+        assert count == pytest.approx(1.0)

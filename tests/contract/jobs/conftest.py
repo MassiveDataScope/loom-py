@@ -206,8 +206,8 @@ def _settlement(outcome: JobOutcome) -> Settlement:
             return Settlement("succeeded", result=result)
         case Postponed(delay=delay, reason=reason):
             return Settlement("postponed", delay.seconds, reason)
-        case Abandoned(reason=reason):
-            return Settlement("abandoned", reason=reason)
+        case Abandoned():
+            return Settlement("abandoned", reason=outcome.statement)
         case Failed(error=error, delay=delay):
             return Settlement("failed", delay.seconds, type(error).__qualname__)
 

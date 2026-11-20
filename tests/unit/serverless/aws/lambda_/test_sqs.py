@@ -639,10 +639,10 @@ print([name for name in loaded if name in sys.modules])
         caplog: pytest.LogCaptureFixture,
     ) -> None:
         handler({"Records": [record("42", "committed")]}, None)
-        final_logs = [message for message in caplog.messages if "SQS job failed finally" in message]
+        final_logs = [message for message in caplog.messages if "Job abandoned" in message]
         assert len(final_logs) == 1
         assert "PostCommitError" in final_logs[0]
-        assert "message_id': '42'" in final_logs[0]
+        assert "task_id': '42'" in final_logs[0]
         assert "committed': True" in final_logs[0]
 
     @pytest.mark.parametrize(
