@@ -1,4 +1,4 @@
-"""Dispatch API: countdown bound, eta gone, dispatch_now on every backend."""
+"""Dispatch API: countdown bound, eta gone, dispatch_now on every transport."""
 
 from __future__ import annotations
 
@@ -7,13 +7,17 @@ from unittest.mock import AsyncMock, MagicMock
 
 import pytest
 
-from loom.celery.service import CeleryJobService
 from loom.core.job.context import clear_pending_dispatches, flush_pending_dispatches
 from loom.core.job.policy import Countdown
-from loom.core.job.router import JobRouter
-from loom.core.job.service import InlineJobService, JobService
-from loom.testing.jobs import ManualTimer, RecordingJobService
-from tests.helpers.jobs import EmailJob, SQSClient, sqs_service
+from loom.core.job.service import JobService
+from loom.testing import ManualTimer, RecordingJobTransport
+from tests.helpers.jobs import (
+    CeleryServiceFixture,
+    EmailJob,
+    InlineServiceFixture,
+    SQSClient,
+    sqs_service,
+)
 
 pytestmark = pytest.mark.timeout(10)
 
@@ -25,13 +29,13 @@ def service(request: pytest.FixtureRequest) -> Iterator[JobService]:
         case "inline":
             executor = MagicMock()
             executor.run = AsyncMock(return_value="ran")
-            built = InlineJobService(MagicMock(), executor, timer=ManualTimer())
+            built = InlineServiceFixture(MagicMock(), executor, timer=ManualTimer())
         case "celery":
-            built = CeleryJobService(MagicMock())
+            built = CeleryServiceFixture(MagicMock())
         case "sqs":
             built = sqs_service(SQSClient())
         case _:
-            built = RecordingJobService()
+            built = JobService(RecordingJobTransport())
     yield built
     clear_pending_dispatches()
 
@@ -72,7 +76,7 @@ class TestDispatchNow:
     async def test_inline_runs_the_job_immediately(self) -> None:
         executor = MagicMock()
         executor.run = AsyncMock(return_value=7)
-        service = InlineJobService(MagicMock(), executor)
+        service = InlineServiceFixture(MagicMock(), executor)
 
         handle = await service.dispatch_now(EmailJob)
 
@@ -81,7 +85,7 @@ class TestDispatchNow:
 
     async def test_celery_sends_immediately(self) -> None:
         app = MagicMock()
-        service = CeleryJobService(app)
+        service = CeleryServiceFixture(app)
 
         await service.dispatch_now(EmailJob)
 
@@ -101,19 +105,19 @@ class TestDispatchNow:
         assert len(client.requests) == 1
 
     async def test_recording_records_immediately(self) -> None:
-        service = RecordingJobService()
+        transport = RecordingJobTransport()
+        service = JobService(transport)
 
         await service.dispatch_now(EmailJob, payload={"n": 1})
 
-        assert [record.payload for record in service.dispatched] == [{"n": 1}]
+        assert [record.payload for record in transport.dispatched] == [{"n": 1}]
         await flush_pending_dispatches()
-        assert len(service.dispatched) == 1
+        assert len(transport.dispatched) == 1
 
-    async def test_router_sends_through_the_backend(self) -> None:
-        app = MagicMock()
-        router = JobRouter({"emails": CeleryJobService(app)}, default=MagicMock())
+    async def test_a_routed_queue_sends_through_its_own_transport(self) -> None:
+        default, emails = RecordingJobTransport(), RecordingJobTransport()
+        service = JobService(default, routes={"emails": emails})
 
-        await router.dispatch_now(EmailJob)
+        await service.dispatch_now(EmailJob)
 
-        app.send_task.assert_called_once()
-        router._default.dispatch_now.assert_not_called()
+        assert (len(default.dispatched), len(emails.dispatched)) == (0, 1)

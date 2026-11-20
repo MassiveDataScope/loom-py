@@ -4,6 +4,7 @@ from __future__ import annotations
 
 from typing import ClassVar
 
+from loom.core.errors import SystemError
 from loom.core.job.delivery import JobDelivery
 from loom.core.job.job import Job
 from loom.core.job.outcome import JobAbandonment, JobPostponement
@@ -18,8 +19,8 @@ class AcmeError(Exception):
     pass
 
 
-class UnretryableAcmeError(Exception):
-    retryable = False
+class UnretryableAcmeError(SystemError):
+    is_retryable = False
 
 
 class SucceedingJob(Job[str]):

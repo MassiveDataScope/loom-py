@@ -7,22 +7,29 @@ from collections.abc import Awaitable, Callable
 from pathlib import Path
 from typing import Any, cast
 
+from loom.celery.service import CeleryJobTransport
 from loom.composition import AppConfig, Application, Project, Recipe
 from loom.core.config import ConfigContext
 from loom.core.di.container import LoomContainer
 from loom.core.discovery.base import DiscoveryResult
 from loom.core.engine.compiler import UseCaseCompiler
 from loom.core.engine.executor import RuntimeExecutor
+from loom.core.engine.metrics import MetricsAdapter
+from loom.core.job.callback import ANY_CALLBACKS, DispatchableCallbacks
+from loom.core.job.config import JobSettings
 from loom.core.job.delivery import JobDelivery
+from loom.core.job.inline import InlineJobTransport
 from loom.core.job.job import Job
 from loom.core.job.run import EnvelopeInvocation
+from loom.core.job.service import JobService
+from loom.core.job.timer import JobTimer
 from loom.core.observability.runtime import ObservabilityRuntime
 from loom.core.stores.profile import WORKER_PROFILE
 from loom.core.stores.repository.registration import classify_key
 from loom.core.use_case.factory import UseCaseFactory, main_repository
 from loom.core.use_case.kinds import declare_kinds
 from loom.jobs.aws.queue import QueueConfig
-from loom.jobs.aws.sqs import SQSConfig, SQSJobService
+from loom.jobs.aws.sqs import SQSConfig, SQSJobTransport
 from tests.helpers.composition import composition_project
 
 BROKER = {"broker_url": "memory://", "result_backend": "cache+memory://"}
@@ -122,11 +129,77 @@ class SQSClient:
             self._in_flight -= 1
 
 
-def sqs_service(client: SQSClient, **knobs: Any) -> SQSJobService:
-    """An ``SQSJobService`` over *client* sending ``emails`` and the FIFO ``orders``."""
+def sqs_service(client: SQSClient, **knobs: Any) -> JobService:
+    """A job service over *client* sending ``emails`` and FIFO ``orders``."""
     queues = {"emails": QueueConfig(url=SQS_URL), "orders": QueueConfig(url=SQS_FIFO_URL)}
     config = SQSConfig(queues=queues, **knobs)
-    return SQSJobService(client, config, factory=cast(Any, None), executor=cast(Any, None))
+    return JobService(SQSJobTransport(client, config))
+
+
+class InlineServiceFixture(JobService):
+    """A public job service using inline transport for direct tests."""
+
+    def __init__(
+        self,
+        factory: Any,
+        executor: Any,
+        *,
+        settings: JobSettings | None = None,
+        callbacks: DispatchableCallbacks = ANY_CALLBACKS,
+        timer: JobTimer | None = None,
+        metrics: MetricsAdapter | None = None,
+    ) -> None:
+        super().__init__(
+            InlineJobTransport(factory, executor, timer=timer, metrics=metrics),
+            factory=factory,
+            executor=executor,
+            settings=settings,
+            callbacks=callbacks,
+        )
+
+
+class CeleryServiceFixture(JobService):
+    """A public job service using Celery transport for direct tests."""
+
+    def __init__(
+        self,
+        app: Any,
+        metrics: MetricsAdapter | None = None,
+        factory: Any = None,
+        executor: Any = None,
+        observability_runtime: Any = None,
+        *,
+        settings: JobSettings | None = None,
+        callbacks: DispatchableCallbacks = ANY_CALLBACKS,
+    ) -> None:
+        super().__init__(
+            CeleryJobTransport(app, metrics=metrics, observability_runtime=observability_runtime),
+            factory=factory,
+            executor=executor,
+            settings=settings,
+            callbacks=callbacks,
+        )
+
+
+class SQSServiceFixture(JobService):
+    """A public job service using SQS transport for direct tests."""
+
+    def __init__(
+        self,
+        client: Any,
+        config: SQSConfig,
+        *,
+        factory: Any,
+        executor: Any,
+        metrics: MetricsAdapter | None = None,
+        settings: JobSettings | None = None,
+    ) -> None:
+        super().__init__(
+            SQSJobTransport(client, config, metrics=metrics),
+            factory=factory,
+            executor=executor,
+            settings=settings,
+        )
 
 
 class JobKernel:

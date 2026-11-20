@@ -649,7 +649,7 @@ gate = ["lint", "types", "test-fast", "test-int"]
 
 [tool.poe.tasks.types]
 help = "mypy src, failing only when the error count grows past MYPY_BASELINE"
-env = { MYPY_BASELINE = "4" }
+env = { MYPY_BASELINE = "0" }
 shell = """
 out=$(mypy --no-color-output src 2>&1)
 found=$(printf '%s\\n' "$out" | sed -n 's/^Found \\([0-9]*\\) error.*/\\1/p')

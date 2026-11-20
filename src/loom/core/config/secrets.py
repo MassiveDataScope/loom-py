@@ -17,7 +17,7 @@ from typing import Any
 
 from loom.core.config._resolver_utils import build_resolver_client, resolve_cached
 from loom.core.config.errors import ConfigError
-from loom.core.connections.aws import aws_error_code
+from loom.core.connections.aws import AwsClients, aws_error_code
 
 
 def _fetch_secret(client: Any, name: str, *, label: str) -> str:
@@ -79,6 +79,8 @@ class SecretsManagerResolver:
         region: AWS region name. Passed directly to ``boto3.client``.
             Defaults to ``None``: ``aws.region`` of the configuration, else
             boto3's own resolution chain (env vars, instance metadata, etc.).
+        clients: The AWS clients the resolver takes its client from; it owns
+            its own when none is given.
 
     Example::
 
@@ -86,7 +88,8 @@ class SecretsManagerResolver:
         value = resolver.resolve("/myapp/%ENV%/db_password")
     """
 
-    def __init__(self, region: str | None = None) -> None:
+    def __init__(self, region: str | None = None, *, clients: AwsClients | None = None) -> None:
+        self._clients = clients or AwsClients()
         self._region = region
         self._unbound: dict[Any, Any] = {}
 
@@ -134,6 +137,7 @@ class SecretsManagerResolver:
             label="Secrets Manager",
             unbound=self._unbound,
             client=lambda: build_resolver_client(
+                self._clients,
                 "secretsmanager",
                 self._region,
                 resolver="SecretsManagerResolver",

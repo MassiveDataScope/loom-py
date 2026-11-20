@@ -18,27 +18,29 @@ import pytest
 from celery import current_app
 
 from loom.celery.adapter import CeleryAdapter
-from loom.celery.service import CeleryJobService
+from loom.celery.service import CeleryJobTransport
 from loom.composition import Application, Project, Recipe
 from loom.composition.resources import ResourceKind
 from loom.core.di.container import LoomContainer
 from loom.core.di.scope import Scope
+from loom.core.errors import JobTimeoutError
 from loom.core.job.context import flush_pending_dispatches
+from loom.core.job.inline import InlineJobTransport
 from loom.core.job.job import Job
-from loom.core.job.service import InlineJobService, JobService
-from loom.core.job.timer import AsyncioJobTimer, JobDelayRefused, JobTimer
+from loom.core.job.service import JobService
+from loom.core.job.timer import JobDelayRefused, JobTimer
 from loom.core.stores.profile import LAMBDA_PROFILE
 from loom.rest.fastapi.adapter import FastAPIAdapter
 from loom.testing import ManualTimer, Override
 from tests.helpers.composition import ProjectFactory, WithOverrides
-from tests.helpers.jobs import BROKER, JobsAdapter, job_project
+from tests.helpers.jobs import BROKER, InlineServiceFixture, JobsAdapter, job_project
 from tests.helpers.loggers import RecordingLogger
 from tests.unit.composition.doubles import AcmePingJob
 
 _CELERY = {"celery": BROKER}
 
 
-class _OwnJobService(InlineJobService):
+class _OwnJobService(InlineServiceFixture):
     """The caller's own service, recognisable by type."""
 
     def __init__(self) -> None:
@@ -74,7 +76,7 @@ class TestRegisteredJobService:
         application = project.compose(CeleryAdapter(jobs=[AcmePingJob]))
         assert [resource.kind for resource in application.resources].count(ResourceKind.CELERY) == 1
 
-        with patch.object(CeleryJobService, "close", autospec=True) as close:
+        with patch.object(CeleryJobTransport, "close", autospec=True) as close:
             async with application.running(check=False):
                 close.assert_not_called()
             close.assert_called_once()
@@ -117,7 +119,7 @@ class TestImplicitJobService:
         with pytest.deprecated_call(match="app.job_service is not set"):
             service = _implicit_service(tmp_path, _CELERY)
 
-        assert isinstance(service, CeleryJobService)
+        assert type(service.default_transport) is CeleryJobTransport
 
     def test_without_job_service_or_celery_section_jobs_run_inline(self, tmp_path: Path) -> None:
         with (
@@ -126,7 +128,7 @@ class TestImplicitJobService:
         ):
             service = _implicit_service(tmp_path, {})
 
-        assert type(service) is InlineJobService
+        assert type(service.default_transport) is InlineJobTransport
 
     def test_without_job_service_a_missing_extra_falls_back_to_inline(
         self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
@@ -137,7 +139,7 @@ class TestImplicitJobService:
             warnings.simplefilter("ignore", DeprecationWarning)
             service = _implicit_service(tmp_path, _CELERY)
 
-        assert type(service) is InlineJobService
+        assert type(service.default_transport) is InlineJobTransport
 
 
 class _LambdaJobsAdapter(JobsAdapter):
@@ -170,17 +172,26 @@ class TestInlineTimer:
         assert policies[1]["transport"] == "inline"
         assert "max_attempts=3" in policies[1]["jobs"][0]["retry"]
 
-    async def test_a_countdown_waits_on_the_timer_of_the_application(self, tmp_path: Path) -> None:
-        application = self._compose(tmp_path, JobsAdapter(AcmePingJob))
+    async def test_a_countdown_runs_when_the_timer_of_the_application_reaches_it(
+        self, tmp_path: Path
+    ) -> None:
+        timer = ManualTimer()
+        application = self._compose(
+            tmp_path,
+            WithOverrides(JobsAdapter(AcmePingJob), Override.instance(JobTimer, timer).install),
+        )
         service = application.kernel.container.resolve(JobService)
 
-        service.dispatch_after_commit(AcmePingJob, countdown=60)
+        handle = service.dispatch_after_commit(AcmePingJob, countdown=60)
         await flush_pending_dispatches()
+        with pytest.raises(JobTimeoutError):
+            handle.wait()
+        await timer.advance(59)
+        with pytest.raises(JobTimeoutError):
+            handle.wait()
+        await timer.advance(1)
 
-        timer = service._timer  # type: ignore[attr-defined]
-        assert isinstance(timer, AsyncioJobTimer)
-        assert len(timer._tasks) == 1
-        await timer.close()
+        assert handle.wait() == await service.run(AcmePingJob)
 
     async def test_a_timer_bound_in_the_container_replaces_it(
         self, tmp_path: Path, warnings_logged: RecordingLogger

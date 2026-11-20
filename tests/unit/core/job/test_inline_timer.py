@@ -14,9 +14,9 @@ from loom.core.job.context import clear_pending_dispatches, flush_pending_dispat
 from loom.core.job.job import Job
 from loom.core.job.outcome import JobPostponement
 from loom.core.job.policy import Backoff, Countdown
-from loom.core.job.service import InlineJobService
 from loom.core.job.timer import AsyncioJobTimer, JobDelayRefused
 from loom.testing.jobs import ManualTimer
+from tests.helpers.jobs import InlineServiceFixture
 from tests.helpers.loggers import RecordingLogger
 
 pytestmark = pytest.mark.timeout(10)
@@ -41,7 +41,7 @@ class Acme:
     def __init__(self, *script: object, timed: bool = True) -> None:
         self.timer = ManualTimer()
         self.executor = MagicMock(run=AsyncMock(side_effect=list(script) or ["done"]))
-        self.service = InlineJobService(
+        self.service = InlineServiceFixture(
             MagicMock(), self.executor, timer=self.timer if timed else None
         )
 

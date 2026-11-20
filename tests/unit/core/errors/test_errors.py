@@ -50,12 +50,12 @@ class TestLoomError:
         assert str(LoomError("readable message", code=_AppCode.BROKEN)) == "readable message"
 
     def test_is_retryable_by_default(self) -> None:
-        assert LoomError("msg", code=_AppCode.BROKEN).retryable is True
+        assert LoomError("msg", code=_AppCode.BROKEN).is_retryable is True
 
     def test_a_domain_error_is_never_retryable(self) -> None:
         """Repeating the work cannot fix the input or the rule it broke."""
-        assert DomainError("msg", code=_AppCode.BROKEN).retryable is False
-        assert SystemError("msg").retryable is True
+        assert DomainError("msg", code=_AppCode.BROKEN).is_retryable is False
+        assert SystemError("msg").is_retryable is True
 
 
 # ---------------------------------------------------------------------------

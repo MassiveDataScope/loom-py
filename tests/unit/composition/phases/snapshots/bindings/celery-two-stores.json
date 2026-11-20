@@ -52,7 +52,7 @@
     },
     "JobService": {
       "provider": "configure_job_service.<locals>.<lambda>",
-      "resolved": "CeleryJobService",
+      "resolved": "JobService",
       "scope": "APPLICATION"
     },
     "ObservabilityRuntime": {

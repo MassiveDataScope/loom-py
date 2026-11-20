@@ -22,7 +22,7 @@ from pathlib import Path
 import pytest
 
 from loom.ai.errors import AgentCompilationError
-from loom.composition import JobBackendError
+from loom.composition import JobTransportError
 from loom.composition.errors import ReservedBindingError
 from loom.core.checks import DeployCheckError
 from loom.core.config import ConfigError
@@ -94,17 +94,17 @@ _SCENARIOS: dict[str, _Precedence] = {
         ),
         DependencyGraphError,
     ),
-    # configure_job_service's JobBackendError before resolve_sql's ConfigError.
-    "job-backend-and-sql-section": _Precedence(
+    # configure_job_service's JobTransportError before resolve_sql's ConfigError.
+    "job-transport-and-sql-section": _Precedence(
         paths.Composition(config={**_UNKNOWN_BACKEND, **_INVALID_SQL}),
-        JobBackendError,
+        JobTransportError,
         # The HTTP adapters validate the sql section in their recipe, during plan.
         {"fastapi": ConfigError, "lambda_http": ConfigError},
         {"http": paths.HTTP},
     ),
     # A caller module's ReservedBindingError (create_kernel) before configure_job_service's
-    # JobBackendError.
-    "reserved-binding-and-job-backend": _Precedence(
+    # JobTransportError.
+    "reserved-binding-and-job-transport": _Precedence(
         paths.Composition(overrides=(binds_sql_service,), config=_UNKNOWN_BACKEND),
         ReservedBindingError,
     ),
@@ -124,9 +124,9 @@ _SCENARIOS: dict[str, _Precedence] = {
 
 
 _VALIDATED_AT_SEAL_AFTER = (
-    "job-backend",
-    "job-backend-celery-extra",
-    "job-backend-celery-section",
+    "job-transport",
+    "job-transport-celery-extra",
+    "job-transport-celery-section",
     "sqs-queue",
     "sql-invalid-section",
     "agent-marker",

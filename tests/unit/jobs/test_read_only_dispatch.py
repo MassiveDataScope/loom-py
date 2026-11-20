@@ -9,14 +9,19 @@ from unittest.mock import AsyncMock, MagicMock
 
 import pytest
 
-from loom.celery.service import CeleryJobService
 from loom.core.errors import UndeclaredStoreWrite
 from loom.core.job.context import clear_pending_dispatches, flush_pending_dispatches
-from loom.core.job.service import InlineJobService, JobService
+from loom.core.job.service import JobService
 from loom.core.stores.catalog import DEFAULT_STORE
 from loom.core.stores.uow.coordinator import OrderedCommits
 from loom.core.stores.uow.scope import Frame, InvocationScope, invocation
-from tests.helpers.jobs import EmailJob, SQSClient, sqs_service
+from tests.helpers.jobs import (
+    CeleryServiceFixture,
+    EmailJob,
+    InlineServiceFixture,
+    SQSClient,
+    sqs_service,
+)
 from tests.unit.core.uow._coordinator_fakes import Factory, Ledger, PhasedStore
 
 pytestmark = pytest.mark.timeout(10)
@@ -26,12 +31,12 @@ _Sent = Callable[[], int]
 
 def _inline() -> tuple[JobService, _Sent]:
     executor = AsyncMock()
-    return InlineJobService(MagicMock(), executor), lambda: executor.execute.await_count
+    return InlineServiceFixture(MagicMock(), executor), lambda: executor.execute.await_count
 
 
 def _celery() -> tuple[JobService, _Sent]:
     app = MagicMock()
-    return CeleryJobService(app), lambda: app.send_task.call_count
+    return CeleryServiceFixture(app), lambda: app.send_task.call_count
 
 
 def _sqs() -> tuple[JobService, _Sent]:

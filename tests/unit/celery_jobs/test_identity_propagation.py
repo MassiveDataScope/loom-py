@@ -15,7 +15,6 @@ from unittest.mock import MagicMock
 import pytest
 
 from loom.celery.runner import _make_job_task
-from loom.celery.service import CeleryJobService
 from loom.core.engine.compiler import UseCaseCompiler
 from loom.core.engine.executor import RuntimeExecutor
 from loom.core.errors import Unauthenticated
@@ -24,6 +23,7 @@ from loom.core.job.config import JobSettings
 from loom.core.job.context import clear_pending_dispatches, flush_pending_dispatches
 from loom.core.job.job import Job
 from loom.core.use_case.markers import Caller
+from tests.helpers.jobs import CeleryServiceFixture
 
 _SUBJECT = "user-1"
 _ROLES = ("role_a",)
@@ -67,7 +67,7 @@ def _mock_celery_app() -> MagicMock:
 async def _dispatch_kwargs(identity: Identity | None) -> dict[str, Any]:
     """Dispatch one job under *identity* and return the ``send_task`` kwargs."""
     app = MagicMock()
-    service = CeleryJobService(app)
+    service = CeleryServiceFixture(app)
     token = set_identity(identity) if identity is not None else None
     try:
         service.dispatch_after_commit(_ReportJob, payload={})

@@ -164,15 +164,15 @@ class BuildProductSummaryUseCase(UseCase[Product, ProductSummaryResponse]):
         return ProductSummaryResponse(product_id=int(product_id), summary=summary)
 ```
 
-`run()` works identically in both `InlineJobService` (development / tests) and
-`CeleryJobService` (production). When Celery is configured, it bypasses the broker
+`run()` works identically in both `JobService with InlineJobTransport` (development / tests) and
+`JobService with CeleryJobTransport` (production). When Celery is configured, it bypasses the broker
 entirely — the job runs in the API process via the same DI container.
 
 Use `dispatch_after_commit()` for fire-and-forget work; use `run()` when you need the result now.
 
 ### Delays inline
 
-`InlineJobService` honours `countdown`, `JobPostponement` and failure backoff: a
+`JobService with InlineJobTransport` honours `countdown`, `JobPostponement` and failure backoff: a
 delayed job waits in the memory of the process on a `JobTimer` and runs again
 with its attempt and postponements carried. Exhausted attempts abandon the job and
 call `on_failure`. A job delayed this way is lost when the process stops (the
@@ -357,10 +357,10 @@ broker, is deferred.
 
 ---
 
-## Pick the job backend
+## Pick the job transport
 
-A use case injects `JobService` and never names a backend. `app.job_service`
-names the backend for every queue `celery.queues` does not list: `inline`,
+A use case injects `JobService` and never names a transport. `app.job_service`
+names the transport for every queue `celery.queues` does not list: `inline`,
 `celery`, `sqs` or a `module:Class` reference. The effective queue of a job is the
 `queue=` of the call, otherwise its `__queue__` after the `jobs.<Job>.queue`
 override.
@@ -384,16 +384,17 @@ Here `notifications` and `erp` go to Celery and any other queue runs inline.
 `task_default_queue` (`default` unless set) must be listed in `queues`, but it
 stays with `app.job_service`: a job left on `__queue__ = "default"` runs inline.
 
-- Only the backends in use are built: with no `celery.queues` and an inline
+- Only the transports in use are built: with no `celery.queues` and an inline
   default, Celery is not even imported.
-- One backend is registered as itself; two sit behind a `JobRouter`.
-- `run()` goes to the default backend (in-process for `inline`, `celery` and `sqs`).
-- `dispatch_parallel()` over jobs of several backends returns one `JobGroup`
-  in input order, and refuses callbacks with `MixedJobBackendsError`.
-- Startup fails with `JobBackendError` for an unknown name or when Celery or
+- One `JobService` is registered; it picks an `InlineJobTransport`,
+  `CeleryJobTransport` or `SQSJobTransport` by effective queue.
+- `run()` executes in process for every transport.
+- `dispatch_parallel()` over jobs of several transports returns one `JobGroup`
+  in input order, and refuses callbacks with `MixedJobTransportsError`.
+- Startup fails with `JobTransportError` for an unknown name or when Celery or
   SQS is needed without its `loom[celery]` or `loom[aws]` extra.
-- A `module:Class` backend is built as `Class(context)`, where `context` is a
-  `loom.composition.JobBackendContext`.
+- A `module:Class` transport is built as `Class(context)`, where `context` is a
+  `loom.composition.JobTransportContext`.
 - `LOOM__APP__JOB_SERVICE` can override the key in production and staging,
   but never with a `module:Class` reference.
 
@@ -719,7 +720,7 @@ attempt it waits `Backoff(first_s, factor, max_s, jitter)`: `first_s * factor **
 seconds, capped at `max_s` (never above 900) and, with `jitter` (the default), drawn
 uniformly from zero to that value. A job may raise `JobPostponement(reason, delay_s=None)`
 to run again later without using an attempt, or `JobAbandonment(reason)` to give up at
-once; an error whose `retryable` is `False` is abandoned at its first attempt.
+once; a loom error whose `is_retryable` is `False` is abandoned at its first attempt, and any other exception is retried.
 
 The most specific layer wins, and a section that sets only some fields inherits the
 rest from the layer below: `jobs.<Job>.retry`, then `jobs.defaults.retry`, then the

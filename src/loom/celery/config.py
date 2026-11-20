@@ -22,7 +22,7 @@ from typing import Literal
 
 import msgspec
 from celery import Celery  # type: ignore[import-untyped]
-from kombu import Queue  # type: ignore[import-untyped]
+from kombu.entity import Queue
 
 from loom.core.model import LoomFrozenStruct
 from loom.core.model.redaction import Dsn
@@ -145,5 +145,5 @@ def create_celery_app(cfg: CeleryConfig) -> Celery:
         task_default_queue=cfg.task_default_queue,
     )
     if cfg.queues:
-        app.conf.task_queues = [Queue(name) for name in cfg.queues]
+        app.conf.task_queues = [Queue(name) for name in cfg.queues]  # type: ignore[no-untyped-call]
     return app

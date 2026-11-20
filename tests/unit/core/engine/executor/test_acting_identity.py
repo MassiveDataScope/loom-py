@@ -27,12 +27,12 @@ from loom.core.errors import Unauthenticated
 from loom.core.execution import ExecutionScope, execution_identity
 from loom.core.identity import ANONYMOUS, Identity, current_caller, current_identity
 from loom.core.job.context import add_pending_dispatch, flush_pending_dispatches
-from loom.core.job.service import InlineJobService
 from loom.core.stores.uow.scope import current_scope
 from loom.core.tracing import active_trace_id
 from loom.core.use_case.invoker import AppInvoker
 from loom.core.use_case.registry import UseCaseRegistry
 from tests.helpers.delegation import acting_as
+from tests.helpers.jobs import InlineServiceFixture
 from tests.helpers.loggers import RecordingLogger
 from tests.helpers.outliving import outlive
 
@@ -332,7 +332,7 @@ class TestATaskOutlivingItsExecution:
     async def test_a_job_it_dispatches_goes_out_detached_as_the_caller(
         self, outliving: Outliving, executor: RuntimeExecutor
     ) -> None:
-        jobs = InlineJobService(BUILDING, executor)
+        jobs = InlineServiceFixture(BUILDING, executor)
 
         async def dispatch() -> Identity:
             handle = jobs.dispatch_after_commit(AcmeWhoJob)

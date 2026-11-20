@@ -225,11 +225,11 @@ def register(
         recipe: What it composes.
         stores: The stores, whose repositories and units of work it registers.
         aws: The application's AWS clients, registered in the container and
-            given to the job backends.
+            given to the job transports.
         logger: Where the container and the compilation log.
 
     Returns:
-        The kernel, the SQL wiring and the job backends' resources.
+        The kernel, the SQL wiring and the job transports' resources.
 
     Raises:
         ConfigError: When the ``cache`` section, an elevation,
@@ -240,7 +240,7 @@ def register(
             replaces a framework-owned key.
         BootstrapError: Wrapping any other failure of a module or of a use
             case's compilation.
-        JobBackendError: When the job backend is unknown or its extra is
+        JobTransportError: When the job transport is unknown or its extra is
             missing. Raised as is.
         SQSQueueConfigError: When SQS serves a job it cannot route. Raised as is.
     """
@@ -293,7 +293,7 @@ def register(
         ctx,
         kernel,
         observability,
-        backend=project.app.job_service,
+        transport=project.app.job_service,
         jobs=recipe.discovered.jobs,
         callbacks=recipe.discovered.callbacks,
         settings=stores.job_settings,

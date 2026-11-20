@@ -20,6 +20,7 @@ from loom.core.environment import ENVIRONMENT_VARIABLE, Environment
 from loom.core.logger import configure_logging
 from loom.core.plugins.entrypoints import list_entry_points
 from loom.testing.golden import GoldenHarness, _serialize_result, serialize_plan
+from loom.testing.jobs import JobTestData
 from tests.helpers.aws import ACCOUNT, FAKE_KEY, REGION, is_moto_answering, scrub_aws_environment
 from tests.helpers.aws_island import FakeAwsIsland
 from tests.helpers.extras import BOTO3_ISLAND, without_extra
@@ -34,6 +35,12 @@ _GOLDEN_DIR = Path(__file__).parent / "golden"
 _PLANS_DIR = _GOLDEN_DIR / "plans"
 _OUTPUTS_DIR = _GOLDEN_DIR / "outputs"
 _BUILTIN_RESOLVER_NAMES = tuple(resolver.name for resolver in default_resolvers())
+
+
+@pytest.fixture
+def jobs() -> JobTestData:
+    """Return valid job test data with copy methods for each scenario."""
+    return JobTestData()
 
 
 def _clear_builtin_resolvers() -> None:

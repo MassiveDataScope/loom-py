@@ -635,7 +635,7 @@ chain applies. See ADR 0006 (`docs/architecture/adr/0006-hexagonal-layers.md`).
 
 A top-level `aws:` section holds the client defaults every AWS product of loom
 inherits: a `dynamodb` store, the ETL's `storage.dynamodb`, the `secrets` and
-`ssm` resolvers, the SNS notifier and the `sqs` job backend. A product's own keys override it key by
+`ssm` resolvers, the SNS notifier and the `sqs` job transport. A product's own keys override it key by
 key.
 
 ```yaml
@@ -657,7 +657,7 @@ stores:
 - `aws:` alone enables no `storage.dynamodb` source.
 - The SNS notifier reads `aws:` from the flow's YAML; the topic's region wins.
 
-loom's own integration tests run these products (the `sqs` job backend and the
+loom's own integration tests run these products (the `sqs` job transport and the
 Lambda SQS adapter, the `secrets` and `ssm` resolvers, a `dynamodb` store, the
 SNS notifier) against LocalStack, configured only through `aws:`. Without
 `LOOM_AWS_IT_URL` they skip:

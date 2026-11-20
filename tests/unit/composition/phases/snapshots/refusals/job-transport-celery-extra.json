@@ -4,6 +4,6 @@
     "type": "builtins.ModuleNotFoundError"
   },
   "message": "jobs are routed to celery, but the loom[celery] extra is not installed",
-  "type": "loom.composition.errors.JobBackendError",
+  "type": "loom.composition.errors.JobTransportError",
   "wrapped": false
 }

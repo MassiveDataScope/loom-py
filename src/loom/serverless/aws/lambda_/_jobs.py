@@ -9,13 +9,14 @@ from collections.abc import Callable, Iterable, Sequence
 from dataclasses import dataclass
 from typing import TYPE_CHECKING, Any, NoReturn, cast
 
+import msgspec
+
 from loom.composition import LoopHost, Recipe
 from loom.core.checks import CheckScope
 from loom.core.config import ConfigError
 from loom.core.connections.aws import AwsClients, aws_island
 from loom.core.discovery.worker import resolve_worker_components
 from loom.core.job.config import JobSettings
-from loom.core.job.delivery import JobDelivery
 from loom.core.job.envelope import JobEnvelope
 from loom.core.job.outcome import JobOutcome
 from loom.core.job.policy import Redelivery, RetryPolicy
@@ -88,27 +89,48 @@ def open_host(application: Application) -> LoopHost:
     host = LoopHost(application)
     host.start()
     _log.info(
-        "Lambda dispatched jobs go through the configured job service",
-        job_service=type(service).__qualname__,
+        "Lambda dispatched jobs go through the configured job transport",
+        job_transport=type(service.default_transport).__qualname__,
     )
     return host
 
 
 @dataclass(frozen=True)
-class QueueConsumer:
-    """What a function consuming SQS needs to run and settle a batch.
-
-    Attributes:
-        settings: The options and retry policies its jobs run under.
-        unknown_job_policy: The retry policy of a message that names no job it serves.
-        settlement: Settles each message by what its job came to.
-        runner: Runs and decides each message, knowing what its queue redelivers.
-    """
+class JobConsumer:
+    """Run envelopes through one runner and the application's resolved job options."""
 
     settings: JobSettings
+    runner: JobRunner
+
+    async def run_envelope(
+        self,
+        envelope: JobEnvelope,
+        job_type: type[Job[Any]],
+        task_id: str | None,
+        context: Any,
+        *,
+        attempt: int,
+        postponements: int,
+    ) -> JobOutcome:
+        """Run an envelope using this consumer's policy and invocation time limit."""
+        options = self.settings.of(job_type)
+        return await self.runner.run(
+            options.delivery_for(
+                job_type,
+                msgspec.structs.replace(envelope, task_id=task_id),
+                attempt=attempt,
+                postponements=postponements,
+                timeout_s=run_timeout(options.timeout, context),
+            )
+        )
+
+
+@dataclass(frozen=True)
+class QueueConsumer(JobConsumer):
+    """A queue's runner, unknown-job policy and message settlement."""
+
     unknown_job_policy: RetryPolicy
     settlement: JobSettlement[SQSRecord]
-    runner: JobRunner
 
     @classmethod
     def bind(
@@ -146,7 +168,7 @@ class QueueConsumer:
         served = list(jobs)
         base = application.job_settings
         settings = base.with_retries(queue.retries_for(served, lambda job: base.of(job).retry))
-        redelivery = Redelivery.SAME if queue.is_fifo else Redelivery.DELAYED
+        redelivery = queue.redelivery
         if served:
             _log.info(
                 "Job retry policies",
@@ -156,9 +178,9 @@ class QueueConsumer:
             )
         return cls(
             settings,
+            job_runner(application, redelivery),
             queue.unknown_job_policy(),
             settlement,
-            job_runner(application, redelivery),
         )
 
 
@@ -186,46 +208,6 @@ def job_runner(application: Application, redelivery: Redelivery) -> JobRunner:
         EnvelopeInvocation(kernel.factory, kernel.executor, application.observability),
         redelivery=redelivery,
         metrics=kernel.metrics,
-    )
-
-
-async def run_envelope(
-    runner: JobRunner,
-    envelope: JobEnvelope,
-    job_type: type[Job[Any]],
-    task_id: str | None,
-    context: Any,
-    *,
-    settings: JobSettings,
-    attempt: int,
-    postponements: int,
-) -> JobOutcome:
-    """Run *envelope* as *job_type*, within its timeout and what remains of the invocation.
-
-    Args:
-        runner: Runs the job and decides what its run came to.
-        envelope: The message to run.
-        job_type: The job it runs as.
-        task_id: The transport's id of the message.
-        context: The Lambda context, for the time that remains.
-        settings: The options and retry policy the function runs its jobs under.
-        attempt: The attempt number the transport counted.
-        postponements: How many times the job asked to run again.
-
-    Returns:
-        What the run came to.
-    """
-    options = settings.of(job_type)
-    return await runner.run(
-        JobDelivery(
-            job_type=job_type,
-            envelope=envelope,
-            task_id=task_id,
-            attempt=attempt,
-            postponements=postponements,
-            policy=options.retry.policy,
-            timeout_s=run_timeout(options.timeout, context),
-        )
     )
 
 

@@ -9,7 +9,7 @@ from loom.core.errors.codes import ErrorCode
 class MalformedJobMessage(SystemError):
     """A job message violates the envelope contract: it is abandoned, never retried."""
 
-    retryable = False
+    is_retryable = False
 
     def __init__(self, message: str) -> None:
         super().__init__(message, code=ErrorCode.MALFORMED_JOB_MESSAGE)
@@ -70,14 +70,14 @@ class JobFailedError(SystemError):
         self.__cause__ = cause
 
 
-class MixedJobBackendsError(SystemError):
+class MixedJobTransportsError(SystemError):
     """``dispatch_parallel`` with callbacks spans jobs of more than one backend."""
 
-    retryable = False
+    is_retryable = False
 
     def __init__(self) -> None:
         super().__init__(
-            "dispatch_parallel callbacks need every job on one job backend; "
+            "dispatch_parallel callbacks need every job on one job transport; "
             "these jobs route to several",
             code=ErrorCode.JOB_BACKENDS_MIXED,
         )

@@ -32,14 +32,15 @@ from loom.serverless.aws.lambda_ import (
     LambdaHandler,
     LambdaUnservedConfigError,
 )
+from loom.testing import RecordingJobTransport
 from tests.helpers.composition import composition_project
 from tests.helpers.loops import RecordedLoops
 from tests.unit.serverless.aws.lambda_._probe import Probe
 from tests.unit.serverless.aws.lambda_._records import WORKER, RecordFactory, with_worker
 
 
-class _OtherJobService:
-    """A job service the log must name: neither inline nor Celery."""
+class _OtherJobTransport(RecordingJobTransport):
+    """A job transport the log must name: neither inline nor Celery."""
 
 
 def _add_broken_resource(application: Application) -> None:
@@ -579,7 +580,7 @@ print([name for name in loaded if name in sys.modules])
         adapter, application, _ = built
         adapter.bind(application)
         try:
-            assert any("InlineJobService" in message for message in caplog.messages)
+            assert any("InlineJobTransport" in message for message in caplog.messages)
         finally:
             adapter.close()
 
@@ -594,14 +595,17 @@ print([name for name in loaded if name in sys.modules])
 
         application = project.compose(
             WithOverrides(
-                adapter, lambda container: container.register(JobService, _OtherJobService)
+                adapter,
+                lambda container: container.register(
+                    JobService, lambda: JobService(_OtherJobTransport())
+                ),
             )
         )
         adapter.bind(application)
         try:
             assert any(
-                "through the configured job service" in record.getMessage()
-                and "_OtherJobService" in record.getMessage()
+                "through the configured job transport" in record.getMessage()
+                and "_OtherJobTransport" in record.getMessage()
                 for record in caplog.records
             )
         finally:

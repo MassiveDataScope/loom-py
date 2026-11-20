@@ -1,4 +1,4 @@
-"""``LambdaEvent.jobs(...)`` feeds the real Lambda SQS handler what ``SQSJobService`` sends."""
+"""``LambdaEvent.jobs(...)`` feeds the real Lambda SQS handler what ``SQSServiceFixture`` sends."""
 
 from __future__ import annotations
 

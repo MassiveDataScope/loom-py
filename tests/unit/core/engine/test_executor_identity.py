@@ -22,7 +22,6 @@ from loom.core.identity import (
     set_identity,
 )
 from loom.core.job.job import Job
-from loom.core.job.service import InlineJobService
 from loom.core.stores.catalog import DEFAULT_STORE
 from loom.core.stores.uow.coordinator import OrderedCommits
 from loom.core.stores.uow.scope import invocation
@@ -30,6 +29,7 @@ from loom.core.use_case.factory import UseCaseFactory
 from loom.core.use_case.invoker import AppInvoker
 from loom.core.use_case.registry import UseCaseRegistry
 from tests.helpers.delegation import acting_as
+from tests.helpers.jobs import InlineServiceFixture
 from tests.unit.core.authz._elevation_doubles import FakeSink
 from tests.unit.core.engine._lifecycle_doubles import Body, Log, Run, StubUnitOfWorkFactory
 
@@ -323,7 +323,7 @@ class TestNestedElevation:
     async def test_an_inline_job_run_after_elevating_is_refused(
         self, executor: RuntimeExecutor
     ) -> None:
-        jobs = InlineJobService(cast(UseCaseFactory, _Factory()), executor)
+        jobs = InlineServiceFixture(cast(UseCaseFactory, _Factory()), executor)
 
         async def call() -> Identity:
             return await jobs.run(WhoAmIJob)

@@ -67,7 +67,7 @@ class JobsTrigger(
     tag="jobs",
     tag_field="source",
 ):
-    """The ``JobEnvelope`` messages ``SQSJobService`` sends to a queue."""
+    """The ``JobEnvelope`` messages ``SQSJobTransport`` sends to a queue."""
 
     queue: QueueMapping | None = None
     """The queue it consumes; ``None`` is refused when the configuration loads."""

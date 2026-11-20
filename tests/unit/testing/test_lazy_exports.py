@@ -26,7 +26,7 @@ sys.modules["httpx"] = None
 from loom.testing import (  # noqa: F401
     GoldenHarness,
     InMemoryRepository,
-    RecordingJobService,
+    RecordingJobTransport,
     UseCaseTest,
     LambdaEvent,
 )

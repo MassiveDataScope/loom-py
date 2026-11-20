@@ -97,7 +97,7 @@ class LambdaEvent(dict[str, Any]):
         group_id: str | None = None,
         queue_arn: str | None = None,
     ) -> LambdaEvent:
-        """One SQS record of the ``JobEnvelope`` ``SQSJobService`` sends for *job*."""
+        """One SQS record of the ``JobEnvelope`` ``SQSJobTransport`` sends for *job*."""
         body = encode_job_message(job, payload=payload, params=params, identity=identity).decode()
         return cls.sqs_record(body, message_id=message_id, group_id=group_id, queue_arn=queue_arn)
 

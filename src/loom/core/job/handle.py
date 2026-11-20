@@ -65,7 +65,7 @@ class JobHandle(Generic[ResultT]):
 
     - **Celery mode**: ``_async_result`` is a Celery ``AsyncResult``.
       ``wait()`` delegates to ``AsyncResult.get(timeout=timeout)``.
-    - **Inline mode** (tests / ``InlineJobService``): ``_async_result`` is
+    - **Inline mode** (tests / ``InlineJobTransport``): ``_async_result`` is
       ``None``.  The runner records the result or error in
       ``_inline_outcome`` after execution; ``wait()`` unwraps it.
 
@@ -172,14 +172,14 @@ class JobGroup:
         """Schedule a job to run after all handles complete (chord).
 
         Stub in the core layer.  The real implementation is provided by
-        ``CeleryJobService``, which returns a chord-capable ``JobGroup``
+        ``CeleryJobTransport``, which returns a chord-capable ``JobGroup``
         subclass from ``dispatch_parallel()``.
 
         Raises:
-            NotImplementedError: Always — use ``CeleryJobService`` for
+            NotImplementedError: Always — use ``CeleryJobTransport`` for
                 chord support.
         """
         raise NotImplementedError(
             "JobGroup.then() requires a Celery-backed service. "
-            "Use CeleryJobService.dispatch_parallel() to obtain chord support."
+            "Use CeleryJobTransport.dispatch_parallel() to obtain chord support."
         )

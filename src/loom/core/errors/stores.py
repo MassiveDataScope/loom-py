@@ -65,7 +65,7 @@ class ScopeOwnershipError(SystemError):
         message: Which of those happened.
     """
 
-    retryable = False
+    is_retryable = False
 
     def __init__(self, message: str) -> None:
         super().__init__(message, code=ErrorCode.INVOCATION_SCOPE_FOREIGN_TASK)
@@ -81,7 +81,7 @@ class UnitOfWorkInsideScope(SystemError):
         message: Names the unit of work.
     """
 
-    retryable = False
+    is_retryable = False
 
     def __init__(self, message: str) -> None:
         super().__init__(message, code=ErrorCode.UOW_INSIDE_SCOPE)
@@ -111,7 +111,7 @@ class UndeclaredStoreWrite(SystemError):
         message: Names the store written to and the stores declared.
     """
 
-    retryable = False
+    is_retryable = False
 
     def __init__(self, message: str) -> None:
         super().__init__(message, code=ErrorCode.UNDECLARED_STORE_WRITE)
@@ -131,7 +131,7 @@ class NestedIdentityMismatch(SystemError):
         message: Names the nested use case.
     """
 
-    retryable = False
+    is_retryable = False
 
     def __init__(self, message: str) -> None:
         super().__init__(message, code=ErrorCode.NESTED_IDENTITY_MISMATCH)
@@ -155,7 +155,7 @@ class NestedElevation(SystemError):
         message: Names the nested use case and the elevated scopes.
     """
 
-    retryable = False
+    is_retryable = False
 
     def __init__(self, message: str) -> None:
         super().__init__(message, code=ErrorCode.NESTED_ELEVATION)
@@ -188,7 +188,7 @@ class StoresNotCommitted(SystemError):
             and may not pickle, so only the message travels.
     """
 
-    retryable = False
+    is_retryable = False
     """A store may have committed: a retry would apply its write twice."""
 
     def __init__(self, message: str, outcome: InvocationOutcome | None = None) -> None:
@@ -219,7 +219,7 @@ class UncomposedStore(SystemError):
         composed: The stores that have a unit of work.
     """
 
-    retryable = False
+    is_retryable = False
     """A configuration error: a retry meets it again."""
 
     def __init__(self, key: StoreKey, composed: Iterable[StoreKey]) -> None:
@@ -243,7 +243,7 @@ class PostCommitError(SystemError):
 
     def __init__(self, *, committed: bool, failures: tuple[Exception, ...]) -> None:
         self.committed = committed
-        self.retryable = not committed
+        self.is_retryable = not committed
         self.failures = failures
         super().__init__(
             f"{len(failures)} post-commit action(s) failed (committed={committed})",

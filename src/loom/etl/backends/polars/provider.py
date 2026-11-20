@@ -23,7 +23,15 @@ from loom.etl.storage._locator import MappingLocator, PrefixLocator, TableLocati
 
 
 class PolarsProvider(BackendProvider):
-    """Create Polars reader/writer pair from storage config."""
+    """Create Polars reader/writer pair from storage config.
+
+    Args:
+        clients: The AWS clients the DynamoDB reader takes its client from;
+            the provider owns its own when none is given.
+    """
+
+    def __init__(self, clients: AwsClients | None = None) -> None:
+        self._clients = clients or AwsClients()
 
     def create_backends(
         self,
@@ -40,7 +48,7 @@ class PolarsProvider(BackendProvider):
         )
         clickhouse_reader = ClickHouseSourceReader(connection=config.clickhouse)
         dynamodb_reader = (
-            DynamoDbSourceReader(_build_dynamodb_client(config.dynamodb))
+            DynamoDbSourceReader(_build_dynamodb_client(self._clients, config.dynamodb))
             if config.dynamodb is not None
             else DynamoDbSourceReader()
         )
@@ -114,13 +122,13 @@ def _build_mongo_client(connection: MongoConnection) -> Any:
     return mongo_island().build_mongo_client(connection)
 
 
-def _build_dynamodb_client(config: AwsClientConfig) -> Any:
-    """Build a boto3 DynamoDB client for the ``storage.dynamodb`` settings.
+def _build_dynamodb_client(clients: AwsClients, config: AwsClientConfig) -> Any:
+    """Return the DynamoDB client of *clients* for the ``storage.dynamodb`` settings.
 
     Raises:
         MissingExtraError: When the ``aws`` extra is not installed.
     """
-    return AwsClients().client("dynamodb", config)
+    return clients.client("dynamodb", config)
 
 
 def _build_polars_locator(config: StorageConfig) -> TableLocator:

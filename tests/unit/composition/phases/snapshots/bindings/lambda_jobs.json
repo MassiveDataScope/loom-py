@@ -42,7 +42,7 @@
     },
     "JobService": {
       "provider": "configure_job_service.<locals>.<lambda>",
-      "resolved": "InlineJobService",
+      "resolved": "JobService",
       "scope": "APPLICATION"
     },
     "ObservabilityRuntime": {

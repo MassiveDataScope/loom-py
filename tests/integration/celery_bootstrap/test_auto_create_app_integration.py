@@ -12,7 +12,7 @@ from loom.core.command import Command, CommandField
 from loom.core.di.container import LoomContainer
 from loom.core.di.scope import Scope
 from loom.core.engine.executor import RuntimeExecutor
-from loom.core.job import InlineJobService, JobService
+from loom.core.job import JobService
 from loom.core.job.callback import JobCallback
 from loom.core.job.job import Job
 from loom.core.model import BaseModel, ColumnField
@@ -33,6 +33,7 @@ from tests.helpers.acme_recording_callbacks import (
     AcmeRecordSuccessCallback,
 )
 from tests.helpers.composition import WithOverrides, scanning
+from tests.helpers.jobs import InlineServiceFixture
 
 
 class _Record(BaseModel):
@@ -305,7 +306,7 @@ def celery_files(tmp_path: Path, monkeypatch: Any) -> Any:
         container.register(AcmeCallbackSink, lambda: callback_sink, scope=Scope.APPLICATION)
         container.register(
             JobService,
-            lambda: InlineJobService(
+            lambda: InlineServiceFixture(
                 container.resolve(UseCaseFactory),
                 container.resolve(RuntimeExecutor),
             ),

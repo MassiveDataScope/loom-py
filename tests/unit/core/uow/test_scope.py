@@ -401,7 +401,7 @@ class TestWritesStayInTheInnermostFrame:
             ) as raised:
                 scope.participant_for(S1, stores[S1].owner, write=True)
 
-        assert (raised.value.code, raised.value.retryable) == (
+        assert (raised.value.code, raised.value.is_retryable) == (
             ErrorCode.UNDECLARED_STORE_WRITE,
             False,
         )
@@ -827,7 +827,7 @@ class TestInvocationError:
         error = invocation_error(_outcome(Uncertain(S0, cause)), None)
 
         assert isinstance(error, StoresNotCommitted)
-        assert (error.retryable, error.__cause__) == (False, cause)
+        assert (error.is_retryable, error.__cause__) == (False, cause)
 
     def test_one_store_re_raises_the_business_error(self) -> None:
         error = Boom("business")
@@ -914,7 +914,7 @@ _ERRORS = [
 class TestErrors:
     @pytest.mark.parametrize("error", _ERRORS)
     def test_each_error_is_not_retryable(self, error: SystemError) -> None:
-        assert error.retryable is False
+        assert error.is_retryable is False
 
     def test_stores_not_committed_names_every_store_and_how_it_ended(self) -> None:
         error = StoresNotCommitted.of(_outcome(Committed(S0), RolledBack(S1, Boom("pw=1"))))

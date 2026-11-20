@@ -18,7 +18,7 @@ from loom.core.config import ConfigError
 from loom.core.connections.aws import aws_error_code
 from loom.core.job.config import ResolvedRetry, RetrySource
 from loom.core.job.job import Job
-from loom.core.job.policy import DEFAULT_RETRY, Countdown, RetryPolicy
+from loom.core.job.policy import DEFAULT_RETRY, Countdown, Redelivery, RetryPolicy
 from loom.jobs.aws import FIFO_SUFFIX
 from loom.jobs.aws.errors import SQSDispatchError, SQSErrorCode, SQSQueueConfigError
 
@@ -35,6 +35,30 @@ REASON_MAX_CHARS = 256
 """The longest abandonment reason kept; a longer one is cut."""
 
 _URL_REGION = re.compile(r"https?://sqs\.([a-z0-9-]+)\.")
+
+
+@dataclass(frozen=True, slots=True)
+class SQSArn:
+    """The region, account and name that identify an SQS queue ARN."""
+
+    region: str
+    account_id: str
+    queue_name: str
+
+    @classmethod
+    def from_string(cls, value: str) -> SQSArn:
+        """Parse an SQS queue ARN.
+
+        Raises:
+            ValueError: The ARN does not identify an SQS queue.
+        """
+        parts = value.split(":")
+        if len(parts) != 6 or parts[0] != "arn" or parts[2] != "sqs":
+            raise ValueError(f"not an SQS queue ARN: {value!r}")
+        _, _, _, region, account_id, queue_name = parts
+        if not region or not account_id or not queue_name:
+            raise ValueError(f"not an SQS queue ARN: {value!r}")
+        return cls(region, account_id, queue_name)
 
 
 class DeadLetterPolicy(StrEnum):
@@ -368,14 +392,20 @@ class SQSQueue:
         """The queue's name in AWS, the last segment of its URL path."""
         return self._config.queue_name
 
-    def placement(
+    @property
+    def redelivery(self) -> Redelivery:
+        """How this queue brings a failed job back."""
+        return Redelivery.SAME if self.is_fifo else Redelivery.DELAYED
+
+    def build_message(
         self,
         job_type: type[Job[Any]],
         payload: Mapping[str, Any],
         task_id: str,
         delay: Countdown,
-    ) -> dict[str, Any]:
-        """Where a job's message goes: the delay on a standard queue; ids on a FIFO one.
+        body: str,
+    ) -> OutgoingMessage:
+        """Build a message with the queue's delay or FIFO placement.
 
         A FIFO queue takes the hash of the payload field ``__group_by__`` names as its
         ``MessageGroupId`` and the task id as its ``MessageDeduplicationId``.
@@ -387,14 +417,14 @@ class SQSQueue:
             delay: Seconds before it becomes visible.
 
         Returns:
-            The :class:`OutgoingMessage` fields that place it.
+            A message ready to send on this queue.
 
         Raises:
             SQSDispatchError: When a FIFO queue is given a delay, or the payload has no
                 value for ``__group_by__``.
         """
         if not self.is_fifo:
-            return {"delay": delay}
+            return OutgoingMessage(id=task_id, body=body, delay=delay)
         if delay.seconds:
             raise SQSDispatchError(
                 "a FIFO queue takes no per-message delay", code=SQSErrorCode.FIFO_DELAY
@@ -408,19 +438,22 @@ class SQSQueue:
                 code=SQSErrorCode.GROUP_MISSING,
             )
         group_id = hashlib.sha256(str(group).encode()).hexdigest()
-        return {"group_id": group_id, "dedup_id": task_id}
+        return OutgoingMessage(id=task_id, body=body, group_id=group_id, dedup_id=task_id)
 
     def is_at(self, event_source_arn: str) -> bool:
         """Whether *event_source_arn* names this queue, by region, account and queue name.
 
         A URL that names no region matches any.
         """
-        parts = event_source_arn.split(":")
-        if len(parts) != 6:
+        try:
+            arn = SQSArn.from_string(event_source_arn)
+        except ValueError:
             return False
-        _, _, _, region, account, name = parts
-        same_region = self.region in (None, region)
-        return same_region and (self.account_id, self.queue_name) == (account, name)
+        same_region = self.region in (None, arn.region)
+        return same_region and (self.account_id, self.queue_name) == (
+            arn.account_id,
+            arn.queue_name,
+        )
 
     def send(self, message: OutgoingMessage) -> None:
         """Send *message* with ``SendMessage``."""
@@ -489,6 +522,11 @@ class SQSQueue:
             )
         return self._dead_letter
 
+    @property
+    def redrive_limit(self) -> int:
+        """The source queue's receive limit from its checked redrive policy."""
+        return self.dead_letter().max_receive_count
+
     def retries_for(
         self, jobs: Iterable[type[Job[Any]]], resolved: Callable[[type[Job[Any]]], ResolvedRetry]
     ) -> dict[type[Job[Any]], ResolvedRetry]:
@@ -511,7 +549,7 @@ class SQSQueue:
         """
         if self.dead_letter_policy is DeadLetterPolicy.DISCARD:
             return {job: resolved(job) for job in jobs}
-        limit = self.dead_letter().max_receive_count
+        limit = self.redrive_limit
         retries: dict[type[Job[Any]], ResolvedRetry] = {}
         for job in jobs:
             retry = resolved(job)
@@ -539,7 +577,7 @@ class SQSQueue:
         """
         if self.dead_letter_policy is DeadLetterPolicy.DISCARD:
             return DEFAULT_RETRY
-        return replace(DEFAULT_RETRY, max_attempts=self.dead_letter().max_receive_count)
+        return replace(DEFAULT_RETRY, max_attempts=self.redrive_limit)
 
     def _refuse_discard(self) -> None:
         if self.dead_letter_policy is DeadLetterPolicy.DISCARD:
@@ -570,7 +608,7 @@ class SQSQueue:
             )
         try:
             policy = json.loads(written)
-            _, _, _, _, account, name = policy["deadLetterTargetArn"].split(":")
+            arn = SQSArn.from_string(policy["deadLetterTargetArn"])
             limit = int(policy["maxReceiveCount"])
             if limit < 1:
                 raise ValueError("maxReceiveCount must be at least 1")
@@ -579,9 +617,11 @@ class SQSQueue:
                 f"queue {self.name!r} has a RedrivePolicy loom cannot read "
                 f"({type(exc).__name__}: {exc}): it needs deadLetterTargetArn and maxReceiveCount"
             ) from exc
-        url = client.get_queue_url(QueueName=name, QueueOwnerAWSAccountId=account)["QueueUrl"]
+        url = client.get_queue_url(QueueName=arn.queue_name, QueueOwnerAWSAccountId=arn.account_id)[
+            "QueueUrl"
+        ]
         target = SQSQueue(
-            self._client, name, QueueConfig(url=url, dead_letter=DeadLetterPolicy.DISCARD)
+            self._client, arn.queue_name, QueueConfig(url=url, dead_letter=DeadLetterPolicy.DISCARD)
         )
         self._dead_letter = DeadLetter(target, limit)
         return self._dead_letter
@@ -642,6 +682,7 @@ __all__ = [
     "OutgoingMessage",
     "QueueConfig",
     "SQSQueue",
+    "SQSArn",
     "SQSQueues",
     "SQSRecord",
 ]

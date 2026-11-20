@@ -190,7 +190,7 @@ class IdentityFixed(SystemError):
         message: Description of the refusal, with the supported switches.
     """
 
-    retryable = False
+    is_retryable = False
     default_message: ClassVar[str] = (
         "The identity is fixed for the work in progress and every task it started: only an "
         "explicit switch changes it, executor.run(UseCase, identity=...), "

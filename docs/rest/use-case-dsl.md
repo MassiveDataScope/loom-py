@@ -1139,7 +1139,7 @@ methods stay on the protocol. Closing is the context manager's job
   letting an individual dispatch's exception propagate directly, and
   **raises `RuntimeError` when called inside an execution**: the executor
   owns the post-commit channel and drains it after the unit of work closes.
-  Call it only outside an execution, as `InlineJobService` documents.
+  Call it only outside an execution, as `JobService with InlineJobTransport` documents.
   `clear_pending_dispatches()` discards the job dispatches and publishes the
   running invocation queued, those of every store, so a hand-driven caller
   cancelling dispatches inside an execution really cancels them; the cache

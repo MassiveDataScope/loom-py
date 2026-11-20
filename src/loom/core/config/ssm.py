@@ -18,7 +18,7 @@ from typing import Any
 
 from loom.core.config._resolver_utils import build_resolver_client, resolve_cached
 from loom.core.config.errors import ConfigError
-from loom.core.connections.aws import aws_error_code
+from loom.core.connections.aws import AwsClients, aws_error_code
 
 
 def _fetch_parameter(client: Any, name: str, with_decryption: bool, *, label: str) -> str:
@@ -77,6 +77,8 @@ class SsmResolver:
             boto3's own resolution chain (env vars, instance metadata, etc.).
         with_decryption: Whether to decrypt SecureString parameters.
             Defaults to ``True``.
+        clients: The AWS clients the resolver takes its client from; it owns
+            its own when none is given.
 
     Example::
 
@@ -89,7 +91,9 @@ class SsmResolver:
         region: str | None = None,
         *,
         with_decryption: bool = True,
+        clients: AwsClients | None = None,
     ) -> None:
+        self._clients = clients or AwsClients()
         self._region = region
         self._with_decryption = with_decryption
         self._unbound: dict[Any, Any] = {}
@@ -137,7 +141,7 @@ class SsmResolver:
             label="SSM",
             unbound=self._unbound,
             client=lambda: build_resolver_client(
-                "ssm", self._region, resolver="SsmResolver", root=_root_
+                self._clients, "ssm", self._region, resolver="SsmResolver", root=_root_
             ),
             fetch=functools.partial(_fetch_parameter, with_decryption=self._with_decryption),
         )

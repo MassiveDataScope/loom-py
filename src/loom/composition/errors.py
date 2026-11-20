@@ -10,8 +10,8 @@
     raises it right after they run, before any repository or
     framework service is registered.
 
-``JobBackendError``
-    A job backend ``app.job_service`` or ``celery.queues`` needs cannot be built.
+``JobTransportError``
+    A job transport ``app.job_service`` or ``celery.queues`` needs cannot be built.
 
 ``CompositionStateError``
     An adapter or an :class:`~loom.composition.ApplicationHost` was used out
@@ -131,14 +131,14 @@ class ReservedBindingError(BootstrapError):
         return cls(issue, key)
 
 
-class JobBackendError(ConfigError):
-    """Raised at start-up when a job backend the configuration needs cannot be built."""
+class JobTransportError(ConfigError):
+    """Raised at start-up when a job transport the configuration needs cannot be built."""
 
 
 __all__ = [
     "ApplicationAlreadyOpenError",
     "CompositionErrorCode",
     "CompositionStateError",
-    "JobBackendError",
+    "JobTransportError",
     "ReservedBindingError",
 ]

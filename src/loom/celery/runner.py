@@ -39,7 +39,6 @@ from loom.core.execution import ExecutionScope
 from loom.core.identity import Acting, current_caller
 from loom.core.job.callback import CallbackOutcome, notify
 from loom.core.job.config import JobSettings
-from loom.core.job.delivery import JobDelivery
 from loom.core.job.envelope import JobEnvelope, job_context, wire_job_name
 from loom.core.job.outcome import (
     Abandoned,
@@ -244,9 +243,9 @@ def _make_job_task(
     ) -> JobOutcome:
         """Run one delivery of the job through the runner."""
         task_id = getattr(getattr(task_self, "request", None), "id", None)
-        delivery = JobDelivery(
-            job_type=job_type,
-            envelope=JobEnvelope(
+        delivery = options.delivery_for(
+            job_type,
+            JobEnvelope(
                 job=name,
                 payload=payload,
                 params=params,
@@ -254,10 +253,8 @@ def _make_job_task(
                 identity=identity,
                 task_id=task_id,
             ),
-            task_id=task_id,
             attempt=task_self.request.retries - postponements + 1,
             postponements=postponements,
-            policy=options.retry.policy,
             timeout_s=run_timeout,
         )
         outcome: JobOutcome = async_runtime.run(

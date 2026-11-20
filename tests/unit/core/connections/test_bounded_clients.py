@@ -14,6 +14,7 @@ from typing import Any
 import pytest
 
 from loom.core.connections import AwsClientConfig
+from loom.core.connections.aws import AwsClients
 from loom.core.model.redaction import Dsn
 from tests.helpers.aws import OTHER_REGION
 from tests.helpers.silent_endpoint import silent_endpoint  # noqa: F401 - pytest fixture
@@ -42,13 +43,14 @@ class TestClientsFailWithinDeclaredBounds:
         from loom.etl.backends.polars.provider import _build_dynamodb_client
 
         client = _build_dynamodb_client(
+            AwsClients(),
             AwsClientConfig(
                 region=OTHER_REGION,
                 url=Dsn(silent_endpoint),
                 connect_timeout=1,
                 read_timeout=1,
                 max_attempts=1,
-            )
+            ),
         )
 
         assert _elapsed(lambda: client.describe_table(TableName="t")) < _BOUND

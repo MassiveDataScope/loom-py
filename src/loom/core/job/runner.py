@@ -9,6 +9,7 @@ from typing import Any
 
 from loom.core.engine.events import EventKind, RuntimeEvent, Status
 from loom.core.engine.metrics import MetricsAdapter, NoMetrics
+from loom.core.errors import LoomError
 from loom.core.job.delivery import JobDelivery
 from loom.core.job.outcome import (
     Abandoned,
@@ -112,7 +113,7 @@ class JobRunner:
 
     def _decide(self, error: Exception, attempt: int, policy: RetryPolicy) -> Abandoned | Failed:
         can_retry = (
-            getattr(error, "retryable", True)
+            (not isinstance(error, LoomError) or error.is_retryable)
             and self._redelivery.can_retry
             and policy.can_retry_after(attempt)
         )

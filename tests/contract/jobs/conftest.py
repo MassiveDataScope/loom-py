@@ -25,7 +25,6 @@ from loom.celery.runner import _CeleryAsyncRuntime, _make_job_task
 from loom.core.connections.aws import AwsClients
 from loom.core.job.config import JobSettings
 from loom.core.job.delivery import JobDelivery
-from loom.core.job.envelope import JobEnvelope
 from loom.core.job.job import Job
 from loom.core.job.outcome import (
     Abandoned,
@@ -38,7 +37,6 @@ from loom.core.job.outcome import (
 )
 from loom.core.job.policy import Redelivery
 from loom.core.job.runner import JobRunner
-from loom.core.job.service import InlineJobService
 from loom.jobs.aws.queue import (
     ABANDONMENT_REASON_ATTRIBUTE,
     POSTPONEMENTS_ATTRIBUTE,
@@ -47,10 +45,10 @@ from loom.jobs.aws.queue import (
 )
 from loom.jobs.aws.settlement import SQSJobSettlement
 from loom.jobs.aws.sqs import SQSConfig
-from loom.testing.jobs import ManualTimer
+from loom.testing.jobs import JobTestData, ManualTimer
 from tests.helpers.aws import ACCOUNT
 from tests.helpers.aws_island import FakeAwsIsland
-from tests.helpers.jobs import JobKernel
+from tests.helpers.jobs import InlineServiceFixture, JobKernel
 from tests.helpers.sqs import URL_BASE, FakeSqs
 
 BACKENDS = ["envelope", "celery", "sqs"]
@@ -91,13 +89,11 @@ class RunnerDriver:
         self, job_type: type[Job[Any]], *, attempt: int = 1, postponements: int = 0
     ) -> Settlement:
         self._kernel.factory.register(job_type)
-        delivery = JobDelivery(
-            job_type=job_type,
-            envelope=JobEnvelope(job=job_type.__qualname__),
-            task_id="task-1",
-            attempt=attempt,
-            postponements=postponements,
-            policy=JobSettings().of(job_type).retry.policy,
+        delivery = (
+            JobTestData()
+            .with_job_type(job_type)
+            .with_policy(JobSettings().of(job_type).retry.policy)
+            .delivery(attempt=attempt, postponements=postponements)
         )
         return _settlement(await self._runner.run(delivery))
 
@@ -164,14 +160,16 @@ class SQSDriver:
                 "eventSourceARN": f"arn:aws:sqs:eu-west-1:{ACCOUNT}:jobs{self._suffix}",
             }
         )
+        data = (
+            JobTestData()
+            .with_job_type(job_type)
+            .with_policy(JobSettings().of(job_type).retry.policy)
+        )
         outcome = await self._runner.run(
-            JobDelivery(
-                job_type=job_type,
-                envelope=JobEnvelope(job=job_type.__qualname__),
-                task_id=record.message_id,
+            data.delivery(
+                envelope=data.envelope(task_id=record.message_id),
                 attempt=record.receive_count,
                 postponements=record.postponements,
-                policy=JobSettings().of(job_type).retry.policy,
             )
         )
         self._client.batches.clear()
@@ -307,7 +305,7 @@ def no_redelivery_driver() -> Iterator[Driver]:
 class Inline:
     """The real inline job service on a manual timer, over a real factory and executor."""
 
-    service: InlineJobService
+    service: InlineServiceFixture
     timer: ManualTimer
 
 
@@ -315,4 +313,4 @@ class Inline:
 def inline() -> Inline:
     kernel = JobKernel()
     timer = ManualTimer()
-    return Inline(InlineJobService(kernel.factory, kernel.executor, timer=timer), timer)
+    return Inline(InlineServiceFixture(kernel.factory, kernel.executor, timer=timer), timer)

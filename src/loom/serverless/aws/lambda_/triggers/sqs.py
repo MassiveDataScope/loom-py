@@ -1,7 +1,7 @@
 """SQS partial-batch handler: loom job envelopes, or an event source's messages via a queue.
 
 A ``jobs`` function reads each message body as the ``JobEnvelope``
-``SQSJobService`` sent; a queued event trigger reads it into the jobs
+``SQSJobTransport`` sent; a queued event trigger reads it into the jobs
 it declares, through its :class:`QueueSource`. Either way each record runs as a
 delivery whose attempt and postponements the record carries, and an
 :class:`~loom.core.job.settlement.JobSettlement` settles its outcome; the batch
@@ -33,7 +33,6 @@ from loom.serverless.aws.lambda_._jobs import (
     Read,
     fail_in_span,
     remaining_ms,
-    run_envelope,
 )
 
 if TYPE_CHECKING:
@@ -107,28 +106,36 @@ class SQSBatch:
             if _out_of_time(context):
                 failed += records[index:]
                 break
-            if not record.is_settleable:
+            outcome = self._read_record(record, context)
+            if outcome is None:
                 failed.append(record)
                 continue
-            if not record.is_readable:
-                outcome: JobOutcome = self._consumer.runner.decide_unrunnable(
-                    MalformedJobMessage(str(record.unreadable_reason)),
-                    record.receive_count,
-                    self._consumer.unknown_job_policy,
-                )
-                self._log_outcome(record, outcome)
-            else:
-                outcome = self._host.run(self._run_record(record, context))
             settled.append((record, outcome))
-            if fifo and not isinstance(outcome, Succeeded):
-                listed = self._consumer.settlement.settle_all(settled)
-                failed += listed
-                settled = []
-                if listed:
-                    failed += records[index + 1 :]
-                    break
+            if not fifo or isinstance(outcome, Succeeded):
+                continue
+            unsettled = self._consumer.settlement.settle_all(settled)
+            settled.clear()
+            failed += unsettled
+            if unsettled:
+                failed += records[index + 1 :]
+                break
         failed += self._consumer.settlement.settle_all(settled)
         return {"batchItemFailures": [{"itemIdentifier": record.message_id} for record in failed]}
+
+    def _read_record(self, record: SQSRecord, context: Any) -> JobOutcome | None:
+        """Run one readable record, or decide why an unreadable one cannot run."""
+        if not record.is_settleable:
+            return None
+        reason = record.unreadable_reason
+        if reason is None:
+            return self._host.run(self._run_record(record, context))
+        outcome = self._consumer.runner.decide_unrunnable(
+            MalformedJobMessage(reason),
+            record.receive_count,
+            self._consumer.unknown_job_policy,
+        )
+        self._log_outcome(record, outcome)
+        return outcome
 
     def close(self) -> None:
         """Close the application and its loop; a second call does nothing."""
@@ -140,13 +147,11 @@ class SQSBatch:
         try:
             for envelope, event_id in self._read(record):
                 job_type = self._job_type(envelope, record)
-                outcome = await run_envelope(
-                    self._consumer.runner,
+                outcome = await self._consumer.run_envelope(
                     envelope,
                     job_type,
                     event_id or envelope.task_id or record.message_id,
                     context,
-                    settings=self._consumer.settings,
                     attempt=record.receive_count,
                     postponements=record.postponements,
                 )
@@ -195,12 +200,21 @@ class SQSBatch:
                     reason=reason,
                     delay_s=delay.seconds,
                 )
-            case Failed() | Abandoned():
+            case Failed():
                 error = outcome.as_exception()
                 _log.exception(
-                    "SQS job failed finally"
-                    if isinstance(outcome, Abandoned)
-                    else "SQS job failed",
+                    "SQS job failed",
+                    job=job,
+                    message_id=record.message_id,
+                    attempt=record.receive_count,
+                    error_class=type(error).__name__,
+                    exc_info=error,
+                    **failure_log_fields(error),
+                )
+            case Abandoned():
+                error = outcome.as_exception()
+                _log.exception(
+                    "SQS job failed finally",
                     job=job,
                     message_id=record.message_id,
                     attempt=record.receive_count,

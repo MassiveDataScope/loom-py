@@ -172,7 +172,7 @@ class AcmeBroken(UseCase[Any, None]):
 
 
 class AcmeUnrecoverableError(LookupError):
-    retryable = False
+    is_retryable = False
 
 
 class AcmeBrokenJob(Job[None]):

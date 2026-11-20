@@ -1,4 +1,4 @@
-"""Unit tests for CeleryJobService."""
+"""Unit tests for the Celery job transport."""
 
 from __future__ import annotations
 
@@ -8,7 +8,7 @@ from unittest.mock import MagicMock
 import pytest
 
 from loom.celery.constants import TASK_JOB_PREFIX
-from loom.celery.service import CallbackLink, CeleryJobService
+from loom.celery.service import CallbackLink
 from loom.core.engine.events import EventKind
 from loom.core.job.callback import DispatchableCallbacks, JobCallback
 from loom.core.job.context import clear_pending_dispatches, flush_pending_dispatches
@@ -16,6 +16,7 @@ from loom.core.job.handle import JobGroup, JobHandle
 from loom.core.job.job import Job
 from loom.core.observability.event import Scope
 from loom.core.tracing import reset_trace_id, set_trace_id
+from tests.helpers.jobs import CeleryServiceFixture
 
 # ---------------------------------------------------------------------------
 # Helpers
@@ -51,9 +52,9 @@ class _FailureCallback(JobCallback):
     pass
 
 
-def _make_service() -> tuple[CeleryJobService, MagicMock]:
+def _make_service() -> tuple[CeleryServiceFixture, MagicMock]:
     mock_app = MagicMock()
-    service = CeleryJobService(
+    service = CeleryServiceFixture(
         mock_app, callbacks=DispatchableCallbacks([_SuccessCallback, _FailureCallback])
     )
     return service, mock_app
@@ -97,7 +98,7 @@ class TestDispatchDeferred:
 
     async def test_send_task_emits_transport_span(self) -> None:
         runtime = _make_runtime()
-        service = CeleryJobService(MagicMock(), observability_runtime=runtime)
+        service = CeleryServiceFixture(MagicMock(), observability_runtime=runtime)
         service.dispatch_after_commit(_EmailJob, payload={"email": "a@b.com"})
         await flush_pending_dispatches()
         runtime.span.assert_called_once()
@@ -259,7 +260,7 @@ class TestSuccessLink:
 
     def test_names_the_success_task_and_is_mutable(self) -> None:
         mock_app = MagicMock()
-        CeleryJobService(
+        CeleryServiceFixture(
             mock_app, callbacks=DispatchableCallbacks([_SuccessCallback])
         ).dispatch_after_commit(_EmailJob, on_success=_SuccessCallback)
 
@@ -271,7 +272,7 @@ class TestSuccessLink:
         mock_app = MagicMock()
         token = set_trace_id(trace_id)
         try:
-            handle = CeleryJobService(
+            handle = CeleryServiceFixture(
                 mock_app, callbacks=DispatchableCallbacks([_SuccessCallback])
             ).dispatch_after_commit(
                 _EmailJob, payload={"order_id": 99}, on_success=_SuccessCallback
@@ -362,7 +363,7 @@ class TestDispatchMetrics:
     def test_dispatch_emits_job_dispatched_event(self) -> None:
         mock_app = MagicMock()
         metrics = MagicMock()
-        service = CeleryJobService(mock_app, metrics=metrics)
+        service = CeleryServiceFixture(mock_app, metrics=metrics)
         service.dispatch_after_commit(_EmailJob)
         assert metrics.on_event.call_count == 1
         event = metrics.on_event.call_args.args[0]
@@ -371,13 +372,13 @@ class TestDispatchMetrics:
 
     def test_dispatch_no_metrics_does_not_raise(self) -> None:
         mock_app = MagicMock()
-        service = CeleryJobService(mock_app, metrics=None)
+        service = CeleryServiceFixture(mock_app, metrics=None)
         service.dispatch_after_commit(_EmailJob)  # must not raise
 
     def test_dispatch_emits_trace_id_in_event(self) -> None:
         mock_app = MagicMock()
         metrics = MagicMock()
-        service = CeleryJobService(mock_app, metrics=metrics)
+        service = CeleryServiceFixture(mock_app, metrics=metrics)
         token = set_trace_id("dispatch-trace")
         try:
             service.dispatch_after_commit(_EmailJob)

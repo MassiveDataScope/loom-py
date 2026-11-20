@@ -157,7 +157,7 @@ Status: Proposed.
 - Compile and startup errors are not `LoomError`s.
 
 The seven classes rebase without changing any status (done 2026-11, with
-`DomainError.retryable = False`, so Celery and the SQS consumers stop retrying
+`DomainError.is_retryable = False`, so Celery and the SQS consumers stop retrying
 a business error; `SQSDispatchError` is a
 `SystemError`; `UnsupportedQuery(reason, *, backend=None, model=None)` names
 the model and the reason, never the backend):
@@ -211,7 +211,7 @@ Compile and startup errors do not move.
 |---|---|
 | REST | `HttpErrorMapper`, `rest/errors.py` |
 | AI | `_STATUS_BY_CODE`, `ai/fastapi/endpoints.py` |
-| Celery | `_is_retryable`, `celery/runner.py` |
+| Jobs | `JobRunner._decide`, `core/job/runner.py` |
 
 Nothing else builds an error status or an error body.
 

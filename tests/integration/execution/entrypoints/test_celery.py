@@ -25,7 +25,6 @@ from loom.celery.runner import (
     _make_callback_task,  # pyright: ignore[reportPrivateUsage]
     _make_job_task,  # pyright: ignore[reportPrivateUsage]
 )
-from loom.celery.service import CeleryJobService
 from loom.core.engine.executor import RuntimeExecutor
 from loom.core.errors import DelegationExpired, Unauthenticated
 from loom.core.identity import Delegation, Identity
@@ -35,6 +34,7 @@ from loom.core.job.envelope import wire_job_name
 from loom.core.use_case.factory import UseCaseFactory
 from loom.core.use_case.markers import Caller
 from tests.helpers.delegation import acting_as, assert_new_delegation
+from tests.helpers.jobs import CeleryServiceFixture
 
 from .doubles import (
     BOB,
@@ -83,11 +83,11 @@ def succeed(celery_app: Celery, factory: UseCaseFactory) -> Callable[[type[Any]]
     return apply
 
 
-class TestCeleryJobService:
+class TestCeleryJobTransport:
     async def test_run_builds_inside_an_execution_as_the_caller_acting(
         self, factory: UseCaseFactory, executor: RuntimeExecutor
     ) -> None:
-        service = CeleryJobService(cast(Any, None), factory=factory, executor=executor)
+        service = CeleryServiceFixture(cast(Any, None), factory=factory, executor=executor)
 
         with acting_as(BOB, until=time.time() + AN_HOUR):
             job = await service.run(AcmeProbeJob)
@@ -98,7 +98,7 @@ class TestCeleryJobService:
     async def test_run_with_nothing_acting_has_no_caller(
         self, factory: UseCaseFactory, executor: RuntimeExecutor
     ) -> None:
-        service = CeleryJobService(cast(Any, None), factory=factory, executor=executor)
+        service = CeleryServiceFixture(cast(Any, None), factory=factory, executor=executor)
 
         with pytest.raises(Unauthenticated):
             await service.run(AcmeProbeJob)
@@ -135,7 +135,7 @@ class TestCeleryJobTask:
         self, factory: UseCaseFactory, executor: RuntimeExecutor, window: float
     ) -> None:
         app = MagicMock()
-        service = CeleryJobService(
+        service = CeleryServiceFixture(
             app, factory=factory, executor=executor, callbacks=DispatchableCallbacks([AcmeCallback])
         )
 
