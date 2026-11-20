@@ -31,7 +31,7 @@ from loom.core.job.config import JobConfig, JobOptions, JobSettings, RetryConfig
 from loom.core.job.delivery import JobDelivery
 from loom.core.job.envelope import job_context
 from loom.core.job.job import Job
-from loom.core.job.outcome import JobRejection, JobRetry
+from loom.core.job.outcome import JobAbandonment, JobPostponement
 from loom.core.job.policy import Backoff
 from loom.core.observability.event import Scope
 from loom.core.stores.catalog import DEFAULT_STORE
@@ -360,11 +360,11 @@ class TestMakeJobTaskExecution:
             _executing_runtime(),
             settings=_SETTINGS,
         )
-        task_fn(task_self, deferrals=0)
+        task_fn(task_self, postponements=0)
 
         [delivery] = seen
         assert delivery is not None
-        assert (delivery.task_id, delivery.attempt, delivery.deferrals) == ("task-9", 2, 0)
+        assert (delivery.task_id, delivery.attempt, delivery.postponements) == ("task-9", 2, 0)
         assert delivery.policy.backoff == _SyncJob.__retry__
 
     def test_the_runner_gets_the_soft_time_limit_as_the_run_timeout(self) -> None:
@@ -470,7 +470,9 @@ class TestMakeJobTaskFailureCallback:
             )
         return app
 
-    def test_a_rejected_job_sends_the_callback_once_with_the_error_class_and_message(self) -> None:
+    def test_an_abandoned_job_sends_the_callback_once_with_the_error_class_and_message(
+        self,
+    ) -> None:
         app = self._run(ValueError("final"), retries=2, failure_callback=self.FAILURE_CALLBACK)
 
         app.send_task.assert_called_once_with(
@@ -485,10 +487,10 @@ class TestMakeJobTaskFailureCallback:
             },
         )
 
-    def test_a_job_rejection_names_its_own_class(self) -> None:
-        app = self._run(JobRejection("tenant deleted"), retries=0, failure_callback="cb")
+    def test_a_job_abandonment_names_its_own_class(self) -> None:
+        app = self._run(JobAbandonment("tenant deleted"), retries=0, failure_callback="cb")
 
-        assert app.send_task.call_args.kwargs["kwargs"]["exc_type"] == "JobRejection"
+        assert app.send_task.call_args.kwargs["kwargs"]["exc_type"] == "JobAbandonment"
         assert app.send_task.call_args.kwargs["kwargs"]["exc_msg"] == "tenant deleted"
 
     def test_a_failure_that_is_retried_sends_nothing(self) -> None:
@@ -496,7 +498,7 @@ class TestMakeJobTaskFailureCallback:
 
         app.send_task.assert_not_called()
 
-    def test_a_rejected_job_without_a_failure_callback_sends_nothing(self) -> None:
+    def test_an_abandoned_job_without_a_failure_callback_sends_nothing(self) -> None:
         app = self._run(ValueError("final"), retries=2, failure_callback=None)
 
         app.send_task.assert_not_called()
@@ -522,7 +524,7 @@ class TestMakeJobTaskRetry:
         task_self.retry.assert_not_called()
         kinds = [c.args[0].kind for c in metrics.on_event.call_args_list]
         assert EventKind.JOB_FAILED not in kinds
-        assert EventKind.JOB_REJECTED in kinds
+        assert EventKind.JOB_ABANDONED in kinds
 
     def test_post_commit_error_without_a_commit_is_retried(self) -> None:
         """A1: nothing committed, so re-running the job cannot duplicate a write."""
@@ -560,38 +562,42 @@ class TestMakeJobTaskRetry:
             )
         assert task_self.retry.call_args.kwargs["countdown"] == 27
 
-    def test_a_job_retry_defers_without_spending_an_attempt(self) -> None:
+    def test_a_job_postponement_postpones_without_spending_an_attempt(self) -> None:
         task_self = _retrying_self(retries=2)
         with pytest.raises(_RetryError):
-            _failing_task(JobRetry("not yet", 7))(task_self, payload={"value": 1}, deferrals=2)
+            _failing_task(JobPostponement("not yet", 7))(
+                task_self, payload={"value": 1}, postponements=2
+            )
         kwargs = task_self.retry.call_args.kwargs
         assert kwargs["countdown"] == 7
-        assert kwargs["kwargs"] == {"payload": {"value": 1}, "deferrals": 3}
+        assert kwargs["kwargs"] == {"payload": {"value": 1}, "postponements": 3}
 
-    def test_deferrals_do_not_exhaust_the_attempts(self) -> None:
+    def test_postponements_do_not_exhaust_the_attempts(self) -> None:
         task_self = _retrying_self(retries=5)
         with pytest.raises(_RetryError):
-            _failing_task(ValueError("err"))(task_self, payload={"value": 1}, deferrals=5)
+            _failing_task(ValueError("err"))(task_self, payload={"value": 1}, postponements=5)
         task_self.retry.assert_called_once()
 
-    def test_a_job_rejection_raises_without_retrying(self) -> None:
+    def test_a_job_abandonment_raises_without_retrying(self) -> None:
         task_self = _retrying_self()
-        with pytest.raises(JobRejection, match="never"):
-            _failing_task(JobRejection("never"))(task_self, payload={"value": 1})
+        with pytest.raises(JobAbandonment, match="never"):
+            _failing_task(JobAbandonment("never"))(task_self, payload={"value": 1})
         task_self.retry.assert_not_called()
 
-    def test_a_deferral_of_a_request_without_kwargs_carries_only_its_deferrals(self) -> None:
+    def test_a_postponement_of_a_request_without_kwargs_carries_only_its_postponements(
+        self,
+    ) -> None:
         task_self = _retrying_self(retries=0)
         task_self.request.kwargs = None
         with pytest.raises(_RetryError):
-            _failing_task(JobRetry("not yet", 7))(task_self)
-        assert task_self.retry.call_args.kwargs["kwargs"] == {"deferrals": 1}
+            _failing_task(JobPostponement("not yet", 7))(task_self)
+        assert task_self.retry.call_args.kwargs["kwargs"] == {"postponements": 1}
 
-    def test_a_deferral_carries_the_signal_that_asked_for_it(self) -> None:
+    def test_a_postponement_carries_the_signal_that_asked_for_it(self) -> None:
         task_self = _retrying_self()
         with pytest.raises(_RetryError):
-            _failing_task(JobRetry("not yet", 7))(task_self, payload={"value": 1})
-        assert isinstance(task_self.retry.call_args.kwargs["exc"], JobRetry)
+            _failing_task(JobPostponement("not yet", 7))(task_self, payload={"value": 1})
+        assert isinstance(task_self.retry.call_args.kwargs["exc"], JobPostponement)
 
     def test_job_started_event_emitted_before_execution(self) -> None:
         """JOB_STARTED must arrive before the job runs."""
@@ -730,7 +736,7 @@ class TestMakeJobTaskRetry:
         ("retries", "expected_error", "expected_kind"),
         [
             (0, _RetryError, EventKind.JOB_FAILED),
-            (2, ValueError, EventKind.JOB_REJECTED),
+            (2, ValueError, EventKind.JOB_ABANDONED),
         ],
     )
     def test_failure_events_of_a_trace_less_job_also_carry_none(
@@ -790,12 +796,12 @@ class TestMakeJobTaskRetry:
         kinds = [c.args[0].kind for c in metrics.on_event.call_args_list]
         assert EventKind.JOB_FAILED in kinds
 
-    def test_job_rejected_event_emitted_when_attempts_are_exhausted(self) -> None:
+    def test_job_abandoned_event_emitted_when_attempts_are_exhausted(self) -> None:
         metrics = MagicMock()
         with pytest.raises(ValueError):
             _failing_task(ValueError("final"), metrics=metrics)(_retrying_self(retries=2))
         kinds = [c.args[0].kind for c in metrics.on_event.call_args_list]
-        assert EventKind.JOB_REJECTED in kinds
+        assert EventKind.JOB_ABANDONED in kinds
 
 
 # ---------------------------------------------------------------------------

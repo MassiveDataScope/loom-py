@@ -76,4 +76,4 @@ class TestRetryPolicy:
         self, max_attempts: int | None, attempt: int, allowed: bool
     ) -> None:
         policy = RetryPolicy(Backoff(1, 1, 1), max_attempts)
-        assert policy.allows_attempt_after(attempt) is allowed
+        assert policy.can_retry_after(attempt) is allowed

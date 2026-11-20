@@ -53,7 +53,7 @@ async def run_envelope(
         envelope=envelope,
         task_id=None,
         attempt=1,
-        deferrals=0,
+        postponements=0,
         policy=DEFAULT_RETRY,
     )
     return await EnvelopeInvocation(factory, executor, ObservabilityRuntime.noop())(delivery)

@@ -46,7 +46,7 @@ def make_record(
     job_name: str = "ProbeJob",
     body: str | None = None,
     receive_count: int = 1,
-    deferrals: int | str | None = None,
+    postponements: int | str | None = None,
 ) -> dict[str, Any]:
     if body is None:
         envelope = {"job": job_name, "params": {"marker": marker}, "identity": identity}
@@ -57,9 +57,9 @@ def make_record(
     )
     record: dict[str, Any] = event["Records"][0]
     record["attributes"]["ApproximateReceiveCount"] = str(receive_count)
-    if deferrals is not None:
-        record["messageAttributes"]["loom.deferrals"] = {
+    if postponements is not None:
+        record["messageAttributes"]["loom.postponements"] = {
             "dataType": "Number",
-            "stringValue": str(deferrals),
+            "stringValue": str(postponements),
         }
     return record

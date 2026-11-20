@@ -18,7 +18,7 @@ from loom.core.errors import MalformedJobMessage
 from loom.core.identity import ON_BEHALF_OF_ATTRIBUTE, Identity
 from loom.core.identity.wire import encode_identity
 from loom.core.job.envelope import JobEnvelope
-from loom.core.job.outcome import failure_log_fields
+from loom.core.job.outcome import Abandoned, Failed, failure_log_fields
 from loom.core.job.policy import Redelivery
 from loom.core.job.runner import JobRunner
 from loom.core.logger import get_logger
@@ -207,7 +207,7 @@ def _bind_jobs(
     queue_name: str,
     application: Application,
 ) -> LambdaHandler:
-    """The SQS batch handler of a ``jobs`` function: a final failure is rejected."""
+    """The SQS batch handler of a ``jobs`` function: a final failure is abandoned."""
     served = [
         job for job in declared.values() if application.job_settings.of(job).queue == queue_name
     ]
@@ -221,7 +221,7 @@ def _bind_queued_events(
     job_type: type[Job[Any]],
     application: Application,
 ) -> LambdaHandler:
-    """The SQS batch handler of a queued event trigger: a final failure is rejected."""
+    """The SQS batch handler of a queued event trigger: a final failure is abandoned."""
     assert trigger.queue is not None
     consumer = QueueConsumer.bind(application, trigger.queue.name, [job_type])
     reader = _event_reader(name, trigger, _VIA_SQS, trusts_requester=False)
@@ -299,12 +299,9 @@ def _identity(
 class _DirectEvents:
     """The warm invocation handler of a direct trigger: fails the event at its first failed job.
 
-    Lambda redelivers the same event with no per-message delay (``Redelivery.SAME``): a
-    ``JobRetry`` is rejected as one that cannot wait, and any other failure fails the
-    invocation. Neither the Lambda context nor the event of an asynchronous invocation
-    carries the retry number, so every run is attempt 1: ``JOB_FAILED`` and
-    ``JOB_REJECTED`` are reported per invocation, and the trigger's own retry settings
-    (``maximum_retry_attempts``) decide how many times the event runs.
+    Redelivery is ``Redelivery.SAME``: a ``JobPostponement`` is abandoned as one that cannot
+    wait, and any other failure fails the invocation. Every run is attempt 1, so
+    ``JOB_FAILED`` and ``JOB_ABANDONED`` are reported per invocation.
     """
 
     def __init__(
@@ -344,12 +341,11 @@ class _DirectEvents:
                         context,
                         settings=self._application.job_settings,
                         attempt=1,
-                        deferrals=0,
+                        postponements=0,
                     )
                 )
-                error = outcome.failure()
-                if error is not None:
-                    raise error
+                if isinstance(outcome, Failed | Abandoned):
+                    raise outcome.as_exception()
         except Exception as exc:
             _log.exception(
                 "Lambda event job failed; the event is retried, then sent to its destination",

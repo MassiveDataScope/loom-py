@@ -172,14 +172,14 @@ Use `dispatch_after_commit()` for fire-and-forget work; use `run()` when you nee
 
 ### Delays inline
 
-`InlineJobService` honours `countdown`, `JobRetry` and failure backoff: a
+`InlineJobService` honours `countdown`, `JobPostponement` and failure backoff: a
 delayed job waits in the memory of the process on a `JobTimer` and runs again
-with its attempt and deferrals carried. Exhausted attempts reject the job and
+with its attempt and postponements carried. Exhausted attempts abandon the job and
 call `on_failure`. A job delayed this way is lost when the process stops (the
 timer logs them, by job and task id, in one line at shutdown), so the service logs a warning at
 start-up: use Celery or SQS in production. A Lambda function composes no
 timer: its inline service refuses a countdown above zero with `JobDelayRefused`,
-rejects a `JobRetry`, and rejects a failing job at its first attempt with its own error.
+abandons a `JobPostponement`, and abandons a failing job at its first attempt with its own error.
 
 ---
 
@@ -286,7 +286,7 @@ exception the failed action raised, carrying whether anything committed.
 
 - **`committed=True`** — the job's transaction committed. The worker task
   treats it as a terminal failure: it is **not retried**, and
-  `JOB_REJECTED` is emitted instead of `JOB_FAILED`. Retrying would run
+  `JOB_ABANDONED` is emitted instead of `JOB_FAILED`. Retrying would run
   the job's `execute()` a second time even though its write already
   committed; the fix belongs to whatever the post-commit action talks to
   (the broker, the cache), not to re-running the job.
@@ -552,20 +552,20 @@ ten entries each.
 | Outcome | Action | In `batchItemFailures` |
 |---|---|---|
 | Succeeded | none | no |
-| Rejected (`JobRejection`, an error that cannot succeed, or attempts exhausted), `redrive` | `SendMessageBatch` to the dead-letter queue, with the reason as the `loom.rejection_reason` attribute | only if that send failed |
-| Rejected, `discard` | none: an ERROR log with `outcome=discarded` | no |
-| Deferred (`JobRetry`), standard queue | `SendMessageBatch` to the same queue with `DelaySeconds` and `loom.deferrals` plus one | only if that send failed |
-| Deferred, FIFO queue | refused, as a FIFO queue takes no per-message delay; settled as Failed | yes |
+| Abandoned (`JobAbandonment`, an error that cannot succeed, or attempts exhausted), `redrive` | `SendMessageBatch` to the dead-letter queue, with the reason as the `loom.abandonment_reason` attribute | only if that send failed |
+| Abandoned, `discard` | none: an ERROR log with `outcome=discarded` | no |
+| Postponed (`JobPostponement`), standard queue | `SendMessageBatch` to the same queue with `DelaySeconds` and `loom.postponements` plus one | only if that send failed |
+| Postponed, FIFO queue | refused, as a FIFO queue takes no per-message delay; settled as Failed | yes |
 | Failed | `ChangeMessageVisibilityBatch` to the backoff delay | yes |
 
 - A success makes no call to SQS, and loom never calls `DeleteMessage`: Lambda
   deletes every record not in `batchItemFailures`.
-- `JobRetry` re-sends the message instead of changing its visibility, so a
-  deferral never counts toward `maxReceiveCount`; a job that keeps asking to
+- `JobPostponement` re-sends the message instead of changing its visibility, so a
+  postponement never counts toward `maxReceiveCount`; a job that keeps asking to
   wait is never dead-lettered.
 - The attempt a job reads is the record's `ApproximateReceiveCount`, and its
-  deferrals are the `loom.deferrals` attribute. A failure on the last attempt
-  is rejected: a `redrive` queue receives it from loom instead of from SQS
+  postponements are the `loom.postponements` attribute. A failure on the last attempt
+  is abandoned: a `redrive` queue receives it from loom instead of from SQS
   after one more delivery.
 - A call that fails for some entries lists only those messages; one that fails
   for all lists all of them, and the failure is logged in one line per call. A
@@ -589,12 +589,12 @@ ten entries each.
   consumes. Any other ARN is logged as an ERROR and listed in
   `batchItemFailures` until the queue's own `RedrivePolicy` dead-letters it.
 - A message whose `ApproximateReceiveCount` is not a positive integer or whose
-  `loom.deferrals` is not a non-negative one is malformed: only that message is
-  rejected.
-- A malformed message is rejected at once, with `MalformedJobMessage` as reason.
+  `loom.postponements` is not a non-negative one is malformed: only that message is
+  abandoned.
+- A malformed message is abandoned at once, with `MalformedJobMessage` as reason.
   A message naming a job the function does not serve is retried, as a deploy
   may still be rolling out, but only up to the queue's limit (`maxReceiveCount`
-  on `redrive`, the default `max_attempts` on `discard`); then it is rejected.
+  on `redrive`, the default `max_attempts` on `discard`); then it is abandoned.
 
 **IAM.** The role of a function consuming a queue needs:
 
@@ -717,15 +717,15 @@ jobs:
 A job is attempted at most `max_attempts` times (3 by default). After a failed
 attempt it waits `Backoff(first_s, factor, max_s, jitter)`: `first_s * factor ** (attempt - 1)`
 seconds, capped at `max_s` (never above 900) and, with `jitter` (the default), drawn
-uniformly from zero to that value. A job may raise `JobRetry(reason, delay_s=None)`
-to run again later without using an attempt, or `JobRejection(reason)` to give up at
-once; an error whose `retryable` is `False` is rejected at its first attempt.
+uniformly from zero to that value. A job may raise `JobPostponement(reason, delay_s=None)`
+to run again later without using an attempt, or `JobAbandonment(reason)` to give up at
+once; an error whose `retryable` is `False` is abandoned at its first attempt.
 
 The most specific layer wins, and a section that sets only some fields inherits the
 rest from the layer below: `jobs.<Job>.retry`, then `jobs.defaults.retry`, then the
 job's `__retry__`, then the loom default. `max_attempts` is only set in YAML.
 A job reads the delivery it runs under by declaring `delivery: JobDelivery | None =
-Delivery()` on `execute` (its `attempt` and `deferrals`); a job run by another job gets
+Delivery()` on `execute` (its `attempt` and `postponements`); a job run by another job gets
 `None`.
 
 ```yaml

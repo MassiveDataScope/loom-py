@@ -66,7 +66,7 @@ def _manifest_project(project: Project, module: str, **sections: Any) -> Project
     )
 
 
-class TestSqsHandler:
+class TestSQSHandler:
     @pytest.mark.parametrize(
         ("markers", "fifo", "failed", "ran"),
         [
@@ -120,7 +120,7 @@ class TestSqsHandler:
 
         assert (len(result["batchItemFailures"]), seen) == (1, [])
 
-    def test_a_malformed_body_is_rejected_at_once_and_not_reported(
+    def test_a_malformed_body_is_abandoned_at_once_and_not_reported(
         self,
         handler: LambdaHandler,
         record: RecordFactory,
@@ -283,7 +283,7 @@ print([name for name in loaded if name in sys.modules])
             ("job", True, ["2", "3"], ["a"]),
         ],
     )
-    def test_a_malformed_message_is_rejected_and_an_unknown_job_retried(
+    def test_a_malformed_message_is_abandoned_and_an_unknown_job_retried(
         self,
         handler: LambdaHandler,
         record: RecordFactory,

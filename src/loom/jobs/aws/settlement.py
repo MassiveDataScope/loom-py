@@ -9,10 +9,10 @@ from typing import TYPE_CHECKING, TypeVar
 import msgspec
 
 from loom.core.connections.aws import AwsClients, aws_error_code
-from loom.core.job.outcome import Deferred, Failed, JobOutcome, Rejected, Succeeded
+from loom.core.job.outcome import Abandoned, Failed, JobOutcome, Postponed, Succeeded
 from loom.core.job.policy import Countdown
 from loom.core.logger import get_logger
-from loom.jobs.aws.queue import BatchResult, DeadLetterPolicy, SqsQueue, SqsRecord
+from loom.jobs.aws.queue import BatchResult, DeadLetterPolicy, SQSQueue, SQSRecord
 
 if TYPE_CHECKING:
     from loom.jobs.aws.sqs import SQSConfig
@@ -28,33 +28,35 @@ SETTLEMENT_TIMEOUT_S = 1
 class _Plan:
     """What the messages of one queue need, by action."""
 
-    rejections: list[tuple[SqsRecord, str]] = field(default_factory=list)
-    discards: list[tuple[SqsRecord, str]] = field(default_factory=list)
-    deferrals: list[tuple[SqsRecord, Countdown]] = field(default_factory=list)
-    retries: list[tuple[SqsRecord, Countdown]] = field(default_factory=list)
+    abandonments: list[tuple[SQSRecord, str]] = field(default_factory=list)
+    discards: list[tuple[SQSRecord, str]] = field(default_factory=list)
+    postponements: list[tuple[SQSRecord, Countdown]] = field(default_factory=list)
+    retries: list[tuple[SQSRecord, Countdown]] = field(default_factory=list)
 
     @classmethod
-    def of(cls, queue: SqsQueue, settled: Sequence[tuple[SqsRecord, JobOutcome]]) -> _Plan:
+    def from_outcomes(
+        cls, queue: SQSQueue, settled: Sequence[tuple[SQSRecord, JobOutcome]]
+    ) -> _Plan:
         """The plan for *settled*, every message received from *queue*."""
         plan = cls()
         for record, outcome in settled:
             match outcome:
                 case Succeeded():
                     continue
-                case Rejected(reason=reason) if (
+                case Abandoned(reason=reason) if (
                     queue.dead_letter_policy is DeadLetterPolicy.REDRIVE
                 ):
-                    plan.rejections.append((record, reason))
-                case Rejected(reason=reason):
+                    plan.abandonments.append((record, reason))
+                case Abandoned(reason=reason):
                     plan.discards.append((record, reason))
-                case Deferred(delay=delay):
-                    plan.deferrals.append((record, delay))
+                case Postponed(delay=delay):
+                    plan.postponements.append((record, delay))
                 case Failed(delay=delay):
                     plan.retries.append((record, delay))
         return plan
 
 
-class SqsSettlement:
+class SQSJobSettlement:
     """Settles the messages a Lambda function received from the queue it consumes.
 
     Loom never deletes a message: Lambda deletes every one the batch does not report.
@@ -69,10 +71,10 @@ class SqsSettlement:
         self._clients = clients
         self._config = config
         self._queue_name = queue_name
-        self._queue: SqsQueue | None = None
+        self._queue: SQSQueue | None = None
 
     @property
-    def queue(self) -> SqsQueue:
+    def queue(self) -> SQSQueue:
         """The consumed queue, over a client bound to ``SETTLEMENT_TIMEOUT_S``; built once."""
         if self._queue is None:
             bounded = msgspec.structs.replace(
@@ -81,14 +83,14 @@ class SqsSettlement:
                 read_timeout=SETTLEMENT_TIMEOUT_S,
                 max_attempts=1,
             )
-            self._queue = SqsQueue(
+            self._queue = SQSQueue(
                 self._clients.client("sqs", bounded),
                 self._queue_name,
                 self._config.queues[self._queue_name],
             )
         return self._queue
 
-    def settle_all(self, settled: Sequence[tuple[SqsRecord, JobOutcome]]) -> list[SqsRecord]:
+    def settle_all(self, settled: Sequence[tuple[SQSRecord, JobOutcome]]) -> list[SQSRecord]:
         """Settle every message by its outcome, one batch call per action.
 
         Args:
@@ -96,14 +98,14 @@ class SqsSettlement:
 
         Returns:
             The messages to report as failed: every failed one, a message of another
-            queue, and every rejection or deferral whose send did not go through.
+            queue, and every abandonment or postponement whose send did not go through.
         """
         group = [item for item in settled if not isinstance(item[1], Succeeded)]
         if not group:
             return []
         queue = self.queue
-        consumed: list[tuple[SqsRecord, JobOutcome]] = []
-        strays: list[SqsRecord] = []
+        consumed: list[tuple[SQSRecord, JobOutcome]] = []
+        strays: list[SQSRecord] = []
         for item in group:
             if queue.is_at(item[0].queue_arn):
                 consumed.append(item)
@@ -118,9 +120,9 @@ class SqsSettlement:
         return strays + self._settle_queue(queue, consumed)
 
     def _settle_queue(
-        self, queue: SqsQueue, group: Sequence[tuple[SqsRecord, JobOutcome]]
-    ) -> list[SqsRecord]:
-        plan = _Plan.of(queue, group)
+        self, queue: SQSQueue, group: Sequence[tuple[SQSRecord, JobOutcome]]
+    ) -> list[SQSRecord]:
+        plan = _Plan.from_outcomes(queue, group)
         for record, reason in plan.discards:
             _log.error(
                 "SQS message discarded: its queue has no dead-letter queue",
@@ -130,17 +132,17 @@ class SqsSettlement:
                 reason=reason,
             )
         self._settle(queue, "change_visibility", plan.retries, queue.change_visibility_batch)
-        unsent = self._settle(queue, "reject", plan.rejections, queue.reject_batch)
-        unsent += self._settle(queue, "defer", plan.deferrals, queue.defer_batch)
+        unsent = self._settle(queue, "abandon", plan.abandonments, queue.abandon_batch)
+        unsent += self._settle(queue, "postpone", plan.postponements, queue.postpone_batch)
         return [record for record, _ in plan.retries] + unsent
 
     @staticmethod
     def _settle(
-        queue: SqsQueue,
+        queue: SQSQueue,
         action: str,
-        entries: Sequence[tuple[SqsRecord, _EntryT]],
-        send: Callable[[Sequence[tuple[SqsRecord, _EntryT]]], BatchResult],
-    ) -> list[SqsRecord]:
+        entries: Sequence[tuple[SQSRecord, _EntryT]],
+        send: Callable[[Sequence[tuple[SQSRecord, _EntryT]]], BatchResult],
+    ) -> list[SQSRecord]:
         if not entries:
             return []
         try:
@@ -160,4 +162,4 @@ class SqsSettlement:
         return [record for record, _ in entries if record.message_id in result.failed]
 
 
-__all__ = ["SqsSettlement"]
+__all__ = ["SQSJobSettlement"]

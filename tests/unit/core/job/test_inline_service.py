@@ -9,7 +9,7 @@ from loom.core.errors import JobFailedError, JobTimeoutError
 from loom.core.job.context import flush_pending_dispatches
 from loom.core.job.handle import JobGroup, JobHandle
 from loom.core.job.job import Job
-from loom.core.job.outcome import JobRejection
+from loom.core.job.outcome import JobAbandonment
 from loom.core.job.service import InlineJobService
 
 # ---------------------------------------------------------------------------
@@ -168,18 +168,18 @@ class TestInProcessJobService:
         await flush_pending_dispatches()
 
         delivery = executor.run.await_args.kwargs["delivery"]
-        assert (delivery.task_id, delivery.attempt, delivery.deferrals) == (handle.job_id, 1, 0)
+        assert (delivery.task_id, delivery.attempt, delivery.postponements) == (handle.job_id, 1, 0)
         assert delivery.envelope.task_id == handle.job_id
 
-    async def test_a_job_rejection_settles_the_handle_as_failed(self) -> None:
-        executor = MagicMock(run=AsyncMock(side_effect=JobRejection("no tenant")))
+    async def test_a_job_abandonment_settles_the_handle_as_failed(self) -> None:
+        executor = MagicMock(run=AsyncMock(side_effect=JobAbandonment("no tenant")))
         service = InlineJobService(factory=MagicMock(), executor=executor)
         handle = service.dispatch_after_commit(DoubleJob, payload={"value": 1})
         await flush_pending_dispatches()
 
         with pytest.raises(JobFailedError) as raised:
             handle.wait()
-        assert type(raised.value.cause).__name__ == "JobRejection"
+        assert type(raised.value.cause).__name__ == "JobAbandonment"
 
     async def test_a_failing_success_callback_keeps_the_job_result(self) -> None:
         class BrokenCallback:

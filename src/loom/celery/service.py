@@ -308,7 +308,7 @@ class CeleryJobService:
                 *payload* holds ``job_id``, ``result``, ``exc_type`` or ``exc_msg``,
                 or *countdown* is outside 0..900 inclusive.
         """
-        pending, handle = self._pending(
+        pending, handle = self._build_pending(
             job_type,
             params=params,
             payload=payload,
@@ -360,7 +360,7 @@ class CeleryJobService:
                 *payload* holds ``job_id``, ``result``, ``exc_type`` or ``exc_msg``,
                 or *countdown* is outside 0..900 inclusive.
         """
-        pending, handle = self._pending(
+        pending, handle = self._build_pending(
             job_type,
             params=params,
             payload=payload,
@@ -373,7 +373,7 @@ class CeleryJobService:
         pending()
         return handle
 
-    def _pending(
+    def _build_pending(
         self,
         job_type: type[Job[ResultT]],
         *,

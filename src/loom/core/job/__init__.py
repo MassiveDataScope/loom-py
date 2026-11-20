@@ -5,10 +5,10 @@ from loom.core.job.handle import JobGroup, JobHandle
 from loom.core.job.job import Job
 from loom.core.job.router import JobRouter
 from loom.core.job.service import InlineJobService, JobService
-from loom.core.job.timer import AsyncioTimer, JobDelayRefused, JobTimer
+from loom.core.job.timer import AsyncioJobTimer, JobDelayRefused, JobTimer
 
 __all__ = [
-    "AsyncioTimer",
+    "AsyncioJobTimer",
     "InlineJobService",
     "Job",
     "JobCallback",

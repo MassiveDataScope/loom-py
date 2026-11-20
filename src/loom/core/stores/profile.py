@@ -59,14 +59,14 @@ class RuntimeProfile:
     Args:
         name: Entry point label (``server``, ``worker``, ...); metrics carry it.
         pool: Connection-pool defaults for one process of this entry point.
-        waits_in_process: Whether work delayed inline may wait in the memory of
+        can_wait_in_process: Whether work delayed inline may wait in the memory of
             the process; a Lambda environment is frozen between invocations
             and cannot.
     """
 
     name: str
     pool: PoolDefaults
-    waits_in_process: bool = True
+    can_wait_in_process: bool = True
 
 
 class PoolMetricsSink(Protocol):
@@ -145,7 +145,7 @@ STREAMING_PROFILE = RuntimeProfile(name="streaming", pool=WORKER_PROFILE.pool)
 LAMBDA_PROFILE = RuntimeProfile(
     name="lambda",
     pool=PoolDefaults(size=1, max_overflow=0, timeout_s=10, recycle_s=300, pre_ping=True),
-    waits_in_process=False,
+    can_wait_in_process=False,
 )
 """A Lambda execution environment: one invocation at a time, frozen between them."""
 

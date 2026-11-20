@@ -28,10 +28,10 @@ from loom.core.job.envelope import JobEnvelope, wire_job_name
 from loom.core.job.handle import InlineOutcome, JobGroup, JobHandle
 from loom.core.job.job import Job
 from loom.core.job.outcome import (
-    Deferred,
+    Abandoned,
     Failed,
     JobOutcome,
-    Rejected,
+    Postponed,
     Succeeded,
 )
 from loom.core.job.policy import Countdown, Redelivery
@@ -50,9 +50,9 @@ ResultT = TypeVar("ResultT")
 class _PendingDispatch:
     """One inline dispatch, started by the post-commit channel once the unit of work has closed.
 
-    A deferred or failed run starts again on the timer, as a copy of this
-    dispatch holding the next delivery, until it succeeds or is rejected. The
-    runner only defers or fails when there is a timer.
+    A postponed or failed run starts again on the timer, as a copy of this
+    dispatch holding the next delivery, until it succeeds or is abandoned. The
+    runner only postpones or fails when there is a timer.
     """
 
     delivery: JobDelivery
@@ -85,13 +85,13 @@ class _PendingDispatch:
         if self.countdown.seconds == 0:
             await self.run()
         else:
-            self.wait(self.countdown, self.run)
+            self.schedule(self.countdown, self.run)
 
-    def wait(self, delay: Countdown, step: Step) -> None:
-        """Run *step* once *delay* is over.
+    def schedule(self, delay: Countdown, step: Step) -> None:
+        """Hand *step* to the timer to run once *delay* is over.
 
         Args:
-            delay: How long to wait.
+            delay: How long the timer holds it.
             step: What to run afterwards.
 
         Raises:
@@ -116,23 +116,27 @@ class _PendingDispatch:
     async def _settle(self, outcome: JobOutcome) -> None:
         match outcome:
             case Succeeded(result=result):
-                error = await self._succeeded(result)
-            case Deferred(delay=delay):
-                self._again(replace(self.delivery, deferrals=self.delivery.deferrals + 1), delay)
+                error = await self._record_success(result)
+            case Postponed(delay=delay):
+                self._schedule_next(
+                    replace(self.delivery, postponements=self.delivery.postponements + 1), delay
+                )
                 error = None
             case Failed(delay=delay):
-                self._again(replace(self.delivery, attempt=self.delivery.attempt + 1), delay)
+                self._schedule_next(
+                    replace(self.delivery, attempt=self.delivery.attempt + 1), delay
+                )
                 error = None
-            case Rejected():
-                error = outcome.failure()
+            case Abandoned():
+                error = outcome.as_exception()
         if error is not None:
-            await self._failed(error)
+            await self._record_failure(error)
 
-    def _again(self, delivery: JobDelivery, delay: Countdown) -> None:
+    def _schedule_next(self, delivery: JobDelivery, delay: Countdown) -> None:
         """Hand *delivery* to the timer for after *delay*."""
-        self.wait(delay, replace(self, delivery=delivery).run)
+        self.schedule(delay, replace(self, delivery=delivery).run)
 
-    async def _succeeded(self, result: Any) -> Exception | None:
+    async def _record_success(self, result: Any) -> Exception | None:
         """Record *result* and call ``on_success``; the callback's error, when it raises."""
         self.outcome.succeed(result)
         if self.on_success is None:
@@ -150,7 +154,7 @@ class _PendingDispatch:
             return exc
         return None
 
-    async def _failed(self, error: Exception) -> None:
+    async def _record_failure(self, error: Exception) -> None:
         self.outcome.fail(error)
         if self.on_failure is not None:
             await notify(
@@ -212,7 +216,7 @@ class JobService(Protocol):
         countdown: int | None = None,
         priority: int | None = None,
     ) -> JobHandle[ResultT]:
-        """Register a Job for deferred execution after the current UoW commits.
+        """Register a Job for execution after the current UoW commits.
 
         The job is NOT sent immediately.  It is queued in the current async
         context and flushed by the executor after a successful commit.
@@ -311,9 +315,9 @@ class InlineJobService:
     ``dispatch_after_commit()`` method respects the post-commit semantics:
     the job is enqueued on the execution's post-commit channel and runs when
     the executor drains it, after the UoW has closed (or at the end of an
-    execution without one). A job with a countdown, a deferral or a failed
+    execution without one). A job with a countdown, a postponement or a failed
     attempt with attempts left waits on the timer and runs again with its
-    deferrals and attempt carried; a rejection ends it and calls ``on_failure``.
+    postponements and attempt carried; an abandonment ends it and calls ``on_failure``.
     Outside an execution the fallback channel holds it until
     :func:`~loom.core.job.context.flush_pending_dispatches`.
 
@@ -329,10 +333,10 @@ class InlineJobService:
         executor: Used to drive the compiled ExecutionPlan.
         settings: The application's job settings; the ClassVars when omitted.
         callbacks: The callbacks a dispatch may attach; any class when omitted.
-        timer: Waits out a countdown, a :class:`~loom.core.job.outcome.JobRetry`
+        timer: Waits out a countdown, a :class:`~loom.core.job.outcome.JobPostponement`
             and a failure backoff. Without one a countdown is refused with
-            :class:`~loom.core.job.timer.JobDelayRefused`, a ``JobRetry`` is
-            rejected as one that cannot wait, and a failure is rejected at
+            :class:`~loom.core.job.timer.JobDelayRefused`, a ``JobPostponement`` is
+            abandoned as one that cannot wait, and a failure is abandoned at
             its first attempt with its own error.
         metrics: Receives the job events of each run; none when omitted.
 
@@ -439,7 +443,7 @@ class InlineJobService:
                 or *countdown* is outside 0..900 inclusive.
             JobDelayRefused: When *countdown* is above zero and the service has no timer.
         """
-        pending, handle = self._pending(
+        pending, handle = self._build_pending(
             job_type,
             params=params,
             payload=payload,
@@ -490,7 +494,7 @@ class InlineJobService:
                 or *countdown* is outside 0..900 inclusive.
             JobDelayRefused: When *countdown* is above zero and the service has no timer.
         """
-        pending, handle = self._pending(
+        pending, handle = self._build_pending(
             job_type,
             params=params,
             payload=payload,
@@ -503,7 +507,7 @@ class InlineJobService:
         await pending.start()
         return handle
 
-    def _pending(
+    def _build_pending(
         self,
         job_type: type[Job[ResultT]],
         *,
@@ -557,7 +561,7 @@ class InlineJobService:
                 envelope=envelope,
                 task_id=task_id,
                 attempt=1,
-                deferrals=0,
+                postponements=0,
                 policy=options.retry.policy,
             ),
             runner=self._runner,

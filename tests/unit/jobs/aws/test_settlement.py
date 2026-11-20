@@ -1,4 +1,4 @@
-"""``SqsSettlement``: one decision per message, one batch call per action and queue."""
+"""``SQSJobSettlement``: one decision per message, one batch call per action and queue."""
 
 from __future__ import annotations
 
@@ -10,17 +10,17 @@ from unittest.mock import MagicMock
 import pytest
 
 from loom.core.connections.aws import AwsClients
-from loom.core.job.outcome import Deferred, Failed, JobOutcome, Rejected, Succeeded
+from loom.core.job.outcome import Abandoned, Failed, JobOutcome, Postponed, Succeeded
 from loom.core.job.policy import Countdown
 from loom.jobs.aws.queue import (
-    DEFERRALS_ATTRIBUTE,
-    REJECTION_REASON_ATTRIBUTE,
+    ABANDONMENT_REASON_ATTRIBUTE,
+    POSTPONEMENTS_ATTRIBUTE,
     DeadLetterPolicy,
     QueueConfig,
-    SqsQueue,
-    SqsRecord,
+    SQSQueue,
+    SQSRecord,
 )
-from loom.jobs.aws.settlement import SETTLEMENT_TIMEOUT_S, SqsSettlement
+from loom.jobs.aws.settlement import SETTLEMENT_TIMEOUT_S, SQSJobSettlement
 from loom.jobs.aws.sqs import SQSConfig
 from tests.helpers.aws import ACCOUNT, OTHER_REGION
 from tests.helpers.aws_island import FakeAwsIsland
@@ -40,8 +40,8 @@ _POLICY = {
 }
 
 
-def _record(name: str, *, arn: str = _ARN, **attributes: Any) -> SqsRecord:
-    return SqsRecord(name, f"handle-{name}", "{}", attributes=attributes, queue_arn=arn)
+def _record(name: str, *, arn: str = _ARN, **attributes: Any) -> SQSRecord:
+    return SQSRecord(name, f"handle-{name}", "{}", attributes=attributes, queue_arn=arn)
 
 
 def _failed(error: str = "boom", seconds: int = 4) -> Failed:
@@ -59,12 +59,14 @@ def _script_redrive_policy(client: MagicMock) -> None:
 class Settling:
     """A settlement over a fake SQS client, with what the fake and the AWS island saw."""
 
-    def __init__(self, client: FakeSqs, settlement: SqsSettlement, island: FakeAwsIsland) -> None:
+    def __init__(
+        self, client: FakeSqs, settlement: SQSJobSettlement, island: FakeAwsIsland
+    ) -> None:
         self.client = client
         self.settlement = settlement
         self.island = island
 
-    def settle_all(self, settled: list[tuple[SqsRecord, JobOutcome]]) -> list[SqsRecord]:
+    def settle_all(self, settled: list[tuple[SQSRecord, JobOutcome]]) -> list[SQSRecord]:
         return self.settlement.settle_all(settled)
 
 
@@ -84,7 +86,7 @@ def settling(monkeypatch: pytest.MonkeyPatch) -> Callable[..., Settling]:
                 "ordered": QueueConfig(url=f"{_SOURCE}.fifo", dead_letter=DeadLetterPolicy.DISCARD),
             }
         )
-        settlement = SqsSettlement(AwsClients(), config, consumes)
+        settlement = SQSJobSettlement(AwsClients(), config, consumes)
         if prime and settlement.queue.dead_letter_policy is DeadLetterPolicy.REDRIVE:
             settlement.queue.read_dead_letter(client)
         return Settling(client, settlement, island)
@@ -103,11 +105,11 @@ def _logged(
     ]
 
 
-def _ids(records: list[SqsRecord]) -> list[str]:
+def _ids(records: list[SQSRecord]) -> list[str]:
     return [record.message_id for record in records]
 
 
-class TestSqsSettlement:
+class TestSQSJobSettlement:
     def test_a_succeeded_message_costs_no_call_and_builds_no_client(
         self, settling: Callable[..., Settling]
     ) -> None:
@@ -117,36 +119,36 @@ class TestSqsSettlement:
 
         assert (redelivered, sum(sqs.client.calls.values()), len(sqs.island.built)) == ([], 0, 0)
 
-    def test_a_rejected_message_goes_to_the_dead_letter_queue_with_its_reason(
+    def test_an_abandoned_message_goes_to_the_dead_letter_queue_with_its_reason(
         self, settling: Callable[..., Settling]
     ) -> None:
         sqs = settling()
 
-        redelivered = sqs.settle_all([(_record("a"), Rejected("tenant deleted"))])
+        redelivered = sqs.settle_all([(_record("a"), Abandoned("tenant deleted"))])
 
         (entry,) = sqs.client.entries("send_message_batch", _DEAD)
-        reason = entry["MessageAttributes"][REJECTION_REASON_ATTRIBUTE]["StringValue"]
+        reason = entry["MessageAttributes"][ABANDONMENT_REASON_ATTRIBUTE]["StringValue"]
         assert (redelivered, reason) == ([], "tenant deleted")
 
-    def test_a_rejected_message_of_a_discard_queue_is_dropped_with_an_error_log(
+    def test_an_abandoned_message_of_a_discard_queue_is_dropped_with_an_error_log(
         self, settling: Callable[..., Settling], caplog: pytest.LogCaptureFixture
     ) -> None:
         sqs = settling(dead_letter="discard")
 
-        redelivered = sqs.settle_all([(_record("a"), Rejected("tenant deleted"))])
+        redelivered = sqs.settle_all([(_record("a"), Abandoned("tenant deleted"))])
 
         assert (redelivered, sum(sqs.client.calls.values())) == ([], 0)
         assert len(_logged(caplog, outcome="discarded")) == 1
 
-    def test_a_deferred_message_is_sent_again_with_its_delay_and_one_deferral_more(
+    def test_a_postponed_message_is_sent_again_with_its_delay_and_one_postponement_more(
         self, settling: Callable[..., Settling]
     ) -> None:
         sqs = settling()
 
-        redelivered = sqs.settle_all([(_record("a"), Deferred(Countdown(30), "warming up"))])
+        redelivered = sqs.settle_all([(_record("a"), Postponed(Countdown(30), "warming up"))])
 
         (entry,) = sqs.client.entries("send_message_batch", _SOURCE)
-        attribute = entry["MessageAttributes"][DEFERRALS_ATTRIBUTE]["StringValue"]
+        attribute = entry["MessageAttributes"][POSTPONEMENTS_ATTRIBUTE]["StringValue"]
         assert (redelivered, entry["DelaySeconds"], attribute) == ([], 30, "1")
 
     def test_a_failed_message_becomes_visible_after_its_backoff_and_is_reported(
@@ -164,7 +166,7 @@ class TestSqsSettlement:
     ) -> None:
         sqs = settling(refuse=frozenset({"b"}))
 
-        redelivered = sqs.settle_all([(_record(name), Rejected("no")) for name in "abc"])
+        redelivered = sqs.settle_all([(_record(name), Abandoned("no")) for name in "abc"])
 
         assert _ids(redelivered) == ["b"]
 
@@ -172,9 +174,9 @@ class TestSqsSettlement:
         self, settling: Callable[..., Settling]
     ) -> None:
         sqs = settling(refuse=frozenset({"c"}))
-        deferred = Deferred(Countdown(5), "wait")
+        postponed = Postponed(Countdown(5), "wait")
 
-        redelivered = sqs.settle_all([(_record(name), deferred) for name in "abc"])
+        redelivered = sqs.settle_all([(_record(name), postponed) for name in "abc"])
 
         assert _ids(redelivered) == ["c"]
 
@@ -194,12 +196,12 @@ class TestSqsSettlement:
         sqs = settling(raises=RuntimeError("down"))
 
         redelivered = sqs.settle_all(
-            [(_record("a"), Rejected("no")), (_record("b"), Deferred(Countdown(5), "wait"))]
+            [(_record("a"), Abandoned("no")), (_record("b"), Postponed(Countdown(5), "wait"))]
         )
 
         assert _ids(redelivered) == ["a", "b"]
 
-    def test_a_reject_that_raises_reports_the_rejections_in_one_log_line(
+    def test_an_abandon_that_raises_reports_the_abandonments_in_one_log_line(
         self,
         settling: Callable[..., Settling],
         monkeypatch: pytest.MonkeyPatch,
@@ -208,10 +210,10 @@ class TestSqsSettlement:
         def refuse(*_: Any) -> None:
             raise RuntimeError("down")
 
-        monkeypatch.setattr(SqsQueue, "reject_batch", refuse)
+        monkeypatch.setattr(SQSQueue, "abandon_batch", refuse)
         sqs = settling()
 
-        redelivered = sqs.settle_all([(_record(name), Rejected("no")) for name in "ab"])
+        redelivered = sqs.settle_all([(_record(name), Abandoned("no")) for name in "ab"])
 
         assert _ids(redelivered) == ["a", "b"]
         assert len([r for r in caplog.records if "settlement call raised" in str(r.msg)]) == 1
@@ -223,10 +225,10 @@ class TestSqsSettlement:
         island = FakeAwsIsland(setup=_script_redrive_policy).install(monkeypatch)
         clients = AwsClients()
         config = SQSConfig(queues={"jobs": QueueConfig(url=_SOURCE)})
-        settlement = SqsSettlement(clients, config, "jobs")
+        settlement = SQSJobSettlement(clients, config, "jobs")
         settlement.queue.read_dead_letter(clients.client("sqs", config))
 
-        redelivered = settlement.settle_all([(_record("a"), Rejected("no"))])
+        redelivered = settlement.settle_all([(_record("a"), Abandoned("no"))])
 
         by_attempts = island.created_by_max_attempts()
         bounded = by_attempts.pop(1)
@@ -238,27 +240,27 @@ class TestSqsSettlement:
         assert retrying.get_queue_attributes.call_count == 1
         assert bounded.get_queue_attributes.call_count + bounded.get_queue_url.call_count == 0
 
-    def test_a_dead_letter_queue_not_read_at_init_lists_the_rejections_without_a_call(
+    def test_a_dead_letter_queue_not_read_at_init_lists_the_abandonments_without_a_call(
         self, settling: Callable[..., Settling]
     ) -> None:
         sqs = settling(prime=False)
         sqs.client.lookup_raises = RuntimeError("must not be asked")
 
-        redelivered = sqs.settle_all([(_record(name), Rejected("no")) for name in "ab"])
+        redelivered = sqs.settle_all([(_record(name), Abandoned("no")) for name in "ab"])
 
         assert (_ids(redelivered), sqs.client.batches) == (["a", "b"], [])
 
-    def test_a_resend_that_raises_reports_the_deferrals(
+    def test_a_resend_that_raises_reports_the_postponements(
         self, settling: Callable[..., Settling], monkeypatch: pytest.MonkeyPatch
     ) -> None:
         def refuse(*_: Any) -> None:
             raise RuntimeError("down")
 
-        monkeypatch.setattr(SqsQueue, "defer_batch", refuse)
+        monkeypatch.setattr(SQSQueue, "postpone_batch", refuse)
         sqs = settling()
-        deferred = Deferred(Countdown(5), "wait")
+        postponed = Postponed(Countdown(5), "wait")
 
-        redelivered = sqs.settle_all([(_record(name), deferred) for name in "ab"])
+        redelivered = sqs.settle_all([(_record(name), postponed) for name in "ab"])
 
         assert _ids(redelivered) == ["a", "b"]
 
@@ -268,7 +270,7 @@ class TestSqsSettlement:
         sqs = settling()
         stray = _record("a", arn=f"arn:aws:sqs:{OTHER_REGION}:{ACCOUNT}:elsewhere")
 
-        redelivered = sqs.settle_all([(stray, Rejected("no"))])
+        redelivered = sqs.settle_all([(stray, Abandoned("no"))])
 
         assert (_ids(redelivered), sqs.client.batches) == (["a"], [])
 
@@ -277,7 +279,7 @@ class TestSqsSettlement:
     ) -> None:
         sqs = settling()
         foreign = f"arn:aws:sqs:{OTHER_REGION}:{ACCOUNT}:elsewhere"
-        stray = [(_record(name, arn=foreign), Rejected("no")) for name in "ab"]
+        stray = [(_record(name, arn=foreign), Abandoned("no")) for name in "ab"]
 
         redelivered = sqs.settle_all(stray)
 
@@ -289,10 +291,10 @@ class TestSqsSettlement:
         self, settling: Callable[..., Settling]
     ) -> None:
         sqs = settling()
-        settled: list[tuple[SqsRecord, JobOutcome]] = [
+        settled: list[tuple[SQSRecord, JobOutcome]] = [
             *((_record(f"f{n}"), _failed()) for n in range(25)),
-            *((_record(f"r{n}"), Rejected("no")) for n in range(3)),
-            *((_record(f"d{n}"), Deferred(Countdown(5), "wait")) for n in range(12)),
+            *((_record(f"r{n}"), Abandoned("no")) for n in range(3)),
+            *((_record(f"d{n}"), Postponed(Countdown(5), "wait")) for n in range(12)),
             (_record("ok"), Succeeded(None)),
         ]
 

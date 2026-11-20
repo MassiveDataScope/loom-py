@@ -26,7 +26,7 @@ from loom.core.di.scope import Scope
 from loom.core.job.context import flush_pending_dispatches
 from loom.core.job.job import Job
 from loom.core.job.service import InlineJobService, JobService
-from loom.core.job.timer import AsyncioTimer, JobDelayRefused, JobTimer
+from loom.core.job.timer import AsyncioJobTimer, JobDelayRefused, JobTimer
 from loom.core.stores.profile import LAMBDA_PROFILE
 from loom.rest.fastapi.adapter import FastAPIAdapter
 from loom.testing import ManualTimer, Override
@@ -178,7 +178,7 @@ class TestInlineTimer:
         await flush_pending_dispatches()
 
         timer = service._timer  # type: ignore[attr-defined]
-        assert isinstance(timer, AsyncioTimer)
+        assert isinstance(timer, AsyncioJobTimer)
         assert len(timer._tasks) == 1
         await timer.close()
 

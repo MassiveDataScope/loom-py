@@ -23,6 +23,7 @@ from tests.helpers.jobs import JobKernel
 from tests.integration.celery_jobs.doubles import (
     QUEUE,
     SOFT_LIMIT,
+    AbandonedJob,
     BridgeDownJob,
     FailingRuntime,
     FlakyJob,
@@ -30,7 +31,6 @@ from tests.integration.celery_jobs.doubles import (
     NotOpenJob,
     RaisingJob,
     RecordingCallback,
-    RejectedJob,
     RejectingTaskJob,
     SoftLimitJob,
     SucceedingJob,
@@ -208,7 +208,7 @@ def served(
     unopened = _CeleryAsyncRuntime()
     unopened.refuse(ConnectionError("database down"))
     bench.job_task(RaisingJob, max_attempts=1)
-    bench.job_task(RejectedJob)
+    bench.job_task(AbandonedJob)
     bench.job_task(SucceedingJob)
     bench.job_task(FlakyJob)
     bench.job_task(NotOpenJob, runtime=unopened)

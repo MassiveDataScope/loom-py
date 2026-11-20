@@ -1,4 +1,4 @@
-"""A message loom rejects reaches the dead-letter queue and moves back to its source."""
+"""A message loom abandons reaches the dead-letter queue and moves back to its source."""
 
 from __future__ import annotations
 
@@ -9,7 +9,7 @@ from typing import Any
 
 import pytest
 
-from loom.jobs.aws.queue import REJECTION_REASON_ATTRIBUTE, QueueConfig, SqsQueue, SqsRecord
+from loom.jobs.aws.queue import ABANDONMENT_REASON_ATTRIBUTE, QueueConfig, SQSQueue, SQSRecord
 from tests.integration.aws.conftest import AwsClientFactory, unique
 
 pytestmark = [pytest.mark.integration, pytest.mark.timeout(60)]
@@ -37,17 +37,17 @@ def queues(sqs: Any) -> Iterator[tuple[str, str]]:
     sqs.delete_queue(QueueUrl=dead)
 
 
-def test_a_rejected_message_lands_in_the_dead_letter_queue_and_moves_back_to_a_destination(
+def test_an_abandoned_message_lands_in_the_dead_letter_queue_and_moves_back_to_a_destination(
     sqs: Any, queues: tuple[str, str]
 ) -> None:
     source, dead = queues
     sqs.send_message(QueueUrl=source, MessageBody="body")
     received = sqs.receive_message(QueueUrl=source, WaitTimeSeconds=5)["Messages"][0]
-    queue = SqsQueue(sqs, "source", QueueConfig(url=source))
+    queue = SQSQueue(sqs, "source", QueueConfig(url=source))
     queue.read_dead_letter(sqs)
 
-    result = queue.reject_batch(
-        [(SqsRecord(received["MessageId"], received["ReceiptHandle"], received["Body"]), "why")]
+    result = queue.abandon_batch(
+        [(SQSRecord(received["MessageId"], received["ReceiptHandle"], received["Body"]), "why")]
     )
 
     assert result.failed == {}
@@ -56,7 +56,7 @@ def test_a_rejected_message_lands_in_the_dead_letter_queue_and_moves_back_to_a_d
     in_dead = sqs.receive_message(
         QueueUrl=dead, WaitTimeSeconds=5, MessageAttributeNames=["All"], VisibilityTimeout=0
     )["Messages"][0]
-    assert in_dead["MessageAttributes"][REJECTION_REASON_ATTRIBUTE]["StringValue"] == "why"
+    assert in_dead["MessageAttributes"][ABANDONMENT_REASON_ATTRIBUTE]["StringValue"] == "why"
 
     sqs.start_message_move_task(SourceArn=_arn(sqs, dead), DestinationArn=_arn(sqs, source))
     deadline = time.monotonic() + 20

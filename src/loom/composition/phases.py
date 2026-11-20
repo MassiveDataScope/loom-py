@@ -298,7 +298,7 @@ def register(
         callbacks=recipe.discovered.callbacks,
         settings=stores.job_settings,
         aws=aws,
-        waits_in_process=recipe.profile.waits_in_process,
+        can_wait_in_process=recipe.profile.can_wait_in_process,
     )
     sql = resolve_sql(ctx)
     register_sql_collaborators(kernel.container, sql, observability)

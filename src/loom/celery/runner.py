@@ -42,10 +42,11 @@ from loom.core.job.config import JobSettings
 from loom.core.job.delivery import JobDelivery
 from loom.core.job.envelope import JobEnvelope, job_context, wire_job_name
 from loom.core.job.outcome import (
-    Deferred,
+    Abandoned,
     Failed,
     JobOutcome,
-    Rejected,
+    JobPostponement,
+    Postponed,
     Succeeded,
 )
 from loom.core.job.policy import Redelivery
@@ -181,12 +182,12 @@ def _make_job_task(
     The returned task is bound (``bind=True``) so it can access retry
     context via ``self``.  Each run goes through a
     :class:`~loom.core.job.runner.JobRunner`, which decides whether it
-    succeeded, defers, fails or is rejected; the task only maps that outcome
-    to Celery: a failure retries after the policy's backoff, a deferral
+    succeeded, postpones, fails or is abandoned; the task only maps that outcome
+    to Celery: a failure retries after the policy's backoff, a postponement
     retries after its delay without spending an attempt (the task carries the
-    count in its ``deferrals`` argument), and a rejection raises its error, which
+    count in its ``postponements`` argument), and an abandonment raises its error, which
     the worker stores as the failure and acknowledges (``acks_late``) without a retry.
-    Any error that ends the task (one the runner rejected, a worker that could
+    Any error that ends the task (one the runner abandoned, a worker that could
     not open its application, a soft time limit) first sends the failure callback
     task named in its ``failure_callback`` argument, with the error's class and
     text; a ``Retry``, ``Reject`` or ``Ignore`` sends nothing. The callback is
@@ -214,7 +215,7 @@ def _make_job_task(
         executor: RuntimeExecutor driving the compiled ExecutionPlan.
         metrics: Optional metrics adapter.  Receives the job events the
             runner emits (``JOB_STARTED``, ``JOB_SUCCEEDED``,
-            ``JOB_DEFERRED``, ``JOB_FAILED`` and ``JOB_REJECTED``).
+            ``JOB_POSTPONED``, ``JOB_FAILED`` and ``JOB_ABANDONED``).
         settings: The application's job settings, which give the task its
             retry policy and time limit.
 
@@ -239,7 +240,7 @@ def _make_job_task(
         params: dict[str, Any] | None,
         identity: dict[str, Any] | None,
         trace_id: str | None,
-        deferrals: int,
+        postponements: int,
     ) -> JobOutcome:
         """Run one delivery of the job through the runner."""
         task_id = getattr(getattr(task_self, "request", None), "id", None)
@@ -254,8 +255,8 @@ def _make_job_task(
                 task_id=task_id,
             ),
             task_id=task_id,
-            attempt=task_self.request.retries - deferrals + 1,
-            deferrals=deferrals,
+            attempt=task_self.request.retries - postponements + 1,
+            postponements=postponements,
             policy=options.retry.policy,
             timeout_s=run_timeout,
         )
@@ -264,20 +265,20 @@ def _make_job_task(
         )
         return outcome
 
-    def _settle(task_self: Any, outcome: JobOutcome, deferrals: int) -> Any:
-        """Map the outcome to Celery: return the result, retry, or raise the rejection's error.
+    def _settle(task_self: Any, outcome: JobOutcome, postponements: int) -> Any:
+        """Map the outcome to Celery: return the result, retry, or raise the abandonment's error.
 
         Args:
             task_self: The bound Celery task.
             outcome: What the runner decided for this delivery.
-            deferrals: Deferrals already spent, carried to the next delivery.
+            postponements: Postponements already spent, carried to the next delivery.
 
         Returns:
             The job's result when it succeeded.
 
         Raises:
-            Retry: When the job failed with attempts left or was deferred.
-            Exception: The error that ended a rejected job, which the worker
+            Retry: When the job failed with attempts left or was postponed.
+            Exception: The error that ended an abandoned job, which the worker
                 stores as the task's failure before acknowledging the message.
         """
         match outcome:
@@ -285,13 +286,15 @@ def _make_job_task(
                 return result
             case Failed(error=error, delay=delay):
                 raise task_self.retry(exc=error, countdown=delay.seconds) from error
-            case Deferred(delay=delay) as deferred:
-                kwargs = {**(task_self.request.kwargs or {}), "deferrals": deferrals + 1}
+            case Postponed(delay=delay) as postponed:
+                kwargs = {**(task_self.request.kwargs or {}), "postponements": postponements + 1}
                 raise task_self.retry(
-                    exc=deferred.failure(), countdown=delay.seconds, kwargs=kwargs
+                    exc=JobPostponement(postponed.reason, delay.seconds),
+                    countdown=delay.seconds,
+                    kwargs=kwargs,
                 )
-            case Rejected() as rejected:
-                raise rejected.failure()
+            case Abandoned() as abandoned:
+                raise abandoned.as_exception()
 
     @celery_app.task(  # type: ignore[untyped-decorator]
         name=wire_job_name(job_type.__qualname__),
@@ -310,7 +313,7 @@ def _make_job_task(
         params: dict[str, Any] | None = None,
         trace_id: str | None = None,
         identity: dict[str, Any] | None = None,
-        deferrals: int = 0,
+        postponements: int = 0,
         failure_callback: str | None = None,
     ) -> Any:
         try:
@@ -321,9 +324,9 @@ def _make_job_task(
                     params=params,
                     identity=identity,
                     trace_id=trace_id,
-                    deferrals=deferrals,
+                    postponements=postponements,
                 )
-                return _settle(self, outcome, deferrals)
+                return _settle(self, outcome, postponements)
         except TaskPredicate:
             raise
         except Exception as error:

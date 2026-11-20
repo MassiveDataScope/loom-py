@@ -6,9 +6,9 @@ from loom.celery.service import CeleryJobService
 from loom.core.job.callback import DispatchableCallbacks
 from tests.integration.celery_jobs.conftest import JSON, Workbench
 from tests.integration.celery_jobs.doubles import (
-    REJECTION,
+    ABANDONMENT,
+    AbandonedJob,
     RecordingCallback,
-    RejectedJob,
     SucceedingJob,
 )
 
@@ -31,13 +31,13 @@ class TestDispatchThroughTheService:
         assert stored.state == "SUCCESS"
         assert calls == [{"job_id": handle.job_id, "hook": "on_success", "result": "done"}]
 
-    async def test_a_rejected_job_calls_the_failure_callback_the_dispatch_named(
+    async def test_an_abandoned_job_calls_the_failure_callback_the_dispatch_named(
         self, served: Workbench
     ) -> None:
         service = CeleryJobService(served.app, callbacks=DispatchableCallbacks([RecordingCallback]))
 
         handle = await service.dispatch_now(
-            RejectedJob,
+            AbandonedJob,
             on_success=RecordingCallback,
             on_failure=RecordingCallback,
             queue=served.queue,
@@ -49,7 +49,7 @@ class TestDispatchThroughTheService:
             {
                 "job_id": handle.job_id,
                 "hook": "on_failure",
-                "exc_type": "JobRejection",
-                "exc_msg": REJECTION,
+                "exc_type": "JobAbandonment",
+                "exc_msg": ABANDONMENT,
             }
         ]

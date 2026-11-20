@@ -195,7 +195,7 @@ def _drain(sqs: Any, queue: _Queue, count: int) -> list[str]:
     return markers
 
 
-class TestSqsJobs:
+class TestSQSJobs:
     @pytest.mark.parametrize("job_type", [WelcomeJob, OrderJob], ids=["standard", "fifo"])
     def test_a_committed_dispatch_reaches_the_queue_as_a_job_envelope(
         self, producer: Application, sqs: Any, queues: _Queues, job_type: type[Job[Any]]

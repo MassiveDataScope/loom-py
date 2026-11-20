@@ -7,7 +7,7 @@ from loom.core.errors.codes import ErrorCode
 
 
 class MalformedJobMessage(SystemError):
-    """A job message violates the envelope contract: it is rejected, never retried."""
+    """A job message violates the envelope contract: it is abandoned, never retried."""
 
     retryable = False
 
@@ -16,10 +16,7 @@ class MalformedJobMessage(SystemError):
 
 
 class UnknownJob(SystemError):
-    """A message names a job absent from this application's registry.
-
-    Retryable on purpose: another version of the function, during a deploy, may know it.
-    """
+    """A message names a job absent from this application's registry; it is retryable."""
 
     def __init__(self, name: str) -> None:
         self.name = name

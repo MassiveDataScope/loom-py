@@ -62,7 +62,7 @@ class FlakyOrderJob(Job[None]):
     def execute(self) -> None:
         raise ValueError("warehouse is down")
 """
-_REJECTION = "loom.rejection_reason"
+_ABANDONMENT_REASON = "loom.abandonment_reason"
 _NOTHING = {"batchItemFailures": []}
 _QUEUE_REGION = TEST_QUEUE["url"].split(".")[1]
 _FIFO_URL = f"https://sqs.{_QUEUE_REGION}.amazonaws.com/{ACCOUNT}/loom-orders.fifo"
@@ -171,7 +171,7 @@ class TestDelivery:
             assert len(result["batchItemFailures"]) == 1
             assert (worker.redeliver(), _messages(worker, worker.queue_url)) == (_NOTHING, [])
 
-    def test_a_failure_that_comes_back_is_rejected_when_the_attempts_run_out(
+    def test_a_failure_that_comes_back_is_abandoned_when_the_attempts_run_out(
         self, config: Config
     ) -> None:
         with _open(config()) as worker:
@@ -184,7 +184,7 @@ class TestDelivery:
             assert [len(r["batchItemFailures"]) for r in results] == [1, 1, 0]
             assert _left(worker, worker.queue_url) == 0
 
-    def test_a_rejection_on_a_redrive_queue_lands_in_the_dead_letter_queue(
+    def test_an_abandonment_on_a_redrive_queue_lands_in_the_dead_letter_queue(
         self, config: Config
     ) -> None:
         with _open(config("redrive")) as worker:
@@ -194,9 +194,9 @@ class TestDelivery:
 
             (dead,) = _messages(worker, worker.dead_letter_url)
             assert _left(worker, worker.queue_url) == 0
-        assert dead["MessageAttributes"][_REJECTION]["StringValue"] == "ValueError"
+        assert dead["MessageAttributes"][_ABANDONMENT_REASON]["StringValue"] == "ValueError"
 
-    def test_a_message_that_cannot_be_read_is_rejected_to_the_dead_letter_queue(
+    def test_a_message_that_cannot_be_read_is_abandoned_to_the_dead_letter_queue(
         self, config: Config
     ) -> None:
         with _open(config("redrive")) as worker:

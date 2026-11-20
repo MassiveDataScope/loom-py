@@ -20,7 +20,7 @@ from loom.core.job.config import JobSettings
 from loom.core.job.job import Job
 from loom.core.job.router import JobRouter
 from loom.core.job.service import InlineJobService, JobService
-from loom.core.job.timer import AsyncioTimer, JobTimer
+from loom.core.job.timer import AsyncioJobTimer, JobTimer
 from loom.core.logger import get_logger
 from loom.core.observability.runtime import ObservabilityRuntime
 from loom.core.plugins.optional import MissingExtraError
@@ -40,7 +40,7 @@ class JobBackendContext:
     """What a job backend is built with; a ``module:Class`` backend receives it.
 
     ``timer`` is the :class:`~loom.core.job.timer.JobTimer` a test bound in the
-    container; ``waits_in_process`` says whether the entry point may hold
+    container; ``can_wait_in_process`` says whether the entry point may hold
     delayed jobs in memory (not a Lambda). ``jobs`` are the discovered jobs this
     backend serves: those on ``celery.queues`` go to Celery instead. ``callbacks``
     holds the discovered job callbacks a dispatch may name. ``settings`` hold each job's
@@ -58,7 +58,7 @@ class JobBackendContext:
     callbacks: DispatchableCallbacks = field(default_factory=DispatchableCallbacks.any)
     settings: JobSettings = field(default_factory=JobSettings)
     timer: JobTimer | None = None
-    waits_in_process: bool = True
+    can_wait_in_process: bool = True
 
 
 _Built = tuple[JobService, tuple[Resource, ...]]
@@ -102,8 +102,8 @@ def _celery_backend(context: JobBackendContext, celery_cfg: CeleryConfig) -> _Bu
 def _inline(context: JobBackendContext) -> _Built:
     timer = context.timer
     resources: tuple[Resource, ...] = ()
-    if timer is None and context.waits_in_process:
-        timer = AsyncioTimer()
+    if timer is None and context.can_wait_in_process:
+        timer = AsyncioJobTimer()
         resources = (Resource(kind=ResourceKind.TIMER, name="jobs", manager=closing(timer.close)),)
         _log.warning(
             "Inline jobs wait in process memory: a delayed job is lost when the process "
@@ -216,7 +216,7 @@ def configure_job_service(
     callbacks: tuple[type[JobCallback], ...] = (),
     settings: JobSettings,
     aws: AwsClients,
-    waits_in_process: bool = True,
+    can_wait_in_process: bool = True,
 ) -> tuple[Resource, ...]:
     """Register the ``JobService`` in the container, ``APPLICATION`` scoped.
 
@@ -238,7 +238,7 @@ def configure_job_service(
         callbacks: The discovered job callbacks.
         settings: Each job's settings in this application.
         aws: The application's AWS clients, which the SQS backend takes its client from.
-        waits_in_process: Whether the inline service may hold delayed jobs in memory;
+        can_wait_in_process: Whether the inline service may hold delayed jobs in memory;
             without it the inline service refuses every delay. A
             :class:`~loom.core.job.timer.JobTimer` already bound in the container
             is used either way.
@@ -267,7 +267,7 @@ def configure_job_service(
         timer=result.container.resolve(JobTimer)
         if result.container.is_registered(JobTimer)
         else None,
-        waits_in_process=waits_in_process,
+        can_wait_in_process=can_wait_in_process,
     )
     service, resources = _implicit(context) if backend is None else _routed(context, backend)
     result.container.register(JobService, lambda: service, scope=Scope.APPLICATION)

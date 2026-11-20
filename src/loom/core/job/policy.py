@@ -16,12 +16,12 @@ class Redelivery(StrEnum):
     NONE = "none"
 
     @property
-    def defers(self) -> bool:
+    def can_postpone(self) -> bool:
         """Whether the transport brings the job back after the delay the job asks for."""
         return self is Redelivery.DELAYED
 
     @property
-    def retries(self) -> bool:
+    def can_retry(self) -> bool:
         """Whether the transport brings a failed job back for another attempt."""
         return self is not Redelivery.NONE
 
@@ -75,7 +75,7 @@ class Backoff:
         """The wait after failed attempt number *attempt*, counting from 1.
 
         Args:
-            attempt: The attempt that failed, or the deferral being scheduled.
+            attempt: The attempt that failed, or the postponement being scheduled.
 
         Returns:
             The ceiling for that attempt, or a draw from zero to it with jitter.
@@ -93,7 +93,7 @@ class RetryPolicy:
     """How a job is repeated: the delay between attempts and how many it gets.
 
     Attributes:
-        backoff: The delay after a failure or a deferral.
+        backoff: The delay after a failure or a postponement.
         max_attempts: Attempts before a failure is final, at least 1; ``None``
             leaves the limit to the transport.
 
@@ -108,7 +108,7 @@ class RetryPolicy:
         if self.max_attempts is not None and self.max_attempts < 1:
             raise ValueError(f"max_attempts must be at least 1, not {self.max_attempts}")
 
-    def allows_attempt_after(self, attempt: int) -> bool:
+    def can_retry_after(self, attempt: int) -> bool:
         """Whether a failed attempt number *attempt* may be followed by another."""
         return self.max_attempts is None or attempt < self.max_attempts
 

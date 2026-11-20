@@ -13,19 +13,16 @@ class JobSignal(Exception):
     """Raised by a job to steer its own delivery; not a failure."""
 
 
-class JobRetry(JobSignal):
+class JobPostponement(JobSignal):
     """Raised by a job to run again later, without counting as a failed attempt.
 
     Attributes:
         reason: Why the job waits.
         delay: The wait; ``None`` leaves it to the job's backoff.
 
-    Args:
-        reason: Why the job waits.
-        delay_s: Seconds to wait, from 0 to 900; ``None`` takes the backoff step.
-
     Raises:
-        ValueError: When *delay_s* is outside the countdown bound.
+        ValueError: When *delay_s*, the seconds to wait from 0 to 900, is outside
+            the countdown bound; ``None`` takes the backoff step.
     """
 
     def __init__(self, reason: str, delay_s: int | None = None) -> None:
@@ -34,8 +31,8 @@ class JobRetry(JobSignal):
         self.delay = None if delay_s is None else Countdown(delay_s)
 
 
-class JobRejection(JobSignal):
-    """Raised by a job to give up for good: the delivery is settled as rejected.
+class JobAbandonment(JobSignal):
+    """Raised by a job to give up for good: the delivery is settled as abandoned.
 
     Attributes:
         reason: Why the job gives up.
@@ -52,25 +49,17 @@ class Succeeded:
 
     result: Any
 
-    def failure(self) -> None:
-        """No failure: the run succeeded."""
-        return None
-
 
 @dataclass(frozen=True, slots=True)
-class Deferred:
+class Postponed:
     """The job asked to run again after *delay*; no attempt was spent."""
 
     delay: Countdown
     reason: str
 
-    def failure(self) -> JobRetry:
-        """The signal that stands for the deferral, as the reason of a retry."""
-        return JobRetry(self.reason, self.delay.seconds)
-
 
 @dataclass(frozen=True, slots=True)
-class Rejected:
+class Abandoned:
     """The job will not run again: it gave up, its error cannot succeed, or attempts ran out.
 
     Attributes:
@@ -81,9 +70,9 @@ class Rejected:
     reason: str
     error: Exception | None = None
 
-    def failure(self) -> Exception:
-        """The error that ended the job, or a :class:`JobRejection` with its reason."""
-        return self.error or JobRejection(self.reason)
+    def as_exception(self) -> Exception:
+        """The error that ended the job, or a :class:`JobAbandonment` with its reason."""
+        return self.error or JobAbandonment(self.reason)
 
 
 @dataclass(frozen=True, slots=True)
@@ -93,12 +82,12 @@ class Failed:
     error: Exception
     delay: Countdown
 
-    def failure(self) -> Exception:
+    def as_exception(self) -> Exception:
         """The error of the failed attempt."""
         return self.error
 
 
-JobOutcome = Succeeded | Deferred | Rejected | Failed
+JobOutcome = Succeeded | Postponed | Abandoned | Failed
 
 
 def failure_log_fields(exc: BaseException) -> dict[str, object]:

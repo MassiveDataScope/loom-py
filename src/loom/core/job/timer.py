@@ -19,7 +19,7 @@ class JobDelayRefused(RuntimeError):
     """Raised when a job is delayed where no timer waits for it.
 
     Attributes:
-        delay: The countdown that was refused; ``None`` for a ``JobRetry``, whose
+        delay: The countdown that was refused; ``None`` for a ``JobPostponement``, whose
             delay the job or its backoff chooses.
 
     Args:
@@ -30,7 +30,7 @@ class JobDelayRefused(RuntimeError):
         waited = "wait" if delay is None else f"wait {delay.seconds}s"
         super().__init__(
             f"cannot {waited}: this job service has no timer, so a countdown "
-            "or a JobRetry cannot be honoured; use Celery or SQS"
+            "or a JobPostponement cannot be honoured; use Celery or SQS"
         )
         self.delay = delay
 
@@ -50,7 +50,7 @@ class JobTimer(Protocol):
         ...
 
 
-class AsyncioTimer:
+class AsyncioJobTimer:
     """A :class:`JobTimer` that waits on the running event loop and keeps its steps in memory.
 
     It owns the tasks it starts. Closing it cancels every step still pending

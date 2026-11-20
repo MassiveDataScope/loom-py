@@ -26,8 +26,8 @@ from loom.core.job.settlement import JobSettlement
 from loom.core.logger import get_logger
 from loom.core.observability.event import Scope
 from loom.core.stores import LAMBDA_PROFILE
-from loom.jobs.aws.queue import DeadLetterPolicy, SqsRecord
-from loom.jobs.aws.settlement import SqsSettlement
+from loom.jobs.aws.queue import DeadLetterPolicy, SQSRecord
+from loom.jobs.aws.settlement import SQSJobSettlement
 from loom.jobs.aws.sqs import SQSConfig
 
 if TYPE_CHECKING:
@@ -100,14 +100,14 @@ class QueueConsumer:
 
     Attributes:
         settings: The options and retry policies its jobs run under.
-        unserved: The retry policy of a message that names no job it serves.
+        unknown_job_policy: The retry policy of a message that names no job it serves.
         settlement: Settles each message by what its job came to.
         runner: Runs and decides each message, knowing what its queue redelivers.
     """
 
     settings: JobSettings
-    unserved: RetryPolicy
-    settlement: JobSettlement[SqsRecord]
+    unknown_job_policy: RetryPolicy
+    settlement: JobSettlement[SQSRecord]
     runner: JobRunner
 
     @classmethod
@@ -133,7 +133,7 @@ class QueueConsumer:
         if queue_name not in config.queues:
             raise ConfigError(f"sqs.queues.{queue_name} is missing: a function consumes that queue")
         clients = application.kernel.container.resolve(AwsClients)
-        settlement = SqsSettlement(clients, config, queue_name)
+        settlement = SQSJobSettlement(clients, config, queue_name)
         queue = settlement.queue
         if queue.dead_letter_policy is DeadLetterPolicy.REDRIVE:
             try:
@@ -145,7 +145,7 @@ class QueueConsumer:
                 ) from exc
         served = list(jobs)
         base = application.job_settings
-        settings = base.with_retries(queue.consumed_retries(served, lambda job: base.of(job).retry))
+        settings = base.with_retries(queue.retries_for(served, lambda job: base.of(job).retry))
         redelivery = Redelivery.SAME if queue.is_fifo else Redelivery.DELAYED
         if served:
             _log.info(
@@ -156,7 +156,7 @@ class QueueConsumer:
             )
         return cls(
             settings,
-            queue.unserved_policy(),
+            queue.unknown_job_policy(),
             settlement,
             job_runner(application, redelivery),
         )
@@ -198,7 +198,7 @@ async def run_envelope(
     *,
     settings: JobSettings,
     attempt: int,
-    deferrals: int,
+    postponements: int,
 ) -> JobOutcome:
     """Run *envelope* as *job_type*, within its timeout and what remains of the invocation.
 
@@ -210,7 +210,7 @@ async def run_envelope(
         context: The Lambda context, for the time that remains.
         settings: The options and retry policy the function runs its jobs under.
         attempt: The attempt number the transport counted.
-        deferrals: How many times the job asked to run again.
+        postponements: How many times the job asked to run again.
 
     Returns:
         What the run came to.
@@ -222,7 +222,7 @@ async def run_envelope(
             envelope=envelope,
             task_id=task_id,
             attempt=attempt,
-            deferrals=deferrals,
+            postponements=postponements,
             policy=options.retry.policy,
             timeout_s=run_timeout(options.timeout, context),
         )

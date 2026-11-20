@@ -12,7 +12,7 @@ from loom.core.engine.executor import RuntimeExecutor
 from loom.core.job.delivery import JobDelivery
 from loom.core.job.envelope import JobEnvelope
 from loom.core.job.job import Job
-from loom.core.job.outcome import JobRejection, JobRetry
+from loom.core.job.outcome import JobAbandonment, JobPostponement
 from loom.core.job.policy import DEFAULT_RETRY
 from loom.core.job.service import InlineJobService
 from loom.core.stores.repository.registration import classify_key
@@ -47,12 +47,12 @@ class OuterJob(Job[None]):
 
 class RetryingJob(Job[None]):
     async def execute(self) -> None:
-        raise JobRetry("later", 5)
+        raise JobPostponement("later", 5)
 
 
-class RejectingJob(Job[None]):
+class AbandoningJob(Job[None]):
     async def execute(self) -> None:
-        raise JobRejection("never")
+        raise JobAbandonment("never")
 
 
 class TwoDeliveriesJob(Job[None]):
@@ -66,7 +66,7 @@ def _delivery(job_type: type[Job[Any]], attempt: int = 2) -> JobDelivery:
         envelope=JobEnvelope(job=job_type.__qualname__),
         task_id="task-1",
         attempt=attempt,
-        deferrals=1,
+        postponements=1,
         policy=DEFAULT_RETRY,
     )
 
@@ -81,7 +81,7 @@ def factory() -> UseCaseFactory:
     container = LoomContainer(classify_key=classify_key, implicit=main_repository)
     declare_kinds(container.kinds)
     factory = UseCaseFactory(container)
-    for job_type in (InnerJob, OuterJob, RetryingJob, RejectingJob):
+    for job_type in (InnerJob, OuterJob, RetryingJob, AbandoningJob):
         factory.register(job_type)
     return factory
 
@@ -128,8 +128,8 @@ class TestDeliveryMarker:
 class TestJobSignalReporting:
     @pytest.mark.parametrize(
         ("job_type", "status"),
-        [(RetryingJob, Status.DEFERRED), (RejectingJob, Status.REJECTED)],
-        ids=["retry", "rejection"],
+        [(RetryingJob, Status.POSTPONED), (AbandoningJob, Status.ABANDONED)],
+        ids=["retry", "abandonment"],
     )
     async def test_a_signal_is_not_logged_as_a_failure_nor_reported_as_one(
         self,
@@ -140,7 +140,7 @@ class TestJobSignalReporting:
         job_type: type[Job[Any]],
         status: Status,
     ) -> None:
-        with caplog.at_level(logging.DEBUG), pytest.raises((JobRetry, JobRejection)):
+        with caplog.at_level(logging.DEBUG), pytest.raises((JobPostponement, JobAbandonment)):
             await executor.run(job_type, factory=factory)
 
         assert not [record for record in caplog.records if record.levelno >= logging.ERROR]

@@ -1,4 +1,4 @@
-"""The inline job service waits on its timer: countdowns, deferrals, backoff, and no timer."""
+"""The inline job service waits on its timer: countdowns, postponements, backoff, and no timer."""
 
 from __future__ import annotations
 
@@ -12,10 +12,10 @@ import pytest
 from loom.core.errors import JobFailedError, JobTimeoutError
 from loom.core.job.context import clear_pending_dispatches, flush_pending_dispatches
 from loom.core.job.job import Job
-from loom.core.job.outcome import JobRetry
+from loom.core.job.outcome import JobPostponement
 from loom.core.job.policy import Backoff, Countdown
 from loom.core.job.service import InlineJobService
-from loom.core.job.timer import AsyncioTimer, JobDelayRefused
+from loom.core.job.timer import AsyncioJobTimer, JobDelayRefused
 from loom.testing.jobs import ManualTimer
 from tests.helpers.loggers import RecordingLogger
 
@@ -48,7 +48,7 @@ class Acme:
     @property
     def runs(self) -> list[tuple[int, int]]:
         return [
-            (call.kwargs["delivery"].attempt, call.kwargs["delivery"].deferrals)
+            (call.kwargs["delivery"].attempt, call.kwargs["delivery"].postponements)
             for call in self.executor.run.await_args_list
         ]
 
@@ -92,8 +92,10 @@ class TestCountdown:
 
 
 class TestRetries:
-    async def test_a_job_retry_runs_again_after_its_delay_with_one_more_deferral(self) -> None:
-        acme = Acme(JobRetry("warming up", 30), "done")
+    async def test_a_job_postponement_runs_again_after_its_delay_with_one_more_postponement(
+        self,
+    ) -> None:
+        acme = Acme(JobPostponement("warming up", 30), "done")
 
         handle = await acme.service.dispatch_now(AcmeJob)
         assert acme.runs == [(1, 0)]
@@ -117,7 +119,7 @@ class TestRetries:
         assert acme.runs == [(1, 0), (2, 0), (3, 0)]
         assert handle.wait() == "done"
 
-    async def test_exhausted_attempts_reject_and_call_on_failure_once(self) -> None:
+    async def test_exhausted_attempts_abandon_and_call_on_failure_once(self) -> None:
         failures: list[str] = []
 
         class Notify:
@@ -140,8 +142,10 @@ class TestRetries:
             handle.wait()
         assert str(failed.value.cause) == "three"
 
-    async def test_a_job_retry_without_delay_goes_through_the_timer_not_the_stack(self) -> None:
-        acme = Acme(*[JobRetry("spin", 0)] * 5, "done")
+    async def test_a_job_postponement_without_delay_goes_through_the_timer_not_the_stack(
+        self,
+    ) -> None:
+        acme = Acme(*[JobPostponement("spin", 0)] * 5, "done")
 
         await acme.service.dispatch_now(AcmeJob)
 
@@ -186,8 +190,8 @@ class TestWithoutATimer:
 
         assert handle.wait() == "done"
 
-    async def test_a_job_retry_is_rejected_as_one_that_cannot_wait(self) -> None:
-        signal = JobRetry("warming up", 30)
+    async def test_a_job_postponement_is_abandoned_as_one_that_cannot_wait(self) -> None:
+        signal = JobPostponement("warming up", 30)
         acme = Acme(signal, timed=False)
 
         handle = await acme.service.dispatch_now(AcmeJob)
@@ -197,8 +201,8 @@ class TestWithoutATimer:
         assert failed.value.cause is signal
         assert acme.runs == [(1, 0)]
 
-    async def test_a_zero_delay_job_retry_is_rejected_too(self) -> None:
-        signal = JobRetry("warming up", 0)
+    async def test_a_zero_delay_job_postponement_is_abandoned_too(self) -> None:
+        signal = JobPostponement("warming up", 0)
         acme = Acme(signal, timed=False)
 
         handle = await acme.service.dispatch_now(AcmeJob)
@@ -247,7 +251,7 @@ class TestAsyncioTimer:
             ran.set()
 
         monkeypatch.setattr(asyncio, "sleep", instant)
-        timer = AsyncioTimer()
+        timer = AsyncioJobTimer()
 
         timer.schedule(Countdown(60), step, job="AcmeJob", task_id="t")
         await asyncio.wait_for(ran.wait(), 1)
@@ -268,7 +272,7 @@ class TestAsyncioTimer:
             ran.set()
 
         monkeypatch.setattr(asyncio, "sleep", instant)
-        timer = AsyncioTimer()
+        timer = AsyncioJobTimer()
 
         timer.schedule(Countdown(60), step, job="AcmeJob", task_id="t")
         await asyncio.wait_for(ran.wait(), 1)
@@ -282,7 +286,7 @@ class TestAsyncioTimer:
         log = RecordingLogger()
         monkeypatch.setattr("loom.core.job.timer._log", log)
         ran: list[int] = []
-        timer = AsyncioTimer()
+        timer = AsyncioJobTimer()
 
         async def step() -> None:
             ran.append(1)
@@ -306,12 +310,12 @@ class TestAsyncioTimer:
         log = RecordingLogger()
         monkeypatch.setattr("loom.core.job.timer._log", log)
 
-        await AsyncioTimer().close()
+        await AsyncioJobTimer().close()
 
         assert log.calls == []
 
     async def test_each_timer_owns_its_tasks(self) -> None:
-        first, second = AsyncioTimer(), AsyncioTimer()
+        first, second = AsyncioJobTimer(), AsyncioJobTimer()
 
         async def step() -> None:
             return None

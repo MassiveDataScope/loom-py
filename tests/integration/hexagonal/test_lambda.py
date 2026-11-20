@@ -4,7 +4,7 @@ The ``jobs`` function runs ``TrackShipmentJob`` from an SQS record carrying
 the enqueuer's identity. A job refused for its caller is not retryable,
 so the function discards its record (the queue says ``dead_letter: discard``)
 and logs it as failed finally: that log is where the refusal surfaces. An
-envelope that does not decode is rejected the same way.
+envelope that does not decode is abandoned the same way.
 """
 
 from __future__ import annotations

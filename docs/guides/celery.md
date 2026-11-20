@@ -172,14 +172,14 @@ Use `dispatch_after_commit()` for fire-and-forget work; use `run()` when you nee
 
 ### Delays inline
 
-`InlineJobService` honours `countdown`, `JobRetry` and failure backoff: a
+`InlineJobService` honours `countdown`, `JobPostponement` and failure backoff: a
 delayed job waits in the memory of the process on a `JobTimer` and runs again
-with its attempt and deferrals carried. Exhausted attempts reject the job and
+with its attempt and postponements carried. Exhausted attempts abandon the job and
 call `on_failure`. A job delayed this way is lost when the process stops (the
 timer logs them, by job and task id, in one line at shutdown), so the service logs a warning at
 start-up: use Celery or SQS in production. A Lambda function composes no
 timer: its inline service refuses a countdown above zero with `JobDelayRefused`,
-rejects a `JobRetry`, and rejects a failing job at its first attempt with its own error.
+abandons a `JobPostponement`, and abandons a failing job at its first attempt with its own error.
 
 ---
 
@@ -375,15 +375,15 @@ jobs:
 A job is attempted at most `max_attempts` times (3 by default). After a failed
 attempt it waits `Backoff(first_s, factor, max_s, jitter)`: `first_s * factor ** (attempt - 1)`
 seconds, capped at `max_s` (never above 900) and, with `jitter` (the default), drawn
-uniformly from zero to that value. A job may raise `JobRetry(reason, delay_s=None)`
-to run again later without using an attempt, or `JobRejection(reason)` to give up at
-once; an error whose `retryable` is `False` is rejected at its first attempt.
+uniformly from zero to that value. A job may raise `JobPostponement(reason, delay_s=None)`
+to run again later without using an attempt, or `JobAbandonment(reason)` to give up at
+once; an error whose `retryable` is `False` is abandoned at its first attempt.
 
 The most specific layer wins, and a section that sets only some fields inherits the
 rest from the layer below: `jobs.<Job>.retry`, then `jobs.defaults.retry`, then the
 job's `__retry__`, then the loom default. `max_attempts` is only set in YAML.
 A job reads the delivery it runs under by declaring `delivery: JobDelivery | None =
-Delivery()` on `execute` (its `attempt` and `deferrals`); a job run by another job gets
+Delivery()` on `execute` (its `attempt` and `postponements`); a job run by another job gets
 `None`.
 
 ```yaml

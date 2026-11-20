@@ -15,16 +15,16 @@ from loom.core.errors import (
 )
 from tests.integration.celery_jobs.conftest import JSON, Workbench
 from tests.integration.celery_jobs.doubles import (
+    ABANDONMENT,
     FAILURE_CALLBACK,
-    REJECTION,
     SOFT_LIMIT,
+    AbandonedJob,
     AcmeKeywordError,
     BridgeDownJob,
     FlakyJob,
     IgnoringTaskJob,
     NotOpenJob,
     RaisingJob,
-    RejectedJob,
     RejectingTaskJob,
     SoftLimitJob,
     SucceedingJob,
@@ -45,7 +45,7 @@ class TestFailureCallbackAcrossSerializers:
             pytest.param(AcmeKeywordError("acme", reason="deleted"), id="keyword-error"),
         ],
     )
-    def test_a_rejected_job_notifies_once_with_the_error_class_and_message(
+    def test_an_abandoned_job_notifies_once_with_the_error_class_and_message(
         self, served: Workbench, error: Exception
     ) -> None:
         RaisingJob.error = error
@@ -61,12 +61,12 @@ class TestFailureCallbackAcrossSerializers:
 
 @JSON
 class TestFailureCallbackFromTheWorker:
-    def test_a_job_rejection_notifies_once_with_its_reason(self, served: Workbench) -> None:
-        task_id = served.send(served.tasks[RejectedJob], failure_callback=FAILURE_CALLBACK)
+    def test_a_job_abandonment_notifies_once_with_its_reason(self, served: Workbench) -> None:
+        task_id = served.send(served.tasks[AbandonedJob], failure_callback=FAILURE_CALLBACK)
         _, calls = served.settle(task_id, notified=1)
 
         assert [(call["exc_type"], call["exc_msg"]) for call in calls] == [
-            ("JobRejection", REJECTION)
+            ("JobAbandonment", ABANDONMENT)
         ]
 
     def test_a_worker_that_could_not_open_its_application_notifies_once(
@@ -123,7 +123,7 @@ class TestFailureCallbackFromTheWorker:
         assert calls == []
 
     def test_a_job_without_a_failure_callback_notifies_no_one(self, served: Workbench) -> None:
-        task_id = served.send(served.tasks[RejectedJob])
+        task_id = served.send(served.tasks[AbandonedJob])
         stored, calls = served.settle(task_id, notified=0)
 
         assert stored.state == "FAILURE"
@@ -148,11 +148,11 @@ class TestBrokenFailureCallbackSend:
         monkeypatch.setattr(served.app, "send_task", refuse_the_callback)
         caplog.set_level(logging.ERROR)
 
-        task_id = served.send(served.tasks[RejectedJob], failure_callback=FAILURE_CALLBACK)
+        task_id = served.send(served.tasks[AbandonedJob], failure_callback=FAILURE_CALLBACK)
         stored, calls = served.settle(task_id, notified=0)
 
         assert calls == []
-        assert (stored.state, type(stored.result).__name__) == ("FAILURE", "JobRejection")
+        assert (stored.state, type(stored.result).__name__) == ("FAILURE", "JobAbandonment")
         assert [
             record.msg["event"]
             for record in caplog.records

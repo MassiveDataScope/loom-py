@@ -11,17 +11,17 @@ from celery.worker.request import Request  # type: ignore[import-untyped]
 
 from loom.core.job.envelope import wire_job_name
 from loom.core.job.job import Job
-from loom.core.job.outcome import JobRejection
+from loom.core.job.outcome import JobAbandonment
 from tests.integration.celery_jobs.conftest import JSON, Workbench
-from tests.integration.celery_jobs.doubles import FAILURE_CALLBACK, REJECTION, RejectedJob
+from tests.integration.celery_jobs.doubles import ABANDONMENT, FAILURE_CALLBACK, AbandonedJob
 
 
-class TestEagerRejection:
+class TestEagerAbandonment:
     def test_the_result_raises_the_jobs_own_error_after_sending_the_failure_callback(
         self, workbench: Callable[[str], Workbench], monkeypatch: pytest.MonkeyPatch
     ) -> None:
         bench = workbench("json")
-        task: Job[None] = bench.job_task(RejectedJob)
+        task: Job[None] = bench.job_task(AbandonedJob)
         sent = MagicMock()
         monkeypatch.setattr(bench.app, "send_task", sent)
         monkeypatch.setitem(bench.app.conf, "task_always_eager", True)
@@ -29,22 +29,22 @@ class TestEagerRejection:
         result = task.apply(kwargs={"failure_callback": "on-error"})  # type: ignore[attr-defined]
 
         assert result.failed()
-        with pytest.raises(JobRejection, match=REJECTION):
+        with pytest.raises(JobAbandonment, match=ABANDONMENT):
             result.get()
         sent.assert_called_once()
         assert sent.call_args.args == ("on-error",)
-        assert sent.call_args.kwargs["kwargs"]["exc_type"] == "JobRejection"
+        assert sent.call_args.kwargs["kwargs"]["exc_type"] == "JobAbandonment"
 
 
 @JSON
-class TestWorkerRejection:
+class TestWorkerAbandonment:
     def test_is_stored_once_with_its_error_and_acked_not_requeued(
         self, served: Workbench, monkeypatch: pytest.MonkeyPatch
     ) -> None:
-        RejectedJob.runs.clear()
+        AbandonedJob.runs.clear()
         failures: list[str] = []
         settlements: list[tuple[str, ...]] = []
-        job_name = wire_job_name(RejectedJob.__qualname__)
+        job_name = wire_job_name(AbandonedJob.__qualname__)
 
         def on_failure(exception: BaseException | None = None, **_: object) -> None:
             failures.append(type(exception).__name__)
@@ -64,13 +64,13 @@ class TestWorkerRejection:
         monkeypatch.setattr(Request, "reject", reject_spy)
         signals.task_failure.connect(on_failure, weak=False)
         try:
-            task_id = served.send(served.tasks[RejectedJob], failure_callback=FAILURE_CALLBACK)
+            task_id = served.send(served.tasks[AbandonedJob], failure_callback=FAILURE_CALLBACK)
             stored, calls = served.settle(task_id, notified=1)
         finally:
             signals.task_failure.disconnect(on_failure)
 
-        assert (stored.state, type(stored.result)) == ("FAILURE", JobRejection)
+        assert (stored.state, type(stored.result)) == ("FAILURE", JobAbandonment)
         assert [call["hook"] for call in calls] == ["on_failure"]
-        assert failures.count("JobRejection") == 1
+        assert failures.count("JobAbandonment") == 1
         assert settlements == [("ack",)]
-        assert RejectedJob.runs == ["ran"]
+        assert AbandonedJob.runs == ["ran"]

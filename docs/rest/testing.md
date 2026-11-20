@@ -313,7 +313,7 @@ settles it, and loom logs that and reports the message. `worker.sqs` is a boto3
 `sqs` client of the mock, and `worker.queue_url` and `worker.dead_letter_url`
 name the queues, so a test reads what the function left in them. Workers on the
 same queue share it, so nested workers see each other's messages. A message that
-cannot be read is rejected and is not in `batchItemFailures`.
+cannot be read is abandoned and is not in `batchItemFailures`.
 
 A direct trigger returns nothing and raises when a job fails:
 
@@ -369,7 +369,7 @@ from loom.testing import ManualTimer, Override
 timer = ManualTimer()
 harness = HttpTestHarness(overrides=[Override.instance(JobTimer, timer)])
 
-# a dispatch with countdown=60, a JobRetry or a failure backoff now waits
+# a dispatch with countdown=60, a JobPostponement or a failure backoff now waits
 await timer.advance(59)  # nothing runs
 await timer.advance(1)  # the job runs, then any step it scheduled within the move
 ```

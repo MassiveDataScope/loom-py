@@ -27,18 +27,18 @@ _T = TypeVar("_T")
 MAX_BATCH_ENTRIES = 10
 MAX_BATCH_BYTES = 1024 * 1024
 """What one batch call carries at most, in entries and in body bytes."""
-DEFERRALS_ATTRIBUTE = "loom.deferrals"
+POSTPONEMENTS_ATTRIBUTE = "loom.postponements"
 """The message attribute counting how many times a job asked to run again."""
-REJECTION_REASON_ATTRIBUTE = "loom.rejection_reason"
+ABANDONMENT_REASON_ATTRIBUTE = "loom.abandonment_reason"
 """The message attribute holding why a message was sent to the dead-letter queue."""
 REASON_MAX_CHARS = 256
-"""The longest rejection reason kept; a longer one is cut."""
+"""The longest abandonment reason kept; a longer one is cut."""
 
 _URL_REGION = re.compile(r"https?://sqs\.([a-z0-9-]+)\.")
 
 
 class DeadLetterPolicy(StrEnum):
-    """What becomes of a message whose job is rejected for good."""
+    """What becomes of a message whose job is abandoned for good."""
 
     REDRIVE = "redrive"
     DISCARD = "discard"
@@ -49,7 +49,7 @@ class QueueConfig(msgspec.Struct, frozen=True, kw_only=True, forbid_unknown_fiel
 
     Attributes:
         url: The queue URL; ``.fifo`` at its end marks a FIFO queue.
-        dead_letter: ``redrive`` sends a rejected message to the queue's
+        dead_letter: ``redrive`` sends an abandoned message to the queue's
             dead-letter queue and leaves the attempt limit to its
             ``RedrivePolicy``; ``discard`` drops it and ``max_attempts`` decides.
     """
@@ -79,7 +79,7 @@ class QueueConfig(msgspec.Struct, frozen=True, kw_only=True, forbid_unknown_fiel
         return self.url.rstrip("/").split("/")[-1]
 
     @classmethod
-    def refuse_misshapen(cls, written: Any, path: str) -> None:
+    def check_written_shape(cls, written: Any, path: str) -> None:
         """Refuse ``sqs.queues`` that is no mapping, or an entry written as a bare URL.
 
         Args:
@@ -122,7 +122,7 @@ class BatchResult:
         """The ids SQS answered a failure for, in a call that itself went through."""
         return [message_id for message_id in self.failed if message_id not in self.unanswered]
 
-    def merged(self, other: BatchResult) -> BatchResult:
+    def merge(self, other: BatchResult) -> BatchResult:
         """This result followed by *other*."""
         return BatchResult(
             (*self.succeeded, *other.succeeded),
@@ -171,7 +171,7 @@ class OutgoingMessage:
 
 
 @dataclass(frozen=True, slots=True)
-class SqsRecord:
+class SQSRecord:
     """A message a Lambda consumer received, as settlement needs it.
 
     Attributes:
@@ -182,8 +182,8 @@ class SqsRecord:
         attributes: The message attributes, in the shape the SQS API takes.
         queue_arn: The ARN of the queue it was received from.
         receive_count: ``ApproximateReceiveCount``: how many times SQS delivered it.
-        deferrals: How many times the job asked to run again; zero for a message never deferred.
-        unreadable: Why loom cannot read its counts; empty when it can.
+        postponements: How many times the job asked to run again; zero when it never did.
+        unreadable_reason: Why loom cannot read its counts; ``None`` when it can.
     """
 
     message_id: str
@@ -193,11 +193,11 @@ class SqsRecord:
     attributes: Mapping[str, Mapping[str, Any]] = field(default_factory=dict)
     queue_arn: str = ""
     receive_count: int = 1
-    deferrals: int = 0
-    unreadable: str = ""
+    postponements: int = 0
+    unreadable_reason: str | None = None
 
     @classmethod
-    def from_event(cls, record: Any) -> SqsRecord:
+    def from_event(cls, record: Any) -> SQSRecord:
         """The record of an SQS event's ``Records`` entry; what it lacks is empty."""
         if not isinstance(record, Mapping):
             return cls("", "", "")
@@ -217,7 +217,7 @@ class SqsRecord:
         except (AttributeError, KeyError, TypeError, ValueError):
             return cls(
                 **fields,
-                unreadable="the message attributes are not readable (each needs a dataType)",
+                unreadable_reason="the message attributes are not readable (each needs a dataType)",
             )
         for name, written, minimum, reason in (
             (
@@ -227,18 +227,18 @@ class SqsRecord:
                 "ApproximateReceiveCount is not a positive integer",
             ),
             (
-                "deferrals",
-                fields["attributes"].get(DEFERRALS_ATTRIBUTE, {}).get("StringValue", 0),
+                "postponements",
+                fields["attributes"].get(POSTPONEMENTS_ATTRIBUTE, {}).get("StringValue", 0),
                 0,
-                f"{DEFERRALS_ATTRIBUTE} is not a non-negative integer",
+                f"{POSTPONEMENTS_ATTRIBUTE} is not a non-negative integer",
             ),
         ):
             try:
                 fields[name] = int(written)
             except (TypeError, ValueError):
-                return cls(**fields, unreadable=reason)
+                return cls(**fields, unreadable_reason=reason)
             if fields[name] < minimum:
-                return cls(**fields, unreadable=reason)
+                return cls(**fields, unreadable_reason=reason)
         return cls(**fields)
 
     @property
@@ -251,6 +251,11 @@ class SqsRecord:
         """Whether it was received from a FIFO queue."""
         return self.queue_arn.endswith(FIFO_SUFFIX)
 
+    @property
+    def is_readable(self) -> bool:
+        """Whether loom can read its attributes and counts."""
+        return self.unreadable_reason is None
+
     @staticmethod
     def _attribute(written: Mapping[str, Any]) -> dict[str, Any]:
         attribute: dict[str, Any] = {"DataType": written["dataType"]}
@@ -260,28 +265,31 @@ class SqsRecord:
             attribute["BinaryValue"] = base64.b64decode(written["binaryValue"])
         return attribute
 
-    def resent(self, delay: Countdown) -> OutgoingMessage:
-        """The same body and attributes, to become visible after *delay*, one deferral more."""
-        deferred = {
-            DEFERRALS_ATTRIBUTE: {"DataType": "Number", "StringValue": str(self.deferrals + 1)}
+    def as_postponement(self, delay: Countdown) -> OutgoingMessage:
+        """The same body and attributes, to become visible after *delay*, one postponement more."""
+        postponed = {
+            POSTPONEMENTS_ATTRIBUTE: {
+                "DataType": "Number",
+                "StringValue": str(self.postponements + 1),
+            }
         }
         return OutgoingMessage(
             id=self.message_id,
             body=self.body,
             delay=delay,
-            attributes={**self.attributes, **deferred},
+            attributes={**self.attributes, **postponed},
         )
 
-    def rejected(self, reason: str, *, fifo: bool) -> OutgoingMessage:
+    def as_abandonment(self, reason: str, *, fifo: bool) -> OutgoingMessage:
         """The same body and attributes, with *reason* cut to ``REASON_MAX_CHARS``.
 
         Args:
-            reason: Why the message is rejected.
+            reason: Why the message is abandoned.
             fifo: Whether the target queue is FIFO: it gets the group id and a new
                 deduplication id.
         """
-        rejection = {
-            REJECTION_REASON_ATTRIBUTE: {
+        abandonment = {
+            ABANDONMENT_REASON_ATTRIBUTE: {
                 "DataType": "String",
                 "StringValue": reason[:REASON_MAX_CHARS],
             }
@@ -291,24 +299,24 @@ class SqsRecord:
             body=self.body,
             group_id=(self.group_id or self.message_id) if fifo else None,
             dedup_id=uuid.uuid4().hex if fifo else None,
-            attributes={**self.attributes, **rejection},
+            attributes={**self.attributes, **abandonment},
         )
 
 
 @dataclass(frozen=True, slots=True)
 class DeadLetter:
-    """Where a queue's rejected messages go and after how many receives SQS sends them there.
+    """Where a queue's abandoned messages go and after how many receives SQS sends them there.
 
     Attributes:
         queue: The dead-letter queue.
         max_receive_count: The ``maxReceiveCount`` of the source queue's ``RedrivePolicy``.
     """
 
-    queue: SqsQueue
+    queue: SQSQueue
     max_receive_count: int
 
 
-class SqsQueue:
+class SQSQueue:
     """One SQS queue: sends, and the batched settlement of what a consumer received.
 
     Args:
@@ -415,16 +423,12 @@ class SqsQueue:
         return same_region and (self.account_id, self.queue_name) == (account, name)
 
     def send(self, message: OutgoingMessage) -> None:
-        """Send *message* with ``SendMessage``.
-
-        Raises:
-            Exception: What the client raises, as itself.
-        """
+        """Send *message* with ``SendMessage``."""
         self._client.send_message(QueueUrl=self.url, **message.request())
 
     def send_batch(self, messages: Sequence[OutgoingMessage]) -> BatchResult:
         """Send *messages* in calls of at most ten entries and one MiB of bodies."""
-        return self._batches(
+        return self._call_in_chunks(
             self._client.send_message_batch,
             [
                 [{"Id": message.id, **message.request()} for message in chunk]
@@ -432,7 +436,7 @@ class SqsQueue:
             ],
         )
 
-    def change_visibility_batch(self, delays: Sequence[tuple[SqsRecord, Countdown]]) -> BatchResult:
+    def change_visibility_batch(self, delays: Sequence[tuple[SQSRecord, Countdown]]) -> BatchResult:
         """Make each record visible again after its delay, without receiving it again before."""
         entries = [
             {
@@ -442,12 +446,12 @@ class SqsQueue:
             }
             for record, delay in delays
         ]
-        return self._batches(
+        return self._call_in_chunks(
             self._client.change_message_visibility_batch, list(self.chunks(entries))
         )
 
-    def defer_batch(self, deferrals: Sequence[tuple[SqsRecord, Countdown]]) -> BatchResult:
-        """Send each record again with its delay and one deferral more.
+    def postpone_batch(self, postponements: Sequence[tuple[SQSRecord, Countdown]]) -> BatchResult:
+        """Send each record again with its delay and one postponement more.
 
         Raises:
             SQSDispatchError: When the queue is FIFO, which takes no per-message delay.
@@ -457,9 +461,9 @@ class SqsQueue:
                 f"queue {self.name!r} is FIFO and takes no per-message delay",
                 code=SQSErrorCode.FIFO_DELAY,
             )
-        return self.send_batch([record.resent(delay) for record, delay in deferrals])
+        return self.send_batch([record.as_postponement(delay) for record, delay in postponements])
 
-    def reject_batch(self, rejections: Sequence[tuple[SqsRecord, str]]) -> BatchResult:
+    def abandon_batch(self, abandonments: Sequence[tuple[SQSRecord, str]]) -> BatchResult:
         """Send each record to the dead-letter queue, with its reason as a message attribute.
 
         Raises:
@@ -467,7 +471,7 @@ class SqsQueue:
         """
         target = self.dead_letter().queue
         return target.send_batch(
-            [record.rejected(reason, fifo=target.is_fifo) for record, reason in rejections]
+            [record.as_abandonment(reason, fifo=target.is_fifo) for record, reason in abandonments]
         )
 
     def dead_letter(self) -> DeadLetter:
@@ -485,7 +489,7 @@ class SqsQueue:
             )
         return self._dead_letter
 
-    def consumed_retries(
+    def retries_for(
         self, jobs: Iterable[type[Job[Any]]], resolved: Callable[[type[Job[Any]]], ResolvedRetry]
     ) -> dict[type[Job[Any]], ResolvedRetry]:
         """The retry policy each of *jobs* has when consumed from this queue.
@@ -524,7 +528,7 @@ class SqsQueue:
             )
         return retries
 
-    def unserved_policy(self) -> RetryPolicy:
+    def unknown_job_policy(self) -> RetryPolicy:
         """The policy of a message that names no job this consumer serves.
 
         It is the loom default; on a ``redrive`` queue its ``max_attempts`` is the
@@ -562,7 +566,7 @@ class SqsQueue:
             raise SQSQueueConfigError(
                 f"queue {self.name!r} is dead_letter: redrive but has no RedrivePolicy: attach "
                 "a dead-letter queue to it, or set dead_letter: discard (then max_attempts "
-                "decides when a job is rejected)"
+                "decides when a job is abandoned)"
             )
         try:
             policy = json.loads(written)
@@ -576,21 +580,23 @@ class SqsQueue:
                 f"({type(exc).__name__}: {exc}): it needs deadLetterTargetArn and maxReceiveCount"
             ) from exc
         url = client.get_queue_url(QueueName=name, QueueOwnerAWSAccountId=account)["QueueUrl"]
-        target = SqsQueue(
+        target = SQSQueue(
             self._client, name, QueueConfig(url=url, dead_letter=DeadLetterPolicy.DISCARD)
         )
         self._dead_letter = DeadLetter(target, limit)
         return self._dead_letter
 
-    def _batches(
+    def _call_in_chunks(
         self, call: Callable[..., Any], chunks: Sequence[Sequence[dict[str, Any]]]
     ) -> BatchResult:
         result = BatchResult()
         for chunk in chunks:
-            result = result.merged(self._batch(call, chunk))
+            result = result.merge(self._call_chunk(call, chunk))
         return result
 
-    def _batch(self, call: Callable[..., Any], entries: Sequence[dict[str, Any]]) -> BatchResult:
+    def _call_chunk(
+        self, call: Callable[..., Any], entries: Sequence[dict[str, Any]]
+    ) -> BatchResult:
         ids = [entry["Id"] for entry in entries]
         try:
             response = call(QueueUrl=self.url, Entries=list(entries))
@@ -602,7 +608,7 @@ class SqsQueue:
         return BatchResult(tuple(id_ for id_ in ids if id_ not in failed), failed)
 
 
-class SqsQueues:
+class SQSQueues:
     """The queues of ``sqs.queues``, each built once and calling SQS only when used.
 
     Building one, or asking it for a queue, makes no call to SQS.
@@ -613,9 +619,9 @@ class SqsQueues:
     """
 
     def __init__(self, client: Any, queues: Mapping[str, QueueConfig]) -> None:
-        self._by_name = {name: SqsQueue(client, name, config) for name, config in queues.items()}
+        self._by_name = {name: SQSQueue(client, name, config) for name, config in queues.items()}
 
-    def named(self, name: str) -> SqsQueue:
+    def named(self, name: str) -> SQSQueue:
         """The queue *name* of ``sqs.queues``.
 
         Raises:
@@ -635,7 +641,7 @@ __all__ = [
     "DeadLetterPolicy",
     "OutgoingMessage",
     "QueueConfig",
-    "SqsQueue",
-    "SqsQueues",
-    "SqsRecord",
+    "SQSQueue",
+    "SQSQueues",
+    "SQSRecord",
 ]

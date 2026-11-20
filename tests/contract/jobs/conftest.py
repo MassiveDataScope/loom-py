@@ -5,7 +5,7 @@ contract by adding a driver here and its name to ``BACKENDS``; one that
 redelivers differently from a delayed message (``Redelivery.SAME`` or
 ``Redelivery.NONE``) adds a driver here and its name to ``UNDELAYED_BACKENDS``.
 The inline service starts every job at its first attempt and waits on a timer:
-it cannot be handed an attempt or a number of deferrals, so it has its own
+it cannot be handed an attempt or a number of postponements, so it has its own
 contract in ``test_inline_contract``, over the same jobs.
 """
 
@@ -28,24 +28,24 @@ from loom.core.job.delivery import JobDelivery
 from loom.core.job.envelope import JobEnvelope
 from loom.core.job.job import Job
 from loom.core.job.outcome import (
-    Deferred,
+    Abandoned,
     Failed,
+    JobAbandonment,
     JobOutcome,
-    JobRejection,
-    JobRetry,
-    Rejected,
+    JobPostponement,
+    Postponed,
     Succeeded,
 )
 from loom.core.job.policy import Redelivery
 from loom.core.job.runner import JobRunner
 from loom.core.job.service import InlineJobService
 from loom.jobs.aws.queue import (
-    DEFERRALS_ATTRIBUTE,
-    REJECTION_REASON_ATTRIBUTE,
+    ABANDONMENT_REASON_ATTRIBUTE,
+    POSTPONEMENTS_ATTRIBUTE,
     QueueConfig,
-    SqsRecord,
+    SQSRecord,
 )
-from loom.jobs.aws.settlement import SqsSettlement
+from loom.jobs.aws.settlement import SQSJobSettlement
 from loom.jobs.aws.sqs import SQSConfig
 from loom.testing.jobs import ManualTimer
 from tests.helpers.aws import ACCOUNT
@@ -71,7 +71,7 @@ class Driver(Protocol):
     """Runs one delivery of a job the way a transport does and says how it settled."""
 
     async def deliver(
-        self, job_type: type[Job[Any]], *, attempt: int = 1, deferrals: int = 0
+        self, job_type: type[Job[Any]], *, attempt: int = 1, postponements: int = 0
     ) -> Settlement: ...
 
 
@@ -88,7 +88,7 @@ class RunnerDriver:
         self._kernel = kernel
 
     async def deliver(
-        self, job_type: type[Job[Any]], *, attempt: int = 1, deferrals: int = 0
+        self, job_type: type[Job[Any]], *, attempt: int = 1, postponements: int = 0
     ) -> Settlement:
         self._kernel.factory.register(job_type)
         delivery = JobDelivery(
@@ -96,24 +96,24 @@ class RunnerDriver:
             envelope=JobEnvelope(job=job_type.__qualname__),
             task_id="task-1",
             attempt=attempt,
-            deferrals=deferrals,
+            postponements=postponements,
             policy=JobSettings().of(job_type).retry.policy,
         )
         return _settlement(await self._runner.run(delivery))
 
 
-class SqsDriver:
+class SQSDriver:
     """Delivers a record through the runner and settles it with SQS, read off the calls made.
 
-    SQS is told the delay of a failed or deferred message and the reason of a
-    rejected one; the reason of the others is the outcome's own.
+    SQS is told the delay of a failed or postponed message and the reason of a
+    abandoned one; the reason of the others is the outcome's own.
     """
 
     def __init__(
         self,
         kernel: JobKernel,
         client: FakeSqs,
-        settlement: SqsSettlement,
+        settlement: SQSJobSettlement,
         redelivery: Redelivery,
         suffix: str,
     ) -> None:
@@ -129,7 +129,7 @@ class SqsDriver:
 
     @staticmethod
     @contextmanager
-    def open(kernel: JobKernel, *, fifo: bool = False) -> Iterator[SqsDriver]:
+    def open(kernel: JobKernel, *, fifo: bool = False) -> Iterator[SQSDriver]:
         suffix = ".fifo" if fifo else ""
         queue = f"{URL_BASE}/jobs{suffix}"
         policy = {
@@ -140,23 +140,26 @@ class SqsDriver:
         config = SQSConfig(queues={"jobs": QueueConfig(url=queue)})
         with pytest.MonkeyPatch.context() as patch:
             FakeAwsIsland(client=client).install(patch)
-            settlement = SqsSettlement(AwsClients(), config, "jobs")
+            settlement = SQSJobSettlement(AwsClients(), config, "jobs")
             settlement.queue.read_dead_letter(client)
             redelivery = Redelivery.SAME if fifo else Redelivery.DELAYED
-            yield SqsDriver(kernel, client, settlement, redelivery, suffix)
+            yield SQSDriver(kernel, client, settlement, redelivery, suffix)
 
     async def deliver(
-        self, job_type: type[Job[Any]], *, attempt: int = 1, deferrals: int = 0
+        self, job_type: type[Job[Any]], *, attempt: int = 1, postponements: int = 0
     ) -> Settlement:
         self._kernel.factory.register(job_type)
-        record = SqsRecord.from_event(
+        record = SQSRecord.from_event(
             {
                 "messageId": "message-1",
                 "receiptHandle": "handle-1",
                 "body": "{}",
                 "attributes": {"ApproximateReceiveCount": str(attempt)},
                 "messageAttributes": {
-                    DEFERRALS_ATTRIBUTE: {"dataType": "Number", "stringValue": str(deferrals)}
+                    POSTPONEMENTS_ATTRIBUTE: {
+                        "dataType": "Number",
+                        "stringValue": str(postponements),
+                    }
                 },
                 "eventSourceARN": f"arn:aws:sqs:eu-west-1:{ACCOUNT}:jobs{self._suffix}",
             }
@@ -167,7 +170,7 @@ class SqsDriver:
                 envelope=JobEnvelope(job=job_type.__qualname__),
                 task_id=record.message_id,
                 attempt=record.receive_count,
-                deferrals=record.deferrals,
+                postponements=record.postponements,
                 policy=JobSettings().of(job_type).retry.policy,
             )
         )
@@ -175,20 +178,20 @@ class SqsDriver:
         redelivered = self._settlement.settle_all([(record, outcome)])
         return self._observed(outcome, redelivered)
 
-    def _observed(self, outcome: JobOutcome, redelivered: list[SqsRecord]) -> Settlement:
+    def _observed(self, outcome: JobOutcome, redelivered: list[SQSRecord]) -> Settlement:
         expected = _settlement(outcome)
         (visibility,) = self._client.entries("change_message_visibility_batch") or [None]
-        (resent,) = self._client.entries("send_message_batch", self.queue) or [None]
+        (postponed_send,) = self._client.entries("send_message_batch", self.queue) or [None]
         (dead,) = self._client.entries(
             "send_message_batch", f"{URL_BASE}/jobs-dlq{self._suffix}"
         ) or [None]
         if visibility is not None:
             return Settlement("failed", visibility["VisibilityTimeout"], expected.reason)
-        if resent is not None:
-            return Settlement("deferred", resent["DelaySeconds"], expected.reason)
+        if postponed_send is not None:
+            return Settlement("postponed", postponed_send["DelaySeconds"], expected.reason)
         if dead is not None:
-            reason = dead["MessageAttributes"][REJECTION_REASON_ATTRIBUTE]["StringValue"]
-            return Settlement("rejected", reason=reason)
+            reason = dead["MessageAttributes"][ABANDONMENT_REASON_ATTRIBUTE]["StringValue"]
+            return Settlement("abandoned", reason=reason)
         assert redelivered == []
         return Settlement("succeeded", result=expected.result)
 
@@ -197,10 +200,10 @@ def _settlement(outcome: JobOutcome) -> Settlement:
     match outcome:
         case Succeeded(result=result):
             return Settlement("succeeded", result=result)
-        case Deferred(delay=delay, reason=reason):
-            return Settlement("deferred", delay.seconds, reason)
-        case Rejected(reason=reason):
-            return Settlement("rejected", reason=reason)
+        case Postponed(delay=delay, reason=reason):
+            return Settlement("postponed", delay.seconds, reason)
+        case Abandoned(reason=reason):
+            return Settlement("abandoned", reason=reason)
         case Failed(error=error, delay=delay):
             return Settlement("failed", delay.seconds, type(error).__qualname__)
 
@@ -222,7 +225,7 @@ class CeleryDriver:
         job_type: type[Job[Any]],
         *,
         attempt: int = 1,
-        deferrals: int = 0,
+        postponements: int = 0,
     ) -> Settlement:
         self._kernel.factory.register(job_type)
         task = _make_job_task(
@@ -233,14 +236,14 @@ class CeleryDriver:
             self._runtime,
             settings=JobSettings(),
         )
-        return await asyncio.to_thread(self._run, task, attempt, deferrals)
+        return await asyncio.to_thread(self._run, task, attempt, postponements)
 
     @staticmethod
-    def _run(task: Any, attempt: int, deferrals: int) -> Settlement:
-        kwargs = {"deferrals": deferrals}
+    def _run(task: Any, attempt: int, postponements: int) -> Settlement:
+        kwargs = {"postponements": postponements}
         task.push_request(
             id="task-1",
-            retries=attempt - 1 + deferrals,
+            retries=attempt - 1 + postponements,
             kwargs=kwargs,
             is_eager=False,
             called_directly=False,
@@ -250,13 +253,13 @@ class CeleryDriver:
         except Retry as retry:
             delay = int(retry.when)
             error = retry.exc
-            if isinstance(error, JobRetry):
-                return Settlement("deferred", delay, error.reason)
+            if isinstance(error, JobPostponement):
+                return Settlement("postponed", delay, error.reason)
             return Settlement("failed", delay, type(error).__qualname__)
-        except JobRejection as rejection:
-            return Settlement("rejected", reason=rejection.reason)
+        except JobAbandonment as abandonment:
+            return Settlement("abandoned", reason=abandonment.reason)
         except Exception as error:
-            return Settlement("rejected", reason=type(error).__qualname__)
+            return Settlement("abandoned", reason=type(error).__qualname__)
         finally:
             task.pop_request()
 
@@ -265,7 +268,7 @@ class CeleryDriver:
 def driver(request: pytest.FixtureRequest) -> Iterator[Driver]:
     kernel = JobKernel()
     if request.param == "sqs":
-        with SqsDriver.open(kernel) as sqs:
+        with SQSDriver.open(kernel) as sqs:
             yield sqs
         return
     if request.param == "celery":
@@ -280,7 +283,7 @@ def driver(request: pytest.FixtureRequest) -> Iterator[Driver]:
 def _undelayed(backend: str, redelivery: Redelivery) -> Iterator[Driver]:
     kernel = JobKernel()
     if backend == "sqs-fifo":
-        with SqsDriver.open(kernel, fifo=True) as sqs:
+        with SQSDriver.open(kernel, fifo=True) as sqs:
             yield sqs
         return
     yield RunnerDriver(kernel.invoke_envelope(), kernel, redelivery)

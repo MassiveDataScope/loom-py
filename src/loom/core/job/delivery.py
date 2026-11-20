@@ -23,8 +23,8 @@ class JobDelivery:
         job_type: The job to run.
         envelope: The message: parameters, payload, trace and caller.
         task_id: The transport's id of the message, or ``None`` when it has none.
-        attempt: The attempt number, from 1; deferrals do not advance it.
-        deferrals: How many times the job asked to run again.
+        attempt: The attempt number, from 1; postponements do not advance it.
+        postponements: How many times the job asked to run again.
         policy: The resolved retry policy of the job.
         timeout_s: The seconds the run may take, or ``None`` for no limit.
     """
@@ -33,6 +33,6 @@ class JobDelivery:
     envelope: JobEnvelope
     task_id: str | None
     attempt: int
-    deferrals: int
+    postponements: int
     policy: RetryPolicy
     timeout_s: float | None = None

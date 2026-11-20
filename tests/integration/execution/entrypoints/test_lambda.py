@@ -76,7 +76,7 @@ class TestLambdaJobsEnvelope:
             None,
             settings=application.job_settings,
             attempt=1,
-            deferrals=0,
+            postponements=0,
         )
 
         [job] = built

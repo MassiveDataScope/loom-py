@@ -314,7 +314,7 @@ def Delivery() -> Any:
     """Factory returning the runtime marker for the job-delivery parameter.
 
     The executor injects the :class:`~loom.core.job.delivery.JobDelivery` the
-    job was run with: its attempt, its deferrals and its retry policy. It is
+    job was run with: its attempt, its postponements and its retry policy. It is
     ``None`` when the execution was not started by a job runner, so a job run
     by another job sees no delivery of its own.
 

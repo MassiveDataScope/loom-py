@@ -35,8 +35,8 @@ from loom.jobs.aws.queue import (
     BatchResult,
     OutgoingMessage,
     QueueConfig,
-    SqsQueue,
-    SqsQueues,
+    SQSQueue,
+    SQSQueues,
 )
 
 if TYPE_CHECKING:
@@ -77,7 +77,7 @@ class SQSConfig(AwsClientConfig, frozen=True, kw_only=True):
             ConfigError: When the section is invalid, or a queue is written as a bare URL.
         """
         written = ctx.section(ConfigKey.SQS, dict) if ctx.has(ConfigKey.SQS) else {}
-        QueueConfig.refuse_misshapen(written.get("queues", {}), "sqs.queues")
+        QueueConfig.check_written_shape(written.get("queues", {}), "sqs.queues")
         return cls.from_config(ctx, ConfigKey.SQS, own=written)
 
 
@@ -119,7 +119,7 @@ def build_backend(context: JobBackendContext) -> SQSJobService:
 class _PendingSQSSend:
     """One ``SendMessage`` on the publish lane; ``task_name``/``task_id`` name it in logs."""
 
-    queue: SqsQueue
+    queue: SQSQueue
     task_name: str
     task_id: str
     message: OutgoingMessage = field(repr=False)
@@ -208,7 +208,7 @@ class _PendingSQSBatch:
         queue = sends[0].queue
         failed: list[_Failure] = []
         async with limit:
-            for chunk in SqsQueue.chunks(
+            for chunk in SQSQueue.chunks(
                 sends, self.config.batch_size, weight=lambda send: send.size
             ):
                 if queue.is_fifo and failed:
@@ -218,7 +218,7 @@ class _PendingSQSBatch:
         return failed
 
     async def _send_chunk(
-        self, queue: SqsQueue, chunk: list[_PendingSQSSend], *, retry: bool
+        self, queue: SQSQueue, chunk: list[_PendingSQSSend], *, retry: bool
     ) -> list[_Failure]:
         """Send ``chunk``; the entries SQS refuses are sent once more when ``retry``."""
         call = asyncio.ensure_future(asyncio.to_thread(self._call, queue, chunk))
@@ -234,7 +234,7 @@ class _PendingSQSBatch:
             return await self._send_chunk(queue, refused, retry=False)
         return [(by_id[task_id], code) for task_id, code in result.failed.items()]
 
-    def _call(self, queue: SqsQueue, chunk: list[_PendingSQSSend]) -> BatchResult:
+    def _call(self, queue: SQSQueue, chunk: list[_PendingSQSSend]) -> BatchResult:
         """In the thread: hand ``chunk`` to SQS, unless the batch stopped before it started."""
         if self.stopped.is_set():
             raise asyncio.CancelledError
@@ -261,7 +261,7 @@ class SQSJobService:
     ) -> None:
         self._config = config
         self._settings = settings or JobSettings()
-        self._queues = SqsQueues(client, config.queues)
+        self._queues = SQSQueues(client, config.queues)
         self._new_batch = functools.partial(_PendingSQSBatch, config)
         self._inline = InlineJobService(factory, executor, settings=self._settings)
         self._metrics = NoMetrics() if metrics is None else metrics
@@ -288,7 +288,7 @@ class SQSJobService:
         priority: int | None = None,
     ) -> JobHandle[ResultT]:
         """Validate and encode now, so a refusal comes before the commit; send after it."""
-        send, handle = self._message(
+        send, handle = self._build_send(
             job_type,
             params=params,
             payload=payload,
@@ -322,7 +322,7 @@ class SQSJobService:
         if they roll back. Work that depends on the caller's writes uses
         :meth:`dispatch_after_commit`.
         """
-        send, handle = self._message(
+        send, handle = self._build_send(
             job_type,
             params=params,
             payload=payload,
@@ -335,7 +335,7 @@ class SQSJobService:
         await send()
         return handle
 
-    def _message(
+    def _build_send(
         self,
         job_type: type[Job[ResultT]],
         *,

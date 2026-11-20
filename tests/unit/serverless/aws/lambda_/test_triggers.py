@@ -17,11 +17,11 @@ from loom.core.engine.events import RuntimeEvent
 from loom.core.errors import BoundaryValidationError, LoomError, MalformedJobMessage
 from loom.core.identity import Identity, current_identity
 from loom.core.job.job import Job
-from loom.core.job.outcome import JobRetry
+from loom.core.job.outcome import JobPostponement
 from loom.core.observability.event import EventKind, LifecycleEvent, Scope
 from loom.core.observability.runtime import ObservabilityRuntime
 from loom.core.use_case import Input
-from loom.jobs.aws.queue import REJECTION_REASON_ATTRIBUTE
+from loom.jobs.aws.queue import ABANDONMENT_REASON_ATTRIBUTE
 from loom.rest.auth import RequestCredentials
 from loom.serverless.aws.lambda_ import LambdaAdapter, S3Object
 from loom.serverless.aws.lambda_.triggers import eventbridge, s3, schedule, sns
@@ -59,7 +59,7 @@ class ImportInvoice(Job[None]):
         if invoice.number == "fail":
             raise ValueError("job failed")
         if invoice.number == "wait":
-            raise JobRetry("tenant warming up", 30)
+            raise JobPostponement("tenant warming up", 30)
         if invoice.number == "final":
             raise _Final("job failed finally", code="final")
 
@@ -284,16 +284,16 @@ class TestDirectTrigger:
         with pytest.raises(error):
             handler(event, None)
 
-    def test_a_job_retry_is_rejected_not_deferred_as_the_same_event_comes_back_undelayed(
+    def test_a_job_postponement_is_abandoned_not_postponed_as_the_same_event_comes_back_undelayed(
         self, serve: Serve
     ) -> None:
         metrics = _Metrics()
         handler = serve(_events(), metrics=metrics)
 
-        with pytest.raises(JobRetry, match="warming up"):
+        with pytest.raises(JobPostponement, match="warming up"):
             handler(LambdaEvent.eventbridge({"number": "wait"}), None)
 
-        assert metrics.kinds == [RuntimeEventKind.JOB_STARTED, RuntimeEventKind.JOB_REJECTED]
+        assert metrics.kinds == [RuntimeEventKind.JOB_STARTED, RuntimeEventKind.JOB_ABANDONED]
 
     def test_a_failure_is_reported_as_failed_for_lambda_to_retry_the_event(
         self, serve: Serve
@@ -439,7 +439,7 @@ class TestQueued:
         assert [invoice.number for invoice, _ in ran] == ["1", "fail"]
         assert {caller.mechanism for _, caller in ran} == {f"lambda:{_FUNCTION}:eventbridge"}
 
-    def test_a_final_failure_is_rejected_to_the_dead_letter_queue_not_reported(
+    def test_a_final_failure_is_abandoned_to_the_dead_letter_queue_not_reported(
         self,
         serve: Serve,
         ran: list[tuple[Any, Identity]],
@@ -451,8 +451,8 @@ class TestQueued:
 
         result = handler(event, None)
 
-        (rejected,) = sqs.entries("send_message_batch", _DEAD)
-        reason = rejected["MessageAttributes"][REJECTION_REASON_ATTRIBUTE]["StringValue"]
+        (abandoned,) = sqs.entries("send_message_batch", _DEAD)
+        reason = abandoned["MessageAttributes"][ABANDONMENT_REASON_ATTRIBUTE]["StringValue"]
         assert (result, reason) == ({"batchItemFailures": []}, "_Final")
         assert [invoice.number for invoice, _ in ran] == ["final"]
 
@@ -480,7 +480,7 @@ class TestQueued:
         )
 
     @pytest.mark.parametrize(("dead_letter", "dead_lettered"), [("discard", 0), ("redrive", 1)])
-    def test_an_sns_message_delivered_raw_is_rejected_not_reported(
+    def test_an_sns_message_delivered_raw_is_abandoned_not_reported(
         self,
         serve: Serve,
         ran: list[tuple[Any, Identity]],

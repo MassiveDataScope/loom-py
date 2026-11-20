@@ -36,7 +36,7 @@ class TestJobEnvelope:
     @pytest.mark.parametrize(
         ("error", "retryable"), [(MalformedJobMessage("{"), False), (UnknownJob("missing"), True)]
     )
-    def test_a_malformed_message_is_rejected_and_an_unknown_job_retried(
+    def test_a_malformed_message_is_abandoned_and_an_unknown_job_retried(
         self, error: Exception, retryable: bool
     ) -> None:
         assert error.retryable is retryable  # type: ignore[attr-defined]

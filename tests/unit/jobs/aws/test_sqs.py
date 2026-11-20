@@ -202,7 +202,7 @@ async def _until_logged(caplog: pytest.LogCaptureFixture, event: str) -> None:
         await asyncio.sleep(0.01)
 
 
-class TestSqsProducer:
+class TestSQSProducer:
     def test_a_producer_applies_no_retry_policy_and_logs_none(
         self,
         tmp_path: Path,
@@ -219,7 +219,7 @@ class TestSqsProducer:
         ]
 
 
-class TestSqsDispatch:
+class TestSQSDispatch:
     async def test_a_standard_queue_gets_the_envelope_and_the_delay(
         self, service: JobService, client: SQSClient
     ) -> None:

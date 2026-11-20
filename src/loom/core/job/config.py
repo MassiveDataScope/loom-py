@@ -140,18 +140,18 @@ class ResolvedRetry:
         """
         values = {**asdict(self.policy.backoff), "max_attempts": self.policy.max_attempts}
         sources = dict(self.sources)
-        if not redelivery.retries:
+        if not redelivery.can_retry:
             values["max_attempts"] = 1
             sources["max_attempts"] = RetrySource.NO_REDELIVERY
         origins = set(sources.values())
         if len(origins) == 1:
-            return f"{_render(values)} ({origins.pop().value})"
+            return f"{_format_fields(values)} ({origins.pop().value})"
         return ", ".join(
             f"{name}={value} ({sources[name].value})" for name, value in values.items()
         )
 
 
-def _render(values: Mapping[str, Any]) -> str:
+def _format_fields(values: Mapping[str, Any]) -> str:
     return " ".join(f"{name}={value}" for name, value in values.items())
 
 

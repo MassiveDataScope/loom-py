@@ -13,10 +13,10 @@ from loom.composition import AppConfig
 from loom.core.config import ConfigContext
 from loom.core.job.delivery import JobDelivery
 from loom.core.job.job import Job
-from loom.core.job.outcome import JobRejection, JobRetry
+from loom.core.job.outcome import JobAbandonment, JobPostponement
 from loom.core.job.policy import Backoff
 from loom.core.use_case import Delivery
-from loom.jobs.aws.queue import DEFERRALS_ATTRIBUTE, REJECTION_REASON_ATTRIBUTE
+from loom.jobs.aws.queue import ABANDONMENT_REASON_ATTRIBUTE, POSTPONEMENTS_ATTRIBUTE
 from loom.serverless.aws.lambda_ import LambdaAdapter, LambdaHandler
 from tests.helpers.aws import ACCOUNT, OTHER_REGION
 from tests.helpers.aws_island import FakeAwsIsland
@@ -47,12 +47,12 @@ class AcmeSyncJob(Job[None]):
 
 class AcmeWaitingJob(Job[None]):
     async def execute(self, marker: str = "") -> None:
-        raise JobRetry("tenant warming up", 30)
+        raise JobPostponement("tenant warming up", 30)
 
 
-class AcmeRejectingJob(Job[None]):
+class AcmeAbandoningJob(Job[None]):
     async def execute(self, marker: str = "") -> None:
-        raise JobRejection("tenant deleted")
+        raise JobAbandonment("tenant deleted")
 
 
 class AcmeFailingJob(Job[None]):
@@ -67,14 +67,14 @@ class AcmeRecordingJob(Job[None]):
 
     async def execute(self, marker: str = "", delivery: JobDelivery | None = Delivery()) -> None:
         assert delivery is not None
-        self.seen.append((delivery.attempt, delivery.deferrals, delivery.task_id))
+        self.seen.append((delivery.attempt, delivery.postponements, delivery.task_id))
 
 
 _JOB_TYPES = [
     AcmeOkJob,
     AcmeSyncJob,
     AcmeWaitingJob,
-    AcmeRejectingJob,
+    AcmeAbandoningJob,
     AcmeFailingJob,
     AcmeRecordingJob,
 ]
@@ -139,24 +139,24 @@ class TestSettlementThroughTheHandler:
             _record("ok", AcmeOkJob),
             _record("sync", AcmeSyncJob),
             _record("wait", AcmeWaitingJob),
-            _record("reject", AcmeRejectingJob),
+            _record("abandon", AcmeAbandoningJob),
             _record("fail", AcmeFailingJob),
         ]
 
         result = serve()({"Records": records}, None)
 
-        (deferred,) = sqs.entries("send_message_batch", _JOBS)
-        (rejected,) = sqs.entries("send_message_batch", _DEAD)
+        (postponed,) = sqs.entries("send_message_batch", _JOBS)
+        (abandoned,) = sqs.entries("send_message_batch", _DEAD)
         (visibility,) = sqs.entries("change_message_visibility_batch", _JOBS)
         assert _failed(result) == ["fail"]
         assert (
-            deferred["DelaySeconds"],
-            rejected["MessageAttributes"][REJECTION_REASON_ATTRIBUTE],
+            postponed["DelaySeconds"],
+            abandoned["MessageAttributes"][ABANDONMENT_REASON_ATTRIBUTE],
         ) == (
             30,
             {"DataType": "String", "StringValue": "tenant deleted"},
         )
-        assert deferred["MessageAttributes"][DEFERRALS_ATTRIBUTE]["StringValue"] == "1"
+        assert postponed["MessageAttributes"][POSTPONEMENTS_ATTRIBUTE]["StringValue"] == "1"
         assert visibility["VisibilityTimeout"] == 4
         assert [method for method, _, _ in sqs.batches].count("send_message_batch") == 2
 
@@ -174,7 +174,7 @@ class TestSettlementThroughTheHandler:
     def test_a_mixed_batch_never_deletes_a_message(self, serve: Serve, sqs: FakeSqs) -> None:
         records = [
             _record("1", AcmeOkJob),
-            _record("2", AcmeRejectingJob),
+            _record("2", AcmeAbandoningJob),
             _record("3", AcmeFailingJob),
         ]
 
@@ -183,7 +183,7 @@ class TestSettlementThroughTheHandler:
         assert (sqs.calls["delete_message"], sqs.calls["delete_message_batch"]) == (0, 0)
 
     @pytest.mark.parametrize(("body_task_id", "task_id"), [("task-9", "task-9"), (None, "m-1")])
-    def test_the_job_runs_as_the_attempt_deferrals_and_task_the_record_carries(
+    def test_the_job_runs_as_the_attempt_postponements_and_task_the_record_carries(
         self, serve: Serve, body_task_id: str | None, task_id: str
     ) -> None:
         AcmeRecordingJob.seen.clear()
@@ -194,7 +194,7 @@ class TestSettlementThroughTheHandler:
                 "task_id": body_task_id,
             }
         )
-        record = make_record("m-1", "x", body=body, receive_count=4, deferrals=2)
+        record = make_record("m-1", "x", body=body, receive_count=4, postponements=2)
 
         serve()({"Records": [record]}, None)
 
@@ -219,12 +219,12 @@ class TestSettlementThroughTheHandler:
     ) -> None:
         handler = serve()
 
-        for deferrals in range(6):
-            record = _record(f"m{deferrals}", AcmeWaitingJob, deferrals=deferrals)
+        for postponements in range(6):
+            record = _record(f"m{postponements}", AcmeWaitingJob, postponements=postponements)
             assert _failed(handler({"Records": [record]}, None)) == []
 
         sent = sqs.entries("send_message_batch", _JOBS)
-        assert [e["MessageAttributes"][DEFERRALS_ATTRIBUTE]["StringValue"] for e in sent] == [
+        assert [e["MessageAttributes"][POSTPONEMENTS_ATTRIBUTE]["StringValue"] for e in sent] == [
             str(count) for count in range(1, 7)
         ]
         assert sqs.entries("send_message_batch", _DEAD) == []
@@ -232,16 +232,16 @@ class TestSettlementThroughTheHandler:
 
     @pytest.mark.parametrize("sqs", [{"refuse": frozenset({"2"})}], indirect=True)
     def test_a_failed_dead_letter_send_lists_only_that_message(self, serve: Serve) -> None:
-        records = [_record(str(n), AcmeRejectingJob) for n in (1, 2, 3)]
+        records = [_record(str(n), AcmeAbandoningJob) for n in (1, 2, 3)]
 
         result = serve()({"Records": records}, None)
 
         assert _failed(result) == ["2"]
 
-    def test_a_rejection_on_a_discard_queue_lists_nothing_and_sends_nothing(
+    def test_an_abandonment_on_a_discard_queue_lists_nothing_and_sends_nothing(
         self, serve: Serve, sqs: FakeSqs
     ) -> None:
-        result = serve(dead_letter="discard")({"Records": [_record("1", AcmeRejectingJob)]}, None)
+        result = serve(dead_letter="discard")({"Records": [_record("1", AcmeAbandoningJob)]}, None)
 
         assert (_failed(result), sqs.batches) == ([], [])
 
@@ -255,7 +255,7 @@ class TestSettlementThroughTheHandler:
         assert len(_failed(result)) == 25
         assert [len(entries) for _, _, entries in sqs.batches] == [10, 10, 5]
 
-    def test_a_job_retry_on_a_fifo_queue_is_rejected_not_settled_as_a_failed_attempt(
+    def test_a_job_postponement_on_a_fifo_queue_is_abandoned_not_settled_as_a_failed_attempt(
         self, serve: Serve, sqs: FakeSqs
     ) -> None:
         record = _record("1", AcmeWaitingJob, fifo=True)
@@ -266,7 +266,7 @@ class TestSettlementThroughTheHandler:
         assert sqs.calls["change_message_visibility_batch"] == 0
         assert sqs.calls["send_message_batch"] == 0
 
-    def test_a_job_retry_on_a_standard_queue_is_deferred_with_its_delay(
+    def test_a_job_postponement_on_a_standard_queue_is_postponed_with_its_delay(
         self, serve: Serve, sqs: FakeSqs
     ) -> None:
         result = serve()({"Records": [_record("1", AcmeWaitingJob)]}, None)
@@ -287,15 +287,15 @@ class TestSettlementThroughTheHandler:
 
         assert (_failed(result), sqs.batches) == (["1", "2"], [])
 
-    def test_a_malformed_message_is_rejected_to_the_dead_letter_queue_with_its_class_as_reason(
+    def test_a_malformed_message_is_abandoned_to_the_dead_letter_queue_with_its_class_as_reason(
         self, serve: Serve, sqs: FakeSqs
     ) -> None:
         record = make_record("1", "x", body="{")
 
         result = serve()({"Records": [record]}, None)
 
-        (rejected,) = sqs.entries("send_message_batch", _DEAD)
-        reason = rejected["MessageAttributes"][REJECTION_REASON_ATTRIBUTE]["StringValue"]
+        (abandoned,) = sqs.entries("send_message_batch", _DEAD)
+        reason = abandoned["MessageAttributes"][ABANDONMENT_REASON_ATTRIBUTE]["StringValue"]
         assert (_failed(result), reason) == ([], "MalformedJobMessage")
 
     @pytest.mark.parametrize(
@@ -312,7 +312,7 @@ class TestSettlementThroughTheHandler:
         assert len(sqs.entries("send_message_batch", _DEAD)) == dead_lettered
 
     @pytest.mark.parametrize(("receive_count", "failed"), [(2, ["1"]), (3, [])])
-    def test_an_unknown_job_on_a_discard_queue_is_rejected_when_the_attempts_run_out(
+    def test_an_unknown_job_on_a_discard_queue_is_abandoned_when_the_attempts_run_out(
         self, serve: Serve, receive_count: int, failed: list[str]
     ) -> None:
         record = make_record("1", "x", job_name="MissingJob", receive_count=receive_count)
@@ -326,7 +326,7 @@ class TestSettlementThroughTheHandler:
     ) -> None:
         handler = serve()
         bound = (sqs.calls["get_queue_attributes"], sqs.calls["get_queue_url"])
-        records = [_record("1", AcmeRejectingJob), _record("2", AcmeRejectingJob)]
+        records = [_record("1", AcmeAbandoningJob), _record("2", AcmeAbandoningJob)]
 
         handler({"Records": records}, None)
 
@@ -334,26 +334,31 @@ class TestSettlementThroughTheHandler:
         assert (sqs.calls["get_queue_attributes"], sqs.calls["get_queue_url"]) == bound
 
     @pytest.mark.parametrize(
-        ("deferrals", "receive_count"),
+        ("postponements", "receive_count"),
         [("x", "1"), ("-1", "1"), (None, "x"), (None, "0")],
-        ids=["non-numeric deferrals", "negative deferrals", "non-numeric count", "zero count"],
+        ids=[
+            "non-numeric postponements",
+            "negative postponements",
+            "non-numeric count",
+            "zero count",
+        ],
     )
-    def test_a_record_with_a_count_it_cannot_read_alone_is_rejected(
-        self, serve: Serve, sqs: FakeSqs, deferrals: str | None, receive_count: str
+    def test_a_record_with_a_count_it_cannot_read_alone_is_abandoned(
+        self, serve: Serve, sqs: FakeSqs, postponements: str | None, receive_count: str
     ) -> None:
-        bad = _record("bad", AcmeOkJob, deferrals=deferrals)
+        bad = _record("bad", AcmeOkJob, postponements=postponements)
         bad["attributes"]["ApproximateReceiveCount"] = receive_count
-        records = [_record("ok", AcmeOkJob), bad, _record("reject", AcmeRejectingJob)]
+        records = [_record("ok", AcmeOkJob), bad, _record("abandon", AcmeAbandoningJob)]
 
         result = serve()({"Records": records}, None)
 
         sent = sqs.entries("send_message_batch", _DEAD)
         reasons = {
-            entry["Id"]: entry["MessageAttributes"][REJECTION_REASON_ATTRIBUTE]["StringValue"]
+            entry["Id"]: entry["MessageAttributes"][ABANDONMENT_REASON_ATTRIBUTE]["StringValue"]
             for entry in sent
         }
         assert _failed(result) == []
-        assert reasons == {"bad": "MalformedJobMessage", "reject": "tenant deleted"}
+        assert reasons == {"bad": "MalformedJobMessage", "abandon": "tenant deleted"}
 
     def test_a_malformed_message_on_a_discard_queue_is_dropped_at_the_first_delivery(
         self, serve: Serve, sqs: FakeSqs
@@ -369,7 +374,7 @@ class TestSettlementThroughTheHandler:
     ) -> None:
         handler = serve()
         sqs.lookup_raises = RuntimeError("no metadata call during an invocation")
-        records = [_record("1", AcmeRejectingJob), _record("2", AcmeFailingJob)]
+        records = [_record("1", AcmeAbandoningJob), _record("2", AcmeFailingJob)]
 
         result = handler({"Records": records}, None)
 

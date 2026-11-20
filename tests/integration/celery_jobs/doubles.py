@@ -11,11 +11,11 @@ from loom.celery.constants import callback_task_name
 from loom.celery.runner import _CeleryAsyncRuntime
 from loom.core.job.callback import CallbackOutcome, JobCallback
 from loom.core.job.job import Job
-from loom.core.job.outcome import JobRejection
+from loom.core.job.outcome import JobAbandonment
 from loom.core.job.policy import Backoff
 
 QUEUE = "jobs"
-REJECTION = "tenant deleted"
+ABANDONMENT = "tenant deleted"
 
 
 class RaisingJob(Job[None]):
@@ -27,12 +27,12 @@ class RaisingJob(Job[None]):
         raise self.error
 
 
-class RejectedJob(Job[None]):
+class AbandonedJob(Job[None]):
     runs: ClassVar[list[str]] = []
 
     async def execute(self) -> None:
         self.runs.append("ran")
-        raise JobRejection(REJECTION)
+        raise JobAbandonment(ABANDONMENT)
 
 
 class SucceedingJob(Job[str]):

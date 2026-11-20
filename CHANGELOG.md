@@ -2,6 +2,41 @@
 
 ## 💥 Breaking
 
+- **jobs:** one word per concept: *postpone* is a job asking to run later,
+  without failing and without spending an attempt; *retry* is running again
+  after a failure, spending an attempt; *abandon* is giving up for good (the
+  job asks, its error is not retryable, or its attempts ran out; on SQS the
+  message goes to the dead-letter queue). Renamed, none aliased or re-exported:
+  `JobRetry` is `JobPostponement`, `JobRejection` is `JobAbandonment`,
+  `Deferred` is `Postponed`, `Rejected` is `Abandoned`,
+  `EventKind.JOB_DEFERRED` and `JOB_REJECTED` are `JOB_POSTPONED` and
+  `JOB_ABANDONED` (wire values `job_postponed` and `job_abandoned`),
+  `Status.DEFERRED` and `REJECTED` are `POSTPONED` and `ABANDONED`,
+  `Redelivery.defers` is `Redelivery.can_postpone` and `Redelivery.retries` is
+  `Redelivery.can_retry`, `RetryPolicy.allows_attempt_after` is `can_retry_after`,
+  `JobDelivery.deferrals` is `postponements`, and the `deferrals` keyword of a
+  Celery job task is `postponements`. The SQS message attributes
+  `loom.deferrals` and `loom.rejection_reason` are `loom.postponements` and
+  `loom.abandonment_reason`; `DEFERRALS_ATTRIBUTE` and
+  `REJECTION_REASON_ATTRIBUTE` are `POSTPONEMENTS_ATTRIBUTE` and
+  `ABANDONMENT_REASON_ATTRIBUTE`; `SQSQueue.defer_batch` and `reject_batch` are
+  `postpone_batch` and `abandon_batch`. `failure()` on a job outcome is
+  `as_exception()`, defined only on `Failed` and `Abandoned`: match
+  `Succeeded` and `Postponed` before asking. **Migration:** rename every use;
+  a Celery message already in flight with `deferrals` must be drained first,
+  and a dead-letter consumer reads `loom.abandonment_reason`.
+- **jobs:** `SqsQueue`, `SqsQueues`, `SqsRecord` and `SqsSettlement` are
+  `SQSQueue`, `SQSQueues`, `SQSRecord` and `SQSJobSettlement`;
+  `AsyncioTimer` is `AsyncioJobTimer`; `SQSRecord.unreadable` (a string, empty
+  when readable) is `unreadable_reason` (`None` when readable) with an
+  `is_readable` property; `QueueConfig.refuse_misshapen` is
+  `check_written_shape`, `SQSQueue.consumed_retries` is `retries_for`,
+  `SQSQueue.unserved_policy` is `unknown_job_policy`, `QueueConsumer.unserved`
+  is `unknown_job_policy`, `JobRunner.unrunnable` is `decide_unrunnable`,
+  `BatchResult.merged` is `merge`, and `SQSRecord.resent` and `rejected` are
+  `as_postponement` and `as_abandonment`. `RuntimeProfile.waits_in_process` is
+  `can_wait_in_process` (and the `configure_job_service` parameter likewise).
+  **Migration:** rename every use; there is no alias.
 - **discovery:** the `app.discovery` block is removed, with its modes
   `interfaces`, `modules` and `manifest` and every key under them
   (`interfaces.modules`, `interfaces.warn_recommended`, `modules.include`,

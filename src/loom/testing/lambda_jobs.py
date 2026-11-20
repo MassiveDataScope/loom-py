@@ -23,7 +23,7 @@ from loom.core.job.envelope import encode_job_message
 from loom.core.job.job import Job
 from loom.core.job.policy import Countdown
 from loom.core.plugins.optional import import_optional
-from loom.jobs.aws.queue import DeadLetterPolicy, OutgoingMessage, QueueConfig, SqsQueue
+from loom.jobs.aws.queue import DeadLetterPolicy, OutgoingMessage, QueueConfig, SQSQueue
 from loom.jobs.aws.sqs import SQSConfig
 from loom.serverless.aws.lambda_.functions import JobsTrigger, served_trigger
 from loom.serverless.aws.lambda_.handler import LambdaAdapter
@@ -116,7 +116,7 @@ class LambdaWorker:
             self.sqs = self._aws.client("sqs", sqs_config)
             self.sqs.meta.events.register_last("before-send", self._unanswered)
             self.queue_url, self.dead_letter_url = self._declare(entry)
-            self._queue = SqsQueue(self.sqs, trigger.queue.name, entry)
+            self._queue = SQSQueue(self.sqs, trigger.queue.name, entry)
             arn = self.sqs.get_queue_attributes(
                 QueueUrl=self.queue_url, AttributeNames=["QueueArn"]
             )

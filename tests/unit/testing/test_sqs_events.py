@@ -85,7 +85,7 @@ def _marked(marker: str, message_id: str, **options: Any) -> dict[str, Any]:
     return record
 
 
-class TestSqsEvents:
+class TestSQSEvents:
     def test_a_batch_that_succeeds_retries_nothing(
         self, handler: LambdaHandler, seen: list[tuple[str, str]]
     ) -> None:
@@ -121,7 +121,7 @@ class TestSqsEvents:
 
         assert seen == [("a", "alice")]
 
-    def test_a_raw_body_loom_cannot_read_is_rejected_not_reported(
+    def test_a_raw_body_loom_cannot_read_is_abandoned_not_reported(
         self, handler: LambdaHandler, seen: list[tuple[str, str]], sqs: FakeSqs
     ) -> None:
         result = handler(LambdaEvent.sqs_record("{", message_id="poison"), None)
