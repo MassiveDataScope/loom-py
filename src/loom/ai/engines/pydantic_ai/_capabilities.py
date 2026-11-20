@@ -536,7 +536,7 @@ def build_toolsets(
             name is longer than a provider accepts, an optional dependency is
             missing, or a factory does not produce a toolset.
     """
-    context = BuildContext.of(plan, container, mcp)
+    context = BuildContext.from_plan(plan, container, mcp)
     reject_unusable_names(plan.capabilities, context.agent)
     return tuple(_build(plan, _Destination.TOOLSET, context))
 

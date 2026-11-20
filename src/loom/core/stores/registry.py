@@ -44,7 +44,7 @@ def resolve_store_backend(name: str, *, path: str | None = None) -> StorePlugin:
         raise ConfigError(_describe_unknown_backend(name, exc.available)) from exc
     except ModuleNotFoundError as exc:
         entry = select_entry_point(PLUGIN_ENTRY_POINT_GROUP, name, on_duplicate="error")
-        missing = None if entry is None else MissingDependency.of(exc, entry)
+        missing = None if entry is None else MissingDependency.from_import_error(exc, entry)
         if missing is None:
             raise
         owner = f"{path}: " if path else ""

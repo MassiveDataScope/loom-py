@@ -194,7 +194,7 @@ async def _drained(session: _ToolsetSession) -> None:
 async def _open(first: _ScriptedSessionToolset, factory: AcmeToolsetFactory) -> _ToolsetSession:
     """A session as ``SharedMcpToolsets.open`` makes one: over an entered first toolset."""
     await first.__aenter__()
-    return _ToolsetSession(_OpenToolset.of(first), rebuild=factory)  # type: ignore[arg-type]
+    return _ToolsetSession(_OpenToolset.from_toolset(first), rebuild=factory)  # type: ignore[arg-type]
 
 
 _TESTER = Identity(subject="tester")
@@ -757,7 +757,7 @@ class TestASessionThatHoldsNothing:
             _ScriptedSessionToolset("second", ledger),
         )
         session = _ToolsetSession(
-            _OpenToolset.of(first, held=False), rebuild=AcmeToolsetFactory(second)
+            _OpenToolset.from_toolset(first, held=False), rebuild=AcmeToolsetFactory(second)
         )  # type: ignore[arg-type]
 
         result = await session.call_tool("write_orders", {})
@@ -768,7 +768,7 @@ class TestASessionThatHoldsNothing:
     @_bounded
     async def test_closes_without_leaving_what_it_never_entered(self) -> None:
         first = _ScriptedSessionToolset("first", _Ledger())
-        session = _ToolsetSession(_OpenToolset.of(first, held=False))  # type: ignore[arg-type]
+        session = _ToolsetSession(_OpenToolset.from_toolset(first, held=False))  # type: ignore[arg-type]
         await session.call_tool("write_orders", {})
 
         await session.aclose()

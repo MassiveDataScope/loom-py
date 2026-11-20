@@ -275,7 +275,7 @@ class CommandStep:
         object.__setattr__(self, "label", getattr(self.fn, "__name__", type(self.fn).__name__))
 
     @classmethod
-    def of(cls, fn: ComputeFn[Any] | RuleFn) -> CommandStep:
+    def from_callable(cls, fn: ComputeFn[Any] | RuleFn) -> CommandStep:
         """The step of *fn*, reading once whether it takes the bound arguments.
 
         A function taking three or more positional parameters, or ``*args``,

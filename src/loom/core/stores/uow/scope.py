@@ -531,7 +531,7 @@ def invocation_error(
     failure = error if error is not None else _first_failure(outcome.stores)
     if not isinstance(failure, Exception) or not _split(outcome.stores):
         return failure
-    stores_error = StoresNotCommittedError.of(outcome)
+    stores_error = StoresNotCommittedError.from_outcome(outcome)
     stores_error.__cause__ = failure
     return stores_error
 

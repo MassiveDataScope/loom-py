@@ -90,7 +90,7 @@ class _Queues:
     standard: _Queue
     fifo: _Queue
 
-    def of(self, job_type: type[Job[Any]]) -> _Queue:
+    def queue_for(self, job_type: type[Job[Any]]) -> _Queue:
         return self.fifo if job_type is OrderJob else self.standard
 
 
@@ -202,7 +202,7 @@ class TestSQSJobs:
     ) -> None:
         job_id = _dispatch(producer, job_type)
 
-        (message,) = _receive(sqs, queues.of(job_type))
+        (message,) = _receive(sqs, queues.queue_for(job_type))
         envelope = decode_job_envelope(message["Body"])
         assert (envelope.job_name, envelope.params, envelope.payload) == (
             job_type.__qualname__,
@@ -221,7 +221,7 @@ class TestSQSJobs:
         with pytest.raises(_Rollback):
             _dispatch(producer, job_type, fail=True)
 
-        assert _receive(sqs, queues.of(job_type), wait=1) == []
+        assert _receive(sqs, queues.queue_for(job_type), wait=1) == []
 
     @pytest.mark.parametrize("job_type", [WelcomeJob, OrderJob], ids=["standard", "fifo"])
     def test_the_lambda_sqs_adapter_runs_the_received_message(
@@ -234,7 +234,7 @@ class TestSQSJobs:
         job_type: type[Job[Any]],
     ) -> None:
         _dispatch(producer, job_type)
-        queue = queues.of(job_type)
+        queue = queues.queue_for(job_type)
         (message,) = _receive(sqs, queue)
         event = LambdaEvent.sqs_record(
             message["Body"], message_id=message["MessageId"], queue_arn=queue.arn
@@ -267,6 +267,6 @@ class TestSQSJobs:
         asyncio.run(producer.kernel.executor.execute(use_case, params=params))
 
         assert sqs_calls == ["SendMessageBatch"] * 3
-        markers = _drain(sqs, queues.of(job_type), 25)
+        markers = _drain(sqs, queues.queue_for(job_type), 25)
         arrived = markers if job_type is OrderJob else sorted(markers, key=int)
         assert arrived == [str(n) for n in range(25)]

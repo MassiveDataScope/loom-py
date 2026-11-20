@@ -71,7 +71,7 @@ class Delegation(NamedTuple):
     until: float | None
 
     @classmethod
-    def of(cls, caller: Identity | None, until: float | None) -> Delegation:
+    def from_caller(cls, caller: Identity | None, until: float | None) -> Delegation:
         """Return *caller* with *until*, or :data:`NO_DELEGATION` for no authenticated caller.
 
         Args:

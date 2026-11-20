@@ -125,7 +125,7 @@ class JobTestData:
         """Build a validated dispatch for transport tests."""
         return JobDispatch.build(
             self.job_type,
-            options=(settings or JobSettings()).of(self.job_type),
+            options=(settings or JobSettings()).options_for(self.job_type),
             callbacks=callbacks,
             payload=payload,
             params=params,

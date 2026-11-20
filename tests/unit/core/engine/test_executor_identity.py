@@ -37,7 +37,7 @@ ANA = Identity(subject="ana", mechanism="test")
 BOB = Identity(subject="bob", mechanism="test")
 WRITE = Permission("rows.write")
 CATALOG = RoleCatalog((WRITE,), (Role("editor", (WRITE,)),))
-BOUNDARY = Scope.of("b1")
+BOUNDARY = Scope.from_segments("b1")
 DECISION = Decision(allowed=True, grant=Grant(subject="ana", role="editor", scope=BOUNDARY))
 REFUSED_JOIN = "Child would join the open unit of work as another identity"
 

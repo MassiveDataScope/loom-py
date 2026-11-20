@@ -91,7 +91,7 @@ class _OpenToolset:
     suspect: bool = False
 
     @classmethod
-    def of(cls, toolset: MCPToolset[Any], *, held: bool = True) -> _OpenToolset:
+    def from_toolset(cls, toolset: MCPToolset[Any], *, held: bool = True) -> _OpenToolset:
         """Hold *toolset* with the pool its builder put on its transport, if any.
 
         ``build_mcp_toolset`` gives an ``http`` toolset a
@@ -132,7 +132,7 @@ class _OpenToolset:
         Raises:
             BaseException: Whatever entering raised, after the pool it made is released.
         """
-        held = cls.of(toolset)
+        held = cls.from_toolset(toolset)
         try:
             await toolset.__aenter__()
         except BaseException:
@@ -214,7 +214,11 @@ class _ToolsetSession(ConcurrentMcpSession):
         if retired is not None:
             self._close(retired)
         await asyncio.shield(asyncio.gather(*self._closing))
-        fresh = await self._listed(toolset) if held.held else _OpenToolset.of(toolset, held=False)
+        fresh = (
+            await self._listed(toolset)
+            if held.held
+            else _OpenToolset.from_toolset(toolset, held=False)
+        )
         if self._closed:
             await asyncio.shield(self._close(fresh))
             return
@@ -315,7 +319,7 @@ class _ToolsetSession(ConcurrentMcpSession):
         try:
             return await self._send(held, operation)
         except Exception as exc:
-            outcome = Outcome.of(exc)
+            outcome = Outcome.from_exception(exc)
             if self._rebuild is None or outcome is not Outcome.SAFE:
                 _raise_failure(held, exc, name, outcome)
             held.suspect = True
@@ -323,7 +327,7 @@ class _ToolsetSession(ConcurrentMcpSession):
         try:
             return await self._send(held, operation)
         except Exception as exc:
-            _raise_failure(held, exc, name, Outcome.of(exc))
+            _raise_failure(held, exc, name, Outcome.from_exception(exc))
 
     async def tools(self, ctx: RunContext[Any]) -> dict[str, ToolsetTool[Any]]:
         """The live toolset's tools for an agent run; a listing never renews.
@@ -708,7 +712,9 @@ class SharedMcpToolsets:
         session = self._sessions.get(connection)
         if session is None:
             rebuild = self._builder(connection)
-            session = _ToolsetSession(_OpenToolset.of(rebuild(), held=False), rebuild=rebuild)
+            session = _ToolsetSession(
+                _OpenToolset.from_toolset(rebuild(), held=False), rebuild=rebuild
+            )
             self._sessions[connection] = session
         return session
 

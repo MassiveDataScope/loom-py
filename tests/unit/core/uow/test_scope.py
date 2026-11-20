@@ -904,7 +904,7 @@ _ERRORS = [
     pytest.param(ScopeOwnershipError("closed"), id="ownership"),
     pytest.param(UnitOfWorkInsideScope.entering(object()), id="inside-scope"),
     pytest.param(
-        StoresNotCommittedError.of(_outcome(Committed(S0), RolledBack(S1, Boom("pw=1")))),
+        StoresNotCommittedError.from_outcome(_outcome(Committed(S0), RolledBack(S1, Boom("pw=1")))),
         id="stores",
     ),
     pytest.param(NestedIdentityMismatch.joining("Child"), id="nested-identity"),
@@ -918,43 +918,51 @@ class TestErrors:
         assert error.is_retryable is False
 
     def test_stores_not_committed_names_every_store_and_how_it_ended(self) -> None:
-        error = StoresNotCommittedError.of(_outcome(Committed(S0), RolledBack(S1, Boom("pw=1"))))
+        error = StoresNotCommittedError.from_outcome(
+            _outcome(Committed(S0), RolledBack(S1, Boom("pw=1")))
+        )
 
         assert str(error) == (
             "the stores of this invocation did not all commit: s0=Committed, s1=RolledBack"
         )
 
     def test_stores_not_committed_has_its_code(self) -> None:
-        error = StoresNotCommittedError.of(_outcome(Committed(S0)))
+        error = StoresNotCommittedError.from_outcome(_outcome(Committed(S0)))
 
         assert error.code == ErrorCode.STORES_NOT_COMMITTED
 
     def test_stores_not_committed_pickles_its_message(self) -> None:
-        error = StoresNotCommittedError.of(_outcome(Committed(S0), RolledBack(S1, Boom("pw=1"))))
+        error = StoresNotCommittedError.from_outcome(
+            _outcome(Committed(S0), RolledBack(S1, Boom("pw=1")))
+        )
 
         restored = pickle.loads(pickle.dumps(error))
 
         assert (type(restored), str(restored)) == (StoresNotCommittedError, str(error))
 
     def test_stores_not_committed_pickles_its_code(self) -> None:
-        error = StoresNotCommittedError.of(_outcome(Committed(S0)))
+        error = StoresNotCommittedError.from_outcome(_outcome(Committed(S0)))
 
         assert pickle.loads(pickle.dumps(error)).code == ErrorCode.STORES_NOT_COMMITTED
 
     def test_stores_not_committed_leaves_the_outcome_behind(self) -> None:
-        error = StoresNotCommittedError.of(_outcome(Committed(S0), RolledBack(S1, Boom("pw=1"))))
+        error = StoresNotCommittedError.from_outcome(
+            _outcome(Committed(S0), RolledBack(S1, Boom("pw=1")))
+        )
 
         assert pickle.loads(pickle.dumps(error)).outcome is None
 
     def test_stores_not_committed_pickles_no_cause_text(self) -> None:
-        error = StoresNotCommittedError.of(_outcome(Committed(S0), RolledBack(S1, Boom("pw=1"))))
+        error = StoresNotCommittedError.from_outcome(
+            _outcome(Committed(S0), RolledBack(S1, Boom("pw=1")))
+        )
 
         assert b"pw=1" not in pickle.dumps(error)
 
     def test_stores_not_committed_pickles_with_an_unpicklable_cause(self) -> None:
         cause = Boom()
         cause.socket = _Unpicklable()  # type: ignore[attr-defined]
-        error = StoresNotCommittedError.of(_outcome(Committed(S0), RolledBack(S1, cause)))
+        error = StoresNotCommittedError.from_outcome(_outcome(Committed(S0), RolledBack(S1, cause)))
 
         assert pickle.loads(pickle.dumps(error)).message == error.message
 

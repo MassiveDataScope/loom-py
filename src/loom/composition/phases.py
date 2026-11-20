@@ -362,7 +362,7 @@ def wire_ai(
     """
     if not recipe.agents and recipe.lenient:
         return AiWiring.ABSENT
-    declared = MarkerDeclarations.of(analysis, kernel.compiler, kernel.registry)
+    declared = MarkerDeclarations.from_analysis(analysis, kernel.compiler, kernel.registry)
     if not recipe.agents:
         declared.mcp_grants({})
         declared.verify({})

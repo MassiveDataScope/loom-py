@@ -461,7 +461,7 @@ class _ResolvedRoute:
     filter_values: _FilterValues
 
     @classmethod
-    def of(cls, compiled_route: CompiledRoute) -> _ResolvedRoute:
+    def from_compiled_route(cls, compiled_route: CompiledRoute) -> _ResolvedRoute:
         """Resolve the request-time facts of one compiled route."""
         uc_type = compiled_route.route.use_case
         plan = getattr(uc_type, "__execution_plan__", None)
@@ -754,7 +754,9 @@ def mount_interfaces(
     component_registry: dict[str, Any] = {}
 
     for cr in compiled_routes:
-        handler = _RouteHandler(_ResolvedRoute.of(cr), factory, executor, observability)
+        handler = _RouteHandler(
+            _ResolvedRoute.from_compiled_route(cr), factory, executor, observability
+        )
         summary, description = _route_docs(cr)
         request_body = build_request_body_schema(cr, component_registry)
         responses = build_success_responses(cr, component_registry)

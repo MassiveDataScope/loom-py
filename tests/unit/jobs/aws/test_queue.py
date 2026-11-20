@@ -397,7 +397,7 @@ class TestAttemptLimit:
         settings = self._settings()
         queue = _primed(FakeSqs({_SOURCE: _POLICY}))
 
-        retries = queue.retries_for([EmailJob], lambda job: settings.of(job).retry)
+        retries = queue.retries_for([EmailJob], lambda job: settings.options_for(job).retry)
 
         assert retries[EmailJob].policy.max_attempts == 4
         assert retries[EmailJob].sources["max_attempts"] is RetrySource.REDRIVE
@@ -407,7 +407,7 @@ class TestAttemptLimit:
         queue = _primed(FakeSqs({_SOURCE: _POLICY}))
 
         with pytest.raises(ConfigError) as raised:
-            queue.retries_for([ReportJob, EmailJob], lambda job: settings.of(job).retry)
+            queue.retries_for([ReportJob, EmailJob], lambda job: settings.options_for(job).retry)
 
         message = str(raised.value)
         assert "EmailJob declares jobs.<Job>.retry.max_attempts" in message
@@ -418,7 +418,7 @@ class TestAttemptLimit:
         settings = self._settings(defaults={"retry": {"max_attempts": 2}})
         queue = _primed(FakeSqs({_SOURCE: _POLICY}))
 
-        retries = queue.retries_for([EmailJob], lambda job: settings.of(job).retry)
+        retries = queue.retries_for([EmailJob], lambda job: settings.options_for(job).retry)
 
         assert retries[EmailJob].policy.max_attempts == 4
 
@@ -431,7 +431,7 @@ class TestAttemptLimit:
         client = FakeSqs({_SOURCE: _POLICY})
         queue = _queue(client, policy=DeadLetterPolicy.DISCARD)
 
-        retries = queue.retries_for([EmailJob], lambda job: settings.of(job).retry)
+        retries = queue.retries_for([EmailJob], lambda job: settings.options_for(job).retry)
 
         assert retries[EmailJob].policy.max_attempts == expected
         assert client.metadata_calls == 0
@@ -440,7 +440,7 @@ class TestAttemptLimit:
         settings = self._settings()
 
         with pytest.raises(SQSQueueConfigError, match="RedrivePolicy"):
-            _primed(FakeSqs()).retries_for([EmailJob], lambda job: settings.of(job).retry)
+            _primed(FakeSqs()).retries_for([EmailJob], lambda job: settings.options_for(job).retry)
 
 
 class TestWire:

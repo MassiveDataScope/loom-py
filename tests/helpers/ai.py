@@ -252,4 +252,6 @@ def declared_markers(*use_cases: type[Any]) -> MarkerDeclarations:
     for use_case in use_cases:
         compiler.compile(use_case)
     analysis = LoomContainer().graph.analyse(map(ClassNode, use_cases), ())
-    return MarkerDeclarations.of(analysis, compiler, UseCaseRegistry.build(list(use_cases)))
+    return MarkerDeclarations.from_analysis(
+        analysis, compiler, UseCaseRegistry.build(list(use_cases))
+    )

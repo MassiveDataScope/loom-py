@@ -85,13 +85,15 @@ class _Sessions:
     managers: Mapping[StoreKey, SessionManager]
     ran: list[StoreKey] = field(default_factory=list)
 
-    def of(self, key: StoreKey) -> AsyncSession:
+    def session_for(self, key: StoreKey) -> AsyncSession:
         session = self.managers[key].active_session
         assert session is not None, f"store {key!r} is not enlisted"
         return session
 
     async def owners(self) -> dict[StoreKey, str]:
-        return {key: str((await self.of(key).execute(OWNER)).scalar_one()) for key in _STORES}
+        return {
+            key: str((await self.session_for(key).execute(OWNER)).scalar_one()) for key in _STORES
+        }
 
 
 _STORES = (DEFAULT_STORE, AUDIT)
@@ -135,7 +137,7 @@ class _RecordMemo(UseCase[memos.Memo, str]):
 
     async def execute(self, cmd: _NewMemo = Input()) -> str:
         await self.memos.create(cmd)
-        return str((await self.sessions.of(AUDIT).execute(OWNER)).scalar_one())
+        return str((await self.sessions.session_for(AUDIT).execute(OWNER)).scalar_one())
 
 
 class _NoteThenNestedMemo(UseCase[notes.Note, tuple[str, str]]):
@@ -152,7 +154,7 @@ class _NoteThenNestedMemo(UseCase[notes.Note, tuple[str, str]]):
     async def execute(self) -> tuple[str, str]:
         await self.notes.create(_NewNote(owner_id=U1, editor="ana", body="outer"))
         nested = await self.invoker.invoke(_RecordMemo, payload={"owner_id": T1, "body": "nested"})
-        own = str((await self.sessions.of(DEFAULT_STORE).execute(OWNER)).scalar_one())
+        own = str((await self.sessions.session_for(DEFAULT_STORE).execute(OWNER)).scalar_one())
         return own, nested
 
 
@@ -165,9 +167,9 @@ class _ElevateEditor(UseCase[notes.Note, dict[StoreKey, str]]):
 
     async def execute(self) -> dict[StoreKey, str]:
         await self.sessions.owners()
-        await elevate("editor", DECISION, at=Scope.of(U1))
+        await elevate("editor", DECISION, at=Scope.from_segments(U1))
         return {
-            key: str((await self.sessions.of(key).execute(EDITOR_FLAG)).scalar_one())
+            key: str((await self.sessions.session_for(key).execute(EDITOR_FLAG)).scalar_one())
             for key in _STORES
         }
 

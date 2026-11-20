@@ -142,7 +142,7 @@ class _RouteEndpoint:
     def __init__(
         self, compiled: CompiledRoute, api: CompiledApi, observability: Observability
     ) -> None:
-        runtime = _ResolvedRoute.of(compiled)
+        runtime = _ResolvedRoute.from_compiled_route(compiled)
         self._handler = _RouteHandler(runtime, api.factory, api.executor, observability)
         param_types = dict(compiled.execute_param_types)
         self._coercers: dict[str, TypeAdapter[Any]] = {

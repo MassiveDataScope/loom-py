@@ -192,7 +192,7 @@ class TestApiJobSettings:
         application = Project.load(str(config_path), environment="test").compose(FastAPIRuntime())
 
         (job,) = application.discovered.jobs
-        options = application.job_settings.of(job)
+        options = application.job_settings.options_for(job)
         assert (job.__name__, options.queue, options.countdown, options.priority) == (
             "ReportJob",
             "reports",

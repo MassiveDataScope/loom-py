@@ -312,7 +312,7 @@ async def _flags_after_elevating(stores: Mapping[StoreKey, Store], elevated: Sto
         for store in stores.values():
             await _active(store).execute(OWNER)
         async with elevation_scope(owns_transaction=True, sink=stores[elevated].sink):
-            await elevate("editor", DECISION, at=Scope.of(U1))
+            await elevate("editor", DECISION, at=Scope.from_segments(U1))
             return {
                 key: (await _active(store).execute(EDITOR_FLAG)).scalar_one()
                 for key, store in stores.items()
@@ -332,7 +332,7 @@ async def _provider_flag_after_elevating(
         scope.frame(Frame(elevated)),
         elevation_scope(owns_transaction=True, sink=stores[elevated].sink),
     ):
-        await elevate("editor", DECISION, at=Scope.of(U1))
+        await elevate("editor", DECISION, at=Scope.from_segments(U1))
         return str((await _active(stores[elevated]).execute(EDITOR_FLAG)).scalar_one())
 
 

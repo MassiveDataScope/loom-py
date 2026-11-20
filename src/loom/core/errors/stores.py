@@ -196,7 +196,7 @@ class StoresNotCommittedError(SystemError):
         super().__init__(message, code=ErrorCode.STORES_NOT_COMMITTED)
 
     @classmethod
-    def of(cls, outcome: InvocationOutcome) -> StoresNotCommittedError:
+    def from_outcome(cls, outcome: InvocationOutcome) -> StoresNotCommittedError:
         """The error for ``outcome``, whose message names every store and how it ended.
 
         Args:

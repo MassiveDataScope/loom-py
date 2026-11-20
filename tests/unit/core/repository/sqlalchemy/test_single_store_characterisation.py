@@ -285,7 +285,7 @@ class _NoteService:
 
 _WRITE = Permission("rows.write")
 _CATALOG = RoleCatalog((_WRITE,), (Role("editor", (_WRITE,)),))
-_BOUNDARY = Scope.of("b1")
+_BOUNDARY = Scope.from_segments("b1")
 
 
 class TestSingleStoreCharacterisation:

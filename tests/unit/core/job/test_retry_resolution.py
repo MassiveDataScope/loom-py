@@ -31,21 +31,21 @@ def _settings(jobs: dict[str, Any], *job_types: type[Job[Any]]) -> JobSettings:
 
 
 def _policy(settings: JobSettings, job_type: type[Job[Any]]) -> RetryPolicy:
-    return settings.of(job_type).retry.policy
+    return settings.options_for(job_type).retry.policy
 
 
 def _sources(settings: JobSettings, job_type: type[Job[Any]]) -> dict[str, RetrySource]:
-    return dict(settings.of(job_type).retry.sources)
+    return dict(settings.options_for(job_type).retry.sources)
 
 
 class TestRetryResolution:
     def test_a_job_nothing_configures_gets_the_loom_default(self) -> None:
-        resolved = _settings({}, PlainJob).of(PlainJob).retry
+        resolved = _settings({}, PlainJob).options_for(PlainJob).retry
         assert resolved.policy == DEFAULT_RETRY
         assert set(resolved.sources.values()) == {RetrySource.LOOM}
 
     def test_the_class_backoff_replaces_the_default_but_not_its_attempt_limit(self) -> None:
-        resolved = _settings({}, ClassBackoffJob).of(ClassBackoffJob).retry
+        resolved = _settings({}, ClassBackoffJob).options_for(ClassBackoffJob).retry
         assert resolved.policy == RetryPolicy(CLASS_BACKOFF, max_attempts=3)
         assert resolved.sources["first_s"] is RetrySource.CLASS
         assert resolved.sources["max_attempts"] is RetrySource.LOOM
@@ -114,7 +114,7 @@ class TestRetryResolution:
             _settings({"PlainJob": {"retries": 3}}, PlainJob)
 
     def test_a_job_the_settings_were_not_built_with_has_its_class_policy(self) -> None:
-        resolved = JobSettings().of(ClassBackoffJob).retry
+        resolved = JobSettings().options_for(ClassBackoffJob).retry
         assert resolved.sources["first_s"] is RetrySource.CLASS
 
 

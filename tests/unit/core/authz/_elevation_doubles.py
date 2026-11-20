@@ -12,7 +12,7 @@ from loom.core.use_case.use_case import UseCase
 
 _WRITE = Permission("rows.write")
 _CATALOG = RoleCatalog((_WRITE,), (Role("editor", (_WRITE,)),))
-_BOUNDARY = Scope.of("b1")
+_BOUNDARY = Scope.from_segments("b1")
 _DECISION = Decision(allowed=True, grant=Grant(subject="ana", role="editor", scope=_BOUNDARY))
 
 

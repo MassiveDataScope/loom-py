@@ -398,7 +398,7 @@ class TestKindPythonRespectsToolTimeout:
             mcp_grants=(),
         )
         toolset = _HungFakeMcpToolset()
-        session = _ToolsetSession(_OpenToolset.of(toolset))  # type: ignore[arg-type]
+        session = _ToolsetSession(_OpenToolset.from_toolset(toolset))  # type: ignore[arg-type]
 
         async def call_until_cut_off() -> None:
             """Run the lookup until the plan timeout cancels it."""

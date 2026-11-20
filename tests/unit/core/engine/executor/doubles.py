@@ -399,7 +399,7 @@ class AcmeAudited(Run):
 
 WRITE = Permission("rows.write")
 CATALOG = RoleCatalog((WRITE,), (Role("editor", (WRITE,)),))
-BOUNDARY = Scope.of("b1")
+BOUNDARY = Scope.from_segments("b1")
 DECISION = Decision(allowed=True, grant=Grant(subject="ana", role="editor", scope=BOUNDARY))
 
 

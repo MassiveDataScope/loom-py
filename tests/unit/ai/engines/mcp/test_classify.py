@@ -35,29 +35,29 @@ class TestMcpErrorClassification:
     def test_a_client_made_code_is_unsafe_whoever_sent_it(
         self, code: int, make: type[MCPError]
     ) -> None:
-        assert Outcome.of(make(code, "Connection closed")) is Outcome.UNSAFE
+        assert Outcome.from_exception(make(code, "Connection closed")) is Outcome.UNSAFE
 
     @pytest.mark.parametrize("make", [MCPError, _sent_by_server])
     def test_an_invalid_request_is_unsafe(self, make: type[MCPError]) -> None:
-        assert Outcome.of(make(-32600, "Unexpected content type")) is Outcome.UNSAFE
+        assert Outcome.from_exception(make(-32600, "Unexpected content type")) is Outcome.UNSAFE
 
     @pytest.mark.parametrize("message", _SESSION_UNKNOWN)
     @pytest.mark.parametrize("make", [MCPError, _sent_by_server])
     def test_a_session_the_server_does_not_know_is_safe(
         self, message: str, make: type[MCPError]
     ) -> None:
-        assert Outcome.of(make(-32600, message)) is Outcome.SAFE
+        assert Outcome.from_exception(make(-32600, message)) is Outcome.SAFE
 
     @pytest.mark.parametrize("message", _SESSION_UNKNOWN)
     @pytest.mark.parametrize("code", [-32000, -32603])
     def test_the_session_messages_are_safe_only_under_invalid_request(
         self, code: int, message: str
     ) -> None:
-        assert Outcome.of(MCPError(code, message)) is Outcome.UNSAFE
+        assert Outcome.from_exception(MCPError(code, message)) is Outcome.UNSAFE
 
     def test_a_code_outside_the_client_set_is_an_answer_the_server_sent(self) -> None:
         assert (
-            Outcome.of(_sent_by_server(-32043, "middleware-sent JSON-RPC error"))
+            Outcome.from_exception(_sent_by_server(-32043, "middleware-sent JSON-RPC error"))
             is Outcome.COMPLETED
         )
 
@@ -73,7 +73,7 @@ class TestMcpErrorClassification:
         ids=["connection", "runtime", "httpx", "group", "unknown"],
     )
     def test_anything_but_an_mcp_error_is_unsafe(self, exc: Exception) -> None:
-        assert Outcome.of(exc) is Outcome.UNSAFE
+        assert Outcome.from_exception(exc) is Outcome.UNSAFE
 
     def test_the_client_made_codes_are_pinned(self) -> None:
         """An upgrade of mcp reruns this: a new client-made code must be added on purpose."""
@@ -101,7 +101,7 @@ class TestMcpErrorClassification:
     def test_a_model_retry_is_judged_by_what_caused_it(
         self, cause: BaseException | None, outcome: Outcome
     ) -> None:
-        assert Outcome.of(_wrapped(cause)) is outcome
+        assert Outcome.from_exception(_wrapped(cause)) is outcome
 
 
 def _wrapped(cause: BaseException | None) -> Exception:

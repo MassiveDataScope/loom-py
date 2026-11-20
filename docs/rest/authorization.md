@@ -33,8 +33,8 @@ separation of duty belongs to the product.
 ## Scopes are paths
 
 loom gives the segments no meaning. A product with workspaces, projects and datasets
-might use `Scope.of("acme")`, `Scope.of("acme", "billing")` and
-`Scope.of("acme", "billing", "invoices")`; another might put a region first. A grant on a
+might use `Scope.from_segments("acme")`, `Scope.from_segments("acme", "billing")` and
+`Scope.from_segments("acme", "billing", "invoices")`; another might put a region first. A grant on a
 scope reaches that scope and everything below it, and nothing else:
 
 | grant on \ access to | `/` | `/W` | `/W/x` | `/W/x/y` | `/W/z` | `/V` |
@@ -82,13 +82,13 @@ there are no negative permissions, and holding two roles gives their union.
 from loom.core.authz import Grant, Scope, evaluate, scopes_with
 
 grants = [
-    Grant("ada", "viewer", Scope.of("acme")),
-    Grant("ada", "operator", Scope.of("acme", "billing")),
+    Grant("ada", "viewer", Scope.from_segments("acme")),
+    Grant("ada", "operator", Scope.from_segments("acme", "billing")),
 ]
 
-evaluate(CATALOG, grants, READ, Scope.of("acme", "billing", "invoices"))  # allowed
-evaluate(CATALOG, grants, RUN, Scope.of("acme"))  # denied
-evaluate(CATALOG, grants, READ, Scope.of("globex"))  # denied
+evaluate(CATALOG, grants, READ, Scope.from_segments("acme", "billing", "invoices"))  # allowed
+evaluate(CATALOG, grants, RUN, Scope.from_segments("acme"))  # denied
+evaluate(CATALOG, grants, READ, Scope.from_segments("globex"))  # denied
 ```
 
 {func}`~loom.core.authz.evaluate` never touches a database or reads a clock. It denies unless
@@ -101,7 +101,7 @@ A stored grant whose role the code does not declare allows nothing.
 To filter a listing, ask once for the outermost scopes and test each item by prefix:
 
 ```python
-reachable = scopes_with(CATALOG, grants, READ)  # frozenset({Scope.of("acme")})
+reachable = scopes_with(CATALOG, grants, READ)  # frozenset({Scope.from_segments("acme")})
 visible = [item for item in items if any(scope.covers(item.scope) for scope in reachable)]
 ```
 
@@ -115,10 +115,10 @@ timezone-aware `expires_at` and pass the decision instant as `now=`:
 from datetime import UTC, datetime, timedelta
 
 now = datetime.now(UTC)
-on_call = [Grant("ada", "operator", Scope.of("acme"), expires_at=now + timedelta(hours=8))]
+on_call = [Grant("ada", "operator", Scope.from_segments("acme"), expires_at=now + timedelta(hours=8))]
 
-evaluate(CATALOG, on_call, RUN, Scope.of("acme"), now=now)  # allowed
-evaluate(CATALOG, on_call, RUN, Scope.of("acme"), now=now + timedelta(hours=8))  # denied
+evaluate(CATALOG, on_call, RUN, Scope.from_segments("acme"), now=now)  # allowed
+evaluate(CATALOG, on_call, RUN, Scope.from_segments("acme"), now=now + timedelta(hours=8))  # denied
 ```
 
 A grant is alive while `now` is before `expires_at`; from that instant on it counts as
@@ -140,16 +140,16 @@ out. The answer lists whatever is missing.
 ```python
 from loom.core.authz import can_grant, can_revoke
 
-manager = [Grant("bob", "admin", Scope.of("acme"))]
-can_grant(CATALOG, manager, "operator", Scope.of("acme", "billing"), delegate=MANAGE)  # allowed
+manager = [Grant("bob", "admin", Scope.from_segments("acme"))]
+can_grant(CATALOG, manager, "operator", Scope.from_segments("acme", "billing"), delegate=MANAGE)  # allowed
 can_grant(CATALOG, manager, "admin", Scope.root(), delegate=MANAGE)  # denied
 
-support = [Grant("eve", "helpdesk", Scope.of("acme"))]
-can_grant(CATALOG, support, "admin", Scope.of("acme"), delegate=MANAGE).missing
+support = [Grant("eve", "helpdesk", Scope.from_segments("acme"))]
+can_grant(CATALOG, support, "admin", Scope.from_segments("acme"), delegate=MANAGE).missing
 # frozenset({Permission("jobs.run")})
 
-operator = [Grant("ola", "operator", Scope.of("acme"))]
-can_grant(CATALOG, operator, "viewer", Scope.of("acme"), delegate=MANAGE).missing
+operator = [Grant("ola", "operator", Scope.from_segments("acme"))]
+can_grant(CATALOG, operator, "viewer", Scope.from_segments("acme"), delegate=MANAGE).missing
 # frozenset({Permission("members.manage")})
 ```
 
@@ -235,7 +235,7 @@ created, so nobody defines a role above what they hold:
 ```python
 from loom.core.authz import CompositionRules, RoleSpec, Scope, evaluate
 
-at = Scope.of("acme")
+at = Scope.from_segments("acme")
 ceiling = frozenset(
     permission
     for permission in CATALOG.permissions
@@ -337,7 +337,7 @@ the current execution:
 from loom.core.authz import Scope, evaluate
 from loom.stores.sqlalchemy.rls import elevate
 
-at = Scope.of(account_id)
+at = Scope.from_segments(account_id)
 decision = evaluate(CATALOG, grants, EDIT_ANY, at)
 if not decision:
     raise PermissionError("not allowed to edit other clerks' entries")

@@ -37,8 +37,8 @@ CATALOG = RoleCatalog(
 )
 
 ROOT = Scope.root()
-T = Scope.of("T")
-U = Scope.of("U")
+T = Scope.from_segments("T")
+U = Scope.from_segments("U")
 R = T.child("sales", "orders")
 R_SIBLING = T.child("sales", "customers")
 

@@ -149,8 +149,8 @@ class UseCaseCompiler:
         self._metrics.on_event(ExecutionEvent(kind=EventKind.COMPILE_START, use_case_name=uc_name))
 
         bindings = self._inspect_execute(use_case_type)
-        compute_steps = tuple(CommandStep.of(fn) for fn in use_case_type.computes)
-        rule_steps = tuple(CommandStep.of(fn) for fn in use_case_type.rules)
+        compute_steps = tuple(CommandStep.from_callable(fn) for fn in use_case_type.computes)
+        rule_steps = tuple(CommandStep.from_callable(fn) for fn in use_case_type.rules)
 
         total = (
             len(bindings.load_steps)

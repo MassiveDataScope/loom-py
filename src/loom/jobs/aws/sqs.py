@@ -79,7 +79,7 @@ def check_queues(
 ) -> None:
     """Fail at startup unless every job's queue has a URL and a FIFO job names its group."""
     for job_type in jobs:
-        queue = settings.of(job_type).queue
+        queue = settings.options_for(job_type).queue
         config = queues.get(queue)
         if config is None:
             raise SQSQueueConfigError(

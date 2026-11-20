@@ -98,7 +98,7 @@ class RunnerDriver:
         delivery = (
             JobTestData()
             .with_job_type(job_type)
-            .with_policy(JobSettings().of(job_type).retry.policy)
+            .with_policy(JobSettings().options_for(job_type).retry.policy)
             .delivery(attempt=attempt, postponements=postponements)
         )
         return _settlement(await self._runner.run(delivery))
@@ -169,7 +169,7 @@ class SQSDriver:
         data = (
             JobTestData()
             .with_job_type(job_type)
-            .with_policy(JobSettings().of(job_type).retry.policy)
+            .with_policy(JobSettings().options_for(job_type).retry.policy)
         )
         outcome = await self._runner.run(
             data.delivery(

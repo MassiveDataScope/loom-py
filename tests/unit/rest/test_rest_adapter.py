@@ -240,7 +240,7 @@ class TestHttpErrorMapper:
         [
             ScopeOwnershipError("closed"),
             UnitOfWorkInsideScope.entering(object()),
-            StoresNotCommittedError.of(InvocationOutcome((Committed(DEFAULT_STORE),))),
+            StoresNotCommittedError.from_outcome(InvocationOutcome((Committed(DEFAULT_STORE),))),
         ],
         ids=["foreign-task", "uow-inside-scope", "stores-not-committed"],
     )

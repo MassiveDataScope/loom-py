@@ -112,7 +112,7 @@ class JobConsumer:
         postponements: int,
     ) -> JobOutcome:
         """Run an envelope using this consumer's policy and invocation time limit."""
-        options = self.settings.of(job_type)
+        options = self.settings.options_for(job_type)
         return await self.runner.run(
             options.delivery_for(
                 job_type,
@@ -132,7 +132,7 @@ class QueueConsumer(JobConsumer):
     settlement: JobSettlement[SQSRecord]
 
     @classmethod
-    def bind(
+    def from_application(
         cls, application: Application, queue_name: str, jobs: Iterable[type[Job[Any]]]
     ) -> QueueConsumer:
         """Check the queue *queue_name* at Init, and fix the policies *jobs* run under.
@@ -166,7 +166,9 @@ class QueueConsumer(JobConsumer):
                 ) from exc
         served = list(jobs)
         base = application.job_settings
-        settings = base.with_retries(queue.retries_for(served, lambda job: base.of(job).retry))
+        settings = base.with_retries(
+            queue.retries_for(served, lambda job: base.options_for(job).retry)
+        )
         redelivery = queue.redelivery
         if served:
             _log.info(

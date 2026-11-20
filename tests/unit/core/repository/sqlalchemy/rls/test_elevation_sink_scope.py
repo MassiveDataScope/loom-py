@@ -26,7 +26,7 @@ from tests.helpers.elevation import sink_for
 
 WRITE = Permission("rows.write")
 CATALOG = RoleCatalog((WRITE,), (Role("editor", (WRITE,)),))
-BOUNDARY = Scope.of("b1")
+BOUNDARY = Scope.from_segments("b1")
 ON = {"loom.scope.editor.any": "on"}
 CLEARED = {"loom.scope.editor.any": ""}
 

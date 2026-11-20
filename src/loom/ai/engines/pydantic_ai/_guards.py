@@ -85,7 +85,9 @@ class BuildContext:
     mcp_grants: tuple[CompiledMcpCapability, ...]
 
     @classmethod
-    def of(cls, plan: AgentPlan, container: LoomContainer, mcp: SharedMcpToolsets) -> BuildContext:
+    def from_plan(
+        cls, plan: AgentPlan, container: LoomContainer, mcp: SharedMcpToolsets
+    ) -> BuildContext:
         """Derive the build context of one compiled plan.
 
         Args:

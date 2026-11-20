@@ -221,7 +221,7 @@ def _make_job_task(
     Returns:
         The registered Celery task object.
     """
-    options = settings.of(job_type)
+    options = settings.options_for(job_type)
     timeout = options.timeout
     runtime = observability or Observability.noop()
     run_timeout = float(timeout) if timeout is not None and timeout > 0 else None

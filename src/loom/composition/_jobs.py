@@ -166,7 +166,9 @@ def _routed(
         return transport, {}, resources
     celery_cfg = _celery_config(context.config)
     queues = [queue for queue in celery_cfg.queues if queue != celery_cfg.task_default_queue]
-    served = tuple(job for job in context.jobs if context.settings.of(job).queue not in queues)
+    served = tuple(
+        job for job in context.jobs if context.settings.options_for(job).queue not in queues
+    )
     transport, resources = _transport(default, replace(context, jobs=served))
     if not queues:
         return transport, {}, resources

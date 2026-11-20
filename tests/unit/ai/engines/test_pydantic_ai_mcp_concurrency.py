@@ -92,14 +92,14 @@ class TestTheEngineAdapterDeclaresConcurrency:
     def test_toolset_session_declares_a_concurrent_mcp_session(self) -> None:
         # ``object()`` basta: la anotacion del toolset es solo de tipos (future
         # annotations), y el constructor no toca el objeto que recibe.
-        session = _ToolsetSession(_OpenToolset.of(object()))  # type: ignore[arg-type]
+        session = _ToolsetSession(_OpenToolset.from_toolset(object()))  # type: ignore[arg-type]
         assert isinstance(session, ConcurrentMcpSession)
 
     async def test_calls_under_one_grant_really_run_in_parallel(self) -> None:
         """Eight calls on one grant are all inside the remote before any of them finishes."""
         gate = CallGate()
         toolset = _FakeToolset(gate)
-        engine_session = _ToolsetSession(_OpenToolset.of(toolset))  # type: ignore[arg-type]
+        engine_session = _ToolsetSession(_OpenToolset.from_toolset(toolset))  # type: ignore[arg-type]
         session = mcp_session_for(engine_session, label="crm")
 
         async def run_eight() -> None:
@@ -124,7 +124,7 @@ class TestTheErrorResultIsTranslated:
     def error_result(self) -> Callable[..., Awaitable[Any]]:
         async def translate(*, is_error: bool) -> Any:
             toolset = _FakeToolset(is_error=is_error)
-            session = _ToolsetSession(_OpenToolset.of(toolset))  # type: ignore[arg-type]
+            session = _ToolsetSession(_OpenToolset.from_toolset(toolset))  # type: ignore[arg-type]
             return await session.call_tool("tool", {})
 
         return translate
@@ -157,7 +157,7 @@ class TestCancellingDoesNotBlockTheSession:
         """A session whose remote calls wait on the returned gate."""
         gate = CallGate()
         toolset = _FakeToolset(gate)
-        session = _ToolsetSession(_OpenToolset.of(toolset))  # type: ignore[arg-type]
+        session = _ToolsetSession(_OpenToolset.from_toolset(toolset))  # type: ignore[arg-type]
         return toolset, session, gate
 
     async def test_cancel_returns_control_immediately(

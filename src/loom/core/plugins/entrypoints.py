@@ -116,7 +116,9 @@ class MissingDependency:
     entry: EntryPoint
 
     @classmethod
-    def of(cls, error: ModuleNotFoundError, entry: EntryPoint) -> MissingDependency | None:
+    def from_import_error(
+        cls, error: ModuleNotFoundError, entry: EntryPoint
+    ) -> MissingDependency | None:
         """Describe the dependency *error* reports missing while *entry* loaded.
 
         Args:

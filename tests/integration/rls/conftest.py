@@ -350,7 +350,9 @@ MANAGE = Permission("members.manage")
 CATALOG = RoleCatalog((MANAGE,), (Role("admin", (MANAGE,)),))
 FLAG = "SELECT coalesce(current_setting('loom.scope.editor.any', true), '')"
 OWNER_SETTING = "SELECT coalesce(current_setting('loom.scope.owner', true), '')"
-DECISION = Decision(allowed=True, grant=Grant(subject=U1, role="admin", scope=Scope.of(U1)))
+DECISION = Decision(
+    allowed=True, grant=Grant(subject=U1, role="admin", scope=Scope.from_segments(U1))
+)
 
 
 @dataclass

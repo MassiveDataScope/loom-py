@@ -131,7 +131,7 @@ class TestConsumedQueue:
 
         application = mount(tmp_path, probe, FakeSqs(_POLICY), jobs=jobs)
 
-        assert application.job_settings.of(probe[0]).retry.policy.max_attempts == 9
+        assert application.job_settings.options_for(probe[0]).retry.policy.max_attempts == 9
 
     def test_the_consumer_logs_the_one_policy_line_of_its_jobs(
         self,

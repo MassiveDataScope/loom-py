@@ -314,7 +314,7 @@ class MarkerDeclarations:
     mcp: tuple[tuple[str, ReachedDeclaration], ...]
 
     @classmethod
-    def of(
+    def from_analysis(
         cls, analysis: GraphAnalysis, compiler: UseCaseCompiler, registry: UseCaseRegistry
     ) -> MarkerDeclarations:
         """Walk each root of *analysis* once and keep what it reaches of the two AI markers.

@@ -193,7 +193,7 @@ class JobService:
         countdown: int | None = None,
         priority: int | None = None,
     ) -> JobDispatch:
-        options = self._settings.of(job_type)
+        options = self._settings.options_for(job_type)
         self.transport_for(queue or options.queue).check_callbacks(on_success, on_failure)
         return JobDispatch.build(
             job_type,

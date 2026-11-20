@@ -14,7 +14,7 @@ from tests.unit.core.authz._elevation_doubles import FakeSink
 
 WRITE = Permission("rows.write")
 CATALOG = RoleCatalog((WRITE, MANAGE), (Role("editor", (WRITE,)), Role("admin", (WRITE, MANAGE))))
-BOUNDARY = Scope.of("b1")
+BOUNDARY = Scope.from_segments("b1")
 
 
 @pytest.fixture(autouse=True)

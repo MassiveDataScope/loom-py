@@ -414,7 +414,7 @@ class UseCaseExecutor:
             started = self._reporter.start(use_case)
             call = self._binder.call
             return await self._boundaries.run(
-                self._boundaries.of(scope, plan, read_only),
+                self._boundaries.boundary_for(scope, plan, read_only),
                 plan,
                 started,
                 lambda: started.business(call(plan, compilable, inputs, identity, started)),

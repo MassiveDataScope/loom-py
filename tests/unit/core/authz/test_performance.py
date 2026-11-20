@@ -20,9 +20,12 @@ class TestAuthorisationPerformance:
         self,
         expires_at: datetime | None,
     ) -> None:
-        grants = [Grant("ada", "viewer", Scope.of(f"w{i}", "x"), expires_at) for i in range(999)]
-        grants.append(Grant("ada", "viewer", Scope.of("target"), expires_at))
-        target = Scope.of("target", "sales", "orders")
+        grants = [
+            Grant("ada", "viewer", Scope.from_segments(f"w{i}", "x"), expires_at)
+            for i in range(999)
+        ]
+        grants.append(Grant("ada", "viewer", Scope.from_segments("target"), expires_at))
+        target = Scope.from_segments("target", "sales", "orders")
         assert evaluate(CATALOG, grants, READ, target, now=NOW).allowed
 
         samples = []
