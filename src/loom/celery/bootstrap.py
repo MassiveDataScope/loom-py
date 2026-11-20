@@ -164,14 +164,14 @@ def bootstrap_worker(
         resolvers=resolvers,
         caller="bootstrap_worker",
     )
-    adapter = CeleryRuntime(
+    runtime = CeleryRuntime(
         jobs=jobs,
         use_cases=use_cases,
         interfaces=interfaces,
         metrics=metrics,
     )
-    application = project.compose(adapter)
-    celery_app = adapter.mount(application)
+    application = project.compose(runtime)
+    celery_app = runtime.mount(application)
     return WorkerBootstrapResult(
         container=application.kernel.container,
         factory=application.kernel.factory,
