@@ -10,6 +10,7 @@ from pathlib import Path
 from typing import Any
 
 import pytest
+from hypothesis import settings
 from moto import mock_aws
 from omegaconf import OmegaConf
 
@@ -24,6 +25,10 @@ from tests.helpers.aws_island import FakeAwsIsland
 from tests.helpers.extras import BOTO3_ISLAND, without_extra
 
 pytest_plugins = ["tests.helpers.delegation"]
+
+settings.register_profile("default", derandomize=True, max_examples=25, database=None)
+settings.register_profile("ci", derandomize=True, max_examples=100, database=None)
+settings.load_profile(os.environ.get("HYPOTHESIS_PROFILE", "default"))
 
 _GOLDEN_DIR = Path(__file__).parent / "golden"
 _PLANS_DIR = _GOLDEN_DIR / "plans"

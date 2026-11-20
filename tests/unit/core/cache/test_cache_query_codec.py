@@ -17,7 +17,10 @@ from __future__ import annotations
 from collections.abc import Sequence
 from typing import Any
 
+import msgspec
 import pytest
+from hypothesis import given
+from hypothesis import strategies as st
 
 from loom.core.cache import CacheConfig, CachedRepository
 from loom.core.cache.decorators import cache_query
@@ -492,3 +495,20 @@ class TestGrammarBoundaries:
         assert codec is not None
         assert codec.decode([{"total": 1, "label": "a"}]) == [Stats(total=1, label="a")]
         assert codec.decode(None) is None
+
+
+def _returns_numbers() -> tuple[int, ...]:
+    raise NotImplementedError
+
+
+class TestResultCodecProperties:
+    @given(values=st.lists(st.integers(min_value=-(2**63), max_value=2**63 - 1), max_size=12))
+    def test_tuple_result_round_trips_through_payload(self, values: list[int]) -> None:
+        codec = build_result_codec(_returns_numbers, model=None)
+        assert codec is not None
+
+        encoded = codec.encode(tuple(values))
+        stored = msgspec.json.decode(msgspec.json.encode(encoded.payload))
+
+        assert encoded.value == tuple(values)
+        assert codec.decode(stored) == tuple(values)
