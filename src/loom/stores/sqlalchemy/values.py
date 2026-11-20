@@ -47,7 +47,7 @@ def check_time_offsets(bindings: Iterable[tuple[Any, object]], *, code: ErrorCod
     offset and takes only a ``time`` that has one (``utcoffset()`` is not
     ``None``); every other column drops the offset and takes only a ``time``
     without one. A model that needs the offset declares a JSON column or
-    ``ColumnType("Time", kwargs={"timezone": True})`` (Postgres only); on
+    ``ColumnType("Time", kwargs=(("timezone", True),))`` (Postgres only); on
     Postgres a ``datetime`` field keeps the instant instead. The error names
     the columns, not the values.
 

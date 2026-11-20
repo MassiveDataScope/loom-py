@@ -44,7 +44,7 @@ class Scoped(BaseModel, RowScoped):
 class Zoned(BaseModel):
     __tablename__ = "zoned_items"
     id: int = ColumnField(Integer, primary_key=True)
-    closes_at: time = ColumnField(ColumnType("Time", kwargs={"timezone": True}))
+    closes_at: time = ColumnField(ColumnType("Time", kwargs=(("timezone", True),)))
 
 
 def _zoned() -> MetaData:

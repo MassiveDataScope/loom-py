@@ -29,6 +29,11 @@
   mock and its own setup client, and the function owns the application and its
   clients. A closed worker no longer raises `the worker is closed`.
 
+- **model:** `ColumnType.kwargs` is a tuple of `(name, value)` pairs, so a column type is
+  hashable as `Annotated` metadata must be; read one option with `ColumnType.option(name)`.
+  **Migration:** `ColumnType("Time", kwargs={"timezone": True})` becomes
+  `ColumnType("Time", kwargs=(("timezone", True),))`.
+- **testing:** `make` builds the same values on every call, registered factories included.
 - **config:** the `ssm` and `secrets` resolvers leave the core. `SsmResolver`
   and `SecretsManagerResolver` are in `loom.connections.aws` (no longer
   exported by `loom.core.config`), and `loom.core.config.default_resolvers()`

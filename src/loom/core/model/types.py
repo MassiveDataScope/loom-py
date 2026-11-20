@@ -27,7 +27,7 @@ Uuid = ColumnType("Uuid")
 
 
 def DateTime(*, tz: bool = True) -> ColumnType:
-    return ColumnType("DateTime", kwargs={"timezone": tz})
+    return ColumnType("DateTime", kwargs=(("timezone", tz),))
 
 
 def Numeric(*, precision: int | None = None, scale: int | None = None) -> ColumnType:
@@ -39,7 +39,7 @@ def Numeric(*, precision: int | None = None, scale: int | None = None) -> Column
     """
     if scale is not None and precision is None:
         raise ValueError("Numeric: a scale needs a precision")
-    return ColumnType("Numeric", kwargs={"precision": precision, "scale": scale})
+    return ColumnType("Numeric", kwargs=(("precision", precision), ("scale", scale)))
 
 
 class _JsonMarker:

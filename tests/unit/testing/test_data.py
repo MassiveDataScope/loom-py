@@ -9,7 +9,7 @@ import msgspec
 import pytest
 from polyfactory.fields import Use
 
-from loom.core.model import LoomFrozenStruct
+from loom.core.model import BigInteger, LoomFrozenStruct
 from loom.core.stores.repository.query import MAX_PAGE_LIMIT, MIN_PAGE_LIMIT, PageParams
 from loom.testing import LoomFactory, make
 
@@ -98,3 +98,29 @@ class TestMake:
     def test_invalid_given_value_still_fails_the_type_rule(self):
         with pytest.raises(ValueError, match="limit must be in"):
             make(PageParams, limit=MAX_PAGE_LIMIT + 1)
+
+
+@dataclass(frozen=True)
+class _Counted:
+    total: Annotated[int, BigInteger]
+
+
+@dataclass(frozen=True)
+class _Registered:
+    value: int
+
+
+class _RegisteredFactory(LoomFactory[_Registered]):
+    __set_as_default_factory_for_type__ = True
+
+
+class TestMakeRegressions:
+    def test_a_field_with_column_metadata_builds(self) -> None:
+        built = make(_Counted, total=7)
+
+        assert built == _Counted(total=7)
+
+    def test_a_registered_factory_builds_the_same_values_on_every_call(self) -> None:
+        first = make(_Registered)
+
+        assert [make(_Registered) for _ in range(3)] == [first, first, first]

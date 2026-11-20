@@ -43,7 +43,7 @@ class _CallerZoned(BaseModel):
     __tablename__ = "caller_zoned_connection_only"
 
     id: int = ColumnField(primary_key=True, autoincrement=True)
-    closes_at: time = ColumnField(ColumnType("Time", kwargs={"timezone": True}))
+    closes_at: time = ColumnField(ColumnType("Time", kwargs=(("timezone", True),)))
 
 
 class _CallerScoped(BaseModel, RowScoped):

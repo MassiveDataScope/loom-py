@@ -184,7 +184,7 @@ def _build_sa_column_type(col_type: ColumnType) -> Any:
     sa_type_cls = _SA_TYPE_MAP.get(col_type.type_name)
     if sa_type_cls is None:
         raise ValueError(f"Unsupported column type: {col_type.type_name}")
-    return sa_type_cls(*col_type.args, **col_type.kwargs)
+    return sa_type_cls(*col_type.args, **dict(col_type.kwargs))
 
 
 def _build_field_kwargs(field: Field) -> dict[str, Any]:

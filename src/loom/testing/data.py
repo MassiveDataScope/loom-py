@@ -50,6 +50,13 @@ class LoomFactory(DataclassFactory[T], MsgspecFactory[T], Generic[T]):  # type: 
             return super().get_model_fields()
         return super(DataclassFactory, cls).get_model_fields()
 
+    @classmethod
+    def restart_sequence(cls) -> None:
+        """Reseed this factory and every subclass, so the next build starts over."""
+        cls.seed_random(_SEED)
+        for subclass in cls.__subclasses__():
+            subclass.restart_sequence()
+
 
 def make(model: type[T], /, **fields: Any) -> T:
     """Build a valid instance of *model*.
@@ -67,5 +74,6 @@ def make(model: type[T], /, **fields: Any) -> T:
     Returns:
         A real instance of *model*.
     """
+    LoomFactory.restart_sequence()
     builder: type[BaseFactory[T]] = LoomFactory._get_or_create_factory(model)  # noqa: SLF001
     return builder.build(**fields)
