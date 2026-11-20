@@ -172,16 +172,26 @@ class TestInlineTimer:
         assert policies[1]["transport"] == "inline"
         assert "max_attempts=3" in policies[1]["jobs"][0]["retry"]
 
-    async def test_a_countdown_waits_on_the_timer_of_the_application(self, tmp_path: Path) -> None:
-        application = self._compose(tmp_path, JobsAdapter(AcmePingJob))
+    async def test_a_countdown_runs_when_the_timer_of_the_application_reaches_it(
+        self, tmp_path: Path
+    ) -> None:
+        timer = ManualTimer()
+        application = self._compose(
+            tmp_path,
+            WithOverrides(JobsAdapter(AcmePingJob), Override.instance(JobTimer, timer).install),
+        )
         service = application.kernel.container.resolve(JobService)
 
-        async with application.running(check=False):
-            handle = service.dispatch_after_commit(AcmePingJob, countdown=60)
-            await flush_pending_dispatches()
+        handle = service.dispatch_after_commit(AcmePingJob, countdown=60)
+        await flush_pending_dispatches()
+        with pytest.raises(JobTimeoutError):
+            handle.wait()
+        await timer.advance(59)
+        with pytest.raises(JobTimeoutError):
+            handle.wait()
+        await timer.advance(1)
 
-            with pytest.raises(JobTimeoutError):
-                handle.wait()
+        assert handle.wait() == await service.run(AcmePingJob)
 
     async def test_a_timer_bound_in_the_container_replaces_it(
         self, tmp_path: Path, warnings_logged: RecordingLogger

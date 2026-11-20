@@ -2,15 +2,25 @@
 
 from __future__ import annotations
 
+from typing import Any
+
 import pytest
 
-from loom.core.errors import MixedJobTransportsError
+from loom.core.engine.compiler import UseCaseCompiler
+from loom.core.engine.executor import RuntimeExecutor
+from loom.core.errors import JobTimeoutError, MixedJobTransportsError
 from loom.core.job.callback import JobCallback
 from loom.core.job.context import clear_pending_dispatches, flush_pending_dispatches
+from loom.core.job.handle import JobHandle
+from loom.core.job.inline import InlineJobTransport
 from loom.core.job.job import Job
 from loom.core.job.service import JobService
+from loom.core.stores.catalog import DEFAULT_STORE
+from loom.core.stores.uow.coordinator import OrderedCommits
+from loom.core.use_case.use_case import UseCase
 from loom.testing import RecordingJobTransport
 from tests.helpers.jobs import EmailJob, JobKernel
+from tests.unit.core.engine._lifecycle_doubles import Log, StubUnitOfWorkFactory
 
 
 class _ReportJob(Job[str]):
@@ -121,3 +131,39 @@ class TestJobService:
 
         await flush_pending_dispatches()
         assert (default.dispatched, emails.dispatched) == ([], [])
+
+
+class _Report(UseCase[Any, None]):
+    def __init__(self, jobs: JobService) -> None:
+        self.jobs = jobs
+        self.handle: JobHandle[str] | None = None
+        self.ran_before_commit = True
+
+    async def execute(self) -> None:
+        self.handle = self.jobs.dispatch_after_commit(_ReportJob, queue="reports")
+        try:
+            self.handle.wait()
+        except JobTimeoutError:
+            self.ran_before_commit = False
+
+
+class TestRoutedInlineTransport:
+    async def test_an_inline_routed_queue_runs_the_job_only_after_the_unit_of_work_commits(
+        self, default: RecordingJobTransport
+    ) -> None:
+        kernel = JobKernel()
+        kernel.factory.register(_ReportJob)
+        inline = InlineJobTransport(kernel.factory, kernel.executor)
+        service = JobService(default, routes={"reports": inline})
+        executor = RuntimeExecutor(
+            UseCaseCompiler(),
+            coordinator=OrderedCommits({DEFAULT_STORE: StubUnitOfWorkFactory(Log())}),
+        )
+        use_case = _Report(service)
+
+        await executor.execute(use_case)
+
+        assert use_case.ran_before_commit is False
+        assert use_case.handle is not None
+        assert use_case.handle.wait() == "report"
+        assert default.dispatched == []

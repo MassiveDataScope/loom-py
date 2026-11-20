@@ -17,12 +17,13 @@ import yaml
 
 from loom.celery.service import CeleryJobTransport
 from loom.composition import JobTransportContext, JobTransportError, Project
+from loom.core.job.context import flush_pending_dispatches
 from loom.core.job.inline import InlineJobTransport
 from loom.core.job.service import JobService
 from loom.rest.fastapi.adapter import FastAPIAdapter
 from loom.testing import RecordingJobTransport
 from tests.helpers.composition import ProjectFactory
-from tests.helpers.jobs import BROKER, JobsAdapter, job_project
+from tests.helpers.jobs import BROKER, EmailJob, JobsAdapter, job_project
 
 _SRC = Path(__file__).resolve().parents[3] / "src"
 _ROUTED = {"celery": {**BROKER, "queues": ["default", "emails"]}}
@@ -87,20 +88,23 @@ print(json.dumps(sorted(
 
 class TestJobTransports:
     @pytest.mark.parametrize(
-        ("queue", "expected"),
-        [
-            ("emails", CeleryJobTransport),
-            ("reports", RecordingJobTransport),
-            ("default", RecordingJobTransport),
-        ],
+        ("queue", "recorded_by_default"),
+        [("emails", False), ("reports", True), ("default", True)],
         ids=["celery queue", "other queue", "celery default queue"],
     )
-    def test_celery_queues_are_sent_by_celery_and_the_rest_by_the_default(
-        self, tmp_path: Path, queue: str, expected: type[object]
+    async def test_celery_queues_are_sent_by_celery_and_the_rest_by_the_default(
+        self, tmp_path: Path, queue: str, recorded_by_default: bool
     ) -> None:
         service = _service(tmp_path, _ROUTED, _RECORDING)
+        default = service.default_transport
+        assert isinstance(default, RecordingJobTransport)
 
-        assert type(service.transport_for(queue)) is expected
+        service.dispatch_after_commit(EmailJob, queue=queue)
+        await flush_pending_dispatches()
+
+        assert [record.queue for record in default.dispatched] == (
+            [queue] if recorded_by_default else []
+        )
 
     @pytest.mark.parametrize(
         ("config", "job_service", "expected"),
