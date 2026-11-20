@@ -287,7 +287,7 @@ class ScriptAdapter:
 async def main(operator: Identity) -> None:  # Product: a model of your app
     application = create_app("config/script.yaml", adapter=ScriptAdapter())
     async with application.running():
-        invoker = application.kernel.app.for_identity(operator)
+        invoker = application.kernel.invoker.for_identity(operator)
         await invoker.entity(Product).get(params={"id": 1})
 ```
 

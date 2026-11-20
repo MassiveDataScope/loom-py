@@ -50,11 +50,11 @@ variable (`LOOM_CONFIG_DIR`, `LOOM_STORAGE_CONFIG_PATH`, `LOOM_ETL_CONFIG`,
   `parse_environment(raw, source=...)` applies the same rules to a value that
   names an environment without selecting the running one.
 - Every entry point resolves it once and passes it on: to the logger, to the
-  deploy checks, and into the container (`bootstrap_app` registers it at
+  deploy checks, and into the container (`create_kernel` registers it at
   `APPLICATION` scope with the configuration, before the modules run). The
   entry points are REST and Celery `create_app`, `bootstrap_worker`,
   `ETLRunner`, `StreamingRunner` and the Prefect flows. The public factories
-  (`create_kernel`, `bootstrap_app`, `ObservabilityRuntime.from_config`,
+  (`create_kernel`, `ObservabilityRuntime.from_config`,
   `configure_logging*`) take `environment=None` and resolve it the same way.
   No module holds it in a global.
 - Prefect: the flow parameter `env` and the keys of `environments` are
