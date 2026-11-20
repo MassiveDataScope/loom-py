@@ -512,7 +512,7 @@ fmt = [
 test = "pytest -n auto --dist worksteal -q -p no:cacheprovider"
 test-fast = "pytest -n auto --dist worksteal -q -p no:cacheprovider -o 'testpaths=tests/unit tests/contract tests/docs'"
 test-int = "pytest -n auto --dist worksteal -q -p no:cacheprovider -o testpaths=tests/integration --ignore=tests/integration/rls"
-test-props = { cmd = "pytest -n auto --dist worksteal -q -p no:cacheprovider -o testpaths=tests/unit -k Properties", env = { HYPOTHESIS_PROFILE = "ci" } }
+test-props = { cmd = "pytest -n auto --dist worksteal -q -p no:cacheprovider -o testpaths=tests/unit -m hypothesis", env = { HYPOTHESIS_PROFILE = "ci" } }
 test-cov = "pytest -n auto --dist worksteal -q -p no:cacheprovider --cov=src/loom --cov-report=term-missing --cov-report=xml"
 test-logs = "pytest -n 0 -p no:cacheprovider -o log_cli=true -o log_cli_level=DEBUG"
 golden-update = "pytest -q -p no:cacheprovider --update-golden"
