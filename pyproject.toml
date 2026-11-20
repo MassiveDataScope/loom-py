@@ -554,7 +554,7 @@ gate = ["lint", "types", "test-fast", "test-int"]
 help = "mypy src, failing only when the error count grows past MYPY_BASELINE"
 env = { MYPY_BASELINE = "4" }
 shell = """
-out=$(mypy src 2>&1)
+out=$(mypy --no-color-output src 2>&1)
 found=$(printf '%s\\n' "$out" | sed -n 's/^Found \\([0-9]*\\) error.*/\\1/p')
 echo "mypy: ${found:-0} errors (baseline $MYPY_BASELINE)"
 if [ "${found:-0}" -gt "$MYPY_BASELINE" ]; then
