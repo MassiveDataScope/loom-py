@@ -5,7 +5,6 @@ from __future__ import annotations
 from collections.abc import Mapping, Sequence
 from typing import TYPE_CHECKING, Any, TypeVar
 
-from loom.core.errors import MixedJobTransportsError
 from loom.core.job.callback import ANY_CALLBACKS, DispatchableCallbacks, JobCallback
 from loom.core.job.config import JobSettings
 from loom.core.job.dispatch import JobDispatch
@@ -172,31 +171,13 @@ class JobService:
         )
         return await self.transport_for(dispatch.queue).send(dispatch)
 
-    def dispatch_parallel(
-        self,
-        jobs: Sequence[tuple[type[Job[Any]], dict[str, Any]]],
-        *,
-        on_all_success: type[JobCallback] | None = None,
-        on_any_failure: type[JobCallback] | None = None,
-    ) -> JobGroup:
-        """Schedule each job after commit and return handles in input order.
-
-        Raises:
-            MixedJobTransportsError: Group callbacks span more than one transport.
-            NotImplementedError: A transport cannot deliver group callbacks.
-        """
+    def dispatch_parallel(self, jobs: Sequence[tuple[type[Job[Any]], dict[str, Any]]]) -> JobGroup:
+        """Schedule each job after commit and return handles in input order."""
         dispatches = [self._build_dispatch(job, payload=body) for job, body in jobs]
-        transports = [self.transport_for(dispatch.queue) for dispatch in dispatches]
-        first = transports[0] if transports else self._default
-        same_transport = all(transport is first for transport in transports)
-        if (on_all_success is not None or on_any_failure is not None) and not same_transport:
-            raise MixedJobTransportsError()
-        if same_transport:
-            first.check_parallel_callbacks(on_all_success, on_any_failure)
         return JobGroup(
             handles=tuple(
-                transport.send_after_commit(dispatch)
-                for transport, dispatch in zip(transports, dispatches, strict=True)
+                self.transport_for(dispatch.queue).send_after_commit(dispatch)
+                for dispatch in dispatches
             )
         )
 

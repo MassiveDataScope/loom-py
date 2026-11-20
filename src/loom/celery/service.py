@@ -192,21 +192,6 @@ class CeleryJobTransport:
         """Accept callbacks, whose discovery is checked by the service."""
         return None
 
-    def check_parallel_callbacks(
-        self, on_all_success: type[JobCallback] | None, on_any_failure: type[JobCallback] | None
-    ) -> None:
-        """Refuse group callbacks until Celery chord support is implemented.
-
-        Raises:
-            NotImplementedError: Either callback is supplied.
-        """
-        if on_all_success is not None or on_any_failure is not None:
-            raise NotImplementedError(
-                "dispatch_parallel() callbacks (on_all_success / on_any_failure) "
-                "require Celery chord support, which is not yet implemented. "
-                "Pass None for both callback arguments."
-            )
-
     def _build_pending(
         self, dispatch: JobDispatch
     ) -> tuple[_PendingCeleryDispatch, JobHandle[Any]]:

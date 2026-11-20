@@ -68,16 +68,3 @@ class JobFailedError(SystemError):
         self.job_id = job_id
         self.cause = cause
         self.__cause__ = cause
-
-
-class MixedJobTransportsError(SystemError):
-    """``dispatch_parallel`` with callbacks spans jobs of more than one backend."""
-
-    is_retryable = False
-
-    def __init__(self) -> None:
-        super().__init__(
-            "dispatch_parallel callbacks need every job on one job transport; "
-            "these jobs route to several",
-            code=ErrorCode.JOB_BACKENDS_MIXED,
-        )

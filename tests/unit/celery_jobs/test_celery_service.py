@@ -149,12 +149,6 @@ class TestCallbacks:
         (message,) = broker.sent()
         assert message.kwargs["failure_callback"] == "loom.callback_error.FailureCallback"
 
-    def test_a_group_with_callbacks_is_refused_until_celery_chords_are_supported(
-        self, service: JobService
-    ) -> None:
-        with pytest.raises(NotImplementedError, match="chord"):
-            service.dispatch_parallel([(EmailJob, {})], on_all_success=SuccessCallback)
-
 
 class TestFailureCallbackSend:
     def test_the_worker_sends_the_callback_task_with_the_link_the_class_and_the_message(

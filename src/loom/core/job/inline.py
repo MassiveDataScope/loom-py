@@ -84,12 +84,6 @@ class InlineJobTransport:
         await self._start(pending)
         return handle
 
-    def check_parallel_callbacks(
-        self, on_all_success: type[JobCallback] | None, on_any_failure: type[JobCallback] | None
-    ) -> None:
-        """Accept group callbacks without invoking them, as inline dispatch has done."""
-        return None
-
     def check_callbacks(
         self, on_success: type[JobCallback] | None, on_failure: type[JobCallback] | None
     ) -> None:

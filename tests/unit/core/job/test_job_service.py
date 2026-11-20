@@ -8,8 +8,7 @@ import pytest
 
 from loom.core.engine.compiler import UseCaseCompiler
 from loom.core.engine.executor import RuntimeExecutor
-from loom.core.errors import JobTimeoutError, MixedJobTransportsError
-from loom.core.job.callback import JobCallback
+from loom.core.errors import JobTimeoutError
 from loom.core.job.context import clear_pending_dispatches, flush_pending_dispatches
 from loom.core.job.handle import JobHandle
 from loom.core.job.inline import InlineJobTransport
@@ -117,20 +116,6 @@ class TestJobService:
 
         assert [handle.queue for handle in group.handles] == ["reports", "emails", "reports"]
         assert (len(default.dispatched), len(emails.dispatched)) == (2, 1)
-
-    @pytest.mark.parametrize("callback", ["on_all_success", "on_any_failure"])
-    async def test_parallel_callbacks_over_mixed_transports_are_refused(
-        self,
-        service: JobService,
-        default: RecordingJobTransport,
-        emails: RecordingJobTransport,
-        callback: str,
-    ) -> None:
-        with pytest.raises(MixedJobTransportsError):
-            service.dispatch_parallel([(_ReportJob, {}), (EmailJob, {})], **{callback: JobCallback})
-
-        await flush_pending_dispatches()
-        assert (default.dispatched, emails.dispatched) == ([], [])
 
 
 class _Report(UseCase[Any, None]):

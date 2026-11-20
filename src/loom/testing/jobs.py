@@ -227,12 +227,6 @@ class RecordingJobTransport:
         """Accept callbacks as the recording transport has done."""
         return None
 
-    def check_parallel_callbacks(
-        self, on_all_success: type[JobCallback] | None, on_any_failure: type[JobCallback] | None
-    ) -> None:
-        """Accept group callbacks without invoking them, as recording dispatch has done."""
-        return None
-
     def _record(self, dispatch: JobDispatch) -> tuple[DispatchedJob, JobHandle[Any]]:
         record = DispatchedJob(
             job_type=dispatch.job_type,

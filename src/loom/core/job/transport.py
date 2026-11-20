@@ -25,9 +25,3 @@ class JobTransport(Protocol):
     ) -> None:
         """Refuse callbacks that the transport cannot carry before discovery checks."""
         ...
-
-    def check_parallel_callbacks(
-        self, on_all_success: type[JobCallback] | None, on_any_failure: type[JobCallback] | None
-    ) -> None:
-        """Refuse group callbacks the transport cannot deliver."""
-        ...

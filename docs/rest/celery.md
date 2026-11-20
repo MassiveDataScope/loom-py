@@ -332,8 +332,7 @@ identity.
 - `asyncio.gather` over several `invoke` calls: one invocation scope has one
   owner task; a participant touched from a `gather` child raises
   `ScopeOwnershipError`. Await the calls one after another.
-- Callbacks (`on_success` / `on_failure`, or `on_all_success` /
-  `on_any_failure` on `dispatch_parallel`) with the SQS backend:
+- Callbacks (`on_success` / `on_failure`) with the SQS backend:
   `dispatch_after_commit` refuses them with `SQSDispatchError` (code
   `sqs_callbacks`).
 - `handle.wait()` with the SQS backend: an SQS `JobHandle` carries no result
@@ -390,7 +389,7 @@ stays with `app.job_service`: a job left on `__queue__ = "default"` runs inline.
   `CeleryJobTransport` or `SQSJobTransport` by effective queue.
 - `run()` executes in process for every transport.
 - `dispatch_parallel()` over jobs of several transports returns one `JobGroup`
-  in input order, and refuses callbacks with `MixedJobTransportsError`.
+  in input order. It takes no callbacks.
 - Startup fails with `JobTransportError` for an unknown name or when Celery or
   SQS is needed without its `loom[celery]` or `loom[aws]` extra.
 - A `module:Class` transport is built as `Class(context)`, where `context` is a
