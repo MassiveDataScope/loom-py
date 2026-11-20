@@ -5,7 +5,6 @@ from __future__ import annotations
 import asyncio
 import logging
 from typing import Any
-from unittest.mock import AsyncMock, MagicMock
 
 import pytest
 from sqlalchemy.engine import make_url
@@ -20,8 +19,8 @@ from loom.core.stores.uow.coordinator import InvocationOutcome, PhysicalStore, R
 from loom.core.stores.uow.scope import current_scope
 from loom.stores.sqlalchemy.uow import SQLAlchemyUnitOfWork, SQLAlchemyUnitOfWorkFactory
 
-from ..conftest import RecordingSessionManager, make_session
-from .conftest import SessionPair, make_session_manager
+from ..conftest import RecordingSession, RecordingSessionManager, make_session
+from .conftest import SessionPair
 
 
 async def _close(uow: SQLAlchemyUnitOfWork) -> None:
@@ -36,18 +35,18 @@ async def _close(uow: SQLAlchemyUnitOfWork) -> None:
 
 class TestSqlAlchemyUnitOfWorkSession:
     def test_sqlalchemy_uow_satisfies_protocol(self) -> None:
-        sm = make_session_manager(make_session())
+        sm = RecordingSessionManager(make_session())
         uow = SQLAlchemyUnitOfWork(sm)
         assert isinstance(uow, UnitOfWork)
 
     def test_sqlalchemy_uow_factory_satisfies_protocol(self) -> None:
-        sm = make_session_manager(make_session())
+        sm = RecordingSessionManager(make_session())
         factory = SQLAlchemyUnitOfWorkFactory(sm)
         assert isinstance(factory, UnitOfWorkFactory)
 
     async def test_begin_opens_session(self) -> None:
         session = make_session()
-        sm = make_session_manager(session)
+        sm = RecordingSessionManager(session)
         uow = SQLAlchemyUnitOfWork(sm)
 
         await uow.begin()
@@ -56,27 +55,27 @@ class TestSqlAlchemyUnitOfWorkSession:
 
     async def test_commit_calls_session_commit(self) -> None:
         session = make_session()
-        sm = make_session_manager(session)
+        sm = RecordingSessionManager(session)
         uow = SQLAlchemyUnitOfWork(sm)
 
         await uow.begin()
         await uow.commit()
-        session.commit.assert_awaited_once()
+        assert session.count("commit") == 1
         await _close(uow)
 
     async def test_rollback_calls_session_rollback(self) -> None:
         session = make_session()
-        sm = make_session_manager(session)
+        sm = RecordingSessionManager(session)
         uow = SQLAlchemyUnitOfWork(sm)
 
         await uow.begin()
         await uow.rollback()
-        session.rollback.assert_awaited_once()
+        assert session.count("rollback") == 1
         await _close(uow)
 
     async def test_begin_before_commit_raises(self) -> None:
         session = make_session()
-        sm = make_session_manager(session)
+        sm = RecordingSessionManager(session)
         uow = SQLAlchemyUnitOfWork(sm)
 
         with pytest.raises(RuntimeError, match="before begin"):
@@ -84,7 +83,7 @@ class TestSqlAlchemyUnitOfWorkSession:
 
     async def test_begin_before_rollback_raises(self) -> None:
         session = make_session()
-        sm = make_session_manager(session)
+        sm = RecordingSessionManager(session)
         uow = SQLAlchemyUnitOfWork(sm)
 
         with pytest.raises(RuntimeError, match="before begin"):
@@ -92,7 +91,7 @@ class TestSqlAlchemyUnitOfWorkSession:
 
     async def test_begin_twice_raises(self) -> None:
         session = make_session()
-        sm = make_session_manager(session)
+        sm = RecordingSessionManager(session)
         uow = SQLAlchemyUnitOfWork(sm)
 
         await uow.begin()
@@ -115,13 +114,13 @@ def _participant_session(sm: Any) -> object:
 class TestSqlAlchemyUnitOfWorkContextManager:
     async def test_the_context_manager_makes_its_session_the_participant_of_its_store(self) -> None:
         session = make_session()
-        sm = make_session_manager(session)
+        sm = RecordingSessionManager(session)
 
         async with SQLAlchemyUnitOfWork(sm):
             assert _participant_session(sm) is session
 
     async def test_the_context_manager_unpublishes_its_scope_on_a_clean_exit(self) -> None:
-        uow = SQLAlchemyUnitOfWork(make_session_manager(make_session()))
+        uow = SQLAlchemyUnitOfWork(RecordingSessionManager(make_session()))
 
         async with uow:
             pass
@@ -129,7 +128,7 @@ class TestSqlAlchemyUnitOfWorkContextManager:
         assert current_scope() is None
 
     async def test_the_context_manager_unpublishes_its_scope_when_the_block_raises(self) -> None:
-        uow = SQLAlchemyUnitOfWork(make_session_manager(make_session()))
+        uow = SQLAlchemyUnitOfWork(RecordingSessionManager(make_session()))
 
         with pytest.raises(ValueError, match="test error"):
             async with uow:
@@ -139,29 +138,29 @@ class TestSqlAlchemyUnitOfWorkContextManager:
 
     async def test_context_manager_commits_on_success(self) -> None:
         session = make_session()
-        sm = make_session_manager(session)
+        sm = RecordingSessionManager(session)
 
         async with SQLAlchemyUnitOfWork(sm):
             pass
 
-        session.commit.assert_awaited_once()
-        session.rollback.assert_not_awaited()
+        assert session.count("commit") == 1
+        assert session.count("rollback") == 0
 
     async def test_context_manager_rolls_back_on_exception(self) -> None:
         session = make_session()
-        sm = make_session_manager(session)
+        sm = RecordingSessionManager(session)
 
         uow = SQLAlchemyUnitOfWork(sm)
         with pytest.raises(RuntimeError):
             async with uow:
                 raise RuntimeError("oops")
 
-        session.rollback.assert_awaited_once()
-        session.commit.assert_not_awaited()
+        assert session.count("rollback") == 1
+        assert session.count("commit") == 0
 
     async def test_commit_failure_rolls_back_then_closes(self) -> None:
         session = make_session()
-        session.commit = AsyncMock(side_effect=RuntimeError("commit failed"))
+        session.fail_on("commit", RuntimeError("commit failed"))
         sm = RecordingSessionManager(session)
         uow = SQLAlchemyUnitOfWork(sm)  # type: ignore[arg-type]
 
@@ -169,7 +168,7 @@ class TestSqlAlchemyUnitOfWorkContextManager:
             async with uow:
                 pass
 
-        session.rollback.assert_awaited_once()
+        assert session.count("rollback") == 1
         assert sm.exits == 1
         assert current_scope() is None
 
@@ -188,7 +187,7 @@ class TestSqlAlchemyUnitOfWorkContextManager:
             async with uow:
                 raise RuntimeError("business")
 
-        session.rollback.assert_awaited_once()
+        assert session.count("rollback") == 1
         assert sm.exits == 1
         assert "UoWCloseFailed" in caplog.text
         assert current_scope() is None
@@ -206,11 +205,11 @@ class TestSqlAlchemyUnitOfWorkContextManager:
             async with uow:
                 pass
 
-        session.commit.assert_awaited_once()
+        assert session.count("commit") == 1
         assert "UoWCloseFailed" in caplog.text
         assert current_scope() is None
 
-        session.commit.assert_awaited_once()
+        assert session.count("commit") == 1
         assert current_scope() is None
 
     async def test_a_second_cancellation_waits_for_the_rollback_then_closes(self) -> None:
@@ -226,7 +225,7 @@ class TestSqlAlchemyUnitOfWorkContextManager:
             rolled_back = True
 
         session = make_session()
-        session.rollback = _blocking_rollback
+        session.run_on("rollback", _blocking_rollback)
         sm = RecordingSessionManager(session)
         uow = SQLAlchemyUnitOfWork(sm)  # type: ignore[arg-type]
         entered = asyncio.Event()
@@ -272,7 +271,7 @@ class TestRollbackFailure:
             async with uow:
                 raise ValueError("business")
 
-        broken_rollback.session.rollback.assert_awaited_once()
+        assert broken_rollback.session.count("rollback") == 1
         assert broken_rollback.manager.exits == 1
         assert "UoWRollbackFailed" in caplog.text
         assert current_scope() is None
@@ -320,7 +319,7 @@ class TestSqlAlchemyCommitFailure:
     ) -> None:
         """An uncertain one wrapped in the non-retryable ``StoresNotCommitted`` (T101)."""
         session = make_session()
-        setattr(session, step, AsyncMock(side_effect=error))
+        session.fail_on(step, error)
         uow = SQLAlchemyUnitOfWork(RecordingSessionManager(session))  # type: ignore[arg-type]
         raised_type = StoresNotCommitted if outcome is Uncertain else type(error)
 
@@ -330,15 +329,15 @@ class TestSqlAlchemyCommitFailure:
 
         assert (raised.value.__cause__ if outcome is Uncertain else raised.value) is error
         assert scope.outcome == InvocationOutcome((outcome(DEFAULT_STORE, error),))
-        assert session.invalidate.await_count == (outcome is Uncertain)
+        assert session.count("invalidate") == (outcome is Uncertain)
 
     async def test_a_failing_invalidate_leaves_the_commit_uncertain_with_its_own_error(
         self,
     ) -> None:
         error = OperationalError("COMMIT", None, OSError())
         session = make_session()
-        session.commit = AsyncMock(side_effect=error)
-        session.invalidate = AsyncMock(side_effect=OSError("socket gone"))
+        session.fail_on("commit", error)
+        session.fail_on("invalidate", OSError("socket gone"))
         uow = SQLAlchemyUnitOfWork(RecordingSessionManager(session))  # type: ignore[arg-type]
 
         with pytest.raises(StoresNotCommitted) as raised:
@@ -351,12 +350,12 @@ class TestSqlAlchemyCommitFailure:
 
 class TestPhased:
     def test_owner_is_the_session_manager(self) -> None:
-        sm = make_session_manager(make_session())
+        sm = RecordingSessionManager(make_session())
 
         assert SQLAlchemyUnitOfWork(sm).owner is sm
 
     def test_physical_names_the_url_without_credentials(self) -> None:
-        sm = make_session_manager(make_session())
+        sm = RecordingSessionManager(make_session())
         sm.engine.url = make_url("postgresql+asyncpg://loom:secret@db:5432/app")
 
         physical = SQLAlchemyUnitOfWork(sm).physical
@@ -367,17 +366,16 @@ class TestPhased:
 
     async def test_flush_flushes_the_session(self) -> None:
         session = make_session()
-        session.flush = AsyncMock()
-        uow = SQLAlchemyUnitOfWork(make_session_manager(session))
+        uow = SQLAlchemyUnitOfWork(RecordingSessionManager(session))
         await uow.begin()
 
         await uow.flush()
 
-        session.flush.assert_awaited_once()
+        assert session.count("flush") == 1
         await uow.close()
 
     async def test_flush_before_begin_is_refused(self) -> None:
-        uow = SQLAlchemyUnitOfWork(make_session_manager(make_session()))
+        uow = SQLAlchemyUnitOfWork(RecordingSessionManager(make_session()))
 
         with pytest.raises(RuntimeError, match=r"flush\(\) called before begin"):
             await uow.flush()
@@ -392,7 +390,7 @@ class TestPhased:
         assert sm.exits == 1
 
     async def test_close_releases_the_session(self) -> None:
-        uow = SQLAlchemyUnitOfWork(make_session_manager(make_session()))
+        uow = SQLAlchemyUnitOfWork(RecordingSessionManager(make_session()))
         await uow.begin()
 
         await uow.close()
@@ -404,8 +402,8 @@ class TestPhased:
         self, still_open: bool, invalidations: int
     ) -> None:
         session = make_session()
-        session.in_transaction.return_value = still_open
-        uow = SQLAlchemyUnitOfWork(make_session_manager(session))
+        session.is_in_transaction = still_open
+        uow = SQLAlchemyUnitOfWork(RecordingSessionManager(session))
         await uow.begin()
         rollback = uow.rollback()
         with pytest.raises(TimeoutError):
@@ -413,7 +411,7 @@ class TestPhased:
 
         await uow.close()
 
-        assert (session.rollback.await_count, session.invalidate.await_count) == (0, invalidations)
+        assert (session.count("rollback"), session.count("invalidate")) == (0, invalidations)
 
     async def test_a_failure_to_close_still_releases_the_session_and_propagates(self) -> None:
         sm = RecordingSessionManager(make_session(), exit_error=ConnectionError("pool gone"))
@@ -459,8 +457,8 @@ class TestPhased:
             await gate.wait()
 
         session = make_session()
-        session.in_transaction.return_value = True
-        session.invalidate = AsyncMock(side_effect=_invalidate)
+        session.is_in_transaction = True
+        session.run_on("invalidate", _invalidate)
         sm = RecordingSessionManager(session)
         uow = SQLAlchemyUnitOfWork(sm)  # type: ignore[arg-type]
         observed: list[bool] = []
@@ -487,7 +485,7 @@ class TestPhased:
 class _GatedSessionManager(RecordingSessionManager):
     """Session manager whose exit blocks on ``gate``; ``exiting`` is set when it starts."""
 
-    def __init__(self, session: MagicMock, gate: asyncio.Event) -> None:
+    def __init__(self, session: RecordingSession, gate: asyncio.Event) -> None:
         super().__init__(session)
         self._gate = gate
         self.exiting = asyncio.Event()
@@ -505,14 +503,14 @@ class _GatedSessionManager(RecordingSessionManager):
 
 class TestSqlAlchemyUnitOfWorkFactory:
     def test_factory_create_returns_new_uow(self) -> None:
-        sm = make_session_manager(make_session())
+        sm = RecordingSessionManager(make_session())
         factory = SQLAlchemyUnitOfWorkFactory(sm)
         uow1 = factory.create()
         uow2 = factory.create()
         assert uow1 is not uow2
 
     def test_factory_create_returns_uow_with_same_session_manager(self) -> None:
-        sm = make_session_manager(make_session())
+        sm = RecordingSessionManager(make_session())
         factory = SQLAlchemyUnitOfWorkFactory(sm)
         uow = factory.create()
         assert isinstance(uow, SQLAlchemyUnitOfWork)

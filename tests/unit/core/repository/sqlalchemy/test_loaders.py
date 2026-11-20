@@ -2,8 +2,8 @@
 
 from __future__ import annotations
 
+from types import SimpleNamespace
 from typing import Any
-from unittest.mock import MagicMock
 
 import pytest
 
@@ -25,10 +25,7 @@ class _FakeNote:
 
 
 def _obj_with_relation(relation_name: str, related: list[Any]) -> Any:
-    obj = MagicMock()
-    obj.__dict__[relation_name] = related
-    setattr(obj, relation_name, related)
-    return obj
+    return SimpleNamespace(**{relation_name: related})
 
 
 # ---------------------------------------------------------------------------
@@ -63,18 +60,14 @@ class TestMemoryLoadersLoadFromObject:
 
     def test_count_none_relation_treated_as_empty(self) -> None:
         loader = _MemoryCountLoader(relation="notes")
-        obj = MagicMock()
-        obj.__dict__["notes"] = None
-        obj.notes = None
+        obj = SimpleNamespace(notes=None)
 
         assert loader.load_from_object(obj) == 0
 
     def test_join_fields_single_object_wrapped_in_list(self) -> None:
         owner = _FakeNote(7, "owner")
         loader = _MemoryJoinFieldsLoader(relation="owner", value_columns=("id",))
-        obj = MagicMock()
-        obj.__dict__["owner"] = owner
-        obj.owner = owner
+        obj = SimpleNamespace(owner=owner)
 
         assert loader.load_from_object(obj) == [{"id": 7}]
 

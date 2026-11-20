@@ -1,7 +1,6 @@
 from __future__ import annotations
 
 from typing import Any
-from unittest.mock import AsyncMock
 
 import pytest
 from sqlalchemy import DateTime  # noqa: F401
@@ -11,13 +10,17 @@ from loom.core.stores.repository.mutation import MutationEvent
 from loom.stores.sqlalchemy.repository import SQLAlchemyRepository
 from loom.stores.sqlalchemy.transactional import record_mutation, transactional
 
+from ...conftest import RecordingSession
 from .conftest import RepositoryWithTransactionalMethod, ServiceWithoutSessionManager
 
 
 class _ServiceWithTransaction:
     def __init__(self, session_manager: Any) -> None:
         self.session_manager = session_manager
-        self.on_transaction_committed = AsyncMock()
+        self.committed_events: list[tuple[MutationEvent, ...]] = []
+
+    async def on_transaction_committed(self, events: tuple[MutationEvent, ...]) -> None:
+        self.committed_events.append(events)
 
     @transactional
     async def execute(self) -> str:
@@ -42,35 +45,35 @@ class TestTransactionalDecorator:
     async def test_transaction_commit_and_post_commit_hook(
         self,
         mock_session_manager: Any,
-        mock_session: AsyncMock,
+        session_double: RecordingSession,
     ) -> None:
         service = _ServiceWithTransaction(mock_session_manager)
 
         result = await service.execute()
 
         assert result == "ok"
-        mock_session.commit.assert_awaited_once()
-        mock_session.rollback.assert_not_awaited()
-        service.on_transaction_committed.assert_awaited_once()
+        assert session_double.count("commit") == 1
+        assert session_double.count("rollback") == 0
+        assert len(service.committed_events) == 1
 
     async def test_nested_transaction_reuses_same_session(
         self,
         mock_session_manager: Any,
-        mock_session: AsyncMock,
+        session_double: RecordingSession,
     ) -> None:
         service = _NestedService(mock_session_manager)
 
         result = await service.outer()
 
         assert result == "inner"
-        mock_session.commit.assert_awaited_once()
+        assert session_double.count("commit") == 1
 
 
 class TestTransactionalOwnerContract:
     """The decorator refuses owners it cannot honour, before any session opens."""
 
     async def test_repository_owner_is_rejected(
-        self, repository_owner: RepositoryWithTransactionalMethod, mock_session: AsyncMock
+        self, repository_owner: RepositoryWithTransactionalMethod, session_double: RecordingSession
     ) -> None:
         with pytest.raises(TypeError) as excinfo:
             await repository_owner.execute()
@@ -78,7 +81,7 @@ class TestTransactionalOwnerContract:
         message = str(excinfo.value)
         assert "@transactional" in message
         assert "not repository methods" in message
-        mock_session.commit.assert_not_awaited()
+        assert session_double.count("commit") == 0
 
     async def test_owner_without_session_manager_is_rejected(
         self, owner_without_session_manager: ServiceWithoutSessionManager

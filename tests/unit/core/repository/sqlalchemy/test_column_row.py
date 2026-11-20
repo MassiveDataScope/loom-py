@@ -5,8 +5,8 @@ from __future__ import annotations
 from datetime import UTC, datetime, time, timedelta, timezone
 from decimal import Decimal
 from enum import Enum
+from types import SimpleNamespace
 from typing import Annotated, Any, cast
-from unittest.mock import MagicMock
 from uuid import UUID
 
 import msgspec
@@ -91,7 +91,7 @@ class TestColumnRow:
         compile_all(_Station)
         compiled = cast(Any, get_compiled(_Station))
         repository: SQLAlchemyRepository[_Station, int] = SQLAlchemyRepository(
-            session_manager=MagicMock(metadata=get_metadata()),
+            session_manager=cast(Any, SimpleNamespace(metadata=get_metadata())),
             model=_Station,
             cursor_codec=CursorCodec(signing="ephemeral"),
         )
