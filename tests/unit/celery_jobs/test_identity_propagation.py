@@ -8,7 +8,7 @@ minted before the contract existed.
 
 from __future__ import annotations
 
-from collections.abc import Iterator
+from collections.abc import Awaitable, Callable, Iterator
 from typing import Any, ClassVar
 
 import pytest
@@ -52,24 +52,29 @@ def worker() -> Iterator[CeleryWorker]:
     worker.close()
 
 
-async def dispatched_identity(identity: Identity | None) -> dict[str, Any] | None:
-    """The identity the envelope of a job dispatched as *identity* carries."""
-    broker = CeleryBroker([ReportJob.__queue__])
-    token = set_identity(identity) if identity is not None else None
-    try:
-        JobService(CeleryJobTransport(broker.app)).dispatch_after_commit(ReportJob)
-        await flush_pending_dispatches()
-    finally:
-        if token is not None:
-            reset_identity(token)
-    (message,) = broker.sent()
-    carried: dict[str, Any] | None = message.kwargs["identity"]
-    return carried
+@pytest.fixture
+def dispatched_identity() -> Callable[[Identity | None], Awaitable[dict[str, Any] | None]]:
+    """Dispatch a job as an identity; return the identity its envelope carries."""
+
+    async def dispatch(identity: Identity | None) -> dict[str, Any] | None:
+        broker = CeleryBroker([ReportJob.__queue__])
+        token = set_identity(identity) if identity is not None else None
+        try:
+            JobService(CeleryJobTransport(broker.app)).dispatch_after_commit(ReportJob)
+            await flush_pending_dispatches()
+        finally:
+            if token is not None:
+                reset_identity(token)
+        (message,) = broker.sent()
+        carried: dict[str, Any] | None = message.kwargs["identity"]
+        return carried
+
+    return dispatch
 
 
 class TestDispatchSide:
     async def test_dispatch_puts_the_caller_in_the_envelope_with_the_deadline_of_its_delegation(
-        self,
+        self, dispatched_identity: Callable[[Identity | None], Awaitable[dict[str, Any] | None]]
     ) -> None:
         carried = await dispatched_identity(CALLER)
 
@@ -84,7 +89,9 @@ class TestDispatchSide:
 
     @pytest.mark.parametrize("identity", [None, ANONYMOUS], ids=["no caller", "anonymous"])
     async def test_a_dispatch_without_an_authenticated_caller_sends_no_identity(
-        self, identity: Identity | None
+        self,
+        dispatched_identity: Callable[[Identity | None], Awaitable[dict[str, Any] | None]],
+        identity: Identity | None,
     ) -> None:
         assert await dispatched_identity(identity) is None
 

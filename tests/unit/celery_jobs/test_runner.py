@@ -39,6 +39,7 @@ from tests.helpers.spans import build_recorder, hex_trace
 
 WIRE_TRACE = "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa1"
 BACKOFF = Backoff(first_s=3, factor=3, max_s=300, jitter=False)
+JOB_TASKS = f"{TASK_JOB_PREFIX}."
 
 
 class DoubleJob(Job[int]):
@@ -140,11 +141,6 @@ def worker() -> Iterator[CeleryWorker]:
     worker = CeleryWorker()
     yield worker
     worker.close()
-
-
-def retried(worker: CeleryWorker) -> list[Any]:
-    """The task messages of the job that the worker published again."""
-    return [m for m in worker.broker.sent() if m.task.startswith(f"{TASK_JOB_PREFIX}.")]
 
 
 class TestRegistration:
@@ -274,7 +270,7 @@ class TestRetry:
         with pytest.raises(Retry):
             worker.run(FailingJob, payload={"value": 1})
 
-        (message,) = retried(worker)
+        (message,) = worker.published(JOB_TASKS)
         assert (message.task_id, message.countdown, message.kwargs["payload"]) == (
             "task-1",
             3,
@@ -289,7 +285,7 @@ class TestRetry:
         with pytest.raises(Retry):
             worker.run(FailingJob, attempt=3)
 
-        assert [message.countdown for message in retried(worker)] == [27]
+        assert [message.countdown for message in worker.published(JOB_TASKS)] == [27]
         worker.close()
 
     def test_the_last_attempt_raises_the_error_and_publishes_nothing(
@@ -298,7 +294,7 @@ class TestRetry:
         with pytest.raises(ValueError, match="err"):
             worker.run(FailingJob, attempt=3)
 
-        assert retried(worker) == []
+        assert worker.published(JOB_TASKS) == []
 
     def test_a_postponement_publishes_again_after_its_delay_counting_one_more(
         self, worker: CeleryWorker
@@ -306,7 +302,7 @@ class TestRetry:
         with pytest.raises(Retry) as raised:
             worker.run(PostponingJob, postponements=2, params={"delay": 7}, payload={"value": 1})
 
-        (message,) = retried(worker)
+        (message,) = worker.published(JOB_TASKS)
         assert isinstance(raised.value.exc, JobPostponement)
         assert (message.countdown, message.kwargs["postponements"]) == (7, 3)
         assert message.kwargs["payload"] == {"value": 1}
@@ -317,7 +313,7 @@ class TestRetry:
         with pytest.raises(Retry):
             worker.run(PostponingJob, params={"delay": 7})
 
-        (message,) = retried(worker)
+        (message,) = worker.published(JOB_TASKS)
         assert message.kwargs["postponements"] == 1
 
     def test_postponements_do_not_use_up_the_attempts(self, worker: CeleryWorker) -> None:
@@ -328,7 +324,7 @@ class TestRetry:
         with pytest.raises(JobAbandonment, match="never"):
             worker.run(AbandoningJob)
 
-        assert retried(worker) == []
+        assert worker.published(JOB_TASKS) == []
 
     @pytest.mark.parametrize("kind", NOT_RETRIED)
     def test_an_error_a_retry_cannot_help_is_raised_without_publishing_again(
@@ -337,7 +333,7 @@ class TestRetry:
         with pytest.raises(type(ERRORS[kind]())):
             worker.run(RaisingJob, params={"kind": kind})
 
-        assert retried(worker) == []
+        assert worker.published(JOB_TASKS) == []
 
     def test_a_post_commit_error_without_a_commit_is_retried(self, worker: CeleryWorker) -> None:
         with pytest.raises(Retry):
@@ -346,10 +342,6 @@ class TestRetry:
 
 class TestFailureCallback:
     CALLBACK = "loom.callback_error.AcmeCallback"
-
-    @staticmethod
-    def sent_callbacks(worker: CeleryWorker) -> list[Any]:
-        return [m for m in worker.broker.sent() if m.task == TestFailureCallback.CALLBACK]
 
     def test_an_abandoned_job_sends_the_callback_once_with_the_error_class_and_message(
         self, worker: CeleryWorker
@@ -363,7 +355,7 @@ class TestFailureCallback:
                 failure_callback=self.CALLBACK,
             )
 
-        (message,) = self.sent_callbacks(worker)
+        (message,) = worker.published(self.CALLBACK)
         assert message.kwargs == {
             "job_id": "task-1",
             "context": {"value": 1},
@@ -377,7 +369,7 @@ class TestFailureCallback:
         with pytest.raises(JobAbandonment):
             worker.run(AbandoningJob, failure_callback=self.CALLBACK)
 
-        (message,) = self.sent_callbacks(worker)
+        (message,) = worker.published(self.CALLBACK)
         assert (message.kwargs["exc_type"], message.kwargs["exc_msg"]) == (
             "JobAbandonment",
             "never",
@@ -387,7 +379,7 @@ class TestFailureCallback:
         with pytest.raises(Retry):
             worker.run(FailingJob, failure_callback=self.CALLBACK)
 
-        assert self.sent_callbacks(worker) == []
+        assert worker.published(self.CALLBACK) == []
 
     def test_an_abandoned_job_without_a_failure_callback_sends_nothing(
         self, worker: CeleryWorker
@@ -395,7 +387,7 @@ class TestFailureCallback:
         with pytest.raises(ValueError):
             worker.run(FailingJob, attempt=3)
 
-        assert self.sent_callbacks(worker) == []
+        assert worker.published(self.CALLBACK) == []
 
 
 class TestEvents:

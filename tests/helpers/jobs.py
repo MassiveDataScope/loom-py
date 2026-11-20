@@ -32,7 +32,7 @@ from loom.core.use_case.factory import UseCaseFactory, main_repository
 from loom.core.use_case.kinds import declare_kinds
 from loom.jobs.aws.queue import QueueConfig
 from loom.jobs.aws.sqs import SQSConfig, SQSJobTransport
-from tests.helpers.celery import CeleryBroker
+from tests.helpers.celery import BrokerMessage, CeleryBroker
 from tests.helpers.composition import composition_project
 
 DEFAULT_QUEUE = "celery"
@@ -265,6 +265,13 @@ class CeleryWorker:
     def close(self) -> None:
         """Shut the async runtime down."""
         self.runtime.shutdown()
+
+    def published(self, task_prefix: str) -> list[BrokerMessage]:
+        """The messages published so far for the tasks whose name starts with *task_prefix*.
+
+        A retry is a job message published again; a failure callback is the message of its task.
+        """
+        return [m for m in self.broker.sent() if m.task.startswith(task_prefix)]
 
     def task(
         self, job_type: type[Job[Any]], observability_runtime: ObservabilityRuntime | None = None
