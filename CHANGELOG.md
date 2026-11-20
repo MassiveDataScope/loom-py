@@ -2,10 +2,15 @@
 
 ## 💥 Breaking
 
+- **stores:** the repositories are named technology first, then port:
+  `RepositorySQLAlchemy` is `SQLAlchemyRepository`, `RepositoryMongo` is
+  `MongoRepository` and `RepositoryDynamoDB` is `DynamoDBRepository`;
+  `DynamoUnitOfWork` and `DynamoUnitOfWorkFactory` are `DynamoDBUnitOfWork` and
+  `DynamoDBUnitOfWorkFactory`.
 - **stores:** the duplicate (store, table) refusal moves from
   `PackageScanner.discover` to `StoreCatalog.models_by_store`, the one place
-  that groups models by store, so `discover` returns models that two stores
-  or one store serve under the same table and the composition refuses them.
+  that groups models by store, so the composition refuses them and `discover`
+  only lists the models.
   The single primary-key rule of the DynamoDB, Mongo and in-memory
   repositories is `single_id_attribute` in `loom.core.stores.repository.record`.
 - **stores:** a repository no longer promises a lookup it cannot serve.

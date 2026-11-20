@@ -8,7 +8,7 @@ from sqlalchemy import DateTime  # noqa: F401
 
 from loom.core.stores.repository import CursorCodec
 from loom.core.stores.repository.mutation import MutationEvent
-from loom.stores.sqlalchemy.repository import RepositorySQLAlchemy
+from loom.stores.sqlalchemy.repository import SQLAlchemyRepository
 from loom.stores.sqlalchemy.transactional import record_mutation, transactional
 
 from .conftest import RepositoryWithTransactionalMethod, ServiceWithoutSessionManager
@@ -110,7 +110,7 @@ class TestCallerScopedSessionProbe:
     async def test_it_reports_the_session_the_decorator_binds(
         self, mock_session_manager: Any, dummy_model: type
     ) -> None:
-        repository = RepositorySQLAlchemy(
+        repository = SQLAlchemyRepository(
             mock_session_manager, dummy_model, cursor_codec=CursorCodec(signing="ephemeral")
         )
         service = _ServiceProbingItsRepository(mock_session_manager, repository)
@@ -124,7 +124,7 @@ class TestCallerScopedSessionProbe:
     async def test_the_binding_does_not_leak_past_the_transaction(
         self, mock_session_manager: Any, dummy_model: type
     ) -> None:
-        repository = RepositorySQLAlchemy(
+        repository = SQLAlchemyRepository(
             mock_session_manager, dummy_model, cursor_codec=CursorCodec(signing="ephemeral")
         )
         service = _ServiceProbingItsRepository(mock_session_manager, repository)

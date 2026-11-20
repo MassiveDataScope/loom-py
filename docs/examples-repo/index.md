@@ -173,7 +173,7 @@ import msgspec
 
 from loom.core.stores.repository import repository_for
 from loom.core.stores.repository import RepoFor
-from loom.stores.sqlalchemy import RepositorySQLAlchemy
+from loom.stores.sqlalchemy import SQLAlchemyRepository
 
 
 class ProductRepo(RepoFor[Product], Protocol):
@@ -182,7 +182,7 @@ class ProductRepo(RepoFor[Product], Protocol):
 
 
 @repository_for(Product)
-class ProductRepository(RepositorySQLAlchemy[Product, int], ProductRepo):
+class ProductRepository(SQLAlchemyRepository[Product, int], ProductRepo):
     async def create(self, data: msgspec.Struct) -> Product:
         payload = msgspec.to_builtins(data)
         payload["name"] = str(payload["name"]).strip()
@@ -256,7 +256,7 @@ from dataclasses import dataclass
 
 from loom.core.stores.repository import DefaultRepositoryBuilder, RepositoryBuildContext
 from loom.core.stores.repository import CursorCodec
-from loom.stores.sqlalchemy import RepositorySQLAlchemy
+from loom.stores.sqlalchemy import SQLAlchemyRepository
 from loom.stores.sqlalchemy.session_manager import SessionManager
 
 
@@ -266,14 +266,14 @@ class SQLAlchemyDefaultRepositoryBuilder:
     cursor_codec: CursorCodec
 
     def __call__(self, context: RepositoryBuildContext) -> object:
-        return RepositorySQLAlchemy(
+        return SQLAlchemyRepository(
             session_manager=self.session_manager,
             model=context.model,
             cursor_codec=self.cursor_codec,
         )
 ```
 
-A builder that constructs a `RepositorySQLAlchemy` or a `RepositoryMongo`
+A builder that constructs a `SQLAlchemyRepository` or a `MongoRepository`
 itself passes the shared `CursorCodec`: resolve it from
 `context.container`, where the backend registers the one it built from
 `stores.settings.cursors`.

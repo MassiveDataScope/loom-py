@@ -36,7 +36,7 @@ from loom.core.stores.uow.abc import UnitOfWork
 from loom.core.stores.uow.coordinator import CommitUncertain, OrderedCommits
 from loom.core.stores.uow.scope import current_scope, unscoped
 from loom.core.use_case import Joined, UseCase
-from loom.stores.sqlalchemy.repository import RepositorySQLAlchemy
+from loom.stores.sqlalchemy.repository import SQLAlchemyRepository
 from loom.stores.sqlalchemy.schema import compile_all, get_compiled
 from loom.stores.sqlalchemy.session_manager import SessionManager
 from loom.stores.sqlalchemy.uow import SQLAlchemyUnitOfWork
@@ -167,8 +167,8 @@ class _Stores:
     def __init__(self, default: SessionManager, audit: SessionManager) -> None:
         codec = CursorCodec(signing="ephemeral")
         self.default, self.audit = default, audit
-        self.orders = RepositorySQLAlchemy(default, _Order, cursor_codec=codec)
-        self.entries = RepositorySQLAlchemy(audit, _Entry, cursor_codec=codec)
+        self.orders = SQLAlchemyRepository(default, _Order, cursor_codec=codec)
+        self.entries = SQLAlchemyRepository(audit, _Entry, cursor_codec=codec)
         self.ran: list[str] = []
         coordinator = OrderedCommits(
             {DEFAULT_STORE: _Sql(default), AUDIT: _Sql(audit), EVENTS: _NoTransactions()}

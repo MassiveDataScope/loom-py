@@ -29,7 +29,7 @@ from loom.core.stores.repository import (
     PaginationMode,
     QuerySpec,
 )
-from loom.stores.sqlalchemy.repository import RepositorySQLAlchemy
+from loom.stores.sqlalchemy.repository import SQLAlchemyRepository
 from loom.stores.sqlalchemy.session_manager import SessionManager
 from tests.unit.core.conftest import SessionManagerFactory
 
@@ -59,7 +59,7 @@ class AcmePatchEntry(Command, frozen=True):
     rank: int
 
 
-class _EntryRepository(RepositorySQLAlchemy[AcmeCachedEntry, _Key]):
+class _EntryRepository(SQLAlchemyRepository[AcmeCachedEntry, _Key]):
     @cache_query(scope="entity")
     async def rank_of(self, key: _Key) -> int:
         entry = await self.get_by_id(key)

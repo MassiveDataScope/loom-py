@@ -19,12 +19,12 @@ through and invalidate.
 ```python
 from loom.core.cache import cache_query, cached
 from loom.core.stores.repository import repository_for
-from loom.stores.sqlalchemy import RepositorySQLAlchemy
+from loom.stores.sqlalchemy import SQLAlchemyRepository
 
 
 @cached
 @repository_for(User)
-class UserRepository(RepositorySQLAlchemy[User, UserCreate, UserUpdate]):
+class UserRepository(SQLAlchemyRepository[User, UserCreate, UserUpdate]):
     @cache_query(scope="entity")
     async def profile(self, user_id: int) -> UserProfile: ...
 

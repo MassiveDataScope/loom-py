@@ -30,7 +30,7 @@ from loom.core.stores.repository import (
     Repository,
     SortSpec,
 )
-from loom.stores.sqlalchemy.repository import RepositorySQLAlchemy
+from loom.stores.sqlalchemy.repository import SQLAlchemyRepository
 from loom.stores.sqlalchemy.schema import compile_all, get_metadata, reset_registry
 from loom.stores.sqlalchemy.session_manager import SessionManager
 from loom.stores.sqlalchemy.uow import SQLAlchemyUnitOfWork
@@ -53,7 +53,7 @@ class Note(BaseModel):
     body: str = ColumnField()
 
 
-class NoteRepository(RepositorySQLAlchemy[Note, int]):
+class NoteRepository(SQLAlchemyRepository[Note, int]):
     """Adds the two kinds of custom cached read on top of the stock repository."""
 
     @cache_query(scope="list")

@@ -9,7 +9,7 @@ import pytest
 from loom.core.identity import Identity, reset_identity, set_identity
 from loom.core.stores.catalog import DEFAULT_STORE
 from loom.core.stores.repository import CursorCodec
-from loom.stores.sqlalchemy.repository import RepositorySQLAlchemy
+from loom.stores.sqlalchemy.repository import SQLAlchemyRepository
 from loom.stores.sqlalchemy.rls import create_schema, rls_session_settings
 from loom.stores.sqlalchemy.schema import compile_all, reset_registry
 from loom.stores.sqlalchemy.session_manager import SessionManager
@@ -35,7 +35,7 @@ class TestColumnTypes:
         manager = SessionManager(
             database.write, session_settings=rls_session_settings(application), store=DEFAULT_STORE
         )
-        repository: RepositorySQLAlchemy[devices.Device, tuple[int, str]] = RepositorySQLAlchemy(
+        repository: SQLAlchemyRepository[devices.Device, tuple[int, str]] = SQLAlchemyRepository(
             session_manager=manager,
             model=devices.Device,
             cursor_codec=CursorCodec(signing="ephemeral"),

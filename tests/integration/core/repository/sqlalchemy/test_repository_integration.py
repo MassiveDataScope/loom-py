@@ -16,14 +16,14 @@ from loom.core.stores.repository import (
     QuerySpec,
     SortSpec,
 )
-from loom.stores.sqlalchemy.repository import RepositorySQLAlchemy, with_session_scope
+from loom.stores.sqlalchemy.repository import SQLAlchemyRepository, with_session_scope
 from loom.testing import RepositoryIntegrationHarness, ScenarioDict
 from tests.integration.fake_repo.product.model import Product
 from tests.integration.fake_repo.product.review.schemas import CreateProductReview
 from tests.integration.fake_repo.product.schemas import CreateProduct, UpdateProduct
 
 
-class _CustomProductRepository(RepositorySQLAlchemy[Product, int]):
+class _CustomProductRepository(SQLAlchemyRepository[Product, int]):
     """Example custom repository using the compiled CoreModel read path."""
 
     @with_session_scope(write=False)

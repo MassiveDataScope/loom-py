@@ -19,8 +19,8 @@ from loom.core.stores.profile import StoreRuntime
 from loom.stores.dynamodb.registry import (
     build_dynamodb_repository_registration_module,
 )
-from loom.stores.dynamodb.repository import RepositoryDynamoDB
-from loom.stores.dynamodb.uow import DynamoUnitOfWorkFactory
+from loom.stores.dynamodb.repository import DynamoDBRepository
+from loom.stores.dynamodb.uow import DynamoDBUnitOfWorkFactory
 
 _READY_TABLE_STATUSES = frozenset({"ACTIVE", "UPDATING"})
 
@@ -61,7 +61,7 @@ class DynamoDBBackend:
     """
 
     name: ClassVar[str] = "dynamodb"
-    repository_type: ClassVar[type[Any] | None] = RepositoryDynamoDB
+    repository_type: ClassVar[type[Any] | None] = DynamoDBRepository
 
     def capabilities(self, spec: StoreSpec) -> StoreCapabilities:
         """Describe DynamoDB: models, without rollback or cursor paging, whatever *spec* says."""
@@ -98,7 +98,7 @@ class DynamoDBBackend:
         client = runtime.aws.client("dynamodb", dynamo_cfg)
         executor = _ReopenableThreads(dynamo_cfg.pool.size)
         return StoreWiring(
-            uow_factory=DynamoUnitOfWorkFactory(),
+            uow_factory=DynamoDBUnitOfWorkFactory(),
             repo_registration_module=build_dynamodb_repository_registration_module(
                 client, dynamo_cfg.table, models, store=spec.key, executor=executor
             ),

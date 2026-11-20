@@ -20,7 +20,7 @@ from loom.core.command import Command
 from loom.core.model import BaseModel, ColumnField
 from loom.core.stores.repository import CursorCodec, PageParams, Repository
 from loom.core.stores.repository.mutation import MutationEvent
-from loom.stores.sqlalchemy.repository import RepositorySQLAlchemy
+from loom.stores.sqlalchemy.repository import SQLAlchemyRepository
 from loom.stores.sqlalchemy.schema import compile_all, get_compiled
 from loom.stores.sqlalchemy.session_manager import SessionManager
 from loom.stores.sqlalchemy.transactional import transactional
@@ -160,7 +160,7 @@ async def cached_dated_repo(
     assert compiled is not None
     async with integration_context.session_manager.engine.begin() as connection:
         await connection.run_sync(compiled.metadata.create_all)
-    repository: RepositorySQLAlchemy[DatedEvent, date] = RepositorySQLAlchemy(
+    repository: SQLAlchemyRepository[DatedEvent, date] = SQLAlchemyRepository(
         session_manager=integration_context.session_manager,
         model=DatedEvent,
         cursor_codec=CursorCodec(signing="ephemeral"),

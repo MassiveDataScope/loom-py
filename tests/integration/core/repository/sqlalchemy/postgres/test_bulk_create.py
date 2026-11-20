@@ -16,7 +16,7 @@ from loom.core.model import BaseModel, ColumnField
 from loom.core.stores.catalog import DEFAULT_STORE
 from loom.core.stores.repository import CursorCodec, OnConflict
 from loom.core.stores.repository.mutation import MutationEvent
-from loom.stores.sqlalchemy.repository import RepositorySQLAlchemy
+from loom.stores.sqlalchemy.repository import SQLAlchemyRepository
 from loom.stores.sqlalchemy.schema import compile_all, get_metadata, reset_registry
 from loom.stores.sqlalchemy.session_manager import SessionManager
 
@@ -67,8 +67,8 @@ async def manager(pg_admin_uri: str) -> AsyncIterator[SessionManager]:
 
 
 @pytest.fixture
-def skus(manager: SessionManager) -> RepositorySQLAlchemy[AcmeBulkSku, int]:
-    return RepositorySQLAlchemy(
+def skus(manager: SessionManager) -> SQLAlchemyRepository[AcmeBulkSku, int]:
+    return SQLAlchemyRepository(
         session_manager=manager, model=AcmeBulkSku, cursor_codec=CursorCodec(signing="ephemeral")
     )
 
@@ -110,7 +110,7 @@ class TestPostgresCreateManyOrder:
     async def test_generated_and_explicit_keys_keep_input_order(
         self, manager: SessionManager, on_conflict: OnConflict
     ) -> None:
-        tags: RepositorySQLAlchemy[AcmeBulkTag, UUID] = RepositorySQLAlchemy(
+        tags: SQLAlchemyRepository[AcmeBulkTag, UUID] = SQLAlchemyRepository(
             session_manager=manager,
             model=AcmeBulkTag,
             cursor_codec=CursorCodec(signing="ephemeral"),
@@ -128,7 +128,7 @@ class TestPostgresCreateManyOrder:
 
 class TestPostgresCreateManyIgnore:
     async def test_overlapping_keys_insert_only_new_rows_in_input_order(
-        self, skus: RepositorySQLAlchemy[AcmeBulkSku, int], mutations: list[MutationEvent]
+        self, skus: SQLAlchemyRepository[AcmeBulkSku, int], mutations: list[MutationEvent]
     ) -> None:
         await skus.create_many([CreateSku(id=1, code="a"), CreateSku(id=2, code="b")])
         mutations.clear()
@@ -157,7 +157,7 @@ class TestPostgresCreateManyIgnore:
         ids=["not-null", "other-unique"],
     )
     async def test_other_constraint_violation_raises_conflict(
-        self, skus: RepositorySQLAlchemy[AcmeBulkSku, int], batch: list[CreateSku]
+        self, skus: SQLAlchemyRepository[AcmeBulkSku, int], batch: list[CreateSku]
     ) -> None:
         await skus.create_many([CreateSku(id=1, code="a")])
 
@@ -171,7 +171,7 @@ class TestPostgresCreateManyChunks:
     @pytest.mark.parametrize("on_conflict", list(OnConflict))
     async def test_batch_above_the_chunk_emits_one_insert_per_chunk_in_one_transaction(
         self,
-        skus: RepositorySQLAlchemy[AcmeBulkSku, int],
+        skus: SQLAlchemyRepository[AcmeBulkSku, int],
         manager: SessionManager,
         statements: list[str],
         monkeypatch: pytest.MonkeyPatch,

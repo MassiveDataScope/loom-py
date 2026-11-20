@@ -29,7 +29,7 @@ from loom.core.stores.repository.registry import RepositoryRegistration
 from loom.stores.mongo.ids import IdPolicy
 from loom.stores.mongo.repository import (
     MongoCollection,
-    RepositoryMongo,
+    MongoRepository,
     SessionProvider,
 )
 
@@ -84,9 +84,9 @@ class MongoDefaultRepositoryBuilder:
                 "MongoDefaultRepositoryBuilder cannot build a repository "
                 f"for non-persistible type {context.model.__qualname__}"
             )
-        return self.build(RepositoryMongo, context.model)
+        return self.build(MongoRepository, context.model)
 
-    def build(self, repository_type: type[RepositoryMongo[Any, Any]], model: type) -> Any:
+    def build(self, repository_type: type[MongoRepository[Any, Any]], model: type) -> Any:
         """Instantiate ``repository_type`` over the collection bound to ``model``."""
         return repository_type(
             model,
@@ -148,7 +148,7 @@ def build_mongo_repository_registration_module(
                 "Repository registration for "
                 f"{registration.model.__qualname__} must use a class type."
             )
-        if issubclass(repository_type, RepositoryMongo):
+        if issubclass(repository_type, MongoRepository):
             return builder.build(repository_type, context.model)
         return repository_type()
 
@@ -156,7 +156,7 @@ def build_mongo_repository_registration_module(
         models=models,
         explicit_models=logical_models,
         build_registered_repository=_registered_builder,
-        default_repository_type=RepositoryMongo,
+        default_repository_type=MongoRepository,
         default_builder=builder,
         store=store,
     )

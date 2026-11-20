@@ -3,7 +3,7 @@
 DynamoDB has no multi-item transaction boundary that maps to the per-UseCase
 Unit of Work used by the relational backend: each write is autocommitted by its
 own ``PutItem`` / ``DeleteItem`` call inside
-:class:`~loom.stores.dynamodb.repository.RepositoryDynamoDB`. This
+:class:`~loom.stores.dynamodb.repository.DynamoDBRepository`. This
 Unit of Work therefore satisfies the
 :class:`~loom.core.stores.uow.abc.UnitOfWork` protocol with empty ``begin`` /
 ``commit`` / ``rollback`` so :class:`~loom.core.engine.executor.RuntimeExecutor`
@@ -17,7 +17,7 @@ from typing import ClassVar
 from loom.core.stores.uow.abc import UnitOfWork
 
 
-class DynamoUnitOfWork:
+class DynamoDBUnitOfWork:
     """No-op Unit of Work: writes are autocommitted per ``PutItem`` call.
 
     Implements the transaction-boundary protocol so the executor can drive
@@ -36,7 +36,7 @@ class DynamoUnitOfWork:
     async def rollback(self) -> None:
         """No-op: DynamoDB autocommitted writes cannot be rolled back here."""
 
-    async def __aenter__(self) -> DynamoUnitOfWork:
+    async def __aenter__(self) -> DynamoDBUnitOfWork:
         await self.begin()
         return self
 
@@ -52,8 +52,8 @@ class DynamoUnitOfWork:
             await self.rollback()
 
 
-class DynamoUnitOfWorkFactory:
-    """Factory that creates fresh :class:`DynamoUnitOfWork` instances.
+class DynamoDBUnitOfWorkFactory:
+    """Factory that creates fresh :class:`DynamoDBUnitOfWork` instances.
 
     Register one instance and inject it into
     :class:`~loom.core.engine.executor.RuntimeExecutor` at startup, mirroring
@@ -62,4 +62,4 @@ class DynamoUnitOfWorkFactory:
 
     def create(self) -> UnitOfWork:
         """Return a fresh, not-yet-begun no-op :class:`UnitOfWork`."""
-        return DynamoUnitOfWork()
+        return DynamoDBUnitOfWork()

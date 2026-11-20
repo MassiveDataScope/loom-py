@@ -25,7 +25,7 @@ from loom.core.stores.catalog import DEFAULT_STORE, StoreKey
 from loom.core.stores.uow.abc import UnitOfWork, UnitOfWorkFactory
 from loom.core.stores.uow.coordinator import OrderedCommits
 from loom.core.stores.uow.scope import current_handle
-from loom.stores.dynamodb.uow import DynamoUnitOfWorkFactory
+from loom.stores.dynamodb.uow import DynamoDBUnitOfWorkFactory
 from loom.stores.mongo.uow import MongoUnitOfWorkFactory
 from loom.stores.sqlalchemy.session_manager import SessionManager
 from loom.stores.sqlalchemy.uow import SQLAlchemyUnitOfWorkFactory
@@ -427,7 +427,7 @@ async def _mongo_noop_case(log: Log) -> AsyncIterator[LifecycleCase]:
 
 @asynccontextmanager
 async def _dynamodb_case(log: Log) -> AsyncIterator[LifecycleCase]:
-    yield _no_op_case("dynamodb", DynamoUnitOfWorkFactory(), log)
+    yield _no_op_case("dynamodb", DynamoDBUnitOfWorkFactory(), log)
 
 
 CaseBuilder = Callable[[Log], AbstractAsyncContextManager[LifecycleCase]]

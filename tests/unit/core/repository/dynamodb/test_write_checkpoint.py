@@ -15,8 +15,8 @@ from loom.core.stores.catalog import DEFAULT_STORE, StoreKey
 from loom.core.stores.repository import OnConflict
 from loom.core.stores.uow.coordinator import NonTransactional, OrderedCommits
 from loom.core.stores.uow.scope import Frame, invocation, invocation_error
-from loom.stores.dynamodb.repository import RepositoryDynamoDB
-from loom.stores.dynamodb.uow import DynamoUnitOfWorkFactory
+from loom.stores.dynamodb.repository import DynamoDBRepository
+from loom.stores.dynamodb.uow import DynamoDBUnitOfWorkFactory
 from tests.helpers.dynamodb import MotoTable
 from tests.unit.core.uow._coordinator_fakes import Factory, Ledger, PhasedStore
 
@@ -24,7 +24,7 @@ from .conftest import Product, ProductCreate, ProductUpdate
 
 AUDIT = StoreKey("audit")
 
-Write = Callable[[RepositoryDynamoDB[Any, int]], Awaitable[object]]
+Write = Callable[[DynamoDBRepository[Any, int]], Awaitable[object]]
 
 
 class AuditEntry(BaseModel):
@@ -49,11 +49,11 @@ WRITES = [
 @pytest.fixture
 def coordinator() -> OrderedCommits:
     return OrderedCommits(
-        {DEFAULT_STORE: DynamoUnitOfWorkFactory(), AUDIT: DynamoUnitOfWorkFactory()}
+        {DEFAULT_STORE: DynamoDBUnitOfWorkFactory(), AUDIT: DynamoDBUnitOfWorkFactory()}
     )
 
 
-class TestDynamoUndeclaredStoreWrite:
+class TestDynamoDBUndeclaredStoreWrite:
     @pytest.mark.parametrize("write", WRITES)
     async def test_a_write_to_an_undeclared_store_calls_no_client_method(
         self,
@@ -61,7 +61,7 @@ class TestDynamoUndeclaredStoreWrite:
         refusing_client: Any,
         write: Write,
     ) -> None:
-        audit: RepositoryDynamoDB[Any, int] = RepositoryDynamoDB(
+        audit: DynamoDBRepository[Any, int] = DynamoDBRepository(
             refusing_client, "products", AuditEntry
         )
 
@@ -70,11 +70,11 @@ class TestDynamoUndeclaredStoreWrite:
                 await write(audit)
 
 
-class TestDynamoDeclaredWrite:
+class TestDynamoDBDeclaredWrite:
     async def test_a_declared_write_is_reported_as_written(
         self, coordinator: OrderedCommits, products_table: MotoTable
     ) -> None:
-        products: RepositoryDynamoDB[Any, int] = RepositoryDynamoDB(
+        products: DynamoDBRepository[Any, int] = DynamoDBRepository(
             products_table.client, "products", Product
         )
 
@@ -95,7 +95,7 @@ class TestDynamoDeclaredWrite:
     async def test_a_write_to_a_missing_item_is_not_reported_as_written(
         self, coordinator: OrderedCommits, write: Write, products_table: MotoTable
     ) -> None:
-        products: RepositoryDynamoDB[Any, int] = RepositoryDynamoDB(
+        products: DynamoDBRepository[Any, int] = DynamoDBRepository(
             products_table.client, "products", Product
         )
 
@@ -109,7 +109,7 @@ class TestDynamoDeclaredWrite:
     async def test_a_write_from_a_gather_child_is_refused(
         self, coordinator: OrderedCommits, products_table: MotoTable
     ) -> None:
-        products: RepositoryDynamoDB[Any, int] = RepositoryDynamoDB(
+        products: DynamoDBRepository[Any, int] = DynamoDBRepository(
             products_table.client, "products", Product
         )
 
@@ -125,7 +125,7 @@ def _unavailable(**kwargs: Any) -> NoReturn:
     raise ClientError({"Error": {"Code": "ServiceUnavailable", "Message": "x"}}, "PutItem")
 
 
-class TestDynamoFailedWriteCheckpoint:
+class TestDynamoDBFailedWriteCheckpoint:
     @pytest.mark.parametrize(
         ("unavailable", "raised", "wrote"),
         [
@@ -143,9 +143,9 @@ class TestDynamoFailedWriteCheckpoint:
     ) -> None:
         audit = PhasedStore(AUDIT, Ledger())
         coordinator = OrderedCommits(
-            {DEFAULT_STORE: DynamoUnitOfWorkFactory(), AUDIT: Factory(audit)}
+            {DEFAULT_STORE: DynamoDBUnitOfWorkFactory(), AUDIT: Factory(audit)}
         )
-        products: RepositoryDynamoDB[Any, int] = RepositoryDynamoDB(
+        products: DynamoDBRepository[Any, int] = DynamoDBRepository(
             products_table.client, "products", Product
         )
         await products.create(ProductCreate(id=1))
@@ -168,9 +168,9 @@ class TestDynamoFailedWriteCheckpoint:
     ) -> None:
         audit = PhasedStore(AUDIT, Ledger())
         coordinator = OrderedCommits(
-            {DEFAULT_STORE: DynamoUnitOfWorkFactory(), AUDIT: Factory(audit)}
+            {DEFAULT_STORE: DynamoDBUnitOfWorkFactory(), AUDIT: Factory(audit)}
         )
-        products: RepositoryDynamoDB[Any, int] = RepositoryDynamoDB(
+        products: DynamoDBRepository[Any, int] = DynamoDBRepository(
             products_table.client, "products", Product
         )
         await products.create(ProductCreate(id=1))

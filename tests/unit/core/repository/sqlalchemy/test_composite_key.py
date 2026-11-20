@@ -16,7 +16,7 @@ from loom.core.stores.repository import (
 )
 from loom.core.stores.repository.mutation import MutationEvent
 from loom.stores.sqlalchemy.query_compiler import QuerySpecCompiler
-from loom.stores.sqlalchemy.repository import RepositorySQLAlchemy
+from loom.stores.sqlalchemy.repository import SQLAlchemyRepository
 from loom.stores.sqlalchemy.schema import compile_all, get_compiled
 from loom.stores.sqlalchemy.session_manager import SessionManager
 from tests.unit.core.conftest import SessionManagerFactory
@@ -54,8 +54,8 @@ async def session_manager(sqlite_manager_for: SessionManagerFactory) -> SessionM
 
 
 @pytest.fixture
-async def repository(session_manager: SessionManager) -> RepositorySQLAlchemy[_Entry, _Key]:
-    repo: RepositorySQLAlchemy[_Entry, _Key] = RepositorySQLAlchemy(
+async def repository(session_manager: SessionManager) -> SQLAlchemyRepository[_Entry, _Key]:
+    repo: SQLAlchemyRepository[_Entry, _Key] = SQLAlchemyRepository(
         session_manager=session_manager,
         model=_Entry,
         cursor_codec=_CODEC,
@@ -74,7 +74,7 @@ def mutations(monkeypatch: pytest.MonkeyPatch) -> list[MutationEvent]:
 
 
 async def _walk(
-    repository: RepositorySQLAlchemy[_Entry, _Key], sort: tuple[SortSpec, ...]
+    repository: SQLAlchemyRepository[_Entry, _Key], sort: tuple[SortSpec, ...]
 ) -> list[_Key]:
     seen: list[_Key] = []
     cursor: str | None = None
@@ -91,14 +91,14 @@ async def _walk(
 
 class TestCursorPagination:
     async def test_walk_without_sort_visits_every_row_in_key_order(
-        self, repository: RepositorySQLAlchemy[_Entry, _Key]
+        self, repository: SQLAlchemyRepository[_Entry, _Key]
     ) -> None:
         seen = await _walk(repository, ())
 
         assert seen == sorted((account, ident) for account, ident, _rank in _SEED)
 
     async def test_walk_by_a_repeated_sort_key_visits_every_row(
-        self, repository: RepositorySQLAlchemy[_Entry, _Key]
+        self, repository: SQLAlchemyRepository[_Entry, _Key]
     ) -> None:
         seen = await _walk(repository, (SortSpec(field="rank", direction="DESC"),))
 
@@ -106,7 +106,7 @@ class TestCursorPagination:
         assert seen == [(account, ident) for account, ident, _rank in expected]
 
     async def test_token_with_a_single_key_value_is_rejected(
-        self, repository: RepositorySQLAlchemy[_Entry, _Key]
+        self, repository: SQLAlchemyRepository[_Entry, _Key]
     ) -> None:
         first_page = QuerySpec(pagination=PaginationMode.CURSOR, limit=2)
         token = _CODEC.encode(
@@ -146,7 +146,7 @@ class TestCursorPagination:
 
 class TestById:
     async def test_get_by_id_matches_every_key_column(
-        self, repository: RepositorySQLAlchemy[_Entry, _Key]
+        self, repository: SQLAlchemyRepository[_Entry, _Key]
     ) -> None:
         entry = await repository.get_by_id((8, 2))
 
@@ -154,19 +154,19 @@ class TestById:
         assert (entry.account_id, entry.id, entry.rank) == (8, 2, 2)
 
     async def test_get_by_id_refuses_a_partial_key(
-        self, repository: RepositorySQLAlchemy[_Entry, _Key]
+        self, repository: SQLAlchemyRepository[_Entry, _Key]
     ) -> None:
         with pytest.raises(ValueError, match=r"\(account_id, id\)"):
             await repository.get_by_id(7)  # type: ignore[arg-type]
 
     async def test_exists_matches_every_key_column(
-        self, repository: RepositorySQLAlchemy[_Entry, _Key]
+        self, repository: SQLAlchemyRepository[_Entry, _Key]
     ) -> None:
         assert await repository.exists((8, 3))
         assert not await repository.exists((8, 4))
 
     async def test_update_changes_only_the_addressed_row(
-        self, repository: RepositorySQLAlchemy[_Entry, _Key]
+        self, repository: SQLAlchemyRepository[_Entry, _Key]
     ) -> None:
         updated = await repository.update((8, 2), _PatchEntry(rank=9))
 
@@ -177,14 +177,14 @@ class TestById:
         assert untouched.rank == 1
 
     async def test_delete_removes_only_the_addressed_row(
-        self, repository: RepositorySQLAlchemy[_Entry, _Key]
+        self, repository: SQLAlchemyRepository[_Entry, _Key]
     ) -> None:
         assert await repository.delete((8, 2))
         assert not await repository.exists((8, 2))
         assert await repository.exists((7, 2))
 
     async def test_delete_refuses_a_partial_key(
-        self, repository: RepositorySQLAlchemy[_Entry, _Key]
+        self, repository: SQLAlchemyRepository[_Entry, _Key]
     ) -> None:
         with pytest.raises(ValueError, match=r"\(account_id, id\)"):
             await repository.delete(2)  # type: ignore[arg-type]
@@ -195,7 +195,7 @@ class TestEveryKeyColumn:
         self, session_manager: SessionManager, monkeypatch: pytest.MonkeyPatch
     ) -> None:
         monkeypatch.setattr(session_manager.engine.dialect, "insert_returning", False)
-        repository: RepositorySQLAlchemy[_Entry, _Key] = RepositorySQLAlchemy(
+        repository: SQLAlchemyRepository[_Entry, _Key] = SQLAlchemyRepository(
             session_manager=session_manager,
             model=_Entry,
             cursor_codec=_CODEC,
@@ -210,7 +210,7 @@ class TestEveryKeyColumn:
     async def test_list_paginated_orders_by_every_key_column(
         self, session_manager: SessionManager
     ) -> None:
-        repository: RepositorySQLAlchemy[_Entry, _Key] = RepositorySQLAlchemy(
+        repository: SQLAlchemyRepository[_Entry, _Key] = SQLAlchemyRepository(
             session_manager=session_manager,
             model=_Entry,
             cursor_codec=_CODEC,
@@ -227,7 +227,7 @@ class TestEveryKeyColumn:
     async def test_create_records_the_full_key_in_ids_and_tags(
         self, session_manager: SessionManager, mutations: list[MutationEvent]
     ) -> None:
-        repository: RepositorySQLAlchemy[_Entry, _Key] = RepositorySQLAlchemy(
+        repository: SQLAlchemyRepository[_Entry, _Key] = SQLAlchemyRepository(
             session_manager=session_manager,
             model=_Entry,
             cursor_codec=_CODEC,

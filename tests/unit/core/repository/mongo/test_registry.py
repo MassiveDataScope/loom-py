@@ -27,7 +27,7 @@ from loom.stores.mongo.registry import (
     MongoDefaultRepositoryBuilder,
     build_mongo_repository_registration_module,
 )
-from loom.stores.mongo.repository import RepositoryMongo
+from loom.stores.mongo.repository import MongoRepository
 from loom.stores.mongo.uow import MongoSessions
 
 from ._fake import FakeMongoClient
@@ -70,7 +70,7 @@ class TestMongoRegistry:
     def test_module_registers_capability_bindings(self) -> None:
         container = _container(FakeMongoClient())
 
-        assert isinstance(container.resolve(Readable[Article]), RepositoryMongo)
+        assert isinstance(container.resolve(Readable[Article]), MongoRepository)
         assert container.resolve_repo(Article) is not None
 
     @pytest.mark.asyncio

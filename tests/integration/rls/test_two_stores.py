@@ -41,7 +41,7 @@ from loom.core.stores.uow.abc import UnitOfWork
 from loom.core.stores.uow.coordinator import OrderedCommits
 from loom.core.stores.uow.scope import Frame, current_scope, invocation
 from loom.stores.sqlalchemy.backend import SQLAlchemyBackend
-from loom.stores.sqlalchemy.repository import RepositorySQLAlchemy
+from loom.stores.sqlalchemy.repository import SQLAlchemyRepository
 from loom.stores.sqlalchemy.rls import elevate
 from loom.stores.sqlalchemy.session_manager import SessionManager
 from tests.helpers.persistence import build_backend
@@ -149,7 +149,7 @@ class Store:
     key: StoreKey
     wiring: StoreWiring
     manager: SessionManager
-    notes: RepositorySQLAlchemy
+    notes: SQLAlchemyRepository
     elevation: StoreElevation | None
 
     def unit_of_work(self) -> UnitOfWork:
@@ -178,7 +178,7 @@ def _build(ctx: ConfigContext, key: StoreKey) -> Store:
     container = LoomContainer()
     wiring.repo_registration_module(container)
     manager = container.resolve(store_binding(SessionManager, key))
-    repository = RepositorySQLAlchemy(
+    repository = SQLAlchemyRepository(
         manager, notes.Note, cursor_codec=container.resolve(CursorCodec)
     )
     return Store(

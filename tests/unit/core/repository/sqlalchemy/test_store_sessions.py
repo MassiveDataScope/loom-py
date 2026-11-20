@@ -27,7 +27,7 @@ from loom.core.stores.elevation import ScopedElevationSink
 from loom.core.stores.repository import CursorCodec, PageParams
 from loom.core.stores.uow.coordinator import ROLLBACK_TIMEOUT_S, OrderedCommits
 from loom.core.stores.uow.scope import Frame, InvocationScope, invocation
-from loom.stores.sqlalchemy.repository import RepositorySQLAlchemy, with_session_scope
+from loom.stores.sqlalchemy.repository import SQLAlchemyRepository, with_session_scope
 from loom.stores.sqlalchemy.rls import SQLAlchemyStoreElevation
 from loom.stores.sqlalchemy.schema import compile_all, get_compiled
 from loom.stores.sqlalchemy.session_manager import SessionManager
@@ -258,9 +258,9 @@ class _RowUpdate(Command, frozen=True):
 
 
 @pytest.fixture
-async def rows(sqlite_manager_for: SessionManagerFactory) -> RepositorySQLAlchemy[_Row, int]:
+async def rows(sqlite_manager_for: SessionManagerFactory) -> SQLAlchemyRepository[_Row, int]:
     manager = await sqlite_manager_for(_Row)
-    return RepositorySQLAlchemy(manager, _Row, cursor_codec=CursorCodec(signing="ephemeral"))
+    return SQLAlchemyRepository(manager, _Row, cursor_codec=CursorCodec(signing="ephemeral"))
 
 
 _OPERATIONS = {
@@ -288,7 +288,7 @@ class TestRepositoryWriteIntent:
         ],
     )
     async def test_only_a_write_marks_the_participant(
-        self, rows: RepositorySQLAlchemy[_Row, int], operation: str, writes: bool
+        self, rows: SQLAlchemyRepository[_Row, int], operation: str, writes: bool
     ) -> None:
         await rows.create(_NewRow(name="a"))
         coordinator = OrderedCommits(
@@ -306,7 +306,7 @@ _INSERT = text("INSERT INTO store_session_rows (name) VALUES (:name)")
 _COUNT = text("SELECT count(*) FROM store_session_rows")
 
 
-class _AuditRows(RepositorySQLAlchemy[_Row, int]):
+class _AuditRows(SQLAlchemyRepository[_Row, int]):
     @with_session_scope(write=True)
     async def insert_raw(self, session: AsyncSession, name: str) -> None:
         await session.execute(_INSERT, {"name": name})

@@ -55,7 +55,7 @@ def with_session_scope(
 
     Example::
 
-        class OrderRepository(RepositorySQLAlchemy[Order, int]):
+        class OrderRepository(SQLAlchemyRepository[Order, int]):
             @with_session_scope(write=True)
             async def archive(self, session: AsyncSession, order_id: int) -> None: ...
     """
@@ -63,7 +63,7 @@ def with_session_scope(
     def decorate(method: Callable[..., Awaitable[R]]) -> Callable[..., Awaitable[R]]:
         @wraps(method)
         async def wrapper(
-            self: RepositorySQLAlchemy[Any, Any],
+            self: SQLAlchemyRepository[Any, Any],
             *args: Any,
             session: AsyncSession | None = None,
             **kwargs: Any,
@@ -76,7 +76,7 @@ def with_session_scope(
     return decorate
 
 
-class RepositorySQLAlchemy(  # type: ignore[misc]
+class SQLAlchemyRepository(  # type: ignore[misc]
     SQLAlchemyCreateMixin[OutputT, IdT],
     SQLAlchemyBulkCreateMixin[OutputT, IdT],
     SQLAlchemyReadMixin[OutputT, IdT],

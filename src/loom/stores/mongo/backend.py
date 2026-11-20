@@ -33,7 +33,7 @@ from loom.stores.mongo.ids import (
     validate_id_field,
 )
 from loom.stores.mongo.registry import build_mongo_repository_registration_module
-from loom.stores.mongo.repository import RepositoryMongo
+from loom.stores.mongo.repository import MongoRepository
 from loom.stores.mongo.uow import MongoSessions, MongoUnitOfWorkFactory
 
 _logger = logging.getLogger(__name__)
@@ -88,7 +88,7 @@ class MongoBackend:
     """
 
     name: ClassVar[str] = "mongo"
-    repository_type: ClassVar[type[Any] | None] = RepositoryMongo
+    repository_type: ClassVar[type[Any] | None] = MongoRepository
 
     def capabilities(self, spec: StoreSpec) -> StoreCapabilities:
         """Describe the store, resolving only its ``transactions`` key, never its connection."""

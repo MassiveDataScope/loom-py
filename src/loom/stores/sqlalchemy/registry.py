@@ -22,7 +22,7 @@ from loom.core.stores.repository.registry import (
     get_repository_registration,
     repository_for,
 )
-from loom.stores.sqlalchemy.repository import RepositorySQLAlchemy
+from loom.stores.sqlalchemy.repository import SQLAlchemyRepository
 from loom.stores.sqlalchemy.session_manager import SessionManager
 
 __all__ = [
@@ -62,7 +62,7 @@ class SQLAlchemyDefaultRepositoryBuilder:
                 f"SQLAlchemyDefaultRepositoryBuilder cannot build a repository "
                 f"for non-persistible type {context.model.__qualname__}"
             )
-        return RepositorySQLAlchemy(
+        return SQLAlchemyRepository(
             session_manager=self.session_manager,
             model=context.model,
             cursor_codec=self.cursor_codec,
@@ -113,7 +113,7 @@ def build_sqlalchemy_repository_registration_module(
                 "Repository registration for "
                 f"{registration.model.__qualname__} must use a class type."
             )
-        if issubclass(repository_type, RepositorySQLAlchemy):
+        if issubclass(repository_type, SQLAlchemyRepository):
             if not issubclass(context.model, BaseModel):
                 raise RuntimeError(
                     f"{repository_type.__qualname__} requires BaseModel-compatible registrations."
@@ -129,7 +129,7 @@ def build_sqlalchemy_repository_registration_module(
         models=models,
         explicit_models=logical_models,
         build_registered_repository=_registered_builder,
-        default_repository_type=RepositorySQLAlchemy,
+        default_repository_type=SQLAlchemyRepository,
         default_builder=SQLAlchemyDefaultRepositoryBuilder(
             session_manager=session_manager, cursor_codec=cursor_codec
         ),

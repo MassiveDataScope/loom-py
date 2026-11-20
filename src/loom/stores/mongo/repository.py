@@ -153,7 +153,7 @@ class MongoCollection(Protocol):
     ) -> DeleteResult: ...
 
 
-class RepositoryMongo(
+class MongoRepository(
     Readable[OutputT],
     FieldReadable[OutputT],
     Creatable[OutputT],
@@ -204,7 +204,7 @@ class RepositoryMongo(
 
     Example::
 
-        repository = RepositoryMongo(Article, database["articles"], cursor_codec=codec)
+        repository = MongoRepository(Article, database["articles"], cursor_codec=codec)
         article = await repository.create(ArticleCreate(slug="hello", title="Hi"))
     """
 
@@ -701,4 +701,4 @@ def _stamp(fields: frozenset[str]) -> Document:
     return dict.fromkeys(fields, now)
 
 
-__all__ = ["MongoCollection", "MongoFindCursor", "RepositoryMongo", "SessionProvider"]
+__all__ = ["MongoCollection", "MongoFindCursor", "MongoRepository", "SessionProvider"]

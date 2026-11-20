@@ -234,8 +234,8 @@ its values with the order of the rows, and reads them from the token
 
 - One `CursorCodec`, built once per process by the backend's `build()` (and
   by the Celery worker) with `CursorCodec.from_context(ctx)`, passed as a
-  required keyword-only `cursor_codec` to `RepositorySQLAlchemy`,
-  `RepositoryMongo`, `QuerySpecCompiler` and the default builders, and
+  required keyword-only `cursor_codec` to `SQLAlchemyRepository`,
+  `MongoRepository`, `QuerySpecCompiler` and the default builders, and
   registered in DI so a service paginating by hand resolves the codec the
   repositories use. `register_cursor_codec` registers it, and raises
   `ConfigError` when a different codec is already registered: two codecs

@@ -26,9 +26,9 @@ from loom.core.stores.repository import CursorCodec
 from loom.core.stores.uow.abc import UnitOfWork
 from loom.core.stores.uow.coordinator import OrderedCommits
 from loom.core.use_case import UseCase
-from loom.stores.mongo.repository import RepositoryMongo
+from loom.stores.mongo.repository import MongoRepository
 from loom.stores.mongo.uow import MongoSessions, MongoUnitOfWork
-from loom.stores.sqlalchemy.repository import RepositorySQLAlchemy
+from loom.stores.sqlalchemy.repository import SQLAlchemyRepository
 from loom.stores.sqlalchemy.schema import compile_all, get_compiled
 from loom.stores.sqlalchemy.session_manager import SessionManager
 from loom.stores.sqlalchemy.uow import SQLAlchemyUnitOfWorkFactory
@@ -137,7 +137,7 @@ class TestStorePostCommit:
         # A transaction cannot create the collection implicitly on 4.2.
         await collection.database.create_collection(collection.name)
         codec = CursorCodec(signing="ephemeral")
-        entries = RepositoryMongo(
+        entries = MongoRepository(
             _Entry,
             collection,
             session_provider=MongoSessions(mongo_client, AUDIT),
@@ -148,7 +148,7 @@ class TestStorePostCommit:
         )
         executor = RuntimeExecutor(UseCaseCompiler(), coordinator=coordinator)
         labels: list[str] = []
-        orders = RepositorySQLAlchemy(sql, _Order, cursor_codec=codec)
+        orders = SQLAlchemyRepository(sql, _Order, cursor_codec=codec)
         use_case = _WriteOrderThenEntry(executor, orders, _WriteEntry(entries, labels))
 
         with nullcontext() if error is None else pytest.raises(error):

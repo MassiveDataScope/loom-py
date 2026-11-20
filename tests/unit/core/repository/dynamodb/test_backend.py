@@ -39,7 +39,7 @@ def _describing(status: str) -> Callable[[MagicMock], None]:
     return setup
 
 
-class TestDynamoReadiness:
+class TestDynamoDBReadiness:
     @pytest.mark.asyncio
     async def test_readiness_is_true_for_an_existing_table(self, products_table: MotoTable) -> None:
         wiring = _wiring("products")
@@ -75,7 +75,7 @@ class TestDynamoReadiness:
         assert "missing" in caplog.text
 
 
-class TestDynamoClientsPerStore:
+class TestDynamoDBClientsPerStore:
     @staticmethod
     def _build_stores(aws: AwsClients, stores: dict[str, dict[str, str]]) -> None:
         ctx = ConfigContext.from_dict(

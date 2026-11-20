@@ -24,7 +24,7 @@ from loom.core.stores.repository import Creatable
 from loom.core.stores.uow.coordinator import OrderedCommits
 from loom.core.stores.uow.scope import Frame, invocation
 from loom.stores.mongo.backend import MongoBackend
-from loom.stores.mongo.repository import RepositoryMongo
+from loom.stores.mongo.repository import MongoRepository
 from loom.stores.mongo.uow import MongoSessions, MongoUnitOfWorkFactory
 from tests.helpers.persistence import build_backend
 
@@ -113,7 +113,7 @@ class TestMongoBackendRegistration:
         wiring = _wiring(monkeypatch, FakeMongoClient(), _SECTION, (Article,))
 
         assert isinstance(wiring.uow_factory, MongoUnitOfWorkFactory)
-        assert MongoBackend.repository_type is RepositoryMongo
+        assert MongoBackend.repository_type is MongoRepository
         assert wiring.readiness is not None
 
 

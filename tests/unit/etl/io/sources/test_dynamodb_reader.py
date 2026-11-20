@@ -26,7 +26,7 @@ from loom.etl.schema._schema import ColumnSchema, LoomDtype
 # ---------------------------------------------------------------------------
 
 
-class _FakeDynamoClient:
+class _FakeDynamoDBClient:
     """Fake low-level client — returns canned AttributeValue pages.
 
     Honors ``Limit``, ``ExclusiveStartKey``, ``Segment``/``TotalSegments`` and
@@ -105,8 +105,8 @@ _ORDER_SCHEMA = (
 )
 
 
-def _reader(items: list[dict[str, Any]]) -> tuple[DynamoDbSourceReader, _FakeDynamoClient]:
-    client = _FakeDynamoClient(items)
+def _reader(items: list[dict[str, Any]]) -> tuple[DynamoDbSourceReader, _FakeDynamoDBClient]:
+    client = _FakeDynamoDBClient(items)
     return DynamoDbSourceReader(client), client
 
 

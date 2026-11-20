@@ -17,7 +17,7 @@ from loom.core.stores.repository import (
     QuerySpec,
     SortSpec,
 )
-from loom.stores.sqlalchemy.repository import RepositorySQLAlchemy
+from loom.stores.sqlalchemy.repository import SQLAlchemyRepository
 from loom.stores.sqlalchemy.schema import compile_all, get_compiled
 from loom.stores.sqlalchemy.session_manager import SessionManager
 
@@ -34,7 +34,7 @@ class _CreateRow(Command, frozen=True):
 
 
 @pytest.fixture
-async def repository() -> AsyncIterator[RepositorySQLAlchemy[_Row, int]]:
+async def repository() -> AsyncIterator[SQLAlchemyRepository[_Row, int]]:
     compile_all(_Row)
     manager = SessionManager(
         "sqlite+aiosqlite:///:memory:",
@@ -49,7 +49,7 @@ async def repository() -> AsyncIterator[RepositorySQLAlchemy[_Row, int]]:
     assert compiled is not None
     async with manager.engine.begin() as connection:
         await connection.run_sync(compiled.metadata.create_all)
-    repo: RepositorySQLAlchemy[_Row, int] = RepositorySQLAlchemy(
+    repo: SQLAlchemyRepository[_Row, int] = SQLAlchemyRepository(
         session_manager=manager, model=_Row, cursor_codec=CursorCodec.disabled()
     )
     await repo.create_many([_CreateRow(rank=rank) for rank in (1, 2, 3)])
@@ -59,7 +59,7 @@ async def repository() -> AsyncIterator[RepositorySQLAlchemy[_Row, int]]:
 
 class TestCursorPagingWithTheDisabledCodec:
     async def test_a_cursor_page_is_refused(
-        self, repository: RepositorySQLAlchemy[_Row, int]
+        self, repository: SQLAlchemyRepository[_Row, int]
     ) -> None:
         query = QuerySpec(
             pagination=PaginationMode.CURSOR, sort=(SortSpec("rank", "ASC"),), limit=2
@@ -69,7 +69,7 @@ class TestCursorPagingWithTheDisabledCodec:
             await repository.list_with_query(query)
 
     async def test_a_cursor_page_with_no_next_page_is_refused_too(
-        self, repository: RepositorySQLAlchemy[_Row, int]
+        self, repository: SQLAlchemyRepository[_Row, int]
     ) -> None:
         query = QuerySpec(
             pagination=PaginationMode.CURSOR, sort=(SortSpec("rank", "ASC"),), limit=10
@@ -79,7 +79,7 @@ class TestCursorPagingWithTheDisabledCodec:
             await repository.list_with_query(query)
 
     async def test_offset_paging_is_unaffected(
-        self, repository: RepositorySQLAlchemy[_Row, int]
+        self, repository: SQLAlchemyRepository[_Row, int]
     ) -> None:
         page = await repository.list_with_query(QuerySpec(sort=(SortSpec("rank", "ASC"),), limit=2))
 

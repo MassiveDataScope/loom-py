@@ -53,7 +53,7 @@ _NOTHING_WRITTEN = frozenset({_CONDITIONAL_CHECK_FAILED, "TransactionCanceledExc
 _TRANSACTION_LIMIT = 100
 
 
-class RepositoryDynamoDB(
+class DynamoDBRepository(
     Readable[OutputT],
     Creatable[OutputT],
     BulkCreatable[OutputT],

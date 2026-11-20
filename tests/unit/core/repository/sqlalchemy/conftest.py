@@ -15,7 +15,7 @@ from loom.core.model import BaseModel, Field, Integer
 from loom.core.stores.catalog import DEFAULT_STORE
 from loom.core.stores.repository import CursorCodec
 from loom.core.stores.repository.mutation import MutationEvent
-from loom.stores.sqlalchemy.repository import RepositorySQLAlchemy
+from loom.stores.sqlalchemy.repository import SQLAlchemyRepository
 from loom.stores.sqlalchemy.schema import compile_all, get_metadata, reset_registry
 from loom.stores.sqlalchemy.session_manager import SessionManager
 from loom.stores.sqlalchemy.transactional import record_mutation, transactional
@@ -160,7 +160,7 @@ class ServiceWithMixedDependencies:
         record_mutation(MutationEvent(entity="incident", op="update", ids=(7,)))
 
 
-class RepositoryWithTransactionalMethod(RepositorySQLAlchemy[msgspec.Struct, int]):
+class RepositoryWithTransactionalMethod(SQLAlchemyRepository[msgspec.Struct, int]):
     """A repository that wrongly declares its own transaction boundary."""
 
     @transactional

@@ -36,8 +36,8 @@ from loom.core.stores.repository.registry import (
     RepositoryRegistration,
     RepositoryToken,
 )
-from loom.stores.dynamodb.repository import RepositoryDynamoDB
-from loom.stores.sqlalchemy.repository import RepositorySQLAlchemy
+from loom.stores.dynamodb.repository import DynamoDBRepository
+from loom.stores.sqlalchemy.repository import SQLAlchemyRepository
 from loom.testing.overrides import Override
 
 
@@ -82,7 +82,7 @@ def _container(default_repository_type: type | None) -> LoomContainer:
 
 class TestCapabilitiesOf:
     def test_dynamodb_declares_only_the_key_operations(self) -> None:
-        assert set(capabilities_of(RepositoryDynamoDB)) == {
+        assert set(capabilities_of(DynamoDBRepository)) == {
             Readable,
             Creatable,
             BulkCreatable,
@@ -94,7 +94,7 @@ class TestCapabilitiesOf:
         assert set(capabilities_of(_BulkWidgetRepository)) == {Creatable, BulkCreatable}
 
     def test_keeps_the_declaration_order(self) -> None:
-        assert capabilities_of(RepositorySQLAlchemy) == (
+        assert capabilities_of(SQLAlchemyRepository) == (
             Readable,
             FieldReadable,
             Creatable,

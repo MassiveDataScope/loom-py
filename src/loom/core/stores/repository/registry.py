@@ -101,7 +101,7 @@ def repository_for(
             async def find_by_sku(self, sku: str) -> Product | None: ...
 
         @repository_for(Product)
-        class ProductRepository(RepositorySQLAlchemy[Product, int], IProductRepository):
+        class ProductRepository(SQLAlchemyRepository[Product, int], IProductRepository):
             async def find_by_sku(self, sku: str) -> Product | None:
                 ...
 

@@ -18,7 +18,7 @@ from loom.core.errors import BoundaryValidationError
 from loom.core.errors.codes import ErrorCode
 from loom.core.model import JSON, BaseModel, ColumnField, LoomStruct, String, Text
 from loom.core.stores.repository import CursorCodec
-from loom.stores.sqlalchemy.repository import RepositorySQLAlchemy
+from loom.stores.sqlalchemy.repository import SQLAlchemyRepository
 from loom.stores.sqlalchemy.schema import compile_all, get_compiled, get_metadata
 from loom.stores.sqlalchemy.values import to_column_row
 
@@ -90,7 +90,7 @@ class TestColumnRow:
     def test_the_repository_write_path_and_to_column_row_give_the_same_column_values(self) -> None:
         compile_all(_Station)
         compiled = cast(Any, get_compiled(_Station))
-        repository: RepositorySQLAlchemy[_Station, int] = RepositorySQLAlchemy(
+        repository: SQLAlchemyRepository[_Station, int] = SQLAlchemyRepository(
             session_manager=MagicMock(metadata=get_metadata()),
             model=_Station,
             cursor_codec=CursorCodec(signing="ephemeral"),

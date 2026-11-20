@@ -37,7 +37,7 @@ from loom.core.stores.repository import CursorCodec, PageParams, RepoFor
 from loom.core.stores.uow.scope import current_scope
 from loom.core.use_case import Input, UseCase
 from loom.core.use_case.invoker import ApplicationInvoker
-from loom.stores.sqlalchemy.repository import RepositorySQLAlchemy
+from loom.stores.sqlalchemy.repository import SQLAlchemyRepository
 from loom.stores.sqlalchemy.schema import compile_all, get_compiled
 from loom.stores.sqlalchemy.session_manager import SessionManager
 from loom.stores.sqlalchemy.transactional import ForeignSessionError, transactional
@@ -262,8 +262,8 @@ async def two_stores(
         await second.dispose()
 
 
-def _note_repo(manager: SessionManager) -> RepositorySQLAlchemy[_Note, int]:
-    return RepositorySQLAlchemy(
+def _note_repo(manager: SessionManager) -> SQLAlchemyRepository[_Note, int]:
+    return SQLAlchemyRepository(
         session_manager=manager,
         model=_Note,
         cursor_codec=CursorCodec(signing="ephemeral"),
@@ -490,7 +490,7 @@ class TestSingleStoreCharacterisation:
         # Inside SQLAlchemyUnitOfWork on the first engine a repository of the
         # second engine refuses the active session (fault A fails closed), so the
         # literal shape of fault B never writes. The own-session path is
-        # RepositorySQLAlchemy._session_scope -> session_manager.session() ->
+        # SQLAlchemyRepository._session_scope -> session_manager.session() ->
         # commit(), and it runs only when no active session is bound. A task
         # started with a fresh contextvars.Context() is that path: it stands in
         # for a store with its own context variable ("one context variable per

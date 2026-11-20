@@ -19,7 +19,7 @@ from loom.core.discovery.base import DiscoveryResult
 from loom.core.job.job import Job
 from loom.core.model import BaseModel, ColumnField
 from loom.core.stores.repository import repository_for
-from loom.stores.sqlalchemy import RepositorySQLAlchemy
+from loom.stores.sqlalchemy import SQLAlchemyRepository
 from tests.unit.core.cache._doubles import SERIALIZED_BACKEND
 
 
@@ -42,7 +42,7 @@ class _CachedWorkerModel(BaseModel):
 
 @cached
 @repository_for(_CachedWorkerModel)
-class _CachedWorkerRepository(RepositorySQLAlchemy[_CachedWorkerModel, int]):
+class _CachedWorkerRepository(SQLAlchemyRepository[_CachedWorkerModel, int]):
     """Marked repository the worker must serve wrapped when ``cache:`` is present."""
 
 

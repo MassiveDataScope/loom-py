@@ -23,7 +23,7 @@ from loom.core.stores.uow.coordinator import (
     Uncertain,
 )
 from loom.core.stores.uow.scope import current_scope
-from loom.stores.mongo.repository import RepositoryMongo
+from loom.stores.mongo.repository import MongoRepository
 from loom.stores.mongo.uow import MongoSessions, MongoUnitOfWorkFactory
 
 from ._fake import FakeMongoClient
@@ -50,8 +50,8 @@ def _sessions(client: FakeMongoClient) -> MongoSessions:
     return MongoSessions(cast(AsyncMongoClient[Any], client), store=DEFAULT_STORE)
 
 
-def _repository(client: FakeMongoClient) -> RepositoryMongo[Article, str]:
-    return RepositoryMongo(
+def _repository(client: FakeMongoClient) -> MongoRepository[Article, str]:
+    return MongoRepository(
         Article,
         client.collection("articles"),
         session_provider=_sessions(client),
@@ -318,7 +318,7 @@ class TestCallerScopedSessionProbe:
 
     async def test_a_repository_with_the_default_provider_never_reports_one(self) -> None:
         client = FakeMongoClient()
-        repository = RepositoryMongo(
+        repository = MongoRepository(
             Article, client.collection("articles"), cursor_codec=CursorCodec(signing="ephemeral")
         )
         factory = _transactional(client)

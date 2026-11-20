@@ -20,7 +20,7 @@ from loom.core.stores.repository.registry import (
     get_repository_registration,
     repository_for,
 )
-from loom.stores.dynamodb.repository import RepositoryDynamoDB
+from loom.stores.dynamodb.repository import DynamoDBRepository
 
 __all__ = [
     "DynamoDBDefaultRepositoryBuilder",
@@ -56,7 +56,7 @@ class DynamoDBDefaultRepositoryBuilder:
                 f"DynamoDBDefaultRepositoryBuilder cannot build a repository "
                 f"for non-persistible type {context.model.__qualname__}"
             )
-        return RepositoryDynamoDB(
+        return DynamoDBRepository(
             client=self.dynamo_client,
             table_name=self.table_name,
             model=context.model,
@@ -107,7 +107,7 @@ def build_dynamodb_repository_registration_module(
                 "Repository registration for "
                 f"{registration.model.__qualname__} must use a class type."
             )
-        if issubclass(repository_type, RepositoryDynamoDB):
+        if issubclass(repository_type, DynamoDBRepository):
             return repository_type(
                 client=dynamo_client,
                 table_name=table_name,
@@ -120,7 +120,7 @@ def build_dynamodb_repository_registration_module(
         models=models,
         explicit_models=logical_models,
         build_registered_repository=_registered_builder,
-        default_repository_type=RepositoryDynamoDB,
+        default_repository_type=DynamoDBRepository,
         default_builder=DynamoDBDefaultRepositoryBuilder(
             dynamo_client=dynamo_client, table_name=table_name, executor=executor
         ),

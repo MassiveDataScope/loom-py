@@ -14,7 +14,7 @@ from loom.core.config import ConfigContext, ConfigError
 from loom.core.config.convert import convert_config
 from loom.core.stores.profile import SERVER_PROFILE
 from loom.stores.dynamodb.backend import DynamoDBBackend, DynamoDBRepositoryConfig
-from loom.stores.dynamodb.repository import RepositoryDynamoDB
+from loom.stores.dynamodb.repository import DynamoDBRepository
 from tests.helpers.aws import OTHER_REGION
 from tests.helpers.aws_island import FakeAwsIsland
 from tests.helpers.persistence import build_backend
@@ -45,7 +45,7 @@ def botocore_config(island: FakeAwsIsland) -> BotocoreConfig:
     return asked_for
 
 
-class TestDynamoClientConfig:
+class TestDynamoDBClientConfig:
     def test_bounded_defaults_reach_the_client(self, botocore_config: BotocoreConfig) -> None:
         config = botocore_config({})
 
@@ -109,7 +109,7 @@ class TestDynamoClientConfig:
             DynamoDBRepositoryConfig,
             strict=True,
         )
-        repository: RepositoryDynamoDB[Any, Any] = RepositoryDynamoDB(
+        repository: DynamoDBRepository[Any, Any] = DynamoDBRepository(
             AwsClients().client("dynamodb", cfg), "products", Product
         )
 

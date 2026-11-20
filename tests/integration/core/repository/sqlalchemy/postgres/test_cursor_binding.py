@@ -30,7 +30,7 @@ from loom.core.stores.repository import (
     Repository,
     SortSpec,
 )
-from loom.stores.sqlalchemy.repository import RepositorySQLAlchemy
+from loom.stores.sqlalchemy.repository import SQLAlchemyRepository
 from loom.stores.sqlalchemy.schema import compile_all, get_metadata, reset_registry
 from loom.stores.sqlalchemy.session_manager import SessionManager
 
@@ -57,7 +57,7 @@ def _scope_settings() -> Mapping[str, str]:
 
 
 @pytest.fixture
-async def repository(pg_admin_uri: str) -> AsyncIterator[RepositorySQLAlchemy[Reading, int]]:
+async def repository(pg_admin_uri: str) -> AsyncIterator[SQLAlchemyRepository[Reading, int]]:
     reset_registry()
     compile_all(Reading)
     manager = SessionManager(
@@ -71,7 +71,7 @@ async def repository(pg_admin_uri: str) -> AsyncIterator[RepositorySQLAlchemy[Re
     async with manager.engine.begin() as conn:
         await conn.run_sync(get_metadata().drop_all)
         await conn.run_sync(get_metadata().create_all)
-    repo: RepositorySQLAlchemy[Reading, int] = RepositorySQLAlchemy(
+    repo: SQLAlchemyRepository[Reading, int] = SQLAlchemyRepository(
         session_manager=manager, model=Reading, cursor_codec=CursorCodec(signing="ephemeral")
     )
     stamps = [_START + timedelta(minutes=minutes) for minutes in (5, 1, 3, 1, 4)]
@@ -86,7 +86,7 @@ async def repository(pg_admin_uri: str) -> AsyncIterator[RepositorySQLAlchemy[Re
 
 
 async def _page(
-    repository: RepositorySQLAlchemy[Reading, int], cursor: str | None
+    repository: SQLAlchemyRepository[Reading, int], cursor: str | None
 ) -> CursorResult[Reading]:
     page = await repository.list_with_query(
         QuerySpec(sort=_QUERY.sort, pagination=_QUERY.pagination, limit=_QUERY.limit, cursor=cursor)
@@ -100,7 +100,7 @@ _AT = {"type": "datetime", "v": "2026-09-06T12:01:00+00:00"}
 
 @pytest.fixture
 async def cached(
-    repository: RepositorySQLAlchemy[Reading, int],
+    repository: SQLAlchemyRepository[Reading, int],
 ) -> AsyncIterator[CachedRepository[Reading, Any, Any, int]]:
     CacheGateway.configure(
         {
@@ -144,7 +144,7 @@ async def cached(
 class TestCursorBinding:
     async def test_a_naive_timestamp_sort_walks_every_page(
         self,
-        repository: RepositorySQLAlchemy[Reading, int],
+        repository: SQLAlchemyRepository[Reading, int],
     ) -> None:
         seen: list[datetime] = []
         cursor: str | None = None
@@ -159,7 +159,7 @@ class TestCursorBinding:
 
     async def test_a_cursor_issued_for_one_tenant_is_refused_for_another(
         self,
-        repository: RepositorySQLAlchemy[Reading, int],
+        repository: SQLAlchemyRepository[Reading, int],
     ) -> None:
         issued = _tenant.set("tenant-a")
         try:
@@ -181,9 +181,9 @@ class TestCursorBinding:
         ids=["text-for-the-integer-key", "text-for-the-timestamp"],
     )
     async def test_a_forged_value_of_another_type_is_refused_before_the_query(
-        self, repository: RepositorySQLAlchemy[Reading, int], position: dict[str, object]
+        self, repository: SQLAlchemyRepository[Reading, int], position: dict[str, object]
     ) -> None:
-        unsigned: RepositorySQLAlchemy[Reading, int] = RepositorySQLAlchemy(
+        unsigned: SQLAlchemyRepository[Reading, int] = SQLAlchemyRepository(
             session_manager=repository.session_manager,
             model=Reading,
             cursor_codec=CursorCodec(signing="unsigned"),
@@ -198,7 +198,7 @@ class TestCursorBinding:
 
     async def test_a_cursor_issued_for_one_sort_is_refused_for_another(
         self,
-        repository: RepositorySQLAlchemy[Reading, int],
+        repository: SQLAlchemyRepository[Reading, int],
     ) -> None:
         cursor = (await _page(repository, None)).next_cursor
         assert cursor is not None
