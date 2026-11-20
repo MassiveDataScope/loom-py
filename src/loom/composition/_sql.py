@@ -6,12 +6,12 @@ from collections.abc import Iterator, Mapping
 from dataclasses import dataclass
 from typing import TYPE_CHECKING, cast
 
-from loom.composition.resources import Resource, ResourceKind
 from loom.core.config import ConfigContext, ConfigKey
 from loom.core.di.container import LoomContainer
 from loom.core.di.scope import Scope
 from loom.core.observability.observability import Observability
 from loom.core.plugins.optional import import_optional
+from loom.core.resources import Resource, ResourceKind
 from loom.core.stores.sql import (
     CallerBoundSql,
     NullSqlQueryService,

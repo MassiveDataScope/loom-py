@@ -14,7 +14,6 @@ import msgspec
 import pytest
 
 from loom.composition import AppConfig, Application, Project, Recipe
-from loom.composition.resources import Resource, ResourceKind
 from loom.core.config import ConfigContext, ConfigKey
 from loom.core.di.container import LoomContainer
 from loom.core.discovery.base import DiscoveryResult
@@ -23,6 +22,7 @@ from loom.core.environment import Environment
 from loom.core.model import BaseModel
 from loom.core.observability.config import ObservabilityConfig
 from loom.core.observability.observability import Observability
+from loom.core.resources import Resource, ResourceKind
 from loom.core.stores import SERVER_PROFILE
 from loom.core.stores.catalog import DEFAULT_STORE, StoreKey
 from loom.core.stores.uow.abc import UnitOfWorkFactory

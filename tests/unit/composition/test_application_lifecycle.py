@@ -10,7 +10,7 @@ import pytest
 
 from loom.composition import Application
 from loom.composition.errors import ApplicationAlreadyOpenError, CompositionErrorCode
-from loom.composition.resources import Resource, ResourceKind, closing
+from loom.core.resources import Resource, ResourceKind, closing
 from tests.helpers.composition import application_of
 
 

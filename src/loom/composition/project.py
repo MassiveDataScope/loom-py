@@ -13,7 +13,6 @@ import msgspec
 
 from loom.composition import phases
 from loom.composition.application import Application
-from loom.composition.resources import Resource, ResourceKind, closing
 from loom.connections.aws import AwsClients
 from loom.connections.resolvers import with_built_in_resolvers
 from loom.core.cache.wiring import CacheGateways
@@ -31,6 +30,7 @@ from loom.core.locator import DEFAULT_CODE_PATH, add_code_path
 from loom.core.logger import get_logger
 from loom.core.observability.config import ObservabilityConfig
 from loom.core.observability.observability import Observability
+from loom.core.resources import Resource, ResourceKind, closing
 from loom.core.stores import resolve_store_plugin
 from loom.core.stores.catalog import StoreCatalog, StoreKey, load_catalog
 
@@ -270,7 +270,8 @@ class Project:
         Raises:
             ConfigError: When a package in ``app.packages`` cannot be scanned,
                 a model belongs to a store the catalog does not serve, or the
-                store section is invalid, or a job transport cannot be built.
+                store section is invalid, or a job transport cannot be built, or two
+                resources share a ``kind:name`` or a readiness key.
             JoinedAutocommitStore: When a use case declares ``Joined`` on a store
                 that cannot roll back.
             UncomposedWriteStore: When a use case or job writes to a store with
@@ -285,8 +286,9 @@ class Project:
         recipe = clock.lap("plan", phases.plan(self, runtime))
         aws = AwsClients()
         stores = clock.lap("build_stores", phases.build_stores(self, recipe, aws))
+        installers = phases.build_installers(self.config, recipe.discovered.installers)
         kernel, sql, job_resources = clock.lap(
-            "register", phases.register(self, recipe, stores, aws, logger=logger)
+            "register", phases.register(self, recipe, stores, aws, installers, logger=logger)
         )
         analysis = clock.lap("analysed", recipe.analysed(kernel.factory.graph))
         ai = clock.lap("wire_ai", phases.wire_ai(self, recipe, kernel, analysis, sql))
@@ -295,17 +297,10 @@ class Project:
         gateways = kernel.container.resolve_or_none(CacheGateways)
         cache = () if gateways is None else gateways.named()
         discovered = recipe.discovered
-        application = Application(
-            kernel=kernel,
-            config=self.config,
-            environment=self.environment,
-            code_path=self.code_path,
-            discovered=discovered,
-            observability=self.observability,
-            sql=sql,
-            ai=ai,
-            job_settings=stores.job_settings,
-            resources=(
+        roster = phases.ResourceRoster()
+        roster.add(
+            "loom",
+            (
                 Resource(
                     kind=ResourceKind.AWS,
                     name="clients",
@@ -319,6 +314,20 @@ class Project:
                 *(resource for resource in (sql.resource, ai.resource) if resource is not None),
                 *stores.resources,
             ),
+        )
+        for installer in installers:
+            roster.add(type(installer).__qualname__, installer.resources(kernel.container))
+        application = Application(
+            kernel=kernel,
+            config=self.config,
+            environment=self.environment,
+            code_path=self.code_path,
+            discovered=discovered,
+            observability=self.observability,
+            sql=sql,
+            ai=ai,
+            job_settings=stores.job_settings,
+            resources=roster.resources,
         )
         logger.info(
             "loom.composition.composed",

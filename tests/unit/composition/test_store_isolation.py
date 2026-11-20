@@ -13,11 +13,11 @@ from pathlib import Path
 import pytest
 
 from loom.composition import AppConfig, Application, Project, Recipe
-from loom.composition.resources import ResourceKind
 from loom.core.command import Command
 from loom.core.config import ConfigContext, ConfigError
 from loom.core.discovery.base import DiscoveryResult
 from loom.core.model import BaseModel, ColumnField
+from loom.core.resources import ResourceKind
 from loom.core.stores.profile import SERVER_PROFILE
 from loom.core.stores.repository import PageParams
 from loom.stores.sqlalchemy.transactional import ForeignSessionError

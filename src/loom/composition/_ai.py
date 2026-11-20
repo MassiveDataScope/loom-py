@@ -7,7 +7,6 @@ from collections.abc import Collection, Iterable, Iterator, Mapping
 from dataclasses import dataclass
 from typing import TYPE_CHECKING, Any, ClassVar, get_args
 
-from loom.composition.resources import Resource, ResourceKind
 from loom.core.bootstrap import Kernel
 from loom.core.config import ConfigContext, ConfigKey
 from loom.core.config.errors import ConfigError
@@ -17,6 +16,7 @@ from loom.core.engine.compiler import UseCaseCompiler
 from loom.core.execution import ExecutionBinding, Kind
 from loom.core.identity import Identity
 from loom.core.observability.observability import Observability
+from loom.core.resources import Resource, ResourceKind
 from loom.core.stores.sql import SqlConfig, SqlQueryService
 from loom.core.use_case.invoker import AppInvoker
 from loom.core.use_case.kinds import AGENT, MCP

@@ -10,7 +10,6 @@ from dataclasses import dataclass, field, replace
 from typing import TYPE_CHECKING, Any, Final, cast
 
 from loom.composition.errors import JobTransportError
-from loom.composition.resources import Resource, ResourceKind, closing
 from loom.connections.aws import AwsClients
 from loom.core.bootstrap import Kernel
 from loom.core.config import ConfigContext, ConfigKey
@@ -24,6 +23,7 @@ from loom.core.job.transport import JobTransport
 from loom.core.logger import get_logger
 from loom.core.observability.observability import Observability
 from loom.core.plugins.optional import MissingExtraError
+from loom.core.resources import Resource, ResourceKind, closing
 from loom.core.symbols import import_symbol
 from loom.jobs.inline import AsyncioJobTimer, InlineJobTransport
 

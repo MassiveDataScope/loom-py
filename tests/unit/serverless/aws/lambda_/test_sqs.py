@@ -13,7 +13,6 @@ from typing import Any
 import pytest
 
 from loom.composition import AppConfig, Application, CompositionStateError, Project
-from loom.composition.resources import Resource, ResourceKind
 from loom.core.checks import CheckScope
 from loom.core.config import ConfigContext, ConfigError
 from loom.core.discovery.base import DiscoveryResult
@@ -25,6 +24,7 @@ from loom.core.job.service import JobService
 from loom.core.model import BaseModel
 from loom.core.observability.event import EventKind, LifecycleEvent, Scope
 from loom.core.observability.observability import Observability
+from loom.core.resources import Resource, ResourceKind
 from loom.core.stores import LAMBDA_PROFILE
 from loom.core.tracing import get_trace_id, reset_trace_id, set_trace_id
 from loom.serverless.aws.lambda_ import (

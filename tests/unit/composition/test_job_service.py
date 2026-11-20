@@ -21,7 +21,6 @@ from celery import current_app
 from loom.celery.runtime import CeleryRuntime
 from loom.celery.service import CeleryJobTransport
 from loom.composition import Application, Project, Recipe
-from loom.composition.resources import ResourceKind
 from loom.core.di.container import LoomContainer
 from loom.core.di.scope import Scope
 from loom.core.errors import JobTimeoutError
@@ -29,6 +28,7 @@ from loom.core.job.context import flush_pending_dispatches
 from loom.core.job.job import Job
 from loom.core.job.service import JobService
 from loom.core.job.timer import JobDelayRefusedError, JobTimer
+from loom.core.resources import ResourceKind
 from loom.core.stores.profile import LAMBDA_PROFILE
 from loom.jobs.inline import InlineJobTransport
 from loom.rest.fastapi.runtime import FastAPIRuntime
