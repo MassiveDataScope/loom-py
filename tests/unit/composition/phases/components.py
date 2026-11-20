@@ -162,7 +162,7 @@ class AcmeUnregistered:
 
 
 class AcmeNeedsService(UseCase[AcmeRecord, None]):
-    """Injects a service no module binds: ``factory.verify`` refuses it, ``bootstrap_app`` not."""
+    """Injects a service no module binds: ``factory.verify`` refuses it, the harness not."""
 
     def __init__(self, service: AcmeUnregistered) -> None:
         super().__init__()

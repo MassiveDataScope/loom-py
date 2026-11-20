@@ -2,18 +2,23 @@
 
 from __future__ import annotations
 
+from functools import partial
 from typing import Any
 
 import pytest
 
-from loom.core.bootstrap import KernelRuntime, create_kernel
+from loom.core.bootstrap import BootstrapError, Kernel, create_kernel
 from loom.core.di.container import LoomContainer
 from loom.core.di.scope import Scope
+from loom.core.engine.compiler import UseCaseCompiler
+from loom.core.engine.events import RuntimeEvent
 from loom.core.engine.executor import RuntimeExecutor
 from loom.core.environment import ENVIRONMENT_VARIABLE, Environment
 from loom.core.stores.catalog import DEFAULT_STORE
 from loom.core.stores.uow.coordinator import InvocationOutcome, OrderedCommits, ParticipantScope
+from loom.core.use_case.factory import UseCaseFactory
 from loom.core.use_case.use_case import UseCase
+from tests.unit.core.doubles import FakeOrderRepo, IOrderRepo
 from tests.unit.core.engine._lifecycle_doubles import Log, StubUnitOfWorkFactory
 
 
@@ -24,6 +29,18 @@ class AcmeKernelConfig:
 class _NoDepsUseCase(UseCase[Any, str]):
     async def execute(self, **kwargs: Any) -> str:
         return "ok"
+
+
+class _RepoDepsUseCase(UseCase[Any, str]):
+    def __init__(self, repo: IOrderRepo) -> None:
+        self._repo = repo
+
+    async def execute(self, **kwargs: Any) -> str:
+        return "noop"
+
+
+def _register_repo(container: LoomContainer, scope: Scope = Scope.REQUEST) -> None:
+    container.register(IOrderRepo, FakeOrderRepo, scope=scope)
 
 
 class _FinishCounting(OrderedCommits):
@@ -37,16 +54,80 @@ class _FinishCounting(OrderedCommits):
 
 
 @pytest.fixture
-def kernel() -> KernelRuntime:
+def kernel() -> Kernel:
     return create_kernel(config=AcmeKernelConfig(), use_cases=[_NoDepsUseCase])
 
 
 class TestCreateKernel:
-    def test_create_kernel_returns_kernel_runtime(self, kernel: KernelRuntime) -> None:
-        assert isinstance(kernel, KernelRuntime)
+    def test_create_kernel_returns_kernel(self, kernel: Kernel) -> None:
+        assert isinstance(kernel, Kernel)
         assert isinstance(kernel.executor, RuntimeExecutor)
 
-    def test_create_kernel_registers_executor_in_container(self, kernel: KernelRuntime) -> None:
+    def test_create_kernel_carries_container_compiler_and_factory(self, kernel: Kernel) -> None:
+        assert isinstance(kernel.container, LoomContainer)
+        assert isinstance(kernel.compiler, UseCaseCompiler)
+        assert isinstance(kernel.factory, UseCaseFactory)
+
+    def test_create_kernel_compiles_all_use_cases(self, kernel: Kernel) -> None:
+        assert kernel.compiler.get_plan(_NoDepsUseCase) is not None
+
+    def test_create_kernel_registers_config_in_container(self) -> None:
+        config = AcmeKernelConfig()
+
+        built = create_kernel(config=config, use_cases=[])
+
+        assert built.container.resolve(AcmeKernelConfig) is config
+
+    def test_create_kernel_executes_modules_in_order(self) -> None:
+        order: list[int] = []
+
+        def first(container: LoomContainer) -> None:
+            order.append(1)
+
+        def second(container: LoomContainer) -> None:
+            order.append(2)
+
+        create_kernel(config=AcmeKernelConfig(), use_cases=[], modules=[first, second])
+
+        assert order == [1, 2]
+
+    def test_create_kernel_modules_register_bindings(self) -> None:
+        built = create_kernel(
+            config=AcmeKernelConfig(), use_cases=[_RepoDepsUseCase], modules=[_register_repo]
+        )
+
+        assert built.container.is_registered(IOrderRepo)
+
+    def test_create_kernel_accepts_a_module_without_dunder_name(self) -> None:
+        built = create_kernel(
+            config=AcmeKernelConfig(),
+            use_cases=[_RepoDepsUseCase],
+            modules=[partial(_register_repo, scope=Scope.APPLICATION)],
+        )
+
+        assert built.container.is_registered(IOrderRepo)
+
+    def test_create_kernel_factory_can_build_use_case(self) -> None:
+        built = create_kernel(
+            config=AcmeKernelConfig(), use_cases=[_RepoDepsUseCase], modules=[_register_repo]
+        )
+
+        assert isinstance(built.factory.build(_RepoDepsUseCase), _RepoDepsUseCase)
+
+    def test_create_kernel_reports_compilation_to_the_metrics_adapter(self) -> None:
+        events: list[RuntimeEvent] = []
+
+        class RecordingMetrics:
+            def on_event(self, event: RuntimeEvent) -> None:
+                events.append(event)
+
+        create_kernel(
+            config=AcmeKernelConfig(), use_cases=[_NoDepsUseCase], metrics=RecordingMetrics()
+        )
+
+        assert any(event.use_case_name == "_NoDepsUseCase" for event in events)
+
+    def test_create_kernel_registers_executor_in_container(self, kernel: Kernel) -> None:
         resolved = kernel.container.resolve(RuntimeExecutor)
         assert resolved is kernel.executor
 
@@ -90,6 +171,22 @@ class TestCreateKernel:
         runtime = create_kernel(config=AcmeKernelConfig(), use_cases=[_NoDepsUseCase])
 
         assert runtime.container.resolve(Environment) is Environment.DEVELOPMENT
+
+
+class TestCreateKernelFailures:
+    def test_a_compilation_error_raises_bootstrap_error(self) -> None:
+        class BrokenUseCase(UseCase[Any, str]):
+            pass
+
+        with pytest.raises(BootstrapError):
+            create_kernel(config=AcmeKernelConfig(), use_cases=[BrokenUseCase])  # type: ignore[type-abstract]
+
+    def test_a_module_exception_raises_bootstrap_error(self) -> None:
+        def bad_module(container: LoomContainer) -> None:
+            raise RuntimeError("db connection refused")
+
+        with pytest.raises(BootstrapError, match="Bootstrap failed"):
+            create_kernel(config=AcmeKernelConfig(), use_cases=[], modules=[bad_module])
 
 
 class _Deployment:

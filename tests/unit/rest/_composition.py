@@ -5,7 +5,7 @@ from __future__ import annotations
 from collections.abc import Mapping
 from typing import Any
 
-from loom.core.bootstrap import KernelRuntime
+from loom.core.bootstrap import Kernel
 from loom.core.config import ConfigContext
 from loom.core.discovery.base import DiscoveryResult
 from loom.core.environment import Environment
@@ -46,7 +46,7 @@ def store_context(store: Mapping[str, object] | None = None, **sections: object)
 def build_bootstrap(
     _app_cfg: object, ctx: ConfigContext, *, environment: Environment = Environment.TEST
 ) -> tuple[
-    KernelRuntime,
+    Kernel,
     UnitOfWorkFactory | None,
     DiscoveryResult,
     tuple[type[RestInterface[Any]], ...],

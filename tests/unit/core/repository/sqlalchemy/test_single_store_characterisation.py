@@ -298,7 +298,7 @@ class TestSingleStoreCharacterisation:
         )
 
         async with application.running():
-            await application.kernel.app.invoke(use_case, payload={"name": "kept"})
+            await application.kernel.invoker.invoke(use_case, payload={"name": "kept"})
 
         assert _count_rows(db_path, _RECORD) == 1
 
@@ -312,7 +312,7 @@ class TestSingleStoreCharacterisation:
 
         async def invoke_failing() -> None:
             async with application.running():
-                await application.kernel.app.invoke(use_case, payload={"name": "lost"})
+                await application.kernel.invoker.invoke(use_case, payload={"name": "lost"})
 
         with pytest.raises(RuntimeError, match=_EXECUTE_FAILED):
             await invoke_failing()
@@ -330,7 +330,7 @@ class TestSingleStoreCharacterisation:
         opened = _spy_units(monkeypatch, application)
 
         async with application.running():
-            await application.kernel.app.invoke(outer, payload={"name": "outer"})
+            await application.kernel.invoker.invoke(outer, payload={"name": "outer"})
 
         assert len(opened) == 1
         assert len(commits) == 1
@@ -346,7 +346,7 @@ class TestSingleStoreCharacterisation:
 
         async def invoke_failing() -> None:
             async with application.running():
-                await application.kernel.app.invoke(outer, payload={"name": "outer"})
+                await application.kernel.invoker.invoke(outer, payload={"name": "outer"})
 
         with pytest.raises(RuntimeError, match=_OUTER_FAILED):
             await invoke_failing()
@@ -362,7 +362,7 @@ class TestSingleStoreCharacterisation:
         )
 
         async with application.running():
-            created_id = await application.kernel.app.invoke(use_case, payload={"name": "kept"})
+            created_id = await application.kernel.invoker.invoke(use_case, payload={"name": "kept"})
             assert current_scope() is None
             repository = application.kernel.container.resolve_repo(model)
             found = await repository.get_by_id(created_id)
@@ -387,7 +387,7 @@ class TestSingleStoreCharacterisation:
         )
 
         async with application.running():
-            await application.kernel.app.invoke(use_case, payload={"name": "kept"})
+            await application.kernel.invoker.invoke(use_case, payload={"name": "kept"})
 
         assert seen == [1]
 
@@ -403,7 +403,7 @@ class TestSingleStoreCharacterisation:
 
         async def invoke_failing() -> None:
             async with application.running():
-                await application.kernel.app.invoke(use_case, payload={"name": "lost"})
+                await application.kernel.invoker.invoke(use_case, payload={"name": "lost"})
 
         with pytest.raises(RuntimeError, match=_EXECUTE_FAILED):
             await invoke_failing()

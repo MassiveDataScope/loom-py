@@ -122,9 +122,9 @@ class TestTransactionCommit:
             coordinator=OrderedCommits({DEFAULT_STORE: uow_factory}),
         )
 
-        await runtime.app.invoke(_CreateProductUC, payload={"name": "keyboard", "price": 120.0})
+        await runtime.invoker.invoke(_CreateProductUC, payload={"name": "keyboard", "price": 120.0})
 
-        found = await runtime.app.invoke(_GetProductUC, params={"product_id": 1})
+        found = await runtime.invoker.invoke(_GetProductUC, params={"product_id": 1})
         assert found is not None
         assert found.name == "keyboard"
 
@@ -139,10 +139,10 @@ class TestTransactionCommit:
             coordinator=OrderedCommits({DEFAULT_STORE: uow_factory}),
         )
 
-        await runtime.app.invoke(_CreateProductUC, payload={"name": "mouse", "price": 25.0})
-        await runtime.app.invoke(_CreateProductUC, payload={"name": "monitor", "price": 300.0})
+        await runtime.invoker.invoke(_CreateProductUC, payload={"name": "mouse", "price": 25.0})
+        await runtime.invoker.invoke(_CreateProductUC, payload={"name": "monitor", "price": 300.0})
 
-        found = await runtime.app.invoke(_GetProductUC, params={"product_id": 2})
+        found = await runtime.invoker.invoke(_GetProductUC, params={"product_id": 2})
         assert found is not None
         assert found.name == "monitor"
 
@@ -165,13 +165,13 @@ class TestTransactionRollback:
         )
 
         with pytest.raises(RuntimeError, match="simulated failure after write"):
-            await runtime.app.invoke(
+            await runtime.invoker.invoke(
                 _FailAfterCreateUC,
                 payload={"name": "ghost", "price": 1.0},
             )
 
         # Entity must NOT be visible — the transaction was rolled back.
-        found = await runtime.app.invoke(_GetProductUC, params={"product_id": 1})
+        found = await runtime.invoker.invoke(_GetProductUC, params={"product_id": 1})
         assert found is None
 
     @pytest.mark.asyncio
@@ -186,22 +186,22 @@ class TestTransactionRollback:
         )
 
         # Commit one product successfully.
-        await runtime.app.invoke(_CreateProductUC, payload={"name": "safe", "price": 10.0})
+        await runtime.invoker.invoke(_CreateProductUC, payload={"name": "safe", "price": 10.0})
 
         # Roll back a second write.
         with pytest.raises(RuntimeError):
-            await runtime.app.invoke(
+            await runtime.invoker.invoke(
                 _FailAfterCreateUC,
                 payload={"name": "ghost", "price": 99.0},
             )
 
         # The committed product is still there.
-        first = await runtime.app.invoke(_GetProductUC, params={"product_id": 1})
+        first = await runtime.invoker.invoke(_GetProductUC, params={"product_id": 1})
         assert first is not None
         assert first.name == "safe"
 
         # The rolled-back product is absent.
-        second = await runtime.app.invoke(_GetProductUC, params={"product_id": 2})
+        second = await runtime.invoker.invoke(_GetProductUC, params={"product_id": 2})
         assert second is None
 
 
@@ -223,7 +223,7 @@ class TestLoadByIdMarker:
         )
 
         with pytest.raises(NotFound) as exc_info:
-            await runtime.app.invoke(_LoadByIdUC, params={"product_id": 99})
+            await runtime.invoker.invoke(_LoadByIdUC, params={"product_id": 99})
 
         assert exc_info.value.entity == "Product"
         assert exc_info.value.id == 99
@@ -239,7 +239,7 @@ class TestLoadByIdMarker:
             coordinator=OrderedCommits({DEFAULT_STORE: uow_factory}),
         )
 
-        await runtime.app.invoke(_CreateProductUC, payload={"name": "desk", "price": 200.0})
+        await runtime.invoker.invoke(_CreateProductUC, payload={"name": "desk", "price": 200.0})
 
-        name = await runtime.app.invoke(_LoadByIdUC, params={"product_id": 1})
+        name = await runtime.invoker.invoke(_LoadByIdUC, params={"product_id": 1})
         assert name == "desk"

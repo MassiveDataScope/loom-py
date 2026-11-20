@@ -23,7 +23,7 @@ from loom.composition.recipe import Adapter, Recipe
 from loom.composition.resources import Resource, ResourceKind
 from loom.connections.aws import AwsClients
 from loom.core.authz.elevation import ElevationSink
-from loom.core.bootstrap import BootstrapError, KernelRuntime
+from loom.core.bootstrap import BootstrapError, Kernel
 from loom.core.bootstrap.kernel import KernelRecipe, seeded_container
 from loom.core.cache.wiring import cache_module_for
 from loom.core.checks import enforce_deploy_checks
@@ -208,7 +208,7 @@ def register(
     aws: AwsClients,
     *,
     logger: LoggerPort,
-) -> tuple[KernelRuntime, SqlWiring, tuple[Resource, ...]]:
+) -> tuple[Kernel, SqlWiring, tuple[Resource, ...]]:
     """Fill a container and build the kernel on it, then register the job service and SQL.
 
     The order: the seed keys (the application's ``AppConfig``,
@@ -332,7 +332,7 @@ def check_installers(config: ConfigContext, installers: Collection[type[Installe
 def wire_ai(
     project: Project,
     recipe: Recipe,
-    kernel: KernelRuntime,
+    kernel: Kernel,
     analysis: GraphAnalysis,
     sql: SqlWiring,
 ) -> AiWiring:
@@ -386,7 +386,7 @@ def wire_ai(
 
 
 def seal(
-    kernel: KernelRuntime,
+    kernel: Kernel,
     analysis: GraphAnalysis,
     recipe: Recipe,
     *,

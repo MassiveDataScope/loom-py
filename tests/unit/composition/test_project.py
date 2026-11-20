@@ -67,7 +67,7 @@ class _Handler:
         self.application = application
 
     async def __call__(self) -> int:
-        return int(await self.application.kernel.app.invoke(_Answer))
+        return int(await self.application.kernel.invoker.invoke(_Answer))
 
 
 # The adapter under test: a profile of its own, one extra use case, its own result type.
@@ -116,7 +116,7 @@ class TestTransportFreeComposition:
             repository = application.kernel.container.resolve_repo(record)
             created = await repository.create(_CreateRecord(name="first"))
             found = await repository.get_by_id(created.id)
-            answer = await application.kernel.app.invoke(ping)
+            answer = await application.kernel.invoker.invoke(ping)
 
         assert found is not None
         assert found.name == "first"

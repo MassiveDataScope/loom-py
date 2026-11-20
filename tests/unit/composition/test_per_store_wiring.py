@@ -280,7 +280,7 @@ class TestPerStoreWiring:
         self, application: Application, databases: tuple[Path, Path]
     ) -> None:
         async with application.running():
-            await application.kernel.app.invoke(_RecordEntry, payload={"name": "e"})
+            await application.kernel.invoker.invoke(_RecordEntry, payload={"name": "e"})
 
         assert [_rows(database) for database in databases] == [
             {"per_store_accounts": 0},
@@ -292,7 +292,7 @@ class TestPerStoreWiring:
         application: Application,
     ) -> None:
         async with application.running():
-            joined = await application.kernel.app.invoke(_ViaLedgerService)
+            joined = await application.kernel.invoker.invoke(_ViaLedgerService)
 
         assert joined is True
 
@@ -302,7 +302,7 @@ class TestPerStoreWiring:
     ) -> None:
         async with application.running():
             with pytest.raises(UndeclaredStoreWrite, match="default"):
-                await application.kernel.app.invoke(_ViaDefaultService)
+                await application.kernel.invoker.invoke(_ViaDefaultService)
 
     @pytest.mark.parametrize(
         ("key", "served"),

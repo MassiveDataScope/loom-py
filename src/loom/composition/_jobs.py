@@ -12,7 +12,7 @@ from typing import TYPE_CHECKING, Any, Final, cast
 from loom.composition.errors import JobTransportError
 from loom.composition.resources import Resource, ResourceKind, closing
 from loom.connections.aws import AwsClients
-from loom.core.bootstrap import KernelRuntime
+from loom.core.bootstrap import Kernel
 from loom.core.config import ConfigContext, ConfigKey
 from loom.core.di.scope import Scope
 from loom.core.job.callback import DispatchableCallbacks, JobCallback
@@ -203,7 +203,7 @@ def _implicit(context: JobTransportContext) -> _Built:
 
 def configure_job_service(
     ctx: ConfigContext,
-    result: KernelRuntime,
+    result: Kernel,
     observability_runtime: ObservabilityRuntime | None,
     *,
     transport: str | None = None,

@@ -73,7 +73,7 @@ async def app(scoped_database: BootstrapFactory, tmp_path: Path) -> AsyncIterato
     await seed_notes(database.bypass)
     composed = Project.load(_config(tmp_path, schema), environment="test").compose(FastAPIAdapter())
     async with composed.running():
-        yield cast(AppInvoker, composed.kernel.app)
+        yield cast(AppInvoker, composed.kernel.invoker)
 
 
 @pytest.fixture

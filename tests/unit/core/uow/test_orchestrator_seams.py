@@ -89,7 +89,7 @@ class TestKernelCoordinator:
         )
         kernel = create_kernel(config=object(), use_cases=[_Noop], coordinator=external)
 
-        await kernel.app.invoke(_Noop)
+        await kernel.invoker.invoke(_Noop)
 
         phases = ("begin", "flush", "commit", "close")
         assert ledger.calls == [(DEFAULT_STORE, phase) for phase in phases]

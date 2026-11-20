@@ -60,7 +60,7 @@ async def _runtime_and_model() -> tuple[AgentRuntime, ScriptedToolModel]:
         plans=[plan],
         config=make_ai_config(),
         engine_provider=provider,  # type: ignore[arg-type]
-        deps=AgentDepsFactory(kernel.app),
+        deps=AgentDepsFactory(kernel.invoker),
         container=kernel.container,
     )
     return runtime, model

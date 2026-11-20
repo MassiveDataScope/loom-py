@@ -17,7 +17,7 @@ import pytest
 
 from loom.composition import AppConfig, Application, Project
 from loom.composition.recipe import Adapter
-from loom.core.bootstrap import bootstrap_app, create_kernel
+from loom.core.bootstrap import create_kernel
 from loom.core.config import ConfigContext
 from loom.core.di.container import LoomContainer
 from loom.core.discovery.base import DiscoveryResult
@@ -155,19 +155,6 @@ def standalone_kernel(
     return kernel.container
 
 
-def standalone_bootstrap(
-    composition: Composition, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
-) -> LoomContainer:
-    del tmp_path, monkeypatch
-    result = bootstrap_app(
-        config=AppConfig(name="acme"),
-        use_cases=composition.use_cases,
-        modules=composition.overrides,
-        environment=composition.environment,
-    )
-    return result.container
-
-
 def _composed(
     composition: Composition,
     document: dict[str, Any],
@@ -247,12 +234,8 @@ COMPOSED: dict[str, StartupPath] = {
 
 STANDALONE: dict[str, StartupPath] = {
     "create_kernel": standalone_kernel,
-    "bootstrap_app": standalone_bootstrap,
 }
 """The paths calling the kernel directly, by name."""
-
-UNCOMPOSED: dict[str, StartupPath] = {"harness": harness, **STANDALONE}
-"""The paths that do not go through ``Project.compose``, by name."""
 
 HTTP = ("fastapi", "lambda_http")
 """The paths serving HTTP, where some refusals read differently: see each variant."""
