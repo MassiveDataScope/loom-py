@@ -520,6 +520,10 @@ markers = [
 ]
 
 [tool.pytest_env]
+POLARS_MAX_THREADS = "1"
+RAYON_NUM_THREADS = "1"
+OMP_NUM_THREADS = "1"
+TOKIO_WORKER_THREADS = "1"
 TEST_SERVER_MODE = { unset = true }
 TEST_SERVER_MODE_ENDPOINT = { unset = true }
 TEST_PROXY_MODE = { unset = true }
@@ -541,11 +545,11 @@ fmt = [
     { cmd = "ruff format src tests" },
     { cmd = "ruff check --fix ." },
 ]
-test = "pytest -n auto --dist worksteal -q -p no:cacheprovider"
-test-fast = "pytest -n auto --dist worksteal -q -p no:cacheprovider -o 'testpaths=tests/unit tests/contract tests/docs'"
-test-int = "pytest -n auto --dist worksteal -q -p no:cacheprovider -o testpaths=tests/integration --ignore=tests/integration/rls"
-test-props = { cmd = "pytest -n auto --dist worksteal -q -p no:cacheprovider -o testpaths=tests/unit -m hypothesis", env = { HYPOTHESIS_PROFILE = "ci" } }
-test-cov = "pytest -n auto --dist worksteal -q -p no:cacheprovider --cov=src/loom --cov-report=term-missing --cov-report=xml"
+test = "pytest -n 4 --dist worksteal -q -p no:cacheprovider"
+test-fast = "pytest -n 4 --dist worksteal -q -p no:cacheprovider -o 'testpaths=tests/unit tests/contract tests/docs'"
+test-int = "pytest -n 4 --dist worksteal -q -p no:cacheprovider -o testpaths=tests/integration --ignore=tests/integration/rls"
+test-props = { cmd = "pytest -n 4 --dist worksteal -q -p no:cacheprovider -o testpaths=tests/unit -m hypothesis", env = { HYPOTHESIS_PROFILE = "ci" } }
+test-cov = "pytest -n 4 --dist worksteal -q -p no:cacheprovider --cov=src/loom --cov-report=term-missing --cov-report=xml"
 test-logs = "pytest -n 0 -p no:cacheprovider -o log_cli=true -o log_cli_level=DEBUG"
 golden-update = "pytest -q -p no:cacheprovider --update-golden"
 gate = ["lint", "types", "test-fast", "test-int"]
