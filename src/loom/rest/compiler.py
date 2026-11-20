@@ -378,6 +378,8 @@ class CompiledRoute:
             accepted for this route.
         effective_allow_pagination_override: Whether callers may override
             pagination mode via query parameters for this route.
+        takes_query_spec: Whether the route's use case takes a ``QuerySpec``,
+            the only route that paginates.
         effective_requires_roles: Resolved roles granting access to this
             route, after applying route → interface precedence.  Empty means
             the route declares no role requirement.
@@ -407,6 +409,7 @@ class CompiledRoute:
     effective_allowed_profiles: tuple[str, ...]
     effective_expose_profile: bool
     effective_allow_pagination_override: bool
+    takes_query_spec: bool = False
     read_only: bool = False
     interface_tags: tuple[str, ...] = ()
     execute_param_types: tuple[tuple[str, Any], ...] = ()
@@ -417,6 +420,22 @@ class CompiledRoute:
     sort_fields: tuple[str, ...] = ()
     result_type: Any = Any
     created_type: Any = None
+
+    @property
+    def can_page_by_cursor(self) -> bool:
+        """Whether the route can serve cursor pages, so a cursor key must be configured."""
+        return offers_cursor_pages(
+            self.effective_pagination_mode,
+            self.effective_allow_pagination_override,
+            takes_query_spec=self.takes_query_spec,
+        )
+
+
+def offers_cursor_pages(
+    mode: PaginationMode, allows_override: bool, *, takes_query_spec: bool
+) -> bool:
+    """Whether a route serves cursor pages: *mode* is cursor, or a paging route lets callers choose."""
+    return mode is PaginationMode.CURSOR or (takes_query_spec and allows_override)
 
 
 @dataclass(frozen=True)
@@ -779,7 +798,9 @@ class RestInterfaceCompiler:
                 model=route.use_case.describe_main_repo()[0],
                 takes_query_spec=takes_query_spec,
                 response=result_type,
-                cursor_pages=pagination is PaginationMode.CURSOR or pagination_override,
+                cursor_pages=offers_cursor_pages(
+                    pagination, pagination_override, takes_query_spec=takes_query_spec
+                ),
             )
 
             compiled.append(
@@ -792,6 +813,7 @@ class RestInterfaceCompiler:
                     effective_allowed_profiles=self._resolve_allowed_profiles(route, interface),
                     effective_expose_profile=self._resolve_expose_profile(route, interface),
                     effective_allow_pagination_override=pagination_override,
+                    takes_query_spec=takes_query_spec,
                     read_only=route.method.upper() == "GET",
                     interface_tags=interface.tags,
                     execute_param_types=self._resolve_execute_param_types(route.use_case),
