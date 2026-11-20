@@ -26,10 +26,11 @@ from loom.core.bootstrap import BootstrapError, KernelRuntime
 from loom.core.bootstrap.kernel import KernelRecipe, seeded_container
 from loom.core.cache.wiring import cache_module_for
 from loom.core.checks import enforce_deploy_checks
-from loom.core.config import ConfigError, ConfigKey
+from loom.core.config import ConfigContext, ConfigError, ConfigKey
 from loom.core.connections.aws import AwsClients
 from loom.core.di.container import ResolutionError
 from loom.core.di.graph import GraphAnalysis
+from loom.core.di.installer import Installer
 from loom.core.di.scope import Scope
 from loom.core.engine.compilable import Compilable
 from loom.core.environment import Environment
@@ -232,7 +233,7 @@ def register(
         The kernel, the SQL wiring and the job transports' resources.
 
     Raises:
-        ConfigError: When the ``cache`` section, an elevation,
+        ConfigError: When a ``ConfiguredInstaller`` section, the ``cache`` section, an elevation,
             ``stores.settings.rollback_timeout``,
             ``identity.max_delegation_seconds`` or the ``sql`` section is
             invalid. Raised as is.
@@ -267,7 +268,9 @@ def register(
         ObservabilityRuntime: observability,
         StoreCatalog: catalog,
     }
-    installers = tuple(installer().install for installer in recipe.discovered.installers)
+    installers = tuple(
+        installer.install for installer in build_installers(ctx, recipe.discovered.installers)
+    )
     with seeded_container(
         KernelRecipe.container(),
         seeds,
@@ -303,6 +306,17 @@ def register(
     sql = resolve_sql(ctx)
     register_sql_collaborators(kernel.container, sql, observability)
     return kernel, sql, job_resources
+
+
+def build_installers(
+    config: ConfigContext, installers: Collection[type[Installer]]
+) -> tuple[Installer, ...]:
+    """Build each installer class from *config*, in order; start-up and ``loom check`` share it.
+
+    Raises:
+        ConfigError: When an installer's configuration section is missing or invalid.
+    """
+    return tuple(installer.from_config(config) for installer in installers)
 
 
 def wire_ai(

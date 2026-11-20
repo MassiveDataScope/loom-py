@@ -60,8 +60,9 @@ class Recipe:
             :class:`~loom.core.stores.StoreRuntime`).
         overrides: DI modules run right after the discovered installers, under the
             same reserved-key check; a test double of a repository binds under
-            the key its store would bind it. Set by the testing harness; no
-            production entry point sets them.
+            the key its store would bind it. Test-only, set by the testing
+            harness: production dependencies and their settings belong in an
+            ``Installer`` (see ``ConfiguredInstaller``), which the scan finds.
         lenient: Skip the checks a test double cannot pass: the deploy
             checks, the use-case factory's verification, the refusal of a
             store a component cannot write to, and the refusal of an agent
