@@ -18,7 +18,7 @@ from typing import TYPE_CHECKING, Any, ClassVar, Protocol
 from loom.core.config import ConfigContext
 from loom.core.di.container import LoomContainer
 from loom.core.model import BaseModel
-from loom.core.stores.profile import StoreRuntime
+from loom.core.stores.profile import StorePluginContext
 from loom.core.stores.uow.abc import UnitOfWorkFactory
 
 if TYPE_CHECKING:
@@ -107,7 +107,7 @@ class StorePlugin(Protocol):
         self,
         ctx: ConfigContext,
         models: Sequence[type[BaseModel]],
-        runtime: StoreRuntime,
+        runtime: StorePluginContext,
     ) -> StoreWiring:
         """Build the persistence wiring for the discovered models.
 

@@ -18,7 +18,7 @@ require_bytewax()
 
 from loom.core.errors import RuleViolationError  # noqa: E402
 from loom.core.observability.event import EventKind, LifecycleEvent, Scope  # noqa: E402
-from loom.core.observability.observability import ObservabilityRuntime  # noqa: E402
+from loom.core.observability.observability import Observability  # noqa: E402
 from loom.streaming.bytewax._error_boundary import ErrorBoundary  # noqa: E402
 from loom.streaming.bytewax.handlers import _shared as _shared  # noqa: E402
 from loom.streaming.bytewax.handlers import dispatcher as _dispatcher  # noqa: E402
@@ -47,7 +47,7 @@ pytestmark = pytest.mark.bytewax
 
 def _boundary() -> ErrorBoundary:
     """Build the error boundary the production wiring passes to scoped nodes."""
-    return ErrorBoundary(observer=ObservabilityRuntime.noop(), flow="orders")
+    return ErrorBoundary(observer=Observability.noop(), flow="orders")
 
 
 class _FakeNode:
@@ -440,7 +440,7 @@ class TestCollectBatchDefault:
 class TestExecuteRecordStep:
     def test_execute_record_step_replaces_payload_and_observes(self) -> None:
         observer = RecordingNodeEventObserver()
-        runtime = ObservabilityRuntime([observer])
+        runtime = Observability([observer])
         result = _steps._execute_record_step(
             runtime,
             "orders",
@@ -459,7 +459,7 @@ class TestExecuteRecordStep:
 
     def test_execute_record_step_accepts_replacement_message(self) -> None:
         observer = RecordingNodeEventObserver()
-        runtime = ObservabilityRuntime([observer])
+        runtime = Observability([observer])
         result = _steps._execute_record_step(
             runtime,
             "orders",
@@ -477,7 +477,7 @@ class TestExecuteRecordStep:
         step = _ContextAwareRecordStep()
 
         _steps._execute_record_step(
-            ObservabilityRuntime.noop(),
+            Observability.noop(),
             "orders",
             3,
             "ContextAware",
@@ -494,7 +494,7 @@ class TestExecuteRecordStep:
 
     def test_execute_record_step_propagates_business_error_and_observes(self) -> None:
         observer = RecordingNodeEventObserver()
-        runtime = ObservabilityRuntime([observer])
+        runtime = Observability([observer])
         step = _BoomRecordStep()
         message = _message("abc")
         with pytest.raises(RuleViolationError, match="value: boom"):
@@ -516,7 +516,7 @@ class TestExecuteRecordStep:
 class TestExecuteBatchStep:
     def test_execute_batch_step_replaces_payloads_and_observes(self) -> None:
         observer = RecordingNodeEventObserver()
-        runtime = ObservabilityRuntime([observer])
+        runtime = Observability([observer])
         result = _steps._execute_batch_step(
             runtime,
             "orders",
@@ -533,7 +533,7 @@ class TestExecuteBatchStep:
         ]
 
     def test_execute_batch_step_rejects_non_list_result(self) -> None:
-        noop = ObservabilityRuntime.noop()
+        noop = Observability.noop()
         step = _InvalidBatchStep()
         messages: list[Message[StreamPayload]] = [_message("a"), _message("b")]
         with pytest.raises(TypeError, match="UpperBatch must return a list of payloads."):
@@ -550,7 +550,7 @@ class TestExecuteBatchStep:
 class TestExecuteExpandStep:
     def test_execute_expand_step_replaces_payloads_and_observes(self) -> None:
         observer = RecordingNodeEventObserver()
-        runtime = ObservabilityRuntime([observer])
+        runtime = Observability([observer])
         result = _steps._execute_expand_step(
             runtime,
             "orders",
@@ -567,7 +567,7 @@ class TestExecuteExpandStep:
         ]
 
     def test_execute_expand_step_rejects_non_iterable_result(self) -> None:
-        noop = ObservabilityRuntime.noop()
+        noop = Observability.noop()
         step = _InvalidExpandStep()
         message = _message("ab")
         with pytest.raises(TypeError, match="UpperExpand must return an iterable of payloads."):
@@ -582,7 +582,7 @@ class TestExecuteExpandStep:
 
     def test_execute_expand_step_accepts_replacement_messages(self) -> None:
         observer = RecordingNodeEventObserver()
-        runtime = ObservabilityRuntime([observer])
+        runtime = Observability([observer])
         result = _steps._execute_expand_step(
             runtime,
             "orders",
@@ -601,7 +601,7 @@ class TestExecuteExpandStep:
 class TestExecuteBatchExpandStep:
     def test_execute_batch_expand_step_replaces_payloads_and_observes(self) -> None:
         observer = RecordingNodeEventObserver()
-        runtime = ObservabilityRuntime([observer])
+        runtime = Observability([observer])
         result = _steps._execute_batch_expand_step(
             runtime,
             "orders",
@@ -618,7 +618,7 @@ class TestExecuteBatchExpandStep:
         ]
 
     def test_execute_batch_expand_step_rejects_non_iterable_result(self) -> None:
-        noop = ObservabilityRuntime.noop()
+        noop = Observability.noop()
         step = _InvalidBatchExpandStep()
         messages: list[Message[StreamPayload]] = [_message("a"), _message("b")]
         with pytest.raises(
@@ -645,7 +645,7 @@ class TestExecuteBatchExpandStep:
         )
 
         result = _steps._execute_batch_expand_step(
-            ObservabilityRuntime.noop(), "orders", 4, "UpperBatchExpand", step, messages
+            Observability.noop(), "orders", 4, "UpperBatchExpand", step, messages
         )
 
         assert [(_message_payload(item).value, item.meta.offset) for item in result] == [
@@ -656,7 +656,7 @@ class TestExecuteBatchExpandStep:
 
     def test_execute_batch_expand_step_expands_an_empty_batch_into_nothing(self) -> None:
         result = _steps._execute_batch_expand_step(
-            ObservabilityRuntime.noop(),
+            Observability.noop(),
             "orders",
             4,
             "UpperBatchExpand",
@@ -712,7 +712,7 @@ class TestExecuteBatchExpandStep:
         self, result: object, error: str
     ) -> None:
         messages: list[Message[StreamPayload]] = [_message("a"), _message("b"), _message("c")]
-        observability = ObservabilityRuntime.noop()
+        observability = Observability.noop()
         step = _ResultBatchExpandStep(result)
         with pytest.raises(TypeError, match=error):
             _steps._execute_batch_expand_step(
@@ -746,7 +746,7 @@ class TestExecuteWithStep:
 
         sink_partition = _SinkPartition()
         result = _scopes._execute_with_step(
-            ObservabilityRuntime.noop(),
+            Observability.noop(),
             "orders",
             5,
             "With",
@@ -859,7 +859,7 @@ class TestWithAsyncBatch:
         return SimpleNamespace(
             bridge=bridge,
             commit_tracker=tracker,
-            flow_runtime=ObservabilityRuntime([observer]),
+            flow_runtime=Observability([observer]),
             plan=SimpleNamespace(name="orders"),
             current_path=(),
             manager_for=lambda idx, node: lifecycle,

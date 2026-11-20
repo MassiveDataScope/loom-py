@@ -36,7 +36,7 @@ from loom.ai.abc import (
     HealthStatus,
 )
 from loom.core.di.container import LoomContainer
-from loom.core.engine.executor import RuntimeExecutor
+from loom.core.engine.executor import UseCaseExecutor
 from loom.core.identity import Identity
 from loom.core.plugins import entrypoints as entrypoints_module
 from loom.rest.fastapi.auto import create_app
@@ -80,7 +80,7 @@ class _PingEngine:
     def __init__(self, deps: DepsFactory, container: LoomContainer) -> None:
         self._deps = deps
         self._container = container
-        self.executor: RuntimeExecutor | None = None
+        self.executor: UseCaseExecutor | None = None
 
     def run_stream(
         self,
@@ -165,15 +165,15 @@ def fake_engine(monkeypatch: pytest.MonkeyPatch) -> None:
 
 @pytest.fixture
 def executed(monkeypatch: pytest.MonkeyPatch) -> list[type[Any]]:
-    """Spy on ``RuntimeExecutor.run`` and collect the use-case types it built and ran."""
+    """Spy on ``UseCaseExecutor.run`` and collect the use-case types it built and ran."""
     seen: list[type[Any]] = []
-    original = RuntimeExecutor.run
+    original = UseCaseExecutor.run
 
-    async def _spy(self: RuntimeExecutor, use_case_type: Any, *args: Any, **kwargs: Any) -> Any:
+    async def _spy(self: UseCaseExecutor, use_case_type: Any, *args: Any, **kwargs: Any) -> Any:
         seen.append(use_case_type)
         return await original(self, use_case_type, *args, **kwargs)
 
-    monkeypatch.setattr(RuntimeExecutor, "run", _spy)
+    monkeypatch.setattr(UseCaseExecutor, "run", _spy)
     return seen
 
 
@@ -247,5 +247,5 @@ class TestAgentsOnlyApp:
         assert PINGS == ["pong"]
         assert executed == [PingUseCase]
         (engine,) = _EngineProvider.engines
-        assert isinstance(engine.executor, RuntimeExecutor)
+        assert isinstance(engine.executor, UseCaseExecutor)
         assert coordinator_of(engine.executor) is None

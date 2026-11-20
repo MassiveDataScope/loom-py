@@ -30,7 +30,7 @@ from loom.core.environment import Environment, resolve_environment, select_confi
 from loom.core.locator import DEFAULT_CODE_PATH, add_code_path
 from loom.core.logger import get_logger
 from loom.core.observability.config import ObservabilityConfig
-from loom.core.observability.observability import ObservabilityRuntime
+from loom.core.observability.observability import Observability
 from loom.core.stores import resolve_store_backend
 from loom.core.stores.catalog import StoreCatalog, StoreKey, load_catalog
 
@@ -163,7 +163,7 @@ class Project:
     code_path: Path
     config_root: Path
     app: AppConfig
-    observability: ObservabilityRuntime
+    observability: Observability
     observability_config: ObservabilityConfig
 
     @classmethod
@@ -203,7 +203,7 @@ class Project:
         observability_config = loaded.config.section_or_default(
             ConfigKey.OBSERVABILITY, ObservabilityConfig, ObservabilityConfig()
         )
-        observability = ObservabilityRuntime.from_config(
+        observability = Observability.from_config(
             observability_config, environment=loaded.environment
         )
         app_cfg = AppConfig.from_config(loaded.config)

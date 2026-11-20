@@ -2,7 +2,7 @@
 
 Drives the whole path a consumer would, exactly as ``test_agent_marker_integration.py``
 does for PR2: a real ``UseCaseCompiler`` compiles a use case declaring ``Agent()``, a
-real ``RuntimeExecutor`` runs it, and a real ``AgentRuntime`` serves the named agent —
+real ``UseCaseExecutor`` runs it, and a real ``AgentHost`` serves the named agent —
 only the model and the MCP/SQL network are faked, at the edge.
 
 Covers points 3, 4 and 5 of the standing integration requirement in
@@ -26,16 +26,16 @@ from loom.ai.compiler._plan import CompiledCapability
 from loom.ai.config import AiConfig, McpServerConfig
 from loom.ai.declarative import PolicySpec
 from loom.ai.errors import AgentRunError, AgentRunErrorCode
-from loom.ai.execution import AgentRuntime
+from loom.ai.execution import AgentHost
 from loom.ai.execution._handle import AgentMarkerResolver
 from loom.core.di import LoomContainer
 from loom.core.engine.compiler import UseCaseCompiler
-from loom.core.engine.executor import RuntimeExecutor
+from loom.core.engine.executor import UseCaseExecutor
 from loom.core.execution import ExecutionScope
 from loom.core.identity import Identity
 from loom.core.model.redaction import Dsn
 from loom.core.observability.event import Scope
-from loom.core.observability.observability import ObservabilityRuntime
+from loom.core.observability.observability import Observability
 from loom.core.stores.sql.abc.contracts import SqlColumn, SqlQueryResult
 from loom.core.stores.sql.config import SqlConfig, SqlConnectionConfig
 from loom.core.stores.sql.service import NullSqlQueryService, SqlQueryService
@@ -173,18 +173,18 @@ def _ai_config(*, granted_mcp: bool) -> AiConfig:
 def _wired(
     *,
     engine: ShapedRecordingEngine,
-    compiler_and_executor: tuple[UseCaseCompiler, RuntimeExecutor],
+    compiler_and_executor: tuple[UseCaseCompiler, UseCaseExecutor],
     deps: StubDepsFactory,
     container: LoomContainer,
     capabilities: Sequence[CompiledCapability] = (),
     mcp_clients: dict[str, StubMcpClient] | None = None,
     granted_sql: bool = False,
     policies: PolicySpec | None = None,
-) -> tuple[RuntimeExecutor, AgentRuntime]:
-    """Wire a real executor to a real ``AgentRuntime``, exactly as ``create_app`` does."""
+) -> tuple[UseCaseExecutor, AgentHost]:
+    """Wire a real executor to a real ``AgentHost``, exactly as ``create_app`` does."""
     _, executor = compiler_and_executor
     provider = CountingEngineProvider(engines={MARKER_AGENT_NAME: engine})
-    runtime = AgentRuntime(
+    runtime = AgentHost(
         plans=[make_plan(MARKER_AGENT_NAME, capabilities=capabilities, policies=policies)],
         config=_ai_config(granted_mcp=bool(mcp_clients)),
         engine_plugin=provider,  # type: ignore[arg-type]
@@ -349,7 +349,7 @@ class TestAgentPathIncludeIsWiredToo:
             mcp_clients={_MCP_SERVER: StubMcpClient(label=_MCP_SERVER, session=session, log=[])},
         )
         observer = RecordingObserver()
-        observability = ObservabilityRuntime(observers=[observer])
+        observability = Observability(observers=[observer])
 
         async with runtime:
             resolver = AgentMarkerResolver(

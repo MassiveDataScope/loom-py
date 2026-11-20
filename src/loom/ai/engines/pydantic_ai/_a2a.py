@@ -65,7 +65,7 @@ def create_a2a_client(capability: CompiledA2ACapability) -> AbstractAsyncContext
 
     Example::
 
-        runtime = AgentRuntime(..., a2a_client_factory=create_a2a_client)
+        runtime = AgentHost(..., a2a_client_factory=create_a2a_client)
     """
     return _sdk().create_a2a_client(capability)
 

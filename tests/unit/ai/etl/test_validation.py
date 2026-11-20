@@ -19,7 +19,7 @@ from loom.ai.engines.pydantic_ai import PydanticAIEnginePlugin
 from loom.ai.etl import PolarsAgentRunner
 from loom.ai.etl import _runner as _runner_module
 from loom.ai.etl._validation import validation_issues
-from loom.ai.execution import AgentRuntime
+from loom.ai.execution import AgentHost
 from loom.core.model import loom_type
 from loom.etl.ports import AgentIssueKind
 from tests.helpers.pydantic_ai_engine import make_plan
@@ -209,13 +209,13 @@ class TestCompiledOnce:
         self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
     ) -> None:
         builds: list[object] = []
-        original = _runner_module.build_agent_runtime
+        original = _runner_module.build_agent_host
 
-        def counting(*args: Any, **kwargs: Any) -> AgentRuntime:
+        def counting(*args: Any, **kwargs: Any) -> AgentHost:
             builds.append(kwargs["names"])
             return original(*args, **kwargs)
 
-        monkeypatch.setattr(_runner_module, "build_agent_runtime", counting)
+        monkeypatch.setattr(_runner_module, "build_agent_host", counting)
         runner = _runner(tmp_path)
 
         runner.validate("typed", Reply, max_usd=None)

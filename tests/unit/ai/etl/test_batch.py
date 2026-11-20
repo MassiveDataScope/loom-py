@@ -11,7 +11,7 @@ import pytest
 
 from loom.ai.etl._batch import PROMPT_MISSING, Batch, RowOutcome
 from loom.ai.etl._ledger import SpendLedger
-from loom.ai.execution import AgentRuntime
+from loom.ai.execution import AgentHost
 from loom.core.identity import Identity
 
 _LIMIT = 3
@@ -35,7 +35,7 @@ class _Runtime:
 
 def _answer_all(runtime: _Runtime, prompts: list[str | None]) -> list[RowOutcome]:
     batch = Batch(
-        runtime=cast(AgentRuntime, runtime),
+        runtime=cast(AgentHost, runtime),
         name="labeller",
         limit=_LIMIT,
         ledger=SpendLedger(None),

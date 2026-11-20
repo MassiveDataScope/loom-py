@@ -9,10 +9,10 @@ from typing import Any
 import pytest
 
 from loom.ai.abc import AgentHandle, McpHandle
-from loom.ai.execution import AgentRuntime
+from loom.ai.execution import AgentHost
 from loom.ai.execution._handle import AgentMarkerResolver, McpMarkerResolver
 from loom.core.engine.compiler import UseCaseCompiler
-from loom.core.engine.executor import RuntimeExecutor
+from loom.core.engine.executor import UseCaseExecutor
 from loom.core.errors import Unauthenticated
 from loom.core.use_case import Agent, Mcp, UseCase
 
@@ -45,15 +45,15 @@ class AcmeOutlivingUseCase(UseCase[object, "asyncio.Task[object]"]):
 @pytest.fixture
 def executor(
     agent_resolver: AgentMarkerResolver, mcp_resolver: McpMarkerResolver
-) -> RuntimeExecutor:
-    executor = RuntimeExecutor(UseCaseCompiler())
+) -> UseCaseExecutor:
+    executor = UseCaseExecutor(UseCaseCompiler())
     executor.bind_agent_resolver(agent_resolver)
     executor.bind_mcp_resolver(mcp_resolver)
     return executor
 
 
 @pytest.fixture
-def outliving(executor: RuntimeExecutor) -> Any:
+def outliving(executor: UseCaseExecutor) -> Any:
     """Run the use case as Alice and return its task, still waiting, once the execution ended."""
 
     async def start(call: _Bind) -> tuple[asyncio.Task[object], asyncio.Event]:
@@ -68,7 +68,7 @@ class TestAHandleInATaskThatOutlivedItsExecution:
     @pytest.mark.parametrize("call", list(HANDLE_CALLS.values()), ids=list(HANDLE_CALLS))
     async def test_is_refused_past_the_delegation_deadline_with_no_backend_call(
         self,
-        runtime: AgentRuntime,
+        runtime: AgentHost,
         outliving: Any,
         call: _Bind,
         past_the_window: Callable[[], None],
@@ -87,7 +87,7 @@ class TestAHandleInATaskThatOutlivedItsExecution:
     @pytest.mark.parametrize("call", list(HANDLE_CALLS.values()), ids=list(HANDLE_CALLS))
     async def test_acts_as_the_caller_within_the_delegation(
         self,
-        runtime: AgentRuntime,
+        runtime: AgentHost,
         outliving: Any,
         call: _Bind,
         window: float,
@@ -102,7 +102,7 @@ class TestAHandleInATaskThatOutlivedItsExecution:
         assert backend_calls() == 1
 
     async def test_the_agent_runs_as_the_caller_of_the_ended_execution(
-        self, runtime: AgentRuntime, outliving: Any, engine: AcmeEngine, window: float
+        self, runtime: AgentHost, outliving: Any, engine: AcmeEngine, window: float
     ) -> None:
         del window
         async with runtime:

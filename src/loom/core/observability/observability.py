@@ -1,4 +1,4 @@
-"""ObservabilityRuntime — shared fan-out engine for all Loom modules.
+"""Observability — shared fan-out engine for all Loom modules.
 
 The tracer factory is imported lazily from ``from_config``: it reaches the
 OpenTelemetry SDK and OTLP exporters, which ship as extras only. Keeping that
@@ -131,7 +131,7 @@ def _build_observers(
     return observers
 
 
-class ObservabilityRuntime:
+class Observability:
     """Shared observability runtime for all Loom modules.
 
     Emits :class:`~loom.core.observability.event.LifecycleEvent` to every
@@ -150,7 +150,7 @@ class ObservabilityRuntime:
 
     Example::
 
-        runtime = ObservabilityRuntime.from_config(config.observability)
+        runtime = Observability.from_config(config.observability)
 
         with runtime.span(Scope.USE_CASE, "CreateOrder", trace_id=tid):
             result = use_case.execute(command)
@@ -388,7 +388,7 @@ class ObservabilityRuntime:
         *,
         environment: Environment | str | None = None,
     ) -> Self:
-        """Build an ``ObservabilityRuntime`` from an ``ObservabilityConfig``.
+        """Build an ``Observability`` from an ``ObservabilityConfig``.
 
         Observers are instantiated in order: structlog → Prometheus. When no
         backend is enabled, a
@@ -410,7 +410,7 @@ class ObservabilityRuntime:
                 :func:`~loom.core.environment.resolve_environment` when ``None``.
 
         Returns:
-            Configured ``ObservabilityRuntime`` ready for use.
+            Configured ``Observability`` ready for use.
 
         Raises:
             ValueError: If OTEL config is invalid (wrong protocol, missing exporter).
@@ -450,10 +450,10 @@ class ObservabilityRuntime:
         """Build a no-op runtime for tests and environments without observability.
 
         Returns:
-            ``ObservabilityRuntime`` backed by a single ``NoopObserver`` and a
+            ``Observability`` backed by a single ``NoopObserver`` and a
             no-op tracer — no observer call, no span, no ambient lookup.
         """
         return cls([NoopObserver()], tracer=NoOpTracer())
 
 
-__all__ = ["ObservabilityRuntime"]
+__all__ = ["Observability"]

@@ -28,7 +28,7 @@ from loom.ai.declarative import PolicySpec
 from loom.ai.engines.pydantic_ai import NativeAgent, PydanticAIEnginePlugin, native_agent
 from loom.ai.engines.pydantic_ai._engine import PydanticAIEngine
 from loom.ai.errors import AgentRunError, AgentRunErrorCode
-from loom.ai.execution import AgentRuntime
+from loom.ai.execution import AgentHost
 from loom.ai.execution._chain import current_chain
 from loom.core.di import LoomContainer
 from loom.core.execution import ExecutionScope
@@ -224,9 +224,9 @@ class TestTheTypedAccessor:
             assert access.deps.state == {"a": 1}
 
 
-def _native_runtime() -> AgentRuntime:
+def _native_runtime() -> AgentHost:
     provider = PydanticAIEnginePlugin(model_resolver=lambda target: _silent_model())
-    return AgentRuntime(
+    return AgentHost(
         plans=[make_plan()],
         config=make_ai_config(),
         engine_plugin=provider,
@@ -238,7 +238,7 @@ def _native_runtime() -> AgentRuntime:
 class _RuntimeHandle:
     """A handle over the real runtime, standing in for a resolved marker."""
 
-    def __init__(self, runtime: AgentRuntime, name: str, identity: Identity) -> None:
+    def __init__(self, runtime: AgentHost, name: str, identity: Identity) -> None:
         self._runtime = runtime
         self._name = name
         self._identity = identity

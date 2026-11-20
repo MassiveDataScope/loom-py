@@ -1,4 +1,4 @@
-"""``AgentRuntime`` opening and validating a use-case-only MCP server (T203).
+"""``AgentHost`` opening and validating a use-case-only MCP server (T203).
 
 A ``Mcp()`` marker's server never appears in any compiled agent plan, so it
 would be invisible to ``_open_clients``/``_verify_tool_filters`` unless its
@@ -15,7 +15,7 @@ from __future__ import annotations
 import pytest
 
 from loom.ai.errors import AgentCompilationError, AgentErrorCode, AgentRunError, AgentRunErrorCode
-from loom.ai.execution import AgentRuntime
+from loom.ai.execution import AgentHost
 from loom.ai.execution._grants import McpGrantView
 from loom.ai.execution._lifecycle import UseCaseMcpGrant
 from loom.core.di import LoomContainer
@@ -65,8 +65,8 @@ def _runtime(
     deps: StubDepsFactory,
     container: LoomContainer,
     remote_clients: str = "required",
-) -> AgentRuntime:
-    return AgentRuntime(
+) -> AgentHost:
+    return AgentHost(
         plans=list(plans),  # type: ignore[arg-type]
         config=make_ai_config(
             mcp_servers=make_mcp_servers(*clients), remote_clients=remote_clients
@@ -188,7 +188,7 @@ class TestServerDeclaredOnlyByAUseCase:
     ) -> None:
         session = RecordingMcpSession(tools=("search",), list_delay_ms=50)
         clients = {_SERVER_A: StubMcpClient(label="a", session=session, log=lifecycle_log)}
-        runtime = AgentRuntime(
+        runtime = AgentHost(
             plans=[],
             config=make_ai_config(mcp_servers=make_mcp_servers(_SERVER_A), startup_timeout_ms=10),
             engine_plugin=CountingEngineProvider(),  # type: ignore[arg-type]

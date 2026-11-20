@@ -25,7 +25,7 @@ from loom.core.stores.profile import (
     PoolDefaults,
     PoolMetricsSink,
     RuntimeProfile,
-    StoreRuntime,
+    StorePluginContext,
 )
 from loom.core.stores.registry import PLUGIN_ENTRY_POINT_GROUP, resolve_store_backend
 
@@ -35,7 +35,7 @@ __all__ = [
     "SERVER_PROFILE",
     "STREAMING_PROFILE",
     "WORKER_PROFILE",
-    "StoreRuntime",
+    "StorePluginContext",
     "DatabaseConfig",
     "NullStorePlugin",
     "StorePlugin",

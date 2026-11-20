@@ -1,7 +1,7 @@
 """The ``on_output`` hook at run time (002 T5: AC5-AC12, AC14).
 
-Every run goes through ``AgentRuntime`` over a ``ScriptedEngine``; the hook
-use cases are real use cases executed by a real ``RuntimeExecutor`` over a
+Every run goes through ``AgentHost`` over a ``ScriptedEngine``; the hook
+use cases are real use cases executed by a real ``UseCaseExecutor`` over a
 recording unit of work.  No network, no database, no model.
 """
 
@@ -30,7 +30,7 @@ from loom.ai.errors import (
     AgentErrorCode,
     AgentRunErrorCode,
 )
-from loom.ai.execution import AgentRunError, AgentRuntime
+from loom.ai.execution import AgentHost, AgentRunError
 from loom.ai.execution._turn import TurnCallbacks
 from loom.core.command import Command
 from loom.core.di import LoomContainer
@@ -234,9 +234,9 @@ def _runtime(
     deps: object,
     container: LoomContainer,
     max_concurrent_runs: int = 8,
-) -> AgentRuntime:
+) -> AgentHost:
     """Build a runtime serving one scripted agent."""
-    return AgentRuntime(
+    return AgentHost(
         plans=[plan],
         config=make_ai_config(max_concurrent_runs=max_concurrent_runs),
         engine_plugin=CountingEngineProvider(engines={_AGENT: engine}),  # type: ignore[arg-type]
@@ -255,7 +255,7 @@ def _tool_script(output: object) -> tuple[AgentEvent, ...]:
     )
 
 
-async def _collect(runtime: AgentRuntime, identity: Identity, **kwargs: Any) -> list[AgentEvent]:
+async def _collect(runtime: AgentHost, identity: Identity, **kwargs: Any) -> list[AgentEvent]:
     """Consume a whole stream and return its events."""
     events: list[AgentEvent] = []
     async with runtime.run_stream(_AGENT, "prompt", identity=identity, **kwargs) as stream:
@@ -924,7 +924,7 @@ class TestStartupProbe:
             "tools": StubMcpClient(label="tools", session=RecordingMcpSession(), log=lifecycle_log)
         }
         plan = _hooked_plan(RecordAnswer, capabilities=(make_mcp_capability("tools"),))
-        runtime = AgentRuntime(
+        runtime = AgentHost(
             plans=[plan],
             config=make_ai_config(mcp_servers=make_mcp_servers("tools")),
             engine_plugin=CountingEngineProvider(),  # type: ignore[arg-type]

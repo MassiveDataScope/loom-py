@@ -30,14 +30,14 @@ from loom.ai.abc import (
 from loom.ai.compiler._plan import CompiledOutputHook
 from loom.ai.config import AiConfig
 from loom.ai.errors import AgentRunError, AgentRunErrorCode
-from loom.ai.execution import AgentRuntime
+from loom.ai.execution import AgentHost
 from loom.ai.execution._handle import AgentMarkerResolver, _AgentHandle
 from loom.core.command import Command
 from loom.core.di import LoomContainer
 from loom.core.execution import ExecutionScope
 from loom.core.identity import ANONYMOUS, Identity
 from loom.core.model import msgspec_type
-from loom.core.observability.observability import ObservabilityRuntime
+from loom.core.observability.observability import Observability
 from loom.core.stores.repository.registration import classify_key
 from loom.core.stores.sql.service import NullSqlQueryService
 from loom.core.use_case import Agent, Caller, Input, UseCase
@@ -188,7 +188,7 @@ class _OneShotEngine:
 class _NativeRecordingEngine:
     """An engine whose ``native()`` records the resolved state it received.
 
-    A mutation to :meth:`AgentRuntime.native` that passes the caller's raw
+    A mutation to :meth:`AgentHost.native` that passes the caller's raw
     ``state`` straight through instead of the value ``_resolve_state``
     computed leaves every test pinning ``STATE_UNDECLARED`` alone green: that
     refusal fires whichever value is forwarded. This double is what a test
@@ -209,16 +209,16 @@ class _NativeRecordingEngine:
         return HealthStatus(status="ok")
 
 
-def _tracing_runtime() -> tuple[ObservabilityRuntime, InMemorySpanExporter]:
+def _tracing_runtime() -> tuple[Observability, InMemorySpanExporter]:
     exporter = InMemorySpanExporter()
     provider = TracerProvider()
     provider.add_span_processor(SimpleSpanProcessor(exporter))
-    return ObservabilityRuntime([], tracer=provider.get_tracer("loom.ai")), exporter
+    return Observability([], tracer=provider.get_tracer("loom.ai")), exporter
 
 
-async def _agent_runtime(deps: StubDepsFactory, container: LoomContainer) -> AgentRuntime:
+async def _agent_host(deps: StubDepsFactory, container: LoomContainer) -> AgentHost:
     provider = CountingEngineProvider(engines={_AGENT_NAME: _OneShotEngine()})  # type: ignore[dict-item]
-    return AgentRuntime(
+    return AgentHost(
         plans=[make_plan(_AGENT_NAME)],
         config=make_ai_config(),
         engine_plugin=provider,  # type: ignore[arg-type]
@@ -233,7 +233,7 @@ class TestAnonymousIdentity:
     async def test_an_anonymous_caller_is_rejected_with_unauthorized(
         self, deps: StubDepsFactory, container: LoomContainer
     ) -> None:
-        runtime = await _agent_runtime(deps, container)
+        runtime = await _agent_host(deps, container)
         handle = _AgentHandle(
             name=_AGENT_NAME,
             runtime=runtime,
@@ -255,7 +255,7 @@ class TestAnonymousIdentity:
         Edit one without the other and this test is the gap the next review
         catches.
         """
-        runtime = await _agent_runtime(deps, container)
+        runtime = await _agent_host(deps, container)
         # The anonymous refusal runs before the runtime is ever asked to run
         # this name, so a name absent from the runtime's own plans is fine
         # here — it matches the agent name ``markers.md`` and the example
@@ -279,7 +279,7 @@ class TestAnonymousIdentity:
         """The engine is never invoked: the run is cut before the runtime's 'run'."""
         engine = _OneShotEngine()
         provider = CountingEngineProvider(engines={_AGENT_NAME: engine})  # type: ignore[dict-item]
-        runtime = AgentRuntime(
+        runtime = AgentHost(
             plans=[make_plan(_AGENT_NAME)],
             config=make_ai_config(),
             engine_plugin=provider,  # type: ignore[arg-type]
@@ -309,7 +309,7 @@ class TestAnonymousIdentity:
         """
         engine = _OneShotEngine()
         provider = CountingEngineProvider(engines={_AGENT_NAME: engine})  # type: ignore[dict-item]
-        runtime = AgentRuntime(
+        runtime = AgentHost(
             plans=[make_plan(_AGENT_NAME)],
             config=make_ai_config(),
             engine_plugin=provider,  # type: ignore[arg-type]
@@ -339,7 +339,7 @@ class TestProviderDetailsReachTheAnswer:
         details = {"confidence": {"ok": 0.93}}
         engine = _OneShotEngine(provider_details=details)
         provider = CountingEngineProvider(engines={_AGENT_NAME: engine})  # type: ignore[dict-item]
-        runtime = AgentRuntime(
+        runtime = AgentHost(
             plans=[make_plan(_AGENT_NAME)],
             config=make_ai_config(),
             engine_plugin=provider,  # type: ignore[arg-type]
@@ -367,7 +367,7 @@ class TestTheHandlesSpan:
         self, deps: StubDepsFactory, container: LoomContainer
     ) -> None:
         observability, exporter = _tracing_runtime()
-        runtime = AgentRuntime(
+        runtime = AgentHost(
             plans=[make_plan(_AGENT_NAME)],
             config=make_ai_config(),
             engine_plugin=CountingEngineProvider(  # type: ignore[arg-type]
@@ -393,11 +393,11 @@ class TestTheHandlesSpan:
         assert spans[0].attributes["subject"] == "ada"
         assert spans[0].attributes["interaction_id"] == answer.interaction_id
 
-    async def test_no_span_exists_without_an_observability_runtime(
+    async def test_no_span_exists_without_observability(
         self, deps: StubDepsFactory, container: LoomContainer
     ) -> None:
         """``observability=None`` is an explicit no-op, not a silent failure."""
-        runtime = await _agent_runtime(deps, container)
+        runtime = await _agent_host(deps, container)
         handle = _AgentHandle(
             name=_AGENT_NAME,
             runtime=runtime,
@@ -450,9 +450,9 @@ class _ShapedEngine(_OneShotEngine):
 
 async def _shaped_runtime(
     deps: StubDepsFactory, container: LoomContainer, engine: _ShapedEngine
-) -> AgentRuntime:
+) -> AgentHost:
     provider = CountingEngineProvider(engines={_AGENT_NAME: engine})  # type: ignore[dict-item]
-    return AgentRuntime(
+    return AgentHost(
         plans=[make_plan(_AGENT_NAME)],
         config=make_ai_config(),
         engine_plugin=provider,  # type: ignore[arg-type]
@@ -467,7 +467,7 @@ class TestTheThreeModes:
     async def test_run_without_expect_uses_the_artifacts_declared_shape(
         self, deps: StubDepsFactory, container: LoomContainer
     ) -> None:
-        runtime = await _agent_runtime(deps, container)
+        runtime = await _agent_host(deps, container)
         handle = _AgentHandle(
             name=_AGENT_NAME,
             runtime=runtime,
@@ -549,7 +549,7 @@ class TestRejectionByOutputHook:
         engine = _ShapedEngine()
         provider = CountingEngineProvider(engines={_AGENT_NAME: engine})  # type: ignore[dict-item]
         plan = conversational_plan(_AGENT_NAME, hook=True)
-        runtime = AgentRuntime(
+        runtime = AgentHost(
             plans=[plan],
             config=make_ai_config(),
             engine_plugin=provider,  # type: ignore[arg-type]
@@ -582,7 +582,7 @@ class TestRejectionByOutputHook:
         engine = _ShapedEngine()
         provider = CountingEngineProvider(engines={agent_name: engine})  # type: ignore[dict-item]
         plan = conversational_plan(agent_name, hook=True)
-        runtime = AgentRuntime(
+        runtime = AgentHost(
             plans=[plan],
             config=make_ai_config(),
             engine_plugin=provider,  # type: ignore[arg-type]
@@ -612,7 +612,7 @@ class TestRejectionByOutputHook:
         engine = _ShapedEngine()
         provider = CountingEngineProvider(engines={_AGENT_NAME: engine})  # type: ignore[dict-item]
         plan = conversational_plan(_AGENT_NAME, hook=True)
-        runtime = AgentRuntime(
+        runtime = AgentHost(
             plans=[plan],
             config=make_ai_config(),
             engine_plugin=provider,  # type: ignore[arg-type]
@@ -639,7 +639,7 @@ class TestRejectionByOutputHook:
         plan = _messages_only_plan(_AGENT_NAME)
         recorder = ConversationRecorder()
         container.register_instance(ConversationRecorder, recorder)
-        runtime = AgentRuntime(
+        runtime = AgentHost(
             plans=[plan],
             config=make_ai_config(),
             engine_plugin=provider,  # type: ignore[arg-type]
@@ -668,7 +668,7 @@ class TestRejectionByOutputHook:
         plan = _messages_only_plan(_AGENT_NAME)
         recorder = ConversationRecorder()
         container.register_instance(ConversationRecorder, recorder)
-        runtime = AgentRuntime(
+        runtime = AgentHost(
             plans=[plan],
             config=make_ai_config(),
             engine_plugin=provider,  # type: ignore[arg-type]
@@ -704,15 +704,13 @@ def _mcp_config(*servers: str) -> AiConfig:
     return make_ai_config(mcp_servers=make_mcp_servers(*servers), startup_timeout_ms=10_000)
 
 
-async def _runtime_with_one_mcp_grant(
-    deps: StubDepsFactory, container: LoomContainer
-) -> AgentRuntime:
+async def _runtime_with_one_mcp_grant(deps: StubDepsFactory, container: LoomContainer) -> AgentHost:
     """One agent, one live ``mcp`` grant on :data:`_RUNBOOKS_SERVER` — the only one."""
     capability = make_mcp_capability(_RUNBOOKS_SERVER)
     session = RecordingMcpSession(label=_RUNBOOKS_SERVER, tools=("search",))
     client = StubMcpClient(label=_RUNBOOKS_SERVER, session=session, log=[])
     provider = CountingEngineProvider(engines={_AGENT_NAME: _OneShotEngine()})  # type: ignore[dict-item]
-    return AgentRuntime(
+    return AgentHost(
         plans=[make_plan(_AGENT_NAME, capabilities=(capability,))],
         config=_mcp_config(_RUNBOOKS_SERVER),
         engine_plugin=provider,  # type: ignore[arg-type]
@@ -751,7 +749,7 @@ class TestUngrantedGrants:
         self, deps: StubDepsFactory, container: LoomContainer
     ) -> None:
         """The same rejection on the ``sql`` side: an agent with no ``sql`` grant at all."""
-        runtime = await _agent_runtime(deps, container)
+        runtime = await _agent_host(deps, container)
         handle = _AgentHandle(
             name=_AGENT_NAME,
             runtime=runtime,
@@ -812,7 +810,7 @@ class TestPublishedGrants:
             )
             for name in (_RUNBOOKS_SERVER, second)
         }
-        runtime = AgentRuntime(
+        runtime = AgentHost(
             plans=[
                 make_plan(
                     _AGENT_NAME,
@@ -848,7 +846,7 @@ class TestTheMarkerResolver:
     async def test_the_resolver_binds_the_name_and_runs_as_the_caller(
         self, deps: StubDepsFactory, container: LoomContainer
     ) -> None:
-        runtime = await _agent_runtime(deps, container)
+        runtime = await _agent_host(deps, container)
         resolver = AgentMarkerResolver(
             runtime, sql_query_service=NullSqlQueryService(), observability=None
         )
@@ -869,7 +867,7 @@ class TestTheNativeEscapeHatch:
         self, deps: StubDepsFactory, container: LoomContainer
     ) -> None:
         """``_OneShotEngine`` implements the contract and nothing else."""
-        runtime = await _agent_runtime(deps, container)
+        runtime = await _agent_host(deps, container)
         handle = _AgentHandle(
             name=_AGENT_NAME,
             runtime=runtime,
@@ -887,7 +885,7 @@ class TestTheNativeEscapeHatch:
         self, deps: StubDepsFactory, container: LoomContainer
     ) -> None:
         """The hatch never hands out what ``run`` would have refused."""
-        runtime = await _agent_runtime(deps, container)
+        runtime = await _agent_host(deps, container)
         handle = _AgentHandle(
             name=_AGENT_NAME,
             runtime=runtime,
@@ -905,7 +903,7 @@ class TestTheNativeEscapeHatch:
         self, deps: StubDepsFactory, container: LoomContainer
     ) -> None:
         """Undeclared state is refused here exactly as it is on a run."""
-        runtime = await _agent_runtime(deps, container)
+        runtime = await _agent_host(deps, container)
         handle = _AgentHandle(
             name=_AGENT_NAME,
             runtime=runtime,
@@ -924,14 +922,14 @@ class TestTheNativeEscapeHatch:
     ) -> None:
         """A ``None`` state on a stateful artefact resolves to its declared defaults.
 
-        Pins the exact value :meth:`AgentRuntime.native` must forward: a
+        Pins the exact value :meth:`AgentHost.native` must forward: a
         mutation that passes the caller's raw ``state`` straight through
         instead of the shape's resolved defaults would leave this green only
         by accident, so it is checked against the recorded value, not merely
         against "no error".
         """
         engine = _NativeRecordingEngine()
-        runtime = AgentRuntime(
+        runtime = AgentHost(
             plans=[make_plan(_AGENT_NAME, state=_DEFAULTED_STATE)],
             config=make_ai_config(),
             engine_plugin=CountingEngineProvider(  # type: ignore[arg-type]
@@ -957,7 +955,7 @@ class TestTheNativeEscapeHatch:
         self, deps: StubDepsFactory, container: LoomContainer
     ) -> None:
         engine = _NativeRecordingEngine()
-        runtime = AgentRuntime(
+        runtime = AgentHost(
             plans=[make_plan(_AGENT_NAME, state=_REQUIRED_STATE)],
             config=make_ai_config(),
             engine_plugin=CountingEngineProvider(  # type: ignore[arg-type]

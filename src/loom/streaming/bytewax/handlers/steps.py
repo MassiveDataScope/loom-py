@@ -8,7 +8,7 @@ from typing import Any
 from bytewax.operators import flat_map
 from bytewax.operators import map as bw_map
 
-from loom.core.observability.observability import ObservabilityRuntime
+from loom.core.observability.observability import Observability
 from loom.streaming.bytewax._error_boundary import (
     ErrorBoundary,
     NodeResult,
@@ -214,7 +214,7 @@ def _apply_explode(stream: Stream, raw: object, idx: int, ctx: _BuildContextProt
 
 
 def _execute_record_step(
-    observer: ObservabilityRuntime,
+    observer: Observability,
     flow_name: str,
     idx: int,
     name: str,
@@ -234,7 +234,7 @@ def _execute_record_step(
 
 
 def _execute_batch_step(
-    observer: ObservabilityRuntime,
+    observer: Observability,
     flow_name: str,
     idx: int,
     name: str,
@@ -256,7 +256,7 @@ def _execute_batch_step(
 
 
 def _execute_expand_step(
-    observer: ObservabilityRuntime,
+    observer: Observability,
     flow_name: str,
     idx: int,
     name: str,
@@ -278,7 +278,7 @@ def _execute_expand_step(
 
 
 def _execute_batch_expand_step(
-    observer: ObservabilityRuntime,
+    observer: Observability,
     flow_name: str,
     idx: int,
     name: str,
@@ -335,7 +335,7 @@ def _result_list(value: object, name: str) -> list[Any]:
 
 
 def _execute_explode_step(
-    observer: ObservabilityRuntime,
+    observer: Observability,
     flow_name: str,
     idx: int,
     name: str,

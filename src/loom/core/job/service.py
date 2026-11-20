@@ -13,7 +13,7 @@ from loom.core.job.job import Job
 from loom.core.job.transport import JobTransport
 
 if TYPE_CHECKING:
-    from loom.core.engine.executor import RuntimeExecutor
+    from loom.core.engine.executor import UseCaseExecutor
     from loom.core.use_case.factory import UseCaseFactory
 
 ResultT = TypeVar("ResultT")
@@ -39,7 +39,7 @@ class JobService:
         default: JobTransport,
         *,
         factory: UseCaseFactory | None = None,
-        executor: RuntimeExecutor | None = None,
+        executor: UseCaseExecutor | None = None,
         routes: Mapping[str, JobTransport] | None = None,
         settings: JobSettings | None = None,
         callbacks: DispatchableCallbacks = ANY_CALLBACKS,

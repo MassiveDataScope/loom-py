@@ -7,10 +7,10 @@ from typing import Any
 from loom.ai.abc import McpHandle
 from loom.ai.execution._handle import McpMarkerResolver
 from loom.core.engine.compiler import UseCaseCompiler
-from loom.core.engine.executor import RuntimeExecutor
+from loom.core.engine.executor import UseCaseExecutor
 from loom.core.identity import Identity
 from loom.core.observability.event import EventKind, Scope
-from loom.core.observability.observability import ObservabilityRuntime
+from loom.core.observability.observability import Observability
 from loom.core.use_case import Caller, Mcp, UseCase
 from tests.integration.ai.conftest import RecordingMcpSession, RecordingObserver
 
@@ -35,7 +35,7 @@ class TestDuringAnAgentRun:
         engine = AcmeActingEngine(during=call_tool)
         runtime = make_runtime(engine)
         holder.append(
-            McpMarkerResolver(runtime, observability=ObservabilityRuntime([recorder])).resolve(
+            McpMarkerResolver(runtime, observability=Observability([recorder])).resolve(
                 Mcp(SERVER, include=[TOOL]), McpHandle
             )
         )
@@ -54,7 +54,7 @@ class TestDuringAnAgentRun:
     async def test_a_use_case_run_from_the_engine_acts_as_the_run_caller(
         self, make_runtime: Any
     ) -> None:
-        executor = RuntimeExecutor(UseCaseCompiler())
+        executor = UseCaseExecutor(UseCaseCompiler())
         seen: list[str] = []
 
         async def run_use_case() -> object:

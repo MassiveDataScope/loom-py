@@ -14,7 +14,7 @@ from loom.core.config import ConfigContext
 from loom.core.discovery.base import DiscoveryResult
 from loom.core.environment import Environment
 from loom.core.observability.config import ObservabilityConfig, PrometheusObservabilityConfig
-from loom.core.observability.observability import ObservabilityRuntime
+from loom.core.observability.observability import Observability
 from loom.prometheus.middleware import PrometheusMiddleware
 from loom.rest._body import BodySizeLimitMiddleware
 from loom.rest.compiler import RouteSources
@@ -87,7 +87,7 @@ class TestRequestObservabilityStack:
             }
         )
         captured: dict[str, Any] = {}
-        runtime = ObservabilityRuntime.noop()
+        runtime = Observability.noop()
 
         def _fake_load(
             *config_paths: str, resolvers: Any = (), environment: Any = None
@@ -96,11 +96,11 @@ class TestRequestObservabilityStack:
             return ConfigContext.from_dict(cast(dict[str, Any], OmegaConf.to_container(raw)))
 
         def _fake_from_config(
-            cls: type[ObservabilityRuntime],
+            cls: type[Observability],
             config: ObservabilityConfig,
             *,
             environment: Environment,
-        ) -> ObservabilityRuntime:
+        ) -> Observability:
             captured["observability_config"] = config
             captured["environment"] = environment
             return runtime
@@ -113,15 +113,15 @@ class TestRequestObservabilityStack:
             result: Any,
             routes: Any,
             *,
-            observability_runtime: ObservabilityRuntime | None = None,
+            observability: Observability | None = None,
             **kwargs: Any,
         ) -> FastAPI:
             del result, routes, kwargs
-            captured["runtime"] = observability_runtime
+            captured["runtime"] = observability
             return FastAPI()
 
         monkeypatch.setattr("loom.composition.project.load_application_config", _fake_load)
-        monkeypatch.setattr(ObservabilityRuntime, "from_config", classmethod(_fake_from_config))
+        monkeypatch.setattr(Observability, "from_config", classmethod(_fake_from_config))
         # The config names no interface module. An empty result lets recipe()
         # continue so create_app still mounts the middlewares under test.
         monkeypatch.setattr(

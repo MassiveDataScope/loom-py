@@ -25,7 +25,7 @@ from loom.core.model.types import NonNegativeInt, PositiveInt
 from loom.core.stores.catalog import StoreCapabilities, StoreKey, StoreSpec, store_binding
 from loom.core.stores.database import PoolConfig
 from loom.core.stores.plugin import StoreWiring
-from loom.core.stores.profile import PoolDefaults, RuntimeProfile, StoreRuntime
+from loom.core.stores.profile import PoolDefaults, RuntimeProfile, StorePluginContext
 from loom.stores.mongo.ids import (
     IdPolicy,
     ObjectIdPolicy,
@@ -99,7 +99,7 @@ class MongoStorePlugin:
         self,
         ctx: ConfigContext,
         models: Sequence[type[BaseModel]],
-        runtime: StoreRuntime,
+        runtime: StorePluginContext,
     ) -> StoreWiring:
         """Build the Mongo wiring for the discovered models.
 

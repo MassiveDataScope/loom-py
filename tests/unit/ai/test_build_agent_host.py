@@ -1,4 +1,4 @@
-"""``build_agent_runtime`` assembles a runtime from an ``ai:`` section and a root."""
+"""``build_agent_host`` assembles a runtime from an ``ai:`` section and a root."""
 
 from __future__ import annotations
 
@@ -7,7 +7,7 @@ from pathlib import Path
 import pytest
 from pydantic_ai.models.test import TestModel
 
-from loom.ai import AiConfig, InferenceTarget, build_agent_runtime
+from loom.ai import AiConfig, InferenceTarget, build_agent_host
 from loom.ai.engines.pydantic_ai import PydanticAIEnginePlugin
 from loom.ai.errors import AgentCompilationError, AgentErrorCode
 from loom.core.identity import Identity
@@ -45,7 +45,7 @@ class TestAssembly:
         _write(tmp_path, "alpha")
         _write(tmp_path, "beta")
 
-        runtime = build_agent_runtime(
+        runtime = build_agent_host(
             _config("agents/*.agent.yaml"), root=tmp_path, engine_plugin=_provider()
         )
 
@@ -55,7 +55,7 @@ class TestAssembly:
         _write(tmp_path, "alpha")
         _write(tmp_path, "beta")
 
-        runtime = build_agent_runtime(
+        runtime = build_agent_host(
             _config("agents/*.agent.yaml"),
             root=tmp_path,
             names={"beta"},
@@ -67,7 +67,7 @@ class TestAssembly:
     def test_explicit_specs_replace_the_configured_ones(self, tmp_path: Path) -> None:
         _write(tmp_path, "alpha")
 
-        runtime = build_agent_runtime(
+        runtime = build_agent_host(
             _config("nowhere/*.yaml"),
             root=tmp_path,
             specs=("agents/*.agent.yaml",),
@@ -79,7 +79,7 @@ class TestAssembly:
     def test_the_runtime_exposes_its_compiled_plans(self, tmp_path: Path) -> None:
         _write(tmp_path, "alpha")
 
-        runtime = build_agent_runtime(
+        runtime = build_agent_host(
             _config("agents/*.agent.yaml"), root=tmp_path, engine_plugin=_provider()
         )
 
@@ -90,7 +90,7 @@ class TestAssembly:
         provider = _provider()
 
         with pytest.raises(AgentCompilationError) as error:
-            build_agent_runtime(config, root=tmp_path, engine_plugin=provider)
+            build_agent_host(config, root=tmp_path, engine_plugin=provider)
 
         assert error.value.issues[0].code == AgentErrorCode.AGENT_SPECS_ESCAPE_ROOT
 
@@ -98,7 +98,7 @@ class TestAssembly:
 class TestRun:
     async def test_the_assembled_runtime_runs_an_agent(self, tmp_path: Path) -> None:
         _write(tmp_path, "alpha")
-        runtime = build_agent_runtime(
+        runtime = build_agent_host(
             _config("agents/*.agent.yaml"), root=tmp_path, engine_plugin=_provider()
         )
 

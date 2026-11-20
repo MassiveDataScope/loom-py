@@ -30,13 +30,13 @@ if TYPE_CHECKING:
     from loom.core.use_case.factory import UseCaseFactory
     from loom.core.use_case.use_case import UseCase
 
-__all__ = ["ParameterBindingError", "RuntimeExecutor"]
+__all__ = ["ParameterBindingError", "UseCaseExecutor"]
 
 ResultT = TypeVar("ResultT")
 _TargetT = TypeVar("_TargetT")
 
 
-class RuntimeExecutor:
+class UseCaseExecutor:
     """Executes UseCases from their compiled ExecutionPlan without reflection.
 
     The public facade of one execution: it computes who the execution acts
@@ -91,7 +91,7 @@ class RuntimeExecutor:
 
     Example::
 
-        executor = RuntimeExecutor(
+        executor = UseCaseExecutor(
             compiler,
             coordinator=OrderedCommits({DEFAULT_STORE: uow_factory}),
             metrics=prometheus_adapter,
@@ -168,7 +168,7 @@ class RuntimeExecutor:
             RuntimeError: If *kind* already has a resolver.
         """
         if self._kinds.is_bound(kind):
-            raise RuntimeError(f"RuntimeExecutor.bind_{kind.name}_resolver() called more than once")
+            raise RuntimeError(f"UseCaseExecutor.bind_{kind.name}_resolver() called more than once")
         self._kinds.bind(kind, resolver)
 
     async def run(
@@ -219,7 +219,7 @@ class RuntimeExecutor:
         build = self._builder if factory is None else factory.build
         if build is None:
             raise TypeError(
-                "RuntimeExecutor.run() needs factory=... or an executor constructed "
+                "UseCaseExecutor.run() needs factory=... or an executor constructed "
                 "with builder=..."
             )
         return await self._execute(
@@ -435,5 +435,5 @@ class RuntimeExecutor:
 
 
 def _handed_instance(compilable: Compilable) -> Compilable:
-    """What :meth:`RuntimeExecutor.execute` builds: the instance it was handed."""
+    """What :meth:`UseCaseExecutor.execute` builds: the instance it was handed."""
     return compilable

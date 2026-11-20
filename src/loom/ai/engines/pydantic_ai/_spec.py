@@ -12,11 +12,11 @@ What is deliberately **not** projected:
 * ``model_role`` — a loom concept; the concrete model is bound separately
   (``_models``) and passed as an object, not as a ``provider:model`` string.
 * ``run_timeout_ms`` / ``max_iterations`` — enforced by
-  :class:`~loom.ai.execution.AgentRuntime`, which supervises every stream; a
+  :class:`~loom.ai.execution.AgentHost`, which supervises every stream; a
   second enforcement here would be a hidden, divergent limit.
 * ``tool_timeout_ms`` — enforced on loom's side, by
   ``_guards.capability_call`` around every granted tool and by
-  ``AgentRuntime``'s own tool deadline. Those two agree: same code, same
+  ``AgentHost``'s own tool deadline. Those two agree: same code, same
   retry class, so which one fires first is not observable. Projecting it as
   the engine's ``tool_timeout`` too
   would race the two deadlines over the same value: whichever fired first

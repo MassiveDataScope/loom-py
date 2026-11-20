@@ -11,7 +11,7 @@ from bytewax.operators import branch, flat_map
 from bytewax.operators import map as bw_map
 
 from loom.core.observability.event import Scope
-from loom.core.observability.observability import ObservabilityRuntime
+from loom.core.observability.observability import Observability
 from loom.core.observability.span import LoomSpan
 from loom.streaming.bytewax._batch_spans import BatchSpan, BatchWindow, emit_batch_spans
 from loom.streaming.bytewax._error_boundary import (
@@ -257,7 +257,7 @@ def _is_message_result(item: Any) -> bool:
 
 
 def _execute_with_step(
-    observer: ObservabilityRuntime,
+    observer: Observability,
     flow_name: str,
     idx: int,
     node_type: str,
@@ -308,7 +308,7 @@ def _run_inner_steps(
 
 
 def _emit_node_batch_spans(
-    observer: ObservabilityRuntime,
+    observer: Observability,
     flow_name: str,
     idx: int,
     node_type: str,

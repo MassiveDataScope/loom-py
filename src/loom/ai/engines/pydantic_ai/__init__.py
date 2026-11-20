@@ -13,7 +13,7 @@ and classifying failures.
 :func:`create_a2a_client` is exported beside the provider because it is not
 part of the engine contract: it is the
 :data:`~loom.ai.execution.A2AClientFactory` a composition root hands to
-:class:`~loom.ai.execution.AgentRuntime`, so that an outbound grant is validated
+:class:`~loom.ai.execution.AgentHost`, so that an outbound grant is validated
 against the live remote at start-up rather than on its first use. The MCP
 counterpart is ``PydanticAIEnginePlugin.mcp_client_factory`` rather than a
 free function, because the session it opens is the very toolset the run path

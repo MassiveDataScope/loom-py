@@ -10,7 +10,7 @@ import pytest
 from pyspark.sql import DataFrame, SparkSession
 from pyspark.sql import functions as F
 
-from loom.core.observability.observability import ObservabilityRuntime
+from loom.core.observability.observability import Observability
 from loom.etl import (
     ETLStep,
     Format,
@@ -224,7 +224,7 @@ class TestRunStepEvents:
         ETLExecutor(
             spark_reader,
             spark_writer,
-            observability=ObservabilityRuntime([observer]),
+            observability=Observability([observer]),
         ).run_step(plan, NoParams())
 
         assert observer.event_names == [EventName.STEP_START, EventName.STEP_END]
@@ -241,7 +241,7 @@ class TestRunStepEvents:
         executor = ETLExecutor(
             FailingReader(),
             spark_writer,
-            observability=ObservabilityRuntime([observer]),
+            observability=Observability([observer]),
         )
         params = NoParams()
         with pytest.raises(RuntimeError, match="spark read failure"):

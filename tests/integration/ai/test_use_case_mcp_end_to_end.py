@@ -1,8 +1,8 @@
 """The real path, end to end, for the ``Mcp()`` marker (spec 015, T501).
 
 Every test here drives a real :class:`~loom.core.engine.compiler.UseCaseCompiler`,
-a real :class:`~loom.core.engine.executor.RuntimeExecutor` and a real
-:class:`~loom.ai.execution.AgentRuntime`, wired through the same production glue
+a real :class:`~loom.core.engine.executor.UseCaseExecutor` and a real
+:class:`~loom.ai.execution.AgentHost`, wired through the same production glue
 ``create_app`` uses — ``MarkerDeclarations.of``
 and ``MarkerDeclarations.mcp_grants`` — rather than hand-built
 ``UseCaseMcpGrant`` instances. The seam faked is the MCP client itself, at the
@@ -35,12 +35,12 @@ import yaml
 
 from loom.ai.abc import AgentHandle, McpHandle
 from loom.ai.errors import AgentCompilationError, AgentErrorCode, AgentRunError, AgentRunErrorCode
-from loom.ai.execution import AgentRuntime
+from loom.ai.execution import AgentHost
 from loom.ai.execution._handle import AgentMarkerResolver, McpMarkerResolver
 from loom.core.di import LoomContainer
 from loom.core.engine.compilable import Compilable
 from loom.core.engine.compiler import UseCaseCompiler
-from loom.core.engine.executor import RuntimeExecutor
+from loom.core.engine.executor import UseCaseExecutor
 from loom.core.identity import Identity
 from loom.core.stores.sql.service import NullSqlQueryService
 from loom.core.use_case import Agent, Mcp, UseCase
@@ -134,11 +134,11 @@ def _mcp_wired(
     deps: StubDepsFactory,
     container: LoomContainer,
     plans: Sequence[AgentPlan] = (),
-) -> tuple[RuntimeExecutor, AgentRuntime]:
+) -> tuple[UseCaseExecutor, AgentHost]:
     """Wire a real executor and a real runtime, exactly as ``create_app`` does.
 
     Reuses the same production glue ``auto.py`` calls between compiling and
-    constructing ``AgentRuntime`` (``:1453-1458``):
+    constructing ``AgentHost`` (``:1453-1458``):
     ``MarkerDeclarations.of`` finds the reached ``Mcp()`` declarations, and
     ``MarkerDeclarations.mcp_grants`` turns them into ``UseCaseMcpGrant``s. Building
     that tuple by hand, as ``test_use_case_mcp_runtime.py`` does for its own
@@ -168,8 +168,8 @@ def _mcp_wired(
     servers = make_mcp_servers(*clients)
     use_case_mcp = declared.mcp_grants(servers)
 
-    executor = RuntimeExecutor(compiler)
-    runtime = AgentRuntime(
+    executor = UseCaseExecutor(compiler)
+    runtime = AgentHost(
         plans=list(plans),
         config=make_ai_config(mcp_servers=servers),
         engine_plugin=CountingEngineProvider(),  # type: ignore[arg-type]

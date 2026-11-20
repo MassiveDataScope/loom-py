@@ -15,7 +15,7 @@ from opentelemetry.sdk.trace.id_generator import IdGenerator
 
 from loom.core.config.observability import OtelConfig
 from loom.core.observability.event import Scope
-from loom.core.observability.observability import ObservabilityRuntime
+from loom.core.observability.observability import Observability
 from loom.core.observability.otel_ids import (
     LoomMessageIdGenerator,
     build_sampler,
@@ -44,11 +44,11 @@ class _CountingDelegate(IdGenerator):
         return 0xF000 + self.trace_calls
 
 
-def _runtime() -> tuple[ObservabilityRuntime, InMemorySpanExporter]:
+def _runtime() -> tuple[Observability, InMemorySpanExporter]:
     exporter = InMemorySpanExporter()
     provider = TracerProvider(id_generator=LoomMessageIdGenerator())
     provider.add_span_processor(SimpleSpanProcessor(exporter))
-    return ObservabilityRuntime([], tracer=provider.get_tracer("loom.test")), exporter
+    return Observability([], tracer=provider.get_tracer("loom.test")), exporter
 
 
 def _by_name(exporter: InMemorySpanExporter) -> dict[str, ReadableSpan]:

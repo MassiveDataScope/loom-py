@@ -20,7 +20,7 @@ from tests.helpers.version_limited_extras import require_bytewax
 require_bytewax()
 
 from loom.core.observability.event import EventKind, LifecycleEvent, Scope  # noqa: E402
-from loom.core.observability.observability import ObservabilityRuntime  # noqa: E402
+from loom.core.observability.observability import Observability  # noqa: E402
 from loom.streaming.bytewax.handlers import storage as _storage  # noqa: E402
 from loom.streaming.core._message import Message, MessageMeta  # noqa: E402
 from tests.unit.streaming.compiler.cases import Result  # noqa: E402
@@ -57,7 +57,7 @@ def _sink(partition: Any, recorder: RecordingLifecycleObserver) -> _storage._Sto
         node_name="results_sink",
         flow_name="orders",
         flow_run_id="run-1",
-        observer=ObservabilityRuntime([recorder]),
+        observer=Observability([recorder]),
     )
 
 

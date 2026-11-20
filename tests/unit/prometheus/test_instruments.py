@@ -10,7 +10,7 @@ import pytest
 from prometheus_client import REGISTRY, CollectorRegistry
 
 from loom.core.engine.events import EventKind as UseCaseEventKind
-from loom.core.engine.events import RuntimeEvent
+from loom.core.engine.events import ExecutionEvent
 from loom.core.observability.event import EventKind, LifecycleEvent, Scope
 from loom.prometheus import (
     KafkaPrometheusMetrics,
@@ -167,7 +167,7 @@ class TestDefaultRegistryCache:
         use_case = "UseCaseCacheProbe"
         for adapter in (PrometheusMetricsRecorder(), PrometheusMetricsRecorder()):
             adapter.on_event(
-                RuntimeEvent(
+                ExecutionEvent(
                     kind=UseCaseEventKind.EXEC_DONE,
                     use_case_name=use_case,
                     status="success",
@@ -182,7 +182,7 @@ class TestDefaultRegistryCache:
         use_case = "UseCaseAliasedRegistryProbe"
         for adapter in (PrometheusMetricsRecorder(), PrometheusMetricsRecorder(registry=REGISTRY)):
             adapter.on_event(
-                RuntimeEvent(
+                ExecutionEvent(
                     kind=UseCaseEventKind.EXEC_DONE,
                     use_case_name=use_case,
                     status="success",

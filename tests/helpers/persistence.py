@@ -15,7 +15,7 @@ from loom.core.stores import (
     PoolMetricsSink,
     RuntimeProfile,
     StorePlugin,
-    StoreRuntime,
+    StorePluginContext,
     StoreWiring,
 )
 from loom.core.stores.catalog import DEFAULT_STORE, StoreCatalog, StoreKey, load_catalog
@@ -34,7 +34,7 @@ def build_backend(
     aws: AwsClients | None = None,
 ) -> StoreWiring:
     """Build *backend* for *store* with the catalog of *ctx*, loaded once, as a composition does."""
-    runtime = StoreRuntime(
+    runtime = StorePluginContext(
         profile,
         pool_metrics=pool_metrics,
         connection_only=connection_only,

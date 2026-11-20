@@ -10,7 +10,7 @@ from sqlalchemy import text
 
 from loom.core.engine.compiler import UseCaseCompiler
 from loom.core.engine.events import EventKind
-from loom.core.engine.executor import RuntimeExecutor
+from loom.core.engine.executor import UseCaseExecutor
 from loom.core.stores.catalog import DEFAULT_STORE
 from loom.core.stores.uow.coordinator import OrderedCommits
 from loom.core.use_case.use_case import UseCase
@@ -32,7 +32,7 @@ class TestOneProtocolPerAdapter:
     """A phased adapter is driven phase by phase, any other through its context manager."""
 
     async def test_success_enters_and_exits_once_through_the_protocol(
-        self, case: LifecycleCase, executor: RuntimeExecutor, metrics: Metrics
+        self, case: LifecycleCase, executor: UseCaseExecutor, metrics: Metrics
     ) -> None:
         result = await executor.execute(Ok(), params={"value": "x"})
 
@@ -51,7 +51,7 @@ class TestOneProtocolPerAdapter:
         assert context_is_clean()
 
     async def test_failure_exits_once_with_the_error_and_unbinds_everything(
-        self, case: LifecycleCase, executor: RuntimeExecutor, metrics: Metrics
+        self, case: LifecycleCase, executor: UseCaseExecutor, metrics: Metrics
     ) -> None:
         action = Boom()
         with pytest.raises(RuntimeError, match="boom"):
@@ -67,7 +67,7 @@ class TestOneProtocolPerAdapter:
         assert context_is_clean()
 
     async def test_cancellation_exits_once_and_the_task_sees_a_clean_context(
-        self, case: LifecycleCase, executor: RuntimeExecutor, metrics: Metrics
+        self, case: LifecycleCase, executor: UseCaseExecutor, metrics: Metrics
     ) -> None:
         await cancel_mid_flight(executor)
 
@@ -82,7 +82,7 @@ class TestOneProtocolPerAdapter:
 
 class TestTerminalEventReflectsTheTransaction:
     async def test_commit_failure_is_exec_error_commit_and_the_adapter_closes_once(
-        self, case: LifecycleCase, executor: RuntimeExecutor, metrics: Metrics, log: Log
+        self, case: LifecycleCase, executor: UseCaseExecutor, metrics: Metrics, log: Log
     ) -> None:
         require_transactional(case).fail_commit(RuntimeError("commit refused"))
         action = Ok()
@@ -101,7 +101,7 @@ class TestTerminalEventReflectsTheTransaction:
         assert context_is_clean()
 
     async def test_begin_failure_emits_exec_start_then_exec_error_begin(
-        self, case: LifecycleCase, executor: RuntimeExecutor, metrics: Metrics
+        self, case: LifecycleCase, executor: UseCaseExecutor, metrics: Metrics
     ) -> None:
         require_transactional(case).fail_begin(ConnectionError("no database"))
         action = Ok()
@@ -119,7 +119,7 @@ class TestTerminalEventReflectsTheTransaction:
         assert context_is_clean()
 
     async def test_second_cancellation_during_the_rollback_waits_for_it_then_closes(
-        self, case: LifecycleCase, executor: RuntimeExecutor, metrics: Metrics
+        self, case: LifecycleCase, executor: UseCaseExecutor, metrics: Metrics
     ) -> None:
         gate = asyncio.Event()
         require_transactional(case).gate_rollback(gate)
@@ -135,7 +135,7 @@ class TestTerminalEventReflectsTheTransaction:
 
 class TestNoSessionLeak:
     async def test_a_thousand_executions_close_every_unit_of_work_they_open(
-        self, case: LifecycleCase, executor: RuntimeExecutor
+        self, case: LifecycleCase, executor: UseCaseExecutor
     ) -> None:
         for index in range(_EXECUTIONS):
             await executor.execute(Ok(), params={"value": str(index)})
@@ -163,7 +163,7 @@ class TestSqliteSessionAccounting:
     ) -> None:
         async with sqlite_session_manager() as manager:
             factory = SQLAlchemyUnitOfWorkFactory(manager.as_session_manager())
-            executor = RuntimeExecutor(
+            executor = UseCaseExecutor(
                 UseCaseCompiler(), coordinator=OrderedCommits({DEFAULT_STORE: factory})
             )
 

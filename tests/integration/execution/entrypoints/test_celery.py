@@ -24,7 +24,7 @@ from loom.celery.runner import (
     _make_callback_task,  # pyright: ignore[reportPrivateUsage]
     _make_job_task,  # pyright: ignore[reportPrivateUsage]
 )
-from loom.core.engine.executor import RuntimeExecutor
+from loom.core.engine.executor import UseCaseExecutor
 from loom.core.errors import DelegationExpired, Unauthenticated
 from loom.core.identity import Delegation, Identity
 from loom.core.job.callback import CallbackOutcome, DispatchableCallbacks
@@ -85,7 +85,7 @@ def succeed(celery_app: Celery, factory: UseCaseFactory) -> Callable[[type[Any]]
 
 class TestCeleryJobTransport:
     async def test_run_builds_inside_an_execution_as_the_caller_acting(
-        self, factory: UseCaseFactory, executor: RuntimeExecutor
+        self, factory: UseCaseFactory, executor: UseCaseExecutor
     ) -> None:
         service = CeleryServiceFixture(cast(Any, None), factory=factory, executor=executor)
 
@@ -96,7 +96,7 @@ class TestCeleryJobTransport:
         assert job.session.execution is job.ran_in
 
     async def test_run_with_nothing_acting_has_no_caller(
-        self, factory: UseCaseFactory, executor: RuntimeExecutor
+        self, factory: UseCaseFactory, executor: UseCaseExecutor
     ) -> None:
         service = CeleryServiceFixture(cast(Any, None), factory=factory, executor=executor)
 
@@ -112,7 +112,7 @@ class TestCeleryJobTask:
         self,
         celery_app: Celery,
         factory: UseCaseFactory,
-        executor: RuntimeExecutor,
+        executor: UseCaseExecutor,
         bridged: bool,
     ) -> None:
         runtime = _CeleryProcessBridge()
@@ -132,7 +132,7 @@ class TestCeleryJobTask:
         assert job.session.execution is job.ran_in
 
     async def test_a_dispatch_and_its_success_link_carry_the_caller_and_its_deadline(
-        self, factory: UseCaseFactory, executor: RuntimeExecutor, window: float
+        self, factory: UseCaseFactory, executor: UseCaseExecutor, window: float
     ) -> None:
         broker = CeleryBroker([AcmeProbeJob.__queue__])
         service = CeleryServiceFixture(

@@ -15,7 +15,7 @@ import pytest
 
 from loom.core.bootstrap.kernel import create_kernel
 from loom.core.engine.compiler import UseCaseCompiler
-from loom.core.engine.executor import RuntimeExecutor
+from loom.core.engine.executor import UseCaseExecutor
 from loom.core.errors import UndeclaredStoreWrite
 from loom.core.execution import ExecutionContext, current_execution
 from loom.core.identity import ANONYMOUS
@@ -64,7 +64,7 @@ class TestRun:
 
         assert probe.session.caller is ALICE
 
-    async def test_with_neither_run_names_both(self, executor: RuntimeExecutor) -> None:
+    async def test_with_neither_run_names_both(self, executor: UseCaseExecutor) -> None:
         with pytest.raises(TypeError, match=r"factory=.*builder="):
             await executor.run(AcmeProbe, identity=ALICE)
 
@@ -86,7 +86,7 @@ class TestRun:
         factory = MagicMock()
         factory.build = MagicMock(return_value=instance)
         stores = StubUnitOfWorkFactory(Log())
-        executor = RuntimeExecutor(
+        executor = UseCaseExecutor(
             UseCaseCompiler(),
             coordinator=OrderedCommits({DEFAULT_STORE: stores}),
             logger=AcmeRecordingLogger(),
@@ -123,7 +123,7 @@ class TestBuiltInsideTheExecution:
     """The use case is built inside its execution, before ``EXEC_START``, events unchanged."""
 
     async def test_run_builds_inside_the_execution_and_before_it_starts(
-        self, executor: RuntimeExecutor, factory: UseCaseFactory
+        self, executor: UseCaseExecutor, factory: UseCaseFactory
     ) -> None:
         probe = await executor.run(AcmeProbe, factory=factory, identity=ALICE)
 
@@ -131,7 +131,7 @@ class TestBuiltInsideTheExecution:
         assert JOURNAL.entries == ["built", "EXEC_START", "EXEC_DONE"]
 
     async def test_execute_given_an_instance_emits_the_same_events(
-        self, executor: RuntimeExecutor
+        self, executor: UseCaseExecutor
     ) -> None:
         probe = AcmeProbe(AcmeSession(ALICE))
         JOURNAL.entries.clear()
@@ -141,7 +141,7 @@ class TestBuiltInsideTheExecution:
         assert JOURNAL.entries == ["EXEC_START", "EXEC_DONE"]
 
     async def test_the_constructor_runs_in_the_execute_context(
-        self, executor: RuntimeExecutor, factory: UseCaseFactory
+        self, executor: UseCaseExecutor, factory: UseCaseFactory
     ) -> None:
         probe = await executor.run(AcmeProbe, factory=factory, identity=ALICE)
 
@@ -150,7 +150,7 @@ class TestBuiltInsideTheExecution:
         assert probe.session.execution is probe.ran_in
 
     async def test_a_per_execution_adapter_declaring_the_caller_gets_the_execution_identity(
-        self, executor: RuntimeExecutor, factory: UseCaseFactory
+        self, executor: UseCaseExecutor, factory: UseCaseFactory
     ) -> None:
         probe = await executor.run(AcmeProbe, factory=factory, identity=ALICE)
 
@@ -165,7 +165,7 @@ class TestBuiltInsideTheExecution:
                 seen.append(current_execution())
                 return seen[-1]
 
-        executor = RuntimeExecutor(
+        executor = UseCaseExecutor(
             UseCaseCompiler(), agent_resolver=Resolver(), mcp_resolver=Resolver()
         )
 
@@ -175,7 +175,7 @@ class TestBuiltInsideTheExecution:
         assert seen == [ran_in, ran_in]
 
     async def test_a_writer_under_a_read_only_execution_is_refused_before_it_is_built(
-        self, executor: RuntimeExecutor, factory: UseCaseFactory
+        self, executor: UseCaseExecutor, factory: UseCaseFactory
     ) -> None:
         class _ReadOnlyOuter(UseCase[Any, None]):
             async def execute(self) -> None:
@@ -200,7 +200,7 @@ class TestExecute:
                 return f"value={value}"
 
         compiler = UseCaseCompiler()
-        ex = RuntimeExecutor(compiler, logger=AcmeRecordingLogger())
+        ex = UseCaseExecutor(compiler, logger=AcmeRecordingLogger())
 
         # Execute twice — _build_plan should only be called once
         with patch.object(compiler, "_build_plan", wraps=compiler._build_plan) as mock_build:

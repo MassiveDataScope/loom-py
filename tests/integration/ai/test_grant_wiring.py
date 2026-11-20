@@ -37,7 +37,7 @@ from loom.ai.declarative import (
 )
 from loom.ai.engines.pydantic_ai import PydanticAIEnginePlugin
 from loom.ai.engines.pydantic_ai._mcp import SharedMcpToolsets
-from loom.ai.execution import AgentRuntime
+from loom.ai.execution import AgentHost
 from loom.ai.inference import InferenceTarget
 from loom.core.di import LoomContainer
 from loom.core.model.redaction import Dsn
@@ -137,9 +137,9 @@ def _compile(*capabilities: object) -> AgentPlan:
     return compiler.compile(_spec(*capabilities), source_path=f"ai/agents/{_AGENT}/agent.yaml")
 
 
-def _runtime(plan: AgentPlan) -> AgentRuntime:
+def _runtime(plan: AgentPlan) -> AgentHost:
     """Build the runtime the composition root builds, over local stubs only."""
-    return AgentRuntime(
+    return AgentHost(
         plans=[plan],
         config=_config(),
         engine_plugin=PydanticAIEnginePlugin(model_resolver=lambda target: _silent_model()),

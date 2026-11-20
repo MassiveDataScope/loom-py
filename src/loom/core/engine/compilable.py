@@ -13,7 +13,7 @@ class Compilable(Protocol):
 
     Both :class:`~loom.core.use_case.use_case.UseCase` and
     :class:`~loom.core.job.job.Job` satisfy this protocol by duck typing.
-    :class:`~loom.core.engine.executor.RuntimeExecutor` depends on this
+    :class:`~loom.core.engine.executor.UseCaseExecutor` depends on this
     abstraction, not on either concrete class — satisfying OCP and DIP.
 
     The compiler inspects the class once at startup and stores an immutable

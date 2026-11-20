@@ -18,7 +18,7 @@ from sqlalchemy.ext.asyncio import AsyncEngine, AsyncSession, create_async_engin
 from sqlalchemy.pool import NullPool
 
 from loom.core.engine.compiler import UseCaseCompiler
-from loom.core.engine.executor import RuntimeExecutor
+from loom.core.engine.executor import UseCaseExecutor
 from loom.core.errors import ScopeOwnershipError
 from loom.core.stores.catalog import DEFAULT_STORE
 from loom.core.stores.uow.coordinator import OrderedCommits, Uncertain
@@ -73,8 +73,8 @@ async def observer(pg_admin_uri: str) -> AsyncIterator[AsyncEngine]:
         await engine.dispose()
 
 
-def _executor(manager: SessionManager) -> RuntimeExecutor:
-    return RuntimeExecutor(
+def _executor(manager: SessionManager) -> UseCaseExecutor:
+    return UseCaseExecutor(
         UseCaseCompiler(),
         coordinator=OrderedCommits({DEFAULT_STORE: SQLAlchemyUnitOfWorkFactory(manager)}),
     )

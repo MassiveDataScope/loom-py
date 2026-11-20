@@ -1,4 +1,4 @@
-"""Lifecycle, start-up validation and shared-session tests of ``AgentRuntime``.
+"""Lifecycle, start-up validation and shared-session tests of ``AgentHost``.
 
 Covers T072 (open/close ordering and per-worker client sharing), T073 (tool
 filters applied against the tools the server actually offers), T077 (single
@@ -18,7 +18,7 @@ import pytest
 
 from loom.ai.compiler import CompiledMcpCapability
 from loom.ai.errors import AgentCompilationError, AgentErrorCode
-from loom.ai.execution import AgentRuntime, SharedMcpSession
+from loom.ai.execution import AgentHost, SharedMcpSession
 from loom.core.di import LoomContainer
 from loom.core.identity import Identity
 from tests.integration.ai.conftest import (
@@ -57,9 +57,9 @@ def _build_runtime(
     container: LoomContainer,
     config_kwargs: dict[str, Any] | None = None,
     sql_config: object | None = None,
-) -> AgentRuntime:
-    """Assemble an ``AgentRuntime`` over local stubs only."""
-    return AgentRuntime(
+) -> AgentHost:
+    """Assemble an ``AgentHost`` over local stubs only."""
+    return AgentHost(
         plans=list(plans),  # type: ignore[arg-type]
         config=make_ai_config(mcp_servers=make_mcp_servers(*clients), **(config_kwargs or {})),
         engine_plugin=provider,  # type: ignore[arg-type]
@@ -330,7 +330,7 @@ class TestStartupBudget:
         lifecycle_log: list[str],
         deps: StubDepsFactory,
         container: LoomContainer,
-    ) -> AgentRuntime:
+    ) -> AgentHost:
         """Three servers whose tool listings alone outlast a single budget."""
         servers = (_SERVER_A, _SERVER_B, _SERVER_C)
         clients = {
@@ -712,7 +712,7 @@ class TestOneConnectionPerServerName:
         plans: tuple[object, ...],
         deps: StubDepsFactory,
         container: LoomContainer,
-    ) -> AgentRuntime:
+    ) -> AgentHost:
         clients = {_SERVER_A: StubMcpClient(label="a", session=RecordingMcpSession(), log=[])}
         return _build_runtime(
             plans=plans,

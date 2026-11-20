@@ -17,7 +17,7 @@ import pytest
 import yaml
 
 from loom.ai import registry
-from loom.ai.execution import AgentRuntime
+from loom.ai.execution import AgentHost
 from loom.composition import AppConfig, Project, create_app
 from loom.core.config import ConfigContext
 from loom.core.discovery.base import DiscoveryResult
@@ -115,20 +115,20 @@ def jobs_manifest(probe: ProbeFixture, monkeypatch: pytest.MonkeyPatch, tmp_path
 
 @pytest.fixture
 def lifetime(monkeypatch: pytest.MonkeyPatch) -> list[str]:
-    """Every entry into and exit from an :class:`AgentRuntime`, in order.
+    """Every entry into and exit from an :class:`AgentHost`, in order.
 
     The engine provider is an in-process double, so the runtime opens no
     network client.
     """
     events: list[str] = []
-    enter, exit_ = AgentRuntime.__aenter__, AgentRuntime.__aexit__
+    enter, exit_ = AgentHost.__aenter__, AgentHost.__aexit__
 
-    async def entered(self: AgentRuntime) -> AgentRuntime:
+    async def entered(self: AgentHost) -> AgentHost:
         events.append("enter")
         return await enter(self)
 
     async def exited(
-        self: AgentRuntime,
+        self: AgentHost,
         exc_type: type[BaseException] | None,
         exc: BaseException | None,
         tb: TracebackType | None,
@@ -137,8 +137,8 @@ def lifetime(monkeypatch: pytest.MonkeyPatch) -> list[str]:
         await exit_(self, exc_type, exc, tb)
 
     monkeypatch.setattr(registry, "resolve_engine_plugin", lambda _: CountingEngineProvider())
-    monkeypatch.setattr(AgentRuntime, "__aenter__", entered)
-    monkeypatch.setattr(AgentRuntime, "__aexit__", exited)
+    monkeypatch.setattr(AgentHost, "__aenter__", entered)
+    monkeypatch.setattr(AgentHost, "__aexit__", exited)
     return events
 
 
@@ -200,7 +200,7 @@ class TestLambdaAiRefusals:
         assert (recipe.agents, recipe.agent_endpoints) == (True, endpoints)
         assert recipe.discovered.agent_specs == (_AGENTS_GLOB,)
 
-    def test_a_jobs_function_enters_the_agent_runtime_once_at_init(
+    def test_a_jobs_function_enters_the_agent_host_once_at_init(
         self, tmp_path: Path, jobs_manifest: str, probe: ProbeFixture, lifetime: list[str]
     ) -> None:
         adapter = LambdaAdapter()
@@ -217,7 +217,7 @@ class TestLambdaAiRefusals:
         assert lifetime == ["enter", "exit"]
         assert [seen[0] for seen in probe[1].seen] == ["a", "a"]
 
-    def test_an_http_function_enters_the_agent_runtime_once_at_init(
+    def test_an_http_function_enters_the_agent_host_once_at_init(
         self, tmp_path: Path, lifetime: list[str]
     ) -> None:
         _write_agent(tmp_path)

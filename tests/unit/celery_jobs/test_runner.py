@@ -203,7 +203,7 @@ class TestExecution:
     def test_a_job_span_lands_in_the_trace_the_dispatcher_sent(self, worker: CeleryWorker) -> None:
         recorder = build_recorder()
 
-        worker.run(TraceJob, trace_id=WIRE_TRACE, observability_runtime=recorder.runtime)
+        worker.run(TraceJob, trace_id=WIRE_TRACE, observability=recorder.runtime)
 
         span = recorder.one("job:TraceJob")
         assert hex_trace(span) == WIRE_TRACE
@@ -214,7 +214,7 @@ class TestExecution:
     ) -> None:
         recorder = build_recorder()
 
-        worker.run(TraceJob, observability_runtime=recorder.runtime)
+        worker.run(TraceJob, observability=recorder.runtime)
 
         assert hex_trace(recorder.one("job:TraceJob")) != WIRE_TRACE
 

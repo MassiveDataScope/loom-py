@@ -851,7 +851,7 @@ class NativeCapableEngine(Protocol):
     """An :class:`AgentEngine` that also publishes its own native form.
 
     ``native`` is optional on :class:`AgentEngine` itself; this Protocol
-    exists only so :meth:`~loom.ai.execution.AgentRuntime.native` can narrow to
+    exists only so :meth:`~loom.ai.execution.AgentHost.native` can narrow to
     it with ``isinstance`` instead of reflecting over ``getattr``.
     """
 

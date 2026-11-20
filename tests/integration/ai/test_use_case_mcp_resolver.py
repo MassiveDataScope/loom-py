@@ -1,9 +1,9 @@
 """``McpMarkerResolver`` (T302) and its degradation (T303).
 
-Builds real ``AgentRuntime`` instances over stub MCP clients — the same
+Builds real ``AgentHost`` instances over stub MCP clients — the same
 shape ``test_use_case_mcp_runtime.py`` (T203) uses — and resolves through
 :class:`~loom.ai.execution._handle.McpMarkerResolver`, the resolver
-``RuntimeExecutor.bind_mcp_resolver`` takes, instead of constructing
+``UseCaseExecutor.bind_mcp_resolver`` takes, instead of constructing
 ``McpGrantView`` by hand. This is the seam T203's suite deliberately stops
 short of: the resolving *binding's own* ``include``, not the shared
 substrate grant's, must be what a resolved view enforces.
@@ -17,14 +17,14 @@ import pytest
 
 from loom.ai.compiler._plan import CompiledMcpCapability
 from loom.ai.errors import AgentRunError, AgentRunErrorCode
-from loom.ai.execution import AgentRuntime
+from loom.ai.execution import AgentHost
 from loom.ai.execution._handle import McpMarkerResolver
 from loom.ai.execution._lifecycle import UseCaseMcpGrant
 from loom.core.di import LoomContainer
 from loom.core.execution import ExecutionScope
 from loom.core.identity import Identity
 from loom.core.observability.event import Scope
-from loom.core.observability.observability import ObservabilityRuntime
+from loom.core.observability.observability import Observability
 from tests.integration.ai.conftest import (
     CountingEngineProvider,
     RecordingMcpSession,
@@ -66,8 +66,8 @@ def _runtime(
     deps: StubDepsFactory,
     container: LoomContainer,
     remote_clients: str = "required",
-) -> AgentRuntime:
-    return AgentRuntime(
+) -> AgentHost:
+    return AgentHost(
         plans=[],
         config=make_ai_config(
             mcp_servers=make_mcp_servers(*clients), remote_clients=remote_clients
@@ -205,7 +205,7 @@ class TestTheSpanDistinguishesTheUseCasePath:
             container=container,
         )
         observer = RecordingObserver()
-        observability = ObservabilityRuntime(observers=[observer])
+        observability = Observability(observers=[observer])
 
         async with runtime:
             resolve = McpMarkerResolver(runtime, observability=observability)

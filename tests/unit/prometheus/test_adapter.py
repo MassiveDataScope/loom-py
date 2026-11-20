@@ -5,7 +5,7 @@ from __future__ import annotations
 import pytest
 from prometheus_client import CollectorRegistry
 
-from loom.core.engine.events import AbandonReason, EventKind, RuntimeEvent
+from loom.core.engine.events import AbandonReason, EventKind, ExecutionEvent
 from loom.prometheus import PrometheusMetricsRecorder
 
 
@@ -29,7 +29,7 @@ class TestExecDone:
     def test_increments_requests_total_success(self) -> None:
         adapter, registry = _adapter()
         adapter.on_event(
-            RuntimeEvent(
+            ExecutionEvent(
                 kind=EventKind.EXEC_DONE,
                 use_case_name="CreateOrder",
                 status="success",
@@ -47,7 +47,7 @@ class TestExecDone:
     def test_observes_duration_histogram(self) -> None:
         adapter, registry = _adapter()
         adapter.on_event(
-            RuntimeEvent(
+            ExecutionEvent(
                 kind=EventKind.EXEC_DONE,
                 use_case_name="GetOrder",
                 duration_ms=500.0,
@@ -63,7 +63,7 @@ class TestExecDone:
     def test_noop_when_duration_none(self) -> None:
         adapter, registry = _adapter()
         adapter.on_event(
-            RuntimeEvent(
+            ExecutionEvent(
                 kind=EventKind.EXEC_DONE,
                 use_case_name="GetOrder",
                 duration_ms=None,
@@ -81,7 +81,7 @@ class TestExecError:
     def test_increments_requests_total_with_status(self) -> None:
         adapter, registry = _adapter()
         adapter.on_event(
-            RuntimeEvent(
+            ExecutionEvent(
                 kind=EventKind.EXEC_ERROR,
                 use_case_name="CreateOrder",
                 status="rule_failure",
@@ -98,7 +98,7 @@ class TestExecError:
     def test_increments_errors_total_by_error_kind(self) -> None:
         adapter, registry = _adapter()
         adapter.on_event(
-            RuntimeEvent(
+            ExecutionEvent(
                 kind=EventKind.EXEC_ERROR,
                 use_case_name="CreateOrder",
                 error=ValueError("oops"),
@@ -115,7 +115,7 @@ class TestExecError:
     def test_error_kind_unknown_when_error_none(self) -> None:
         adapter, registry = _adapter()
         adapter.on_event(
-            RuntimeEvent(
+            ExecutionEvent(
                 kind=EventKind.EXEC_ERROR,
                 use_case_name="X",
                 error=None,
@@ -133,7 +133,7 @@ class TestExecStart:
     def test_noop_on_exec_start(self) -> None:
         adapter, registry = _adapter()
         adapter.on_event(
-            RuntimeEvent(
+            ExecutionEvent(
                 kind=EventKind.EXEC_START,
                 use_case_name="CreateOrder",
             )
@@ -152,7 +152,7 @@ class TestJobEvents:
         adapter, registry = _adapter()
         for _ in range(2):
             adapter.on_event(
-                RuntimeEvent(
+                ExecutionEvent(
                     kind=EventKind.JOB_ABANDONED,
                     use_case_name="SendEmail",
                     reason=AbandonReason.ATTEMPTS_EXHAUSTED,
@@ -168,7 +168,7 @@ class TestJobEvents:
 
     def test_counts_an_event_that_has_no_reason_under_an_empty_one(self) -> None:
         adapter, registry = _adapter()
-        adapter.on_event(RuntimeEvent(kind=EventKind.JOB_SUCCEEDED, use_case_name="SendEmail"))
+        adapter.on_event(ExecutionEvent(kind=EventKind.JOB_SUCCEEDED, use_case_name="SendEmail"))
 
         count = _metric_value(
             registry,

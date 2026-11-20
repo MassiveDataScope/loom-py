@@ -721,7 +721,7 @@ class FastAPIAdapter:
         app = create_fastapi_app(
             application.kernel,
             declared.routes,
-            observability_runtime=application.observability,
+            observability=application.observability,
             title=rest_cfg.title,
             version=rest_cfg.version,
             docs_url=rest_cfg.docs_url,
@@ -738,7 +738,7 @@ class FastAPIAdapter:
                 service=sql.service,
                 config=sql.config,
                 authenticator=auth.authenticator,
-                observability_runtime=application.observability,
+                observability=application.observability,
             )
             _warn_sql_endpoints(sql.config, auth)
         _bind_agent_surfaces(app, application.ai, auth, application.observability)

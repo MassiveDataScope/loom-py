@@ -12,7 +12,7 @@ from loom.core.command import Command, Patch
 from loom.core.config.loader import load_config, section
 from loom.core.di.container import LoomContainer
 from loom.core.di.scope import Scope
-from loom.core.engine.executor import RuntimeExecutor
+from loom.core.engine.executor import UseCaseExecutor
 from loom.core.errors import RuleViolationsError
 from loom.core.use_case import Compute, F, Input, Rule
 from loom.core.use_case.use_case import UseCase
@@ -164,7 +164,7 @@ class TestUseCaseCrudIntegration:
             modules=[_repo_module(integration_context)],
         )
 
-        executor = RuntimeExecutor(result.compiler)
+        executor = UseCaseExecutor(result.compiler)
 
         create_uc = result.factory.build(CreateProductUseCase)
         created = await executor.execute(
@@ -205,7 +205,7 @@ class TestUseCaseCrudIntegration:
             use_cases=[CreateProductWithComputeAndRulesUseCase],
             modules=[_repo_module(integration_context)],
         )
-        executor = RuntimeExecutor(result.compiler)
+        executor = UseCaseExecutor(result.compiler)
         create_uc = result.factory.build(CreateProductWithComputeAndRulesUseCase)
 
         created = await executor.execute(
@@ -226,7 +226,7 @@ class TestUseCaseCrudIntegration:
             use_cases=[CreateProductWithComputeAndRulesUseCase],
             modules=[_repo_module(integration_context)],
         )
-        executor = RuntimeExecutor(result.compiler)
+        executor = UseCaseExecutor(result.compiler)
         create_uc = result.factory.build(CreateProductWithComputeAndRulesUseCase)
 
         with pytest.raises(RuleViolationsError):
@@ -248,7 +248,7 @@ class TestUseCaseCrudIntegration:
             cache=_CacheSettings(backend="redis", ttl_seconds=120),
         )
         result = create_kernel(config=config, use_cases=[ReadTypedConfigUseCase])
-        executor = RuntimeExecutor(result.compiler)
+        executor = UseCaseExecutor(result.compiler)
 
         use_case = result.factory.build(ReadTypedConfigUseCase)
         snapshot = await executor.execute(use_case)
@@ -286,7 +286,7 @@ class TestUseCaseCrudIntegration:
         typed_cfg = section(raw_cfg, "app", _IntegrationAppConfig)
 
         result = create_kernel(config=typed_cfg, use_cases=[ReadTypedConfigUseCase])
-        executor = RuntimeExecutor(result.compiler)
+        executor = UseCaseExecutor(result.compiler)
         use_case = result.factory.build(ReadTypedConfigUseCase)
         snapshot = await executor.execute(use_case)
 

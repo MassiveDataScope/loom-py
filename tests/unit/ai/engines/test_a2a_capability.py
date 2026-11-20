@@ -33,7 +33,7 @@ from loom.ai.engines.pydantic_ai import PydanticAIEnginePlugin, _a2a, _capabilit
 from loom.ai.engines.pydantic_ai._mcp import SharedMcpToolsets
 from loom.ai.engines.pydantic_ai.extras import a2a as a2a_island
 from loom.ai.errors import AgentCompilationError, AgentErrorCode, AgentRunErrorCode
-from loom.ai.execution import AgentRunError, AgentRuntime
+from loom.ai.execution import AgentHost, AgentRunError
 from loom.ai.inference import InferenceTarget
 from loom.core.di import LoomContainer
 from loom.core.execution import ExecutionScope
@@ -340,9 +340,9 @@ class StubEngineProvider:
         return frozenset({"a2a"})
 
 
-def make_runtime(plan: AgentPlan) -> AgentRuntime:
+def make_runtime(plan: AgentPlan) -> AgentHost:
     """Build a runtime whose only live dependency is the remote agent."""
-    return AgentRuntime(
+    return AgentHost(
         plans=[plan],
         config=AiConfig(engine="pydantic-ai", specs=(), models={}, startup_timeout_ms=5000),
         engine_plugin=StubEngineProvider(),  # type: ignore[arg-type]

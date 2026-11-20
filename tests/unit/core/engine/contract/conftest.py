@@ -20,7 +20,7 @@ import pytest
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from loom.core.engine.compiler import UseCaseCompiler
-from loom.core.engine.executor import RuntimeExecutor
+from loom.core.engine.executor import UseCaseExecutor
 from loom.core.stores.catalog import DEFAULT_STORE, StoreKey
 from loom.core.stores.uow.abc import UnitOfWork, UnitOfWorkFactory
 from loom.core.stores.uow.coordinator import OrderedCommits
@@ -450,7 +450,7 @@ def require_transactional(case: LifecycleCase) -> FailureSeams:
 
 
 async def cancel_twice_during_rollback(
-    executor: RuntimeExecutor, gate: asyncio.Event
+    executor: UseCaseExecutor, gate: asyncio.Event
 ) -> list[bool]:
     """Cancel a hanging execution, then again while its gated rollback is in flight.
 
@@ -502,8 +502,8 @@ def broker(log: Log) -> Broker:
 
 
 @pytest.fixture
-def executor(case: LifecycleCase, metrics: Metrics) -> RuntimeExecutor:
-    return RuntimeExecutor(
+def executor(case: LifecycleCase, metrics: Metrics) -> UseCaseExecutor:
+    return UseCaseExecutor(
         UseCaseCompiler(),
         coordinator=OrderedCommits({DEFAULT_STORE: case.factory}),
         metrics=metrics,

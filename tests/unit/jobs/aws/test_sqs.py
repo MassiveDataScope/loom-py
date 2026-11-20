@@ -15,7 +15,7 @@ from loom.composition import JobTransportError
 from loom.core import concurrency
 from loom.core.config import ConfigError
 from loom.core.engine.compiler import UseCaseCompiler
-from loom.core.engine.executor import RuntimeExecutor
+from loom.core.engine.executor import UseCaseExecutor
 from loom.core.engine.post_commit import (
     PostCommitChannel,
     active_channel,
@@ -382,7 +382,7 @@ class TestSQSDispatch:
         self, client: SQSClient, batch: bool
     ) -> None:
         log = Log()
-        executor = RuntimeExecutor(
+        executor = UseCaseExecutor(
             UseCaseCompiler(),
             coordinator=OrderedCommits({DEFAULT_STORE: StubUnitOfWorkFactory(log)}),
         )

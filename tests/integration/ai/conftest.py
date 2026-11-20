@@ -54,7 +54,7 @@ from loom.core.command import Command
 from loom.core.di import LoomContainer
 from loom.core.engine.compilable import Compilable
 from loom.core.engine.compiler import UseCaseCompiler
-from loom.core.engine.executor import RuntimeExecutor
+from loom.core.engine.executor import UseCaseExecutor
 from loom.core.identity import Identity
 from loom.core.model import loom_type, msgspec_type
 from loom.core.model.redaction import Dsn
@@ -358,7 +358,7 @@ class RecordingDepsFactory:
     """Deps factory running real use cases through a real executor, no database.
 
     Built the way the composition root builds it: the use cases are compiled
-    by a :class:`UseCaseCompiler`, executed by a :class:`RuntimeExecutor` over
+    by a :class:`UseCaseCompiler`, executed by a :class:`UseCaseExecutor` over
     a recording unit of work, resolved through a :class:`UseCaseRegistry`, and
     each bundle is the composition root's :class:`AgentDepsFactory` bundle.
 
@@ -377,7 +377,7 @@ class RecordingDepsFactory:
         for use_case in self.use_cases:
             compiler.compile(use_case)
         self._registry = UseCaseRegistry.build(list(self.use_cases))
-        self._executor = RuntimeExecutor(
+        self._executor = UseCaseExecutor(
             compiler, coordinator=OrderedCommits({DEFAULT_STORE: self.uow})
         )
 
@@ -845,12 +845,12 @@ def conversation_deps(container: LoomContainer) -> RecordingDepsFactory:
 # ---------------------------------------------------------------------------
 # Agent() marker doubles (spec 014, PR2)
 #
-# 'AgentRuntime' and the marker resolver it feeds
+# 'AgentHost' and the marker resolver it feeds
 # ('loom.ai.execution._handle.agent_marker_resolver') are deliberately absent
 # from this module, for the reason the module docstring states: importing
 # 'loom.ai.execution' here would abort collection of every test in this
 # package on one bad import, hiding which module actually regressed. Each
-# marker test module builds its own 'AgentRuntime' and resolver, over the
+# marker test module builds its own 'AgentHost' and resolver, over the
 # plan and use-case doubles this section provides.
 # ---------------------------------------------------------------------------
 
@@ -994,7 +994,7 @@ class InnerMarkerUseCase(UseCase[object, dict[str, object]]):
 
 def marker_use_case_executor(
     *use_cases: type[Compilable],
-) -> tuple[UseCaseCompiler, RuntimeExecutor]:
+) -> tuple[UseCaseCompiler, UseCaseExecutor]:
     """Compile *use_cases* and build the real executor a marker test drives.
 
     Args:
@@ -1004,12 +1004,12 @@ def marker_use_case_executor(
     Returns:
         The compiler (for plan inspection) and the executor, not yet bound
         to any agent resolver — the test module binds one once its own
-        ``AgentRuntime`` exists.
+        ``AgentHost`` exists.
     """
     compiler = UseCaseCompiler()
     for use_case in use_cases:
         compiler.compile(use_case)
-    return compiler, RuntimeExecutor(compiler)
+    return compiler, UseCaseExecutor(compiler)
 
 
 # The AI test modules import the shared fakes from this conftest.

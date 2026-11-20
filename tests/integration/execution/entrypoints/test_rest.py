@@ -17,7 +17,7 @@ from fastapi import Depends, FastAPI
 from fastapi.testclient import TestClient
 
 from loom.core.engine.compiler import UseCaseCompiler
-from loom.core.engine.executor import RuntimeExecutor
+from loom.core.engine.executor import UseCaseExecutor
 from loom.core.identity import (
     Identity,
     captured_delegation,
@@ -25,7 +25,7 @@ from loom.core.identity import (
     reset_identity,
     set_identity,
 )
-from loom.core.observability.observability import ObservabilityRuntime
+from loom.core.observability.observability import Observability
 from loom.core.transport.dispatcher import ExecutionRequest
 from loom.core.use_case.factory import UseCaseFactory
 from loom.rest.auth import AuthenticationMiddleware
@@ -45,9 +45,7 @@ def client(factory: UseCaseFactory, compiler: UseCaseCompiler) -> Callable[..., 
     def serve(caller: Identity | None) -> TestClient:
         app = FastAPI()
         routes = RestInterfaceCompiler(compiler).compile(AcmeRoutes)
-        bind_interfaces(
-            app, routes, factory, RuntimeExecutor(compiler), ObservabilityRuntime.noop()
-        )
+        bind_interfaces(app, routes, factory, UseCaseExecutor(compiler), Observability.noop())
         return TestClient(as_caller(app, caller))  # type: ignore[arg-type]
 
     return serve
@@ -76,7 +74,7 @@ class TestRestAdapter:
     @pytest.mark.usefixtures("authenticated")
     async def test_injects_a_constructor_port_and_caller_as_the_request_caller(
         self,
-        executor: RuntimeExecutor,
+        executor: UseCaseExecutor,
         factory: UseCaseFactory,
         caller: Identity | None,
         subject: str,

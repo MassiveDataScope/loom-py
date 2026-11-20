@@ -42,7 +42,7 @@ from loom.ai.engines.pydantic_ai import _capabilities, _mcp, _transport
 from loom.ai.engines.pydantic_ai._guards import BuildContext
 from loom.ai.engines.pydantic_ai._mcp import SharedMcpToolsets, _SessionToolset, _ToolsetSession
 from loom.ai.errors import AgentRunError, AgentRunErrorCode
-from loom.ai.execution import AgentRuntime
+from loom.ai.execution import AgentHost
 from loom.ai.execution._handle import McpMarkerResolver, _AgentHandle
 from loom.ai.execution._lifecycle import UseCaseMcpGrant
 from loom.core.di.container import LoomContainer
@@ -559,14 +559,14 @@ _SERVER = "orders"
 
 
 @asynccontextmanager
-async def _runtime_over(server: InProcessServer) -> AsyncIterator[AgentRuntime]:
+async def _runtime_over(server: InProcessServer) -> AsyncIterator[AgentHost]:
     """A runtime on the default start-up budget whose agent and use case share the server."""
     from tests.helpers.ai import CountingEngineProvider, StubDepsFactory, make_ai_config
     from tests.integration.ai.conftest import make_mcp_capability, make_mcp_servers, make_plan
 
     del server  # every toolset built while it serves reaches it, whatever the URL
     grant = make_mcp_capability(_SERVER)
-    runtime = AgentRuntime(
+    runtime = AgentHost(
         plans=[make_plan("agent", capabilities=[grant])],
         config=make_ai_config(mcp_servers=make_mcp_servers(_SERVER), startup_timeout_ms=10000),
         engine_plugin=CountingEngineProvider(),  # type: ignore[arg-type]

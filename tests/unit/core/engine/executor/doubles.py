@@ -11,8 +11,8 @@ from loom.core.authz.elevation import elevate_scope, elevated_scopes
 from loom.core.command import Command
 from loom.core.di.container import LoomContainer
 from loom.core.di.scope import Scope as DiScope
-from loom.core.engine.events import EventKind, RuntimeEvent
-from loom.core.engine.executor import RuntimeExecutor
+from loom.core.engine.events import EventKind, ExecutionEvent
+from loom.core.engine.executor import UseCaseExecutor
 from loom.core.engine.post_commit import active_channel
 from loom.core.execution import (
     ExecutionContext,
@@ -111,7 +111,7 @@ class AcmeJournal:
     def __init__(self) -> None:
         self.entries: list[str] = []
 
-    def on_event(self, event: RuntimeEvent) -> None:
+    def on_event(self, event: ExecutionEvent) -> None:
         self.entries.append(event.kind.name)
 
 
@@ -126,7 +126,7 @@ class AcmeSlowStart:
     def __init__(self) -> None:
         self.done_ms: float | None = None
 
-    def on_event(self, event: RuntimeEvent) -> None:
+    def on_event(self, event: ExecutionEvent) -> None:
         if event.kind is EventKind.EXEC_START:
             time.sleep(self.DELAY_S)
         elif event.kind is EventKind.EXEC_DONE:
@@ -259,7 +259,7 @@ class AcmeAnyone(UseCase[Any, Seen]):
 class AcmeNests(UseCase[Any, Seen]):
     """Runs ``inner`` nested, as ``identity`` (``None`` to inherit)."""
 
-    def __init__(self, executor: RuntimeExecutor, inner: UseCase[Any, Seen], identity: Any) -> None:
+    def __init__(self, executor: UseCaseExecutor, inner: UseCase[Any, Seen], identity: Any) -> None:
         self.executor, self.inner, self.identity = executor, inner, identity
 
     async def execute(self) -> Seen:

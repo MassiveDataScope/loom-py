@@ -14,7 +14,7 @@ from pathlib import Path
 import polars as pl
 import pytest
 
-from loom.core.observability.observability import ObservabilityRuntime
+from loom.core.observability.observability import Observability
 from loom.etl import ETLStep, FromTable, IntoTable
 from loom.etl.compiler import ETLCompiler
 from loom.etl.declarative.expr._refs import TableRef
@@ -148,7 +148,7 @@ class TestRunStep:
         ETLExecutor(
             polars_reader,
             polars_writer,
-            observability=ObservabilityRuntime([observer]),
+            observability=Observability([observer]),
         ).run_step(plan, NoParams())
 
         assert observer.event_names == [EventName.STEP_START, EventName.STEP_END]
@@ -172,7 +172,7 @@ class TestRunStep:
         executor = ETLExecutor(
             FailingReader(),
             polars_writer,
-            observability=ObservabilityRuntime([observer]),
+            observability=Observability([observer]),
         )
         params = NoParams()
         with pytest.raises(RuntimeError, match="read failure"):

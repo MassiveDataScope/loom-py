@@ -1,4 +1,4 @@
-"""``AgentRuntime.native``'s guard: the chain and admission a hand-driven run may rejoin.
+"""``AgentHost.native``'s guard: the chain and admission a hand-driven run may rejoin.
 
 A run driven through ``AgentHandle.native()`` pushes nothing onto loom's own
 call chain and takes no admission permit on its own — that is left to the
@@ -19,7 +19,7 @@ import pytest
 
 from loom.ai.abc import HealthStatus
 from loom.ai.errors import AgentRunError, AgentRunErrorCode
-from loom.ai.execution import AgentRuntime
+from loom.ai.execution import AgentHost
 from loom.ai.execution._chain import current_chain
 from loom.core.di import LoomContainer
 from loom.core.execution import ExecutionScope
@@ -60,12 +60,12 @@ class _NativeCapableEngine:
 
 def _runtime(
     *, max_agent_depth: int = 1, max_concurrent_runs: int = 8, names: tuple[str, ...]
-) -> AgentRuntime:
+) -> AgentHost:
     engines: dict[str, Any] = {name: _NativeCapableEngine() for name in names}
     config = make_ai_config(
         max_agent_depth=max_agent_depth, max_concurrent_runs=max_concurrent_runs
     )
-    return AgentRuntime(
+    return AgentHost(
         plans=[make_plan(name) for name in names],
         config=config,
         engine_plugin=CountingEngineProvider(engines=engines),  # type: ignore[arg-type]
@@ -74,7 +74,7 @@ def _runtime(
     )
 
 
-def _access(runtime: AgentRuntime, name: str) -> _NativeAccess:
+def _access(runtime: AgentHost, name: str) -> _NativeAccess:
     native = runtime.native(name, identity=_AUTHENTICATED)
     assert isinstance(native, _NativeAccess)
     return native

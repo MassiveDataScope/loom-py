@@ -19,7 +19,7 @@ from dataclasses import dataclass
 from types import MappingProxyType
 from typing import Any, NamedTuple, TypeVar
 
-from loom.core.engine.events import EventKind, Phase, RuntimeEvent, Status
+from loom.core.engine.events import EventKind, ExecutionEvent, Phase, Status
 from loom.core.engine.metrics import MetricsRecorder, NoMetrics
 from loom.core.errors import PostCommitError, RuleViolationError, RuleViolationsError
 from loom.core.job.outcome import JobSignal, failure_log_fields
@@ -67,7 +67,7 @@ class ExecutionReporter:
         execution = self._execution(use_case)
         try:
             self._metrics.on_event(
-                RuntimeEvent(
+                ExecutionEvent(
                     kind=EventKind.EXEC_START, use_case_name=use_case, trace_id=execution.trace_id
                 )
             )
@@ -153,7 +153,7 @@ class StartedExecution:
             **ran,
         )
         self.metrics.on_event(
-            RuntimeEvent(
+            ExecutionEvent(
                 kind=EventKind.EXEC_DONE,
                 use_case_name=self.use_case_name,
                 duration_ms=elapsed_ms,
@@ -171,7 +171,7 @@ class StartedExecution:
         status = self._status(error)
         self.log_failure(error, status, error_kind, duration_ms=elapsed_ms)
         self.metrics.on_event(
-            RuntimeEvent(
+            ExecutionEvent(
                 kind=EventKind.EXEC_ERROR,
                 use_case_name=self.use_case_name,
                 duration_ms=elapsed_ms,

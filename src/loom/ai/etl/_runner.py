@@ -14,7 +14,7 @@ from typing import Any, TypeVar
 import polars as pl
 
 from loom.ai.abc import AgentEnginePlugin
-from loom.ai.bootstrap import build_agent_runtime
+from loom.ai.bootstrap import build_agent_host
 from loom.ai.compiler import AgentPlan
 from loom.ai.config import AiConfig
 from loom.ai.etl._batch import Batch
@@ -22,7 +22,7 @@ from loom.ai.etl._columns import output_columns
 from loom.ai.etl._frames import answers_frame, no_answers, prompt_rows, require_free_keys
 from loom.ai.etl._ledger import SpendLedger
 from loom.ai.etl._validation import validation_issues
-from loom.ai.execution import AgentRuntime
+from loom.ai.execution import AgentHost
 from loom.ai.registry import resolve_engine_plugin
 from loom.core.model import loom_type
 from loom.etl.ports.contracts import AgentIssue
@@ -137,8 +137,8 @@ class PolarsAgentRunner:
         outcomes = _run_blocking(partial(batch.answer_all, prompts))
         return answers_frame(rows, outcomes, columns, plan.fingerprint)
 
-    def _runtime(self, name: str) -> AgentRuntime:
-        return build_agent_runtime(
+    def _runtime(self, name: str) -> AgentHost:
+        return build_agent_host(
             self._config,
             root=self._root,
             names={name},

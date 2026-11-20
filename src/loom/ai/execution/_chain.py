@@ -1,6 +1,6 @@
 """Task-local chain of in-flight agent names, for cycle and depth bounds.
 
-Every run started through :meth:`~loom.ai.execution.AgentRuntime.run` — whether
+Every run started through :meth:`~loom.ai.execution.AgentHost.run` — whether
 the top-level call a transport makes or a nested call an
 :class:`~loom.ai.abc.AgentHandle` makes from inside a use case — pushes its
 own agent name onto this chain and pops it once the run is over, so the chain

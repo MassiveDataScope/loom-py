@@ -7,7 +7,7 @@ from typing import Any, Generic, TypeVar
 import pytest
 
 from loom.core.engine.compiler import UseCaseCompiler
-from loom.core.engine.executor import RuntimeExecutor
+from loom.core.engine.executor import UseCaseExecutor
 from loom.core.execution import ExecutionKinds, Kind
 from loom.core.identity import Identity
 from loom.core.use_case.kinds import AGENT, CALLER, MCP, declare_kinds
@@ -136,7 +136,7 @@ class TestTheKindsRegistry:
         calls: list[str] = []
         compiler = UseCaseCompiler()
         plan = compiler.compile(AcmeMixedUseCase)
-        executor = RuntimeExecutor(compiler)
+        executor = UseCaseExecutor(compiler)
         executor.bind_agent_resolver(AcmeNamedResolver(calls, "name"))
         executor.bind_mcp_resolver(AcmeNamedResolver(calls, "server"))
 

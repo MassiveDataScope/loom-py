@@ -156,7 +156,7 @@ class TestRuntimeWiring:
     ) -> None:
         """``create_engine`` runs once per plan, in ``__aenter__`` (FR-026)."""
         from loom.ai.config import AiConfig as _AiConfig
-        from loom.ai.execution import AgentRuntime
+        from loom.ai.execution import AgentHost
         from tests.helpers.pydantic_ai_engine import answering_model, encode
 
         builds: list[str] = []
@@ -175,7 +175,7 @@ class TestRuntimeWiring:
             specs=("ai/agents/*/agent.yaml",),
             models={"default": _TARGETS["openai"]},
         )
-        runtime = AgentRuntime(
+        runtime = AgentHost(
             plans=[plan],
             config=config,
             engine_plugin=provider,

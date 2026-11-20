@@ -13,7 +13,7 @@ from tests.helpers.version_limited_extras import require_bytewax
 require_bytewax()
 
 from loom.core.observability.event import LifecycleEvent  # noqa: E402
-from loom.core.observability.observability import ObservabilityRuntime  # noqa: E402
+from loom.core.observability.observability import Observability  # noqa: E402
 from loom.streaming.bytewax.handlers import steps as _steps  # noqa: E402
 from loom.streaming.core._exceptions import UnsupportedNodeError  # noqa: E402
 from loom.streaming.core._message import Message, MessageMeta  # noqa: E402
@@ -61,7 +61,7 @@ def _ctx() -> SimpleNamespace:
     return SimpleNamespace(
         plan=SimpleNamespace(name="orders"),
         current_path=(1, 2),
-        flow_runtime=ObservabilityRuntime.noop(),
+        flow_runtime=Observability.noop(),
         commit_tracker=None,
     )
 
@@ -101,7 +101,7 @@ class TestApplyRecordStep:
             def on_event(self, event: LifecycleEvent) -> None:
                 events.append(event)
 
-        runtime = ObservabilityRuntime([_RecordingObserver()])
+        runtime = Observability([_RecordingObserver()])
         ctx = SimpleNamespace(
             plan=SimpleNamespace(name="orders"),
             current_path=(1, 2),

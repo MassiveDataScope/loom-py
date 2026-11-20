@@ -24,7 +24,7 @@ from loom.core.job.job import Job
 from loom.core.job.service import JobService
 from loom.core.model import BaseModel
 from loom.core.observability.event import EventKind, LifecycleEvent, Scope
-from loom.core.observability.observability import ObservabilityRuntime
+from loom.core.observability.observability import Observability
 from loom.core.stores import LAMBDA_PROFILE
 from loom.core.tracing import get_trace_id, reset_trace_id, set_trace_id
 from loom.serverless.aws.lambda_ import (
@@ -192,7 +192,7 @@ from loom.composition import AppConfig, Project
 from loom.core.config import ConfigContext, ConfigError
 from loom.core.environment import Environment
 from loom.core.observability.config import ObservabilityConfig
-from loom.core.observability.observability import ObservabilityRuntime
+from loom.core.observability.observability import Observability
 from loom.core.job.job import Job
 class Probe(Job[None]):
     def execute(self) -> None:
@@ -204,7 +204,7 @@ project = Project(
     code_path=Path.cwd(),
     config_root=Path.cwd(),
     app=AppConfig(name="lambda-sqs", entry="worker"),
-    observability=ObservabilityRuntime.noop(),
+    observability=Observability.noop(),
     observability_config=ObservabilityConfig(),
 )
 LambdaAdapter(jobs=[Probe]).recipe(project)
@@ -459,7 +459,7 @@ print([name for name in loaded if name in sys.modules])
 
         adapter, application, _ = built
         observer = Observer()
-        application.observability = ObservabilityRuntime([observer])
+        application.observability = Observability([observer])
         handler = adapter.bind(application)
         try:
             result = handler({"Records": [record("1", "a", trace_id="trace")]}, None)
@@ -559,7 +559,7 @@ print([name for name in loaded if name in sys.modules])
 
         adapter, application, _ = built
         observer = Observer()
-        application.observability = ObservabilityRuntime([observer])
+        application.observability = Observability([observer])
         handler = adapter.bind(application)
         try:
             item = record("1", "a")

@@ -2,7 +2,7 @@
 
 Walks a compiled :class:`~loom.etl.compiler._plan.PipelinePlan` and drives
 read → execute → write for each step, emitting lifecycle events through the
-shared :class:`~loom.core.observability.observability.ObservabilityRuntime`.
+shared :class:`~loom.core.observability.observability.Observability`.
 
 This class is **not** part of the public API.  It is instantiated exclusively
 by :class:`~loom.etl.ETLRunner`, which wires reader, writer, catalog, and the
@@ -11,11 +11,11 @@ shared observability runtime from a :data:`~loom.etl.StorageConfig`.
 For normal usage::
 
     from loom.etl import ETLRunner
-    from loom.core.observability import ObservabilityRuntime
+    from loom.core.observability import Observability
 
     runner = ETLRunner.from_yaml(
         "loom.yaml",
-        observability=ObservabilityRuntime.noop(),
+        observability=Observability.noop(),
     )
     runner.run(DailyOrdersPipeline, DailyOrdersParams(run_date=date.today()))
 
@@ -38,7 +38,7 @@ from typing import Any
 
 from loom.core.config import ConfigContext
 from loom.core.observability.event import Scope
-from loom.core.observability.observability import ObservabilityRuntime
+from loom.core.observability.observability import Observability
 from loom.core.runner import SupportsFlush
 from loom.etl.checkpoint import CheckpointCleanupError, CheckpointStore
 from loom.etl.compiler._plan import (
@@ -110,7 +110,7 @@ class ETLExecutor:
         self,
         reader: SourceReader,
         writer: TargetWriter,
-        observability: ObservabilityRuntime | None = None,
+        observability: Observability | None = None,
         dispatcher: ParallelDispatcher | None = None,
         checkpoint_store: CheckpointStore | None = None,
         client_executor: ClientCommandExecutor | None = None,
@@ -119,7 +119,7 @@ class ETLExecutor:
     ) -> None:
         self._reader = reader
         self._writer = writer
-        self._observability = observability or ObservabilityRuntime.noop()
+        self._observability = observability or Observability.noop()
         self._dispatcher: ParallelDispatcher = dispatcher or ThreadDispatcher()
         self._checkpoint_store: CheckpointStore | None = checkpoint_store
         self._client_executor: ClientCommandExecutor | None = client_executor
@@ -127,7 +127,7 @@ class ETLExecutor:
         self._agents: AgentBatchRunner | None = agents
 
     @property
-    def observability(self) -> ObservabilityRuntime:
+    def observability(self) -> Observability:
         """Return the shared observability runtime."""
         return self._observability
 

@@ -36,7 +36,7 @@ from loom.core.errors import BODY_FIELD, LoomError, RuleViolationError
 from loom.core.identity import current_identity
 from loom.core.model import LoomFrozenStruct
 from loom.core.observability.event import Scope
-from loom.core.observability.observability import ObservabilityRuntime
+from loom.core.observability.observability import Observability
 from loom.core.stores.sql.config import SqlConfig, SqlConnectionConfig, roles_need_identity_binding
 from loom.core.stores.sql.roles import resolve_query_roles
 from loom.core.stores.sql.service import SqlQueryService
@@ -213,7 +213,7 @@ def _make_sql_handler(
     *,
     path: str,
     roles_bound: bool,
-    observability_runtime: ObservabilityRuntime,
+    observability: Observability,
 ) -> Callable[[Request], Coroutine[Any, Any, Response]]:
     """Build the async handler serving SQL queries for one connection."""
     handler_name = f"execute_sql_{name}"
@@ -232,7 +232,7 @@ def _make_sql_handler(
                 allowed_roles=allowed_roles,
                 requested_roles=query.roles,
             )
-            with observability_runtime.span(
+            with observability.span(
                 Scope.USE_CASE,
                 handler_name,
                 trace_id=get_trace_id(),
@@ -305,7 +305,7 @@ def _mount_endpoint(
     name: str,
     connection: SqlConnectionConfig,
     mechanism: str | None,
-    observability_runtime: ObservabilityRuntime,
+    observability: Observability,
 ) -> None:
     """Register the POST route for *name* and emit the startup WARNING.
 
@@ -325,7 +325,7 @@ def _mount_endpoint(
             connection,
             path=path,
             roles_bound=bound_mechanism is not None,
-            observability_runtime=observability_runtime,
+            observability=observability,
         ),
         methods=["POST"],
         include_in_schema=endpoint.include_in_schema,
@@ -358,7 +358,7 @@ def bind_sql_endpoints(
     service: SqlQueryService,
     config: SqlConfig,
     authenticator: Authenticator | None = None,
-    observability_runtime: ObservabilityRuntime | None = None,
+    observability: Observability | None = None,
 ) -> None:
     """Mount one generic SQL endpoint per opted-in connection.
 
@@ -376,7 +376,7 @@ def bind_sql_endpoints(
             Its ``provides_roles`` flag decides whether roles are bound to the
             identity; ``None`` (or a mechanism binding no role) means no
             binding, and the endpoint is then single-role by config.
-        observability_runtime: Runtime emitting one span per request, with the
+        observability: Runtime emitting one span per request, with the
             same labels the router runtime uses. ``None`` falls back to a
             no-op runtime.
 
@@ -385,9 +385,7 @@ def bind_sql_endpoints(
         service = SqlQueryService(executors=executors, config=sql_config)
         bind_sql_endpoints(app, service=service, config=sql_config)
     """
-    runtime = (
-        observability_runtime if observability_runtime is not None else ObservabilityRuntime.noop()
-    )
+    runtime = observability if observability is not None else Observability.noop()
     mechanism = _roles_mechanism(authenticator)
     for name in mounted_sql_endpoints(config):
         _mount_endpoint(
@@ -396,5 +394,5 @@ def bind_sql_endpoints(
             name=name,
             connection=config.connections[name],
             mechanism=mechanism,
-            observability_runtime=runtime,
+            observability=runtime,
         )

@@ -21,7 +21,7 @@ from loom.core.stores.profile import (
     SERVER_PROFILE,
     PoolDefaults,
     RuntimeProfile,
-    StoreRuntime,
+    StorePluginContext,
 )
 from loom.core.use_case.use_case import UseCase
 from loom.stores.sqlalchemy.plugin import SQLAlchemyStorePlugin
@@ -85,7 +85,7 @@ class _TinyAdapter:
 
 class TestTransportFreeComposition:
     async def test_an_adapter_of_its_own_gets_its_profile_its_use_case_and_its_type(
-        self, fixture_project: ProjectFactory, runtimes: list[StoreRuntime]
+        self, fixture_project: ProjectFactory, runtimes: list[StorePluginContext]
     ) -> None:
         config = fixture_project()
 
@@ -176,16 +176,16 @@ class TestTransportFreeComposition:
             Project.load(project, environment="test").compose(adapter)
 
     @pytest.fixture
-    def runtimes(self, monkeypatch: pytest.MonkeyPatch) -> list[StoreRuntime]:
+    def runtimes(self, monkeypatch: pytest.MonkeyPatch) -> list[StorePluginContext]:
         """Record the runtime the composition hands the SQLAlchemy backend."""
-        recorded: list[StoreRuntime] = []
+        recorded: list[StorePluginContext] = []
         build = SQLAlchemyStorePlugin.build
 
         def recording(
             self: SQLAlchemyStorePlugin,
             ctx: ConfigContext,
             models: Sequence[type[BaseModel]],
-            runtime: StoreRuntime,
+            runtime: StorePluginContext,
         ) -> StoreWiring:
             recorded.append(runtime)
             return build(self, ctx, models, runtime)

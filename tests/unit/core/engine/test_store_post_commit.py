@@ -20,8 +20,8 @@ from loom.core.cache.dependency import GenerationalDependencyResolver
 from loom.core.cache.repository import CachedRepository
 from loom.core.command import Command
 from loom.core.engine.compiler import UseCaseCompiler
-from loom.core.engine.events import EventKind, RuntimeEvent
-from loom.core.engine.executor import RuntimeExecutor
+from loom.core.engine.events import EventKind, ExecutionEvent
+from loom.core.engine.executor import UseCaseExecutor
 from loom.core.engine.post_commit import store_channel
 from loom.core.errors import StoresNotCommittedError
 from loom.core.job.context import (
@@ -173,7 +173,7 @@ class _Stores:
         coordinator = OrderedCommits(
             {DEFAULT_STORE: _Sql(default), AUDIT: _Sql(audit), EVENTS: _NoTransactions()}
         )
-        self.executor = RuntimeExecutor(UseCaseCompiler(), coordinator=coordinator)
+        self.executor = UseCaseExecutor(UseCaseCompiler(), coordinator=coordinator)
 
     def mark(self, label: str) -> Callable[[], None]:
         return lambda: self.ran.append(label)
@@ -242,7 +242,7 @@ class _BodyFails(Exception):
 
 
 class _FailsWhenDone:
-    def on_event(self, event: RuntimeEvent) -> None:
+    def on_event(self, event: ExecutionEvent) -> None:
         if event.kind is EventKind.EXEC_DONE:
             raise _Failed
 
@@ -543,7 +543,7 @@ class TestStorePostCommit:
     async def test_a_failing_metrics_adapter_does_not_skip_the_actions(
         self, stores: _Stores
     ) -> None:
-        executor = RuntimeExecutor(
+        executor = UseCaseExecutor(
             UseCaseCompiler(),
             coordinator=OrderedCommits({DEFAULT_STORE: _Sql(stores.default)}),
             metrics=_FailsWhenDone(),
@@ -559,7 +559,7 @@ class TestStorePostCommit:
     async def test_one_store_without_transactions_in_a_failed_invocation_runs_its_priority_lane(
         self, stores: _Stores, failure: Step
     ) -> None:
-        executor = RuntimeExecutor(
+        executor = UseCaseExecutor(
             UseCaseCompiler(), coordinator=OrderedCommits({DEFAULT_STORE: _NoTransactions()})
         )
         use_case = _OnDefault(stores.queue("default"), stores.gathered(), failure)

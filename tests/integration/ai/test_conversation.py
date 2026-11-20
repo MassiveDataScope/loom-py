@@ -1,7 +1,7 @@
 """The ``conversation`` loader at run time (006 T5: AC6-AC10).
 
-Every run goes through ``AgentRuntime`` over a ``ScriptedEngine``; the loader
-and hook use cases are real use cases executed by a real ``RuntimeExecutor``
+Every run goes through ``AgentHost`` over a ``ScriptedEngine``; the loader
+and hook use cases are real use cases executed by a real ``UseCaseExecutor``
 over a recording unit of work.  No network, no database, no model.
 """
 
@@ -28,7 +28,7 @@ from loom.ai.errors import (
     is_retriable,
     run_error_class,
 )
-from loom.ai.execution import AgentRunError, AgentRuntime
+from loom.ai.execution import AgentHost, AgentRunError
 from loom.ai.execution._turn import TurnCallbacks
 from loom.core.command import Command
 from loom.core.di import LoomContainer
@@ -253,9 +253,9 @@ def _plan(
 
 def _runtime(
     engine: ScriptedEngine, plan: AgentPlan, *, deps: object, container: LoomContainer
-) -> AgentRuntime:
+) -> AgentHost:
     """Build a runtime serving one scripted agent."""
-    return AgentRuntime(
+    return AgentHost(
         plans=[plan],
         config=make_ai_config(),
         engine_plugin=CountingEngineProvider(engines={_AGENT: engine}),  # type: ignore[arg-type]
@@ -803,7 +803,7 @@ class TestStartupProbe:
             "tools": StubMcpClient(label="tools", session=RecordingMcpSession(), log=lifecycle_log)
         }
         plan = _plan(capabilities=(make_mcp_capability("tools"),))
-        runtime = AgentRuntime(
+        runtime = AgentHost(
             plans=[plan],
             config=make_ai_config(mcp_servers=make_mcp_servers("tools")),
             engine_plugin=CountingEngineProvider(),  # type: ignore[arg-type]

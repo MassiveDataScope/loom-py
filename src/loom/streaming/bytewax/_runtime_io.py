@@ -15,7 +15,7 @@ from confluent_kafka import OFFSET_BEGINNING, OFFSET_END, KafkaError
 from confluent_kafka.admin import AdminClient
 
 from loom.core.observability.event import Scope, TerminalReason
-from loom.core.observability.observability import ObservabilityRuntime
+from loom.core.observability.observability import Observability
 from loom.core.observability.span import LoomSpan
 from loom.core.plugins.optional import import_optional
 from loom.core.tracing import generate_trace_id
@@ -253,7 +253,7 @@ class KafkaPartitionedSource(FixedPartitionedSource[KafkaRecord[bytes], "int | N
         self,
         source: _CompiledKafkaSource,
         commit_tracker: KafkaCommitTracker | None = None,
-        observability: ObservabilityRuntime | None = None,
+        observability: Observability | None = None,
     ) -> None:
         self._source = source
         self._commit_tracker = commit_tracker
@@ -511,7 +511,7 @@ class _TerminalTracing:
         flow_run_id: Identifier of the flow run the spans belong to.
     """
 
-    observer: ObservabilityRuntime
+    observer: Observability
     flow: str
     flow_run_id: str
 
@@ -702,7 +702,7 @@ class _KafkaMessageSink(_KafkaDynamicSinkBase, DynamicSink[Message[StreamPayload
 
     def bind_terminal_tracing(
         self,
-        observer: ObservabilityRuntime,
+        observer: Observability,
         flow: str,
         flow_run_id: str,
     ) -> None:

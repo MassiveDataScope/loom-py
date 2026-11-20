@@ -14,7 +14,7 @@ from fastapi.testclient import TestClient
 from loom.core.command import Command
 from loom.core.di.container import LoomContainer
 from loom.core.engine.compiler import UseCaseCompiler
-from loom.core.engine.executor import RuntimeExecutor
+from loom.core.engine.executor import UseCaseExecutor
 from loom.core.errors import (
     BoundaryValidationError,
     Conflict,
@@ -563,7 +563,7 @@ class TestRestUseCaseDispatcherErrors:
 
 
 # ---------------------------------------------------------------------------
-# RestUseCaseDispatcher — boundary validation, driven by a real RuntimeExecutor
+# RestUseCaseDispatcher — boundary validation, driven by a real UseCaseExecutor
 # ---------------------------------------------------------------------------
 
 
@@ -581,7 +581,7 @@ def _real_adapter(*use_case_types: type[UseCase[Any, Any]]) -> RestUseCaseDispat
     for use_case_type in use_case_types:
         uc_compiler.compile(use_case_type)
     return RestUseCaseDispatcher(
-        RuntimeExecutor(uc_compiler),
+        UseCaseExecutor(uc_compiler),
         factory=UseCaseFactory(LoomContainer(classify_key=classify_key, implicit=main_repository)),
     )
 

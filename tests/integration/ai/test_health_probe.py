@@ -1,4 +1,4 @@
-"""The background health probe fails open (:meth:`AgentRuntime.health`).
+"""The background health probe fails open (:meth:`AgentHost.health`).
 
 ``AgentEngine.health`` is a public protocol a third party implements, so it may
 raise anything. Before this the probe had no guard: the first failure ended the
@@ -12,7 +12,7 @@ from __future__ import annotations
 import pytest
 
 from loom.ai.abc import HealthStatus
-from loom.ai.execution import AgentRuntime
+from loom.ai.execution import AgentHost
 from loom.core.di import LoomContainer
 from tests.integration.ai.conftest import (
     CountingEngineProvider,
@@ -57,9 +57,9 @@ def container() -> LoomContainer:
     return LoomContainer()
 
 
-def _runtime(engines: dict[str, ScriptedEngine], container: LoomContainer) -> AgentRuntime:
+def _runtime(engines: dict[str, ScriptedEngine], container: LoomContainer) -> AgentHost:
     """Build a runtime over two agents and no live client."""
-    return AgentRuntime(
+    return AgentHost(
         plans=[make_plan(name) for name in engines],
         config=make_ai_config(health_cache_ttl_ms=5),
         engine_plugin=CountingEngineProvider(engines),  # type: ignore[arg-type]

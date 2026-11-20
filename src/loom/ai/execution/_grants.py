@@ -25,7 +25,7 @@ from loom.core.errors import BoundaryValidationError, UnsupportedBoundaryType
 from loom.core.identity import Identity
 from loom.core.model import loom_type_of
 from loom.core.observability.event import Scope
-from loom.core.observability.observability import ObservabilityRuntime
+from loom.core.observability.observability import Observability
 from loom.core.stores.sql.abc import SqlQueryResult
 from loom.core.stores.sql.service import SqlQueryService
 
@@ -113,7 +113,7 @@ class McpGrantView:
         session: McpSession,
         catalogue: Sequence[McpToolInfo],
         timeout_s: float,
-        observability: ObservabilityRuntime | None,
+        observability: Observability | None,
     ) -> None:
         self._span_attributes = span_attributes
         self._capability = capability
@@ -287,7 +287,7 @@ class SqlGrantView:
         agent: str,
         capability: CompiledSqlCapability,
         sql_query_service: SqlQueryService,
-        observability: ObservabilityRuntime | None,
+        observability: Observability | None,
     ) -> None:
         self._agent = agent
         self._capability = capability

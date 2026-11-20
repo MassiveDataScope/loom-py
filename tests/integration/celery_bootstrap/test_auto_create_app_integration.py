@@ -11,7 +11,7 @@ from loom.composition import Project
 from loom.core.command import Command, CommandField
 from loom.core.di.container import LoomContainer
 from loom.core.di.scope import Scope
-from loom.core.engine.executor import RuntimeExecutor
+from loom.core.engine.executor import UseCaseExecutor
 from loom.core.job import JobService
 from loom.core.job.callback import JobCallback
 from loom.core.job.job import Job
@@ -308,7 +308,7 @@ def celery_files(tmp_path: Path, monkeypatch: Any) -> Any:
             JobService,
             lambda: InlineServiceFixture(
                 container.resolve(UseCaseFactory),
-                container.resolve(RuntimeExecutor),
+                container.resolve(UseCaseExecutor),
             ),
             scope=Scope.APPLICATION,
         )

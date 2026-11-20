@@ -992,7 +992,7 @@ await self._app.entity(Product).update(params={"id": product_id}, payload={"stoc
 
 ## Execution lifecycle
 
-`RuntimeExecutor.execute` owns one execution end to end — from opening the
+`UseCaseExecutor.execute` owns one execution end to end — from opening the
 unit of work to running the post-commit actions it queued. REST use cases
 and Celery jobs run through the same lifecycle; the Celery worker drives it
 through the async bridge, not through a lifecycle of its own.

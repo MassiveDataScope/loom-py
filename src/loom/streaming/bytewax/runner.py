@@ -27,7 +27,7 @@ from loom.core.model import LoomFrozenStruct
 from loom.core.model.types import PositiveInt
 from loom.core.observability.config import ObservabilityConfig
 from loom.core.observability.event import Scope
-from loom.core.observability.observability import ObservabilityRuntime
+from loom.core.observability.observability import Observability
 from loom.core.runner import shutdown_runner
 from loom.core.tracing import generate_trace_id
 from loom.streaming.bytewax._adapter import build_dataflow_with_shutdown
@@ -161,7 +161,7 @@ class StreamingRunner:
         self._flow: StreamFlow[Any, Any] | None = None
         self._plan: CompiledPlan | None = None
         self._runtime: BytewaxRuntimeConfig = BytewaxRuntimeConfig()
-        self._observability_runtime: ObservabilityRuntime = ObservabilityRuntime.noop()
+        self._observability: Observability = Observability.noop()
         self._log = logger
         self._shutdown: Callable[[], None] | None = None
         self._sink_registry: SinkRegistry = _registry or SinkRegistry()
@@ -172,12 +172,12 @@ class StreamingRunner:
         flow: StreamFlow[Any, Any],
         plan: CompiledPlan,
         runtime: BytewaxRuntimeConfig,
-        observability_runtime: ObservabilityRuntime,
+        observability: Observability,
     ) -> None:
         self._flow = flow
         self._plan = plan
         self._runtime = runtime
-        self._observability_runtime = observability_runtime
+        self._observability = observability
 
     @classmethod
     def from_context(
@@ -185,7 +185,7 @@ class StreamingRunner:
         flow: StreamFlow[Any, Any],
         *,
         config: ConfigContext,
-        observability_runtime: ObservabilityRuntime | None = None,
+        observability: Observability | None = None,
         environment: Environment | str | None = None,
     ) -> StreamingRunner:
         """Build a runner from a resolved config context.
@@ -200,7 +200,7 @@ class StreamingRunner:
                 production or staging.
         """
         runner = cls()
-        runner._configure_from(flow, config, environment, observability_runtime)
+        runner._configure_from(flow, config, environment, observability)
         return runner
 
     def _configure_from(
@@ -208,13 +208,13 @@ class StreamingRunner:
         flow: StreamFlow[Any, Any],
         config: ConfigContext,
         environment: Environment | str | None,
-        observability_runtime: ObservabilityRuntime | None = None,
+        observability: Observability | None = None,
     ) -> None:
         resolved_environment = resolve_environment(environment)
         observability_cfg = config.section_or_default(
             ConfigKey.OBSERVABILITY, ObservabilityConfig, ObservabilityConfig()
         )
-        obs = observability_runtime or ObservabilityRuntime.from_config(
+        obs = observability or Observability.from_config(
             observability_cfg, environment=resolved_environment
         )
         enforce_deploy_checks(config, resolved_environment, scope=CheckScope.without_rest())
@@ -233,7 +233,7 @@ class StreamingRunner:
         path: str,
         *,
         resolvers: Sequence[ConfigResolver] = (),
-        observability_runtime: ObservabilityRuntime | None = None,
+        observability: Observability | None = None,
         environment: Environment | str | None = None,
     ) -> StreamingRunner:
         """Load config from YAML or a config directory and build a runner.
@@ -245,14 +245,14 @@ class StreamingRunner:
             resolvers: Resolvers for ``${name:key}`` placeholders, registered
                 before the built-in ``secrets`` and ``ssm`` defaults.  A
                 resolver named like a default replaces it.
-            observability_runtime: Optional runtime override.
+            observability: Optional runtime override.
             environment: Environment of the run; overrides ``LOOM_ENV``.
         """
         resolved_environment = resolve_environment(environment)
         return cls.from_context(
             flow,
             config=_load_yaml(path, resolvers, resolved_environment),
-            observability_runtime=observability_runtime,
+            observability=observability,
             environment=resolved_environment,
         )
 
@@ -262,14 +262,14 @@ class StreamingRunner:
         flow: StreamFlow[Any, Any],
         config: dict[str, Any],
         *,
-        observability_runtime: ObservabilityRuntime | None = None,
+        observability: Observability | None = None,
         environment: Environment | str | None = None,
     ) -> StreamingRunner:
         """Build a runner from a plain Python config mapping; see :meth:`from_context`."""
         return cls.from_context(
             flow,
             config=ConfigContext.from_dict(config),
-            observability_runtime=observability_runtime,
+            observability=observability,
             environment=environment,
         )
 
@@ -330,7 +330,7 @@ class StreamingRunner:
             merged_error_sinks = self._resolved_error_sinks or None
         prepared = _prepare_run(
             self._plan,
-            observability_runtime=self._observability_runtime,
+            observability=self._observability,
             runtime=runtime or self._runtime,
             error_sinks=merged_error_sinks,
         )
@@ -402,15 +402,15 @@ class StreamingRunner:
             )
         resolved_runtime = runtime or self._runtime
         try:
-            with self._observability_runtime.span(
+            with self._observability.span(
                 Scope.POLL_CYCLE,
                 self._plan.name,
                 id=generate_trace_id(),
                 node_count=len(self._plan.nodes),
             ):
-                self._observability_runtime.start_scrape_server()
+                self._observability.start_scrape_server()
                 prepared = self.prepare_run(runtime=resolved_runtime)
-                with self._observability_runtime.span(
+                with self._observability.span(
                     Scope.FLOW,
                     self._plan.name,
                     node_count=len(self._plan.nodes),
@@ -467,7 +467,7 @@ def _to_timedelta(value_ms: int | None) -> timedelta | None:
 def _prepare_run(
     plan: CompiledPlan,
     *,
-    observability_runtime: ObservabilityRuntime | None = None,
+    observability: Observability | None = None,
     source: Any | None = None,
     sink: Any | None = None,
     terminal_sinks: Mapping[tuple[int, ...], Any] | None = None,
@@ -477,7 +477,7 @@ def _prepare_run(
     commit_tracker = build_commit_tracker(plan.source)
     _guard_keyed_multiprocess(plan, runtime, commit_tracker)
     if source is None:
-        source = build_runtime_source(plan.source, commit_tracker, observability_runtime)
+        source = build_runtime_source(plan.source, commit_tracker, observability)
     if sink is None and plan.output is not None:
         sink = build_runtime_sink(plan.output, commit_tracker)
     if terminal_sinks is None:
@@ -487,7 +487,7 @@ def _prepare_run(
     bridge = _create_bridge(plan, runtime or BytewaxRuntimeConfig())
     built = build_dataflow_with_shutdown(
         plan=plan,
-        observability_runtime=observability_runtime,
+        observability=observability,
         source=source,
         sink=sink,
         terminal_sinks=terminal_sinks,

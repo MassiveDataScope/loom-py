@@ -36,7 +36,7 @@ from bytewax.outputs import DynamicSink, StatelessSinkPartition
 
 from loom.core.async_bridge import AsyncBridge
 from loom.core.logger import get_logger
-from loom.core.observability.observability import ObservabilityRuntime
+from loom.core.observability.observability import Observability
 from loom.core.tracing.context import generate_trace_id
 from loom.streaming.bytewax._commit_tracker import CommitCompletionPort
 from loom.streaming.bytewax._errors import RuntimeConfigurationError
@@ -122,7 +122,7 @@ class _DropSink(DynamicSink[Any]):
 def build_dataflow(
     plan: CompiledPlan,
     *,
-    observability_runtime: ObservabilityRuntime | None = None,
+    observability: Observability | None = None,
     source: Any | None = None,
     sink: Any | None = None,
     terminal_sinks: Mapping[tuple[int, ...], Any] | None = None,
@@ -131,7 +131,7 @@ def build_dataflow(
     """Build a Bytewax Dataflow from a compiled plan."""
     return build_dataflow_with_shutdown(
         plan,
-        observability_runtime=observability_runtime,
+        observability=observability,
         source=source,
         sink=sink,
         terminal_sinks=terminal_sinks,
@@ -142,7 +142,7 @@ def build_dataflow(
 def build_dataflow_with_shutdown(
     plan: CompiledPlan,
     *,
-    observability_runtime: ObservabilityRuntime | None = None,
+    observability: Observability | None = None,
     source: Any | None = None,
     sink: Any | None = None,
     terminal_sinks: Mapping[tuple[int, ...], Any] | None = None,
@@ -154,7 +154,7 @@ def build_dataflow_with_shutdown(
 
     Args:
         plan: Compiled flow plan.
-        observability_runtime: Optional observability runtime for lifecycle events.
+        observability: Optional observability runtime for lifecycle events.
         source: Optional Bytewax source override (used in tests).
         sink: Optional Bytewax sink override (used in tests).
         terminal_sinks: Optional per-branch sink overrides.
@@ -165,7 +165,7 @@ def build_dataflow_with_shutdown(
     """
     if terminal_sinks is None:
         terminal_sinks = build_runtime_terminal_sinks(plan.terminal_sinks, commit_tracker)
-    resolved_runtime = observability_runtime or ObservabilityRuntime.noop()
+    resolved_runtime = observability or Observability.noop()
     _bind_commit_tracker_object(source, commit_tracker, plan.source)
     _bind_commit_tracker_object(sink, commit_tracker, plan.source)
     _bind_commit_tracker_mapping(terminal_sinks, commit_tracker, plan.source)
@@ -197,9 +197,7 @@ class _SupportsCommitBind(Protocol):
 class _SupportsTerminalTracing(Protocol):
     """Runtime sink that can record the death of the messages it writes."""
 
-    def bind_terminal_tracing(
-        self, observer: ObservabilityRuntime, flow: str, flow_run_id: str
-    ) -> None:
+    def bind_terminal_tracing(self, observer: Observability, flow: str, flow_run_id: str) -> None:
         """Make this sink emit a terminal span per message it writes."""
 
 
@@ -301,7 +299,7 @@ class _BuildContext:
         self,
         plan: CompiledPlan,
         bridge: AsyncBridge | None,
-        flow_runtime: ObservabilityRuntime,
+        flow_runtime: Observability,
         flow_run_id: str,
         source: Any | None = None,
         sink: Any | None = None,

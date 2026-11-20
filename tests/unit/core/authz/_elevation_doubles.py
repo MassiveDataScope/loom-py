@@ -7,7 +7,7 @@ from typing import Any
 
 from loom.core.authz import Decision, Grant, Permission, Role, RoleCatalog, Scope
 from loom.core.authz.elevation import elevate_scope
-from loom.core.engine.executor import RuntimeExecutor
+from loom.core.engine.executor import UseCaseExecutor
 from loom.core.use_case.use_case import UseCase
 
 _WRITE = Permission("rows.write")
@@ -81,7 +81,7 @@ class ElevatesEditor(UseCase[Any, None]):
         await elevate_scope("editor", _DECISION, at=_BOUNDARY, permission=_WRITE, catalog=_CATALOG)
 
 
-async def elevations_through(executor: RuntimeExecutor, sink: FakeSink) -> list[str]:
+async def elevations_through(executor: UseCaseExecutor, sink: FakeSink) -> list[str]:
     """The scopes *sink* saw flagged while *executor* ran one elevating execution."""
     sink.open = True
     await executor.execute(ElevatesEditor())

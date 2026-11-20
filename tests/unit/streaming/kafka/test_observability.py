@@ -4,15 +4,15 @@ import pytest
 from prometheus_client import CollectorRegistry, generate_latest
 
 from loom.core.observability.event import LifecycleEvent, Scope
-from loom.core.observability.observability import ObservabilityRuntime
+from loom.core.observability.observability import Observability
 from loom.prometheus import KafkaPrometheusMetrics
 
 pytestmark = pytest.mark.kafka
 
 
-def _make_obs(registry: CollectorRegistry) -> tuple[ObservabilityRuntime, KafkaPrometheusMetrics]:
+def _make_obs(registry: CollectorRegistry) -> tuple[Observability, KafkaPrometheusMetrics]:
     metrics = KafkaPrometheusMetrics(registry=registry)
-    return ObservabilityRuntime([metrics]), metrics
+    return Observability([metrics]), metrics
 
 
 class TestKafkaPrometheusMetrics:

@@ -13,7 +13,7 @@ your application, not in front of it.
                     ┌──────────────────────────┐
    HTTP / A2A  ────► │  your loom application   │
    (authenticated)   │  ┌────────────────────┐  │
-                     │  │    AgentRuntime    │  │
+                     │  │     AgentHost     │  │
                      │  └─────────┬──────────┘  │
                      │            │             │
                      │   usecase / sql grants   │
@@ -271,7 +271,7 @@ carries its own `init_timeout`, and the group of concurrent connection
 attempts is wrapped in its own deadline — but both are the *same*
 `ai.startup_timeout_ms`. The group's deadline is not armed when the
 connection attempts themselves start; it is computed once, as an absolute
-clock reading (`AgentRuntime._startup_deadline`), at the very top of
+clock reading (`AgentHost._startup_deadline`), at the very top of
 `__aenter__`, before `_verify_sql_readonly`, `_verify_invoker` and
 `_verify_mcp_connections` run — three synchronous checks with no timeout of
 their own — and only then handed to `_open_clients`, which arms

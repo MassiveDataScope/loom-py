@@ -14,8 +14,8 @@ from loom.core.config import ConfigContext
 from loom.core.di.container import LoomContainer
 from loom.core.discovery.base import DiscoveryResult
 from loom.core.engine.compiler import UseCaseCompiler
-from loom.core.engine.events import EventKind, RuntimeEvent
-from loom.core.engine.executor import RuntimeExecutor
+from loom.core.engine.events import EventKind, ExecutionEvent
+from loom.core.engine.executor import UseCaseExecutor
 from loom.core.engine.metrics import MetricsRecorder
 from loom.core.job.callback import ANY_CALLBACKS, CallbackOutcome, DispatchableCallbacks
 from loom.core.job.config import JobSettings
@@ -24,7 +24,7 @@ from loom.core.job.job import Job
 from loom.core.job.run import EnvelopeInvocation
 from loom.core.job.service import JobService
 from loom.core.job.timer import JobTimer
-from loom.core.observability.observability import ObservabilityRuntime
+from loom.core.observability.observability import Observability
 from loom.core.stores.profile import WORKER_PROFILE
 from loom.core.stores.repository.registration import classify_key
 from loom.core.use_case.factory import UseCaseFactory, main_repository
@@ -52,14 +52,14 @@ class RecordingMetrics:
     """A metrics adapter that keeps every runtime event it receives."""
 
     def __init__(self) -> None:
-        self.events: list[RuntimeEvent] = []
+        self.events: list[ExecutionEvent] = []
 
     @property
     def kinds(self) -> list[EventKind]:
         """The kind of each event received, in order."""
         return [event.kind for event in self.events]
 
-    def on_event(self, event: RuntimeEvent) -> None:
+    def on_event(self, event: ExecutionEvent) -> None:
         self.events.append(event)
 
 
@@ -184,13 +184,13 @@ class CeleryServiceFixture(JobService):
         metrics: MetricsRecorder | None = None,
         factory: Any = None,
         executor: Any = None,
-        observability_runtime: Any = None,
+        observability: Any = None,
         *,
         settings: JobSettings | None = None,
         callbacks: DispatchableCallbacks = ANY_CALLBACKS,
     ) -> None:
         super().__init__(
-            CeleryJobTransport(app, metrics=metrics, observability_runtime=observability_runtime),
+            CeleryJobTransport(app, metrics=metrics, observability=observability),
             factory=factory,
             executor=executor,
             settings=settings,
@@ -226,10 +226,10 @@ class JobKernel:
         container = LoomContainer(classify_key=classify_key, implicit=main_repository)
         declare_kinds(container.kinds)
         self.factory = UseCaseFactory(container)
-        self.executor = RuntimeExecutor(UseCaseCompiler())
+        self.executor = UseCaseExecutor(UseCaseCompiler())
 
     def invoke_envelope(self) -> Callable[[JobDelivery], Awaitable[Any]]:
-        return EnvelopeInvocation(self.factory, self.executor, ObservabilityRuntime.noop())
+        return EnvelopeInvocation(self.factory, self.executor, Observability.noop())
 
 
 class CeleryWorker:
@@ -271,9 +271,7 @@ class CeleryWorker:
         """
         return [m for m in self.broker.sent() if m.task.startswith(task_prefix)]
 
-    def task(
-        self, job_type: type[Job[Any]], observability_runtime: ObservabilityRuntime | None = None
-    ) -> Any:
+    def task(self, job_type: type[Job[Any]], observability: Observability | None = None) -> Any:
         """Register *job_type* and return its Celery task."""
         self.kernel.factory.register(job_type)
         return _make_job_task(
@@ -283,7 +281,7 @@ class CeleryWorker:
             self.kernel.executor,
             self.runtime,
             self.metrics,
-            observability_runtime,
+            observability,
             settings=self._settings,
         )
 
@@ -300,7 +298,7 @@ class CeleryWorker:
         *,
         attempt: int = 1,
         eager: bool | None = False,
-        observability_runtime: ObservabilityRuntime | None = None,
+        observability: Observability | None = None,
         **kwargs: Any,
     ) -> Any:
         """Run one delivery of *job_type* as the worker does and return its result.
@@ -309,7 +307,7 @@ class CeleryWorker:
             job_type: The job the task runs.
             attempt: The attempt the request carries; postponements add retries to it.
             eager: Whether the request is eager; ``None`` for a request that does not say.
-            observability_runtime: What opens the job's span.
+            observability: What opens the job's span.
             **kwargs: The task's keyword arguments: ``payload``, ``params``,
                 ``trace_id``, ``identity``, ``postponements``, ``failure_callback``.
 
@@ -320,7 +318,7 @@ class CeleryWorker:
             Retry: The task retried: its message is in :attr:`broker`.
             Exception: The error that ended the task.
         """
-        task = self.task(job_type, observability_runtime)
+        task = self.task(job_type, observability)
         task.push_request(
             id=self.TASK_ID,
             retries=attempt - 1 + kwargs.get("postponements", 0),

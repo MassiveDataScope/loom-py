@@ -40,7 +40,7 @@ from bytewax.testing import TestingSink, TestingSource  # noqa: E402
 
 from loom.core.config import ConfigContext  # noqa: E402
 from loom.core.model import LoomStruct  # noqa: E402
-from loom.core.observability.observability import ObservabilityRuntime  # noqa: E402
+from loom.core.observability.observability import Observability  # noqa: E402
 from loom.streaming import (  # noqa: E402
     BatchExpandStep,
     BatchStep,
@@ -145,7 +145,7 @@ def _ctx(tracker: KafkaCommitTracker | None) -> Any:
     return SimpleNamespace(
         plan=SimpleNamespace(name="orders"),
         current_path=(),
-        flow_runtime=ObservabilityRuntime.noop(),
+        flow_runtime=Observability.noop(),
         commit_tracker=tracker,
     )
 
@@ -255,7 +255,7 @@ class TestExpandRoutesAccounting:
             tracker,
             declared,
             False,
-            ObservabilityRuntime.noop(),
+            Observability.noop(),
             "orders",
         )
         tracker.complete(TOPIC, PARTITION, OFFSET)
@@ -274,7 +274,7 @@ class TestExpandRoutesAccounting:
             tracker,
             declared,
             False,
-            ObservabilityRuntime.noop(),
+            Observability.noop(),
             "orders",
         )
         tracker.complete(TOPIC, PARTITION, OFFSET)
@@ -296,7 +296,7 @@ class TestExpandRoutesAccounting:
             tracker,
             frozenset({AcmeOrder}),
             False,
-            ObservabilityRuntime.noop(),
+            Observability.noop(),
             "orders",
         )
 
@@ -315,7 +315,7 @@ class TestExpandRoutesAccounting:
             tracker,
             frozenset({AcmeOrder}),
             True,
-            ObservabilityRuntime.noop(),
+            Observability.noop(),
             "orders",
         )
         tracker.complete(TOPIC, PARTITION, OFFSET)
@@ -339,7 +339,7 @@ class TestExpandRoutesAccounting:
             tracker,
             frozenset({AcmeOrder}),
             False,
-            ObservabilityRuntime.noop(),
+            Observability.noop(),
             "orders",
         )
         tracker.complete(TOPIC, PARTITION, OFFSET)
@@ -406,7 +406,7 @@ class TestSinkTrackingContract:
         ctx = _adapter._BuildContext(
             plan=plan,
             bridge=None,
-            flow_runtime=ObservabilityRuntime.noop(),
+            flow_runtime=Observability.noop(),
             flow_run_id="run-1",
             terminal_sinks={},
         )
@@ -428,7 +428,7 @@ class TestSinkTrackingContract:
         ctx = _adapter._BuildContext(
             plan=cast(Any, SimpleNamespace(name="orders", terminal_sinks={}, source=source)),
             bridge=None,
-            flow_runtime=ObservabilityRuntime.noop(),
+            flow_runtime=Observability.noop(),
             flow_run_id="run-1",
             terminal_sinks={(0, 1): _UserSink()},
             commit_tracker=tracker,
@@ -448,7 +448,7 @@ def _guard_context(**plan_parts: Any) -> _adapter._BuildContext:
     return _adapter._BuildContext(
         plan=plan,
         bridge=None,
-        flow_runtime=ObservabilityRuntime.noop(),
+        flow_runtime=Observability.noop(),
         flow_run_id="run-1",
         sink=sink,
         terminal_sinks=dict.fromkeys(plan.terminal_sinks, sink),
@@ -1481,7 +1481,7 @@ class TestStorageCompletesAfterItsFlush:
             node_name="table",
             flow_name="orders",
             flow_run_id="run-1",
-            observer=ObservabilityRuntime.noop(),
+            observer=Observability.noop(),
             commit_tracker=tracker,
         )
         return sink, tracker

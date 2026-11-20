@@ -174,7 +174,7 @@ class ArgumentBinder:
                     raise RuntimeError(
                         f"{use_case}.execute declares an {binding.kind.spelling} parameter but "
                         f"no {binding.kind.name!r} resolver is bound on this executor. Call "
-                        f"RuntimeExecutor.bind_{binding.kind.name}_resolver() once the AI "
+                        f"UseCaseExecutor.bind_{binding.kind.name}_resolver() once the AI "
                         "runtime exists."
                     ) from None
 

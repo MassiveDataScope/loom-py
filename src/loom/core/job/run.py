@@ -8,9 +8,9 @@ from loom.core.job.envelope import job_context
 from loom.core.observability.event import Scope
 
 if TYPE_CHECKING:
-    from loom.core.engine.executor import RuntimeExecutor
+    from loom.core.engine.executor import UseCaseExecutor
     from loom.core.job.delivery import JobDelivery
-    from loom.core.observability.observability import ObservabilityRuntime
+    from loom.core.observability.observability import Observability
     from loom.core.use_case.factory import UseCaseFactory
 
 
@@ -26,8 +26,8 @@ class EnvelopeInvocation:
     def __init__(
         self,
         factory: UseCaseFactory,
-        executor: RuntimeExecutor,
-        observability: ObservabilityRuntime,
+        executor: UseCaseExecutor,
+        observability: Observability,
     ) -> None:
         self._factory = factory
         self._executor = executor

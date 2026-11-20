@@ -20,7 +20,7 @@ def _as_attribute(value: object) -> AttributeValue:
 
 
 class EventKind(StrEnum):
-    """Lifecycle phase emitted by an ``ObservabilityRuntime`` span."""
+    """Lifecycle phase emitted by an ``Observability`` span."""
 
     START = "start"
     END = "end"

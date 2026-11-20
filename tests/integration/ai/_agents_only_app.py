@@ -76,7 +76,7 @@ class _UnbuiltEngine:
     """Placeholder engine.
 
     ``create_app`` compiles the plans but never enters the app lifespan, which
-    is where ``AgentRuntime`` builds engines, so nothing here is instantiated.
+    is where ``AgentHost`` builds engines, so nothing here is instantiated.
     """
 
     def __init__(self) -> None:

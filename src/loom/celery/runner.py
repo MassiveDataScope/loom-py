@@ -7,7 +7,7 @@ never again. Every task is registered with ``shared=False``: it belongs to
 its ``celery_app`` alone.
 
 All jobs — both sync and async ``execute()`` — are executed through the
-:class:`~loom.core.engine.executor.RuntimeExecutor` via a per-process
+:class:`~loom.core.engine.executor.UseCaseExecutor` via a per-process
 :class:`~loom.core.async_bridge.AsyncBridge`.  This gives every job
 access to the Unit of Work, injection markers (``Input()``, ``Load()``,
 etc.), and the ability to dispatch further jobs post-commit.  The bridge
@@ -53,11 +53,11 @@ from loom.core.job.run import EnvelopeInvocation
 from loom.core.job.runner import JobRunner
 from loom.core.logger import get_logger
 from loom.core.observability.event import Scope
-from loom.core.observability.observability import ObservabilityRuntime
+from loom.core.observability.observability import Observability
 from loom.core.tracing import active_trace_id
 
 if TYPE_CHECKING:
-    from loom.core.engine.executor import RuntimeExecutor
+    from loom.core.engine.executor import UseCaseExecutor
     from loom.core.engine.metrics import MetricsRecorder
     from loom.core.job.job import Job
     from loom.core.use_case.factory import UseCaseFactory
@@ -169,10 +169,10 @@ def _make_job_task(
     celery_app: Celery,
     job_type: type[Job[Any]],
     factory: UseCaseFactory,
-    executor: RuntimeExecutor,
+    executor: UseCaseExecutor,
     process_bridge: _CeleryProcessBridge,
     metrics: MetricsRecorder | None = None,
-    observability_runtime: ObservabilityRuntime | None = None,
+    observability: Observability | None = None,
     *,
     settings: JobSettings,
 ) -> Any:
@@ -194,7 +194,7 @@ def _make_job_task(
     acknowledgement sends it again, and a hard kill sends none.
 
     Both sync and async ``execute()`` methods are driven by the
-    :class:`~loom.core.engine.executor.RuntimeExecutor` via a shared
+    :class:`~loom.core.engine.executor.UseCaseExecutor` via a shared
     :class:`~loom.core.async_bridge.AsyncBridge`, giving every job access
     to the full framework (UoW, injection markers, dispatch).  The executor
     owns the lifecycle: it opens the unit of work, commits and drains the
@@ -211,7 +211,7 @@ def _make_job_task(
         celery_app: Celery application to register the task on.
         job_type: Concrete :class:`~loom.core.job.job.Job` subclass.
         factory: Used to build the Job instance via DI.
-        executor: RuntimeExecutor driving the compiled ExecutionPlan.
+        executor: UseCaseExecutor driving the compiled ExecutionPlan.
         metrics: Optional metrics adapter.  Receives the job events the
             runner emits (``JOB_STARTED``, ``JOB_SUCCEEDED``,
             ``JOB_POSTPONED``, ``JOB_FAILED`` and ``JOB_ABANDONED``).
@@ -223,7 +223,7 @@ def _make_job_task(
     """
     options = settings.of(job_type)
     timeout = options.timeout
-    runtime = observability_runtime or ObservabilityRuntime.noop()
+    runtime = observability or Observability.noop()
     run_timeout = float(timeout) if timeout is not None and timeout > 0 else None
     name = job_type.__qualname__
     runner = JobRunner(
@@ -342,7 +342,7 @@ def _make_callback_task(
     outcome: CallbackOutcome,
     factory: UseCaseFactory,
     process_bridge: _CeleryProcessBridge,
-    observability_runtime: ObservabilityRuntime | None = None,
+    observability: Observability | None = None,
 ) -> Any:
     """Register and return the Celery task calling *callback_type*'s hook for *outcome*.
 
@@ -364,12 +364,12 @@ def _make_callback_task(
         outcome: The outcome whose hook the task calls.
         factory: Used to build the callback instance via DI.
         process_bridge: Runs an async hook.
-        observability_runtime: Opens the callback's span.
+        observability: Opens the callback's span.
 
     Returns:
         The registered Celery task object.
     """
-    runtime = observability_runtime or ObservabilityRuntime.noop()
+    runtime = observability or Observability.noop()
     name = callback_type.__qualname__
     hook_is_async = inspect.iscoroutinefunction(outcome.hook(callback_type))
 

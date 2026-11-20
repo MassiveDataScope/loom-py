@@ -22,8 +22,8 @@ from fastapi.testclient import TestClient
 from loom.core.config.errors import ConfigError
 from loom.core.di.container import LoomContainer
 from loom.core.engine.compiler import UseCaseCompiler
-from loom.core.engine.executor import RuntimeExecutor
-from loom.core.observability.observability import ObservabilityRuntime
+from loom.core.engine.executor import UseCaseExecutor
+from loom.core.observability.observability import Observability
 from loom.core.stores.repository.query import QuerySpec
 from loom.core.stores.repository.registration import classify_key
 from loom.core.tracing import get_trace_id
@@ -118,8 +118,8 @@ def _items_client(max_limit: int = 1000) -> TestClient:
             ItemsInterface
         ),
         factory,
-        RuntimeExecutor(compiler),
-        observability_runtime=ObservabilityRuntime.noop(),
+        UseCaseExecutor(compiler),
+        observability=Observability.noop(),
     )
     return TestClient(app, raise_server_exceptions=False)
 

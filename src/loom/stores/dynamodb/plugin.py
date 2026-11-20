@@ -15,7 +15,7 @@ from loom.core.connections.aws import AwsClientConfig
 from loom.core.model import BaseModel
 from loom.core.stores.catalog import MODELS_ONLY, StoreCapabilities, StoreSpec
 from loom.core.stores.plugin import StoreWiring
-from loom.core.stores.profile import StoreRuntime
+from loom.core.stores.profile import StorePluginContext
 from loom.stores.dynamodb.registry import (
     build_dynamodb_repository_registration_module,
 )
@@ -72,7 +72,7 @@ class DynamoDBStorePlugin:
         self,
         ctx: ConfigContext,
         models: Sequence[type[BaseModel]],
-        runtime: StoreRuntime,
+        runtime: StorePluginContext,
     ) -> StoreWiring:
         """Build the DynamoDB wiring for the discovered models.
 

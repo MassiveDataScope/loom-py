@@ -16,7 +16,7 @@ import pytest
 
 from loom.ai.abc import McpHandle
 from loom.ai.errors import AgentRunError, AgentRunErrorCode
-from loom.ai.execution import AgentRuntime
+from loom.ai.execution import AgentHost
 from loom.ai.execution._handle import McpMarkerResolver
 from loom.ai.execution._lifecycle import UseCaseMcpGrant
 from loom.core.di import LoomContainer
@@ -55,7 +55,7 @@ class TestAUseCaseOnlyServerIsLeftOutOfTheProbe:
             usecase="orders.get_order_status",
             parameter="gateway",
         )
-        runtime = AgentRuntime(
+        runtime = AgentHost(
             plans=[make_plan(_AGENT)],  # declares no 'mcp' capability at all
             config=make_ai_config(
                 mcp_servers=make_mcp_servers(_SERVER),

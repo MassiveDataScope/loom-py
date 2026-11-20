@@ -226,7 +226,7 @@ class TestARunLevelShapeOverrideSurvivesAnArtefactsOwnOutputCheck:
     """Regression: pydantic-ai refuses a run ``output_type`` on an agent that
     holds an output validator (``UserError: Cannot set a custom run
     'output_type' when the agent has output validators``). The engine's own
-    ``AgentRuntime.run`` docstring already promises that an overridden shape
+    ``AgentHost.run`` docstring already promises that an overridden shape
     skips the plan's own output check; this class pins that the *engine*
     itself never reaches pydantic-ai's refusal in the first place.
     """

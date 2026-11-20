@@ -24,7 +24,7 @@ from loom.core.stores import (
     StoreWiring,
     resolve_store_backend,
 )
-from loom.core.stores.profile import SERVER_PROFILE, StoreRuntime
+from loom.core.stores.profile import SERVER_PROFILE, StorePluginContext
 from tests.helpers.persistence import build_backend
 
 _GROUP = "loom.stores.plugins"
@@ -62,7 +62,7 @@ class _FakeBackend:
     name: ClassVar[str] = "fake"
     repository_type: ClassVar[type | None] = None
 
-    def build(self, ctx: ConfigContext, models: object, runtime: StoreRuntime) -> StoreWiring:
+    def build(self, ctx: ConfigContext, models: object, runtime: StorePluginContext) -> StoreWiring:
         return NullStorePlugin().build(ctx, (), runtime)
 
 

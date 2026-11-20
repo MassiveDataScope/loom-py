@@ -1,6 +1,6 @@
 """HTTP surface of the agent runtime (T086-T095, T098).
 
-Drives ``bind_agent_endpoints`` over a live :class:`AgentRuntime` backed by
+Drives ``bind_agent_endpoints`` over a live :class:`AgentHost` backed by
 scripted engines, asserting the wire contract in
 ``specs/001-ai-agent-layer/contracts/http-sse.md``: double opt-in mounting,
 401 before 404, the body cap enforced while reading, the run-error status
@@ -47,7 +47,7 @@ from loom.ai.errors import (
     AgentErrorCode,
     AgentRunErrorCode,
 )
-from loom.ai.execution import AgentRuntime
+from loom.ai.execution import AgentHost
 from loom.ai.fastapi.endpoints import bind_agent_endpoints
 from loom.core.config.errors import ConfigError
 from loom.core.di import LoomContainer
@@ -56,7 +56,7 @@ from loom.core.identity import ANONYMOUS, Identity, reset_identity, set_identity
 from loom.core.model import loom_type, msgspec_type
 from loom.core.model.redaction import Dsn
 from loom.core.observability.event import EventKind, LifecycleEvent, Scope
-from loom.core.observability.observability import ObservabilityRuntime
+from loom.core.observability.observability import Observability
 from loom.rest.auth.middleware import AuthenticationMiddleware
 from tests.integration.ai.conftest import (
     DEFAULT_OUTPUT,
@@ -137,7 +137,7 @@ async def _serving(
     max_state_bytes: int = 65536,
     health_cache_ttl_ms: int = 20,
     max_concurrent_runs: int = 8,
-    observability_runtime: ObservabilityRuntime | None = None,
+    observability: Observability | None = None,
 ) -> AsyncIterator[tuple[FastAPI, httpx.AsyncClient]]:
     """Serve an entered runtime over an in-process ASGI client."""
     config = make_ai_config(
@@ -148,7 +148,7 @@ async def _serving(
         health_cache_ttl_ms=health_cache_ttl_ms,
         max_concurrent_runs=max_concurrent_runs,
     )
-    runtime = AgentRuntime(
+    runtime = AgentHost(
         plans=list(plans if plans is not None else (make_plan(_AGENT),)),
         config=config,
         engine_plugin=CountingEngineProvider(engines=engines),  # type: ignore[arg-type]
@@ -165,7 +165,7 @@ async def _serving(
             runtime=runtime,
             config=config,
             authenticator=authenticator if authenticator is not None else StubAuthenticator(),  # type: ignore[arg-type]
-            observability_runtime=observability_runtime,
+            observability=observability,
             prefix=_PREFIX,
         )
         app.add_middleware(_IdentityMiddleware, identity=identity)
@@ -359,7 +359,7 @@ class TestMounting:
     ) -> None:
         """Opting in without an authenticator and without anonymous aborts start-up."""
         config = make_ai_config(endpoints={_AGENT: make_endpoint(allow_anonymous=False)})
-        runtime = AgentRuntime(
+        runtime = AgentHost(
             plans=[make_plan(_AGENT)],
             config=config,
             engine_plugin=CountingEngineProvider(),  # type: ignore[arg-type]
@@ -1304,7 +1304,7 @@ class TestStreamTracing:
             container=container,
             identity=identity,
             engines={_AGENT: engine},
-            observability_runtime=ObservabilityRuntime([recorder]),
+            observability=Observability([recorder]),
         ) as (_app, client):
             response = await client.post(f"{_PREFIX}/{_AGENT}/stream", json={"prompt": "p"})
             assert _sse_names(response.text) == [
@@ -1399,7 +1399,7 @@ class TestStreamTracing:
             container=container,
             identity=identity,
             engines={_AGENT: engine},
-            observability_runtime=ObservabilityRuntime([recorder]),
+            observability=Observability([recorder]),
         ) as (app, _client):
             await self._abandon_stream_after_first_frame(app, f"{_PREFIX}/{_AGENT}/stream")
 
@@ -1449,7 +1449,7 @@ class TestUsageOnTheAgentSpan:
             container=container,
             identity=identity,
             engines={_AGENT: engine if engine is not None else ScriptedEngine()},
-            observability_runtime=ObservabilityRuntime([recorder]),
+            observability=Observability([recorder]),
         ) as (_app, client):
             response = await client.post(f"{_PREFIX}/{_AGENT}/{suffix}", json={"prompt": "p"})
             assert response.status_code == 200
@@ -1528,7 +1528,7 @@ class TestUsageOnTheAgentSpan:
             container=container,
             identity=identity,
             engines={_AGENT: engine},
-            observability_runtime=ObservabilityRuntime([recorder]),
+            observability=Observability([recorder]),
         ) as (_app, client):
             response = await client.post(f"{_PREFIX}/{_AGENT}/run", json={"prompt": "p"})
             assert response.status_code == 422
@@ -1764,7 +1764,7 @@ class TestAuthenticationExclusions:
             a2a=A2AConfig(base_url=Dsn(_A2A_BASE_URL), expose=(_AGENT,)),
         )
         plans = [make_plan(_AGENT)]
-        runtime = AgentRuntime(
+        runtime = AgentHost(
             plans=plans,
             config=config,
             engine_plugin=CountingEngineProvider(),  # type: ignore[arg-type]

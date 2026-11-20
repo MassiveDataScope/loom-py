@@ -22,10 +22,10 @@ from loom.core.bootstrap import BootstrapError
 from loom.core.di.container import LoomContainer, ResolutionError
 from loom.core.discovery.base import DiscoveryResult
 from loom.core.engine.compiler import UseCaseCompiler
-from loom.core.engine.executor import RuntimeExecutor
+from loom.core.engine.executor import UseCaseExecutor
 from loom.core.errors import UnsupportedQuery
 from loom.core.model import BaseModel, ColumnField
-from loom.core.observability.observability import ObservabilityRuntime
+from loom.core.observability.observability import Observability
 from loom.core.stores.repository import BulkCreatable, Creatable, Listable, OnConflict, Readable
 from loom.core.stores.repository.registration import classify_key
 from loom.core.stores.repository.registry import repository_for
@@ -349,8 +349,8 @@ def _lookup_client() -> TestClient:
         app,
         RestInterfaceCompiler(compiler, defaults=RestApiDefaults()).compile(_LookupInterface),
         factory,
-        RuntimeExecutor(compiler),
-        observability_runtime=ObservabilityRuntime.noop(),
+        UseCaseExecutor(compiler),
+        observability=Observability.noop(),
     )
     return TestClient(app, raise_server_exceptions=False)
 

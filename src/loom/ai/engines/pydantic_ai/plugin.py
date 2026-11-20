@@ -2,7 +2,7 @@
 
 The provider is what the ``ai.engine: pydantic-ai`` setting resolves to. It
 builds one engine per plan — called exactly once per plan by
-:class:`~loom.ai.execution.AgentRuntime`, in ``__aenter__``, never per request —
+:class:`~loom.ai.execution.AgentHost`, in ``__aenter__``, never per request —
 and answers which capability kinds this adapter can serve.
 
 The plan's output schema reaches the engine through the spec; a pinned

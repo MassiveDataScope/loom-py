@@ -28,7 +28,7 @@ from __future__ import annotations
 
 from typing import TYPE_CHECKING
 
-from loom.core.engine.events import EventKind, RuntimeEvent
+from loom.core.engine.events import EventKind, ExecutionEvent
 from loom.prometheus._instruments import cached_instruments, counter_spec, histogram_spec
 
 if TYPE_CHECKING:
@@ -108,7 +108,7 @@ class PrometheusMetricsRecorder:
         self._errors_total = instruments[_ERRORS_TOTAL]
         self._job_events_total = instruments[_JOB_EVENTS_TOTAL]
 
-    def on_event(self, event: RuntimeEvent) -> None:
+    def on_event(self, event: ExecutionEvent) -> None:
         """Process a runtime event and update Prometheus instruments.
 
         Args:

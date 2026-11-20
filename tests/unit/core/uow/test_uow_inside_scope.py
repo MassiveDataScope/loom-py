@@ -19,7 +19,7 @@ import pytest
 from pymongo import AsyncMongoClient
 
 from loom.core.engine.compiler import UseCaseCompiler
-from loom.core.engine.executor import RuntimeExecutor
+from loom.core.engine.executor import UseCaseExecutor
 from loom.core.errors import UnitOfWorkInsideScope
 from loom.core.stores.catalog import DEFAULT_STORE
 from loom.core.stores.uow.abc import UnitOfWork
@@ -120,7 +120,7 @@ class TestInsideAScope:
 
     async def test_a_use_case_entering_one_by_hand_fails_with_it(self) -> None:
         manager = RecordingSessionManager(make_session())
-        executor = RuntimeExecutor(
+        executor = UseCaseExecutor(
             UseCaseCompiler(), coordinator=OrderedCommits({DEFAULT_STORE: Factory(_store())})
         )
 
@@ -131,7 +131,7 @@ class TestInsideAScope:
 
     async def test_a_use_case_entering_one_by_hand_commits_nothing_on_its_own(self) -> None:
         session = make_session()
-        executor = RuntimeExecutor(
+        executor = UseCaseExecutor(
             UseCaseCompiler(), coordinator=OrderedCommits({DEFAULT_STORE: Factory(_store())})
         )
 

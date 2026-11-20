@@ -20,7 +20,7 @@ if TYPE_CHECKING:
     from loom.core.config import ConfigContext
     from loom.core.discovery.base import DiscoveryResult
     from loom.core.environment import Environment
-    from loom.core.observability.observability import ObservabilityRuntime
+    from loom.core.observability.observability import Observability
 
 
 @dataclass(eq=False, kw_only=True)
@@ -51,7 +51,7 @@ class Application:
     environment: Environment
     code_path: Path
     discovered: DiscoveryResult
-    observability: ObservabilityRuntime
+    observability: Observability
     sql: SqlWiring
     ai: AiWiring
     job_settings: JobSettings = field(default_factory=JobSettings)

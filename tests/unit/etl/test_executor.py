@@ -8,7 +8,7 @@ from typing import Any
 
 import pytest
 
-from loom.core.observability.observability import ObservabilityRuntime
+from loom.core.observability.observability import Observability
 from loom.etl import ETLPipeline, ETLProcess, ETLStep, FromTable, IntoTable
 from loom.etl.compiler import ETLCompiler
 from loom.etl.executor import ETLExecutor, ThreadDispatcher
@@ -108,7 +108,7 @@ def executor_factory() -> ExecutorFactory:
         executor = ETLExecutor(
             reader,
             writer,
-            observability=ObservabilityRuntime([run_observer]),
+            observability=Observability([run_observer]),
             dispatcher=dispatcher,
         )
         return executor, writer, run_observer
@@ -200,7 +200,7 @@ class TestRunStep:
         executor = ETLExecutor(
             reader,
             writer,
-            observability=ObservabilityRuntime([RecordingRunObserver()]),
+            observability=Observability([RecordingRunObserver()]),
         )
 
         streaming_plan = compiler.compile_step(StepStreaming)
@@ -223,7 +223,7 @@ class TestRunStep:
         executor = ETLExecutor(
             _NonStreamingReader(),
             InMemoryTargetWriter(),
-            observability=ObservabilityRuntime([RecordingRunObserver()]),
+            observability=Observability([RecordingRunObserver()]),
         )
         streaming_plan = compiler.compile_step(StepStreaming)
 
@@ -373,7 +373,7 @@ class TestFlush:
         executor = ETLExecutor(
             InMemorySourceReader({"raw.orders": object()}),
             InMemoryTargetWriter(),
-            observability=ObservabilityRuntime([observer]),
+            observability=Observability([observer]),
         )
 
         executor.flush()

@@ -16,7 +16,7 @@ from loom.core.di.graph import ClassNode, DependencyGraph, DependencyPath, Graph
 from loom.core.engine.compiler import UseCaseCompiler
 from loom.core.execution import ExecutionBinding, Kind
 from loom.core.identity import Identity
-from loom.core.observability.observability import ObservabilityRuntime
+from loom.core.observability.observability import Observability
 from loom.core.stores.sql import SqlConfig, SqlQueryService
 from loom.core.use_case.invoker import AppInvoker
 from loom.core.use_case.kinds import AGENT, MCP
@@ -28,7 +28,7 @@ if TYPE_CHECKING:
     from loom.ai.compiler import AgentPlan
     from loom.ai.config import AiConfig, McpServerConfig
     from loom.ai.errors import AgentCompilationIssue
-    from loom.ai.execution import AgentRuntime, UseCaseMcpGrant
+    from loom.ai.execution import AgentHost, UseCaseMcpGrant
 
 
 @dataclass(frozen=True)
@@ -100,11 +100,11 @@ class AiWiring:
     ABSENT: ClassVar[AiWiring]
 
     config: AiConfig | None
-    runtime: AgentRuntime | None
+    runtime: AgentHost | None
     plans: tuple[AgentPlan, ...] = ()
 
     @classmethod
-    def hosted(cls, config: AiConfig, runtime: AgentRuntime) -> AiWiring:
+    def hosted(cls, config: AiConfig, runtime: AgentHost) -> AiWiring:
         """The wiring of *runtime*, built from *config*, with the runtime's own plans."""
         return cls(config=config, runtime=runtime, plans=runtime.plans)
 
@@ -157,14 +157,14 @@ class AiWiring:
                 )
             declared.mcp_grants({})
             return cls.ABSENT
-        from loom.ai.bootstrap import build_agent_runtime
+        from loom.ai.bootstrap import build_agent_host
         from loom.ai.config import AiConfig
         from loom.ai.registry import resolve_engine_plugin
 
         ai_cfg = ctx.section(ConfigKey.AI, AiConfig)
         grants = declared.mcp_grants(ai_cfg.mcp_servers)
         provider = resolve_engine_plugin(ai_cfg.engine)
-        runtime = build_agent_runtime(
+        runtime = build_agent_host(
             ai_cfg,
             root=code_path,
             names=names,
@@ -197,14 +197,14 @@ class AiWiring:
         Args:
             kernel: The kernel whose executor resolves the markers; its
                 container serves ``SqlQueryService`` and, optionally,
-                ``ObservabilityRuntime``.
+                ``Observability``.
         """
         if self.runtime is None:
             return
         from loom.ai.execution._handle import AgentMarkerResolver, McpMarkerResolver
 
         container = kernel.container
-        observability = container.resolve_or_none(ObservabilityRuntime)
+        observability = container.resolve_or_none(Observability)
         kernel.executor.bind_agent_resolver(
             AgentMarkerResolver(
                 self.runtime,

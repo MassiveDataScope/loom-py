@@ -261,7 +261,7 @@ class TestExecutorUsesNotFound:
         from unittest.mock import AsyncMock
 
         from loom.core.engine.compiler import UseCaseCompiler
-        from loom.core.engine.executor import RuntimeExecutor
+        from loom.core.engine.executor import UseCaseExecutor
         from loom.core.use_case.markers import LoadById
         from loom.core.use_case.use_case import UseCase
 
@@ -279,7 +279,7 @@ class TestExecutorUsesNotFound:
         repo = AsyncMock()
         repo.get_by_id = AsyncMock(return_value=None)
 
-        executor = RuntimeExecutor(UseCaseCompiler())
+        executor = UseCaseExecutor(UseCaseCompiler())
         uc = _UC()
         with pytest.raises(NotFound) as exc_info:
             await executor.execute(

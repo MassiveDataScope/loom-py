@@ -17,7 +17,7 @@ from loom.core.bootstrap.kernel import seeded_container
 from loom.core.di.container import LoomContainer
 from loom.core.di.scope import Scope
 from loom.core.logger import get_logger
-from loom.core.observability.observability import ObservabilityRuntime
+from loom.core.observability.observability import Observability
 from loom.core.stores.catalog import DEFAULT_STORE
 from loom.core.stores.repository import RepositoryCatalog
 from loom.core.stores.sql import SqlQueryService
@@ -35,7 +35,7 @@ def _leaves_everything(container: LoomContainer) -> None:
 
 
 def _binds_observability(container: LoomContainer) -> None:
-    container.register(ObservabilityRuntime, ObservabilityRuntime.noop, scope=Scope.APPLICATION)
+    container.register(Observability, Observability.noop, scope=Scope.APPLICATION)
 
 
 def _binds_repository_catalog(container: LoomContainer) -> None:
@@ -108,5 +108,5 @@ class TestReservedBindings:
             overridden(modules=(_binds_observability,))
 
         assert str(caught.value) == str(
-            ReservedBindingError.for_key(_binds_observability, ObservabilityRuntime)
+            ReservedBindingError.for_key(_binds_observability, Observability)
         )

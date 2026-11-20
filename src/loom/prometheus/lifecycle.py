@@ -49,7 +49,7 @@ class PrometheusLifecycleObserver:
     Example::
 
         adapter = PrometheusLifecycleObserver()
-        runtime = ObservabilityRuntime([adapter])
+        runtime = Observability([adapter])
 
         with runtime.span(Scope.USE_CASE, "CreateOrder"):
             ...

@@ -1,4 +1,4 @@
-"""Unit tests for ObservabilityRuntime — emit, span, error isolation, noop."""
+"""Unit tests for Observability — emit, span, error isolation, noop."""
 
 from __future__ import annotations
 
@@ -18,7 +18,7 @@ from loom.core.observability.config import (
     PrometheusObservabilityConfig,
 )
 from loom.core.observability.event import EventKind, LifecycleEvent, LifecycleStatus, Scope
-from loom.core.observability.observability import ObservabilityRuntime
+from loom.core.observability.observability import Observability
 
 
 class AcmeRuntimeRecordingObserver:
@@ -37,7 +37,7 @@ class _BrokenObserver:
 class TestEmit:
     def test_fans_out_to_all_observers(self) -> None:
         a, b = AcmeRuntimeRecordingObserver(), AcmeRuntimeRecordingObserver()
-        runtime = ObservabilityRuntime([a, b])
+        runtime = Observability([a, b])
         event = LifecycleEvent(scope=Scope.NODE, name="transform", kind=EventKind.START)
 
         runtime.emit(event)
@@ -48,7 +48,7 @@ class TestEmit:
     def test_broken_observer_does_not_stop_others(self) -> None:
         broken = _BrokenObserver()
         good = AcmeRuntimeRecordingObserver()
-        runtime = ObservabilityRuntime([broken, good])
+        runtime = Observability([broken, good])
         event = LifecycleEvent(scope=Scope.NODE, name="x", kind=EventKind.START)
 
         runtime.emit(event)
@@ -56,14 +56,14 @@ class TestEmit:
         assert len(good.events) == 1
 
     def test_empty_observers_is_safe(self) -> None:
-        runtime = ObservabilityRuntime([])
+        runtime = Observability([])
         runtime.emit(LifecycleEvent(scope=Scope.NODE, name="x", kind=EventKind.START))
 
 
 class TestSpan:
     def test_emits_start_and_end_on_success(self) -> None:
         obs = AcmeRuntimeRecordingObserver()
-        runtime = ObservabilityRuntime([obs])
+        runtime = Observability([obs])
 
         with runtime.span(Scope.USE_CASE, "CreateOrder"):
             # Intentional no-op: the test only needs the context manager to close.
@@ -75,7 +75,7 @@ class TestSpan:
 
     def test_emits_start_and_error_on_exception(self) -> None:
         obs = AcmeRuntimeRecordingObserver()
-        runtime = ObservabilityRuntime([obs])
+        runtime = Observability([obs])
 
         with pytest.raises(ValueError), runtime.span(Scope.USE_CASE, "CreateOrder"):
             raise ValueError("bad input")
@@ -85,14 +85,14 @@ class TestSpan:
         assert obs.events[1].error == "bad input"
 
     def test_error_event_reraises_exception(self) -> None:
-        runtime = ObservabilityRuntime([AcmeRuntimeRecordingObserver()])
+        runtime = Observability([AcmeRuntimeRecordingObserver()])
 
         with pytest.raises(RuntimeError, match="boom"), runtime.span(Scope.NODE, "step"):
             raise RuntimeError("boom")
 
     def test_end_event_carries_duration(self) -> None:
         obs = AcmeRuntimeRecordingObserver()
-        runtime = ObservabilityRuntime([obs])
+        runtime = Observability([obs])
 
         with runtime.span(Scope.JOB, "ingest"):
             # Intentional no-op: the test only needs the context manager to close.
@@ -104,7 +104,7 @@ class TestSpan:
 
     def test_propagates_trace_and_correlation_id(self) -> None:
         obs = AcmeRuntimeRecordingObserver()
-        runtime = ObservabilityRuntime([obs])
+        runtime = Observability([obs])
 
         with runtime.span(Scope.NODE, "x", trace_id="t-1", correlation_id="c-1"):
             # Intentional no-op: the test only needs the context manager to close.
@@ -116,7 +116,7 @@ class TestSpan:
 
     def test_meta_forwarded_to_both_events(self) -> None:
         obs = AcmeRuntimeRecordingObserver()
-        runtime = ObservabilityRuntime([obs])
+        runtime = Observability([obs])
 
         with runtime.span(Scope.NODE, "x", flow="my_flow"):
             # Intentional no-op: the test only needs the context manager to close.
@@ -128,14 +128,14 @@ class TestSpan:
 
 class TestNoop:
     def test_noop_runtime_is_callable(self) -> None:
-        runtime = ObservabilityRuntime.noop()
+        runtime = Observability.noop()
 
         with runtime.span(Scope.USE_CASE, "GetOrder"):
             # Intentional no-op: the noop runtime still needs to accept the scope.
             pass
 
     def test_noop_emit_is_safe(self) -> None:
-        runtime = ObservabilityRuntime.noop()
+        runtime = Observability.noop()
         runtime.emit(LifecycleEvent(scope=Scope.NODE, name="x", kind=EventKind.END))
 
 
@@ -151,7 +151,7 @@ class TestFromConfig:
         )
 
         with pytest.raises(ValueError, match="export_logs requires observability.log.enabled"):
-            ObservabilityRuntime.from_config(config)
+            Observability.from_config(config)
 
     def test_export_logs_installs_otel_log_export_when_logger_config_present(
         self, monkeypatch: pytest.MonkeyPatch
@@ -185,9 +185,9 @@ class TestFromConfig:
             ),
         )
 
-        runtime = ObservabilityRuntime.from_config(config)
+        runtime = Observability.from_config(config)
 
-        assert isinstance(runtime, ObservabilityRuntime)
+        assert isinstance(runtime, Observability)
         assert "extra_processors" in captured
         extra_processors = cast(tuple[object, ...], captured["extra_processors"])
         assert len(extra_processors) == 1
@@ -210,14 +210,14 @@ class TestFromConfig:
         )
         config = ObservabilityConfig(log=LogObservabilityConfig(config=LoggerConfig()))
 
-        ObservabilityRuntime.from_config(config, **given)
+        Observability.from_config(config, **given)
 
         assert captured["environment"] is expected
 
 
 class TestStartScrapeServer:
     def test_noop_when_port_is_none(self, monkeypatch: pytest.MonkeyPatch) -> None:
-        runtime = ObservabilityRuntime([], _scrape_port=None)
+        runtime = Observability([], _scrape_port=None)
         called: list[int] = []
         monkeypatch.setattr(
             "loom.core.observability.observability.start_http_server",
@@ -231,7 +231,7 @@ class TestStartScrapeServer:
     def test_calls_start_http_server_with_port_and_addr(
         self, monkeypatch: pytest.MonkeyPatch
     ) -> None:
-        runtime = ObservabilityRuntime([], _scrape_port=9090, _scrape_addr="127.0.0.1")
+        runtime = Observability([], _scrape_port=9090, _scrape_addr="127.0.0.1")
         calls: list[tuple[int, str]] = []
         monkeypatch.setattr(
             "loom.core.observability.observability.start_http_server",
@@ -243,7 +243,7 @@ class TestStartScrapeServer:
         assert calls == [(9090, "127.0.0.1")]
 
     def test_is_idempotent(self, monkeypatch: pytest.MonkeyPatch) -> None:
-        runtime = ObservabilityRuntime([], _scrape_port=9090)
+        runtime = Observability([], _scrape_port=9090)
         called: list[int] = []
         monkeypatch.setattr(
             "loom.core.observability.observability.start_http_server",
@@ -256,7 +256,7 @@ class TestStartScrapeServer:
         assert len(called) == 1
 
     def test_noop_runtime_start_scrape_server_is_safe(self) -> None:
-        runtime = ObservabilityRuntime.noop()
+        runtime = Observability.noop()
         runtime.start_scrape_server()  # must not raise
 
     def test_from_config_resolves_scrape_port_and_addr(
@@ -272,7 +272,7 @@ class TestStartScrapeServer:
             "loom.core.observability.observability.start_http_server", lambda p, addr=None: None
         )
 
-        runtime = ObservabilityRuntime.from_config(config)
+        runtime = Observability.from_config(config)
 
         assert runtime._scrape_port == 8080
         assert runtime._scrape_addr == "0.0.0.0"
@@ -286,7 +286,7 @@ class TestStartScrapeServer:
             )
         )
 
-        runtime = ObservabilityRuntime.from_config(config)
+        runtime = Observability.from_config(config)
 
         assert runtime._scrape_port is None
 
@@ -298,6 +298,6 @@ class TestStartScrapeServer:
             )
         )
 
-        runtime = ObservabilityRuntime.from_config(config)
+        runtime = Observability.from_config(config)
 
         assert runtime._scrape_port is None

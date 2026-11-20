@@ -2,7 +2,7 @@ from __future__ import annotations
 
 from typing import Protocol
 
-from loom.core.engine.events import RuntimeEvent
+from loom.core.engine.events import ExecutionEvent
 
 
 class MetricsRecorder(Protocol):
@@ -18,14 +18,14 @@ class MetricsRecorder(Protocol):
     Example::
 
         class PrometheusRecorder:
-            def on_event(self, event: RuntimeEvent) -> None:
+            def on_event(self, event: ExecutionEvent) -> None:
                 if event.kind == EventKind.EXEC_DONE:
                     DURATION.labels(usecase=event.use_case_name).observe(
                         (event.duration_ms or 0) / 1000
                     )
     """
 
-    def on_event(self, event: RuntimeEvent) -> None:
+    def on_event(self, event: ExecutionEvent) -> None:
         """Process a runtime or compile-time event.
 
         Args:
@@ -40,5 +40,5 @@ class NoMetrics:
 
     __slots__ = ()
 
-    def on_event(self, event: RuntimeEvent) -> None:
+    def on_event(self, event: ExecutionEvent) -> None:
         """Ignore *event*."""

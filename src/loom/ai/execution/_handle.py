@@ -9,13 +9,13 @@ singleton, or by a task that outlived its execution, serves each caller as
 itself and is refused past the caller's delegation. The ``Mcp()`` handle looks
 its server's grant up on every call.
 
-Running an ``Agent()`` handle goes through :meth:`AgentRuntime.run`, under the
+Running an ``Agent()`` handle goes through :meth:`AgentHost.run`, under the
 same admission and policies as a transport-driven run. Three run modes:
 ``run(prompt)`` decodes into the artefact's declared output;
 ``run(prompt, expect=X)`` decodes this call only into ``X``, without the
 artefact's own output check; ``run_text`` decodes nothing. Both overrides are
 refused before the model is called when the artefact's output hook declares
-the ``output`` field (:meth:`AgentRuntime.output_hook_shape_bound`).
+the ``output`` field (:meth:`AgentHost.output_hook_shape_bound`).
 
 ``mcp()`` and ``sql()`` on an ``Agent()`` handle return the artefact's own
 granted views (:mod:`~loom.ai.execution._grants`), over the session and
@@ -36,12 +36,12 @@ from loom.ai.execution._grants import (
     McpGrantView,
     SqlGrantView,
 )
-from loom.ai.execution._lifecycle import AgentRuntime
+from loom.ai.execution._lifecycle import AgentHost
 from loom.core.errors import IdentityFixed
 from loom.core.execution import ExecutionResolver, current_execution, execution_identity
 from loom.core.identity import Identity
 from loom.core.observability.event import Scope
-from loom.core.observability.observability import ObservabilityRuntime
+from loom.core.observability.observability import Observability
 from loom.core.observability.span import LoomSpan
 from loom.core.stores.sql.service import SqlQueryService
 
@@ -64,8 +64,8 @@ class _AgentHandle:
         self,
         *,
         name: str,
-        runtime: AgentRuntime,
-        observability: ObservabilityRuntime | None,
+        runtime: AgentHost,
+        observability: Observability | None,
         sql_query_service: SqlQueryService,
     ) -> None:
         self._name = name
@@ -92,7 +92,7 @@ class _AgentHandle:
             conversation_id: Identifier of the conversation this run
                 continues; ``None`` runs single-shot.
             state: This run's state, forwarded to
-                :meth:`~loom.ai.execution.AgentRuntime.run` unchanged.
+                :meth:`~loom.ai.execution.AgentHost.run` unchanged.
 
         Returns:
             The decoded answer, this run's own usage and its interaction id.
@@ -369,10 +369,10 @@ class AgentMarkerResolver(_MarkerResolver[str, "_AgentHandle"]):
 
     def __init__(
         self,
-        runtime: AgentRuntime,
+        runtime: AgentHost,
         *,
         sql_query_service: SqlQueryService,
-        observability: ObservabilityRuntime | None,
+        observability: Observability | None,
     ) -> None:
         super().__init__()
         self._runtime = runtime
@@ -413,7 +413,7 @@ class AgentMarkerResolver(_MarkerResolver[str, "_AgentHandle"]):
 class _McpHandle:
     """One ``Mcp(server, include=...)`` declaration over the server's shared grant.
 
-    Every call looks the grant up (:meth:`AgentRuntime.use_case_mcp_grant`)
+    Every call looks the grant up (:meth:`AgentHost.use_case_mcp_grant`)
     and goes through an :class:`~loom.ai.execution._grants.McpGrantView` of it
     filtered by this declaration's ``include``, built once per grant.
 
@@ -429,8 +429,8 @@ class _McpHandle:
         *,
         server: str,
         include: tuple[str, ...],
-        runtime: AgentRuntime,
-        observability: ObservabilityRuntime | None,
+        runtime: AgentHost,
+        observability: Observability | None,
     ) -> None:
         self._server = server
         self._include = include
@@ -522,9 +522,7 @@ class McpMarkerResolver(_MarkerResolver[tuple[str, tuple[str, ...]], "_McpHandle
         observability: Runtime every handle's span opens on, or ``None``.
     """
 
-    def __init__(
-        self, runtime: AgentRuntime, *, observability: ObservabilityRuntime | None
-    ) -> None:
+    def __init__(self, runtime: AgentHost, *, observability: Observability | None) -> None:
         super().__init__()
         self._runtime = runtime
         self._observability = observability

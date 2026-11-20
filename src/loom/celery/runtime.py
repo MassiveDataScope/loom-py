@@ -17,7 +17,7 @@ signals check, open and close the application.  Its recipe declares
   ``worker_shutdown`` closes.
 
 A worker with no model asks for its connection only
-(``StoreRuntime.connection_only``), serving no repository: its check
+(``StorePluginContext.connection_only``), serving no repository: its check
 probes the connection and creates no table, though on Postgres it still
 refuses a superuser or bypass role and scoped tables outside an external
 schema; its row-level security is never bound, so on Postgres with
@@ -293,7 +293,7 @@ def _register_tasks(
             kernel.executor,
             process_bridge,
             metrics,
-            observability_runtime=observability,
+            observability=observability,
             settings=application.job_settings,
         )
     for callback_type in application.discovered.callbacks:
@@ -304,7 +304,7 @@ def _register_tasks(
                 outcome,
                 kernel.factory,
                 process_bridge,
-                observability_runtime=observability,
+                observability=observability,
             )
 
 

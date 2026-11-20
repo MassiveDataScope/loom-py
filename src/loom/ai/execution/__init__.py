@@ -23,7 +23,7 @@ from loom.ai.errors import (
 from loom.ai.execution._lifecycle import (
     A2AClientFactory,
     AgentHealth,
-    AgentRuntime,
+    AgentHost,
     UseCaseMcpGrant,
 )
 from loom.ai.execution._mcp import McpClientFactory, SharedMcpSession
@@ -31,7 +31,7 @@ from loom.ai.execution._mcp import McpClientFactory, SharedMcpSession
 __all__ = [
     "A2AClientFactory",
     "AgentHealth",
-    "AgentRuntime",
+    "AgentHost",
     "ConcurrentMcpSession",
     "McpClientFactory",
     "McpSession",

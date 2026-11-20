@@ -1,7 +1,7 @@
 """Assembly of an agent runtime from a deployment's ``ai:`` section.
 
 The one path every transport takes from configuration to a live
-:class:`~loom.ai.execution.AgentRuntime`: resolve the engine, load and compile
+:class:`~loom.ai.execution.AgentHost`: resolve the engine, load and compile
 the artifacts, and hand both to the runtime, which opens nothing until it is
 entered.
 """
@@ -16,7 +16,7 @@ from loom.ai.abc import AgentEnginePlugin, DepsFactory
 from loom.ai.compiler import AgentCompiler
 from loom.ai.config import AiConfig
 from loom.ai.declarative import DecodedSpec, load_specs
-from loom.ai.execution import AgentRuntime, UseCaseMcpGrant
+from loom.ai.execution import AgentHost, UseCaseMcpGrant
 from loom.ai.registry import (
     configure_engine_mcp_connect_timeout,
     engine_client_factories,
@@ -29,7 +29,7 @@ from loom.core.identity import Identity
 from loom.core.stores.sql.config import SqlConfig
 from loom.core.use_case.registry import UseCaseRegistry
 
-__all__ = ["build_agent_runtime"]
+__all__ = ["build_agent_host"]
 
 
 class _NoDependencies(DepsFactory):
@@ -44,7 +44,7 @@ class _NoDependencies(DepsFactory):
         return None
 
 
-def build_agent_runtime(
+def build_agent_host(
     config: AiConfig,
     *,
     root: Path | str,
@@ -56,7 +56,7 @@ def build_agent_runtime(
     deps: DepsFactory | None = None,
     sql: SqlConfig | None = None,
     use_case_mcp: Sequence[UseCaseMcpGrant] = (),
-) -> AgentRuntime:
+) -> AgentHost:
     """Compile the declared artifacts and build the runtime that serves them.
 
     Compilation is offline and complete: every issue of every artifact is
@@ -99,7 +99,7 @@ def build_agent_runtime(
     )
     decoded = load_specs(config.specs if specs is None else specs, root=root)
     plans = compiler.compile_all(_named(decoded, names))
-    return AgentRuntime(
+    return AgentHost(
         plans=plans,
         config=config,
         engine_plugin=provider,

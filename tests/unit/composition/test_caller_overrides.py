@@ -23,9 +23,9 @@ from loom.core.bootstrap import BootstrapError
 from loom.core.config import ConfigContext
 from loom.core.di.container import BindingKey, LoomContainer
 from loom.core.di.scope import Scope
-from loom.core.engine.executor import RuntimeExecutor
+from loom.core.engine.executor import UseCaseExecutor
 from loom.core.job.job import Job
-from loom.core.observability.observability import ObservabilityRuntime
+from loom.core.observability.observability import Observability
 from loom.core.stores.catalog import StoreCatalog, StoreKey
 from loom.core.stores.repository import DefaultRepositoryBuilder
 from loom.core.stores.sql import CallerBoundSql, SqlQueryService
@@ -51,10 +51,10 @@ _RESERVED: list[BindingKey] = [
     SessionManager,
     SqlQueryService,
     CallerBoundSql,
-    ObservabilityRuntime,
+    Observability,
     StoreCatalog,
     ElevationSink,
-    RuntimeExecutor,
+    UseCaseExecutor,
     UseCaseRegistry,
     ApplicationInvoker,
 ]

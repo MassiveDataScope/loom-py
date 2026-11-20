@@ -111,18 +111,18 @@ never a default; the code door is a distinct decision, not derived from it.
 
 ### Building a runtime outside an HTTP app
 
-`loom.ai.build_agent_runtime(config, *, root, names=None, ...)` is the
+`loom.ai.build_agent_host(config, *, root, names=None, ...)` is the
 assembly `create_app` itself uses: it resolves the engine, loads the artifacts
-under `root`, compiles them and returns the `AgentRuntime` unentered. `names`
+under `root`, compiles them and returns the `AgentHost` unentered. `names`
 restricts it to some agents; `registry`, `container`, `deps`, `sql` and
 `use_case_mcp` default to empty, and `engine_plugin` replaces the provider
 resolved from `ai.engine`.
 
 ```python
-from loom.ai import build_agent_runtime
+from loom.ai import build_agent_host
 from loom.core.identity import Identity
 
-runtime = build_agent_runtime(ai_config, root=repo_root, names={"seller_reply"})
+runtime = build_agent_host(ai_config, root=repo_root, names={"seller_reply"})
 async with runtime:
     result = await runtime.run("seller_reply", prompt, identity=Identity(subject="batch"))
 ```

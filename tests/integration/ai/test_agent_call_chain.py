@@ -1,6 +1,6 @@
 """``ai.max_agent_depth``: cycle and depth bounds over the in-flight run chain (T203/T204).
 
-Every run started through ``AgentRuntime.run`` pushes its own name onto a
+Every run started through ``AgentHost.run`` pushes its own name onto a
 task-local chain and pops it in a ``finally`` — this is what a marker-driven
 nested run reuses unmodified, so the coverage lives here, one level below the
 ``AgentHandle`` adapter, where the mechanism this test protects actually
@@ -16,7 +16,7 @@ import pytest
 
 from loom.ai.abc import AgentEvent, AgentResult, Conversation, FinalEvent, HealthStatus
 from loom.ai.errors import AgentRunError, AgentRunErrorCode
-from loom.ai.execution import AgentRuntime
+from loom.ai.execution import AgentHost
 from loom.core.di import LoomContainer
 from loom.core.identity import Identity
 from tests.integration.ai.conftest import (
@@ -91,12 +91,12 @@ def _runtime(
     outer_callback: Callable[[], Awaitable[None]] | None,
     deps: StubDepsFactory,
     container: LoomContainer,
-) -> AgentRuntime:
+) -> AgentHost:
     outer_engine = _CallbackEngine(outer_callback)
     inner_engine = _CallbackEngine()
     engines = {_OUTER: outer_engine, _INNER: inner_engine}
     provider = CountingEngineProvider(engines=engines)  # type: ignore[arg-type]
-    return AgentRuntime(
+    return AgentHost(
         plans=[make_plan(_OUTER), make_plan(_INNER)],
         config=make_ai_config(max_agent_depth=max_agent_depth),
         engine_plugin=provider,  # type: ignore[arg-type]

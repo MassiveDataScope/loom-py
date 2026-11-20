@@ -7,7 +7,7 @@ from typing import TYPE_CHECKING
 from fastapi import FastAPI
 
 from loom.composition import AiWiring
-from loom.core.observability.observability import ObservabilityRuntime
+from loom.core.observability.observability import Observability
 from loom.rest.fastapi._auto_auth import _AuthWiring
 
 if TYPE_CHECKING:
@@ -21,7 +21,7 @@ def _bind_agent_surfaces(
     app: FastAPI,
     ai: AiWiring,
     auth: _AuthWiring,
-    observability_runtime: ObservabilityRuntime,
+    observability: Observability,
 ) -> None:
     """Mount the HTTP surface of every opted-in agent and the A2A surface of every exposed one.
 
@@ -43,7 +43,7 @@ def _bind_agent_surfaces(
         runtime=runtime,
         config=config,
         authenticator=auth.authenticator,
-        observability_runtime=observability_runtime,
+        observability=observability,
         prefix=_AGENTS_PREFIX,
     )
     if config.a2a is None:
@@ -57,7 +57,7 @@ def _bind_agent_surfaces(
         plans=ai.plans,
         authenticator=auth.authenticator,
         exclude_paths=auth.exclude_paths,
-        observability_runtime=observability_runtime,
+        observability=observability,
         agents_prefix=_AGENTS_PREFIX,
     )
 

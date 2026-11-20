@@ -28,7 +28,7 @@ from bytewax.outputs import DynamicSink, StatelessSinkPartition
 
 from loom.core.logger import get_logger
 from loom.core.observability.event import Scope, TerminalReason
-from loom.core.observability.observability import ObservabilityRuntime
+from loom.core.observability.observability import Observability
 from loom.core.observability.span import LoomSpan
 from loom.streaming.bytewax._batch_spans import BatchSpan, BatchWindow, emit_batch_spans
 from loom.streaming.bytewax._commit_tracker import CommitCompletionPort
@@ -70,7 +70,7 @@ class _StorageSinkPartition(StatelessSinkPartition[Message[Any]]):
         node_name: str,
         flow_name: str,
         flow_run_id: str,
-        observer: ObservabilityRuntime,
+        observer: Observability,
         commit_tracker: CommitCompletionPort | None = None,
     ) -> None:
         self._partition = partition

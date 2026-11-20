@@ -90,7 +90,7 @@ class PoolMetricsSink(Protocol):
 
 
 @dataclass(frozen=True)
-class StoreRuntime:
+class StorePluginContext:
     """What the host hands a store backend besides its configuration.
 
     Args:
@@ -155,7 +155,7 @@ __all__ = [
     "SERVER_PROFILE",
     "STREAMING_PROFILE",
     "WORKER_PROFILE",
-    "StoreRuntime",
+    "StorePluginContext",
     "PoolDefaults",
     "PoolMetricsSink",
     "RuntimeProfile",

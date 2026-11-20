@@ -263,7 +263,7 @@ class MongoUnitOfWorkFactory:
 
     Build it through :meth:`without_transactions` or :meth:`transactional`;
     register one instance and inject it into
-    :class:`~loom.core.engine.executor.RuntimeExecutor` at startup.
+    :class:`~loom.core.engine.executor.UseCaseExecutor` at startup.
 
     Args:
         new_unit_of_work: Returns a fresh, not-yet-begun unit of work.

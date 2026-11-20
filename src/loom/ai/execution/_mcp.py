@@ -125,7 +125,7 @@ class FilterTarget:
     Attributes:
         agent: The agent declaring this grant, or the registered use-case key
             when the target comes from an ``Mcp()`` marker instead of a
-            compiled agent plan (see ``AgentRuntime._use_case_filter_targets``).
+            compiled agent plan (see ``AgentHost._use_case_filter_targets``).
     """
 
     agent: str

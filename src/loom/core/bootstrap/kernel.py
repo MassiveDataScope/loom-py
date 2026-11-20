@@ -21,7 +21,7 @@ from loom.core.di.container import BindingKey, LoomContainer
 from loom.core.di.errors import describe_key
 from loom.core.engine.compilable import Compilable
 from loom.core.engine.compiler import UseCaseCompiler
-from loom.core.engine.executor import RuntimeExecutor
+from loom.core.engine.executor import UseCaseExecutor
 from loom.core.engine.metrics import MetricsRecorder
 from loom.core.environment import Environment, resolve_environment
 from loom.core.execution import ExecutionResolver
@@ -35,7 +35,7 @@ from loom.core.use_case.registry import UseCaseRegistry
 
 KERNEL_KEYS: tuple[BindingKey, ...] = (
     UseCaseFactory,
-    RuntimeExecutor,
+    UseCaseExecutor,
     UseCaseRegistry,
     ApplicationInvoker,
 )
@@ -62,7 +62,7 @@ class Kernel:
     container: LoomContainer
     compiler: UseCaseCompiler
     factory: UseCaseFactory
-    executor: RuntimeExecutor
+    executor: UseCaseExecutor
     registry: UseCaseRegistry
     invoker: AppInvoker
     metrics: MetricsRecorder | None = None
@@ -107,9 +107,9 @@ def create_kernel(
             module's service or a use case can inject
             :class:`~loom.core.environment.Environment`.
         agent_resolver: An :class:`~loom.core.execution.ExecutionResolver`
-            bound as by :meth:`~loom.core.engine.executor.RuntimeExecutor.bind_agent_resolver`.
+            bound as by :meth:`~loom.core.engine.executor.UseCaseExecutor.bind_agent_resolver`.
         mcp_resolver: An :class:`~loom.core.execution.ExecutionResolver`
-            bound as by :meth:`~loom.core.engine.executor.RuntimeExecutor.bind_mcp_resolver`.
+            bound as by :meth:`~loom.core.engine.executor.UseCaseExecutor.bind_mcp_resolver`.
 
     Returns:
         Fully built :class:`Kernel`.
@@ -244,7 +244,7 @@ class KernelRecipe:
         """Compile the use cases and register the kernel's keys in the filled *container*.
 
         Registers :class:`~loom.core.use_case.factory.UseCaseFactory`, one
-        :class:`~loom.core.engine.executor.RuntimeExecutor` (whose elevation
+        :class:`~loom.core.engine.executor.UseCaseExecutor` (whose elevation
         sink is the bound :class:`~loom.core.authz.elevation.ElevationSink`,
         if any), :class:`~loom.core.use_case.registry.UseCaseRegistry` and
         :class:`~loom.core.use_case.invoker.ApplicationInvoker`. Gives the
@@ -256,7 +256,7 @@ class KernelRecipe:
             CompilationError: When a use case does not compile.
         """
         compiler, factory = self._install_use_cases(container)
-        executor = RuntimeExecutor(
+        executor = UseCaseExecutor(
             compiler,
             coordinator=self.coordinator,
             metrics=self.metrics,
@@ -269,7 +269,7 @@ class KernelRecipe:
         )
         registry = UseCaseRegistry.build(list(self.use_cases))
         invoker = AppInvoker(factory=factory, executor=executor, registry=registry)
-        container.register_instance(RuntimeExecutor, executor)
+        container.register_instance(UseCaseExecutor, executor)
         container.register_instance(UseCaseRegistry, registry)
         container.register_instance(ApplicationInvoker, invoker)
         return Kernel(

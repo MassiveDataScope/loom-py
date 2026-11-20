@@ -1,6 +1,6 @@
 """The A2A methods themselves: ``message/send``, ``message/stream``, the rest.
 
-One handler per method, over :class:`~loom.ai.execution.AgentRuntime`, reusing
+One handler per method, over :class:`~loom.ai.execution.AgentHost`, reusing
 the pure event projection of :mod:`loom.ai.a2a.events`. The rules every agent
 transport shares — the span that survives a disconnect and the heartbeat race —
 come from :mod:`loom.ai._transport` rather than from the HTTP surface's private
@@ -44,11 +44,11 @@ from loom.ai.a2a.events import A2AEventProjector, TaskState
 from loom.ai.abc import CONVERSATION_ID_MAX_LENGTH, AgentResult
 from loom.ai.config import AiConfig
 from loom.ai.errors import AgentRunError
-from loom.ai.execution import AgentRuntime
+from loom.ai.execution import AgentHost
 from loom.ai.fastapi.response import ENCODER, AgentJSONResponse
 from loom.core.identity import Identity
 from loom.core.observability.event import Scope
-from loom.core.observability.observability import ObservabilityRuntime
+from loom.core.observability.observability import Observability
 from loom.core.observability.span import LoomSpan
 from loom.core.tracing import get_trace_id
 
@@ -204,7 +204,7 @@ def _sse_frame(request_id: int | str | None, event: Mapping[str, object]) -> byt
 
 
 async def _annotated_run(
-    runtime: AgentRuntime,
+    runtime: AgentHost,
     span: LoomSpan,
     name: str,
     prompt: str,
@@ -240,18 +240,18 @@ async def _annotated_run(
 
 
 def _make_send_handler(
-    runtime: AgentRuntime,
+    runtime: AgentHost,
     config: AiConfig,
     *,
     prefix: str,
-    observability_runtime: ObservabilityRuntime,
+    observability: Observability,
 ) -> Handler:
     """Build the ``message/send`` handler: one run, one terminal task."""
 
     async def send_message(call: Call) -> Response:
         name = call.agent.name
         prompt, context_id = _read_message(call.params, max_prompt_bytes=config.max_prompt_bytes)
-        span = observability_runtime.open_span(
+        span = observability.open_span(
             Scope.AGENT,
             "agent_run",
             trace_id=get_trace_id(),
@@ -278,7 +278,7 @@ def _make_send_handler(
 
 
 def _run_frames(
-    runtime: AgentRuntime, call: Call, prompt: str, *, task_id: str, context_id: str
+    runtime: AgentHost, call: Call, prompt: str, *, task_id: str, context_id: str
 ) -> AsyncIterator[bytes]:
     """Project one run onto A2A frames, heartbeats and terminal failure included.
 
@@ -318,11 +318,11 @@ def _run_frames(
 
 
 def _make_stream_handler(
-    runtime: AgentRuntime,
+    runtime: AgentHost,
     config: AiConfig,
     *,
     prefix: str,
-    observability_runtime: ObservabilityRuntime,
+    observability: Observability,
 ) -> Handler:
     """Build the ``message/stream`` handler: the run's events, as SSE."""
 
@@ -333,7 +333,7 @@ def _make_stream_handler(
 
         async def _framed() -> AsyncIterator[bytes]:
             with always_closed(
-                observability_runtime.open_span(
+                observability.open_span(
                     Scope.AGENT,
                     "agent_run",
                     trace_id=get_trace_id(),
@@ -364,20 +364,20 @@ def _make_unsupported_handler(method: str) -> Handler:
 
 
 def make_handlers(
-    runtime: AgentRuntime,
+    runtime: AgentHost,
     config: AiConfig,
     *,
     prefix: str,
-    observability_runtime: ObservabilityRuntime,
+    observability: Observability,
 ) -> Mapping[str, Handler]:
     """Build the method dispatch table, shared by every published agent."""
     handlers: dict[str, Handler] = {
         method: _make_unsupported_handler(method) for method in _UNSUPPORTED_METHODS
     }
     handlers[_SEND] = _make_send_handler(
-        runtime, config, prefix=prefix, observability_runtime=observability_runtime
+        runtime, config, prefix=prefix, observability=observability
     )
     handlers[_STREAM] = _make_stream_handler(
-        runtime, config, prefix=prefix, observability_runtime=observability_runtime
+        runtime, config, prefix=prefix, observability=observability
     )
     return handlers

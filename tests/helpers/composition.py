@@ -18,11 +18,11 @@ from loom.composition.resources import Resource, ResourceKind
 from loom.core.config import ConfigContext, ConfigKey
 from loom.core.di.container import LoomContainer
 from loom.core.discovery.base import DiscoveryResult
-from loom.core.engine.executor import RuntimeExecutor
+from loom.core.engine.executor import UseCaseExecutor
 from loom.core.environment import Environment
 from loom.core.model import BaseModel
 from loom.core.observability.config import ObservabilityConfig
-from loom.core.observability.observability import ObservabilityRuntime
+from loom.core.observability.observability import Observability
 from loom.core.stores import SERVER_PROFILE
 from loom.core.stores.catalog import DEFAULT_STORE, StoreKey
 from loom.core.stores.uow.abc import UnitOfWorkFactory
@@ -51,7 +51,7 @@ def composition_project(
         code_path=code_path if code_path is not None else Path.cwd(),
         config_root=config_root if config_root is not None else Path.cwd(),
         app=app if app is not None else ctx.section(ConfigKey.APP, AppConfig),
-        observability=ObservabilityRuntime.noop(),
+        observability=Observability.noop(),
         observability_config=ctx.section_or_default(
             ConfigKey.OBSERVABILITY, ObservabilityConfig, ObservabilityConfig()
         ),
@@ -114,7 +114,7 @@ class WithOverrides:
         return self._adapter.bind(application)
 
 
-def coordinator_of(executor: RuntimeExecutor) -> Any:
+def coordinator_of(executor: UseCaseExecutor) -> Any:
     """The coordinator *executor* opens a top-level writer's scope over, if any."""
     top_level = executor._boundaries._top_level  # noqa: SLF001
     return getattr(top_level, "coordinator", None)
@@ -146,16 +146,16 @@ def fixture_project(tmp_path: Path) -> ProjectFactory:
 
 
 @pytest.fixture
-def executors(monkeypatch: pytest.MonkeyPatch) -> list[RuntimeExecutor]:
-    """Every ``RuntimeExecutor`` constructed during the test, in order."""
-    built: list[RuntimeExecutor] = []
-    construct = RuntimeExecutor.__init__
+def executors(monkeypatch: pytest.MonkeyPatch) -> list[UseCaseExecutor]:
+    """Every ``UseCaseExecutor`` constructed during the test, in order."""
+    built: list[UseCaseExecutor] = []
+    construct = UseCaseExecutor.__init__
 
-    def counted(self: RuntimeExecutor, *args: Any, **kwargs: Any) -> None:
+    def counted(self: UseCaseExecutor, *args: Any, **kwargs: Any) -> None:
         built.append(self)
         construct(self, *args, **kwargs)
 
-    monkeypatch.setattr(RuntimeExecutor, "__init__", counted)
+    monkeypatch.setattr(UseCaseExecutor, "__init__", counted)
     return built
 
 
@@ -193,7 +193,7 @@ def application_of(*resources: Resource) -> Application:
 
 
 class TaskAffine:
-    """Refuses, as ``AgentRuntime`` and an MCP client do, an exit from a task it was not entered in.
+    """Refuses, as ``AgentHost`` and an MCP client do, an exit from a task it was not entered in.
 
     Attributes:
         entered_in: The task that entered it.

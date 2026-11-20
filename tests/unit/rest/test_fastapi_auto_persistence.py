@@ -24,7 +24,7 @@ from loom.core.discovery.base import DiscoveryResult
 from loom.core.model import BaseModel, ColumnField
 from loom.core.stores import NullStorePlugin, StoreWiring
 from loom.core.stores.catalog import MODELS_ONLY, StoreCapabilities, StoreSpec
-from loom.core.stores.profile import SERVER_PROFILE, StoreRuntime
+from loom.core.stores.profile import SERVER_PROFILE, StorePluginContext
 from loom.core.use_case.use_case import UseCase
 from loom.rest.fastapi.auto import create_app
 from loom.rest.fastapi.runtime import _discover_components
@@ -198,14 +198,14 @@ class _RecordingBackend:
     name: ClassVar[str] = "recording"
     repository_type: ClassVar[type[Any] | None] = None
     events: ClassVar[list[tuple[str, tuple[type[BaseModel], ...]]]] = []
-    runtimes: ClassVar[list[StoreRuntime]] = []
+    runtimes: ClassVar[list[StorePluginContext]] = []
 
     def capabilities(self, spec: StoreSpec) -> StoreCapabilities:
         del spec
         return MODELS_ONLY
 
     def build(
-        self, ctx: ConfigContext, models: Sequence[type[BaseModel]], runtime: StoreRuntime
+        self, ctx: ConfigContext, models: Sequence[type[BaseModel]], runtime: StorePluginContext
     ) -> StoreWiring:
         self.events.append(("build", tuple(models)))
         self.runtimes.append(runtime)

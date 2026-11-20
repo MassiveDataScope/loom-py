@@ -7,7 +7,7 @@ from confluent_kafka import TopicPartition
 from prometheus_client import CollectorRegistry, generate_latest
 
 from loom.core.observability.event import LifecycleEvent
-from loom.core.observability.observability import ObservabilityRuntime
+from loom.core.observability.observability import Observability
 from loom.prometheus import KafkaPrometheusMetrics
 from loom.streaming.kafka import (
     ConsumerSettings,
@@ -113,7 +113,7 @@ class TestKafkaProducerClient:
         installer = install_raw_producer_stub(monkeypatch)
         producer = KafkaProducerClient(
             ProducerSettings(brokers=("k1:9092",)),
-            obs=ObservabilityRuntime([kafka_metrics]),
+            obs=Observability([kafka_metrics]),
         )
 
         producer.send(KafkaRecord(topic="orders", key=b"k", value=b"payload"))
@@ -138,7 +138,7 @@ class TestKafkaProducerClient:
 
         producer = KafkaProducerClient(
             ProducerSettings(brokers=("k1:9092",)),
-            obs=ObservabilityRuntime([_RecordingObserver()]),
+            obs=Observability([_RecordingObserver()]),
         )
 
         producer.send(
@@ -258,7 +258,7 @@ class TestKafkaConsumerClient:
             ConsumerSettings(
                 brokers=("k1:9092",), group_id="g1", topics=("orders",), delivery="at_most_once"
             ),
-            obs=ObservabilityRuntime([_RecordingObserver()]),
+            obs=Observability([_RecordingObserver()]),
         )
 
         record = consumer.poll(100)
@@ -381,7 +381,7 @@ class TestKafkaConsumerClient:
             ConsumerSettings(
                 brokers=("k1:9092",), group_id="g1", topics=("orders",), delivery="at_most_once"
             ),
-            obs=ObservabilityRuntime([kafka_metrics]),
+            obs=Observability([kafka_metrics]),
         )
 
         consumer.poll(100)

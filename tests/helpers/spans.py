@@ -17,7 +17,7 @@ from opentelemetry.sdk.trace.export.in_memory_span_exporter import InMemorySpanE
 from opentelemetry.sdk.trace.sampling import Sampler
 
 from loom.core.observability.event import LifecycleEvent, Scope
-from loom.core.observability.observability import ObservabilityRuntime
+from loom.core.observability.observability import Observability
 from loom.core.observability.otel_ids import LoomMessageIdGenerator
 
 
@@ -45,7 +45,7 @@ class EventCollector:
 class SpanRecorder:
     """An observability runtime wired to an in-memory span exporter."""
 
-    runtime: ObservabilityRuntime
+    runtime: Observability
     exporter: InMemorySpanExporter
     collector: EventCollector
 
@@ -105,7 +105,7 @@ def build_recorder(
     )
     provider.add_span_processor(SimpleSpanProcessor(exporter))
     collector = EventCollector()
-    runtime = ObservabilityRuntime(
+    runtime = Observability(
         [collector],
         tracer=provider.get_tracer("loom.test"),
         _max_span_links=max_span_links,

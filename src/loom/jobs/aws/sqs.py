@@ -14,7 +14,7 @@ import msgspec
 
 from loom.core.config import ConfigKey
 from loom.core.connections.aws import AwsClientConfig, aws_error_code
-from loom.core.engine.events import EventKind, RuntimeEvent
+from loom.core.engine.events import EventKind, ExecutionEvent
 from loom.core.engine.metrics import NoMetrics
 from loom.core.engine.post_commit import log_never_ran
 from loom.core.job.config import JobSettings
@@ -285,7 +285,7 @@ class SQSJobTransport:
         )
         send = _PendingSQSSend(target, envelope.job, task_id, message)
         self._metrics.on_event(
-            RuntimeEvent(
+            ExecutionEvent(
                 kind=EventKind.JOB_DISPATCHED,
                 use_case_name=dispatch.job_type.__qualname__,
                 trace_id=envelope.trace_id,

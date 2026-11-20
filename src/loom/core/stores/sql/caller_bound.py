@@ -32,7 +32,7 @@ from typing import Any
 
 from loom.core.identity import Identity
 from loom.core.observability.event import Scope
-from loom.core.observability.observability import ObservabilityRuntime
+from loom.core.observability.observability import Observability
 from loom.core.stores.sql.abc.contracts import SqlQueryResult
 from loom.core.stores.sql.abc.errors import RolesNotBoundError
 from loom.core.stores.sql.config import SqlConfig
@@ -99,7 +99,7 @@ class CallerBoundSql:
         self,
         service: SqlQueryService,
         config: SqlConfig,
-        observability: ObservabilityRuntime | None = None,
+        observability: Observability | None = None,
     ) -> None:
         self._service = service
         self._observability = observability

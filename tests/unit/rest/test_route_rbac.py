@@ -16,9 +16,9 @@ from fastapi.testclient import TestClient
 
 from loom.core.di.container import LoomContainer
 from loom.core.engine.compiler import UseCaseCompiler
-from loom.core.engine.executor import RuntimeExecutor
+from loom.core.engine.executor import UseCaseExecutor
 from loom.core.identity import Identity, reset_identity, set_identity
-from loom.core.observability.observability import ObservabilityRuntime
+from loom.core.observability.observability import Observability
 from loom.core.stores.repository.registration import classify_key
 from loom.core.use_case.factory import UseCaseFactory, main_repository
 from loom.core.use_case.use_case import UseCase
@@ -95,8 +95,8 @@ def _client(interface: type[RestInterface[Any]], identity: Identity | None) -> T
         app,
         RestInterfaceCompiler(compiler).compile(interface),
         factory,
-        RuntimeExecutor(compiler),
-        observability_runtime=ObservabilityRuntime.noop(),
+        UseCaseExecutor(compiler),
+        observability=Observability.noop(),
     )
     app.add_middleware(AcmePublishedIdentityMiddleware, identity=identity)
     return TestClient(app, raise_server_exceptions=False)

@@ -211,14 +211,14 @@ class TestTaskAffinity:
 
         assert affine.entered_in is not asyncio.current_task()
 
-    async def test_a_real_agent_runtime_closes_cleanly(self) -> None:
+    async def test_a_real_agent_host_closes_cleanly(self) -> None:
         # Local imports: the AI pillar is an optional extra.
         pytest.importorskip("loom.ai.execution")
-        from loom.ai.execution import AgentRuntime
+        from loom.ai.execution import AgentHost
         from loom.core.di import LoomContainer
         from tests.helpers.ai import CountingEngineProvider, StubDepsFactory, make_ai_config
 
-        runtime = AgentRuntime(
+        runtime = AgentHost(
             plans=[],
             config=make_ai_config(),
             engine_plugin=CountingEngineProvider(engines={}),  # type: ignore[arg-type]

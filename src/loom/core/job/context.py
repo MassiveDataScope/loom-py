@@ -83,7 +83,7 @@ async def flush_pending_dispatches() -> None:
     if active_channel() is not None and not execution_ended():
         raise RuntimeError(
             "flush_pending_dispatches() cannot run inside an execution: "
-            "RuntimeExecutor owns the post-commit channel and drains it "
+            "UseCaseExecutor owns the post-commit channel and drains it "
             "after the unit of work closes."
         )
     channel = _fallback.get()

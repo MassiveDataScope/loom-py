@@ -15,7 +15,7 @@ Builds one handler at startup per
 4. Builds the :class:`~loom.core.use_case.use_case.UseCase` instance via the
    :class:`~loom.core.use_case.factory.UseCaseFactory`, only once the request
    parameters are valid.
-5. Drives execution through :class:`~loom.core.engine.executor.RuntimeExecutor`.
+5. Drives execution through :class:`~loom.core.engine.executor.UseCaseExecutor`.
 6. Returns a :class:`~loom.rest.fastapi.response.MsgspecJSONResponse`: a
    :class:`~loom.core.use_case.Created` result answers ``201`` with its
    ``value``, any other result the route's ``status_code``.
@@ -43,13 +43,13 @@ from starlette.datastructures import QueryParams
 from starlette.requests import Request
 from starlette.responses import Response
 
-from loom.core.engine.executor import RuntimeExecutor
+from loom.core.engine.executor import UseCaseExecutor
 from loom.core.errors import BODY_FIELD, BoundaryValidationError, Forbidden, LoomError
 from loom.core.errors.codes import ErrorCode
 from loom.core.identity import Identity, current_identity
 from loom.core.model import LoomType, loom_type, msgspec_type
 from loom.core.observability.event import Scope
-from loom.core.observability.observability import ObservabilityRuntime
+from loom.core.observability.observability import Observability
 from loom.core.stores.repository.query import (
     FilterGroup,
     FilterOp,
@@ -622,8 +622,8 @@ class _RouteHandler:
         self,
         runtime: _ResolvedRoute,
         factory: UseCaseFactory,
-        executor: RuntimeExecutor,
-        observability: ObservabilityRuntime,
+        executor: UseCaseExecutor,
+        observability: Observability,
     ) -> None:
         self._runtime = runtime
         self._factory = factory
@@ -712,8 +712,8 @@ def bind_interfaces(
     app: FastAPI,
     compiled_routes: Sequence[CompiledRoute],
     factory: UseCaseFactory,
-    executor: RuntimeExecutor,
-    observability_runtime: ObservabilityRuntime,
+    executor: UseCaseExecutor,
+    observability: Observability,
 ) -> dict[str, Any]:
     """Register compiled routes on a FastAPI application.
 
@@ -732,7 +732,7 @@ def bind_interfaces(
             :class:`~loom.rest.compiler.RestInterfaceCompiler`.
         factory: Use-case factory for constructing instances per request.
         executor: Runtime executor that drives the use-case pipeline.
-        observability_runtime: Shared runtime used to emit request lifecycle
+        observability: Shared runtime used to emit request lifecycle
             events around each handler execution.
 
     Returns:
@@ -748,13 +748,13 @@ def bind_interfaces(
             routes,
             factory,
             executor,
-            observability_runtime=ObservabilityRuntime.noop(),
+            observability=Observability.noop(),
         )
     """
     component_registry: dict[str, Any] = {}
 
     for cr in compiled_routes:
-        handler = _RouteHandler(_ResolvedRoute.of(cr), factory, executor, observability_runtime)
+        handler = _RouteHandler(_ResolvedRoute.of(cr), factory, executor, observability)
         summary, description = _route_docs(cr)
         request_body = build_request_body_schema(cr, component_registry)
         responses = build_success_responses(cr, component_registry)

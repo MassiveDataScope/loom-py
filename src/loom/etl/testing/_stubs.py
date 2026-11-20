@@ -179,7 +179,7 @@ class RecordingRunObserver(LifecycleObserver):
     Example::
 
         observer = RecordingRunObserver()
-        runtime = ObservabilityRuntime([observer])
+        runtime = Observability([observer])
         executor = ETLExecutor(reader, writer, observability=runtime)
         executor.run_step(plan, params)
 

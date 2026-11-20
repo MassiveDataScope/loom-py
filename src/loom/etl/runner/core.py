@@ -14,7 +14,7 @@ from loom.core.checks import CheckScope, enforce_deploy_checks
 from loom.core.config import ConfigContext, ConfigResolver
 from loom.core.config.convert import convert_config
 from loom.core.environment import Environment, resolve_environment
-from loom.core.observability.observability import ObservabilityRuntime
+from loom.core.observability.observability import Observability
 from loom.core.observability.protocol import LifecycleObserver
 from loom.core.runner import flush_runner
 from loom.etl.checkpoint import CheckpointStore, TempCleaner
@@ -68,7 +68,7 @@ class ETLRunner:
         self,
         reader: SourceReader,
         writer: TargetWriter,
-        observability: ObservabilityRuntime | None = None,
+        observability: Observability | None = None,
         dispatcher: ParallelDispatcher | None = None,
         checkpoint_store: CheckpointStore | None = None,
         client_executor: ClientCommandExecutor | None = None,
@@ -78,7 +78,7 @@ class ETLRunner:
         self._executor = ETLExecutor(
             reader,
             writer,
-            observability or ObservabilityRuntime.noop(),
+            observability or Observability.noop(),
             dispatcher,
             checkpoint_store,
             client_executor,
@@ -127,7 +127,7 @@ class ETLRunner:
         """
         resolved_environment = resolve_environment(environment)
         resolved_obs_config = obs_config or ETLObservabilityConfig()
-        observability = ObservabilityRuntime.from_config(
+        observability = Observability.from_config(
             resolved_obs_config, environment=resolved_environment
         )
         if config_context is not None:
@@ -151,7 +151,7 @@ class ETLRunner:
         cls,
         config: StorageConfig,
         obs_config: ETLObservabilityConfig,
-        observability: ObservabilityRuntime,
+        observability: Observability,
         *,
         spark: SparkSession | None = None,
         dispatcher: ParallelDispatcher | None = None,
@@ -165,11 +165,11 @@ class ETLRunner:
         if obs_config.lineage.enabled:
             lineage_store = make_lineage_store(config, obs_config.lineage, spark)
             if lineage_store is not None:
-                observability = ObservabilityRuntime(
+                observability = Observability(
                     [*observability.observers, LineageObserver(lineage_store)]
                 )
         if extra_observers:
-            observability = ObservabilityRuntime([*observability.observers, *extra_observers])
+            observability = Observability([*observability.observers, *extra_observers])
         checkpoint_store = make_checkpoint_store(config, spark, cleaner)
         client_executor = make_client_executor(config, spark)
         return cls(
@@ -230,9 +230,7 @@ class ETLRunner:
         context = _load_context(path, resolvers=resolvers, environment=resolved_environment)
         storage_config, obs_config = _parse_sections(context)
         storage_config.validate()
-        observability = ObservabilityRuntime.from_config(
-            obs_config, environment=resolved_environment
-        )
+        observability = Observability.from_config(obs_config, environment=resolved_environment)
         enforce_deploy_checks(context, resolved_environment, scope=CheckScope.without_rest())
         return cls._assemble(
             storage_config,

@@ -15,7 +15,7 @@ from pydantic import BaseModel, ConfigDict
 
 from loom.ai.abc import StateShape
 from loom.ai.errors import AgentRunError, AgentRunErrorCode
-from loom.ai.execution import AgentRuntime
+from loom.ai.execution import AgentHost
 from loom.ai.execution._handle import _AgentHandle
 from loom.core.di import LoomContainer
 from loom.core.execution import ExecutionScope
@@ -72,8 +72,8 @@ _REQUIRED_PYDANTIC_SCHEMA_STATE = StateShape(
 )
 
 
-def _runtime(plan: Any, engine: RecordingScriptedEngine) -> AgentRuntime:
-    return AgentRuntime(
+def _runtime(plan: Any, engine: RecordingScriptedEngine) -> AgentHost:
+    return AgentHost(
         plans=[plan],
         config=make_ai_config(),
         engine_plugin=CountingEngineProvider(engines={_AGENT: engine}),  # type: ignore[arg-type]

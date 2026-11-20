@@ -19,7 +19,7 @@ from loom.ai.abc import (
 from loom.ai.errors import AgentRunError, AgentRunErrorCode
 from loom.core.di import LoomContainer
 from loom.core.engine.compiler import UseCaseCompiler
-from loom.core.engine.executor import RuntimeExecutor
+from loom.core.engine.executor import UseCaseExecutor
 from loom.core.engine.plan import ExecutionPlan
 from loom.core.execution import current_execution, execution_identity
 from loom.core.identity import Identity
@@ -848,7 +848,7 @@ class UseCaseTest(Generic[ResultT]):
         """
         declarer = f"{type(self._use_case).__qualname__}.execute"
         harness = type(self).__name__
-        executor = RuntimeExecutor(
+        executor = UseCaseExecutor(
             UseCaseCompiler(),
             agent_resolver=_AgentDoubles(declarer, harness, self._agent_doubles),
             mcp_resolver=_McpDoubles(declarer, harness, self._mcp_doubles),

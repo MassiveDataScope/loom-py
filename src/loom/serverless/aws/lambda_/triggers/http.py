@@ -28,7 +28,7 @@ from starlette.routing import Route
 
 from loom.composition import Application, LoopHost, Project, Recipe
 from loom.core.config import ConfigContext, ConfigKey
-from loom.core.observability.observability import ObservabilityRuntime
+from loom.core.observability.observability import Observability
 from loom.core.stores import LAMBDA_PROFILE
 from loom.core.stores.sql import SqlConfig
 from loom.rest.auth import Authenticator
@@ -123,7 +123,7 @@ def _starlette_app(application: Application, declared: RestDeclaration) -> Starl
     return app
 
 
-def _route(compiled: CompiledRoute, api: CompiledApi, observability: ObservabilityRuntime) -> Route:
+def _route(compiled: CompiledRoute, api: CompiledApi, observability: Observability) -> Route:
     """One Starlette route running *compiled* through the router runtime.
 
     The path keeps bare ``{name}`` parameters: a Starlette convertor such as
@@ -140,7 +140,7 @@ class _RouteEndpoint:
     """Validates the path parameters of one route as FastAPI does, then runs it."""
 
     def __init__(
-        self, compiled: CompiledRoute, api: CompiledApi, observability: ObservabilityRuntime
+        self, compiled: CompiledRoute, api: CompiledApi, observability: Observability
     ) -> None:
         runtime = _ResolvedRoute.of(compiled)
         self._handler = _RouteHandler(runtime, api.factory, api.executor, observability)

@@ -1,7 +1,7 @@
 """UnitOfWork and UnitOfWorkFactory protocols.
 
 These protocols define the transaction boundary contract that
-:class:`~loom.core.engine.executor.RuntimeExecutor` uses to manage commit
+:class:`~loom.core.engine.executor.UseCaseExecutor` uses to manage commit
 and rollback around each UseCase execution.
 
 No backend-specific types are imported here — implementations may back these
@@ -50,7 +50,7 @@ class UnitOfWork(Protocol):
     manager interface delegates to :meth:`begin` / :meth:`commit` /
     :meth:`rollback` automatically.
 
-    :class:`~loom.core.engine.executor.RuntimeExecutor` drives the unit of
+    :class:`~loom.core.engine.executor.UseCaseExecutor` drives the unit of
     work through :meth:`__aenter__` / :meth:`__aexit__` only; the explicit
     methods stay for adapters and hand-driven use.
 
@@ -123,12 +123,12 @@ class UnitOfWorkFactory(Protocol):
     """Factory that creates fresh :class:`UnitOfWork` instances.
 
     One factory is typically registered per application and injected into
-    :class:`~loom.core.engine.executor.RuntimeExecutor` at startup.
+    :class:`~loom.core.engine.executor.UseCaseExecutor` at startup.
 
     Example::
 
         factory = SQLAlchemyUnitOfWorkFactory(session_manager)
-        executor = RuntimeExecutor(compiler, uow_factory=factory)
+        executor = UseCaseExecutor(compiler, uow_factory=factory)
     """
 
     def create(self) -> UnitOfWork:

@@ -38,7 +38,7 @@ class LogObservabilityConfig(
         enabled: Enable the structlog observer. Defaults to ``True``.
         config: Optional full logger configuration. When ``None``, logging
             must have been configured externally before
-            ``ObservabilityRuntime.from_config`` is called.
+            ``Observability.from_config`` is called.
     """
 
     enabled: bool = True

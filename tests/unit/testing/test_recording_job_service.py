@@ -9,7 +9,7 @@ from typing import Any
 import pytest
 
 from loom.core.engine.compiler import UseCaseCompiler
-from loom.core.engine.executor import RuntimeExecutor
+from loom.core.engine.executor import UseCaseExecutor
 from loom.core.identity import ANONYMOUS, Identity
 from loom.core.job.context import clear_pending_dispatches, flush_pending_dispatches
 from loom.core.job.job import Job
@@ -61,8 +61,8 @@ def service(transport: RecordingJobTransport) -> JobService:
 
 
 @pytest.fixture
-def executor() -> RuntimeExecutor:
-    return RuntimeExecutor(
+def executor() -> UseCaseExecutor:
+    return UseCaseExecutor(
         UseCaseCompiler(), coordinator=OrderedCommits({DEFAULT_STORE: StubUnitOfWorkFactory(Log())})
     )
 
@@ -76,7 +76,7 @@ def _composed_service(tmp_path: Path, config: dict[str, Any], *jobs: type[Job[An
 
 class TestRecordingJobTransport:
     async def test_a_committed_dispatch_is_recorded_with_its_caller(
-        self, service: JobService, transport: RecordingJobTransport, executor: RuntimeExecutor
+        self, service: JobService, transport: RecordingJobTransport, executor: UseCaseExecutor
     ) -> None:
         await executor.execute(_Ship(service, fail=False), identity=_ALICE)
 
@@ -91,7 +91,7 @@ class TestRecordingJobTransport:
         ) == (ShipJob, {"note": "fragile"}, {"order": 7}, "shipping", 0, _ALICE)
 
     async def test_an_anonymous_caller_is_recorded_as_no_caller(
-        self, service: JobService, transport: RecordingJobTransport, executor: RuntimeExecutor
+        self, service: JobService, transport: RecordingJobTransport, executor: UseCaseExecutor
     ) -> None:
         """The capture every transport makes: the job wire carries no anonymous caller."""
         await executor.execute(_Ship(service, fail=False), identity=ANONYMOUS)
@@ -99,7 +99,7 @@ class TestRecordingJobTransport:
         assert [record.identity for record in transport.dispatched] == [None]
 
     async def test_a_rolled_back_dispatch_is_not_recorded(
-        self, service: JobService, transport: RecordingJobTransport, executor: RuntimeExecutor
+        self, service: JobService, transport: RecordingJobTransport, executor: UseCaseExecutor
     ) -> None:
         failing = _Ship(service, fail=True)
 

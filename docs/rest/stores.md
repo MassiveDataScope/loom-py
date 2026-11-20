@@ -87,7 +87,7 @@ A backend is a class with a no-argument constructor, a `name`, a
 `build(ctx, models, runtime) -> StoreWiring`. `repository_type` is the
 repository class the auto-CRUD gate inspects, and it is known before `build`.
 `None` means the backend serves no repositories. `runtime` is a
-`StoreRuntime`: the `RuntimeProfile` of the entry point building it
+`StorePluginContext`: the `RuntimeProfile` of the entry point building it
 (`server`, `worker`, ...), whose defaults size any connection pool the backend
 opens, an optional pool-metrics sink, `connection_only`, and `catalog`, the
 `StoreCatalog` the composition loaded once, `store`, the key of the store it
@@ -130,7 +130,7 @@ import msgspec
 from loom.core.config import ConfigContext
 from loom.core.model import BaseModel
 from loom.core.model.introspection import get_id_attribute
-from loom.core.stores import StoreRuntime, StoreWiring
+from loom.core.stores import StorePluginContext, StoreWiring
 from loom.core.stores.repository import RepositoryBuildContext, build_repository_registration_module
 
 from billing_ledger.client import LedgerClient
@@ -147,7 +147,7 @@ class LedgerBackend:
     repository_type: ClassVar[type[Any] | None] = RepositoryLedger
 
     def build(
-        self, ctx: ConfigContext, models: Sequence[type[BaseModel]], runtime: StoreRuntime
+        self, ctx: ConfigContext, models: Sequence[type[BaseModel]], runtime: StorePluginContext
     ) -> StoreWiring:
         # ConfigError when the store is missing, names another backend or is invalid.
         store = runtime.catalog.served_by(self.name, runtime.store)
@@ -921,8 +921,8 @@ class Measurement(BaseModel):
     at startup with `UnservedModelError`, in the API as well as the worker.
   - A `JobService` your `modules` register is kept instead of being replaced;
     the framework-owned keys (`SessionManager`, `SqlQueryService`,
-    `CallerBoundSql`, `ObservabilityRuntime`, `ElevationSink`,
-    `RuntimeExecutor`, `UseCaseRegistry`, `ApplicationInvoker`) are reserved
+    `CallerBoundSql`, `Observability`, `ElevationSink`,
+    `UseCaseExecutor`, `UseCaseRegistry`, `ApplicationInvoker`) are reserved
     and a module that binds one fails startup; see
     [Caller bindings and framework defaults](../getting-started/composition.md#caller-bindings-and-framework-defaults).
 - Every engine's connection follows one standard
@@ -990,7 +990,7 @@ class Measurement(BaseModel):
   connections per process (it allowed thirty); the API keeps five plus five
   and recycles connections every 1800 s. Declare `database.pool` to keep
   other values.
-- `StorePlugin.build` takes a third argument, the `StoreRuntime`.
+- `StorePlugin.build` takes a third argument, the `StorePluginContext`.
 - A worker with a malformed `database` section now fails at startup instead
   of running without its database.
 

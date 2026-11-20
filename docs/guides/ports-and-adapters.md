@@ -103,7 +103,7 @@ port.
   when first used.
 - A standalone kernel takes the resolvers as
   `create_kernel(agent_resolver=..., mcp_resolver=...)`, or later through
-  `RuntimeExecutor.bind_agent_resolver` and `bind_mcp_resolver`. A resolver is
+  `UseCaseExecutor.bind_agent_resolver` and `bind_mcp_resolver`. A resolver is
   a `loom.core.execution.ExecutionResolver`: `resolve(declaration, annotation)`
   returns the handle, and the handle reads the identity at call time.
 
@@ -156,12 +156,12 @@ cycles therefore stop kernel creation:
 The framework owns some keys. A module that binds one fails right after it
 runs:
 
-- `create_kernel` reserves `UseCaseFactory`, `RuntimeExecutor`,
+- `create_kernel` reserves `UseCaseFactory`, `UseCaseExecutor`,
   `UseCaseRegistry` and `ApplicationInvoker`
   (`loom.core.bootstrap.kernel.KERNEL_KEYS`) and raises `BootstrapError`
   naming the module and the key.
 - A composed application also reserves `SqlQueryService`, `CallerBoundSql`,
-  `ObservabilityRuntime`, `StoreCatalog`, `ElevationSink` and each store's
+  `Observability`, `StoreCatalog`, `ElevationSink` and each store's
   `SessionManager` or `MongoSessions`, and raises
   `loom.composition.ReservedBindingError`.
 
@@ -194,7 +194,7 @@ order; `create_app` loads the project (`Project.load`) and calls
    start-up in a deployed environment.
 2. `build_stores`: every store the discovered models use is built.
 3. `register`: the container is filled in this order: the seed keys
-   (`AppConfig`, `Environment`, `ObservabilityRuntime`, `StoreCatalog`), the
+   (`AppConfig`, `Environment`, `Observability`, `StoreCatalog`), the
    caller's modules, the overrides, each store's repositories, the cache
    module, the kernel (which compiles the use cases), the job service, the SQL
    collaborators.
@@ -361,7 +361,7 @@ Known debt:
 |---|---|---|
 | REST adapter builds the use case | `RestUseCaseDispatcher(executor)`; `await adapter.handle(CreateUser(repo=users), ExecutionRequest(params=p, dependencies={User: users}))` | `RestUseCaseDispatcher(kernel.executor, factory=kernel.factory)`; `await adapter.handle(CreateUser, ExecutionRequest(params=p))`, with `users` bound in the container. `ExecutionRequest.dependencies` is removed. |
 | Sealed container | `application.kernel.container.register(...)` after start-up | Bind the key in a module: a discovered `Installer` in `app.packages`. A sealed container raises `ContainerSealed`. |
-| Kernel keys | A module binding `UseCaseFactory`, `RuntimeExecutor`, `UseCaseRegistry` or `ApplicationInvoker` was silently replaced | Drop the binding; `create_kernel` raises `BootstrapError`, a composed application `ReservedBindingError`. |
+| Kernel keys | A module binding `UseCaseFactory`, `UseCaseExecutor`, `UseCaseRegistry` or `ApplicationInvoker` was silently replaced | Drop the binding; `create_kernel` raises `BootstrapError`, a composed application `ReservedBindingError`. |
 | Acting as someone else | `set_identity(X)` then a call, inside a use case | `executor.run(UseCase, identity=X)` or `invoker.for_identity(X).invoke(...)`. `set_identity` inside work raises `IdentityFixed`. |
 | Long background work | Ran as the request's caller indefinitely | Runs as the caller for at most `identity.max_delegation_seconds`; switch to a system identity with `executor.run(UseCase, identity=...)`. |
 | Job wire | `encode_identity(identity)` only | `Delegation(caller, until).encoded()` and `Delegation.decoded(payload)` carry the deadline; `encode_job_message(..., identity=)` also takes a `Delegation`. Messages without `until` get a fresh window at the worker. |
@@ -373,6 +373,6 @@ Known debt:
 | Kernel builder | `bootstrap_app(...)` returning `BootstrapResult`; `KernelRuntime`; `kernel.app` | `create_kernel(...)` returning `Kernel`, the only builder; the invoker is `kernel.invoker`. `loom.composition.create_app(...)` composes a whole application. |
 | Bare factory | `UseCaseFactory(LoomContainer())` | `loom.composition.create_app(...)` or `create_kernel(...)`; the bare form emits `DeprecationWarning`. |
 | Patch targets | `loom.composition.build.configure_job_service`, `.reject_manifest_agents_without_ai_section`, `.load_application_config`, `.add_code_path` | `loom.composition.phases.configure_job_service`, `loom.composition.project.load_application_config`, `loom.composition.project.add_code_path`. The manifest-agents check has no patch target: it runs inside the AI wiring and raises `ConfigError`. |
-| Runtime events | `RuntimeEvent(status="success")` | `RuntimeEvent(status=Status.SUCCESS)`, with `Phase` for `error_kind` (`loom.core.engine.events`). |
+| Runtime events | `ExecutionEvent(status="success")` | `ExecutionEvent(status=Status.SUCCESS)`, with `Phase` for `error_kind` (`loom.core.engine.events`). |
 | Compute and rule steps | Telling `ComputeStep` from `RuleStep` by type | Both are `CommandStep`; read the plan field holding them (`compute_steps`, `rule_steps`). |
 | Execution logs | `[EXEC] <use case>` start line; `[STEP]` lines; `[RULE]` warnings | One terminal `[DONE]` or `[FAIL]` line per execution; `steps` and `broken_rules` fields on it. |

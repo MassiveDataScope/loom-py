@@ -6,7 +6,7 @@ from typing import Any
 
 import msgspec
 
-from loom.core.engine.executor import RuntimeExecutor
+from loom.core.engine.executor import UseCaseExecutor
 from loom.core.errors import LoomError
 from loom.core.identity import current_identity
 from loom.core.transport.dispatcher import ExecutionRequest
@@ -20,7 +20,7 @@ from loom.rest.fastapi.response import created_response
 class RestUseCaseDispatcher:
     """Concrete REST transport adapter for FastAPI routes.
 
-    Bridges HTTP requests to the ``RuntimeExecutor`` pipeline: each call
+    Bridges HTTP requests to the ``UseCaseExecutor`` pipeline: each call
     builds the use case class inside its execution through ``factory`` (so
     its constructor ports, ``Caller()`` and per-execution adapters are
     resolved there), as the request's caller. Serializes ``msgspec.Struct``
@@ -28,7 +28,7 @@ class RestUseCaseDispatcher:
     ``HTTPException`` instances.
 
     Args:
-        executor: Configured ``RuntimeExecutor`` shared across all routes.
+        executor: Configured ``UseCaseExecutor`` shared across all routes.
         factory: Builds each use case with its dependencies from the container.
         error_mapper: Optional custom error mapper. Defaults to
             ``HttpErrorMapper`` with standard status code mapping.
@@ -47,7 +47,7 @@ class RestUseCaseDispatcher:
 
     def __init__(
         self,
-        executor: RuntimeExecutor,
+        executor: UseCaseExecutor,
         *,
         factory: UseCaseFactory,
         error_mapper: HttpErrorMapper | None = None,

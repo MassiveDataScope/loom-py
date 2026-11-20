@@ -10,7 +10,7 @@ from typing import Any, Literal
 import pytest
 
 from loom.core.config import ConfigContext
-from loom.core.observability.observability import ObservabilityRuntime
+from loom.core.observability.observability import Observability
 from loom.etl import ETLPipeline, ETLProcess, ETLStep, FromConfig, IntoTable
 from loom.etl.compiler import ETLCompilationError, ETLCompiler
 from loom.etl.executor import ETLExecutor
@@ -96,7 +96,7 @@ class TestConfigValueContainment:
         runner = ETLRunner(
             InMemorySourceReader({}),
             writer,
-            ObservabilityRuntime([observer]),
+            Observability([observer]),
             config_context=_context(),
         )
 
@@ -127,7 +127,7 @@ class TestConfigValueContainment:
         executor = ETLExecutor(
             InMemorySourceReader({}),
             InMemoryTargetWriter(),
-            ObservabilityRuntime([observer]),
+            Observability([observer]),
             config_context=_context(),
         )
 

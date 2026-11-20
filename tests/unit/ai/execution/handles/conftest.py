@@ -7,7 +7,7 @@ from typing import Any
 import pytest
 
 from loom.ai.abc import AgentHandle, McpHandle
-from loom.ai.execution import AgentRuntime
+from loom.ai.execution import AgentHost
 from loom.ai.execution._handle import AgentMarkerResolver, McpMarkerResolver
 from loom.ai.execution._lifecycle import UseCaseMcpGrant
 from loom.core.di import LoomContainer
@@ -64,7 +64,7 @@ def make_runtime(session: RecordingMcpSession, engine: AcmeEngine) -> Any:
             log=[],
             connect_error=None if reachable else "refused",
         )
-        return AgentRuntime(
+        return AgentHost(
             plans=[
                 make_plan(
                     AGENT,
@@ -97,17 +97,17 @@ def make_runtime(session: RecordingMcpSession, engine: AcmeEngine) -> Any:
 
 
 @pytest.fixture
-def runtime(make_runtime: Any) -> AgentRuntime:
+def runtime(make_runtime: Any) -> AgentHost:
     return make_runtime()  # type: ignore[no-any-return]
 
 
 @pytest.fixture
-def agent_resolver(runtime: AgentRuntime, sql_service: AcmeSqlService) -> AgentMarkerResolver:
+def agent_resolver(runtime: AgentHost, sql_service: AcmeSqlService) -> AgentMarkerResolver:
     return AgentMarkerResolver(runtime, sql_query_service=sql_service, observability=None)
 
 
 @pytest.fixture
-def mcp_resolver(runtime: AgentRuntime) -> McpMarkerResolver:
+def mcp_resolver(runtime: AgentHost) -> McpMarkerResolver:
     return McpMarkerResolver(runtime, observability=None)
 
 

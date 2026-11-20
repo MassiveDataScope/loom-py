@@ -63,7 +63,7 @@ class TestMaintenanceFlow:
         monkeypatch.setattr(
             _maintenance, "_parse_sections", lambda context: (storage_config, observability_config)
         )
-        monkeypatch.setattr(_maintenance.ObservabilityRuntime, "from_config", configure)
+        monkeypatch.setattr(_maintenance.Observability, "from_config", configure)
         monkeypatch.setattr(_maintenance.MaintenanceRunner, "from_config", lambda config: runner)
 
         flow = _build_flow(tmp_path)
@@ -108,7 +108,7 @@ class TestMaintenanceFlow:
             _maintenance, "_parse_sections", lambda context: (MagicMock(), MagicMock())
         )
         monkeypatch.setattr(
-            _maintenance.ObservabilityRuntime,
+            _maintenance.Observability,
             "from_config",
             MagicMock(return_value=runtime),
         )

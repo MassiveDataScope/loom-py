@@ -1,4 +1,4 @@
-"""Per-run and per-worker bounds enforced by ``AgentRuntime`` (T082, FR-033a).
+"""Per-run and per-worker bounds enforced by ``AgentHost`` (T082, FR-033a).
 
 Four bounds, one code each: ``max_concurrent_runs`` → ``TOO_MANY_RUNS``,
 ``run_timeout_ms`` → ``RUN_TIMEOUT``, ``max_iterations`` →
@@ -15,7 +15,7 @@ import pytest
 
 from loom.ai.abc import AgentEvent, FinalEvent, TextDeltaEvent, ToolCallEvent, ToolResultEvent
 from loom.ai.errors import AgentRunErrorCode
-from loom.ai.execution import AgentRunError, AgentRuntime
+from loom.ai.execution import AgentHost, AgentRunError
 from loom.core.di import LoomContainer
 from loom.core.identity import Identity
 from tests.integration.ai.conftest import (
@@ -40,7 +40,7 @@ def _runtime(
     tool_timeout_ms: int = 1000,
     max_iterations: int = 8,
     run_timeout_ms: int = 5000,
-) -> AgentRuntime:
+) -> AgentHost:
     """Build a runtime with one scripted agent and explicit limits."""
     plan = make_plan(
         _AGENT,
@@ -50,7 +50,7 @@ def _runtime(
             run_timeout_ms=run_timeout_ms,
         ),
     )
-    return AgentRuntime(
+    return AgentHost(
         plans=[plan],
         config=make_ai_config(max_concurrent_runs=max_concurrent_runs),
         engine_plugin=CountingEngineProvider(engines={_AGENT: engine}),  # type: ignore[arg-type]

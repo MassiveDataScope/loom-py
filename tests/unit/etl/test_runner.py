@@ -11,7 +11,7 @@ import msgspec
 import pytest
 
 from loom.core.model.redaction import Dsn
-from loom.core.observability.observability import ObservabilityRuntime
+from loom.core.observability.observability import Observability
 from loom.core.runner import SupportsFlush
 from loom.etl import ETLParams, ETLPipeline, ETLProcess, ETLStep, FromTable, IntoTable
 from loom.etl.compiler import ETLCompiler, InvalidStageError, filter_plan, iter_all_steps
@@ -72,7 +72,7 @@ def runner_factory() -> RunnerFactory:
         return ETLRunner(
             reader,
             InMemoryTargetWriter(),
-            observability=ObservabilityRuntime(list(observers or ())),
+            observability=Observability(list(observers or ())),
         )
 
     return _make
@@ -266,7 +266,7 @@ class TestRunnerRun:
         runner = ETLRunner(
             InMemorySourceReader({"raw.orders": object()}),
             InMemoryTargetWriter(),
-            observability=ObservabilityRuntime([spy]),
+            observability=Observability([spy]),
         )
 
         assert isinstance(runner, SupportsFlush)
@@ -309,7 +309,7 @@ class TestRunnerRun:
         runner = ETLRunner(
             InMemorySourceReader({"raw.orders": object()}),
             InMemoryTargetWriter(),
-            observability=ObservabilityRuntime([spy]),
+            observability=Observability([spy]),
         )
 
         with pytest.raises(RuntimeError, match="boom"):

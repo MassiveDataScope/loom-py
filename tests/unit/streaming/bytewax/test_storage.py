@@ -13,7 +13,7 @@ require_bytewax()
 
 from loom.core.async_bridge import AsyncBridge  # noqa: E402
 from loom.core.model.redaction import Dsn  # noqa: E402
-from loom.core.observability.observability import ObservabilityRuntime  # noqa: E402
+from loom.core.observability.observability import Observability  # noqa: E402
 from loom.core.stores.database import DatabaseConfig, PoolConfig  # noqa: E402
 from loom.streaming.bytewax.handlers import storage as _storage  # noqa: E402
 from loom.streaming.compiler import CompiledStorageSink  # noqa: E402
@@ -36,7 +36,7 @@ class _FakeCtx:
     def __init__(self, *, bridge: AsyncBridge | None) -> None:
         self.plan = type("_Plan", (), {"name": "test_flow"})()
         self.bridge = bridge
-        self.flow_runtime = ObservabilityRuntime.noop()
+        self.flow_runtime = Observability.noop()
         self.flow_run_id = "run-1"
         self.commit_tracker = None
         self._session_manager = object()

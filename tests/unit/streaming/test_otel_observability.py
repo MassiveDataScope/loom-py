@@ -9,7 +9,7 @@ from opentelemetry.trace import StatusCode
 
 from loom.core.observability.config import ObservabilityConfig
 from loom.core.observability.event import Scope
-from loom.core.observability.observability import ObservabilityRuntime
+from loom.core.observability.observability import Observability
 
 
 class TestObservabilityConfig:
@@ -27,7 +27,7 @@ class TestStreamingScopes:
         exporter = InMemorySpanExporter()
         provider = TracerProvider()
         provider.add_span_processor(SimpleSpanProcessor(exporter))
-        runtime = ObservabilityRuntime([], tracer=provider.get_tracer("loom.streaming"))
+        runtime = Observability([], tracer=provider.get_tracer("loom.streaming"))
 
         with runtime.span(Scope.POLL_CYCLE, "orders"), runtime.span(Scope.NODE, "transform"):
             pass

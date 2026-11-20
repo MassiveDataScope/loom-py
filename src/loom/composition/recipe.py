@@ -57,7 +57,7 @@ class Recipe:
             serves a scrape.
         connection_only: Ask the backend for its connection only, no
             repository; for an entry point with no model (see
-            :class:`~loom.core.stores.StoreRuntime`).
+            :class:`~loom.core.stores.StorePluginContext`).
         overrides: DI modules run right after the discovered installers, under the
             same reserved-key check; a test double of a repository binds under
             the key its store would bind it. Test-only, set by the testing

@@ -30,7 +30,7 @@ from loom.core.stores.database import (
     require_schema_key,
 )
 from loom.core.stores.plugin import StoreWiring, no_model_preparation
-from loom.core.stores.profile import StoreRuntime
+from loom.core.stores.profile import StorePluginContext
 from loom.stores.sqlalchemy.registry import (
     build_sqlalchemy_repository_registration_module,
     register_session_manager,
@@ -110,7 +110,7 @@ class SQLAlchemyStorePlugin:
         self,
         ctx: ConfigContext,
         models: Sequence[type[BaseModel]],
-        runtime: StoreRuntime,
+        runtime: StorePluginContext,
     ) -> StoreWiring:
         """Build the SQLAlchemy wiring of the store ``runtime.store`` for the discovered models.
 
@@ -124,7 +124,7 @@ class SQLAlchemyStorePlugin:
             The SQLAlchemy wiring.
 
         With ``runtime.connection_only`` no repository is served; see
-        :class:`~loom.core.stores.StoreRuntime`.
+        :class:`~loom.core.stores.StorePluginContext`.
 
         Raises:
             ConfigError: When the store's section is missing, names another
@@ -182,7 +182,7 @@ class SQLAlchemyStorePlugin:
 
 def _open_session_manager(
     db_cfg: DatabaseConfig,
-    runtime: StoreRuntime,
+    runtime: StorePluginContext,
     database: StoreKey,
     settings: DeferredScopedSettings | None,
     metadata: MetaData | None,

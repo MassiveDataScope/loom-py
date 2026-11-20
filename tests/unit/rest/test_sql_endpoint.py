@@ -11,7 +11,7 @@ from fastapi.testclient import TestClient
 
 from loom.core.errors import SystemError as LoomSystemError
 from loom.core.observability.event import EventKind, Scope
-from loom.core.observability.observability import ObservabilityRuntime
+from loom.core.observability.observability import Observability
 from loom.core.stores.sql.abc import SqlExecutionError
 from loom.core.stores.sql.config import SqlConfig, SqlConnectionConfig, SqlEndpointConfig
 from loom.core.stores.sql.service import SqlQueryService
@@ -449,7 +449,7 @@ class TestSqlEndpointSpan:
             app,
             service=service,
             config=config,
-            observability_runtime=ObservabilityRuntime([observer]),
+            observability=Observability([observer]),
         )
         client = TestClient(app, raise_server_exceptions=False)
 

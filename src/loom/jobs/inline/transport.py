@@ -18,7 +18,7 @@ from loom.core.job.runner import JobRunner
 from loom.core.job.timer import JobDelayRefusedError, JobTimer
 
 if TYPE_CHECKING:
-    from loom.core.engine.executor import RuntimeExecutor
+    from loom.core.engine.executor import UseCaseExecutor
     from loom.core.engine.metrics import MetricsRecorder
     from loom.core.use_case.factory import UseCaseFactory
 
@@ -46,7 +46,7 @@ class InlineJobTransport:
     def __init__(
         self,
         factory: UseCaseFactory,
-        executor: RuntimeExecutor,
+        executor: UseCaseExecutor,
         *,
         timer: JobTimer | None = None,
         metrics: MetricsRecorder | None = None,

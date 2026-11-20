@@ -15,7 +15,7 @@ from loom.core.stores.catalog import (
     StoreSpec,
 )
 from loom.core.stores.plugin import StoreWiring
-from loom.core.stores.profile import StoreRuntime
+from loom.core.stores.profile import StorePluginContext
 
 
 class NullStorePlugin:
@@ -37,7 +37,7 @@ class NullStorePlugin:
         self,
         ctx: ConfigContext,
         models: Sequence[type[BaseModel]],
-        runtime: StoreRuntime,
+        runtime: StorePluginContext,
     ) -> StoreWiring:
         """Build a wiring in which every hook is a no-op.
 

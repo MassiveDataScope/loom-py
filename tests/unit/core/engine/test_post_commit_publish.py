@@ -13,7 +13,7 @@ import pytest
 from loom.core import concurrency
 from loom.core.engine import post_commit
 from loom.core.engine.compiler import UseCaseCompiler
-from loom.core.engine.executor import RuntimeExecutor
+from loom.core.engine.executor import UseCaseExecutor
 from loom.core.engine.post_commit import PostCommitChannel, active_channel
 from loom.core.errors import PostCommitError
 from loom.core.job.context import add_pending_dispatch, flush_pending_dispatches
@@ -161,7 +161,7 @@ class TestPostCommitPublish:
         app.send_task.side_effect = lambda *_, **__: sent.set()
         bump = _Gate()
         log = Log()
-        executor = RuntimeExecutor(
+        executor = UseCaseExecutor(
             UseCaseCompiler(),
             coordinator=OrderedCommits({DEFAULT_STORE: StubUnitOfWorkFactory(log)}),
         )
@@ -222,7 +222,7 @@ class TestPostCommitPublish:
         hang = _Hang()
         calls: list[str] = []
         log = Log()
-        executor = RuntimeExecutor(
+        executor = UseCaseExecutor(
             UseCaseCompiler(),
             coordinator=OrderedCommits({DEFAULT_STORE: StubUnitOfWorkFactory(log)}),
         )

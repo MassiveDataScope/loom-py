@@ -56,7 +56,7 @@ class Phase(StrEnum):
 
 
 @dataclass(frozen=True)
-class RuntimeEvent:
+class ExecutionEvent:
     """Immutable event emitted by the compiler and runtime executor.
 
     Consumed by ``MetricsRecorder`` and structured loggers. Carries no
@@ -79,7 +79,7 @@ class RuntimeEvent:
 
     Example::
 
-        event = RuntimeEvent(
+        event = ExecutionEvent(
             kind=EventKind.EXEC_DONE,
             use_case_name="UpdateUserUseCase",
             duration_ms=12.4,

@@ -8,7 +8,7 @@ import pytest
 
 from loom.ai.abc import McpHandle
 from loom.ai.errors import AgentRunError, AgentRunErrorCode
-from loom.ai.execution import AgentRuntime
+from loom.ai.execution import AgentHost
 from loom.ai.execution._handle import McpMarkerResolver
 from loom.core.execution import ExecutionScope
 from loom.core.identity import ANONYMOUS, Identity
@@ -18,7 +18,7 @@ from .doubles import ALICE, HANDLE_CALLS, NO_SUBJECT, SERVER, TOOL, AcmeSqlServi
 
 
 @pytest.fixture
-def lookups(runtime: AgentRuntime, monkeypatch: pytest.MonkeyPatch) -> list[str]:
+def lookups(runtime: AgentHost, monkeypatch: pytest.MonkeyPatch) -> list[str]:
     """Every server the runtime was asked the ``Mcp()`` grant of."""
     asked: list[str] = []
     lookup = runtime.use_case_mcp_grant
@@ -33,7 +33,7 @@ def lookups(runtime: AgentRuntime, monkeypatch: pytest.MonkeyPatch) -> list[str]
 
 class TestTheMcpGrant:
     async def test_is_looked_up_on_every_call_and_never_on_resolve(
-        self, runtime: AgentRuntime, lookups: list[str]
+        self, runtime: AgentHost, lookups: list[str]
     ) -> None:
         crm = McpMarkerResolver(runtime, observability=None).resolve(
             Mcp(SERVER, include=["find_*"]), McpHandle
@@ -114,7 +114,7 @@ class TestTheMcpGrant:
 
 class TestACallerWithNoSubject:
     async def test_an_anonymous_agent_caller_keeps_unauthorized(
-        self, runtime: AgentRuntime, triage: Any, crm: Any, backend_calls: Any
+        self, runtime: AgentHost, triage: Any, crm: Any, backend_calls: Any
     ) -> None:
         async with runtime:
             with ExecutionScope(ANONYMOUS):
@@ -130,7 +130,7 @@ class TestACallerWithNoSubject:
     @pytest.mark.parametrize("call", list(HANDLE_CALLS.values()), ids=list(HANDLE_CALLS))
     async def test_is_refused_with_no_backend_call_even_where_a_row_has_no_subject(
         self,
-        runtime: AgentRuntime,
+        runtime: AgentHost,
         triage: Any,
         crm: Any,
         caller: Identity,

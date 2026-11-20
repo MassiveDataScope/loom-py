@@ -38,8 +38,8 @@ from loom.core.identity import DEFAULT_MAX_DELEGATION_SECONDS, configure_delegat
 from loom.core.job.config import JobSettings
 from loom.core.logger import LoggerPort
 from loom.core.model import BaseModel
-from loom.core.observability.observability import ObservabilityRuntime
-from loom.core.stores import StoreRuntime, StoreWiring
+from loom.core.observability.observability import Observability
+from loom.core.stores import StorePluginContext, StoreWiring
 from loom.core.stores.catalog import (
     DEFAULT_STORE,
     DEFAULT_STORE_PATH,
@@ -182,7 +182,7 @@ def build_stores(project: Project, recipe: Recipe, aws: AwsClients) -> Stores:
     cursor_codec = recipe.build_cursor_codec(ctx)
     wirings: dict[StoreKey, StoreWiring] = {}
     for key, models in stores.items():
-        runtime = StoreRuntime(
+        runtime = StorePluginContext(
             recipe.profile,
             pool_metrics=recipe.pool_metrics,
             connection_only=recipe.connection_only,
@@ -212,7 +212,7 @@ def register(
     """Fill a container and build the kernel on it, then register the job service and SQL.
 
     The order: the seed keys (the application's ``AppConfig``,
-    ``Environment``, ``ObservabilityRuntime`` and ``StoreCatalog``); the
+    ``Environment``, ``Observability`` and ``StoreCatalog``); the
     discovered installers; the recipe's overrides; each store's repositories and the
     ``RepositoryCatalog`` over them; the cache module; the framework's keys,
     among them the kernel, whose construction compiles the discovered use
@@ -265,7 +265,7 @@ def register(
     seeds = {
         type(project.app): project.app,
         Environment: project.environment,
-        ObservabilityRuntime: observability,
+        Observability: observability,
         StoreCatalog: catalog,
     }
     installers = tuple(

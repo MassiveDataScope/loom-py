@@ -13,7 +13,7 @@ import pytest
 from loom.core.config.errors import ConfigError
 from loom.core.identity import ANONYMOUS, Identity
 from loom.core.observability.event import EventKind, LifecycleEvent, Scope
-from loom.core.observability.observability import ObservabilityRuntime
+from loom.core.observability.observability import Observability
 from loom.core.stores.sql.abc import RolesNotBoundError, UnknownConnectionError
 from loom.core.stores.sql.caller_bound import CallerBoundSql
 from loom.core.stores.sql.config import SqlConfig, SqlConnectionConfig
@@ -35,7 +35,7 @@ def _caller_bound(
     executor: FakeSqlExecutor,
     connection: SqlConnectionConfig,
     *,
-    observability: ObservabilityRuntime | None = None,
+    observability: Observability | None = None,
 ) -> CallerBoundSql:
     """Build a ``CallerBoundSql`` over a fake 'analytics' connection."""
     config = make_sql_config(analytics=connection)
@@ -184,7 +184,7 @@ class TestCallerBoundRoles:
         """The bound path records the labels the REST endpoint guarantees, on its own span."""
         observer = AcmeSqlRecordingObserver()
         sql = _caller_bound(
-            fake_executor, make_connection_config(), observability=ObservabilityRuntime([observer])
+            fake_executor, make_connection_config(), observability=Observability([observer])
         )
         await sql.execute("SELECT 1", connection="analytics", identity=_identity("role_viz_sales"))
         started = next(e for e in observer.events if e.kind == EventKind.START)
@@ -201,7 +201,7 @@ class TestCallerBoundRoles:
         """A dropped role must not appear in the audit trail as if it had applied."""
         observer = AcmeSqlRecordingObserver()
         sql = _caller_bound(
-            fake_executor, make_connection_config(), observability=ObservabilityRuntime([observer])
+            fake_executor, make_connection_config(), observability=Observability([observer])
         )
         await sql.execute(
             "SELECT 1",
@@ -215,14 +215,14 @@ class TestCallerBoundRoles:
         """No query ran, so there is nothing to attribute to any set of roles."""
         observer = AcmeSqlRecordingObserver()
         sql = _caller_bound(
-            fake_executor, make_connection_config(), observability=ObservabilityRuntime([observer])
+            fake_executor, make_connection_config(), observability=Observability([observer])
         )
         identity = _identity("role_intruder")
         with pytest.raises(RolesNotBoundError):
             await sql.execute("SELECT 1", connection="analytics", identity=identity)
         assert observer.events == []
 
-    async def test_without_an_observability_runtime_the_query_runs_and_records_nothing(
+    async def test_without_observability_the_query_runs_and_records_nothing(
         self,
         fake_executor: FakeSqlExecutor,
     ) -> None:

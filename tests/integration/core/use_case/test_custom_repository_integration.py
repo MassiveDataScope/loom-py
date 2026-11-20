@@ -11,7 +11,7 @@ from loom.core.bootstrap import create_kernel
 from loom.core.di.container import LoomContainer
 from loom.core.di.scope import Scope
 from loom.core.engine.compilable import Compilable
-from loom.core.engine.executor import RuntimeExecutor
+from loom.core.engine.executor import UseCaseExecutor
 from loom.core.response import Response
 from loom.core.stores.repository import CursorCodec, RepositoryBuildContext, repository_for
 from loom.core.use_case.use_case import UseCase
@@ -142,7 +142,7 @@ class TestCustomRepositoryIntegration:
             use_cases=_use_cases(CreateProductUseCase),
             modules=[_repo_module(integration_context)],
         )
-        executor = RuntimeExecutor(result.compiler)
+        executor = UseCaseExecutor(result.compiler)
 
         use_case = result.factory.build(CreateProductUseCase)
 
@@ -165,7 +165,7 @@ class TestCustomRepositoryIntegration:
             use_cases=_use_cases(CreateProductUseCase, FindProductByNameUseCase),
             modules=[_repo_module(integration_context)],
         )
-        executor = RuntimeExecutor(result.compiler)
+        executor = UseCaseExecutor(result.compiler)
 
         await executor.execute(
             result.factory.build(CreateProductUseCase),
@@ -189,7 +189,7 @@ class TestCustomRepositoryIntegration:
             use_cases=_use_cases(CreateProductUseCase, GetProductIdByNameJob),
             modules=[_repo_module(integration_context)],
         )
-        executor = RuntimeExecutor(result.compiler)
+        executor = UseCaseExecutor(result.compiler)
 
         await executor.execute(
             result.factory.build(CreateProductUseCase),
@@ -212,7 +212,7 @@ class TestCustomRepositoryIntegration:
             use_cases=[GetTaskViewUseCase],
             modules=[_logical_repo_module(integration_context)],
         )
-        executor = RuntimeExecutor(result.compiler)
+        executor = UseCaseExecutor(result.compiler)
 
         use_case = result.factory.build(GetTaskViewUseCase)
         found = await executor.execute(use_case, params={"task_id": "t-1"})
@@ -231,7 +231,7 @@ class TestCustomRepositoryIntegration:
             use_cases=[GetBuilderTaskViewUseCase],
             modules=[_builder_logical_repo_module(integration_context)],
         )
-        executor = RuntimeExecutor(result.compiler)
+        executor = UseCaseExecutor(result.compiler)
 
         use_case = result.factory.build(GetBuilderTaskViewUseCase)
         found = await executor.execute(use_case, params={"task_id": "t-2"})

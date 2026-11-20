@@ -23,12 +23,12 @@ from loom.core.command import Command, Internal
 from loom.core.di.container import LoomContainer
 from loom.core.di.scope import Scope
 from loom.core.engine.compiler import UseCaseCompiler
-from loom.core.engine.executor import RuntimeExecutor
+from loom.core.engine.executor import UseCaseExecutor
 from loom.core.model import BaseModel, ColumnField, LoomStruct, String
 from loom.core.observability.event import EventKind as ObservabilityEventKind
 from loom.core.observability.event import LifecycleEvent as ObservabilityLifecycleEvent
 from loom.core.observability.event import Scope as ObservabilityScope
-from loom.core.observability.observability import ObservabilityRuntime
+from loom.core.observability.observability import Observability
 from loom.core.stores.repository import CursorCodec
 from loom.core.stores.repository.query import (
     PageParams,
@@ -340,7 +340,7 @@ def _resolve_schema(schema_ref: dict[str, Any], openapi_doc: dict[str, Any]) -> 
 
 def _make_app(
     *compiled_routes: CompiledRoute,
-    observability_runtime: ObservabilityRuntime | None = None,
+    observability: Observability | None = None,
     **factory_types: Any,
 ) -> FastAPI:
     """Build a minimal FastAPI app from pre-compiled routes."""
@@ -348,14 +348,14 @@ def _make_app(
     types = [cr.route.use_case for cr in compiled_routes]
     uc_comp = _uc_compiler(*types)
     factory = _factory(uc_comp, *types)
-    executor = RuntimeExecutor(uc_comp)
+    executor = UseCaseExecutor(uc_comp)
     app = FastAPI()
     component_registry = bind_interfaces(
         app,
         list(compiled_routes),
         factory,
         executor,
-        observability_runtime=observability_runtime or ObservabilityRuntime.noop(),
+        observability=observability or Observability.noop(),
     )
     if component_registry:
         _register_openapi_components(app, component_registry)
@@ -434,9 +434,9 @@ class TestRoutesArgument:
 
     def test_routes_are_required(self) -> None:
         result = _bootstrap(AcmePingUseCase)
-        observability_runtime = ObservabilityRuntime.noop()
+        observability = Observability.noop()
         with pytest.raises(TypeError, match="routes"):
-            create_fastapi_app(result, observability_runtime=observability_runtime)  # type: ignore[call-arg]
+            create_fastapi_app(result, observability=observability)  # type: ignore[call-arg]
 
     def test_the_interfaces_keyword_is_refused(self) -> None:
         class IFace(RestInterface[str]):
@@ -444,12 +444,12 @@ class TestRoutesArgument:
             routes = (RestRoute(use_case=AcmePingUseCase, method="GET", path="/"),)
 
         result = _bootstrap(AcmePingUseCase)
-        observability_runtime = ObservabilityRuntime.noop()
+        observability = Observability.noop()
         with pytest.raises(TypeError, match="routes"):
             create_fastapi_app(  # type: ignore[call-arg]
                 result,
                 interfaces=[IFace],
-                observability_runtime=observability_runtime,
+                observability=observability,
             )
 
     def test_a_bare_sequence_names_route_sources(self) -> None:
@@ -458,12 +458,12 @@ class TestRoutesArgument:
             routes = (RestRoute(use_case=AcmePingUseCase, method="GET", path="/"),)
 
         result = _bootstrap(AcmePingUseCase)
-        observability_runtime = ObservabilityRuntime.noop()
+        observability = Observability.noop()
         with pytest.raises(TypeError, match="RouteSources"):
             create_fastapi_app(
                 result,
                 [IFace],  # type: ignore[arg-type]
-                observability_runtime=observability_runtime,
+                observability=observability,
             )
 
 
@@ -1171,7 +1171,7 @@ class TestCreateFastApiApp:
         app = create_fastapi_app(
             result,
             routes=RouteSources(python=[IFace]),
-            observability_runtime=ObservabilityRuntime.noop(),
+            observability=Observability.noop(),
         )
         assert isinstance(app, FastAPI)
 
@@ -1186,7 +1186,7 @@ class TestCreateFastApiApp:
         app = create_fastapi_app(
             result,
             routes=RouteSources(python=[IFace]),
-            observability_runtime=ObservabilityRuntime.noop(),
+            observability=Observability.noop(),
         )
         client = TestClient(app)
         assert client.get("/ping/").json() == "pong"
@@ -1202,7 +1202,7 @@ class TestCreateFastApiApp:
         app = create_fastapi_app(
             result,
             routes=RouteSources(python=[IFace]),
-            observability_runtime=ObservabilityRuntime.noop(),
+            observability=Observability.noop(),
             title="My API",
             version="2.0.0",
         )
@@ -1224,7 +1224,7 @@ class TestCreateFastApiApp:
         app = create_fastapi_app(
             result,
             routes=RouteSources(python=[PingIFace, ItemIFace]),
-            observability_runtime=ObservabilityRuntime.noop(),
+            observability=Observability.noop(),
         )
         client = TestClient(app)
         assert client.get("/ping/").json() == "pong"
@@ -1239,13 +1239,13 @@ class TestCreateFastApiApp:
 
         # bootstrap with NO use cases — AcmePingUseCase not compiled
         result = _bootstrap()
-        observability_runtime = ObservabilityRuntime.noop()
+        observability = Observability.noop()
         route_sources = RouteSources(python=[IFace])
         with pytest.raises(InterfaceCompilationError, match="not been compiled"):
             create_fastapi_app(
                 result,
                 routes=route_sources,
-                observability_runtime=observability_runtime,
+                observability=observability,
             )
 
     def test_create_fastapi_app_accepts_defaults(
@@ -1261,7 +1261,7 @@ class TestCreateFastApiApp:
         app = create_fastapi_app(
             result,
             routes=RouteSources(python=[IFace]),
-            observability_runtime=ObservabilityRuntime.noop(),
+            observability=Observability.noop(),
             defaults=defaults,
         )
         assert isinstance(app, FastAPI)
@@ -1289,7 +1289,7 @@ class TestCreateFastApiApp:
             create_fastapi_app(
                 result,
                 routes=RouteSources(python=[IFace]),
-                observability_runtime=ObservabilityRuntime.noop(),
+                observability=Observability.noop(),
                 defaults=defaults,
             )
 
@@ -1303,7 +1303,7 @@ class TestCreateFastApiApp:
         app = create_fastapi_app(
             _bootstrap(QueryAwareUseCase),
             routes=RouteSources(python=[IFace]),
-            observability_runtime=ObservabilityRuntime.noop(),
+            observability=Observability.noop(),
             defaults=RestApiDefaults(allow_pagination_override=True),
         )
 
@@ -1317,7 +1317,7 @@ class TestCreateFastApiApp:
         app = create_fastapi_app(
             _bootstrap(AcmePingUseCase),
             routes=RouteSources(python=[IFace]),
-            observability_runtime=ObservabilityRuntime.noop(),
+            observability=Observability.noop(),
         )
 
         assert isinstance(app, FastAPI)
@@ -1351,7 +1351,7 @@ class TestCreateFastApiApp:
         app = create_fastapi_app(
             result,
             routes=RouteSources(python=[_UsersIFace]),
-            observability_runtime=ObservabilityRuntime.noop(),
+            observability=Observability.noop(),
         )
         client = TestClient(app)
 
@@ -1369,12 +1369,12 @@ class TestUseCaseSpans:
             routes = (RestRoute(use_case=AcmePingUseCase, method="GET", path="/"),)
 
         observer = RecordingObservabilityObserver()
-        runtime = ObservabilityRuntime([observer])
+        runtime = Observability([observer])
         result = _bootstrap(AcmePingUseCase)
         app = create_fastapi_app(
             result,
             routes=RouteSources(python=[IFace]),
-            observability_runtime=runtime,
+            observability=runtime,
         )
         client = TestClient(app)
         response = client.get("/ping/")
@@ -1428,9 +1428,7 @@ class TestUseCaseSpans:
         app = create_fastapi_app(
             result,
             routes=RouteSources(python=[IFace]),
-            observability_runtime=ObservabilityRuntime(
-                [], tracer=loom_provider.get_tracer("loom.rest")
-            ),
+            observability=Observability([], tracer=loom_provider.get_tracer("loom.rest")),
         )
         app.add_middleware(_HostSpanMiddleware)
 

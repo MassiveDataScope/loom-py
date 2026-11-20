@@ -18,7 +18,7 @@ from loom.core.model import BaseModel, ColumnField, RowScoped, ScopedField
 from loom.core.model.types import Integer
 from loom.core.stores import StoreWiring
 from loom.core.stores.catalog import DEFAULT_STORE, StoreKey, load_catalog
-from loom.core.stores.profile import SERVER_PROFILE, StoreRuntime
+from loom.core.stores.profile import SERVER_PROFILE, StorePluginContext
 from loom.core.stores.repository import CursorCodec
 from loom.stores.sqlalchemy.plugin import SQLAlchemyStorePlugin
 
@@ -61,7 +61,7 @@ def _build(
     *models: type[BaseModel],
     pool_metrics: _Labels | None = None,
 ) -> StoreWiring:
-    runtime = StoreRuntime(
+    runtime = StorePluginContext(
         SERVER_PROFILE,
         pool_metrics=pool_metrics,
         catalog=load_catalog(ctx),
@@ -130,7 +130,7 @@ class TestBackendStores:
         container.register_instance(Environment, Environment.TEST)
 
         for store in (DEFAULT_STORE, _AUDIT):
-            runtime = StoreRuntime(
+            runtime = StorePluginContext(
                 SERVER_PROFILE,
                 catalog=load_catalog(ctx),
                 store=store,

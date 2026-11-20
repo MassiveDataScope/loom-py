@@ -225,7 +225,7 @@ The order is fixed; no adapter reorders it:
 7. Build the kernel: the discovered `Installer` classes first, then the
    repositories, then the cache module.
 8. Register `JobService` (Celery when a `celery` section is present, inline
-   otherwise), `SqlQueryService`, `CallerBoundSql` and `ObservabilityRuntime`.
+   otherwise), `SqlQueryService`, `CallerBoundSql` and `Observability`.
    `loom.celery` is imported lazily: a `celery` section that only dispatches
    jobs does not load the worker.
 9. When the recipe hosts agents and an `ai` section exists, build the agent
@@ -418,7 +418,7 @@ happens to a key you bind depends on who owns it:
 | A model's repository, `RepositoryToken(Order)` | kept; the usual way to replace one is `repository_for` or a custom `DefaultRepositoryBuilder` (keyed `(DefaultRepositoryBuilder, store)` for a store other than `default`) |
 | A capability key such as `Listable[Order]`, on its own | refused: startup fails with a `ConfigError` naming `Override.repository`. Every capability key is an alias of the model's repository; to substitute a double use `loom.testing.Override.repository` |
 | `CachedCalls`, `RepositoryDecorator` | kept |
-| `SessionManager` and `MongoSessions`, also keyed `(…, store)` for any declared store, `SqlQueryService`, `CallerBoundSql`, `ObservabilityRuntime`, `ElevationSink`, `RuntimeExecutor`, `UseCaseRegistry`, `ApplicationInvoker` | reserved: startup fails with a typed reserved-binding error naming the key |
+| `SessionManager` and `MongoSessions`, also keyed `(…, store)` for any declared store, `SqlQueryService`, `CallerBoundSql`, `Observability`, `ElevationSink`, `UseCaseExecutor`, `UseCaseRegistry`, `ApplicationInvoker` | reserved: startup fails with a typed reserved-binding error naming the key |
 
 The reserved keys are the framework's own: `ElevationSink` sets and clears the
 row-level-security elevation inside the transaction, and the SQL and

@@ -16,7 +16,7 @@ from loom.core.observability.event import (
     Scope,
     TerminalReason,
 )
-from loom.core.observability.observability import ObservabilityRuntime
+from loom.core.observability.observability import Observability
 from loom.core.observability.protocol import LifecycleObserver
 from loom.core.observability.span import LoomSpan
 
@@ -26,7 +26,7 @@ __all__ = [
     "LifecycleObserver",
     "LifecycleStatus",
     "LoomSpan",
-    "ObservabilityRuntime",
+    "Observability",
     "Scope",
     "TerminalReason",
     "LogObservabilityConfig",

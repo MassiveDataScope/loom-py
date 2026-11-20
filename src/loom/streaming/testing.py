@@ -27,7 +27,7 @@ from bytewax.outputs import Sink
 
 from loom.core.config import ConfigContext
 from loom.core.observability.event import Scope
-from loom.core.observability.observability import ObservabilityRuntime
+from loom.core.observability.observability import Observability
 from loom.core.tracing import generate_trace_id
 from loom.streaming import Message, MessageMeta
 from loom.streaming.bytewax.runner import _prepare_run
@@ -66,10 +66,10 @@ class StreamingTestRunner:
     def __init__(
         self,
         plan: CompiledPlan,
-        observability_runtime: ObservabilityRuntime | None = None,
+        observability: Observability | None = None,
     ) -> None:
         self._plan = plan
-        self._observability_runtime = observability_runtime or ObservabilityRuntime.noop()
+        self._observability = observability or Observability.noop()
         self._input: list[Any] = []
         self._output: list[Any] = []
         self._errors: dict[ErrorKind, list[Any]] = {}
@@ -80,11 +80,11 @@ class StreamingTestRunner:
         flow: StreamFlow[Any, Any],
         *,
         config: ConfigContext | Mapping[str, Any],
-        observability_runtime: ObservabilityRuntime | None = None,
+        observability: Observability | None = None,
     ) -> StreamingTestRunner:
         """Compile a flow and build a test runner from resolved config."""
         plan = compile_flow(flow, config=_ensure_config_context(config))
-        return cls(plan, observability_runtime=observability_runtime)
+        return cls(plan, observability=observability)
 
     @classmethod
     def from_yaml(
@@ -92,13 +92,13 @@ class StreamingTestRunner:
         flow: StreamFlow[Any, Any],
         path: str,
         *,
-        observability_runtime: ObservabilityRuntime | None = None,
+        observability: Observability | None = None,
     ) -> StreamingTestRunner:
         """Load YAML config, compile the flow, and build a test runner."""
         return cls.from_flow(
             flow,
             config=ConfigContext.from_yaml(path),
-            observability_runtime=observability_runtime,
+            observability=observability,
         )
 
     @classmethod
@@ -107,13 +107,13 @@ class StreamingTestRunner:
         flow: StreamFlow[Any, Any],
         config: dict[str, Any],
         *,
-        observability_runtime: ObservabilityRuntime | None = None,
+        observability: Observability | None = None,
     ) -> StreamingTestRunner:
         """Build a test runner from a plain Python config mapping."""
         return cls.from_flow(
             flow,
             config=ConfigContext.from_dict(config),
-            observability_runtime=observability_runtime,
+            observability=observability,
         )
 
     def with_payloads(self, items: list[Any]) -> StreamingTestRunner:
@@ -167,7 +167,7 @@ class StreamingTestRunner:
         }
         prepared = _prepare_run(
             plan=self._plan,
-            observability_runtime=self._observability_runtime,
+            observability=self._observability,
             source=bytewax_testing.TestingSource(list(self._input)),
             sink=(
                 bytewax_testing.TestingSink(self._output)
@@ -178,7 +178,7 @@ class StreamingTestRunner:
             error_sinks=error_sinks,
         )
         try:
-            with self._observability_runtime.span(
+            with self._observability.span(
                 Scope.POLL_CYCLE,
                 self._plan.name,
                 id=generate_trace_id(),

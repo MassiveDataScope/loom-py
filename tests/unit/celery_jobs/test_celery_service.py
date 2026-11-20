@@ -218,7 +218,7 @@ class TestEvents:
 
     async def test_the_broker_send_is_one_transport_span(self, broker: CeleryBroker) -> None:
         recorder = build_recorder()
-        service = JobService(CeleryJobTransport(broker.app, observability_runtime=recorder.runtime))
+        service = JobService(CeleryJobTransport(broker.app, observability=recorder.runtime))
 
         service.dispatch_after_commit(EmailJob)
         await flush_pending_dispatches()

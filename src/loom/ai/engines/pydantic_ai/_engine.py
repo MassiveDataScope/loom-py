@@ -187,7 +187,7 @@ class PydanticAIEngine:
             conversation: The conversation this run continues, or ``None``
                 for a single shot.
             state: This run's state, already resolved against the plan's
-                declared shape by :class:`~loom.ai.execution.AgentRuntime`;
+                declared shape by :class:`~loom.ai.execution.AgentHost`;
                 forwarded to :attr:`_deps` unchanged.
 
         Returns:
@@ -311,7 +311,7 @@ class PydanticAIEngine:
         """Return this engine's own objects, for a caller driving the run itself.
 
         Serves :meth:`~loom.ai.abc.AgentHandle.native` through
-        :meth:`~loom.ai.execution.AgentRuntime.native`; the accessor that names
+        :meth:`~loom.ai.execution.AgentHost.native`; the accessor that names
         the returned type for calling code is
         :func:`~loom.ai.engines.pydantic_ai.native_agent`. What a driver keeps
         and loses is stated once, on :meth:`~loom.ai.abc.AgentHandle.native`.
@@ -319,11 +319,11 @@ class PydanticAIEngine:
         Args:
             identity: Verified caller the dependency bundle is built for.
             state: This run's state, already resolved against the plan's
-                declared shape by :class:`~loom.ai.execution.AgentRuntime`.
+                declared shape by :class:`~loom.ai.execution.AgentHost`.
             guard: Zero-argument factory of the async context manager a
                 driven run enters to rejoin this runtime's chain and
                 admission bounds; built by
-                :meth:`~loom.ai.execution.AgentRuntime.native` and carried on
+                :meth:`~loom.ai.execution.AgentHost.native` and carried on
                 the returned carrier unchanged.
 
         Returns:

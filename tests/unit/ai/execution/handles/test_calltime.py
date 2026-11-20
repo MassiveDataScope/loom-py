@@ -8,14 +8,14 @@ from typing import Any
 import pytest
 
 from loom.ai.abc import AgentHandle, McpHandle
-from loom.ai.execution import AgentRuntime
+from loom.ai.execution import AgentHost
 from loom.ai.execution._handle import AgentMarkerResolver, McpMarkerResolver
 from loom.core.engine.compiler import UseCaseCompiler
-from loom.core.engine.executor import RuntimeExecutor
+from loom.core.engine.executor import UseCaseExecutor
 from loom.core.errors import IdentityFixed
 from loom.core.execution import ExecutionRequired, ExecutionScope, NoExecution
 from loom.core.observability.event import EventKind, Scope
-from loom.core.observability.observability import ObservabilityRuntime
+from loom.core.observability.observability import Observability
 from loom.core.use_case import Agent, Mcp
 from tests.integration.ai.conftest import RecordingMcpSession, RecordingObserver
 
@@ -87,7 +87,7 @@ class TestTheLegacyCall:
 
 class TestBindingAResolver:
     def test_refuses_positional_resolvers(self) -> None:
-        executor = RuntimeExecutor(UseCaseCompiler())
+        executor = UseCaseExecutor(UseCaseCompiler())
 
         with pytest.raises(TypeError, match=r"resolve\(declaration, annotation\)"):
             executor.bind_agent_resolver(lambda name, identity: name)
@@ -97,7 +97,7 @@ class TestBindingAResolver:
     def test_binds_the_call_time_resolvers_without_a_warning(
         self, agent_resolver: AgentMarkerResolver, mcp_resolver: McpMarkerResolver
     ) -> None:
-        executor = RuntimeExecutor(UseCaseCompiler())
+        executor = UseCaseExecutor(UseCaseCompiler())
 
         with warnings.catch_warnings():
             warnings.simplefilter("error", DeprecationWarning)
@@ -107,7 +107,7 @@ class TestBindingAResolver:
 
 class TestEachCallReadsTheIdentity:
     async def test_one_agent_handle_runs_as_whoever_calls_it(
-        self, runtime: AgentRuntime, triage: Any, crm: Any, engine: AcmeEngine
+        self, runtime: AgentHost, triage: Any, crm: Any, engine: AcmeEngine
     ) -> None:
         async with runtime:
             for caller in (ALICE, BOB, ALICE):
@@ -118,7 +118,7 @@ class TestEachCallReadsTheIdentity:
         assert engine.acting == [ALICE, BOB, ALICE]
 
     async def test_one_sql_view_queries_with_the_roles_of_whoever_calls_it(
-        self, runtime: AgentRuntime, triage: Any, crm: Any, sql_service: AcmeSqlService
+        self, runtime: AgentHost, triage: Any, crm: Any, sql_service: AcmeSqlService
     ) -> None:
         async with runtime:
             view = triage.sql("acme-reporting")
@@ -130,7 +130,7 @@ class TestEachCallReadsTheIdentity:
 
     @pytest.mark.parametrize("call", list(HANDLE_CALLS.values()), ids=list(HANDLE_CALLS))
     async def test_a_handle_called_outside_any_execution_fails_closed(
-        self, runtime: AgentRuntime, triage: Any, crm: Any, call: Any, backend_calls: Any
+        self, runtime: AgentHost, triage: Any, crm: Any, call: Any, backend_calls: Any
     ) -> None:
         async with runtime:
             handle_call = call(triage, crm)
@@ -140,10 +140,10 @@ class TestEachCallReadsTheIdentity:
         assert backend_calls() == 0
 
     async def test_one_mcp_handle_calls_each_tool_as_whoever_calls_it(
-        self, runtime: AgentRuntime, session: RecordingMcpSession
+        self, runtime: AgentHost, session: RecordingMcpSession
     ) -> None:
         recorder = RecordingObserver()
-        resolver = McpMarkerResolver(runtime, observability=ObservabilityRuntime([recorder]))
+        resolver = McpMarkerResolver(runtime, observability=Observability([recorder]))
         crm = resolver.resolve(Mcp(SERVER, include=["find_*"]), McpHandle)
 
         async with runtime:

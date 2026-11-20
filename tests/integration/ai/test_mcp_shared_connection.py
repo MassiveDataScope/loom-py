@@ -33,7 +33,7 @@ from loom.ai.config import AiConfig
 from loom.ai.engines.pydantic_ai import PydanticAIEnginePlugin, create_mcp_client
 from loom.ai.engines.pydantic_ai import _mcp as engine_mcp
 from loom.ai.errors import AgentCompilationError, AgentRunError, AgentRunErrorCode
-from loom.ai.execution import AgentRuntime
+from loom.ai.execution import AgentHost
 from loom.core.di import LoomContainer
 from loom.core.identity import Identity
 from tests.integration.ai.conftest import (
@@ -146,10 +146,10 @@ def _config(**overrides: Any) -> AiConfig:
     )
 
 
-def _runtime(plans: list[AgentPlan], model: ScriptedToolModel, **overrides: Any) -> AgentRuntime:
+def _runtime(plans: list[AgentPlan], model: ScriptedToolModel, **overrides: Any) -> AgentHost:
     """Build the runtime the composition root builds, MCP factory included."""
     provider = PydanticAIEnginePlugin(model_resolver=lambda target: model.as_model())
-    return AgentRuntime(
+    return AgentHost(
         plans=plans,
         config=_config(**overrides),
         engine_plugin=provider,
@@ -243,7 +243,7 @@ class TestConcurrentCallsOverTheSharedToolset:
         # with ``plans`` and each agent drives its own script.
         models = iter((blocked_model, quick_model))
         provider = PydanticAIEnginePlugin(model_resolver=lambda target: next(models).as_model())
-        runtime = AgentRuntime(
+        runtime = AgentHost(
             plans=plans,
             config=_config(),
             engine_plugin=provider,
@@ -299,7 +299,7 @@ class TestTheWiringIsChecked:
         model = ScriptedToolModel()
         plan = make_plan("clerk", capabilities=(make_mcp_capability(_SERVER),))
         provider = PydanticAIEnginePlugin(model_resolver=lambda target: model.as_model())
-        runtime = AgentRuntime(
+        runtime = AgentHost(
             plans=[plan],
             config=_config(),
             engine_plugin=provider,
@@ -323,7 +323,7 @@ class TestTheWiringIsChecked:
         plan = make_plan("clerk", capabilities=(make_mcp_capability(_SERVER),))
         opener = PydanticAIEnginePlugin(model_resolver=lambda target: model.as_model())
         builder = PydanticAIEnginePlugin(model_resolver=lambda target: model.as_model())
-        runtime = AgentRuntime(
+        runtime = AgentHost(
             plans=[plan],
             config=_config(),
             engine_plugin=builder,

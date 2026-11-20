@@ -8,7 +8,7 @@ from typing import Any
 import pytest
 
 from loom.core.engine.compiler import UseCaseCompiler
-from loom.core.engine.executor import RuntimeExecutor
+from loom.core.engine.executor import UseCaseExecutor
 from loom.core.execution import current_execution
 from loom.core.identity import ANONYMOUS, current_identity
 from loom.core.stores.catalog import DEFAULT_STORE
@@ -26,7 +26,7 @@ from .doubles import (
     session_factory,
 )
 
-MakeExecutor = Callable[..., RuntimeExecutor]
+MakeExecutor = Callable[..., UseCaseExecutor]
 
 
 @pytest.fixture(autouse=True)
@@ -42,15 +42,15 @@ def no_execution_left_open() -> Iterator[None]:
 def make_executor() -> MakeExecutor:
     """An executor reporting its events to ``JOURNAL`` and logging to a recorder, by default."""
 
-    def make(**options: Any) -> RuntimeExecutor:
+    def make(**options: Any) -> UseCaseExecutor:
         defaults: dict[str, Any] = {"logger": AcmeRecordingLogger(), "metrics": JOURNAL}
-        return RuntimeExecutor(UseCaseCompiler(), **{**defaults, **options})
+        return UseCaseExecutor(UseCaseCompiler(), **{**defaults, **options})
 
     return make
 
 
 @pytest.fixture
-def executor(make_executor: MakeExecutor) -> RuntimeExecutor:
+def executor(make_executor: MakeExecutor) -> UseCaseExecutor:
     return make_executor()
 
 
@@ -81,9 +81,9 @@ def stores(ledger: Ledger) -> AcmeStores:
 
 
 @pytest.fixture
-def transactional_executor(stores: AcmeStores, metrics: Metrics) -> RuntimeExecutor:
+def transactional_executor(stores: AcmeStores, metrics: Metrics) -> UseCaseExecutor:
     """An executor whose top-level writers open an invocation scope over ``stores``."""
-    return RuntimeExecutor(
+    return UseCaseExecutor(
         UseCaseCompiler(), coordinator=OrderedCommits({DEFAULT_STORE: stores}), metrics=metrics
     )
 
@@ -94,8 +94,8 @@ def mcp_calls() -> McpCalls:
 
 
 @pytest.fixture
-def mcp_executor(mcp_calls: McpCalls) -> RuntimeExecutor:
+def mcp_executor(mcp_calls: McpCalls) -> UseCaseExecutor:
     """An executor whose ``Mcp()`` resolver records each call in ``mcp_calls``."""
-    executor = RuntimeExecutor(UseCaseCompiler())
+    executor = UseCaseExecutor(UseCaseCompiler())
     executor.bind_mcp_resolver(mcp_resolver(mcp_calls))
     return executor

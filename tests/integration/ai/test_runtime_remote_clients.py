@@ -26,7 +26,7 @@ import pytest
 
 from loom.ai.compiler._plan import AgentPlan, CompiledA2ACapability
 from loom.ai.errors import AgentCompilationError, AgentErrorCode
-from loom.ai.execution import AgentRuntime
+from loom.ai.execution import AgentHost
 from loom.core.di import LoomContainer
 from loom.core.identity import Identity
 from tests.integration.ai.conftest import (
@@ -87,11 +87,11 @@ def _runtime(
     health_cache_ttl_ms: int = 5,
     with_mcp_factory: bool = True,
     with_a2a_factory: bool = True,
-) -> AgentRuntime:
-    """Assemble an ``AgentRuntime`` over local stubs only."""
+) -> AgentHost:
+    """Assemble an ``AgentHost`` over local stubs only."""
     mcp = dict(clients or {})
     a2a = dict(a2a_clients or {})
-    return AgentRuntime(
+    return AgentHost(
         plans=list(plans),
         config=make_ai_config(
             mcp_servers=make_mcp_servers(*mcp),

@@ -24,7 +24,7 @@ from fastapi import FastAPI
 from fastapi.testclient import TestClient
 
 from loom.core.identity import Identity, reset_identity, set_identity
-from loom.core.observability.observability import ObservabilityRuntime
+from loom.core.observability.observability import Observability
 from loom.core.stores.sql.config import SqlEndpointConfig
 from loom.core.stores.sql.service import SqlQueryService
 from loom.rest.auth import (
@@ -91,7 +91,7 @@ class AcmeFixedIdentityMiddleware:
 def _app(
     executor: FakeSqlExecutor,
     *,
-    runtime: ObservabilityRuntime | None = None,
+    runtime: Observability | None = None,
     **conn_overrides: Any,
 ) -> FastAPI:
     connection = make_connection_config(
@@ -105,7 +105,7 @@ def _app(
         service=SqlQueryService(executors={"analytics": executor}, config=config),
         config=config,
         authenticator=_RoleAuthenticator(),
-        observability_runtime=runtime,
+        observability=runtime,
     )
     return app
 
@@ -114,7 +114,7 @@ def _client(
     executor: FakeSqlExecutor,
     *,
     identity: Identity | None,
-    runtime: ObservabilityRuntime | None = None,
+    runtime: Observability | None = None,
     **conn_overrides: Any,
 ) -> TestClient:
     app = _app(executor, runtime=runtime, **conn_overrides)
@@ -401,7 +401,7 @@ class TestNonJwtMechanismDerivesRoles:
         client = _client(
             FakeSqlExecutor(),
             identity=_identity((ROLE_A, ROLE_B), subject="user-42"),
-            runtime=ObservabilityRuntime([observer]),
+            runtime=Observability([observer]),
         )
 
         response = _post(client, roles=[ROLE_B])
@@ -461,7 +461,7 @@ class TestSingleRoleConnection:
             service=SqlQueryService(executors={"analytics": executor}, config=config),
             config=config,
             authenticator=_RoleAuthenticator(),
-            observability_runtime=ObservabilityRuntime([observer]),
+            observability=Observability([observer]),
         )
         app.add_middleware(AcmeFixedIdentityMiddleware, identity=_identity((ROLE_B,)))
 

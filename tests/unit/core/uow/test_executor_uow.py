@@ -1,4 +1,4 @@
-"""Unit tests for RuntimeExecutor UoW lifecycle integration."""
+"""Unit tests for UseCaseExecutor UoW lifecycle integration."""
 
 from __future__ import annotations
 
@@ -7,7 +7,7 @@ from typing import Any, ClassVar
 import pytest
 
 from loom.core.engine.compiler import UseCaseCompiler
-from loom.core.engine.executor import RuntimeExecutor
+from loom.core.engine.executor import UseCaseExecutor
 from loom.core.stores.catalog import DEFAULT_STORE
 from loom.core.stores.uow.coordinator import OrderedCommits
 from loom.core.stores.uow.scope import current_scope
@@ -95,7 +95,7 @@ class TestExecutorUnitOfWork:
     @pytest.mark.asyncio
     async def test_no_uow_factory_runs_without_transaction(self) -> None:
         compiler = _compiler(_SimpleUC)
-        executor = RuntimeExecutor(compiler)  # no uow_factory
+        executor = UseCaseExecutor(compiler)  # no uow_factory
         uc = _SimpleUC()
         result = await executor.execute(uc)
         assert result == "ok"
@@ -104,7 +104,7 @@ class TestExecutorUnitOfWork:
     async def test_uow_factory_creates_uow_per_execution(self) -> None:
         factory = RecordingUnitOfWorkFactory()
         compiler = _compiler(_SimpleUC)
-        executor = RuntimeExecutor(compiler, coordinator=OrderedCommits({DEFAULT_STORE: factory}))
+        executor = UseCaseExecutor(compiler, coordinator=OrderedCommits({DEFAULT_STORE: factory}))
 
         uc = _SimpleUC()
         await executor.execute(uc)
@@ -116,7 +116,7 @@ class TestExecutorUnitOfWork:
         """FR-001: the executor never calls ``begin`` itself."""
         factory = RecordingUnitOfWorkFactory()
         compiler = _compiler(_SimpleUC)
-        executor = RuntimeExecutor(compiler, coordinator=OrderedCommits({DEFAULT_STORE: factory}))
+        executor = UseCaseExecutor(compiler, coordinator=OrderedCommits({DEFAULT_STORE: factory}))
 
         await executor.execute(_SimpleUC())
 
@@ -127,7 +127,7 @@ class TestExecutorUnitOfWork:
         """FR-001: a clean ``__aexit__`` is the commit; the executor calls no method."""
         factory = RecordingUnitOfWorkFactory()
         compiler = _compiler(_SimpleUC)
-        executor = RuntimeExecutor(compiler, coordinator=OrderedCommits({DEFAULT_STORE: factory}))
+        executor = UseCaseExecutor(compiler, coordinator=OrderedCommits({DEFAULT_STORE: factory}))
 
         await executor.execute(_SimpleUC())
 
@@ -140,7 +140,7 @@ class TestExecutorUnitOfWork:
         """FR-001: the failure reaches ``__aexit__``; the adapter decides the rollback."""
         factory = RecordingUnitOfWorkFactory()
         compiler = _compiler(_FailingUC)
-        executor = RuntimeExecutor(compiler, coordinator=OrderedCommits({DEFAULT_STORE: factory}))
+        executor = UseCaseExecutor(compiler, coordinator=OrderedCommits({DEFAULT_STORE: factory}))
 
         failing_uc = _FailingUC()
         with pytest.raises(RuntimeError, match="intentional") as info:
@@ -161,7 +161,7 @@ class TestExecutorUnitOfWork:
 class _NestingUC(UseCase[Any, str]):
     """Runs ``_SimpleUC`` through the same executor from inside its own execution."""
 
-    def __init__(self, executor: RuntimeExecutor) -> None:
+    def __init__(self, executor: UseCaseExecutor) -> None:
         self._executor = executor
 
     async def execute(self, **kwargs: Any) -> str:
@@ -172,7 +172,7 @@ class TestNestedExecutionUnitOfWork:
     @pytest.mark.asyncio
     async def test_nested_execution_does_not_open_second_uow(self) -> None:
         factory = RecordingUnitOfWorkFactory()
-        executor = RuntimeExecutor(
+        executor = UseCaseExecutor(
             _compiler(_SimpleUC, _NestingUC), coordinator=OrderedCommits({DEFAULT_STORE: factory})
         )
 
@@ -183,7 +183,7 @@ class TestNestedExecutionUnitOfWork:
     @pytest.mark.asyncio
     async def test_nested_execution_does_not_commit(self) -> None:
         factory = RecordingUnitOfWorkFactory()
-        executor = RuntimeExecutor(
+        executor = UseCaseExecutor(
             _compiler(_SimpleUC, _NestingUC), coordinator=OrderedCommits({DEFAULT_STORE: factory})
         )
 
@@ -194,7 +194,7 @@ class TestNestedExecutionUnitOfWork:
     @pytest.mark.asyncio
     async def test_no_scope_is_published_after_execution(self) -> None:
         factory = RecordingUnitOfWorkFactory()
-        executor = RuntimeExecutor(
+        executor = UseCaseExecutor(
             _compiler(_SimpleUC), coordinator=OrderedCommits({DEFAULT_STORE: factory})
         )
 
@@ -205,7 +205,7 @@ class TestNestedExecutionUnitOfWork:
     @pytest.mark.asyncio
     async def test_no_scope_is_published_after_failed_execution(self) -> None:
         factory = RecordingUnitOfWorkFactory()
-        executor = RuntimeExecutor(
+        executor = UseCaseExecutor(
             _compiler(_FailingUC), coordinator=OrderedCommits({DEFAULT_STORE: factory})
         )
 
@@ -247,7 +247,7 @@ class TestLoadProfilePassedToRepo:
         repo = RecordingRepository(MyEntity())
 
         compiler = _compiler(LoadUC)
-        executor = RuntimeExecutor(compiler)
+        executor = UseCaseExecutor(compiler)
         await executor.execute(
             LoadUC(),
             params={"entity_id": "42"},
@@ -274,7 +274,7 @@ class TestLoadProfilePassedToRepo:
         repo = RecordingRepository(MyEntity())
 
         compiler = _compiler(LoadUC)
-        executor = RuntimeExecutor(compiler)
+        executor = UseCaseExecutor(compiler)
         await executor.execute(
             LoadUC(),
             params={"entity_id": "7"},

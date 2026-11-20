@@ -151,7 +151,7 @@ class UseCaseMcpGrant:
     parameter: str
 
 
-class AgentRuntime:
+class AgentHost:
     """Owns the live agents of one worker: clients, engines and their limits.
 
     Usable only as an async context manager, and only from the task that
@@ -188,7 +188,7 @@ class AgentRuntime:
 
     Example::
 
-        async with AgentRuntime(
+        async with AgentHost(
             plans=plans, config=ai_config, engine_plugin=provider,
             deps=deps, container=container,
         ) as runtime:
@@ -241,7 +241,7 @@ class AgentRuntime:
                 client opened so far is closed before the error propagates.
         """
         if self._stack is not None:
-            raise RuntimeError("AgentRuntime is already entered")
+            raise RuntimeError("AgentHost is already entered")
         stack = AsyncExitStack()
         self._stack = stack
         self._owner = asyncio.current_task()
@@ -279,10 +279,10 @@ class AgentRuntime:
         """
         stack = self._stack
         if stack is None:
-            raise RuntimeError("AgentRuntime was not entered")
+            raise RuntimeError("AgentHost was not entered")
         if asyncio.current_task() is not self._owner:
             raise RuntimeError(
-                "AgentRuntime must be exited by the task that entered it: the live "
+                "AgentHost must be exited by the task that entered it: the live "
                 "clients are session-affine and closing them from another task "
                 "corrupts them"
             )
@@ -1066,7 +1066,7 @@ class AgentRuntime:
         """
         if self._stack is None:
             raise RuntimeError(
-                "AgentRuntime must be entered before use: wrap it in "
+                "AgentHost must be entered before use: wrap it in "
                 "'async with runtime:' to open its clients and build its engines"
             )
         try:
@@ -1125,7 +1125,7 @@ class AgentRuntime:
         slot = self._slots.get(name)
         if slot is None:
             raise RuntimeError(
-                "AgentRuntime must be entered before use: wrap it in "
+                "AgentHost must be entered before use: wrap it in "
                 "'async with runtime:' to open its clients and build its engines"
             )
         return slot

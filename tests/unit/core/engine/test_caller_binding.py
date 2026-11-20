@@ -13,7 +13,7 @@ import asyncio
 import pytest
 
 from loom.core.engine.compiler import CompilationError, UseCaseCompiler
-from loom.core.engine.executor import RuntimeExecutor
+from loom.core.engine.executor import UseCaseExecutor
 from loom.core.errors import Unauthenticated
 from loom.core.identity import ANONYMOUS, Identity
 from loom.core.use_case.markers import Caller
@@ -44,14 +44,14 @@ class NoCallerUseCase(UseCase[object, str]):
         return "anyone"
 
 
-def _executor() -> RuntimeExecutor:
-    return RuntimeExecutor(UseCaseCompiler())
+def _executor() -> UseCaseExecutor:
+    return UseCaseExecutor(UseCaseCompiler())
 
 
 async def _run(use_case_type: type[UseCase[object, str]], **kwargs: object) -> str:
     compiler = UseCaseCompiler()
     compiler.compile(use_case_type)
-    executor = RuntimeExecutor(compiler)
+    executor = UseCaseExecutor(compiler)
     result: str = await executor.execute(use_case_type(), **kwargs)  # type: ignore[arg-type]
     return result
 
@@ -115,7 +115,7 @@ class TestCallerBinding:
         """Fail-closed: a transport that delivers no identity never yields ANONYMOUS."""
         compiler = UseCaseCompiler()
         compiler.compile(WhoAmIUseCase)
-        executor = RuntimeExecutor(compiler)
+        executor = UseCaseExecutor(compiler)
         use_case = WhoAmIUseCase()
 
         with pytest.raises(Unauthenticated):
@@ -125,7 +125,7 @@ class TestCallerBinding:
         """The message must tell a developer which wiring is missing."""
         compiler = UseCaseCompiler()
         compiler.compile(WhoAmIUseCase)
-        executor = RuntimeExecutor(compiler)
+        executor = UseCaseExecutor(compiler)
         use_case = WhoAmIUseCase()
 
         with pytest.raises(Unauthenticated, match="WhoAmIUseCase"):
@@ -139,7 +139,7 @@ class TestCallerBinding:
         """Two callers running at once must each see their own identity."""
         compiler = UseCaseCompiler()
         compiler.compile(WhoAmIUseCase)
-        executor = RuntimeExecutor(compiler)
+        executor = UseCaseExecutor(compiler)
 
         results = await asyncio.gather(
             executor.execute(WhoAmIUseCase(), identity=_ALICE),
@@ -150,4 +150,4 @@ class TestCallerBinding:
 
     def test_the_executor_is_constructible_without_identity_support(self) -> None:
         """The parameter is additive: existing composition roots keep working."""
-        assert isinstance(_executor(), RuntimeExecutor)
+        assert isinstance(_executor(), UseCaseExecutor)

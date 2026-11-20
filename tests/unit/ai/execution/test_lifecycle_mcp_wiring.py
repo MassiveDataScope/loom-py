@@ -1,6 +1,6 @@
 """The runtime's own wiring point decides whether a session is safe unwrapped.
 
-``AgentRuntime._register_opened`` (``loom/ai/execution/_lifecycle.py``) is the
+``AgentHost._register_opened`` (``loom/ai/execution/_lifecycle.py``) is the
 one place a just-opened session becomes what a grant view calls through. It
 must go through :func:`~loom.ai.execution._mcp.mcp_session_for` to do that:
 storing the session as-is would let a third-party session that declares
@@ -25,7 +25,7 @@ from typing import Any
 import pytest
 
 from loom.ai.abc import McpToolCallResult, McpToolInfo
-from loom.ai.execution import AgentRuntime
+from loom.ai.execution import AgentHost
 from loom.ai.execution._handle import _AgentHandle
 from loom.core.di import LoomContainer
 from loom.core.execution import ExecutionScope
@@ -100,7 +100,7 @@ class TestUndeclaredThirdPartySession:
         capability = make_mcp_capability(_MCP_SERVER)
         session = _UndeclaredThirdPartySession()
         client = StubMcpClient(label=_MCP_SERVER, session=session, log=[])
-        runtime = AgentRuntime(
+        runtime = AgentHost(
             plans=[make_plan(_AGENT_NAME, capabilities=(capability,))],
             config=make_ai_config(mcp_servers=make_mcp_servers(_MCP_SERVER)),
             engine_plugin=CountingEngineProvider(  # type: ignore[arg-type]

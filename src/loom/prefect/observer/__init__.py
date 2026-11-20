@@ -1,7 +1,7 @@
 """LifecycleObserver bridges for ``loom.prefect``.
 
 This sub-package contains the two observers loom's
-:class:`~loom.core.observability.observability.ObservabilityRuntime` attaches
+:class:`~loom.core.observability.observability.Observability` attaches
 when a pipeline runs under Prefect:
 
 - :class:`PrefectObserver` — forwards events to the Prefect run logger

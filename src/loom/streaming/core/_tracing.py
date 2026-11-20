@@ -14,7 +14,7 @@ from __future__ import annotations
 from collections.abc import Mapping
 
 from loom.core.observability.event import Scope, TerminalReason
-from loom.core.observability.observability import ObservabilityRuntime
+from loom.core.observability.observability import Observability
 from loom.core.observability.span import LoomSpan
 from loom.streaming.core._message import MessageMeta
 
@@ -45,7 +45,7 @@ def message_attributes(meta: MessageMeta) -> dict[str, object]:
 
 
 def open_terminal_span(
-    runtime: ObservabilityRuntime,
+    runtime: Observability,
     meta: MessageMeta,
     reason: TerminalReason,
     *,

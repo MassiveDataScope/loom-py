@@ -1,6 +1,6 @@
 """Inbound A2A surface: card, JSON-RPC methods and streaming parity (T135, T136).
 
-Drives ``bind_a2a_endpoints`` over a live :class:`AgentRuntime` backed by
+Drives ``bind_a2a_endpoints`` over a live :class:`AgentHost` backed by
 scripted engines, asserting ``specs/001-ai-agent-layer/contracts/a2a.md``:
 the published card validates against the A2A SDK, the streamed events are the
 same union the HTTP surface projects (FR-039a), the capability wiring never
@@ -43,7 +43,7 @@ from loom.ai.abc import (
 from loom.ai.compiler._plan import AgentPlan
 from loom.ai.config import A2AConfig, AgentEndpointConfig
 from loom.ai.errors import AgentCompilationError, AgentErrorCode, AgentRunErrorCode
-from loom.ai.execution import AgentRuntime
+from loom.ai.execution import AgentHost
 from loom.ai.fastapi.endpoints import bind_agent_endpoints
 from loom.core.config.errors import ConfigError
 from loom.core.di import LoomContainer
@@ -51,7 +51,7 @@ from loom.core.identity import Identity
 from loom.core.model import loom_type
 from loom.core.model.redaction import Dsn
 from loom.core.observability.event import EventKind, Scope
-from loom.core.observability.observability import ObservabilityRuntime
+from loom.core.observability.observability import Observability
 from loom.rest.auth.abc import RequestCredentials
 from loom.rest.auth.middleware import AuthenticationMiddleware
 from tests.integration.ai.conftest import (
@@ -177,7 +177,7 @@ async def _serving(
     declared_exclusions: Sequence[str] = (),
     max_prompt_bytes: int = 65536,
     with_http_endpoints: bool = False,
-    observability_runtime: ObservabilityRuntime | None = None,
+    observability: Observability | None = None,
 ) -> AsyncIterator[tuple[FastAPI, httpx.AsyncClient]]:
     """Serve an entered runtime behind the real authentication middleware.
 
@@ -192,7 +192,7 @@ async def _serving(
         a2a=a2a if a2a is not None else A2AConfig(base_url=Dsn(_BASE_URL), expose=(_AGENT,)),
         max_prompt_bytes=max_prompt_bytes,
     )
-    runtime = AgentRuntime(
+    runtime = AgentHost(
         plans=plans,
         config=config,
         engine_plugin=CountingEngineProvider(engines=engines),  # type: ignore[arg-type]
@@ -222,7 +222,7 @@ async def _serving(
             plans=plans,
             authenticator=authenticator,  # type: ignore[arg-type]
             exclude_paths=tuple(declared_exclusions),
-            observability_runtime=observability_runtime,
+            observability=observability,
             prefix=_PREFIX,
         )
         transport = httpx.ASGITransport(app=app)
@@ -236,9 +236,9 @@ def _runtime(
     container: LoomContainer,
     config: Any,
     plans: Sequence[AgentPlan],
-) -> AgentRuntime:
+) -> AgentHost:
     """Build a runtime over scripted engines for one configuration."""
-    return AgentRuntime(
+    return AgentHost(
         plans=list(plans),
         config=config,
         engine_plugin=CountingEngineProvider(),  # type: ignore[arg-type]
@@ -415,7 +415,7 @@ class TestOptionality:
         """No section means no card route and no invocation route."""
         config = make_ai_config(endpoints={_AGENT: make_endpoint()})
         plans = [make_plan(_AGENT)]
-        runtime = AgentRuntime(
+        runtime = AgentHost(
             plans=plans,
             config=config,
             engine_plugin=CountingEngineProvider(),  # type: ignore[arg-type]
@@ -735,7 +735,7 @@ class TestUsageOnTheAgentSpan:
         async with _serving(
             deps=deps,
             container=container,
-            observability_runtime=ObservabilityRuntime([recorder]),
+            observability=Observability([recorder]),
         ) as (_app, client):
             response = await client.post(
                 f"{_PREFIX}/{_AGENT}", json=_rpc("message/send"), headers=_auth()
@@ -937,7 +937,7 @@ class TestConversations:
             container=container,
             plans=(conversational_plan(_AGENT),),
             engines={_AGENT: engine},
-            observability_runtime=ObservabilityRuntime([observer]),
+            observability=Observability([observer]),
         ) as (_app, client):
             response = await client.post(
                 f"{_PREFIX}/{_AGENT}", json=_rpc(method, context_id=context_id), headers=_auth()
@@ -967,7 +967,7 @@ class TestConversations:
             container=container,
             plans=(conversational_plan(_AGENT),),
             engines={_AGENT: engine},
-            observability_runtime=ObservabilityRuntime([observer]),
+            observability=Observability([observer]),
         ) as (_app, client):
             response = await client.post(
                 f"{_PREFIX}/{_AGENT}", json=_rpc(method, task_id="t-1"), headers=_auth()

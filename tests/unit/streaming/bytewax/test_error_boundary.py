@@ -12,7 +12,7 @@ from tests.helpers.version_limited_extras import require_bytewax
 require_bytewax()
 
 from loom.core.errors import BoundaryValidationError, RuleViolationError  # noqa: E402
-from loom.core.observability.observability import ObservabilityRuntime  # noqa: E402
+from loom.core.observability.observability import Observability  # noqa: E402
 from loom.streaming.bytewax import _error_boundary  # noqa: E402
 from loom.streaming.core._errors import ErrorEnvelope, ErrorKind  # noqa: E402
 from loom.streaming.core._message import Message, MessageMeta  # noqa: E402
@@ -49,7 +49,7 @@ def _raise(exc: Exception) -> NoReturn:
 
 
 def _boundary() -> _error_boundary.ErrorBoundary:
-    return _error_boundary.ErrorBoundary(observer=ObservabilityRuntime.noop(), flow="orders")
+    return _error_boundary.ErrorBoundary(observer=Observability.noop(), flow="orders")
 
 
 class TestClassifyTask:

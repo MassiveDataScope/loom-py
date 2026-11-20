@@ -62,7 +62,7 @@ from loom.ai.errors import (
     AgentRunErrorCode,
     run_error_class,
 )
-from loom.ai.execution import AgentRunError, AgentRuntime
+from loom.ai.execution import AgentHost, AgentRunError
 from loom.composition._ai import AgentDepsFactory
 from loom.core.bootstrap import create_kernel
 from loom.core.command import Command
@@ -1882,8 +1882,8 @@ class TestIdentityReachesTheExecutor:
 
 class TestTheRuntimeStartChecksTheInvoker:
     @staticmethod
-    def _runtime(container: LoomContainer, provider: CountingEngineProvider) -> AgentRuntime:
-        return AgentRuntime(
+    def _runtime(container: LoomContainer, provider: CountingEngineProvider) -> AgentHost:
+        return AgentHost(
             plans=[make_plan("analyst", capabilities=(whoami_capability(),))],
             config=make_ai_config(),
             engine_plugin=provider,  # type: ignore[arg-type]

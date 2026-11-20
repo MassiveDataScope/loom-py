@@ -24,7 +24,7 @@ from loom.core.config import ConfigContext
 from loom.core.config.errors import ConfigError
 from loom.core.environment import Environment
 from loom.core.model.redaction import Dsn, Secret
-from loom.core.observability.observability import ObservabilityRuntime
+from loom.core.observability.observability import Observability
 from loom.rest.auth import JwtAuthConfig, JwtAuthenticator, RequestCredentials
 from loom.rest.auth.config import JwtIssuerConfig, JwtPublicKey
 from loom.rest.checks import AUDIENCE_CHECK, ISSUER_CHECK
@@ -856,4 +856,4 @@ class TestAgentSurfaceAudience:
         wiring = AiWiring(config=ai_config, runtime=cast(Any, object()))
 
         with pytest.raises(ConfigError, match=r"Agent 'analyst'.*audience"):
-            _bind_agent_surfaces(FastAPI(), wiring, auth, ObservabilityRuntime.noop())
+            _bind_agent_surfaces(FastAPI(), wiring, auth, Observability.noop())

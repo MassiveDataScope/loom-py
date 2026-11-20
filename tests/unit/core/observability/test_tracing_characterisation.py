@@ -5,7 +5,7 @@ was reconstructed after the fact from two independent ``on_event`` calls: a
 child never found its parent (E2), every root span pointed at a fabricated
 parent that was never exported (E5), and two concurrent runs of the same
 ``(scope, name)`` collided on one process-wide registry key (E7). Spans are now
-opened by ``ObservabilityRuntime`` itself, in the one lexical scope that covers
+opened by ``Observability`` itself, in the one lexical scope that covers
 both ends of a unit of work, so each of those assertions is inverted here.
 
 Spans are exported through a real ``TracerProvider`` with a
@@ -36,7 +36,7 @@ from loom.core.config.observability import OtelConfig
 from loom.core.model.redaction import Dsn
 from loom.core.observability.config import ObservabilityConfig, OtelObservabilityConfig
 from loom.core.observability.event import EventKind, LifecycleEvent, Scope
-from loom.core.observability.observability import ObservabilityRuntime
+from loom.core.observability.observability import Observability
 from loom.core.observability.observer import otel as _otel_module
 from loom.core.observability.span import LoomSpan
 
@@ -68,16 +68,16 @@ def _exporting_provider() -> tuple[TracerProvider, InMemorySpanExporter]:
 
 def _exporting_runtime(
     observer: RecordingObserver | None = None,
-) -> tuple[ObservabilityRuntime, InMemorySpanExporter]:
+) -> tuple[Observability, InMemorySpanExporter]:
     """Build a runtime whose spans land in an in-memory exporter."""
     provider, exporter = _exporting_provider()
     observers = [observer] if observer is not None else []
-    runtime = ObservabilityRuntime(observers, tracer=provider.get_tracer("loom.tracing-corpus"))
+    runtime = Observability(observers, tracer=provider.get_tracer("loom.tracing-corpus"))
     return runtime, exporter
 
 
 @pytest.fixture
-def exporting_runtime() -> tuple[ObservabilityRuntime, InMemorySpanExporter]:
+def exporting_runtime() -> tuple[Observability, InMemorySpanExporter]:
     return _exporting_runtime()
 
 
@@ -117,7 +117,7 @@ class TestSpanTreeIsExported:
     """
 
     def test_child_scope_is_parented_to_its_open_parent_scope(
-        self, exporting_runtime: tuple[ObservabilityRuntime, InMemorySpanExporter]
+        self, exporting_runtime: tuple[Observability, InMemorySpanExporter]
     ) -> None:
         runtime, exporter = exporting_runtime
 
@@ -137,7 +137,7 @@ class TestSpanTreeIsExported:
         assert _trace_id(node) == _trace_id(poll_cycle)
 
     def test_without_a_trace_id_parent_and_child_are_still_one_trace(
-        self, exporting_runtime: tuple[ObservabilityRuntime, InMemorySpanExporter]
+        self, exporting_runtime: tuple[Observability, InMemorySpanExporter]
     ) -> None:
         """This is what the Bytewax runner emits: a POLL_CYCLE with no trace id."""
         runtime, exporter = exporting_runtime
@@ -153,7 +153,7 @@ class TestSpanTreeIsExported:
         assert _trace_id(node) == _trace_id(poll_cycle)
 
     def test_three_levels_export_one_tree(
-        self, exporting_runtime: tuple[ObservabilityRuntime, InMemorySpanExporter]
+        self, exporting_runtime: tuple[Observability, InMemorySpanExporter]
     ) -> None:
         runtime, exporter = exporting_runtime
 
@@ -174,7 +174,7 @@ class TestSpanTreeIsExported:
         assert _parent_span_id(pipeline) is None
 
     def test_a_failing_body_closes_the_span_as_an_error_without_double_recording(
-        self, exporting_runtime: tuple[ObservabilityRuntime, InMemorySpanExporter]
+        self, exporting_runtime: tuple[Observability, InMemorySpanExporter]
     ) -> None:
         runtime, exporter = exporting_runtime
 
@@ -216,7 +216,7 @@ class TestNoDanglingParent:
     """
 
     def test_every_exported_parent_is_itself_exported(
-        self, exporting_runtime: tuple[ObservabilityRuntime, InMemorySpanExporter]
+        self, exporting_runtime: tuple[Observability, InMemorySpanExporter]
     ) -> None:
         runtime, exporter = exporting_runtime
 
@@ -237,7 +237,7 @@ class TestNoDanglingParent:
             assert parent is None or parent in exported_span_ids
 
     def test_unrelated_root_spans_do_not_share_a_parent(
-        self, exporting_runtime: tuple[ObservabilityRuntime, InMemorySpanExporter]
+        self, exporting_runtime: tuple[Observability, InMemorySpanExporter]
     ) -> None:
         runtime, exporter = exporting_runtime
 
@@ -265,7 +265,7 @@ class TestConcurrentRunsAreDisjoint:
     """
 
     def test_concurrent_runs_of_the_same_scope_and_name_export_two_trees(
-        self, exporting_runtime: tuple[ObservabilityRuntime, InMemorySpanExporter]
+        self, exporting_runtime: tuple[Observability, InMemorySpanExporter]
     ) -> None:
         runtime, exporter = exporting_runtime
         both_open = threading.Barrier(2, timeout=5)
@@ -338,7 +338,7 @@ class TestSpanAcrossAsendBoundaries:
 
     @pytest.mark.asyncio
     async def test_frames_pulled_in_one_task_do_not_leak_the_span_between_them(
-        self, exporting_runtime: tuple[ObservabilityRuntime, InMemorySpanExporter]
+        self, exporting_runtime: tuple[Observability, InMemorySpanExporter]
     ) -> None:
         """Same-task drive: the failure mode is a leak, not a detach error.
 
@@ -365,7 +365,7 @@ class TestSpanAcrossAsendBoundaries:
     @pytest.mark.asyncio
     async def test_frames_pulled_from_different_tasks_log_no_detach_failure(
         self,
-        exporting_runtime: tuple[ObservabilityRuntime, InMemorySpanExporter],
+        exporting_runtime: tuple[Observability, InMemorySpanExporter],
         caplog: pytest.LogCaptureFixture,
     ) -> None:
         """Task-per-frame drive: this is the shape that produces the log line.
@@ -395,7 +395,7 @@ class TestSpanAcrossAsendBoundaries:
 
     @pytest.mark.asyncio
     async def test_a_failure_after_the_first_frame_closes_the_span_as_an_error(
-        self, exporting_runtime: tuple[ObservabilityRuntime, InMemorySpanExporter]
+        self, exporting_runtime: tuple[Observability, InMemorySpanExporter]
     ) -> None:
         runtime, exporter = exporting_runtime
 
@@ -413,7 +413,7 @@ class TestSpanAcrossAsendBoundaries:
 
     @pytest.mark.asyncio
     async def test_an_abandoned_stream_closes_the_span_exactly_once(
-        self, exporting_runtime: tuple[ObservabilityRuntime, InMemorySpanExporter]
+        self, exporting_runtime: tuple[Observability, InMemorySpanExporter]
     ) -> None:
         """A client that walks away ends the generator with ``GeneratorExit``."""
         runtime, exporter = exporting_runtime
@@ -431,7 +431,7 @@ class TestSpanAcrossAsendBoundaries:
         assert spans[0].status.status_code is StatusCode.OK
 
     def test_an_inner_region_can_still_nest_under_an_open_span(
-        self, exporting_runtime: tuple[ObservabilityRuntime, InMemorySpanExporter]
+        self, exporting_runtime: tuple[Observability, InMemorySpanExporter]
     ) -> None:
         runtime, exporter = exporting_runtime
 
@@ -455,7 +455,7 @@ class TestClosingAnnotations:
     """
 
     def test_an_annotation_reaches_the_exported_span(
-        self, exporting_runtime: tuple[ObservabilityRuntime, InMemorySpanExporter]
+        self, exporting_runtime: tuple[Observability, InMemorySpanExporter]
     ) -> None:
         runtime, exporter = exporting_runtime
 
@@ -490,7 +490,7 @@ class TestClosingAnnotations:
         assert observer.events[-1].meta["gen_ai.usage.input_tokens"] == 1840
 
     def test_annotating_a_closed_span_changes_nothing(
-        self, exporting_runtime: tuple[ObservabilityRuntime, InMemorySpanExporter]
+        self, exporting_runtime: tuple[Observability, InMemorySpanExporter]
     ) -> None:
         runtime, exporter = exporting_runtime
 
@@ -515,7 +515,7 @@ class TestHostProviderCoexistence:
         host_provider, host_exporter = _exporting_provider()
         loom_provider, loom_exporter = _exporting_provider()
         host_tracer = host_provider.get_tracer("host.sdk")
-        runtime = ObservabilityRuntime([], tracer=loom_provider.get_tracer("loom"))
+        runtime = Observability([], tracer=loom_provider.get_tracer("loom"))
 
         with (
             host_tracer.start_as_current_span("host:request"),
@@ -548,7 +548,7 @@ class TestHostProviderCoexistence:
         monkeypatch.setattr(trace, "_TRACER_PROVIDER", None, raising=False)
         monkeypatch.setattr(trace, "_TRACER_PROVIDER_SET_ONCE", trace.Once(), raising=False)
 
-        runtime = ObservabilityRuntime.from_config(
+        runtime = Observability.from_config(
             ObservabilityConfig(
                 otel=OtelObservabilityConfig(enabled=True, config=OtelConfig(endpoint=None))
             )
@@ -577,7 +577,7 @@ class TestHostProviderCoexistence:
         exporter = InMemorySpanExporter()
         monkeypatch.setattr(_otel_module, "_build_exporter", lambda config: exporter)
 
-        runtime = ObservabilityRuntime.from_config(
+        runtime = Observability.from_config(
             ObservabilityConfig(
                 otel=OtelObservabilityConfig(
                     enabled=True,
@@ -736,7 +736,7 @@ class TestEventStreamIsUnchanged:
 
         observer = RecordingObserver()
         provider, exporter = _exporting_provider()
-        runtime = ObservabilityRuntime([_Broken(), observer], tracer=provider.get_tracer("loom"))
+        runtime = Observability([_Broken(), observer], tracer=provider.get_tracer("loom"))
 
         with runtime.span(Scope.USE_CASE, "CreateOrder"):
             pass
