@@ -166,9 +166,9 @@ class Stubs:
     agent: StubResolver
     mcp: StubResolver
 
-    def bind(self, container: LoomContainer) -> None:
-        container.kinds.bind(AGENT, self.agent)
-        container.kinds.bind(MCP, self.mcp)
+    def register(self, container: LoomContainer) -> None:
+        container.kinds.register(AGENT, self.agent)
+        container.kinds.register(MCP, self.mcp)
 
 
 class Stubbed:
@@ -185,7 +185,7 @@ class Stubbed:
             recipe,
             agents=False,
             lenient=True,
-            overrides=(*recipe.overrides, self._root, self._stubs.bind),
+            overrides=(*recipe.overrides, self._root, self._stubs.register),
         )
 
     def mount(self, application: Application) -> Any:

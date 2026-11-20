@@ -169,7 +169,7 @@ class UseCaseExecutor:
         """
         if self._kinds.is_bound(kind):
             raise RuntimeError(f"UseCaseExecutor.bind_{kind.name}_resolver() called more than once")
-        self._kinds.bind(kind, resolver)
+        self._kinds.register(kind, resolver)
 
     async def run(
         self,

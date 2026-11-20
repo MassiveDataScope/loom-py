@@ -74,7 +74,7 @@ class TestUnboundKind:
 
     def test_a_bound_kind_is_not_refused(self) -> None:
         container = _bound(Scope.APPLICATION)
-        container.kinds.bind(ACME_CRM, acme_resolver())
+        container.kinds.register(ACME_CRM, acme_resolver())
 
         _refused(container)
 
@@ -93,7 +93,7 @@ class TestUnboundKind:
             container.resolve(AcmeCrmAdapter)
         resolver = acme_resolver()
         with pytest.raises(ContainerSealed, match="the container is sealed"):
-            container.kinds.bind(ACME_CRM, resolver)
+            container.kinds.register(ACME_CRM, resolver)
 
 
 class AcmeCrmPort:
