@@ -24,7 +24,7 @@ pip install "loom-kernel[celery]"
 | `JobService.run()` | Execute a job immediately in the calling process |
 | `JobCallback` | Hook invoked by the broker on task success or failure |
 | `bootstrap_worker()` | Single entry point to start a Celery worker |
-| `CeleryRuntime` | The worker's adapter over the shared composition (`loom.celery.runtime`) |
+| `CeleryRuntime` | The worker's runtime over the shared composition (`loom.celery.runtime`) |
 | `WorkerNotOpenError` | Raised by every task of a worker process whose application failed to open |
 | `CeleryConfig` | YAML-driven broker and worker settings |
 | `JobConfig` | Per-job routing and retry overrides from YAML |
@@ -403,7 +403,7 @@ section and the extra select Celery, and anything else runs inline.
 ### SQS
 
 `app.job_service: sqs` sends each dispatched job to Amazon SQS as one message
-whose body is the `JobEnvelope` the Lambda SQS adapter runs. Install
+whose body is the `JobEnvelope` the Lambda SQS runtime runs. Install
 `loom-kernel[aws]`.
 
 ```yaml
@@ -977,7 +977,7 @@ With `sqlalchemy` the worker applies row-level security exactly as the API
 does: session settings per transaction, the pool reset, and the
 `schema.mode: external` checks. A backend whose extra is not installed stops
 startup with a `ConfigError` naming `loom-kernel[<backend>]`. Agent and MCP
-markers are still refused at startup: the worker hosts no agent runtime.
+markers are still refused at startup: the worker hosts no agent host.
 
 A worker that discovers no model runs connection-only: no repository and no
 cursor codec, and its startup check is a single `SELECT 1` that, on Postgres,

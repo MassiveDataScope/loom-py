@@ -1,4 +1,4 @@
-"""The FastAPI adapter: how an HTTP entry point composes and serves an application."""
+"""The FastAPI runtime: how an HTTP entry point composes and serves an application."""
 
 from __future__ import annotations
 
@@ -581,7 +581,7 @@ def served_routes(
 
 @dataclasses.dataclass(frozen=True)
 class RestDeclaration:
-    """What :func:`compose_rest` resolved and an HTTP adapter's ``mount`` mounts."""
+    """What :func:`compose_rest` resolved and an HTTP runtime's ``mount`` mounts."""
 
     name: str
     rest: _RestConfig
@@ -601,7 +601,7 @@ def compose_rest(
 ) -> tuple[Recipe, RestDeclaration]:
     """Validate ``app.rest``, discover, add the YAML routes and prune the CRUD ones.
 
-    The one composition of every HTTP adapter, so the configuration, the
+    The one composition of every HTTP runtime, so the configuration, the
     authentication, discovery and the CRUD gating have one source of truth.
 
     Args:

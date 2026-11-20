@@ -1,4 +1,4 @@
-"""Resolution of store backends from the ``loom.stores.plugins`` group."""
+"""Resolution of store plugins from the ``loom.stores.plugins`` group."""
 
 from __future__ import annotations
 
@@ -16,23 +16,23 @@ if TYPE_CHECKING:
     from loom.core.stores.plugin import StorePlugin
 
 PLUGIN_ENTRY_POINT_GROUP = "loom.stores.plugins"
-"""Entry point group store backends register under."""
+"""Entry point group store plugins register under."""
 
 
 def resolve_store_backend(name: str, *, path: str | None = None) -> StorePlugin:
-    """Resolve the store backend registered under ``name``.
+    """Resolve the store plugin registered under ``name``.
 
     Args:
-        name: ``stores.<key>.backend`` value naming the backend.
-        path: Configuration path that names the backend, for the message of a
+        name: ``stores.<key>.backend`` value naming the plugin.
+        path: Configuration path that names the plugin, for the message of a
             missing dependency (``"stores.audit.backend"``).
 
     Returns:
-        An instance of the registered backend class.
+        An instance of the registered plugin class.
 
     Raises:
-        ConfigError: When no backend is registered under ``name`` (the message
-            lists the registered names), or when the backend needs a third-party
+        ConfigError: When no plugin is registered under ``name`` (the message
+            lists the registered names), or when the plugin needs a third-party
             module that is not installed, naming the module and the extras
             that provide it.
         ModuleNotFoundError: When a module of loom itself is missing.
@@ -54,7 +54,7 @@ def resolve_store_backend(name: str, *, path: str | None = None) -> StorePlugin:
 
 
 def _describe_unknown_backend(name: str, available: tuple[str, ...]) -> str:
-    """Return the message naming an unknown backend *name* and the *available* ones."""
+    """Return the message naming an unknown plugin *name* and the *available* ones."""
     if not available:
         return f"Unknown store backend {name!r}. No store backends are registered."
     registered = ", ".join(available)

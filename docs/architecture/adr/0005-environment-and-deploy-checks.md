@@ -462,3 +462,5 @@ unknown fields.
   application does.
 - A Prefect worker must run with `LOOM_ENV` set to the environment of its
   deployments; a run whose `env` differs fails.
+
+> Renamed in 12.0.0: ObservabilityRuntime → Observability.

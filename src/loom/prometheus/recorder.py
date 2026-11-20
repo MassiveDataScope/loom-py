@@ -1,4 +1,4 @@
-"""Prometheus metrics adapter for Loom use-case events.
+"""Prometheus metrics recorder for Loom use-case events.
 
 Implements the :class:`~loom.core.engine.metrics.MetricsRecorder` protocol
 using ``prometheus_client`` instruments.  Install the optional dependency
@@ -10,13 +10,13 @@ Usage::
 
     from loom.prometheus import PrometheusMetricsRecorder
 
-    adapter = PrometheusMetricsRecorder()
+    recorder = PrometheusMetricsRecorder()
 
     kernel = create_kernel(
         config=cfg,
         use_cases=[CreateOrderUseCase],
         modules=[register_repositories],
-        metrics=adapter,
+        metrics=recorder,
     )
     app = create_fastapi_app(kernel, RouteSources(python=[OrderInterface]))
 
@@ -90,15 +90,15 @@ class PrometheusMetricsRecorder:
         registry: Optional ``CollectorRegistry``.  Defaults to
             ``prometheus_client.REGISTRY`` (the global default registry).
             Pass a custom registry in tests to avoid cross-test pollution.
-            Multiple adapter instances sharing the default registry reuse
+            Multiple recorder instances sharing the default registry reuse
             the same instruments — no duplicate-collector errors.
 
     Example::
 
         from loom.prometheus import PrometheusMetricsRecorder
 
-        adapter = PrometheusMetricsRecorder()
-        kernel = create_kernel(config=cfg, use_cases=[...], metrics=adapter)
+        recorder = PrometheusMetricsRecorder()
+        kernel = create_kernel(config=cfg, use_cases=[...], metrics=recorder)
     """
 
     def __init__(self, registry: CollectorRegistry | None = None) -> None:

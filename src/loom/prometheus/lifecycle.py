@@ -1,4 +1,4 @@
-"""Prometheus lifecycle adapter — records LifecycleEvent as Prometheus instruments."""
+"""Prometheus lifecycle observer — records LifecycleEvent as Prometheus instruments."""
 
 from __future__ import annotations
 

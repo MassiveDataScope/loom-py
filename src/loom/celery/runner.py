@@ -212,7 +212,7 @@ def _make_job_task(
         job_type: Concrete :class:`~loom.core.job.job.Job` subclass.
         factory: Used to build the Job instance via DI.
         executor: UseCaseExecutor driving the compiled ExecutionPlan.
-        metrics: Optional metrics adapter.  Receives the job events the
+        metrics: Optional metrics recorder.  Receives the job events the
             runner emits (``JOB_STARTED``, ``JOB_SUCCEEDED``,
             ``JOB_POSTPONED``, ``JOB_FAILED`` and ``JOB_ABANDONED``).
         settings: The application's job settings, which give the task its

@@ -61,7 +61,7 @@ class ExecutionReporter:
         """Report *use_case*'s execution started, and return what reports its end.
 
         Raises:
-            Exception: What the metrics adapter raised, once logged as the
+            Exception: What the metrics recorder raised, once logged as the
                 execution failing to begin.
         """
         execution = self._execution(use_case)

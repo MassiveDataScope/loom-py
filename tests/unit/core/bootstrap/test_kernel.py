@@ -114,7 +114,7 @@ class TestCreateKernel:
 
         assert isinstance(built.factory.build(_RepoDepsUseCase), _RepoDepsUseCase)
 
-    def test_create_kernel_reports_compilation_to_the_metrics_adapter(self) -> None:
+    def test_create_kernel_reports_compilation_to_the_metrics_recorder(self) -> None:
         events: list[ExecutionEvent] = []
 
         class RecordingMetrics:

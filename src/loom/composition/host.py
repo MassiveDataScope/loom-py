@@ -24,7 +24,7 @@ class ApplicationHost:
     A transport that starts and stops its application in separate calls (a
     worker's signals, a Lambda's Init and shutdown) cannot enter
     :meth:`Application.running` in one and exit it in another: each call runs
-    in a task of its own, and an agent runtime, an MCP client or a cancel
+    in a task of its own, and an agent host, an MCP client or a cancel
     scope refuses to be exited from a task other than the one that entered it.
     The host spawns one owner task on the running loop that enters
     :meth:`~Application.running`, waits until :meth:`shutdown`, and exits it.

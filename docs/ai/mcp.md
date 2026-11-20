@@ -801,7 +801,7 @@ stock transport.
 ## MCP on AWS Lambda
 
 A Lambda function hosts the `ai` section on every trigger: `http`, `jobs`,
-and the event triggers (`eventbridge`, `s3`, `sns`, `schedule`). The agent runtime is opened once, during Init, together with the
+and the event triggers (`eventbridge`, `s3`, `sns`, `schedule`). The agent host is opened once, during Init, together with the
 session of every server the function can reach. The sessions stay open across
 warm invocations and close at shutdown, as on FastAPI. Every rule of [When a
 call fails](#when-a-call-fails) applies unchanged.

@@ -14,7 +14,7 @@ if TYPE_CHECKING:
     from loom.composition import Project
 
 COMPONENT = "LambdaRuntime"
-"""The adapter refusals and composition errors name."""
+"""The runtime refusals and composition errors name."""
 _STDIO = "stdio"
 """The MCP transport that runs a server as a subprocess, which a frozen function cannot keep."""
 
@@ -22,7 +22,7 @@ _log = get_logger(__name__)
 
 
 class LambdaUnservedConfigError(ConfigError):
-    """Raised when the configuration declares something a Lambda adapter does not serve.
+    """Raised when the configuration declares something a Lambda runtime does not serve.
 
     Raised by the recipe, before anything opens.
 

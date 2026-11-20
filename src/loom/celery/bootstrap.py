@@ -125,7 +125,7 @@ def bootstrap_worker(
             same classes via ``use_cases=`` but without having to enumerate
             individual use-case types — useful when callbacks interact with
             AutoCRUD-generated use-cases that are not importable by name.
-        metrics: Optional metrics adapter forwarded to the compiler and
+        metrics: Optional metrics recorder forwarded to the compiler and
             executor.
         resolvers: Resolvers for ``${name:key}`` placeholders, registered
             before the built-in ``secrets`` and ``ssm`` defaults.  A resolver

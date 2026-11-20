@@ -634,7 +634,7 @@ class RestInterfaceCompiler:
         defaults: Global REST API defaults applied when interface/route
             level is unset.  Defaults to :class:`~loom.rest.model.RestApiDefaults`
             with offset pagination.
-        metrics: Optional metrics adapter.  Reserved for future use
+        metrics: Optional metrics recorder.  Reserved for future use
             (HTTP metrics are emitted at request time by the router runtime).
 
     Example::

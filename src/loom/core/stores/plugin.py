@@ -1,11 +1,11 @@
-"""Store backend plugin contract.
+"""Store plugin contract.
 
-A backend is resolved by name from the ``loom.stores.plugins`` entry
+A plugin is resolved by name from the ``loom.stores.plugins`` entry
 point group and asked once, at bootstrap, for everything the host needs to
 wire persistence: the unit-of-work factory, the DI module registering
 repositories, the startup checks, the open/close lifespan, and a model
 preparation step. The repository class the capability gate inspects is a
-class fact of the backend, known before ``build``.
+class fact of the plugin, known before ``build``.
 """
 
 from __future__ import annotations
@@ -27,7 +27,7 @@ if TYPE_CHECKING:
 
 
 def no_model_preparation(models: Sequence[type[BaseModel]]) -> None:
-    """Prepare nothing: the default for a backend whose models need no compilation.
+    """Prepare nothing: the default for a plugin whose models need no compilation.
 
     Args:
         models: Discovered models; ignored.
@@ -36,24 +36,24 @@ def no_model_preparation(models: Sequence[type[BaseModel]]) -> None:
 
 @asynccontextmanager
 async def no_lifespan() -> AsyncIterator[None]:
-    """Hold no startup resource: the default lifespan of a backend without one."""
+    """Hold no startup resource: the default lifespan of a plugin without one."""
     yield
 
 
 async def no_startup_checks() -> None:
-    """Check nothing: the default for a backend that does not verify a schema."""
+    """Check nothing: the default for a plugin that does not verify a schema."""
 
 
 @dataclass(frozen=True)
 class StoreWiring:
-    """Everything a host needs from a store backend, resolved once at bootstrap.
+    """Everything a host needs from a store plugin, resolved once at bootstrap.
 
     Args:
-        uow_factory: Unit-of-work factory bound to the backend; ``None`` when
-            the backend has no persistence, which the kernel executor accepts
+        uow_factory: Unit-of-work factory bound to the plugin; ``None`` when
+            the plugin has no persistence, which the kernel executor accepts
             by running use cases without a unit of work.
         repo_registration_module: DI module registering model repositories.
-        lifespan_init: Async context manager that opens the backend and
+        lifespan_init: Async context manager that opens the plugin and
             releases it on the way out. It does not check the schema and it
             does not reset the compiled registry. Defaults to
             :func:`no_lifespan`.
@@ -79,13 +79,13 @@ class StoreWiring:
 
 
 class StorePlugin(Protocol):
-    """Factory a store backend exposes through its entry point.
+    """Factory a store plugin exposes through its entry point.
 
     The entry point targets a class with a no-argument constructor; the
-    registry instantiates it. Each backend serves the store the host names
+    registry instantiates it. Each plugin serves the store the host names
     (``runtime.store``), taken from the catalog the host loaded once:
     ``runtime.catalog.served_by(name, runtime.store)``. The host builds one
-    backend per store, so a backend registers nothing another store's
+    plugin per store, so a plugin registers nothing another store's
     instance would overwrite. It reads any other section from the context it
     is given.
     """
@@ -96,7 +96,7 @@ class StorePlugin(Protocol):
     def capabilities(self, spec: StoreSpec) -> StoreCapabilities:
         """Describe the configured store without building its resources.
 
-        Required: the catalog fails with a ``ConfigError`` naming a backend
+        Required: the catalog fails with a ``ConfigError`` naming a plugin
         that does not implement it. Read only the settings a capability
         depends on; the catalog asks this before any connection's secrets
         need to resolve.
@@ -112,9 +112,9 @@ class StorePlugin(Protocol):
         """Build the persistence wiring for the discovered models.
 
         Args:
-            ctx: Configuration context the backend reads its other sections from.
+            ctx: Configuration context the plugin reads its other sections from.
             models: Models discovered by the host.
-            runtime: Defaults of the entry point building the backend, the
+            runtime: Defaults of the entry point building the plugin, the
                 optional pool-metrics receiver and the store catalog.
 
         Returns:

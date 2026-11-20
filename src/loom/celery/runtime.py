@@ -1,4 +1,4 @@
-"""The Celery adapter: how a worker composes and serves an application.
+"""The Celery runtime: how a worker composes and serves an application.
 
 The worker runs the same recipe as every other entry point
 (:func:`loom.composition.create_app`), so it gains what the API already had:
@@ -110,7 +110,7 @@ class _ProcessBridgeProtocol(Protocol):
 
 
 def _build_process_bridge(runtime_cfg: CeleryRuntimeConfig) -> _CeleryProcessBridge:
-    """Build the per-process async runtime used by Celery worker tasks."""
+    """Build the per-process bridge used by Celery worker tasks."""
     return _CeleryProcessBridge(
         backend=runtime_cfg.backend,
         backend_options=build_backend_options(runtime_cfg.backend, runtime_cfg.use_uvloop),
@@ -139,7 +139,7 @@ class _WorkerLifecycle:
     connection is always created on the loop that uses it. An
     :class:`~loom.composition.ApplicationHost` opens and closes it in one task
     of the bridge, although each bridge call runs in a task of its own: a
-    task-affine resource (an agent runtime, an MCP client) closes cleanly.
+    task-affine resource (an agent host, an MCP client) closes cleanly.
     Another backend than asyncio has no asyncio task to own it: there the
     application is entered and exited in two bridge calls, which is safe
     because the worker hosts no agents. Closing is idempotent and best

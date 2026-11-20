@@ -3,7 +3,7 @@
 Provides the FastAPI binding for compiled REST interfaces:
 - :class:`~loom.rest.fastapi.response.MsgspecJSONResponse` — zero-copy JSON response.
 - :func:`~loom.rest.fastapi.router.mount_interfaces` — binds compiled routes to FastAPI.
-- :class:`~loom.rest.fastapi.runtime.FastAPIRuntime` — the HTTP adapter of ``create_app``.
+- :class:`~loom.rest.fastapi.runtime.FastAPIRuntime` — the HTTP runtime of ``create_app``.
 - :func:`~loom.rest.fastapi.app.create_fastapi_app` — composition root.
 - :func:`~loom.rest.fastapi.auto.describe_fastapi_app` — application self-description.
 """

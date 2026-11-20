@@ -95,7 +95,7 @@ class Override:
 
 
 class OverrideRuntime:
-    """Apply test overrides to an adapter recipe during composition."""
+    """Apply test overrides to a runtime recipe during composition."""
 
     def __init__(self, runtime: Runtime[Any], overrides: tuple[Override, ...]) -> None:
         self._runtime = runtime
@@ -110,5 +110,5 @@ class OverrideRuntime:
         )
 
     def mount(self, application: Application) -> Any:
-        """Bind the wrapped adapter to the composed application."""
+        """Bind the wrapped runtime to the composed application."""
         return self._runtime.mount(application)

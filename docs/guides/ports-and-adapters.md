@@ -190,7 +190,7 @@ seal. The container `create_kernel` returns stays unsealed.
 order; `create_app` loads the project (`Project.load`) and calls
 `Project.serve`. Nothing registers after `register`.
 
-1. `plan`: the adapter returns its `Recipe`; failing deploy checks stop
+1. `plan`: the runtime returns its `Recipe`; failing deploy checks stop
    start-up in a deployed environment.
 2. `build_stores`: every store the discovered models use is built.
 3. `register`: the container is filled in this order: the seed keys
@@ -200,7 +200,7 @@ order; `create_app` loads the project (`Project.load`) and calls
    collaborators.
 4. `analysed`: the dependency graph is analysed from the use cases, jobs and
    callbacks (the refusals above).
-5. `wire_ai`: the agent runtime is built when the entry point hosts agents,
+5. `wire_ai`: the agent host is built when the entry point hosts agents,
    every `Agent()` and `Mcp()` declaration is checked, and the resolvers are
    bound.
 6. `seal`: the container is sealed and its singletons built; each use case and

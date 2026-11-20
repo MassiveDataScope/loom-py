@@ -36,7 +36,7 @@ class MetricsRecorder(Protocol):
 
 
 class NoMetrics:
-    """A metrics adapter recording nothing, for an engine given none."""
+    """A metrics recorder recording nothing, for an engine given none."""
 
     __slots__ = ()
 

@@ -1,9 +1,9 @@
 """Transport-neutral composition: the application, its resources and their lifecycle.
 
-An adapter declares a :class:`Recipe`; :func:`create_app` composes the
-:class:`Application` it asks for and lets the adapter mount its transport.
+A runtime declares a :class:`Recipe`; :func:`create_app` composes the
+:class:`Application` it asks for and lets the runtime mount its transport.
 Nothing here imports an HTTP framework, the Celery worker or :mod:`loom.rest`,
-but for one sanctioned reach-out: :func:`create_app` without an adapter imports
+but for one sanctioned reach-out: :func:`create_app` without a runtime imports
 the one ``app.entry`` names, lazily, when it runs.
 """
 

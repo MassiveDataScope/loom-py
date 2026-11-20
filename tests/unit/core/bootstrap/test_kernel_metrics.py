@@ -40,8 +40,8 @@ class TestKernelCarriesMetrics:
 
 
 class TestCreateFastapiAppWiresMetrics:
-    async def test_executor_receives_metrics_adapter(self) -> None:
-        """create_kernel must register UseCaseExecutor with the metrics adapter."""
+    async def test_executor_receives_metrics_recorder(self) -> None:
+        """create_kernel must register UseCaseExecutor with the metrics recorder."""
         pytest.importorskip("fastapi")
 
         from loom.rest.compiler import RouteSources

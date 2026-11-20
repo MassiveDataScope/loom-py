@@ -660,7 +660,7 @@ stores:
 - The SNS notifier reads `aws:` from the flow's YAML; the topic's region wins.
 
 loom's own integration tests run these products (the `sqs` job transport and the
-Lambda SQS adapter, the `secrets` and `ssm` resolvers, a `dynamodb` store, the
+Lambda SQS runtime, the `secrets` and `ssm` resolvers, a `dynamodb` store, the
 SNS notifier) against LocalStack, configured only through `aws:`. Without
 `LOOM_AWS_IT_URL` they skip:
 

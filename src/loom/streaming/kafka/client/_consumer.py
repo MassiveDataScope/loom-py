@@ -42,7 +42,7 @@ class KafkaConsumerClient:
 
     Args:
         settings: Typed consumer settings.
-        obs: Optional observability runtime.
+        obs: Optional observability.
         retry_policy: Backoff schedule for transient group-coordinator errors
             on offset fetch and commit.
     """
@@ -79,7 +79,7 @@ class KafkaConsumerClient:
 
         Args:
             settings: Typed consumer settings.
-            observability: Optional observability runtime.
+            observability: Optional observability.
             retry_policy: Backoff schedule for transient group-coordinator
                 errors.
 

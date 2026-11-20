@@ -255,7 +255,7 @@ A `Recipe` is a frozen dataclass:
 | `discovered` | The `DiscoveryResult` to compile: models, use cases, interfaces, agent specs, after whatever the runtime added or pruned. |
 | `default_store_backend` | Backend of the default store when `stores.default` is not declared. Default `none`. |
 | `check_scope` | A `CheckScope`: configuration paths whose deploy checks the entry point requires or leaves out, such as `CheckScope.without_rest()` for a worker. |
-| `agents` | Whether the entry point hosts the agent runtime; without it an `ai` section is ignored. Default `False`. |
+| `agents` | Whether the entry point hosts the agent host; without it an `ai` section is ignored. Default `False`. |
 | `agent_endpoints` | Whether the runtime mounts agent endpoints. `False` mounts none, so only the agents an `Agent()` marker names are compiled, as on Lambda. Matters only with `agents=True`. Default `True`. |
 | `metrics` | Use-case metrics, or `None`. |
 | `pool_metrics` | Connection-pool metrics, for an entry point that serves a scrape. |
@@ -298,7 +298,7 @@ executor and the invoker; `application.config`, `environment`,
 ## Lifecycle
 
 An `Application` owns its resources: the cache gateways, the ClickHouse SQL
-registry, the agent runtime and the persistence store. They open in that
+registry, the agent host and the persistence store. They open in that
 order and close in reverse. Each resource's startup checks — for the store,
 schema creation or verification, the connecting role, the row-level-security
 guard and time-zone columns; for the ClickHouse SQL registry, its own
@@ -324,7 +324,7 @@ connection checks — run right before it opens, and all of them run in
 
 A transport that opens and closes in separate calls — the Celery signals,
 a Lambda's Init and shutdown — uses `ApplicationHost(application, check=True)`
-instead, since each call runs in a task of its own and an agent runtime or an
+instead, since each call runs in a task of its own and an agent host or an
 MCP client must be closed by the task that opened it:
 
 - `await host.start()` spawns one owner task that enters `running()` and

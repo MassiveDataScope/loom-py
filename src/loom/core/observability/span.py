@@ -1,4 +1,4 @@
-"""Span handles for the observability runtime.
+"""Span handles for observability.
 
 :meth:`~loom.core.observability.observability.Observability.span` covers the
 common case: a span that opens and closes inside one lexical scope, and can

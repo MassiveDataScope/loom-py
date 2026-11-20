@@ -1,4 +1,4 @@
-"""Backend provider loading for ETL runner wiring."""
+"""ETL engine loading for runner wiring."""
 
 from __future__ import annotations
 
@@ -53,16 +53,16 @@ class EtlEngine(Protocol):
 
 
 def load_etl_engine(engine: str) -> EtlEngine:
-    """Load backend provider implementation from package entry points.
+    """Load an ETL engine from package entry points.
 
     Args:
-        engine: ``storage.engine`` value naming the backend distribution.
+        engine: ``storage.engine`` value naming the engine distribution.
 
     Returns:
-        A provider instance built from the registered class.
+        An engine built from the registered class.
 
     Raises:
-        ValueError: When no backend is registered for ``engine``; the message
+        ValueError: When no ETL engine is registered for ``engine``; the message
             names the engines that are.
     """
     provider_cls = cast(type[EtlEngine], _load_backend_class(engine))
@@ -70,14 +70,14 @@ def load_etl_engine(engine: str) -> EtlEngine:
 
 
 def _load_backend_class(engine: str) -> object:
-    """Load the registered backend class, naming the alternatives on a miss."""
+    """Load the registered engine class, naming the alternatives on a miss."""
     try:
         return load_entry_point(_ENGINE_ENTRY_POINT_GROUP, engine, on_duplicate="warn_first")
     except EntryPointNotFoundError as exc:
         available = ", ".join(exc.available) if exc.available else "none"
         raise ValueError(
             f"Unsupported storage.engine={engine!r}. "
-            f"No backend provider registered in entry point group "
+            f"No ETL engine registered in entry point group "
             f"'{_ENGINE_ENTRY_POINT_GROUP}'. Registered engines: {available}."
         ) from exc
 

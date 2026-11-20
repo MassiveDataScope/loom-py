@@ -132,7 +132,7 @@ def _build_observers(
 
 
 class Observability:
-    """Shared observability runtime for all Loom modules.
+    """Shared observability for all Loom modules.
 
     Emits :class:`~loom.core.observability.event.LifecycleEvent` to every
     registered observer. Observer failures are logged and discarded — they

@@ -540,7 +540,7 @@ class TestStorePostCommit:
 
         assert client.batches == [(SQS_URL, [ids[0]]), (SQS_URL, [ids[1]])]
 
-    async def test_a_failing_metrics_adapter_does_not_skip_the_actions(
+    async def test_a_failing_metrics_recorder_does_not_skip_the_actions(
         self, stores: _Stores
     ) -> None:
         executor = UseCaseExecutor(

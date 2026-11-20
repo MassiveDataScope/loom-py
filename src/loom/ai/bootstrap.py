@@ -1,4 +1,4 @@
-"""Assembly of an agent runtime from a deployment's ``ai:`` section.
+"""Assembly of an agent host from a deployment's ``ai:`` section.
 
 The one path every transport takes from configuration to a live
 :class:`~loom.ai.execution.AgentHost`: resolve the engine, load and compile

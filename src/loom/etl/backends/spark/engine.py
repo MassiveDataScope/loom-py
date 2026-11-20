@@ -1,4 +1,4 @@
-"""Spark backend provider for ETL runner wiring."""
+"""Spark ETL engine for ETL runner wiring."""
 
 from __future__ import annotations
 
@@ -26,7 +26,7 @@ class SparkEtlEngine(EtlEngine):
     ) -> tuple[SourceReader, TargetWriter]:
         if spark is None:
             raise ValueError(
-                "A SparkSession is required for Spark backend provider. "
+                "A SparkSession is required for the Spark ETL engine. "
                 "Pass spark=<session> to ETLRunner.from_yaml() or ETLRunner.from_config()."
             )
         route_resolver = build_table_resolver(config)

@@ -1,4 +1,4 @@
-"""Polars backend provider for ETL runner wiring."""
+"""Polars ETL engine for ETL runner wiring."""
 
 from __future__ import annotations
 

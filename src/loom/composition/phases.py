@@ -1,9 +1,9 @@
 """The ordered phases that :meth:`~loom.composition.project.Project.compose` runs.
 
-The order: :func:`plan` takes the adapter's recipe; :func:`build_stores` builds
+The order: :func:`plan` takes the runtime's recipe; :func:`build_stores` builds
 every store before any registration; :func:`register` fills the container and
 builds the kernel; :meth:`Recipe.analysed` analyses the dependency graph;
-:func:`wire_ai` builds the optional agent runtime; :func:`seal` seals the
+:func:`wire_ai` builds the optional agent host; :func:`seal` seals the
 container. Nothing registers after :func:`register`.
 """
 
@@ -336,7 +336,7 @@ def wire_ai(
     analysis: GraphAnalysis,
     sql: SqlWiring,
 ) -> AiWiring:
-    """Build the agent runtime when the entry point hosts it, else nothing.
+    """Build the agent host when the entry point hosts it, else nothing.
 
     Every ``Agent()`` and ``Mcp()`` declaration the analysed graph reaches
     counts, in a use case's ``execute()`` or on an adapter it is built

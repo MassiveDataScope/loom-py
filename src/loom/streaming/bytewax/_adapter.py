@@ -154,7 +154,7 @@ def build_dataflow_with_shutdown(
 
     Args:
         plan: Compiled flow plan.
-        observability: Optional observability runtime for lifecycle events.
+        observability: Optional observability for lifecycle events.
         source: Optional Bytewax source override (used in tests).
         sink: Optional Bytewax sink override (used in tests).
         terminal_sinks: Optional per-branch sink overrides.

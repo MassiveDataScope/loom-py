@@ -4,7 +4,7 @@ Install the ``lambda`` extra. The entry point changes one line::
 
     handler = create_app("config.yaml", runtime=LambdaRuntime())
 
-The recipe is the FastAPI adapter's, so the configuration, the authentication,
+The recipe is the FastAPI runtime's, so the configuration, the authentication,
 discovery and the CRUD gating have one source of truth. The transport is a bare
 Starlette application with one route per compiled route, reusing FastAPI's error
 handlers and the router runtime: a response matches the FastAPI one by

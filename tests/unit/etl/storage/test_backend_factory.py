@@ -159,7 +159,7 @@ class TestLoadEtlEngine:
         assert type(load_etl_engine("spark")).__name__ == "SparkEtlEngine"
 
     def test_load_backend_provider_rejects_unknown_engine(self) -> None:
-        with pytest.raises(ValueError, match="No backend provider registered"):
+        with pytest.raises(ValueError, match="No ETL engine registered"):
             load_etl_engine("duckdb")
 
     def test_load_backend_provider_names_the_registered_engines_when_rejecting(self) -> None:

@@ -644,3 +644,5 @@ the cursor binding and the error documentation.
 
 Estimated effort: `Created` 0.5 day; `RateLimited` 0.5 day; `Query()` with
 `from_query`, compiler checks and OpenAPI 2 days; tests included.
+
+> Renamed in 12.0.0: LoomRestAdapter → RestUseCaseDispatcher, _RouteRuntime → _ResolvedRoute, module rest/fastapi/router_runtime.py → rest/fastapi/router.py.

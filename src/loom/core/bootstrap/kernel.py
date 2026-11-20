@@ -56,7 +56,7 @@ class Kernel:
             it invokes acts as the identity acting where it is called;
             :meth:`~loom.core.use_case.invoker.AppInvoker.for_identity` binds a
             copy to one caller.
-        metrics: Optional metrics adapter the executor reports to.
+        metrics: Optional metrics recorder the executor reports to.
     """
 
     container: LoomContainer
@@ -96,7 +96,7 @@ def create_kernel(
         use_cases: Compilable classes to compile at startup.
         modules: Container registration modules, run in order.
         logger: Optional logger override; defaults to ``loom.bootstrap``.
-        metrics: Optional metrics adapter.
+        metrics: Optional metrics recorder.
         coordinator: Coordinator of the application's stores, which runs
             each execution in their units of work; ``None`` runs without one.
         repo_resolver: Optional repository resolver used by marker-based loads.
@@ -209,7 +209,7 @@ class KernelRecipe:
     Args:
         use_cases: Compilable classes to compile.
         logger: Logger of the compilation.
-        metrics: Optional metrics adapter.
+        metrics: Optional metrics recorder.
         coordinator: Coordinator of the application's stores; ``None`` runs without one.
         repo_resolver: Repository resolver of marker-based loads; defaults to
             the container's ``resolve_repo``.

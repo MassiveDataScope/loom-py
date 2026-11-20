@@ -1,4 +1,4 @@
-"""HTTP surface of the agent runtime: ``/run``, ``/stream`` and ``/health``.
+"""HTTP surface of the agent host: ``/run``, ``/stream`` and ``/health``.
 
 Mirrors :func:`loom.rest.fastapi.sql.mount_sql_endpoints`. Mounting is a double
 opt-in — an agent needs ``enabled`` **and** a named ``auth`` in ``ai.endpoints``

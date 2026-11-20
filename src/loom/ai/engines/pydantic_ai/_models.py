@@ -36,7 +36,7 @@ from loom.ai.inference import InferenceTarget
 from loom.ai.registry import require_provider_sdk
 
 _ISLANDS = "loom.ai.engines.pydantic_ai.providers"
-"""Package every provider island lives in."""
+"""Package every model builder lives in."""
 
 
 class ModelResolver(Protocol):

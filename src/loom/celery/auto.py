@@ -37,7 +37,7 @@ def create_app(
             defaults to production when unset.
         jobs: Concrete ``Job`` subclasses to register as Celery tasks.
             Optional when ``app.packages`` is configured.
-        metrics: Optional metrics adapter.
+        metrics: Optional metrics recorder.
         resolvers: Resolvers for ``${name:key}`` placeholders, registered
             before the built-in ``secrets`` and ``ssm`` defaults.  A resolver
             named like a default replaces it.

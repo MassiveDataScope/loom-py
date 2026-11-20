@@ -2,7 +2,7 @@
 
 A shortcut over :func:`loom.composition.create_app` with
 :class:`~loom.rest.fastapi.runtime.FastAPIRuntime`; the composition owns the
-resources, the adapter mounts the routes.
+resources, the runtime mounts the routes.
 """
 
 from __future__ import annotations

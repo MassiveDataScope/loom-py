@@ -92,7 +92,7 @@ class UseCaseCompiler:
 
     Args:
         logger: Optional logger. Defaults to the framework logger.
-        metrics: Optional metrics adapter. When provided, receives
+        metrics: Optional metrics recorder. When provided, receives
             ``COMPILE_START`` and ``COMPILE_DONE`` events.
 
     Example::

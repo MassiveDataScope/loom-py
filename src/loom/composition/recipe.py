@@ -45,7 +45,7 @@ class Recipe:
             is not declared.
         check_scope: Configuration paths whose deploy checks this entry point
             requires or leaves out, such as ``app.rest`` for a worker.
-        agents: Whether this entry point hosts the agent runtime; without it
+        agents: Whether this entry point hosts the agent host; without it
             an ``ai`` section is ignored and any compiled use case declaring
             an ``Agent()`` or ``Mcp()`` marker is refused at start-up.
         agent_endpoints: Whether this entry point serves its agents over

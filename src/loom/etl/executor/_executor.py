@@ -6,7 +6,7 @@ shared :class:`~loom.core.observability.observability.Observability`.
 
 This class is **not** part of the public API.  It is instantiated exclusively
 by :class:`~loom.etl.ETLRunner`, which wires reader, writer, catalog, and the
-shared observability runtime from a :data:`~loom.etl.StorageConfig`.
+shared observability from a :data:`~loom.etl.StorageConfig`.
 
 For normal usage::
 
@@ -82,7 +82,7 @@ class ETLExecutor:
     * Bind the step's ``WithAgent`` declarations to the injected agent runner.
     * Invoke the step's ``execute()`` with the resulting frames and values.
     * Write the result via the injected :class:`~loom.etl._io.TargetWriter`.
-    * Emit lifecycle events to the shared observability runtime.
+    * Emit lifecycle events to the shared observability.
     * Dispatch parallel groups through the :class:`~loom.etl.executor.ParallelDispatcher`.
 
     All collaborators are injected — the executor has no dependency on any
@@ -96,7 +96,7 @@ class ETLExecutor:
     Args:
         reader:     Source reader implementation.
         writer:     Target writer implementation.
-        observability: Shared observability runtime.  Defaults to a no-op runtime.
+        observability: Shared observability.  Defaults to a no-op.
         dispatcher: Parallel task dispatcher.  Defaults to
                     :class:`~loom.etl.executor.ThreadDispatcher`.
         config_context: Config the ``FromConfig`` values are resolved from,
@@ -128,7 +128,7 @@ class ETLExecutor:
 
     @property
     def observability(self) -> Observability:
-        """Return the shared observability runtime."""
+        """Return the shared observability."""
         return self._observability
 
     def flush(self) -> None:

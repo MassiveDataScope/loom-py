@@ -489,7 +489,7 @@ deployment's concern; the memory backend is unaffected.
 ## Lifecycle
 
 The application closes the cache gateways when it closes, last, after the
-persistence store, the agent runtime and the SQL registry — in the API's
+persistence store, the agent host and the SQL registry — in the API's
 lifespan and in each Celery worker process alike (see
 [Composition and lifecycle](../getting-started/composition.md#lifecycle)):
 one `close` per distinct alias, so two with a separate `counter_alias` and one

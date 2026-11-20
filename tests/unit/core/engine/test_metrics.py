@@ -96,7 +96,7 @@ def _make_executor(
 
 
 class TestMetricsRecorderProtocol:
-    def test_recording_adapter_satisfies_protocol(self) -> None:
+    def test_a_recording_double_satisfies_the_protocol(self) -> None:
         adapter = _RecordingAdapter()
         event = ExecutionEvent(kind=EventKind.EXEC_DONE, use_case_name="X")
         # duck-typing — no TypeError expected

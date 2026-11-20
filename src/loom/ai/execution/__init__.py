@@ -1,4 +1,4 @@
-"""Live agent runtime: one entered lifecycle, shared clients, bounded runs.
+"""Live agent host: one entered lifecycle, shared clients, bounded runs.
 
 The lifecycle lives in :mod:`~loom.ai.execution._lifecycle`, the shared MCP
 sessions and their tool-filter validation in :mod:`~loom.ai.execution._mcp` and

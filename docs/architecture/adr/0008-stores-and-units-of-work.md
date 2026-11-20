@@ -267,3 +267,5 @@ A delivery is not done until all of these pass:
   https://docs.aws.amazon.com/amazondynamodb/latest/developerguide/transaction-apis.html
 - MongoDB transactions: https://www.mongodb.com/docs/manual/core/transactions/
 - ClickHouse transactions: https://clickhouse.com/docs/guides/developer/transactional
+
+> Renamed in 12.0.0: RuntimeExecutor → UseCaseExecutor, phased → is_phased.

@@ -87,11 +87,11 @@ class AgentDepsFactory:
 
 @dataclass(frozen=True)
 class AiWiring:
-    """The agent runtime of a composed application and the ``ai:`` section it was built from.
+    """The agent host of a composed application and the ``ai:`` section it was built from.
 
     Args:
         config: Parsed ``ai:`` section, or ``None`` when absent.
-        runtime: Agent runtime entered by the app lifespan alongside the SQL
+        runtime: Agent host entered by the app lifespan alongside the SQL
             registry, or ``None`` when no section is configured.
         plans: Compiled agent plans, the runtime's own; empty when there is no
             runtime.
@@ -120,7 +120,7 @@ class AiWiring:
         declared: MarkerDeclarations,
         names: Collection[str] | None = None,
     ) -> AiWiring:
-        """Build the agent runtime the ``ai:`` section configures, without opening a connection.
+        """Build the agent host the ``ai:`` section configures, without opening a connection.
 
         Without the section the AI pillar is never imported. With it, every
         ``Mcp()`` declaration is checked against ``ai.mcp_servers`` and
@@ -185,7 +185,7 @@ class AiWiring:
 
     @property
     def resource(self) -> Resource | None:
-        """The agent runtime as the application's resource; ``None`` without a runtime."""
+        """The agent host as the application's resource; ``None`` without a runtime."""
         runtime = self.runtime
         if runtime is None:
             return None

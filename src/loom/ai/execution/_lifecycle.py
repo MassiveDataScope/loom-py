@@ -1,4 +1,4 @@
-"""One entered agent runtime: shared clients opened once, engines built once.
+"""One entered agent host: shared clients opened once, engines built once.
 
 Entering opens every live client concurrently through one
 :class:`~contextlib.AsyncExitStack` owned by the entering task, verifies the

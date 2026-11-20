@@ -361,7 +361,7 @@ class AgentMarkerResolver(_MarkerResolver[str, "_AgentHandle"]):
     """Resolves each ``Agent(name)`` declaration to its one handle, in either resolver shape.
 
     Args:
-        runtime: Live agent runtime serving this deployment.
+        runtime: Live agent host serving this deployment.
         sql_query_service: The application's query service, handed to every
             ``sql`` grant view a handle builds.
         observability: Runtime every handle's span opens on, or ``None``.
@@ -420,7 +420,7 @@ class _McpHandle:
     Args:
         server: MCP server name the declaration names.
         include: Glob patterns of the tools the declaration admits.
-        runtime: Live agent runtime serving this deployment.
+        runtime: Live agent host serving this deployment.
         observability: Runtime the view's span opens on, or ``None``.
     """
 
@@ -518,7 +518,7 @@ class McpMarkerResolver(_MarkerResolver[tuple[str, tuple[str, ...]], "_McpHandle
     A ``Scope.TOOL`` span of a call carries ``mcp_server``, never ``agent``.
 
     Args:
-        runtime: Live agent runtime serving this deployment.
+        runtime: Live agent host serving this deployment.
         observability: Runtime every handle's span opens on, or ``None``.
     """
 

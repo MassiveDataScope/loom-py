@@ -363,7 +363,7 @@ class TestUnstartedRunsLogOneTerminalLine:
 
         assert _terminal_lines(logger, "AcmeNoMarkersUseCase") == [("[FAIL]", "begin")]
 
-    async def test_a_metrics_adapter_raising_on_start(
+    async def test_a_metrics_recorder_raising_on_start(
         self, make_executor: MakeExecutor, logger: AcmeRecordingLogger
     ) -> None:
         metrics = _RaisesOnStart()

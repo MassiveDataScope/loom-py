@@ -75,7 +75,7 @@ class UseCaseExecutor:
         debug_execution: When ``True``, each execution's terminal log lists
             the steps it ran under ``steps``. Defaults to ``False``.
         logger: Optional logger. Defaults to the framework logger.
-        metrics: Optional metrics adapter. When provided, receives
+        metrics: Optional metrics recorder. When provided, receives
             ``EXEC_START``, ``EXEC_DONE``, and ``EXEC_ERROR`` events.
         repo_resolver: Optional callable that resolves a repository instance
             from an entity model type. Used by ``Load``/``Exists`` when

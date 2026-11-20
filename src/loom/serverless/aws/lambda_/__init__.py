@@ -1,4 +1,4 @@
-"""AWS Lambda: one adapter serving the trigger each deployed function declares.
+"""AWS Lambda: one runtime serving the trigger each deployed function declares.
 
 The names load on first access, so a function running jobs or events never
 loads the HTTP stack (FastAPI, Starlette, Mangum). An ``http`` function needs

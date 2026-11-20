@@ -1,4 +1,4 @@
-"""Prometheus metrics adapter for Kafka transport operations.
+"""Prometheus metrics recorder for Kafka transport operations.
 
 Optional module — requires ``prometheus-client``::
 

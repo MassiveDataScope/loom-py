@@ -1,4 +1,4 @@
-"""Structural contracts of the observability runtime."""
+"""Structural contracts of observability."""
 
 from __future__ import annotations
 
