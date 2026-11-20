@@ -130,7 +130,7 @@ class TestBackendPhases:
                 names = (await session.execute(text("SELECT name FROM sqlite_master"))).scalars()
             assert "phase_items" in set(names)
         finally:
-            await manager.dispose()
+            await manager.close()
 
     async def test_a_failed_check_empties_the_queued_pool(
         self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
@@ -145,4 +145,4 @@ class TestBackendPhases:
             assert pool.checkedin() == 0
             assert pool.checkedout() == 0
         finally:
-            await manager.dispose()
+            await manager.close()

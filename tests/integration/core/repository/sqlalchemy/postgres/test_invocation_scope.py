@@ -60,7 +60,7 @@ async def manager(pg_admin_uri: str) -> AsyncIterator[SessionManager]:
     try:
         yield session_manager
     finally:
-        await session_manager.dispose()
+        await session_manager.close()
 
 
 @pytest.fixture

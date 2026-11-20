@@ -208,7 +208,7 @@ class TestIntoTableSQLAlchemyIntegration:
             )
             flushed = partition.close()
         finally:
-            bridge.run(session_manager.dispose())
+            bridge.run(session_manager.close())
             bridge.shutdown()
 
         engine = create_engine(_sync_url(path))
@@ -247,7 +247,7 @@ class TestIntoTableSQLAlchemyIntegration:
             partition.write_batch(items)
             flushed = partition.close()
         finally:
-            bridge.run(session_manager.dispose())
+            bridge.run(session_manager.close())
             bridge.shutdown()
 
         engine = create_engine(_sync_url(path))
@@ -276,7 +276,7 @@ class TestIntoTableSQLAlchemyIntegration:
             partition.write_batch([_VisitRow(visit_id=_VISIT_ID, label="first")])
             partition.close()
         finally:
-            bridge.run(session_manager.dispose())
+            bridge.run(session_manager.close())
             bridge.shutdown()
 
         engine = create_engine(_sync_url(path))
@@ -309,7 +309,7 @@ class TestIntoTableSQLAlchemyIntegration:
             partition.write_batch([])
             partition.close()
         finally:
-            bridge.run(session_manager.dispose())
+            bridge.run(session_manager.close())
             bridge.shutdown()
 
         engine = create_engine(_sync_url(path))
@@ -342,7 +342,7 @@ class TestIntoTableSQLAlchemyIntegration:
             partition.write_batch([_OrderRow(order_id=10, amount=5.0, status="done")])
             partition.close()
         finally:
-            bridge.run(session_manager.dispose())
+            bridge.run(session_manager.close())
             bridge.shutdown()
 
         engine = create_engine(_sync_url(path))
@@ -725,7 +725,7 @@ def _write_to_postgres(uri: str, table: str, payload: type[Any], items: list[Any
         partition.write_batch(items)
         partition.close()
     finally:
-        bridge.run(session_manager.dispose())
+        bridge.run(session_manager.close())
         bridge.shutdown()
 
 

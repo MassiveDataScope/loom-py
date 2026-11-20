@@ -96,7 +96,7 @@ _DB_CHILD = textwrap.dedent(
             async with manager.session() as session:
                 await session.execute(text("SELECT 1"))
             samples.append((time.perf_counter() - started) * 1_000_000)
-        await manager.dispose()
+        await manager.close()
         return samples
 
     samples = asyncio.run(main())

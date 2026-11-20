@@ -45,7 +45,7 @@ class TestBuildSessionManager:
             assert pool._recycle == 60
             assert pool._pre_ping is False
         finally:
-            await manager.dispose()
+            await manager.close()
 
     async def test_undeclared_keys_come_from_the_profile(self) -> None:
         manager = build_session_manager(
@@ -61,7 +61,7 @@ class TestBuildSessionManager:
             )
             assert pool._pre_ping is True
         finally:
-            await manager.dispose()
+            await manager.close()
 
     async def test_an_in_memory_sqlite_omits_the_sizing_keys_and_starts(self) -> None:
         manager = build_session_manager(
@@ -70,7 +70,7 @@ class TestBuildSessionManager:
         try:
             assert type(_pool_of(manager)).__name__ == "StaticPool"
         finally:
-            await manager.dispose()
+            await manager.close()
 
     async def test_a_sqlite_file_takes_every_key(self, tmp_path: Path) -> None:
         config = DatabaseConfig(url=Dsn(f"sqlite+aiosqlite:///{tmp_path / 'app.db'}"))
@@ -79,7 +79,7 @@ class TestBuildSessionManager:
             pool = _pool_of(manager)
             assert (pool.size(), pool._max_overflow, pool._timeout) == (5, 5, 10)
         finally:
-            await manager.dispose()
+            await manager.close()
 
     def test_connect_args_and_echo_reach_the_engine(self, monkeypatch: pytest.MonkeyPatch) -> None:
         seen: dict[str, Any] = {}
@@ -130,7 +130,7 @@ class TestBuildSessionManager:
             pool = _pool_of(manager)
             assert (pool.size(), pool._max_overflow, pool._timeout, pool._recycle) == (1, 0, 5, 300)
         finally:
-            await manager.dispose()
+            await manager.close()
 
     async def test_a_caller_pool_class_is_honoured(self) -> None:
         manager = build_session_manager(
@@ -142,4 +142,4 @@ class TestBuildSessionManager:
         try:
             assert type(_pool_of(manager)) is NullPool
         finally:
-            await manager.dispose()
+            await manager.close()

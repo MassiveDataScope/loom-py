@@ -270,10 +270,10 @@ class SessionManager:
             await session.close()
             self._log.debug("SessionScopeClosed")
 
-    async def dispose(self) -> None:
-        """Dispose of the engine and release all pooled connections."""
+    async def close(self) -> None:
+        """Close the engine and release all pooled connections."""
         await self._engine.dispose()
-        self._log.info("SessionManagerDisposed")
+        self._log.info("SessionManagerClosed")
 
     @property
     def engine(self) -> AsyncEngine:

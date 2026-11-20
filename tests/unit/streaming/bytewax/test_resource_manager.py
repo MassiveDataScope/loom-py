@@ -20,7 +20,7 @@ from loom.streaming.bytewax._resource_manager import ResourceManager  # noqa: E4
 
 
 class _FakeManager:
-    async def dispose(self) -> None:
+    async def close(self) -> None:
         await asyncio.sleep(0)
         return None
 

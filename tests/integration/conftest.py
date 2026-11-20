@@ -52,7 +52,7 @@ async def integration_context(tmp_path: Path) -> AsyncGenerator[RepositoryIntegr
     finally:
         async with manager.engine.begin() as conn:
             await conn.run_sync(get_metadata().drop_all)
-        await manager.dispose()
+        await manager.close()
         reset_registry()
         if db_path.exists():
             db_path.unlink()

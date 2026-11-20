@@ -264,7 +264,7 @@ async def _create_schema(db_url: str) -> None:
         async with manager.engine.begin() as conn:
             await conn.run_sync(get_metadata().create_all)
     finally:
-        await manager.dispose()
+        await manager.close()
 
 
 async def _drop_schema(db_url: str) -> None:
@@ -273,7 +273,7 @@ async def _drop_schema(db_url: str) -> None:
         async with manager.engine.begin() as conn:
             await conn.run_sync(get_metadata().drop_all)
     finally:
-        await manager.dispose()
+        await manager.close()
 
 
 @pytest.fixture

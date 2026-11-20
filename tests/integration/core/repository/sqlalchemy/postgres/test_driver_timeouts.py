@@ -36,7 +36,7 @@ class TestDriverTimeouts:
                 async with manager.engine.connect() as connection:
                     await connection.execute(text("SELECT pg_sleep(:s)"), {"s": _SLEEP_SECONDS})
         finally:
-            await manager.dispose()
+            await manager.close()
         elapsed = time.perf_counter() - started
 
         assert "timeout" in f"{type(raised.value).__name__} {raised.value}".lower()

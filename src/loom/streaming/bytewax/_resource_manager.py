@@ -36,8 +36,8 @@ class _ResourceManagerProtocol(Protocol):
 class _SharedSessionManagerProtocol(Protocol):
     """Minimal SQLAlchemy session-manager contract cached by the adapter."""
 
-    def dispose(self) -> Coroutine[Any, Any, None]:
-        """Dispose pooled connections and release engine resources."""
+    def close(self) -> Coroutine[Any, Any, None]:
+        """Close pooled connections and release engine resources."""
         ...
 
 
@@ -83,7 +83,7 @@ class ResourceManager:
             if bridge is None:
                 break
             try:
-                bridge.run(session_manager.dispose())
+                bridge.run(session_manager.close())
             except Exception as exc:
                 errors.append(exc)
         self._managers.clear()

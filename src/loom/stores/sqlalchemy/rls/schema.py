@@ -79,7 +79,7 @@ async def create_schema(
             else:
                 await _create_protected(connection, schema, bootstrap, lock_timeout)
     finally:
-        await manager.dispose()
+        await manager.close()
 
 
 async def _create_protected(

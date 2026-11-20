@@ -143,7 +143,7 @@ async def repository(pg_admin_uri: str) -> AsyncIterator[NoteRepository]:
             session_manager=manager, model=Note, cursor_codec=CursorCodec(signing="ephemeral")
         )
     finally:
-        await manager.dispose()
+        await manager.close()
         await _run_as_admin(pg_admin_uri, _TEARDOWN_STATEMENTS)
         reset_registry()
 

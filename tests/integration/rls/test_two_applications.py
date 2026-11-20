@@ -80,7 +80,7 @@ async def _desk(application: Application) -> str:
         async with manager.session() as session:
             return str(await session.scalar(DESK))
     finally:
-        await manager.dispose()
+        await manager.close()
 
 
 class TestTwoApplications:

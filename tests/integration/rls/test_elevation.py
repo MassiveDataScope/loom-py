@@ -67,7 +67,7 @@ class TestElevationFlag:
                 assert (await session.execute(edited)).scalar() == 1
         finally:
             reset_identity(identity)
-            await manager.dispose()
+            await manager.close()
 
     async def test_elevation_without_an_open_transaction_arrives_with_the_next_one(
         self, scoped_database: BootstrapFactory, tmp_path: Path
@@ -89,7 +89,7 @@ class TestElevationFlag:
                     assert (await session.execute(text(FLAG))).scalar() == "on"
         finally:
             reset_identity(identity)
-            await manager.dispose()
+            await manager.close()
 
 
 _PID = "SELECT pg_backend_pid()"
@@ -154,7 +154,7 @@ async def nested(scoped_database: BootstrapFactory, tmp_path: Path) -> _Nested:
         flag_inside, flag_after, pid_before, pid_after = await _nested_elevation(manager, decision)
     finally:
         reset_identity(identity)
-        await manager.dispose()
+        await manager.close()
     return _Nested(
         flag_inside=flag_inside,
         flag_after=flag_after,

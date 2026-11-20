@@ -84,7 +84,7 @@ async def repository(pg_admin_uri: str) -> AsyncIterator[SQLAlchemyRepository[Re
     finally:
         async with manager.engine.begin() as conn:
             await conn.run_sync(get_metadata().drop_all)
-        await manager.dispose()
+        await manager.close()
         reset_registry()
 
 

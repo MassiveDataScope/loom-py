@@ -229,8 +229,8 @@ async def stores() -> AsyncIterator[_Stores]:
         yield _Stores(default, audit)
     finally:
         FAILURES.clear()
-        await default.dispose()
-        await audit.dispose()
+        await default.close()
+        await audit.close()
 
 
 def _raises(error: type[BaseException] | None) -> AbstractContextManager[object]:

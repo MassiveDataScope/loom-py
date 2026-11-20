@@ -99,7 +99,7 @@ async def sa_env(tmp_path: Path):  # type: ignore[no-untyped-def]
     finally:
         async with manager.engine.begin() as conn:
             await conn.run_sync(get_metadata().drop_all)
-        await manager.dispose()
+        await manager.close()
         reset_registry()
         if db_path.exists():
             db_path.unlink()

@@ -198,7 +198,7 @@ async def _wired(ctx: ConfigContext) -> AsyncIterator[dict[StoreKey, Store]]:
         yield stores
     finally:
         for store in stores.values():
-            await store.manager.dispose()
+            await store.manager.close()
 
 
 @asynccontextmanager

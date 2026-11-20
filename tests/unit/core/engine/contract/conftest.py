@@ -122,7 +122,7 @@ async def sqlite_session_manager() -> AsyncIterator[CountingSessionManager]:
     try:
         yield CountingSessionManager(manager)
     finally:
-        await manager.dispose()
+        await manager.close()
 
 
 # ---------------------------------------------------------------------------

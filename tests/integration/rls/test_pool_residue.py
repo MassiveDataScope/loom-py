@@ -91,4 +91,4 @@ class TestPoolResidue:
                 assert (await raw.execute(text(owner))).scalar() == ""
         finally:
             reset_identity(token)
-            await manager.dispose()
+            await manager.close()

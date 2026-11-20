@@ -142,8 +142,8 @@ async def stores() -> AsyncIterator[_Stores]:
     try:
         yield pair
     finally:
-        await default.dispose()
-        await audit.dispose()
+        await default.close()
+        await audit.close()
 
 
 EntryWrite = Callable[[Any], Awaitable[object]]

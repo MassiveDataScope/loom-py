@@ -399,7 +399,7 @@ async def _probe_connection(store: _Store) -> None:
 async def _release_queued(session_manager: SessionManager) -> None:
     """Dispose a queued pool, so a prefork parent forks with no connection."""
     if isinstance(session_manager.engine.sync_engine.pool, QueuePool):
-        await session_manager.dispose()
+        await session_manager.close()
 
 
 @asynccontextmanager
@@ -412,7 +412,7 @@ async def _lifespan(session_manager: SessionManager) -> AsyncIterator[None]:
     try:
         yield
     finally:
-        await session_manager.dispose()
+        await session_manager.close()
 
 
 async def _check_external(

@@ -165,7 +165,7 @@ class TestConnectionOnlyWorker:
             assert await _settled_connections(database, name) == 0
             assert not await _has_table(database)
         finally:
-            await manager.dispose()
+            await manager.close()
 
     async def test_a_superuser_fails_the_check_and_leaves_no_connection(
         self, tmp_path: Path
@@ -182,4 +182,4 @@ class TestConnectionOnlyWorker:
             pool: Any = manager.engine.sync_engine.pool
             assert (pool.checkedout(), pool.checkedin()) == (0, 0)
         finally:
-            await manager.dispose()
+            await manager.close()

@@ -112,7 +112,7 @@ async def sql() -> AsyncIterator[SessionManager]:
     try:
         yield manager
     finally:
-        await manager.dispose()
+        await manager.close()
 
 
 class TestStorePostCommit:

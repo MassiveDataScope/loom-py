@@ -118,7 +118,7 @@ async def manager() -> AsyncIterator[SessionManager]:
     try:
         yield built
     finally:
-        await built.dispose()
+        await built.close()
 
 
 def _decision() -> Decision:

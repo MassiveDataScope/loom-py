@@ -74,8 +74,8 @@ async def stores() -> AsyncIterator[_Stores]:
     try:
         yield pair
     finally:
-        await pair.default.dispose()
-        await pair.audit.dispose()
+        await pair.default.close()
+        await pair.audit.close()
 
 
 def _handle(scope: InvocationScope, key: StoreKey) -> object:
@@ -153,7 +153,7 @@ class TestTransactional:
                 with pytest.raises(UndeclaredStoreWrite) as raised:
                     await service.record()
         finally:
-            await manager.dispose()
+            await manager.close()
 
         assert "hunter2" not in str(raised.value)
 
@@ -514,7 +514,7 @@ class TestOperationSession:
 
             assert (checked_out, await rows.count()) == (0, 0)
         finally:
-            await manager.dispose()
+            await manager.close()
 
 
 class TestHandedInSession:
@@ -542,7 +542,7 @@ class TestHandedInSession:
                 with pytest.raises(ForeignSessionError, match="another engine") as raised:
                     await audit_rows.insert_raw("foreign", session=foreign)
         finally:
-            await manager.dispose()
+            await manager.close()
 
         message = str(raised.value)
         assert "s3cret" not in message

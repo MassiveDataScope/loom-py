@@ -259,8 +259,8 @@ async def two_stores(
         await _create_schema(second)
         yield first, second, first_path, second_path
     finally:
-        await first.dispose()
-        await second.dispose()
+        await first.close()
+        await second.close()
 
 
 def _note_repo(manager: SessionManager) -> SQLAlchemyRepository[_Note, int]:

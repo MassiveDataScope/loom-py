@@ -62,7 +62,7 @@ async def manager(pg_admin_uri: str) -> AsyncIterator[SessionManager]:
     finally:
         async with session_manager.engine.begin() as conn:
             await conn.run_sync(get_metadata().drop_all)
-        await session_manager.dispose()
+        await session_manager.close()
         reset_registry()
 
 
