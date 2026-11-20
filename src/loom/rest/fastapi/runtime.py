@@ -221,7 +221,7 @@ def _gate_autocrud_capabilities(
         if interface.auto_crud_model is not None:
             model = interface.auto_crud_model
             key = store_of(model)
-            backend = project.resolve_store_backend(key, default=SQLALCHEMY_BACKEND)
+            backend = project.resolve_store_plugin(key, default=SQLALCHEMY_BACKEND)
             pruned.update(_gate_interface(interface, model, key, backend))
     mounted = {route.use_case for iface in interfaces for route in iface.routes}
     dropped = pruned - mounted
@@ -269,7 +269,7 @@ def _serving_repository_type(model: type[Any], backend: StorePlugin) -> type[Any
         return backend.repository_type
     except AttributeError as exc:
         raise ConfigError(
-            f"store backend {type(backend).__name__} does not declare repository_type"
+            f"store plugin {type(backend).__name__} does not declare repository_type"
         ) from exc
 
 
@@ -644,7 +644,7 @@ def compose_rest(
     recipe = Recipe(
         profile=SERVER_PROFILE,
         discovered=discovered,
-        default_store_backend=SQLALCHEMY_BACKEND,
+        default_store_plugin=SQLALCHEMY_BACKEND,
         check_scope=CheckScope(required=frozenset({ConfigKey.APP_REST})),
         agents=True,
         metrics=_build_metrics_adapter(metrics_cfg, metrics_registry),

@@ -31,7 +31,7 @@ from loom.core.locator import DEFAULT_CODE_PATH, add_code_path
 from loom.core.logger import get_logger
 from loom.core.observability.config import ObservabilityConfig
 from loom.core.observability.observability import Observability
-from loom.core.stores import resolve_store_backend
+from loom.core.stores import resolve_store_plugin
 from loom.core.stores.catalog import StoreCatalog, StoreKey, load_catalog
 
 if TYPE_CHECKING:
@@ -240,7 +240,7 @@ class Project:
         """
         return load_catalog(self.config)
 
-    def resolve_store_backend(self, key: StoreKey, *, default: str) -> StorePlugin:
+    def resolve_store_plugin(self, key: StoreKey, *, default: str) -> StorePlugin:
         """Build the backend ``stores.<key>.backend`` names; *default* without that store.
 
         Raises:
@@ -248,7 +248,7 @@ class Project:
                 registered under that name.
         """
         spec = self.catalog.specs.get(key)
-        return resolve_store_backend(default) if spec is None else spec.resolve_backend()
+        return resolve_store_plugin(default) if spec is None else spec.resolve_plugin()
 
     def compose(
         self,
@@ -325,7 +325,7 @@ class Project:
             runtime=type(runtime).__qualname__,
             use_cases=len(discovered.use_cases),
             jobs=len(discovered.jobs),
-            backends=stores.store_backends,
+            store_plugins=stores.store_plugins,
             keys=len(kernel.container.bindings()),
             installers=len(discovered.installers),
             overrides=len(recipe.overrides),

@@ -17,7 +17,7 @@ import loom.stores.mongo.plugin as backend_module
 from loom.core.config import ConfigContext, ConfigError
 from loom.core.di.container import LoomContainer
 from loom.core.model import BaseModel, ColumnField
-from loom.core.stores import StoreWiring, resolve_store_backend
+from loom.core.stores import StoreWiring, resolve_store_plugin
 from loom.core.stores.catalog import StoreKey
 from loom.core.stores.profile import SERVER_PROFILE, WORKER_PROFILE, RuntimeProfile
 from loom.core.stores.repository import Creatable
@@ -41,14 +41,14 @@ sys.modules["pymongo"] = None
 sys.modules["bson"] = None
 
 from loom.core.config import ConfigError
-from loom.core.stores import resolve_store_backend
+from loom.core.stores import resolve_store_plugin
 
 try:
-    resolve_store_backend("mongo")
+    resolve_store_plugin("mongo")
 except ConfigError as exc:
     assert "loom-kernel[mongo]" in str(exc), str(exc)
 else:
-    raise SystemExit("resolve_store_backend('mongo') did not fail without pymongo")
+    raise SystemExit("resolve_store_plugin('mongo') did not fail without pymongo")
 """
 
 
@@ -87,7 +87,7 @@ _SECTION: dict[str, Any] = {"url": "mongodb://localhost:27017", "database": "dem
 
 class TestMongoStorePluginRegistration:
     def test_backend_is_registered_under_its_name(self) -> None:
-        assert isinstance(resolve_store_backend("mongo"), MongoStorePlugin)
+        assert isinstance(resolve_store_plugin("mongo"), MongoStorePlugin)
         assert MongoStorePlugin.name == "mongo"
 
     def test_missing_section_is_a_config_error(self) -> None:

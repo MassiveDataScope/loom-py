@@ -90,7 +90,7 @@ def _application(
 
 def _default_backend(project: Project, recipe: Recipe) -> str:
     """The backend the composition builds the default store of *recipe* with."""
-    return project.resolve_store_backend(DEFAULT_STORE, default=recipe.default_store_backend).name
+    return project.resolve_store_plugin(DEFAULT_STORE, default=recipe.default_store_plugin).name
 
 
 class TestBackendRule:

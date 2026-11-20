@@ -94,13 +94,13 @@ class Stores:
 
     Args:
         job_settings: Each discovered job's settings.
-        store_backends: The name of the backend each store's wiring was built by.
+        store_plugins: The name of the store plugin each store's wiring was built by.
         models: The models each store serves.
         wirings: Each store's wiring, its models prepared.
     """
 
     job_settings: JobSettings
-    store_backends: dict[StoreKey, str]
+    store_plugins: dict[StoreKey, str]
     models: dict[StoreKey, tuple[type[BaseModel], ...]]
     wirings: dict[StoreKey, StoreWiring]
 
@@ -119,7 +119,7 @@ class Stores:
                 manager=wiring.lifespan_init,
                 check=wiring.startup_checks,
                 readiness=wiring.readiness,
-                readiness_key=self.store_backends[key] if key == DEFAULT_STORE else key,
+                readiness_key=self.store_plugins[key] if key == DEFAULT_STORE else key,
             )
             for key, wiring in self.wirings.items()
         )
@@ -170,7 +170,7 @@ def build_stores(project: Project, recipe: Recipe, aws: AwsClients) -> Stores:
     job_settings = JobSettings.from_config(ctx, discovered.jobs)
     stores = catalog.models_by_store(discovered.models)
     backends = {
-        key: project.resolve_store_backend(key, default=recipe.default_store_backend)
+        key: project.resolve_store_plugin(key, default=recipe.default_store_plugin)
         for key in stores
     }
     default_label = backends[DEFAULT_STORE].name
@@ -195,7 +195,7 @@ def build_stores(project: Project, recipe: Recipe, aws: AwsClients) -> Stores:
         wiring.prepare_models(models)
     return Stores(
         job_settings=job_settings,
-        store_backends={key: backends[key].name for key in stores},
+        store_plugins={key: backends[key].name for key in stores},
         models=stores,
         wirings=wirings,
     )

@@ -56,7 +56,7 @@ class TestSameRulesAtStartUpAndInLoomCheck:
             ({"celery": {}}, "app.name is required"),
             (
                 {"app": {"name": "acme"}, "stores": {"main": {"backend": "typo"}}},
-                "Unknown store backend 'typo'",
+                "Unknown store plugin 'typo'",
             ),
         ],
         ids=["discovery", "no name", "no app section", "backend typo"],
@@ -135,7 +135,7 @@ class TestBackendsLoadedPerEntryPoint:
         recipe = Recipe(
             profile=SERVER_PROFILE,
             discovered=DiscoveryResult(models=(), use_cases=()),
-            default_store_backend="none",
+            default_store_plugin="none",
         )
 
         build_stores(project, recipe, AwsClients())
@@ -156,7 +156,7 @@ class TestRequireInstalled:
     def test_an_empty_catalog_resolves_nothing(self, monkeypatch: pytest.MonkeyPatch) -> None:
         monkeypatch.setattr(
             catalog_module,
-            "resolve_store_backend",
+            "resolve_store_plugin",
             lambda *args, **kwargs: pytest.fail("no store is declared"),
         )
 

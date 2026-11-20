@@ -27,7 +27,7 @@ from loom.core.stores.profile import (
     RuntimeProfile,
     StorePluginContext,
 )
-from loom.core.stores.registry import PLUGIN_ENTRY_POINT_GROUP, resolve_store_backend
+from loom.core.stores.registry import PLUGIN_ENTRY_POINT_GROUP, resolve_store_plugin
 
 __all__ = [
     "PLUGIN_ENTRY_POINT_GROUP",
@@ -47,5 +47,5 @@ __all__ = [
     "SchemaConfig",
     "decode_database_config",
     "load_database_config",
-    "resolve_store_backend",
+    "resolve_store_plugin",
 ]

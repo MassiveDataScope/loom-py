@@ -35,7 +35,7 @@ class AcmeTransportFreeAdapter:
         return Recipe(
             profile=SERVER_PROFILE,
             discovered=project.discovered,
-            default_store_backend="sqlalchemy",
+            default_store_plugin="sqlalchemy",
         )
 
     def mount(self, application: Application) -> Application:

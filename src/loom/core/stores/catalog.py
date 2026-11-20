@@ -39,7 +39,7 @@ from loom.core.model import BaseModel
 from loom.core.plugins.entrypoints import registered_names
 from loom.core.stores.registry import (
     PLUGIN_ENTRY_POINT_GROUP,
-    resolve_store_backend,
+    resolve_store_plugin,
 )
 
 if TYPE_CHECKING:
@@ -161,14 +161,14 @@ class StoreSpec:
         """Dotted path of the key naming the store's plugin, for error messages."""
         return f"{self.path}.{BACKEND_KEY}"
 
-    def resolve_backend(self) -> StorePlugin:
+    def resolve_plugin(self) -> StorePlugin:
         """Build the plugin the store names.
 
         Raises:
             ConfigError: When no plugin is registered under that name, or it
                 needs a module that is not installed.
         """
-        return resolve_store_backend(self.backend, path=self.backend_path)
+        return resolve_store_plugin(self.backend, path=self.backend_path)
 
     @functools.cached_property
     def capabilities(self) -> StoreCapabilities:
@@ -182,10 +182,10 @@ class StoreSpec:
         """
         if self.backend in CONNECTION_ONLY_BACKENDS:
             return NO_CAPABILITIES
-        backend = self.resolve_backend()
+        backend = self.resolve_plugin()
         if not callable(getattr(backend, "capabilities", None)):
             raise ConfigError(
-                f"store backend {self.backend!r} ({type(backend).__qualname__}) serving "
+                f"store plugin {self.backend!r} ({type(backend).__qualname__}) serving "
                 f"{self.path} does not implement the required method 'capabilities'"
             )
         return backend.capabilities(self)
@@ -264,11 +264,11 @@ class StoreCatalog:
 
         Raises:
             ConfigError: Naming the first store whose plugin is not
-                installed, as :meth:`StoreSpec.resolve_backend`.
+                installed, as :meth:`StoreSpec.resolve_plugin`.
         """
         for spec in self.specs.values():
             if spec.backend not in CONNECTION_ONLY_BACKENDS:
-                spec.resolve_backend()
+                spec.resolve_plugin()
 
     def served_by(self, backend: str, key: StoreKey) -> StoreSpec:
         """Return the store *key* that *backend* serves.
@@ -449,19 +449,19 @@ def _spec(ctx: ConfigContext, key: StoreKey, registered: tuple[str, ...]) -> Sto
         )
     backend = ctx.section_or_default(f"{path}.{BACKEND_KEY}", str, "")
     if not backend:
-        raise ConfigError(f"{path}.{BACKEND_KEY} is missing: name the store's store backend")
+        raise ConfigError(f"{path}.{BACKEND_KEY} is missing: name the store's plugin")
     connection_only = backend in CONNECTION_ONLY_BACKENDS
     if not connection_only and backend not in registered:
         kinds = ", ".join(sorted(CONNECTION_ONLY_BACKENDS))
         raise ConfigError(
-            f"{path}.{BACKEND_KEY}: Unknown store backend {backend!r}. "
-            f"Registered backends: {', '.join(registered)}. "
+            f"{path}.{BACKEND_KEY}: Unknown store plugin {backend!r}. "
+            f"Registered store plugins: {', '.join(registered)}. "
             f"Connection-only stores: {kinds}."
         )
     if connection_only and key == DEFAULT_STORE:
         raise ConfigError(
             f"{path}.{BACKEND_KEY} is {backend!r}, a connection-only store that "
-            "serves no model; declare the application's store backend there"
+            "serves no model; declare the application's store plugin there"
         )
     return StoreSpec(key=key, backend=backend, config=ctx)
 

@@ -253,7 +253,7 @@ A `Recipe` is a frozen dataclass:
 |---|---|
 | `profile` | Pool defaults of the entry point: `SERVER_PROFILE`, `WORKER_PROFILE`, `STREAMING_PROFILE` or your own `RuntimeProfile`. A key in `stores.default.pool` still wins. |
 | `discovered` | The `DiscoveryResult` to compile: models, use cases, interfaces, agent specs, after whatever the runtime added or pruned. |
-| `default_store_backend` | Backend of the default store when `stores.default` is not declared. Default `none`. |
+| `default_store_plugin` | Store plugin of the default store when `stores.default` is not declared. Default `none`. |
 | `check_scope` | A `CheckScope`: configuration paths whose deploy checks the entry point requires or leaves out, such as `CheckScope.without_rest()` for a worker. |
 | `agents` | Whether the entry point hosts the agent host; without it an `ai` section is ignored. Default `False`. |
 | `agent_endpoints` | Whether the runtime mounts agent endpoints. `False` mounts none, so only the agents an `Agent()` marker names are compiled, as on Lambda. Matters only with `agents=True`. Default `True`. |
@@ -276,7 +276,7 @@ class ScriptAdapter:
         return Recipe(
             profile=WORKER_PROFILE,
             discovered=project.discovered,  # app.packages
-            default_store_backend="sqlalchemy",  # without stores.default
+            default_store_plugin="sqlalchemy",  # without stores.default
             check_scope=CheckScope.without_rest(),
         )
 
@@ -386,7 +386,7 @@ request or task:
 - `ResolutionError` — any other constructor dependency of a use case that is
   not bound.
 - `ConfigError` — an incomplete or invalid configuration, an unknown
-  store backend, or a backend whose extra is not installed (the message
+  store plugin, or a backend whose extra is not installed (the message
   names `loom-kernel[<backend>]`).
 - `ReservedBindingError` (`loom.composition`, code
   `CompositionErrorCode.RESERVED_BINDING`): an `Installer` of yours registered a

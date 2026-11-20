@@ -61,7 +61,7 @@ class _Models:
         return Recipe(
             profile=SERVER_PROFILE,
             discovered=DiscoveryResult(models=self.models, use_cases=()),
-            default_store_backend="sqlalchemy",
+            default_store_plugin="sqlalchemy",
         )
 
     def mount(self, application: Application) -> Application:

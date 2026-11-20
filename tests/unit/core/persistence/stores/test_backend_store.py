@@ -6,7 +6,7 @@ import pytest
 
 from loom.connections.aws import AwsClients
 from loom.core.config import ConfigContext, ConfigError
-from loom.core.stores import resolve_store_backend
+from loom.core.stores import resolve_store_plugin
 from loom.core.stores.catalog import StoreKey, load_catalog
 from loom.core.stores.profile import SERVER_PROFILE, StorePluginContext
 from loom.core.stores.repository import CursorCodec
@@ -23,7 +23,7 @@ class TestBackendStoreLookup:
             cursor_codec=CursorCodec.disabled(),
             aws=AwsClients(),
         )
-        backend = resolve_store_backend(name)
+        backend = resolve_store_plugin(name)
 
         with pytest.raises(ConfigError, match=rf"the '{name}' backend needs stores\.events"):
             backend.build(ctx, (), runtime)

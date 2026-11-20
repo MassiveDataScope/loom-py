@@ -125,7 +125,7 @@ class TestBackendSelection:
             tmp_path, store={"backend": "mongodb", "url": "sqlite+aiosqlite:///"}
         )
 
-        with pytest.raises(ConfigError, match="Unknown store backend 'mongodb'") as exc_info:
+        with pytest.raises(ConfigError, match="Unknown store plugin 'mongodb'") as exc_info:
             create_app(config_path)
 
         message = str(exc_info.value)

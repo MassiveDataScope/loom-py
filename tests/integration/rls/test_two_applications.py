@@ -43,7 +43,7 @@ class _Tickets:
         return Recipe(
             profile=SERVER_PROFILE,
             discovered=DiscoveryResult(models=(_Ticket,), use_cases=()),
-            default_store_backend="sqlalchemy",
+            default_store_plugin="sqlalchemy",
         )
 
     def mount(self, application: Application) -> Application:

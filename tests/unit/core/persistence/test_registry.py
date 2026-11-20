@@ -22,7 +22,7 @@ from loom.core.stores import (
     NullStorePlugin,
     StorePlugin,
     StoreWiring,
-    resolve_store_backend,
+    resolve_store_plugin,
 )
 from loom.core.stores.profile import SERVER_PROFILE, StorePluginContext
 from tests.helpers.persistence import build_backend
@@ -87,7 +87,7 @@ class TestResolveBackend:
         )
 
         with pytest.raises(ConfigError) as excinfo:
-            resolve_store_backend("missing")
+            resolve_store_plugin("missing")
 
         message = str(excinfo.value)
         assert "'missing'" in message
@@ -98,15 +98,15 @@ class TestResolveBackend:
     ) -> None:
         _install(monkeypatch, ())
 
-        with pytest.raises(ConfigError, match="No store backends are registered"):
-            resolve_store_backend("missing")
+        with pytest.raises(ConfigError, match="No store plugins are registered"):
+            resolve_store_plugin("missing")
 
     def test_injected_entry_point_resolves_to_an_instance_of_its_class(
         self, monkeypatch: pytest.MonkeyPatch
     ) -> None:
         _install(monkeypatch, (AcmePersistenceEntryPoint("fake", "loom-fake", _FakeBackend),))
 
-        backend = resolve_store_backend("fake")
+        backend = resolve_store_plugin("fake")
 
         assert isinstance(backend, _FakeBackend)
         assert backend.name == "fake"
@@ -121,10 +121,10 @@ class TestResolveBackend:
         )
 
         with pytest.raises(DuplicateEntryPointError):
-            resolve_store_backend("fake")
+            resolve_store_plugin("fake")
 
     def test_none_backend_is_registered_by_loom(self) -> None:
-        backend = resolve_store_backend("none")
+        backend = resolve_store_plugin("none")
 
         assert isinstance(backend, NullStorePlugin)
 
@@ -210,11 +210,11 @@ class TestBrokenBackendImport:
         _install(monkeypatch, (_BrokenEntryPoint("audit", missing, _KERNEL_REQUIRES),))
 
         with pytest.raises(ConfigError) as excinfo:
-            resolve_store_backend("audit", path="stores.audit.backend")
+            resolve_store_plugin("audit", path="stores.audit.backend")
 
         root = missing.partition(".")[0]
         assert str(excinfo.value) == (
-            f"stores.audit.backend: store backend 'audit' needs {root!r}, "
+            f"stores.audit.backend: store plugin 'audit' needs {root!r}, "
             f"which is not installed: install {installs}"
         )
         assert isinstance(excinfo.value.__cause__, ModuleNotFoundError)
@@ -225,11 +225,10 @@ class TestBrokenBackendImport:
         _install(monkeypatch, (_BrokenEntryPoint("audit", "acme_driver", _KERNEL_REQUIRES),))
 
         with pytest.raises(ConfigError) as excinfo:
-            resolve_store_backend("audit", path="stores.audit.backend")
+            resolve_store_plugin("audit", path="stores.audit.backend")
 
         assert str(excinfo.value) == (
-            "stores.audit.backend: store backend 'audit' needs 'acme_driver', "
-            "which is not installed"
+            "stores.audit.backend: store plugin 'audit' needs 'acme_driver', which is not installed"
         )
 
     @pytest.mark.parametrize("missing", ["loom.stores.mongo.plugin", "loom"])
@@ -239,7 +238,7 @@ class TestBrokenBackendImport:
         _install(monkeypatch, (_BrokenEntryPoint("audit", missing, _KERNEL_REQUIRES),))
 
         with pytest.raises(ModuleNotFoundError) as excinfo:
-            resolve_store_backend("audit", path="stores.audit.backend")
+            resolve_store_plugin("audit", path="stores.audit.backend")
 
         assert excinfo.value.name == missing
 

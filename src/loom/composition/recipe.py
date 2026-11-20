@@ -41,7 +41,7 @@ class Recipe:
         profile: Pool defaults of the entry point (server, worker, ...).
         discovered: Use cases, models, interfaces, job callbacks and agent specs, final:
             with whatever the runtime added or pruned.
-        default_store_backend: Backend of the default store when ``stores.default``
+        default_store_plugin: Store plugin of the default store when ``stores.default``
             is not declared.
         check_scope: Configuration paths whose deploy checks this entry point
             requires or leaves out, such as ``app.rest`` for a worker.
@@ -73,7 +73,7 @@ class Recipe:
 
     profile: RuntimeProfile
     discovered: DiscoveryResult
-    default_store_backend: str = NONE_BACKEND
+    default_store_plugin: str = NONE_BACKEND
     check_scope: CheckScope = UNSCOPED
     agents: bool = False
     agent_endpoints: bool = True

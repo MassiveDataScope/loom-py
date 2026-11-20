@@ -40,7 +40,7 @@ class TestComposedEvent:
             "runtime": "Serving",
             "use_cases": 1,
             "jobs": 1,
-            "backends": {"default": "sqlalchemy"},
+            "store_plugins": {"default": "sqlalchemy"},
             "installers": 0,
             "overrides": 1,
             "agents": 0,

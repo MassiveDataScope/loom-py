@@ -19,7 +19,7 @@ PLUGIN_ENTRY_POINT_GROUP = "loom.stores.plugins"
 """Entry point group store plugins register under."""
 
 
-def resolve_store_backend(name: str, *, path: str | None = None) -> StorePlugin:
+def resolve_store_plugin(name: str, *, path: str | None = None) -> StorePlugin:
     """Resolve the store plugin registered under ``name``.
 
     Args:
@@ -48,7 +48,7 @@ def resolve_store_backend(name: str, *, path: str | None = None) -> StorePlugin:
         if missing is None:
             raise
         owner = f"{path}: " if path else ""
-        raise ConfigError(f"{owner}store backend {name!r} {missing.describe()}") from exc
+        raise ConfigError(f"{owner}store plugin {name!r} {missing.describe()}") from exc
     backend_cls = cast("type[StorePlugin]", target)
     return backend_cls()
 
@@ -56,12 +56,12 @@ def resolve_store_backend(name: str, *, path: str | None = None) -> StorePlugin:
 def _describe_unknown_backend(name: str, available: tuple[str, ...]) -> str:
     """Return the message naming an unknown plugin *name* and the *available* ones."""
     if not available:
-        return f"Unknown store backend {name!r}. No store backends are registered."
+        return f"Unknown store plugin {name!r}. No store plugins are registered."
     registered = ", ".join(available)
-    return f"Unknown store backend {name!r}. Registered backends: {registered}."
+    return f"Unknown store plugin {name!r}. Registered store plugins: {registered}."
 
 
 __all__ = [
     "PLUGIN_ENTRY_POINT_GROUP",
-    "resolve_store_backend",
+    "resolve_store_plugin",
 ]
