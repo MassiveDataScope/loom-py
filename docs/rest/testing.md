@@ -28,6 +28,45 @@ Builder methods: `with_params`, `with_input`, `with_command`, `with_loaded`,
 `with_deps`, `with_main_repo`. The `.plan` property returns the compiled
 `ExecutionPlan`.
 
+## Test data
+
+`make(Model, **fields)` builds a valid, real instance of any dataclass or
+msgspec Struct, with no declaration. It needs the `testing` extra
+(polyfactory). Values you pass are used as given; the rest is generated
+deterministically, so the same call builds the same instance.
+
+```python
+from loom.testing import make
+
+user = make(User, email="ada@example.com")
+```
+
+A rule on one field lives in the type, where `make` and `__post_init__` read
+the same constant:
+
+```python
+limit: Annotated[int, msgspec.Meta(ge=MIN_PAGE_LIMIT, le=MAX_PAGE_LIMIT)] = 50
+```
+
+A rule that spans fields (such as `first <= last`) or references another type
+gets a `LoomFactory` subclass next to the type. Registered with
+`__set_as_default_factory_for_type__`, it also builds that type wherever it is
+nested:
+
+```python
+from polyfactory.fields import Use
+from loom.testing import LoomFactory
+
+class BackoffFactory(LoomFactory[Backoff]):
+    __set_as_default_factory_for_type__ = True
+
+    first_s = Use(lambda: 1.0)
+    max_s = Use(lambda: 30.0)
+```
+
+A test passes explicitly every value it asserts on: generated values are valid,
+not stable, and must never decide the outcome.
+
 ## HTTP-level testing
 
 `HttpTestHarness` builds a `TestClient` from `RestInterface` declarations with
