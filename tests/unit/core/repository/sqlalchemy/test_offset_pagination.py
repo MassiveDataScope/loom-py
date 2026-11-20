@@ -9,9 +9,10 @@ from loom.core.model import BaseModel, ColumnField
 from loom.core.stores.catalog import DEFAULT_STORE
 from loom.core.stores.repository import CursorCodec, FilterParams, PageParams, QuerySpec, SortSpec
 from loom.stores.sqlalchemy.query_compiler.compiler import QuerySpecCompiler
-from loom.stores.sqlalchemy.repository import RepositorySQLAlchemy
+from loom.stores.sqlalchemy.repository import SQLAlchemyRepository
 from loom.stores.sqlalchemy.schema import compile_all, get_compiled
 from loom.stores.sqlalchemy.session_manager import SessionManager
+from loom.testing import make
 
 
 class _Row(BaseModel):
@@ -49,8 +50,8 @@ async def session_manager() -> AsyncIterator[SessionManager]:
 
 
 @pytest.fixture
-async def repository(session_manager: SessionManager) -> RepositorySQLAlchemy[_Row, int]:
-    repo: RepositorySQLAlchemy[_Row, int] = RepositorySQLAlchemy(
+async def repository(session_manager: SessionManager) -> SQLAlchemyRepository[_Row, int]:
+    repo: SQLAlchemyRepository[_Row, int] = SQLAlchemyRepository(
         session_manager=session_manager,
         model=_Row,
         cursor_codec=CursorCodec(signing="ephemeral"),
@@ -61,10 +62,10 @@ async def repository(session_manager: SessionManager) -> RepositorySQLAlchemy[_R
 
 class TestPagePastTheEnd:
     async def test_list_paginated_reports_the_filtered_total(
-        self, repository: RepositorySQLAlchemy[_Row, int]
+        self, repository: SQLAlchemyRepository[_Row, int]
     ) -> None:
         result = await repository.list_paginated(
-            PageParams(page=9, limit=2), FilterParams(filters={"rank": 3})
+            make(PageParams, page=9, limit=2), FilterParams(filters={"rank": 3})
         )
 
         assert (result.items, result.total_count, result.has_next) == ((), 2, False)
@@ -87,7 +88,9 @@ class TestOffsetOrdering:
             columns={},
         )
 
-        sql = str(compiler.compile_offset(QuerySpec(sort=(SortSpec("rank", "DESC"),), limit=2)))
+        sql = str(
+            compiler.compile_offset(make(QuerySpec, sort=(SortSpec("rank", "DESC"),), limit=2))
+        )
 
         assert sql.split("ORDER BY", 1)[1].split("LIMIT")[0].strip() == (
             "offset_rows.rank DESC, offset_rows.id"

@@ -43,6 +43,7 @@ from loom.core.stores.repository.query import (
 from loom.core.stores.uow.coordinator import OrderedCommits
 from loom.core.stores.uow.scope import Frame, invocation
 from loom.stores.sqlalchemy.query_compiler import UnsafeFilterError
+from loom.testing import make
 from tests.unit.core.uow._coordinator_fakes import (
     Factory,
     Ledger,
@@ -308,7 +309,7 @@ class CountingRepository(Repository[RowT, WidgetCreate, WidgetUpdate, Any], Gene
         matched = self._matching_rows(query)
         if query.pagination is PaginationMode.CURSOR:
             return CursorResult(items=tuple(matched), next_cursor=None, has_next=False)
-        page_params = PageParams(page=query.page, limit=query.limit)
+        page_params = make(PageParams, page=query.page, limit=query.limit)
         return build_page_result(matched, len(matched), page_params)
 
     def _matching_rows(self, query: QuerySpec) -> list[RowT]:

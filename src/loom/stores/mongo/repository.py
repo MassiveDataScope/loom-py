@@ -33,15 +33,13 @@ from pymongo.asynchronous.client_session import AsyncClientSession
 from pymongo.errors import BulkWriteError, DuplicateKeyError, PyMongoError
 from pymongo.results import DeleteResult, InsertManyResult, InsertOneResult
 
-from loom.core.config import ConfigError
-from loom.core.errors import Conflict, UnsupportedQuery
+from loom.core.errors import Conflict
 from loom.core.logger import get_logger
 from loom.core.model.convert import to_struct
 from loom.core.model.enums import ServerDefault, ServerOnUpdate
 from loom.core.model.introspection import (
     column_annotations,
     get_column_fields,
-    get_id_attributes,
     get_table_name,
 )
 from loom.core.stores.repository import (
@@ -52,6 +50,7 @@ from loom.core.stores.repository import (
     CursorCodec,
     CursorResult,
     Deletable,
+    FieldReadable,
     FilterGroup,
     FilterOp,
     FilterParams,
@@ -70,7 +69,7 @@ from loom.core.stores.repository import (
     build_page_result,
 )
 from loom.core.stores.repository.cursor import require_cursor_sort
-from loom.core.stores.repository.record import RecordLayout
+from loom.core.stores.repository.record import RecordLayout, single_id_attribute
 from loom.stores.mongo.ids import IdPolicy, Uuid4IdPolicy
 from loom.stores.mongo.query_compiler import MongoFilter, MongoQueryCompiler, MongoSort
 from loom.stores.mongo.values import to_storage_datetime, to_storage_value
@@ -154,8 +153,9 @@ class MongoCollection(Protocol):
     ) -> DeleteResult: ...
 
 
-class RepositoryMongo(
+class MongoRepository(
     Readable[OutputT],
+    FieldReadable[OutputT],
     Creatable[OutputT],
     BulkCreatable[OutputT],
     Updatable[OutputT],
@@ -204,7 +204,7 @@ class RepositoryMongo(
 
     Example::
 
-        repository = RepositoryMongo(Article, database["articles"], cursor_codec=codec)
+        repository = MongoRepository(Article, database["articles"], cursor_codec=codec)
         article = await repository.create(ArticleCreate(slug="hello", title="Hi"))
     """
 
@@ -224,7 +224,7 @@ class RepositoryMongo(
         self._collection = collection
         self._ids: IdPolicy = id_policy if id_policy is not None else Uuid4IdPolicy()
         self._session = session_provider
-        self._id_attr = _single_id_attribute(model)
+        self._id_attr = single_id_attribute(model, why_single="Mongo stores one key value in _id")
         column_fields = get_column_fields(model)
         self._column_fields = frozenset(column_fields)
         self._cursor_columns = column_annotations(model)
@@ -332,8 +332,9 @@ class RepositoryMongo(
         it) and the store may hold the partial batch. With ``IGNORE`` the
         write is unordered and a document whose ``_id`` already exists is
         skipped; any other write error leaves the other documents written.
-        ``IGNORE`` is refused inside a transaction, which a duplicate-key
-        error aborts. An empty ``data`` returns ``()`` without a round trip.
+        Inside a transaction the stored keys are read first, because a
+        duplicate-key error would abort it. An empty ``data`` returns ``()``
+        without a round trip.
 
         Args:
             data: Command structs to persist.
@@ -349,7 +350,6 @@ class RepositoryMongo(
                 ``ERROR``; with ``IGNORE``, on a duplicate in another unique
                 index.
             BulkWriteError: On a write error other than a duplicate key.
-            UnsupportedQuery: With ``IGNORE`` inside a transaction.
         """
         documents = [self._new_document(item) for item in data]
         if not documents:
@@ -377,38 +377,60 @@ class RepositoryMongo(
             raise conflict from exc
 
     async def _insert_new(self, documents: list[Document]) -> list[Document]:
-        """Insert *documents* unordered and return those whose ``_id`` did not exist yet.
+        """Insert the *documents* whose ``_id`` is not stored yet and return them.
+
+        Outside a transaction one unordered ``insert_many`` skips the stored
+        keys. Inside one a duplicate key would abort the transaction, so the
+        stored keys are read in its session first and only the missing
+        documents are inserted; a key another transaction inserts in between
+        fails this one as a write conflict.
 
         Raises:
-            UnsupportedQuery: Inside a transaction.
             Conflict: On a duplicate in a unique index other than ``_id``.
             BulkWriteError: On a write error other than a duplicate key.
         """
         session = self._write_session()
         if session is not None:
-            raise UnsupportedQuery(
-                "create_many(on_conflict=IGNORE) cannot run inside a transaction: "
-                "a duplicate key aborts it",
-                backend=self.backend_name,
-                model=self._model.__qualname__,
-            )
+            documents = await self._not_stored(documents, session)
         try:
             await self._collection.insert_many(documents, ordered=False, session=session)
         except BulkWriteError as exc:
             skipped = set(self._duplicate_indexes(exc))
-            secondary = next(
-                (
-                    error["keyValue"]
-                    for error in exc.details["writeErrors"]
-                    if _ID not in error.get("keyPattern", {_ID: 1})
-                ),
-                None,
-            )
-            if secondary is not None:
-                values = ", ".join(f"{name}={value!r}" for name, value in secondary.items())
-                raise Conflict(f"{self._model.__qualname__} with {values} already exists.") from exc
+            self._raise_secondary_conflict(exc)
             return [document for index, document in enumerate(documents) if index not in skipped]
         return documents
+
+    async def _not_stored(
+        self, documents: list[Document], session: AsyncClientSession
+    ) -> list[Document]:
+        """Return the first document of each ``_id`` that *session* does not see stored."""
+        keys = [document[_ID] for document in documents]
+        stored = {
+            document[_ID]
+            for document in await self._collection.find(
+                {_ID: {"$in": keys}}, session=session
+            ).to_list()
+        }
+        missing = []
+        for document in documents:
+            if document[_ID] not in stored:
+                stored.add(document[_ID])
+                missing.append(document)
+        return missing
+
+    def _raise_secondary_conflict(self, exc: BulkWriteError) -> None:
+        """Raise ``Conflict`` when *exc* reports a duplicate in a unique index but ``_id``."""
+        secondary = next(
+            (
+                error["keyValue"]
+                for error in exc.details["writeErrors"]
+                if _ID not in error.get("keyPattern", {_ID: 1})
+            ),
+            None,
+        )
+        if secondary is not None:
+            values = ", ".join(f"{name}={value!r}" for name, value in secondary.items())
+            raise Conflict(f"{self._model.__qualname__} with {values} already exists.") from exc
 
     @staticmethod
     def _duplicate_indexes(exc: BulkWriteError) -> list[int]:
@@ -656,16 +678,6 @@ class RepositoryMongo(
         return cast(OutputT, to_struct(self._model, kwargs))
 
 
-def _single_id_attribute(model: type) -> str:
-    key = get_id_attributes(model)
-    if len(key) == 1:
-        return key[0]
-    raise ConfigError(
-        f"{model.__qualname__} has the composite primary key ({', '.join(key)}); "
-        "Mongo stores one key value in _id, so declare a single primary key"
-    )
-
-
 def _equality_group(filter_params: FilterParams | None) -> FilterGroup:
     """Translate page-mode equality filters into a flat AND group."""
     if filter_params is None:
@@ -689,4 +701,4 @@ def _stamp(fields: frozenset[str]) -> Document:
     return dict.fromkeys(fields, now)
 
 
-__all__ = ["MongoCollection", "MongoFindCursor", "RepositoryMongo", "SessionProvider"]
+__all__ = ["MongoCollection", "MongoFindCursor", "MongoRepository", "SessionProvider"]

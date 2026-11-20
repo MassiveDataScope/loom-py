@@ -13,6 +13,7 @@ import pytest
 
 from loom.core.cache import CacheConfig
 from loom.core.stores.repository import PageParams
+from loom.testing import make
 
 from ._doubles import AcmeCacheWidget, CachedEnv, CountingRepository, wrap_with_cache
 
@@ -61,7 +62,7 @@ class TestJitteredBand:
     async def test_list_index_and_entity_batch_stay_inside_their_bands(self) -> None:
         env = _env(jitter=JITTER)
 
-        await env.wrapper.list_paginated(PageParams(page=1, limit=ROW_COUNT))
+        await env.wrapper.list_paginated(make(PageParams, page=1, limit=ROW_COUNT))
 
         assert all(_within(ttl, LIST_TTL, JITTER) for ttl in env.backend.set_ttls)
         assert all(_within(ttl, ENTITY_TTL, JITTER) for ttl in env.backend.multi_set_ttls)
@@ -99,7 +100,7 @@ class TestNoJitter:
     async def test_list_writes_use_the_configured_ttls(self) -> None:
         env = _env(jitter=0.0)
 
-        await env.wrapper.list_paginated(PageParams(page=1, limit=ROW_COUNT))
+        await env.wrapper.list_paginated(make(PageParams, page=1, limit=ROW_COUNT))
 
         assert set(env.backend.set_ttls) == {LIST_TTL}
         assert set(env.backend.multi_set_ttls) == {ENTITY_TTL}

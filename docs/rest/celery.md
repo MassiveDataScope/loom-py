@@ -233,9 +233,7 @@ class RestockEmailFailureCallback(JobCallback):
     def on_success(self, job_id: str, result: Any, **context: Any) -> None:
         pass
 
-    async def on_failure(
-        self, job_id: str, exc_type: str, exc_msg: str, **context: Any
-    ) -> None:
+    async def on_failure(self, job_id: str, exc_type: str, exc_msg: str, **context: Any) -> None:
         product_id = context.get("product_id")
         entity = self._app.entity(Product)
         product = await entity.get(params={"id": product_id})
@@ -251,6 +249,7 @@ class RestockEmailFailureCallback(JobCallback):
 ```python
 # called on task success — result is the value returned by Job.execute()
 async def on_success(self, job_id: str, result: Any, **context: Any) -> None: ...
+
 
 # called on task failure — exc_type / exc_msg describe the exception
 async def on_failure(self, job_id: str, exc_type: str, exc_msg: str, **context: Any) -> None: ...
@@ -787,7 +786,7 @@ from loom.celery.bootstrap import bootstrap_worker
 from app.product.jobs import SendRestockEmailJob
 
 result = bootstrap_worker(
-    "config/worker.yaml",   # includes base.yaml → app.packages supplements registry
+    "config/worker.yaml",  # includes base.yaml → app.packages supplements registry
     jobs=[SendRestockEmailJob],
 )
 celery_app = result.celery_app
@@ -802,7 +801,7 @@ from app.product.interface import ProductInterface
 result = bootstrap_worker(
     "config/worker.yaml",
     jobs=[SendRestockEmailJob],
-    interfaces=[ProductInterface],     # auto-extracts use-cases from routes (including AutoCRUD)
+    interfaces=[ProductInterface],  # auto-extracts use-cases from routes (including AutoCRUD)
 )
 ```
 
@@ -855,11 +854,13 @@ with a `name` and a `resolve(key) -> object` works:
 ```python
 from loom.celery.auto import create_app
 
+
 class VaultResolver:
     name = "vault"
 
     def resolve(self, key: str) -> str:
         return read_vault_secret(key)
+
 
 celery_app = create_app("config/worker.yaml", resolvers=[VaultResolver()])
 ```
@@ -1011,6 +1012,7 @@ Or patch it in a pytest fixture:
 ```python
 import pytest
 from app.worker_main import celery_app
+
 
 @pytest.fixture(autouse=True)
 def celery_eager(monkeypatch):

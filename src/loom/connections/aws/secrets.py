@@ -5,8 +5,8 @@ by fetching values from AWS Secrets Manager at parse time.
 
 Example::
 
+    from loom.connections.aws import SecretsManagerResolver
     from loom.core.config import load_config
-    from loom.core.config.secrets import SecretsManagerResolver
 
     cfg = load_config("config/prod.yaml", resolvers=[SecretsManagerResolver("eu-west-1")])
 """
@@ -15,9 +15,11 @@ from __future__ import annotations
 
 from typing import Any
 
-from loom.core.config._resolver_utils import build_resolver_client, resolve_cached
+from loom.connections.aws._resolver_client import build_resolver_client
+from loom.connections.aws.clients import AwsClients
 from loom.core.config.errors import ConfigError
-from loom.core.connections.aws import AwsClients, aws_error_code
+from loom.core.config.resolution import resolve_cached
+from loom.core.connections.aws import AwsClientSource, aws_error_code
 
 
 def _fetch_secret(client: Any, name: str, *, label: str) -> str:
@@ -88,7 +90,9 @@ class SecretsManagerResolver:
         value = resolver.resolve("/myapp/%ENV%/db_password")
     """
 
-    def __init__(self, region: str | None = None, *, clients: AwsClients | None = None) -> None:
+    def __init__(
+        self, region: str | None = None, *, clients: AwsClientSource | None = None
+    ) -> None:
         self._clients = clients or AwsClients()
         self._region = region
         self._unbound: dict[Any, Any] = {}

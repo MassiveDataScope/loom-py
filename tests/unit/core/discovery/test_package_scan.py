@@ -154,18 +154,6 @@ class TestPackageScan:
 
         assert PackageScanner(["acme_assets"]).discover().models == ()
 
-    def test_duplicate_table_names_name_both_modules(self, write_package: PackageWriter) -> None:
-        write_package(
-            "acme_duplicates",
-            {
-                "first.py": _MODEL.format(name="First", table="same"),
-                "second.py": _MODEL.format(name="Second", table="same"),
-            },
-        )
-
-        with pytest.raises(ConfigError, match="acme_duplicates.first.*acme_duplicates.second"):
-            PackageScanner(["acme_duplicates"]).discover()
-
     def test_orders_installers_by_module_and_qualname(self, write_package: PackageWriter) -> None:
         installer = "class {name}(Installer):\n    def install(self, container): pass\n"
         header = "from loom.core.di.installer import Installer\n"

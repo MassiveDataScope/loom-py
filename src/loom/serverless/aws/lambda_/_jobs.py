@@ -12,9 +12,9 @@ from typing import TYPE_CHECKING, Any, NoReturn, cast
 import msgspec
 
 from loom.composition import LoopHost, Recipe
+from loom.connections.aws import AwsClients, aws_island
 from loom.core.checks import CheckScope
 from loom.core.config import ConfigError
-from loom.core.connections.aws import AwsClients, aws_island
 from loom.core.discovery.worker import resolve_worker_components
 from loom.core.job.config import JobSettings
 from loom.core.job.envelope import JobEnvelope

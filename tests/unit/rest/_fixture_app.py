@@ -79,7 +79,7 @@ _CACHED_MODEL_SOURCE = '''
 from loom.core.cache import cached
 from loom.core.stores.repository import RepositoryBuildContext, repository_for
 from loom.core.stores.repository import CursorCodec
-from loom.stores.sqlalchemy import RepositorySQLAlchemy, SessionManager
+from loom.stores.sqlalchemy import SQLAlchemyRepository, SessionManager
 from tests.unit.rest._fixture_app import CACHED_READS
 
 
@@ -101,7 +101,7 @@ def _build_cached_record_repository(context: RepositoryBuildContext) -> Any:
 
 @cached
 @repository_for(CachedRecord, builder=_build_cached_record_repository)
-class CachedRecordRepository(RepositorySQLAlchemy[CachedRecord, int]):
+class CachedRecordRepository(SQLAlchemyRepository[CachedRecord, int]):
     """Counts every read that reaches the database."""
 
     async def get_by_id(self, obj_id: int, profile: str = "default") -> CachedRecord | None:

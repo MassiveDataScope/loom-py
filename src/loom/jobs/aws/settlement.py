@@ -8,7 +8,8 @@ from typing import TYPE_CHECKING, TypeVar
 
 import msgspec
 
-from loom.core.connections.aws import AwsClients, aws_error_code
+from loom.connections.aws import AwsClients
+from loom.core.connections.aws import aws_error_code
 from loom.core.job.outcome import Abandoned, Failed, JobOutcome, Postponed, Succeeded
 from loom.core.job.policy import Countdown
 from loom.core.logger import get_logger

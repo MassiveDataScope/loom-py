@@ -14,8 +14,6 @@ from typing import TypeVar
 from loom.core.config import ConfigError
 from loom.core.discovery._utils import collect_from_modules
 from loom.core.discovery.base import DiscoveryResult
-from loom.core.model import BaseModel
-from loom.core.stores.catalog import store_of
 
 ClassT = TypeVar("ClassT", bound=type)
 
@@ -64,12 +62,10 @@ class PackageScanner:
 
         Raises:
             ConfigError: When an entry cannot be imported, a directory inside a
-                package holds modules but no ``__init__.py``, or one store
-                serves the same table from two models.
+                package holds modules but no ``__init__.py``.
         """
         found = collect_from_modules(self._modules())
         models = self._ordered(found.models)
-        self._refuse_duplicate_tables(models)
         return DiscoveryResult(
             models=models,
             use_cases=self._ordered(found.use_cases),
@@ -110,18 +106,6 @@ class PackageScanner:
     @staticmethod
     def _holds_loose_modules(files: Sequence[str]) -> bool:
         return "__init__.py" not in files and any(name.endswith(".py") for name in files)
-
-    def _refuse_duplicate_tables(self, models: Sequence[type[BaseModel]]) -> None:
-        by_table: dict[tuple[str, str], type[BaseModel]] = {}
-        for model in models:
-            store, table = store_of(model), vars(model)["__tablename__"]
-            previous = by_table.setdefault((store, table), model)
-            if previous is not model:
-                raise ConfigError(
-                    f"Store {store!r} serves table {table!r} twice: "
-                    f"{previous.__module__}.{previous.__qualname__} and "
-                    f"{model.__module__}.{model.__qualname__}"
-                )
 
     @staticmethod
     def _ordered(classes: Sequence[ClassT]) -> tuple[ClassT, ...]:

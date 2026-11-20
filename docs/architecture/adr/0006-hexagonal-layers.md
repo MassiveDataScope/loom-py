@@ -38,7 +38,7 @@ Dependencies point inwards: a layer imports only the layers listed above it.
 | Domain and application | `loom.core.model`, `use_case`, `engine`, `command`, `projection`, `identity`, `authz` | no infrastructure, no SDK |
 | Ports | `loom.core.stores.backend`, `uow.abc`, `repository.abc`, `sql.abc`, `job.service`, `cache` | protocols and value types; no SDK |
 | Configuration contracts | `loom.core.config`, `loom.core.connections.<engine>`, `loom.core.stores.database`, `loom.core.stores.profile` | validated data; no SDK |
-| Outbound adapters (islands) | `loom.stores.{sqlalchemy,dynamodb,mongo}`, `loom.stores.clickhouse`, `loom.core.connections.<engine>.client`, `loom.prometheus`, `loom.celery.service` and `loom.celery.config` (the `JobService` port over Celery and the client it sends with) | implement the ports; the only modules importing an SDK |
+| Outbound adapters (islands) | `loom.stores.{sqlalchemy,dynamodb,mongo}`, `loom.stores.clickhouse`, `loom.connections.<engine>.client`, `loom.prometheus`, `loom.celery.service` and `loom.celery.config` (the `JobService` port over Celery and the client it sends with) | implement the ports; the only modules importing an SDK |
 | Composition root | `loom.composition` (`Application`), and `create_app` and the worker bootstrap until they move into it | compose the application and own the lifecycle of its resources; no transport. A top-level package, outside `loom.core`, because it wires the AI runtime and the Celery job service |
 | Inbound adapters | `loom.rest.fastapi`, `loom.celery` (the worker), the ETL and streaming runners, Prefect flows | translate a transport; build no resource of their own |
 
@@ -54,14 +54,18 @@ time, where a transitive import shows.
 ### One connection type per engine
 
 `loom.core.connections` declares one type per engine, and imports no driver.
-Each engine has a package of its own, whose `__init__` only re-exports:
+The adapters that build each SDK client live outside the core, in
+`loom.connections.<engine>`:
 
 ```text
 loom/core/connections/
-  _base.py            ConnectionSettings, ConnectionPool, merge_extra, redact_uri, require_text
-  <engine>/config.py  the connection type(s), the pool type, client_options()
-  <engine>/loader.py  the <Engine>Island Protocol and its typed loader
-  <engine>/client.py  the island: imports the SDK at its top, builds the client
+  _base.py                 ConnectionSettings, ConnectionPool, merge_extra, redact_uri, require_text
+  <engine>/config.py       the connection type(s), the pool type, client_options()
+  aws/source.py            AwsClientSource, the port that serves AWS clients
+loom/connections/
+  aws/clients.py           AwsClients, the shared holder of AWS clients
+  <engine>/loader.py       the <Engine>Island Protocol and its typed loader
+  <engine>/client.py       the island: imports the SDK at its top, builds the client
 ```
 
 The relational type, `DatabaseConfig`, lives in `loom.core.stores.database` and
@@ -128,11 +132,11 @@ types never import the config layer.
 
 ### One client builder per engine
 
-Each engine's client is built in one island, `loom.core.connections.<engine>.client`
+Each engine's client is built in one island, `loom.connections.<engine>.client`
 (`aws`, `mongo`, `clickhouse`); the relational one is `build_session_manager`,
 in the SQLAlchemy island. Core paths load an island with the typed loader of
 the engine's contract package (`aws_island`, `mongo_island`,
-`clickhouse_island` from `loom.core.connections.<engine>`, wrapping
+`clickhouse_island` from `loom.connections.<engine>`, wrapping
 `import_optional`); an island may import another island directly (the
 DynamoDB repository and the SQL service's ClickHouse transport do). A context
 calls the builder passing only options the connection does not decide
@@ -156,7 +160,7 @@ drifts from its contract.
   import under `if TYPE_CHECKING:` loads nothing and is not counted).
 - `tests/unit/core/connections/test_single_source.py`: each engine's identifying
   keys are declared by one type, and no module outside the
-  `loom.core.connections.<engine>.client` islands builds a driver client.
+  `loom.connections.<engine>.client` islands builds a driver client.
 - `tests/unit/core/connections/test_standard.py`: no connection or pool type
   has a retired field name or a `_ms` field, and every engine type defines
   `client_options()`.
@@ -209,7 +213,7 @@ everywhere. Three levels are judged separately.
 
 ### Known debt
 
-- Island clients under `loom.core.connections` (`aws`, `mongo`, `clickhouse`)
+- Island clients under `loom.connections` (`aws`, `mongo`, `clickhouse`)
   still import their drivers. The store adapters live in `loom.stores`.
 - The logger does not fit AWS Lambda. Its redesign is the next spec (logging
   standard, Lambda first).

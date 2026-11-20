@@ -5,8 +5,8 @@ from __future__ import annotations
 from datetime import UTC, datetime, time, timedelta, timezone
 from decimal import Decimal
 from enum import Enum
+from types import SimpleNamespace
 from typing import Annotated, Any, cast
-from unittest.mock import MagicMock
 from uuid import UUID
 
 import msgspec
@@ -18,7 +18,7 @@ from loom.core.errors import BoundaryValidationError
 from loom.core.errors.codes import ErrorCode
 from loom.core.model import JSON, BaseModel, ColumnField, LoomStruct, String, Text
 from loom.core.stores.repository import CursorCodec
-from loom.stores.sqlalchemy.repository import RepositorySQLAlchemy
+from loom.stores.sqlalchemy.repository import SQLAlchemyRepository
 from loom.stores.sqlalchemy.schema import compile_all, get_compiled, get_metadata
 from loom.stores.sqlalchemy.values import to_column_row
 
@@ -90,8 +90,8 @@ class TestColumnRow:
     def test_the_repository_write_path_and_to_column_row_give_the_same_column_values(self) -> None:
         compile_all(_Station)
         compiled = cast(Any, get_compiled(_Station))
-        repository: RepositorySQLAlchemy[_Station, int] = RepositorySQLAlchemy(
-            session_manager=MagicMock(metadata=get_metadata()),
+        repository: SQLAlchemyRepository[_Station, int] = SQLAlchemyRepository(
+            session_manager=cast(Any, SimpleNamespace(metadata=get_metadata())),
             model=_Station,
             cursor_codec=CursorCodec(signing="ephemeral"),
         )

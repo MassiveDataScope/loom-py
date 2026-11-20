@@ -101,11 +101,10 @@ def repository_for(
             async def find_by_sku(self, sku: str) -> Product | None: ...
 
         @repository_for(Product)
-        class ProductRepository(RepositorySQLAlchemy[Product, int], IProductRepository):
+        class ProductRepository(SQLAlchemyRepository[Product, int], IProductRepository):
             async def find_by_sku(self, sku: str) -> Product | None:
                 ...
 
-        # Use case declares only the capability it needs:
         class GetProductUseCase(UseCase[Product, Product | None, IProductRepository]):
             async def execute(self, sku: str) -> Product | None:
                 return await self.main_repo.find_by_sku(sku)

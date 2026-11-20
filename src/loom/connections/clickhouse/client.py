@@ -4,7 +4,7 @@ Contexts call :func:`build_clickhouse_client`; the asynchronous SQL service
 builds its options with :func:`async_client_options` and opens the client
 with :func:`open_async_client`.
 
-Loaded with :func:`~loom.core.connections.clickhouse.loader.clickhouse_island`.
+Loaded with :func:`~loom.connections.clickhouse.loader.clickhouse_island`.
 The DSN goes to the driver as written; explicit credentials and bounds win
 over it, as in the driver.
 """
@@ -22,8 +22,8 @@ from loom.core.connections.clickhouse.config import ClickHouseConnection
 from loom.core.model.redaction import reveal_for_driver
 
 if TYPE_CHECKING:
-    from loom.core.connections.clickhouse import client as _self
-    from loom.core.connections.clickhouse.loader import ClickHouseIsland
+    from loom.connections.clickhouse import client as _self
+    from loom.connections.clickhouse.loader import ClickHouseIsland
 
     _conforms: ClickHouseIsland = _self
 

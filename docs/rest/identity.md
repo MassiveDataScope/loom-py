@@ -19,11 +19,11 @@ from loom.core.identity import Identity, current_identity
 
 identity = current_identity()
 
-identity.is_authenticated          # False for the anonymous caller
-identity.subject                   # stable caller id, "" when anonymous
-identity.has_role("role_admin")    # exact match, never a prefix
-identity.attribute("email")        # verified string attribute, or None
-identity.mechanism                 # "jwt", "api-key", ... — audit only
+identity.is_authenticated  # False for the anonymous caller
+identity.subject  # stable caller id, "" when anonymous
+identity.has_role("role_admin")  # exact match, never a prefix
+identity.attribute("email")  # verified string attribute, or None
+identity.mechanism  # "jwt", "api-key", ... — audit only
 ```
 
 Two accessors fail closed instead of returning `None`:
@@ -139,14 +139,14 @@ in every use case:
 ```python
 class ReportsInterface(RestInterface[Report]):
     prefix = "/reports"
-    requires_roles = ("report_reader",)          # default for every route
+    requires_roles = ("report_reader",)  # default for every route
     routes = (
         RestRoute(use_case=ListReportsUseCase, method="GET", path="/"),
         RestRoute(
             use_case=PurgeReportsUseCase,
             method="DELETE",
             path="/",
-            requires_roles=("report_admin",),    # route wins over the interface
+            requires_roles=("report_admin",),  # route wins over the interface
         ),
     )
 ```
@@ -325,7 +325,7 @@ class ApiKeyAuthenticator:
         key = credentials.header("x-api-key")
         owner = await self._keys.owner_of(key) if key else None
         if owner is None:
-            return None                      # a refusal, with no reason attached
+            return None  # a refusal, with no reason attached
         return Identity(
             subject=owner.id,
             roles=owner.roles,
@@ -437,7 +437,9 @@ from loom.core.logger import get_logger, log_context
 logger = get_logger(__name__)
 
 with log_context(request_id=audit_request_id):
-    logger.info("audit.recorded")  # carries request_id; stdlib records too, once configure_logging has run
+    logger.info(
+        "audit.recorded"
+    )  # carries request_id; stdlib records too, once configure_logging has run
 ```
 
 ---

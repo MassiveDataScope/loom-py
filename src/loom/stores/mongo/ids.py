@@ -55,7 +55,7 @@ class Uuid4IdPolicy:
 
     Example::
 
-        repository = RepositoryMongo(
+        repository = MongoRepository(
             Article, collection, id_policy=Uuid4IdPolicy(), cursor_codec=codec
         )
     """
@@ -82,7 +82,7 @@ class ObjectIdPolicy:
 
     Example::
 
-        repository = RepositoryMongo(
+        repository = MongoRepository(
             Article, collection, id_policy=ObjectIdPolicy(), cursor_codec=codec
         )
     """

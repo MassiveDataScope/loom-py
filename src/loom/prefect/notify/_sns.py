@@ -7,9 +7,10 @@ from typing import Any
 
 from botocore.exceptions import BotoCoreError, ClientError  # type: ignore[import-untyped]
 
+from loom.connections.aws import AwsClients
 from loom.core.config import ConfigContext
 from loom.core.config.keys import ConfigKey
-from loom.core.connections.aws import AwsClientConfig, AwsClients
+from loom.core.connections.aws import AwsClientConfig
 from loom.core.logger import get_logger
 from loom.prefect.notify._event import NotifyEvent
 from loom.prefect.notify._format import run_details, should_notify

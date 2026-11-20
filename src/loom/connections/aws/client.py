@@ -1,7 +1,7 @@
 """The AWS SDK island: the one module of loom that touches boto3.
 
-Loaded with :func:`~loom.core.connections.aws.loader.aws_island` by
-:class:`~loom.core.connections.aws.clients.AwsClients`; the ``aws`` extra brings boto3 to it.
+Loaded with :func:`~loom.connections.aws.loader.aws_island` by
+:class:`~loom.connections.aws.clients.AwsClients`; the ``aws`` extra brings boto3 to it.
 """
 
 from __future__ import annotations
@@ -16,8 +16,8 @@ from loom.core.connections.aws.config import AwsClientConfig
 from loom.core.model.redaction import reveal_for_driver
 
 if TYPE_CHECKING:
-    from loom.core.connections.aws import client as _self
-    from loom.core.connections.aws.loader import AwsIsland
+    from loom.connections.aws import client as _self
+    from loom.connections.aws.loader import AwsIsland
 
     _conforms: AwsIsland = _self
 

@@ -31,9 +31,10 @@ from loom.core.stores.repository.query import (
     SortSpec,
 )
 from loom.stores.sqlalchemy.query_compiler.filters import compile_filter_group
-from loom.stores.sqlalchemy.repository import RepositorySQLAlchemy
+from loom.stores.sqlalchemy.repository import SQLAlchemyRepository
 from loom.stores.sqlalchemy.schema import compile_all, get_compiled
 from loom.stores.sqlalchemy.session_manager import SessionManager
+from loom.testing import make
 
 _CODEC = CursorCodec(signing="ephemeral")
 
@@ -222,7 +223,7 @@ class TestJsonColumns:
     async def test_datetime_and_decimal_inside_a_json_column_round_trip(
         self, session_manager: SessionManager
     ) -> None:
-        repo: RepositorySQLAlchemy[_Doc, int] = RepositorySQLAlchemy(
+        repo: SQLAlchemyRepository[_Doc, int] = SQLAlchemyRepository(
             session_manager=session_manager,
             model=_Doc,
             cursor_codec=CursorCodec(signing="ephemeral"),
@@ -241,7 +242,7 @@ class TestEnumColumns:
     async def test_enum_values_are_stored_read_back_and_filtered_by_equality(
         self, session_manager: SessionManager
     ) -> None:
-        repo: RepositorySQLAlchemy[_Case, int] = RepositorySQLAlchemy(
+        repo: SQLAlchemyRepository[_Case, int] = SQLAlchemyRepository(
             session_manager=session_manager,
             model=_Case,
             cursor_codec=CursorCodec(signing="ephemeral"),
@@ -250,13 +251,14 @@ class TestEnumColumns:
         await repo.create(_CreateCase(state=_State.OPEN, level=_Level.LOW))
 
         stored = await repo.get_by_id(created.id)
-        query = QuerySpec(
+        query = make(
+            QuerySpec,
             filters=FilterGroup(
                 filters=(
                     FilterSpec("state", FilterOp.EQ, _State.CLOSED),
                     FilterSpec("level", FilterOp.EQ, _Level.HIGH),
                 )
-            )
+            ),
         )
         found = await repo.list_with_query(query)
         async with session_manager.engine.connect() as connection:
@@ -276,7 +278,7 @@ class TestUuidColumns:
     async def test_a_uuid_is_stored_as_hex_read_back_and_filtered_by_equality(
         self, session_manager: SessionManager
     ) -> None:
-        repo: RepositorySQLAlchemy[_Badge, int] = RepositorySQLAlchemy(
+        repo: SQLAlchemyRepository[_Badge, int] = SQLAlchemyRepository(
             session_manager=session_manager,
             model=_Badge,
             cursor_codec=_CODEC,
@@ -285,7 +287,9 @@ class TestUuidColumns:
         await repo.create(_CreateBadge(ref=_OTHER_REF))
 
         stored = await repo.get_by_id(created.id)
-        query = QuerySpec(filters=FilterGroup(filters=(FilterSpec("ref", FilterOp.EQ, _REF),)))
+        query = make(
+            QuerySpec, filters=FilterGroup(filters=(FilterSpec("ref", FilterOp.EQ, _REF),))
+        )
         found = await repo.list_with_query(query)
         async with session_manager.engine.connect() as connection:
             raw = await connection.execute(text("SELECT ref FROM typed_badges ORDER BY id"))
@@ -298,7 +302,7 @@ class TestUuidColumns:
     async def test_a_bare_uuid_annotation_round_trips_as_hex(
         self, session_manager: SessionManager
     ) -> None:
-        repo: RepositorySQLAlchemy[_Pass, int] = RepositorySQLAlchemy(
+        repo: SQLAlchemyRepository[_Pass, int] = SQLAlchemyRepository(
             session_manager=session_manager,
             model=_Pass,
             cursor_codec=_CODEC,
@@ -316,7 +320,7 @@ class TestUuidColumns:
     async def test_a_cursor_walk_sorted_by_a_uuid_pages_in_uuid_order(
         self, session_manager: SessionManager
     ) -> None:
-        repo: RepositorySQLAlchemy[_Badge, int] = RepositorySQLAlchemy(
+        repo: SQLAlchemyRepository[_Badge, int] = SQLAlchemyRepository(
             session_manager=session_manager,
             model=_Badge,
             cursor_codec=_CODEC,
@@ -329,7 +333,8 @@ class TestUuidColumns:
         pages = 0
         while True:
             page = await repo.list_with_query(
-                QuerySpec(
+                make(
+                    QuerySpec,
                     sort=(SortSpec(field="ref", direction="DESC"),),
                     pagination=PaginationMode.CURSOR,
                     limit=2,
@@ -351,7 +356,7 @@ _OFFSET_REQUIRED = (("closes_at", "time must carry a UTC offset"),)
 
 
 async def _lookup(
-    repo: RepositorySQLAlchemy[Any, int], lookup: str, field: str, value: object
+    repo: SQLAlchemyRepository[Any, int], lookup: str, field: str, value: object
 ) -> object:
     """Run one equality lookup that bypasses ``QuerySpec``: get_by, exists_by or filter_by."""
     if lookup == "get_by":
@@ -359,7 +364,7 @@ async def _lookup(
     if lookup == "exists_by":
         return await repo.exists_by(field, value)
     page = await repo.list_paginated(
-        PageParams(page=1, limit=10), FilterParams(filters={field: value})
+        make(PageParams, page=1, limit=10), FilterParams(filters={field: value})
     )
     return page.items
 
@@ -371,7 +376,7 @@ class TestTimeColumns:
     async def test_writing_an_aware_time_to_a_time_column_is_refused(
         self, session_manager: SessionManager
     ) -> None:
-        repo: RepositorySQLAlchemy[_Slot, int] = RepositorySQLAlchemy(
+        repo: SQLAlchemyRepository[_Slot, int] = SQLAlchemyRepository(
             session_manager=session_manager,
             model=_Slot,
             cursor_codec=_CODEC,
@@ -404,7 +409,7 @@ class TestTimeColumns:
     async def test_looking_up_a_time_column_by_an_aware_time_is_refused(
         self, session_manager: SessionManager, lookup: str
     ) -> None:
-        repo: RepositorySQLAlchemy[_Slot, int] = RepositorySQLAlchemy(
+        repo: SQLAlchemyRepository[_Slot, int] = SQLAlchemyRepository(
             session_manager=session_manager,
             model=_Slot,
             cursor_codec=_CODEC,
@@ -418,7 +423,7 @@ class TestTimeColumns:
     async def test_an_aware_time_in_a_json_column_keeps_its_offset(
         self, session_manager: SessionManager
     ) -> None:
-        repo: RepositorySQLAlchemy[_Slot, int] = RepositorySQLAlchemy(
+        repo: SQLAlchemyRepository[_Slot, int] = SQLAlchemyRepository(
             session_manager=session_manager,
             model=_Slot,
             cursor_codec=_CODEC,
@@ -437,7 +442,7 @@ class TestTimeOffsetEscapeHatches:
     def test_a_time_with_time_zone_column_accepts_an_aware_time_on_write(
         self, session_manager: SessionManager
     ) -> None:
-        repo: RepositorySQLAlchemy[_Slot, int] = RepositorySQLAlchemy(
+        repo: SQLAlchemyRepository[_Slot, int] = SQLAlchemyRepository(
             session_manager=session_manager,
             model=_Slot,
             cursor_codec=_CODEC,
@@ -466,7 +471,7 @@ class TestTimeOffsetEscapeHatches:
     def test_a_time_with_time_zone_column_refuses_a_time_without_offset_on_write(
         self, session_manager: SessionManager, value: time
     ) -> None:
-        repo: RepositorySQLAlchemy[_Slot, int] = RepositorySQLAlchemy(
+        repo: SQLAlchemyRepository[_Slot, int] = SQLAlchemyRepository(
             session_manager=session_manager,
             model=_Slot,
             cursor_codec=_CODEC,
@@ -485,7 +490,7 @@ class TestTimeOffsetEscapeHatches:
     def test_a_plain_time_column_accepts_a_time_with_a_zone_but_no_offset(
         self, session_manager: SessionManager
     ) -> None:
-        repo: RepositorySQLAlchemy[_Slot, int] = RepositorySQLAlchemy(
+        repo: SQLAlchemyRepository[_Slot, int] = SQLAlchemyRepository(
             session_manager=session_manager,
             model=_Slot,
             cursor_codec=_CODEC,
@@ -505,7 +510,7 @@ class TestTimeOffsetEscapeHatches:
     def test_a_write_reports_every_refused_time_column_in_name_order(
         self, session_manager: SessionManager
     ) -> None:
-        repo: RepositorySQLAlchemy[_Slot, int] = RepositorySQLAlchemy(
+        repo: SQLAlchemyRepository[_Slot, int] = SQLAlchemyRepository(
             session_manager=session_manager,
             model=_Slot,
             cursor_codec=_CODEC,
@@ -543,7 +548,7 @@ class TestTimeOffsetEscapeHatches:
     async def test_a_time_with_time_zone_column_refuses_a_naive_lookup_value(
         self, session_manager: SessionManager, lookup: str
     ) -> None:
-        repo: RepositorySQLAlchemy[_Slot, int] = RepositorySQLAlchemy(
+        repo: SQLAlchemyRepository[_Slot, int] = SQLAlchemyRepository(
             session_manager=session_manager,
             model=_Slot,
             cursor_codec=_CODEC,
@@ -563,7 +568,7 @@ class TestLookupValues:
     async def test_a_lookup_by_a_plain_enum_matches_what_the_write_stored(
         self, session_manager: SessionManager, lookup: str
     ) -> None:
-        repo: RepositorySQLAlchemy[_Swatch, int] = RepositorySQLAlchemy(
+        repo: SQLAlchemyRepository[_Swatch, int] = SQLAlchemyRepository(
             session_manager=session_manager,
             model=_Swatch,
             cursor_codec=_CODEC,
@@ -582,7 +587,7 @@ class TestLookupValues:
     async def test_a_lookup_on_a_name_that_is_not_a_column_is_refused(
         self, session_manager: SessionManager, lookup: str, model: type[BaseModel], field: str
     ) -> None:
-        repo: RepositorySQLAlchemy[Any, int] = RepositorySQLAlchemy(
+        repo: SQLAlchemyRepository[Any, int] = SQLAlchemyRepository(
             session_manager=session_manager,
             model=model,
             cursor_codec=_CODEC,
@@ -596,7 +601,7 @@ class TestRelatedStructs:
     def test_output_renames_fields_of_a_loaded_related_struct(
         self, session_manager: SessionManager
     ) -> None:
-        repo: RepositorySQLAlchemy[_Ticket, int] = RepositorySQLAlchemy(
+        repo: SQLAlchemyRepository[_Ticket, int] = SQLAlchemyRepository(
             session_manager=session_manager,
             model=_Ticket,
             cursor_codec=CursorCodec(signing="ephemeral"),
@@ -615,17 +620,17 @@ class TestRelatedStructs:
     async def test_dict_annotated_relation_has_the_same_keys_on_read_and_write(
         self, session_manager: SessionManager
     ) -> None:
-        tickets: RepositorySQLAlchemy[_Ticket, int] = RepositorySQLAlchemy(
+        tickets: SQLAlchemyRepository[_Ticket, int] = SQLAlchemyRepository(
             session_manager=session_manager,
             model=_Ticket,
             cursor_codec=CursorCodec(signing="ephemeral"),
         )
-        customers: RepositorySQLAlchemy[_Customer, int] = RepositorySQLAlchemy(
+        customers: SQLAlchemyRepository[_Customer, int] = SQLAlchemyRepository(
             session_manager=session_manager,
             model=_Customer,
             cursor_codec=CursorCodec(signing="ephemeral"),
         )
-        tags: RepositorySQLAlchemy[_Tag, int] = RepositorySQLAlchemy(
+        tags: SQLAlchemyRepository[_Tag, int] = SQLAlchemyRepository(
             session_manager=session_manager,
             model=_Tag,
             cursor_codec=CursorCodec(signing="ephemeral"),
@@ -661,7 +666,7 @@ class TestFilterValues:
     async def test_a_plain_enum_filter_value_matches_what_the_write_stored(
         self, session_manager: SessionManager, op: FilterOp, value: Any
     ) -> None:
-        repo: RepositorySQLAlchemy[_Swatch, int] = RepositorySQLAlchemy(
+        repo: SQLAlchemyRepository[_Swatch, int] = SQLAlchemyRepository(
             session_manager=session_manager,
             model=_Swatch,
             cursor_codec=CursorCodec(signing="ephemeral"),
@@ -670,7 +675,10 @@ class TestFilterValues:
         dark = await repo.create(_CreateSwatch(shade=_Shade.DARK))
 
         page = await repo.list_with_query(
-            QuerySpec(filters=FilterGroup(filters=(FilterSpec(field="shade", op=op, value=value),)))
+            make(
+                QuerySpec,
+                filters=FilterGroup(filters=(FilterSpec(field="shade", op=op, value=value),)),
+            )
         )
 
         assert [item.id for item in page.items] == [dark.id]
@@ -679,7 +687,7 @@ class TestFilterValues:
     def test_a_json_column_filter_binds_the_value_the_write_hands_sqlalchemy(
         self, session_manager: SessionManager, field: str, value: Any
     ) -> None:
-        repo: RepositorySQLAlchemy[_Mark, int] = RepositorySQLAlchemy(
+        repo: SQLAlchemyRepository[_Mark, int] = SQLAlchemyRepository(
             session_manager=session_manager,
             model=_Mark,
             cursor_codec=CursorCodec(signing="ephemeral"),

@@ -29,8 +29,9 @@ from loom.core.stores.repository import (
     PaginationMode,
     QuerySpec,
 )
-from loom.stores.sqlalchemy.repository import RepositorySQLAlchemy
+from loom.stores.sqlalchemy.repository import SQLAlchemyRepository
 from loom.stores.sqlalchemy.session_manager import SessionManager
+from loom.testing import make
 from tests.unit.core.conftest import SessionManagerFactory
 
 from ._doubles import CountingCacheBackend
@@ -59,7 +60,7 @@ class AcmePatchEntry(Command, frozen=True):
     rank: int
 
 
-class _EntryRepository(RepositorySQLAlchemy[AcmeCachedEntry, _Key]):
+class _EntryRepository(SQLAlchemyRepository[AcmeCachedEntry, _Key]):
     @cache_query(scope="entity")
     async def rank_of(self, key: _Key) -> int:
         entry = await self.get_by_id(key)
@@ -78,13 +79,13 @@ class AcmeCompositeCacheEnv(NamedTuple):
 
 
 def _read_paginated(wrapper: _Cached) -> Awaitable[PageResult[AcmeCachedEntry]]:
-    return wrapper.list_paginated(PageParams(page=1, limit=10))
+    return wrapper.list_paginated(make(PageParams, page=1, limit=10))
 
 
 def _read_cursor(
     wrapper: _Cached,
 ) -> Awaitable[PageResult[AcmeCachedEntry] | CursorResult[AcmeCachedEntry]]:
-    return wrapper.list_with_query(QuerySpec(pagination=PaginationMode.CURSOR, limit=10))
+    return wrapper.list_with_query(make(QuerySpec, pagination=PaginationMode.CURSOR, limit=10))
 
 
 _READS = pytest.mark.parametrize(

@@ -13,6 +13,7 @@ framework overhead.
 ```python
 from loom.testing import UseCaseTest
 
+
 async def test_create_user():
     fake_repo = InMemoryRepository(User)
     result = await (
@@ -57,6 +58,7 @@ nested:
 from polyfactory.fields import Use
 from loom.testing import LoomFactory
 
+
 class BackoffFactory(LoomFactory[Backoff]):
     __set_as_default_factory_for_type__ = True
 
@@ -87,6 +89,7 @@ Force errors on specific methods:
 
 ```python
 from loom.core.errors import NotFound
+
 harness.force_error(Product, "get_by_id", NotFound("not found"))
 ```
 
@@ -99,6 +102,7 @@ what it needs without composing again:
 import pytest
 from loom.testing import HttpTestHarness, InMemoryRepository, Override
 
+
 @pytest.fixture(scope="module")
 def harness():
     baseline = InMemoryRepository(Product)
@@ -106,12 +110,14 @@ def harness():
     harness.client = harness.build_app(interfaces=[ProductRestInterface])
     return harness
 
+
 @pytest.fixture
 def products(harness):
     double = InMemoryRepository(Product)
     double.seed(Product(id=1, name="kettle"))
     with harness.overriding(Override.repository(Product, double)):
         yield double
+
 
 def test_reads_the_double(harness, products):
     assert harness.client.get("/products/1").json()["name"] == "kettle"
@@ -191,6 +197,7 @@ lambda:
 
 ```python
 from loom.testing import LambdaTestClient
+
 
 def test_get_order(token: str) -> None:
     with LambdaTestClient("config.yaml", function="orders", environment="test") as client:
@@ -376,6 +383,7 @@ app:
 ```python
 from loom.core.job.service import JobService
 from loom.testing import LambdaTestClient, RecordingJobTransport
+
 
 def test_placing_an_order_ships_it(token: str) -> None:
     with LambdaTestClient("config.yaml", function="orders", environment="test") as client:

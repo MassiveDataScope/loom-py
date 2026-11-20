@@ -31,7 +31,7 @@ from loom.core.stores.uow.coordinator import Committed, InvocationOutcome, Order
 from loom.core.stores.uow.scope import invocation
 from loom.core.use_case import Joined, UseCase
 from loom.core.use_case.factory import UseCaseFactory, main_repository
-from loom.stores.sqlalchemy.repository import RepositorySQLAlchemy, with_session_scope
+from loom.stores.sqlalchemy.repository import SQLAlchemyRepository, with_session_scope
 from loom.stores.sqlalchemy.schema import compile_all, get_compiled
 from loom.stores.sqlalchemy.session_manager import SessionManager
 from loom.stores.sqlalchemy.uow import SQLAlchemyUnitOfWorkFactory
@@ -64,8 +64,8 @@ class _NewEntry(Command, frozen=True):
     note: str
 
 
-Orders = RepositorySQLAlchemy[_Order, int]
-Entries = RepositorySQLAlchemy[_AuditEntry, int]
+Orders = SQLAlchemyRepository[_Order, int]
+Entries = SQLAlchemyRepository[_AuditEntry, int]
 
 
 def _manager(store: StoreKey) -> SessionManager:
@@ -125,8 +125,8 @@ async def stores() -> AsyncIterator[_Stores]:
     pair = _Stores(
         default=default,
         audit=audit,
-        orders=RepositorySQLAlchemy(default, _Order, cursor_codec=codec),
-        entries=RepositorySQLAlchemy(audit, _AuditEntry, cursor_codec=codec),
+        orders=SQLAlchemyRepository(default, _Order, cursor_codec=codec),
+        entries=SQLAlchemyRepository(audit, _AuditEntry, cursor_codec=codec),
     )
     for model, manager in ((_Order, default), (_AuditEntry, audit)):
         compiled = get_compiled(model)
@@ -222,7 +222,7 @@ class _ReadAuditWriteOrder(UseCase[_Order, int]):
         return await self.entries.count()
 
 
-class _MarkingEntries(RepositorySQLAlchemy[_AuditEntry, int]):
+class _MarkingEntries(SQLAlchemyRepository[_AuditEntry, int]):
     """An audit repository with a custom write; records each run of its body."""
 
     ran: list[object]

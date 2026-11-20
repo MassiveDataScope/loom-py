@@ -29,7 +29,7 @@ from loom.core.use_case.use_case import UseCase
 from loom.rest.fastapi.adapter import _discover_components
 from loom.rest.fastapi.auto import create_app
 from loom.rest.model import RestInterface, RestRoute
-from loom.stores.dynamodb.uow import DynamoUnitOfWorkFactory
+from loom.stores.dynamodb.uow import DynamoDBUnitOfWorkFactory
 from loom.stores.mongo.uow import MongoUnitOfWorkFactory
 from loom.stores.sqlalchemy.uow import SQLAlchemyUnitOfWorkFactory
 from tests.helpers.composition import composition_project
@@ -102,7 +102,7 @@ class TestBackendSelection:
             AppConfig(name="demo"), _ctx(store=_DYNAMODB_STORE)
         )
 
-        assert isinstance(factory, DynamoUnitOfWorkFactory)
+        assert isinstance(factory, DynamoDBUnitOfWorkFactory)
 
     def test_selects_mongo_backend(
         self, agents_only_discovery: None, fake_mongo_client: FakeMongoClient

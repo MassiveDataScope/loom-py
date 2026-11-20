@@ -205,7 +205,7 @@ class CursorCodec:
 
     Example::
 
-        codec = CursorCodec.from_context(ctx)  # or container.resolve(CursorCodec)
+        codec = CursorCodec.from_context(ctx)
         token = codec.encode(position, model="billing.Invoice", query=query, scope=tenant_id)
         position = codec.decode(
             token,

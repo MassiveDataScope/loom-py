@@ -14,8 +14,8 @@ import yaml
 from typer.testing import CliRunner
 
 from loom.cli.app import app
-from loom.core.config.secrets import SecretsManagerResolver
-from loom.core.config.ssm import SsmResolver
+from loom.connections.aws.secrets import SecretsManagerResolver
+from loom.connections.aws.ssm import SsmResolver
 from loom.core.discovery.base import DiscoveryResult
 from loom.core.discovery.scanner import PackageScanner
 

@@ -35,7 +35,7 @@ from loom.stores.sqlalchemy.registry import (
     build_sqlalchemy_repository_registration_module,
     register_session_manager,
 )
-from loom.stores.sqlalchemy.repository import RepositorySQLAlchemy
+from loom.stores.sqlalchemy.repository import SQLAlchemyRepository
 from loom.stores.sqlalchemy.rls.elevate import SQLAlchemyStoreElevation
 from loom.stores.sqlalchemy.rls.integrity import (
     AUDIT_HORIZON_WARNING_MONTHS,
@@ -99,7 +99,7 @@ class SQLAlchemyBackend:
     """
 
     name: ClassVar[str] = SQLALCHEMY_BACKEND
-    repository_type: ClassVar[type[Any] | None] = RepositorySQLAlchemy
+    repository_type: ClassVar[type[Any] | None] = SQLAlchemyRepository
 
     def capabilities(self, spec: StoreSpec) -> StoreCapabilities:
         """Describe SQLAlchemy: models and rollback, whatever *spec* says."""

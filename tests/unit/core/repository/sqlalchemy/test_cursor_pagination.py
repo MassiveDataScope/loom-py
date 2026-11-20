@@ -20,9 +20,10 @@ from loom.core.stores.repository import (
     QuerySpec,
     SortSpec,
 )
-from loom.stores.sqlalchemy.repository import RepositorySQLAlchemy
+from loom.stores.sqlalchemy.repository import SQLAlchemyRepository
 from loom.stores.sqlalchemy.schema import compile_all, get_compiled
 from loom.stores.sqlalchemy.session_manager import SessionManager
+from loom.testing import make
 
 
 class _Row(BaseModel):
@@ -113,8 +114,8 @@ async def session_manager() -> AsyncIterator[SessionManager]:
 
 
 @pytest.fixture
-async def repository(session_manager: SessionManager) -> RepositorySQLAlchemy[_Row, int]:
-    repo: RepositorySQLAlchemy[_Row, int] = RepositorySQLAlchemy(
+async def repository(session_manager: SessionManager) -> SQLAlchemyRepository[_Row, int]:
+    repo: SQLAlchemyRepository[_Row, int] = SQLAlchemyRepository(
         session_manager=session_manager, model=_Row, cursor_codec=_CODEC
     )
     await repo.create_many([_CreateRow(rank=rank, label=label) for rank, label in _SEED])
@@ -124,7 +125,8 @@ async def repository(session_manager: SessionManager) -> RepositorySQLAlchemy[_R
 class TestRejectedTokens:
     @staticmethod
     def _query(token: str | None = None) -> QuerySpec:
-        return QuerySpec(
+        return make(
+            QuerySpec,
             sort=(SortSpec(field="rank", direction="DESC"),),
             pagination=PaginationMode.CURSOR,
             limit=3,
@@ -135,7 +137,7 @@ class TestRejectedTokens:
         return _CODEC.encode(cursor, model=f"{_Row.__module__}._Row", query=self._query(), scope="")
 
     async def test_token_from_another_backend(
-        self, repository: RepositorySQLAlchemy[_Row, int]
+        self, repository: SQLAlchemyRepository[_Row, int]
     ) -> None:
         query = self._query(self._token(Cursor(backend="dynamodb", keys=(3,), tie_breaker=1)))
 
@@ -146,7 +148,7 @@ class TestRejectedTokens:
         assert excinfo.value.model == "_Row"
 
     async def test_token_issued_for_a_different_sort(
-        self, repository: RepositorySQLAlchemy[_Row, int]
+        self, repository: SQLAlchemyRepository[_Row, int]
     ) -> None:
         token = self._token(Cursor(backend="sqlalchemy", keys=(3, "a"), tie_breaker=1))
 
@@ -156,7 +158,7 @@ class TestRejectedTokens:
         assert "sort" in excinfo.value.reason
 
     async def test_token_signed_by_another_process(
-        self, repository: RepositorySQLAlchemy[_Row, int]
+        self, repository: SQLAlchemyRepository[_Row, int]
     ) -> None:
         other = CursorCodec(signing="ephemeral")
         token = other.encode(
@@ -176,7 +178,7 @@ class TestNaiveDateTimeSort:
     async def test_every_row_is_visited_once_in_order(
         self, session_manager: SessionManager
     ) -> None:
-        repository: RepositorySQLAlchemy[_Reading, int] = RepositorySQLAlchemy(
+        repository: SQLAlchemyRepository[_Reading, int] = SQLAlchemyRepository(
             session_manager=session_manager, model=_Reading, cursor_codec=_CODEC
         )
         start = datetime(2026, 9, 6, 12, 0)
@@ -186,7 +188,8 @@ class TestNaiveDateTimeSort:
         seen: list[datetime] = []
         cursor: str | None = None
         while True:
-            query = QuerySpec(
+            query = make(
+                QuerySpec,
                 sort=(SortSpec(field="taken_at"),),
                 pagination=PaginationMode.CURSOR,
                 limit=2,
@@ -215,10 +218,10 @@ class TestSortFieldsACursorCannotCarry:
         self, session_manager: SessionManager, field: str
     ) -> None:
         compile_all(_Rated)
-        repo: RepositorySQLAlchemy[_Rated, int] = RepositorySQLAlchemy(
+        repo: SQLAlchemyRepository[_Rated, int] = SQLAlchemyRepository(
             session_manager=session_manager, model=_Rated, cursor_codec=_CODEC
         )
-        query = QuerySpec(sort=(SortSpec(field),), pagination=PaginationMode.CURSOR, limit=2)
+        query = make(QuerySpec, sort=(SortSpec(field),), pagination=PaginationMode.CURSOR, limit=2)
 
         with pytest.raises(UnsupportedQuery) as excinfo:
             await repo.list_with_query(query)
@@ -226,10 +229,14 @@ class TestSortFieldsACursorCannotCarry:
         assert f"cannot order by {field!r}" in excinfo.value.reason
 
     async def test_an_empty_cursor_is_refused_like_any_invalid_token(
-        self, repository: RepositorySQLAlchemy[_Row, int]
+        self, repository: SQLAlchemyRepository[_Row, int]
     ) -> None:
-        query = QuerySpec(
-            sort=(SortSpec("rank"),), pagination=PaginationMode.CURSOR, limit=2, cursor=""
+        query = make(
+            QuerySpec,
+            sort=(SortSpec("rank"),),
+            pagination=PaginationMode.CURSOR,
+            limit=2,
+            cursor="",
         )
 
         with pytest.raises(UnsupportedQuery) as excinfo:
@@ -267,17 +274,23 @@ class TestCursorKeys:
         assert compiled is not None
         async with session_manager.engine.begin() as connection:
             await connection.run_sync(compiled.metadata.create_all)
-        repo: RepositorySQLAlchemy[_Swatch, int] = RepositorySQLAlchemy(
+        repo: SQLAlchemyRepository[_Swatch, int] = SQLAlchemyRepository(
             session_manager=session_manager, model=_Swatch, cursor_codec=_CODEC
         )
         await repo.create_many([_CreateSwatch(shade=shade) for shade in _Shade])
-        query = QuerySpec(sort=(SortSpec("shade"),), pagination=PaginationMode.CURSOR, limit=2)
+        query = make(
+            QuerySpec, sort=(SortSpec("shade"),), pagination=PaginationMode.CURSOR, limit=2
+        )
 
         first = await repo.list_with_query(query)
         assert isinstance(first, CursorResult)
         second = await repo.list_with_query(
-            QuerySpec(
-                sort=query.sort, pagination=query.pagination, limit=2, cursor=first.next_cursor
+            make(
+                QuerySpec,
+                sort=query.sort,
+                pagination=query.pagination,
+                limit=2,
+                cursor=first.next_cursor,
             )
         )
 
@@ -296,10 +309,12 @@ class TestCursorKeys:
         async with session_manager.engine.begin() as connection:
             await connection.run_sync(compiled.metadata.create_all)
         unsigned = CursorCodec(signing="unsigned")
-        repo: RepositorySQLAlchemy[_Shift, int] = RepositorySQLAlchemy(
+        repo: SQLAlchemyRepository[_Shift, int] = SQLAlchemyRepository(
             session_manager=session_manager, model=_Shift, cursor_codec=unsigned
         )
-        query = QuerySpec(sort=(SortSpec("starts_at"),), pagination=PaginationMode.CURSOR, limit=2)
+        query = make(
+            QuerySpec, sort=(SortSpec("starts_at"),), pagination=PaginationMode.CURSOR, limit=2
+        )
         aware = time(9, 30, tzinfo=timezone(timedelta(hours=2)))
         token = unsigned.encode(
             Cursor(backend="sqlalchemy", keys=(aware,), tie_breaker=1),
@@ -307,7 +322,9 @@ class TestCursorKeys:
             query=query,
             scope="",
         )
-        forged = QuerySpec(sort=query.sort, pagination=query.pagination, limit=2, cursor=token)
+        forged = make(
+            QuerySpec, sort=query.sort, pagination=query.pagination, limit=2, cursor=token
+        )
 
         with pytest.raises(BoundaryValidationError) as excinfo:
             await repo.list_with_query(forged)
@@ -324,7 +341,7 @@ class TestCursorKeys:
         assert compiled is not None
         async with session_manager.engine.begin() as connection:
             await connection.run_sync(compiled.metadata.create_all)
-        repo: RepositorySQLAlchemy[_Ticket, UUID] = RepositorySQLAlchemy(
+        repo: SQLAlchemyRepository[_Ticket, UUID] = SQLAlchemyRepository(
             session_manager=session_manager, model=_Ticket, cursor_codec=_CODEC
         )
         keys = [UUID(int=n) for n in (5, 2, 7, 1, 6, 3, 4)]
@@ -336,7 +353,7 @@ class TestCursorKeys:
         cursor: str | None = None
         while True:
             page = await repo.list_with_query(
-                QuerySpec(sort=sort, pagination=PaginationMode.CURSOR, limit=2, cursor=cursor)
+                make(QuerySpec, sort=sort, pagination=PaginationMode.CURSOR, limit=2, cursor=cursor)
             )
             assert isinstance(page, CursorResult)
             pages += 1

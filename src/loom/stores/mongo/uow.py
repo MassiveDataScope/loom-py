@@ -7,7 +7,7 @@ opt-in (``stores.<name>.transactions: true``):
   ``begin``, commits or aborts it, and ends the session afterwards. It is a
   participant of the invocation scope (:mod:`loom.core.stores.uow.scope`), and
   :class:`MongoSessions` finds its session there: a
-  :class:`~loom.stores.mongo.repository.RepositoryMongo` built with
+  :class:`~loom.stores.mongo.repository.MongoRepository` built with
   ``session_provider=MongoSessions(client, store)`` joins the transaction of
   the use case it runs in. It declares the coordinator's ``phased`` marker:
   ``begin``, ``flush``, ``commit``, ``rollback`` and ``close`` are separate
@@ -130,11 +130,12 @@ class MongoUnitOfWork(EntersAlone):
         client: Client the session is started on; needs a replica set.
         store: Key of the store the unit of work belongs to.
 
+    Leaving the block commits the transaction.
+
     Example::
 
         async with MongoUnitOfWork(client, store=DEFAULT_STORE):
             await repo.create(entity)
-        # committed
     """
 
     is_transactional: ClassVar[bool] = True

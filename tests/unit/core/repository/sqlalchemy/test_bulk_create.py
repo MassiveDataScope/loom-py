@@ -13,7 +13,7 @@ from loom.core.errors import Conflict, UnsupportedQuery
 from loom.core.model import BaseModel, ColumnField, ServerDefault
 from loom.core.stores.repository import CursorCodec, OnConflict
 from loom.core.stores.repository.mutation import MutationEvent
-from loom.stores.sqlalchemy.repository import RepositorySQLAlchemy
+from loom.stores.sqlalchemy.repository import SQLAlchemyRepository
 from loom.stores.sqlalchemy.session_manager import SessionManager
 from tests.unit.core.conftest import SessionManagerFactory
 
@@ -57,8 +57,8 @@ async def session_manager(sqlite_manager_for: SessionManagerFactory) -> SessionM
 
 
 @pytest.fixture
-def repository(session_manager: SessionManager) -> RepositorySQLAlchemy[_Item, int]:
-    return RepositorySQLAlchemy(
+def repository(session_manager: SessionManager) -> SQLAlchemyRepository[_Item, int]:
+    return SQLAlchemyRepository(
         session_manager=session_manager, model=_Item, cursor_codec=CursorCodec(signing="ephemeral")
     )
 
@@ -121,7 +121,7 @@ def inserts(session_manager: SessionManager) -> Iterator[list[str]]:
 
 class TestCreateMany:
     async def test_empty_input_issues_no_statement(
-        self, repository: RepositorySQLAlchemy[_Item, int], statements: list[str]
+        self, repository: SQLAlchemyRepository[_Item, int], statements: list[str]
     ) -> None:
         created = await repository.create_many([])
 
@@ -129,7 +129,7 @@ class TestCreateMany:
         assert statements == []
 
     async def test_inserts_every_row_in_one_statement(
-        self, repository: RepositorySQLAlchemy[_Item, int], statements: list[str]
+        self, repository: SQLAlchemyRepository[_Item, int], statements: list[str]
     ) -> None:
         await repository.create_many([_CreateItem(sku=f"sku-{index}") for index in range(5)])
 
@@ -139,7 +139,7 @@ class TestCreateMany:
 
     async def test_falls_back_to_reselect_when_dialect_lacks_returning(
         self,
-        repository: RepositorySQLAlchemy[_Item, int],
+        repository: SQLAlchemyRepository[_Item, int],
         session_manager: SessionManager,
         statements: list[str],
         monkeypatch: pytest.MonkeyPatch,
@@ -161,7 +161,7 @@ class TestCreateMany:
         ids=["optional-only-in-later-row", "optional-only-in-first-row"],
     )
     async def test_optional_field_supplied_by_some_rows_is_persisted(
-        self, repository: RepositorySQLAlchemy[_Item, int], notes: tuple[str | None, str | None]
+        self, repository: SQLAlchemyRepository[_Item, int], notes: tuple[str | None, str | None]
     ) -> None:
         created = await repository.create_many(
             [_CreateItem(sku="a", note=notes[0]), _CreateItem(sku="b", note=notes[1])]
@@ -173,7 +173,7 @@ class TestCreateMany:
         assert [item.note for item in stored if item is not None] == list(notes)
 
     async def test_records_one_mutation_event_with_every_id(
-        self, repository: RepositorySQLAlchemy[_Item, int], mutations: list[MutationEvent]
+        self, repository: SQLAlchemyRepository[_Item, int], mutations: list[MutationEvent]
     ) -> None:
         created = await repository.create_many([_CreateItem(sku="a"), _CreateItem(sku="b")])
 
@@ -184,7 +184,7 @@ class TestCreateMany:
         assert mutations[0].changed_fields == frozenset({"sku", "qty"})
 
     async def test_callable_default_is_evaluated_for_the_row_that_omits_it(
-        self, repository: RepositorySQLAlchemy[_Item, int], statements: list[str]
+        self, repository: SQLAlchemyRepository[_Item, int], statements: list[str]
     ) -> None:
         created = await repository.create_many(
             [_CreateItem(sku="a", token="given"), _CreateItem(sku="b")]
@@ -198,7 +198,7 @@ class TestCreateMany:
         assert sum(statement.startswith("INSERT") for statement in statements) == 1
 
     async def test_server_default_applies_to_the_row_that_omits_it(
-        self, repository: RepositorySQLAlchemy[_Item, int], statements: list[str]
+        self, repository: SQLAlchemyRepository[_Item, int], statements: list[str]
     ) -> None:
         given = "2020-01-02 03:04:05"
         created = await repository.create_many(
@@ -219,7 +219,7 @@ class TestCreateMany:
 class TestCreateManyOrder:
     @pytest.mark.parametrize("on_conflict", list(OnConflict))
     async def test_generated_and_explicit_keys_keep_input_order(
-        self, repository: RepositorySQLAlchemy[_Item, int], on_conflict: OnConflict
+        self, repository: SQLAlchemyRepository[_Item, int], on_conflict: OnConflict
     ) -> None:
         created = await repository.create_many(
             [
@@ -242,7 +242,7 @@ class TestCreateManyIgnore:
     )
     async def test_the_event_lists_only_inserted_ids(
         self,
-        repository: RepositorySQLAlchemy[_Item, int],
+        repository: SQLAlchemyRepository[_Item, int],
         mutations: list[MutationEvent],
         keys: tuple[int, ...],
         recorded: list[tuple[int, ...]],
@@ -258,7 +258,7 @@ class TestCreateManyIgnore:
         assert [event.ids for event in mutations] == recorded
 
     async def test_skips_only_the_primary_key_conflict(
-        self, repository: RepositorySQLAlchemy[_Item, int], inserts: list[str]
+        self, repository: SQLAlchemyRepository[_Item, int], inserts: list[str]
     ) -> None:
         await repository.create_many(
             [_CreateKeyedItem(sku="a", id=1)], on_conflict=OnConflict.IGNORE
@@ -275,7 +275,7 @@ class TestCreateManyIgnore:
         ids=["not-null", "other-unique"],
     )
     async def test_other_constraint_violation_raises_conflict(
-        self, repository: RepositorySQLAlchemy[_Item, int], batch: list[_CreateKeyedItem]
+        self, repository: SQLAlchemyRepository[_Item, int], batch: list[_CreateKeyedItem]
     ) -> None:
         await repository.create_many([_CreateKeyedItem(sku="a", id=1)])
 
@@ -291,7 +291,7 @@ class TestCreateManyIgnore:
     )
     async def test_is_refused_without_on_conflict_do_nothing_returning(
         self,
-        repository: RepositorySQLAlchemy[_Item, int],
+        repository: SQLAlchemyRepository[_Item, int],
         session_manager: SessionManager,
         monkeypatch: pytest.MonkeyPatch,
         attribute: str,
@@ -311,7 +311,7 @@ class TestCreateManyIgnore:
 
 class TestCreateManyChunks:
     async def test_small_batch_emits_the_plain_multi_row_insert(
-        self, repository: RepositorySQLAlchemy[_Item, int], inserts: list[str]
+        self, repository: SQLAlchemyRepository[_Item, int], inserts: list[str]
     ) -> None:
         await repository.create_many([_CreateItem(sku="a"), _CreateItem(sku="b")])
 
@@ -328,7 +328,7 @@ class TestCreateManyChunks:
     )
     async def test_batch_above_the_chunk_emits_one_insert_per_chunk_in_one_transaction(
         self,
-        repository: RepositorySQLAlchemy[_Item, int],
+        repository: SQLAlchemyRepository[_Item, int],
         session_manager: SessionManager,
         inserts: list[str],
         transactions: list[str],

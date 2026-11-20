@@ -7,6 +7,7 @@ import pytest
 
 from loom.core.errors import Conflict
 from loom.core.stores.repository import (
+    BulkCreatable,
     Creatable,
     Deletable,
     FilterGroup,
@@ -17,6 +18,7 @@ from loom.core.stores.repository import (
     Readable,
     Updatable,
 )
+from loom.testing import make
 
 from .conftest import SEED, BackendCase, CreateOrder, OrderStatus, UpdateOrder, require
 
@@ -51,7 +53,7 @@ class TestContractWrite:
     async def test_create_many_stores_the_fields_left_at_their_default(
         self, case: BackendCase, repository: Any
     ) -> None:
-        require(case, Creatable, Readable)
+        require(case, BulkCreatable, Readable)
 
         created = await repository.create_many(SEED[:2])
 
@@ -63,7 +65,9 @@ class TestContractWrite:
     ) -> None:
         require(case, Creatable, Listable)
         await repository.create(_FIRST)
-        spec = QuerySpec(filters=FilterGroup(filters=(FilterSpec("priority", FilterOp.EQ, 0),)))
+        spec = make(
+            QuerySpec, filters=FilterGroup(filters=(FilterSpec("priority", FilterOp.EQ, 0),))
+        )
 
         found = await repository.list_with_query(spec)
 

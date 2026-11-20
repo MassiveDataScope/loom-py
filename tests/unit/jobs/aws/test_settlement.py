@@ -7,7 +7,7 @@ from typing import Any
 
 import pytest
 
-from loom.core.connections.aws import AwsClients
+from loom.connections.aws import AwsClients
 from loom.core.engine.events import AbandonReason
 from loom.core.job.outcome import (
     Abandoned,

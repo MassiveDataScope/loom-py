@@ -113,8 +113,8 @@ class MongoQueryCompiler:
     Example::
 
         compiler = MongoQueryCompiler(Article, "slug")
-        compiler.compile_filter(FilterGroup(filters=(FilterSpec("slug", FilterOp.EQ, "a"),)))
-        # {"$and": [{"_id": {"$eq": "a"}}]}
+        group = FilterGroup(filters=(FilterSpec("slug", FilterOp.EQ, "a"),))
+        assert compiler.compile_filter(group) == {"$and": [{"_id": {"$eq": "a"}}]}
     """
 
     backend: ClassVar[str] = "mongo"

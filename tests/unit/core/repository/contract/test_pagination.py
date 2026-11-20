@@ -15,6 +15,7 @@ from loom.core.stores.repository import (
     QuerySpec,
     SortSpec,
 )
+from loom.testing import make
 
 from .conftest import SEED, BackendCase, OrderStatus, oracle, require, seed_rows
 
@@ -33,7 +34,9 @@ _CURSOR_SORTS: dict[str, tuple[SortSpec, ...]] = {
 
 
 async def _page(repository: Any, page: int, filters: FilterGroup | None = None) -> PageResult[Any]:
-    result = await repository.list_with_query(QuerySpec(filters=filters, limit=_PAGE, page=page))
+    result = await repository.list_with_query(
+        make(QuerySpec, filters=filters, limit=_PAGE, page=page)
+    )
     assert isinstance(result, PageResult)
     return result
 
@@ -45,7 +48,8 @@ async def _walk(
     cursor: str | None = None
     for _ in range(len(SEED) + 1):
         result = await repository.list_with_query(
-            QuerySpec(
+            make(
+                QuerySpec,
                 filters=filters,
                 sort=sort,
                 pagination=PaginationMode.CURSOR,
@@ -91,7 +95,9 @@ class TestContractPagination:
 
         seen: list[int] = []
         for page in range(1, len(SEED) // _PAGE + 1):
-            result = await seeded.list_with_query(QuerySpec(sort=sort, limit=_PAGE, page=page))
+            result = await seeded.list_with_query(
+                make(QuerySpec, sort=sort, limit=_PAGE, page=page)
+            )
             assert isinstance(result, PageResult)
             seen.extend(row.id for row in result.items)
 

@@ -14,17 +14,17 @@ import msgspec
 from loom.composition import phases
 from loom.composition.application import Application
 from loom.composition.resources import Resource, ResourceKind, closing
+from loom.connections.aws import AwsClients
+from loom.connections.resolvers import with_built_in_resolvers
 from loom.core.cache.wiring import CacheGateways
 from loom.core.config import (
     ConfigContext,
     ConfigError,
     ConfigKey,
     ConfigResolver,
-    with_default_resolvers,
 )
 from loom.core.config.keys import INTERPOLATION
 from loom.core.config.overrides import load_application_config
-from loom.core.connections.aws import AwsClients
 from loom.core.discovery.scanner import PackageScanner
 from loom.core.environment import Environment, resolve_environment, select_config_paths
 from loom.core.locator import DEFAULT_CODE_PATH, add_code_path
@@ -134,7 +134,7 @@ class LoadedConfig:
         return cls(
             config=load_application_config(
                 *paths,
-                resolvers=with_default_resolvers(resolvers),
+                resolvers=with_built_in_resolvers(resolvers),
                 environment=resolved_environment,
             ),
             environment=resolved_environment,

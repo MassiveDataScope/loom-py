@@ -54,11 +54,12 @@ class UnitOfWork(Protocol):
     work through :meth:`__aenter__` / :meth:`__aexit__` only; the explicit
     methods stay for adapters and hand-driven use.
 
+    Leaving the block calls ``commit``.
+
     Example::
 
         async with uow:
             repo.save(entity)
-        # commit was called on exit
     """
 
     is_transactional: ClassVar[bool]

@@ -23,7 +23,7 @@ from celery.exceptions import Retry  # type: ignore[import-untyped]
 
 from loom.celery.runner import _CeleryAsyncRuntime, _make_job_task
 from loom.celery.service import CeleryJobTransport
-from loom.core.connections.aws import AwsClients
+from loom.connections.aws import AwsClients
 from loom.core.identity import Delegation
 from loom.core.job.config import JobSettings
 from loom.core.job.context import clear_pending_dispatches

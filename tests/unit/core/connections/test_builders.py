@@ -47,7 +47,7 @@ class TestAwsClientBuilder:
     def test_aws_builder_opens_a_session_of_the_profile_and_gives_every_bound(
         self, mocked_aws: None, dev_profile: str
     ) -> None:
-        island = import_optional("loom.core.connections.aws.client", extra="aws")
+        island = import_optional("loom.connections.aws.client", extra="aws")
         config = AwsClientConfig(
             region=OTHER_REGION,
             url=Dsn("http://localhost:8000"),
@@ -80,7 +80,7 @@ class TestMongoClientBuilder:
     def test_mongo_builders_forward_the_connection_and_the_context_options(
         self, monkeypatch: pytest.MonkeyPatch, builder: str, client_name: str
     ) -> None:
-        island = import_optional("loom.core.connections.mongo.client", extra="mongo")
+        island = import_optional("loom.connections.mongo.client", extra="mongo")
         client = _Recorder()
         monkeypatch.setattr(island, client_name, client)
         connection = MongoConnection(
@@ -103,7 +103,7 @@ class TestMongoClientBuilder:
     def test_mongo_builder_leaves_unset_options_to_the_driver(
         self, monkeypatch: pytest.MonkeyPatch
     ) -> None:
-        island = import_optional("loom.core.connections.mongo.client", extra="mongo")
+        island = import_optional("loom.connections.mongo.client", extra="mongo")
         client = _Recorder()
         monkeypatch.setattr(island, "MongoClient", client)
 
@@ -112,7 +112,7 @@ class TestMongoClientBuilder:
         assert client.kwargs == {"host": "mongodb://h"}
 
     def test_mongo_builder_refuses_an_extra_the_connection_decides(self) -> None:
-        island = import_optional("loom.core.connections.mongo.client", extra="mongo")
+        island = import_optional("loom.connections.mongo.client", extra="mongo")
         connection = MongoConnection(url=Dsn("mongodb://h"), database="app", pool=MongoPool(size=4))
 
         with pytest.raises(ValueError, match="maxPoolSize"):
@@ -122,7 +122,7 @@ class TestMongoClientBuilder:
 
     @pytest.mark.parametrize("option", ["maxpoolsize", "MAXPOOLSIZE", "SocketTimeoutMS", "Host"])
     def test_mongo_builder_compares_option_names_ignoring_case(self, option: str) -> None:
-        island = import_optional("loom.core.connections.mongo.client", extra="mongo")
+        island = import_optional("loom.connections.mongo.client", extra="mongo")
         connection = MongoConnection(
             url=Dsn("mongodb://h"), database="app", read_timeout=5, pool=MongoPool(size=4)
         )
@@ -142,7 +142,7 @@ class TestClickHouseClientBuilder:
     def test_clickhouse_builder_forwards_only_what_is_declared(
         self, monkeypatch: pytest.MonkeyPatch
     ) -> None:
-        island = import_optional("loom.core.connections.clickhouse.client", extra="clickhouse")
+        island = import_optional("loom.connections.clickhouse.client", extra="clickhouse")
         get_client = _Recorder()
         monkeypatch.setattr(island.clickhouse_connect, "get_client", get_client)
 
@@ -154,7 +154,7 @@ class TestClickHouseClientBuilder:
         self,
         monkeypatch: pytest.MonkeyPatch,
     ) -> None:
-        island = import_optional("loom.core.connections.clickhouse.client", extra="clickhouse")
+        island = import_optional("loom.connections.clickhouse.client", extra="clickhouse")
         get_client = _Recorder()
         monkeypatch.setattr(island.clickhouse_connect, "get_client", get_client)
         connection = ClickHouseConnection(
@@ -178,7 +178,7 @@ class TestClickHouseClientBuilder:
     def test_async_clickhouse_builder_sizes_its_thread_pool(
         self, monkeypatch: pytest.MonkeyPatch
     ) -> None:
-        island = import_optional("loom.core.connections.clickhouse.client", extra="clickhouse")
+        island = import_optional("loom.connections.clickhouse.client", extra="clickhouse")
         recorded: dict[str, Any] = {}
 
         async def get_async_client(**kwargs: Any) -> str:
@@ -195,7 +195,7 @@ class TestClickHouseClientBuilder:
         assert recorded == {"dsn": "clickhouse://h/db", "executor_threads": 3, "query_retries": 0}
 
     def test_clickhouse_builder_refuses_an_extra_the_connection_decides(self) -> None:
-        island = import_optional("loom.core.connections.clickhouse.client", extra="clickhouse")
+        island = import_optional("loom.connections.clickhouse.client", extra="clickhouse")
 
         with pytest.raises(ValueError, match="password"):
             island.build_clickhouse_client(

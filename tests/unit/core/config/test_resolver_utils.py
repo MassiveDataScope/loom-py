@@ -9,12 +9,12 @@ from __future__ import annotations
 
 import pytest
 
-from loom.core.config._resolver_utils import (
+from loom.core.config.errors import ConfigError
+from loom.core.config.resolution import (
     _expand_env_vars,
     _navigate_json,
     _split_resolver_key,
 )
-from loom.core.config.errors import ConfigError
 from loom.core.connections.aws import aws_error_code
 
 # ---------------------------------------------------------------------------

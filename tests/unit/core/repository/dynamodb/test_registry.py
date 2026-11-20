@@ -11,7 +11,7 @@ from loom.stores.dynamodb.registry import (
     DynamoDBDefaultRepositoryBuilder,
     build_dynamodb_repository_registration_module,
 )
-from loom.stores.dynamodb.repository import RepositoryDynamoDB
+from loom.stores.dynamodb.repository import DynamoDBRepository
 from tests.helpers.dynamodb import MotoTable
 
 from .conftest import Product, ProductCreate
@@ -26,7 +26,7 @@ def _container(dynamodb: Any) -> LoomContainer:
     return container
 
 
-class TestDynamoRegistry:
+class TestDynamoDBRegistry:
     def test_module_registers_default_builder(self, products_table: MotoTable) -> None:
         container = _container(products_table.client)
 
@@ -37,7 +37,7 @@ class TestDynamoRegistry:
         container = _container(products_table.client)
 
         repo = container.resolve(Readable[Product])
-        assert isinstance(repo, RepositoryDynamoDB)
+        assert isinstance(repo, DynamoDBRepository)
         assert container.resolve_repo(Product) is not None
 
     @pytest.mark.asyncio

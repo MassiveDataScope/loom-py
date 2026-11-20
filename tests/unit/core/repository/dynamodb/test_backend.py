@@ -9,8 +9,8 @@ from unittest.mock import MagicMock
 import pytest
 
 import loom.stores.dynamodb.backend as backend_module
+from loom.connections.aws import AwsClients
 from loom.core.config import ConfigContext
-from loom.core.connections.aws import AwsClients
 from loom.core.stores import StoreWiring
 from loom.core.stores.profile import SERVER_PROFILE
 from loom.stores.dynamodb.backend import DynamoDBBackend
@@ -39,7 +39,7 @@ def _describing(status: str) -> Callable[[MagicMock], None]:
     return setup
 
 
-class TestDynamoReadiness:
+class TestDynamoDBReadiness:
     @pytest.mark.asyncio
     async def test_readiness_is_true_for_an_existing_table(self, products_table: MotoTable) -> None:
         wiring = _wiring("products")
@@ -75,7 +75,7 @@ class TestDynamoReadiness:
         assert "missing" in caplog.text
 
 
-class TestDynamoClientsPerStore:
+class TestDynamoDBClientsPerStore:
     @staticmethod
     def _build_stores(aws: AwsClients, stores: dict[str, dict[str, str]]) -> None:
         ctx = ConfigContext.from_dict(

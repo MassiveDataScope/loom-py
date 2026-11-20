@@ -19,6 +19,7 @@ from loom.core.stores.repository import (
     QuerySpec,
     SortSpec,
 )
+from loom.testing import make
 
 from .conftest import BackendCase, OrderStatus, oracle, require, seed_rows
 
@@ -89,7 +90,7 @@ class TestContractQuery:
         require(case, Listable)
         filters = _FILTERS[name]
 
-        found = await _ids(seeded, QuerySpec(filters=filters, limit=_ALL))
+        found = await _ids(seeded, make(QuerySpec, filters=filters, limit=_ALL))
 
         assert sorted(found) == sorted(oracle(seed_rows(), filters))
 
@@ -100,7 +101,7 @@ class TestContractQuery:
         require(case, Listable)
         sort = _SORTS[name]
 
-        assert await _ids(seeded, QuerySpec(sort=sort, limit=_ALL)) == oracle(
+        assert await _ids(seeded, make(QuerySpec, sort=sort, limit=_ALL)) == oracle(
             seed_rows(), sort=sort
         )
 
@@ -109,6 +110,6 @@ class TestContractQuery:
         filters = _FILTERS["gte"]
         sort = _SORTS["status-asc-amount-desc"]
 
-        found = await _ids(seeded, QuerySpec(filters=filters, sort=sort, limit=_ALL))
+        found = await _ids(seeded, make(QuerySpec, filters=filters, sort=sort, limit=_ALL))
 
         assert found == oracle(seed_rows(), filters, sort)

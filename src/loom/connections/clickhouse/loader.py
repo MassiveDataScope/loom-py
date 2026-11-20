@@ -1,7 +1,7 @@
 """The typed way to load the clickhouse-connect island, and what the island publishes.
 
 Importing this module loads no SDK: :func:`clickhouse_island` loads
-:mod:`loom.core.connections.clickhouse.client` through
+:mod:`loom.connections.clickhouse.client` through
 :func:`~loom.core.plugins.optional.import_optional`.
 """
 
@@ -14,11 +14,11 @@ from loom.core.plugins.optional import import_optional
 if TYPE_CHECKING:
     from loom.core.connections.clickhouse.config import ClickHouseConnection
 
-_ISLAND = "loom.core.connections.clickhouse.client"
+_ISLAND = "loom.connections.clickhouse.client"
 
 
 class ClickHouseIsland(Protocol):
-    """What :mod:`loom.core.connections.clickhouse.client` publishes.
+    """What :mod:`loom.connections.clickhouse.client` publishes.
 
     The clients are typed ``Any``: clickhouse-connect ships no stubs.
     """

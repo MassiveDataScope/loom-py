@@ -23,7 +23,7 @@ from loom.core.use_case.factory import UseCaseFactory
 from loom.core.use_case.invoker import ApplicationInvoker
 from loom.core.use_case.markers import Exists, Load, LoadById, OnMissing
 from loom.core.use_case.use_case import UseCase
-from loom.stores.sqlalchemy.repository import RepositorySQLAlchemy
+from loom.stores.sqlalchemy.repository import SQLAlchemyRepository
 from loom.stores.sqlalchemy.schema import compile_all, get_metadata, reset_registry
 from loom.stores.sqlalchemy.session_manager import SessionManager
 from tests.helpers import acme_recording_callbacks
@@ -254,7 +254,7 @@ class _DispatchChildJobOrchestratorJob(Job[bool]):
         )
 
 
-class _RecordRepository(RepositorySQLAlchemy[_Record, int]):
+class _RecordRepository(SQLAlchemyRepository[_Record, int]):
     pass
 
 

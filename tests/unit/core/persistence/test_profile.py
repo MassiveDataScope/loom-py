@@ -7,7 +7,7 @@ import sys
 
 import pytest
 
-from loom.core.connections.aws import AwsClients
+from loom.connections.aws import AwsClients
 from loom.core.stores.catalog import DEFAULT_STORE, StoreCatalog
 from loom.core.stores.profile import (
     SERVER_PROFILE,

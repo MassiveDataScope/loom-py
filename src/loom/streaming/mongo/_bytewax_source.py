@@ -9,7 +9,7 @@ from typing import Protocol, cast
 from bytewax.inputs import FixedPartitionedSource, StatefulSourcePartition
 from pymongo.errors import OperationFailure
 
-from loom.core.connections.mongo import mongo_island
+from loom.connections.mongo import mongo_island
 from loom.core.model.redaction import reveal_for_driver
 from loom.streaming.compiler._plan import CompiledMongoCDCSource
 from loom.streaming.core._message import Message

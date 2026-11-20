@@ -99,22 +99,28 @@ from loom.core.use_case.use_case import UseCase
 
 _EMAIL_RE = re.compile(r"^[^@\s]+@[^@\s]+\.[^@\s]+$")
 
+
 class CreateUser(Command, frozen=True):
     full_name: str
     email: str
+
 
 class UpdateUser(Command, frozen=True):
     full_name: Patch[str] = None
     email: Patch[str] = None
 
+
 def _name_must_not_be_blank(full_name: str) -> str | None:
     return None if full_name.strip() else "full_name must not be blank"
+
 
 def _email_must_be_valid(email: str) -> str | None:
     return None if _EMAIL_RE.fullmatch(email) else "email must be valid"
 
+
 def _email_is_taken(cmd: CreateUser, fields_set: frozenset[str], email_exists: bool) -> bool:
     return email_exists
+
 
 class CreateUserUseCase(UseCase[User, User]):
     rules = [
@@ -130,8 +136,13 @@ class CreateUserUseCase(UseCase[User, User]):
     ) -> User:
         return await self.main_repo.create(cmd)
 
+
 class UpdateUserUseCase(UseCase[User, User | None]):
-    rules = [Rule.check(F(UpdateUser).full_name, via=_name_must_not_be_blank).when_present(F(UpdateUser).full_name)]
+    rules = [
+        Rule.check(F(UpdateUser).full_name, via=_name_must_not_be_blank).when_present(
+            F(UpdateUser).full_name
+        )
+    ]
 
     async def execute(
         self,
@@ -155,12 +166,15 @@ Use `from_param` to guard nested routes (e.g. `/users/{user_id}/addresses/{addre
 ```python
 from loom.core.use_case import Exists, Input, OnMissing
 
+
 class CreateAddressUseCase(UseCase[Address, Address]):
     async def execute(
         self,
         user_id: int,
         cmd: CreateUserAddress = Input(),
-        _user_exists: bool = Exists(User, from_param="user_id", against="id", on_missing=OnMissing.RAISE),
+        _user_exists: bool = Exists(
+            User, from_param="user_id", against="id", on_missing=OnMissing.RAISE
+        ),
     ) -> Address:
         return await self.main_repo.create(CreateAddressRecord(user_id=user_id, **cmd.__dict__))
 ```
@@ -175,8 +189,15 @@ Build explicit queries without raw SQL:
 
 ```python
 from loom.core.stores.repository.query import (
-    FilterGroup, FilterOp, FilterSpec, PageResult, PaginationMode, QuerySpec, SortSpec,
+    FilterGroup,
+    FilterOp,
+    FilterSpec,
+    PageResult,
+    PaginationMode,
+    QuerySpec,
+    SortSpec,
 )
+
 
 class ListLowStockProductsUseCase(UseCase[Product, PageResult[Product]]):
     async def execute(self, profile: str = "default") -> PageResult[Product]:
@@ -203,6 +224,7 @@ Jobs are use-case-like executors that run in a Celery queue. `LoadById` works th
 from loom.core.job.job import Job
 from loom.core.use_case import Input, LoadById
 
+
 class SendRestockEmailJob(Job[bool]):
     __queue__ = "notifications"
 
@@ -225,11 +247,14 @@ class SendRestockEmailJob(Job[bool]):
 ```python
 from loom.core.job.service import JobService
 
+
 class DispatchRestockEmailUseCase(UseCase[Product, DispatchRestockEmailResponse]):
     def __init__(self, job_service: JobService) -> None:
         self._jobs = job_service
 
-    async def execute(self, product_id: str, cmd: DispatchRestockEmailCommand = Input()) -> DispatchRestockEmailResponse:
+    async def execute(
+        self, product_id: str, cmd: DispatchRestockEmailCommand = Input()
+    ) -> DispatchRestockEmailResponse:
         handle = self._jobs.dispatch_after_commit(
             SendRestockEmailJob,
             params={"product_id": int(product_id)},
@@ -245,6 +270,7 @@ Callbacks are resolved by the DI container and receive the job result + context:
 ```python
 from loom.core.job.callback import JobCallback
 
+
 class RestockEmailSuccessCallback(JobCallback):
     def __init__(self, app: ApplicationInvoker) -> None:
         self._app = app
@@ -255,7 +281,9 @@ class RestockEmailSuccessCallback(JobCallback):
         entity = self._app.entity(Product)
         product = await entity.get(params={"id": context["product_id"]})
         if product:
-            await entity.update(params={"id": product.id}, payload={"category": f"{product.category}-notified"})
+            await entity.update(
+                params={"id": product.id}, payload={"category": f"{product.category}-notified"}
+            )
 ```
 
 ---
@@ -267,15 +295,24 @@ class RestockEmailSuccessCallback(JobCallback):
 ```python
 from loom.core.use_case.invoker import ApplicationInvoker
 
+
 class RestockWorkflowUseCase(UseCase[Product, RestockWorkflowResponse]):
     def __init__(self, app: ApplicationInvoker, job_service: JobService) -> None:
         self._app = app
         self._jobs = job_service
 
-    async def execute(self, product_id: str, cmd: DispatchRestockEmailCommand = Input()) -> RestockWorkflowResponse:
-        summary = await self._app.invoke(BuildProductSummaryUseCase, params={"product_id": int(product_id)})
-        handle = self._jobs.dispatch_after_commit(SendRestockEmailJob, params={"product_id": int(product_id)}, payload={...})
-        return RestockWorkflowResponse(summary=summary.summary, restock_job_id=handle.job_id, queue=handle.queue)
+    async def execute(
+        self, product_id: str, cmd: DispatchRestockEmailCommand = Input()
+    ) -> RestockWorkflowResponse:
+        summary = await self._app.invoke(
+            BuildProductSummaryUseCase, params={"product_id": int(product_id)}
+        )
+        handle = self._jobs.dispatch_after_commit(
+            SendRestockEmailJob, params={"product_id": int(product_id)}, payload={...}
+        )
+        return RestockWorkflowResponse(
+            summary=summary.summary, restock_job_id=handle.job_id, queue=handle.queue
+        )
 ```
 
 ---
@@ -286,19 +323,32 @@ class RestockWorkflowUseCase(UseCase[Product, RestockWorkflowResponse]):
 from loom.rest.autocrud import build_auto_routes
 from loom.rest.model import PaginationMode, RestInterface, RestRoute
 
+
 class ProductRestInterface(RestInterface[Product]):
     prefix = "/products"
     tags = ("Products",)
     pagination_mode = PaginationMode.CURSOR
     routes = (
-        RestRoute(use_case=ListLowStockProductsUseCase, method="GET", path="/low-stock",
-                  summary="List low stock products"),
-        RestRoute(use_case=DispatchRestockEmailUseCase, method="POST",
-                  path="/{product_id}/jobs/restock-email", status_code=202,
-                  summary="Dispatch restock email"),
-        RestRoute(use_case=RestockWorkflowUseCase, method="POST",
-                  path="/{product_id}/workflows/restock", status_code=202,
-                  summary="Run restock workflow"),
+        RestRoute(
+            use_case=ListLowStockProductsUseCase,
+            method="GET",
+            path="/low-stock",
+            summary="List low stock products",
+        ),
+        RestRoute(
+            use_case=DispatchRestockEmailUseCase,
+            method="POST",
+            path="/{product_id}/jobs/restock-email",
+            status_code=202,
+            summary="Dispatch restock email",
+        ),
+        RestRoute(
+            use_case=RestockWorkflowUseCase,
+            method="POST",
+            path="/{product_id}/workflows/restock",
+            status_code=202,
+            summary="Run restock workflow",
+        ),
         *build_auto_routes(Product, ()),  # adds GET, POST, PATCH, DELETE automatically
     )
 ```
@@ -310,11 +360,22 @@ class AddressRestInterface(RestInterface[Address]):
     prefix = "/users"
     tags = ("UserAddresses",)
     routes = (
-        RestRoute(use_case=CreateAddressUseCase, method="POST",   path="/{user_id}/addresses/",            status_code=201),
-        RestRoute(use_case=ListAddressesUseCase, method="GET",    path="/{user_id}/addresses/"),
-        RestRoute(use_case=GetAddressUseCase,    method="GET",    path="/{user_id}/addresses/{address_id}"),
-        RestRoute(use_case=UpdateAddressUseCase, method="PATCH",  path="/{user_id}/addresses/{address_id}"),
-        RestRoute(use_case=DeleteAddressUseCase, method="DELETE", path="/{user_id}/addresses/{address_id}"),
+        RestRoute(
+            use_case=CreateAddressUseCase,
+            method="POST",
+            path="/{user_id}/addresses/",
+            status_code=201,
+        ),
+        RestRoute(use_case=ListAddressesUseCase, method="GET", path="/{user_id}/addresses/"),
+        RestRoute(
+            use_case=GetAddressUseCase, method="GET", path="/{user_id}/addresses/{address_id}"
+        ),
+        RestRoute(
+            use_case=UpdateAddressUseCase, method="PATCH", path="/{user_id}/addresses/{address_id}"
+        ),
+        RestRoute(
+            use_case=DeleteAddressUseCase, method="DELETE", path="/{user_id}/addresses/{address_id}"
+        ),
     )
 ```
 
@@ -385,7 +446,7 @@ section:
 | `stores.default.backend` | Reads | What the app gets |
 |---|---|---|
 | `sqlalchemy` | `stores.default` (`url`, `pool`, `schema`, ...) | unit of work, repositories with every capability (`create_many` included) and compiled tables for every discovered model; needs the `sqlalchemy` extra, a driver and a reachable database even with zero models |
-| `dynamodb` | `stores.default` (`region`, `table`, ...) | key-value repositories (`Readable`, `Creatable`, `BulkCreatable`, `Updatable`, `Deletable`); auto-CRUD mounts get, create, update and delete — `list` and `count` are not mounted, and `get_by` / `exists_by` on a non-key field raise `UnsupportedQuery`; no relational tables |
+| `dynamodb` | `stores.default` (`region`, `table`, ...) | key-value repositories (`Readable`, `Creatable`, `BulkCreatable`, `Updatable`, `Deletable`); auto-CRUD mounts get, create, update and delete — `list` and `count` are not mounted, and it declares no `FieldReadable`, so a lookup by another field is not served; no relational tables |
 | `mongo` | `stores.default` (`url`, `database`, ...) | one collection per model in one database, repositories with every capability (`create_many` included), offset and cursor pagination, `QuerySpec` filters and sorts; unit of work is a no-op unless `transactions: true` (needs a replica set); ids minted by loom (`uuid4`, or `objectid` per config), `autoincrement` refused at startup; needs the `mongo` extra |
 | `none` | nothing | no unit of work, no repositories; discovered models are accepted but not compiled, the rest of the section is ignored, deferred job dispatch never fires, and an interface with `auto_crud_model` refuses to boot |
 
@@ -483,11 +544,13 @@ with a `name` and a `resolve(key) -> object` works:
 ```python
 from loom.rest.fastapi.auto import create_app
 
+
 class VaultResolver:
     name = "vault"
 
     def resolve(self, key: str) -> str:
         return read_vault_secret(key)
+
 
 app = create_app("config/api.yaml", resolvers=[VaultResolver()])
 ```
@@ -511,16 +574,20 @@ from loom.core.di.container import LoomContainer
 from loom.core.di.scope import Scope
 from loom.rest.fastapi.auto import create_app
 
+
 class Clock(Protocol):
     def now(self) -> datetime: ...
+
 
 class SystemClock:
     def now(self) -> datetime:
         return datetime.now(UTC)
 
+
 class ClockInstaller(Installer):
     def install(self, container: LoomContainer) -> None:
         container.register(Clock, SystemClock, scope=Scope.APPLICATION)
+
 
 app = create_app("config/api.yaml")
 ```
@@ -537,32 +604,41 @@ For compute-heavy write flows, declare field derivations and run them before rul
 ```python
 from loom.core.use_case import Compute, F
 
+
 def _normalize_email(email: str) -> str:
     return email.strip().lower()
+
 
 def _compute_subtotal(unit_price: float, quantity: int) -> float:
     return unit_price * quantity
 
+
 def _compute_tax(subtotal: float, tax_rate: float) -> float:
     return subtotal * tax_rate
+
 
 def _unit_price_must_be_positive(unit_price: float) -> str | None:
     return None if unit_price > 0 else "unit_price must be > 0"
 
+
 def _country_must_be_supported(country: str) -> str | None:
     return None if country in TAX_RATES else "Unsupported country"
+
 
 class PricingPreviewUseCase(UseCase[Record, PricingPreviewResponse]):
     computes = (
         Compute.set(F(PricingCommand).normalized_email).from_command(
-            F(PricingCommand).email, via=_normalize_email,
+            F(PricingCommand).email,
+            via=_normalize_email,
         ),
         Compute.set(F(PricingCommand).subtotal).from_command(
-            F(PricingCommand).unit_price, F(PricingCommand).quantity,
+            F(PricingCommand).unit_price,
+            F(PricingCommand).quantity,
             via=_compute_subtotal,
         ),
         Compute.set(F(PricingCommand).tax_amount).from_command(
-            F(PricingCommand).subtotal, F(PricingCommand).tax_rate,
+            F(PricingCommand).subtotal,
+            F(PricingCommand).tax_rate,
             via=_compute_tax,
         ),
     )
@@ -571,8 +647,9 @@ class PricingPreviewUseCase(UseCase[Record, PricingPreviewResponse]):
         Rule.check(F(PricingCommand).country, via=_country_must_be_supported),
     )
 
-    async def execute(self, record_id: int, cmd: PricingCommand = Input()) -> PricingPreviewResponse:
-        ...
+    async def execute(
+        self, record_id: int, cmd: PricingCommand = Input()
+    ) -> PricingPreviewResponse: ...
 ```
 
 Computes run in declaration order — later computes can reference fields set by earlier ones.

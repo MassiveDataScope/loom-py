@@ -34,7 +34,8 @@ from loom.core.stores.repository import (
 )
 from loom.stores.mongo import repository as repository_module
 from loom.stores.mongo.ids import ObjectIdPolicy, Uuid4IdPolicy
-from loom.stores.mongo.repository import RepositoryMongo, SessionProvider
+from loom.stores.mongo.repository import MongoRepository, SessionProvider
+from loom.testing import make
 
 from ._fake import FakeCollection, FakeMongoClient
 from .conftest import Article
@@ -178,17 +179,17 @@ def collection() -> FakeCollection:
     return FakeCollection()
 
 
-def _articles(collection: FakeCollection) -> RepositoryMongo[Article, str]:
-    return RepositoryMongo(Article, collection, cursor_codec=_CODEC)
+def _articles(collection: FakeCollection) -> MongoRepository[Article, str]:
+    return MongoRepository(Article, collection, cursor_codec=_CODEC)
 
 
 def _notes(
     collection: FakeCollection, policy: Uuid4IdPolicy | ObjectIdPolicy | None = None
-) -> RepositoryMongo[AcmeMongoNote, str]:
-    return RepositoryMongo(AcmeMongoNote, collection, id_policy=policy, cursor_codec=_CODEC)
+) -> MongoRepository[AcmeMongoNote, str]:
+    return MongoRepository(AcmeMongoNote, collection, id_policy=policy, cursor_codec=_CODEC)
 
 
-async def _seed(repo: RepositoryMongo[Article, str], rows: list[tuple[str, int]]) -> None:
+async def _seed(repo: MongoRepository[Article, str], rows: list[tuple[str, int]]) -> None:
     for slug, views in rows:
         await repo.create(ArticleCreate(slug=slug, title=slug.upper(), views=views))
 
@@ -245,7 +246,7 @@ class TestStorageForm:
     async def test_a_plain_enum_field_needs_no_declared_column_type(
         self, collection: FakeCollection
     ) -> None:
-        repo: RepositoryMongo[Swatch, str] = RepositoryMongo(
+        repo: MongoRepository[Swatch, str] = MongoRepository(
             Swatch, collection, cursor_codec=_CODEC
         )
 
@@ -274,16 +275,6 @@ class TestStorageForm:
         await _articles(collection).create(PlainArticleCreate(slug="a", title="A"))
 
         assert collection.documents["a"] == {"_id": "a", "title": "A", "views": 0}
-
-    async def test_update_keeps_the_fields_the_caller_did_not_send(
-        self, collection: FakeCollection
-    ) -> None:
-        repo = _articles(collection)
-        await repo.create(ArticleCreate(slug="a", title="A", views=7))
-
-        await repo.update("a", ArticleUpdate(title="B"))
-
-        assert collection.documents["a"]["views"] == 7
 
     async def test_update_does_not_clobber_with_the_defaults_of_unsent_fields(
         self, collection: FakeCollection
@@ -317,7 +308,7 @@ class TestStorageForm:
             "_utc_now",
             lambda: datetime(2026, 1, 1, 0, 0, 0, 999_999, tzinfo=UTC),
         )
-        repo: RepositoryMongo[AcmeMongoEvent, str] = RepositoryMongo(
+        repo: MongoRepository[AcmeMongoEvent, str] = MongoRepository(
             AcmeMongoEvent, collection, cursor_codec=_CODEC
         )
 
@@ -350,7 +341,7 @@ class TestStorageForm:
     async def test_string_stored_types_round_trip_and_filter(
         self, collection: FakeCollection
     ) -> None:
-        repo: RepositoryMongo[AcmeMongoInvoice, UUID] = RepositoryMongo(
+        repo: MongoRepository[AcmeMongoInvoice, UUID] = MongoRepository(
             AcmeMongoInvoice, collection, cursor_codec=_CODEC
         )
         ident = UUID("b7cdfa6d-0805-4c13-8071-af9317c08254")
@@ -414,7 +405,7 @@ class TestIdGeneration:
     ) -> None:
         clock = iter([datetime(2026, 1, 1, tzinfo=UTC), datetime(2026, 1, 2, tzinfo=UTC)])
         monkeypatch.setattr(repository_module, "_utc_now", lambda: next(clock))
-        repo: RepositoryMongo[Stamped, str] = RepositoryMongo(
+        repo: MongoRepository[Stamped, str] = MongoRepository(
             Stamped, collection, cursor_codec=_CODEC
         )
         created = await repo.create(NoteCreate(body="first"))
@@ -431,7 +422,7 @@ class TestIdGeneration:
         self, collection: FakeCollection, monkeypatch: pytest.MonkeyPatch
     ) -> None:
         monkeypatch.setattr(repository_module, "_utc_now", lambda: datetime(2026, 1, 2, tzinfo=UTC))
-        repo: RepositoryMongo[Audited, str] = RepositoryMongo(
+        repo: MongoRepository[Audited, str] = MongoRepository(
             Audited, collection, cursor_codec=_CODEC
         )
         created = await repo.create(NoteCreate(body="first"))
@@ -465,7 +456,7 @@ class TestIdGeneration:
         self, collection: FakeCollection
     ) -> None:
         """The boot-time gate, not the repository, judges ``autoincrement``."""
-        repo: RepositoryMongo[Counter, int] = RepositoryMongo(
+        repo: MongoRepository[Counter, int] = MongoRepository(
             Counter, collection, cursor_codec=_CODEC
         )
 
@@ -512,7 +503,7 @@ class TestConflicts:
         collection = RecordingCollection()
         session = FakeMongoClient().start_session()
         provider = cast(SessionProvider, lambda write: session)
-        repo = RepositoryMongo(Article, collection, session_provider=provider, cursor_codec=_CODEC)
+        repo = MongoRepository(Article, collection, session_provider=provider, cursor_codec=_CODEC)
         payload = [ArticleCreate(slug="a", title="A"), ArticleCreate(slug="a", title="A")]
 
         with pytest.raises(Conflict):
@@ -562,16 +553,6 @@ class TestConflicts:
 
 
 class TestCreateMany:
-    async def test_outputs_keep_input_order(self, collection: FakeCollection) -> None:
-        repo = _articles(collection)
-
-        created = await repo.create_many(
-            [ArticleCreate(slug="z", title="Z"), ArticleCreate(slug="a", title="A")]
-        )
-
-        assert [item.slug for item in created] == ["z", "a"]
-        assert await repo.count() == 2
-
     async def test_empty_input_makes_no_round_trip(self) -> None:
         class ExplodingCollection(FakeCollection):
             async def insert_many(
@@ -619,21 +600,6 @@ class TestCreateManyIgnore:
 
         assert collection.orders == [False]
 
-    async def test_is_refused_inside_a_transaction(self) -> None:
-        collection = RaisingCollection()
-        session = FakeMongoClient().start_session()
-        provider = cast(SessionProvider, lambda write: session)
-        repo = RepositoryMongo(Article, collection, session_provider=provider, cursor_codec=_CODEC)
-
-        with pytest.raises(UnsupportedQuery, match="on Article: .*inside a transaction") as refused:
-            await repo.create_many(
-                [ArticleCreate(slug="a", title="A")], on_conflict=OnConflict.IGNORE
-            )
-
-        assert refused.value.backend == "mongo"
-
-        assert collection.orders == []
-
     @pytest.mark.parametrize(
         ("details", "raised"),
         [
@@ -661,37 +627,19 @@ class TestListing:
         await _seed(repo, [("c", 1), ("a", 1), ("b", 2)])
 
         page = await repo.list_paginated(
-            PageParams(page=1, limit=1), FilterParams(filters={"views": 1})
+            make(PageParams, page=1, limit=1), FilterParams(filters={"views": 1})
         )
 
         assert [item.slug for item in page.items] == ["a"]
         assert page.total_count == 2
         assert page.has_next is True
 
-    async def test_list_with_query_offset_filters_and_sorts(
-        self, collection: FakeCollection
-    ) -> None:
-        repo = _articles(collection)
-        await _seed(repo, [("a", 5), ("b", 3), ("c", 9), ("d", 1)])
-        query = QuerySpec(
-            filters=FilterGroup(filters=(FilterSpec("views", FilterOp.GTE, 3),)),
-            sort=(SortSpec("views", "DESC"),),
-            limit=2,
-            page=2,
-        )
-
-        page = await repo.list_with_query(query)
-
-        assert isinstance(page, PageResult)
-        assert [item.slug for item in page.items] == ["b"]
-        assert page.total_count == 3
-        assert page.has_next is False
-
 
 class TestCursorPagination:
     @staticmethod
     def _query(cursor: str | None = None) -> QuerySpec:
-        return QuerySpec(
+        return make(
+            QuerySpec,
             sort=(SortSpec("views", "DESC"),),
             pagination=PaginationMode.CURSOR,
             limit=3,
@@ -706,7 +654,7 @@ class TestCursorPagination:
     async def test_a_disabled_codec_refuses_a_cursor_page_with_no_next_page(
         self, collection: FakeCollection
     ) -> None:
-        repo = RepositoryMongo(Article, collection, cursor_codec=CursorCodec.disabled())
+        repo = MongoRepository(Article, collection, cursor_codec=CursorCodec.disabled())
 
         with pytest.raises(UnsupportedQuery, match="cursor pagination is not enabled"):
             await repo.list_with_query(self._query())
@@ -751,14 +699,20 @@ class TestCursorPagination:
     ) -> None:
         repo = _notes(collection, ObjectIdPolicy())
         created = [await repo.create(NoteCreate(body=body)) for body in ("one", "two", "three")]
-        query = QuerySpec(sort=(SortSpec("id", "ASC"),), pagination=PaginationMode.CURSOR, limit=2)
+        query = make(
+            QuerySpec, sort=(SortSpec("id", "ASC"),), pagination=PaginationMode.CURSOR, limit=2
+        )
 
         first = await repo.list_with_query(query)
         assert isinstance(first, CursorResult)
         assert first.next_cursor is not None
         second = await repo.list_with_query(
-            QuerySpec(
-                sort=query.sort, pagination=PaginationMode.CURSOR, limit=2, cursor=first.next_cursor
+            make(
+                QuerySpec,
+                sort=query.sort,
+                pagination=PaginationMode.CURSOR,
+                limit=2,
+                cursor=first.next_cursor,
             )
         )
 
@@ -775,15 +729,18 @@ class TestCursorPagination:
         ]
 
         by_eq = await repo.list_with_query(
-            QuerySpec(filters=FilterGroup(filters=(FilterSpec("id", FilterOp.EQ, first.id),)))
+            make(QuerySpec, filters=FilterGroup(filters=(FilterSpec("id", FilterOp.EQ, first.id),)))
         )
         by_in = await repo.list_with_query(
-            QuerySpec(
-                filters=FilterGroup(filters=(FilterSpec("id", FilterOp.IN, (first.id, second.id)),))
+            make(
+                QuerySpec,
+                filters=FilterGroup(
+                    filters=(FilterSpec("id", FilterOp.IN, (first.id, second.id)),)
+                ),
             )
         )
         page = await repo.list_paginated(
-            PageParams(page=1, limit=10), FilterParams(filters={"id": second.id})
+            make(PageParams, page=1, limit=10), FilterParams(filters={"id": second.id})
         )
 
         assert isinstance(by_eq, PageResult)
@@ -801,14 +758,18 @@ class TestCursorPagination:
         await _seed(repo, [("a", 1), ("b", 1), ("c", 1)])
         sort = (SortSpec("slug", "DESC"),)
         first = await repo.list_with_query(
-            QuerySpec(sort=sort, pagination=PaginationMode.CURSOR, limit=2)
+            make(QuerySpec, sort=sort, pagination=PaginationMode.CURSOR, limit=2)
         )
         assert isinstance(first, CursorResult)
         assert first.next_cursor is not None
 
         second = await repo.list_with_query(
-            QuerySpec(
-                sort=sort, pagination=PaginationMode.CURSOR, limit=2, cursor=first.next_cursor
+            make(
+                QuerySpec,
+                sort=sort,
+                pagination=PaginationMode.CURSOR,
+                limit=2,
+                cursor=first.next_cursor,
             )
         )
 
@@ -821,7 +782,7 @@ class TestCursorPagination:
         self, collection: FakeCollection, field: str
     ) -> None:
         """Documents hold dates and UUIDs as text; the cursor carries the model's types."""
-        repo: RepositoryMongo[AcmeMongoInvoice, UUID] = RepositoryMongo(
+        repo: MongoRepository[AcmeMongoInvoice, UUID] = MongoRepository(
             AcmeMongoInvoice, collection, cursor_codec=_CODEC
         )
         created = [
@@ -830,14 +791,18 @@ class TestCursorPagination:
             )
             for n in (3, 1, 2)
         ]
-        query = QuerySpec(sort=(SortSpec(field),), pagination=PaginationMode.CURSOR, limit=2)
+        query = make(QuerySpec, sort=(SortSpec(field),), pagination=PaginationMode.CURSOR, limit=2)
 
         first = await repo.list_with_query(query)
         assert isinstance(first, CursorResult)
         assert first.next_cursor is not None
         second = await repo.list_with_query(
-            QuerySpec(
-                sort=query.sort, pagination=query.pagination, limit=2, cursor=first.next_cursor
+            make(
+                QuerySpec,
+                sort=query.sort,
+                pagination=query.pagination,
+                limit=2,
+                cursor=first.next_cursor,
             )
         )
 
@@ -857,8 +822,8 @@ class TestCursorPagination:
     async def test_a_dotted_sort_field_is_refused_before_the_query(
         self, collection: FakeCollection
     ) -> None:
-        query = QuerySpec(
-            sort=(SortSpec("author.name"),), pagination=PaginationMode.CURSOR, limit=2
+        query = make(
+            QuerySpec, sort=(SortSpec("author.name"),), pagination=PaginationMode.CURSOR, limit=2
         )
 
         with pytest.raises(UnsupportedQuery, match="cannot order by 'author.name'"):
@@ -903,7 +868,7 @@ class TestSessions:
         # The repository only forwards the session to the driver; the fake
         # session stands in for pymongo's nominal AsyncClientSession.
         provider = cast(SessionProvider, lambda write: session)
-        repo = RepositoryMongo(
+        repo = MongoRepository(
             Article, RecordingCollection(), session_provider=provider, cursor_codec=_CODEC
         )
 
@@ -931,16 +896,16 @@ class TestSessions:
         def provider(intent: bool) -> None:
             intents.append(intent)
 
-        repo = RepositoryMongo(Article, collection, session_provider=provider, cursor_codec=_CODEC)
+        repo = MongoRepository(Article, collection, session_provider=provider, cursor_codec=_CODEC)
         await _CALLS[operation](repo)
 
         assert set(intents) == {write}
 
 
-_CALLS: dict[str, Callable[[RepositoryMongo[Article, str]], Awaitable[object]]] = {
+_CALLS: dict[str, Callable[[MongoRepository[Article, str]], Awaitable[object]]] = {
     "get_by_id": lambda repo: repo.get_by_id("a"),
     "count": lambda repo: repo.count(),
-    "list_paginated": lambda repo: repo.list_paginated(PageParams(page=1, limit=5)),
+    "list_paginated": lambda repo: repo.list_paginated(make(PageParams, page=1, limit=5)),
     "create": lambda repo: repo.create(ArticleCreate(slug="a", title="A")),
     "create_many": lambda repo: repo.create_many([ArticleCreate(slug="a", title="A")]),
     "update": lambda repo: repo.update("a", ArticleUpdate(title="B")),

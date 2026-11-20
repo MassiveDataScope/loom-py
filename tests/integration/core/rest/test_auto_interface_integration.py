@@ -29,7 +29,7 @@ from loom.rest.compiler import RouteSources
 from loom.rest.fastapi.app import create_fastapi_app
 from loom.rest.model import RestInterface, RestRoute
 from loom.stores.sqlalchemy import build_sqlalchemy_repository_registration_module
-from loom.stores.sqlalchemy.repository import RepositorySQLAlchemy
+from loom.stores.sqlalchemy.repository import SQLAlchemyRepository
 from loom.stores.sqlalchemy.schema import compile_all, get_metadata, reset_registry
 from loom.stores.sqlalchemy.session_manager import SessionManager
 from tests.integration.support.logical_repo_fixtures import (
@@ -81,13 +81,13 @@ class TaskViewInterface(RestInterface[TaskView]):
 def _make_register_repos(
     session_manager: SessionManager, codec: CursorCodec
 ) -> Callable[[LoomContainer], None]:
-    repo: RepositorySQLAlchemy[Any, int] = RepositorySQLAlchemy(
+    repo: SQLAlchemyRepository[Any, int] = SQLAlchemyRepository(
         session_manager=session_manager,
         model=AutoProduct,
         cursor_codec=codec,
     )
 
-    def _provider() -> RepositorySQLAlchemy[Any, int]:
+    def _provider() -> SQLAlchemyRepository[Any, int]:
         return repo
 
     token = ("repo", AutoProduct)

@@ -18,9 +18,9 @@ from typing import Any, Self
 
 import msgspec
 
+from loom.connections.clickhouse.client import async_client_options
 from loom.core.config.convert import convert_config
 from loom.core.config.errors import ConfigError
-from loom.core.connections.clickhouse.client import async_client_options
 from loom.core.stores.sql.abc import UnknownConnectionError
 from loom.core.stores.sql.config import SqlConfig, SqlConnectionConfig, reject_retired_sql_keys
 from loom.stores.clickhouse._client import (

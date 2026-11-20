@@ -1,10 +1,13 @@
-"""The values a struct persists when it is created."""
+"""The values a struct persists when it is created, and the key it persists under."""
 
 from __future__ import annotations
 
 from typing import Any, ClassVar
 
 import msgspec
+
+from loom.core.config import ConfigError
+from loom.core.model.introspection import get_id_attributes
 
 
 class RecordLayout:
@@ -56,3 +59,24 @@ class RecordLayout:
         if self._tag is not None:
             values[self._tag[0]] = self._tag[1]
         return values
+
+
+def single_id_attribute(model: type, *, why_single: str) -> str:
+    """Return the only primary-key field of a model that a store keys by one value.
+
+    Args:
+        model: The model.
+        why_single: Why the store holds one key value, completing the refusal
+            message ("Mongo stores one key value in _id").
+
+    Raises:
+        ValueError: If the model declares no primary-key field.
+        ConfigError: If the primary key is composite.
+    """
+    names = get_id_attributes(model)
+    if len(names) > 1:
+        raise ConfigError(
+            f"{model.__qualname__} has the composite primary key ({', '.join(names)}); "
+            f"{why_single}, so declare a single primary key"
+        )
+    return names[0]

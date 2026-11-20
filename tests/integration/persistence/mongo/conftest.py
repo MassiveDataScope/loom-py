@@ -31,7 +31,7 @@ from pymongo.errors import PyMongoError
 from loom.core.stores.catalog import DEFAULT_STORE
 from loom.core.stores.repository import CursorCodec
 from loom.core.stores.repository.registration import capabilities_of
-from loom.stores.mongo.repository import RepositoryMongo
+from loom.stores.mongo.repository import MongoRepository
 from loom.stores.mongo.uow import MongoSessions, MongoUnitOfWork
 from tests.unit.core.repository.contract import conftest as contract
 from tests.unit.core.repository.contract.conftest import AcmeContractOrder, BackendCase
@@ -104,8 +104,8 @@ def case(mongo_client: AsyncMongoClient[Any], mongo_database: _SessionDatabase) 
     ]
 
     @asynccontextmanager
-    async def open_repository() -> AsyncIterator[RepositoryMongo[AcmeContractOrder, int]]:
-        yield RepositoryMongo(
+    async def open_repository() -> AsyncIterator[MongoRepository[AcmeContractOrder, int]]:
+        yield MongoRepository(
             AcmeContractOrder,
             collection,
             session_provider=MongoSessions(mongo_client, store=DEFAULT_STORE),
@@ -116,7 +116,7 @@ def case(mongo_client: AsyncMongoClient[Any], mongo_database: _SessionDatabase) 
         name="mongo",
         repository_factory=open_repository,
         model=AcmeContractOrder,
-        capabilities=frozenset(capabilities_of(RepositoryMongo)),
+        capabilities=frozenset(capabilities_of(MongoRepository)),
         transactions=True,
         unit_of_work=lambda _repository: MongoUnitOfWork(mongo_client, store=DEFAULT_STORE),
     )

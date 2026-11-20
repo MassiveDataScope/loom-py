@@ -4,7 +4,6 @@ from collections.abc import AsyncIterator
 from contextlib import asynccontextmanager
 from types import SimpleNamespace
 from typing import Annotated, Any, cast
-from unittest.mock import AsyncMock, MagicMock
 
 import msgspec
 import pytest
@@ -15,12 +14,12 @@ from loom.core.model import BaseModel, Field, Integer
 from loom.core.stores.catalog import DEFAULT_STORE
 from loom.core.stores.repository import CursorCodec
 from loom.core.stores.repository.mutation import MutationEvent
-from loom.stores.sqlalchemy.repository import RepositorySQLAlchemy
+from loom.stores.sqlalchemy.repository import SQLAlchemyRepository
 from loom.stores.sqlalchemy.schema import compile_all, get_metadata, reset_registry
 from loom.stores.sqlalchemy.session_manager import SessionManager
 from loom.stores.sqlalchemy.transactional import record_mutation, transactional
 
-from ...conftest import RecordingSessionManager
+from ...conftest import RecordingSession, RecordingSessionManager
 
 
 class _DummyModel(BaseModel):
@@ -63,13 +62,8 @@ def dummy_model() -> type:
 
 
 @pytest.fixture
-def mock_session() -> AsyncMock:
-    return AsyncMock()
-
-
-@pytest.fixture
-def mock_session_manager(mock_session: AsyncMock) -> MockSessionManager:
-    return MockSessionManager(mock_session)
+def mock_session_manager(session_double: RecordingSession) -> MockSessionManager:
+    return MockSessionManager(session_double)
 
 
 # ---------------------------------------------------------------------------
@@ -160,7 +154,7 @@ class ServiceWithMixedDependencies:
         record_mutation(MutationEvent(entity="incident", op="update", ids=(7,)))
 
 
-class RepositoryWithTransactionalMethod(RepositorySQLAlchemy[msgspec.Struct, int]):
+class RepositoryWithTransactionalMethod(SQLAlchemyRepository[msgspec.Struct, int]):
     """A repository that wrongly declares its own transaction boundary."""
 
     @transactional
@@ -182,19 +176,19 @@ def log() -> list[str]:
 
 
 @pytest.fixture
-def recording_session(session_double: MagicMock, log: list[str]) -> MagicMock:
+def recording_session(session_double: RecordingSession, log: list[str]) -> RecordingSession:
     """A session double that records its commit in ``log``."""
 
     async def _commit() -> None:
         log.append("commit")
 
-    session_double.commit.side_effect = _commit
+    session_double.run_on("commit", _commit)
     return session_double
 
 
 @pytest.fixture
 def logging_session_manager(
-    recording_session: MagicMock, log: list[str]
+    recording_session: RecordingSession, log: list[str]
 ) -> RecordingSessionManager:
     """The manager that hands out ``recording_session`` and logs its close."""
     return RecordingSessionManager(recording_session, log=log)

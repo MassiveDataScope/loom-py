@@ -30,6 +30,7 @@ from loom.core.stores.repository.query import (
     QuerySpec,
     build_page_result,
 )
+from loom.testing import make
 from tests.unit.core.uow._coordinator_fakes import (
     NonTransactionalStore,
     StoreFactory,
@@ -260,7 +261,7 @@ class _FakeRepository(Repository[_EntityOut, _Create, _Update, int]):
         if query.pagination == PaginationMode.CURSOR:
             values = tuple(list(self.storage.values())[: query.limit])
             return CursorResult(items=values, next_cursor=None, has_next=False)
-        page = PageParams(page=query.page, limit=query.limit)
+        page = make(PageParams, page=query.page, limit=query.limit)
         return await self.list_paginated(page, profile=profile)
 
     async def create(self, data: _Create) -> _EntityOut:
@@ -500,7 +501,7 @@ class TestCachedRepository:
     ) -> None:
         await wrapped_repository.create(_Create(name="a"))
         await wrapped_repository.create(_Create(name="b"))
-        query = QuerySpec(page=1, limit=1, pagination=PaginationMode.OFFSET)
+        query = make(QuerySpec, page=1, limit=1, pagination=PaginationMode.OFFSET)
 
         first = await wrapped_repository.list_with_query(query)
         second = await wrapped_repository.list_with_query(query)
@@ -518,8 +519,8 @@ class TestCachedRepository:
     ) -> None:
         await wrapped_repository.create(_Create(name="a"))
         await wrapped_repository.create(_Create(name="b"))
-        first_page = QuerySpec(limit=1, pagination=PaginationMode.CURSOR)
-        next_page = QuerySpec(limit=1, pagination=PaginationMode.CURSOR, cursor="cursor-2")
+        first_page = make(QuerySpec, limit=1, pagination=PaginationMode.CURSOR)
+        next_page = make(QuerySpec, limit=1, pagination=PaginationMode.CURSOR, cursor="cursor-2")
 
         _ = await wrapped_repository.list_with_query(first_page)
         _ = await wrapped_repository.list_with_query(first_page)
@@ -972,7 +973,7 @@ class TestPrimaryKeyByName:
         keyless = CodeWidget(code=cast(int, None), name="b")
         env = wrap_with_cache(CountingRepository([keyless, keyed], CodeWidget), cache_config)
 
-        page = await env.wrapper.list_paginated(PageParams(page=1, limit=2))
+        page = await env.wrapper.list_paginated(make(PageParams, page=1, limit=2))
 
         assert list(page.items) == [keyless, keyed]
         fingerprint = await env.resolver.fingerprint(

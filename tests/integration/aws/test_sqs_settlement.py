@@ -9,8 +9,8 @@ from typing import Any
 
 import pytest
 
+from loom.connections.aws import AwsClients
 from loom.core.config import ConfigContext
-from loom.core.connections.aws import AwsClients
 from loom.core.engine.events import AbandonReason
 from loom.core.job.outcome import Abandoned, Failed, JobAbandonment, JobOutcome, Postponed
 from loom.core.job.policy import Countdown

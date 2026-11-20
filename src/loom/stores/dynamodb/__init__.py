@@ -2,16 +2,16 @@ from loom.stores.dynamodb.registry import (
     DynamoDBDefaultRepositoryBuilder,
     build_dynamodb_repository_registration_module,
 )
-from loom.stores.dynamodb.repository import RepositoryDynamoDB
+from loom.stores.dynamodb.repository import DynamoDBRepository
 from loom.stores.dynamodb.uow import (
-    DynamoUnitOfWork,
-    DynamoUnitOfWorkFactory,
+    DynamoDBUnitOfWork,
+    DynamoDBUnitOfWorkFactory,
 )
 
 __all__ = [
     "DynamoDBDefaultRepositoryBuilder",
-    "DynamoUnitOfWork",
-    "DynamoUnitOfWorkFactory",
-    "RepositoryDynamoDB",
+    "DynamoDBUnitOfWork",
+    "DynamoDBUnitOfWorkFactory",
+    "DynamoDBRepository",
     "build_dynamodb_repository_registration_module",
 ]

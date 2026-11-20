@@ -127,9 +127,9 @@ def _require_enlisted(scope: InvocationScope, session_manager: SessionManager) -
 
 
 def _reject_repository_owner(owner: Any) -> None:
-    from loom.stores.sqlalchemy.repository import RepositorySQLAlchemy
+    from loom.stores.sqlalchemy.repository import SQLAlchemyRepository
 
-    if isinstance(owner, RepositorySQLAlchemy):
+    if isinstance(owner, SQLAlchemyRepository):
         raise TypeError(
             "@transactional is intended for service/orchestrator boundaries, "
             "not repository methods.",

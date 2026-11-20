@@ -11,10 +11,8 @@ Usage example::
     stmt = ProductCore.select("default").where(ProductCore.price > 100)
     products = await ProductCore.fetch_all(session, stmt, profile="default")
 
-Column expressions are available as instance attributes::
-
-    ProductCore.id        # → SA Column expression
-    ProductCore.name      # → SA Column expression
+Column expressions are available as instance attributes: ``ProductCore.id`` and
+``ProductCore.name`` are SQLAlchemy column expressions.
 
 The ORM class (``ProductSA``) is kept exclusively for writes and Alembic.
 """
@@ -110,10 +108,9 @@ class CoreModel:
     """Compiled Core read artifact for a Struct model.
 
     Created by :func:`~loom.stores.sqlalchemy.schema.compile_all`.
-    Column expressions are set as instance attributes at compile time::
-
-        ProductCore.id    # SA Column expression usable in WHERE clauses
-        ProductCore.name  # SA Column expression
+    Column expressions are set as instance attributes at compile time:
+    ``ProductCore.id`` and ``ProductCore.name`` are SQLAlchemy column
+    expressions usable in WHERE clauses.
 
     Args:
         struct_cls: The source ``BaseModel`` Struct class.

@@ -38,13 +38,14 @@ correctly; loom reads the join columns from the `ForeignKeyConstraint` it
 already builds for scoped models.
 
 ```python
-class Ticket(BaseModel, RowScoped):                 # key (account_id, id)
+class Ticket(BaseModel, RowScoped):  # key (account_id, id)
     __tablename__ = "ticket"
     account_id: int = ScopedField(primary_key=True, scope="account")
     id: int = ColumnField(primary_key=True)
     customer_id: int = ColumnField(foreign_key="customer.id")
     customer: CustomerOut | None = RelationField(
-        foreign_key="customer.id", cardinality=Cardinality.MANY_TO_ONE, profiles=("detail",))
+        foreign_key="customer.id", cardinality=Cardinality.MANY_TO_ONE, profiles=("detail",)
+    )
 ```
 
 `LoadById` gains a tuple form, because loom cannot guess which execute

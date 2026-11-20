@@ -9,7 +9,6 @@ import weakref
 from collections.abc import Callable
 from concurrent.futures import ThreadPoolExecutor
 from typing import Any, cast
-from unittest.mock import MagicMock
 
 import pytest
 
@@ -17,8 +16,8 @@ from loom.core.concurrency import run_in_executor, run_to_completion
 from loom.core.stores.catalog import DEFAULT_STORE
 from loom.stores.mongo.uow import MongoUnitOfWork
 from loom.stores.sqlalchemy.uow import SQLAlchemyUnitOfWork
-from tests.unit.core.conftest import make_session
-from tests.unit.core.uow.conftest import make_session_manager
+from tests.unit.core.conftest import RecordingSessionManager, make_session
+from tests.unit.core.repository.mongo._fake import FakeMongoClient
 
 _LONG = 60.0
 """A timeout no step here reaches."""
@@ -113,11 +112,11 @@ class TestRunStepCancellation:
 
 
 def _sqlalchemy() -> tuple[object, str]:
-    return SQLAlchemyUnitOfWork(make_session_manager(make_session())), "_exit_session"
+    return SQLAlchemyUnitOfWork(RecordingSessionManager(make_session())), "_exit_session"
 
 
 def _mongo() -> tuple[object, str]:
-    return MongoUnitOfWork(MagicMock(), DEFAULT_STORE), "_end_session"
+    return MongoUnitOfWork(cast(Any, FakeMongoClient()), DEFAULT_STORE), "_end_session"
 
 
 class TestCancelledClose:

@@ -30,9 +30,7 @@ ModelT = TypeVar("ModelT", bound=msgspec.Struct, covariant=True)
 
 
 class Readable(Protocol[ModelT]):
-    """Repository capability: fetch individual entities.
-
-    Implement this to expose single-entity read operations.
+    """Repository capability: fetch one entity by its primary key.
 
     Example::
 
@@ -43,6 +41,14 @@ class Readable(Protocol[ModelT]):
     async def get_by_id(self, obj_id: Any, profile: str = "default") -> ModelT | None:
         """Fetch one entity by primary key."""
         ...
+
+
+class FieldReadable(Protocol[ModelT]):
+    """Repository capability: fetch one entity by any field.
+
+    A store that reaches an entity only through its key declares ``Readable``
+    and not this one.
+    """
 
     async def get_by(
         self,
@@ -161,6 +167,7 @@ class Countable(Protocol[ModelT]):
 
 class RepoFor(
     Readable[ModelT],
+    FieldReadable[ModelT],
     Creatable[ModelT],
     BulkCreatable[ModelT],
     Updatable[ModelT],
@@ -177,14 +184,14 @@ class RepoFor(
     (``Readable``, ``Creatable``, etc.) to respect the Interface Segregation
     Principle.
 
+    A use case that declares no third generic parameter gets the full surface.
+
     Example::
 
-        # Full surface — no third param needed, RepoFor[Any] is the default
         class CreateProductUseCase(UseCase[Product, Product]):
             async def execute(self, cmd: CreateProductCommand = Input()) -> Product:
                 return await self.main_repo.create(cmd)
 
-        # Specific capability — only what the use case needs
         class GetProductUseCase(UseCase[Product, Product | None, Readable[Product]]):
             async def execute(self, product_id: int) -> Product | None:
                 return await self.main_repo.get_by_id(product_id)

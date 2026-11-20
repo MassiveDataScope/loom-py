@@ -21,6 +21,7 @@ from loom.core.cache.keys import entity_key, stable_hash
 from loom.core.stores.repository import PageParams, PageResult
 from loom.core.stores.repository.mutation import MutationEvent
 from loom.core.stores.repository.query import FilterOp, PaginationMode, QuerySpec
+from loom.testing import make
 
 from ._doubles import (
     AcmeCacheWidget,
@@ -67,7 +68,7 @@ def _make_env(
 
 
 def _cursor_query(limit: int) -> QuerySpec:
-    return QuerySpec(pagination=PaginationMode.CURSOR, limit=limit)
+    return make(QuerySpec, pagination=PaginationMode.CURSOR, limit=limit)
 
 
 def _widgets(count: int) -> list[AcmeCacheWidget]:
@@ -105,7 +106,7 @@ async def _entity_cache_key(env: AcmeIndexEnv[RowT], obj_id: object) -> str:
 
 
 async def _warm_index(env: AcmeIndexEnv[RowT], limit: int = ROW_COUNT) -> None:
-    await env.wrapper.list_paginated(PageParams(page=1, limit=limit))
+    await env.wrapper.list_paginated(make(PageParams, page=1, limit=limit))
     env.repository.reset_counters()
     env.backend.reset_counters()
 
@@ -117,7 +118,7 @@ async def _evict_entities(env: AcmeIndexEnv[RowT], ids: Sequence[object]) -> Non
 
 
 async def _list_all(env: AcmeIndexEnv[RowT], limit: int = ROW_COUNT) -> PageResult[RowT]:
-    page = await env.wrapper.list_paginated(PageParams(page=1, limit=limit))
+    page = await env.wrapper.list_paginated(make(PageParams, page=1, limit=limit))
     assert isinstance(page, PageResult)
     return page
 

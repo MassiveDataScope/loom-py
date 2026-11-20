@@ -10,7 +10,7 @@ from loom.core.command import Command
 from loom.core.model import BaseModel, ColumnField
 from loom.core.stores.catalog import DEFAULT_STORE
 from loom.core.stores.repository import CursorCodec
-from loom.stores.sqlalchemy.repository import RepositorySQLAlchemy
+from loom.stores.sqlalchemy.repository import SQLAlchemyRepository
 from loom.stores.sqlalchemy.schema import compile_all, get_compiled
 from loom.stores.sqlalchemy.session_manager import SessionManager
 
@@ -53,7 +53,7 @@ class TestNullableColumns:
         self,
         session_manager: SessionManager,
     ) -> None:
-        repo: RepositorySQLAlchemy[_Gauge, int] = RepositorySQLAlchemy(
+        repo: SQLAlchemyRepository[_Gauge, int] = SQLAlchemyRepository(
             session_manager=session_manager,
             model=_Gauge,
             cursor_codec=CursorCodec(signing="ephemeral"),

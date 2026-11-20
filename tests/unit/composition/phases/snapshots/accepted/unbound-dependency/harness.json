@@ -79,6 +79,26 @@
       "provider": "LoomContainer.register_instance.<locals>.<lambda>",
       "resolved": "UseCaseRegistry",
       "scope": "APPLICATION"
+    },
+    "loom.core.stores.repository.capabilities.Creatable[tests.unit.composition.phases.components.AcmeRecord]": {
+      "provider": "Override.install.<locals>.<lambda>",
+      "resolved": "InMemoryRepository",
+      "scope": "APPLICATION"
+    },
+    "loom.core.stores.repository.capabilities.Deletable[tests.unit.composition.phases.components.AcmeRecord]": {
+      "provider": "Override.install.<locals>.<lambda>",
+      "resolved": "InMemoryRepository",
+      "scope": "APPLICATION"
+    },
+    "loom.core.stores.repository.capabilities.Readable[tests.unit.composition.phases.components.AcmeRecord]": {
+      "provider": "Override.install.<locals>.<lambda>",
+      "resolved": "InMemoryRepository",
+      "scope": "APPLICATION"
+    },
+    "loom.core.stores.repository.capabilities.Updatable[tests.unit.composition.phases.components.AcmeRecord]": {
+      "provider": "Override.install.<locals>.<lambda>",
+      "resolved": "InMemoryRepository",
+      "scope": "APPLICATION"
     }
   },
   "repo_bindings": {

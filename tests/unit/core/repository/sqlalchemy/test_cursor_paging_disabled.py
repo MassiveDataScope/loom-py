@@ -17,9 +17,10 @@ from loom.core.stores.repository import (
     QuerySpec,
     SortSpec,
 )
-from loom.stores.sqlalchemy.repository import RepositorySQLAlchemy
+from loom.stores.sqlalchemy.repository import SQLAlchemyRepository
 from loom.stores.sqlalchemy.schema import compile_all, get_compiled
 from loom.stores.sqlalchemy.session_manager import SessionManager
+from loom.testing import make
 
 
 class _Row(BaseModel):
@@ -34,7 +35,7 @@ class _CreateRow(Command, frozen=True):
 
 
 @pytest.fixture
-async def repository() -> AsyncIterator[RepositorySQLAlchemy[_Row, int]]:
+async def repository() -> AsyncIterator[SQLAlchemyRepository[_Row, int]]:
     compile_all(_Row)
     manager = SessionManager(
         "sqlite+aiosqlite:///:memory:",
@@ -49,7 +50,7 @@ async def repository() -> AsyncIterator[RepositorySQLAlchemy[_Row, int]]:
     assert compiled is not None
     async with manager.engine.begin() as connection:
         await connection.run_sync(compiled.metadata.create_all)
-    repo: RepositorySQLAlchemy[_Row, int] = RepositorySQLAlchemy(
+    repo: SQLAlchemyRepository[_Row, int] = SQLAlchemyRepository(
         session_manager=manager, model=_Row, cursor_codec=CursorCodec.disabled()
     )
     await repo.create_many([_CreateRow(rank=rank) for rank in (1, 2, 3)])
@@ -59,29 +60,31 @@ async def repository() -> AsyncIterator[RepositorySQLAlchemy[_Row, int]]:
 
 class TestCursorPagingWithTheDisabledCodec:
     async def test_a_cursor_page_is_refused(
-        self, repository: RepositorySQLAlchemy[_Row, int]
+        self, repository: SQLAlchemyRepository[_Row, int]
     ) -> None:
-        query = QuerySpec(
-            pagination=PaginationMode.CURSOR, sort=(SortSpec("rank", "ASC"),), limit=2
+        query = make(
+            QuerySpec, pagination=PaginationMode.CURSOR, sort=(SortSpec("rank", "ASC"),), limit=2
         )
 
         with pytest.raises(UnsupportedQuery, match=r"cursor pagination is not enabled"):
             await repository.list_with_query(query)
 
     async def test_a_cursor_page_with_no_next_page_is_refused_too(
-        self, repository: RepositorySQLAlchemy[_Row, int]
+        self, repository: SQLAlchemyRepository[_Row, int]
     ) -> None:
-        query = QuerySpec(
-            pagination=PaginationMode.CURSOR, sort=(SortSpec("rank", "ASC"),), limit=10
+        query = make(
+            QuerySpec, pagination=PaginationMode.CURSOR, sort=(SortSpec("rank", "ASC"),), limit=10
         )
 
         with pytest.raises(UnsupportedQuery, match=r"cursor pagination is not enabled"):
             await repository.list_with_query(query)
 
     async def test_offset_paging_is_unaffected(
-        self, repository: RepositorySQLAlchemy[_Row, int]
+        self, repository: SQLAlchemyRepository[_Row, int]
     ) -> None:
-        page = await repository.list_with_query(QuerySpec(sort=(SortSpec("rank", "ASC"),), limit=2))
+        page = await repository.list_with_query(
+            make(QuerySpec, sort=(SortSpec("rank", "ASC"),), limit=2)
+        )
 
         assert [row.rank for row in page.items] == [1, 2]
 
@@ -97,7 +100,7 @@ class TestDisabledCodec:
         cursor = Cursor(backend="sqlalchemy", keys=(1,), tie_breaker=1)
 
         with pytest.raises(UnsupportedQuery, match=r"cursor pagination is not enabled"):
-            CursorCodec.disabled().encode(cursor, model="m", query=QuerySpec(), scope="")
+            CursorCodec.disabled().encode(cursor, model="m", query=make(QuerySpec), scope="")
 
     def test_decode_refuses_with_the_documented_error(self) -> None:
         with pytest.raises(UnsupportedQuery, match=r"cursor pagination is not enabled"):
@@ -105,7 +108,7 @@ class TestDisabledCodec:
                 "token",
                 backend="sqlalchemy",
                 model="m",
-                query=QuerySpec(),
+                query=make(QuerySpec),
                 scope="",
                 columns={},
                 primary_key=("id",),

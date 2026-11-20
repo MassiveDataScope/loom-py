@@ -19,12 +19,12 @@ from app.product.schemas import CreateProduct
 class CreateProductUseCase(UseCase[Product, Product]):
     #            ↑ model   ↑ return type
 
-    computes = [CREATE_NORMALIZE_NAME, CREATE_NORMALIZE_PRICE]   # run first
-    rules    = [CREATE_NAME_RULE, CREATE_PRICE_RULE]             # run after computes
+    computes = [CREATE_NORMALIZE_NAME, CREATE_NORMALIZE_PRICE]  # run first
+    rules = [CREATE_NAME_RULE, CREATE_PRICE_RULE]  # run after computes
 
     async def execute(
         self,
-        cmd: CreateProduct = Input(),           # body ← JSON-decoded command
+        cmd: CreateProduct = Input(),  # body ← JSON-decoded command
     ) -> Product:
         return await self.main_repo.create(cmd)
 ```
@@ -60,9 +60,9 @@ class CreateProduct(Command, frozen=True):
 class UpdateProduct(Command, frozen=True):
     # Patch[T] marks a field as optional in partial updates.
     # None means "not provided" — not "set to null".
-    name:  Patch[str]   = None
+    name: Patch[str] = None
     price: Patch[float] = None
-    sku:   Patch[str]   = None
+    sku: Patch[str] = None
 ```
 
 > `Patch[T]` is a union type alias for `T | None` with framework-level tracking
@@ -107,9 +107,10 @@ async def execute(self, cmd: CreateProduct = Input()) -> Product: ...
 ```python
 from loom.core.use_case import LoadById
 
+
 async def execute(
     self,
-    product_id: int,                                    # path parameter
+    product_id: int,  # path parameter
     cmd: UpdateProduct = Input(),
     product: Product = LoadById(Product, by="product_id"),  # loaded before execute
 ) -> Product | None:
@@ -130,13 +131,14 @@ async def execute(
 ```python
 from loom.core.use_case import Exists, OnMissing
 
+
 async def execute(
     self,
     user_id: int,
     cmd: CreateAddress = Input(),
     _user_exists: bool = Exists(
         User,
-        from_param="user_id",    # check User.id == user_id
+        from_param="user_id",  # check User.id == user_id
         against="id",
         on_missing=OnMissing.RAISE,  # auto-404 if False
     ),
@@ -167,14 +169,18 @@ from typing import Annotated
 import msgspec
 from loom.core.use_case import Query
 
-class OrderQuery(msgspec.Struct, frozen=True, kw_only=True, rename="camel",
-                 forbid_unknown_fields=True):
+
+class OrderQuery(
+    msgspec.Struct, frozen=True, kw_only=True, rename="camel", forbid_unknown_fields=True
+):
     customer_id: UUID | None = None
     status: OrderStatus | None = None
     changed_since: Annotated[datetime, msgspec.Meta(tz=True)] | None = msgspec.field(
-        default=None, name="changed_since")
+        default=None, name="changed_since"
+    )
     cursor: str | None = None
     limit: Annotated[int, msgspec.Meta(ge=1, le=200)] = 50
+
 
 class ListOrders(UseCase[Order, OrderPage]):
     async def execute(self, query: OrderQuery = Query()) -> OrderPage: ...
@@ -261,13 +267,13 @@ class TriageIncidentUseCase(UseCase[object, IncidentReport]):
         caller: Identity = Caller(),
         triage: AgentHandle[SeverityAssessment] = Agent("incident-triage"),
     ) -> IncidentReport:
-        obs = triage.sql("observability_readonly")             # the artefact's own granted view
+        obs = triage.sql("observability_readonly")  # the artefact's own granted view
         deploys = await obs.query(
             "select service, status from deploys where incident = :id",
             parameters={"id": incident_id},
         )
 
-        runbooks = triage.mcp("runbooks")                       # the artefact's own filtered view
+        runbooks = triage.mcp("runbooks")  # the artefact's own filtered view
         runbook = await runbooks.call(
             "search_incident",
             {"incident_id": incident_id, "recent_deploy": deploys[0]["service"]},
@@ -304,9 +310,9 @@ like `Caller()` carries no configuration.
 ### Three run modes
 
 ```python
-assessment = await triage.run(prompt)                       # the artefact's declared shape
-plan       = await triage.run(prompt, expect=RollbackPlan)  # this run only
-summary    = await triage.run_text(f"Write it up: {facts}") # open prose, decodes nothing
+assessment = await triage.run(prompt)  # the artefact's declared shape
+plan = await triage.run(prompt, expect=RollbackPlan)  # this run only
+summary = await triage.run_text(f"Write it up: {facts}")  # open prose, decodes nothing
 ```
 
 ### Two grant views, reached through the agent — never re-declared
@@ -416,9 +422,7 @@ class LookUpRunbookUseCase(UseCase[object, RunbookLookup]):
         caller: Identity = Caller(),
         runbooks: McpHandle = Mcp("runbooks", include=("search_incident",)),
     ) -> RunbookLookup:
-        result = await runbooks.call_untyped(
-            "search_incident", {"incident_id": incident_id}
-        )
+        result = await runbooks.call_untyped("search_incident", {"incident_id": incident_id})
         return RunbookLookup(
             incident_id=incident_id,
             requested_by=caller.require_subject(),
@@ -531,6 +535,7 @@ Computes can read multiple fields:
 def _compute_subtotal(unit_price: float, quantity: int) -> float:
     return unit_price * quantity
 
+
 # Derives subtotal from unit_price × quantity
 CREATE_SUBTOTAL = Compute.set(F(PricingCommand).subtotal).from_command(
     F(PricingCommand).unit_price,
@@ -547,7 +552,7 @@ UPDATE_NORMALIZE_NAME = (
     Compute.set(F(UpdateProduct).name)
     .from_command(F(UpdateProduct).name, via=_normalize_name_with_context)
     .from_params("product_id")
-    .when_present(F(UpdateProduct).name)   # skip if name was not sent
+    .when_present(F(UpdateProduct).name)  # skip if name was not sent
 )
 ```
 
@@ -563,7 +568,7 @@ Essential for partial-update commands:
 UPDATE_NORMALIZE_PRICE = (
     Compute.set(F(UpdateProduct).price)
     .from_command(F(UpdateProduct).price, via=_normalize_price)
-    .when_present(F(UpdateProduct).price)   # skip when price is absent from PATCH body
+    .when_present(F(UpdateProduct).price)  # skip when price is absent from PATCH body
 )
 ```
 
@@ -615,7 +620,7 @@ def _price_must_be_positive(price: float) -> str | None:
     return None if price > 0 else "price must be positive"
 
 
-CREATE_NAME_RULE  = Rule.check(F(CreateProduct).name,  via=_name_must_not_be_blank)
+CREATE_NAME_RULE = Rule.check(F(CreateProduct).name, via=_name_must_not_be_blank)
 CREATE_PRICE_RULE = Rule.check(F(CreateProduct).price, via=_price_must_be_positive)
 ```
 
@@ -723,15 +728,15 @@ UPDATE_NAME_PRICE_MISMATCH_RULE = (
 ```python
 class UpdateProductUseCase(UseCase[Product, Product | None]):
     computes = [
-        UPDATE_NORMALIZE_NAME,    # strip whitespace — skipped if name absent
-        UPDATE_NORMALIZE_PRICE,   # round to 2 dp  — skipped if price absent
+        UPDATE_NORMALIZE_NAME,  # strip whitespace — skipped if name absent
+        UPDATE_NORMALIZE_PRICE,  # round to 2 dp  — skipped if price absent
     ]
     rules = [
-        UPDATE_NOT_EMPTY_RULE,              # reject empty PATCH body
-        UPDATE_NAME_RULE,                   # name not blank (if present)
-        UPDATE_PRICE_RULE,                  # price positive (if present)
+        UPDATE_NOT_EMPTY_RULE,  # reject empty PATCH body
+        UPDATE_NAME_RULE,  # name not blank (if present)
+        UPDATE_PRICE_RULE,  # price positive (if present)
         UPDATE_SYSTEM_NAME_IMMUTABLE_RULE,  # block rename of id=1 (if name present)
-        UPDATE_NAME_PRICE_MISMATCH_RULE,    # name ≠ str(price) (if both present)
+        UPDATE_NAME_PRICE_MISMATCH_RULE,  # name ≠ str(price) (if both present)
     ]
 
     async def execute(
@@ -751,14 +756,15 @@ Attach use cases to routes via `RestRoute`:
 ```python
 from loom.rest.model import RestInterface, RestRoute
 
+
 class ProductInterface(RestInterface[Product]):
     prefix = "/products"
     tags = ("Products",)
     routes = (
-        RestRoute(use_case=CreateProductUseCase, method="POST",   path="/",              status_code=201),
-        RestRoute(use_case=GetProductUseCase,    method="GET",    path="/{product_id}"),
-        RestRoute(use_case=ListProductsUseCase,  method="GET",    path="/"),
-        RestRoute(use_case=UpdateProductUseCase, method="PATCH",  path="/{product_id}"),
+        RestRoute(use_case=CreateProductUseCase, method="POST", path="/", status_code=201),
+        RestRoute(use_case=GetProductUseCase, method="GET", path="/{product_id}"),
+        RestRoute(use_case=ListProductsUseCase, method="GET", path="/"),
+        RestRoute(use_case=UpdateProductUseCase, method="PATCH", path="/{product_id}"),
         RestRoute(use_case=DeleteProductUseCase, method="DELETE", path="/{product_id}"),
     )
 ```
@@ -769,7 +775,7 @@ Or let the framework generate all five routes automatically:
 class ProductInterface(RestInterface[Product]):
     prefix = "/products"
     tags = ("Products",)
-    auto = True   # generates GET, POST, PATCH, DELETE, list automatically
+    auto = True  # generates GET, POST, PATCH, DELETE, list automatically
 ```
 
 See [Auto-CRUD guide](autocrud.md) for the full options reference.
@@ -781,6 +787,7 @@ create or find the resource already there returns `Created` when it created:
 
 ```python
 from loom.core.use_case import Created, Input
+
 
 class CreateOrder(UseCase[Order, OrderView | Created[OrderView]]):
     async def execute(self, cmd: CreateOrderCommand = Input()) -> OrderView | Created[OrderView]:

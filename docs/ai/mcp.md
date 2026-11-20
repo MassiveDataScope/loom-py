@@ -500,7 +500,7 @@ A worked example — a server exposing a session endpoint, where the agent
 presents a long-lived bootstrap secret and receives short-lived tokens:
 
 ```python
-import httpx2       # the flavour the MCP transport's client uses
+import httpx2  # the flavour the MCP transport's client uses
 
 
 class AgentSessionAuth(httpx2.Auth):
@@ -516,15 +516,13 @@ class AgentSessionAuth(httpx2.Auth):
             self._token = yield from self._mint()
         request.headers["Authorization"] = f"Bearer {self._token}"
         response = yield request
-        if response.status_code == 401:            # expired or revoked
+        if response.status_code == 401:  # expired or revoked
             self._token = yield from self._mint()  # one renewal, not a loop
             request.headers["Authorization"] = f"Bearer {self._token}"
             yield request
 
     def _mint(self):
-        response = yield httpx2.Request(
-            "POST", self._url, json={"secret_path": self._ref}
-        )
+        response = yield httpx2.Request("POST", self._url, json={"secret_path": self._ref})
         return response.json()["access_token"]
 ```
 

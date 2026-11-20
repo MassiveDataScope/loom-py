@@ -8,12 +8,12 @@ from typing import Any
 
 import msgspec
 
+from loom.connections.resolvers import with_built_in_resolvers
 from loom.core.config import (
     ConfigContext,
     ConfigError,
     ConfigKey,
     ConfigResolver,
-    with_default_resolvers,
 )
 from loom.core.config.convert import convert_config
 from loom.core.config.overrides import load_application_config
@@ -96,7 +96,7 @@ def _load_context(
     resolved = resolve_environment(environment)
     return load_application_config(
         *config_source_paths(path, resolved),
-        resolvers=with_default_resolvers(resolvers),
+        resolvers=with_built_in_resolvers(resolvers),
         keyed=STORAGE_KEYED_COLLECTIONS,
         environment=resolved,
     )

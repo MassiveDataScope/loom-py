@@ -11,8 +11,7 @@ import logging
 from collections.abc import Callable, Coroutine
 from dataclasses import dataclass
 from types import SimpleNamespace
-from typing import Any
-from unittest.mock import MagicMock
+from typing import Any, cast
 
 import anyio
 import pytest
@@ -40,6 +39,8 @@ from loom.core.stores.uow.coordinator import (
 from loom.stores.mongo.uow import MongoUnitOfWork
 from loom.stores.sqlalchemy.uow import SQLAlchemyUnitOfWork
 
+from ..conftest import RecordingSessionManager, make_session
+from ..repository.mongo._fake import FakeMongoClient
 from ._coordinator_fakes import (
     Boom,
     Effect,
@@ -227,10 +228,8 @@ class TestEnlist:
         assert participant.handle is None
 
 
-def _session_manager() -> MagicMock:
-    manager = MagicMock()
-    manager.engine.url = make_url("sqlite+aiosqlite:///loom.db")
-    return manager
+def _session_manager() -> RecordingSessionManager:
+    return RecordingSessionManager(make_session(), url=make_url("sqlite+aiosqlite:///loom.db"))
 
 
 class TestLoomTransactionalUnitsOfWork:
@@ -238,7 +237,7 @@ class TestLoomTransactionalUnitsOfWork:
         "uow",
         [
             SQLAlchemyUnitOfWork(_session_manager()),
-            MongoUnitOfWork(MagicMock(), store=DEFAULT_STORE),
+            MongoUnitOfWork(cast(Any, FakeMongoClient()), store=DEFAULT_STORE),
         ],
         ids=["sqlalchemy", "mongo"],
     )

@@ -62,7 +62,7 @@ def _sqlalchemy_case() -> ScopedUnitOfWorkCase:
         _sqlalchemy(manager),
         "SQLAlchemyUnitOfWork",
         lambda: manager.exits,
-        lambda: session.commit.await_count,
+        lambda: session.count("commit"),
     )
 
 
@@ -140,7 +140,7 @@ class TestInsideAScope:
         with pytest.raises(UnitOfWorkInsideScope):
             await executor.execute(use_case)
 
-        session.commit.assert_not_awaited()
+        assert session.count("commit") == 0
 
 
 class TestOutsideAScope:

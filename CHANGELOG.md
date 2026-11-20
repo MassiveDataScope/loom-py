@@ -29,6 +29,57 @@
   mock and its own setup client, and the function owns the application and its
   clients. A closed worker no longer raises `the worker is closed`.
 
+- **config:** the `ssm` and `secrets` resolvers leave the core. `SsmResolver`
+  and `SecretsManagerResolver` are in `loom.connections.aws` (no longer
+  exported by `loom.core.config`), and `loom.core.config.default_resolvers()`
+  and `with_default_resolvers()` hold only the technology-free `file` resolver.
+  The composition, the ETL runner and the Bytewax runner register all three
+  through `loom.connections.resolvers.built_in_resolvers()` and
+  `with_built_in_resolvers()`; `loom check` still calls no resolver. Nothing
+  under `loom.core` imports `loom.connections` now.
+  **Migration:** `from loom.core.config import SsmResolver` becomes
+  `from loom.connections.aws import SsmResolver`; a loader that relied on
+  `default_resolvers()` for `ssm` and `secrets` uses `built_in_resolvers()`.
+- **testing:** `InMemoryRepository` declares the key capabilities (`Readable`,
+  `Creatable`, `Updatable`, `Deletable`), so a harness that injects it binds
+  those DI keys, and it behaves like a real repository on the contract the
+  adapters share: `create` keeps the id the command carries, a duplicate id
+  raises `Conflict`, and `update` leaves the fields a command did not send.
+  `loom.testing.make` also builds `PageParams`, `FilterParams` and `QuerySpec`
+  with their declared defaults.
+- **stores:** the repositories are named technology first, then port:
+  `RepositorySQLAlchemy` is `SQLAlchemyRepository`, `RepositoryMongo` is
+  `MongoRepository` and `RepositoryDynamoDB` is `DynamoDBRepository`;
+  `DynamoUnitOfWork` and `DynamoUnitOfWorkFactory` are `DynamoDBUnitOfWork` and
+  `DynamoDBUnitOfWorkFactory`.
+- **stores:** the duplicate (store, table) refusal moves from
+  `PackageScanner.discover` to `StoreCatalog.models_by_store`, the one place
+  that groups models by store, so the composition refuses them and `discover`
+  only lists the models. `RepositoryCatalog` applies the same check
+  (`refuse_duplicate_tables`) and raises `ConfigError`, not `ValueError`.
+  The single primary-key rule of the DynamoDB, Mongo and in-memory
+  repositories is `single_id_attribute` in `loom.core.stores.repository.record`.
+- **stores:** a repository no longer promises a lookup it cannot serve.
+  `Readable` is now the lookup by primary key (`get_by_id`) and the new
+  `FieldReadable` (`get_by`) is the lookup by any field; `RepoFor` composes
+  both, and the SQLAlchemy and Mongo repositories declare both. The DynamoDB
+  repository declares `Readable` only and drops `get_by` and `exists_by`: it
+  reached nothing but the key and refused every other field at call time.
+  Mongo `create_many(on_conflict=OnConflict.IGNORE)` no longer raises
+  `UnsupportedQuery` inside a transaction: it reads the stored keys in the
+  transaction first and inserts only the missing documents.
+  **Migration:** a use case that injects `Readable[Model]` for `get_by`
+  injects `FieldReadable[Model]`; on DynamoDB read by key with `get_by_id`.
+- **connections:** the SDK client builders leave the core. `AwsClients`,
+  `aws_island`, `AwsIsland`, `mongo_island`, `MongoIsland`, `clickhouse_island`,
+  `ClickHouseIsland` and the `client` modules are now in `loom.connections.aws`,
+  `loom.connections.mongo` and `loom.connections.clickhouse`;
+  `loom.core.connections` keeps the settings, the value types and the new
+  `AwsClientSource` port that `RuntimeProfile.aws` and the config resolvers
+  accept. Nothing under `loom.core` imports an SDK.
+  **Migration:** `from loom.core.connections.aws import AwsClients` becomes
+  `from loom.connections.aws import AwsClients`; likewise for the islands and
+  `loom.core.connections.<engine>.client`.
 - **jobs:** `JobService` is the one public job API, and it is a class, not a
   protocol: it holds `run`, `dispatch_after_commit`, `dispatch_now` and
   `dispatch_parallel` once, builds a validated `JobDispatch` (options, countdown,

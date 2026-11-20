@@ -13,7 +13,7 @@ from loom.core.stores.catalog import DEFAULT_STORE, StoreKey
 from loom.core.stores.repository import CursorCodec
 from loom.core.stores.uow.coordinator import OrderedCommits
 from loom.core.stores.uow.scope import Frame, invocation
-from loom.stores.mongo.repository import RepositoryMongo
+from loom.stores.mongo.repository import MongoRepository
 from loom.stores.mongo.uow import MongoSessions, MongoUnitOfWork, MongoUnitOfWorkFactory
 
 from ._fake import FakeMongoClient
@@ -71,8 +71,8 @@ class TestWriteIntent:
         assert wrote is True
 
 
-def _repository(fake: FakeMongoClient) -> RepositoryMongo[Article, str]:
-    return RepositoryMongo(
+def _repository(fake: FakeMongoClient) -> MongoRepository[Article, str]:
+    return MongoRepository(
         Article,
         fake.collection("articles"),
         session_provider=MongoSessions(_client(fake), store=DEFAULT_STORE),

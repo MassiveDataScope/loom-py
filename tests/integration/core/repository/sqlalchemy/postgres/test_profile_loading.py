@@ -11,9 +11,10 @@ from loom.core.model import BaseModel, Cardinality, ColumnField, ProjectionField
 from loom.core.projection.loaders import CountLoader, ExistsLoader
 from loom.core.stores.catalog import DEFAULT_STORE
 from loom.core.stores.repository import CursorCodec, PageParams
-from loom.stores.sqlalchemy.repository import RepositorySQLAlchemy
+from loom.stores.sqlalchemy.repository import SQLAlchemyRepository
 from loom.stores.sqlalchemy.schema import compile_all, get_metadata, reset_registry
 from loom.stores.sqlalchemy.session_manager import SessionManager
+from loom.testing import make
 
 pytestmark = pytest.mark.integration
 
@@ -75,7 +76,7 @@ _SEED = (
     "INSERT INTO loom_it_pl_watchers VALUES (1, 1, 'ann')",
 )
 
-_PAGE = PageParams(limit=20)
+_PAGE = make(PageParams, limit=20)
 
 
 class StatementLog:
@@ -131,7 +132,7 @@ class TestProfileLoading:
         self,
         manager: SessionManager,
     ) -> None:
-        repo = RepositorySQLAlchemy(manager, Ticket, cursor_codec=CursorCodec(signing="ephemeral"))
+        repo = SQLAlchemyRepository(manager, Ticket, cursor_codec=CursorCodec(signing="ephemeral"))
         log = _log_statements(manager)
 
         page = await repo.list_paginated(_PAGE, profile="detail")
@@ -150,7 +151,7 @@ class TestProfileLoading:
         self,
         manager: SessionManager,
     ) -> None:
-        repo = RepositorySQLAlchemy(manager, Ticket, cursor_codec=CursorCodec(signing="ephemeral"))
+        repo = SQLAlchemyRepository(manager, Ticket, cursor_codec=CursorCodec(signing="ephemeral"))
         log = _log_statements(manager)
 
         page = await repo.list_paginated(_PAGE, profile="counts")
@@ -164,7 +165,7 @@ class TestProfileLoading:
         manager: SessionManager,
     ) -> None:
         await _execute(manager, "ALTER TABLE loom_it_pl_comments RENAME COLUMN body TO gone")
-        repo = RepositorySQLAlchemy(manager, Ticket, cursor_codec=CursorCodec(signing="ephemeral"))
+        repo = SQLAlchemyRepository(manager, Ticket, cursor_codec=CursorCodec(signing="ephemeral"))
 
         with pytest.raises(ProgrammingError, match="body"):
             await repo.list_paginated(_PAGE, profile="detail")
@@ -177,7 +178,7 @@ class TestProfileLoading:
         manager: SessionManager,
     ) -> None:
         await _execute(manager, "ALTER TABLE loom_it_pl_comments RENAME COLUMN ticket_id TO gone")
-        repo = RepositorySQLAlchemy(manager, Ticket, cursor_codec=CursorCodec(signing="ephemeral"))
+        repo = SQLAlchemyRepository(manager, Ticket, cursor_codec=CursorCodec(signing="ephemeral"))
 
         with pytest.raises(ProgrammingError, match="ticket_id"):
             await repo.list_paginated(_PAGE, profile="counts")

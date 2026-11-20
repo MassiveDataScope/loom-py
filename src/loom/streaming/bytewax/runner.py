@@ -13,13 +13,13 @@ from bytewax.dataflow import Dataflow
 from bytewax.recovery import RecoveryConfig
 from bytewax.run import cli_main
 
+from loom.connections.resolvers import with_built_in_resolvers
 from loom.core.async_bridge import AsyncBridge, build_backend_options
 from loom.core.checks import CheckScope, enforce_deploy_checks
 from loom.core.config import (
     ConfigContext,
     ConfigKey,
     ConfigResolver,
-    with_default_resolvers,
 )
 from loom.core.config.overrides import load_application_config
 from loom.core.environment import Environment, config_source_paths, resolve_environment
@@ -444,7 +444,7 @@ def _load_yaml(
     """Load *path*, a file or a config directory, with *resolvers* ahead of the defaults."""
     return load_application_config(
         *config_source_paths(path, environment),
-        resolvers=with_default_resolvers(resolvers),
+        resolvers=with_built_in_resolvers(resolvers),
         environment=environment,
     )
 

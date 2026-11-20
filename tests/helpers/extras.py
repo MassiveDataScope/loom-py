@@ -15,9 +15,9 @@ from collections.abc import Iterable, Mapping
 
 import pytest
 
-BOTO3_ISLAND = "loom.core.connections.aws.client"
-MONGO_ISLAND = "loom.core.connections.mongo.client"
-CLICKHOUSE_ISLAND = "loom.core.connections.clickhouse.client"
+BOTO3_ISLAND = "loom.connections.aws.client"
+MONGO_ISLAND = "loom.connections.mongo.client"
+CLICKHOUSE_ISLAND = "loom.connections.clickhouse.client"
 ENGINE_EXTRAS = "loom.ai.engines.pydantic_ai.extras"
 ENGINE_PROVIDERS = "loom.ai.engines.pydantic_ai.providers"
 

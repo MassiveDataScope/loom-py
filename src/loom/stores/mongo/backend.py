@@ -16,9 +16,9 @@ from typing import Any, ClassVar, Literal
 import msgspec
 from pymongo import AsyncMongoClient
 
+from loom.connections.mongo.client import build_async_mongo_client
 from loom.core.config import ConfigContext
 from loom.core.connections.mongo import MongoConnection, MongoPool
-from loom.core.connections.mongo.client import build_async_mongo_client
 from loom.core.di.container import LoomContainer
 from loom.core.model import BaseModel
 from loom.core.model.types import NonNegativeInt, PositiveInt
@@ -33,7 +33,7 @@ from loom.stores.mongo.ids import (
     validate_id_field,
 )
 from loom.stores.mongo.registry import build_mongo_repository_registration_module
-from loom.stores.mongo.repository import RepositoryMongo
+from loom.stores.mongo.repository import MongoRepository
 from loom.stores.mongo.uow import MongoSessions, MongoUnitOfWorkFactory
 
 _logger = logging.getLogger(__name__)
@@ -88,7 +88,7 @@ class MongoBackend:
     """
 
     name: ClassVar[str] = "mongo"
-    repository_type: ClassVar[type[Any] | None] = RepositoryMongo
+    repository_type: ClassVar[type[Any] | None] = MongoRepository
 
     def capabilities(self, spec: StoreSpec) -> StoreCapabilities:
         """Describe the store, resolving only its ``transactions`` key, never its connection."""

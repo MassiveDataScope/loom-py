@@ -21,8 +21,8 @@ import pytest
 from loom.composition import Application, phases
 from loom.composition.errors import ReservedBindingError
 from loom.composition.project import Project
+from loom.connections.aws import AwsClients
 from loom.core.bootstrap import BootstrapError
-from loom.core.connections.aws import AwsClients
 from loom.core.di import ContainerSealed
 from loom.core.di.container import ResolutionError
 from loom.core.logger import get_logger

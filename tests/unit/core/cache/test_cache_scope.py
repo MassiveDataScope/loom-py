@@ -20,6 +20,7 @@ from loom.core.cache.keys import (
 from loom.core.stores.repository import PageParams
 from loom.core.stores.repository.query import QuerySpec
 from loom.stores.sqlalchemy.repository import with_session_scope
+from loom.testing import make
 
 from ._doubles import (
     AcmeCacheWidget,
@@ -32,7 +33,7 @@ from ._doubles import (
 )
 
 ROW_A = 1
-PAGE = PageParams(page=1, limit=10)
+PAGE = make(PageParams, page=1, limit=10)
 SCOPE_A = '[["loom.scope.tenant","a"]]'
 SCOPE_B = '[["loom.scope.tenant","b"]]'
 
@@ -393,7 +394,7 @@ class TestACallerTransactionBypassesTheCache:
         for _ in range(2):
             await wrapper.get_by_id(ROW_A)
             await wrapper.list_paginated(PAGE)
-            await wrapper.list_with_query(QuerySpec(page=1, limit=10))
+            await wrapper.list_with_query(make(QuerySpec, page=1, limit=10))
             await wrapper.all_names()
 
         calls = (

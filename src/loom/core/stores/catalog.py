@@ -298,7 +298,8 @@ class StoreCatalog:
         Raises:
             ConfigError: When a model declares the retired ``__database__``,
                 or belongs to a store the catalog does not declare or to a
-                connection-only store, naming the model and the store.
+                connection-only store, or a store serves one table from two
+                models, naming the models and the store.
         """
         groups: dict[StoreKey, list[type[BaseModel]]] = {DEFAULT_STORE: []}
         for model in models:
@@ -312,7 +313,32 @@ class StoreCatalog:
                         "its connection to the sinks that name it"
                     )
             groups.setdefault(key, []).append(model)
+        for key, grouped in groups.items():
+            refuse_duplicate_tables(key, grouped)
         return {key: tuple(groups[key]) for key in (DEFAULT_STORE, *self.specs) if key in groups}
+
+
+def refuse_duplicate_tables(store: StoreKey, models: Sequence[type[BaseModel]]) -> None:
+    """Refuse a store that serves one table from two models.
+
+    The one owner of the rule: the store catalog applies it when it groups the
+    discovered models and the repository catalog when it is built by hand.
+
+    Raises:
+        ConfigError: Naming the store, the table and both models.
+    """
+    by_table: dict[str, type[BaseModel]] = {}
+    for model in models:
+        table = getattr(model, "__tablename__", None)
+        if table is None:
+            continue
+        previous = by_table.setdefault(table, model)
+        if previous is not model:
+            raise ConfigError(
+                f"Store {store!r} serves table {table!r} twice: "
+                f"{previous.__module__}.{previous.__qualname__} and "
+                f"{model.__module__}.{model.__qualname__}"
+            )
 
 
 def store_of(model: type[Any]) -> StoreKey:
@@ -441,6 +467,7 @@ def _spec(ctx: ConfigContext, key: StoreKey, registered: tuple[str, ...]) -> Sto
 
 
 __all__ = [
+    "refuse_duplicate_tables",
     "BACKEND_KEY",
     "CLICKHOUSE_BACKEND",
     "CONNECTION_ONLY_BACKENDS",

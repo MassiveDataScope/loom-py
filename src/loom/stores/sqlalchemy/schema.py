@@ -866,10 +866,11 @@ def compile_all(*classes: type, metadata: MetaData | None = None) -> None:
         *classes: Root model classes to compile.  Transitive dependencies
             are resolved automatically.
 
+    A model named by a relation annotation, such as ``Product.reviews:
+    list[ProductReview]``, is compiled with the root that names it.
+
     Example::
 
-        # ProductReview is compiled automatically because Product.reviews
-        # is annotated as list[ProductReview].
         compile_all(Product)
     """
     comp = _compilation_for(metadata)

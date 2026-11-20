@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import pytest
 
+from loom.core.config import ConfigError
 from loom.core.di.container import LoomContainer, ResolutionError
 from loom.core.model import BaseModel
 from loom.core.model.introspection import get_table_name
@@ -135,7 +136,7 @@ class TestRepositoryCatalogIndex:
     def test_a_store_serving_two_models_of_one_table_is_refused(
         self, container: LoomContainer
     ) -> None:
-        with pytest.raises(ValueError, match="ledger.*catalog_orders.*AcmeOrder.*AcmeOrderCopy"):
+        with pytest.raises(ConfigError, match="ledger.*catalog_orders.*AcmeOrder.*AcmeOrderCopy"):
             RepositoryCatalog(container, {LEDGER: (AcmeOrder, AcmeOrderCopy)})
 
 

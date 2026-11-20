@@ -16,7 +16,7 @@ from loom.core.config import ConfigContext
 from loom.core.stores import StoreWiring
 from loom.core.stores.profile import SERVER_PROFILE
 from loom.stores.dynamodb.backend import DynamoDBBackend
-from loom.stores.dynamodb.repository import RepositoryDynamoDB
+from loom.stores.dynamodb.repository import DynamoDBRepository
 from tests.helpers.aws import REGION
 from tests.helpers.dynamodb import MotoTable
 from tests.helpers.persistence import build_backend
@@ -44,13 +44,13 @@ def slow_client() -> _SlowClient:
     return _SlowClient()
 
 
-class TestDynamoExecutorParallelism:
+class TestDynamoDBExecutorParallelism:
     async def test_sixteen_calls_progress_in_parallel_on_a_sixteen_thread_executor(
         self,
         slow_client: _SlowClient,
     ) -> None:
         with ThreadPoolExecutor(max_workers=16) as executor:
-            repository: RepositoryDynamoDB[Any, Any] = RepositoryDynamoDB(
+            repository: DynamoDBRepository[Any, Any] = DynamoDBRepository(
                 slow_client, "products", Product, executor=executor
             )
 
@@ -65,7 +65,7 @@ class TestDynamoExecutorParallelism:
         slow_client: _SlowClient,
     ) -> None:
         with ThreadPoolExecutor(max_workers=2) as executor:
-            repository: RepositoryDynamoDB[Any, Any] = RepositoryDynamoDB(
+            repository: DynamoDBRepository[Any, Any] = DynamoDBRepository(
                 slow_client, "products", Product, executor=executor
             )
             _REQUEST.set("req-42")
@@ -105,7 +105,7 @@ def created(monkeypatch: pytest.MonkeyPatch) -> list[int]:
     return sizes
 
 
-class TestDynamoExecutorLifespan:
+class TestDynamoDBExecutorLifespan:
     async def test_each_lifespan_runs_on_a_new_pool_sized_by_the_pool_size(
         self, created: list[int], products_table: MotoTable
     ) -> None:

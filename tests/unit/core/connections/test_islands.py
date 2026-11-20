@@ -46,7 +46,7 @@ class TestAwsConnectionIsland:
 
     def test_the_aws_island_builds_a_client_with_every_bound(self, mocked_aws: None) -> None:
         pytest.importorskip("boto3")
-        island = import_optional("loom.core.connections.aws.client", extra="aws")
+        island = import_optional("loom.connections.aws.client", extra="aws")
         config = AwsClientConfig(
             region=OTHER_REGION,
             url=Dsn("http://localhost:8000"),
@@ -68,7 +68,7 @@ class TestAwsConnectionIsland:
 class TestMongoConnectionIsland:
     def test_pymongo_takes_the_mongo_options_in_its_units(self) -> None:
         pytest.importorskip("pymongo")
-        island = import_optional("loom.core.connections.mongo.client", extra="mongo")
+        island = import_optional("loom.connections.mongo.client", extra="mongo")
         connection = MongoConnection(
             url=Dsn("mongodb://h:27017"),
             database="app",
@@ -101,7 +101,7 @@ class TestClickHouseConnectionIsland:
         clickhouse_connect = pytest.importorskip("clickhouse_connect")
         from clickhouse_connect.driver.httpclient import HttpClient
 
-        island = import_optional("loom.core.connections.clickhouse.client", extra="clickhouse")
+        island = import_optional("loom.connections.clickhouse.client", extra="clickhouse")
         connection = ClickHouseConnection(
             url=Dsn("clickhouse://h:8123/db"),
             username="u",

@@ -1,4 +1,4 @@
-"""Shared utilities for config resolvers (SSM, Secrets Manager, etc.)."""
+"""Shared utilities for config resolvers: key splitting, ``%VAR%`` expansion, caching."""
 
 from __future__ import annotations
 
@@ -7,63 +7,11 @@ import logging
 import os
 import re
 from collections.abc import Callable, Hashable
-from typing import Any, cast
+from typing import Any
 
-from loom.core.config.context import ConfigContext
 from loom.core.config.errors import ConfigError
-from loom.core.config.keys import INTERPOLATION, ConfigKey
-from loom.core.connections.aws import AwsClientConfig, AwsClients
-from loom.core.plugins.optional import MissingExtraError
 
 _CLIENT = ("client",)
-
-
-def build_resolver_client(
-    clients: AwsClients, service: str, region: str | None, *, resolver: str, root: Any
-) -> Any:
-    """Build one boto3 client through the AWS island from the ``aws:`` section as written.
-
-    The resolvers are the ones resolving the placeholders, so they read
-    ``aws:`` of the configuration *root* unresolved; *region*, when given,
-    overrides its region.
-
-    Args:
-        clients: The AWS clients the resolver owns.
-        service: Service name, ``"ssm"`` or ``"secretsmanager"``.
-        region: AWS region, or ``None`` to take ``aws.region`` or let boto3
-            resolve its own.
-        resolver: Resolver class name, for the messages.
-        root: The configuration being resolved, or ``None`` outside one.
-
-    Returns:
-        The client; typed ``Any`` because boto3 ships no stubs.
-
-    Raises:
-        ConfigError: When boto3 is not installed, naming the extra, or
-            ``aws:`` is invalid or holds a placeholder.
-    """
-    written = None
-    if root is not None:
-        from omegaconf import OmegaConf
-
-        aws = OmegaConf.to_container(OmegaConf.masked_copy(root, ConfigKey.AWS), resolve=False)
-        written = cast("dict[str, object]", aws).get(ConfigKey.AWS)
-    for key, value in written.items() if isinstance(written, dict) else ():
-        if isinstance(value, str) and INTERPOLATION in value:
-            raise ConfigError(
-                f"{ConfigKey.AWS}.{key} is a placeholder, but {resolver} reads "
-                f"{ConfigKey.AWS} as written: write the value, or leave it out for boto3 "
-                "to read its environment (AWS_REGION, AWS_ENDPOINT_URL)"
-            )
-    overrides: dict[str, Any] = {} if region is None else {"region": region}
-    ctx = ConfigContext.from_dict({ConfigKey.AWS: written})
-    config = AwsClientConfig.from_config(ctx, ConfigKey.AWS, **overrides)
-    try:
-        return clients.client(service, config)
-    except MissingExtraError as exc:
-        raise ConfigError(
-            f"boto3 is required for {resolver}. Install it with: pip install loom-kernel[aws]"
-        ) from exc
 
 
 def resolve_cached(
@@ -201,4 +149,4 @@ def _navigate_json(raw: str, keys: list[str], path: str) -> object:
     return current
 
 
-__all__ = ["_expand_env_vars", "_split_resolver_key", "_navigate_json"]
+__all__ = ["_expand_env_vars", "_navigate_json", "_split_resolver_key", "resolve_cached"]
