@@ -16,7 +16,7 @@ from __future__ import annotations
 
 import functools
 from enum import Enum
-from typing import Final
+from typing import Final, cast
 
 from pydantic_ai.exceptions import ModelRetry, ToolFailed
 
@@ -46,7 +46,7 @@ def _mcp_error() -> type[Exception] | None:
         from mcp import MCPError
     except ImportError:
         return None
-    return MCPError
+    return cast(type[Exception], MCPError)
 
 
 class Outcome(Enum):

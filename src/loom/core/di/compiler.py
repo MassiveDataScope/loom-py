@@ -29,7 +29,7 @@ from __future__ import annotations
 import threading
 from collections.abc import Callable
 from itertools import repeat
-from typing import TYPE_CHECKING, Any, TypeVar
+from typing import TYPE_CHECKING, Any, TypeVar, cast
 
 from loom.core.di.errors import ResolutionError
 from loom.core.di.graph import (
@@ -111,11 +111,13 @@ class SupplierCompiler:
                 refused or part of a construction cycle, with the path.
         """
         with STRUCTURE_LOCK:
-            plan: Callable[[], Any] | None = self._plans.get(cls)
-            if plan is None:
+            compiled = self._plans.get(cls)
+            if compiled is None:
                 node = ClassNode(cls)
-                plan = self._plans[cls] = self._constructor_call(DependencyPath(node), node, cls)
-            return plan
+                compiled = self._plans[cls] = self._constructor_call(
+                    DependencyPath(node), node, cls
+                )
+            return cast(Callable[[], T], compiled)
 
     def _compile(self, path: DependencyPath, key: object) -> Supplier:
         """The supplier of *key*, which ends *path*."""

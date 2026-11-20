@@ -239,7 +239,7 @@ class _EndedCache(dict[Hashable, object]):
     def __contains__(self, key: object) -> bool:
         raise _closed(_PER_EXECUTION_VALUE)
 
-    def get(self, key: Hashable, default: object = None) -> object:  # type: ignore[override]
+    def get(self, key: Hashable, default: object = None) -> object:
         raise _closed(_PER_EXECUTION_VALUE)
 
     def __setitem__(self, key: Hashable, value: object) -> None:
@@ -280,8 +280,8 @@ def current_execution() -> ExecutionContext | None:
     Returns:
         The current :class:`ExecutionContext`, or ``None``.
     """
-    context: Any = _acting_now().work
-    if context is None or context is _NO_EXECUTION or context.ended:
+    context = _acting_now().work
+    if not isinstance(context, ExecutionContext) or context is _NO_EXECUTION or context.ended:
         return None
     return context
 
@@ -376,9 +376,9 @@ def execution_identity() -> Identity:
     """
     acting = _acting_now()
     identity, context = acting.caller, acting.work
-    if identity is None or context is None:
+    if identity is None or not isinstance(context, ExecutionContext):
         raise _no_identity(context)
-    if context.ended:  # pyright: ignore[reportAttributeAccessIssue]
+    if context.ended:
         acting.refuse_expired()
     return identity
 

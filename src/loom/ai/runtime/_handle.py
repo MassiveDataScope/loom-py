@@ -26,7 +26,7 @@ from __future__ import annotations
 
 from abc import ABC, abstractmethod
 from collections.abc import Hashable, Mapping
-from typing import TYPE_CHECKING, Any, Generic, TypeVar
+from typing import TYPE_CHECKING, Any, Generic, TypeVar, cast
 
 from loom.ai.abc import AgentAnswer, AgentHandle, McpHandle, Prompt, SqlGrantHandle
 from loom.ai.errors import AgentRunError, AgentRunErrorCode, require_authenticated
@@ -399,7 +399,7 @@ class AgentMarkerResolver(_MarkerResolver[str, "_AgentHandle"]):
 
     @staticmethod
     def _key(declaration: Any) -> str:
-        return declaration.name
+        return cast(str, declaration.name)
 
     def _build(self, key: str) -> _AgentHandle:
         return _AgentHandle(
