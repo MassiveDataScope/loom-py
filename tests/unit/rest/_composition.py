@@ -10,6 +10,7 @@ from loom.core.config import ConfigContext
 from loom.core.discovery.base import DiscoveryResult
 from loom.core.environment import Environment
 from loom.core.stores.uow.abc import UnitOfWorkFactory
+from loom.rest.discovery import interfaces_in
 from loom.rest.fastapi.adapter import FastAPIAdapter
 from loom.rest.model import RestInterface
 from tests.helpers.composition import composition_project, uow_factory
@@ -59,4 +60,4 @@ def build_bootstrap(
     """
     application = composition_project(ctx, environment=environment).compose(FastAPIAdapter())
     discovered = application.discovered
-    return application.kernel, uow_factory(application), discovered, discovered.interfaces
+    return application.kernel, uow_factory(application), discovered, interfaces_in(discovered)

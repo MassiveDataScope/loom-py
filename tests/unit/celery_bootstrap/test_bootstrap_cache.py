@@ -69,9 +69,7 @@ def _bootstrap(tmp_path: Path, cache: dict[str, Any] | None) -> Any:
         cfg["cache"] = cache
     config_path = tmp_path / "worker.yaml"
     config_path.write_text(yaml.safe_dump(cfg), encoding="utf-8")
-    discovered = DiscoveryResult(
-        models=(_CachedWorkerModel,), use_cases=(), interfaces=(), jobs=(_NoopJob,)
-    )
+    discovered = DiscoveryResult(models=(_CachedWorkerModel,), use_cases=(), jobs=(_NoopJob,))
     with patch("loom.core.discovery.scanner.PackageScanner.discover", return_value=discovered):
         return bootstrap_worker(str(config_path))
 

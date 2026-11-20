@@ -57,11 +57,11 @@ class PersistenceNoneRecord(BaseModel):
 
 
 def _no_models() -> DiscoveryResult:
-    return DiscoveryResult(models=(), use_cases=(), interfaces=())
+    return DiscoveryResult(models=(), use_cases=())
 
 
 def _agents_only() -> DiscoveryResult:
-    return DiscoveryResult(models=(), use_cases=(), interfaces=(), agent_specs=("agents/*.yaml",))
+    return DiscoveryResult(models=(), use_cases=(), agent_specs=("agents/*.yaml",))
 
 
 @pytest.fixture
@@ -332,7 +332,7 @@ class TestBuildBootstrapModelRules:
         monkeypatch.setattr(
             "loom.composition.project.PackageScanner.discover",
             lambda self, agents=None: DiscoveryResult(
-                models=(), use_cases=(), interfaces=_interfaces(OrphanOnAnyBackend), agent_specs=()
+                models=(), use_cases=(), classes=(OrphanOnAnyBackend,), agent_specs=()
             ),
         )
         ctx = _ctx(store=store)
@@ -350,7 +350,7 @@ class TestBuildBootstrapModelRules:
     ) -> None:
         """An interface that declares its own routes generates no CRUD, so it is left alone."""
 
-        class _ListRecords(UseCase[PersistenceNoneRecord, None]):
+        class _ListRecords(UseCase[Any, None]):
             async def execute(self) -> None:  # pragma: no cover - never invoked
                 return None
 
@@ -364,7 +364,7 @@ class TestBuildBootstrapModelRules:
             lambda self, agents=None: DiscoveryResult(
                 models=(),
                 use_cases=(),
-                interfaces=_interfaces(HandWrittenInterface),
+                classes=(HandWrittenInterface,),
                 agent_specs=(),
             ),
         )

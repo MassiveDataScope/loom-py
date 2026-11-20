@@ -180,7 +180,7 @@ def _composed(
         models=composition.models,
         use_cases=composition.use_cases,
         jobs=composition.jobs,
-        interfaces=composition.interfaces,
+        classes=composition.interfaces,
     )
     monkeypatch.setattr(
         "loom.composition.project.PackageScanner.discover",

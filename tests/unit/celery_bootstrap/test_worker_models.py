@@ -86,10 +86,9 @@ def _reset_registry(monkeypatch: pytest.MonkeyPatch) -> Iterator[None]:
     discovered = DiscoveryResult(
         models=(_Order,),
         use_cases=(_CountOrders, _PageThroughOrders),
-        interfaces=(),
         jobs=(_LoadOrderJob, _PageThroughOrdersJob),
     )
-    empty = DiscoveryResult(models=(), use_cases=(), interfaces=())
+    empty = DiscoveryResult(models=(), use_cases=())
     monkeypatch.setattr(
         PackageScanner,
         "discover",

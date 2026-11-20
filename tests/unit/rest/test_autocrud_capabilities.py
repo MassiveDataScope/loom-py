@@ -110,12 +110,8 @@ class TestSupportedOpsFollowTheRegisteredRepository:
 
 
 def _discovery(*interfaces: type, models: tuple[type[BaseModel], ...] = ()) -> DiscoveryResult:
-    """Mirror discovery: the use cases are those the interface routes reference."""
-    typed = tuple(cast(type[RestInterface[Any]], klass) for klass in interfaces)
-    use_cases = tuple(dict.fromkeys(route.use_case for iface in typed for route in iface.routes))
-    return DiscoveryResult(
-        models=models or (CapabilityRecord,), use_cases=use_cases, interfaces=typed
-    )
+    """A scan that found *interfaces* among its classes."""
+    return DiscoveryResult(models=models or (CapabilityRecord,), use_cases=(), classes=interfaces)
 
 
 def _ops(interface: type[RestInterface[Any]]) -> set[CrudOp]:

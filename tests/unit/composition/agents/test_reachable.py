@@ -97,7 +97,6 @@ class AcmeAgentEntryPoint:
             discovered=DiscoveryResult(
                 models=(),
                 use_cases=(self._use_case,),
-                interfaces=(),
                 jobs=(),
                 agent_specs=(_AGENTS_GLOB,),
             ),

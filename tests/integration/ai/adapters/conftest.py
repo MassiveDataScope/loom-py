@@ -77,7 +77,6 @@ class AgentlessHost:
         discovered = DiscoveryResult(
             models=(),
             use_cases=self.use_cases,
-            interfaces=(),
             jobs=(),
             callbacks=self.callbacks,
         )

@@ -148,7 +148,6 @@ class TestOverriding:
         assert container.resolve(AcmeStore) is original
         assert container.resolve(AcmeReadable) is original
 
-
     def test_exits_the_override_entered_by_identity_when_two_are_equal(
         self, container: LoomContainer
     ) -> None:

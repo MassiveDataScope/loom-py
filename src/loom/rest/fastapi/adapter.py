@@ -33,10 +33,7 @@ from loom.core.config import (
 )
 from loom.core.config.errors import ConfigError
 from loom.core.config.loader import convert_section
-from loom.core.discovery._utils import (
-    collect_use_cases_from_interfaces,
-    infer_model_from_use_case,
-)
+from loom.core.discovery._utils import infer_model_from_use_case
 from loom.core.discovery.base import DiscoveryResult
 from loom.core.introspection import (
     INTROSPECTION_STATE_ATTR,
@@ -76,6 +73,7 @@ from loom.rest.config import (
     validate_interfaces_config,
 )
 from loom.rest.cors import CorsConfig
+from loom.rest.discovery import interfaces_in, route_use_cases
 from loom.rest.fastapi._auto_ai import _bind_agent_surfaces
 from loom.rest.fastapi._auto_auth import (
     _AuthWiring,
@@ -143,16 +141,11 @@ def _fold_config_interfaces(
 
     Returns:
         *discovered*, unchanged when ``config_interfaces`` is empty, else
-        with its ``models``, ``use_cases`` and ``interfaces`` extended.
+        with its ``models`` and ``use_cases`` extended.
     """
     if not config_interfaces:
         return discovered
-    known_use_cases = set(discovered.use_cases)
-    new_use_cases = [
-        use_case
-        for use_case in collect_use_cases_from_interfaces(list(config_interfaces))
-        if use_case not in known_use_cases
-    ]
+    new_use_cases = _unknown_route_use_cases(discovered, config_interfaces)
     models = list(discovered.models)
     known_models = set(models)
     for use_case in new_use_cases:
@@ -162,12 +155,21 @@ def _fold_config_interfaces(
             known_models.add(model)
     return discovered.with_changes(
         models=tuple(models),
-        use_cases=discovered.use_cases + tuple(new_use_cases),
-        interfaces=discovered.interfaces + config_interfaces,
+        use_cases=discovered.use_cases + new_use_cases,
     )
 
 
-def _reject_autocrud_without_model(discovered: DiscoveryResult) -> None:
+def _unknown_route_use_cases(
+    discovered: DiscoveryResult, interfaces: tuple[type[RestInterface[Any]], ...]
+) -> tuple[type[Any], ...]:
+    """The use cases the routes of *interfaces* reference that *discovered* does not hold."""
+    known = set(discovered.use_cases)
+    return tuple(use_case for use_case in route_use_cases(interfaces) if use_case not in known)
+
+
+def _reject_autocrud_without_model(
+    discovered: DiscoveryResult, interfaces: tuple[type[RestInterface[Any]], ...]
+) -> None:
     """Reject generated CRUD routes over a model discovery never found.
 
     Auto-CRUD derives its operations from the model's repository, so an
@@ -180,7 +182,7 @@ def _reject_autocrud_without_model(discovered: DiscoveryResult) -> None:
         RuntimeError: When such an interface exists, naming both classes.
     """
     known = set(discovered.models)
-    for interface in discovered.interfaces:
+    for interface in interfaces:
         model = interface.auto_crud_model
         if model is not None and model not in known:
             raise RuntimeError(
@@ -191,7 +193,11 @@ def _reject_autocrud_without_model(discovered: DiscoveryResult) -> None:
             )
 
 
-def _gate_autocrud_capabilities(discovered: DiscoveryResult, project: Project) -> DiscoveryResult:
+def _gate_autocrud_capabilities(
+    discovered: DiscoveryResult,
+    interfaces: tuple[type[RestInterface[Any]], ...],
+    project: Project,
+) -> DiscoveryResult:
     """Mount only the CRUD operations the serving repository class declares.
 
     The repository is the explicit ``repository_for`` class when there is one,
@@ -211,13 +217,13 @@ def _gate_autocrud_capabilities(discovered: DiscoveryResult, project: Project) -
             when narrowing leaves no route; each names model and backend.
     """
     pruned: set[type[Any]] = set()
-    for interface in discovered.interfaces:
+    for interface in interfaces:
         if interface.auto_crud_model is not None:
             model = interface.auto_crud_model
             key = store_of(model)
             backend = project.resolve_store_backend(key, default=SQLALCHEMY_BACKEND)
             pruned.update(_gate_interface(interface, model, key, backend))
-    mounted = {route.use_case for iface in discovered.interfaces for route in iface.routes}
+    mounted = {route.use_case for iface in interfaces for route in iface.routes}
     dropped = pruned - mounted
     return discovered.with_changes(
         use_cases=tuple(uc for uc in discovered.use_cases if uc not in dropped),
@@ -282,19 +288,22 @@ def _reject_unsupported_include(
 
 
 def _discover_components(project: Project) -> DiscoveryResult:
-    """Run discovery and reject a result with nothing to serve.
+    """Run discovery, add its interfaces' use cases, and refuse a result with nothing to serve.
 
     Use cases, REST interfaces and ``app.agents`` are each optional on their
     own: an application whose only content is agents has neither use cases nor
     interfaces. Only a result with none of the three is an error.
     """
     discovered = project.discovered
-    if not discovered.use_cases and not discovered.interfaces and not discovered.agent_specs:
+    interfaces = interfaces_in(discovered)
+    if not discovered.use_cases and not interfaces and not discovered.agent_specs:
         raise RuntimeError(
             "Nothing discovered: no UseCase, no RestInterface and no agents. "
             "Set app.packages or app.agents."
         )
-    return discovered
+    return discovered.with_changes(
+        use_cases=discovered.use_cases + _unknown_route_use_cases(discovered, interfaces)
+    )
 
 
 def _documentation_paths(
@@ -549,7 +558,7 @@ def served_routes(
     interfaces, disabled = _route_config(project.config)
     config_interfaces = build_interfaces_from_config(interfaces)
     discovered = _discover_components(project)
-    python_interfaces = discovered.interfaces
+    python_interfaces = interfaces_in(discovered)
     unserved: tuple[type[RestInterface[Any]], ...] = ()
     if select_interfaces is not None:
         named = _interfaces_by_name(python_interfaces, interfaces, config_interfaces)
@@ -557,10 +566,10 @@ def served_routes(
         unserved = tuple(i for i in python_interfaces if i not in served)
         python_interfaces = tuple(i for i in python_interfaces if i in served)
         config_interfaces = tuple(i for i in config_interfaces if i in served)
-        discovered = discovered.with_changes(interfaces=python_interfaces)
     discovered = _fold_config_interfaces(discovered, config_interfaces)
-    _reject_autocrud_without_model(discovered)
-    discovered = _gate_autocrud_capabilities(discovered, project)
+    served_interfaces = python_interfaces + config_interfaces
+    _reject_autocrud_without_model(discovered, served_interfaces)
+    discovered = _gate_autocrud_capabilities(discovered, served_interfaces, project)
     routes = RouteSources(
         python=python_interfaces,
         config=config_interfaces,

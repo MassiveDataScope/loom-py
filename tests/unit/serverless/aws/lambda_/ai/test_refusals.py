@@ -106,7 +106,7 @@ def jobs_manifest(probe: ProbeFixture, monkeypatch: pytest.MonkeyPatch, tmp_path
         PackageScanner,
         "discover",
         lambda self, **kwargs: DiscoveryResult(
-            models=(), use_cases=(), interfaces=(), jobs=(probe[0],), agent_specs=(_AGENTS_GLOB,)
+            models=(), use_cases=(), jobs=(probe[0],), agent_specs=(_AGENTS_GLOB,)
         ),
     )
     _write_agent(tmp_path)

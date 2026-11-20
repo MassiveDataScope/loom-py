@@ -90,9 +90,7 @@ class _HarnessAdapter:
         use_cases = dict.fromkeys(route.use_case for iface in interfaces for route in iface.routes)
         return Recipe(
             profile=SERVER_PROFILE,
-            discovered=project.discovered.with_changes(
-                models=(), use_cases=tuple(use_cases), interfaces=()
-            ),
+            discovered=project.discovered.with_changes(models=(), use_cases=tuple(use_cases)),
             overrides=self._overrides,
             lenient=True,
         )

@@ -133,7 +133,7 @@ class TestBackendsLoadedPerEntryPoint:
         project = Project.load(config, environment="test")
         recipe = Recipe(
             profile=SERVER_PROFILE,
-            discovered=DiscoveryResult(models=(), use_cases=(), interfaces=()),
+            discovered=DiscoveryResult(models=(), use_cases=()),
             default_store_backend="none",
         )
 

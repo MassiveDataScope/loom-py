@@ -79,7 +79,7 @@ class TestDuplicateJobQualnames:
             return Duplicate
 
         jobs = [make_job(), make_job()]
-        discovered = DiscoveryResult(models=(), use_cases=(), interfaces=())
+        discovered = DiscoveryResult(models=(), use_cases=())
 
         with pytest.raises(DuplicateJobName):
             discovery._resolve_compilables_and_jobs(discovered, jobs, [])

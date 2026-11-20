@@ -32,7 +32,6 @@ from loom.core.discovery import PackageScanner
 result = PackageScanner(["app_models"]).discover()
 
 assert [model.__name__ for model in result.models] == ["Kind"], result
-assert result.interfaces == (), result
 assert "loom.rest" not in sys.modules, sorted(m for m in sys.modules if m.startswith("loom.rest"))
 """
 
