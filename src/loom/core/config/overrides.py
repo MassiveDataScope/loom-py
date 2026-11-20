@@ -94,6 +94,8 @@ _PROTECTED: Final = (
     ("lambda", "functions", "*", "trigger"),
     ("lambda", "handler"),
     ("app", "packages"),
+    ("app", "entry_points"),
+    ("app", "agents"),
 )
 """Keys no ``config.overridable`` entry may open, with everything below them; ``*`` is any level.
 
@@ -102,7 +104,7 @@ the environment any other way. ``stores.settings.cursors`` decides whether, and 
 which key, cursor tokens are signed, ``aws`` and ``sqs.queues`` where AWS calls
 and jobs go, a Lambda function's ``trigger`` what invokes it, which job runs
 and as whom, ``lambda.handler`` the code every function runs and
-``app.packages`` the code it loads: no per-deploy variable may change them."""
+``app.packages``, ``app.entry_points`` and ``app.agents`` the code it loads: no per-deploy variable may change them."""
 
 OVERRIDABLE: Final = (
     "app.entry",

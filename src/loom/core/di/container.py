@@ -324,7 +324,7 @@ class LoomContainer:
         finally:
             with STRUCTURE_LOCK:
                 exited_in_order = binding.overridden[-1] is instance
-                last = len(binding.overridden) - 1 - binding.overridden[::-1].index(instance)
+                last = max(i for i, held in enumerate(binding.overridden) if held is instance)
                 del binding.overridden[last]
                 binding.instance = binding.overridden[-1]
                 if len(binding.overridden) == 1:

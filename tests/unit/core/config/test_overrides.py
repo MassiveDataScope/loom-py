@@ -419,6 +419,8 @@ class TestConfigOverridableAllowlist:
             "lambda.*.*.trigger.queue",
             "lambda.handler",
             "app.packages",
+            "app.entry_points",
+            "app.agents",
             "app.*",
         ],
     )
