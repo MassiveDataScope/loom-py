@@ -207,7 +207,7 @@ class TurnCallbacks:
                 once the use case settled within the remaining bound.
             RuntimeError: When the use case ended cancelled without the
                 consumer being cancelled.
-            LookupError: When the runtime holds no application invoker.
+            LookupError: When the host holds no application invoker.
             Exception: Whatever the use case raised.
         """
         loop = asyncio.get_running_loop()

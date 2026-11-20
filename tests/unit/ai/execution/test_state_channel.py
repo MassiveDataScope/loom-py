@@ -1,7 +1,7 @@
-"""The state channel through the runtime (T303): FR-008, FR-009, FR-010.
+"""The state channel through the host (T303): FR-008, FR-009, FR-010.
 
 ``state`` reaches these seams already decoded and normalised by whichever
-boundary received it (FR-008); the runtime's own job is to check it against
+boundary received it (FR-008); the host's own job is to check it against
 the target plan's declared shape and hand the result to the engine
 unchanged, never to parse it again.
 """
@@ -72,7 +72,7 @@ _REQUIRED_PYDANTIC_SCHEMA_STATE = StateShape(
 )
 
 
-def _runtime(plan: Any, engine: RecordingScriptedEngine) -> AgentHost:
+def _host(plan: Any, engine: RecordingScriptedEngine) -> AgentHost:
     return AgentHost(
         plans=[plan],
         config=make_ai_config(),
@@ -85,9 +85,9 @@ def _runtime(plan: Any, engine: RecordingScriptedEngine) -> AgentHost:
 class TestStateReachesTheEngine:
     async def test_a_non_empty_state_arrives_at_the_engine_intact(self) -> None:
         engine = RecordingScriptedEngine()
-        runtime = _runtime(make_plan(_AGENT, state=_SCHEMA_STATE), engine)
-        async with runtime:
-            await runtime.run(
+        host = _host(make_plan(_AGENT, state=_SCHEMA_STATE), engine)
+        async with host:
+            await host.run(
                 _AGENT,
                 "hola",
                 identity=_AUTHENTICATED,
@@ -97,10 +97,10 @@ class TestStateReachesTheEngine:
 
     async def test_run_stream_resolves_state_the_same_way_as_run(self) -> None:
         engine = RecordingScriptedEngine()
-        runtime = _runtime(make_plan(_AGENT, state=_SCHEMA_STATE), engine)
+        host = _host(make_plan(_AGENT, state=_SCHEMA_STATE), engine)
         async with (
-            runtime,
-            runtime.run_stream(
+            host,
+            host.run_stream(
                 _AGENT, "hola", identity=_AUTHENTICATED, state={"marca": "civic", "km": 3}
             ) as events,
         ):
@@ -111,14 +111,14 @@ class TestStateReachesTheEngine:
     async def test_state_reaches_the_engine_through_a_marker_resolved_handle(self) -> None:
         """The same channel, driven from ``AgentHandle.run`` (FR-007)."""
         engine = RecordingScriptedEngine()
-        runtime = _runtime(make_plan(_AGENT, state=_SCHEMA_STATE), engine)
+        host = _host(make_plan(_AGENT, state=_SCHEMA_STATE), engine)
         handle = _AgentHandle(
             name=_AGENT,
-            runtime=runtime,
+            host=host,
             observability=None,
             sql_query_service=NullSqlQueryService(),
         )
-        async with runtime:
+        async with host:
             with ExecutionScope(_AUTHENTICATED):
                 await handle.run("hola", state={"marca": "civic", "km": 7})
         assert engine.states == [{"marca": "civic", "km": 7}]
@@ -134,9 +134,9 @@ class TestNoneStateOnAStatefulArtefact:
         self, shape: StateShape
     ) -> None:
         engine = RecordingScriptedEngine()
-        runtime = _runtime(make_plan(_AGENT, state=shape), engine)
-        async with runtime:
-            await runtime.run(_AGENT, "hola", identity=_AUTHENTICATED)
+        host = _host(make_plan(_AGENT, state=shape), engine)
+        async with host:
+            await host.run(_AGENT, "hola", identity=_AUTHENTICATED)
         assert engine.states == [{"marca": "", "km": 0}]
 
 
@@ -152,10 +152,10 @@ class TestNoneStateAgainstARequiredField:
         self, shape: StateShape
     ) -> None:
         engine = RecordingScriptedEngine()
-        runtime = _runtime(make_plan(_AGENT, state=shape), engine)
-        async with runtime:
+        host = _host(make_plan(_AGENT, state=shape), engine)
+        async with host:
             with pytest.raises(AgentRunError) as excinfo:
-                await runtime.run(_AGENT, "hola", identity=_AUTHENTICATED)
+                await host.run(_AGENT, "hola", identity=_AUTHENTICATED)
 
         assert excinfo.value.code == AgentRunErrorCode.STATE_REQUIRED
         assert engine.stream_count == 0
@@ -167,10 +167,10 @@ class TestRuntimeStateAgainstNoDeclaredShape:
         self,
     ) -> None:
         engine = RecordingScriptedEngine()
-        runtime = _runtime(make_plan(_AGENT), engine)
-        async with runtime:
+        host = _host(make_plan(_AGENT), engine)
+        async with host:
             with pytest.raises(AgentRunError) as excinfo:
-                await runtime.run(_AGENT, "hola", identity=_AUTHENTICATED, state={"anything": 1})
+                await host.run(_AGENT, "hola", identity=_AUTHENTICATED, state={"anything": 1})
 
         assert excinfo.value.code == AgentRunErrorCode.STATE_UNDECLARED
         assert excinfo.value.usage is None
@@ -181,17 +181,17 @@ class TestRuntimeStateAgainstNoDeclaredShape:
 
     async def test_names_the_agent_in_the_refusal(self) -> None:
         engine = RecordingScriptedEngine()
-        runtime = _runtime(make_plan(_AGENT), engine)
-        async with runtime:
+        host = _host(make_plan(_AGENT), engine)
+        async with host:
             with pytest.raises(AgentRunError) as excinfo:
-                await runtime.run(_AGENT, "hola", identity=_AUTHENTICATED, state={"x": 1})
+                await host.run(_AGENT, "hola", identity=_AUTHENTICATED, state={"x": 1})
 
         assert _AGENT in str(excinfo.value)
 
     async def test_a_none_state_is_unaffected(self) -> None:
         """FR-010 refuses a non-empty ``state``; ``None`` is always allowed."""
         engine = RecordingScriptedEngine()
-        runtime = _runtime(make_plan(_AGENT), engine)
-        async with runtime:
-            await runtime.run(_AGENT, "hola", identity=_AUTHENTICATED)
+        host = _host(make_plan(_AGENT), engine)
+        async with host:
+            await host.run(_AGENT, "hola", identity=_AUTHENTICATED)
         assert engine.states == [None]

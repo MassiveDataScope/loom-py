@@ -523,7 +523,7 @@ def build_toolsets(
             its context here, at build time, and every other toolset resolves
             through the per-invocation bundle instead.
         mcp: The worker's MCP toolsets. Passing the *same* store for every plan
-            is what makes an ``mcp`` grant reuse the connection the runtime
+            is what makes an ``mcp`` grant reuse the connection the host
             already opened instead of adding one per agent.
 
     Returns:

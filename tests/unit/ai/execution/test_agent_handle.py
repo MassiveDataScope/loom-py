@@ -233,15 +233,15 @@ class TestAnonymousIdentity:
     async def test_an_anonymous_caller_is_rejected_with_unauthorized(
         self, deps: StubDepsFactory, container: LoomContainer
     ) -> None:
-        runtime = await _agent_host(deps, container)
+        host = await _agent_host(deps, container)
         handle = _AgentHandle(
             name=_AGENT_NAME,
-            runtime=runtime,
+            host=host,
             observability=None,
             sql_query_service=NullSqlQueryService(),
         )
 
-        async with runtime:
+        async with host:
             with ExecutionScope(ANONYMOUS), pytest.raises(AgentRunError) as excinfo:
                 await handle.run("hola")
 
@@ -255,19 +255,19 @@ class TestAnonymousIdentity:
         Edit one without the other and this test is the gap the next review
         catches.
         """
-        runtime = await _agent_host(deps, container)
-        # The anonymous refusal runs before the runtime is ever asked to run
-        # this name, so a name absent from the runtime's own plans is fine
+        host = await _agent_host(deps, container)
+        # The anonymous refusal runs before the host is ever asked to run
+        # this name, so a name absent from the host's own plans is fine
         # here — it matches the agent name ``markers.md`` and the example
         # in ``docs/rest/use-case-dsl.md`` both use.
         handle = _AgentHandle(
             name="incident-triage",
-            runtime=runtime,
+            host=host,
             observability=None,
             sql_query_service=NullSqlQueryService(),
         )
 
-        async with runtime:
+        async with host:
             with ExecutionScope(ANONYMOUS), pytest.raises(AgentRunError) as excinfo:
                 await handle.run("hola")
 
@@ -276,10 +276,10 @@ class TestAnonymousIdentity:
     async def test_an_anonymous_caller_never_reaches_the_model(
         self, deps: StubDepsFactory, container: LoomContainer
     ) -> None:
-        """The engine is never invoked: the run is cut before the runtime's 'run'."""
+        """The engine is never invoked: the run is cut before the host's 'run'."""
         engine = _OneShotEngine()
         provider = CountingEngineProvider(engines={_AGENT_NAME: engine})  # type: ignore[dict-item]
-        runtime = AgentHost(
+        host = AgentHost(
             plans=[make_plan(_AGENT_NAME)],
             config=make_ai_config(),
             engine_plugin=provider,  # type: ignore[arg-type]
@@ -288,12 +288,12 @@ class TestAnonymousIdentity:
         )
         handle = _AgentHandle(
             name=_AGENT_NAME,
-            runtime=runtime,
+            host=host,
             observability=None,
             sql_query_service=NullSqlQueryService(),
         )
 
-        async with runtime:
+        async with host:
             with ExecutionScope(ANONYMOUS), pytest.raises(AgentRunError):
                 await handle.run("hola")
                 assert engine.run_stream_calls == 0
@@ -303,13 +303,13 @@ class TestAnonymousIdentity:
     ) -> None:
         """The engine's run receives exactly the handle's identity, never another:
 
-        the runtime authorises every capability with this identity, so
+        the host authorises every capability with this identity, so
         forcing a different one inside the adapter would leave the capability
         running as a third party.
         """
         engine = _OneShotEngine()
         provider = CountingEngineProvider(engines={_AGENT_NAME: engine})  # type: ignore[dict-item]
-        runtime = AgentHost(
+        host = AgentHost(
             plans=[make_plan(_AGENT_NAME)],
             config=make_ai_config(),
             engine_plugin=provider,  # type: ignore[arg-type]
@@ -318,12 +318,12 @@ class TestAnonymousIdentity:
         )
         handle = _AgentHandle(
             name=_AGENT_NAME,
-            runtime=runtime,
+            host=host,
             observability=None,
             sql_query_service=NullSqlQueryService(),
         )
 
-        async with runtime:
+        async with host:
             with ExecutionScope(_AUTHENTICATED):
                 answer = await handle.run("hola")
 
@@ -339,7 +339,7 @@ class TestProviderDetailsReachTheAnswer:
         details = {"confidence": {"ok": 0.93}}
         engine = _OneShotEngine(provider_details=details)
         provider = CountingEngineProvider(engines={_AGENT_NAME: engine})  # type: ignore[dict-item]
-        runtime = AgentHost(
+        host = AgentHost(
             plans=[make_plan(_AGENT_NAME)],
             config=make_ai_config(),
             engine_plugin=provider,  # type: ignore[arg-type]
@@ -348,12 +348,12 @@ class TestProviderDetailsReachTheAnswer:
         )
         handle = _AgentHandle(
             name=_AGENT_NAME,
-            runtime=runtime,
+            host=host,
             observability=None,
             sql_query_service=NullSqlQueryService(),
         )
 
-        async with runtime:
+        async with host:
             with ExecutionScope(_AUTHENTICATED):
                 answer = await handle.run("hola")
 
@@ -361,13 +361,13 @@ class TestProviderDetailsReachTheAnswer:
 
 
 class TestTheHandlesSpan:
-    """The handle opens its own span; the runtime opens none on its own."""
+    """The handle opens its own span; the host opens none on its own."""
 
     async def test_a_successful_run_opens_and_closes_an_agent_span(
         self, deps: StubDepsFactory, container: LoomContainer
     ) -> None:
         observability, exporter = _tracing_runtime()
-        runtime = AgentHost(
+        host = AgentHost(
             plans=[make_plan(_AGENT_NAME)],
             config=make_ai_config(),
             engine_plugin=CountingEngineProvider(  # type: ignore[arg-type]
@@ -378,12 +378,12 @@ class TestTheHandlesSpan:
         )
         handle = _AgentHandle(
             name=_AGENT_NAME,
-            runtime=runtime,
+            host=host,
             observability=observability,
             sql_query_service=NullSqlQueryService(),
         )
 
-        async with runtime:
+        async with host:
             with ExecutionScope(_AUTHENTICATED):
                 answer = await handle.run("hola")
 
@@ -397,15 +397,15 @@ class TestTheHandlesSpan:
         self, deps: StubDepsFactory, container: LoomContainer
     ) -> None:
         """``observability=None`` is an explicit no-op, not a silent failure."""
-        runtime = await _agent_host(deps, container)
+        host = await _agent_host(deps, container)
         handle = _AgentHandle(
             name=_AGENT_NAME,
-            runtime=runtime,
+            host=host,
             observability=None,
             sql_query_service=NullSqlQueryService(),
         )
 
-        async with runtime:
+        async with host:
             with ExecutionScope(_AUTHENTICATED):
                 answer = await handle.run("hola")
 
@@ -467,15 +467,15 @@ class TestTheThreeModes:
     async def test_run_without_expect_uses_the_artifacts_declared_shape(
         self, deps: StubDepsFactory, container: LoomContainer
     ) -> None:
-        runtime = await _agent_host(deps, container)
+        host = await _agent_host(deps, container)
         handle = _AgentHandle(
             name=_AGENT_NAME,
-            runtime=runtime,
+            host=host,
             observability=None,
             sql_query_service=NullSqlQueryService(),
         )
 
-        async with runtime:
+        async with host:
             with ExecutionScope(_AUTHENTICATED):
                 answer = await handle.run("hola")
 
@@ -485,15 +485,15 @@ class TestTheThreeModes:
         self, deps: StubDepsFactory, container: LoomContainer
     ) -> None:
         engine = _ShapedEngine(shaped_output={"severity": 5})
-        runtime = await _shaped_runtime(deps, container, engine)
+        host = await _shaped_runtime(deps, container, engine)
         handle = _AgentHandle(
             name=_AGENT_NAME,
-            runtime=runtime,
+            host=host,
             observability=None,
             sql_query_service=NullSqlQueryService(),
         )
 
-        async with runtime:
+        async with host:
             with ExecutionScope(_AUTHENTICATED):
                 answer = await handle.run("hola", expect=dict)
 
@@ -504,15 +504,15 @@ class TestTheThreeModes:
         self, deps: StubDepsFactory, container: LoomContainer
     ) -> None:
         engine = _ShapedEngine(shaped_output="a plain sentence")
-        runtime = await _shaped_runtime(deps, container, engine)
+        host = await _shaped_runtime(deps, container, engine)
         handle = _AgentHandle(
             name=_AGENT_NAME,
-            runtime=runtime,
+            host=host,
             observability=None,
             sql_query_service=NullSqlQueryService(),
         )
 
-        async with runtime:
+        async with host:
             with ExecutionScope(_AUTHENTICATED):
                 answer = await handle.run_text("hola")
 
@@ -524,15 +524,15 @@ class TestTheThreeModes:
     ) -> None:
         """The declared shape uses run_stream; a per-run shape uses run_stream_shaped."""
         engine = _ShapedEngine(shaped_output={"anything": True})
-        runtime = await _shaped_runtime(deps, container, engine)
+        host = await _shaped_runtime(deps, container, engine)
         handle = _AgentHandle(
             name=_AGENT_NAME,
-            runtime=runtime,
+            host=host,
             observability=None,
             sql_query_service=NullSqlQueryService(),
         )
 
-        async with runtime:
+        async with host:
             with ExecutionScope(_AUTHENTICATED):
                 await handle.run("hola", expect=dict)
 
@@ -549,7 +549,7 @@ class TestRejectionByOutputHook:
         engine = _ShapedEngine()
         provider = CountingEngineProvider(engines={_AGENT_NAME: engine})  # type: ignore[dict-item]
         plan = conversational_plan(_AGENT_NAME, hook=True)
-        runtime = AgentHost(
+        host = AgentHost(
             plans=[plan],
             config=make_ai_config(),
             engine_plugin=provider,  # type: ignore[arg-type]
@@ -558,12 +558,12 @@ class TestRejectionByOutputHook:
         )
         handle = _AgentHandle(
             name=_AGENT_NAME,
-            runtime=runtime,
+            host=host,
             observability=None,
             sql_query_service=NullSqlQueryService(),
         )
 
-        async with runtime:
+        async with host:
             with ExecutionScope(_AUTHENTICATED), pytest.raises(AgentRunError) as excinfo:
                 await handle.run("hola", expect=dict)
 
@@ -582,7 +582,7 @@ class TestRejectionByOutputHook:
         engine = _ShapedEngine()
         provider = CountingEngineProvider(engines={agent_name: engine})  # type: ignore[dict-item]
         plan = conversational_plan(agent_name, hook=True)
-        runtime = AgentHost(
+        host = AgentHost(
             plans=[plan],
             config=make_ai_config(),
             engine_plugin=provider,  # type: ignore[arg-type]
@@ -591,12 +591,12 @@ class TestRejectionByOutputHook:
         )
         handle = _AgentHandle(
             name=agent_name,
-            runtime=runtime,
+            host=host,
             observability=None,
             sql_query_service=NullSqlQueryService(),
         )
 
-        async with runtime:
+        async with host:
             with ExecutionScope(_AUTHENTICATED), pytest.raises(AgentRunError) as excinfo:
                 await handle.run("hola", expect=dict)
 
@@ -612,7 +612,7 @@ class TestRejectionByOutputHook:
         engine = _ShapedEngine()
         provider = CountingEngineProvider(engines={_AGENT_NAME: engine})  # type: ignore[dict-item]
         plan = conversational_plan(_AGENT_NAME, hook=True)
-        runtime = AgentHost(
+        host = AgentHost(
             plans=[plan],
             config=make_ai_config(),
             engine_plugin=provider,  # type: ignore[arg-type]
@@ -621,12 +621,12 @@ class TestRejectionByOutputHook:
         )
         handle = _AgentHandle(
             name=_AGENT_NAME,
-            runtime=runtime,
+            host=host,
             observability=None,
             sql_query_service=NullSqlQueryService(),
         )
 
-        async with runtime:
+        async with host:
             with ExecutionScope(_AUTHENTICATED), pytest.raises(AgentRunError) as excinfo:
                 await handle.run_text("hola")
 
@@ -639,7 +639,7 @@ class TestRejectionByOutputHook:
         plan = _messages_only_plan(_AGENT_NAME)
         recorder = ConversationRecorder()
         container.register_instance(ConversationRecorder, recorder)
-        runtime = AgentHost(
+        host = AgentHost(
             plans=[plan],
             config=make_ai_config(),
             engine_plugin=provider,  # type: ignore[arg-type]
@@ -648,12 +648,12 @@ class TestRejectionByOutputHook:
         )
         handle = _AgentHandle(
             name=_AGENT_NAME,
-            runtime=runtime,
+            host=host,
             observability=None,
             sql_query_service=NullSqlQueryService(),
         )
 
-        async with runtime:
+        async with host:
             with ExecutionScope(_AUTHENTICATED):
                 answer = await handle.run("hola")
 
@@ -668,7 +668,7 @@ class TestRejectionByOutputHook:
         plan = _messages_only_plan(_AGENT_NAME)
         recorder = ConversationRecorder()
         container.register_instance(ConversationRecorder, recorder)
-        runtime = AgentHost(
+        host = AgentHost(
             plans=[plan],
             config=make_ai_config(),
             engine_plugin=provider,  # type: ignore[arg-type]
@@ -677,12 +677,12 @@ class TestRejectionByOutputHook:
         )
         handle = _AgentHandle(
             name=_AGENT_NAME,
-            runtime=runtime,
+            host=host,
             observability=None,
             sql_query_service=NullSqlQueryService(),
         )
 
-        async with runtime:
+        async with host:
             with ExecutionScope(_AUTHENTICATED):
                 answer = await handle.run("hola", expect=dict)
 
@@ -727,15 +727,15 @@ class TestUngrantedGrants:
         self, deps: StubDepsFactory, container: LoomContainer
     ) -> None:
         """The message names the one granted server, not an arbitrary one."""
-        runtime = await _runtime_with_one_mcp_grant(deps, container)
+        host = await _runtime_with_one_mcp_grant(deps, container)
         handle = _AgentHandle(
             name=_AGENT_NAME,
-            runtime=runtime,
+            host=host,
             observability=None,
             sql_query_service=NullSqlQueryService(),
         )
 
-        async with runtime:
+        async with host:
             with ExecutionScope(_AUTHENTICATED), pytest.raises(AgentRunError) as excinfo:
                 handle.mcp("not-granted")
 
@@ -749,15 +749,15 @@ class TestUngrantedGrants:
         self, deps: StubDepsFactory, container: LoomContainer
     ) -> None:
         """The same rejection on the ``sql`` side: an agent with no ``sql`` grant at all."""
-        runtime = await _agent_host(deps, container)
+        host = await _agent_host(deps, container)
         handle = _AgentHandle(
             name=_AGENT_NAME,
-            runtime=runtime,
+            host=host,
             observability=None,
             sql_query_service=NullSqlQueryService(),
         )
 
-        async with runtime:
+        async with host:
             with ExecutionScope(_AUTHENTICATED), pytest.raises(AgentRunError) as excinfo:
                 handle.sql("reporting")
 
@@ -778,15 +778,15 @@ class TestPublishedGrants:
     async def test_grants_names_the_granted_mcp_server(
         self, deps: StubDepsFactory, container: LoomContainer
     ) -> None:
-        runtime = await _runtime_with_one_mcp_grant(deps, container)
+        host = await _runtime_with_one_mcp_grant(deps, container)
         handle = _AgentHandle(
             name=_AGENT_NAME,
-            runtime=runtime,
+            host=host,
             observability=None,
             sql_query_service=NullSqlQueryService(),
         )
 
-        async with runtime:
+        async with host:
             with ExecutionScope(_AUTHENTICATED):
                 assert handle.grants() == (_RUNBOOKS_SERVER,)
 
@@ -810,7 +810,7 @@ class TestPublishedGrants:
             )
             for name in (_RUNBOOKS_SERVER, second)
         }
-        runtime = AgentHost(
+        host = AgentHost(
             plans=[
                 make_plan(
                     _AGENT_NAME,
@@ -830,12 +830,12 @@ class TestPublishedGrants:
         )
         handle = _AgentHandle(
             name=_AGENT_NAME,
-            runtime=runtime,
+            host=host,
             observability=None,
             sql_query_service=NullSqlQueryService(),
         )
 
-        async with runtime:
+        async with host:
             with ExecutionScope(_AUTHENTICATED):
                 assert handle.grants() == (_RUNBOOKS_SERVER, second, "analytics")
 
@@ -846,14 +846,14 @@ class TestTheMarkerResolver:
     async def test_the_resolver_binds_the_name_and_runs_as_the_caller(
         self, deps: StubDepsFactory, container: LoomContainer
     ) -> None:
-        runtime = await _agent_host(deps, container)
+        host = await _agent_host(deps, container)
         resolver = AgentMarkerResolver(
-            runtime, sql_query_service=NullSqlQueryService(), observability=None
+            host, sql_query_service=NullSqlQueryService(), observability=None
         )
 
         handle = resolver.resolve(Agent(_AGENT_NAME), AgentHandle[Any])
 
-        async with runtime:
+        async with host:
             with ExecutionScope(_AUTHENTICATED):
                 answer = await handle.run("hola")
 
@@ -867,15 +867,15 @@ class TestTheNativeEscapeHatch:
         self, deps: StubDepsFactory, container: LoomContainer
     ) -> None:
         """``_OneShotEngine`` implements the contract and nothing else."""
-        runtime = await _agent_host(deps, container)
+        host = await _agent_host(deps, container)
         handle = _AgentHandle(
             name=_AGENT_NAME,
-            runtime=runtime,
+            host=host,
             observability=None,
             sql_query_service=NullSqlQueryService(),
         )
 
-        async with runtime:
+        async with host:
             with ExecutionScope(_AUTHENTICATED), pytest.raises(NotImplementedError) as excinfo:
                 handle.native()
 
@@ -885,15 +885,15 @@ class TestTheNativeEscapeHatch:
         self, deps: StubDepsFactory, container: LoomContainer
     ) -> None:
         """The hatch never hands out what ``run`` would have refused."""
-        runtime = await _agent_host(deps, container)
+        host = await _agent_host(deps, container)
         handle = _AgentHandle(
             name=_AGENT_NAME,
-            runtime=runtime,
+            host=host,
             observability=None,
             sql_query_service=NullSqlQueryService(),
         )
 
-        async with runtime:
+        async with host:
             with ExecutionScope(ANONYMOUS), pytest.raises(AgentRunError) as excinfo:
                 handle.native()
 
@@ -903,15 +903,15 @@ class TestTheNativeEscapeHatch:
         self, deps: StubDepsFactory, container: LoomContainer
     ) -> None:
         """Undeclared state is refused here exactly as it is on a run."""
-        runtime = await _agent_host(deps, container)
+        host = await _agent_host(deps, container)
         handle = _AgentHandle(
             name=_AGENT_NAME,
-            runtime=runtime,
+            host=host,
             observability=None,
             sql_query_service=NullSqlQueryService(),
         )
 
-        async with runtime:
+        async with host:
             with ExecutionScope(_AUTHENTICATED), pytest.raises(AgentRunError) as excinfo:
                 handle.native(state={"ticket": "INC-1"})
 
@@ -929,7 +929,7 @@ class TestTheNativeEscapeHatch:
         against "no error".
         """
         engine = _NativeRecordingEngine()
-        runtime = AgentHost(
+        host = AgentHost(
             plans=[make_plan(_AGENT_NAME, state=_DEFAULTED_STATE)],
             config=make_ai_config(),
             engine_plugin=CountingEngineProvider(  # type: ignore[arg-type]
@@ -940,12 +940,12 @@ class TestTheNativeEscapeHatch:
         )
         handle = _AgentHandle(
             name=_AGENT_NAME,
-            runtime=runtime,
+            host=host,
             observability=None,
             sql_query_service=NullSqlQueryService(),
         )
 
-        async with runtime:
+        async with host:
             with ExecutionScope(_AUTHENTICATED):
                 handle.native()
 
@@ -955,7 +955,7 @@ class TestTheNativeEscapeHatch:
         self, deps: StubDepsFactory, container: LoomContainer
     ) -> None:
         engine = _NativeRecordingEngine()
-        runtime = AgentHost(
+        host = AgentHost(
             plans=[make_plan(_AGENT_NAME, state=_REQUIRED_STATE)],
             config=make_ai_config(),
             engine_plugin=CountingEngineProvider(  # type: ignore[arg-type]
@@ -966,12 +966,12 @@ class TestTheNativeEscapeHatch:
         )
         handle = _AgentHandle(
             name=_AGENT_NAME,
-            runtime=runtime,
+            host=host,
             observability=None,
             sql_query_service=NullSqlQueryService(),
         )
 
-        async with runtime:
+        async with host:
             with ExecutionScope(_AUTHENTICATED), pytest.raises(AgentRunError) as excinfo:
                 handle.native()
 

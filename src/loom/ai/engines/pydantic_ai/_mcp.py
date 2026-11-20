@@ -2,7 +2,7 @@
 
 One ``MCPToolset`` per connection serves the whole worker, held by
 :class:`SharedMcpToolsets`: :meth:`SharedMcpToolsets.open` is the
-:data:`~loom.ai.execution.McpClientFactory` the runtime enters at start-up, and
+:data:`~loom.ai.execution.McpClientFactory` the host enters at start-up, and
 :meth:`SharedMcpToolsets.for_build` puts that same session behind the run's
 capability boundary (:class:`_SessionToolset`). :class:`_ToolsetSession` is a
 :class:`~loom.ai.abc.ConcurrentMcpSession`: grant views, ``python`` factories
@@ -386,7 +386,7 @@ class _SessionToolset(AbstractToolset[Any]):
     same object for every run and every step.
 
     Args:
-        session: The connection's session, opened by the runtime.
+        session: The connection's session, opened by the host.
         named_after: The connection's first toolset, whose id and label this
             reports.
     """
@@ -628,13 +628,13 @@ def _stdio_transport(command: str, capability: CompiledMcpCapability) -> ClientT
 class SharedMcpToolsets:
     """The MCP toolsets of one worker: one per distinct connection.
 
-    The runtime opens each connection at start-up (:meth:`open`) as a
+    The host opens each connection at start-up (:meth:`open`) as a
     :class:`_ToolsetSession`; :meth:`for_build` hands an agent's ``mcp``
     grant that session and :meth:`session_for` hands it to a ``python``
     factory. A connection start-up did not open (tolerated as unreachable)
     gets a session created on first use that connects on each use.
     :meth:`for_build` refuses a connection :meth:`open` was never asked for.
-    One instance serves one runtime lifecycle; toolsets are never evicted.
+    One instance serves one host lifecycle; toolsets are never evicted.
     Each toolset waits :data:`DEFAULT_MCP_CONNECT_TIMEOUT_SECONDS` for its
     connection and handshake unless :meth:`set_connect_timeout` replaces it.
 
@@ -658,7 +658,7 @@ class SharedMcpToolsets:
         Has no effect on a connection whose toolset :meth:`_toolset` already
         built: the deadline is read once, at build, not on every connect.
         Callers that need the deployment's real ``ai.startup_timeout_ms``
-        must call this before the runtime opens any client.
+        must call this before the host opens any client.
 
         Args:
             seconds: New handshake deadline, in seconds.
@@ -683,7 +683,7 @@ class SharedMcpToolsets:
             connected it.
 
         Raises:
-            AgentCompilationError: When the runtime never opened this
+            AgentCompilationError: When the host never opened this
                 connection through :meth:`open` -- the deployment wired some
                 other MCP client factory -- or when the toolset cannot be built.
         """
@@ -705,7 +705,7 @@ class SharedMcpToolsets:
         """Return the connection's session; one start-up could not open connects on use.
 
         That session holds nothing open: each use enters its toolset and leaves
-        it, so nothing outlives the runtime that never opened the connection.
+        it, so nothing outlives the host that never opened the connection.
         It starts from a toolset of its own, as the one start-up tried released
         its pool.
         """
@@ -750,7 +750,7 @@ class SharedMcpToolsets:
         """Open the worker's session for one grant, connected and ready to list.
 
         Satisfies :data:`~loom.ai.execution.McpClientFactory`: nothing happens
-        until the context is entered, so the runtime's start-up deadline bounds
+        until the context is entered, so the host's start-up deadline bounds
         the whole of it and a failure is reported as a coded start-up issue
         rather than as an exception escaping ``create_app``. Holding the
         context open is what keeps the shared connection alive for the runs.
@@ -798,7 +798,7 @@ async def create_mcp_client(
     """Open one throw-away session against an MCP server, outside any sharing.
 
     For a caller that needs a session of its own — a diagnostic, a probe,
-    a test. A composition root must **not** wire this as the runtime's
+    a test. A composition root must **not** wire this as the host's
     ``mcp_client_factory``: it builds a toolset the engine's run path does not
     know about, so the worker would hold that connection plus one per agent.
     Read ``mcp_client_factory`` off the engine provider instead, which is what

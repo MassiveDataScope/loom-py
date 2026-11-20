@@ -107,9 +107,9 @@ class TestBindingAResolver:
 
 class TestEachCallReadsTheIdentity:
     async def test_one_agent_handle_runs_as_whoever_calls_it(
-        self, runtime: AgentHost, triage: Any, crm: Any, engine: AcmeEngine
+        self, host: AgentHost, triage: Any, crm: Any, engine: AcmeEngine
     ) -> None:
-        async with runtime:
+        async with host:
             for caller in (ALICE, BOB, ALICE):
                 with ExecutionScope(caller):
                     await HANDLE_CALLS["agent"](triage, crm)()
@@ -118,9 +118,9 @@ class TestEachCallReadsTheIdentity:
         assert engine.acting == [ALICE, BOB, ALICE]
 
     async def test_one_sql_view_queries_with_the_roles_of_whoever_calls_it(
-        self, runtime: AgentHost, triage: Any, crm: Any, sql_service: AcmeSqlService
+        self, host: AgentHost, triage: Any, crm: Any, sql_service: AcmeSqlService
     ) -> None:
-        async with runtime:
+        async with host:
             view = triage.sql("acme-reporting")
             for caller in (ALICE, BOB):
                 with ExecutionScope(caller):
@@ -130,9 +130,9 @@ class TestEachCallReadsTheIdentity:
 
     @pytest.mark.parametrize("call", list(HANDLE_CALLS.values()), ids=list(HANDLE_CALLS))
     async def test_a_handle_called_outside_any_execution_fails_closed(
-        self, runtime: AgentHost, triage: Any, crm: Any, call: Any, backend_calls: Any
+        self, host: AgentHost, triage: Any, crm: Any, call: Any, backend_calls: Any
     ) -> None:
-        async with runtime:
+        async with host:
             handle_call = call(triage, crm)
             with pytest.raises(ExecutionRequired):
                 await handle_call()
@@ -140,13 +140,13 @@ class TestEachCallReadsTheIdentity:
         assert backend_calls() == 0
 
     async def test_one_mcp_handle_calls_each_tool_as_whoever_calls_it(
-        self, runtime: AgentHost, session: RecordingMcpSession
+        self, host: AgentHost, session: RecordingMcpSession
     ) -> None:
         recorder = RecordingObserver()
-        resolver = McpMarkerResolver(runtime, observability=Observability([recorder]))
+        resolver = McpMarkerResolver(host, observability=Observability([recorder]))
         crm = resolver.resolve(Mcp(SERVER, include=["find_*"]), McpHandle)
 
-        async with runtime:
+        async with host:
             for caller in (ALICE, BOB):
                 with ExecutionScope(caller):
                     assert await crm.call_untyped(TOOL, {}) == {"orders": 1}

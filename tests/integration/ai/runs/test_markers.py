@@ -33,15 +33,15 @@ class TestDuringAnAgentRun:
             return await holder[0].call_untyped(TOOL, {})
 
         engine = AcmeActingEngine(during=call_tool)
-        runtime = make_runtime(engine)
+        host = make_runtime(engine)
         holder.append(
-            McpMarkerResolver(runtime, observability=Observability([recorder])).resolve(
+            McpMarkerResolver(host, observability=Observability([recorder])).resolve(
                 Mcp(SERVER, include=[TOOL]), McpHandle
             )
         )
 
-        async with runtime:
-            await runtime.run(AGENT, "p", identity=ALICE)
+        async with host:
+            await host.run(AGENT, "p", identity=ALICE)
 
         subjects = {
             event.meta["subject"]
@@ -63,7 +63,7 @@ class TestDuringAnAgentRun:
 
         engine = AcmeActingEngine(during=run_use_case)
 
-        async with make_runtime(engine) as runtime:
-            await runtime.run(AGENT, "p", identity=ALICE)
+        async with make_runtime(engine) as host:
+            await host.run(AGENT, "p", identity=ALICE)
 
         assert seen == [ALICE.subject, ALICE.subject]

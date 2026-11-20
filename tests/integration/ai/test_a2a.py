@@ -122,7 +122,7 @@ class ExplodingEngine:
         conversation: Conversation | None = None,
         state: object | None = None,
     ) -> object:
-        """Fail the same way the stream does; the runtime drives the stream."""
+        """Fail the same way the stream does; the host drives the stream."""
         del prompt, identity, conversation, state
         raise RuntimeError(_CATCH_ALL_CANARY)
 
@@ -192,7 +192,7 @@ async def _serving(
         a2a=a2a if a2a is not None else A2AConfig(base_url=Dsn(_BASE_URL), expose=(_AGENT,)),
         max_prompt_bytes=max_prompt_bytes,
     )
-    runtime = AgentHost(
+    host = AgentHost(
         plans=plans,
         config=config,
         engine_plugin=CountingEngineProvider(engines=engines),  # type: ignore[arg-type]
@@ -200,7 +200,7 @@ async def _serving(
         container=container,
     )
     authenticator = HeaderAuthenticator()
-    async with runtime:
+    async with host:
         app = FastAPI()
         app.add_middleware(
             AuthenticationMiddleware,
@@ -210,14 +210,14 @@ async def _serving(
         if with_http_endpoints:
             mount_agent_endpoints(
                 app,
-                runtime=runtime,
+                host=host,
                 config=config,
                 authenticator=authenticator,  # type: ignore[arg-type]
                 prefix=_AGENTS_PREFIX,
             )
         mount_a2a_endpoints(
             app,
-            runtime=runtime,
+            host=host,
             config=config,
             plans=plans,
             authenticator=authenticator,  # type: ignore[arg-type]
@@ -230,7 +230,7 @@ async def _serving(
             yield app, client
 
 
-def _runtime(
+def _host(
     *,
     deps: DepsFactory,
     container: LoomContainer,
@@ -261,8 +261,8 @@ async def _bind_a2a(
     )
     plans = [make_plan(_AGENT)]
     authenticator = HeaderAuthenticator()
-    runtime = _runtime(deps=deps, container=container, config=config, plans=plans)
-    async with runtime:
+    host = _host(deps=deps, container=container, config=config, plans=plans)
+    async with host:
         app = FastAPI()
         app.add_middleware(
             AuthenticationMiddleware,
@@ -271,7 +271,7 @@ async def _bind_a2a(
         )
         mount_a2a_endpoints(
             app,
-            runtime=runtime,
+            host=host,
             config=config,
             plans=plans,
             authenticator=authenticator,  # type: ignore[arg-type]
@@ -298,10 +298,10 @@ async def _serving_anonymously(
         a2a=A2AConfig(base_url=Dsn(_BASE_URL), expose=(_AGENT,)),
     )
     plans = [make_plan(_AGENT)]
-    runtime = _runtime(deps=deps, container=container, config=config, plans=plans)
-    async with runtime:
+    host = _host(deps=deps, container=container, config=config, plans=plans)
+    async with host:
         app = FastAPI()
-        mount_a2a_endpoints(app, runtime=runtime, config=config, plans=plans, prefix=_PREFIX)
+        mount_a2a_endpoints(app, host=host, config=config, plans=plans, prefix=_PREFIX)
         transport = httpx.ASGITransport(app=app)
         async with httpx.AsyncClient(transport=transport, base_url="http://agents.test") as client:
             yield client
@@ -415,7 +415,7 @@ class TestOptionality:
         """No section means no card route and no invocation route."""
         config = make_ai_config(endpoints={_AGENT: make_endpoint()})
         plans = [make_plan(_AGENT)]
-        runtime = AgentHost(
+        host = AgentHost(
             plans=plans,
             config=config,
             engine_plugin=CountingEngineProvider(),  # type: ignore[arg-type]
@@ -423,9 +423,9 @@ class TestOptionality:
             container=container,
         )
 
-        async with runtime:
+        async with host:
             app = FastAPI()
-            mount_a2a_endpoints(app, runtime=runtime, config=config, plans=plans)
+            mount_a2a_endpoints(app, host=host, config=config, plans=plans)
 
         assert not [path for path in _route_paths(app) if path.startswith(_PREFIX)]
 

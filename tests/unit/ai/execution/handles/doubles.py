@@ -28,7 +28,7 @@ NO_SUBJECT = Identity(subject="", roles=("analyst",), mechanism="test")
 
 
 class AcmeEngine:
-    """One successful turn per run, recording who the runtime ran it as and who was acting."""
+    """One successful turn per run, recording who the host ran it as and who was acting."""
 
     def __init__(self) -> None:
         self.identities: list[Identity] = []

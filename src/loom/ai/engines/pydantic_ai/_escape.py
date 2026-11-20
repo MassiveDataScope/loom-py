@@ -95,7 +95,7 @@ async def native_agent(
             ``AGENT_CALL_CYCLE`` or ``AGENT_CALL_TOO_DEEP`` when entering the
             guard refuses this run; with ``TOO_MANY_RUNS`` when no admission
             permit is free.
-        RuntimeError: When the runtime serving *handle* was never entered.
+        RuntimeError: When the host serving *handle* was never entered.
 
     Example::
 

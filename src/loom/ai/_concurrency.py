@@ -5,7 +5,7 @@ already declaring :class:`~loom.ai.abc.ConcurrentMcpSession` — makes the same
 promise to every caller sharing it: a call already running finishes even if
 the caller waiting on it is cancelled, so the session stays consistent for
 whoever else is using it. :func:`shield_and_drain` is that promise, kept in
-one place so neither the runtime's own lock nor a session that declares
+one place so neither the host's own lock nor a session that declares
 itself already concurrency-safe has to restate it.
 """
 

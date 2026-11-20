@@ -1,4 +1,4 @@
-"""The composition root hands the runtime its client factories (FR-025, FR-040).
+"""The composition root hands the host its client factories (FR-025, FR-040).
 
 ``create_app`` used to build :class:`~loom.ai.execution.AgentHost` with neither
 ``mcp_client_factory`` nor ``a2a_client_factory``. An artifact granting either
@@ -7,10 +7,10 @@ configured" — a failure no deployment could act on, because nothing in the
 configuration file was wrong.
 
 These tests drive the real ``create_app`` over a temporary project and enter its
-lifespan, which is where the runtime opens its live clients. Both grants point
+lifespan, which is where the host opens its live clients. Both grants point
 at addresses nothing serves, so start-up still fails; what must have changed is
 *why*. The absence of the missing-factory wording is the assertion: it can only
-be produced by a runtime that was handed no factory at all.
+be produced by a host that was handed no factory at all.
 """
 
 from __future__ import annotations
@@ -130,7 +130,7 @@ class TestMcpFactory:
     def test_does_not_complain_about_the_factory_when_the_artifact_grants_mcp(
         self, tmp_path: Path
     ) -> None:
-        """The wording only a factory-less runtime produces must be gone."""
+        """The wording only a factory-less host produces must be gone."""
         config_path = _write_project(
             tmp_path, specs={_MCP_AGENT: _spec(_MCP_AGENT, {"kind": "mcp", "server": _SERVER})}
         )

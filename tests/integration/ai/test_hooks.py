@@ -132,7 +132,7 @@ class Recorder:
 
 
 class TriageCommand(Command, frozen=True, kw_only=True):
-    """Typed output plus every context name the runtime offers."""
+    """Typed output plus every context name the host offers."""
 
     output: TriageReport
     interaction_id: str
@@ -227,7 +227,7 @@ def _hooked_plan(use_case: type[UseCase[Any, Any]], **plan_kwargs: Any) -> Agent
     return msgspec.structs.replace(make_plan(_AGENT, **plan_kwargs), on_output=hook)
 
 
-def _runtime(
+def _host(
     engine: ScriptedEngine,
     plan: AgentPlan,
     *,
@@ -235,7 +235,7 @@ def _runtime(
     container: LoomContainer,
     max_concurrent_runs: int = 8,
 ) -> AgentHost:
-    """Build a runtime serving one scripted agent."""
+    """Build a host serving one scripted agent."""
     return AgentHost(
         plans=[plan],
         config=make_ai_config(max_concurrent_runs=max_concurrent_runs),
@@ -255,10 +255,10 @@ def _tool_script(output: object) -> tuple[AgentEvent, ...]:
     )
 
 
-async def _collect(runtime: AgentHost, identity: Identity, **kwargs: Any) -> list[AgentEvent]:
+async def _collect(host: AgentHost, identity: Identity, **kwargs: Any) -> list[AgentEvent]:
     """Consume a whole stream and return its events."""
     events: list[AgentEvent] = []
-    async with runtime.run_stream(_AGENT, "prompt", identity=identity, **kwargs) as stream:
+    async with host.run_stream(_AGENT, "prompt", identity=identity, **kwargs) as stream:
         async for event in stream:
             events.append(event)
     return events
@@ -294,10 +294,10 @@ class TestHookExecution:
         """The command carries the validated output as the declared type plus the context."""
         engine = ScriptedEngine(script=default_script(REPORT))
         plan = _hooked_plan(RecordTriage)
-        runtime = _runtime(engine, plan, deps=hook_deps, container=container)
+        host = _host(engine, plan, deps=hook_deps, container=container)
 
-        async with runtime:
-            result = await runtime.run(_AGENT, "prompt", identity=identity)
+        async with host:
+            result = await host.run(_AGENT, "prompt", identity=identity)
 
         assert len(recorder.calls) == 1
         command = recorder.calls[0].command
@@ -322,10 +322,10 @@ class TestHookExecution:
     ) -> None:
         """A dict output reaches a ``dict[str, Any]`` field unchanged."""
         engine = ScriptedEngine(script=default_script({"answer": "42"}))
-        runtime = _runtime(engine, _hooked_plan(RecordAnswer), deps=hook_deps, container=container)
+        host = _host(engine, _hooked_plan(RecordAnswer), deps=hook_deps, container=container)
 
-        async with runtime:
-            await runtime.run(_AGENT, "prompt", identity=identity)
+        async with host:
+            await host.run(_AGENT, "prompt", identity=identity)
 
         command = recorder.calls[0].command
         assert isinstance(command, AnswerCommand)
@@ -340,10 +340,10 @@ class TestHookExecution:
     ) -> None:
         """``subject`` inside the output stays nested; the command's is the caller's."""
         engine = ScriptedEngine(script=default_script({"answer": "42", "subject": "spoofed"}))
-        runtime = _runtime(engine, _hooked_plan(RecordAnswer), deps=hook_deps, container=container)
+        host = _host(engine, _hooked_plan(RecordAnswer), deps=hook_deps, container=container)
 
-        async with runtime:
-            await runtime.run(_AGENT, "prompt", identity=identity)
+        async with host:
+            await host.run(_AGENT, "prompt", identity=identity)
 
         command = recorder.calls[0].command
         assert isinstance(command, AnswerCommand)
@@ -359,10 +359,10 @@ class TestHookExecution:
     ) -> None:
         """The offered dict is filtered to the declared names before ``from_payload``."""
         engine = ScriptedEngine(script=default_script({"answer": "42"}))
-        runtime = _runtime(engine, _hooked_plan(RecordStrict), deps=hook_deps, container=container)
+        host = _host(engine, _hooked_plan(RecordStrict), deps=hook_deps, container=container)
 
-        async with runtime:
-            result = await runtime.run(_AGENT, "prompt", identity=identity)
+        async with host:
+            result = await host.run(_AGENT, "prompt", identity=identity)
 
         command = recorder.calls[0].command
         assert isinstance(command, StrictCommand)
@@ -380,9 +380,9 @@ class TestHookExecution:
     ) -> None:
         """Tool events pass through untouched; the hook runs once, at the final event."""
         engine = ScriptedEngine(script=_tool_script({"answer": "42"}))
-        runtime = _runtime(engine, _hooked_plan(RecordAnswer), deps=hook_deps, container=container)
+        host = _host(engine, _hooked_plan(RecordAnswer), deps=hook_deps, container=container)
 
-        async with runtime, runtime.run_stream(_AGENT, "prompt", identity=identity) as stream:
+        async with host, host.run_stream(_AGENT, "prompt", identity=identity) as stream:
             async for event in stream:
                 recorder.timeline.append(type(event).__name__)
 
@@ -404,10 +404,10 @@ class TestHookExecution:
     ) -> None:
         """``Caller()`` inside the use case is the run's identity."""
         engine = ScriptedEngine(script=default_script(REPORT))
-        runtime = _runtime(engine, _hooked_plan(RecordTriage), deps=hook_deps, container=container)
+        host = _host(engine, _hooked_plan(RecordTriage), deps=hook_deps, container=container)
 
-        async with runtime:
-            await runtime.run(_AGENT, "prompt", identity=identity)
+        async with host:
+            await host.run(_AGENT, "prompt", identity=identity)
 
         assert recorder.calls[0].caller == identity
 
@@ -444,10 +444,10 @@ class TestHookExecution:
     ) -> None:
         """An anonymous run still records, with ``Caller()`` bound to ``ANONYMOUS``."""
         engine = ScriptedEngine(script=default_script(REPORT))
-        runtime = _runtime(engine, _hooked_plan(RecordTriage), deps=hook_deps, container=container)
+        host = _host(engine, _hooked_plan(RecordTriage), deps=hook_deps, container=container)
 
-        async with runtime:
-            await runtime.run(_AGENT, "prompt", identity=ANONYMOUS)
+        async with host:
+            await host.run(_AGENT, "prompt", identity=ANONYMOUS)
 
         call = recorder.calls[0]
         assert call.caller == ANONYMOUS
@@ -463,10 +463,10 @@ class TestHookExecution:
     ) -> None:
         """Without a hook the run is still named; nothing is executed."""
         engine = ScriptedEngine()
-        runtime = _runtime(engine, make_plan(_AGENT), deps=hook_deps, container=container)
+        host = _host(engine, make_plan(_AGENT), deps=hook_deps, container=container)
 
-        async with runtime:
-            result = await runtime.run(_AGENT, "prompt", identity=identity)
+        async with host:
+            result = await host.run(_AGENT, "prompt", identity=identity)
 
         assert result.interaction_id is not None
         assert len(result.interaction_id) == 32
@@ -490,11 +490,11 @@ class TestHookFailures:
         """The caller gets the coded error and the id; the exception text stays server-side."""
         recorder.failure = ValueError("secret detail")
         engine = ScriptedEngine(script=default_script({"answer": "42"}))
-        runtime = _runtime(engine, _hooked_plan(RecordAnswer), deps=hook_deps, container=container)
+        host = _host(engine, _hooked_plan(RecordAnswer), deps=hook_deps, container=container)
 
-        async with runtime:
+        async with host:
             with pytest.raises(AgentRunError) as failure:
-                await runtime.run(_AGENT, "prompt", identity=identity)
+                await host.run(_AGENT, "prompt", identity=identity)
 
         assert failure.value.code is AgentRunErrorCode.HOOK_FAILED
         assert failure.value.interaction_id is not None
@@ -513,11 +513,11 @@ class TestHookFailures:
         """A hook ending in its own ``CancelledError`` is a hook failure, not a consumer exit."""
         recorder.failure = asyncio.CancelledError()
         engine = ScriptedEngine(script=default_script({"answer": "42"}))
-        runtime = _runtime(engine, _hooked_plan(RecordAnswer), deps=hook_deps, container=container)
+        host = _host(engine, _hooked_plan(RecordAnswer), deps=hook_deps, container=container)
 
-        async with runtime:
+        async with host:
             with pytest.raises(AgentRunError) as failure:
-                await runtime.run(_AGENT, "prompt", identity=identity)
+                await host.run(_AGENT, "prompt", identity=identity)
 
         assert failure.value.code is AgentRunErrorCode.HOOK_FAILED
         assert failure.value.interaction_id is not None
@@ -534,10 +534,10 @@ class TestHookFailures:
         """The stream closes with one ``error`` carrying the id and no ``final``."""
         recorder.failure = asyncio.CancelledError()
         engine = ScriptedEngine(script=default_script({"answer": "42"}))
-        runtime = _runtime(engine, _hooked_plan(RecordAnswer), deps=hook_deps, container=container)
+        host = _host(engine, _hooked_plan(RecordAnswer), deps=hook_deps, container=container)
 
-        async with runtime:
-            events = await _collect(runtime, identity)
+        async with host:
+            events = await _collect(host, identity)
 
         terminal = [event for event in events if isinstance(event, ErrorEvent | FinalEvent)]
         assert len(terminal) == 1
@@ -557,10 +557,10 @@ class TestHookFailures:
         """The stream ends in one ``error`` event carrying the id, and no ``final``."""
         recorder.failure = ValueError("secret detail")
         engine = ScriptedEngine(script=default_script({"answer": "42"}))
-        runtime = _runtime(engine, _hooked_plan(RecordAnswer), deps=hook_deps, container=container)
+        host = _host(engine, _hooked_plan(RecordAnswer), deps=hook_deps, container=container)
 
-        async with runtime:
-            events = await _collect(runtime, identity)
+        async with host:
+            events = await _collect(host, identity)
 
         terminal = [event for event in events if isinstance(event, ErrorEvent | FinalEvent)]
         assert len(terminal) == 1
@@ -581,11 +581,11 @@ class TestHookFailures:
         """An authorization denial keeps its meaning and its fixed text."""
         recorder.failure = Forbidden("triage of INC-1 is restricted")
         engine = ScriptedEngine(script=default_script({"answer": "42"}))
-        runtime = _runtime(engine, _hooked_plan(RecordAnswer), deps=hook_deps, container=container)
+        host = _host(engine, _hooked_plan(RecordAnswer), deps=hook_deps, container=container)
 
-        async with runtime:
+        async with host:
             with pytest.raises(AgentRunError) as failure:
-                await runtime.run(_AGENT, "prompt", identity=identity)
+                await host.run(_AGENT, "prompt", identity=identity)
 
         assert failure.value.code is AgentRunErrorCode.UNAUTHORIZED
         assert str(failure.value) == _DENIED_MESSAGE
@@ -602,13 +602,13 @@ class TestHookFailures:
         recorder.sleep_s = 5.0
         engine = ScriptedEngine(script=default_script({"answer": "42"}))
         plan = _hooked_plan(RecordAnswer, policies=make_policies(tool_timeout_ms=50))
-        runtime = _runtime(engine, plan, deps=hook_deps, container=container)
+        host = _host(engine, plan, deps=hook_deps, container=container)
         loop = asyncio.get_running_loop()
 
-        async with runtime:
+        async with host:
             started = loop.time()
             with pytest.raises(AgentRunError) as failure:
-                await runtime.run(_AGENT, "prompt", identity=identity)
+                await host.run(_AGENT, "prompt", identity=identity)
             elapsed = loop.time() - started
 
         assert failure.value.code is AgentRunErrorCode.HOOK_FAILED
@@ -627,10 +627,10 @@ class TestHookFailures:
     ) -> None:
         """A successful hook is one ``begin → commit`` through the executor."""
         engine = ScriptedEngine(script=default_script({"answer": "42"}))
-        runtime = _runtime(engine, _hooked_plan(RecordAnswer), deps=hook_deps, container=container)
+        host = _host(engine, _hooked_plan(RecordAnswer), deps=hook_deps, container=container)
 
-        async with runtime:
-            await runtime.run(_AGENT, "prompt", identity=identity)
+        async with host:
+            await host.run(_AGENT, "prompt", identity=identity)
 
         assert hook_deps.uow.log == ["begin", "commit"]
         assert len(recorder.calls) == 1
@@ -651,12 +651,12 @@ class TestIncompleteRuns:
     ) -> None:
         """An engine failure passes through with the id and runs no hook."""
         engine = ScriptedEngine(script=error_script(AgentRunErrorCode.PROVIDER_UNAVAILABLE))
-        runtime = _runtime(engine, _hooked_plan(RecordAnswer), deps=hook_deps, container=container)
+        host = _host(engine, _hooked_plan(RecordAnswer), deps=hook_deps, container=container)
 
-        async with runtime:
-            events = await _collect(runtime, identity)
+        async with host:
+            events = await _collect(host, identity)
             with pytest.raises(AgentRunError) as failure:
-                await runtime.run(_AGENT, "prompt", identity=identity)
+                await host.run(_AGENT, "prompt", identity=identity)
 
         error = events[-1]
         assert isinstance(error, ErrorEvent)
@@ -675,10 +675,10 @@ class TestIncompleteRuns:
         """A ``RUN_TIMEOUT`` breach is terminal, named, and runs no hook."""
         engine = ScriptedEngine(script=default_script({"answer": "42"}), delays_ms=(0, 400))
         plan = _hooked_plan(RecordAnswer, policies=make_policies(run_timeout_ms=30))
-        runtime = _runtime(engine, plan, deps=hook_deps, container=container)
+        host = _host(engine, plan, deps=hook_deps, container=container)
 
-        async with runtime:
-            events = await _collect(runtime, identity)
+        async with host:
+            events = await _collect(host, identity)
 
         error = events[-1]
         assert isinstance(error, ErrorEvent)
@@ -695,9 +695,9 @@ class TestIncompleteRuns:
     ) -> None:
         """Leaving after the first delta closes the generators; nothing is recorded."""
         engine = ScriptedEngine(script=default_script({"answer": "42"}))
-        runtime = _runtime(engine, _hooked_plan(RecordAnswer), deps=hook_deps, container=container)
+        host = _host(engine, _hooked_plan(RecordAnswer), deps=hook_deps, container=container)
 
-        async with runtime, runtime.run_stream(_AGENT, "prompt", identity=identity) as stream:
+        async with host, host.run_stream(_AGENT, "prompt", identity=identity) as stream:
             async for event in stream:
                 assert isinstance(event, TextDeltaEvent)
                 break
@@ -714,11 +714,11 @@ class TestIncompleteRuns:
     ) -> None:
         """A stream exhausted without a terminal event still ends named; no hook runs."""
         engine = ScriptedEngine(script=(TextDeltaEvent(text="ok"),))
-        runtime = _runtime(engine, _hooked_plan(RecordAnswer), deps=hook_deps, container=container)
+        host = _host(engine, _hooked_plan(RecordAnswer), deps=hook_deps, container=container)
 
-        async with runtime:
+        async with host:
             with pytest.raises(AgentRunError) as failure:
-                await runtime.run(_AGENT, "prompt", identity=identity)
+                await host.run(_AGENT, "prompt", identity=identity)
 
         assert failure.value.code is AgentRunErrorCode.PROVIDER_UNAVAILABLE
         assert failure.value.interaction_id is not None
@@ -734,10 +734,10 @@ class TestIncompleteRuns:
     ) -> None:
         """Exactly one ``error`` event closes the stream, carrying the id."""
         engine = ScriptedEngine(script=(TextDeltaEvent(text="ok"),))
-        runtime = _runtime(engine, _hooked_plan(RecordAnswer), deps=hook_deps, container=container)
+        host = _host(engine, _hooked_plan(RecordAnswer), deps=hook_deps, container=container)
 
-        async with runtime:
-            events = await _collect(runtime, identity)
+        async with host:
+            events = await _collect(host, identity)
 
         terminal = [event for event in events if isinstance(event, ErrorEvent | FinalEvent)]
         assert len(terminal) == 1
@@ -765,10 +765,10 @@ class TestCancellationDuringTheHook:
         recorder.gate = asyncio.Event()
         engine = ScriptedEngine(script=default_script({"answer": "42"}))
         plan = _hooked_plan(RecordAnswer)
-        runtime = _runtime(engine, plan, deps=hook_deps, container=container, max_concurrent_runs=1)
+        host = _host(engine, plan, deps=hook_deps, container=container, max_concurrent_runs=1)
 
-        async with runtime:
-            consumer = asyncio.create_task(runtime.run(_AGENT, "prompt", identity=identity))
+        async with host:
+            consumer = asyncio.create_task(host.run(_AGENT, "prompt", identity=identity))
             await recorder.entered.wait()
             consumer.cancel()
             recorder.gate.set()
@@ -779,7 +779,7 @@ class TestCancellationDuringTheHook:
             assert recorder.cancelled is False
 
             recorder.gate = None
-            result = await runtime.run(_AGENT, "prompt", identity=identity)
+            result = await host.run(_AGENT, "prompt", identity=identity)
 
         assert result.hook_result is not None
         assert len(recorder.calls) == 2
@@ -794,10 +794,10 @@ class TestCancellationDuringTheHook:
         """A second cancel while waiting for the hook to settle cuts the hook, not just the wait."""
         recorder.gate = asyncio.Event()
         engine = ScriptedEngine(script=default_script({"answer": "42"}))
-        runtime = _runtime(engine, _hooked_plan(RecordAnswer), deps=hook_deps, container=container)
+        host = _host(engine, _hooked_plan(RecordAnswer), deps=hook_deps, container=container)
 
-        async with runtime:
-            consumer = asyncio.create_task(runtime.run(_AGENT, "prompt", identity=identity))
+        async with host:
+            consumer = asyncio.create_task(host.run(_AGENT, "prompt", identity=identity))
             await recorder.entered.wait()
             consumer.cancel()
             await asyncio.sleep(0)
@@ -825,10 +825,10 @@ class TestOrderInStream:
     ) -> None:
         """The record exists before the consumer sees ``final``, which carries the result."""
         engine = ScriptedEngine(script=default_script(REPORT))
-        runtime = _runtime(engine, _hooked_plan(RecordTriage), deps=hook_deps, container=container)
+        host = _host(engine, _hooked_plan(RecordTriage), deps=hook_deps, container=container)
 
         final: object = None
-        async with runtime, runtime.run_stream(_AGENT, "prompt", identity=identity) as stream:
+        async with host, host.run_stream(_AGENT, "prompt", identity=identity) as stream:
             async for event in stream:
                 recorder.timeline.append(type(event).__name__)
                 final = event
@@ -854,10 +854,10 @@ class TestConversationId:
     ) -> None:
         """The opaque value is copied verbatim into the command."""
         engine = ScriptedEngine(script=default_script({"answer": "42"}))
-        runtime = _runtime(engine, _hooked_plan(RecordAnswer), deps=hook_deps, container=container)
+        host = _host(engine, _hooked_plan(RecordAnswer), deps=hook_deps, container=container)
 
-        async with runtime:
-            await runtime.run(_AGENT, "prompt", identity=identity, conversation_id="c-42")
+        async with host:
+            await host.run(_AGENT, "prompt", identity=identity, conversation_id="c-42")
 
         command = recorder.calls[0].command
         assert isinstance(command, AnswerCommand)
@@ -870,12 +870,12 @@ class TestConversationId:
         hook_deps: RecordingDepsFactory,
         container: LoomContainer,
     ) -> None:
-        """Absent means ``None``; the runtime never invents one."""
+        """Absent means ``None``; the host never invents one."""
         engine = ScriptedEngine(script=default_script({"answer": "42"}))
-        runtime = _runtime(engine, _hooked_plan(RecordAnswer), deps=hook_deps, container=container)
+        host = _host(engine, _hooked_plan(RecordAnswer), deps=hook_deps, container=container)
 
-        async with runtime:
-            events = await _collect(runtime, identity)
+        async with host:
+            events = await _collect(host, identity)
 
         command = recorder.calls[0].command
         assert isinstance(command, AnswerCommand)
@@ -891,17 +891,15 @@ class TestConversationId:
     ) -> None:
         """An out-of-bound value is a programming error, refused before admission."""
         engine = ScriptedEngine(script=default_script({"answer": "42"}))
-        runtime = _runtime(engine, _hooked_plan(RecordAnswer), deps=hook_deps, container=container)
+        host = _host(engine, _hooked_plan(RecordAnswer), deps=hook_deps, container=container)
 
-        async with runtime:
+        async with host:
             with pytest.raises(ValueError, match="conversation_id"):
-                await runtime.run(_AGENT, "prompt", identity=identity, conversation_id="x" * 129)
+                await host.run(_AGENT, "prompt", identity=identity, conversation_id="x" * 129)
             with pytest.raises(ValueError, match="conversation_id"):
-                async with runtime.run_stream(
-                    _AGENT, "prompt", identity=identity, conversation_id=""
-                ):
+                async with host.run_stream(_AGENT, "prompt", identity=identity, conversation_id=""):
                     pass
-            await runtime.run(_AGENT, "prompt", identity=identity, conversation_id="x" * 128)
+            await host.run(_AGENT, "prompt", identity=identity, conversation_id="x" * 128)
 
         assert engine.stream_count == 1
         assert len(recorder.calls) == 1
@@ -924,7 +922,7 @@ class TestStartupProbe:
             "tools": StubMcpClient(label="tools", session=RecordingMcpSession(), log=lifecycle_log)
         }
         plan = _hooked_plan(RecordAnswer, capabilities=(make_mcp_capability("tools"),))
-        runtime = AgentHost(
+        host = AgentHost(
             plans=[plan],
             config=make_ai_config(mcp_servers=make_mcp_servers("tools")),
             engine_plugin=CountingEngineProvider(),  # type: ignore[arg-type]
@@ -934,7 +932,7 @@ class TestStartupProbe:
         )
 
         with pytest.raises(AgentCompilationError) as failure:
-            async with runtime:
+            async with host:
                 pass
 
         issues = failure.value.issues
@@ -950,9 +948,9 @@ class TestStartupProbe:
     ) -> None:
         """The dict bundle stays valid for a deployment without hooks."""
         engine = ScriptedEngine()
-        runtime = _runtime(engine, make_plan(_AGENT), deps=deps, container=container)
+        host = _host(engine, make_plan(_AGENT), deps=deps, container=container)
 
-        async with runtime:
-            result = await runtime.run(_AGENT, "prompt", identity=identity)
+        async with host:
+            result = await host.run(_AGENT, "prompt", identity=identity)
 
         assert result.interaction_id is not None

@@ -92,7 +92,7 @@ class _Model:
 
 @dataclass
 class _World:
-    """One server, the worker's shared toolsets over it, and the session the runtime opened."""
+    """One server, the worker's shared toolsets over it, and the session the host opened."""
 
     server: InProcessServer
     shared: SharedMcpToolsets
@@ -154,7 +154,7 @@ def _counting_builds(monkeypatch: pytest.MonkeyPatch) -> list[object]:
 
 @asynccontextmanager
 async def _world(monkeypatch: pytest.MonkeyPatch, *, warm: bool = True) -> AsyncIterator[_World]:
-    """Open the connection as the runtime does: entered, its tools listed, one call made."""
+    """Open the connection as the host does: entered, its tools listed, one call made."""
     built = _counting_builds(monkeypatch)
     async with serving(monkeypatch) as server:
         shared = SharedMcpToolsets()
@@ -528,15 +528,15 @@ class TestTheGrantViews:
     """A use case's ``Mcp()`` marker and ``handle.mcp()`` report an interruption alike."""
 
     async def test_report_the_interrupted_call_code(self, monkeypatch: pytest.MonkeyPatch) -> None:
-        async with serving(monkeypatch) as server, _runtime_over(server) as runtime:
+        async with serving(monkeypatch) as server, _runtime_over(server) as host:
             identity = Identity(subject="tester")
             server.fault("echo", "cut", "cut")
-            marker = McpMarkerResolver(runtime, observability=None).resolve(
+            marker = McpMarkerResolver(host, observability=None).resolve(
                 Mcp(_SERVER, include=["echo"]), McpHandle
             )
             handle = _AgentHandle(
                 name="agent",
-                runtime=runtime,
+                host=host,
                 observability=None,
                 sql_query_service=NullSqlQueryService(),
             ).mcp(_SERVER)
@@ -560,13 +560,13 @@ _SERVER = "orders"
 
 @asynccontextmanager
 async def _runtime_over(server: InProcessServer) -> AsyncIterator[AgentHost]:
-    """A runtime on the default start-up budget whose agent and use case share the server."""
+    """A host on the default start-up budget whose agent and use case share the server."""
     from tests.helpers.ai import CountingEngineProvider, StubDepsFactory, make_ai_config
     from tests.integration.ai.conftest import make_mcp_capability, make_mcp_servers, make_plan
 
     del server  # every toolset built while it serves reaches it, whatever the URL
     grant = make_mcp_capability(_SERVER)
-    runtime = AgentHost(
+    host = AgentHost(
         plans=[make_plan("agent", capabilities=[grant])],
         config=make_ai_config(mcp_servers=make_mcp_servers(_SERVER), startup_timeout_ms=10000),
         engine_plugin=CountingEngineProvider(),  # type: ignore[arg-type]
@@ -577,5 +577,5 @@ async def _runtime_over(server: InProcessServer) -> AsyncIterator[AgentHost]:
             UseCaseMcpGrant(capability=grant, usecase="orders.find", parameter="gateway"),
         ),
     )
-    async with runtime:
-        yield runtime
+    async with host:
+        yield host

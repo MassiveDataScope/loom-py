@@ -32,15 +32,15 @@ def _bind_agent_surfaces(
         ConfigError: When an agent opts in without a usable authenticator, or
             when its callers are verified by a JWT without a validated ``aud``.
     """
-    config, runtime = ai.config, ai.runtime
-    if config is None or runtime is None:
+    config, agent_host = ai.config, ai.agent_host
+    if config is None or agent_host is None:
         return
     _validate_agent_endpoint_auth(config, auth)
     from loom.ai.fastapi.endpoints import mount_agent_endpoints
 
     mount_agent_endpoints(
         app,
-        runtime=runtime,
+        host=agent_host,
         config=config,
         authenticator=auth.authenticator,
         observability=observability,
@@ -52,7 +52,7 @@ def _bind_agent_surfaces(
 
     mount_a2a_endpoints(
         app,
-        runtime=runtime,
+        host=agent_host,
         config=config,
         plans=ai.plans,
         authenticator=auth.authenticator,

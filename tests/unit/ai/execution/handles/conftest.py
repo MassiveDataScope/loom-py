@@ -1,4 +1,4 @@
-"""A runtime granting one agent an ``mcp`` server and a ``sql`` connection, and both resolvers."""
+"""A host granting one agent an ``mcp`` server and a ``sql`` connection, and both resolvers."""
 
 from __future__ import annotations
 
@@ -55,7 +55,7 @@ def sql_service() -> AcmeSqlService:
 
 @pytest.fixture
 def make_runtime(session: RecordingMcpSession, engine: AcmeEngine) -> Any:
-    """Build the runtime, not entered; ``reachable=False`` tolerates the server as down."""
+    """Build the host, not entered; ``reachable=False`` tolerates the server as down."""
 
     def make(*, reachable: bool = True, use_case_servers: tuple[str, ...] = (SERVER,)) -> Any:
         client = StubMcpClient(
@@ -97,18 +97,18 @@ def make_runtime(session: RecordingMcpSession, engine: AcmeEngine) -> Any:
 
 
 @pytest.fixture
-def runtime(make_runtime: Any) -> AgentHost:
+def host(make_runtime: Any) -> AgentHost:
     return make_runtime()  # type: ignore[no-any-return]
 
 
 @pytest.fixture
-def agent_resolver(runtime: AgentHost, sql_service: AcmeSqlService) -> AgentMarkerResolver:
-    return AgentMarkerResolver(runtime, sql_query_service=sql_service, observability=None)
+def agent_resolver(host: AgentHost, sql_service: AcmeSqlService) -> AgentMarkerResolver:
+    return AgentMarkerResolver(host, sql_query_service=sql_service, observability=None)
 
 
 @pytest.fixture
-def mcp_resolver(runtime: AgentHost) -> McpMarkerResolver:
-    return McpMarkerResolver(runtime, observability=None)
+def mcp_resolver(host: AgentHost) -> McpMarkerResolver:
+    return McpMarkerResolver(host, observability=None)
 
 
 @pytest.fixture

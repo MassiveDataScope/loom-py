@@ -186,7 +186,7 @@ What stdio does not do:
   Lambda](#mcp-on-aws-lambda));
 - **it spawns one process per server, for the whole worker.** Start-up spawns
   it and every agent granted that server speaks to that one child. It dies with
-  the last holder of the connection — normally the runtime, briefly a straggler
+  the last holder of the connection — normally the host, briefly a straggler
   run that outlived it — so none survives the worker. Two entries of
   `ai.mcp_servers` are two children even when they run the same command;
 - **it does not inherit your environment.** The child receives only `HOME`,
@@ -237,7 +237,7 @@ ai:
 | Value | A client that fails to *connect* |
 |---|---|
 | `required` (default) | Aborts start-up, by name, with `MCP_SERVER_UNREACHABLE` — or `A2A_AGENT_UNREACHABLE` for a remote agent. |
-| `optional` | Logged at WARNING and dropped; the runtime starts without it. |
+| `optional` | Logged at WARNING and dropped; the host starts without it. |
 
 The switch is process-wide and covers the remote agents of `ai.a2a_agents` as
 well as the servers of `ai.mcp_servers`. An unknown value fails configuration
@@ -310,7 +310,7 @@ spent the shared start-up budget, the verification pass is given a fresh
 `startup_timeout_ms` rather than the exhausted one — otherwise one hanging
 server would fail the filters of every server that answered.
 
-**A server that never opened connects on each use.** The runtime does not
+**A server that never opened connects on each use.** The host does not
 reconnect a start-up client that failed; that would need a supervisor task that
 does not exist. The agent path and a `kind: python` factory's `remote()` still
 reach the server through the connection's one session, but that session holds
@@ -335,7 +335,7 @@ rather than per worker.
 
 That recovery belongs to the agent's own `mcp` capability and `remote()`. A
 server reached through an `Mcp()` marker does not recover: its grant is
-resolved once, when the runtime is entered, so a tolerated outage keeps every
+resolved once, when the host is entered, so a tolerated outage keeps every
 marker call failing `TOOL_UNAVAILABLE` ("the server never connected at
 start-up") until the worker restarts. `handle.mcp(server)` does not recover
 either: the agent's grants hold only servers that opened, so it raises
@@ -764,7 +764,7 @@ loom does not ask the client whether it is connected before a call. Over
 streamable HTTP the client still reports itself connected after the server has
 restarted, so the answer would not catch a dead connection. Two other things
 are unchanged. A server that never connected at start-up under `optional` is
-not reconnected by the runtime, and is connected on each use (above). The
+not reconnected by the host, and is connected on each use (above). The
 health probe still does not see a server named only by an `Mcp()` marker.
 
 ### An idle gap replaces pooled connections, not the session
@@ -1010,7 +1010,7 @@ address, credential and deadline. Two grants that disagree abort start-up with
 `MCP_CONNECTION_CONFLICT`, naming the server and both agents; `include` and
 `exclude` are per-agent views over the shared connection and never conflict.
 
-**Sessions are lifespan-scoped.** The runtime opens every client inside a
+**Sessions are lifespan-scoped.** The host opens every client inside a
 single `AsyncExitStack` and releases them in strict reverse order from the task
 that entered it. Releasing a session closes every toolset it holds, each in a
 task of its own, and waits for them all; a call still in flight at that moment

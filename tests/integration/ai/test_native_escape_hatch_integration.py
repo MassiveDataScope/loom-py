@@ -56,40 +56,40 @@ async def _runtime_and_model() -> tuple[AgentHost, ScriptedToolModel]:
     model = ScriptedToolModel(calls=(("usecase_whoami", {}),))
     provider = PydanticAIEnginePlugin(model_resolver=lambda target: model.as_model())
     plan = make_plan(_AGENT_NAME, capabilities=(whoami_capability(),))
-    runtime = AgentHost(
+    host = AgentHost(
         plans=[plan],
         config=make_ai_config(),
         engine_plugin=provider,  # type: ignore[arg-type]
         deps=AgentDepsFactory(kernel.invoker),
         container=kernel.container,
     )
-    return runtime, model
+    return host, model
 
 
 class TestTheHatchOverTheRealRuntime:
     async def test_the_hatch_hands_over_the_agent_the_runtime_itself_runs(self) -> None:
-        runtime, _ = await _runtime_and_model()
+        host, _ = await _runtime_and_model()
 
-        async with runtime:
+        async with host:
             resolver = AgentMarkerResolver(
-                runtime, sql_query_service=NullSqlQueryService(), observability=None
+                host, sql_query_service=NullSqlQueryService(), observability=None
             )
             handle = resolver.resolve(Agent(_AGENT_NAME), AgentHandle[Any])
 
             with ExecutionScope(_ANALYST):
                 async with native_agent(_as_handle(handle)) as access:
-                    engine = runtime._slots[_AGENT_NAME].engine  # noqa: SLF001
+                    engine = host._slots[_AGENT_NAME].engine  # noqa: SLF001
                     assert isinstance(engine, PydanticAIEngine)
                     assert access.agent is engine._agent  # noqa: SLF001
 
     async def test_a_capability_call_made_with_the_bundle_runs_as_the_authenticated_caller(
         self,
     ) -> None:
-        runtime, model = await _runtime_and_model()
+        host, model = await _runtime_and_model()
 
-        async with runtime:
+        async with host:
             resolver = AgentMarkerResolver(
-                runtime, sql_query_service=NullSqlQueryService(), observability=None
+                host, sql_query_service=NullSqlQueryService(), observability=None
             )
             handle = resolver.resolve(Agent(_AGENT_NAME), AgentHandle[Any])
 
@@ -108,10 +108,10 @@ class TestTheHatchOverTheRealRuntime:
         engine's own, independent guard: a bundle built for the analyst,
         driven in an execution acting as no one, runs no tool.
         """
-        runtime, model = await _runtime_and_model()
+        host, model = await _runtime_and_model()
 
-        async with runtime:
-            engine = runtime._slots[_AGENT_NAME].engine  # noqa: SLF001
+        async with host:
+            engine = host._slots[_AGENT_NAME].engine  # noqa: SLF001
             assert isinstance(engine, PydanticAIEngine)
             access = engine.native(identity=_ANALYST, guard=_noop_guard)
 

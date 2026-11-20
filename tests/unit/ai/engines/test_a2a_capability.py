@@ -329,7 +329,7 @@ class TestGovernedDelegation:
 
 
 class StubEngineProvider:
-    """Engine provider the runtime never reaches: start-up fails before it."""
+    """Engine provider the host never reaches: start-up fails before it."""
 
     def create_engine(self, plan: object, *, deps: object, container: object) -> AgentEngine:
         """Fail loudly: no test here gets as far as building an engine."""
@@ -341,7 +341,7 @@ class StubEngineProvider:
 
 
 def make_runtime(plan: AgentPlan) -> AgentHost:
-    """Build a runtime whose only live dependency is the remote agent."""
+    """Build a host whose only live dependency is the remote agent."""
     return AgentHost(
         plans=[plan],
         config=AiConfig(engine="pydantic-ai", specs=(), models={}, startup_timeout_ms=5000),
@@ -357,10 +357,10 @@ class TestStartupFactory:
         self,
     ) -> None:
         """An unreachable card fails start-up with the coded issue (FR-040)."""
-        runtime = make_runtime(make_plan((a2a_capability(url=UNREACHABLE_URL),)))
+        host = make_runtime(make_plan((a2a_capability(url=UNREACHABLE_URL),)))
 
         with pytest.raises(AgentCompilationError) as failure:
-            async with runtime:
+            async with host:
                 pass  # pragma: no cover - start-up never completes
 
         issue = failure.value.issues[0]

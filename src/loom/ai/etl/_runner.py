@@ -33,7 +33,7 @@ ResultT = TypeVar("ResultT")
 class PolarsAgentRunner:
     """Runs the agents of an ``ai:`` section over Polars frames, for ETL steps.
 
-    Every call to :meth:`map` builds, enters and closes a runtime of its own,
+    Every call to :meth:`map` builds, enters and closes a host of its own,
     so two steps mapping at once never share one. ``map`` is synchronous: it
     runs its batch on an event loop of its own, in a dedicated thread, which
     sees the caller's context variables, when the calling thread already runs
@@ -45,7 +45,7 @@ class PolarsAgentRunner:
     Args:
         config: Parsed ``ai:`` section.
         root: Directory the artifact globs are resolved against.
-        engine_plugin: Builds the engine provider of each runtime; resolved
+        engine_plugin: Builds the engine of each host; resolved
             from ``config.engine`` when omitted.
     """
 
@@ -98,7 +98,7 @@ class PolarsAgentRunner:
     ) -> pl.DataFrame:
         """Run agent *name* once per row of *frame*, never aborting on a row.
 
-        A frame without rows compiles nothing and opens no runtime.
+        A frame without rows compiles nothing and opens no host.
 
         Args:
             name: Agent to run.
@@ -123,11 +123,11 @@ class PolarsAgentRunner:
         rows, prompts = prompt_rows(frame, keys, prompt)
         if not prompts:
             return no_answers(rows, columns)
-        runtime = self._runtime(name)
-        plan = _only_plan(runtime.plans, name)
-        self._compiled[name] = runtime.plans
+        host = self._host(name)
+        plan = _only_plan(host.plans, name)
+        self._compiled[name] = host.plans
         batch = Batch(
-            runtime=runtime,
+            host=host,
             name=name,
             limit=self._config.max_concurrent_runs,
             ledger=SpendLedger(max_usd),
@@ -137,7 +137,7 @@ class PolarsAgentRunner:
         outcomes = _run_blocking(partial(batch.answer_all, prompts))
         return answers_frame(rows, outcomes, columns, plan.fingerprint)
 
-    def _runtime(self, name: str) -> AgentHost:
+    def _host(self, name: str) -> AgentHost:
         return build_agent_host(
             self._config,
             root=self._root,
@@ -148,7 +148,7 @@ class PolarsAgentRunner:
     def _plans(self, name: str) -> tuple[AgentPlan, ...]:
         plans = self._compiled.get(name)
         if plans is None:
-            plans = self._compiled[name] = self._runtime(name).plans
+            plans = self._compiled[name] = self._host(name).plans
         return plans
 
 

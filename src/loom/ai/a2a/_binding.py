@@ -47,7 +47,7 @@ def published_agents(
     *,
     config: AiConfig,
     plans: Mapping[str, AgentPlan],
-    runtime: AgentHost,
+    host: AgentHost,
     mechanism: str | None,
     prefix: str,
 ) -> tuple[PublishedAgent, ...]:
@@ -69,7 +69,7 @@ def published_agents(
     published: list[PublishedAgent] = []
     for name in a2a.expose:
         plan = plans.get(name)
-        if plan is None or not runtime.has_agent(name):
+        if plan is None or not host.has_agent(name):
             _logger.warning(
                 "Agent %s is listed in 'ai.a2a.expose' but no compiled agent has that name: "
                 "it is not published over A2A",

@@ -204,7 +204,7 @@ def _sse_frame(request_id: int | str | None, event: Mapping[str, object]) -> byt
 
 
 async def _annotated_run(
-    runtime: AgentHost,
+    host: AgentHost,
     span: LoomSpan,
     name: str,
     prompt: str,
@@ -217,7 +217,7 @@ async def _annotated_run(
     agent spans must get the same answer whichever surface the caller used.
 
     Args:
-        runtime: Runtime serving the agent.
+        host: Host serving the agent.
         span: Open span of this run.
         name: Agent to run.
         prompt: Caller prompt.
@@ -231,7 +231,7 @@ async def _annotated_run(
         AgentRunError: Whatever the run failed with, unchanged.
     """
     try:
-        result = await runtime.run(name, prompt, identity=identity, conversation_id=conversation_id)
+        result = await host.run(name, prompt, identity=identity, conversation_id=conversation_id)
     except AgentRunError as exc:
         annotate_usage(span, exc.usage)
         raise
@@ -240,7 +240,7 @@ async def _annotated_run(
 
 
 def _make_send_handler(
-    runtime: AgentHost,
+    host: AgentHost,
     config: AiConfig,
     *,
     prefix: str,
@@ -265,12 +265,12 @@ def _make_send_handler(
         try:
             with always_closed(span), span.as_current():
                 result = await _annotated_run(
-                    runtime, span, name, prompt, call.identity, conversation_id=context_id
+                    host, span, name, prompt, call.identity, conversation_id=context_id
                 )
         except AgentRunError as exc:
             _logger.warning("a2a run of agent %r failed: %s", name, exc)
             return error_response(call.request_id, internal_error(exc.code))
-        result = project_output(result, runtime.output_type(name))
+        result = project_output(result, host.output_type(name))
         task = _completed_task(uuid4().hex, context_id, result.output)
         return AgentJSONResponse(content=rpc_response(call.request_id, task))
 
@@ -278,7 +278,7 @@ def _make_send_handler(
 
 
 def _run_frames(
-    runtime: AgentHost, call: Call, prompt: str, *, task_id: str, context_id: str
+    host: AgentHost, call: Call, prompt: str, *, task_id: str, context_id: str
 ) -> AsyncIterator[bytes]:
     """Project one run onto A2A frames, heartbeats and terminal failure included.
 
@@ -299,12 +299,10 @@ def _run_frames(
             call.request_id, _task(task_id, context_id, {"state": TaskState.SUBMITTED})
         )
         try:
-            async with runtime.run_stream(
+            async with host.run_stream(
                 call.agent.name, prompt, identity=call.identity, conversation_id=context_id
             ) as events:
-                projected_events = with_projected_output(
-                    events, runtime.output_type(call.agent.name)
-                )
+                projected_events = with_projected_output(events, host.output_type(call.agent.name))
                 async for frame in with_heartbeats(
                     _projected(projected_events), heartbeat_ms=HEARTBEAT_MS
                 ):
@@ -318,7 +316,7 @@ def _run_frames(
 
 
 def _make_stream_handler(
-    runtime: AgentHost,
+    host: AgentHost,
     config: AiConfig,
     *,
     prefix: str,
@@ -345,7 +343,7 @@ def _make_stream_handler(
                 )
             ):
                 async for frame in _run_frames(
-                    runtime, call, prompt, task_id=task_id, context_id=context_id
+                    host, call, prompt, task_id=task_id, context_id=context_id
                 ):
                     yield frame
 
@@ -364,7 +362,7 @@ def _make_unsupported_handler(method: str) -> Handler:
 
 
 def make_handlers(
-    runtime: AgentHost,
+    host: AgentHost,
     config: AiConfig,
     *,
     prefix: str,
@@ -374,10 +372,8 @@ def make_handlers(
     handlers: dict[str, Handler] = {
         method: _make_unsupported_handler(method) for method in _UNSUPPORTED_METHODS
     }
-    handlers[_SEND] = _make_send_handler(
-        runtime, config, prefix=prefix, observability=observability
-    )
+    handlers[_SEND] = _make_send_handler(host, config, prefix=prefix, observability=observability)
     handlers[_STREAM] = _make_stream_handler(
-        runtime, config, prefix=prefix, observability=observability
+        host, config, prefix=prefix, observability=observability
     )
     return handlers

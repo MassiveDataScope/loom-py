@@ -53,7 +53,7 @@ def crash_on_prompt(monkeypatch: pytest.MonkeyPatch) -> None:
 
     async def run(self: AgentHost, name: str, prompt: str, **options: Any) -> AgentResult:
         if prompt == "crash":
-            raise _Crash("the runtime broke")
+            raise _Crash("the host broke")
         return await original(self, name, prompt, **options)
 
     monkeypatch.setattr(AgentHost, "run", run)

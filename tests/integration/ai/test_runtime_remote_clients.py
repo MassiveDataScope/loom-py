@@ -75,7 +75,7 @@ def _a2a_client_factory(
     return _factory
 
 
-def _runtime(
+def _host(
     *,
     plans: Sequence[AgentPlan],
     deps: StubDepsFactory,
@@ -134,7 +134,7 @@ class TestRequiredStartup:
         self, lifecycle_log: list[str], deps: StubDepsFactory, container: LoomContainer
     ) -> None:
         """A refused MCP connection still aborts start-up with its stable code."""
-        runtime = _runtime(
+        host = _host(
             plans=(make_plan(_AGENT, capabilities=(make_mcp_capability(_SERVER_A),)),),
             clients={_SERVER_A: _refusing_client(_SERVER_A, lifecycle_log)},
             deps=deps,
@@ -142,7 +142,7 @@ class TestRequiredStartup:
         )
 
         with pytest.raises(AgentCompilationError) as failure:
-            await runtime.__aenter__()
+            await host.__aenter__()
 
         assert AgentErrorCode.MCP_SERVER_UNREACHABLE in _codes(failure.value)
 
@@ -150,7 +150,7 @@ class TestRequiredStartup:
         self, lifecycle_log: list[str], deps: StubDepsFactory, container: LoomContainer
     ) -> None:
         """A refused A2A connection still aborts start-up with its stable code."""
-        runtime = _runtime(
+        host = _host(
             plans=(make_plan(_AGENT, capabilities=(_make_a2a_capability(),)),),
             a2a_clients={_REMOTE: _refusing_client(_REMOTE, lifecycle_log)},
             deps=deps,
@@ -158,7 +158,7 @@ class TestRequiredStartup:
         )
 
         with pytest.raises(AgentCompilationError) as failure:
-            await runtime.__aenter__()
+            await host.__aenter__()
 
         assert AgentErrorCode.A2A_AGENT_UNREACHABLE in _codes(failure.value)
 
@@ -166,7 +166,7 @@ class TestRequiredStartup:
         self, lifecycle_log: list[str], deps: StubDepsFactory, container: LoomContainer
     ) -> None:
         """A hang past the budget still aborts start-up under ``required`` (AC8)."""
-        runtime = _runtime(
+        host = _host(
             plans=(make_plan(_AGENT, capabilities=(make_mcp_capability(_SERVER_A),)),),
             clients={_SERVER_A: _hanging_client(_SERVER_A, lifecycle_log)},
             deps=deps,
@@ -178,7 +178,7 @@ class TestRequiredStartup:
 
         with pytest.raises(AgentCompilationError) as failure:
             async with budget:
-                await runtime.__aenter__()
+                await host.__aenter__()
 
         assert AgentErrorCode.MCP_SERVER_UNREACHABLE in _codes(failure.value)
 
@@ -189,8 +189,8 @@ class TestOptionalStartup:
     async def test_starts_when_the_mcp_server_refuses_the_connection(
         self, lifecycle_log: list[str], deps: StubDepsFactory, container: LoomContainer
     ) -> None:
-        """The runtime boots with no network behind the declared grant."""
-        runtime = _runtime(
+        """The host boots with no network behind the declared grant."""
+        host = _host(
             plans=(make_plan(_AGENT, capabilities=(make_mcp_capability(_SERVER_A),)),),
             clients={_SERVER_A: _refusing_client(_SERVER_A, lifecycle_log)},
             deps=deps,
@@ -198,14 +198,14 @@ class TestOptionalStartup:
             remote_clients="optional",
         )
 
-        async with runtime:
-            assert runtime.has_agent(_AGENT)
+        async with host:
+            assert host.has_agent(_AGENT)
 
     async def test_starts_when_the_a2a_agent_refuses_the_connection(
         self, lifecycle_log: list[str], deps: StubDepsFactory, container: LoomContainer
     ) -> None:
         """The tolerance covers the A2A clients too, not only MCP."""
-        runtime = _runtime(
+        host = _host(
             plans=(make_plan(_AGENT, capabilities=(_make_a2a_capability(),)),),
             a2a_clients={_REMOTE: _refusing_client(_REMOTE, lifecycle_log)},
             deps=deps,
@@ -213,8 +213,8 @@ class TestOptionalStartup:
             remote_clients="optional",
         )
 
-        async with runtime:
-            assert runtime.has_agent(_AGENT)
+        async with host:
+            assert host.has_agent(_AGENT)
 
     async def test_warns_naming_the_server_when_tolerating_the_failure(
         self,
@@ -224,7 +224,7 @@ class TestOptionalStartup:
         caplog: pytest.LogCaptureFixture,
     ) -> None:
         """A tolerated failure is a WARNING carrying the code and the server."""
-        runtime = _runtime(
+        host = _host(
             plans=(make_plan(_AGENT, capabilities=(make_mcp_capability(_SERVER_A),)),),
             clients={_SERVER_A: _refusing_client(_SERVER_A, lifecycle_log)},
             deps=deps,
@@ -233,7 +233,7 @@ class TestOptionalStartup:
         )
 
         with caplog.at_level(logging.WARNING, logger=_LOGGER):
-            async with runtime:
+            async with host:
                 pass
 
         warnings = [record.getMessage() for record in caplog.records if record.levelno >= 30]
@@ -250,7 +250,7 @@ class TestOptionalStartup:
         caplog: pytest.LogCaptureFixture,
     ) -> None:
         """The transport's reason can carry a URL, so it stays out of WARNING."""
-        runtime = _runtime(
+        host = _host(
             plans=(make_plan(_AGENT, capabilities=(make_mcp_capability(_SERVER_A),)),),
             clients={_SERVER_A: _refusing_client(_SERVER_A, lifecycle_log)},
             deps=deps,
@@ -259,7 +259,7 @@ class TestOptionalStartup:
         )
 
         with caplog.at_level(logging.WARNING, logger=_LOGGER):
-            async with runtime:
+            async with host:
                 pass
 
         assert not [record for record in caplog.records if _REFUSED in record.getMessage()], (
@@ -274,7 +274,7 @@ class TestOptionalStartup:
         caplog: pytest.LogCaptureFixture,
     ) -> None:
         """The reason stays available to an operator who asks for DEBUG."""
-        runtime = _runtime(
+        host = _host(
             plans=(make_plan(_AGENT, capabilities=(make_mcp_capability(_SERVER_A),)),),
             clients={_SERVER_A: _refusing_client(_SERVER_A, lifecycle_log)},
             deps=deps,
@@ -283,7 +283,7 @@ class TestOptionalStartup:
         )
 
         with caplog.at_level(logging.DEBUG, logger=_LOGGER):
-            async with runtime:
+            async with host:
                 pass
 
         assert any(_REFUSED in record.getMessage() for record in caplog.records)
@@ -292,7 +292,7 @@ class TestOptionalStartup:
         self, lifecycle_log: list[str], deps: StubDepsFactory, container: LoomContainer
     ) -> None:
         """The health probe names the missing dependency once its first pass ran."""
-        runtime = _runtime(
+        host = _host(
             plans=(make_plan(_AGENT, capabilities=(make_mcp_capability(_SERVER_A),)),),
             clients={_SERVER_A: _refusing_client(_SERVER_A, lifecycle_log)},
             deps=deps,
@@ -300,9 +300,9 @@ class TestOptionalStartup:
             remote_clients="optional",
         )
 
-        async with runtime:
-            await _until(lambda: runtime._health.get(_AGENT) is not None)
-            health = await runtime.health(_AGENT)
+        async with host:
+            await _until(lambda: host._health.get(_AGENT) is not None)
+            health = await host.health(_AGENT)
 
         assert health.checks[f"mcp:{_SERVER_A}"] == "unavailable"
 
@@ -320,7 +320,7 @@ class TestOptionalStartup:
             _AGENT,
             capabilities=(make_mcp_capability(_SERVER_A), make_mcp_capability(_SERVER_B)),
         )
-        runtime = _runtime(
+        host = _host(
             plans=(plan,),
             clients=clients,
             deps=deps,
@@ -328,7 +328,7 @@ class TestOptionalStartup:
             remote_clients="optional",
         )
 
-        async with runtime:
+        async with host:
             pass
 
         assert lifecycle_log == [f"open:{_SERVER_B}", f"close:{_SERVER_B}"]
@@ -362,7 +362,7 @@ class TestBudgetAfterTolerating:
     ) -> None:
         """The hang spent the shared budget; the opened server's filter is still checked."""
         plan, clients, session = self._mixed_plan(list_delay_ms=0)
-        runtime = _runtime(
+        host = _host(
             plans=(plan,),
             clients=clients,
             deps=deps,
@@ -372,7 +372,7 @@ class TestBudgetAfterTolerating:
         )
 
         async with asyncio.timeout(1.0):
-            async with runtime:
+            async with host:
                 listed = session.listed
 
         assert listed == 1, "the opened server's tools were never listed"
@@ -382,7 +382,7 @@ class TestBudgetAfterTolerating:
     ) -> None:
         """A connected server whose own listing times out still fails closed."""
         plan, clients, _session = self._mixed_plan(list_delay_ms=200)
-        runtime = _runtime(
+        host = _host(
             plans=(plan,),
             clients=clients,
             deps=deps,
@@ -395,7 +395,7 @@ class TestBudgetAfterTolerating:
 
         with pytest.raises(AgentCompilationError) as failure:
             async with budget:
-                await runtime.__aenter__()
+                await host.__aenter__()
 
         assert AgentErrorCode.MCP_SERVER_UNREACHABLE in _codes(failure.value)
         assert _SERVER_B in str(failure.value)
@@ -405,7 +405,7 @@ class TestBudgetAfterTolerating:
     ) -> None:
         """The same mixed hang still aborts start-up under ``required``."""
         plan, clients, _session = self._mixed_plan(list_delay_ms=0)
-        runtime = _runtime(
+        host = _host(
             plans=(plan,),
             clients=clients,
             deps=deps,
@@ -417,7 +417,7 @@ class TestBudgetAfterTolerating:
 
         with pytest.raises(AgentCompilationError) as failure:
             async with budget:
-                await runtime.__aenter__()
+                await host.__aenter__()
 
         assert AgentErrorCode.MCP_SERVER_UNREACHABLE in _codes(failure.value)
         assert _SERVER_A in str(failure.value)
@@ -430,7 +430,7 @@ class TestDownServerFilter:
         self, lifecycle_log: list[str], deps: StubDepsFactory, container: LoomContainer
     ) -> None:
         """A filter on a server that never opened does not fail start-up."""
-        runtime = _runtime(
+        host = _host(
             plans=(
                 make_plan(_AGENT, capabilities=(make_mcp_capability(_SERVER_A, include=("x",)),)),
             ),
@@ -440,8 +440,8 @@ class TestDownServerFilter:
             remote_clients="optional",
         )
 
-        async with runtime:
-            assert runtime.has_agent(_AGENT)
+        async with host:
+            assert host.has_agent(_AGENT)
 
     async def test_runs_the_agent_when_its_other_servers_opened(
         self,
@@ -466,7 +466,7 @@ class TestDownServerFilter:
                 make_mcp_capability(_SERVER_B, include=("alpha",)),
             ),
         )
-        runtime = _runtime(
+        host = _host(
             plans=(plan,),
             clients=clients,
             deps=deps,
@@ -474,8 +474,8 @@ class TestDownServerFilter:
             remote_clients="optional",
         )
 
-        async with runtime:
-            result = await runtime.run(_AGENT, "question", identity=identity)
+        async with host:
+            result = await host.run(_AGENT, "question", identity=identity)
 
         assert result.output == {"answer": "42"}
 
@@ -488,7 +488,7 @@ class TestMissingFactory:
         self, deps: StubDepsFactory, container: LoomContainer, remote_clients: str
     ) -> None:
         """An ``mcp`` grant with no factory aborts under both values."""
-        runtime = _runtime(
+        host = _host(
             plans=(make_plan(_AGENT, capabilities=(make_mcp_capability(_SERVER_A),)),),
             deps=deps,
             container=container,
@@ -497,7 +497,7 @@ class TestMissingFactory:
         )
 
         with pytest.raises(AgentCompilationError) as failure:
-            await runtime.__aenter__()
+            await host.__aenter__()
 
         assert _MISSING_MCP_FACTORY in str(failure.value)
 
@@ -506,7 +506,7 @@ class TestMissingFactory:
         self, deps: StubDepsFactory, container: LoomContainer, remote_clients: str
     ) -> None:
         """An ``a2a`` grant with no factory aborts under both values."""
-        runtime = _runtime(
+        host = _host(
             plans=(make_plan(_AGENT, capabilities=(_make_a2a_capability(),)),),
             deps=deps,
             container=container,
@@ -515,7 +515,7 @@ class TestMissingFactory:
         )
 
         with pytest.raises(AgentCompilationError) as failure:
-            await runtime.__aenter__()
+            await host.__aenter__()
 
         assert _MISSING_A2A_FACTORY in str(failure.value)
 
@@ -527,7 +527,7 @@ class TestMissingFactory:
             _AGENT,
             capabilities=(make_mcp_capability(_SERVER_A), _make_a2a_capability()),
         )
-        runtime = _runtime(
+        host = _host(
             plans=(plan,),
             clients={_SERVER_A: _refusing_client(_SERVER_A, lifecycle_log)},
             deps=deps,
@@ -537,7 +537,7 @@ class TestMissingFactory:
         )
 
         with pytest.raises(AgentCompilationError) as failure:
-            await runtime.__aenter__()
+            await host.__aenter__()
 
         assert _codes(failure.value) == {AgentErrorCode.A2A_AGENT_UNREACHABLE}
         assert _MISSING_A2A_FACTORY in str(failure.value)
@@ -561,7 +561,7 @@ class TestRunningWithoutAStartupClient:
         reopened. Pinned here so a change to it is a decision, not a surprise.
         """
         client = _refusing_client(_SERVER_A, lifecycle_log)
-        runtime = _runtime(
+        host = _host(
             plans=(make_plan(_AGENT, capabilities=(make_mcp_capability(_SERVER_A),)),),
             clients={_SERVER_A: client},
             deps=deps,
@@ -569,8 +569,8 @@ class TestRunningWithoutAStartupClient:
             remote_clients="optional",
         )
 
-        async with runtime:
-            result = await runtime.run(_AGENT, "question", identity=identity)
+        async with host:
+            result = await host.run(_AGENT, "question", identity=identity)
 
         assert result.output == {"answer": "42"}
         assert lifecycle_log == []

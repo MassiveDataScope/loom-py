@@ -1,4 +1,4 @@
-"""A session declares whether it needs serialisation; the runtime stops deciding it.
+"""A session declares whether it needs serialisation; the host stops deciding it.
 
 ``mcp_session_for`` is the only point that decides whether to wrap a session in
 ``SharedMcpSession``: it does so by default, and leaves the session as-is when it

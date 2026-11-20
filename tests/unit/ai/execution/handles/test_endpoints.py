@@ -1,4 +1,4 @@
-"""No HTTP or A2A endpoint opens an execution: the runtime opens one per agent run."""
+"""No HTTP or A2A endpoint opens an execution: the host opens one per agent run."""
 
 from __future__ import annotations
 

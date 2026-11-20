@@ -109,7 +109,7 @@ marker-filled handle always refuses an anonymous caller, with no
 opts an agent into. Exposure over the network is always an explicit opt-in,
 never a default; the code door is a distinct decision, not derived from it.
 
-### Building a runtime outside an HTTP app
+### Building a host outside an HTTP app
 
 `loom.ai.build_agent_host(config, *, root, names=None, ...)` is the
 assembly `create_app` itself uses: it resolves the engine, loads the artifacts
@@ -122,9 +122,9 @@ resolved from `ai.engine`.
 from loom.ai import build_agent_host
 from loom.core.identity import Identity
 
-runtime = build_agent_host(ai_config, root=repo_root, names={"seller_reply"})
-async with runtime:
-    result = await runtime.run("seller_reply", prompt, identity=Identity(subject="batch"))
+host = build_agent_host(ai_config, root=repo_root, names={"seller_reply"})
+async with host:
+    result = await host.run("seller_reply", prompt, identity=Identity(subject="batch"))
 ```
 
 ETL steps reach agents declaratively instead, through
@@ -156,7 +156,7 @@ before `AGENT_CALL_TOO_DEEP` catches a runaway one — see
 ### Conversation memory belongs to the application
 
 An artifact may declare a `conversation` use case beside `on_output`: for
-every run that carries a `conversation_id`, the runtime executes it before the
+every run that carries a `conversation_id`, the host executes it before the
 model starts and it returns the prior turns as opaque, engine-native bytes —
 or `None` on the first turn. The engine replays them and hands the turn's new
 messages to the `on_output` use case as `messages`, so the application
@@ -281,7 +281,7 @@ and this run overrides the output shape: pydantic-ai refuses a run-level
 - **[Artifact reference](artifacts.md)** — the complete `spec_version: 1`
   format, field by field, and the folder layout an agent lives in. It includes
   [`on_output`](artifacts.md#on_output--a-use-case-run-once-per-completed-run),
-  the use case the runtime executes once per completed run with the validated
+  the use case the host executes once per completed run with the validated
   output, and
   [`conversation`](artifacts.md#conversation--loading-the-prior-turns), the
   use case that loads the prior turns of a `conversation_id` before the model

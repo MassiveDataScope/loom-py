@@ -67,7 +67,7 @@ def build_a2a_http_client(capability: CompiledA2ACapability) -> httpx.AsyncClien
 async def create_a2a_client(capability: CompiledA2ACapability) -> AsyncIterator[Client]:
     """Open one session against a remote agent, card fetched and checked.
 
-    Nothing happens until the context is entered, so the runtime's start-up
+    Nothing happens until the context is entered, so the host's start-up
     deadline bounds the whole of it and a failure is reported as a coded
     start-up issue.
 
@@ -103,7 +103,7 @@ async def send_to_remote_agent(capability: CompiledA2ACapability, prompt: str) -
     """Delegate one prompt to a remote agent and return its reply text.
 
     Opens :func:`create_a2a_client` per call, because ``build_toolsets`` is
-    synchronous and the engine has no channel to the session the runtime
+    synchronous and the engine has no channel to the session the host
     opened: sharing it would need a lifecycle handoff that does not exist yet.
     The cost is one card fetch per delegation, bounded by ``tool_timeout_ms``
     like the call it precedes, and it buys a stateless toolset — no cached

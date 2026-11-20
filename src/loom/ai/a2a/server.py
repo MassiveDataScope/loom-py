@@ -126,7 +126,7 @@ def _make_card_handler(card: bytes) -> Callable[[], Response]:
 def mount_a2a_endpoints(
     app: FastAPI,
     *,
-    runtime: AgentHost,
+    host: AgentHost,
     config: AiConfig,
     plans: Sequence[AgentPlan],
     authenticator: Authenticator | None = None,
@@ -144,11 +144,11 @@ def mount_a2a_endpoints(
 
     Args:
         app: FastAPI application to mount the routes on.
-        runtime: Entered runtime serving the agents.
+        host: Entered host serving the agents.
         config: Parsed ``ai:`` section.
-        plans: Compiled plans the runtime was built from; the card is projected
+        plans: Compiled plans the host was built from; the card is projected
             from them, which is why they are passed explicitly instead of read
-            back out of the runtime.
+            back out of the host.
         authenticator: Mechanism authenticating callers; its name selects the
             security scheme the card advertises.
         exclude_paths: Extra authentication exclusions to validate against the
@@ -169,7 +169,7 @@ def mount_a2a_endpoints(
 
     Example::
 
-        mount_a2a_endpoints(app, runtime=runtime, config=ai_config, plans=plans,
+        mount_a2a_endpoints(app, host=host, config=ai_config, plans=plans,
                            authenticator=authenticator, exclude_paths=("/health",))
     """
     if config.a2a is None:
@@ -178,7 +178,7 @@ def mount_a2a_endpoints(
     agents = published_agents(
         config=config,
         plans={plan.name: plan for plan in plans},
-        runtime=runtime,
+        host=host,
         mechanism=mechanism,
         prefix=prefix,
     )
@@ -196,7 +196,7 @@ def mount_a2a_endpoints(
     if authenticator is not None:
         register_card_exclusions(app, cards)
     handlers = make_handlers(
-        runtime,
+        host,
         config,
         prefix=prefix,
         observability=observability or Observability.noop(),

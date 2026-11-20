@@ -1,4 +1,4 @@
-"""The runtime's own wiring point decides whether a session is safe unwrapped.
+"""The host's own wiring point decides whether a session is safe unwrapped.
 
 ``AgentHost._register_opened`` (``loom/ai/execution/_lifecycle.py``) is the
 one place a just-opened session becomes what a grant view calls through. It
@@ -9,9 +9,9 @@ even though :func:`mcp_session_for` is fully tested on its own.
 
 This test drives the real path end to end, through the public grant surface
 (:meth:`~loom.ai.abc.AgentHandle.mcp`) rather than reaching into the
-runtime's private state: a plain session that never declares
+host's private state: a plain session that never declares
 :class:`~loom.ai.abc.ConcurrentMcpSession` must still serialise two
-concurrent calls once the runtime has opened it, because skipping
+concurrent calls once the host has opened it, because skipping
 ``mcp_session_for`` at start-up is indistinguishable from any other bug that
 leaves a session unwrapped.
 """
@@ -91,7 +91,7 @@ class TestUndeclaredThirdPartySession:
     async def test_an_undeclared_third_party_session_stays_serialized(
         self, deps: StubDepsFactory, container: LoomContainer
     ) -> None:
-        """A third-party session opened by the runtime still serialises its calls.
+        """A third-party session opened by the host still serialises its calls.
 
         Skipping ``mcp_session_for`` at the wiring point (storing the just-opened
         session verbatim in ``self._sessions``) would let these two calls
@@ -100,7 +100,7 @@ class TestUndeclaredThirdPartySession:
         capability = make_mcp_capability(_MCP_SERVER)
         session = _UndeclaredThirdPartySession()
         client = StubMcpClient(label=_MCP_SERVER, session=session, log=[])
-        runtime = AgentHost(
+        host = AgentHost(
             plans=[make_plan(_AGENT_NAME, capabilities=(capability,))],
             config=make_ai_config(mcp_servers=make_mcp_servers(_MCP_SERVER)),
             engine_plugin=CountingEngineProvider(  # type: ignore[arg-type]
@@ -112,12 +112,12 @@ class TestUndeclaredThirdPartySession:
         )
         handle = _AgentHandle(
             name=_AGENT_NAME,
-            runtime=runtime,
+            host=host,
             observability=None,
             sql_query_service=NullSqlQueryService(),
         )
 
-        async with runtime:
+        async with host:
             with ExecutionScope(_AUTHENTICATED):
                 mcp = handle.mcp(_MCP_SERVER)
                 first = asyncio.create_task(mcp.call_untyped("echo", {"token": "a"}))

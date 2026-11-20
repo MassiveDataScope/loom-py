@@ -853,7 +853,7 @@ class TestAgentSurfaceAudience:
         auth = _AuthWiring(
             authenticator=JwtAuthenticator(jwt_config), exclude_paths=(), jwt_config=jwt_config
         )
-        wiring = AiWiring(config=ai_config, runtime=cast(Any, object()))
+        wiring = AiWiring(config=ai_config, agent_host=cast(Any, object()))
 
         with pytest.raises(ConfigError, match=r"Agent 'analyst'.*audience"):
             _bind_agent_surfaces(FastAPI(), wiring, auth, Observability.noop())

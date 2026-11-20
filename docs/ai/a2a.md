@@ -189,7 +189,7 @@ guarantee is provable in the base wheel:
 | `policies` | — | not published |
 | `metadata` | — | **never published** — it carries owner, cost centre and ticket references |
 | `A2AConfig.base_url` | `url` | deployment fact |
-| what the runtime actually serves | `capabilities` | must match reality |
+| what the host actually serves | `capabilities` | must match reality |
 | the constant `("agent",)` | `skills[].tags` | **fixed**, never derived from `metadata` |
 | the authenticator actually in use | `securitySchemes` | derived, never a hardcoded guess |
 

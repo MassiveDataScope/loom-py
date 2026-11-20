@@ -1,4 +1,4 @@
-"""Fixtures shared by the runtime unit tests."""
+"""Fixtures shared by the host unit tests."""
 
 from __future__ import annotations
 

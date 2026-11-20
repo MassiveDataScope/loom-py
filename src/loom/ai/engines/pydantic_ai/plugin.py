@@ -74,7 +74,7 @@ class PydanticAIEnginePlugin:
     :meth:`configure_mcp_connect_timeout` once it has read
     ``ai.startup_timeout_ms``.
 
-    One instance serves one runtime lifecycle. It holds the worker's shared
+    One instance serves one host lifecycle. It holds the worker's shared
     MCP toolsets, which are never evicted, so re-entering the same provider
     from a second event loop would reuse a connection lock bound to the first.
     ``create_app`` builds one provider per application.
@@ -105,7 +105,7 @@ class PydanticAIEnginePlugin:
         Read structurally, with ``getattr``, by the composition root,
         so a third-party engine that declares no such method is simply left
         at its own default. Has no effect on a connection whose toolset was
-        already built: call this before the runtime opens its clients.
+        already built: call this before the host opens its clients.
 
         Args:
             seconds: New handshake deadline, in seconds.

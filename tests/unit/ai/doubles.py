@@ -10,7 +10,7 @@ from loom.core.observability.observability import Observability
 
 
 def tracing_runtime() -> tuple[Observability, InMemorySpanExporter]:
-    """An in-memory tracer that exports every span the runtime opens."""
+    """An in-memory tracer that exports every span the host opens."""
     exporter = InMemorySpanExporter()
     provider = TracerProvider()
     provider.add_span_processor(SimpleSpanProcessor(exporter))

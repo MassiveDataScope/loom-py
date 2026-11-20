@@ -68,13 +68,13 @@ class TestAHandleInATaskThatOutlivedItsExecution:
     @pytest.mark.parametrize("call", list(HANDLE_CALLS.values()), ids=list(HANDLE_CALLS))
     async def test_is_refused_past_the_delegation_deadline_with_no_backend_call(
         self,
-        runtime: AgentHost,
+        host: AgentHost,
         outliving: Any,
         call: _Bind,
         past_the_window: Callable[[], None],
         backend_calls: Any,
     ) -> None:
-        async with runtime:
+        async with host:
             task, release = await outliving(call)
             past_the_window()
             release.set()
@@ -87,14 +87,14 @@ class TestAHandleInATaskThatOutlivedItsExecution:
     @pytest.mark.parametrize("call", list(HANDLE_CALLS.values()), ids=list(HANDLE_CALLS))
     async def test_acts_as_the_caller_within_the_delegation(
         self,
-        runtime: AgentHost,
+        host: AgentHost,
         outliving: Any,
         call: _Bind,
         window: float,
         backend_calls: Any,
     ) -> None:
         del window
-        async with runtime:
+        async with host:
             task, release = await outliving(call)
             release.set()
             await task
@@ -102,10 +102,10 @@ class TestAHandleInATaskThatOutlivedItsExecution:
         assert backend_calls() == 1
 
     async def test_the_agent_runs_as_the_caller_of_the_ended_execution(
-        self, runtime: AgentHost, outliving: Any, engine: AcmeEngine, window: float
+        self, host: AgentHost, outliving: Any, engine: AcmeEngine, window: float
     ) -> None:
         del window
-        async with runtime:
+        async with host:
             task, release = await outliving(HANDLE_CALLS["agent"])
             release.set()
             await task

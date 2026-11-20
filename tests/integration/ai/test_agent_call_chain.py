@@ -34,7 +34,7 @@ _INNER = "inner"
 class _CallbackEngine:
     """Runs one scripted turn, invoking *callback* (if any) before finishing.
 
-    The callback is where a test drives a nested ``runtime.run`` call from
+    The callback is where a test drives a nested ``host.run`` call from
     inside an in-flight one — the same position a marker-resolved
     ``AgentHandle.run`` call would run from inside a use case a hook or a
     tool invokes.
@@ -85,7 +85,7 @@ class _CallbackEngine:
         return HealthStatus(status="ok")
 
 
-def _runtime(
+def _host(
     *,
     max_agent_depth: int,
     outer_callback: Callable[[], Awaitable[None]] | None,
@@ -118,7 +118,7 @@ class TestDefaultDepth:
 
         async def _nest() -> None:
             with pytest.raises(AgentRunError) as excinfo:
-                await runtime.run(_INNER, "hola", identity=identity)
+                await host.run(_INNER, "hola", identity=identity)
             assert excinfo.value.code is AgentRunErrorCode.AGENT_CALL_TOO_DEEP
             # Pins the exact message docs/rest/use-case-dsl.md quotes for
             # AGENT_CALL_TOO_DEEP; edit one without the other and this is the
@@ -127,9 +127,9 @@ class TestDefaultDepth:
                 "agent call chain outer -> inner exceeds ai.max_agent_depth=1"
             )
 
-        runtime = _runtime(max_agent_depth=1, outer_callback=_nest, deps=deps, container=container)
-        async with runtime:
-            await runtime.run(_OUTER, "hola", identity=identity)
+        host = _host(max_agent_depth=1, outer_callback=_nest, deps=deps, container=container)
+        async with host:
+            await host.run(_OUTER, "hola", identity=identity)
 
     async def test_a_nested_run_of_the_same_agent_is_a_cycle(
         self,
@@ -141,16 +141,16 @@ class TestDefaultDepth:
 
         async def _nest() -> None:
             with pytest.raises(AgentRunError) as excinfo:
-                await runtime.run(_OUTER, "hola", identity=identity)
+                await host.run(_OUTER, "hola", identity=identity)
             assert excinfo.value.code is AgentRunErrorCode.AGENT_CALL_CYCLE
             assert _OUTER in str(excinfo.value)
             # Pins the exact message docs/rest/use-case-dsl.md quotes for
             # AGENT_CALL_CYCLE.
             assert str(excinfo.value) == "agent call cycle detected: outer -> outer"
 
-        runtime = _runtime(max_agent_depth=5, outer_callback=_nest, deps=deps, container=container)
-        async with runtime:
-            await runtime.run(_OUTER, "hola", identity=identity)
+        host = _host(max_agent_depth=5, outer_callback=_nest, deps=deps, container=container)
+        async with host:
+            await host.run(_OUTER, "hola", identity=identity)
 
     async def test_two_consecutive_runs_of_the_same_agent_do_not_contaminate_each_other(
         self,
@@ -163,10 +163,10 @@ class TestDefaultDepth:
         If the restoration were lost, the second run would still see the
         first run's name in the chain and fail as a spurious cycle.
         """
-        runtime = _runtime(max_agent_depth=1, outer_callback=None, deps=deps, container=container)
-        async with runtime:
-            await runtime.run(_OUTER, "hola", identity=identity)
-            await runtime.run(_OUTER, "hola de nuevo", identity=identity)
+        host = _host(max_agent_depth=1, outer_callback=None, deps=deps, container=container)
+        async with host:
+            await host.run(_OUTER, "hola", identity=identity)
+            await host.run(_OUTER, "hola de nuevo", identity=identity)
 
     async def test_a_failed_run_also_restores_the_chain(
         self,
@@ -184,15 +184,13 @@ class TestDefaultDepth:
             if calls == 1:
                 raise RuntimeError("boom")
 
-        runtime = _runtime(
-            max_agent_depth=1, outer_callback=_fail_once, deps=deps, container=container
-        )
-        async with runtime:
+        host = _host(max_agent_depth=1, outer_callback=_fail_once, deps=deps, container=container)
+        async with host:
             with pytest.raises(RuntimeError, match="boom"):
-                await runtime.run(_OUTER, "hola", identity=identity)
+                await host.run(_OUTER, "hola", identity=identity)
             # Same agent, same task: succeeds only if the failed run's name
             # was popped from the chain despite the exception.
-            await runtime.run(_OUTER, "otra vez", identity=identity)
+            await host.run(_OUTER, "otra vez", identity=identity)
 
 
 class TestRaisedDepth:
@@ -207,12 +205,12 @@ class TestRaisedDepth:
         seen: list[str] = []
 
         async def _nest() -> None:
-            result = await runtime.run(_INNER, "hola", identity=identity)
+            result = await host.run(_INNER, "hola", identity=identity)
             seen.append("nested-ok")
             assert result.output == {}
 
-        runtime = _runtime(max_agent_depth=2, outer_callback=_nest, deps=deps, container=container)
-        async with runtime:
-            await runtime.run(_OUTER, "hola", identity=identity)
+        host = _host(max_agent_depth=2, outer_callback=_nest, deps=deps, container=container)
+        async with host:
+            await host.run(_OUTER, "hola", identity=identity)
 
         assert seen == ["nested-ok"]

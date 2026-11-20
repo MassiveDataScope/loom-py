@@ -1,7 +1,7 @@
 """Incident-triage domain types exercised by the output-hook phase tests.
 
 ``RecordTriage`` is the satisfiable hook: its command asks only for the
-nested ``output`` and context names the runtime offers.  The other use cases
+nested ``output`` and context names the host offers.  The other use cases
 each break exactly one rule of the compile-time proof.
 """
 

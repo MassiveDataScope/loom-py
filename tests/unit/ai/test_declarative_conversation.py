@@ -1,6 +1,6 @@
 """Authored ``conversation`` loader of spec version 1 (``loom.ai.declarative``).
 
-``conversation.usecase`` names the use case the runtime executes before a run that
+``conversation.usecase`` names the use case the host executes before a run that
 carries a ``conversation_id`` (006/D1). These tests pin the artifact half of AC1: the
 field decodes into :class:`ConversationSpec`, stays ``None`` when absent, rejects unknown
 keys the same way every other struct does, and the published JSON Schema accepts the

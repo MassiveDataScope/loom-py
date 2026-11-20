@@ -236,24 +236,24 @@ def _native_runtime() -> AgentHost:
 
 
 class _RuntimeHandle:
-    """A handle over the real runtime, standing in for a resolved marker."""
+    """A handle over the real host, standing in for a resolved marker."""
 
-    def __init__(self, runtime: AgentHost, name: str, identity: Identity) -> None:
-        self._runtime = runtime
+    def __init__(self, host: AgentHost, name: str, identity: Identity) -> None:
+        self._host = host
         self._name = name
         self._identity = identity
 
     def native(self, *, state: object | None = None) -> object:
-        """Return the runtime's native form for this handle's agent and caller."""
-        return self._runtime.native(self._name, identity=self._identity, state=state)
+        """Return the host's native form for this handle's agent and caller."""
+        return self._host.native(self._name, identity=self._identity, state=state)
 
 
 class TestTheAccessorRejoinsTheGuard:
-    """``native_agent`` enters the runtime's own guard, not a no-op body."""
+    """``native_agent`` enters the host's own guard, not a no-op body."""
 
     async def test_the_chain_records_this_run_only_inside_the_block(self) -> None:
-        async with _native_runtime() as runtime:
-            handle = _as_handle(_RuntimeHandle(runtime, "contract", _IDENTITY))
+        async with _native_runtime() as host:
+            handle = _as_handle(_RuntimeHandle(host, "contract", _IDENTITY))
 
             assert current_chain() == ()
             with ExecutionScope(_IDENTITY):
@@ -274,8 +274,8 @@ class TestTheBodysExceptionsAreNeverReclassified:
     async def test_a_raw_exception_escapes_unchanged(self) -> None:
         original = TimeoutError("the vendor call timed out")
 
-        async with _native_runtime() as runtime:
-            handle = _as_handle(_RuntimeHandle(runtime, "contract", _IDENTITY))
+        async with _native_runtime() as host:
+            handle = _as_handle(_RuntimeHandle(host, "contract", _IDENTITY))
             with ExecutionScope(_IDENTITY), pytest.raises(TimeoutError) as excinfo:
                 async with native_agent(handle):
                     raise original
@@ -285,8 +285,8 @@ class TestTheBodysExceptionsAreNeverReclassified:
     async def test_an_agent_run_error_escapes_unchanged(self) -> None:
         original = AgentRunError(AgentRunErrorCode.UNAUTHORIZED, "denied")
 
-        async with _native_runtime() as runtime:
-            handle = _as_handle(_RuntimeHandle(runtime, "contract", _IDENTITY))
+        async with _native_runtime() as host:
+            handle = _as_handle(_RuntimeHandle(host, "contract", _IDENTITY))
             with ExecutionScope(_IDENTITY), pytest.raises(AgentRunError) as excinfo:
                 async with native_agent(handle):
                     raise original

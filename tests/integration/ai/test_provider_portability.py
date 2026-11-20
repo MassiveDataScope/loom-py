@@ -175,7 +175,7 @@ class TestRuntimeWiring:
             specs=("ai/agents/*/agent.yaml",),
             models={"default": _TARGETS["openai"]},
         )
-        runtime = AgentHost(
+        host = AgentHost(
             plans=[plan],
             config=config,
             engine_plugin=provider,
@@ -183,7 +183,7 @@ class TestRuntimeWiring:
             container=LoomContainer(),
         )
 
-        async with runtime as live:
+        async with host as live:
             first = await live.run("contract", "question", identity=Identity(subject="caller"))
             second = await live.run("contract", "question", identity=Identity(subject="caller"))
 

@@ -18,29 +18,29 @@ from .doubles import ALICE, HANDLE_CALLS, NO_SUBJECT, SERVER, TOOL, AcmeSqlServi
 
 
 @pytest.fixture
-def lookups(runtime: AgentHost, monkeypatch: pytest.MonkeyPatch) -> list[str]:
-    """Every server the runtime was asked the ``Mcp()`` grant of."""
+def lookups(host: AgentHost, monkeypatch: pytest.MonkeyPatch) -> list[str]:
+    """Every server the host was asked the ``Mcp()`` grant of."""
     asked: list[str] = []
-    lookup = runtime.use_case_mcp_grant
+    lookup = host.use_case_mcp_grant
 
     def recording(server: str) -> Any:
         asked.append(server)
         return lookup(server)
 
-    monkeypatch.setattr(runtime, "use_case_mcp_grant", recording)
+    monkeypatch.setattr(host, "use_case_mcp_grant", recording)
     return asked
 
 
 class TestTheMcpGrant:
     async def test_is_looked_up_on_every_call_and_never_on_resolve(
-        self, runtime: AgentHost, lookups: list[str]
+        self, host: AgentHost, lookups: list[str]
     ) -> None:
-        crm = McpMarkerResolver(runtime, observability=None).resolve(
+        crm = McpMarkerResolver(host, observability=None).resolve(
             Mcp(SERVER, include=["find_*"]), McpHandle
         )
         resolved = list(lookups)
 
-        async with runtime:
+        async with host:
             with ExecutionScope(ALICE):
                 await crm.call_untyped(TOOL, {})
                 await crm.call_untyped(TOOL, {})
@@ -51,12 +51,12 @@ class TestTheMcpGrant:
     async def test_a_server_no_use_case_was_granted_is_refused_with_no_call(
         self, make_runtime: Any, backend_calls: Any
     ) -> None:
-        runtime = make_runtime(use_case_servers=())
-        crm = McpMarkerResolver(runtime, observability=None).resolve(
+        host = make_runtime(use_case_servers=())
+        crm = McpMarkerResolver(host, observability=None).resolve(
             Mcp(SERVER, include=["find_*"]), McpHandle
         )
 
-        async with runtime:
+        async with host:
             with ExecutionScope(ALICE), pytest.raises(AgentRunError) as refused:
                 await crm.call_untyped(TOOL, {})
 
@@ -67,12 +67,12 @@ class TestTheMcpGrant:
     async def test_a_granted_server_that_never_connected_keeps_tool_unavailable(
         self, make_runtime: Any
     ) -> None:
-        runtime = make_runtime(reachable=False)
-        crm = McpMarkerResolver(runtime, observability=None).resolve(
+        host = make_runtime(reachable=False)
+        crm = McpMarkerResolver(host, observability=None).resolve(
             Mcp(SERVER, include=["find_*"]), McpHandle
         )
 
-        async with runtime:
+        async with host:
             with ExecutionScope(ALICE):
                 assert crm.tools() == ()
                 with pytest.raises(AgentRunError) as untyped:
@@ -87,15 +87,15 @@ class TestTheMcpGrant:
     async def test_a_caller_with_no_subject_learns_nothing_of_the_server(
         self, make_runtime: Any, reachable: bool, monkeypatch: pytest.MonkeyPatch
     ) -> None:
-        runtime = make_runtime(reachable=reachable)
-        crm = McpMarkerResolver(runtime, observability=None).resolve(
+        host = make_runtime(reachable=reachable)
+        crm = McpMarkerResolver(host, observability=None).resolve(
             Mcp(SERVER, include=["find_*"]), McpHandle
         )
         asked: list[str] = []
-        monkeypatch.setattr(runtime, "use_case_mcp_grant", asked.append)
+        monkeypatch.setattr(host, "use_case_mcp_grant", asked.append)
         refusals: list[AgentRunErrorCode] = []
 
-        async with runtime:
+        async with host:
             with ExecutionScope(ANONYMOUS):
                 for call in (
                     lambda: crm.call_untyped(TOOL, {}),
@@ -114,9 +114,9 @@ class TestTheMcpGrant:
 
 class TestACallerWithNoSubject:
     async def test_an_anonymous_agent_caller_keeps_unauthorized(
-        self, runtime: AgentHost, triage: Any, crm: Any, backend_calls: Any
+        self, host: AgentHost, triage: Any, crm: Any, backend_calls: Any
     ) -> None:
-        async with runtime:
+        async with host:
             with ExecutionScope(ANONYMOUS):
                 handle_call = HANDLE_CALLS["agent"](triage, crm)
                 with pytest.raises(AgentRunError) as refused:
@@ -130,7 +130,7 @@ class TestACallerWithNoSubject:
     @pytest.mark.parametrize("call", list(HANDLE_CALLS.values()), ids=list(HANDLE_CALLS))
     async def test_is_refused_with_no_backend_call_even_where_a_row_has_no_subject(
         self,
-        runtime: AgentHost,
+        host: AgentHost,
         triage: Any,
         crm: Any,
         caller: Identity,
@@ -140,7 +140,7 @@ class TestACallerWithNoSubject:
     ) -> None:
         assert "" in sql_service.rows_by_subject
 
-        async with runtime:
+        async with host:
             with ExecutionScope(caller):
                 handle_call = call(triage, crm)
                 with pytest.raises(AgentRunError) as refused:

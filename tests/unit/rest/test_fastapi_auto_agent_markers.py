@@ -203,7 +203,7 @@ class TestResolversBindOnlyWithAnAiRuntime:
 
     def test_with_an_ai_runtime_both_resolvers_are_bound_once(self) -> None:
         result = _kernel_runtime()
-        ai = AiWiring(config=None, runtime=_fake_agent_host())
+        ai = AiWiring(config=None, agent_host=_fake_agent_host())
 
         ai.bind_resolvers(result)
 
@@ -227,7 +227,7 @@ class TestResolversBindOnlyWithAnAiRuntime:
         if registered:
             result.container.register_instance(Observability, runtime)
 
-        AiWiring(config=None, runtime=_fake_agent_host()).bind_resolvers(result)
+        AiWiring(config=None, agent_host=_fake_agent_host()).bind_resolvers(result)
 
         with ExecutionScope(Identity(subject="ada", mechanism="test")):
             handle: Any = result.container.kinds.resolve(AGENT, Agent("triage"), AgentHandle)

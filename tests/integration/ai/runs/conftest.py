@@ -67,11 +67,11 @@ def serving() -> Any:
     """Serve an entered runtime's agent endpoints, acting as Alice for each request."""
 
     @asynccontextmanager
-    async def serve(runtime: AgentHost) -> AsyncIterator[FastAPI]:
+    async def serve(host: AgentHost) -> AsyncIterator[FastAPI]:
         app = FastAPI()
         mount_agent_endpoints(
             app,
-            runtime=runtime,
+            host=host,
             config=make_ai_config(endpoints={AGENT: make_endpoint()}),
             authenticator=AcmeAuthenticator(),  # type: ignore[arg-type]
             observability=Observability([]),

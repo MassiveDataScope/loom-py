@@ -2,7 +2,7 @@
 
 Keeps the whole limit vocabulary out of the lifecycle: a breach of
 ``run_timeout_ms``, ``tool_timeout_ms`` or ``max_iterations`` becomes the
-stream's terminal :class:`~loom.ai.abc.ErrorEvent`, which the runtime turns
+stream's terminal :class:`~loom.ai.abc.ErrorEvent`, which the host turns
 back into an :class:`~loom.ai.errors.AgentRunError`.
 """
 
@@ -142,11 +142,11 @@ async def cancel_task(task: asyncio.Task[None]) -> None:
     The ``CancelledError`` is swallowed only when it belongs to *task*. If it
     arrived because the caller itself was cancelled while awaiting, it is
     re-raised: absorbing that one would break the cooperative cancellation of
-    whoever is shutting this runtime down, and the shutdown would appear to
+    whoever is shutting this host down, and the shutdown would appear to
     succeed while its caller kept running.
 
     Args:
-        task: Background task this runtime owns.
+        task: Background task this host owns.
     """
     task.cancel()
     try:

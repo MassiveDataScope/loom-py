@@ -2,7 +2,7 @@
 
 The one path every transport takes from configuration to a live
 :class:`~loom.ai.execution.AgentHost`: resolve the engine, load and compile
-the artifacts, and hand both to the runtime, which opens nothing until it is
+the artifacts, and hand both to the host, which opens nothing until it is
 entered.
 """
 
@@ -33,7 +33,7 @@ __all__ = ["build_agent_host"]
 
 
 class _NoDependencies(DepsFactory):
-    """Dependency factory of a runtime whose agents reach no application service."""
+    """Dependency factory of a host whose agents reach no application service."""
 
     def build(
         self,
@@ -57,10 +57,10 @@ def build_agent_host(
     sql: SqlConfig | None = None,
     use_case_mcp: Sequence[UseCaseMcpGrant] = (),
 ) -> AgentHost:
-    """Compile the declared artifacts and build the runtime that serves them.
+    """Compile the declared artifacts and build the host that serves them.
 
     Compilation is offline and complete: every issue of every artifact is
-    reported at once. No client opens until the returned runtime is entered.
+    reported at once. No client opens until the returned host is entered.
 
     Args:
         config: Parsed ``ai:`` section.
@@ -81,7 +81,7 @@ def build_agent_host(
             use cases.
 
     Returns:
-        The runtime, not yet entered.
+        The host, not yet entered.
 
     Raises:
         AgentCompilationError: When the engine cannot be resolved, a glob

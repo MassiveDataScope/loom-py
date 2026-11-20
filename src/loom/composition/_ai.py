@@ -91,22 +91,22 @@ class AiWiring:
 
     Args:
         config: Parsed ``ai:`` section, or ``None`` when absent.
-        runtime: Agent host entered by the app lifespan alongside the SQL
+        agent_host: Agent host entered by the app lifespan alongside the SQL
             registry, or ``None`` when no section is configured.
-        plans: Compiled agent plans, the runtime's own; empty when there is no
-            runtime.
+        plans: Compiled agent plans, the agent host's own; empty when there is no
+            agent host.
     """
 
     ABSENT: ClassVar[AiWiring]
 
     config: AiConfig | None
-    runtime: AgentHost | None
+    agent_host: AgentHost | None
     plans: tuple[AgentPlan, ...] = ()
 
     @classmethod
-    def hosted(cls, config: AiConfig, runtime: AgentHost) -> AiWiring:
-        """The wiring of *runtime*, built from *config*, with the runtime's own plans."""
-        return cls(config=config, runtime=runtime, plans=runtime.plans)
+    def hosted(cls, config: AiConfig, agent_host: AgentHost) -> AiWiring:
+        """The wiring of *agent_host*, built from *config*, with the agent host's own plans."""
+        return cls(config=config, agent_host=agent_host, plans=agent_host.plans)
 
     @classmethod
     def build(
@@ -125,11 +125,11 @@ class AiWiring:
         Without the section the AI pillar is never imported. With it, every
         ``Mcp()`` declaration is checked against ``ai.mcp_servers`` and
         granted, the engine is resolved and the artifacts are compiled
-        offline; the runtime's live clients open with the application.
+        offline; the agent host's live clients open with the application.
 
         Args:
             ctx: The application's configuration.
-            kernel: The kernel the runtime serves.
+            kernel: The kernel the agent host serves.
             sql_cfg: The ``sql`` section, or ``None``.
             code_path: Root the artifact globs are relative to.
             agent_specs: Glob patterns from ``app.agents``.
@@ -164,7 +164,7 @@ class AiWiring:
         ai_cfg = ctx.section(ConfigKey.AI, AiConfig)
         grants = declared.mcp_grants(ai_cfg.mcp_servers)
         provider = resolve_engine_plugin(ai_cfg.engine)
-        runtime = build_agent_host(
+        agent_host = build_agent_host(
             ai_cfg,
             root=code_path,
             names=names,
@@ -176,7 +176,7 @@ class AiWiring:
             sql=sql_cfg,
             use_case_mcp=grants,
         )
-        return cls.hosted(ai_cfg, runtime)
+        return cls.hosted(ai_cfg, agent_host)
 
     @property
     def mcp_servers(self) -> Mapping[str, McpServerConfig]:
@@ -185,21 +185,21 @@ class AiWiring:
 
     @property
     def resource(self) -> Resource | None:
-        """The agent host as the application's resource; ``None`` without a runtime."""
-        runtime = self.runtime
-        if runtime is None:
+        """The agent host as the application's resource; ``None`` without an agent host."""
+        agent_host = self.agent_host
+        if agent_host is None:
             return None
-        return Resource(kind=ResourceKind.AGENTS, name="agents", manager=lambda: runtime)
+        return Resource(kind=ResourceKind.AGENTS, name="agents", manager=lambda: agent_host)
 
     def bind_resolvers(self, kernel: Kernel) -> None:
-        """Bind the executor's ``Agent()`` and ``Mcp()`` resolvers over :attr:`runtime`, if any.
+        """Bind the executor's ``Agent()`` and ``Mcp()`` resolvers over :attr:`agent_host`, if any.
 
         Args:
             kernel: The kernel whose executor resolves the markers; its
                 container serves ``SqlQueryService`` and, optionally,
                 ``Observability``.
         """
-        if self.runtime is None:
+        if self.agent_host is None:
             return
         from loom.ai.execution._handle import AgentMarkerResolver, McpMarkerResolver
 
@@ -207,17 +207,17 @@ class AiWiring:
         observability = container.resolve_or_none(Observability)
         kernel.executor.bind_agent_resolver(
             AgentMarkerResolver(
-                self.runtime,
+                self.agent_host,
                 sql_query_service=container.resolve(SqlQueryService),
                 observability=observability,
             )
         )
         kernel.executor.bind_mcp_resolver(
-            McpMarkerResolver(self.runtime, observability=observability)
+            McpMarkerResolver(self.agent_host, observability=observability)
         )
 
 
-AiWiring.ABSENT = AiWiring(config=None, runtime=None)
+AiWiring.ABSENT = AiWiring(config=None, agent_host=None)
 
 
 @dataclass(frozen=True, slots=True)
@@ -344,7 +344,7 @@ class MarkerDeclarations:
         """Refuse every ``Agent()`` declaration start-up cannot satisfy.
 
         Args:
-            plans: Every compiled agent plan, by name; empty when no runtime
+            plans: Every compiled agent plan, by name; empty when no agent host
                 is built, which reports every declared agent as unknown.
 
         Raises:
@@ -360,7 +360,7 @@ class MarkerDeclarations:
             raise AgentCompilationError(issues)
 
     def mcp_grants(self, servers: Mapping[str, McpServerConfig]) -> tuple[UseCaseMcpGrant, ...]:
-        """Compile every ``Mcp()`` declaration into the runtime's own grants.
+        """Compile every ``Mcp()`` declaration into the agent host's own grants.
 
         Args:
             servers: Every configured MCP server, by name; empty when no

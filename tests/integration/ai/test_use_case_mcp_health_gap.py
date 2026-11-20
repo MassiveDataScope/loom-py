@@ -55,7 +55,7 @@ class TestAUseCaseOnlyServerIsLeftOutOfTheProbe:
             usecase="orders.get_order_status",
             parameter="gateway",
         )
-        runtime = AgentHost(
+        host = AgentHost(
             plans=[make_plan(_AGENT)],  # declares no 'mcp' capability at all
             config=make_ai_config(
                 mcp_servers=make_mcp_servers(_SERVER),
@@ -69,14 +69,14 @@ class TestAUseCaseOnlyServerIsLeftOutOfTheProbe:
             use_case_mcp=(grant,),
         )
 
-        async with runtime:
-            await _until(lambda: runtime._health.get(_AGENT) is not None)
-            health = await runtime.health(_AGENT)
+        async with host:
+            await _until(lambda: host._health.get(_AGENT) is not None)
+            health = await host.health(_AGENT)
 
             assert health.status == "ok"
             assert _SERVER not in health.checks
 
-            resolver = McpMarkerResolver(runtime, observability=None)
+            resolver = McpMarkerResolver(host, observability=None)
             handle = resolver.resolve(Mcp(_SERVER, include=["search"]), McpHandle)
             with ExecutionScope(identity), pytest.raises(AgentRunError) as excinfo:
                 await handle.call_untyped("search", {})

@@ -133,9 +133,9 @@ class _OpenedClient:
 
 @dataclass(frozen=True, slots=True)
 class UseCaseMcpGrant:
-    """One verified ``Mcp()`` marker binding, compiled into a runtime input.
+    """One verified ``Mcp()`` marker binding, compiled into a host input.
 
-    Its server joins the clients the runtime opens even when no agent plan
+    Its server joins the clients the host opens even when no agent plan
     declares it.
 
     Attributes:
@@ -172,7 +172,7 @@ class AgentHost:
             same fail-closed rule.
         use_case_mcp: Every ``Mcp()`` marker binding a declaring use case
             carries (:class:`UseCaseMcpGrant`). Each server joins the clients
-            this runtime opens; one named only this way is no ``/health``
+            this host opens; one named only this way is no ``/health``
             check entry.
 
     Runs emit no span of their own; the transport opens it.
@@ -191,8 +191,8 @@ class AgentHost:
         async with AgentHost(
             plans=plans, config=ai_config, engine_plugin=provider,
             deps=deps, container=container,
-        ) as runtime:
-            result = await runtime.run("analyst", prompt, identity=identity)
+        ) as host:
+            result = await host.run("analyst", prompt, identity=identity)
     """
 
     def __init__(
@@ -233,10 +233,10 @@ class AgentHost:
         """Open every live client, validate the plans and build the engines.
 
         Returns:
-            The entered runtime.
+            The entered host.
 
         Raises:
-            RuntimeError: When the runtime was already entered.
+            RuntimeError: When the host was already entered.
             AgentCompilationError: Aggregating every start-up failure. Every
                 client opened so far is closed before the error propagates.
         """
@@ -272,7 +272,7 @@ class AgentHost:
         """Close every live client in reverse order, in the task that opened them.
 
         Raises:
-            RuntimeError: When the runtime was never entered, or when the
+            RuntimeError: When the host was never entered, or when the
                 exiting task is not the one that entered it — closing a
                 session-affine client from a foreign task is a latent
                 corruption, not a detail to paper over.
@@ -298,11 +298,11 @@ class AgentHost:
 
     @property
     def plans(self) -> tuple[AgentPlan, ...]:
-        """Every compiled plan this runtime serves, in the order they were given."""
+        """Every compiled plan this host serves, in the order they were given."""
         return tuple(self._plans.values())
 
     def agent_names(self) -> tuple[str, ...]:
-        """Return the names of every agent this runtime serves.
+        """Return the names of every agent this host serves.
 
         Returns:
             One name per compiled plan, in the order the plans were given.
@@ -310,13 +310,13 @@ class AgentHost:
         return tuple(self._plans)
 
     def has_agent(self, name: str) -> bool:
-        """Report whether an agent with that name is served by this runtime.
+        """Report whether an agent with that name is served by this host.
 
         Args:
             name: Agent name to look for.
 
         Returns:
-            ``True`` when the runtime holds a plan with that name.
+            ``True`` when the host holds a plan with that name.
         """
         return name in self._plans
 
@@ -911,8 +911,8 @@ class AgentHost:
 
         Read by :func:`~loom.ai.fastapi.endpoints._decode_state` to parse a
         request's raw ``state`` bytes against the artefact's own shape, and available
-        before this runtime is entered — a compiled plan already carries its shape,
-        unlike a grant, which is resolved only once the runtime opens its clients.
+        before this host is entered — a compiled plan already carries its shape,
+        unlike a grant, which is resolved only once the host opens its clients.
 
         Args:
             name: Agent whose declared shape is read.
@@ -953,7 +953,7 @@ class AgentHost:
 
         Returns:
             The immutable :class:`~loom.ai.execution._grants.AgentGrants` this
-            runtime resolved for *name* when it was entered.
+            host resolved for *name* when it was entered.
 
         Raises:
             KeyError: When no agent is named *name*.
@@ -962,7 +962,7 @@ class AgentHost:
         return self._grants[name]
 
     def native(self, name: str, *, identity: Identity, state: object | None = None) -> object:
-        """Return one agent's engine-native objects, outside this runtime's supervision.
+        """Return one agent's engine-native objects, outside this host's supervision.
 
         Serves :meth:`~loom.ai.abc.AgentHandle.native`; see it for what a run
         driven through the returned objects keeps and what it loses.
@@ -996,7 +996,7 @@ class AgentHost:
         )
 
     def _native_guard(self, name: str) -> Callable[[], AbstractAsyncContextManager[None]]:
-        """Build the guard a hand-driven run of *name* enters to rejoin this runtime's bounds.
+        """Build the guard a hand-driven run of *name* enters to rejoin this host's bounds.
 
         The guard enters the call chain and takes an admission slot in
         :meth:`_run_stream`'s order, then runs its body as the identity of the
@@ -1060,14 +1060,14 @@ class AgentHost:
             unreachable under ``ai.remote_clients: optional``.
 
         Raises:
-            RuntimeError: When the runtime was never entered.
+            RuntimeError: When the host was never entered.
             AgentRunError: With ``MCP_SERVER_NOT_GRANTED`` when no ``Mcp()``
                 declaration reached at startup names *server*.
         """
         if self._stack is None:
             raise RuntimeError(
                 "AgentHost must be entered before use: wrap it in "
-                "'async with runtime:' to open its clients and build its engines"
+                "'async with host:' to open its clients and build its engines"
             )
         try:
             return self._use_case_grants[server]
@@ -1126,7 +1126,7 @@ class AgentHost:
         if slot is None:
             raise RuntimeError(
                 "AgentHost must be entered before use: wrap it in "
-                "'async with runtime:' to open its clients and build its engines"
+                "'async with host:' to open its clients and build its engines"
             )
         return slot
 
@@ -1261,7 +1261,7 @@ def _remote_capabilities(
 def _merge_use_case_mcp(
     mcp: tuple[CompiledMcpCapability, ...], use_case_mcp: Sequence[UseCaseMcpGrant]
 ) -> tuple[CompiledMcpCapability, ...]:
-    """Fold each declaring use case's own server into the set the runtime opens.
+    """Fold each declaring use case's own server into the set the host opens.
 
     One capability per server name; both sources open the same client.
 

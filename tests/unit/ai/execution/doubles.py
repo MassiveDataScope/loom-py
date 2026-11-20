@@ -1,4 +1,4 @@
-"""Doubles shared by the runtime unit tests."""
+"""Doubles shared by the host unit tests."""
 
 from __future__ import annotations
 

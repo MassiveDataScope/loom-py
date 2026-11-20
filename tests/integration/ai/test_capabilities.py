@@ -1882,7 +1882,7 @@ class TestIdentityReachesTheExecutor:
 
 class TestTheRuntimeStartChecksTheInvoker:
     @staticmethod
-    def _runtime(container: LoomContainer, provider: CountingEngineProvider) -> AgentHost:
+    def _host(container: LoomContainer, provider: CountingEngineProvider) -> AgentHost:
         return AgentHost(
             plans=[make_plan("analyst", capabilities=(whoami_capability(),))],
             config=make_ai_config(),
@@ -1897,7 +1897,7 @@ class TestTheRuntimeStartChecksTheInvoker:
         provider = CountingEngineProvider()
 
         with pytest.raises(AgentCompilationError) as failure:
-            async with self._runtime(kernel.container, provider):
+            async with self._host(kernel.container, provider):
                 pass
 
         assert [issue.code for issue in failure.value.issues] == [AgentErrorCode.INVOKER_BOUND]
@@ -1909,7 +1909,7 @@ class TestTheRuntimeStartChecksTheInvoker:
         provider = CountingEngineProvider()
 
         with pytest.raises(AgentCompilationError) as failure:
-            async with self._runtime(LoomContainer(), provider):
+            async with self._host(LoomContainer(), provider):
                 pass
 
         issues = failure.value.issues
@@ -1921,7 +1921,7 @@ class TestTheRuntimeStartChecksTheInvoker:
         kernel = create_kernel(config=object(), use_cases=[WhoAmIUseCase])
         provider = CountingEngineProvider()
 
-        async with self._runtime(kernel.container, provider):
+        async with self._host(kernel.container, provider):
             pass
 
         assert provider.calls == ["analyst"]

@@ -184,7 +184,7 @@ def _wired(
     """Wire a real executor to a real ``AgentHost``, exactly as ``create_app`` does."""
     _, executor = compiler_and_executor
     provider = CountingEngineProvider(engines={MARKER_AGENT_NAME: engine})
-    runtime = AgentHost(
+    host = AgentHost(
         plans=[make_plan(MARKER_AGENT_NAME, capabilities=capabilities, policies=policies)],
         config=_ai_config(granted_mcp=bool(mcp_clients)),
         engine_plugin=provider,  # type: ignore[arg-type]
@@ -199,9 +199,9 @@ def _wired(
         else NullSqlQueryService()
     )
     executor.bind_agent_resolver(
-        AgentMarkerResolver(runtime, sql_query_service=sql_query_service, observability=None)
+        AgentMarkerResolver(host, sql_query_service=sql_query_service, observability=None)
     )
-    return executor, runtime
+    return executor, host
 
 
 class TestTheThreeModesOverOneArtefact:
@@ -211,14 +211,14 @@ class TestTheThreeModesOverOneArtefact:
         self, deps: StubDepsFactory, container: LoomContainer
     ) -> None:
         engine = ShapedRecordingEngine()
-        executor, runtime = _wired(
+        executor, host = _wired(
             engine=engine,
             compiler_and_executor=marker_use_case_executor(ThreeModesUseCase),
             deps=deps,
             container=container,
         )
 
-        async with runtime:
+        async with host:
             result = await executor.execute(ThreeModesUseCase(), identity=_ALICE)
 
         assert result["declared"] == {"answer": "42"}
@@ -239,7 +239,7 @@ class TestACallFilteredByTheGrant:
             results={"read_orders": {"orders": [1, 2, 3]}},
         )
         engine = ShapedRecordingEngine()
-        executor, runtime = _wired(
+        executor, host = _wired(
             engine=engine,
             compiler_and_executor=marker_use_case_executor(GrantedToolUseCase),
             deps=deps,
@@ -248,7 +248,7 @@ class TestACallFilteredByTheGrant:
             mcp_clients={_MCP_SERVER: StubMcpClient(label=_MCP_SERVER, session=session, log=[])},
         )
 
-        async with runtime:
+        async with host:
             result = await executor.execute(GrantedToolUseCase(), identity=_ALICE)
 
         assert result == {"orders": [1, 2, 3]}
@@ -259,7 +259,7 @@ class TestACallFilteredByTheGrant:
     ) -> None:
         session = RecordingMcpSession(tools=("read_orders", "write_orders"))
         engine = ShapedRecordingEngine()
-        executor, runtime = _wired(
+        executor, host = _wired(
             engine=engine,
             compiler_and_executor=marker_use_case_executor(RejectedToolUseCase),
             deps=deps,
@@ -269,7 +269,7 @@ class TestACallFilteredByTheGrant:
         )
 
         use_case = RejectedToolUseCase()
-        async with runtime:
+        async with host:
             with pytest.raises(AgentRunError) as excinfo:
                 await executor.execute(use_case, identity=_ALICE)
 
@@ -286,7 +286,7 @@ class TestAQueryWithTheCallersRoles:
         service = RecordingSqlQueryService(_sql_result())
         container.register_instance(SqlQueryService, service)
         engine = ShapedRecordingEngine()
-        executor, runtime = _wired(
+        executor, host = _wired(
             engine=engine,
             compiler_and_executor=marker_use_case_executor(GrantedQueryUseCase),
             deps=deps,
@@ -295,7 +295,7 @@ class TestAQueryWithTheCallersRoles:
             granted_sql=True,
         )
 
-        async with runtime:
+        async with host:
             rows = await executor.execute(GrantedQueryUseCase(), identity=_ALICE)
 
         assert list(rows) == [{"id": 1}, {"id": 2}]
@@ -316,7 +316,7 @@ class TestAgentPathIncludeIsWiredToo:
     ) -> None:
         session = RecordingMcpSession(tools=("read_orders", "write_orders"))
         engine = ShapedRecordingEngine()
-        executor, runtime = _wired(
+        executor, host = _wired(
             engine=engine,
             compiler_and_executor=marker_use_case_executor(GrantedToolUseCase),
             deps=deps,
@@ -325,9 +325,9 @@ class TestAgentPathIncludeIsWiredToo:
             mcp_clients={_MCP_SERVER: StubMcpClient(label=_MCP_SERVER, session=session, log=[])},
         )
 
-        async with runtime:
+        async with host:
             resolver = AgentMarkerResolver(
-                runtime, sql_query_service=NullSqlQueryService(), observability=None
+                host, sql_query_service=NullSqlQueryService(), observability=None
             )
             handle = resolver.resolve(Agent(MARKER_AGENT_NAME), AgentHandle[Any])
             with ExecutionScope(_ALICE):
@@ -340,7 +340,7 @@ class TestAgentPathIncludeIsWiredToo:
             tools=("read_orders",), results={"read_orders": {"orders": []}}
         )
         engine = ShapedRecordingEngine()
-        executor, runtime = _wired(
+        executor, host = _wired(
             engine=engine,
             compiler_and_executor=marker_use_case_executor(GrantedToolUseCase),
             deps=deps,
@@ -351,9 +351,9 @@ class TestAgentPathIncludeIsWiredToo:
         observer = RecordingObserver()
         observability = Observability(observers=[observer])
 
-        async with runtime:
+        async with host:
             resolver = AgentMarkerResolver(
-                runtime, sql_query_service=NullSqlQueryService(), observability=observability
+                host, sql_query_service=NullSqlQueryService(), observability=observability
             )
             handle = resolver.resolve(Agent(MARKER_AGENT_NAME), AgentHandle[Any])
             with ExecutionScope(_ALICE):
@@ -382,7 +382,7 @@ class TestAgentPathIncludeIsWiredToo:
 
         session = SlowSession(tools=("read_orders",), results={"read_orders": {"orders": []}})
         engine = ShapedRecordingEngine()
-        executor, runtime = _wired(
+        executor, host = _wired(
             engine=engine,
             compiler_and_executor=marker_use_case_executor(GrantedToolUseCase),
             deps=deps,
@@ -392,9 +392,9 @@ class TestAgentPathIncludeIsWiredToo:
             policies=make_policies(tool_timeout_ms=10),
         )
 
-        async with runtime:
+        async with host:
             resolver = AgentMarkerResolver(
-                runtime, sql_query_service=NullSqlQueryService(), observability=None
+                host, sql_query_service=NullSqlQueryService(), observability=None
             )
             handle = resolver.resolve(Agent(MARKER_AGENT_NAME), AgentHandle[Any])
             mcp_handle = handle.mcp(_MCP_SERVER)

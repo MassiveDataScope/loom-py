@@ -1,4 +1,4 @@
-"""HTTP surface of the agent runtime (T086-T095, T098).
+"""HTTP surface of the agent host (T086-T095, T098).
 
 Drives ``mount_agent_endpoints`` over a live :class:`AgentHost` backed by
 scripted engines, asserting the wire contract in
@@ -86,7 +86,7 @@ _PREFIX = "/agents"
 _MCP_SERVER = "tools"
 _SRC = Path(__file__).resolve().parents[3] / "src"
 _INTERACTION_ID_LENGTH = 32
-"""Length of the ``uuid4().hex`` the runtime mints per admitted run."""
+"""Length of the ``uuid4().hex`` the host mints per admitted run."""
 _NEW_MESSAGES = b'[{"kind": "request", "conversation_id": "c-42"}]'
 _RESULT_KEYS = {"output", "usage", "interaction_id", "hook_result"}
 """The only keys a completed run publishes, on ``/run`` and on the ``final`` frame."""
@@ -139,7 +139,7 @@ async def _serving(
     max_concurrent_runs: int = 8,
     observability: Observability | None = None,
 ) -> AsyncIterator[tuple[FastAPI, httpx.AsyncClient]]:
-    """Serve an entered runtime over an in-process ASGI client."""
+    """Serve an entered host over an in-process ASGI client."""
     config = make_ai_config(
         endpoints=dict(endpoints if endpoints is not None else {_AGENT: make_endpoint()}),
         mcp_servers=make_mcp_servers(_MCP_SERVER),
@@ -148,7 +148,7 @@ async def _serving(
         health_cache_ttl_ms=health_cache_ttl_ms,
         max_concurrent_runs=max_concurrent_runs,
     )
-    runtime = AgentHost(
+    host = AgentHost(
         plans=list(plans if plans is not None else (make_plan(_AGENT),)),
         config=config,
         engine_plugin=CountingEngineProvider(engines=engines),  # type: ignore[arg-type]
@@ -158,11 +158,11 @@ async def _serving(
             {_MCP_SERVER: StubMcpClient(label="mcp", session=RecordingMcpSession(), log=[])}
         ),  # type: ignore[arg-type]
     )
-    async with runtime:
+    async with host:
         app = FastAPI()
         mount_agent_endpoints(
             app,
-            runtime=runtime,
+            host=host,
             config=config,
             authenticator=authenticator if authenticator is not None else StubAuthenticator(),  # type: ignore[arg-type]
             observability=observability,
@@ -359,7 +359,7 @@ class TestMounting:
     ) -> None:
         """Opting in without an authenticator and without anonymous aborts start-up."""
         config = make_ai_config(endpoints={_AGENT: make_endpoint(allow_anonymous=False)})
-        runtime = AgentHost(
+        host = AgentHost(
             plans=[make_plan(_AGENT)],
             config=config,
             engine_plugin=CountingEngineProvider(),  # type: ignore[arg-type]
@@ -369,10 +369,10 @@ class TestMounting:
 
         app = FastAPI()
 
-        async with runtime:
+        async with host:
             with pytest.raises(ConfigError):
                 mount_agent_endpoints(
-                    app, runtime=runtime, config=config, authenticator=None, prefix=_PREFIX
+                    app, host=host, config=config, authenticator=None, prefix=_PREFIX
                 )
 
     async def test_warns_when_mounting_an_agent(
@@ -1764,14 +1764,14 @@ class TestAuthenticationExclusions:
             a2a=A2AConfig(base_url=Dsn(_A2A_BASE_URL), expose=(_AGENT,)),
         )
         plans = [make_plan(_AGENT)]
-        runtime = AgentHost(
+        host = AgentHost(
             plans=plans,
             config=config,
             engine_plugin=CountingEngineProvider(),  # type: ignore[arg-type]
             deps=deps,
             container=container,
         )
-        async with runtime:
+        async with host:
             app = FastAPI()
             app.add_middleware(
                 AuthenticationMiddleware,
@@ -1780,7 +1780,7 @@ class TestAuthenticationExclusions:
             )
             mount_a2a_endpoints(
                 app,
-                runtime=runtime,
+                host=host,
                 config=config,
                 plans=plans,
                 authenticator=StubAuthenticator(),  # type: ignore[arg-type]

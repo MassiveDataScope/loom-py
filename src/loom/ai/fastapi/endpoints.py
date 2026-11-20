@@ -94,10 +94,10 @@ _STATUS_BY_CODE: Mapping[AgentRunErrorCode, int] = MappingProxyType(
 class _AgentRunRequest(LoomFrozenStruct, frozen=True, kw_only=True, forbid_unknown_fields=True):
     """Body accepted by ``/run`` and ``/stream``: a prompt, an optional thread and state.
 
-    ``conversation_id`` is opaque to the runtime: it selects the conversation the
+    ``conversation_id`` is opaque to the host: it selects the conversation the
     loader use case receives, when the artifact declares one, and is copied
     verbatim into the output hook's command. Its bounds are enforced here, at decode, so an
-    out-of-range value is a ``422`` and never reaches the runtime.
+    out-of-range value is a ``422`` and never reaches the host.
 
     ``state`` is ``msgspec.Raw`` rather than a decoded value: this struct is
     decoded by the one module-level :data:`_REQUEST_DECODER` shared by every
@@ -235,21 +235,19 @@ async def _read_request(
     return parsed, state
 
 
-def _require_agent(
-    name: str, exposed: Mapping[str, AgentEndpointConfig], runtime: AgentHost
-) -> None:
+def _require_agent(name: str, exposed: Mapping[str, AgentEndpointConfig], host: AgentHost) -> None:
     """Refuse an agent that is not compiled or not exposed over HTTP.
 
     Raises:
         TransportError: 404 ``AGENT_NOT_FOUND``.
     """
-    if name in exposed and runtime.has_agent(name):
+    if name in exposed and host.has_agent(name):
         return
     raise TransportError(404, "AGENT_NOT_FOUND", f"no agent named {name!r} is exposed")
 
 
 async def _annotated_run(
-    runtime: AgentHost,
+    host: AgentHost,
     span: LoomSpan,
     name: str,
     body: _AgentRunRequest,
@@ -264,7 +262,7 @@ async def _annotated_run(
     cost than one that answers.
 
     Args:
-        runtime: Runtime serving the agent.
+        host: Host serving the agent.
         span: Open span of this run.
         name: Agent to run.
         body: Decoded request.
@@ -279,7 +277,7 @@ async def _annotated_run(
         AgentRunError: Whatever the run failed with, unchanged.
     """
     try:
-        result = await runtime.run(
+        result = await host.run(
             name,
             body.prompt,
             identity=identity,
@@ -294,7 +292,7 @@ async def _annotated_run(
 
 
 def _make_run_handler(
-    runtime: AgentHost,
+    host: AgentHost,
     config: AiConfig,
     exposed: Mapping[str, AgentEndpointConfig],
     *,
@@ -306,13 +304,13 @@ def _make_run_handler(
     async def run_agent(request: Request, name: str) -> Response:
         try:
             identity = require_caller(name, exposed.get(name))
-            _require_agent(name, exposed, runtime)
+            _require_agent(name, exposed, host)
             body, state = await _read_request(
                 request,
                 name=name,
                 max_prompt_bytes=config.max_prompt_bytes,
                 max_state_bytes=config.max_state_bytes,
-                state_shape=runtime.state_shape(name),
+                state_shape=host.state_shape(name),
             )
             span = observability.open_span(
                 Scope.AGENT,
@@ -326,8 +324,8 @@ def _make_run_handler(
                 mechanism=identity.mechanism,
             )
             with always_closed(span), span.as_current():
-                result = await _annotated_run(runtime, span, name, body, identity, state)
-            result = project_output(result, runtime.output_type(name))
+                result = await _annotated_run(host, span, name, body, identity, state)
+            result = project_output(result, host.output_type(name))
             return AgentJSONResponse(content=result_payload(result))
         except TransportError as exc:
             return error_response(exc.status_code, exc.code, exc.message)
@@ -365,7 +363,7 @@ async def _annotating_usage(
 
 
 def _stream_frames(
-    runtime: AgentHost,
+    host: AgentHost,
     name: str,
     body: _AgentRunRequest,
     identity: Identity,
@@ -402,14 +400,14 @@ def _stream_frames(
         )
         with always_closed(span):
             try:
-                async with runtime.run_stream(
+                async with host.run_stream(
                     name,
                     body.prompt,
                     identity=identity,
                     conversation_id=body.conversation_id,
                     state=state,
                 ) as events:
-                    projected_events = with_projected_output(events, runtime.output_type(name))
+                    projected_events = with_projected_output(events, host.output_type(name))
                     async for frame in stream_sse(
                         _annotating_usage(projected_events, span),
                         heartbeat_ms=HEARTBEAT_MS,
@@ -425,7 +423,7 @@ def _stream_frames(
 
 
 def _make_stream_handler(
-    runtime: AgentHost,
+    host: AgentHost,
     config: AiConfig,
     exposed: Mapping[str, AgentEndpointConfig],
     *,
@@ -437,19 +435,19 @@ def _make_stream_handler(
     async def stream_agent(request: Request, name: str) -> Response:
         try:
             identity = require_caller(name, exposed.get(name))
-            _require_agent(name, exposed, runtime)
+            _require_agent(name, exposed, host)
             body, state = await _read_request(
                 request,
                 name=name,
                 max_prompt_bytes=config.max_prompt_bytes,
                 max_state_bytes=config.max_state_bytes,
-                state_shape=runtime.state_shape(name),
+                state_shape=host.state_shape(name),
             )
         except TransportError as exc:
             return error_response(exc.status_code, exc.code, exc.message)
         return StreamingResponse(
             _stream_frames(
-                runtime,
+                host,
                 name,
                 body,
                 identity,
@@ -464,17 +462,17 @@ def _make_stream_handler(
 
 
 def _make_health_handler(
-    runtime: AgentHost,
+    host: AgentHost,
     exposed: Mapping[str, AgentEndpointConfig],
 ) -> Callable[[str], object]:
     """Build the handler serving the cached health of one agent."""
 
     async def agent_health(name: str) -> Response:
         try:
-            _require_agent(name, exposed, runtime)
+            _require_agent(name, exposed, host)
         except TransportError as exc:
             return error_response(exc.status_code, exc.code, exc.message)
-        health = await runtime.health(name)
+        health = await host.health(name)
         payload: dict[str, object] = {"status": health.status}
         if health.detail is not None:
             payload["detail"] = health.detail
@@ -517,21 +515,21 @@ def _require_usable_authenticator(
 
 
 def _announce_mount(
-    runtime: AgentHost,
+    host: AgentHost,
     name: str,
     endpoint: AgentEndpointConfig,
     *,
     prefix: str,
 ) -> None:
     """Emit the startup WARNING carrying the security state of one mount."""
-    if not runtime.has_agent(name):
+    if not host.has_agent(name):
         _logger.warning(
             "Agent endpoint configured for agent=%s but no compiled agent has that name: "
             "its routes answer 404",
             name,
         )
         return
-    kinds = runtime.capability_kinds(name)
+    kinds = host.capability_kinds(name)
     _logger.warning(
         "Agent endpoints mounted: path=%s/%s/{run,stream,health} agent=%s auth=%s "
         "allow_anonymous=%s capabilities=%s. %s",
@@ -541,7 +539,7 @@ def _announce_mount(
         endpoint.auth,
         endpoint.allow_anonymous,
         ",".join(kinds) or "none",
-        _identity_notice(endpoint, kinds, conversational=runtime.has_conversation(name)),
+        _identity_notice(endpoint, kinds, conversational=host.has_conversation(name)),
     )
 
 
@@ -593,7 +591,7 @@ def _identity_notice(
 def mount_agent_endpoints(
     app: FastAPI,
     *,
-    runtime: AgentHost,
+    host: AgentHost,
     config: AiConfig,
     authenticator: Authenticator | None = None,
     observability: Observability | None = None,
@@ -607,7 +605,7 @@ def mount_agent_endpoints(
 
     Args:
         app: FastAPI application to mount the routes on.
-        runtime: Entered runtime serving the agents.
+        host: Entered host serving the agents.
         config: Parsed ``ai:`` section.
         authenticator: Mechanism authenticating callers of the application.
             ``None`` is only acceptable for agents declaring
@@ -623,7 +621,7 @@ def mount_agent_endpoints(
 
     Example::
 
-        mount_agent_endpoints(app, runtime=runtime, config=ai_config,
+        mount_agent_endpoints(app, host=host, config=ai_config,
                              authenticator=authenticator)
     """
     exposed = _exposed_agents(config, authenticator)
@@ -634,21 +632,19 @@ def mount_agent_endpoints(
     run_path = f"{prefix}/{{name}}/run"
     app.add_api_route(
         run_path,
-        _make_run_handler(runtime, config, exposed, path=run_path, observability=observability),
+        _make_run_handler(host, config, exposed, path=run_path, observability=observability),
         methods=["POST"],
     )
     stream_path = f"{prefix}/{{name}}/stream"
     app.add_api_route(
         stream_path,
-        _make_stream_handler(
-            runtime, config, exposed, path=stream_path, observability=observability
-        ),
+        _make_stream_handler(host, config, exposed, path=stream_path, observability=observability),
         methods=["POST"],
     )
     app.add_api_route(
         f"{prefix}/{{name}}/health",
-        _make_health_handler(runtime, exposed),
+        _make_health_handler(host, exposed),
         methods=["GET"],
     )
     for name, endpoint in exposed.items():
-        _announce_mount(runtime, name, endpoint, prefix=prefix)
+        _announce_mount(host, name, endpoint, prefix=prefix)

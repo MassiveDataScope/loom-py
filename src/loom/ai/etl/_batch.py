@@ -1,4 +1,4 @@
-"""One batch of runs of one agent on an entered runtime, bounded and budgeted."""
+"""One batch of runs of one agent on an entered host, bounded and budgeted."""
 
 from __future__ import annotations
 
@@ -42,7 +42,7 @@ class Batch:
     """Runs one agent once per prompt, never more than *limit* at a time.
 
     Attributes:
-        runtime: Runtime serving the agent, not yet entered.
+        host: Host serving the agent, not yet entered.
         name: Agent to run.
         limit: Runs in flight at once.
         ledger: Spend of the batch against its budget.
@@ -50,7 +50,7 @@ class Batch:
         to_builtins: Projects an answer onto builtins.
     """
 
-    runtime: AgentHost
+    host: AgentHost
     name: str
     limit: int
     ledger: SpendLedger
@@ -58,7 +58,7 @@ class Batch:
     to_builtins: Callable[[Any], Mapping[str, Any]]
 
     async def answer_all(self, prompts: Sequence[str | None]) -> list[RowOutcome]:
-        """Enter the runtime, answer every prompt in order, and close it in the same task.
+        """Enter the host, answer every prompt in order, and close it in the same task.
 
         *limit* workers take the prompts in order from one shared iterator, so
         the batch creates at most *limit* tasks whatever the number of rows.
@@ -70,7 +70,7 @@ class Batch:
         identity = Identity(subject=f"etl:{self.name}")
         outcomes: list[RowOutcome | None] = [None] * len(prompts)
         pending = iter(enumerate(prompts))
-        async with self.runtime, asyncio.TaskGroup() as workers:
+        async with self.host, asyncio.TaskGroup() as workers:
             for _ in range(min(self.limit, len(prompts))):
                 workers.create_task(self._work(pending, outcomes, identity))
         if None in outcomes:
@@ -99,7 +99,7 @@ class Batch:
     async def _run(self, prompt: str, identity: Identity) -> RowOutcome:
         usage: AgentUsage | None = None
         try:
-            result = await self.runtime.run(self.name, prompt, identity=identity)
+            result = await self.host.run(self.name, prompt, identity=identity)
             usage = result.usage
             output = self.to_builtins(result.output)
         except AgentRunError as error:

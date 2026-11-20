@@ -112,14 +112,14 @@ class TestASingletonAdapterHoldingHandles:
     async def test_interleaved_executions_each_act_as_themselves(
         self,
         kernel: Kernel,
-        runtime: AgentHost,
+        host: AgentHost,
         engine: AcmeEngine,
         session: RecordingMcpSession,
     ) -> None:
         async def advise(caller: Identity, first: bool) -> None:
             await kernel.executor.run(AcmeAdviseUseCase, params={"first": first}, identity=caller)
 
-        async with runtime:
+        async with host:
             first = asyncio.create_task(advise(ALICE, True))
             await kernel.container.resolve(AcmeGates).first_started.wait()
             await advise(BOB, False)
@@ -130,11 +130,11 @@ class TestASingletonAdapterHoldingHandles:
         assert len(session.calls) == 2
 
     async def test_its_handles_fail_closed_outside_any_execution(
-        self, kernel: Kernel, runtime: AgentHost
+        self, kernel: Kernel, host: AgentHost
     ) -> None:
         advisor = kernel.container.resolve(AcmeAdvisor)
 
-        async with runtime:
+        async with host:
             with pytest.raises(ExecutionRequired):
                 await advisor.triage.run("advise")
             with pytest.raises(ExecutionRequired):
@@ -144,7 +144,7 @@ class TestASingletonAdapterHoldingHandles:
 class TestHandlesResolvedInEachExecution:
     async def test_a_resolve_by_another_caller_does_not_change_who_an_earlier_one_acts_as(
         self,
-        runtime: AgentHost,
+        host: AgentHost,
         engine: AcmeEngine,
         sql_service: AcmeSqlService,
         session: RecordingMcpSession,
@@ -152,14 +152,12 @@ class TestHandlesResolvedInEachExecution:
         recorder = RecordingObserver()
         executor = UseCaseExecutor(UseCaseCompiler())
         executor.bind_agent_resolver(
-            AgentMarkerResolver(runtime, sql_query_service=sql_service, observability=None)
+            AgentMarkerResolver(host, sql_query_service=sql_service, observability=None)
         )
-        executor.bind_mcp_resolver(
-            McpMarkerResolver(runtime, observability=Observability([recorder]))
-        )
+        executor.bind_mcp_resolver(McpMarkerResolver(host, observability=Observability([recorder])))
         gates = AcmeGates()
 
-        async with runtime:
+        async with host:
             first = asyncio.create_task(
                 executor.execute(AcmeInterleavedUseCase(gates, first=True), identity=ALICE)
             )

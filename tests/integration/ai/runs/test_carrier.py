@@ -71,7 +71,7 @@ _GRANTS = {"python": _python, "mcp": _mcp, "a2a": _a2a}
 
 @asynccontextmanager
 async def _alice_guard() -> AsyncIterator[None]:
-    """The guard the runtime hands over: the run's body is an execution acting as Alice."""
+    """The guard the host hands over: the run's body is an execution acting as Alice."""
     with ExecutionScope(ALICE):
         yield
 

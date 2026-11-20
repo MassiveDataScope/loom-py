@@ -142,7 +142,7 @@ class TestFrameFormat:
         assert "type" not in _split_frame(encode_sse_event(event))[1]
 
     def test_emits_the_interaction_id_and_hook_result_when_the_final_carries_them(self) -> None:
-        """A ``final`` minted by the runtime carries the id and the hook's result verbatim."""
+        """A ``final`` minted by the host carries the id and the hook's result verbatim."""
         event = FinalEvent(
             output={"answer": "42"},
             usage=_USAGE,

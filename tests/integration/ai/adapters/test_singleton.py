@@ -38,11 +38,11 @@ class TestASingletonAdapterHoldingHandles:
         application = project.compose(
             WithOverrides(LambdaRuntime(use_cases=(AcmeMarket,)), _singletons)
         )
-        container, runtime = application.kernel.container, application.ai.runtime
+        container, host = application.kernel.container, application.ai.agent_host
         quotes = container.resolve(AcmeQuotes)
-        assert runtime is not None
+        assert host is not None
 
-        async with runtime:
+        async with host:
             for caller in (_ALICE, _BOB):
                 await application.kernel.executor.run(AcmeMarket, identity=caller)
 

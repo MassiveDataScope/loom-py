@@ -53,8 +53,8 @@ class _AgentHandle:
     """One named agent; each call acts as the execution identity of the moment.
 
     Args:
-        name: Agent name as this deployment's runtime knows it.
-        runtime: Live runtime the handle runs through.
+        name: Agent name as this deployment's host knows it.
+        host: Live host the handle runs through.
         observability: Runtime the handle's own span opens on, or ``None``.
         sql_query_service: The application's query service, handed to every
             :class:`~loom.ai.execution._grants.SqlGrantView` this handle builds.
@@ -64,13 +64,13 @@ class _AgentHandle:
         self,
         *,
         name: str,
-        runtime: AgentHost,
+        host: AgentHost,
         observability: Observability | None,
         sql_query_service: SqlQueryService,
     ) -> None:
         self._name = name
         self._who = f"agent {name!r}"
-        self._runtime = runtime
+        self._host = host
         self._observability = observability
         self._sql_query_service = sql_query_service
 
@@ -113,7 +113,7 @@ class _AgentHandle:
             self._require_shape_allowed()
         span = self._open_span(caller)
         try:
-            result = await self._runtime.run(
+            result = await self._host.run(
                 self._name,
                 prompt,
                 identity=caller,
@@ -182,7 +182,7 @@ class _AgentHandle:
                 no native form.
         """
         caller = require_authenticated(self._who)
-        return self._runtime.native(self._name, identity=caller, state=state)
+        return self._host.native(self._name, identity=caller, state=state)
 
     def mcp(self, server: str) -> McpHandle:
         """Return this artefact's own filtered view of one ``mcp`` grant.
@@ -191,7 +191,7 @@ class _AgentHandle:
             AgentRunError: With ``MCP_GRANT_UNKNOWN`` when the artefact
                 declares no ``mcp`` grant on that server name.
         """
-        grants = self._runtime.grants(self._name)
+        grants = self._host.grants(self._name)
         grant = grants.mcp.get(server)
         if grant is None:
             raise self._mcp_grant_unknown(server, grants)
@@ -213,7 +213,7 @@ class _AgentHandle:
             AgentRunError: With ``SQL_GRANT_UNKNOWN`` when the artefact
                 declares no ``sql`` grant on that connection name.
         """
-        grants = self._runtime.grants(self._name)
+        grants = self._host.grants(self._name)
         capability = grants.sql.get(connection)
         if capability is None:
             raise self._sql_grant_unknown(connection, grants)
@@ -226,7 +226,7 @@ class _AgentHandle:
 
     def grants(self) -> tuple[str, ...]:
         """Return every grant name reachable through :meth:`mcp` and :meth:`sql`."""
-        return self._runtime.grants(self._name).names
+        return self._host.grants(self._name).names
 
     def _mcp_grant_unknown(self, server: str, grants: AgentGrants) -> AgentRunError:
         granted = grants.mcp_names
@@ -258,7 +258,7 @@ class _AgentHandle:
 
     def _require_shape_allowed(self) -> None:
         """Refuse a per-run shape when the output hook's command needs the declared one."""
-        if self._runtime.grants(self._name).output_shape_bound:
+        if self._host.grants(self._name).output_shape_bound:
             raise AgentRunError(
                 AgentRunErrorCode.AGENT_RUN_SHAPE_WITH_HOOK,
                 f"agent {self._name!r} declares an output hook that reads the run's "
@@ -361,7 +361,7 @@ class AgentMarkerResolver(_MarkerResolver[str, "_AgentHandle"]):
     """Resolves each ``Agent(name)`` declaration to its one handle, in either resolver shape.
 
     Args:
-        runtime: Live agent host serving this deployment.
+        host: Live agent host serving this deployment.
         sql_query_service: The application's query service, handed to every
             ``sql`` grant view a handle builds.
         observability: Runtime every handle's span opens on, or ``None``.
@@ -369,13 +369,13 @@ class AgentMarkerResolver(_MarkerResolver[str, "_AgentHandle"]):
 
     def __init__(
         self,
-        runtime: AgentHost,
+        host: AgentHost,
         *,
         sql_query_service: SqlQueryService,
         observability: Observability | None,
     ) -> None:
         super().__init__()
-        self._runtime = runtime
+        self._host = host
         self._sql_query_service = sql_query_service
         self._observability = observability
 
@@ -383,7 +383,7 @@ class AgentMarkerResolver(_MarkerResolver[str, "_AgentHandle"]):
         """Return the handle of agent *name*, built on its first call.
 
         Args:
-            name: Agent name as this deployment's runtime knows it.
+            name: Agent name as this deployment's host knows it.
             identity: Checked, inside an execution, against the execution
                 identity; every call on the handle acts as the execution
                 identity of the moment.
@@ -404,7 +404,7 @@ class AgentMarkerResolver(_MarkerResolver[str, "_AgentHandle"]):
     def _build(self, key: str) -> _AgentHandle:
         return _AgentHandle(
             name=key,
-            runtime=self._runtime,
+            host=self._host,
             observability=self._observability,
             sql_query_service=self._sql_query_service,
         )
@@ -420,7 +420,7 @@ class _McpHandle:
     Args:
         server: MCP server name the declaration names.
         include: Glob patterns of the tools the declaration admits.
-        runtime: Live agent host serving this deployment.
+        host: Live agent host serving this deployment.
         observability: Runtime the view's span opens on, or ``None``.
     """
 
@@ -429,13 +429,13 @@ class _McpHandle:
         *,
         server: str,
         include: tuple[str, ...],
-        runtime: AgentHost,
+        host: AgentHost,
         observability: Observability | None,
     ) -> None:
         self._server = server
         self._include = include
         self._who = f"mcp server {server!r}"
-        self._runtime = runtime
+        self._host = host
         self._observability = observability
         self._view: tuple[McpGrant, McpGrantView] | None = None
 
@@ -484,7 +484,7 @@ class _McpHandle:
 
     def _current_view(self) -> McpGrantView | None:
         """Look the server's grant up and return this declaration's view of it, or ``None``."""
-        grant = self._runtime.use_case_mcp_grant(self._server)
+        grant = self._host.use_case_mcp_grant(self._server)
         if grant is None:
             return None
         cached = self._view
@@ -518,13 +518,13 @@ class McpMarkerResolver(_MarkerResolver[tuple[str, tuple[str, ...]], "_McpHandle
     A ``Scope.TOOL`` span of a call carries ``mcp_server``, never ``agent``.
 
     Args:
-        runtime: Live agent host serving this deployment.
+        host: Live agent host serving this deployment.
         observability: Runtime every handle's span opens on, or ``None``.
     """
 
-    def __init__(self, runtime: AgentHost, *, observability: Observability | None) -> None:
+    def __init__(self, host: AgentHost, *, observability: Observability | None) -> None:
         super().__init__()
-        self._runtime = runtime
+        self._host = host
         self._observability = observability
 
     def __call__(
@@ -557,7 +557,7 @@ class McpMarkerResolver(_MarkerResolver[tuple[str, tuple[str, ...]], "_McpHandle
         return _McpHandle(
             server=server,
             include=include,
-            runtime=self._runtime,
+            host=self._host,
             observability=self._observability,
         )
 

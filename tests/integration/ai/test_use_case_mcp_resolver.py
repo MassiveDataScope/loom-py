@@ -59,7 +59,7 @@ def _grant(
     return UseCaseMcpGrant(capability=capability, usecase=usecase, parameter=parameter)
 
 
-def _runtime(
+def _host(
     *,
     clients: dict[str, StubMcpClient],
     use_case_mcp: tuple[UseCaseMcpGrant, ...],
@@ -94,15 +94,15 @@ class TestTheResolverAppliesTheResolvingBindingsFilter:
             tools=("search", "delete"), schemas=("search",), results={"search": {"hits": 1}}
         )
         clients = {_SERVER_A: StubMcpClient(label="a", session=session, log=lifecycle_log)}
-        runtime = _runtime(
+        host = _host(
             clients=clients,
             use_case_mcp=(_grant(_SERVER_A, include=("search",)),),
             deps=deps,
             container=container,
         )
 
-        async with runtime:
-            resolve = McpMarkerResolver(runtime, observability=None)
+        async with host:
+            resolve = McpMarkerResolver(host, observability=None)
             handle = resolve(_SERVER_A, ("search",), identity)
 
             with ExecutionScope(identity):
@@ -123,7 +123,7 @@ class TestTheResolverAppliesTheResolvingBindingsFilter:
     ) -> None:
         session = RecordingMcpSession(tools=("search", "delete"))
         clients = {_SERVER_A: StubMcpClient(label="a", session=session, log=lifecycle_log)}
-        runtime = _runtime(
+        host = _host(
             clients=clients,
             use_case_mcp=(
                 _grant(_SERVER_A, include=("search",), usecase="orders.first"),
@@ -133,8 +133,8 @@ class TestTheResolverAppliesTheResolvingBindingsFilter:
             container=container,
         )
 
-        async with runtime:
-            resolve = McpMarkerResolver(runtime, observability=None)
+        async with host:
+            resolve = McpMarkerResolver(host, observability=None)
             first = resolve(_SERVER_A, ("search",), identity)
             second = resolve(_SERVER_A, ("delete",), identity)
 
@@ -165,20 +165,20 @@ class TestTheResolverAppliesTheResolvingBindingsFilter:
         """
         session = RecordingMcpSession(tools=("search", "delete"))
         clients = {_SERVER_A: StubMcpClient(label="a", session=session, log=lifecycle_log)}
-        runtime = _runtime(
+        host = _host(
             clients=clients,
             use_case_mcp=(_grant(_SERVER_A, include=("search",)),),
             deps=deps,
             container=container,
         )
 
-        async with runtime:
-            grant = runtime.use_case_mcp_grant(_SERVER_A)
+        async with host:
+            grant = host.use_case_mcp_grant(_SERVER_A)
             assert grant is not None
             # The shared substrate carries no filter of its own (H1, T203).
             assert grant.capability.include == ()
 
-            resolve = McpMarkerResolver(runtime, observability=None)
+            resolve = McpMarkerResolver(host, observability=None)
             handle = resolve(_SERVER_A, ("search",), identity)
 
             with ExecutionScope(identity):
@@ -198,7 +198,7 @@ class TestTheSpanDistinguishesTheUseCasePath:
     ) -> None:
         session = RecordingMcpSession(tools=("search",), results={"search": {"ok": True}})
         clients = {_SERVER_A: StubMcpClient(label="a", session=session, log=lifecycle_log)}
-        runtime = _runtime(
+        host = _host(
             clients=clients,
             use_case_mcp=(_grant(_SERVER_A, include=("search",)),),
             deps=deps,
@@ -207,8 +207,8 @@ class TestTheSpanDistinguishesTheUseCasePath:
         observer = RecordingObserver()
         observability = Observability(observers=[observer])
 
-        async with runtime:
-            resolve = McpMarkerResolver(runtime, observability=observability)
+        async with host:
+            resolve = McpMarkerResolver(host, observability=observability)
             handle = resolve(_SERVER_A, ("search",), identity)
             with ExecutionScope(identity):
                 await handle.call_untyped("search", {})
@@ -247,15 +247,15 @@ class TestTimeoutComesFromTheServersOwnDeadline:
 
         session = SlowSession(tools=("search",), results={"search": {"ok": 1}})
         clients = {_SERVER_A: StubMcpClient(label="a", session=session, log=lifecycle_log)}
-        runtime = _runtime(
+        host = _host(
             clients=clients,
             use_case_mcp=(_grant(_SERVER_A, include=("search",), timeout_ms=40),),
             deps=deps,
             container=container,
         )
 
-        async with runtime:
-            resolve = McpMarkerResolver(runtime, observability=None)
+        async with host:
+            resolve = McpMarkerResolver(host, observability=None)
             handle = resolve(_SERVER_A, ("search",), identity)
             with ExecutionScope(identity), pytest.raises(AgentRunError) as excinfo:
                 await handle.call_untyped("search", {})
@@ -276,7 +276,7 @@ class TestUnreachableServerTolerated:
         identity: Identity,
     ) -> None:
         client = StubMcpClient(label="a", session=None, log=lifecycle_log, connect_error="refused")
-        runtime = _runtime(
+        host = _host(
             clients={_SERVER_A: client},
             use_case_mcp=(_grant(_SERVER_A, include=("search",)),),
             deps=deps,
@@ -284,8 +284,8 @@ class TestUnreachableServerTolerated:
             remote_clients="optional",
         )
 
-        async with runtime:
-            resolve = McpMarkerResolver(runtime, observability=None)
+        async with host:
+            resolve = McpMarkerResolver(host, observability=None)
             handle = resolve(_SERVER_A, ("search",), identity)
 
             with ExecutionScope(identity):
@@ -311,13 +311,13 @@ class TestUnreachableServerTolerated:
     ) -> None:
         """Distinguishes 'never entered' (a wiring bug) from 'tolerated down'."""
         client = StubMcpClient(label="a", session=None, log=lifecycle_log)
-        runtime = _runtime(
+        host = _host(
             clients={_SERVER_A: client},
             use_case_mcp=(_grant(_SERVER_A, include=("search",)),),
             deps=deps,
             container=container,
         )
-        handle = McpMarkerResolver(runtime, observability=None)(_SERVER_A, ("search",), identity)
+        handle = McpMarkerResolver(host, observability=None)(_SERVER_A, ("search",), identity)
 
         with (
             ExecutionScope(identity),

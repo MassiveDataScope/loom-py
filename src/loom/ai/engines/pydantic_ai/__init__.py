@@ -1,7 +1,7 @@
 """pydantic-ai engine adapter, behind the ``ai-pydantic`` extra.
 
 Importing this package requires ``pydantic-ai-slim``; nothing in ``loom.ai``
-imports it. The runtime reaches :class:`PydanticAIEnginePlugin` through the
+imports it. The host reaches :class:`PydanticAIEnginePlugin` through the
 ``loom.ai.engines`` entry point named ``pydantic-ai``.
 
 The adapter is *native-inside*: an :class:`~loom.ai.compiler.AgentPlan` is
@@ -19,7 +19,7 @@ counterpart is ``PydanticAIEnginePlugin.mcp_client_factory`` rather than a
 free function, because the session it opens is the very toolset the run path
 uses: one connection per server for the whole worker. :func:`create_mcp_client`
 opens a session of its own and is for diagnostics, never for wiring the
-runtime.
+host.
 
 :func:`native_agent` is the escape hatch out of loom: an async context
 manager over the agent this adapter built, handed to calling code so it can

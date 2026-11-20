@@ -200,7 +200,7 @@ class StubMcpClient:
 
     Args:
         label: Name recorded in ``log`` on open and on close.
-        session: Session handed to the runtime once connected.
+        session: Session handed to the host once connected.
         log: Shared lifecycle log receiving ``open:<label>``/``close:<label>``.
         connect_delay_ms: Delay before the connection is considered open.
         never_connects: When true the connection never completes, standing in
@@ -256,7 +256,7 @@ def mcp_client_factory(
         clients: Stub client per ``CompiledMcpCapability.server``.
 
     Returns:
-        The factory the runtime calls once per MCP capability.
+        The factory the host calls once per MCP capability.
     """
 
     def _factory(capability: CompiledMcpCapability) -> StubMcpClient:
@@ -538,7 +538,7 @@ def make_sql_capability(
 
 
 def make_sql_config(connection: str = "reporting", *, readonly: bool = True) -> SqlConfig:
-    """Build the live SQL configuration the runtime re-verifies against."""
+    """Build the live SQL configuration the host re-verifies against."""
     return SqlConfig(connections={connection: make_sql_connection(readonly=readonly)})
 
 
@@ -634,7 +634,7 @@ class ScriptedToolModel:
     def as_model(self) -> Model:
         """Return the ``FunctionModel`` the engine will drive.
 
-        Both modes are scripted: the runtime always drives the engine through
+        Both modes are scripted: the host always drives the engine through
         ``run_stream``, so a response-only ``FunctionModel`` would fail the run
         before the MCP toolset was ever consulted.
         """
@@ -700,7 +700,7 @@ async def _until(predicate: Callable[[], bool], *, timeout: float = 2.0) -> None
         if predicate():
             return
         await asyncio.sleep(0.005)
-    raise AssertionError("the runtime never reached the expected state")
+    raise AssertionError("the host never reached the expected state")
 
 
 # ---------------------------------------------------------------------------
@@ -864,7 +864,7 @@ class RecordingScriptedEngine(ScriptedEngine):
     out of the caller-facing parameters. Recording it here, at the one seam
     between the handle and the "model", is what lets a test assert on it.
     ``states`` is the corresponding record for T303's own channel: what the
-    runtime resolved *this* run's ``state`` to, after FR-010's check and
+    host resolved *this* run's ``state`` to, after FR-010's check and
     FR-009's defaults.
     """
 

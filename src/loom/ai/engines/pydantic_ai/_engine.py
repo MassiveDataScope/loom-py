@@ -321,7 +321,7 @@ class PydanticAIEngine:
             state: This run's state, already resolved against the plan's
                 declared shape by :class:`~loom.ai.execution.AgentHost`.
             guard: Zero-argument factory of the async context manager a
-                driven run enters to rejoin this runtime's chain and
+                driven run enters to rejoin this host's chain and
                 admission bounds; built by
                 :meth:`~loom.ai.execution.AgentHost.native` and carried on
                 the returned carrier unchanged.

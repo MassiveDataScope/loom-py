@@ -5,7 +5,7 @@ default, unless it declares itself already safe for concurrent calls (see
 :func:`mcp_session_for` and :class:`~loom.ai.abc.ConcurrentMcpSession`). The
 declared tool filters are validated here too: they are checked
 against the tools a server really lists, which is a property of the session,
-not of the runtime lifecycle.
+not of the host lifecycle.
 """
 
 from __future__ import annotations

@@ -1,6 +1,6 @@
 """``_ToolsetSession`` declares itself safe for concurrent calls.
 
-The runtime's ``mcp_session_for`` decides whether to serialise a session by
+The host's ``mcp_session_for`` decides whether to serialise a session by
 checking whether it subclasses :class:`~loom.ai.abc.ConcurrentMcpSession`
 (``loom/ai/execution/_mcp.py``). This pins the engine's own half of that
 contract: its session must keep declaring it, or every grant view

@@ -10,7 +10,7 @@ edge, exactly as ``test_agent_marker_grants_integration.py`` fakes it for the
 ``Agent()`` marker.
 
 ``test_use_case_mcp_runtime.py`` (T203) and ``test_use_case_mcp_resolver.py``
-(T302) already cover the runtime's own opening/listing rules and the
+(T302) already cover the host's own opening/listing rules and the
 resolver's own filtering rule in isolation; this module is the one that
 proves the whole chain — compiler, executor, runtime, resolver — agrees, and
 adds the measurements those modules deliberately stop short of: a real
@@ -169,7 +169,7 @@ def _mcp_wired(
     use_case_mcp = declared.mcp_grants(servers)
 
     executor = UseCaseExecutor(compiler)
-    runtime = AgentHost(
+    host = AgentHost(
         plans=list(plans),
         config=make_ai_config(mcp_servers=servers),
         engine_plugin=CountingEngineProvider(),  # type: ignore[arg-type]
@@ -178,14 +178,12 @@ def _mcp_wired(
         mcp_client_factory=factory or mcp_client_factory(dict(clients)),  # type: ignore[arg-type]
         use_case_mcp=use_case_mcp,
     )
-    executor.bind_mcp_resolver(McpMarkerResolver(runtime, observability=None))
+    executor.bind_mcp_resolver(McpMarkerResolver(host, observability=None))
     if plans:
         executor.bind_agent_resolver(
-            AgentMarkerResolver(
-                runtime, sql_query_service=NullSqlQueryService(), observability=None
-            )
+            AgentMarkerResolver(host, sql_query_service=NullSqlQueryService(), observability=None)
         )
-    return executor, runtime
+    return executor, host
 
 
 class TestTheRealPathCompilesStartsResolvesAndCallsWithZeroAgentPlans:
@@ -201,11 +199,11 @@ class TestTheRealPathCompilesStartsResolvesAndCallsWithZeroAgentPlans:
     ) -> None:
         session = RecordingMcpSession(tools=("search",), results={"search": {"hits": 5}})
         clients = {_SERVER: StubMcpClient(label="a", session=session, log=lifecycle_log)}
-        executor, runtime = _mcp_wired(
+        executor, host = _mcp_wired(
             use_case_types=(_GatewayUseCase,), clients=clients, deps=deps, container=container
         )
 
-        async with runtime:
+        async with host:
             result = await executor.execute(_GatewayUseCase(), identity=identity)
 
         assert result == {"hits": 5}
@@ -227,7 +225,7 @@ class TestAServerSharedByAnAgentAndAUseCase:
         clients = {_SERVER: StubMcpClient(label="a", session=session, log=lifecycle_log)}
         factory = CountingMcpClientFactory(clients)
         plan = make_plan(_AGENT, capabilities=(make_mcp_capability(_SERVER, include=("search",)),))
-        executor, runtime = _mcp_wired(
+        executor, host = _mcp_wired(
             use_case_types=(_AgentToolUseCase, _GatewayUseCase),
             clients=clients,
             factory=factory,
@@ -236,7 +234,7 @@ class TestAServerSharedByAnAgentAndAUseCase:
             plans=(plan,),
         )
 
-        async with runtime:
+        async with host:
             await executor.execute(_GatewayUseCase(), identity=identity)
 
         assert factory.calls == [_SERVER]
@@ -256,7 +254,7 @@ class TestTheUseCaseReachesWhatTheAgentExcludes:
         session = RecordingMcpSession(tools=("search", "delete"), results={"delete": {"ok": True}})
         clients = {_SERVER: StubMcpClient(label="a", session=session, log=lifecycle_log)}
         plan = make_plan(_AGENT, capabilities=(make_mcp_capability(_SERVER, include=("search",)),))
-        executor, runtime = _mcp_wired(
+        executor, host = _mcp_wired(
             use_case_types=(_AgentToolUseCase, _WideningGatewayUseCase),
             clients=clients,
             deps=deps,
@@ -264,7 +262,7 @@ class TestTheUseCaseReachesWhatTheAgentExcludes:
             plans=(plan,),
         )
 
-        async with runtime:
+        async with host:
             agent_tools = await executor.execute(_AgentToolUseCase(), identity=identity)
             use_case_result = await executor.execute(_WideningGatewayUseCase(), identity=identity)
 
@@ -289,7 +287,7 @@ class TestAnIncludeMatchingNothingAbortsThroughTheRealPath:
     ) -> None:
         session = RecordingMcpSession(tools=("search",))
         clients = {_SERVER: StubMcpClient(label="a", session=session, log=lifecycle_log)}
-        _, runtime = _mcp_wired(
+        _, host = _mcp_wired(
             use_case_types=(_MissingToolGatewayUseCase,),
             clients=clients,
             deps=deps,
@@ -297,7 +295,7 @@ class TestAnIncludeMatchingNothingAbortsThroughTheRealPath:
         )
 
         with pytest.raises(AgentCompilationError) as failure:
-            await runtime.__aenter__()
+            await host.__aenter__()
 
         codes = {issue.code for issue in failure.value.issues}
         assert AgentErrorCode.USECASE_TOOL_FILTER_MATCHES_NOTHING in codes
@@ -320,14 +318,14 @@ class TestTwoUseCasesWithDisjointIncludesOverOneSession:
     ) -> None:
         session = RecordingMcpSession(tools=("search", "delete"))
         clients = {_SERVER: StubMcpClient(label="a", session=session, log=lifecycle_log)}
-        executor, runtime = _mcp_wired(
+        executor, host = _mcp_wired(
             use_case_types=(_FirstOrdersUseCase, _SecondOrdersUseCase),
             clients=clients,
             deps=deps,
             container=container,
         )
 
-        async with runtime:
+        async with host:
             first = await executor.execute(_FirstOrdersUseCase(), identity=identity)
             second = await executor.execute(_SecondOrdersUseCase(), identity=identity)
 
@@ -369,7 +367,7 @@ class TestTheDoubleAndTheRealPathAgreeOnTheRefusal:
     ) -> None:
         session = RecordingMcpSession(tools=("search", "delete"), results={"delete": {"ok": True}})
         clients = {_SERVER: StubMcpClient(label="a", session=session, log=lifecycle_log)}
-        executor, runtime = _mcp_wired(
+        executor, host = _mcp_wired(
             use_case_types=(_NarrowGatewayUseCase,),
             clients=clients,
             deps=deps,
@@ -377,7 +375,7 @@ class TestTheDoubleAndTheRealPathAgreeOnTheRefusal:
         )
 
         use_case = _NarrowGatewayUseCase()
-        async with runtime:
+        async with host:
             with pytest.raises(AgentRunError) as real_failure:
                 await executor.execute(use_case, identity=identity)
 

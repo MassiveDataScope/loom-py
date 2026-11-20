@@ -3,7 +3,7 @@
 The worker opens one session per server at start-up and every run and every
 ``Mcp()`` marker speaks through it. When the server behind it goes away after
 that -- a transport error under an in-flight call, a redeploy, a child that
-exits -- the holder the runtime keeps open also keeps the dead client from ever
+exits -- the holder the host keeps open also keeps the dead client from ever
 being re-entered, so every later call failed until the process was restarted.
 Driven over a real stdio child, which the test can kill.
 """

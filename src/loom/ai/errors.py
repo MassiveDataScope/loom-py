@@ -731,8 +731,8 @@ class AgentErrorCode(IssueCode):
     MCP_CONNECTION_NOT_OPENED = (
         "MCP_CONNECTION_NOT_OPENED",
         Template(
-            "{component}: the runtime never opened mcp server '{server}' through this "
-            "engine's shared toolsets. The runtime's 'mcp_client_factory' must be the "
+            "{component}: the host never opened mcp server '{server}' through this "
+            "engine's shared toolsets. The host's 'mcp_client_factory' must be the "
             "'mcp_client_factory' of the very provider instance that builds the engines, "
             "or the run would hold a second connection whose tool filters start-up never "
             "validated",
@@ -822,9 +822,9 @@ class AgentRunErrorCode(StrEnum):
 class AgentRunError(Exception):
     """A run failed with a stable, machine-readable code.
 
-    Lives with :class:`AgentRunErrorCode` rather than with the runtime that
+    Lives with :class:`AgentRunErrorCode` rather than with the host that
     raises it: the engine adapters classify and re-raise it, and importing the
-    whole live runtime — its exit stack, its shared sessions, its SQL
+    whole live host — its exit stack, its shared sessions, its SQL
     configuration — to reach one exception class would point the dependency
     arrow at the concretion instead of at the contract.
 
@@ -914,7 +914,7 @@ _RUN_ERROR_CLASSES: Mapping[AgentRunErrorCode, AgentRunErrorClass] = MappingProx
 CONVERSATION_LOAD_FAILED_MESSAGE: Final[str] = (
     "the conversation could not be loaded; the detail is recorded server-side"
 )
-"""Client text of every ``CONVERSATION_LOAD_FAILED`` error, the runtime loader's
+"""Client text of every ``CONVERSATION_LOAD_FAILED`` error, the host loader's
 and an engine's history decoder's alike; the loader's own detail is logged."""
 
 CONVERSATION_LOAD_TIMEOUT_MESSAGE: Final[str] = "the conversation loader exceeded its time limit"

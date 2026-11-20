@@ -24,7 +24,7 @@ What is deliberately **not** projected:
   ``PROVIDER_UNAVAILABLE`` (retried) where loom's is ``TOOL_TIMEOUT`` (not
   retried). One value, two retry behaviours, chosen by the event loop.
 
-``retries`` **is** projected, and it is not the same axis as the runtime's
+``retries`` **is** projected, and it is not the same axis as the host's
 ``plan.policies.retries + 1`` attempts (``_engine``): the engine's counter
 replays a failed *tool* call inside one run, loom's replays a failed
 *provider* call across runs. They share one artifact field on purpose — a

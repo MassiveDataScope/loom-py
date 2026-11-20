@@ -358,7 +358,7 @@ class TestCardProjection:
         assert _card()["url"] == f"{_BASE_URL}{DEFAULT_A2A_PREFIX}/{_AGENT_NAME}"
 
     def test_card_declares_the_exact_transport_capabilities(self) -> None:
-        """The advertised transport capabilities match what the runtime serves (FR-039b)."""
+        """The advertised transport capabilities match what the host serves (FR-039b)."""
         assert _card()["capabilities"] == {
             "streaming": True,
             "pushNotifications": False,

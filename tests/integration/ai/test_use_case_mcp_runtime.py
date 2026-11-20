@@ -57,7 +57,7 @@ def _grant(
     )
 
 
-def _runtime(
+def _host(
     *,
     plans: tuple[object, ...] = (),
     clients: dict[str, StubMcpClient],
@@ -90,17 +90,17 @@ class TestServerDeclaredOnlyByAUseCase:
     ) -> None:
         session = RecordingMcpSession(tools=("search", "delete"))
         clients = {_SERVER_A: StubMcpClient(label="a", session=session, log=lifecycle_log)}
-        runtime = _runtime(
+        host = _host(
             clients=clients,
             use_case_mcp=(_grant(_SERVER_A, include=("search",)),),
             deps=deps,
             container=container,
         )
 
-        async with runtime:
+        async with host:
             assert lifecycle_log == ["open:a"]
             assert session.listed == 1
-            grant = runtime.use_case_mcp_grant(_SERVER_A)
+            grant = host.use_case_mcp_grant(_SERVER_A)
 
         assert grant is not None
         assert grant.capability.server == _SERVER_A
@@ -120,15 +120,15 @@ class TestServerDeclaredOnlyByAUseCase:
         )
         clients = {_SERVER_A: StubMcpClient(label="a", session=session, log=lifecycle_log)}
         binding = _grant(_SERVER_A, include=("search",))
-        runtime = _runtime(
+        host = _host(
             clients=clients,
             use_case_mcp=(binding,),
             deps=deps,
             container=container,
         )
 
-        async with runtime:
-            grant = runtime.use_case_mcp_grant(_SERVER_A)
+        async with host:
+            grant = host.use_case_mcp_grant(_SERVER_A)
             assert grant is not None
             # The caller's own filter comes from its own binding (S6), never
             # from the shared substrate grant this runtime hands back — see
@@ -160,7 +160,7 @@ class TestServerDeclaredOnlyByAUseCase:
     ) -> None:
         session = RecordingMcpSession(tools=("search",))
         clients = {_SERVER_A: StubMcpClient(label="a", session=session, log=lifecycle_log)}
-        runtime = _runtime(
+        host = _host(
             clients=clients,
             use_case_mcp=(_grant(_SERVER_A, include=("no-such-tool",)),),
             deps=deps,
@@ -168,7 +168,7 @@ class TestServerDeclaredOnlyByAUseCase:
         )
 
         with pytest.raises(AgentCompilationError) as failure:
-            await runtime.__aenter__()
+            await host.__aenter__()
 
         issue = next(
             issue
@@ -188,7 +188,7 @@ class TestServerDeclaredOnlyByAUseCase:
     ) -> None:
         session = RecordingMcpSession(tools=("search",), list_delay_ms=50)
         clients = {_SERVER_A: StubMcpClient(label="a", session=session, log=lifecycle_log)}
-        runtime = AgentHost(
+        host = AgentHost(
             plans=[],
             config=make_ai_config(mcp_servers=make_mcp_servers(_SERVER_A), startup_timeout_ms=10),
             engine_plugin=CountingEngineProvider(),  # type: ignore[arg-type]
@@ -199,7 +199,7 @@ class TestServerDeclaredOnlyByAUseCase:
         )
 
         with pytest.raises(AgentCompilationError) as failure:
-            await runtime.__aenter__()
+            await host.__aenter__()
 
         assert AgentErrorCode.MCP_SERVER_UNREACHABLE in _codes(failure.value)
 
@@ -216,7 +216,7 @@ class TestServerSharedWithAnAgent:
         session = RecordingMcpSession(tools=("search", "delete"))
         clients = {_SERVER_A: StubMcpClient(label="a", session=session, log=lifecycle_log)}
         plan = make_plan(capabilities=(make_mcp_capability(_SERVER_A, include=("search",)),))
-        runtime = _runtime(
+        host = _host(
             plans=(plan,),
             clients=clients,
             use_case_mcp=(_grant(_SERVER_A, include=("delete",)),),
@@ -224,10 +224,10 @@ class TestServerSharedWithAnAgent:
             container=container,
         )
 
-        async with runtime:
+        async with host:
             assert lifecycle_log == ["open:a"]
             assert session.listed == 1
-            grant = runtime.use_case_mcp_grant(_SERVER_A)
+            grant = host.use_case_mcp_grant(_SERVER_A)
 
         assert grant is not None
 
@@ -244,7 +244,7 @@ class TestServerSharedWithAnAgent:
         clients = {_SERVER_A: StubMcpClient(label="a", session=session, log=lifecycle_log)}
         plan = make_plan(capabilities=(make_mcp_capability(_SERVER_A, include=("search",)),))
         binding = _grant(_SERVER_A, include=("delete",))
-        runtime = _runtime(
+        host = _host(
             plans=(plan,),
             clients=clients,
             use_case_mcp=(binding,),
@@ -252,8 +252,8 @@ class TestServerSharedWithAnAgent:
             container=container,
         )
 
-        async with runtime:
-            agent_grant = runtime.grants("analyst").mcp[_SERVER_A]
+        async with host:
+            agent_grant = host.grants("analyst").mcp[_SERVER_A]
             agent_view = McpGrantView(
                 span_attributes={"agent": "analyst"},
                 capability=agent_grant.capability,
@@ -267,7 +267,7 @@ class TestServerSharedWithAnAgent:
             with ExecutionScope(identity):
                 assert agent_view.tools() == ("search",)
 
-            use_case_grant = runtime.use_case_mcp_grant(_SERVER_A)
+            use_case_grant = host.use_case_mcp_grant(_SERVER_A)
             assert use_case_grant is not None
             # Same note as above: the caller's own filter is its own
             # binding's 'include', not the shared substrate grant's.
@@ -299,7 +299,7 @@ class TestTwoUseCasesOverTheSameServer:
     ) -> None:
         session = RecordingMcpSession(tools=("search", "delete"))
         clients = {_SERVER_A: StubMcpClient(label="a", session=session, log=lifecycle_log)}
-        runtime = _runtime(
+        host = _host(
             clients=clients,
             use_case_mcp=(
                 _grant(_SERVER_A, include=("search",), usecase="orders.first", parameter="a"),
@@ -309,8 +309,8 @@ class TestTwoUseCasesOverTheSameServer:
             container=container,
         )
 
-        async with runtime:
-            grant = runtime.use_case_mcp_grant(_SERVER_A)
+        async with host:
+            grant = host.use_case_mcp_grant(_SERVER_A)
 
         # Both bindings resolve the same server-keyed grant (FR-15): the
         # 'include' a caller sees comes from its own binding at resolution
@@ -335,14 +335,14 @@ class TestEarlyReturnGuards:
         """Mutating step 4 (contributing under the guard) must fail this test."""
         session = RecordingMcpSession(tools=("search",))
         clients = {_SERVER_A: StubMcpClient(label="a", session=session, log=lifecycle_log)}
-        runtime = _runtime(
+        host = _host(
             clients=clients,
             use_case_mcp=(_grant(_SERVER_A, include=("search",)),),
             deps=deps,
             container=container,
         )
 
-        async with runtime:
+        async with host:
             assert lifecycle_log == ["open:a"]
 
     async def test_zero_agent_plans_still_lists_and_verifies_the_include(
@@ -357,7 +357,7 @@ class TestEarlyReturnGuards:
         start-up."""
         session = RecordingMcpSession(tools=("search",))
         clients = {_SERVER_A: StubMcpClient(label="a", session=session, log=lifecycle_log)}
-        runtime = _runtime(
+        host = _host(
             clients=clients,
             use_case_mcp=(_grant(_SERVER_A, include=("no-such-tool",)),),
             deps=deps,
@@ -365,7 +365,7 @@ class TestEarlyReturnGuards:
         )
 
         with pytest.raises(AgentCompilationError) as failure:
-            await runtime.__aenter__()
+            await host.__aenter__()
 
         assert AgentErrorCode.USECASE_TOOL_FILTER_MATCHES_NOTHING in _codes(failure.value)
 
@@ -376,7 +376,7 @@ class TestUseCaseMcpGrantBeforeEntering:
     def test_raises_runtime_error_if_never_entered(
         self, deps: StubDepsFactory, container: LoomContainer
     ) -> None:
-        runtime = _runtime(
+        host = _host(
             clients={},
             use_case_mcp=(_grant(_SERVER_A, include=("search",)),),
             deps=deps,
@@ -384,7 +384,7 @@ class TestUseCaseMcpGrantBeforeEntering:
         )
 
         with pytest.raises(RuntimeError, match="must be entered before use"):
-            runtime.use_case_mcp_grant(_SERVER_A)
+            host.use_case_mcp_grant(_SERVER_A)
 
 
 class TestUseCaseGrantsAreClearedOnExit:
@@ -403,17 +403,17 @@ class TestUseCaseGrantsAreClearedOnExit:
     ) -> None:
         session = RecordingMcpSession(tools=("search",))
         clients = {_SERVER_A: StubMcpClient(label="a", session=session, log=lifecycle_log)}
-        runtime = _runtime(
+        host = _host(
             clients=clients,
             use_case_mcp=(_grant(_SERVER_A, include=("search",)),),
             deps=deps,
             container=container,
         )
 
-        async with runtime:
-            assert runtime.use_case_mcp_grant(_SERVER_A) is not None
+        async with host:
+            assert host.use_case_mcp_grant(_SERVER_A) is not None
 
-        assert runtime._use_case_grants == {}
+        assert host._use_case_grants == {}
 
 
 class TestToleratedUnreachableServerDoesNotTriggerTheFilter:
@@ -432,7 +432,7 @@ class TestToleratedUnreachableServerDoesNotTriggerTheFilter:
         self, lifecycle_log: list[str], deps: StubDepsFactory, container: LoomContainer
     ) -> None:
         client = StubMcpClient(label="a", session=None, log=lifecycle_log, connect_error="refused")
-        runtime = _runtime(
+        host = _host(
             clients={_SERVER_A: client},
             use_case_mcp=(_grant(_SERVER_A, include=("no-such-tool",)),),
             deps=deps,
@@ -440,8 +440,8 @@ class TestToleratedUnreachableServerDoesNotTriggerTheFilter:
             remote_clients="optional",
         )
 
-        async with runtime:
-            assert runtime.use_case_mcp_grant(_SERVER_A) is None
+        async with host:
+            assert host.use_case_mcp_grant(_SERVER_A) is None
 
 
 class TestAgentsOnlyDeployment:
@@ -456,12 +456,12 @@ class TestAgentsOnlyDeployment:
         session = RecordingMcpSession(tools=("search",))
         clients = {_SERVER_A: StubMcpClient(label="a", session=session, log=lifecycle_log)}
         plan = make_plan(capabilities=(make_mcp_capability(_SERVER_A, include=("search",)),))
-        runtime = _runtime(
+        host = _host(
             plans=(plan,), clients=clients, use_case_mcp=(), deps=deps, container=container
         )
 
-        async with runtime:
+        async with host:
             with pytest.raises(AgentRunError) as excinfo:
-                runtime.use_case_mcp_grant(_SERVER_A)
+                host.use_case_mcp_grant(_SERVER_A)
             assert excinfo.value.code is AgentRunErrorCode.MCP_SERVER_NOT_GRANTED
-            assert runtime.has_agent("analyst")
+            assert host.has_agent("analyst")

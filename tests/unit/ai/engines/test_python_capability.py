@@ -186,7 +186,7 @@ def toolset_builder(monkeypatch: pytest.MonkeyPatch) -> CountingToolsetBuilder:
 
 
 async def opened(grant: CompiledMcpCapability) -> SharedMcpToolsets:
-    """Return a store whose connection for ``grant`` the runtime already opened."""
+    """Return a store whose connection for ``grant`` the host already opened."""
     shared = SharedMcpToolsets()
     await shared.open(grant).__aenter__()
     return shared

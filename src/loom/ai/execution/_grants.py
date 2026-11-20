@@ -51,7 +51,7 @@ class McpGrant:
 class AgentGrants:
     """Every ``mcp``/``sql`` grant one agent was compiled with, resolved once.
 
-    Built once per plan when the runtime is entered.
+    Built once per plan when the host is entered.
 
     Attributes:
         mcp: Live ``mcp`` grants by server name; a server declared under

@@ -5,7 +5,7 @@ Two entry points, one connection recipe, both served by the
 engine that imports the ``a2a-sdk``:
 
 * :func:`create_a2a_client` is the :data:`~loom.ai.execution.A2AClientFactory`
-  the runtime opens at start-up. Entering it fetches the remote card, applies
+  the host opens at start-up. Entering it fetches the remote card, applies
   the grant's skill filter to it and hands back a usable session, so an
   unreachable or mismatched agent fails start-up as ``A2A_AGENT_UNREACHABLE``
   instead of surfacing on the first delegation.
@@ -65,7 +65,7 @@ def create_a2a_client(capability: CompiledA2ACapability) -> AbstractAsyncContext
 
     Example::
 
-        runtime = AgentHost(..., a2a_client_factory=create_a2a_client)
+        host = AgentHost(..., a2a_client_factory=create_a2a_client)
     """
     return _sdk().create_a2a_client(capability)
 

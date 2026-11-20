@@ -232,7 +232,7 @@ class TestBind:
 
         application = _application(tmp_path, {"ai": {"agents": {}}}, adapter)
 
-        assert application.ai.runtime is None
+        assert application.ai.agent_host is None
 
 
 class TestServices:

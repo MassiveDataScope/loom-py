@@ -1,6 +1,6 @@
-"""Neutral runtime contracts of the AI pillar.
+"""Neutral contracts of the AI pillar.
 
-Everything the compiler, the runtime and the HTTP layer share with an engine
+Everything the compiler, the host and the HTTP layer share with an engine
 lives here, and nothing here imports an engine: the bootstrap resolves the
 provider through :mod:`loom.ai.registry` and hands the compiler plain values.
 
@@ -233,7 +233,7 @@ class AgentResult(LoomFrozenStruct, frozen=True, kw_only=True):
         output: Answer already decoded and validated against the declared
             output shape.
         usage: Resource accounting of the run.
-        interaction_id: Identifier the runtime minted for this run.
+        interaction_id: Identifier the host minted for this run.
         hook_result: Return value of the ``on_output`` use case, when the plan
             declares one.
         messages: New messages of this run in the engine's own serialised
@@ -271,7 +271,7 @@ class AgentAnswer(LoomFrozenStruct, Generic[AnswerT], frozen=True, kw_only=True)
             shape by default, or the type passed as ``expect`` when the run
             overrode it for this call only.
         usage: Resource accounting of this run only.
-        interaction_id: Identifier the runtime minted for this run.
+        interaction_id: Identifier the host minted for this run.
         provider_details: What the provider reported about this answer beyond
             the answer itself, verbatim and opaque to loom — a decision
             model's confidence and probabilities per field, another
@@ -646,7 +646,7 @@ class AgentHandle(Protocol[AnswerT]):
                 would have refused; with ``STATE_UNDECLARED`` or
                 ``STATE_REQUIRED`` when *state* does not match the
                 artefact's declared shape.
-            RuntimeError: When the runtime serving this handle was never
+            RuntimeError: When the host serving this handle was never
                 entered.
             NotImplementedError: When the engine serving this agent publishes
                 no native form.
@@ -739,7 +739,7 @@ class FinalEvent(LoomFrozenStruct, frozen=True, kw_only=True, tag="final", tag_f
         output: Answer already decoded and validated against the declared
             output shape.
         usage: Resource accounting of the whole run.
-        interaction_id: Identifier the runtime minted for this run.
+        interaction_id: Identifier the host minted for this run.
         hook_result: Return value of the ``on_output`` use case, when the plan
             declares one.
         messages: New messages of this run in the engine's own serialised
@@ -747,7 +747,7 @@ class FinalEvent(LoomFrozenStruct, frozen=True, kw_only=True, tag="final", tag_f
             ``policies.max_history_bytes``.
         provider_details: What the provider reported about the final answer
             beyond the answer itself, as on :class:`AgentResult`; the
-            runtime copies it there, and no wire surface publishes it.
+            host copies it there, and no wire surface publishes it.
     """
 
     output: object
@@ -870,7 +870,7 @@ class NativeCapableEngine(Protocol):
             state: This run's state, already resolved against the plan's
                 declared shape.
             guard: Zero-argument factory of the async context manager a
-                driven run enters to rejoin the runtime's chain and
+                driven run enters to rejoin the host's chain and
                 admission bounds.
 
         Returns:
@@ -949,7 +949,7 @@ class McpToolCallResult(LoomFrozenStruct, frozen=True, kw_only=True):
 
 
 class McpSession(Protocol):
-    """Minimal MCP session the runtime needs from any client library.
+    """Minimal MCP session the host needs from any client library.
 
     ``list_tools`` returns :class:`McpToolInfo` so a caller can see which
     tools publish an output schema, and ``call_tool`` returns
@@ -991,7 +991,7 @@ class ConcurrentMcpSession:
     multiplexes concurrent calls by matching each response back to its own
     request id, rather than writing straight through a single unmatched
     stream — declares that guarantee by also subclassing this, in addition
-    to implementing :class:`McpSession`, and the runtime leaves it
+    to implementing :class:`McpSession`, and the host leaves it
     unwrapped.
 
     This class carries no members: subclassing it *is* the declaration. A
@@ -1000,7 +1000,7 @@ class ConcurrentMcpSession:
     A subclass keeping this promise must (a) tolerate overlapping calls by
     matching each response back to its own request id — the multiplexing
     that makes the guarantee true in the first place — and (b) must **not**
-    shield a call from its own caller's cancellation the way the runtime's
+    shield a call from its own caller's cancellation the way the host's
     locked wrapper does: with no shared frame to desynchronise, there is
     nothing left to drain, and shielding would only stop the plan's own
     ``tool_timeout_ms`` from bounding the call.
@@ -1151,7 +1151,7 @@ class AgentEnginePlugin(Protocol):
     ) -> AgentEngine:
         """Build one engine for one compiled plan.
 
-        Called exactly once per plan by the runtime, never per request.
+        Called exactly once per plan by the host, never per request.
 
         Args:
             plan: The compiled ``AgentPlan``, typed as ``object``.

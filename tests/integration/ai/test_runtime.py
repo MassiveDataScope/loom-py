@@ -87,7 +87,7 @@ class TestLifecycle:
         plan = make_plan(
             capabilities=(make_mcp_capability(_SERVER_A), make_mcp_capability(_SERVER_B)),
         )
-        runtime = _build_runtime(
+        host = _build_runtime(
             plans=(plan,),
             clients=clients,
             provider=CountingEngineProvider(),
@@ -95,7 +95,7 @@ class TestLifecycle:
             container=container,
         )
 
-        async with runtime:
+        async with host:
             assert sorted(lifecycle_log) == ["open:a", "open:b"]
 
     async def test_closes_in_reverse_order_when_the_runtime_exits(
@@ -117,7 +117,7 @@ class TestLifecycle:
         plan = make_plan(
             capabilities=(make_mcp_capability(_SERVER_A), make_mcp_capability(_SERVER_B)),
         )
-        runtime = _build_runtime(
+        host = _build_runtime(
             plans=(plan,),
             clients=clients,
             provider=CountingEngineProvider(),
@@ -125,7 +125,7 @@ class TestLifecycle:
             container=container,
         )
 
-        async with runtime:
+        async with host:
             pass
 
         assert lifecycle_log == ["open:a", "open:b", "close:b", "close:a"]
@@ -142,7 +142,7 @@ class TestLifecycle:
             _SERVER_A: StubMcpClient(label="a", session=RecordingMcpSession(), log=lifecycle_log)
         }
         provider = CountingEngineProvider()
-        runtime = _build_runtime(
+        host = _build_runtime(
             plans=(make_plan(capabilities=(make_mcp_capability(_SERVER_A),)),),
             clients=clients,
             provider=provider,
@@ -150,10 +150,10 @@ class TestLifecycle:
             container=container,
         )
 
-        async with runtime:
-            await runtime.run("analyst", "p1", identity=identity)
-            await runtime.run("analyst", "p2", identity=identity)
-            async with runtime.run_stream("analyst", "p3", identity=identity) as stream:
+        async with host:
+            await host.run("analyst", "p1", identity=identity)
+            await host.run("analyst", "p2", identity=identity)
+            async with host.run_stream("analyst", "p3", identity=identity) as stream:
                 async for _ in stream:
                     pass
 
@@ -170,7 +170,7 @@ class TestLifecycle:
         clients = {
             _SERVER_A: StubMcpClient(label="a", session=RecordingMcpSession(), log=lifecycle_log)
         }
-        runtime = _build_runtime(
+        host = _build_runtime(
             plans=(make_plan(capabilities=(make_mcp_capability(_SERVER_A),)),),
             clients=clients,
             provider=CountingEngineProvider(),
@@ -178,10 +178,10 @@ class TestLifecycle:
             container=container,
         )
 
-        async with runtime:
-            await runtime.run("analyst", "p1", identity=identity)
-            await runtime.run("analyst", "p2", identity=identity)
-            async with runtime.run_stream("analyst", "p3", identity=identity) as stream:
+        async with host:
+            await host.run("analyst", "p1", identity=identity)
+            await host.run("analyst", "p2", identity=identity)
+            async with host.run_stream("analyst", "p3", identity=identity) as stream:
                 async for _ in stream:
                     pass
 
@@ -197,24 +197,24 @@ class TestLifecycle:
         clients = {
             _SERVER_A: StubMcpClient(label="a", session=RecordingMcpSession(), log=lifecycle_log)
         }
-        runtime = _build_runtime(
+        host = _build_runtime(
             plans=(make_plan(capabilities=(make_mcp_capability(_SERVER_A),)),),
             clients=clients,
             provider=CountingEngineProvider(),
             deps=deps,
             container=container,
         )
-        await runtime.__aenter__()
+        await host.__aenter__()
 
         async def _exit_elsewhere() -> None:
-            await runtime.__aexit__(None, None, None)
+            await host.__aexit__(None, None, None)
 
         try:
             task = asyncio.create_task(_exit_elsewhere())
             with pytest.raises(RuntimeError):
                 await task
         finally:
-            await runtime.__aexit__(None, None, None)
+            await host.__aexit__(None, None, None)
 
 
 class TestConcurrentStartup:
@@ -238,7 +238,7 @@ class TestConcurrentStartup:
         plan = make_plan(
             capabilities=(make_mcp_capability(_SERVER_A), make_mcp_capability(_SERVER_B)),
         )
-        runtime = _build_runtime(
+        host = _build_runtime(
             plans=(plan,),
             clients=clients,
             provider=CountingEngineProvider(),
@@ -249,7 +249,7 @@ class TestConcurrentStartup:
 
         loop = asyncio.get_running_loop()
         started = loop.time()
-        async with runtime:
+        async with host:
             elapsed = loop.time() - started
 
         assert elapsed < 0.070, f"start-up took {elapsed:.3f}s; the two clients ran in sequence"
@@ -269,7 +269,7 @@ class TestConcurrentStartup:
                 never_connects=True,
             )
         }
-        runtime = _build_runtime(
+        host = _build_runtime(
             plans=(make_plan(capabilities=(make_mcp_capability(_SERVER_A),)),),
             clients=clients,
             provider=CountingEngineProvider(),
@@ -284,7 +284,7 @@ class TestConcurrentStartup:
 
         with pytest.raises(AgentCompilationError) as failure:
             async with budget:
-                await runtime.__aenter__()
+                await host.__aenter__()
 
         assert _SERVER_A in str(failure.value)
 
@@ -303,7 +303,7 @@ class TestConcurrentStartup:
                 never_connects=True,
             )
         }
-        runtime = _build_runtime(
+        host = _build_runtime(
             plans=(make_plan(capabilities=(make_mcp_capability(_SERVER_A),)),),
             clients=clients,
             provider=CountingEngineProvider(),
@@ -316,7 +316,7 @@ class TestConcurrentStartup:
 
         with pytest.raises(AgentCompilationError) as failure:
             async with budget:
-                await runtime.__aenter__()
+                await host.__aenter__()
 
         assert AgentErrorCode.MCP_SERVER_UNREACHABLE in _codes(failure.value)
 
@@ -364,14 +364,14 @@ class TestStartupBudget:
         container: LoomContainer,
     ) -> None:
         """Three 50 ms listings share one 80 ms budget, they do not each get one."""
-        runtime = self._slow_listing_runtime(
+        host = self._slow_listing_runtime(
             lifecycle_log=lifecycle_log, deps=deps, container=container
         )
 
         loop = asyncio.get_running_loop()
         started = loop.time()
         with pytest.raises(AgentCompilationError):
-            await runtime.__aenter__()
+            await host.__aenter__()
         elapsed = loop.time() - started
 
         assert elapsed < 0.130, (
@@ -385,12 +385,12 @@ class TestStartupBudget:
         container: LoomContainer,
     ) -> None:
         """The expired budget is a coded issue naming the server, not a bare timeout."""
-        runtime = self._slow_listing_runtime(
+        host = self._slow_listing_runtime(
             lifecycle_log=lifecycle_log, deps=deps, container=container
         )
 
         with pytest.raises(AgentCompilationError) as failure:
-            await runtime.__aenter__()
+            await host.__aenter__()
 
         assert AgentErrorCode.MCP_SERVER_UNREACHABLE in _codes(failure.value)
         assert _SERVER_C in str(failure.value)
@@ -408,7 +408,7 @@ class TestStartupBudget:
             make_plan("first", capabilities=(make_mcp_capability(_SERVER_A, include=("alpha",)),)),
             make_plan("second", capabilities=(make_mcp_capability(_SERVER_A, include=("beta",)),)),
         )
-        runtime = _build_runtime(
+        host = _build_runtime(
             plans=plans,
             clients=clients,
             provider=CountingEngineProvider(),
@@ -416,7 +416,7 @@ class TestStartupBudget:
             container=container,
         )
 
-        async with runtime:
+        async with host:
             assert session.listed == 1
 
     async def test_applies_each_plans_own_filter_when_they_share_a_server(
@@ -432,7 +432,7 @@ class TestStartupBudget:
             make_plan("first", capabilities=(make_mcp_capability(_SERVER_A, include=("alpha",)),)),
             make_plan("second", capabilities=(make_mcp_capability(_SERVER_A, include=("gamma",)),)),
         )
-        runtime = _build_runtime(
+        host = _build_runtime(
             plans=plans,
             clients=clients,
             provider=CountingEngineProvider(),
@@ -441,7 +441,7 @@ class TestStartupBudget:
         )
 
         with pytest.raises(AgentCompilationError) as failure:
-            await runtime.__aenter__()
+            await host.__aenter__()
 
         assert AgentErrorCode.TOOL_FILTER_MATCHES_NOTHING in _codes(failure.value)
         assert "second" in str(failure.value)
@@ -460,7 +460,7 @@ class TestToolFilter:
         session = RecordingMcpSession(tools=("alpha", "beta"))
         clients = {_SERVER_A: StubMcpClient(label="a", session=session, log=lifecycle_log)}
         capability = make_mcp_capability(_SERVER_A, include=("gamma",))
-        runtime = _build_runtime(
+        host = _build_runtime(
             plans=(make_plan(capabilities=(capability,)),),
             clients=clients,
             provider=CountingEngineProvider(),
@@ -469,7 +469,7 @@ class TestToolFilter:
         )
 
         with pytest.raises(AgentCompilationError) as failure:
-            await runtime.__aenter__()
+            await host.__aenter__()
 
         assert AgentErrorCode.TOOL_FILTER_MATCHES_NOTHING in _codes(failure.value)
 
@@ -483,7 +483,7 @@ class TestToolFilter:
         session = RecordingMcpSession(tools=("alpha", "beta"))
         clients = {_SERVER_A: StubMcpClient(label="a", session=session, log=lifecycle_log)}
         capability = make_mcp_capability(_SERVER_A, include=("alpha",))
-        runtime = _build_runtime(
+        host = _build_runtime(
             plans=(make_plan(capabilities=(capability,)),),
             clients=clients,
             provider=CountingEngineProvider(),
@@ -491,8 +491,8 @@ class TestToolFilter:
             container=container,
         )
 
-        async with runtime:
-            assert runtime.has_agent("analyst")
+        async with host:
+            assert host.has_agent("analyst")
 
     async def test_starts_when_a_glob_matches_part_of_the_tools(
         self,
@@ -504,7 +504,7 @@ class TestToolFilter:
         session = RecordingMcpSession(tools=("search_web", "search_docs", "delete_index"))
         clients = {_SERVER_A: StubMcpClient(label="a", session=session, log=lifecycle_log)}
         capability = make_mcp_capability(_SERVER_A, include=("search_*",))
-        runtime = _build_runtime(
+        host = _build_runtime(
             plans=(make_plan(capabilities=(capability,)),),
             clients=clients,
             provider=CountingEngineProvider(),
@@ -512,8 +512,8 @@ class TestToolFilter:
             container=container,
         )
 
-        async with runtime:
-            assert runtime.has_agent("analyst")
+        async with host:
+            assert host.has_agent("analyst")
 
     async def test_aborts_when_the_glob_matches_no_tool(
         self,
@@ -525,7 +525,7 @@ class TestToolFilter:
         session = RecordingMcpSession(tools=("search_web", "delete_index"))
         clients = {_SERVER_A: StubMcpClient(label="a", session=session, log=lifecycle_log)}
         capability = make_mcp_capability(_SERVER_A, include=("write_*",))
-        runtime = _build_runtime(
+        host = _build_runtime(
             plans=(make_plan(capabilities=(capability,)),),
             clients=clients,
             provider=CountingEngineProvider(),
@@ -534,7 +534,7 @@ class TestToolFilter:
         )
 
         with pytest.raises(AgentCompilationError) as failure:
-            await runtime.__aenter__()
+            await host.__aenter__()
 
         assert AgentErrorCode.TOOL_FILTER_MATCHES_NOTHING in _codes(failure.value)
 
@@ -548,7 +548,7 @@ class TestToolFilter:
         session = RecordingMcpSession(tools=("search_web", "search_docs"))
         clients = {_SERVER_A: StubMcpClient(label="a", session=session, log=lifecycle_log)}
         capability = make_mcp_capability(_SERVER_A, include=("search_*",), exclude=("search_*",))
-        runtime = _build_runtime(
+        host = _build_runtime(
             plans=(make_plan(capabilities=(capability,)),),
             clients=clients,
             provider=CountingEngineProvider(),
@@ -557,7 +557,7 @@ class TestToolFilter:
         )
 
         with pytest.raises(AgentCompilationError) as failure:
-            await runtime.__aenter__()
+            await host.__aenter__()
 
         assert AgentErrorCode.TOOL_FILTER_MATCHES_NOTHING in _codes(failure.value)
 
@@ -571,7 +571,7 @@ class TestToolFilter:
         session = RecordingMcpSession(tools=("alpha",))
         clients = {_SERVER_A: StubMcpClient(label="a", session=session, log=lifecycle_log)}
         capability = make_mcp_capability(_SERVER_A, include=("gamma",))
-        runtime = _build_runtime(
+        host = _build_runtime(
             plans=(make_plan(capabilities=(capability,)),),
             clients=clients,
             provider=CountingEngineProvider(),
@@ -580,7 +580,7 @@ class TestToolFilter:
         )
 
         with pytest.raises(AgentCompilationError) as failure:
-            await runtime.__aenter__()
+            await host.__aenter__()
 
         message = str(failure.value)
         assert _SERVER_A in message
@@ -597,7 +597,7 @@ class TestReadOnlyDrift:
     ) -> None:
         """A plan compiled against a read-only connection refuses a writable one."""
         plan = make_plan(capabilities=(make_sql_capability("reporting", readonly=True),))
-        runtime = _build_runtime(
+        host = _build_runtime(
             plans=(plan,),
             clients={},
             provider=CountingEngineProvider(),
@@ -607,7 +607,7 @@ class TestReadOnlyDrift:
         )
 
         with pytest.raises(AgentCompilationError) as failure:
-            await runtime.__aenter__()
+            await host.__aenter__()
 
         assert AgentErrorCode.SQL_READONLY_DRIFT in _codes(failure.value)
 
@@ -618,7 +618,7 @@ class TestReadOnlyDrift:
     ) -> None:
         """The drift issue names the connection the operator must fix."""
         plan = make_plan(capabilities=(make_sql_capability("reporting", readonly=True),))
-        runtime = _build_runtime(
+        host = _build_runtime(
             plans=(plan,),
             clients={},
             provider=CountingEngineProvider(),
@@ -628,7 +628,7 @@ class TestReadOnlyDrift:
         )
 
         with pytest.raises(AgentCompilationError) as failure:
-            await runtime.__aenter__()
+            await host.__aenter__()
 
         assert "reporting" in str(failure.value)
 
@@ -639,7 +639,7 @@ class TestReadOnlyDrift:
     ) -> None:
         """No drift means start-up proceeds with the SQL capability live."""
         plan = make_plan(capabilities=(make_sql_capability("reporting", readonly=True),))
-        runtime = _build_runtime(
+        host = _build_runtime(
             plans=(plan,),
             clients={},
             provider=CountingEngineProvider(engines={"analyst": ScriptedEngine()}),
@@ -648,8 +648,8 @@ class TestReadOnlyDrift:
             sql_config=make_sql_config("reporting", readonly=True),
         )
 
-        async with runtime:
-            assert runtime.agent_names() == ("analyst",)
+        async with host:
+            assert host.agent_names() == ("analyst",)
 
 
 class TestSharedMcpSession:
@@ -707,7 +707,7 @@ class TestSharedMcpSession:
 class TestOneConnectionPerServerName:
     """One name, one connection: the worker shares a client between agents."""
 
-    def _runtime(
+    def _host(
         self,
         plans: tuple[object, ...],
         deps: StubDepsFactory,
@@ -737,10 +737,10 @@ class TestOneConnectionPerServerName:
                 CompiledMcpCapability(server=_SERVER_A, url="https://elsewhere.internal/mcp"),
             ),
         )
-        runtime = self._runtime((first, second), deps, container)
+        host = self._host((first, second), deps, container)
 
         with pytest.raises(AgentCompilationError) as failure:
-            await runtime.__aenter__()
+            await host.__aenter__()
 
         assert _codes(failure.value) == {AgentErrorCode.MCP_CONNECTION_CONFLICT}
         message = str(failure.value)
@@ -756,7 +756,7 @@ class TestOneConnectionPerServerName:
             make_plan("reader", capabilities=(make_mcp_capability(_SERVER_A, include=("alpha",)),)),
             make_plan("writer", capabilities=(make_mcp_capability(_SERVER_A, exclude=("alpha",)),)),
         )
-        runtime = self._runtime(plans, deps, container)
+        host = self._host(plans, deps, container)
 
-        async with runtime:
-            assert runtime.agent_names() == ("reader", "writer")
+        async with host:
+            assert host.agent_names() == ("reader", "writer")
