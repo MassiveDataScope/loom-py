@@ -392,7 +392,7 @@ class TestUseCaseGrantsAreClearedOnExit:
 
     White-box: ``use_case_mcp_grant`` never observes this through its own
     guard (``_stack is None``), so the private dict is read directly, exactly
-    as ``test_runtime_remote_clients.py`` already reads ``runtime._health``.
+    as ``test_agent_host_remote_clients.py`` already reads ``host._health``.
     Without this clearing, a re-entered runtime would hand out, during the
     window between ``__aexit__`` and a subsequent ``__aenter__`` that failed
     before rebuilding it, grants pointing at already-closed sessions.

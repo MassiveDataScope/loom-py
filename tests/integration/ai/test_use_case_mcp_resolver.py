@@ -1,7 +1,7 @@
 """``McpMarkerResolver`` (T302) and its degradation (T303).
 
 Builds real ``AgentHost`` instances over stub MCP clients — the same
-shape ``test_use_case_mcp_runtime.py`` (T203) uses — and resolves through
+shape ``test_use_case_mcp_agent_host.py`` (T203) uses — and resolves through
 :class:`~loom.ai.execution._handle.McpMarkerResolver`, the resolver
 ``UseCaseExecutor.bind_mcp_resolver`` takes, instead of constructing
 ``McpGrantView`` by hand. This is the seam T203's suite deliberately stops

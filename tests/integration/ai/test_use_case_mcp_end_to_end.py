@@ -9,7 +9,7 @@ and ``MarkerDeclarations.mcp_grants`` — rather than hand-built
 edge, exactly as ``test_agent_marker_grants_integration.py`` fakes it for the
 ``Agent()`` marker.
 
-``test_use_case_mcp_runtime.py`` (T203) and ``test_use_case_mcp_resolver.py``
+``test_use_case_mcp_agent_host.py`` (T203) and ``test_use_case_mcp_resolver.py``
 (T302) already cover the host's own opening/listing rules and the
 resolver's own filtering rule in isolation; this module is the one that
 proves the whole chain — compiler, executor, runtime, resolver — agrees, and
@@ -141,7 +141,7 @@ def _mcp_wired(
     constructing ``AgentHost`` (``:1453-1458``):
     ``MarkerDeclarations.of`` finds the reached ``Mcp()`` declarations, and
     ``MarkerDeclarations.mcp_grants`` turns them into ``UseCaseMcpGrant``s. Building
-    that tuple by hand, as ``test_use_case_mcp_runtime.py`` does for its own
+    that tuple by hand, as ``test_use_case_mcp_agent_host.py`` does for its own
     narrower purpose, would skip exercising this glue at all.
 
     The agent resolver is bound only when *plans* is non-empty: a runtime
@@ -273,7 +273,7 @@ class TestTheUseCaseReachesWhatTheAgentExcludes:
 class TestAnIncludeMatchingNothingAbortsThroughTheRealPath:
     """T501 item 4: an ``include`` matching nothing aborts start-up through
     ``MarkerDeclarations.mcp_grants`` itself, not through a hand-built
-    ``UseCaseMcpGrant`` — ``test_use_case_mcp_runtime.py`` pins this same
+    ``UseCaseMcpGrant`` — ``test_use_case_mcp_agent_host.py`` pins this same
     outcome, but its ``_grant()`` helper builds the grant by hand and never
     calls ``MarkerDeclarations.mcp_grants``, so it cannot catch a regression in the
     glue that carries ``binding.include`` into the compiled capability.
