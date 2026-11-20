@@ -99,7 +99,7 @@ def _runtime(
     return AgentRuntime(
         plans=[make_plan(_OUTER), make_plan(_INNER)],
         config=make_ai_config(max_agent_depth=max_agent_depth),
-        engine_provider=provider,  # type: ignore[arg-type]
+        engine_plugin=provider,  # type: ignore[arg-type]
         deps=deps,
         container=container,
     )

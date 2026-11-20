@@ -30,7 +30,7 @@ import pytest
 
 from loom.ai.compiler import AgentPlan, CompiledMcpCapability
 from loom.ai.config import AiConfig
-from loom.ai.engines.pydantic_ai import PydanticAIEngineProvider, create_mcp_client
+from loom.ai.engines.pydantic_ai import PydanticAIEnginePlugin, create_mcp_client
 from loom.ai.engines.pydantic_ai import _mcp as engine_mcp
 from loom.ai.errors import AgentCompilationError, AgentRunError, AgentRunErrorCode
 from loom.ai.execution import AgentRuntime
@@ -148,11 +148,11 @@ def _config(**overrides: Any) -> AiConfig:
 
 def _runtime(plans: list[AgentPlan], model: ScriptedToolModel, **overrides: Any) -> AgentRuntime:
     """Build the runtime the composition root builds, MCP factory included."""
-    provider = PydanticAIEngineProvider(model_resolver=lambda target: model.as_model())
+    provider = PydanticAIEnginePlugin(model_resolver=lambda target: model.as_model())
     return AgentRuntime(
         plans=plans,
         config=_config(**overrides),
-        engine_provider=provider,
+        engine_plugin=provider,
         deps=CapabilityDepsFactory(),  # type: ignore[arg-type]
         container=LoomContainer(),
         mcp_client_factory=provider.mcp_client_factory,
@@ -242,11 +242,11 @@ class TestConcurrentCallsOverTheSharedToolset:
         # One engine is built per plan, in plan order, so the models line up
         # with ``plans`` and each agent drives its own script.
         models = iter((blocked_model, quick_model))
-        provider = PydanticAIEngineProvider(model_resolver=lambda target: next(models).as_model())
+        provider = PydanticAIEnginePlugin(model_resolver=lambda target: next(models).as_model())
         runtime = AgentRuntime(
             plans=plans,
             config=_config(),
-            engine_provider=provider,
+            engine_plugin=provider,
             deps=CapabilityDepsFactory(),  # type: ignore[arg-type]
             container=LoomContainer(),
             mcp_client_factory=provider.mcp_client_factory,
@@ -298,11 +298,11 @@ class TestTheWiringIsChecked:
         """
         model = ScriptedToolModel()
         plan = make_plan("clerk", capabilities=(make_mcp_capability(_SERVER),))
-        provider = PydanticAIEngineProvider(model_resolver=lambda target: model.as_model())
+        provider = PydanticAIEnginePlugin(model_resolver=lambda target: model.as_model())
         runtime = AgentRuntime(
             plans=[plan],
             config=_config(),
-            engine_provider=provider,
+            engine_plugin=provider,
             deps=CapabilityDepsFactory(),  # type: ignore[arg-type]
             container=LoomContainer(),
             mcp_client_factory=create_mcp_client,
@@ -321,12 +321,12 @@ class TestTheWiringIsChecked:
         """Resolving the provider twice is the same hole with a friendlier face."""
         model = ScriptedToolModel()
         plan = make_plan("clerk", capabilities=(make_mcp_capability(_SERVER),))
-        opener = PydanticAIEngineProvider(model_resolver=lambda target: model.as_model())
-        builder = PydanticAIEngineProvider(model_resolver=lambda target: model.as_model())
+        opener = PydanticAIEnginePlugin(model_resolver=lambda target: model.as_model())
+        builder = PydanticAIEnginePlugin(model_resolver=lambda target: model.as_model())
         runtime = AgentRuntime(
             plans=[plan],
             config=_config(),
-            engine_provider=builder,
+            engine_plugin=builder,
             deps=CapabilityDepsFactory(),  # type: ignore[arg-type]
             container=LoomContainer(),
             mcp_client_factory=opener.mcp_client_factory,

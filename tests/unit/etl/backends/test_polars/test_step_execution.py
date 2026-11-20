@@ -21,7 +21,7 @@ from loom.etl.declarative.expr._refs import TableRef
 from loom.etl.executor import ETLExecutor
 from loom.etl.lineage._records import EventName, RunStatus
 from loom.etl.schema._schema import LoomDtype
-from loom.etl.testing import StubRunObserver
+from loom.etl.testing import RecordingRunObserver
 from tests.unit.etl.backends.doubles import NoParams
 
 from .conftest import MinimalPolarsSourceReader, MinimalPolarsTargetWriter, table_path
@@ -142,7 +142,7 @@ class TestRunStep:
     ) -> None:
         """Observer receives step_start then step_end(success) on a clean run."""
         seed_table("raw.orders", pl.DataFrame({"id": [1], "amount": [1.0]}))
-        observer = StubRunObserver()
+        observer = RecordingRunObserver()
 
         plan = ETLCompiler().compile_step(DoubleAmountStep)
         ETLExecutor(
@@ -166,7 +166,7 @@ class TestRunStep:
             def read(self, spec, params_instance):  # type: ignore[override]
                 raise RuntimeError("read failure")
 
-        observer = StubRunObserver()
+        observer = RecordingRunObserver()
         plan = ETLCompiler().compile_step(DoubleAmountStep)
 
         executor = ETLExecutor(

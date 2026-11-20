@@ -1,4 +1,4 @@
-"""Resolution of store backends from the ``loom.stores.backends`` group."""
+"""Resolution of store backends from the ``loom.stores.plugins`` group."""
 
 from __future__ import annotations
 
@@ -13,13 +13,13 @@ from loom.core.plugins.entrypoints import (
 )
 
 if TYPE_CHECKING:
-    from loom.core.stores.plugin import StoreBackend
+    from loom.core.stores.plugin import StorePlugin
 
-BACKEND_ENTRY_POINT_GROUP = "loom.stores.backends"
+PLUGIN_ENTRY_POINT_GROUP = "loom.stores.plugins"
 """Entry point group store backends register under."""
 
 
-def resolve_store_backend(name: str, *, path: str | None = None) -> StoreBackend:
+def resolve_store_backend(name: str, *, path: str | None = None) -> StorePlugin:
     """Resolve the store backend registered under ``name``.
 
     Args:
@@ -39,17 +39,17 @@ def resolve_store_backend(name: str, *, path: str | None = None) -> StoreBackend
         DuplicateEntryPointError: When several distributions register ``name``.
     """
     try:
-        target = load_entry_point(BACKEND_ENTRY_POINT_GROUP, name, on_duplicate="error")
+        target = load_entry_point(PLUGIN_ENTRY_POINT_GROUP, name, on_duplicate="error")
     except EntryPointNotFoundError as exc:
         raise ConfigError(_describe_unknown_backend(name, exc.available)) from exc
     except ModuleNotFoundError as exc:
-        entry = select_entry_point(BACKEND_ENTRY_POINT_GROUP, name, on_duplicate="error")
+        entry = select_entry_point(PLUGIN_ENTRY_POINT_GROUP, name, on_duplicate="error")
         missing = None if entry is None else MissingDependency.of(exc, entry)
         if missing is None:
             raise
         owner = f"{path}: " if path else ""
         raise ConfigError(f"{owner}store backend {name!r} {missing.describe()}") from exc
-    backend_cls = cast("type[StoreBackend]", target)
+    backend_cls = cast("type[StorePlugin]", target)
     return backend_cls()
 
 
@@ -62,6 +62,6 @@ def _describe_unknown_backend(name: str, available: tuple[str, ...]) -> str:
 
 
 __all__ = [
-    "BACKEND_ENTRY_POINT_GROUP",
+    "PLUGIN_ENTRY_POINT_GROUP",
     "resolve_store_backend",
 ]

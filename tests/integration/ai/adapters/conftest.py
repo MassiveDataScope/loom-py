@@ -107,7 +107,7 @@ def engines(
     """The engine provider ``ai.engine`` resolves to; ``calls`` names each agent built."""
     provider = CountingEngineProvider()
     provider.mcp_client_factory = sessions  # type: ignore[assignment]
-    monkeypatch.setattr(registry, "resolve_engine_provider", lambda _: provider)
+    monkeypatch.setattr(registry, "resolve_engine_plugin", lambda _: provider)
     return provider
 
 

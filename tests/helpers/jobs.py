@@ -16,7 +16,7 @@ from loom.core.discovery.base import DiscoveryResult
 from loom.core.engine.compiler import UseCaseCompiler
 from loom.core.engine.events import EventKind, RuntimeEvent
 from loom.core.engine.executor import RuntimeExecutor
-from loom.core.engine.metrics import MetricsAdapter
+from loom.core.engine.metrics import MetricsRecorder
 from loom.core.job.callback import ANY_CALLBACKS, CallbackOutcome, DispatchableCallbacks
 from loom.core.job.config import JobSettings
 from loom.core.job.delivery import JobDelivery
@@ -164,7 +164,7 @@ class InlineServiceFixture(JobService):
         settings: JobSettings | None = None,
         callbacks: DispatchableCallbacks = ANY_CALLBACKS,
         timer: JobTimer | None = None,
-        metrics: MetricsAdapter | None = None,
+        metrics: MetricsRecorder | None = None,
     ) -> None:
         super().__init__(
             InlineJobTransport(factory, executor, timer=timer, metrics=metrics),
@@ -181,7 +181,7 @@ class CeleryServiceFixture(JobService):
     def __init__(
         self,
         app: Any,
-        metrics: MetricsAdapter | None = None,
+        metrics: MetricsRecorder | None = None,
         factory: Any = None,
         executor: Any = None,
         observability_runtime: Any = None,
@@ -208,7 +208,7 @@ class SQSServiceFixture(JobService):
         *,
         factory: Any,
         executor: Any,
-        metrics: MetricsAdapter | None = None,
+        metrics: MetricsRecorder | None = None,
         settings: JobSettings | None = None,
     ) -> None:
         super().__init__(

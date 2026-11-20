@@ -18,15 +18,15 @@ from loom.core.command.introspection import (
 CommandT = TypeVar("CommandT", bound=Command)
 
 
-class PydanticAdapter:
-    """Implements ``CommandAdapter[dict]`` using Pydantic for validation.
+class PydanticCommandParser:
+    """Implements ``CommandParser[dict]`` using Pydantic for validation.
 
     Builds a Pydantic ``BaseModel`` from a Command's input fields (excluding
     ``internal`` and ``calculated`` fields) and uses it to validate raw dicts.
 
     Example::
 
-        adapter = PydanticAdapter()
+        adapter = PydanticCommandParser()
         adapter.register(CreateUser, UpdateUser)
         cmd, fields_set = adapter.parse(CreateUser, {"email": "a@b.com", "name": "Jo"})
     """

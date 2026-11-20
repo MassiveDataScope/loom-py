@@ -359,7 +359,7 @@ Known debt:
 
 | Change | Before | After |
 |---|---|---|
-| REST adapter builds the use case | `LoomRestAdapter(executor)`; `await adapter.handle(CreateUser(repo=users), AdapterRequest(params=p, dependencies={User: users}))` | `LoomRestAdapter(kernel.executor, factory=kernel.factory)`; `await adapter.handle(CreateUser, AdapterRequest(params=p))`, with `users` bound in the container. `AdapterRequest.dependencies` is removed. |
+| REST adapter builds the use case | `RestUseCaseDispatcher(executor)`; `await adapter.handle(CreateUser(repo=users), ExecutionRequest(params=p, dependencies={User: users}))` | `RestUseCaseDispatcher(kernel.executor, factory=kernel.factory)`; `await adapter.handle(CreateUser, ExecutionRequest(params=p))`, with `users` bound in the container. `ExecutionRequest.dependencies` is removed. |
 | Sealed container | `application.kernel.container.register(...)` after start-up | Bind the key in a module: a discovered `Installer` in `app.packages`. A sealed container raises `ContainerSealed`. |
 | Kernel keys | A module binding `UseCaseFactory`, `RuntimeExecutor`, `UseCaseRegistry` or `ApplicationInvoker` was silently replaced | Drop the binding; `create_kernel` raises `BootstrapError`, a composed application `ReservedBindingError`. |
 | Acting as someone else | `set_identity(X)` then a call, inside a use case | `executor.run(UseCase, identity=X)` or `invoker.for_identity(X).invoke(...)`. `set_identity` inside work raises `IdentityFixed`. |

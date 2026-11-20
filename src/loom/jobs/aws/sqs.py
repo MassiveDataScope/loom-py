@@ -37,7 +37,7 @@ from loom.jobs.aws.queue import (
 if TYPE_CHECKING:
     from loom.composition import JobTransportContext
     from loom.core.config import ConfigContext
-    from loom.core.engine.metrics import MetricsAdapter
+    from loom.core.engine.metrics import MetricsRecorder
     from loom.core.job.callback import JobCallback
 
 ResultT = TypeVar("ResultT")
@@ -232,7 +232,7 @@ class SQSJobTransport:
     """Send validated jobs to SQS, batching the post-commit channel when configured."""
 
     def __init__(
-        self, client: Any, config: SQSConfig, *, metrics: MetricsAdapter | None = None
+        self, client: Any, config: SQSConfig, *, metrics: MetricsRecorder | None = None
     ) -> None:
         self._config = config
         self._queues = SQSQueues(client, config.queues)

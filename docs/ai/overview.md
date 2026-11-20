@@ -115,7 +115,7 @@ never a default; the code door is a distinct decision, not derived from it.
 assembly `create_app` itself uses: it resolves the engine, loads the artifacts
 under `root`, compiles them and returns the `AgentRuntime` unentered. `names`
 restricts it to some agents; `registry`, `container`, `deps`, `sql` and
-`use_case_mcp` default to empty, and `engine_provider` replaces the provider
+`use_case_mcp` default to empty, and `engine_plugin` replaces the provider
 resolved from `ai.engine`.
 
 ```python

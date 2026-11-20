@@ -62,7 +62,7 @@ def _build_runtime(
     return AgentRuntime(
         plans=list(plans),  # type: ignore[arg-type]
         config=make_ai_config(mcp_servers=make_mcp_servers(*clients), **(config_kwargs or {})),
-        engine_provider=provider,  # type: ignore[arg-type]
+        engine_plugin=provider,  # type: ignore[arg-type]
         deps=deps,
         container=container,
         sql_config=sql_config,  # type: ignore[arg-type]

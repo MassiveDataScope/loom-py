@@ -10,7 +10,7 @@ import pytest
 from loom.core.bootstrap import create_kernel
 from loom.core.engine.events import EventKind, RuntimeEvent
 from loom.core.engine.executor import RuntimeExecutor
-from loom.core.engine.metrics import MetricsAdapter
+from loom.core.engine.metrics import MetricsRecorder
 from loom.core.model import LoomStruct
 from loom.core.use_case.use_case import UseCase
 
@@ -30,7 +30,7 @@ class TestKernelCarriesMetrics:
         assert result.metrics is None
 
     def test_metrics_stored_when_provided(self) -> None:
-        adapter = MagicMock(spec=MetricsAdapter)
+        adapter = MagicMock(spec=MetricsRecorder)
         result = create_kernel(
             config=object(),
             use_cases=[_SimpleUseCase],

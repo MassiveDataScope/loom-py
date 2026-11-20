@@ -25,7 +25,7 @@ from loom.core.use_case import Input, UseCase
 from loom.core.use_case.errors import UncomposedWriteStore
 from loom.rest.fastapi.runtime import FastAPIAdapter
 from loom.rest.model import RestInterface
-from loom.stores.sqlalchemy.plugin import SQLAlchemyBackend
+from loom.stores.sqlalchemy.plugin import SQLAlchemyStorePlugin
 from loom.stores.sqlalchemy.session_manager import SessionManager
 from loom.stores.sqlalchemy.transactional import transactional
 from tests.helpers.composition import Serving, composition_project
@@ -341,7 +341,7 @@ class TestPerStoreWiring:
         def build(*args: object) -> None:
             raise AssertionError("a store was built")
 
-        monkeypatch.setattr(SQLAlchemyBackend, "build", build)
+        monkeypatch.setattr(SQLAlchemyStorePlugin, "build", build)
         source, adapter = _project(databases, second="sqlalchemy"), Serving(AcmeBackendNamedAudit)
 
         with pytest.raises(ConfigError, match=r"stores\.sqlalchemy would report its readiness"):

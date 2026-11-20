@@ -2,7 +2,7 @@
 
 Each store is declared under `stores.<name>`: its `backend` names a plugin,
 and the rest of the section is the connection that backend reads. loom
-resolves the backend from the `loom.stores.backends` entry point group
+resolves the backend from the `loom.stores.plugins` entry point group
 at bootstrap, asks it once for everything the host needs, and never imports a
 backend it was not asked for. Four ship with loom — `sqlalchemy`, `dynamodb`,
 `mongo` and `none` — and a package of your own registers a fifth the same way.
@@ -188,7 +188,7 @@ async def _lifespan(client: LedgerClient) -> AsyncIterator[None]:
 
 ```toml
 # pyproject.toml of the billing_ledger package
-[project.entry-points."loom.stores.backends"]
+[project.entry-points."loom.stores.plugins"]
 ledger = "billing_ledger.backend:LedgerBackend"
 ```
 
@@ -990,7 +990,7 @@ class Measurement(BaseModel):
   connections per process (it allowed thirty); the API keeps five plus five
   and recycles connections every 1800 s. Declare `database.pool` to keep
   other values.
-- `StoreBackend.build` takes a third argument, the `StoreRuntime`.
+- `StorePlugin.build` takes a third argument, the `StoreRuntime`.
 - A worker with a malformed `database` section now fails at startup instead
   of running without its database.
 

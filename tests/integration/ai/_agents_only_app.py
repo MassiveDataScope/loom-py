@@ -84,7 +84,7 @@ class _UnbuiltEngine:
 
 
 class _EngineProvider:
-    """Smallest provider ``resolve_engine_provider`` accepts."""
+    """Smallest provider ``resolve_engine_plugin`` accepts."""
 
     LOOM_AI_ENGINE_API = 2
 

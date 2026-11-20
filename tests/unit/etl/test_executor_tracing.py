@@ -20,7 +20,7 @@ from loom.core.observability.observability import ObservabilityRuntime
 from loom.etl import ETLParams, ETLPipeline, ETLProcess, ETLStep, FromTable, IntoTable
 from loom.etl.compiler import ETLCompiler
 from loom.etl.executor import ETLExecutor
-from loom.etl.testing import StubSourceReader, StubTargetWriter
+from loom.etl.testing import InMemorySourceReader, InMemoryTargetWriter
 
 
 class TracingParams(ETLParams):  # type: ignore[misc]
@@ -80,8 +80,8 @@ def _executor() -> tuple[ETLExecutor, InMemorySpanExporter]:
     provider = TracerProvider()
     provider.add_span_processor(SimpleSpanProcessor(exporter))
     executor = ETLExecutor(
-        StubSourceReader({"orders": object()}),
-        StubTargetWriter(),
+        InMemorySourceReader({"orders": object()}),
+        InMemoryTargetWriter(),
         observability=ObservabilityRuntime([], tracer=provider.get_tracer("loom.etl")),
     )
     return executor, exporter

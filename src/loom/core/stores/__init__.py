@@ -15,8 +15,8 @@ from loom.core.stores.database import (
     decode_database_config,
     load_database_config,
 )
-from loom.core.stores.none import NoneBackend
-from loom.core.stores.plugin import StoreBackend, StoreWiring
+from loom.core.stores.none import NullStorePlugin
+from loom.core.stores.plugin import StorePlugin, StoreWiring
 from loom.core.stores.profile import (
     LAMBDA_PROFILE,
     SERVER_PROFILE,
@@ -27,18 +27,18 @@ from loom.core.stores.profile import (
     RuntimeProfile,
     StoreRuntime,
 )
-from loom.core.stores.registry import BACKEND_ENTRY_POINT_GROUP, resolve_store_backend
+from loom.core.stores.registry import PLUGIN_ENTRY_POINT_GROUP, resolve_store_backend
 
 __all__ = [
-    "BACKEND_ENTRY_POINT_GROUP",
+    "PLUGIN_ENTRY_POINT_GROUP",
     "LAMBDA_PROFILE",
     "SERVER_PROFILE",
     "STREAMING_PROFILE",
     "WORKER_PROFILE",
     "StoreRuntime",
     "DatabaseConfig",
-    "NoneBackend",
-    "StoreBackend",
+    "NullStorePlugin",
+    "StorePlugin",
     "StoreWiring",
     "PoolConfig",
     "PoolDefaults",

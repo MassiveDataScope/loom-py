@@ -29,7 +29,7 @@ from loom.ai.abc import AgentEngine
 from loom.ai.compiler._plan import AgentPlan, CompiledA2ACapability
 from loom.ai.config import AiConfig
 from loom.ai.declarative import PolicySpec
-from loom.ai.engines.pydantic_ai import PydanticAIEngineProvider, _a2a, _capabilities
+from loom.ai.engines.pydantic_ai import PydanticAIEnginePlugin, _a2a, _capabilities
 from loom.ai.engines.pydantic_ai._mcp import SharedMcpToolsets
 from loom.ai.engines.pydantic_ai.extras import a2a as a2a_island
 from loom.ai.errors import AgentCompilationError, AgentErrorCode, AgentRunErrorCode
@@ -166,7 +166,7 @@ def build_engine(
     deps: object | None = None,
 ) -> AgentEngine:
     """Build the real adapter for a plan granting a remote agent."""
-    provider = PydanticAIEngineProvider(model_resolver=lambda target: model.as_model())
+    provider = PydanticAIEnginePlugin(model_resolver=lambda target: model.as_model())
     plan = make_plan(capabilities, tool_timeout_ms=tool_timeout_ms)
     return provider.create_engine(
         plan,
@@ -345,7 +345,7 @@ def make_runtime(plan: AgentPlan) -> AgentRuntime:
     return AgentRuntime(
         plans=[plan],
         config=AiConfig(engine="pydantic-ai", specs=(), models={}, startup_timeout_ms=5000),
-        engine_provider=StubEngineProvider(),  # type: ignore[arg-type]
+        engine_plugin=StubEngineProvider(),  # type: ignore[arg-type]
         deps=CapabilityDepsFactory(),  # type: ignore[arg-type]
         container=LoomContainer(),
         a2a_client_factory=_a2a.create_a2a_client,

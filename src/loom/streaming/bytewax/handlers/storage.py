@@ -38,7 +38,7 @@ from loom.streaming.core._exceptions import UnsupportedNodeError
 from loom.streaming.core._message import Message, MessageMeta
 from loom.streaming.core._tracing import open_terminal_span
 from loom.streaming.nodes._sink import IntoSink, SinkPartition
-from loom.streaming.nodes._table import Backend, IntoTable
+from loom.streaming.nodes._table import IntoTable, TableEngine
 
 Stream = Any
 logger = get_logger(__name__)
@@ -263,15 +263,15 @@ class _StorageDynamicSink(DynamicSink[Message[Any]]):
         )
         if isinstance(node, IntoTable):
             session_manager = None
-            if node.backend is Backend.SQLALCHEMY:
+            if node.engine is TableEngine.SQLALCHEMY:
                 if self._ctx.bridge is None:
                     raise RuntimeError(
-                        "IntoTable backend=sqlalchemy requires an AsyncBridge "
+                        "IntoTable engine=sqlalchemy requires an AsyncBridge "
                         "from the Bytewax runtime."
                     )
                 if self._compiled.database_config is None:
                     raise RuntimeError(
-                        "IntoTable backend=sqlalchemy requires a resolved database config."
+                        "IntoTable engine=sqlalchemy requires a resolved database config."
                     )
                 session_manager = self._ctx.session_manager_for(self._compiled.database_config)
             partition = node.build_partition(

@@ -24,7 +24,7 @@ from loom.etl.compiler._plan import (
 )
 from loom.etl.runner import ETLRunner
 from loom.etl.storage._config import StorageConfig, StorageDefaults, TablePathConfig, TempConfig
-from loom.etl.testing import StubSourceReader, StubTargetWriter
+from loom.etl.testing import InMemorySourceReader, InMemoryTargetWriter
 from tests.helpers.version_limited_extras import require_pyspark
 from tests.unit.etl.doubles import (
     OrdersStagingAStep,
@@ -68,10 +68,10 @@ def params() -> RunDateIgnoredParams:
 @pytest.fixture
 def runner_factory() -> RunnerFactory:
     def _make(observers: Sequence[Any] | None = None) -> ETLRunner:
-        reader = StubSourceReader({"raw.orders": object()})
+        reader = InMemorySourceReader({"raw.orders": object()})
         return ETLRunner(
             reader,
-            StubTargetWriter(),
+            InMemoryTargetWriter(),
             observability=ObservabilityRuntime(list(observers or ())),
         )
 
@@ -230,9 +230,9 @@ class TestRunnerRun:
         include: list[str] | None,
         expected_steps: int,
     ) -> None:
-        from loom.etl.testing import StubRunObserver
+        from loom.etl.testing import RecordingRunObserver
 
-        observer = StubRunObserver()
+        observer = RecordingRunObserver()
         runner_factory([observer]).run(PipelineAll, params, include=include)
         assert len(observer.step_statuses) == expected_steps
 
@@ -264,8 +264,8 @@ class TestRunnerRun:
 
         spy = _PrometheusSpy()
         runner = ETLRunner(
-            StubSourceReader({"raw.orders": object()}),
-            StubTargetWriter(),
+            InMemorySourceReader({"raw.orders": object()}),
+            InMemoryTargetWriter(),
             observability=ObservabilityRuntime([spy]),
         )
 
@@ -307,8 +307,8 @@ class TestRunnerRun:
 
         spy = _PrometheusSpy()
         runner = ETLRunner(
-            StubSourceReader({"raw.orders": object()}),
-            StubTargetWriter(),
+            InMemorySourceReader({"raw.orders": object()}),
+            InMemoryTargetWriter(),
             observability=ObservabilityRuntime([spy]),
         )
 

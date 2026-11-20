@@ -16,7 +16,7 @@ from loom.streaming.bytewax._operators import (  # noqa: E402
     SyncResourceLifecycle,
     lifecycle_for,
 )
-from loom.streaming.nodes._with import ContextFactory  # noqa: E402
+from loom.streaming.nodes._with import ContextSupplier  # noqa: E402
 
 pytestmark = pytest.mark.bytewax
 
@@ -94,7 +94,7 @@ class TestSyncResourceLifecycle:
         assert first.entered == 1
         assert first.exited == 1
 
-    def test_context_factory_creates_fresh_context_per_batch(self) -> None:
+    def test_context_supplier_creates_fresh_context_per_batch(self) -> None:
         created: list[_FakeSyncCM] = []
 
         def _factory() -> _FakeSyncCM:
@@ -105,7 +105,7 @@ class TestSyncResourceLifecycle:
         node: With[AcmeOperatorPayload, AcmeOperatorPayload] = With(
             process=Process(IntoTopic("out", payload=AcmeOperatorPayload)),
             scope=ResourceScope.BATCH,
-            client=ContextFactory(_factory),
+            client=ContextSupplier(_factory),
         )
         lifecycle = lifecycle_for(node)
 

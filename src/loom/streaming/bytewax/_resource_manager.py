@@ -107,7 +107,7 @@ def _session_manager_builder() -> Callable[
         from loom.stores.sqlalchemy.session_manager import build_session_manager
     except ImportError as exc:
         raise ImportError(
-            "IntoTable(backend=SQLALCHEMY) requires SQLAlchemy. "
+            "IntoTable(engine=SQLALCHEMY) requires SQLAlchemy. "
             "Install loom-kernel[sqlalchemy] to write to SQLAlchemy tables."
         ) from exc
     return cast(

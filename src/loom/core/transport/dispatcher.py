@@ -7,12 +7,12 @@ from loom.core.use_case.use_case import UseCase
 
 
 @dataclass(frozen=True)
-class AdapterRequest:
+class ExecutionRequest:
     """Normalized, transport-agnostic request for UseCase execution.
 
     Carries the parsed inputs that a transport layer (REST, CLI, gRPC, etc.)
     extracts from its native request format before handing off to a
-    ``LoomAdapter`` implementation. What the use case is built with comes
+    ``UseCaseDispatcher`` implementation. What the use case is built with comes
     from the container, never from the request.
 
     Args:
@@ -22,7 +22,7 @@ class AdapterRequest:
 
     Example::
 
-        request = AdapterRequest(
+        request = ExecutionRequest(
             params={"user_id": 1},
             payload={"email": "new@corp.com"},
         )
@@ -33,7 +33,7 @@ class AdapterRequest:
 
 
 @runtime_checkable
-class LoomAdapter(Protocol):
+class UseCaseDispatcher(Protocol):
     """Port for transport adapters.
 
     Any transport layer (REST, CLI, event bus) that drives UseCase execution
@@ -41,7 +41,7 @@ class LoomAdapter(Protocol):
     transport concerns.
 
     The adapter is responsible for:
-    - Constructing an ``AdapterRequest`` from the native request format.
+    - Constructing an ``ExecutionRequest`` from the native request format.
     - Running the use case class inside one execution, as the request's
       caller, so loom builds it there with its dependencies.
     - Serializing the result into the native response format.
@@ -49,11 +49,11 @@ class LoomAdapter(Protocol):
 
     Example::
 
-        class MyCliAdapter:
+        class MyCliDispatcher:
             async def handle(
                 self,
                 use_case: type[UseCase[Any, Any]],
-                request: AdapterRequest,
+                request: ExecutionRequest,
             ) -> Any:
                 ...
     """
@@ -61,7 +61,7 @@ class LoomAdapter(Protocol):
     async def handle(
         self,
         use_case: type[UseCase[Any, Any]],
-        request: AdapterRequest,
+        request: ExecutionRequest,
     ) -> Any:
         """Build and execute the UseCase and return a transport-ready result.
 

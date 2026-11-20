@@ -172,7 +172,7 @@ def _mcp_wired(
     runtime = AgentRuntime(
         plans=list(plans),
         config=make_ai_config(mcp_servers=servers),
-        engine_provider=CountingEngineProvider(),  # type: ignore[arg-type]
+        engine_plugin=CountingEngineProvider(),  # type: ignore[arg-type]
         deps=deps,
         container=container,
         mcp_client_factory=factory or mcp_client_factory(dict(clients)),  # type: ignore[arg-type]

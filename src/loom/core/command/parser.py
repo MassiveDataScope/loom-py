@@ -5,7 +5,7 @@ from typing import Any, Protocol, TypeVar
 RawT = TypeVar("RawT", contravariant=True)
 
 
-class CommandAdapter(Protocol[RawT]):
+class CommandParser(Protocol[RawT]):
     """Contract for compiling a Command into a transport-specific schema
     and parsing raw input into a Command instance.
 

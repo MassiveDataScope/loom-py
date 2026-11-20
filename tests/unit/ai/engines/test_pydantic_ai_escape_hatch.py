@@ -25,7 +25,7 @@ from pydantic_ai.models.function import AgentInfo, FunctionModel
 
 from loom.ai.abc import AgentHandle
 from loom.ai.declarative import PolicySpec
-from loom.ai.engines.pydantic_ai import NativeAgent, PydanticAIEngineProvider, native_agent
+from loom.ai.engines.pydantic_ai import NativeAgent, PydanticAIEnginePlugin, native_agent
 from loom.ai.engines.pydantic_ai._engine import PydanticAIEngine
 from loom.ai.errors import AgentRunError, AgentRunErrorCode
 from loom.ai.execution import AgentRuntime
@@ -109,7 +109,7 @@ def _silent_model() -> Model:
 
 def _engine(*, output_check: Any = None) -> PydanticAIEngine:
     model = _silent_model()
-    provider = PydanticAIEngineProvider(model_resolver=lambda target: model)
+    provider = PydanticAIEnginePlugin(model_resolver=lambda target: model)
     engine = provider.create_engine(
         make_plan(output_check=output_check),
         deps=_RecordingDeps(),
@@ -225,11 +225,11 @@ class TestTheTypedAccessor:
 
 
 def _native_runtime() -> AgentRuntime:
-    provider = PydanticAIEngineProvider(model_resolver=lambda target: _silent_model())
+    provider = PydanticAIEnginePlugin(model_resolver=lambda target: _silent_model())
     return AgentRuntime(
         plans=[make_plan()],
         config=make_ai_config(),
-        engine_provider=provider,
+        engine_plugin=provider,
         deps=_RecordingDeps(),
         container=LoomContainer(),
     )
@@ -296,7 +296,7 @@ class TestTheBodysExceptionsAreNeverReclassified:
 
 def _engine_with_policies(policies: PolicySpec) -> PydanticAIEngine:
     model = _silent_model()
-    provider = PydanticAIEngineProvider(model_resolver=lambda target: model)
+    provider = PydanticAIEnginePlugin(model_resolver=lambda target: model)
     engine = provider.create_engine(
         make_plan(policies=policies), deps=_RecordingDeps(), container=LoomContainer()
     )

@@ -47,7 +47,7 @@ class _IntegrationAppConfig(msgspec.Struct, kw_only=True):
 
 class UseCaseConfigSnapshot(Command, frozen=True):
     env: str
-    cache_backend: str
+    cache_store: str
     timeout_ms: int
     pagination_mode: str
 
@@ -128,7 +128,7 @@ class ReadTypedConfigUseCase(UseCase[object, UseCaseConfigSnapshot]):
         products_list = self._settings.use_cases.products_list
         return UseCaseConfigSnapshot(
             env=self._settings.env,
-            cache_backend=self._settings.cache.backend,
+            cache_store=self._settings.cache.backend,
             timeout_ms=products_list.timeout_ms,
             pagination_mode=products_list.pagination_mode,
         )
@@ -254,7 +254,7 @@ class TestUseCaseCrudIntegration:
         snapshot = await executor.execute(use_case)
 
         assert snapshot.env == "integration"
-        assert snapshot.cache_backend == "redis"
+        assert snapshot.cache_store == "redis"
         assert snapshot.timeout_ms == 750
         assert snapshot.pagination_mode == "offset"
 
@@ -291,6 +291,6 @@ class TestUseCaseCrudIntegration:
         snapshot = await executor.execute(use_case)
 
         assert snapshot.env == "test-yaml"
-        assert snapshot.cache_backend == "memory"
+        assert snapshot.cache_store == "memory"
         assert snapshot.timeout_ms == 900
         assert snapshot.pagination_mode == "cursor"

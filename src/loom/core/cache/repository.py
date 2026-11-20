@@ -15,7 +15,7 @@ from loom.core.cache._batching import REFILL_BATCH_SIZE, batched
 from loom.core.cache._single_flight import SingleFlight
 from loom.core.cache.abc.config import CacheConfig
 from loom.core.cache.abc.dependency import BatchFingerprintResolver, DependencyResolver
-from loom.core.cache.abc.store import CacheBackend
+from loom.core.cache.abc.store import CacheStore
 from loom.core.cache.decorators import declares_cache_policy
 from loom.core.cache.keys import (
     custom_query_key,
@@ -228,7 +228,7 @@ class CachedRepository(
     the backend, so two write calls do not choose the same expiry.  The spread
     is per write call: a batch write (a cached page, an index refill) carries
     one TTL for the whole batch because
-    :class:`~loom.core.cache.abc.store.CacheBackend` takes one TTL per call,
+    :class:`~loom.core.cache.abc.store.CacheStore` takes one TTL per call,
     so the rows of a single page still expire together.
     """
 
@@ -237,7 +237,7 @@ class CachedRepository(
         repository: Repository[OutputT, CreateT, UpdateT, IdT],
         *,
         config: CacheConfig,
-        cache: CacheBackend,
+        cache: CacheStore,
         dependency_resolver: DependencyResolver,
     ) -> None:
         _require_full_repository(repository)

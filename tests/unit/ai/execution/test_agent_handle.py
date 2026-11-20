@@ -221,7 +221,7 @@ async def _agent_runtime(deps: StubDepsFactory, container: LoomContainer) -> Age
     return AgentRuntime(
         plans=[make_plan(_AGENT_NAME)],
         config=make_ai_config(),
-        engine_provider=provider,  # type: ignore[arg-type]
+        engine_plugin=provider,  # type: ignore[arg-type]
         deps=deps,
         container=container,
     )
@@ -282,7 +282,7 @@ class TestAnonymousIdentity:
         runtime = AgentRuntime(
             plans=[make_plan(_AGENT_NAME)],
             config=make_ai_config(),
-            engine_provider=provider,  # type: ignore[arg-type]
+            engine_plugin=provider,  # type: ignore[arg-type]
             deps=deps,
             container=container,
         )
@@ -312,7 +312,7 @@ class TestAnonymousIdentity:
         runtime = AgentRuntime(
             plans=[make_plan(_AGENT_NAME)],
             config=make_ai_config(),
-            engine_provider=provider,  # type: ignore[arg-type]
+            engine_plugin=provider,  # type: ignore[arg-type]
             deps=deps,
             container=container,
         )
@@ -342,7 +342,7 @@ class TestProviderDetailsReachTheAnswer:
         runtime = AgentRuntime(
             plans=[make_plan(_AGENT_NAME)],
             config=make_ai_config(),
-            engine_provider=provider,  # type: ignore[arg-type]
+            engine_plugin=provider,  # type: ignore[arg-type]
             deps=deps,
             container=container,
         )
@@ -370,7 +370,7 @@ class TestTheHandlesSpan:
         runtime = AgentRuntime(
             plans=[make_plan(_AGENT_NAME)],
             config=make_ai_config(),
-            engine_provider=CountingEngineProvider(  # type: ignore[arg-type]
+            engine_plugin=CountingEngineProvider(  # type: ignore[arg-type]
                 engines={_AGENT_NAME: _OneShotEngine()}  # type: ignore[dict-item]
             ),
             deps=deps,
@@ -455,7 +455,7 @@ async def _shaped_runtime(
     return AgentRuntime(
         plans=[make_plan(_AGENT_NAME)],
         config=make_ai_config(),
-        engine_provider=provider,  # type: ignore[arg-type]
+        engine_plugin=provider,  # type: ignore[arg-type]
         deps=deps,
         container=container,
     )
@@ -552,7 +552,7 @@ class TestRejectionByOutputHook:
         runtime = AgentRuntime(
             plans=[plan],
             config=make_ai_config(),
-            engine_provider=provider,  # type: ignore[arg-type]
+            engine_plugin=provider,  # type: ignore[arg-type]
             deps=RecordingDepsFactory((RecordTurn,)).registered_in(container),  # type: ignore[arg-type]
             container=container,
         )
@@ -585,7 +585,7 @@ class TestRejectionByOutputHook:
         runtime = AgentRuntime(
             plans=[plan],
             config=make_ai_config(),
-            engine_provider=provider,  # type: ignore[arg-type]
+            engine_plugin=provider,  # type: ignore[arg-type]
             deps=RecordingDepsFactory((RecordTurn,)).registered_in(container),  # type: ignore[arg-type]
             container=container,
         )
@@ -615,7 +615,7 @@ class TestRejectionByOutputHook:
         runtime = AgentRuntime(
             plans=[plan],
             config=make_ai_config(),
-            engine_provider=provider,  # type: ignore[arg-type]
+            engine_plugin=provider,  # type: ignore[arg-type]
             deps=RecordingDepsFactory((RecordTurn,)).registered_in(container),  # type: ignore[arg-type]
             container=container,
         )
@@ -642,7 +642,7 @@ class TestRejectionByOutputHook:
         runtime = AgentRuntime(
             plans=[plan],
             config=make_ai_config(),
-            engine_provider=provider,  # type: ignore[arg-type]
+            engine_plugin=provider,  # type: ignore[arg-type]
             deps=RecordingDepsFactory((_RecordMessageOnly,)).registered_in(container),  # type: ignore[arg-type]
             container=container,
         )
@@ -671,7 +671,7 @@ class TestRejectionByOutputHook:
         runtime = AgentRuntime(
             plans=[plan],
             config=make_ai_config(),
-            engine_provider=provider,  # type: ignore[arg-type]
+            engine_plugin=provider,  # type: ignore[arg-type]
             deps=RecordingDepsFactory((_RecordMessageOnly,)).registered_in(container),  # type: ignore[arg-type]
             container=container,
         )
@@ -715,7 +715,7 @@ async def _runtime_with_one_mcp_grant(
     return AgentRuntime(
         plans=[make_plan(_AGENT_NAME, capabilities=(capability,))],
         config=_mcp_config(_RUNBOOKS_SERVER),
-        engine_provider=provider,  # type: ignore[arg-type]
+        engine_plugin=provider,  # type: ignore[arg-type]
         deps=deps,
         container=container,
         mcp_client_factory=mcp_client_factory({_RUNBOOKS_SERVER: client}),  # type: ignore[arg-type]
@@ -825,7 +825,7 @@ class TestPublishedGrants:
             ],
             config=_mcp_config(_RUNBOOKS_SERVER, second),
             sql_config=make_sql_config("analytics"),
-            engine_provider=provider,  # type: ignore[arg-type]
+            engine_plugin=provider,  # type: ignore[arg-type]
             deps=deps,
             container=container,
             mcp_client_factory=mcp_client_factory(sessions),  # type: ignore[arg-type]
@@ -934,7 +934,7 @@ class TestTheNativeEscapeHatch:
         runtime = AgentRuntime(
             plans=[make_plan(_AGENT_NAME, state=_DEFAULTED_STATE)],
             config=make_ai_config(),
-            engine_provider=CountingEngineProvider(  # type: ignore[arg-type]
+            engine_plugin=CountingEngineProvider(  # type: ignore[arg-type]
                 engines={_AGENT_NAME: engine}  # type: ignore[dict-item]
             ),
             deps=deps,
@@ -960,7 +960,7 @@ class TestTheNativeEscapeHatch:
         runtime = AgentRuntime(
             plans=[make_plan(_AGENT_NAME, state=_REQUIRED_STATE)],
             config=make_ai_config(),
-            engine_provider=CountingEngineProvider(  # type: ignore[arg-type]
+            engine_plugin=CountingEngineProvider(  # type: ignore[arg-type]
                 engines={_AGENT_NAME: engine}  # type: ignore[dict-item]
             ),
             deps=deps,

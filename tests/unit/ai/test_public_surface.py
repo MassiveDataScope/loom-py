@@ -41,7 +41,7 @@ _REQUIRED_EXPORTS = frozenset(
         "Conversation",
         "HealthStatus",
         "AgentEngine",
-        "AgentEngineProvider",
+        "AgentEnginePlugin",
         "ToolsetFactory",
         "ToolsetContext",
         "McpSession",

@@ -159,17 +159,17 @@ class AiWiring:
             return cls.ABSENT
         from loom.ai.bootstrap import build_agent_runtime
         from loom.ai.config import AiConfig
-        from loom.ai.registry import resolve_engine_provider
+        from loom.ai.registry import resolve_engine_plugin
 
         ai_cfg = ctx.section(ConfigKey.AI, AiConfig)
         grants = declared.mcp_grants(ai_cfg.mcp_servers)
-        provider = resolve_engine_provider(ai_cfg.engine)
+        provider = resolve_engine_plugin(ai_cfg.engine)
         runtime = build_agent_runtime(
             ai_cfg,
             root=code_path,
             names=names,
             specs=ai_cfg.artifact_specs(agent_specs, mcp_declared=bool(declared.mcp)),
-            engine_provider=provider,
+            engine_plugin=provider,
             registry=kernel.registry,
             container=kernel.container,
             deps=AgentDepsFactory(kernel.invoker),

@@ -186,7 +186,7 @@ lambda = [
 ]
 
 [project.entry-points."loom.ai.engines"]
-pydantic-ai = "loom.ai.engines.pydantic_ai.plugin:PydanticAIEngineProvider"
+pydantic-ai = "loom.ai.engines.pydantic_ai.plugin:PydanticAIEnginePlugin"
 
 # Authentication strategies for the remote endpoints loom calls out to: MCP
 # servers and A2A agents alike, since the contract is httpx.Auth and knows
@@ -202,13 +202,13 @@ static = "loom.ai.remote_auth:static_headers"
 polars = "loom.etl.backends.polars.engine:PolarsEtlEngine"
 spark = "loom.etl.backends.spark.engine:SparkEtlEngine"
 
-# Store backends a store's `backend` key resolves. A deployment registers
+# Store plugins a store's `backend` key resolves. A deployment registers
 # its own under the same group from its own package.
-[project.entry-points."loom.stores.backends"]
-sqlalchemy = "loom.stores.sqlalchemy.plugin:SQLAlchemyBackend"
-dynamodb = "loom.stores.dynamodb.plugin:DynamoDBBackend"
-mongo = "loom.stores.mongo.plugin:MongoBackend"
-none = "loom.core.stores.none:NoneBackend"
+[project.entry-points."loom.stores.plugins"]
+sqlalchemy = "loom.stores.sqlalchemy.plugin:SQLAlchemyStorePlugin"
+dynamodb = "loom.stores.dynamodb.plugin:DynamoDBStorePlugin"
+mongo = "loom.stores.mongo.plugin:MongoStorePlugin"
+none = "loom.core.stores.none:NullStorePlugin"
 
 # Check sets by the configuration path they validate; a set is imported only
 # when the process uses that path. A package shipping checks registers under

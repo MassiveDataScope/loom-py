@@ -21,7 +21,7 @@ from sqlalchemy.pool import NullPool
 from loom.core.config import ConfigContext, ConfigError
 from loom.core.stores.profile import SERVER_PROFILE
 from loom.stores.sqlalchemy.alembic import StoreSchema
-from loom.stores.sqlalchemy.plugin import SQLAlchemyBackend
+from loom.stores.sqlalchemy.plugin import SQLAlchemyStorePlugin
 from loom.stores.sqlalchemy.rls import create_schema, verify
 from loom.stores.sqlalchemy.rls.integrity import startup_problems
 from loom.stores.sqlalchemy.rls.sources import clear_scope_sources, register_scope_source
@@ -410,7 +410,10 @@ class TestStaticGuard:
         register_scope_source("editor", lambda: None)
         try:
             wiring = build_backend(
-                SQLAlchemyBackend(), ConfigContext.from_dict(config), notes.MODELS, SERVER_PROFILE
+                SQLAlchemyStorePlugin(),
+                ConfigContext.from_dict(config),
+                notes.MODELS,
+                SERVER_PROFILE,
             )
             wiring.prepare_models(notes.MODELS)
             with pytest.raises(ConfigError, match="guard.relation_grants"):

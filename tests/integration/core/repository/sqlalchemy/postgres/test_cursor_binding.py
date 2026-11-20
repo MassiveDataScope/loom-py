@@ -12,10 +12,10 @@ import msgspec
 import pytest
 
 from loom.core.cache import (
-    CacheBackend,
     CacheConfig,
     CachedRepository,
     CacheGateway,
+    CacheStore,
     GenerationalDependencyResolver,
 )
 from loom.core.command import Command
@@ -140,8 +140,8 @@ async def cached(
         yield CachedRepository(
             repository=cast(Repository[Reading, Any, Any, int], repository),
             config=config,
-            cache=cast(CacheBackend, data),
-            dependency_resolver=GenerationalDependencyResolver(cast(CacheBackend, counters)),
+            cache=cast(CacheStore, data),
+            dependency_resolver=GenerationalDependencyResolver(cast(CacheStore, counters)),
         )
     finally:
         await data.clear()

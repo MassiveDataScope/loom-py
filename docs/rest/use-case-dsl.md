@@ -802,7 +802,7 @@ hold only characters allowed in an RFC 3986 URI reference; otherwise it raises
 `ValueError`. OpenAPI documents both statuses with the `OrderView` schema and
 declares `Location` on the `201`. `Created` must wrap one of the other members
 of the result, and a route whose `status_code` is already `201` cannot return
-it; either fails at startup. `LoomRestAdapter` answers a `Created` the same
+it; either fails at startup. `RestUseCaseDispatcher` answers a `Created` the same
 way; other callers receive the wrapper and read `.value`.
 
 ### `429` when the caller spent its budget

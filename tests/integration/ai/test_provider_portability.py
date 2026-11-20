@@ -20,7 +20,7 @@ import pytest
 from loom.ai.compiler import AgentCompiler, AgentPlan
 from loom.ai.config import AiConfig
 from loom.ai.declarative import AgentSpecV1, JsonSchemaOutput, PolicySpec
-from loom.ai.engines.pydantic_ai import PydanticAIEngineProvider
+from loom.ai.engines.pydantic_ai import PydanticAIEnginePlugin
 from loom.ai.errors import AgentRunErrorCode
 from loom.ai.execution import AgentRunError
 from loom.ai.inference import InferenceTarget
@@ -69,7 +69,7 @@ def _compile(target: InferenceTarget) -> AgentPlan:
     compiler = AgentCompiler(
         config=_config(target),
         registry=UseCaseRegistry({}, {}),
-        supported_kinds=PydanticAIEngineProvider().supported_capability_kinds(),
+        supported_kinds=PydanticAIEnginePlugin().supported_capability_kinds(),
     )
     return compiler.compile(_spec(), source_path="agents/analyst.agent.yaml")
 
@@ -132,7 +132,7 @@ class TestNoProviderFallback:
             resolved.append(target)
             return failing_model(lambda: _rate_limited())
 
-        provider = PydanticAIEngineProvider(model_resolver=resolver)
+        provider = PydanticAIEnginePlugin(model_resolver=resolver)
         engine = provider.create_engine(plan, deps=NullDeps(), container=LoomContainer())
 
         identity = Identity(subject="caller")
@@ -162,7 +162,7 @@ class TestRuntimeWiring:
         builds: list[str] = []
         plan = make_plan(schema=_SCHEMA)
 
-        class CountingProvider(PydanticAIEngineProvider):
+        class CountingProvider(PydanticAIEnginePlugin):
             def create_engine(self, plan: object, *, deps: Any, container: Any) -> Any:
                 builds.append(getattr(plan, "name", "?"))
                 return super().create_engine(plan, deps=deps, container=container)
@@ -178,7 +178,7 @@ class TestRuntimeWiring:
         runtime = AgentRuntime(
             plans=[plan],
             config=config,
-            engine_provider=provider,
+            engine_plugin=provider,
             deps=NullDeps(),
             container=LoomContainer(),
         )

@@ -103,7 +103,7 @@ class TestUndeclaredThirdPartySession:
         runtime = AgentRuntime(
             plans=[make_plan(_AGENT_NAME, capabilities=(capability,))],
             config=make_ai_config(mcp_servers=make_mcp_servers(_MCP_SERVER)),
-            engine_provider=CountingEngineProvider(  # type: ignore[arg-type]
+            engine_plugin=CountingEngineProvider(  # type: ignore[arg-type]
                 engines={_AGENT_NAME: ScriptedEngine()}
             ),
             deps=deps,  # type: ignore[arg-type]

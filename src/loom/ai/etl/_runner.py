@@ -13,7 +13,7 @@ from typing import Any, TypeVar
 
 import polars as pl
 
-from loom.ai.abc import AgentEngineProvider
+from loom.ai.abc import AgentEnginePlugin
 from loom.ai.bootstrap import build_agent_runtime
 from loom.ai.compiler import AgentPlan
 from loom.ai.config import AiConfig
@@ -23,7 +23,7 @@ from loom.ai.etl._frames import answers_frame, no_answers, prompt_rows, require_
 from loom.ai.etl._ledger import SpendLedger
 from loom.ai.etl._validation import validation_issues
 from loom.ai.execution import AgentRuntime
-from loom.ai.registry import resolve_engine_provider
+from loom.ai.registry import resolve_engine_plugin
 from loom.core.model import loom_type
 from loom.etl.ports.contracts import AgentIssue
 
@@ -45,7 +45,7 @@ class PolarsAgentRunner:
     Args:
         config: Parsed ``ai:`` section.
         root: Directory the artifact globs are resolved against.
-        engine_provider: Builds the engine provider of each runtime; resolved
+        engine_plugin: Builds the engine provider of each runtime; resolved
             from ``config.engine`` when omitted.
     """
 
@@ -54,11 +54,11 @@ class PolarsAgentRunner:
         config: AiConfig,
         *,
         root: Path,
-        engine_provider: Callable[[], AgentEngineProvider] | None = None,
+        engine_plugin: Callable[[], AgentEnginePlugin] | None = None,
     ) -> None:
         self._config = config
         self._root = root
-        self._engine_provider = engine_provider or partial(resolve_engine_provider, config.engine)
+        self._engine_plugin = engine_plugin or partial(resolve_engine_plugin, config.engine)
         self._compiled: dict[str, tuple[AgentPlan, ...]] = {}
 
     def validate(
@@ -79,7 +79,7 @@ class PolarsAgentRunner:
             output_type,
             max_usd=max_usd,
             compile_plans=partial(self._plans, name),
-            engine_provider=self._engine_provider,
+            engine_plugin=self._engine_plugin,
         )
 
     def version(self, name: str) -> str:
@@ -142,7 +142,7 @@ class PolarsAgentRunner:
             self._config,
             root=self._root,
             names={name},
-            engine_provider=self._engine_provider(),
+            engine_plugin=self._engine_plugin(),
         )
 
     def _plans(self, name: str) -> tuple[AgentPlan, ...]:

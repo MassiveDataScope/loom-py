@@ -236,9 +236,9 @@ def _attempt_counter(error: Exception) -> _AttemptCounter:
 
 
 def _engine(*, retries: int, failure: _AttemptCounter) -> AgentEngine:
-    from loom.ai.engines.pydantic_ai import PydanticAIEngineProvider
+    from loom.ai.engines.pydantic_ai import PydanticAIEnginePlugin
 
-    provider = PydanticAIEngineProvider(model_resolver=lambda target: failing_model(failure))
+    provider = PydanticAIEnginePlugin(model_resolver=lambda target: failing_model(failure))
     return provider.create_engine(
         make_plan(retries=retries), deps=NullDeps(), container=LoomContainer()
     )

@@ -1,6 +1,6 @@
 """``output_check`` (spec 011 L17 / spec 018): a declared predicate over the answer.
 
-Drives the real engine adapter — :class:`~loom.ai.engines.pydantic_ai.PydanticAIEngineProvider`
+Drives the real engine adapter — :class:`~loom.ai.engines.pydantic_ai.PydanticAIEnginePlugin`
 and :class:`~loom.ai.engines.pydantic_ai._engine.PydanticAIEngine` — against a
 ``FunctionModel``, no network. Pins three claims:
 

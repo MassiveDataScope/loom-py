@@ -16,7 +16,7 @@ from loom.etl.compiler import ETLCompilationError, ETLCompiler
 from loom.etl.executor import ETLExecutor
 from loom.etl.ports import ConfigValueError
 from loom.etl.runner import ETLRunner
-from loom.etl.testing import StubRunObserver, StubSourceReader, StubTargetWriter
+from loom.etl.testing import InMemorySourceReader, InMemoryTargetWriter, RecordingRunObserver
 from tests.unit.etl.doubles import RunDateIgnoredParams
 
 SECRET = "s3cr3t-respondio-token-value"
@@ -91,10 +91,10 @@ def _assert_contained(exc: BaseException) -> None:
 
 class TestConfigValueContainment:
     def test_successful_run_leaks_nothing(self, caplog: pytest.LogCaptureFixture) -> None:
-        observer = StubRunObserver()
-        writer = StubTargetWriter()
+        observer = RecordingRunObserver()
+        writer = InMemoryTargetWriter()
         runner = ETLRunner(
-            StubSourceReader({}),
+            InMemorySourceReader({}),
             writer,
             ObservabilityRuntime([observer]),
             config_context=_context(),
@@ -123,10 +123,10 @@ class TestConfigValueContainment:
         self,
         caplog: pytest.LogCaptureFixture,
     ) -> None:
-        observer = StubRunObserver()
+        observer = RecordingRunObserver()
         executor = ETLExecutor(
-            StubSourceReader({}),
-            StubTargetWriter(),
+            InMemorySourceReader({}),
+            InMemoryTargetWriter(),
             ObservabilityRuntime([observer]),
             config_context=_context(),
         )

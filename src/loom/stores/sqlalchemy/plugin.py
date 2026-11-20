@@ -88,7 +88,7 @@ class _Store:
     session_manager: SessionManager
 
 
-class SQLAlchemyBackend:
+class SQLAlchemyStorePlugin:
     """Backend for ``stores.<name>.backend: sqlalchemy``.
 
     Reads the section of the store the host hands it (``runtime.store``) and
@@ -503,4 +503,4 @@ async def _reject_privileged_connection(connection: AsyncConnection, path: str) 
         )
 
 
-__all__ = ["SQLAlchemyBackend"]
+__all__ = ["SQLAlchemyStorePlugin"]

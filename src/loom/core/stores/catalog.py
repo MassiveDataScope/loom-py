@@ -1,7 +1,7 @@
 """The store catalog: the ``stores.<name>`` sections and the store each model belongs to.
 
 Each ``stores.<name>`` section declares one store: its ``backend``, one of the
-names registered in the ``loom.stores.backends`` entry-point group, and
+names registered in the ``loom.stores.plugins`` entry-point group, and
 the connection that backend reads. A connection-only store
 (:data:`CONNECTION_ONLY_BACKENDS`, ``clickhouse``) is no store backend:
 it serves no model and no repository, never joins a unit of work, and only
@@ -38,12 +38,12 @@ from loom.core.connections import ConnectionSettings
 from loom.core.model import BaseModel
 from loom.core.plugins.entrypoints import registered_names
 from loom.core.stores.registry import (
-    BACKEND_ENTRY_POINT_GROUP,
+    PLUGIN_ENTRY_POINT_GROUP,
     resolve_store_backend,
 )
 
 if TYPE_CHECKING:
-    from loom.core.stores.plugin import StoreBackend
+    from loom.core.stores.plugin import StorePlugin
 
 T = TypeVar("T")
 
@@ -161,7 +161,7 @@ class StoreSpec:
         """Dotted path of the key naming the store's backend, for error messages."""
         return f"{self.path}.{BACKEND_KEY}"
 
-    def resolve_backend(self) -> StoreBackend:
+    def resolve_backend(self) -> StorePlugin:
         """Build the backend the store names.
 
         Raises:
@@ -395,7 +395,7 @@ def load_catalog(ctx: ConfigContext) -> StoreCatalog:
         return StoreCatalog(specs=MappingProxyType({}))
     if not isinstance(written, Mapping):
         raise ConfigError(f"{ConfigKey.STORES} must map each store name to its section")
-    registered = registered_names(BACKEND_ENTRY_POINT_GROUP)
+    registered = registered_names(PLUGIN_ENTRY_POINT_GROUP)
     specs: dict[StoreKey, StoreSpec] = {}
     for name, section in written.items():
         if name == SETTINGS_KEY:

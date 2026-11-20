@@ -55,7 +55,7 @@ if TYPE_CHECKING:
     from loom.ai.execution import McpSession
 
 
-class PydanticAIEngineProvider:
+class PydanticAIEnginePlugin:
     """Builds pydantic-ai engines from compiled plans.
 
     Args:
@@ -69,7 +69,7 @@ class PydanticAIEngineProvider:
     Every MCP toolset this provider builds starts at
     :data:`~loom.ai.engines.pydantic_ai._mcp.DEFAULT_MCP_CONNECT_TIMEOUT_SECONDS`
     for its connection and ``initialize`` handshake, because
-    :func:`~loom.ai.registry.resolve_engine_provider` constructs this class
+    :func:`~loom.ai.registry.resolve_engine_plugin` constructs this class
     with no arguments. The composition root instead calls
     :meth:`configure_mcp_connect_timeout` once it has read
     ``ai.startup_timeout_ms``.
@@ -84,7 +84,7 @@ class PydanticAIEngineProvider:
 
     Example::
 
-        provider = PydanticAIEngineProvider()
+        provider = PydanticAIEnginePlugin()
         provider.configure_mcp_connect_timeout(ai_cfg.startup_timeout_ms / 1000)
         engine = provider.create_engine(plan, deps=deps, container=container)
     """
@@ -283,7 +283,7 @@ def _register_output_check(agent: Agent[Any, Any], loom_type: LoomType, check: O
     validator built could only ever be discarded.
 
     Args:
-        agent: Agent built by :meth:`PydanticAIEngineProvider.create_engine`.
+        agent: Agent built by :meth:`PydanticAIEnginePlugin.create_engine`.
         loom_type: The plan's compiled output type, read for its library and
             :meth:`~loom.core.model.LoomType.to_builtins`.
         check: Resolved :data:`~loom.ai.abc.OutputCheck` of the plan.

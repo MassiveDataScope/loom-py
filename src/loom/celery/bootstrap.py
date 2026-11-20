@@ -51,7 +51,7 @@ from loom.core.use_case.factory import UseCaseFactory
 
 if TYPE_CHECKING:
     from loom.core.engine.compilable import Compilable
-    from loom.core.engine.metrics import MetricsAdapter
+    from loom.core.engine.metrics import MetricsRecorder
     from loom.core.job.job import Job
 
 
@@ -82,7 +82,7 @@ def bootstrap_worker(
     jobs: Sequence[type[Job[Any]]] = (),
     use_cases: Sequence[type[Compilable]] = (),
     interfaces: Sequence[type[Any]] = (),
-    metrics: MetricsAdapter | None = None,
+    metrics: MetricsRecorder | None = None,
     resolvers: Sequence[ConfigResolver] = (),
 ) -> WorkerBootstrapResult:
     """Bootstrap a Celery worker process and register all Job tasks.

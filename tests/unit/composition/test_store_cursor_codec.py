@@ -17,9 +17,9 @@ from loom.core.config import ConfigContext, ConfigError
 from loom.core.discovery.base import DiscoveryResult
 from loom.core.model import BaseModel, ColumnField
 from loom.core.stores import SERVER_PROFILE, StoreRuntime
-from loom.core.stores.none import NoneBackend
+from loom.core.stores.none import NullStorePlugin
 from loom.core.stores.repository import CursorCodec
-from loom.stores.sqlalchemy.plugin import SQLAlchemyBackend
+from loom.stores.sqlalchemy.plugin import SQLAlchemyStorePlugin
 from tests.helpers.composition import composition_project
 
 _SQLITE = {"default": {"backend": "sqlalchemy", "url": "sqlite+aiosqlite:///:memory:"}}
@@ -49,7 +49,7 @@ class TestStoreCursorCodec:
     def runtimes(self, monkeypatch: pytest.MonkeyPatch) -> list[StoreRuntime]:
         """Every runtime a ``none`` or SQLAlchemy store is built with, in order."""
         seen: list[StoreRuntime] = []
-        for backend in (NoneBackend, SQLAlchemyBackend):
+        for backend in (NullStorePlugin, SQLAlchemyStorePlugin):
             build = backend.build
 
             def recorded(self: Any, ctx: Any, models: Any, runtime: Any, build: Any = build) -> Any:

@@ -99,7 +99,7 @@ def _runtime(
             startup_timeout_ms=startup_timeout_ms,
             health_cache_ttl_ms=health_cache_ttl_ms,
         ),
-        engine_provider=CountingEngineProvider(),  # type: ignore[arg-type]
+        engine_plugin=CountingEngineProvider(),  # type: ignore[arg-type]
         deps=deps,
         container=container,
         mcp_client_factory=mcp_client_factory(mcp) if with_mcp_factory else None,  # type: ignore[arg-type]

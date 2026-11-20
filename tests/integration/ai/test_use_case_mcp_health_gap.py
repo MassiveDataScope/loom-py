@@ -62,7 +62,7 @@ class TestAUseCaseOnlyServerIsLeftOutOfTheProbe:
                 remote_clients="optional",
                 health_cache_ttl_ms=5,
             ),
-            engine_provider=CountingEngineProvider(),  # type: ignore[arg-type]
+            engine_plugin=CountingEngineProvider(),  # type: ignore[arg-type]
             deps=deps,
             container=container,
             mcp_client_factory=mcp_client_factory({_SERVER: client}),  # type: ignore[arg-type]

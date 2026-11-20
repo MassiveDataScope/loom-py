@@ -27,7 +27,7 @@ class Entity:
 
 
 class _RecordingAdapter:
-    """In-memory MetricsAdapter for test assertions."""
+    """In-memory MetricsRecorder for test assertions."""
 
     def __init__(self) -> None:
         self.events: list[RuntimeEvent] = []
@@ -91,11 +91,11 @@ def _make_executor(
 
 
 # ---------------------------------------------------------------------------
-# MetricsAdapter protocol
+# MetricsRecorder protocol
 # ---------------------------------------------------------------------------
 
 
-class TestMetricsAdapterProtocol:
+class TestMetricsRecorderProtocol:
     def test_recording_adapter_satisfies_protocol(self) -> None:
         adapter = _RecordingAdapter()
         event = RuntimeEvent(kind=EventKind.EXEC_DONE, use_case_name="X")

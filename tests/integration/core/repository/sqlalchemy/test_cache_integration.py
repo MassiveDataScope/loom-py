@@ -9,10 +9,10 @@ from unittest.mock import AsyncMock, patch
 import pytest
 
 from loom.core.cache import (
-    CacheBackend,
     CacheConfig,
     CachedRepository,
     CacheGateway,
+    CacheStore,
     GenerationalDependencyResolver,
 )
 from loom.core.cache.keys import entity_key
@@ -31,11 +31,11 @@ from tests.integration.fake_repo.product.schemas import CreateProduct, UpdatePro
 
 
 class _Gateways(NamedTuple):
-    # ``CacheGateway`` overloads ``get_value`` while ``CacheBackend`` declares it
+    # ``CacheGateway`` overloads ``get_value`` while ``CacheStore`` declares it
     # once, so a type checker does not see the gateway as a structural match.
     # It is one at runtime; the cast keeps the fixture honest about that.
-    data: CacheBackend
-    counters: CacheBackend
+    data: CacheStore
+    counters: CacheStore
     config: CacheConfig
 
 
@@ -63,7 +63,7 @@ class UpdateDatedEvent(Command, frozen=True):
 
 @pytest.fixture
 async def cache_gateways(
-    cache_backend_kind: str,
+    cache_store_kind: str,
 ) -> AsyncGenerator[_Gateways, None]:
     namespace = "integration_cache"
     counter_namespace = "integration_cache_counters"
@@ -88,7 +88,7 @@ async def cache_gateways(
         },
     }
 
-    if cache_backend_kind == "redis-fake":
+    if cache_store_kind == "redis-fake":
         fakeredis_async = importlib.import_module("fakeredis.aioredis")
         fake_connection = fakeredis_async.FakeConnection
         aiocache_config["test_cache"] = {
@@ -123,8 +123,8 @@ async def cache_gateways(
     )
     try:
         yield _Gateways(
-            cast(CacheBackend, data_gateway),
-            cast(CacheBackend, counter_gateway),
+            cast(CacheStore, data_gateway),
+            cast(CacheStore, counter_gateway),
             cache_config,
         )
     finally:
@@ -214,7 +214,7 @@ def product_service(
 
 
 @pytest.fixture(params=["memory", "redis-fake"])
-def cache_backend_kind(request: Any) -> str:
+def cache_store_kind(request: Any) -> str:
     return cast(str, request.param)
 
 

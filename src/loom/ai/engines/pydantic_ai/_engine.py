@@ -126,7 +126,7 @@ class PydanticAIEngine:
             registered. Defaults to *agent* when not given, which is
             correct whenever the plan declares no ``output_check``: the
             two agents would behave identically, so
-            :class:`~loom.ai.engines.pydantic_ai.plugin.PydanticAIEngineProvider`
+            :class:`~loom.ai.engines.pydantic_ai.plugin.PydanticAIEnginePlugin`
             builds only one and passes it for both.
         deps: Per-invocation dependency factory; singleton services are
             captured here, at build, and the caller's identity is supplied per

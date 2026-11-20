@@ -21,10 +21,10 @@ from loom.etl.lineage._records import (
 from loom.etl.lineage._records import (
     RunStatus as LineageRunStatus,
 )
-from loom.etl.testing import StubRunObserver, StubSourceReader, StubTargetWriter
+from loom.etl.testing import InMemorySourceReader, InMemoryTargetWriter, RecordingRunObserver
 from tests.unit.etl.doubles import OrdersStagingAStep, RunDateIgnoredParams
 
-ExecutorFactory = Callable[..., tuple[ETLExecutor, StubTargetWriter, StubRunObserver]]
+ExecutorFactory = Callable[..., tuple[ETLExecutor, InMemoryTargetWriter, RecordingRunObserver]]
 
 
 def _table_ref(spec: Any) -> Any:
@@ -99,12 +99,12 @@ def compiler() -> ETLCompiler:
 def executor_factory() -> ExecutorFactory:
     def _make(
         frames: dict[str, Any] | None = None,
-        observer: StubRunObserver | None = None,
+        observer: RecordingRunObserver | None = None,
         dispatcher: Any = None,
-    ) -> tuple[ETLExecutor, StubTargetWriter, StubRunObserver]:
-        writer = StubTargetWriter()
-        run_observer = observer or StubRunObserver()
-        reader = StubSourceReader(frames or {"orders": SENTINEL_A, "customers": SENTINEL_B})
+    ) -> tuple[ETLExecutor, InMemoryTargetWriter, RecordingRunObserver]:
+        writer = InMemoryTargetWriter()
+        run_observer = observer or RecordingRunObserver()
+        reader = InMemorySourceReader(frames or {"orders": SENTINEL_A, "customers": SENTINEL_B})
         executor = ETLExecutor(
             reader,
             writer,
@@ -196,11 +196,11 @@ class TestRunStep:
                 return SENTINEL_A
 
         reader = _TracingReader()
-        writer = StubTargetWriter()
+        writer = InMemoryTargetWriter()
         executor = ETLExecutor(
             reader,
             writer,
-            observability=ObservabilityRuntime([StubRunObserver()]),
+            observability=ObservabilityRuntime([RecordingRunObserver()]),
         )
 
         streaming_plan = compiler.compile_step(StepStreaming)
@@ -222,8 +222,8 @@ class TestRunStep:
 
         executor = ETLExecutor(
             _NonStreamingReader(),
-            StubTargetWriter(),
-            observability=ObservabilityRuntime([StubRunObserver()]),
+            InMemoryTargetWriter(),
+            observability=ObservabilityRuntime([RecordingRunObserver()]),
         )
         streaming_plan = compiler.compile_step(StepStreaming)
 
@@ -371,8 +371,8 @@ class TestFlush:
 
         observer = _FlushObserver()
         executor = ETLExecutor(
-            StubSourceReader({"raw.orders": object()}),
-            StubTargetWriter(),
+            InMemorySourceReader({"raw.orders": object()}),
+            InMemoryTargetWriter(),
             observability=ObservabilityRuntime([observer]),
         )
 

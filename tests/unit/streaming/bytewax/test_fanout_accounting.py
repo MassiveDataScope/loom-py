@@ -42,7 +42,6 @@ from loom.core.config import ConfigContext  # noqa: E402
 from loom.core.model import LoomStruct  # noqa: E402
 from loom.core.observability.observability import ObservabilityRuntime  # noqa: E402
 from loom.streaming import (  # noqa: E402
-    Backend,
     BatchExpandStep,
     BatchStep,
     Broadcast,
@@ -65,6 +64,7 @@ from loom.streaming import (  # noqa: E402
     Router,
     Selector,
     StreamFlow,
+    TableEngine,
     With,
     WithAsync,
     msg,
@@ -929,7 +929,7 @@ def _topic(name: str) -> IntoTopic[Any]:
 
 def _table(payload: type[Any] = Item) -> Any:
     """Build the table sink; ``Process`` does not type ``IntoSink`` nodes."""
-    return IntoTable(payload=payload, table="items", backend=Backend.DELTA, name="items_table")
+    return IntoTable(payload=payload, table="items", engine=TableEngine.DELTA, name="items_table")
 
 
 @dataclass(frozen=True)

@@ -1,4 +1,4 @@
-"""``DynamoDBBackend``: the readiness probe over the configured table."""
+"""``DynamoDBStorePlugin``: the readiness probe over the configured table."""
 
 from __future__ import annotations
 
@@ -13,7 +13,7 @@ from loom.connections.aws import AwsClients
 from loom.core.config import ConfigContext
 from loom.core.stores import StoreWiring
 from loom.core.stores.profile import SERVER_PROFILE
-from loom.stores.dynamodb.plugin import DynamoDBBackend
+from loom.stores.dynamodb.plugin import DynamoDBStorePlugin
 from tests.helpers.aws import OTHER_REGION, REGION
 from tests.helpers.aws_island import FakeAwsIsland
 from tests.helpers.dynamodb import MotoTable
@@ -29,7 +29,7 @@ def _wiring(table: str) -> StoreWiring:
             },
         }
     )
-    return build_backend(DynamoDBBackend(), ctx, (), SERVER_PROFILE)
+    return build_backend(DynamoDBStorePlugin(), ctx, (), SERVER_PROFILE)
 
 
 def _describing(status: str) -> Callable[[MagicMock], None]:
@@ -88,7 +88,7 @@ class TestDynamoDBClientsPerStore:
             }
         )
         for name in stores:
-            build_backend(DynamoDBBackend(), ctx, (), SERVER_PROFILE, store=name, aws=aws)
+            build_backend(DynamoDBStorePlugin(), ctx, (), SERVER_PROFILE, store=name, aws=aws)
 
     def test_stores_with_different_settings_get_different_clients(
         self, island: FakeAwsIsland

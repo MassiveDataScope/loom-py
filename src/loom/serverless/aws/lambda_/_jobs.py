@@ -34,7 +34,7 @@ from loom.jobs.aws.sqs import SQSConfig
 if TYPE_CHECKING:
     from loom.composition import Application, Project
     from loom.core.engine.compilable import Compilable
-    from loom.core.engine.metrics import MetricsAdapter
+    from loom.core.engine.metrics import MetricsRecorder
     from loom.core.job.job import Job
 
 _log = get_logger(__name__)
@@ -49,7 +49,7 @@ def jobs_recipe(
     project: Project,
     jobs: Sequence[type[Job[Any]]],
     use_cases: Sequence[type[Compilable]],
-    metrics: MetricsAdapter | None,
+    metrics: MetricsRecorder | None,
 ) -> tuple[Recipe, dict[str, type[Job[Any]]]]:
     """The recipe of a function running jobs, with Lambda pool defaults, and the jobs by name.
 

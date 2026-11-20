@@ -56,7 +56,7 @@ from pydantic_ai.models.function import AgentInfo, DeltaToolCall, DeltaToolCalls
 
 from loom.ai import registry
 from loom.ai.abc import AgentHandle, McpHandle
-from loom.ai.engines.pydantic_ai import PydanticAIEngineProvider, _mcp
+from loom.ai.engines.pydantic_ai import PydanticAIEnginePlugin, _mcp
 from loom.core.command import Command
 from loom.core.use_case import Agent, Input, Mcp, UseCase
 from loom.rest.model import RestInterface, RestRoute
@@ -193,7 +193,7 @@ async def _stream(messages: list[ModelMessage], info: AgentInfo) -> AsyncIterato
     yield {0: DeltaToolCall(name=name, json_args=arguments, tool_call_id=f"a3-{len(messages)}")}
 
 
-_PROVIDER = PydanticAIEngineProvider(
+_PROVIDER = PydanticAIEnginePlugin(
     model_resolver=lambda target: FunctionModel(_respond, stream_function=_stream)
 )
 
@@ -217,7 +217,7 @@ def patches() -> list[tuple[object, str, object]]:
     return [
         (AutoBackend, "connect_tcp", counted_connect),
         (_mcp._ToolsetSession, "list_tools", timed_listing),
-        (registry, "resolve_engine_provider", lambda name: _PROVIDER),
+        (registry, "resolve_engine_plugin", lambda name: _PROVIDER),
     ]
 
 

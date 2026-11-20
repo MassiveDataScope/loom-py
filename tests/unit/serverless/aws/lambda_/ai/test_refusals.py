@@ -136,7 +136,7 @@ def lifetime(monkeypatch: pytest.MonkeyPatch) -> list[str]:
         events.append("exit")
         await exit_(self, exc_type, exc, tb)
 
-    monkeypatch.setattr(registry, "resolve_engine_provider", lambda _: CountingEngineProvider())
+    monkeypatch.setattr(registry, "resolve_engine_plugin", lambda _: CountingEngineProvider())
     monkeypatch.setattr(AgentRuntime, "__aenter__", entered)
     monkeypatch.setattr(AgentRuntime, "__aexit__", exited)
     return events

@@ -32,7 +32,7 @@ from loom.etl.executor import ETLExecutor
 from loom.etl.lineage._records import EventName, RunStatus
 from loom.etl.schema._schema import ColumnSchema, LoomDtype, SchemaNotFoundError
 from loom.etl.storage._config import MissingTablePolicy
-from loom.etl.testing import StubRunObserver
+from loom.etl.testing import RecordingRunObserver
 from tests.unit.etl.backends.doubles import NoParams
 
 from .conftest import SparkSourceReader, SparkTargetWriter, spark_table_path
@@ -219,7 +219,7 @@ class TestRunStepEvents:
             spark.createDataFrame([(0, 0.0)], ["id", "amount"]),
         )
 
-        observer = StubRunObserver()
+        observer = RecordingRunObserver()
         plan = ETLCompiler().compile_step(SparkDoubleAmountStep)
         ETLExecutor(
             spark_reader,
@@ -235,7 +235,7 @@ class TestRunStepEvents:
             def read(self, spec: object, params: object) -> DataFrame:  # type: ignore[override]
                 raise RuntimeError("spark read failure")
 
-        observer = StubRunObserver()
+        observer = RecordingRunObserver()
         plan = ETLCompiler().compile_step(SparkDoubleAmountStep)
 
         executor = ETLExecutor(

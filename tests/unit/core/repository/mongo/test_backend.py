@@ -1,4 +1,4 @@
-"""``MongoBackend``: config section, wiring shape, model preparation and readiness."""
+"""``MongoStorePlugin``: config section, wiring shape, model preparation and readiness."""
 
 from __future__ import annotations
 
@@ -23,7 +23,7 @@ from loom.core.stores.profile import SERVER_PROFILE, WORKER_PROFILE, RuntimeProf
 from loom.core.stores.repository import Creatable
 from loom.core.stores.uow.coordinator import OrderedCommits
 from loom.core.stores.uow.scope import Frame, invocation
-from loom.stores.mongo.plugin import MongoBackend
+from loom.stores.mongo.plugin import MongoStorePlugin
 from loom.stores.mongo.repository import MongoRepository
 from loom.stores.mongo.uow import MongoSessions, MongoUnitOfWorkFactory
 from tests.helpers.persistence import build_backend
@@ -79,20 +79,20 @@ def _wiring(
     monkeypatch.setattr(
         backend_module, "build_async_mongo_client", lambda _cfg, **_extra: fake_client
     )
-    return build_backend(MongoBackend(), _ctx(section), models, SERVER_PROFILE)
+    return build_backend(MongoStorePlugin(), _ctx(section), models, SERVER_PROFILE)
 
 
 _SECTION: dict[str, Any] = {"url": "mongodb://localhost:27017", "database": "demo"}
 
 
-class TestMongoBackendRegistration:
+class TestMongoStorePluginRegistration:
     def test_backend_is_registered_under_its_name(self) -> None:
-        assert isinstance(resolve_store_backend("mongo"), MongoBackend)
-        assert MongoBackend.name == "mongo"
+        assert isinstance(resolve_store_backend("mongo"), MongoStorePlugin)
+        assert MongoStorePlugin.name == "mongo"
 
     def test_missing_section_is_a_config_error(self) -> None:
         ctx = _ctx(None)
-        backend = MongoBackend()
+        backend = MongoStorePlugin()
 
         with pytest.raises(ConfigError, match="stores.default"):
             build_backend(backend, ctx, (), SERVER_PROFILE)
@@ -107,13 +107,13 @@ class TestMongoBackendRegistration:
         ctx = _ctx(_SECTION, cursors={})
 
         with pytest.raises(ConfigError, match=r"stores\.settings\.cursors\.signing: ephemeral"):
-            build_backend(MongoBackend(), ctx, (), SERVER_PROFILE)
+            build_backend(MongoStorePlugin(), ctx, (), SERVER_PROFILE)
 
     def test_wiring_shape(self, monkeypatch: pytest.MonkeyPatch) -> None:
         wiring = _wiring(monkeypatch, FakeMongoClient(), _SECTION, (Article,))
 
         assert isinstance(wiring.uow_factory, MongoUnitOfWorkFactory)
-        assert MongoBackend.repository_type is MongoRepository
+        assert MongoStorePlugin.repository_type is MongoRepository
         assert wiring.readiness is not None
 
 
@@ -144,7 +144,7 @@ class TestMongoClientOptions:
         max_size: int,
         wait_ms: int,
     ) -> None:
-        build_backend(MongoBackend(), _ctx(_SECTION), (), profile)
+        build_backend(MongoStorePlugin(), _ctx(_SECTION), (), profile)
 
         assert client_options[0]["maxPoolSize"] == max_size
         assert client_options[0]["waitQueueTimeoutMS"] == wait_ms
@@ -155,7 +155,7 @@ class TestMongoClientOptions:
         self, client_options: list[dict[str, Any]]
     ) -> None:
         build_backend(
-            MongoBackend(),
+            MongoStorePlugin(),
             _ctx({**_SECTION, "pool": {"size": 8, "timeout": 2, "recycle": 60}}),
             (),
             SERVER_PROFILE,
@@ -169,7 +169,7 @@ class TestMongoClientOptions:
     def test_store_without_pool_section_gets_profile(
         self, client_options: list[dict[str, Any]]
     ) -> None:
-        build_backend(MongoBackend(), _ctx(_SECTION), (), WORKER_PROFILE)
+        build_backend(MongoStorePlugin(), _ctx(_SECTION), (), WORKER_PROFILE)
 
         assert client_options[0]["maxPoolSize"] == 2
 
@@ -177,7 +177,7 @@ class TestMongoClientOptions:
         self, client_options: list[dict[str, Any]]
     ) -> None:
         build_backend(
-            MongoBackend(),
+            MongoStorePlugin(),
             _ctx({**_SECTION, "pool": {"max_overflow": 1}}),
             (),
             SERVER_PROFILE,
@@ -190,7 +190,7 @@ class TestMongoClientOptions:
         client_options: list[dict[str, Any]],
     ) -> None:
         build_backend(
-            MongoBackend(),
+            MongoStorePlugin(),
             _ctx({**_SECTION, "server_selection_timeout": 2}),
             (),
             SERVER_PROFILE,
@@ -202,7 +202,7 @@ class TestMongoClientOptions:
         self,
         client_options: list[dict[str, Any]],
     ) -> None:
-        build_backend(MongoBackend(), _ctx(_SECTION), (), SERVER_PROFILE)
+        build_backend(MongoStorePlugin(), _ctx(_SECTION), (), SERVER_PROFILE)
 
         assert client_options[0]["host"] == "mongodb://localhost:27017"
         assert client_options[0]["tz_aware"] is True
@@ -211,7 +211,7 @@ class TestMongoClientOptions:
         self, client_options: list[dict[str, Any]]
     ) -> None:
         build_backend(
-            MongoBackend(),
+            MongoStorePlugin(),
             _ctx({**_SECTION, "pool": {"pre_ping": False}}),
             (),
             SERVER_PROFILE,
@@ -333,7 +333,7 @@ def _audit_store(monkeypatch: pytest.MonkeyPatch, fake_client: FakeMongoClient) 
             },
         }
     )
-    return build_backend(MongoBackend(), ctx, (Article,), SERVER_PROFILE, store=_AUDIT)
+    return build_backend(MongoStorePlugin(), ctx, (Article,), SERVER_PROFILE, store=_AUDIT)
 
 
 class TestMongoStoreUnitOfWork:

@@ -19,7 +19,7 @@ import pytest
 from loom.ai.compiler import AgentCompiler, AgentPlan
 from loom.ai.config import AiConfig, McpServerConfig
 from loom.ai.declarative import AgentSpecV1, JsonSchemaOutput, McpCapability
-from loom.ai.engines.pydantic_ai import PydanticAIEngineProvider
+from loom.ai.engines.pydantic_ai import PydanticAIEnginePlugin
 from loom.ai.errors import AgentCompilationError, AgentErrorCode
 from loom.ai.inference import InferenceTarget
 from loom.core.di import LoomContainer
@@ -82,7 +82,7 @@ def _compile(config: AiConfig, capability: McpCapability) -> AgentPlan:
     compiler = AgentCompiler(
         config=config,
         registry=UseCaseRegistry.build([]),
-        supported_kinds=PydanticAIEngineProvider().supported_capability_kinds(),
+        supported_kinds=PydanticAIEnginePlugin().supported_capability_kinds(),
     )
     return compiler.compile(spec, source_path=f"ai/agents/{_AGENT}/agent.yaml")
 
@@ -91,11 +91,11 @@ def _runtime(config: AiConfig, plan: AgentPlan, model: ScriptedToolModel) -> Any
     """Build the runtime the composition root builds, with the real MCP factory."""
     from loom.ai.execution import AgentRuntime
 
-    provider = PydanticAIEngineProvider(model_resolver=lambda target: model.as_model())
+    provider = PydanticAIEnginePlugin(model_resolver=lambda target: model.as_model())
     return AgentRuntime(
         plans=[plan],
         config=config,
-        engine_provider=provider,
+        engine_plugin=provider,
         deps=CapabilityDepsFactory(),  # type: ignore[arg-type]
         container=LoomContainer(),
         # Read off the provider, as ``create_app`` does: the start-up session

@@ -8,7 +8,7 @@ import pytest
 from pydantic_ai.models.test import TestModel
 
 from loom.ai import AiConfig, InferenceTarget, build_agent_runtime
-from loom.ai.engines.pydantic_ai import PydanticAIEngineProvider
+from loom.ai.engines.pydantic_ai import PydanticAIEnginePlugin
 from loom.ai.errors import AgentCompilationError, AgentErrorCode
 from loom.core.identity import Identity
 
@@ -36,8 +36,8 @@ def _config(*specs: str) -> AiConfig:
     )
 
 
-def _provider() -> PydanticAIEngineProvider:
-    return PydanticAIEngineProvider(model_resolver=lambda target: TestModel())
+def _provider() -> PydanticAIEnginePlugin:
+    return PydanticAIEnginePlugin(model_resolver=lambda target: TestModel())
 
 
 class TestAssembly:
@@ -46,7 +46,7 @@ class TestAssembly:
         _write(tmp_path, "beta")
 
         runtime = build_agent_runtime(
-            _config("agents/*.agent.yaml"), root=tmp_path, engine_provider=_provider()
+            _config("agents/*.agent.yaml"), root=tmp_path, engine_plugin=_provider()
         )
 
         assert runtime.agent_names() == ("alpha", "beta")
@@ -59,7 +59,7 @@ class TestAssembly:
             _config("agents/*.agent.yaml"),
             root=tmp_path,
             names={"beta"},
-            engine_provider=_provider(),
+            engine_plugin=_provider(),
         )
 
         assert runtime.agent_names() == ("beta",)
@@ -71,7 +71,7 @@ class TestAssembly:
             _config("nowhere/*.yaml"),
             root=tmp_path,
             specs=("agents/*.agent.yaml",),
-            engine_provider=_provider(),
+            engine_plugin=_provider(),
         )
 
         assert runtime.agent_names() == ("alpha",)
@@ -80,7 +80,7 @@ class TestAssembly:
         _write(tmp_path, "alpha")
 
         runtime = build_agent_runtime(
-            _config("agents/*.agent.yaml"), root=tmp_path, engine_provider=_provider()
+            _config("agents/*.agent.yaml"), root=tmp_path, engine_plugin=_provider()
         )
 
         assert [plan.name for plan in runtime.plans] == ["alpha"]
@@ -90,7 +90,7 @@ class TestAssembly:
         provider = _provider()
 
         with pytest.raises(AgentCompilationError) as error:
-            build_agent_runtime(config, root=tmp_path, engine_provider=provider)
+            build_agent_runtime(config, root=tmp_path, engine_plugin=provider)
 
         assert error.value.issues[0].code == AgentErrorCode.AGENT_SPECS_ESCAPE_ROOT
 
@@ -99,7 +99,7 @@ class TestRun:
     async def test_the_assembled_runtime_runs_an_agent(self, tmp_path: Path) -> None:
         _write(tmp_path, "alpha")
         runtime = build_agent_runtime(
-            _config("agents/*.agent.yaml"), root=tmp_path, engine_provider=_provider()
+            _config("agents/*.agent.yaml"), root=tmp_path, engine_plugin=_provider()
         )
 
         async with runtime:

@@ -30,7 +30,7 @@ import msgspec
 
 from loom.core.cache._single_flight import SingleFlight
 from loom.core.cache.abc.config import CacheConfig
-from loom.core.cache.abc.store import CacheBackend
+from loom.core.cache.abc.store import CacheStore
 from loom.core.cache.decorators import _CallPolicy, declares_cache_call
 from loom.core.cache.keys import call_key
 from loom.core.cache.result_codec import ResultCodec, build_call_codec
@@ -421,7 +421,7 @@ class _ConfiguredCalls:
     def __init__(
         self,
         config: CacheConfig,
-        cache: CacheBackend,
+        cache: CacheStore,
         flight: SingleFlight,
         rng: random.Random,
     ) -> None:

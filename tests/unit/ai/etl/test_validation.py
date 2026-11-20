@@ -13,9 +13,9 @@ from pydantic_ai.models.openai import OpenAIChatModel
 from pydantic_ai.providers.openai import OpenAIProvider
 
 from loom.ai import AiConfig, InferenceTarget, ModelPrice
-from loom.ai.abc import AgentEngineProvider
+from loom.ai.abc import AgentEnginePlugin
 from loom.ai.compiler import CompiledOutput
-from loom.ai.engines.pydantic_ai import PydanticAIEngineProvider
+from loom.ai.engines.pydantic_ai import PydanticAIEnginePlugin
 from loom.ai.etl import PolarsAgentRunner
 from loom.ai.etl import _runner as _runner_module
 from loom.ai.etl._validation import validation_issues
@@ -79,7 +79,7 @@ def _runner(
     return PolarsAgentRunner(
         config,
         root=tmp_path,
-        engine_provider=lambda: PydanticAIEngineProvider(model_resolver=_openai_chat),
+        engine_plugin=lambda: PydanticAIEnginePlugin(model_resolver=_openai_chat),
     )
 
 
@@ -123,7 +123,7 @@ class TestOutputMismatch:
         assert _kinds(_runner(tmp_path), "untyped") == [AgentIssueKind.OUTPUT_MISMATCH]
 
 
-def _no_engine() -> AgentEngineProvider:
+def _no_engine() -> AgentEnginePlugin:
     raise AssertionError("the engine provider is built only to price a budget")
 
 
@@ -137,7 +137,7 @@ class TestOutputWithoutColumns:
             PydanticDecision,
             max_usd=None,
             compile_plans=lambda: (plan,),
-            engine_provider=_no_engine,
+            engine_plugin=_no_engine,
         )
 
         assert [issue.kind for issue in issues] == [AgentIssueKind.OUTPUT_MISMATCH]

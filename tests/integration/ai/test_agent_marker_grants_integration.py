@@ -187,7 +187,7 @@ def _wired(
     runtime = AgentRuntime(
         plans=[make_plan(MARKER_AGENT_NAME, capabilities=capabilities, policies=policies)],
         config=_ai_config(granted_mcp=bool(mcp_clients)),
-        engine_provider=provider,  # type: ignore[arg-type]
+        engine_plugin=provider,  # type: ignore[arg-type]
         deps=deps,
         container=container,
         mcp_client_factory=mcp_client_factory(mcp_clients or {}),  # type: ignore[arg-type]

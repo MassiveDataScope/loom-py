@@ -15,7 +15,7 @@ import loom.stores.dynamodb.plugin as backend_module
 from loom.core.config import ConfigContext
 from loom.core.stores import StoreWiring
 from loom.core.stores.profile import SERVER_PROFILE
-from loom.stores.dynamodb.plugin import DynamoDBBackend
+from loom.stores.dynamodb.plugin import DynamoDBStorePlugin
 from loom.stores.dynamodb.repository import DynamoDBRepository
 from tests.helpers.aws import REGION
 from tests.helpers.dynamodb import MotoTable
@@ -88,7 +88,7 @@ def _wiring() -> StoreWiring:
             }
         }
     )
-    return build_backend(DynamoDBBackend(), ctx, (), SERVER_PROFILE)
+    return build_backend(DynamoDBStorePlugin(), ctx, (), SERVER_PROFILE)
 
 
 @pytest.fixture

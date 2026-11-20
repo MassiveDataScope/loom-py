@@ -26,11 +26,11 @@ from loom.core.identity import (
     set_identity,
 )
 from loom.core.observability.observability import ObservabilityRuntime
-from loom.core.transport.dispatcher import AdapterRequest
+from loom.core.transport.dispatcher import ExecutionRequest
 from loom.core.use_case.factory import UseCaseFactory
 from loom.rest.auth import AuthenticationMiddleware
 from loom.rest.compiler import RestInterfaceCompiler
-from loom.rest.dispatcher import LoomRestAdapter
+from loom.rest.dispatcher import RestUseCaseDispatcher
 from loom.rest.fastapi.router import bind_interfaces
 from tests.helpers.delegation import acting_as, assert_new_delegation
 from tests.helpers.loggers import RecordingLogger
@@ -70,7 +70,7 @@ class TestRestRoute:
 
 
 class TestRestAdapter:
-    """``LoomRestAdapter`` builds the use case class it is handed inside its execution."""
+    """``RestUseCaseDispatcher`` builds the use case class it is handed inside its execution."""
 
     @CALLERS
     @pytest.mark.usefixtures("authenticated")
@@ -81,9 +81,9 @@ class TestRestAdapter:
         caller: Identity | None,
         subject: str,
     ) -> None:
-        adapter = LoomRestAdapter(executor, factory=factory)
+        adapter = RestUseCaseDispatcher(executor, factory=factory)
 
-        seen = await adapter.handle(AcmeGreeting, AdapterRequest(params={}))
+        seen = await adapter.handle(AcmeGreeting, ExecutionRequest(params={}))
 
         assert seen == {"greeting": f"hello {subject}", "runs_as": subject, "ambient": subject}
 

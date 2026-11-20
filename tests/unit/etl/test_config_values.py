@@ -27,7 +27,7 @@ from loom.etl.compiler import ETLCompilationError, ETLCompiler, ETLErrorCode
 from loom.etl.executor import ETLExecutor
 from loom.etl.ports import ConfigValueError
 from loom.etl.runner import ETLRunner
-from loom.etl.testing import PolarsStepRunner, StubSourceReader, StubTargetWriter
+from loom.etl.testing import InMemorySourceReader, InMemoryTargetWriter, PolarsStepRunner
 from tests.unit._resolver_stubs import MappingResolver
 from tests.unit.etl.doubles import RunDateIgnoredParams
 
@@ -87,12 +87,12 @@ class _ListClientExecutor:
 
 def _executor(
     config: dict[str, Any] | None = _CONFIG,
-    reader: StubSourceReader | None = None,
+    reader: InMemorySourceReader | None = None,
     client_executor: _ListClientExecutor | None = None,
-) -> tuple[ETLExecutor, StubTargetWriter]:
-    writer = StubTargetWriter()
+) -> tuple[ETLExecutor, InMemoryTargetWriter]:
+    writer = InMemoryTargetWriter()
     executor = ETLExecutor(
-        reader or StubSourceReader({}),
+        reader or InMemorySourceReader({}),
         writer,
         client_executor=client_executor,
         config_context=ConfigContext.from_dict(config) if config is not None else None,
@@ -258,7 +258,7 @@ class TestExecutorInjection:
 
     def test_injects_next_to_inline_and_grouped_sources(self) -> None:
         for step in (InlineSourceStep, GroupedSourceStep):
-            executor, writer = _executor(reader=StubSourceReader({"orders": "frame"}))
+            executor, writer = _executor(reader=InMemorySourceReader({"orders": "frame"}))
 
             executor.run_step(ETLCompiler().compile_step(step), _PARAMS)
 
@@ -276,7 +276,7 @@ class TestExecutorInjection:
         self, monkeypatch: pytest.MonkeyPatch
     ) -> None:
         config = {"respondio": {"api_token": "${oc.env:LOOM_TEST_ROTATING_TOKEN}"}}
-        executor, writer = _executor(config=config, reader=StubSourceReader({"orders": 1}))
+        executor, writer = _executor(config=config, reader=InMemorySourceReader({"orders": 1}))
         plan = ETLCompiler().compile_step(InlineSourceStep)
 
         monkeypatch.setenv("LOOM_TEST_ROTATING_TOKEN", "first")

@@ -40,7 +40,7 @@ from loom.core.stores.repository import CursorCodec
 from loom.core.stores.uow.abc import UnitOfWork
 from loom.core.stores.uow.coordinator import OrderedCommits
 from loom.core.stores.uow.scope import Frame, current_scope, invocation
-from loom.stores.sqlalchemy.plugin import SQLAlchemyBackend
+from loom.stores.sqlalchemy.plugin import SQLAlchemyStorePlugin
 from loom.stores.sqlalchemy.repository import SQLAlchemyRepository
 from loom.stores.sqlalchemy.rls import elevate
 from loom.stores.sqlalchemy.session_manager import SessionManager
@@ -173,7 +173,7 @@ class Store:
 
 
 def _build(ctx: ConfigContext, key: StoreKey) -> Store:
-    wiring = build_backend(SQLAlchemyBackend(), ctx, notes.MODELS, store=key)
+    wiring = build_backend(SQLAlchemyStorePlugin(), ctx, notes.MODELS, store=key)
     wiring.prepare_models(notes.MODELS)
     container = LoomContainer()
     wiring.repo_registration_module(container)

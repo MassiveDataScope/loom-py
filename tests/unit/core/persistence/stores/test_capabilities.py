@@ -81,7 +81,7 @@ class TestBuiltinStoreCapabilities:
 
 
 class _EntryPoint:
-    group = "loom.stores.backends"
+    group = "loom.stores.plugins"
 
     def __init__(self, name: str, target: type) -> None:
         self.name = name

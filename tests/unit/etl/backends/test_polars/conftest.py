@@ -24,7 +24,7 @@ from loom.etl.declarative.source import SourceSpec  # noqa: E402
 from loom.etl.declarative.target import TargetSpec  # noqa: E402
 from loom.etl.declarative.target._table import ReplaceSpec  # noqa: E402
 from loom.etl.schema._schema import ColumnSchema, LoomDtype  # noqa: E402
-from loom.etl.testing import StubCatalog  # noqa: E402
+from loom.etl.testing import InMemoryCatalog  # noqa: E402
 
 _POLARS_TO_LOOM: dict[type, LoomDtype] = {
     pl.Int8: LoomDtype.INT8,
@@ -67,15 +67,15 @@ def delta_root(tmp_path: Path) -> Path:
 
 
 @pytest.fixture
-def delta_catalog() -> StubCatalog:
+def delta_catalog() -> InMemoryCatalog:
     """Fresh in-memory catalog for each test."""
-    return StubCatalog()
+    return InMemoryCatalog()
 
 
 @pytest.fixture
 def seed_table(
     delta_root: Path,
-    delta_catalog: StubCatalog,
+    delta_catalog: InMemoryCatalog,
 ) -> Callable[[str | TableRef, pl.DataFrame], Path]:
     """Factory fixture that writes a :class:`polars.DataFrame` as a real
     Delta table and registers its schema in the catalog.

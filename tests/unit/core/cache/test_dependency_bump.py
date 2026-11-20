@@ -13,12 +13,12 @@ import asyncio
 from loom.core.cache import GenerationalDependencyResolver
 from loom.core.stores.repository.mutation import MutationEvent
 
-from ._doubles import CountingCacheBackend
+from ._doubles import CountingCacheStore
 
 
 class TestDependencyBump:
     async def test_bump_from_events_increments_every_expected_key_once(self) -> None:
-        backend = CountingCacheBackend()
+        backend = CountingCacheStore()
         resolver = GenerationalDependencyResolver(backend)
         events = (
             MutationEvent(entity="widget", op="update", ids=(1, 2), tags=frozenset({"custom-tag"})),
@@ -47,7 +47,7 @@ class TestDependencyBump:
         single wait shared by every key in flight.
         """
 
-        class SlowBackend(CountingCacheBackend):
+        class SlowBackend(CountingCacheStore):
             def __init__(self, release: asyncio.Event) -> None:
                 super().__init__()
                 self._release = release

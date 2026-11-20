@@ -23,7 +23,7 @@ import pytest
 from pydantic_ai.capabilities import AbstractCapability
 from pydantic_ai.tools import RunContext
 
-from loom.ai.engines.pydantic_ai import plugin as _provider
+from loom.ai.engines.pydantic_ai import plugin as _plugin
 from loom.ai.errors import AgentCompilationError, AgentErrorCode
 from loom.ai.inference import InferenceTarget
 from tests.helpers.pydantic_ai_engine import build_engine, make_plan, prose_model
@@ -42,7 +42,7 @@ class _AlwaysStreams(AbstractCapability[Any]):
 class TestStreamingCapabilityConflict:
     @pytest.fixture
     def streaming_capability(self, monkeypatch: pytest.MonkeyPatch) -> None:
-        monkeypatch.setattr(_provider, "build_capabilities", lambda plan: (_AlwaysStreams(),))
+        monkeypatch.setattr(_plugin, "build_capabilities", lambda plan: (_AlwaysStreams(),))
 
     def test_a_whole_binding_with_a_streaming_capability_fails_at_build(
         self, streaming_capability: None

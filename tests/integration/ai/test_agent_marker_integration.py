@@ -71,7 +71,7 @@ def _wired(
         config=make_ai_config(
             max_concurrent_runs=max_concurrent_runs, max_agent_depth=max_agent_depth
         ),
-        engine_provider=provider,  # type: ignore[arg-type]
+        engine_plugin=provider,  # type: ignore[arg-type]
         deps=deps,
         container=container,
     )

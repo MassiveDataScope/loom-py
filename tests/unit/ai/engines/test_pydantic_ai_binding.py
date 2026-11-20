@@ -19,7 +19,7 @@ from pydantic_ai.models.typesafe import TypeSafeModel
 from loom.ai.compiler._plan import AgentPlan, CompiledInstruction
 from loom.ai.engines.pydantic_ai._models import SUPPORTED_PROVIDERS, resolve_model
 from loom.ai.engines.pydantic_ai._spec import build_agent_spec, build_output_type
-from loom.ai.engines.pydantic_ai.plugin import PydanticAIEngineProvider
+from loom.ai.engines.pydantic_ai.plugin import PydanticAIEnginePlugin
 from loom.ai.errors import AgentCompilationError, AgentErrorCode
 from loom.ai.inference import InferenceTarget
 from loom.core.config import ConfigError
@@ -327,7 +327,7 @@ def from_spec(monkeypatch: pytest.MonkeyPatch) -> _FromSpecRecorder:
 
 
 def _create_engine(plan: AgentPlan) -> None:
-    provider = PydanticAIEngineProvider(model_resolver=lambda target: TestModel())
+    provider = PydanticAIEnginePlugin(model_resolver=lambda target: TestModel())
     provider.create_engine(plan, deps=NullDeps(), container=LoomContainer())
 
 
@@ -465,13 +465,13 @@ class TestInstructionsAndDescriptionKeywords:
 class TestEntryPoint:
     def test_the_engine_resolves_by_entry_point_when_requested_by_name(self) -> None:
         """``ai.engine: pydantic-ai`` resolves, handshake included (FR-021)."""
-        from loom.ai.engines.pydantic_ai import PydanticAIEngineProvider
-        from loom.ai.registry import resolve_engine_provider
+        from loom.ai.engines.pydantic_ai import PydanticAIEnginePlugin
+        from loom.ai.registry import resolve_engine_plugin
 
-        provider = resolve_engine_provider("pydantic-ai")
+        provider = resolve_engine_plugin("pydantic-ai")
 
-        assert isinstance(provider, PydanticAIEngineProvider)
-        assert PydanticAIEngineProvider.LOOM_AI_ENGINE_API == 2
+        assert isinstance(provider, PydanticAIEnginePlugin)
+        assert PydanticAIEnginePlugin.LOOM_AI_ENGINE_API == 2
 
     # The kinds this adapter declares are asserted by
     # ``tests/integration/ai/test_capabilities.py::TestSupportedCapabilityKinds``,

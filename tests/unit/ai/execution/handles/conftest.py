@@ -78,7 +78,7 @@ def make_runtime(session: RecordingMcpSession, engine: AcmeEngine) -> Any:
                 mcp_servers=make_mcp_servers(SERVER),
                 remote_clients="required" if reachable else "optional",
             ),
-            engine_provider=CountingEngineProvider(engines={AGENT: engine}),  # type: ignore[dict-item]
+            engine_plugin=CountingEngineProvider(engines={AGENT: engine}),  # type: ignore[dict-item]
             deps=StubDepsFactory(),
             container=LoomContainer(),
             mcp_client_factory=mcp_client_factory({SERVER: client}),  # type: ignore[arg-type]

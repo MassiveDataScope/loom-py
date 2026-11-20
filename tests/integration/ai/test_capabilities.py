@@ -52,7 +52,7 @@ from loom.ai.compiler._plan import (
     CompiledUsecaseCapability,
 )
 from loom.ai.declarative import PolicySpec
-from loom.ai.engines.pydantic_ai import PydanticAIEngineProvider, _capabilities
+from loom.ai.engines.pydantic_ai import PydanticAIEnginePlugin, _capabilities
 from loom.ai.engines.pydantic_ai._events import translate
 from loom.ai.engines.pydantic_ai._mcp import SharedMcpToolsets
 from loom.ai.errors import (
@@ -505,7 +505,7 @@ def build_engine(
     policies: PolicySpec | None = None,
 ) -> AgentEngine:
     """Build the real adapter for a plan carrying ``capabilities``."""
-    provider = PydanticAIEngineProvider(model_resolver=lambda target: model.as_model())
+    provider = PydanticAIEnginePlugin(model_resolver=lambda target: model.as_model())
     plan = make_plan("analyst", capabilities=tuple(capabilities), policies=policies)
     return provider.create_engine(plan, deps=deps, container=container)  # type: ignore[arg-type]
 
@@ -873,7 +873,7 @@ class TestSupportedCapabilityKinds:
         self,
     ) -> None:
         """Every kind the adapter can serve is announced, ``a2a`` included."""
-        kinds = PydanticAIEngineProvider().supported_capability_kinds()
+        kinds = PydanticAIEnginePlugin().supported_capability_kinds()
 
         assert kinds == frozenset({"usecase", "sql", "mcp", "skills", "python", "a2a", "native"})
 
@@ -1886,7 +1886,7 @@ class TestTheRuntimeStartChecksTheInvoker:
         return AgentRuntime(
             plans=[make_plan("analyst", capabilities=(whoami_capability(),))],
             config=make_ai_config(),
-            engine_provider=provider,  # type: ignore[arg-type]
+            engine_plugin=provider,  # type: ignore[arg-type]
             deps=StubDepsFactory(),
             container=container,
         )

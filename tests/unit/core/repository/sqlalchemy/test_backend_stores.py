@@ -1,4 +1,4 @@
-"""``SQLAlchemyBackend`` serves the store the host hands it, never ``stores.default`` by fiat.
+"""``SQLAlchemyStorePlugin`` serves the store the host hands it, never ``stores.default`` by fiat.
 
 ADR 0008: each store has its own section, metadata and metrics label, and
 every message about its schema names its own section.
@@ -20,7 +20,7 @@ from loom.core.stores import StoreWiring
 from loom.core.stores.catalog import DEFAULT_STORE, StoreKey, load_catalog
 from loom.core.stores.profile import SERVER_PROFILE, StoreRuntime
 from loom.core.stores.repository import CursorCodec
-from loom.stores.sqlalchemy.plugin import SQLAlchemyBackend
+from loom.stores.sqlalchemy.plugin import SQLAlchemyStorePlugin
 
 _AUDIT = StoreKey("audit")
 _POSTGRES = "postgresql+asyncpg://app:secret@db.invalid/app"
@@ -69,7 +69,7 @@ def _build(
         cursor_codec=CursorCodec.from_context(ctx),
         aws=AwsClients(),
     )
-    return SQLAlchemyBackend().build(ctx, models, runtime)
+    return SQLAlchemyStorePlugin().build(ctx, models, runtime)
 
 
 class TestBackendStores:
@@ -137,6 +137,6 @@ class TestBackendStores:
                 cursor_codec=codec,
                 aws=AwsClients(),
             )
-            SQLAlchemyBackend().build(ctx, (), runtime).repo_registration_module(container)
+            SQLAlchemyStorePlugin().build(ctx, (), runtime).repo_registration_module(container)
 
         assert container.resolve(CursorCodec) is codec

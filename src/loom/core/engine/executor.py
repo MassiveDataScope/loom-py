@@ -8,7 +8,7 @@ from loom.core.engine.boundaries import Boundaries, outside_departed_execution
 from loom.core.engine.compilable import Compilable
 from loom.core.engine.compiler import UseCaseCompiler
 from loom.core.engine.events import Phase
-from loom.core.engine.metrics import MetricsAdapter
+from loom.core.engine.metrics import MetricsRecorder
 from loom.core.engine.observation import ExecutionReporter
 from loom.core.engine.plan import ExecutionPlan, ParameterBindingError
 from loom.core.engine.preparation import ArgumentBinder, ExecutionInputs
@@ -110,7 +110,7 @@ class RuntimeExecutor:
         coordinator: Coordinator | None = None,
         debug_execution: bool = False,
         logger: LoggerPort | None = None,
-        metrics: MetricsAdapter | None = None,
+        metrics: MetricsRecorder | None = None,
         repo_resolver: Callable[[type[Any]], Any] | None = None,
         resolvers: ExecutionKinds | None = None,
         builder: Callable[[type[Any]], Any] | None = None,

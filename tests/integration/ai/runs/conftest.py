@@ -46,7 +46,7 @@ def make_runtime(session: RecordingMcpSession) -> Any:
             config=make_ai_config(
                 endpoints={AGENT: make_endpoint()}, mcp_servers=make_mcp_servers(SERVER)
             ),
-            engine_provider=CountingEngineProvider(engines={AGENT: engine}),  # type: ignore[dict-item]
+            engine_plugin=CountingEngineProvider(engines={AGENT: engine}),  # type: ignore[dict-item]
             deps=StubDepsFactory(),
             container=LoomContainer(),
             mcp_client_factory=mcp_client_factory({SERVER: client}),  # type: ignore[arg-type]

@@ -1,4 +1,4 @@
-"""``SQLAlchemyBackend``: the readiness probe over the shared engine."""
+"""``SQLAlchemyStorePlugin``: the readiness probe over the shared engine."""
 
 from __future__ import annotations
 
@@ -12,7 +12,7 @@ from loom.core.di.container import LoomContainer
 from loom.core.stores import StoreWiring
 from loom.core.stores.profile import SERVER_PROFILE
 from loom.core.stores.repository import CursorCodec
-from loom.stores.sqlalchemy.plugin import SQLAlchemyBackend
+from loom.stores.sqlalchemy.plugin import SQLAlchemyStorePlugin
 from tests.helpers.persistence import build_backend
 
 _UNREACHABLE_URL = "sqlite+aiosqlite:////nonexistent/loom-readiness/store.db"
@@ -28,10 +28,10 @@ def _wiring(url: str, cursors: dict[str, str] | None = None) -> StoreWiring:
             },
         }
     )
-    return build_backend(SQLAlchemyBackend(), ctx, (), SERVER_PROFILE)
+    return build_backend(SQLAlchemyStorePlugin(), ctx, (), SERVER_PROFILE)
 
 
-class TestSqlAlchemyBackend:
+class TestSqlAlchemyStorePlugin:
     def test_a_missing_cursor_key_fails_the_build_naming_the_opt_out(self) -> None:
         with pytest.raises(ConfigError, match=r"stores\.settings\.cursors\.signing: ephemeral"):
             _wiring("sqlite+aiosqlite:///", cursors={})

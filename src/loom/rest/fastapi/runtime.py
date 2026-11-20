@@ -44,11 +44,11 @@ from loom.core.observability.config import PrometheusObservabilityConfig
 from loom.core.stores import (
     SERVER_PROFILE,
     PoolMetricsSink,
-    StoreBackend,
+    StorePlugin,
 )
 from loom.core.stores.catalog import SQLALCHEMY_BACKEND, StoreKey, store_of
 from loom.core.use_case.constants import CrudOp
-from loom.prometheus import PrometheusMetricsAdapter
+from loom.prometheus import PrometheusMetricsRecorder
 from loom.prometheus.db_pool import PrometheusPoolMetrics
 from loom.prometheus.middleware import PrometheusMiddleware
 from loom.rest._body import DEFAULT_MAX_BODY_BYTES, BodySizeLimitMiddleware
@@ -234,7 +234,7 @@ def _gate_interface(
     interface: type[RestInterface[Any]],
     model: type[Any],
     key: StoreKey,
-    backend: StoreBackend,
+    backend: StorePlugin,
 ) -> frozenset[type[Any]]:
     """Narrow one interface's generated routes; return the use cases pruned from it."""
     backend_name = backend.name
@@ -260,7 +260,7 @@ def _gate_interface(
     return frozenset(route.use_case for route in generated if route.use_case not in kept)
 
 
-def _serving_repository_type(model: type[Any], backend: StoreBackend) -> type[Any] | None:
+def _serving_repository_type(model: type[Any], backend: StorePlugin) -> type[Any] | None:
     """Return the repository class that will serve *model* on *backend*."""
     registered = registered_repository_type(model)
     if registered is not None:
@@ -322,18 +322,18 @@ def _build_metrics_adapter(
     cfg: PrometheusObservabilityConfig,
     registry: CollectorRegistry | None,
 ) -> Any | None:
-    """Return a ``PrometheusMetricsAdapter`` when metrics are enabled, else ``None``.
+    """Return a ``PrometheusMetricsRecorder`` when metrics are enabled, else ``None``.
 
     Args:
         cfg: Metrics feature config.
         registry: Optional Prometheus registry override.
 
     Returns:
-        ``PrometheusMetricsAdapter`` or ``None``.
+        ``PrometheusMetricsRecorder`` or ``None``.
     """
     if not cfg.enabled:
         return None
-    return PrometheusMetricsAdapter(registry=registry)
+    return PrometheusMetricsRecorder(registry=registry)
 
 
 def _build_pool_metrics(

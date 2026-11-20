@@ -37,7 +37,7 @@ from loom.core.stores.catalog import StoreCatalog, StoreKey, load_catalog
 if TYPE_CHECKING:
     from loom.composition.recipe import Adapter
     from loom.core.discovery.base import DiscoveryResult
-    from loom.core.stores import StoreBackend
+    from loom.core.stores import StorePlugin
 
 
 T = TypeVar("T")
@@ -240,7 +240,7 @@ class Project:
         """
         return load_catalog(self.config)
 
-    def resolve_store_backend(self, key: StoreKey, *, default: str) -> StoreBackend:
+    def resolve_store_backend(self, key: StoreKey, *, default: str) -> StorePlugin:
         """Build the backend ``stores.<key>.backend`` names; *default* without that store.
 
         Raises:

@@ -239,7 +239,7 @@ def _runtime(
     return AgentRuntime(
         plans=[plan],
         config=make_ai_config(max_concurrent_runs=max_concurrent_runs),
-        engine_provider=CountingEngineProvider(engines={_AGENT: engine}),  # type: ignore[arg-type]
+        engine_plugin=CountingEngineProvider(engines={_AGENT: engine}),  # type: ignore[arg-type]
         deps=deps,  # type: ignore[arg-type]
         container=container,
     )
@@ -927,7 +927,7 @@ class TestStartupProbe:
         runtime = AgentRuntime(
             plans=[plan],
             config=make_ai_config(mcp_servers=make_mcp_servers("tools")),
-            engine_provider=CountingEngineProvider(),  # type: ignore[arg-type]
+            engine_plugin=CountingEngineProvider(),  # type: ignore[arg-type]
             deps=deps,
             container=container,
             mcp_client_factory=mcp_client_factory(clients),  # type: ignore[arg-type]

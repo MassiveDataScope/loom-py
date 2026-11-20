@@ -54,7 +54,7 @@ from pydantic_ai.models.function import (  # noqa: E402
 )
 
 from loom.ai import registry, remote_auth  # noqa: E402
-from loom.ai.engines.pydantic_ai import PydanticAIEngineProvider, _mcp  # noqa: E402
+from loom.ai.engines.pydantic_ai import PydanticAIEnginePlugin, _mcp  # noqa: E402
 from loom.ai.engines.pydantic_ai import _transport as _transport  # noqa: E402
 from loom.ai.engines.pydantic_ai._transport import EvictableTransport  # noqa: E402
 from loom.ai.errors import AgentRunErrorCode  # noqa: E402
@@ -486,8 +486,8 @@ def world(
             clock = _WallClock()
             monkeypatch.setattr(_transport, "time", clock)
             model = _Model()
-            provider = PydanticAIEngineProvider(model_resolver=model.model)
-            monkeypatch.setattr(registry, "resolve_engine_provider", lambda name: provider)
+            provider = PydanticAIEnginePlugin(model_resolver=model.model)
+            monkeypatch.setattr(registry, "resolve_engine_plugin", lambda name: provider)
             builds, drops = _counted(monkeypatch)
             config = _write_project(tmp_path, server.url, trigger, agents=agents)
             function = "worker" if trigger == "jobs" else None

@@ -16,7 +16,7 @@ from loom.rest.compiler import (
     RouteSources,
 )
 from loom.rest.config import RestInterfaceConfigError
-from loom.rest.dispatcher import LoomRestAdapter
+from loom.rest.dispatcher import RestUseCaseDispatcher
 from loom.rest.errors import HttpErrorMapper
 from loom.rest.middleware import TraceIdMiddleware
 from loom.rest.model import (
@@ -26,7 +26,7 @@ from loom.rest.model import (
     RestInterface,
     RestRoute,
 )
-from loom.rest.parser import PydanticAdapter
+from loom.rest.parser import PydanticCommandParser
 
 __all__ = [
     "ALL",
@@ -35,9 +35,9 @@ __all__ = [
     "CompiledRoute",
     "HttpErrorMapper",
     "InterfaceCompilationError",
-    "LoomRestAdapter",
+    "RestUseCaseDispatcher",
     "PaginationMode",
-    "PydanticAdapter",
+    "PydanticCommandParser",
     "RestApiDefaults",
     "RestInterface",
     "RestInterfaceCompiler",

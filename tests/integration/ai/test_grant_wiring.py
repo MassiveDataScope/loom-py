@@ -35,7 +35,7 @@ from loom.ai.declarative import (
     JsonSchemaOutput,
     McpCapability,
 )
-from loom.ai.engines.pydantic_ai import PydanticAIEngineProvider
+from loom.ai.engines.pydantic_ai import PydanticAIEnginePlugin
 from loom.ai.engines.pydantic_ai._mcp import SharedMcpToolsets
 from loom.ai.execution import AgentRuntime
 from loom.ai.inference import InferenceTarget
@@ -132,7 +132,7 @@ def _compile(*capabilities: object) -> AgentPlan:
     compiler = AgentCompiler(
         config=_config(),
         registry=UseCaseRegistry.build([]),
-        supported_kinds=PydanticAIEngineProvider().supported_capability_kinds(),
+        supported_kinds=PydanticAIEnginePlugin().supported_capability_kinds(),
     )
     return compiler.compile(_spec(*capabilities), source_path=f"ai/agents/{_AGENT}/agent.yaml")
 
@@ -142,7 +142,7 @@ def _runtime(plan: AgentPlan) -> AgentRuntime:
     return AgentRuntime(
         plans=[plan],
         config=_config(),
-        engine_provider=PydanticAIEngineProvider(model_resolver=lambda target: _silent_model()),
+        engine_plugin=PydanticAIEnginePlugin(model_resolver=lambda target: _silent_model()),
         deps=StubDepsFactory(),  # type: ignore[arg-type]
         container=LoomContainer(),
         mcp_client_factory=_stub_mcp_client,  # type: ignore[arg-type]
@@ -155,7 +155,7 @@ class TestGrantA2A:
 
     def test_the_provider_announces_a2a_when_asked(self) -> None:
         """Announcing the kind is what makes the compiler admit the grant."""
-        assert "a2a" in PydanticAIEngineProvider().supported_capability_kinds()
+        assert "a2a" in PydanticAIEnginePlugin().supported_capability_kinds()
 
     def test_the_compiler_admits_the_grant_when_the_agent_is_registered(self) -> None:
         """Through the real compiler: one compiled capability, not zero."""

@@ -9,7 +9,7 @@ import pytest
 
 from loom.core.logger import LoggerPort
 from loom.streaming.nodes._step import RecordStep
-from loom.streaming.nodes._with import ContextFactory
+from loom.streaming.nodes._with import ContextSupplier
 from tests.unit.streaming.doubles import AcmePayload
 
 
@@ -61,12 +61,12 @@ class TestNodeLogBindings:
         ]
         assert step.log is logger
 
-    def test_context_factory_log_binds_static_class_metadata(
+    def test_context_supplier_log_binds_static_class_metadata(
         self,
         monkeypatch: pytest.MonkeyPatch,
     ) -> None:
         fake = _FakeLogger()
-        factory = ContextFactory(lambda: nullcontext())
+        factory = ContextSupplier(lambda: nullcontext())
         monkeypatch.setattr("loom.streaming.nodes._with.get_logger", lambda name: fake)
 
         logger = factory.log
@@ -74,10 +74,10 @@ class TestNodeLogBindings:
         assert logger is fake
         assert fake.bind_calls == [
             {
-                "component": "context_factory",
-                "class_name": "ContextFactory",
+                "component": "context_supplier",
+                "class_name": "ContextSupplier",
                 "module": "loom.streaming.nodes._with",
-                "factory_name": "ContextFactory",
+                "factory_name": "ContextSupplier",
             }
         ]
         assert factory.log is logger

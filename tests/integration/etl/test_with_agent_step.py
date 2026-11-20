@@ -20,7 +20,7 @@ from pydantic_ai.models.function import AgentInfo, FunctionModel
 from pydantic_ai.models.test import TestModel
 
 from loom.ai import AiConfig, InferenceTarget, ModelPrice
-from loom.ai.engines.pydantic_ai import PydanticAIEngineProvider
+from loom.ai.engines.pydantic_ai import PydanticAIEnginePlugin
 from loom.ai.etl import PolarsAgentRunner
 from loom.etl import (
     AgentMapper,
@@ -128,7 +128,7 @@ def _runner(tmp_path: Path, models_built: list[Model], *, failing: bool = False)
     agents = PolarsAgentRunner(
         ai,
         root=tmp_path,
-        engine_provider=lambda: PydanticAIEngineProvider(model_resolver=build_model),
+        engine_plugin=lambda: PydanticAIEnginePlugin(model_resolver=build_model),
     )
     storage = convert_storage_config(
         normalise_storage_section({"defaults": {"table_path": {"uri": str(tmp_path / "lake")}}})

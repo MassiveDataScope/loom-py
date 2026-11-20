@@ -81,7 +81,7 @@ from loom.core.runner import shutdown_runner
 from loom.core.stores import WORKER_PROFILE
 
 if TYPE_CHECKING:
-    from loom.core.engine.metrics import MetricsAdapter
+    from loom.core.engine.metrics import MetricsRecorder
     from loom.core.job.job import Job
 
 _log = get_logger(__name__)
@@ -275,7 +275,7 @@ def _register_tasks(
     declared: _Declared,
     application: Application,
     process_bridge: _CeleryProcessBridge,
-    metrics: MetricsAdapter | None,
+    metrics: MetricsRecorder | None,
 ) -> None:
     """Register one task per job and one per callback class and outcome."""
     kernel, observability = application.kernel, application.observability
@@ -339,7 +339,7 @@ class CeleryAdapter:
         jobs: Sequence[type[Job[Any]]] = (),
         use_cases: Sequence[type[Compilable]] = (),
         interfaces: Sequence[type[Any]] = (),
-        metrics: MetricsAdapter | None = None,
+        metrics: MetricsRecorder | None = None,
     ) -> None:
         self._jobs = tuple(jobs)
         self._use_cases = tuple(use_cases)

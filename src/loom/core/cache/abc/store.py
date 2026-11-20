@@ -5,7 +5,7 @@ from typing import Any, Protocol, TypeVar
 T = TypeVar("T")
 
 
-class CacheBackend(Protocol):
+class CacheStore(Protocol):
     """Abstract cache backend defining the contract for key-value storage operations."""
 
     async def get_value(self, key: str, *, type: type[T] | None = None) -> T | Any | None:

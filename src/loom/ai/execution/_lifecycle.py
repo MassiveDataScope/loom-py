@@ -23,7 +23,7 @@ from loom.ai._filters import select_names
 from loom.ai.abc import (
     CONVERSATION_ID_MAX_LENGTH,
     AgentEngine,
-    AgentEngineProvider,
+    AgentEnginePlugin,
     AgentEvent,
     AgentResult,
     Conversation,
@@ -160,7 +160,7 @@ class AgentRuntime:
     Args:
         plans: Compiled plans this worker serves.
         config: Deployment configuration of the AI pillar.
-        engine_provider: Provider building one engine per plan, exactly once.
+        engine_plugin: Provider building one engine per plan, exactly once.
         deps: Per-invocation dependency factory handed to every engine.
         container: Application container the engines resolve services from.
         sql_config: Live ``sql:`` configuration, re-verified at start-up
@@ -189,7 +189,7 @@ class AgentRuntime:
     Example::
 
         async with AgentRuntime(
-            plans=plans, config=ai_config, engine_provider=provider,
+            plans=plans, config=ai_config, engine_plugin=provider,
             deps=deps, container=container,
         ) as runtime:
             result = await runtime.run("analyst", prompt, identity=identity)
@@ -200,7 +200,7 @@ class AgentRuntime:
         *,
         plans: Sequence[AgentPlan],
         config: AiConfig,
-        engine_provider: AgentEngineProvider,
+        engine_plugin: AgentEnginePlugin,
         deps: DepsFactory,
         container: LoomContainer,
         sql_config: SqlConfig | None = None,
@@ -210,7 +210,7 @@ class AgentRuntime:
     ) -> None:
         self._plans: Mapping[str, AgentPlan] = MappingProxyType({p.name: p for p in plans})
         self._config = config
-        self._engine_provider = engine_provider
+        self._engine_plugin = engine_plugin
         self._deps = deps
         self._container = container
         self._invoker: ApplicationInvoker | None = None
@@ -794,7 +794,7 @@ class AgentRuntime:
     def _build_engines(self) -> None:
         """Build one engine per plan, exactly once per worker."""
         for name, plan in self._plans.items():
-            engine = self._engine_provider.create_engine(
+            engine = self._engine_plugin.create_engine(
                 plan, deps=self._deps, container=self._container
             )
             self._slots[name] = _AgentSlot(plan=plan, engine=engine)

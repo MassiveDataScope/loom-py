@@ -18,7 +18,7 @@ from sqlalchemy.engine import make_url
 from loom.core.config import ConfigContext, ConfigError
 from loom.core.model import BaseModel, ColumnField
 from loom.core.stores.profile import WORKER_PROFILE
-from loom.stores.sqlalchemy.plugin import SQLAlchemyBackend
+from loom.stores.sqlalchemy.plugin import SQLAlchemyStorePlugin
 from tests.helpers.persistence import build_backend
 from tests.integration.rls.conftest import execute, scalar
 
@@ -54,7 +54,7 @@ def probe_schema(module_database_uri: str, created_roles: set[str]) -> _Schema:
 
 async def _probe(url: str) -> None:
     ctx = ConfigContext.from_dict({"stores": {"default": {"backend": "sqlalchemy", "url": url}}})
-    wiring = build_backend(SQLAlchemyBackend(), ctx, (), WORKER_PROFILE, connection_only=True)
+    wiring = build_backend(SQLAlchemyStorePlugin(), ctx, (), WORKER_PROFILE, connection_only=True)
     wiring.prepare_models(())
     await wiring.startup_checks()
 
@@ -117,7 +117,7 @@ class TestProbeRefusal:
                 "stores": {"default": store, "settings": cursors},
             }
         )
-        wiring = build_backend(SQLAlchemyBackend(), ctx, (_Plain,), WORKER_PROFILE)
+        wiring = build_backend(SQLAlchemyStorePlugin(), ctx, (_Plain,), WORKER_PROFILE)
         wiring.prepare_models((_Plain,))
 
         with pytest.raises(ConfigError, match=r"stores\.default\.url connects as a superuser"):

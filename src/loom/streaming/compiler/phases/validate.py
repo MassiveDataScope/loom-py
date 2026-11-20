@@ -38,7 +38,7 @@ from loom.streaming.nodes._router import Router
 from loom.streaming.nodes._shape import CollectBatch, Drain, ForEach, StreamShape, WindowStrategy
 from loom.streaming.nodes._sink import IntoSink
 from loom.streaming.nodes._step import BatchExpandStep, BatchStep, ExpandStep, RecordStep, Step
-from loom.streaming.nodes._table import Backend, IntoTable
+from loom.streaming.nodes._table import IntoTable, TableEngine
 from loom.streaming.nodes._table.config import (
     resolve_clickhouse_table_config,
     resolve_delta_table_config,
@@ -301,15 +301,15 @@ def _validate_storage_sink_node(
     """Validate backend-specific config for one storage sink."""
     if not isinstance(node, IntoTable):
         return []
-    if node.backend is Backend.SQLALCHEMY:
+    if node.engine is TableEngine.SQLALCHEMY:
         return _validate_storage_sink_resolution(
             node, lambda: resolve_sqlalchemy_table_config(node, ctx, catalog)
         )
-    if node.backend is Backend.DELTA:
+    if node.engine is TableEngine.DELTA:
         return _validate_storage_sink_resolution(
             node, lambda: resolve_delta_table_config(node, ctx)
         )
-    if node.backend is Backend.CLICKHOUSE:
+    if node.engine is TableEngine.CLICKHOUSE:
         return _validate_storage_sink_resolution(
             node, lambda: resolve_clickhouse_table_config(node, ctx, catalog)
         )

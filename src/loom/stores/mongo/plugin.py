@@ -77,7 +77,7 @@ class MongoRepositoryConfig(MongoConnection, frozen=True, kw_only=True):
     pool: MongoRepositoryPool = msgspec.field(default_factory=MongoRepositoryPool)
 
 
-class MongoBackend:
+class MongoStorePlugin:
     """Backend for ``stores.<name>.backend: mongo``.
 
     Reads the section of the store it serves and ``stores.settings.cursors``,
@@ -200,4 +200,4 @@ async def _lifespan(client: AsyncMongoClient[Any]) -> AsyncIterator[None]:
         await client.close()
 
 
-__all__ = ["MongoBackend", "MongoRepositoryConfig"]
+__all__ = ["MongoStorePlugin", "MongoRepositoryConfig"]

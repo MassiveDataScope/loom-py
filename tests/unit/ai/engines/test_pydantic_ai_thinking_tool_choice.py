@@ -21,7 +21,7 @@ from pydantic_ai.models import Model
 from pydantic_ai.models.bedrock import BedrockConverseModel
 from pydantic_ai.providers.bedrock import BedrockProvider
 
-from loom.ai.engines.pydantic_ai.plugin import PydanticAIEngineProvider
+from loom.ai.engines.pydantic_ai.plugin import PydanticAIEnginePlugin
 from loom.ai.engines.pydantic_ai.providers._shared import model_settings
 from loom.ai.inference import InferenceTarget
 from loom.ai.pricing import ModelPrice
@@ -97,7 +97,7 @@ class TestAdaptiveThinking:
     ) -> None:
         bedrock = _RecordedBedrock()
         plan = msgspec.structs.replace(make_plan(inference=_TARGET), price=price)
-        engine = PydanticAIEngineProvider(model_resolver=bedrock.model).create_engine(
+        engine = PydanticAIEnginePlugin(model_resolver=bedrock.model).create_engine(
             plan, deps=NullDeps(), container=LoomContainer()
         )
 

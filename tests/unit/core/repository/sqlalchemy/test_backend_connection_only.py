@@ -1,4 +1,4 @@
-"""``SQLAlchemyBackend`` built with ``connection_only=True``.
+"""``SQLAlchemyStorePlugin`` built with ``connection_only=True``.
 
 A host with no model (a worker running raw-SQL jobs) gets a unit of work and
 nothing more: no cursor codec, no repository, and the compiled registry left
@@ -23,7 +23,7 @@ from loom.core.model.types import Integer
 from loom.core.stores import StoreWiring
 from loom.core.stores.profile import WORKER_PROFILE
 from loom.core.stores.repository import CursorCodec
-from loom.stores.sqlalchemy.plugin import SQLAlchemyBackend
+from loom.stores.sqlalchemy.plugin import SQLAlchemyStorePlugin
 from loom.stores.sqlalchemy.schema import compile_all, get_compiled
 from loom.stores.sqlalchemy.session_manager import SessionManager
 from tests.helpers.persistence import build_backend
@@ -58,7 +58,7 @@ class _CallerScoped(BaseModel, RowScoped):
 def _wiring(database: dict[str, Any]) -> StoreWiring:
     # No stores.settings.cursors at all: a codec built here would fail.
     ctx = ConfigContext.from_dict({"stores": {"default": {"backend": "sqlalchemy", **database}}})
-    return build_backend(SQLAlchemyBackend(), ctx, (), WORKER_PROFILE, connection_only=True)
+    return build_backend(SQLAlchemyStorePlugin(), ctx, (), WORKER_PROFILE, connection_only=True)
 
 
 def _registered(wiring: StoreWiring) -> LoomContainer:

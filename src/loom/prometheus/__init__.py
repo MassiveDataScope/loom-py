@@ -6,7 +6,7 @@ Optional module — requires ``prometheus-client``::
 
 Provides:
 
-- :class:`PrometheusMetricsAdapter` — wires into the bootstrap pipeline to
+- :class:`PrometheusMetricsRecorder` — wires into the bootstrap pipeline to
   record use-case level metrics (request counts, durations, errors).
 - :class:`PrometheusMiddleware` — pure ASGI middleware that records
   HTTP-level metrics (request counts, durations by path template).
@@ -24,14 +24,14 @@ scrape path, when ``observability.prometheus.enabled`` is set::
 """
 
 from loom.prometheus.kafka import KafkaMetricName, KafkaPrometheusMetrics
-from loom.prometheus.lifecycle import PrometheusLifecycleAdapter
+from loom.prometheus.lifecycle import PrometheusLifecycleObserver
 from loom.prometheus.middleware import PrometheusMiddleware
-from loom.prometheus.recorder import PrometheusMetricsAdapter
+from loom.prometheus.recorder import PrometheusMetricsRecorder
 
 __all__ = [
     "KafkaMetricName",
     "KafkaPrometheusMetrics",
-    "PrometheusLifecycleAdapter",
-    "PrometheusMetricsAdapter",
+    "PrometheusLifecycleObserver",
+    "PrometheusMetricsRecorder",
     "PrometheusMiddleware",
 ]

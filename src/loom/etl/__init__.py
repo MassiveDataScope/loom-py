@@ -34,7 +34,7 @@ Compilation::
 
 Testing stubs::
 
-    from loom.etl.testing import StubCatalog, StubSourceReader, StubTargetWriter
+    from loom.etl.testing import InMemoryCatalog, InMemorySourceReader, InMemoryTargetWriter
 
 Namespaced API (discoverable by bounded context)::
 

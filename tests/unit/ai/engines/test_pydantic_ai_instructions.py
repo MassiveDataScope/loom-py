@@ -4,7 +4,7 @@ Two things are exercised together: the start-up guard that keeps the
 templating extra optional (T401), and the dispatch map projecting each
 compiled block onto what ``Agent.from_spec(instructions=...)`` receives
 (T402). A "recording double" (:class:`_FromSpecRecorder`) captures what
-:meth:`~loom.ai.engines.pydantic_ai.plugin.PydanticAIEngineProvider.create_engine`
+:meth:`~loom.ai.engines.pydantic_ai.plugin.PydanticAIEnginePlugin.create_engine`
 actually hands the engine; the assertions about ``dynamic`` and ``name`` then
 run pydantic-ai's own :func:`~pydantic_ai._instructions.sourced_instruction`
 against what was captured, rather than re-deriving those rules locally.
@@ -27,7 +27,7 @@ from loom.ai.engines.pydantic_ai._instructions import (
     build_instructions,
     ensure_templating_available,
 )
-from loom.ai.engines.pydantic_ai.plugin import PydanticAIEngineProvider
+from loom.ai.engines.pydantic_ai.plugin import PydanticAIEnginePlugin
 from loom.ai.errors import AgentCompilationError, AgentErrorCode
 from loom.core.di import LoomContainer
 from tests.helpers.extras import ENGINE_EXTRAS, without_extra
@@ -114,7 +114,7 @@ class TestTemplatingExtraCheck:
         from pydantic_ai.models.test import TestModel
 
         without_extra(monkeypatch, ["pydantic_handlebars"], [f"{ENGINE_EXTRAS}.handlebars"])
-        provider = PydanticAIEngineProvider(model_resolver=lambda target: TestModel())
+        provider = PydanticAIEnginePlugin(model_resolver=lambda target: TestModel())
 
         engine = provider.create_engine(make_plan(), deps=NullDeps(), container=LoomContainer())
 

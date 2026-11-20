@@ -19,7 +19,7 @@ from loom.etl.schema._schema import ColumnSchema, LoomDtype
 _UNKNOWN_DTYPE = LoomDtype.NULL
 
 
-class StubCatalog:
+class InMemoryCatalog:
     """In-memory :class:`~loom.etl._io.TableDiscovery` for tests.
 
     Accepts two optional seed dictionaries:
@@ -38,7 +38,7 @@ class StubCatalog:
 
     Example::
 
-        catalog = StubCatalog(
+        catalog = InMemoryCatalog(
             schemas={
                 "raw.orders": (
                     ColumnSchema("id",     LoomDtype.INT64,   nullable=False),
@@ -79,7 +79,7 @@ class StubCatalog:
         self._schemas[ref.ref] = schema
 
 
-class StubSourceReader:
+class InMemorySourceReader:
     """In-memory :class:`~loom.etl._io.SourceReader` for tests.
 
     Returns pre-seeded frames keyed by source alias.  Any alias not found
@@ -90,7 +90,7 @@ class StubSourceReader:
 
     Example::
 
-        reader = StubSourceReader({"orders": pl.LazyFrame({"id": [1, 2]})})
+        reader = InMemorySourceReader({"orders": pl.LazyFrame({"id": [1, 2]})})
         frame = reader.read(orders_spec, params)
         assert frame is not None
     """
@@ -125,12 +125,12 @@ class StubSourceReader:
         _ = frames
         _ = query
         raise NotImplementedError(
-            "StubSourceReader does not implement SQLExecutor.execute_sql(). "
+            "InMemorySourceReader does not implement SQLExecutor.execute_sql(). "
             "Use backend-specific readers/runners for StepSQL tests."
         )
 
 
-class StubTargetWriter:
+class InMemoryTargetWriter:
     """In-memory :class:`~loom.etl._io.TargetWriter` for tests.
 
     Captures all write calls in :attr:`written` for post-execution assertion.
@@ -141,7 +141,7 @@ class StubTargetWriter:
 
     Example::
 
-        writer = StubTargetWriter()
+        writer = InMemoryTargetWriter()
         writer.write(frame, spec, params)
         assert len(writer.written) == 1
         frame_out, spec_out = writer.written[0]
@@ -167,7 +167,7 @@ class StubTargetWriter:
         self.streaming_flags.append(streaming)
 
 
-class StubRunObserver(LifecycleObserver):
+class RecordingRunObserver(LifecycleObserver):
     """In-memory lifecycle observer for tests.
 
     Captures all lifecycle events as a flat list of ``(event_name, data)``
@@ -178,7 +178,7 @@ class StubRunObserver(LifecycleObserver):
 
     Example::
 
-        observer = StubRunObserver()
+        observer = RecordingRunObserver()
         runtime = ObservabilityRuntime([observer])
         executor = ETLExecutor(reader, writer, observability=runtime)
         executor.run_step(plan, params)

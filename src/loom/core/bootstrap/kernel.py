@@ -22,7 +22,7 @@ from loom.core.di.errors import describe_key
 from loom.core.engine.compilable import Compilable
 from loom.core.engine.compiler import UseCaseCompiler
 from loom.core.engine.executor import RuntimeExecutor
-from loom.core.engine.metrics import MetricsAdapter
+from loom.core.engine.metrics import MetricsRecorder
 from loom.core.environment import Environment, resolve_environment
 from loom.core.execution import ExecutionResolver
 from loom.core.logger import LoggerPort, get_logger
@@ -65,7 +65,7 @@ class Kernel:
     executor: RuntimeExecutor
     registry: UseCaseRegistry
     invoker: AppInvoker
-    metrics: MetricsAdapter | None = None
+    metrics: MetricsRecorder | None = None
 
 
 def create_kernel(
@@ -74,7 +74,7 @@ def create_kernel(
     use_cases: Sequence[type[Compilable]],
     modules: Sequence[Callable[[LoomContainer], None]] = (),
     logger: LoggerPort | None = None,
-    metrics: MetricsAdapter | None = None,
+    metrics: MetricsRecorder | None = None,
     coordinator: Coordinator | None = None,
     repo_resolver: Callable[[type[Any]], Any] | None = None,
     environment: Environment | str | None = None,
@@ -219,7 +219,7 @@ class KernelRecipe:
 
     use_cases: Sequence[type[Compilable]]
     logger: LoggerPort
-    metrics: MetricsAdapter | None = None
+    metrics: MetricsRecorder | None = None
     coordinator: Coordinator | None = None
     repo_resolver: Callable[[type[Any]], Any] | None = None
     agent_resolver: ExecutionResolver | None = None

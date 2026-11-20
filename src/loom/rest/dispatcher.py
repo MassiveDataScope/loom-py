@@ -9,7 +9,7 @@ import msgspec
 from loom.core.engine.executor import RuntimeExecutor
 from loom.core.errors import LoomError
 from loom.core.identity import current_identity
-from loom.core.transport.dispatcher import AdapterRequest
+from loom.core.transport.dispatcher import ExecutionRequest
 from loom.core.use_case.factory import UseCaseFactory
 from loom.core.use_case.outcome import Created
 from loom.core.use_case.use_case import UseCase
@@ -17,7 +17,7 @@ from loom.rest.errors import HttpErrorMapper
 from loom.rest.fastapi.response import created_response
 
 
-class LoomRestAdapter:
+class RestUseCaseDispatcher:
     """Concrete REST transport adapter for FastAPI routes.
 
     Bridges HTTP requests to the ``RuntimeExecutor`` pipeline: each call
@@ -35,13 +35,13 @@ class LoomRestAdapter:
 
     Example::
 
-        adapter = LoomRestAdapter(kernel.executor, factory=kernel.factory)
+        adapter = RestUseCaseDispatcher(kernel.executor, factory=kernel.factory)
 
         @router.post("/users")
         async def create_user(body: CreateUserBody) -> dict:
             return await adapter.handle(
                 CreateUserUseCase,
-                AdapterRequest(params={}, payload=body.model_dump()),
+                ExecutionRequest(params={}, payload=body.model_dump()),
             )
     """
 
@@ -59,7 +59,7 @@ class LoomRestAdapter:
     async def handle(
         self,
         use_case: type[UseCase[Any, Any]],
-        request: AdapterRequest,
+        request: ExecutionRequest,
     ) -> Any:
         """Build and execute the UseCase and return a serializable result.
 

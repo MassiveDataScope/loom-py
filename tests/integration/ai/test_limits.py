@@ -53,7 +53,7 @@ def _runtime(
     return AgentRuntime(
         plans=[plan],
         config=make_ai_config(max_concurrent_runs=max_concurrent_runs),
-        engine_provider=CountingEngineProvider(engines={_AGENT: engine}),  # type: ignore[arg-type]
+        engine_plugin=CountingEngineProvider(engines={_AGENT: engine}),  # type: ignore[arg-type]
         deps=deps,
         container=container,
     )

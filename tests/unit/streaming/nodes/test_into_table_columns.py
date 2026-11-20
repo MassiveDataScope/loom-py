@@ -22,7 +22,7 @@ from loom.core.model import BaseModel, ColumnField, LoomStruct, Numeric, String,
 from loom.core.model.enums import Cardinality
 from loom.core.model.relation import RelationField
 from loom.stores.sqlalchemy.schema import compile_model
-from loom.streaming.nodes._table import Backend, IntoTable, SqlAlchemySinkConfig
+from loom.streaming.nodes._table import IntoTable, SqlAlchemySinkConfig, TableEngine
 
 
 class _Shade(StrEnum):
@@ -147,7 +147,7 @@ def bridge() -> Iterator[AsyncBridge]:
 
 
 def _sink(payload: type[Any]) -> IntoTable[Any]:
-    return IntoTable(payload=payload, table="t", backend=Backend.SQLALCHEMY)
+    return IntoTable(payload=payload, table="t", engine=TableEngine.SQLALCHEMY)
 
 
 def _sink_config() -> SqlAlchemySinkConfig:

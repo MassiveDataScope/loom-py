@@ -58,7 +58,7 @@ from loom.serverless.aws.lambda_.triggers.sqs import QueueSource, SQSBatch
 if TYPE_CHECKING:
     from loom.composition import Application, Project
     from loom.core.engine.compilable import Compilable
-    from loom.core.engine.metrics import MetricsAdapter
+    from loom.core.engine.metrics import MetricsRecorder
     from loom.core.job.job import Job
     from loom.rest.auth import Authenticator
 
@@ -118,7 +118,7 @@ class LambdaAdapter:
         authenticator: Authenticator | None = None,
         jobs: Sequence[type[Job[Any]]] = (),
         use_cases: Sequence[type[Compilable]] = (),
-        metrics: MetricsAdapter | None = None,
+        metrics: MetricsRecorder | None = None,
     ) -> None:
         self._function = function
         self._authenticator = authenticator

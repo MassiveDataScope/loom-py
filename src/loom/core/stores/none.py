@@ -18,7 +18,7 @@ from loom.core.stores.plugin import StoreWiring
 from loom.core.stores.profile import StoreRuntime
 
 
-class NoneBackend:
+class NullStorePlugin:
     """Backend for ``stores.<name>.backend: none``, and for a worker without ``stores``.
 
     No unit-of-work factory, no repositories, no startup resource; the rest
@@ -60,4 +60,4 @@ def _register_no_repositories(container: LoomContainer) -> None:
     """No-op DI module: nothing to register."""
 
 
-__all__ = ["NoneBackend"]
+__all__ = ["NullStorePlugin"]

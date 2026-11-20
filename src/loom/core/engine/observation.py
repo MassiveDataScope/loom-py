@@ -20,7 +20,7 @@ from types import MappingProxyType
 from typing import Any, NamedTuple, TypeVar
 
 from loom.core.engine.events import EventKind, Phase, RuntimeEvent, Status
-from loom.core.engine.metrics import MetricsAdapter, NoMetrics
+from loom.core.engine.metrics import MetricsRecorder, NoMetrics
 from loom.core.errors import PostCommitError, RuleViolation, RuleViolations
 from loom.core.job.outcome import JobSignal, failure_log_fields
 from loom.core.logger import LoggerPort
@@ -52,9 +52,9 @@ class ExecutionReporter:
 
     __slots__ = ("_debug", "_logger", "_metrics")
 
-    def __init__(self, logger: LoggerPort, metrics: MetricsAdapter | None, debug: bool) -> None:
+    def __init__(self, logger: LoggerPort, metrics: MetricsRecorder | None, debug: bool) -> None:
         self._logger = logger
-        self._metrics: MetricsAdapter = NoMetrics() if metrics is None else metrics
+        self._metrics: MetricsRecorder = NoMetrics() if metrics is None else metrics
         self._debug = debug
 
     def start(self, use_case: str) -> StartedExecution:
@@ -99,7 +99,7 @@ class StartedExecution:
     the steps run, in debug mode only; ``broken_rules`` the rules broken.
     """
 
-    metrics: MetricsAdapter
+    metrics: MetricsRecorder
     use_case_name: str
     trace_id: str | None
     logger: LoggerPort

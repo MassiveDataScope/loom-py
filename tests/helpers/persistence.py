@@ -14,7 +14,7 @@ from loom.core.stores import (
     SERVER_PROFILE,
     PoolMetricsSink,
     RuntimeProfile,
-    StoreBackend,
+    StorePlugin,
     StoreRuntime,
     StoreWiring,
 )
@@ -23,7 +23,7 @@ from loom.core.stores.repository import CursorCodec
 
 
 def build_backend(
-    backend: StoreBackend,
+    backend: StorePlugin,
     ctx: ConfigContext,
     models: Sequence[type[BaseModel]] = (),
     profile: RuntimeProfile = SERVER_PROFILE,

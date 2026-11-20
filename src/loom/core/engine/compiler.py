@@ -7,7 +7,7 @@ from typing import Any, Final, get_args, get_origin
 
 from loom.core.engine.compilable import Compilable
 from loom.core.engine.events import EventKind, RuntimeEvent
-from loom.core.engine.metrics import MetricsAdapter, NoMetrics
+from loom.core.engine.metrics import MetricsRecorder, NoMetrics
 from loom.core.engine.plan import (
     CallerBinding,
     CommandStep,
@@ -104,11 +104,11 @@ class UseCaseCompiler:
     def __init__(
         self,
         logger: LoggerPort | None = None,
-        metrics: MetricsAdapter | None = None,
+        metrics: MetricsRecorder | None = None,
     ) -> None:
         self._cache: dict[type[Any], ExecutionPlan] = {}
         self._logger = logger or get_logger(__name__)
-        self._metrics: MetricsAdapter = NoMetrics() if metrics is None else metrics
+        self._metrics: MetricsRecorder = NoMetrics() if metrics is None else metrics
 
     def compile(self, use_case_type: type[Compilable]) -> ExecutionPlan:
         """Return the ExecutionPlan for ``use_case_type``, compiling if needed.

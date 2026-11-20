@@ -45,7 +45,7 @@ from typing import Any, NamedTuple, TypeVar
 import msgspec
 
 from loom.core.engine.compiler import UseCaseCompiler
-from loom.core.engine.metrics import MetricsAdapter
+from loom.core.engine.metrics import MetricsRecorder
 from loom.core.engine.plan import ExecutionPlan
 from loom.core.errors import UnsupportedBoundaryType
 from loom.core.model import get_column_fields, is_pydantic_model, loom_type, msgspec_type
@@ -647,7 +647,7 @@ class RestInterfaceCompiler:
         self,
         use_case_compiler: UseCaseCompiler,
         defaults: RestApiDefaults | None = None,
-        metrics: MetricsAdapter | None = None,
+        metrics: MetricsRecorder | None = None,
     ) -> None:
         self._uc_compiler = use_case_compiler
         self._defaults = defaults or RestApiDefaults()

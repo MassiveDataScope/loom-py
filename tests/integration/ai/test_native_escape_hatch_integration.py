@@ -1,4 +1,4 @@
-"""The escape hatch over a real ``AgentRuntime`` and a real ``PydanticAIEngineProvider``.
+"""The escape hatch over a real ``AgentRuntime`` and a real ``PydanticAIEnginePlugin``.
 
 ``tests/unit/ai/engines/test_pydantic_ai_escape_hatch.py`` drives ``native_agent``
 against a hand-written handle that reimplements the marker-resolved path, and
@@ -6,7 +6,7 @@ its spend-cap test used a plan holding no capability at all. Neither would
 notice a mutation that pins a fixed identity in ``_BoundAgentHandle.native``
 or drops the artefact's grants from what the hatch hands back. This module
 closes both gaps: a real ``AgentRuntime`` over a real
-``PydanticAIEngineProvider``, resolving a marker exactly as
+``PydanticAIEnginePlugin``, resolving a marker exactly as
 ``agent_marker_resolver`` does, with a plan granting one real capability.
 """
 
@@ -19,7 +19,7 @@ from typing import Any, cast
 import pytest
 
 from loom.ai.abc import AgentHandle
-from loom.ai.engines.pydantic_ai import PydanticAIEngineProvider, native_agent
+from loom.ai.engines.pydantic_ai import PydanticAIEnginePlugin, native_agent
 from loom.ai.engines.pydantic_ai._engine import PydanticAIEngine
 from loom.ai.errors import AgentRunError, AgentRunErrorCode
 from loom.ai.execution import AgentRuntime
@@ -54,12 +54,12 @@ def _as_handle(handle: object) -> AgentHandle[Any]:
 async def _runtime_and_model() -> tuple[AgentRuntime, ScriptedToolModel]:
     kernel = create_kernel(config=object(), use_cases=[WhoAmIUseCase])
     model = ScriptedToolModel(calls=(("usecase_whoami", {}),))
-    provider = PydanticAIEngineProvider(model_resolver=lambda target: model.as_model())
+    provider = PydanticAIEnginePlugin(model_resolver=lambda target: model.as_model())
     plan = make_plan(_AGENT_NAME, capabilities=(whoami_capability(),))
     runtime = AgentRuntime(
         plans=[plan],
         config=make_ai_config(),
-        engine_provider=provider,  # type: ignore[arg-type]
+        engine_plugin=provider,  # type: ignore[arg-type]
         deps=AgentDepsFactory(kernel.invoker),
         container=kernel.container,
     )

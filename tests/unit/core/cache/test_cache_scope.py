@@ -25,7 +25,7 @@ from loom.testing import make
 from ._doubles import (
     AcmeCacheWidget,
     CachedEnv,
-    CountingCacheBackend,
+    CountingCacheStore,
     CountingRepository,
     WidgetUpdate,
     WritableRepository,
@@ -122,11 +122,11 @@ class SettingsRepository(CountingRepository[AcmeCacheWidget]):
         self.session_manager = _SessionManager(has_session_settings)
 
 
-def _entity_entries(backend: CountingCacheBackend) -> list[str]:
+def _entity_entries(backend: CountingCacheStore) -> list[str]:
     return [key for key in backend.data if key.startswith("widget:") and ":list:" not in key]
 
 
-def _wrap(repository: Any, backend: CountingCacheBackend) -> CachedRepository[Any, Any, Any, Any]:
+def _wrap(repository: Any, backend: CountingCacheStore) -> CachedRepository[Any, Any, Any, Any]:
     return CachedRepository(
         repository,
         config=CacheConfig(enabled=True, default_ttl=100, default_list_ttl=50),
@@ -304,7 +304,7 @@ class TestTheScopeIsNeverLost:
     def test_an_unscoped_repository_reports_the_empty_scope(self) -> None:
         wrapper = _wrap(
             CountingRepository([AcmeCacheWidget(id=ROW_A, name="a")], AcmeCacheWidget),
-            CountingCacheBackend(),
+            CountingCacheStore(),
         )
 
         assert wrapper.cache_scope() == ""
@@ -312,7 +312,7 @@ class TestTheScopeIsNeverLost:
     @pytest.mark.asyncio
     async def test_a_wrapper_around_a_wrapper_keys_by_the_innermost_scope(self) -> None:
         repository = ScopedRepository([AcmeCacheWidget(id=ROW_A, name="a")])
-        outer = _wrap(_wrap(repository, CountingCacheBackend()), CountingCacheBackend())
+        outer = _wrap(_wrap(repository, CountingCacheStore()), CountingCacheStore())
 
         await outer.get_by_id(ROW_A)
         repository.scope = SCOPE_B
@@ -322,13 +322,13 @@ class TestTheScopeIsNeverLost:
 
     def test_a_repository_with_session_settings_and_no_scope_is_refused(self) -> None:
         repository = SettingsRepository(has_session_settings=True)
-        backend = CountingCacheBackend()
+        backend = CountingCacheStore()
 
         with pytest.raises(RuntimeError, match="cache_scope"):
             _wrap(repository, backend)
 
     def test_a_repository_without_session_settings_needs_no_scope(self) -> None:
-        wrapper = _wrap(SettingsRepository(has_session_settings=False), CountingCacheBackend())
+        wrapper = _wrap(SettingsRepository(has_session_settings=False), CountingCacheStore())
 
         assert wrapper.cache_scope() == ""
 
@@ -339,7 +339,7 @@ class TestAScopeChangeSkipsTheWrite:
     @pytest.mark.asyncio
     async def test_an_entity_loaded_under_one_scope_is_not_stored_after_a_change(self) -> None:
         repository = SwitchingRepository([AcmeCacheWidget(id=ROW_A, name="a")])
-        backend = CountingCacheBackend()
+        backend = CountingCacheStore()
         wrapper = _wrap(repository, backend)
 
         row = await wrapper.get_by_id(ROW_A)
@@ -350,7 +350,7 @@ class TestAScopeChangeSkipsTheWrite:
     @pytest.mark.asyncio
     async def test_a_page_loaded_under_one_scope_is_not_stored_after_a_change(self) -> None:
         repository = SwitchingRepository([AcmeCacheWidget(id=ROW_A, name="a")])
-        backend = CountingCacheBackend()
+        backend = CountingCacheStore()
         wrapper = _wrap(repository, backend)
 
         page = await wrapper.list_paginated(PAGE)
@@ -361,7 +361,7 @@ class TestAScopeChangeSkipsTheWrite:
     @pytest.mark.asyncio
     async def test_a_custom_read_under_one_scope_is_not_stored_after_a_change(self) -> None:
         repository = SwitchingRepository([AcmeCacheWidget(id=ROW_A, name="a")])
-        backend = CountingCacheBackend()
+        backend = CountingCacheStore()
         wrapper = _wrap(repository, backend)
 
         assert await wrapper.all_names() == ["a"]
@@ -373,7 +373,7 @@ class TestAScopeChangeSkipsTheWrite:
     ) -> None:
         repository = ScopedRepository([AcmeCacheWidget(id=ROW_A, name="a")])
         repository.reads = 0
-        wrapper = _wrap(repository, CountingCacheBackend())
+        wrapper = _wrap(repository, CountingCacheStore())
 
         await wrapper.list_paginated(PAGE)
 
@@ -388,7 +388,7 @@ class TestACallerTransactionBypassesTheCache:
     async def test_every_read_reaches_the_repository_and_nothing_is_stored(self) -> None:
         repository = TransactionRepository([AcmeCacheWidget(id=ROW_A, name="a")])
         repository.in_transaction = True
-        backend = CountingCacheBackend()
+        backend = CountingCacheStore()
         wrapper = _wrap(repository, backend)
 
         for _ in range(2):
@@ -409,7 +409,7 @@ class TestACallerTransactionBypassesTheCache:
     @pytest.mark.asyncio
     async def test_reads_after_the_transaction_use_the_cache_again(self) -> None:
         repository = TransactionRepository([AcmeCacheWidget(id=ROW_A, name="a")])
-        wrapper = _wrap(repository, CountingCacheBackend())
+        wrapper = _wrap(repository, CountingCacheStore())
 
         repository.in_transaction = True
         await wrapper.get_by_id(ROW_A)
@@ -424,7 +424,7 @@ class TestASessionPassedByHandBypassesTheCache:
     @pytest.mark.asyncio
     async def test_a_custom_read_given_a_session_is_never_cached(self) -> None:
         repository = TransactionRepository([AcmeCacheWidget(id=ROW_A, name="a")])
-        backend = CountingCacheBackend()
+        backend = CountingCacheStore()
         wrapper = _wrap(repository, backend)
 
         await wrapper.names_in(session=object())
@@ -436,7 +436,7 @@ class TestASessionPassedByHandBypassesTheCache:
     @pytest.mark.asyncio
     async def test_the_same_read_without_a_session_is_cached(self) -> None:
         repository = TransactionRepository([AcmeCacheWidget(id=ROW_A, name="a")])
-        wrapper = _wrap(repository, CountingCacheBackend())
+        wrapper = _wrap(repository, CountingCacheStore())
 
         await wrapper.names_in()
         await wrapper.names_in()
@@ -446,7 +446,7 @@ class TestASessionPassedByHandBypassesTheCache:
     @pytest.mark.asyncio
     async def test_a_session_passed_positionally_is_never_cached(self) -> None:
         repository = TransactionRepository([AcmeCacheWidget(id=ROW_A, name="a")])
-        backend = CountingCacheBackend()
+        backend = CountingCacheStore()
         wrapper = _wrap(repository, backend)
 
         await wrapper.names_in("a", object())
@@ -458,7 +458,7 @@ class TestASessionPassedByHandBypassesTheCache:
     @pytest.mark.asyncio
     async def test_a_session_of_none_is_cached_like_no_session(self) -> None:
         repository = TransactionRepository([AcmeCacheWidget(id=ROW_A, name="a")])
-        wrapper = _wrap(repository, CountingCacheBackend())
+        wrapper = _wrap(repository, CountingCacheStore())
 
         await wrapper.names_in("a", None)
         await wrapper.names_in("a", None)
@@ -469,7 +469,7 @@ class TestASessionPassedByHandBypassesTheCache:
 class TestAWrapperAroundAWrapperInATransaction:
     def test_the_wrapper_reports_the_wrapped_caller_scoped_session(self) -> None:
         repository = TransactionRepository([AcmeCacheWidget(id=ROW_A, name="a")])
-        wrapper = _wrap(repository, CountingCacheBackend())
+        wrapper = _wrap(repository, CountingCacheStore())
 
         repository.in_transaction = True
         assert wrapper.has_caller_scoped_session() is True
@@ -479,7 +479,7 @@ class TestAWrapperAroundAWrapperInATransaction:
     def test_a_wrapper_over_a_repository_without_the_capability_reports_none(self) -> None:
         wrapper = _wrap(
             CountingRepository([AcmeCacheWidget(id=ROW_A, name="a")], AcmeCacheWidget),
-            CountingCacheBackend(),
+            CountingCacheStore(),
         )
 
         assert wrapper.has_caller_scoped_session() is False
@@ -488,8 +488,8 @@ class TestAWrapperAroundAWrapperInATransaction:
     async def test_the_outer_cache_stays_out_of_the_transaction_too(self) -> None:
         repository = TransactionRepository([AcmeCacheWidget(id=ROW_A, name="a")])
         repository.in_transaction = True
-        outer_backend = CountingCacheBackend()
-        outer = _wrap(_wrap(repository, CountingCacheBackend()), outer_backend)
+        outer_backend = CountingCacheStore()
+        outer = _wrap(_wrap(repository, CountingCacheStore()), outer_backend)
 
         await outer.get_by_id(ROW_A)
         await outer.get_by_id(ROW_A)
@@ -502,7 +502,7 @@ class TestASessionScopedReadFollowsTheSameRule:
     @pytest.mark.asyncio
     async def test_a_read_without_a_session_is_cached(self) -> None:
         repository = SessionScopedRepository([AcmeCacheWidget(id=ROW_A, name="a")])
-        wrapper = _wrap(repository, CountingCacheBackend())
+        wrapper = _wrap(repository, CountingCacheStore())
 
         assert await wrapper.names_with("a") == ["a"]
         assert await wrapper.names_with("a") == ["a"]
@@ -512,7 +512,7 @@ class TestASessionScopedReadFollowsTheSameRule:
     @pytest.mark.asyncio
     async def test_a_read_given_a_session_is_not_cached(self) -> None:
         repository = SessionScopedRepository([AcmeCacheWidget(id=ROW_A, name="a")])
-        wrapper = _wrap(repository, CountingCacheBackend())
+        wrapper = _wrap(repository, CountingCacheStore())
         session = object()
 
         await wrapper.names_with("a")

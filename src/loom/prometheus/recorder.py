@@ -1,6 +1,6 @@
 """Prometheus metrics adapter for Loom use-case events.
 
-Implements the :class:`~loom.core.engine.metrics.MetricsAdapter` protocol
+Implements the :class:`~loom.core.engine.metrics.MetricsRecorder` protocol
 using ``prometheus_client`` instruments.  Install the optional dependency
 with::
 
@@ -8,9 +8,9 @@ with::
 
 Usage::
 
-    from loom.prometheus import PrometheusMetricsAdapter
+    from loom.prometheus import PrometheusMetricsRecorder
 
-    adapter = PrometheusMetricsAdapter()
+    adapter = PrometheusMetricsRecorder()
 
     kernel = create_kernel(
         config=cfg,
@@ -62,8 +62,8 @@ _JOB_EVENT_KINDS = frozenset(kind for kind in EventKind if kind.startswith("job_
 _INSTRUMENTS = (_REQUESTS_TOTAL, _DURATION_SECONDS, _ERRORS_TOTAL, _JOB_EVENTS_TOTAL)
 
 
-class PrometheusMetricsAdapter:
-    """Prometheus implementation of the ``MetricsAdapter`` protocol.
+class PrometheusMetricsRecorder:
+    """Prometheus implementation of the ``MetricsRecorder`` protocol.
 
     Records the use-case instruments and one for jobs:
 
@@ -95,9 +95,9 @@ class PrometheusMetricsAdapter:
 
     Example::
 
-        from loom.prometheus import PrometheusMetricsAdapter
+        from loom.prometheus import PrometheusMetricsRecorder
 
-        adapter = PrometheusMetricsAdapter()
+        adapter = PrometheusMetricsRecorder()
         kernel = create_kernel(config=cfg, use_cases=[...], metrics=adapter)
     """
 

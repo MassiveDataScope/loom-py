@@ -11,7 +11,7 @@ from loom.core.model import LoomStruct
 from loom.core.stores.catalog import DEFAULT_STORE, load_catalog
 from loom.core.stores.database import load_database_config
 from loom.core.stores.profile import SERVER_PROFILE, STREAMING_PROFILE
-from loom.stores.sqlalchemy.plugin import SQLAlchemyBackend
+from loom.stores.sqlalchemy.plugin import SQLAlchemyStorePlugin
 from loom.stores.sqlalchemy.session_manager import SessionManager, build_session_manager
 from loom.streaming.nodes._table import IntoTable
 from loom.streaming.nodes._table.config import resolve_sqlalchemy_table_config
@@ -40,7 +40,7 @@ def _api_manager(database: dict[str, Any]) -> SessionManager:
             },
         }
     )
-    wiring = build_backend(SQLAlchemyBackend(), ctx, (), SERVER_PROFILE)
+    wiring = build_backend(SQLAlchemyStorePlugin(), ctx, (), SERVER_PROFILE)
     factory: Any = wiring.uow_factory
     return factory._session_manager
 

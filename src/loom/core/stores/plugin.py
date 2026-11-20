@@ -1,6 +1,6 @@
 """Store backend plugin contract.
 
-A backend is resolved by name from the ``loom.stores.backends`` entry
+A backend is resolved by name from the ``loom.stores.plugins`` entry
 point group and asked once, at bootstrap, for everything the host needs to
 wire persistence: the unit-of-work factory, the DI module registering
 repositories, the startup checks, the open/close lifespan, and a model
@@ -78,7 +78,7 @@ class StoreWiring:
     elevation: StoreElevation | None = None
 
 
-class StoreBackend(Protocol):
+class StorePlugin(Protocol):
     """Factory a store backend exposes through its entry point.
 
     The entry point targets a class with a no-argument constructor; the
@@ -124,7 +124,7 @@ class StoreBackend(Protocol):
 
 
 __all__ = [
-    "StoreBackend",
+    "StorePlugin",
     "StoreWiring",
     "no_lifespan",
     "no_model_preparation",

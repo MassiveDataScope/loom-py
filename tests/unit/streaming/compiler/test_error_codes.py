@@ -11,13 +11,12 @@ from omegaconf import DictConfig, OmegaConf
 
 from loom.core.stores.catalog import StoreCatalog
 from loom.streaming import (
-    Backend,
     BatchExpandStep,
     BatchStep,
     Broadcast,
     BroadcastRoute,
     CollectBatch,
-    ContextFactory,
+    ContextSupplier,
     Drain,
     ErrorEnvelope,
     ExpandRoutes,
@@ -37,6 +36,7 @@ from loom.streaming import (
     Route,
     Router,
     StreamFlow,
+    TableEngine,
     WindowStrategy,
     With,
     msg,
@@ -214,7 +214,7 @@ class _NeedsPrefix(RecordStep[Order, Result]):
         return Result(value=message.payload.order_id)
 
 
-class _Tokens(ContextFactory):
+class _Tokens(ContextSupplier):
     """A configured context factory: a binding that resolves to no process node."""
 
     def __init__(self, *, token: str) -> None:
@@ -333,7 +333,7 @@ _COMPILE_PATH_CASES: dict[str, _FlowCase] = {
         "selector",
     ),
     "storage sink without name": (
-        lambda: _flow(FakeStep(), IntoTable(payload=Result, table="t", backend=Backend.DELTA)),
+        lambda: _flow(FakeStep(), IntoTable(payload=Result, table="t", engine=TableEngine.DELTA)),
         {},
         StreamingErrorCode.SINK_MISSING_NAME,
         "storage sink 'IntoTable': missing name",
@@ -343,7 +343,7 @@ _COMPILE_PATH_CASES: dict[str, _FlowCase] = {
     "storage sink without config section": (
         lambda: _flow(
             FakeStep(),
-            IntoTable(payload=Result, table="t", backend=Backend.CLICKHOUSE, name="results"),
+            IntoTable(payload=Result, table="t", engine=TableEngine.CLICKHOUSE, name="results"),
         ),
         {},
         StreamingErrorCode.SINK_CONFIG_INVALID,
@@ -366,7 +366,7 @@ _COMPILE_PATH_CASES: dict[str, _FlowCase] = {
         {},
         StreamingErrorCode.BATCH_SCOPE_DIRECT_CONTEXT,
         "With with scope=BATCH cannot use direct context manager instances: db. "
-        "Use ContextFactory for batch-scoped resources.",
+        "Use ContextSupplier for batch-scoped resources.",
         "With",
         None,
     ),
@@ -571,7 +571,7 @@ _COMPILE_PATH_CASES: dict[str, _FlowCase] = {
     "flow output after a process that ends in IntoSink": (
         lambda: _flow(
             FakeStep(),
-            IntoTable(payload=Result, table="t", backend=Backend.DELTA, name="results"),
+            IntoTable(payload=Result, table="t", engine=TableEngine.DELTA, name="results"),
             output=_out(),
         ),
         {"streaming": {"sinks": {"results": {"uri": "memory://results"}}}},
@@ -715,7 +715,7 @@ _COMPILE_PATH_CASES: dict[str, _FlowCase] = {
         lambda: _flow(
             CollectBatch(3, 50),
             _SameBatch(),
-            IntoTable(payload=Order, table="t", backend=Backend.DELTA, name="orders"),
+            IntoTable(payload=Order, table="t", engine=TableEngine.DELTA, name="orders"),
         ),
         {},
         StreamingErrorCode.SHAPE_MISMATCH,

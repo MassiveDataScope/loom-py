@@ -43,7 +43,7 @@ from loom.core.observability.span import (
 )
 from loom.core.observability.topology import ROOT_SCOPES
 from loom.core.tracing.context import active_trace_id
-from loom.prometheus.lifecycle import PrometheusLifecycleAdapter
+from loom.prometheus.lifecycle import PrometheusLifecycleObserver
 
 
 def _resolve_scrape_port(cfg: PrometheusObservabilityConfig) -> int | None:
@@ -124,7 +124,7 @@ def _build_observers(
         observers.append(StructlogLifecycleObserver())
     if config.prometheus.enabled:
         observers.append(
-            PrometheusLifecycleAdapter(
+            PrometheusLifecycleObserver(
                 pushgateway_url=config.prometheus.pushgateway_url,
             )
         )

@@ -19,15 +19,15 @@ from loom.core.plugins.entrypoints import (
     select_entry_point,
 )
 from loom.core.stores import (
-    NoneBackend,
-    StoreBackend,
+    NullStorePlugin,
+    StorePlugin,
     StoreWiring,
     resolve_store_backend,
 )
 from loom.core.stores.profile import SERVER_PROFILE, StoreRuntime
 from tests.helpers.persistence import build_backend
 
-_GROUP = "loom.stores.backends"
+_GROUP = "loom.stores.plugins"
 _SRC = Path(__file__).resolve().parents[4] / "src"
 
 
@@ -63,7 +63,7 @@ class _FakeBackend:
     repository_type: ClassVar[type | None] = None
 
     def build(self, ctx: ConfigContext, models: object, runtime: StoreRuntime) -> StoreWiring:
-        return NoneBackend().build(ctx, (), runtime)
+        return NullStorePlugin().build(ctx, (), runtime)
 
 
 def _install(
@@ -126,7 +126,7 @@ class TestResolveBackend:
     def test_none_backend_is_registered_by_loom(self) -> None:
         backend = resolve_store_backend("none")
 
-        assert isinstance(backend, NoneBackend)
+        assert isinstance(backend, NullStorePlugin)
 
 
 class _UntouchedContainer:
@@ -136,16 +136,16 @@ class _UntouchedContainer:
         raise AssertionError(f"the registration module touched container.{name}")
 
 
-class TestNoneBackend:
+class TestNullStorePlugin:
     def _wiring(self) -> StoreWiring:
-        backend: StoreBackend = NoneBackend()
+        backend: StorePlugin = NullStorePlugin()
         return build_backend(backend, ConfigContext.from_dict({}), (), SERVER_PROFILE)
 
     def test_build_has_no_unit_of_work_and_no_default_repository_type(self) -> None:
         wiring = self._wiring()
 
         assert wiring.uow_factory is None
-        assert NoneBackend.repository_type is None
+        assert NullStorePlugin.repository_type is None
         assert wiring.readiness is None
 
     def test_registration_module_registers_nothing(self) -> None:

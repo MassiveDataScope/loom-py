@@ -30,7 +30,7 @@ from loom.jobs.inline import AsyncioJobTimer, InlineJobTransport
 if TYPE_CHECKING:
     from loom.celery.config import CeleryConfig
     from loom.core.engine.executor import RuntimeExecutor
-    from loom.core.engine.metrics import MetricsAdapter
+    from loom.core.engine.metrics import MetricsRecorder
     from loom.core.use_case.factory import UseCaseFactory
 
 _log = get_logger(__name__)
@@ -53,7 +53,7 @@ class JobTransportContext:
     aws: AwsClients
     factory: UseCaseFactory
     executor: RuntimeExecutor
-    metrics: MetricsAdapter | None
+    metrics: MetricsRecorder | None
     observability: ObservabilityRuntime | None
     jobs: tuple[type[Job[Any]], ...] = ()
     callbacks: DispatchableCallbacks = field(default_factory=DispatchableCallbacks.any)

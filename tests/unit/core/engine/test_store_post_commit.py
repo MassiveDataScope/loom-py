@@ -41,7 +41,7 @@ from loom.stores.sqlalchemy.schema import compile_all, get_compiled
 from loom.stores.sqlalchemy.session_manager import SessionManager
 from loom.stores.sqlalchemy.uow import SQLAlchemyUnitOfWork
 from tests.helpers.jobs import SQS_URL, EmailJob, SQSClient, sqs_service
-from tests.unit.core.cache._doubles import CountingCacheBackend
+from tests.unit.core.cache._doubles import CountingCacheStore
 
 pytestmark = pytest.mark.timeout(30)
 
@@ -209,7 +209,7 @@ class _Stores:
     def write_entry(self, entries: Any = None) -> Step:
         return lambda: (entries or self.entries).create(_New(ref="e"))
 
-    def cached_entries(self, backend: CountingCacheBackend) -> Any:
+    def cached_entries(self, backend: CountingCacheStore) -> Any:
         resolver = GenerationalDependencyResolver(backend)
         return CachedRepository(
             self.entries, config=CacheConfig(), cache=backend, dependency_resolver=resolver
@@ -358,7 +358,7 @@ class TestStorePostCommit:
         self, stores: _Stores, failing: StoreKey, bumped: bool, error: type[BaseException]
     ) -> None:
         FAILURES[failing] = _Refused()
-        backend = CountingCacheBackend()
+        backend = CountingCacheStore()
         cached = stores.cached_entries(backend)
         use_case = _JoinsAudit(cached, stores.write_entry(cached), stores.write_order())
 
@@ -370,7 +370,7 @@ class TestStorePostCommit:
     async def test_a_unit_of_work_entered_by_hand_bumps_once_it_committed(
         self, stores: _Stores
     ) -> None:
-        backend = CountingCacheBackend()
+        backend = CountingCacheStore()
         cached = stores.cached_entries(backend)
 
         async with SQLAlchemyUnitOfWork(stores.audit):
@@ -383,7 +383,7 @@ class TestStorePostCommit:
         self, stores: _Stores
     ) -> None:
         """T099 P4: a write outside the invocation commits at once; its bump must not wait."""
-        backend = CountingCacheBackend()
+        backend = CountingCacheStore()
         cached = stores.cached_entries(backend)
 
         async def durable() -> None:

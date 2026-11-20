@@ -43,7 +43,7 @@ from loom.core.observability.event import Scope
 from loom.core.observability.observability import ObservabilityRuntime
 
 if TYPE_CHECKING:
-    from loom.core.engine.metrics import MetricsAdapter
+    from loom.core.engine.metrics import MetricsRecorder
     from loom.core.job.callback import JobCallback
 
 ResultT = TypeVar("ResultT")
@@ -163,7 +163,7 @@ class CeleryJobTransport:
     def __init__(
         self,
         celery_app: Celery,
-        metrics: MetricsAdapter | None = None,
+        metrics: MetricsRecorder | None = None,
         observability_runtime: ObservabilityRuntime | None = None,
     ) -> None:
         self._app = celery_app

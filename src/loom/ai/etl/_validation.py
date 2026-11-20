@@ -6,7 +6,7 @@ from collections.abc import Callable
 from decimal import Decimal
 from typing import Any
 
-from loom.ai.abc import AgentEngineProvider
+from loom.ai.abc import AgentEnginePlugin
 from loom.ai.compiler import AgentPlan
 from loom.ai.errors import AgentCompilationError
 from loom.ai.etl._columns import output_columns
@@ -21,7 +21,7 @@ def validation_issues(
     *,
     max_usd: Decimal | None,
     compile_plans: Callable[[], tuple[AgentPlan, ...]],
-    engine_provider: Callable[[], AgentEngineProvider],
+    engine_plugin: Callable[[], AgentEnginePlugin],
 ) -> tuple[AgentIssue, ...]:
     """Return every reason agent *name* cannot serve a step, without spending anything.
 
@@ -30,7 +30,7 @@ def validation_issues(
         output_type: Type the step expects every answer to decode into.
         max_usd: Budget of one execution of the step, when declared.
         compile_plans: Compiles the artifacts declaring *name*.
-        engine_provider: Builds the engine provider asked whether it prices the
+        engine_plugin: Builds the engine provider asked whether it prices the
             model; called only when a budget is declared.
 
     Returns:
@@ -40,7 +40,7 @@ def validation_issues(
         plans = compile_plans()
         if not plans:
             return (_issue(AgentIssueKind.NOT_FOUND, f"no agent artifact declares {name!r}"),)
-        return _plan_issues(plans[0], output_type, max_usd, engine_provider)
+        return _plan_issues(plans[0], output_type, max_usd, engine_plugin)
     except AgentCompilationError as error:
         return (_issue(AgentIssueKind.COMPILATION_FAILED, _describe(error)),)
 
@@ -49,12 +49,12 @@ def _plan_issues(
     plan: AgentPlan,
     output_type: type[Any],
     max_usd: Decimal | None,
-    engine_provider: Callable[[], AgentEngineProvider],
+    engine_plugin: Callable[[], AgentEnginePlugin],
 ) -> tuple[AgentIssue, ...]:
     issues: list[AgentIssue] = []
     if (output := _output_issue(plan, output_type)) is not None:
         issues.append(output)
-    if _budgeted(plan, max_usd) and not _priced(plan, engine_provider()):
+    if _budgeted(plan, max_usd) and not _priced(plan, engine_plugin()):
         issues.append(_issue(AgentIssueKind.UNPRICED_BUDGET, _unpriced(plan)))
     if max_usd is not None and (ceiling := _ceiling_issue(plan, max_usd)) is not None:
         issues.append(ceiling)
@@ -86,7 +86,7 @@ def _budgeted(plan: AgentPlan, max_usd: Decimal | None) -> bool:
     return max_usd is not None or plan.policies.max_usd is not None
 
 
-def _priced(plan: AgentPlan, provider: AgentEngineProvider) -> bool:
+def _priced(plan: AgentPlan, provider: AgentEnginePlugin) -> bool:
     return plan.price is not None or engine_prices_model(provider, plan.inference)
 
 

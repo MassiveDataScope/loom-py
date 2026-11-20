@@ -17,7 +17,7 @@ from loom.core.observability.observability import ObservabilityRuntime  # noqa: 
 from loom.core.stores.database import DatabaseConfig, PoolConfig  # noqa: E402
 from loom.streaming.bytewax.handlers import storage as _storage  # noqa: E402
 from loom.streaming.compiler import CompiledStorageSink  # noqa: E402
-from loom.streaming.nodes._table import Backend, IntoTable  # noqa: E402
+from loom.streaming.nodes._table import IntoTable, TableEngine  # noqa: E402
 from loom.streaming.nodes._table.common import SqlAlchemySinkConfig  # noqa: E402
 from tests.unit.streaming.compiler.cases import Result  # noqa: E402
 
@@ -75,7 +75,7 @@ class TestStorageDynamicSink:
         node = IntoTable(
             payload=Result,
             table="results",
-            backend=Backend.SQLALCHEMY,
+            engine=TableEngine.SQLALCHEMY,
             name="results_sink",
         )
         compiled = CompiledStorageSink(
@@ -127,7 +127,7 @@ class TestStorageDynamicSink:
         node = IntoTable(
             payload=Result,
             table="results",
-            backend=Backend.SQLALCHEMY,
+            engine=TableEngine.SQLALCHEMY,
             name="results_sink",
         )
         compiled = CompiledStorageSink(

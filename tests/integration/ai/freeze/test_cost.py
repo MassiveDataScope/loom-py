@@ -41,7 +41,7 @@ import yaml  # noqa: E402
 from httpcore2._backends.auto import AutoBackend  # noqa: E402
 
 from loom.ai import registry  # noqa: E402
-from loom.ai.engines.pydantic_ai import PydanticAIEngineProvider, _mcp  # noqa: E402
+from loom.ai.engines.pydantic_ai import PydanticAIEnginePlugin, _mcp  # noqa: E402
 from loom.ai.engines.pydantic_ai import _transport as _transport  # noqa: E402
 from loom.ai.errors import AgentRunErrorCode  # noqa: E402
 from loom.composition import create_app  # noqa: E402
@@ -327,8 +327,8 @@ def _function_with_a_spare_server(
 ) -> LambdaHandler:
     """T06's function, plus an agent no use case or job reaches, granted a second server."""
     monkeypatch.setattr(_transport, "time", _WallClock())
-    provider = PydanticAIEngineProvider(model_resolver=_Model().model)
-    monkeypatch.setattr(registry, "resolve_engine_provider", lambda name: provider)
+    provider = PydanticAIEnginePlugin(model_resolver=_Model().model)
+    monkeypatch.setattr(registry, "resolve_engine_plugin", lambda name: provider)
     path = Path(_write_project(tmp_path, server.url, trigger, agents=True))
     config = yaml.safe_load(path.read_text(encoding="utf-8"))
     spare_server = {"url": spare.url, "timeout_ms": 5000, "auth": {"kind": _TOKEN_KIND}}

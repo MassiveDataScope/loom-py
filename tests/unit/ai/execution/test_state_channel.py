@@ -76,7 +76,7 @@ def _runtime(plan: Any, engine: RecordingScriptedEngine) -> AgentRuntime:
     return AgentRuntime(
         plans=[plan],
         config=make_ai_config(),
-        engine_provider=CountingEngineProvider(engines={_AGENT: engine}),  # type: ignore[arg-type]
+        engine_plugin=CountingEngineProvider(engines={_AGENT: engine}),  # type: ignore[arg-type]
         deps=StubDepsFactory(),
         container=LoomContainer(),
     )

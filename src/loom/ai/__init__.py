@@ -16,7 +16,7 @@ from __future__ import annotations
 from loom.ai.abc import (
     AgentAnswer,
     AgentEngine,
-    AgentEngineProvider,
+    AgentEnginePlugin,
     AgentEvent,
     AgentHandle,
     AgentResult,
@@ -70,7 +70,7 @@ __all__ = [
     "AgentAnswer",
     "AgentEndpointConfig",
     "AgentEngine",
-    "AgentEngineProvider",
+    "AgentEnginePlugin",
     "AgentEvent",
     "AgentHandle",
     "AgentHealth",

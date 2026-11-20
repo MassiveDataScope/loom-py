@@ -49,7 +49,7 @@ from loom.core.model.redaction import Dsn  # noqa: E402
 from loom.core.model.relation import RelationField  # noqa: E402
 from loom.stores.sqlalchemy import session_manager as session_manager_module  # noqa: E402
 from loom.stores.sqlalchemy.session_manager import SessionManager  # noqa: E402
-from loom.streaming import Backend, FromTopic, IntoTable, Process, StreamFlow  # noqa: E402
+from loom.streaming import FromTopic, IntoTable, Process, StreamFlow, TableEngine  # noqa: E402
 from loom.streaming.nodes._table import DeltaSinkConfig, SqlAlchemySinkConfig  # noqa: E402
 from loom.streaming.nodes._table import _delta as _table_delta  # noqa: E402
 from loom.streaming.nodes._table.common import ClickHouseSinkConfig  # noqa: E402
@@ -186,7 +186,7 @@ class TestIntoTableSQLAlchemyIntegration:
         )
         bridge = AsyncBridge()
         session_manager = SessionManager(_async_url(path), store=DEFAULT_STORE)
-        node = IntoTable(payload=_OrderRow, table="orders", backend=Backend.SQLALCHEMY)
+        node = IntoTable(payload=_OrderRow, table="orders", engine=TableEngine.SQLALCHEMY)
         sink_config = SqlAlchemySinkConfig.from_config(
             {"chunk_size": 500, "table": "orders"},
             default_table="orders",
@@ -235,7 +235,7 @@ class TestIntoTableSQLAlchemyIntegration:
         items = [with_note, without_note] if first_has_note else [without_note, with_note]
         bridge = AsyncBridge()
         session_manager = SessionManager(_async_url(path), store=DEFAULT_STORE)
-        node = IntoTable(payload=_NoteRow, table="notes", backend=Backend.SQLALCHEMY)
+        node = IntoTable(payload=_NoteRow, table="notes", engine=TableEngine.SQLALCHEMY)
         partition = node.build_partition(
             SqlAlchemySinkConfig.from_config({"table": "notes"}, default_table="notes"),
             worker_index=0,
@@ -262,7 +262,7 @@ class TestIntoTableSQLAlchemyIntegration:
         path = _make_db(tmp_path, "CREATE TABLE visits (visit_id CHAR(32), label TEXT)")
         bridge = AsyncBridge()
         session_manager = SessionManager(_async_url(path), store=DEFAULT_STORE)
-        node = IntoTable(payload=_VisitRow, table="visits", backend=Backend.SQLALCHEMY)
+        node = IntoTable(payload=_VisitRow, table="visits", engine=TableEngine.SQLALCHEMY)
         sink_config = SqlAlchemySinkConfig.from_config({"table": "visits"}, default_table="visits")
         partition = node.build_partition(
             sink_config,
@@ -392,7 +392,7 @@ class TestIntoTableSQLAlchemyIntegration:
                     IntoTable(
                         payload=_OrderRow,
                         table="orders",
-                        backend=Backend.SQLALCHEMY,
+                        engine=TableEngine.SQLALCHEMY,
                         name="orders_sink",
                     ),
                 ),
@@ -493,7 +493,7 @@ class TestIntoTableSQLAlchemyIntegration:
                     IntoTable(
                         payload=_OrderRow,
                         table="events",
-                        backend=Backend.DELTA,
+                        engine=TableEngine.DELTA,
                         name="events_sink",
                     ),
                 )
@@ -549,7 +549,7 @@ class TestIntoTableSQLAlchemyIntegration:
         self, tmp_path: Path
     ) -> None:
         pytest.importorskip("deltalake")
-        node = IntoTable(payload=_OrderRow, table="events", backend=Backend.DELTA)
+        node = IntoTable(payload=_OrderRow, table="events", engine=TableEngine.DELTA)
         config = DeltaSinkConfig.from_config(
             {"uri": str(tmp_path / "events_delta"), "buffer_max_records": 3},
             default_table="events",
@@ -564,7 +564,7 @@ class TestIntoTableSQLAlchemyIntegration:
     def test_a_delta_table_gets_no_column_for_a_relation_field(self, tmp_path: Path) -> None:
         pytest.importorskip("deltalake")
         uri = str(tmp_path / "owned_delta")
-        node = IntoTable(payload=_OwnedRow, table="owned", backend=Backend.DELTA)
+        node = IntoTable(payload=_OwnedRow, table="owned", engine=TableEngine.DELTA)
         config = DeltaSinkConfig.from_config({"uri": uri}, default_table="owned")
         partition = node.build_partition(config, worker_index=0, worker_count=1)
 
@@ -578,7 +578,7 @@ class TestIntoTableSQLAlchemyIntegration:
     ) -> None:
         pytest.importorskip("deltalake")
         uri = str(tmp_path / "notes_delta")
-        node = IntoTable(payload=_NoteRow, table="notes", backend=Backend.DELTA)
+        node = IntoTable(payload=_NoteRow, table="notes", engine=TableEngine.DELTA)
         config = DeltaSinkConfig.from_config({"uri": uri}, default_table="notes")
         partition = node.build_partition(config, worker_index=0, worker_count=1)
         batch = [_NoteRow(note_id=1)]
@@ -596,7 +596,7 @@ class TestIntoTableSQLAlchemyIntegration:
     def _write_to_delta(self, tmp_path: Path, payload: type[Any], items: list[Any]) -> str:
         pytest.importorskip("deltalake")
         uri = str(tmp_path / "converted_delta")
-        node = IntoTable(payload=payload, table="converted", backend=Backend.DELTA)
+        node = IntoTable(payload=payload, table="converted", engine=TableEngine.DELTA)
         config = DeltaSinkConfig.from_config({"uri": uri}, default_table="converted")
         partition = node.build_partition(config, worker_index=0, worker_count=1)
         partition.write_batch(items)
@@ -638,7 +638,7 @@ class TestIntoTableSQLAlchemyIntegration:
         class _NoColumns(LoomStruct):
             pass
 
-        node = IntoTable(payload=_NoColumns, table="events", backend=Backend.DELTA)
+        node = IntoTable(payload=_NoColumns, table="events", engine=TableEngine.DELTA)
         config = DeltaSinkConfig.from_config(
             {"uri": str(tmp_path / "events_delta")}, default_table="events"
         )
@@ -713,7 +713,7 @@ def pg_table(pg_uri: str) -> Iterator[str]:
 def _write_to_postgres(uri: str, table: str, payload: type[Any], items: list[Any]) -> None:
     bridge = AsyncBridge()
     session_manager = SessionManager(uri, store=DEFAULT_STORE)
-    node = IntoTable(payload=payload, table=table, backend=Backend.SQLALCHEMY)
+    node = IntoTable(payload=payload, table=table, engine=TableEngine.SQLALCHEMY)
     partition = node.build_partition(
         SqlAlchemySinkConfig.from_config({"table": table}, default_table=table),
         worker_index=0,
@@ -771,7 +771,7 @@ class TestIntoTableClickHouseUnit:
 
     def test_write_batch_inserts_column_oriented(self, mock_ch_client: MagicMock) -> None:
         """close() flushes all rows in column-oriented format."""
-        node = IntoTable(payload=_CHRow, table="t", backend=Backend.CLICKHOUSE)
+        node = IntoTable(payload=_CHRow, table="t", engine=TableEngine.CLICKHOUSE)
         partition = node.build_partition(_ch_config(), worker_index=0, worker_count=1)
 
         partition.write_batch(
@@ -795,7 +795,7 @@ class TestIntoTableClickHouseUnit:
         assert data[4] == [None, 10]  # parent_id: Nullable
 
     def test_a_relation_field_is_not_a_column(self, mock_ch_client: MagicMock) -> None:
-        node = IntoTable(payload=_OwnedRow, table="t", backend=Backend.CLICKHOUSE)
+        node = IntoTable(payload=_OwnedRow, table="t", engine=TableEngine.CLICKHOUSE)
         partition = node.build_partition(_ch_config(), worker_index=0, worker_count=1)
 
         partition.write_batch([_OwnedRow(owner_id=3, row_id=7)])
@@ -808,7 +808,7 @@ class TestIntoTableClickHouseUnit:
     def test_an_unset_column_field_is_refused_with_its_name_and_table(
         self, mock_ch_client: MagicMock
     ) -> None:
-        node = IntoTable(payload=_NoteRow, table="notes", backend=Backend.CLICKHOUSE)
+        node = IntoTable(payload=_NoteRow, table="notes", engine=TableEngine.CLICKHOUSE)
         partition = node.build_partition(_ch_config("notes"), worker_index=0, worker_count=1)
         batch = [_NoteRow(note_id=1)]
 
@@ -824,7 +824,7 @@ class TestIntoTableClickHouseUnit:
 
     def test_list_field_not_json_serialised(self, mock_ch_client: MagicMock) -> None:
         """list[str] arrives at insert() as a Python list, never as a JSON string."""
-        node = IntoTable(payload=_CHRow, table="t", backend=Backend.CLICKHOUSE)
+        node = IntoTable(payload=_CHRow, table="t", engine=TableEngine.CLICKHOUSE)
         partition = node.build_partition(_ch_config(), worker_index=0, worker_count=1)
 
         partition.write_batch(
@@ -847,7 +847,7 @@ class TestIntoTableClickHouseUnit:
 
     def test_bool_coercion_to_int(self, mock_ch_client: MagicMock) -> None:
         """bool fields are coerced to 0/1 for ClickHouse UInt8 columns."""
-        node = IntoTable(payload=_CHRow, table="t", backend=Backend.CLICKHOUSE)
+        node = IntoTable(payload=_CHRow, table="t", engine=TableEngine.CLICKHOUSE)
         partition = node.build_partition(_ch_config(), worker_index=0, worker_count=1)
 
         partition.write_batch(
@@ -865,7 +865,7 @@ class TestIntoTableClickHouseUnit:
 
     def test_age_flush_fires_on_empty_epoch(self, mock_ch_client: MagicMock) -> None:
         """Empty write_batch triggers flush when buffer_max_age_s is exceeded."""
-        node = IntoTable(payload=_CHRow, table="t", backend=Backend.CLICKHOUSE)
+        node = IntoTable(payload=_CHRow, table="t", engine=TableEngine.CLICKHOUSE)
         partition = node.build_partition(
             _ch_config(buffer_max_records=10_000, buffer_max_age_s=0.01),
             worker_index=0,
@@ -885,7 +885,7 @@ class TestIntoTableClickHouseUnit:
 
     def test_buffer_retained_below_threshold(self, mock_ch_client: MagicMock) -> None:
         """Items stay in buffer when neither count nor age threshold is reached."""
-        node = IntoTable(payload=_CHRow, table="t", backend=Backend.CLICKHOUSE)
+        node = IntoTable(payload=_CHRow, table="t", engine=TableEngine.CLICKHOUSE)
         partition = node.build_partition(
             _ch_config(buffer_max_records=10_000, buffer_max_age_s=9999.0),
             worker_index=0,
@@ -902,7 +902,7 @@ class TestIntoTableClickHouseUnit:
         assert mock_ch_client.insert.call_count == 0  # still buffered
 
     def test_a_plain_enum_field_is_inserted_as_its_value(self, mock_ch_client: MagicMock) -> None:
-        node = IntoTable(payload=_TintRow, table="t", backend=Backend.CLICKHOUSE)
+        node = IntoTable(payload=_TintRow, table="t", engine=TableEngine.CLICKHOUSE)
         partition = node.build_partition(_ch_config(), worker_index=0, worker_count=1)
 
         partition.write_batch([_TintRow(row_id=1, tint=_Tint.RED)])
@@ -913,7 +913,7 @@ class TestIntoTableClickHouseUnit:
     def test_a_nested_struct_field_is_inserted_as_json_text(
         self, mock_ch_client: MagicMock
     ) -> None:
-        node = IntoTable(payload=_NestedRow, table="t", backend=Backend.CLICKHOUSE)
+        node = IntoTable(payload=_NestedRow, table="t", engine=TableEngine.CLICKHOUSE)
         partition = node.build_partition(_ch_config(), worker_index=0, worker_count=1)
 
         partition.write_batch(
@@ -941,7 +941,7 @@ class TestIntoTableClickHouseUnit:
     def test_a_datetime_and_a_decimal_in_a_mapping_are_inserted_as_json_text(
         self, mock_ch_client: MagicMock, payload: type[Any], item: Any
     ) -> None:
-        node = IntoTable(payload=payload, table="t", backend=Backend.CLICKHOUSE)
+        node = IntoTable(payload=payload, table="t", engine=TableEngine.CLICKHOUSE)
         partition = node.build_partition(_ch_config(), worker_index=0, worker_count=1)
 
         partition.write_batch([item])
@@ -954,7 +954,7 @@ class TestIntoTableClickHouseUnit:
 
     def test_a_date_field_is_inserted_as_a_date(self, mock_ch_client: MagicMock) -> None:
         """clickhouse-connect writes a ``Date`` column from ``date`` objects only."""
-        node = IntoTable(payload=_CalendarRow, table="t", backend=Backend.CLICKHOUSE)
+        node = IntoTable(payload=_CalendarRow, table="t", engine=TableEngine.CLICKHOUSE)
         partition = node.build_partition(_ch_config(), worker_index=0, worker_count=1)
 
         partition.write_batch(

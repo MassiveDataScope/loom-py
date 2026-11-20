@@ -1134,7 +1134,7 @@ inside the retry loop would run once per attempt.
 """
 
 
-class AgentEngineProvider(Protocol):
+class AgentEnginePlugin(Protocol):
     """Entry-point target in group ``loom.ai.engines``.
 
     Attributes:

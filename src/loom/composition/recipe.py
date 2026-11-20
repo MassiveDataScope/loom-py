@@ -27,7 +27,7 @@ if TYPE_CHECKING:
     from loom.core.config import ConfigContext
     from loom.core.di.container import LoomContainer
     from loom.core.discovery.base import DiscoveryResult
-    from loom.core.engine.metrics import MetricsAdapter
+    from loom.core.engine.metrics import MetricsRecorder
     from loom.core.stores.profile import PoolMetricsSink, RuntimeProfile
 
 T_co = TypeVar("T_co", covariant=True)
@@ -77,7 +77,7 @@ class Recipe:
     check_scope: CheckScope = UNSCOPED
     agents: bool = False
     agent_endpoints: bool = True
-    metrics: MetricsAdapter | None = None
+    metrics: MetricsRecorder | None = None
     pool_metrics: PoolMetricsSink | None = None
     connection_only: bool = False
     overrides: tuple[Callable[[LoomContainer], None], ...] = ()

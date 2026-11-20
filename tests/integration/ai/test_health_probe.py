@@ -62,7 +62,7 @@ def _runtime(engines: dict[str, ScriptedEngine], container: LoomContainer) -> Ag
     return AgentRuntime(
         plans=[make_plan(name) for name in engines],
         config=make_ai_config(health_cache_ttl_ms=5),
-        engine_provider=CountingEngineProvider(engines),  # type: ignore[arg-type]
+        engine_plugin=CountingEngineProvider(engines),  # type: ignore[arg-type]
         deps=StubDepsFactory(),  # type: ignore[arg-type]
         container=container,
     )

@@ -10,7 +10,7 @@ from dataclasses import asdict, dataclass
 from typing import Any
 
 from loom.core.engine.events import AbandonReason, EventKind, RuntimeEvent, Status
-from loom.core.engine.metrics import MetricsAdapter, NoMetrics
+from loom.core.engine.metrics import MetricsRecorder, NoMetrics
 from loom.core.errors import LoomError
 from loom.core.job.delivery import JobDelivery
 from loom.core.job.outcome import (
@@ -92,13 +92,13 @@ class JobRunner:
         invocation: Invocation,
         *,
         redelivery: Redelivery,
-        metrics: MetricsAdapter | None = None,
+        metrics: MetricsRecorder | None = None,
         rng: random.Random | None = None,
     ) -> None:
         self._invocation = invocation
         self._rng = random.Random() if rng is None else rng
         self._redelivery = redelivery
-        self._metrics: MetricsAdapter = NoMetrics() if metrics is None else metrics
+        self._metrics: MetricsRecorder = NoMetrics() if metrics is None else metrics
 
     async def run(self, delivery: JobDelivery) -> JobOutcome:
         """Run *delivery* once.

@@ -8,11 +8,11 @@ from loom.core.command.introspection import (
     get_patch_fields,
     is_patch_command,
 )
-from loom.core.command.parser import CommandAdapter
+from loom.core.command.parser import CommandParser
 
 __all__ = [
     "Command",
-    "CommandAdapter",
+    "CommandParser",
     "CommandField",
     "Computed",
     "Internal",

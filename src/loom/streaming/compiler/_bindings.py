@@ -112,7 +112,7 @@ def _resolve_with(
 ) -> With[Any, Any]:
     resolved_process = _resolve_process(node.process, ctx, errors)
     resolved_deps = _resolve_dependencies(node.sync_contexts, ctx, errors)
-    resolved_deps.update(_resolve_dependencies(node.context_factories, ctx, errors))
+    resolved_deps.update(_resolve_dependencies(node.context_suppliers, ctx, errors))
     resolved_deps.update(_resolve_dependencies(node.plain_deps, ctx, errors))
     return With(scope=node.scope, process=resolved_process, **resolved_deps)
 
@@ -124,7 +124,7 @@ def _resolve_with_async(
 ) -> WithAsync[Any, Any]:
     resolved_process = _resolve_process(node.process, ctx, errors)
     resolved_deps = _resolve_dependencies(node.async_contexts, ctx, errors)
-    resolved_deps.update(_resolve_dependencies(node.context_factories, ctx, errors))
+    resolved_deps.update(_resolve_dependencies(node.context_suppliers, ctx, errors))
     resolved_deps.update(_resolve_dependencies(node.plain_deps, ctx, errors))
     return WithAsync(
         scope=node.scope,

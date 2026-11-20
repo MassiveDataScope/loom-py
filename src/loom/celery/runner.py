@@ -58,7 +58,7 @@ from loom.core.tracing import active_trace_id
 
 if TYPE_CHECKING:
     from loom.core.engine.executor import RuntimeExecutor
-    from loom.core.engine.metrics import MetricsAdapter
+    from loom.core.engine.metrics import MetricsRecorder
     from loom.core.job.job import Job
     from loom.core.use_case.factory import UseCaseFactory
 
@@ -171,7 +171,7 @@ def _make_job_task(
     factory: UseCaseFactory,
     executor: RuntimeExecutor,
     process_bridge: _CeleryProcessBridge,
-    metrics: MetricsAdapter | None = None,
+    metrics: MetricsRecorder | None = None,
     observability_runtime: ObservabilityRuntime | None = None,
     *,
     settings: JobSettings,

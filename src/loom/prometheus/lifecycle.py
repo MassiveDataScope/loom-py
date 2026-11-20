@@ -26,7 +26,7 @@ _ERRORS_TOTAL = counter_spec(
 _INSTRUMENTS = (_DURATION_SECONDS, _ERRORS_TOTAL)
 
 
-class PrometheusLifecycleAdapter:
+class PrometheusLifecycleObserver:
     """Lifecycle observer that records span durations and errors as Prometheus metrics.
 
     Instruments:
@@ -48,7 +48,7 @@ class PrometheusLifecycleAdapter:
 
     Example::
 
-        adapter = PrometheusLifecycleAdapter()
+        adapter = PrometheusLifecycleObserver()
         runtime = ObservabilityRuntime([adapter])
 
         with runtime.span(Scope.USE_CASE, "CreateOrder"):
@@ -108,4 +108,4 @@ class PrometheusLifecycleAdapter:
         push_to_gateway(gateway, job=job_name, registry=registry)
 
 
-__all__ = ["PrometheusLifecycleAdapter"]
+__all__ = ["PrometheusLifecycleObserver"]

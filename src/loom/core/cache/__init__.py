@@ -1,7 +1,7 @@
 from loom.core.cache.abc import (
     BatchFingerprintResolver,
-    CacheBackend,
     CacheConfig,
+    CacheStore,
     DependencyResolver,
 )
 from loom.core.cache.calls import CachedCalls, cached_calls
@@ -18,7 +18,7 @@ __all__ = [
     "BoundedMemoryCache",
     "CacheGateway",
     "CachedCalls",
-    "CacheBackend",
+    "CacheStore",
     "CacheConfig",
     "CacheWriteError",
     "CachedRepository",

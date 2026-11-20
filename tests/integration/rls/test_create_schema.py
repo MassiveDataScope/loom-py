@@ -60,7 +60,7 @@ class TestCreateSchema:
     ) -> None:
         from loom.core.config import ConfigContext
         from loom.core.identity import Identity, reset_identity, set_identity
-        from loom.stores.sqlalchemy.plugin import SQLAlchemyBackend
+        from loom.stores.sqlalchemy.plugin import SQLAlchemyStorePlugin
         from loom.stores.sqlalchemy.rls.sources import (
             clear_scope_sources,
             register_scope_source,
@@ -92,7 +92,10 @@ class TestCreateSchema:
                 },
             }
             return build_backend(
-                SQLAlchemyBackend(), ConfigContext.from_dict(config), notes.MODELS, SERVER_PROFILE
+                SQLAlchemyStorePlugin(),
+                ConfigContext.from_dict(config),
+                notes.MODELS,
+                SERVER_PROFILE,
             )
 
         register_scope_source("editor", lambda: None)
@@ -140,7 +143,7 @@ class TestCreateSchema:
         scoped_database: BootstrapFactory,
     ) -> None:
         from loom.core.config import ConfigContext
-        from loom.stores.sqlalchemy.plugin import SQLAlchemyBackend
+        from loom.stores.sqlalchemy.plugin import SQLAlchemyStorePlugin
         from tests.unit.core.locator_fixtures.plain import Widget
 
         database = await scoped_database("plain_external")
@@ -161,7 +164,7 @@ class TestCreateSchema:
             },
         }
         wiring = build_backend(
-            SQLAlchemyBackend(), ConfigContext.from_dict(config), (Widget,), SERVER_PROFILE
+            SQLAlchemyStorePlugin(), ConfigContext.from_dict(config), (Widget,), SERVER_PROFILE
         )
         wiring.prepare_models((Widget,))
 

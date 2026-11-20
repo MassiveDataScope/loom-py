@@ -13,7 +13,7 @@ from loom.core.model import BaseModel, ColumnField, RowScoped, ScopedField
 from loom.core.model.types import Integer
 from loom.core.stores.plugin import StoreWiring
 from loom.core.stores.profile import SERVER_PROFILE
-from loom.stores.sqlalchemy.plugin import SQLAlchemyBackend
+from loom.stores.sqlalchemy.plugin import SQLAlchemyStorePlugin
 from loom.stores.sqlalchemy.schema import get_compiled
 from tests.helpers.persistence import build_backend
 
@@ -54,7 +54,7 @@ def _wiring(url: str, *models: type[BaseModel], **schema: object):
         },
     }
     return build_backend(
-        SQLAlchemyBackend(), ConfigContext.from_dict(config), models, SERVER_PROFILE
+        SQLAlchemyStorePlugin(), ConfigContext.from_dict(config), models, SERVER_PROFILE
     )
 
 

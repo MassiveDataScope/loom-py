@@ -16,7 +16,7 @@ from loom.etl.executor import ETLExecutor
 from loom.etl.io.targets._clickhouse import ClickHouseClientExecutor
 from loom.etl.pipeline._step_client import ClientStep
 from loom.etl.ports.contracts import ClientCommandExecutor
-from loom.etl.testing import StubSourceReader, StubTargetWriter
+from loom.etl.testing import InMemorySourceReader, InMemoryTargetWriter
 
 # ---------------------------------------------------------------------------
 # Helpers
@@ -42,8 +42,8 @@ class _PipelineWithClientStep(ETLPipeline[SimpleParams]):
 
 def _make_executor(client_executor: ClientCommandExecutor | None = None) -> ETLExecutor:
     return ETLExecutor(
-        StubSourceReader({}),
-        StubTargetWriter(),
+        InMemorySourceReader({}),
+        InMemoryTargetWriter(),
         client_executor=client_executor,
     )
 
@@ -151,8 +151,8 @@ class TestClientStepExecution:
                 fn(mock_client)
 
         executor = ETLExecutor(
-            StubSourceReader({}),
-            StubTargetWriter(),
+            InMemorySourceReader({}),
+            InMemoryTargetWriter(),
             client_executor=_MockExecutor(),  # type: ignore[arg-type]
         )
         plan = ETLCompiler().compile_step(_RecordingStep)
@@ -173,8 +173,8 @@ class TestClientStepExecution:
                 fn(object())
 
         executor = ETLExecutor(
-            StubSourceReader({}),
-            StubTargetWriter(),
+            InMemorySourceReader({}),
+            InMemoryTargetWriter(),
             client_executor=_NullClientExecutor(),  # type: ignore[arg-type]
         )
         plan = ETLCompiler().compile_step(_ParamsCapture)
@@ -184,7 +184,7 @@ class TestClientStepExecution:
         assert param.value == 7
 
     def test_no_sources_read_for_client_step(self) -> None:
-        reader = StubSourceReader({})
+        reader = InMemorySourceReader({})
         read_calls: list[Any] = []
         original_read = reader.read
 
@@ -202,7 +202,7 @@ class TestClientStepExecution:
 
         executor = ETLExecutor(
             reader,
-            StubTargetWriter(),
+            InMemoryTargetWriter(),
             client_executor=_MockClientExecutor(),  # type: ignore[arg-type]
         )
         plan = ETLCompiler().compile_step(_ConcreteClientStep)
@@ -211,7 +211,7 @@ class TestClientStepExecution:
         assert not read_calls, "reader.read should not be called for ClientStep"
 
     def test_no_write_called_for_client_step(self) -> None:
-        writer = StubTargetWriter()
+        writer = InMemoryTargetWriter()
         write_calls: list[Any] = []
         original_write = writer.write
 
@@ -227,7 +227,7 @@ class TestClientStepExecution:
                 fn(mock_client)
 
         executor = ETLExecutor(
-            StubSourceReader({}),
+            InMemorySourceReader({}),
             writer,
             client_executor=_MockClientExecutor(),  # type: ignore[arg-type]
         )

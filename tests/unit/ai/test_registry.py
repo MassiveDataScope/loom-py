@@ -19,7 +19,7 @@ from loom.ai.registry import (
     configure_engine_mcp_connect_timeout,
     require_provider_sdk,
     require_provider_setting,
-    resolve_engine_provider,
+    resolve_engine_plugin,
 )
 from loom.core.plugins import entrypoints as entrypoints_module
 
@@ -102,7 +102,7 @@ class TestEngineNotFound:
         _install(monkeypatch, ())
 
         with pytest.raises(AgentCompilationError) as excinfo:
-            resolve_engine_provider(_ENGINE_NAME)
+            resolve_engine_plugin(_ENGINE_NAME)
 
         assert AgentErrorCode.ENGINE_NOT_FOUND in _codes(excinfo.value)
 
@@ -114,7 +114,7 @@ class TestEngineNotFound:
         _install(monkeypatch, (_FakeEntryPoint("other-engine", "loom-engine-beta", object()),))
 
         with pytest.raises(AgentCompilationError) as excinfo:
-            resolve_engine_provider(_ENGINE_NAME)
+            resolve_engine_plugin(_ENGINE_NAME)
 
         assert "other-engine" in str(excinfo.value)
 
@@ -136,7 +136,7 @@ class TestHandshakeOnTheInstance:
             ),
         )
 
-        provider = resolve_engine_provider(_ENGINE_NAME)
+        provider = resolve_engine_plugin(_ENGINE_NAME)
 
         assert isinstance(provider, _ProviderDeclaringOnTheInstance)
 
@@ -148,7 +148,7 @@ class TestHandshakeOnTheInstance:
         built = _ProviderDeclaringOnTheInstance()
         _install(monkeypatch, (_FakeEntryPoint(_ENGINE_NAME, "loom-engine-alpha", built),))
 
-        provider = resolve_engine_provider(_ENGINE_NAME)
+        provider = resolve_engine_plugin(_ENGINE_NAME)
 
         assert provider is built
 
@@ -168,7 +168,7 @@ class TestEngineDuplicate:
             ),
         )
         with pytest.raises(AgentCompilationError) as excinfo:
-            resolve_engine_provider(_ENGINE_NAME)
+            resolve_engine_plugin(_ENGINE_NAME)
         return excinfo.value
 
     def test_fails_with_engine_duplicate_when_two_distributions_register_it(
@@ -199,7 +199,7 @@ class TestEngineApiMismatch:
         )
 
         with pytest.raises(AgentCompilationError) as excinfo:
-            resolve_engine_provider(_ENGINE_NAME)
+            resolve_engine_plugin(_ENGINE_NAME)
 
         assert AgentErrorCode.ENGINE_API_MISMATCH in _codes(excinfo.value)
 
@@ -220,7 +220,7 @@ class TestEngineApiMismatch:
         )
 
         with pytest.raises(AgentCompilationError) as excinfo:
-            resolve_engine_provider(_ENGINE_NAME)
+            resolve_engine_plugin(_ENGINE_NAME)
 
         assert AgentErrorCode.ENGINE_API_MISMATCH in _codes(excinfo.value)
 
@@ -284,10 +284,10 @@ class TestConfigureEngineMcpConnectTimeout:
             exc_type=ImportError,
         )
         from loom.ai.compiler import CompiledMcpCapability
-        from loom.ai.engines.pydantic_ai.plugin import PydanticAIEngineProvider
+        from loom.ai.engines.pydantic_ai.plugin import PydanticAIEnginePlugin
 
-        provider = resolve_engine_provider(_ENGINE_NAME)
-        assert isinstance(provider, PydanticAIEngineProvider)
+        provider = resolve_engine_plugin(_ENGINE_NAME)
+        assert isinstance(provider, PydanticAIEnginePlugin)
 
         configure_engine_mcp_connect_timeout(provider, 7.0)
 

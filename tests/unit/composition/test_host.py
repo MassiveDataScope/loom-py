@@ -221,7 +221,7 @@ class TestTaskAffinity:
         runtime = AgentRuntime(
             plans=[],
             config=make_ai_config(),
-            engine_provider=CountingEngineProvider(engines={}),  # type: ignore[arg-type]
+            engine_plugin=CountingEngineProvider(engines={}),  # type: ignore[arg-type]
             deps=StubDepsFactory(),
             container=LoomContainer(),
         )

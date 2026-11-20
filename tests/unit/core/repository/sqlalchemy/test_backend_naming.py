@@ -14,7 +14,7 @@ from loom.core.config import ConfigContext, ConfigError
 from loom.core.stores import StoreWiring
 from loom.core.stores.profile import SERVER_PROFILE
 from loom.stores.sqlalchemy.alembic import load_store_schema
-from loom.stores.sqlalchemy.plugin import SQLAlchemyBackend
+from loom.stores.sqlalchemy.plugin import SQLAlchemyStorePlugin
 from loom.stores.sqlalchemy.schema import get_metadata, reset_registry
 from tests.helpers.persistence import build_backend
 from tests.integration.agnosticism import rosters
@@ -77,7 +77,10 @@ class TestNamingConvention:
         path = _config_file(tmp_path, rosters.NAMING_CONVENTION)
         application = load_store_schema(str(path))
         wiring = build_backend(
-            SQLAlchemyBackend(), ConfigContext.from_yaml(str(path)), rosters.MODELS, SERVER_PROFILE
+            SQLAlchemyStorePlugin(),
+            ConfigContext.from_yaml(str(path)),
+            rosters.MODELS,
+            SERVER_PROFILE,
         )
 
         assert wiring.prepare_models is not None
@@ -92,7 +95,7 @@ class TestNamingConvention:
     ) -> None:
         path = _config_file(tmp_path, {"primary": "pk_%(table_name)s"})
 
-        backend, context = SQLAlchemyBackend(), ConfigContext.from_yaml(str(path))
+        backend, context = SQLAlchemyStorePlugin(), ConfigContext.from_yaml(str(path))
         with pytest.raises(
             ConfigError, match=r"stores\.default\.schema\.naming_convention.*'primary'"
         ):
@@ -126,7 +129,7 @@ class TestNamingConvention:
                 },
             }
         )
-        wiring = build_backend(SQLAlchemyBackend(), ctx, (), SERVER_PROFILE)
+        wiring = build_backend(SQLAlchemyStorePlugin(), ctx, (), SERVER_PROFILE)
         assert wiring.prepare_models is not None
         assert wiring.lifespan_init is not None
         wiring.prepare_models(())

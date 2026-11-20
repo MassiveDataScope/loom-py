@@ -24,7 +24,7 @@ from loom.core.stores.profile import (
     StoreRuntime,
 )
 from loom.core.use_case.use_case import UseCase
-from loom.stores.sqlalchemy.plugin import SQLAlchemyBackend
+from loom.stores.sqlalchemy.plugin import SQLAlchemyStorePlugin
 from tests.helpers.composition import ProjectFactory, coordinator_of
 
 
@@ -179,10 +179,10 @@ class TestTransportFreeComposition:
     def runtimes(self, monkeypatch: pytest.MonkeyPatch) -> list[StoreRuntime]:
         """Record the runtime the composition hands the SQLAlchemy backend."""
         recorded: list[StoreRuntime] = []
-        build = SQLAlchemyBackend.build
+        build = SQLAlchemyStorePlugin.build
 
         def recording(
-            self: SQLAlchemyBackend,
+            self: SQLAlchemyStorePlugin,
             ctx: ConfigContext,
             models: Sequence[type[BaseModel]],
             runtime: StoreRuntime,
@@ -190,7 +190,7 @@ class TestTransportFreeComposition:
             recorded.append(runtime)
             return build(self, ctx, models, runtime)
 
-        monkeypatch.setattr(SQLAlchemyBackend, "build", recording)
+        monkeypatch.setattr(SQLAlchemyStorePlugin, "build", recording)
         return recorded
 
 

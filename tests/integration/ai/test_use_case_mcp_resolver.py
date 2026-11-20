@@ -72,7 +72,7 @@ def _runtime(
         config=make_ai_config(
             mcp_servers=make_mcp_servers(*clients), remote_clients=remote_clients
         ),
-        engine_provider=CountingEngineProvider(),  # type: ignore[arg-type]
+        engine_plugin=CountingEngineProvider(),  # type: ignore[arg-type]
         deps=deps,
         container=container,
         mcp_client_factory=mcp_client_factory(clients),  # type: ignore[arg-type]

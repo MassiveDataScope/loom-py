@@ -5,7 +5,7 @@ from typing import Protocol
 from loom.core.engine.events import RuntimeEvent
 
 
-class MetricsAdapter(Protocol):
+class MetricsRecorder(Protocol):
     """Port for recording runtime and compile-time events.
 
     Implement this protocol to plug in any metrics backend
@@ -17,7 +17,7 @@ class MetricsAdapter(Protocol):
 
     Example::
 
-        class PrometheusAdapter:
+        class PrometheusRecorder:
             def on_event(self, event: RuntimeEvent) -> None:
                 if event.kind == EventKind.EXEC_DONE:
                     DURATION.labels(usecase=event.use_case_name).observe(

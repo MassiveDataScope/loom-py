@@ -52,7 +52,7 @@ class DynamoDBRepositoryConfig(AwsClientConfig, frozen=True, kw_only=True):
             raise ValueError("region is required: the table lives in one region")
 
 
-class DynamoDBBackend:
+class DynamoDBStorePlugin:
     """Backend for ``stores.<name>.backend: dynamodb``.
 
     Reads the section of the store it serves and binds every model to the
@@ -156,4 +156,4 @@ async def _readiness(client: Any, table: str, executor: Executor) -> bool:
     return status in _READY_TABLE_STATUSES
 
 
-__all__ = ["DynamoDBBackend", "DynamoDBRepositoryConfig"]
+__all__ = ["DynamoDBStorePlugin", "DynamoDBRepositoryConfig"]

@@ -34,7 +34,7 @@ from loom.stores.sqlalchemy.session_manager import SessionManager
 from loom.testing import make
 from tests.unit.core.conftest import SessionManagerFactory
 
-from ._doubles import CountingCacheBackend
+from ._doubles import CountingCacheStore
 
 _Key = tuple[int, int]
 _PROFILE = "default"
@@ -73,7 +73,7 @@ _Read = Callable[[_Cached], Awaitable[PageResult[AcmeCachedEntry] | CursorResult
 
 class AcmeCompositeCacheEnv(NamedTuple):
     wrapper: _Cached
-    backend: CountingCacheBackend
+    backend: CountingCacheStore
     resolver: GenerationalDependencyResolver
     statements: list[str]
 
@@ -110,7 +110,7 @@ async def env(
     await repository.create_many(
         [AcmeCreateEntry(account_id=account, id=ident, rank=ident) for account, ident in _KEYS]
     )
-    backend = CountingCacheBackend()
+    backend = CountingCacheStore()
     resolver = GenerationalDependencyResolver(backend)
     wrapper: _Cached = CachedRepository(
         repository, config=cache_config, cache=backend, dependency_resolver=resolver

@@ -569,7 +569,7 @@ async def _runtime_over(server: InProcessServer) -> AsyncIterator[AgentRuntime]:
     runtime = AgentRuntime(
         plans=[make_plan("agent", capabilities=[grant])],
         config=make_ai_config(mcp_servers=make_mcp_servers(_SERVER), startup_timeout_ms=10000),
-        engine_provider=CountingEngineProvider(),  # type: ignore[arg-type]
+        engine_plugin=CountingEngineProvider(),  # type: ignore[arg-type]
         deps=StubDepsFactory(),
         container=LoomContainer(),
         mcp_client_factory=SharedMcpToolsets().open,

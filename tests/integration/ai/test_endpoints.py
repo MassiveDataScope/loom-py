@@ -151,7 +151,7 @@ async def _serving(
     runtime = AgentRuntime(
         plans=list(plans if plans is not None else (make_plan(_AGENT),)),
         config=config,
-        engine_provider=CountingEngineProvider(engines=engines),  # type: ignore[arg-type]
+        engine_plugin=CountingEngineProvider(engines=engines),  # type: ignore[arg-type]
         deps=deps,
         container=container,
         mcp_client_factory=mcp_client_factory(
@@ -362,7 +362,7 @@ class TestMounting:
         runtime = AgentRuntime(
             plans=[make_plan(_AGENT)],
             config=config,
-            engine_provider=CountingEngineProvider(),  # type: ignore[arg-type]
+            engine_plugin=CountingEngineProvider(),  # type: ignore[arg-type]
             deps=deps,
             container=container,
         )
@@ -1767,7 +1767,7 @@ class TestAuthenticationExclusions:
         runtime = AgentRuntime(
             plans=plans,
             config=config,
-            engine_provider=CountingEngineProvider(),  # type: ignore[arg-type]
+            engine_plugin=CountingEngineProvider(),  # type: ignore[arg-type]
             deps=deps,
             container=container,
         )
