@@ -2,12 +2,13 @@
 
 from __future__ import annotations
 
+import msgspec
 from hypothesis import given
 from hypothesis import strategies as st
 
 from loom.core.job.envelope import decode_job_envelope, encode_job_message
 from loom.core.job.job import Job
-from loom.core.job.policy import Backoff
+from loom.core.job.policy import Backoff, Countdown, Seconds
 
 
 class _AnyJob(Job[None]):
@@ -17,6 +18,23 @@ class _AnyJob(Job[None]):
 
 _wire_values = st.one_of(st.none(), st.booleans(), st.integers(), st.text(max_size=20))
 _wire_mappings = st.dictionaries(st.text(max_size=12), _wire_values, max_size=6)
+
+
+class TestCountdownProperties:
+    @given(seconds=st.integers(min_value=-2000, max_value=2000))
+    def test_the_rule_declared_in_the_type_and_the_check_agree(self, seconds: int) -> None:
+        try:
+            Countdown(seconds)
+            checked = True
+        except ValueError:
+            checked = False
+        try:
+            msgspec.convert(seconds, Seconds)
+            declared = True
+        except msgspec.ValidationError:
+            declared = False
+
+        assert checked is declared
 
 
 class TestBackoffProperties:

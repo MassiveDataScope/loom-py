@@ -26,7 +26,7 @@ from loom.core.job.handle import JobHandle
 from loom.core.job.run import EnvelopeInvocation
 from loom.core.observability.runtime import ObservabilityRuntime
 from loom.core.use_case.factory import UseCaseFactory
-from loom.testing import JobTestData
+from loom.testing import JobTestData, make
 from tests.helpers.celery import CeleryBroker
 from tests.helpers.delegation import acting_as, assert_new_delegation
 from tests.helpers.jobs import CeleryServiceFixture, InlineServiceFixture
@@ -99,7 +99,7 @@ class TestJobRunner:
     async def test_builds_inside_an_execution_as_the_envelope_caller(
         self, factory: UseCaseFactory, executor: RuntimeExecutor
     ) -> None:
-        envelope = JobEnvelope(job="AcmeProbeJob", identity=encode_identity(ALICE))
+        envelope = make(JobEnvelope, job="AcmeProbeJob", identity=encode_identity(ALICE))
 
         job = await run_envelope(envelope, factory, executor)
 
@@ -109,8 +109,8 @@ class TestJobRunner:
     async def test_acts_as_the_envelope_caller_within_its_delegation(
         self, factory: UseCaseFactory, executor: RuntimeExecutor
     ) -> None:
-        envelope = JobEnvelope(
-            job="AcmeProbeJob", identity=Delegation(ALICE, time.time() + 60).encoded()
+        envelope = make(
+            JobEnvelope, job="AcmeProbeJob", identity=Delegation(ALICE, time.time() + 60).encoded()
         )
 
         job = await run_envelope(envelope, factory, executor)
@@ -126,7 +126,7 @@ class TestJobRunner:
         self, factory: UseCaseFactory, executor: RuntimeExecutor, deadline: Any
     ) -> None:
         identity = {**(encode_identity(ALICE) or {}), "until": deadline}
-        envelope = JobEnvelope(job="AcmeProbeJob", identity=identity)
+        envelope = make(JobEnvelope, job="AcmeProbeJob", identity=identity)
 
         with pytest.raises(Unauthenticated, match="system identity"):
             await run_envelope(envelope, factory, executor)
@@ -329,7 +329,7 @@ class TestADispatchWithNoCaller:
         (message,) = broker.sent()
         sent = {**message.kwargs}
         del sent["failure_callback"]
-        envelope = JobEnvelope(job="AcmeProbeJob", **sent)
+        envelope = make(JobEnvelope, job="AcmeProbeJob", **sent)
 
         with pytest.raises(Unauthenticated):
             await run_envelope(envelope, factory, executor)

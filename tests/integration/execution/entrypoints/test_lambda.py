@@ -27,6 +27,7 @@ from loom.serverless.aws.lambda_._jobs import JobConsumer, job_runner
 from loom.serverless.aws.lambda_.triggers.http import (
     _route,  # pyright: ignore[reportPrivateUsage]
 )
+from loom.testing import make
 
 from .doubles import ALICE, CALLERS, AcmeProbeJob, AcmeRecordingFactory, AcmeRoutes, as_caller
 
@@ -66,7 +67,7 @@ class TestLambdaJobsEnvelope:
         application = SimpleNamespace(
             kernel=kernel, observability=ObservabilityRuntime.noop(), job_settings=JobSettings()
         )
-        envelope = JobEnvelope(job="AcmeProbeJob", identity=encode_identity(ALICE))
+        envelope = make(JobEnvelope, job="AcmeProbeJob", identity=encode_identity(ALICE))
 
         await JobConsumer(
             application.job_settings, job_runner(cast(Any, application), Redelivery.SAME)

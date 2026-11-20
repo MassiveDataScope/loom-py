@@ -13,6 +13,7 @@ from loom.core.job.envelope import (
 )
 from loom.core.job.job import Job
 from loom.core.job.outcome import failure_log_fields
+from loom.testing import make
 
 
 class _AnyJob(Job[None]):
@@ -23,7 +24,7 @@ class _AnyJob(Job[None]):
 class TestJobEnvelope:
     @pytest.mark.parametrize("job", ["Task", "loom.job.Task"])
     def test_job_name_strips_only_wire_prefix(self, job: str) -> None:
-        assert JobEnvelope(job=job).job_name == "Task"
+        assert make(JobEnvelope, job=job).job_name == "Task"
 
     def test_wire_job_name(self) -> None:
         assert wire_job_name("Task") == "loom.job.Task"
