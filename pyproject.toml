@@ -648,17 +648,8 @@ golden-update = "pytest -q -p no:cacheprovider --update-golden"
 gate = ["lint", "types", "test-fast", "test-int"]
 
 [tool.poe.tasks.types]
-help = "mypy src, failing only when the error count grows past MYPY_BASELINE"
-env = { MYPY_BASELINE = "0" }
-shell = """
-out=$(mypy --no-color-output src 2>&1)
-found=$(printf '%s\\n' "$out" | sed -n 's/^Found \\([0-9]*\\) error.*/\\1/p')
-echo "mypy: ${found:-0} errors (baseline $MYPY_BASELINE)"
-if [ "${found:-0}" -gt "$MYPY_BASELINE" ]; then
-  printf '%s\\n' "$out" | tail -n 40
-  exit 1
-fi
-"""
+help = "mypy over src; any error fails"
+cmd = "mypy --no-color-output src"
 
 [tool.commitizen]
 name = "cz_conventional_commits"
