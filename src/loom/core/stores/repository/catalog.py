@@ -8,7 +8,7 @@ from typing import Any, TypeVar, cast
 from loom.core.di.container import LoomContainer
 from loom.core.model import BaseModel
 from loom.core.model.introspection import get_table_name
-from loom.core.stores.catalog import StoreKey, store_of
+from loom.core.stores.catalog import StoreKey, refuse_duplicate_tables, store_of
 from loom.core.stores.repository.capabilities import RepoFor
 from loom.core.stores.repository.registry import RepositoryToken
 
@@ -23,7 +23,7 @@ class RepositoryCatalog:
         models: The models each store serves.
 
     Raises:
-        ValueError: When a store serves two models of one table.
+        ConfigError: When a store serves two models of one table.
     """
 
     def __init__(
@@ -35,22 +35,16 @@ class RepositoryCatalog:
         self._stores = tuple(models)
         self._tables: dict[str, dict[StoreKey, type[BaseModel]]] = {}
         for store, served in models.items():
+            refuse_duplicate_tables(store, served)
             for model in served:
-                table = get_table_name(model)
-                by_store = self._tables.setdefault(table, {})
-                if store in by_store:
-                    raise ValueError(
-                        f"Store {store!r} serves table {table!r} twice: "
-                        f"{by_store[store].__qualname__} and {model.__qualname__}"
-                    )
-                by_store[store] = model
+                self._tables.setdefault(get_table_name(model), {})[store] = model
 
     @classmethod
     def from_repositories(cls, repositories: Mapping[type[BaseModel], Any]) -> RepositoryCatalog:
         """Build a catalog from model repository pairs.
 
         Raises:
-            ValueError: When one store contains duplicate table names.
+            ConfigError: When one store contains duplicate table names.
         """
         container = LoomContainer()
         models: dict[StoreKey, list[type[BaseModel]]] = {}
