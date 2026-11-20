@@ -184,14 +184,14 @@ class RepoFor(
     (``Readable``, ``Creatable``, etc.) to respect the Interface Segregation
     Principle.
 
+    A use case that declares no third generic parameter gets the full surface.
+
     Example::
 
-        # Full surface — no third param needed, RepoFor[Any] is the default
         class CreateProductUseCase(UseCase[Product, Product]):
             async def execute(self, cmd: CreateProductCommand = Input()) -> Product:
                 return await self.main_repo.create(cmd)
 
-        # Specific capability — only what the use case needs
         class GetProductUseCase(UseCase[Product, Product | None, Readable[Product]]):
             async def execute(self, product_id: int) -> Product | None:
                 return await self.main_repo.get_by_id(product_id)

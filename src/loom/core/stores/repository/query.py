@@ -124,9 +124,8 @@ class SortSpec(LoomFrozenStruct, frozen=True):
 class QuerySpec(LoomFrozenStruct, frozen=True):
     """Structured query contract for list operations.
 
-    Replaces the flat ``FilterParams`` dict with an explicit, type-safe
-    representation.  The repository implementation compiles this into
-    backend-specific clauses at query time.
+    The repository implementation compiles it into backend-specific clauses
+    at query time.
 
     Args:
         filters: Optional filter group applied to the query.

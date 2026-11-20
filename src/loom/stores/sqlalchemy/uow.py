@@ -53,12 +53,13 @@ class SQLAlchemyUnitOfWork(EntersAlone):
         session_manager: Session factory used to create the underlying
             ``AsyncSession``.
 
+    Leaving the block commits the transaction.
+
     Example::
 
         uow = SQLAlchemyUnitOfWork(session_manager)
         async with uow:
             await repo.create(entity)
-        # committed
     """
 
     is_transactional: ClassVar[bool] = True

@@ -130,11 +130,12 @@ class MongoUnitOfWork(EntersAlone):
         client: Client the session is started on; needs a replica set.
         store: Key of the store the unit of work belongs to.
 
+    Leaving the block commits the transaction.
+
     Example::
 
         async with MongoUnitOfWork(client, store=DEFAULT_STORE):
             await repo.create(entity)
-        # committed
     """
 
     is_transactional: ClassVar[bool] = True

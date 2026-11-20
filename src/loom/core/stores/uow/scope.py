@@ -21,7 +21,7 @@ Example::
 
     async with invocation(OrderedCommits({DEFAULT_STORE: factory})) as scope:
         async with scope.frame(Frame(DEFAULT_STORE)):
-            ...  # run the use case
+            ...
         outcome = await scope.coordinator.finish(scope, error=None)
 """
 
