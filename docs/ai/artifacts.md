@@ -989,7 +989,7 @@ exception class is reported, its message is not.
 
 A toolset caches through `cached_calls`, never by writing its own keys: a
 factory typed `(ctx: ToolsetContext) -> AbstractToolset[Any]` returns
-`FunctionToolset(cached_calls(ctx.container).bind(MyTools()))`, and every method
+`FunctionToolset(cached_calls(ctx.container).wrap_methods(MyTools()))`, and every method
 marked `@cache_call` is served from the application's `cache:` section. What is
 cached, what is refused and why a cached call is never invalidated are in
 [Caching any coroutine](../rest/cache.md#caching-any-coroutine).

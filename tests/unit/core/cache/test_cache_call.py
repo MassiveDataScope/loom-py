@@ -1,4 +1,4 @@
-"""Binding contract of ``@cache_call``: the key, the wrapper and ``bind``.
+"""Binding contract of ``@cache_call``: the key, the wrapper and ``wrap_methods``.
 
 The decorator declares and the composition root binds, so everything observable
 about a cached call lives here: the key is the arguments and nothing else, a
@@ -912,8 +912,8 @@ class TestAnOverrideThatIsNotACoroutine:
     ) -> None:
         calls = _calls(CountingCacheStore())
 
-        bound = calls.bind(_SyncOverride())
-        calls.bind(_SyncOverride())
+        bound = calls.wrap_methods(_SyncOverride())
+        calls.wrap_methods(_SyncOverride())
 
         assert bound == []
         records = _warnings(caplog, "CacheCallOverriddenBySync")
@@ -921,13 +921,13 @@ class TestAnOverrideThatIsNotACoroutine:
         assert "_SyncOverride.search" in records[0].getMessage()
 
 
-class TestBindPublishesTheCoroutineMethods:
+class TestWrapMethodsPublishesTheCoroutineMethods:
     """AC7: binding an object yields its public coroutines, base first."""
 
     def test_the_methods_are_published_in_declaration_order(self) -> None:
         bound = _ConfiguredCalls(
             _config(), CountingCacheStore(), SingleFlight(), random.Random()
-        ).bind(_Tools())
+        ).wrap_methods(_Tools())
 
         assert [method.__name__ for method in bound] == ["search", "summarise"]
 
@@ -935,10 +935,10 @@ class TestBindPublishesTheCoroutineMethods:
         """Discovery reads the class attribute, so a raising getter is harmless."""
         calls = _calls(CountingCacheStore())
 
-        assert calls.bind(_Tools())
+        assert calls.wrap_methods(_Tools())
 
     async def test_an_unmarked_method_is_bound_and_unchanged(self) -> None:
-        bound = _calls(CountingCacheStore()).bind(_Tools())
+        bound = _calls(CountingCacheStore()).wrap_methods(_Tools())
         summarise = bound[1]
 
         assert await summarise("hi") == "HI"
@@ -947,8 +947,8 @@ class TestBindPublishesTheCoroutineMethods:
     async def test_two_instances_share_one_entry(self, monkeypatch: pytest.MonkeyPatch) -> None:
         """The key is the arguments, so a stateless toolset caches across instances."""
         calls = _calls(_gateway("calls_two_instances"))
-        first = calls.bind(_Tools())[0]
-        second = calls.bind(_Tools())[0]
+        first = calls.wrap_methods(_Tools())[0]
+        second = calls.wrap_methods(_Tools())[0]
         monkeypatch.setattr(_Tools, "calls_made", 0)
 
         await first("q")
@@ -960,7 +960,7 @@ class TestBindPublishesTheCoroutineMethods:
 class _StaticTools:
     """Toolset whose tools are static and class methods, marked and not.
 
-    An ``async`` ``staticmethod`` reaches ``bind`` as a descriptor rather than
+    An ``async`` ``staticmethod`` reaches ``wrap_methods`` as a descriptor rather than
     as a function, so discovery that asks the raw class entry whether it is a
     coroutine unpublishes it — the very silence ``CacheCallOverriddenBySync``
     exists to prevent.
@@ -993,11 +993,11 @@ class _StaticTools:
         return text.lower()
 
 
-class TestBindPublishesStaticAndClassMethods:
+class TestWrapMethodsPublishesStaticAndClassMethods:
     """FR-087: a descriptor holds a coroutine, so the tool must be published."""
 
     def test_every_public_coroutine_is_published(self) -> None:
-        bound = _calls(CountingCacheStore()).bind(_StaticTools())
+        bound = _calls(CountingCacheStore()).wrap_methods(_StaticTools())
 
         assert [method.__name__ for method in bound] == [
             "cached_static",
@@ -1008,7 +1008,7 @@ class TestBindPublishesStaticAndClassMethods:
         ]
 
     async def test_a_marked_static_method_is_cached(self, monkeypatch: pytest.MonkeyPatch) -> None:
-        wrapped = _calls(_gateway("calls_static_method")).bind(_StaticTools())[0]
+        wrapped = _calls(_gateway("calls_static_method")).wrap_methods(_StaticTools())[0]
         monkeypatch.setattr(_StaticTools, "static_calls", 0)
 
         assert await wrapped("q") == AcmeCallDoc(title="q")
@@ -1017,7 +1017,7 @@ class TestBindPublishesStaticAndClassMethods:
         assert _StaticTools.static_calls == 1
 
     async def test_a_marked_class_method_is_cached(self, monkeypatch: pytest.MonkeyPatch) -> None:
-        wrapped = _calls(_gateway("calls_class_method")).bind(_StaticTools())[1]
+        wrapped = _calls(_gateway("calls_class_method")).wrap_methods(_StaticTools())[1]
         monkeypatch.setattr(_StaticTools, "class_calls", 0)
 
         assert await wrapped("q") == AcmeCallDoc(title="q")
@@ -1037,14 +1037,14 @@ class TestBindPublishesStaticAndClassMethods:
     async def test_an_unmarked_static_or_class_method_is_bound_and_unchanged(
         self, result: int, expected: str
     ) -> None:
-        bound = _calls(CountingCacheStore()).bind(_StaticTools())[result]
+        bound = _calls(CountingCacheStore()).wrap_methods(_StaticTools())[result]
 
         assert await bound("hi") == expected
         assert not getattr(bound, "__cache_call_wrapped__", False)
 
     def test_a_static_property_is_still_never_evaluated(self) -> None:
         """Unwrapping the descriptors must not start reading the instance."""
-        assert _calls(CountingCacheStore()).bind(_Tools())
+        assert _calls(CountingCacheStore()).wrap_methods(_Tools())
 
 
 _TENANT: ContextVar[str] = ContextVar("tenant")
@@ -1123,8 +1123,8 @@ class TestWithoutASection:
 
         assert cached_calls(container) is calls
 
-    def test_the_pass_through_binds_the_same_methods(self) -> None:
-        bound = _UnconfiguredCalls().bind(_Tools())
+    def test_the_pass_through_wraps_the_same_methods(self) -> None:
+        bound = _UnconfiguredCalls().wrap_methods(_Tools())
 
         assert [method.__name__ for method in bound] == ["search", "summarise"]
 

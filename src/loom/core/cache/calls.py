@@ -55,7 +55,7 @@ class CachedCalls(Protocol):
         """Return the cached form of *func*, or *func* itself."""
         ...
 
-    def bind(self, obj: object) -> list[AsyncCallable]:
+    def wrap_methods(self, obj: object) -> list[AsyncCallable]:
         """Return the public coroutine methods of *obj*, cached where declared."""
         ...
 
@@ -464,7 +464,7 @@ class _ConfiguredCalls:
         wrapper.__annotations__ = resolve_type_hints(func, include_extras=True)
         return wrapper
 
-    def bind(self, obj: object) -> list[AsyncCallable]:
+    def wrap_methods(self, obj: object) -> list[AsyncCallable]:
         """Return the public coroutine methods of *obj*, cached where declared.
 
         Every public coroutine method is published, so adding a public helper
@@ -608,7 +608,7 @@ class _UnconfiguredCalls:
             self._warn_once("CacheCallNotConfigured", func)
         return func
 
-    def bind(self, obj: object) -> list[AsyncCallable]:
+    def wrap_methods(self, obj: object) -> list[AsyncCallable]:
         """Return the public coroutine methods of *obj*, all uncached.
 
         Args:
