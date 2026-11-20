@@ -9,6 +9,7 @@ import msgspec
 import pytest
 
 from loom.celery.adapter import CeleryAdapter
+from loom.composition.checked import CheckedProject
 from loom.composition.project import Project
 from loom.core.config import ConfigContext, ConfigError, ConfigResolver
 from loom.core.di.installer import ConfiguredInstaller
@@ -111,7 +112,7 @@ class TestInstallerSectionValidation:
         with pytest.raises(ConfigError) as at_startup:
             _bucket(config)
         with pytest.raises(ConfigError) as in_check:
-            Project.check(config, environment="test", excluded=("app.rest",))
+            CheckedProject.load(config, environment="test", excluded=("app.rest",))
 
         assert str(in_check.value) == str(at_startup.value)
         assert "AcmeStoresInstaller" in str(in_check.value)
@@ -122,7 +123,7 @@ class TestInstallerSectionValidation:
     ) -> None:
         config = project_config(_CONFIGURED, _STORES_SECTION)
 
-        Project.check(config, environment="test", excluded=("app.rest",))
+        CheckedProject.load(config, environment="test", excluded=("app.rest",))
 
         assert decoded == ["acme-data"]
 
@@ -131,7 +132,7 @@ class TestInstallerSectionValidation:
     ) -> None:
         config = project_config(_PLAIN, "")
 
-        checked = Project.check(config, environment="test", excluded=("app.rest",))
+        checked = CheckedProject.load(config, environment="test", excluded=("app.rest",))
 
         assert not checked.report.errors
 
@@ -290,6 +291,6 @@ class TestInstallerSectionWithPlaceholders:
             _CONFIGURED, "acme:\n  stores:\n    bucket: ${secrets:/acme/bucket}\n"
         )
 
-        checked = Project.check(config, environment="test", excluded=("app.rest",))
+        checked = CheckedProject.load(config, environment="test", excluded=("app.rest",))
 
         assert not checked.report.errors

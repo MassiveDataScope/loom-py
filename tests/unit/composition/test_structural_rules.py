@@ -10,6 +10,7 @@ import pytest
 import yaml
 
 from loom.composition import Recipe
+from loom.composition.checked import CheckedProject
 from loom.composition.phases import build_stores
 from loom.composition.project import Project
 from loom.core.config import ConfigError
@@ -30,7 +31,7 @@ def _start_up(config: str) -> object:
 
 
 def _check(config: str) -> object:
-    return Project.check(config, environment="test", excluded=_NO_REST)
+    return CheckedProject.load(config, environment="test", excluded=_NO_REST)
 
 
 @pytest.fixture
@@ -84,14 +85,14 @@ class TestSameRulesAtStartUpAndInLoomCheck:
         config = write_config({"app": {"name": "${oc.env:ACME_APP_NAME}"}})
 
         assert Project.load(config, environment="test").app.name == "acme"
-        assert Project.check(config, environment="test", excluded=_NO_REST).config is not None
+        assert CheckedProject.load(config, environment="test", excluded=_NO_REST).config is not None
 
     def test_check_leaves_a_placeholder_application_name_unresolved(
         self, write_config: WriteConfig
     ) -> None:
         config = write_config({"app": {"name": "${oc.env:ACME_NAME_NEVER_SET}"}})
 
-        assert Project.check(config, environment="test", excluded=_NO_REST).config is not None
+        assert CheckedProject.load(config, environment="test", excluded=_NO_REST).config is not None
 
 
 class TestBackendsLoadedPerEntryPoint:

@@ -25,7 +25,7 @@ from typing import Annotated
 
 import typer
 
-from loom.composition.project import CheckedProject, Project
+from loom.composition.checked import CheckedProject
 from loom.core.config.errors import ConfigError
 from loom.serverless.aws.lambda_.trigger_jobs import check_triggers
 
@@ -80,13 +80,15 @@ def check_config(config: list[Path], env: str | None, skip: tuple[str, ...]) -> 
             declared configuration key.
     """
     if not config:
-        checked = Project.check(environment=env, excluded=skip)
+        checked = CheckedProject.load(environment=env, excluded=skip)
     elif len(config) == 1 and config[0].is_dir():
-        checked = Project.check(config_dir=str(config[0]), environment=env, excluded=skip)
+        checked = CheckedProject.load(config_dir=str(config[0]), environment=env, excluded=skip)
     elif any(path.is_dir() for path in config):
         raise ConfigError("pass one config directory or YAML files, not both")
     else:
-        checked = Project.check(*(str(path) for path in config), environment=env, excluded=skip)
+        checked = CheckedProject.load(
+            *(str(path) for path in config), environment=env, excluded=skip
+        )
     unknown = checked.unknown_paths(skip)
     if unknown:
         raise typer.BadParameter(

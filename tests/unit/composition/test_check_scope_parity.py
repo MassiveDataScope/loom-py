@@ -8,7 +8,7 @@ import pytest
 import yaml
 
 from loom.celery.adapter import CeleryAdapter
-from loom.composition.project import Project
+from loom.composition.checked import CheckedProject
 from loom.core.checks import (
     CheckScope,
     DeployCheckError,
@@ -44,7 +44,7 @@ class TestStartUpAndCheckParity:
         path.write_text(yaml.safe_dump(_DOCUMENT), encoding="utf-8")
         scope = CheckScope(required=frozenset({"app.rest"}))
 
-        checked = Project.check(str(path), environment="test")
+        checked = CheckedProject.load(str(path), environment="test")
         started = enforce_deploy_checks(
             ConfigContext.from_dict(_DOCUMENT), Environment.PRODUCTION, scope=scope
         )
@@ -72,7 +72,7 @@ class TestLambdaHttpParity:
         path = tmp_path / "app.yaml"
         path.write_text(yaml.safe_dump(document), encoding="utf-8")
 
-        checked = Project.check(str(path), environment="test")
+        checked = CheckedProject.load(str(path), environment="test")
         started = run_deploy_checks(
             ConfigContext.from_dict(document), scope=CheckScope(required=frozenset({"app.rest"}))
         )
@@ -86,7 +86,7 @@ class TestLambdaHttpParity:
         path = tmp_path / "app.yaml"
         path.write_text(yaml.safe_dump(_lambda_with({"trigger": jobs_trigger()})), encoding="utf-8")
 
-        checked = Project.check(str(path), environment="test")
+        checked = CheckedProject.load(str(path), environment="test")
 
         assert "app.rest (not declared)" in [s.describe() for s in checked.report.skipped]
 
