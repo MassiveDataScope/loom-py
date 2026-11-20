@@ -84,6 +84,7 @@ def test_an_abandonment_a_postponement_and_a_failure_are_each_settled_on_a_real_
         )
     )
     settlement = SQSJobSettlement(AwsClients(), config, "jobs")
+    settlement.queue.read_dead_letter(sqs)
     received = {record.body: record for record in _received(sqs, source, 3, arn)}
     outcomes: dict[str, JobOutcome] = {
         "abandoned": Abandoned(AbandonReason.JOB_ASKED, JobAbandonment("tenant deleted")),
