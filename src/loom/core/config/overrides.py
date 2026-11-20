@@ -104,7 +104,8 @@ the environment any other way. ``stores.settings.cursors`` decides whether, and 
 which key, cursor tokens are signed, ``aws`` and ``sqs.queues`` where AWS calls
 and jobs go, a Lambda function's ``trigger`` what invokes it, which job runs
 and as whom, ``lambda.handler`` the code every function runs and
-``app.packages``, ``app.entry_points`` and ``app.agents`` the code it loads: no per-deploy variable may change them."""
+``app.packages``, ``app.entry_points`` and ``app.agents`` the code it loads: no
+per-deploy variable may change them."""
 
 OVERRIDABLE: Final = (
     "app.entry",

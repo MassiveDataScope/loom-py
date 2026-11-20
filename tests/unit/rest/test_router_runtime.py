@@ -1292,39 +1292,18 @@ class TestCreateFastApiApp:
                 defaults=defaults,
             )
 
-    def test_a_paging_route_that_lets_callers_choose_cursor_fails_without_a_cursor_key(
+    def test_a_paging_route_that_lets_callers_choose_cursor_compiles_without_a_cursor_key(
         self,
     ) -> None:
         class IFace(RestInterface[str]):
             prefix = "/items"
             routes = (RestRoute(use_case=QueryAwareUseCase, method="GET", path="/"),)
 
-        with pytest.raises(
-            InterfaceCompilationError, match=r"IFace.*GET.*stores\.settings\.cursors"
-        ):
-            create_fastapi_app(
-                _bootstrap(QueryAwareUseCase),
-                routes=RouteSources(python=[IFace]),
-                observability_runtime=ObservabilityRuntime.noop(),
-                defaults=RestApiDefaults(allow_pagination_override=True),
-            )
-
-    def test_a_paging_route_fixed_to_offset_compiles_without_a_cursor_key(self) -> None:
-        class IFace(RestInterface[str]):
-            prefix = "/items"
-            routes = (
-                RestRoute(
-                    use_case=QueryAwareUseCase,
-                    method="GET",
-                    path="/",
-                    allow_pagination_override=False,
-                ),
-            )
-
         app = create_fastapi_app(
             _bootstrap(QueryAwareUseCase),
             routes=RouteSources(python=[IFace]),
             observability_runtime=ObservabilityRuntime.noop(),
+            defaults=RestApiDefaults(allow_pagination_override=True),
         )
 
         assert isinstance(app, FastAPI)

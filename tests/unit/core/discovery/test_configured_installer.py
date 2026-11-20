@@ -259,7 +259,9 @@ class TestInstallerSectionWithPlaceholders:
             _ExplodingResolver(),
         )
 
-        with pytest.raises(ConfigError, match=r"_PooledInstaller.*acme.vault.pool: unknown keys \['hots'\]"):
+        with pytest.raises(
+            ConfigError, match=r"_PooledInstaller.*acme.vault.pool: unknown keys \['hots'\]"
+        ):
             _PooledInstaller.check_config(config)
 
     def test_check_accepts_valid_literals_beside_nested_placeholders(self, tmp_path: Path) -> None:

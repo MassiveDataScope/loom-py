@@ -6,7 +6,8 @@ domain bootstrap result and REST interface declarations into a runnable
 
 It is intentionally kept thin — route validation happens during
 :class:`~loom.rest.compiler.RestInterfaceCompiler` compilation, the cursor-key
-check in :func:`compile_api` (both fail-fast at startup), and all request
+check in :func:`compile_api` (both fail-fast at startup; a route that merely lets
+callers choose cursor pages is refused per request without a key), and all request
 handling is delegated to :func:`~loom.rest.fastapi.router_runtime.bind_interfaces`.
 
 An application normally gets it through :func:`~loom.composition.create_app`,
@@ -99,8 +100,8 @@ def compile_api(
         TypeError: If *routes* is not a ``RouteSources``.
         RuntimeError: If no ``RuntimeExecutor`` is registered.
         InterfaceCompilationError: If any interface fails structural validation,
-            or a route can page by cursor while no cursor key is configured
-            under ``stores.settings.cursors``.
+            or a route declares ``pagination: cursor`` while no cursor key is
+            configured under ``stores.settings.cursors``.
     """
     resolved_routes = _require_route_sources(routes)
     executor = result.container.resolve_or_none(RuntimeExecutor)
@@ -115,10 +116,10 @@ def compile_api(
     codec = result.container.resolve_or_none(CursorCodec) or CursorCodec.disabled()
     if not codec.is_enabled:
         for route in compiled:
-            if route.can_page_by_cursor:
+            if route.effective_pagination_mode is PaginationMode.CURSOR:
                 raise InterfaceCompilationError(
                     f"{route.interface_name}: route ({route.route.method.upper()}, "
-                    f"{route.route.path!r}) can page by cursor, but no cursor key is "
+                    f"{route.route.path!r}) declares pagination: cursor, but no cursor key is "
                     f"configured: set keys under {CURSORS_SECTION}"
                 )
     return CompiledApi(routes=tuple(compiled), factory=result.factory, executor=executor)
