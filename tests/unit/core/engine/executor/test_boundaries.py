@@ -246,7 +246,7 @@ class TestOwnership:
         seen: list[tuple[bool, int]] = []
 
         async def read() -> None:
-            seen.append((scope_now().owned_here(), len(scope_now().participants)))
+            seen.append((scope_now().is_owned_here(), len(scope_now().participants)))
 
         async def outer() -> None:
             await asyncio.gather(executor.execute(Run(read), read_only=True))

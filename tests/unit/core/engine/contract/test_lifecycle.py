@@ -113,7 +113,7 @@ class TestTerminalEventReflectsTheTransaction:
         assert metrics.only(EventKind.EXEC_ERROR).error_kind == "begin"
         assert case.factory.entered == 1
         # The coordinator closes a phased unit of work whose begin failed.
-        assert case.factory.exited == (1 if case.phased else 0)
+        assert case.factory.exited == (1 if case.is_phased else 0)
         # A failed begin opens nothing (SQLAlchemy) or ends what it opened (Mongo).
         assert case.probe.sessions_opened() == case.probe.sessions_closed()
         assert context_is_clean()

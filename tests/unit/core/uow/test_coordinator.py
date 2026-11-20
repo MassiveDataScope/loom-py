@@ -165,7 +165,7 @@ class TestEnlist:
         assert (caught.value.code, caught.value.is_retryable) == (ErrorCode.UNCOMPOSED_STORE, False)
 
     @pytest.mark.parametrize("store_type", [_FlushOnly, _CloseOnly], ids=["flush", "close"])
-    async def test_a_unit_of_work_without_the_phased_marker_runs_in_a_single_phase(
+    async def test_a_unit_of_work_without_the_is_phased_marker_runs_in_a_single_phase(
         self, store_type: type[ThirdPartyStore]
     ) -> None:
         ledger = Ledger()
@@ -174,7 +174,7 @@ class TestEnlist:
         participant = await coordinator.enlist(scope, S0)
         outcome = await coordinator.finish(scope, None)
 
-        assert participant.phased is False
+        assert participant.is_phased is False
         assert outcome.stores == (Committed(S0),)
         assert ledger.calls_of(S0) == ["begin", "exit-commit", "commit"]
 
@@ -193,7 +193,7 @@ class TestEnlist:
 
         participant = await coordinator.enlist(Scope(), S0)
 
-        assert participant.phased is phased
+        assert participant.is_phased is phased
         assert participant.physical == physical
 
     async def test_a_phased_participant_accepts_the_owner_of_its_unit_of_work(self) -> None:
@@ -242,7 +242,7 @@ class TestLoomTransactionalUnitsOfWork:
         ids=["sqlalchemy", "mongo"],
     )
     def test_loom_transactional_units_of_work_are_phased(self, uow: UnitOfWork) -> None:
-        assert Participant(S0, uow).phased
+        assert Participant(S0, uow).is_phased
 
 
 class TestCommitOrder:
@@ -409,12 +409,12 @@ class TestOutcome:
         ],
         ids=["committed", "non-transactional", "rolled-back", "uncertain"],
     )
-    def test_succeeded_only_when_every_store_committed_or_is_non_transactional(
+    def test_has_succeeded_only_when_every_store_committed_or_is_non_transactional(
         self, store: StoreOutcome, succeeded: bool
     ) -> None:
         outcome = InvocationOutcome(stores=(Committed(S1), store))
 
-        assert outcome.succeeded is succeeded
+        assert outcome.has_succeeded is succeeded
 
     def test_commit_uncertain_carries_the_driver_error(self) -> None:
         cause = ConnectionError("ack lost")

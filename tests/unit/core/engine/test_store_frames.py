@@ -329,7 +329,7 @@ class TestJoinedWrite:
     async def test_a_joined_repository_commits_with_the_invocation(self, stores: _Stores) -> None:
         outcome = await stores.run(_WriteBothStores(stores.order_port, stores.entry_port))
 
-        assert outcome.succeeded
+        assert outcome.has_succeeded
         assert {store.key for store in outcome.stores} == {DEFAULT_STORE, AUDIT}
         assert (await stores.orders.count(), await stores.entries.count()) == (1, 2)
 

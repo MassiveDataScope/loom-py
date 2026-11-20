@@ -192,7 +192,7 @@ class Boundaries:
             return self._reads if read_only else self._top_level
         if not read_only:
             return JoinsScope(scope, plan.frame, False)
-        if scope.owned_here():
+        if scope.is_owned_here():
             return JoinsScope(scope, _READ_ONLY, True)
         return self._hiding_reads
 

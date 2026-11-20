@@ -9,7 +9,7 @@ opt-in (``stores.<name>.transactions: true``):
   :class:`MongoSessions` finds its session there: a
   :class:`~loom.stores.mongo.repository.MongoRepository` built with
   ``session_provider=MongoSessions(client, store)`` joins the transaction of
-  the use case it runs in. It declares the coordinator's ``phased`` marker:
+  the use case it runs in. It declares the coordinator's ``is_phased`` marker:
   ``begin``, ``flush``, ``commit``, ``rollback`` and ``close`` are separate
   calls.
 - :class:`NoOpMongoUnitOfWork` (default) opens nothing: each driver call is
@@ -139,7 +139,7 @@ class MongoUnitOfWork(EntersAlone):
     """
 
     is_transactional: ClassVar[bool] = True
-    phased: ClassVar[bool] = True
+    is_phased: ClassVar[bool] = True
 
     def __init__(self, client: AsyncMongoClient[Any], store: StoreKey) -> None:
         self._client = client

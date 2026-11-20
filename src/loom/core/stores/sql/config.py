@@ -70,7 +70,7 @@ class SqlEndpointConfig(LoomFrozenStruct, frozen=True, kw_only=True, forbid_unkn
     include_in_schema: bool = False
 
     @property
-    def binds_identity(self) -> bool:
+    def is_identity_bound(self) -> bool:
         """Whether this endpoint requires an identity the framework can read.
 
         Returns:
@@ -238,7 +238,7 @@ def _validate_endpoint(
             "sql_endpoint.enabled requires a 'default_role' or a non-empty "
             "'allowed_roles' on the connection"
         )
-    if allowed_roles and not endpoint.binds_identity:
+    if allowed_roles and not endpoint.is_identity_bound:
         raise ValueError(
             "sql_endpoint.enabled with a non-empty 'allowed_roles' requires "
             f"'sql_endpoint.auth: {_IDENTITY_BOUND_AUTH}': it is the only mode whose "

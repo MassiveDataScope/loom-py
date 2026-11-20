@@ -439,15 +439,15 @@ class TestWritesStayInTheInnermostFrame:
         assert participant.wrote is True
 
 
-class TestOwnedHere:
+class TestIsOwnedHere:
     async def test_the_owner_task_owns_the_scope(self) -> None:
-        assert _scope_for().owned_here() is True
+        assert _scope_for().is_owned_here() is True
 
     async def test_a_gather_child_does_not(self) -> None:
         scope = _scope_for()
 
         async def owned() -> bool:
-            return scope.owned_here()
+            return scope.is_owned_here()
 
         assert await asyncio.gather(owned()) == [False]
 
@@ -455,7 +455,7 @@ class TestOwnedHere:
         scope = _scope_for()
         scope.closed = True
 
-        assert scope.owned_here() is False
+        assert scope.is_owned_here() is False
 
 
 class TestCurrentHandle:

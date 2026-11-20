@@ -49,7 +49,7 @@ def record_mutation(event: MutationEvent) -> None:
         event: The mutation event to record.
     """
     scope = current_scope()
-    if scope is not None and scope.mutations is not None and scope.owned_here():
+    if scope is not None and scope.mutations is not None and scope.is_owned_here():
         scope.mutations.append(event)
 
 

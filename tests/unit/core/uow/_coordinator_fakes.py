@@ -122,7 +122,7 @@ class _RecordingStore:
 class PhasedStore(_RecordingStore):
     """A loom-owned transactional unit of work with separate phases."""
 
-    phased: ClassVar[bool] = True
+    is_phased: ClassVar[bool] = True
 
     def __init__(self, key: StoreKey, ledger: Ledger, fault: Fault | None = None) -> None:
         super().__init__(key, ledger, fault)
@@ -197,7 +197,7 @@ class ThirdPartyStore(_RecordingStore):
 class AutocommitStore(ThirdPartyStore):
     """A third-party unit of work whose writes autocommit, like ``NoOpMongoUnitOfWork``.
 
-    It declares no ``phased`` marker, so the coordinator drives it in a single
+    It declares no ``is_phased`` marker, so the coordinator drives it in a single
     phase and its participant has no owner.
     """
 
@@ -219,7 +219,7 @@ class Kind(enum.Enum):
         return _STORES[self]
 
     @property
-    def phased(self) -> bool:
+    def is_phased(self) -> bool:
         return self is not Kind.THIRD_PARTY
 
 

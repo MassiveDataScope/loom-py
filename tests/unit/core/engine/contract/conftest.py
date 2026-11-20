@@ -222,7 +222,7 @@ _CONTEXT_MANAGER = frozenset({"enter", "exit"})
 class LifecycleProbe:
     """Wraps a real unit of work and records how the executor's coordinator drives it.
 
-    ``is_transactional`` and ``phased`` are the wrapped adapter's values,
+    ``is_transactional`` and ``is_phased`` are the wrapped adapter's values,
     forwarded by :func:`probe_class_for`, so the coordinator drives the probe
     exactly as it drives the adapter: phase by phase when the adapter is
     phased (ADR 0008, which supersedes FR-001 "the executor never calls
@@ -232,7 +232,7 @@ class LifecycleProbe:
     """
 
     is_transactional: ClassVar[bool]
-    phased: ClassVar[bool]
+    is_phased: ClassVar[bool]
 
     def __init__(self, inner: UnitOfWork, log: Log) -> None:
         # ``Any``: a phased adapter's ``flush``/``close``/``owner`` are not on ``UnitOfWork``.
@@ -297,15 +297,15 @@ class LifecycleProbe:
     @property
     def off_protocol_calls(self) -> list[str]:
         """Calls outside the one protocol this adapter is driven through."""
-        allowed = _PHASES if self.phased else _CONTEXT_MANAGER
+        allowed = _PHASES if self.is_phased else _CONTEXT_MANAGER
         return [call for call in self.calls if call not in allowed]
 
 
 def probe_class_for(adapter: type[UnitOfWork]) -> type[LifecycleProbe]:
-    """Return a probe class declaring the ``is_transactional`` and ``phased`` of ``adapter``."""
+    """Return a probe class declaring the ``is_transactional`` and ``is_phased`` of ``adapter``."""
     markers = {
         "is_transactional": adapter.is_transactional,
-        "phased": getattr(adapter, "phased", False) is True,
+        "is_phased": getattr(adapter, "is_phased", False) is True,
     }
     return type(f"{adapter.__name__}Probe", (LifecycleProbe,), markers)
 
@@ -356,7 +356,7 @@ class LifecycleCase:
         name: Adapter name, used in test ids and skip reasons.
         factory: Recording factory the executor is built with.
         transactional: The ``is_transactional`` ClassVar of a created unit of work.
-        phased: Whether the coordinator drives it phase by phase.
+        is_phased: Whether the coordinator drives it phase by phase.
         probe: Observation of the adapter's session.
         failures: Failure injection; ``None`` when the adapter has no driver seam.
         sessions_expected: Driver sessions one execution opens on this adapter.
@@ -367,7 +367,7 @@ class LifecycleCase:
     name: str
     factory: RecordingFactory
     transactional: bool
-    phased: bool
+    is_phased: bool
     probe: SessionProbe
     failures: FailureSeams | None
     sessions_expected: int
@@ -385,7 +385,7 @@ def _transactional_case(
         name=name,
         factory=RecordingFactory(factory, log),
         transactional=type(factory.create()).is_transactional,
-        phased=True,
+        is_phased=True,
         probe=seams,
         failures=seams,
         sessions_expected=1,
@@ -398,7 +398,7 @@ def _no_op_case(name: str, factory: UnitOfWorkFactory, log: Log) -> LifecycleCas
         name=name,
         factory=RecordingFactory(factory, log),
         transactional=type(factory.create()).is_transactional,
-        phased=False,
+        is_phased=False,
         probe=NoSessionProbe(),
         failures=None,
         sessions_expected=0,

@@ -25,7 +25,7 @@ def _validate_sql_endpoint_auth(sql_cfg: SqlConfig, auth: _AuthWiring) -> None:
     """Enforce the startup gates of every mounted identity-bound endpoint."""
     for name, connection in sql_cfg.connections.items():
         endpoint = connection.sql_endpoint
-        if not endpoint.enabled or not endpoint.binds_identity:
+        if not endpoint.enabled or not endpoint.is_identity_bound:
             continue
         subject = f"SQL connection {name!r}"
         authenticator = auth.require_authenticator(subject)

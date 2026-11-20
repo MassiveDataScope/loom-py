@@ -152,7 +152,7 @@ class SupplierCompiler:
         its key and under every alias of it; a dependent compiled earlier keeps it,
         and it reads the built instance.
         """
-        if binding.scope.per_execution:
+        if binding.scope.is_per_execution:
             return per_execution(binding, make)
         instance = binding.instance
         if instance is not UNBUILT:

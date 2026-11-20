@@ -63,7 +63,7 @@ class SQLAlchemyUnitOfWork(EntersAlone):
     """
 
     is_transactional: ClassVar[bool] = True
-    phased: ClassVar[bool] = True
+    is_phased: ClassVar[bool] = True
 
     def __init__(self, session_manager: SessionManager) -> None:
         self._session_manager = session_manager
