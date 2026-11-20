@@ -6,7 +6,7 @@ from uuid import UUID
 import msgspec
 import pytest
 
-from loom.core.errors import Conflict, UnsupportedQuery
+from loom.core.errors import Conflict
 from loom.core.model import BaseModel, ColumnField
 from loom.core.stores.repository import OnConflict
 from loom.stores.dynamodb.repository import RepositoryDynamoDB
@@ -84,34 +84,6 @@ class TestDynamoRepositoryRoundTrip:
 
         assert products_table.items_by_id()["1"]["name"] == {"S": "Widget"}
 
-    async def test_get_by_non_key_field_raises_unsupported_query(
-        self, products_table: MotoTable
-    ) -> None:
-        repo = _repo(products_table.client)
-
-        with pytest.raises(UnsupportedQuery, match="get_by\\('name'\\)") as exc_info:
-            await repo.get_by("name", "Bolt")
-
-        assert exc_info.value.code == "unsupported_query"
-        assert exc_info.value.backend == "dynamodb"
-        assert exc_info.value.model == "Product"
-
-    async def test_exists_by_primary_key(self, products_table: MotoTable) -> None:
-        """The contract suite skips exists_by for DynamoDB (no Countable): pin the key path here."""
-        repo = _repo(products_table.client)
-        await repo.create(ProductCreate(id=3, name="Nut"))
-
-        assert await repo.exists_by("id", 3) is True
-        assert await repo.exists_by("id", 999) is False
-
-    async def test_exists_by_non_key_field_raises_unsupported_query(
-        self, products_table: MotoTable
-    ) -> None:
-        repo = _repo(products_table.client)
-
-        with pytest.raises(UnsupportedQuery, match="exists_by\\('name'\\)"):
-            await repo.exists_by("name", "Nut")
-
     async def test_update_conditional_failure_returns_none(
         self, monkeypatch: pytest.MonkeyPatch, products_table: MotoTable
     ) -> None:
@@ -167,12 +139,6 @@ class TestDynamoUuidPrimaryKey:
         await repo.create(AcmeDynamoBadge(id=_BADGE_ID, label="first"))
 
         assert await repo.get_by_id(_BADGE_ID) == AcmeDynamoBadge(id=_BADGE_ID, label="first")
-
-    async def test_a_uuid_primary_key_answers_exists_by(self, badges: MotoTable) -> None:
-        repo = _badge_repo(badges.client)
-        await repo.create(AcmeDynamoBadge(id=_BADGE_ID, label="first"))
-
-        assert await repo.exists_by("id", _BADGE_ID) is True
 
     async def test_an_item_is_updated_by_its_uuid_primary_key(self, badges: MotoTable) -> None:
         repo = _badge_repo(badges.client)

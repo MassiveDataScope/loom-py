@@ -31,6 +31,7 @@ from loom.core.stores.repository.capabilities import (
     Countable,
     Creatable,
     Deletable,
+    FieldReadable,
     Listable,
     Readable,
     RepoFor,
@@ -439,7 +440,17 @@ def _primary_store(use_case_type: type[Compilable]) -> StoreKey:
 
 
 _REPOSITORY_CONTRACTS: Final = frozenset(
-    {Readable, Creatable, BulkCreatable, Updatable, Deletable, Listable, Countable, RepoFor}
+    {
+        Readable,
+        FieldReadable,
+        Creatable,
+        BulkCreatable,
+        Updatable,
+        Deletable,
+        Listable,
+        Countable,
+        RepoFor,
+    }
 )
 
 

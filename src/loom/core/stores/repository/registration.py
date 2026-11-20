@@ -16,6 +16,7 @@ from loom.core.stores.repository.capabilities import (
     Countable,
     Creatable,
     Deletable,
+    FieldReadable,
     Listable,
     Readable,
     RepoFor,
@@ -31,6 +32,7 @@ from loom.core.stores.repository.registry import (
 
 _STANDARD_PROTOCOLS: tuple[Any, ...] = (
     Readable,
+    FieldReadable,
     Creatable,
     BulkCreatable,
     Updatable,

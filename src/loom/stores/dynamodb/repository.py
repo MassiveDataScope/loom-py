@@ -2,12 +2,11 @@
 
 DynamoDB is a key-value / document store, not a relational engine. This
 repository implements faithfully only what DynamoDB supports natively through
-the item primary key: ``get_by_id``, ``create``, ``create_many``, ``update``,
-``delete`` and the key-scoped ``get_by`` / ``exists_by``. Listing and counting
-need a full table scan or a secondary index, so the class declares neither
-``Listable`` nor ``Countable``: the auto-CRUD gate mounts no list route over it
-and the DI container binds no such capability. A lookup on a field other than the key
-raises :class:`~loom.core.errors.UnsupportedQuery`.
+the item primary key: ``get_by_id``, ``create``, ``create_many``, ``update`` and
+``delete``. A lookup by another field, listing and counting need a full table
+scan or a secondary index, so the class declares none of ``FieldReadable``,
+``Listable`` or ``Countable``: the auto-CRUD gate mounts no list route over it
+and the DI container binds no such capability.
 
 Model-to-table mapping is intentionally simple: every model is stored in the
 single table configured under ``stores.<name>.table``. The item primary
@@ -27,7 +26,7 @@ import msgspec
 from loom.core.concurrency import run_in_executor
 from loom.core.config import ConfigError
 from loom.core.connections.aws import aws_error_code
-from loom.core.errors import Conflict, UnsupportedQuery
+from loom.core.errors import Conflict
 from loom.core.logger import get_logger
 from loom.core.model.convert import to_struct
 from loom.core.model.introspection import get_column_fields, get_id_attributes, get_table_name
@@ -70,10 +69,6 @@ class RepositoryDynamoDB(
     :class:`~boto3.dynamodb.types.TypeDeserializer` translate them to and from
     plain Python values, preserving the ``float``↔``Decimal`` round-trip
     DynamoDB requires.
-
-    ``exists_by`` is served for the partition key although the class does
-    not declare ``Countable``: counting needs a scan, an existence check
-    does not.
 
     Args:
         client: A boto3 low-level ``dynamodb`` client (or a compatible object
@@ -138,29 +133,6 @@ class RepositoryDynamoDB(
         if item is None:
             return None
         return self._to_output(self._decode_item(item))
-
-    async def get_by(self, field: str, value: Any, profile: str = "default") -> OutputT | None:
-        """Fetch one entity by ``field == value``.
-
-        Supported only when ``field`` is the partition key; any other field
-        would require a scan or secondary index and raises
-        :class:`~loom.core.errors.UnsupportedQuery`.
-        """
-        if field == self._id_attr:
-            return await self.get_by_id(cast(IdT, value), profile)
-        raise self._unsupported_field("get_by", field)
-
-    async def exists_by(self, field: str, value: Any) -> bool:
-        """Return whether an item exists for ``field == value`` (primary key only)."""
-        if field != self._id_attr:
-            raise self._unsupported_field("exists_by", field)
-        response = await run_in_executor(
-            self._executor,
-            self._client.get_item,
-            TableName=self._table_name,
-            Key=self._encode_key(value),
-        )
-        return "Item" in response
 
     async def create(self, data: msgspec.Struct) -> OutputT:
         """Persist a new item with a conditional ``PutItem`` (insert, not upsert).
@@ -353,15 +325,6 @@ class RepositoryDynamoDB(
         finally:
             if landed and scope is not None and participant is not None:
                 scope.record_write(participant)
-
-    def _unsupported_field(self, operation: str, field: str) -> UnsupportedQuery:
-        """Build the error for a lookup on a field the partition key does not cover."""
-        return UnsupportedQuery(
-            f"{operation}('{field}') needs a scan or a secondary index; only the "
-            f"primary key '{self._id_attr}' can be queried.",
-            backend=self.backend_name,
-            model=self._model.__qualname__,
-        )
 
     def _creation_item(self, data: msgspec.Struct) -> dict[str, Any]:
         """Return the item to store for *data*, keyed by internal field name.

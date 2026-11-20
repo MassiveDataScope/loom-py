@@ -150,6 +150,16 @@
       "resolved": "RepositorySQLAlchemy",
       "scope": "APPLICATION"
     },
+    "loom.core.stores.repository.capabilities.FieldReadable[tests.unit.composition.phases.components.AcmeLedgerEntry]": {
+      "provider": "_build_repository_provider.<locals>._provider",
+      "resolved": "RepositorySQLAlchemy",
+      "scope": "APPLICATION"
+    },
+    "loom.core.stores.repository.capabilities.FieldReadable[tests.unit.composition.phases.components.AcmeRecord]": {
+      "provider": "_build_repository_provider.<locals>._provider",
+      "resolved": "RepositorySQLAlchemy",
+      "scope": "APPLICATION"
+    },
     "loom.core.stores.repository.capabilities.Listable[tests.unit.composition.phases.components.AcmeLedgerEntry]": {
       "provider": "_build_repository_provider.<locals>._provider",
       "resolved": "RepositorySQLAlchemy",

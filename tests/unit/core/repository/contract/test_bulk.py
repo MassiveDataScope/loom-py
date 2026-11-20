@@ -71,3 +71,17 @@ class TestContractBulkCreate:
         await repository.create(SEED[0])
 
         assert await repository.create_many([SEED[0]], on_conflict=OnConflict.IGNORE) == ()
+
+    async def test_ignore_inside_a_unit_of_work_skips_existing_keys(
+        self, case: BackendCase, repository: Any
+    ) -> None:
+        require(case, BulkCreatable, Readable)
+        await repository.create(SEED[1])
+
+        async with case.unit_of_work(repository):
+            created = await repository.create_many(
+                [SEED[1], SEED[2]], on_conflict=OnConflict.IGNORE
+            )
+
+        assert [row.id for row in created] == [SEED[2].id]
+        assert await repository.get_by_id(SEED[2].id) == created[0]

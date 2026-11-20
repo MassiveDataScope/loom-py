@@ -18,6 +18,7 @@ from loom.core.stores.repository import (
     Countable,
     Creatable,
     Deletable,
+    FieldReadable,
     Listable,
     OnConflict,
     Readable,
@@ -95,6 +96,7 @@ class TestCapabilitiesOf:
     def test_keeps_the_declaration_order(self) -> None:
         assert capabilities_of(RepositorySQLAlchemy) == (
             Readable,
+            FieldReadable,
             Creatable,
             BulkCreatable,
             Updatable,

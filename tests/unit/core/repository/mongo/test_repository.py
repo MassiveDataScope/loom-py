@@ -619,21 +619,6 @@ class TestCreateManyIgnore:
 
         assert collection.orders == [False]
 
-    async def test_is_refused_inside_a_transaction(self) -> None:
-        collection = RaisingCollection()
-        session = FakeMongoClient().start_session()
-        provider = cast(SessionProvider, lambda write: session)
-        repo = RepositoryMongo(Article, collection, session_provider=provider, cursor_codec=_CODEC)
-
-        with pytest.raises(UnsupportedQuery, match="on Article: .*inside a transaction") as refused:
-            await repo.create_many(
-                [ArticleCreate(slug="a", title="A")], on_conflict=OnConflict.IGNORE
-            )
-
-        assert refused.value.backend == "mongo"
-
-        assert collection.orders == []
-
     @pytest.mark.parametrize(
         ("details", "raised"),
         [

@@ -218,8 +218,9 @@ and the post-commit actions that run once it has closed.
 ## Capabilities and the gate
 
 Repositories declare what they can do by inheriting capability protocols:
-`Readable`, `Creatable`, `BulkCreatable`, `Updatable`, `Deletable`, `Listable`
-and `Countable` (`loom.core.stores.repository`). `capabilities_of(repository_type)`
+`Readable` (by primary key), `FieldReadable` (by any field), `Creatable`,
+`BulkCreatable`, `Updatable`, `Deletable`, `Listable` and `Countable`
+(`loom.core.stores.repository`). `capabilities_of(repository_type)`
 is the single detector — the registration module binds a DI key per declared
 protocol, and the auto-CRUD gate mounts one operation per protocol:
 
@@ -244,7 +245,7 @@ The gate looks at the class that will serve the model — the explicit
 ```python
 from loom.core.stores.repository.registration import capabilities_of
 
-capabilities_of(RepositoryLedger)   # (Readable, Creatable, BulkCreatable)
+capabilities_of(LedgerRepository)   # (Readable, Creatable, BulkCreatable)
 ```
 
 Swapping the `DefaultRepositoryBuilder` does not move the gate: it keeps
@@ -272,8 +273,8 @@ Any other constraint violation still raises `Conflict`.
   `ERROR` (see below), unordered for `IGNORE`, which skips only duplicate-key
   errors (code 11000) on `_id`; a duplicate in another unique index raises
   `Conflict` and any other write error leaves the other documents written.
-  `IGNORE` is refused with `UnsupportedQuery` inside a transaction, which a
-  duplicate key aborts.
+  Inside a transaction `IGNORE` reads the stored keys first and inserts only
+  the missing documents, because a duplicate key would abort the transaction.
 - DynamoDB writes `ERROR` batches with `TransactWriteItems` in chunks of 100,
   each conditioned on the key not existing: every chunk is atomic, the batch
   is not, so a conflict leaves earlier chunks written. A key repeated in the
@@ -286,15 +287,16 @@ can honour the order and document its atomicity.
 ### `UnsupportedQuery`
 
 A capability the class does not declare is absent from DI and from the
-generated routes. What the protocol cannot express — a lookup the backend can
-only serve by scanning, a cursor from another backend — is refused at run time
-with `UnsupportedQuery(backend, model, reason)`, mapped by the REST layer to
-`400` with code `unsupported_query`:
+generated routes: DynamoDB reaches an item only through its key, so it declares
+`Readable` and not `FieldReadable`, `Listable` or `Countable`. What the
+protocol cannot express — a cursor from another backend, a filter operator the
+backend lacks — is refused at run time with `UnsupportedQuery(backend, model,
+reason)`, mapped by the REST layer to `400` with code `unsupported_query`:
 
 ```python
 from loom.core.errors import UnsupportedQuery
 
-raise UnsupportedQuery("dynamodb", "orders.Order", "get_by on 'customer_id' needs an index")
+raise UnsupportedQuery("mongo", "orders.Order", "LIKE on 'customer' needs a regex")
 ```
 
 ## Dependency verification at boot

@@ -2,6 +2,17 @@
 
 ## 💥 Breaking
 
+- **stores:** a repository no longer promises a lookup it cannot serve.
+  `Readable` is now the lookup by primary key (`get_by_id`) and the new
+  `FieldReadable` (`get_by`) is the lookup by any field; `RepoFor` composes
+  both, and the SQLAlchemy and Mongo repositories declare both. The DynamoDB
+  repository declares `Readable` only and drops `get_by` and `exists_by`: it
+  reached nothing but the key and refused every other field at call time.
+  Mongo `create_many(on_conflict=OnConflict.IGNORE)` no longer raises
+  `UnsupportedQuery` inside a transaction: it reads the stored keys in the
+  transaction first and inserts only the missing documents.
+  **Migration:** a use case that injects `Readable[Model]` for `get_by`
+  injects `FieldReadable[Model]`; on DynamoDB read by key with `get_by_id`.
 - **connections:** the SDK client builders leave the core. `AwsClients`,
   `aws_island`, `AwsIsland`, `mongo_island`, `MongoIsland`, `clickhouse_island`,
   `ClickHouseIsland` and the `client` modules are now in `loom.connections.aws`,
