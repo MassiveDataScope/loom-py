@@ -77,6 +77,26 @@ class TestLazyExports:
         with pytest.raises(ImportError, match=r"loom-kernel\[lambda,testing\]"):
             _ = loom.testing.LambdaTestClient
 
+    @pytest.mark.parametrize("name", ["make", "LoomFactory"])
+    def test_data_exports_name_the_testing_extra_when_polyfactory_is_missing(
+        self, name: str, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        monkeypatch.delitem(sys.modules, "loom.testing.data", raising=False)
+        monkeypatch.setitem(sys.modules, "polyfactory", None)
+
+        with pytest.raises(ImportError, match=r"requires polyfactory.*loom-kernel\[testing\]"):
+            getattr(loom.testing, name)
+
+    def test_data_exports_let_any_other_missing_module_surface(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        monkeypatch.setitem(sys.modules, "loom.testing.job_factories", None)
+
+        with pytest.raises(ImportError) as raised:
+            _ = loom.testing.make
+
+        assert raised.value.name == "loom.testing.job_factories"
+
     def test_unknown_attribute_raises_attribute_error(self) -> None:
         """Names outside the lazy export set keep the standard ``AttributeError``."""
         with pytest.raises(AttributeError, match="does_not_exist"):
