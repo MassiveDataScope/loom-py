@@ -157,7 +157,7 @@ class TestOpening:
 
         with pytest.raises(CompositionStateError, match="shut down while opening") as raised:
             await starting
-        assert raised.value.issue.code is CompositionErrorCode.HOST_STOPPED_WHILE_OPENING
+        assert raised.value.issue.code is CompositionErrorCode.HOST_SHUT_DOWN_WHILE_OPENING
         assert gate.closed
         assert not application.is_open
         await stopping

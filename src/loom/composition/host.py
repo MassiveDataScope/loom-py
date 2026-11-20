@@ -46,7 +46,7 @@ class ApplicationHost:
         self._check = check
         self._started = False
         self._owner: asyncio.Task[None] | None = None
-        self._stopping = asyncio.Event()
+        self._shutting_down = asyncio.Event()
         self._close_failure: BaseException | None = None
 
     async def start(self) -> None:
@@ -93,8 +93,8 @@ class ApplicationHost:
         owner = self._owner
         if owner is None:
             return
-        first = not self._stopping.is_set()
-        self._stopping.set()
+        first = not self._shutting_down.is_set()
+        self._shutting_down.set()
         try:
             await asyncio.wait({owner})
         except asyncio.CancelledError:
@@ -115,26 +115,26 @@ class ApplicationHost:
         try:
             async with self._application.running(check=self._check):
                 entered = True
-                if not self._stopping.is_set():
+                if not self._shutting_down.is_set():
                     opened.set_result(None)
-                    await self._stopping.wait()
+                    await self._shutting_down.wait()
         except BaseException as error:
             if not opened.done():
                 if isinstance(error, asyncio.CancelledError):
                     opened.cancel()
                 elif entered:
-                    opened.set_exception(_stopped_while_opening())
+                    opened.set_exception(_shut_down_while_opening())
                 else:
                     opened.set_exception(error)
                     return
             raise
         if not opened.done():
-            opened.set_exception(_stopped_while_opening())
+            opened.set_exception(_shut_down_while_opening())
 
     def _record_close_failure(self, owner: asyncio.Task[None]) -> None:
         """Keep the owner's failure to close for :meth:`shutdown`, or log it if none is waiting."""
         self._close_failure = _failure_to_close(owner)
-        if not self._stopping.is_set():
+        if not self._shutting_down.is_set():
             self._log_failure()
 
     def _take_close_failure(self) -> BaseException | None:
@@ -232,5 +232,5 @@ def _failure_to_close(owner: asyncio.Task[None]) -> BaseException | None:
     return owner.exception()
 
 
-def _stopped_while_opening() -> CompositionStateError:
-    return CompositionStateError(CompositionErrorCode.HOST_STOPPED_WHILE_OPENING.issue())
+def _shut_down_while_opening() -> CompositionStateError:
+    return CompositionStateError(CompositionErrorCode.HOST_SHUT_DOWN_WHILE_OPENING.issue())

@@ -62,8 +62,8 @@ class CompositionErrorCode(IssueCode):
             component="ApplicationHost",
         ),
     )
-    HOST_STOPPED_WHILE_OPENING = (
-        "HOST_STOPPED_WHILE_OPENING",
+    HOST_SHUT_DOWN_WHILE_OPENING = (
+        "HOST_SHUT_DOWN_WHILE_OPENING",
         Template(
             "ApplicationHost was shut down while opening; the application is closed",
             component="ApplicationHost",
