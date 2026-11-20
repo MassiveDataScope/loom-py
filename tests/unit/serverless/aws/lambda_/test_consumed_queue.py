@@ -6,7 +6,6 @@ import json
 from collections.abc import Callable
 from pathlib import Path
 from typing import Any
-from unittest.mock import MagicMock
 
 import pytest
 
@@ -29,12 +28,6 @@ _POLICY = {
         "maxReceiveCount": 4,
     }
 }
-
-
-def _script_redrive_policy(client: MagicMock) -> None:
-    client.get_queue_attributes.return_value = {
-        "Attributes": {"RedrivePolicy": json.dumps(_POLICY[_JOBS])}
-    }
 
 
 Bind = Callable[..., Application]
@@ -175,10 +168,9 @@ class TestConsumedQueue:
         monkeypatch: pytest.MonkeyPatch,
         bind: Bind,
     ) -> None:
-        def refuse(client: MagicMock) -> None:
-            client.get_queue_attributes.side_effect = FakeSdkError("throttled")
-
-        FakeAwsIsland(setup=refuse).install(monkeypatch)
+        FakeAwsIsland(
+            make_client=lambda service, config: FakeSqs(lookup_raises=FakeSdkError("throttled"))
+        ).install(monkeypatch)
 
         with pytest.raises(ConfigError, match=r"queue 'jobs'.*FakeSdkError: throttled"):
             bind(tmp_path, probe, None)
@@ -191,14 +183,16 @@ class TestConsumedQueue:
         monkeypatch: pytest.MonkeyPatch,
     ) -> None:
         jobs = {probe[0].__name__: {"queue": "jobs"}}
-        island = FakeAwsIsland(setup=_script_redrive_policy).install(monkeypatch)
+        island = FakeAwsIsland(make_client=lambda service, config: FakeSqs(_POLICY)).install(
+            monkeypatch
+        )
         bind(tmp_path, probe, None, jobs=jobs)
 
         by_attempts = island.created_by_max_attempts()
         bounded = by_attempts.pop(1)
         [retrying] = by_attempts.values()
-        assert retrying.get_queue_attributes.call_count == 1
-        assert bounded.get_queue_attributes.call_count + bounded.get_queue_url.call_count == 0
+        assert retrying.calls["get_queue_attributes"] == 1
+        assert bounded.metadata_calls == 0
 
     @pytest.mark.parametrize(
         "policy",

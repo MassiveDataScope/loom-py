@@ -2,13 +2,22 @@
 
 from __future__ import annotations
 
+import asyncio
+from collections.abc import AsyncIterator, Callable
+from contextlib import AbstractAsyncContextManager, asynccontextmanager
+
 import pytest
 
+from loom.core.errors import UndeclaredStoreWrite
 from loom.core.identity import Identity, reset_identity, set_identity
 from loom.core.job.context import clear_pending_dispatches, flush_pending_dispatches
 from loom.core.job.policy import Countdown
+from loom.core.stores.catalog import DEFAULT_STORE
+from loom.core.stores.uow.coordinator import OrderedCommits
+from loom.core.stores.uow.scope import Frame, InvocationScope, invocation
 from loom.core.tracing import reset_trace_id, set_trace_id
 from tests.contract.jobs.conftest import DelayedJob, NotifyJob, ReportJob, Wire
+from tests.unit.core.uow._coordinator_fakes import Factory, Ledger, PhasedStore
 
 
 class TestAfterCommit:
@@ -156,3 +165,47 @@ class TestParallel:
             (handle.job_id, body)
             for handle, body in zip(group.handles, ({"a": 1}, {"b": 2}), strict=True)
         ]
+
+
+@asynccontextmanager
+async def read_only_invocation() -> AsyncIterator[InvocationScope]:
+    async with (
+        invocation(OrderedCommits({}), read_only=True) as scope,
+        scope.frame(Frame(None)),
+    ):
+        yield scope
+
+
+@asynccontextmanager
+async def read_only_frame_in_a_writer() -> AsyncIterator[InvocationScope]:
+    store = PhasedStore(DEFAULT_STORE, Ledger())
+    async with (
+        invocation(OrderedCommits({DEFAULT_STORE: Factory(store)})) as scope,
+        scope.frame(Frame(DEFAULT_STORE)),
+        scope.frame(Frame(None)),
+    ):
+        yield scope
+
+
+READ_ONLY: dict[str, Callable[[], AbstractAsyncContextManager[InvocationScope]]] = {
+    "read-only-invocation": read_only_invocation,
+    "read-only-frame-in-a-writer": read_only_frame_in_a_writer,
+}
+
+
+class TestReadOnlyExecution:
+    @pytest.mark.parametrize("gathered", [False, True], ids=["owner", "gather-child"])
+    @pytest.mark.parametrize("read_only", sorted(READ_ONLY))
+    async def test_a_dispatch_from_a_read_only_execution_is_refused_and_never_sent(
+        self, wire: Wire, read_only: str, gathered: bool
+    ) -> None:
+        async def dispatch() -> None:
+            wire.service.dispatch_after_commit(NotifyJob, payload={"to": "a@b.c"})
+
+        async with READ_ONLY[read_only]():
+            attempt = asyncio.gather(dispatch()) if gathered else dispatch()
+            with pytest.raises(UndeclaredStoreWrite, match="a job dispatch is refused"):
+                await attempt
+
+        await flush_pending_dispatches()
+        assert wire.sent() == []

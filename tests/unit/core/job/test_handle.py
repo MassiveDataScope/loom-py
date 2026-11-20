@@ -3,12 +3,18 @@ from __future__ import annotations
 import dataclasses
 from datetime import UTC, datetime
 from typing import Any
-from unittest.mock import MagicMock
 
 import pytest
+from celery import Celery
 
 from loom.core.errors import JobFailedError, JobTimeoutError
 from loom.core.job.handle import InlineOutcome, JobGroup, JobHandle
+
+
+@pytest.fixture
+def results() -> Celery:
+    """A Celery application whose result backend lives in memory."""
+    return Celery(broker="memory://", backend="cache+memory://")
 
 
 def _now() -> datetime:
@@ -46,32 +52,33 @@ class TestJobHandle:
     # JobHandle — Celery (async_result) mode
     # ---------------------------------------------------------------------------
 
-    def test_wait_async_result_delegates_to_get(self) -> None:
-        mock_result = MagicMock()
-        mock_result.get.return_value = 99
-        handle = JobHandle(job_id="x", queue="q", dispatched_at=_now(), _async_result=mock_result)
+    def test_wait_async_result_returns_what_the_result_backend_holds(self, results: Celery) -> None:
+        results.backend.store_result("x", 99, "SUCCESS")
+        handle = JobHandle(
+            job_id="x", queue="q", dispatched_at=_now(), _async_result=results.AsyncResult("x")
+        )
 
         assert handle.wait(timeout=5.0) == 99
-        mock_result.get.assert_called_once_with(timeout=5.0)
 
-    def test_wait_async_timeout_raises_job_timeout_error(self) -> None:
-        class TimeoutError(Exception):  # simulates celery.exceptions.TimeoutError
-            pass
-
-        mock_result = MagicMock()
-        mock_result.get.side_effect = TimeoutError()
-        handle = JobHandle(job_id="tid", queue="q", dispatched_at=_now(), _async_result=mock_result)
+    def test_wait_async_timeout_raises_job_timeout_error(self, results: Celery) -> None:
+        handle = JobHandle(
+            job_id="tid",
+            queue="q",
+            dispatched_at=_now(),
+            _async_result=results.AsyncResult("never-stored"),
+        )
 
         with pytest.raises(JobTimeoutError) as exc_info:
-            handle.wait(timeout=2.0)
+            handle.wait(timeout=0.05)
 
         assert exc_info.value.job_id == "tid"
-        assert exc_info.value.timeout == pytest.approx(2.0)
+        assert exc_info.value.timeout == pytest.approx(0.05)
 
-    def test_wait_async_failure_raises_job_failed_error(self) -> None:
-        mock_result = MagicMock()
-        mock_result.get.side_effect = ValueError("something went wrong")
-        handle = JobHandle(job_id="fid", queue="q", dispatched_at=_now(), _async_result=mock_result)
+    def test_wait_async_failure_raises_job_failed_error(self, results: Celery) -> None:
+        results.backend.store_result("fid", ValueError("something went wrong"), "FAILURE")
+        handle = JobHandle(
+            job_id="fid", queue="q", dispatched_at=_now(), _async_result=results.AsyncResult("fid")
+        )
 
         with pytest.raises(JobFailedError) as exc_info:
             handle.wait()
