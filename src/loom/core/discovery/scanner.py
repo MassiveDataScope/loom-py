@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import importlib
+import importlib.metadata
 import os
 import pkgutil
 import sys
@@ -24,10 +25,37 @@ ClassT = TypeVar("ClassT", bound=type)
 
 
 class PackageScanner:
-    """Discover application classes in configured packages and their subpackages."""
+    """Discover application classes in configured packages and their subpackages.
 
-    def __init__(self, packages: Sequence[str]) -> None:
+    Args:
+        packages: The ``app.packages`` entries.
+        entry_points: The ``app.entry_points`` groups; the module of every
+            installed entry point in them is scanned like a package entry.
+    """
+
+    def __init__(self, packages: Sequence[str] = (), *, entry_points: Sequence[str] = ()) -> None:
         self._packages = packages
+        self._entry_points = entry_points
+
+    def package_names(self) -> list[str]:
+        """Return the modules to scan: ``app.packages``, then the entry-point modules, sorted.
+
+        Raises:
+            ConfigError: When a declared entry-point group has no installed entry point.
+        """
+        return [*self._packages, *self._entry_point_modules()]
+
+    def _entry_point_modules(self) -> list[str]:
+        modules: set[str] = set()
+        for group in self._entry_points:
+            provided = importlib.metadata.entry_points(group=group)
+            if not provided:
+                raise ConfigError(
+                    f"app.entry_points group {group!r} has no entry point: no installed "
+                    "distribution provides it"
+                )
+            modules.update(entry_point.module for entry_point in provided)
+        return sorted(modules)
 
     def discover(self, *, agents: Sequence[str] = ()) -> DiscoveryResult:
         """Return the classes of the configured modules and packages, subpackages included.
@@ -61,7 +89,7 @@ class PackageScanner:
 
     def _modules(self) -> list[ModuleType]:
         modules: dict[str, ModuleType] = {}
-        for package_name in self._packages:
+        for package_name in self.package_names():
             package = self._import(package_name)
             modules[package.__name__] = package
             self._refuse_directories_without_init(package)
