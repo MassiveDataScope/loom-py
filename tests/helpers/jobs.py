@@ -13,6 +13,7 @@ from loom.core.config import ConfigContext
 from loom.core.di.container import LoomContainer
 from loom.core.discovery.base import DiscoveryResult
 from loom.core.engine.compiler import UseCaseCompiler
+from loom.core.engine.events import EventKind, RuntimeEvent
 from loom.core.engine.executor import RuntimeExecutor
 from loom.core.engine.metrics import MetricsAdapter
 from loom.core.job.callback import ANY_CALLBACKS, DispatchableCallbacks
@@ -42,6 +43,21 @@ class EmailJob(Job[str]):
 
     def execute(self) -> str:
         return "email"
+
+
+class RecordingMetrics:
+    """A metrics adapter that keeps every runtime event it receives."""
+
+    def __init__(self) -> None:
+        self.events: list[RuntimeEvent] = []
+
+    @property
+    def kinds(self) -> list[EventKind]:
+        """The kind of each event received, in order."""
+        return [event.kind for event in self.events]
+
+    def on_event(self, event: RuntimeEvent) -> None:
+        self.events.append(event)
 
 
 class JobsAdapter:

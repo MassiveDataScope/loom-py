@@ -167,3 +167,25 @@ class TestRoutedInlineTransport:
         assert use_case.handle is not None
         assert use_case.handle.wait() == "report"
         assert default.dispatched == []
+
+
+class TestDispatchArguments:
+    def test_dispatch_after_commit_has_no_eta(self, service: JobService) -> None:
+        with pytest.raises(TypeError, match="eta"):
+            service.dispatch_after_commit(EmailJob, eta=object())  # type: ignore[call-arg]
+
+    async def test_dispatch_now_has_no_eta(self, service: JobService) -> None:
+        with pytest.raises(TypeError, match="eta"):
+            await service.dispatch_now(EmailJob, eta=object())  # type: ignore[call-arg]
+
+
+class TestDispatchNowRouting:
+    async def test_a_routed_queue_sends_through_its_own_transport(
+        self,
+        service: JobService,
+        default: RecordingJobTransport,
+        emails: RecordingJobTransport,
+    ) -> None:
+        await service.dispatch_now(EmailJob)
+
+        assert (len(default.dispatched), len(emails.dispatched)) == (0, 1)

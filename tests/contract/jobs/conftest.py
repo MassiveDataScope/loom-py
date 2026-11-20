@@ -22,9 +22,13 @@ from celery import Celery  # type: ignore[import-untyped]
 from celery.exceptions import Retry  # type: ignore[import-untyped]
 
 from loom.celery.runner import _CeleryAsyncRuntime, _make_job_task
+from loom.celery.service import CeleryJobTransport
 from loom.core.connections.aws import AwsClients
+from loom.core.identity import Delegation
 from loom.core.job.config import JobSettings
+from loom.core.job.context import clear_pending_dispatches
 from loom.core.job.delivery import JobDelivery
+from loom.core.job.envelope import TASK_JOB_PREFIX, decode_job_envelope
 from loom.core.job.job import Job
 from loom.core.job.outcome import (
     Abandoned,
@@ -37,6 +41,7 @@ from loom.core.job.outcome import (
 )
 from loom.core.job.policy import Redelivery
 from loom.core.job.runner import JobRunner
+from loom.core.job.service import JobService
 from loom.jobs.aws.queue import (
     ABANDONMENT_REASON_ATTRIBUTE,
     POSTPONEMENTS_ATTRIBUTE,
@@ -44,11 +49,12 @@ from loom.jobs.aws.queue import (
     SQSRecord,
 )
 from loom.jobs.aws.settlement import SQSJobSettlement
-from loom.jobs.aws.sqs import SQSConfig
-from loom.testing.jobs import JobTestData, ManualTimer
+from loom.jobs.aws.sqs import SQSConfig, SQSJobTransport
+from loom.testing.jobs import DispatchedJob, JobTestData, ManualTimer, RecordingJobTransport
 from tests.helpers.aws import ACCOUNT
 from tests.helpers.aws_island import FakeAwsIsland
-from tests.helpers.jobs import InlineServiceFixture, JobKernel
+from tests.helpers.celery import CeleryBroker
+from tests.helpers.jobs import InlineServiceFixture, JobKernel, SQSClient
 from tests.helpers.sqs import URL_BASE, FakeSqs
 
 BACKENDS = ["envelope", "celery", "sqs"]
@@ -314,3 +320,123 @@ def inline() -> Inline:
     kernel = JobKernel()
     timer = ManualTimer()
     return Inline(InlineServiceFixture(kernel.factory, kernel.executor, timer=timer), timer)
+
+
+class NotifyJob(Job[str]):
+    __queue__ = "emails"
+
+    def execute(self) -> str:
+        return "notified"
+
+
+class ReportJob(Job[str]):
+    __queue__ = "reports"
+
+    def execute(self) -> str:
+        return "reported"
+
+
+class DelayedJob(Job[str]):
+    __queue__ = "emails"
+    __countdown__ = 12
+
+    def execute(self) -> str:
+        return "delayed"
+
+
+DISPATCH_JOBS = {job.__qualname__: job for job in (NotifyJob, ReportJob, DelayedJob)}
+"""The jobs of the dispatch contract, by the name they carry on the wire."""
+
+QUEUES = ("emails", "reports")
+"""The standard queues every dispatch wire serves."""
+
+SQS_QUEUE_URLS = {name: f"{URL_BASE}/{name}" for name in QUEUES}
+
+
+class Wire(Protocol):
+    """One transport behind a :class:`JobService`, and the messages it let out."""
+
+    service: JobService
+
+    def sent(self) -> list[DispatchedJob]:
+        """Every message that left, in order, drained from where the transport put it."""
+        ...
+
+
+class RecordingWire:
+    """The in-memory double: what it recorded is what left."""
+
+    def __init__(self) -> None:
+        self._transport = RecordingJobTransport()
+        self.service = JobService(self._transport)
+
+    def sent(self) -> list[DispatchedJob]:
+        return list(self._transport.dispatched)
+
+
+class CeleryWire:
+    """The Celery transport over the in-memory broker: what it left in the queues is what left."""
+
+    def __init__(self) -> None:
+        self._broker = CeleryBroker(QUEUES)
+        self.service = JobService(CeleryJobTransport(self._broker.app))
+
+    def sent(self) -> list[DispatchedJob]:
+        return [
+            DispatchedJob(
+                job_type=DISPATCH_JOBS[message.task.removeprefix(f"{TASK_JOB_PREFIX}.")],
+                task_id=message.task_id,
+                payload=message.kwargs["payload"],
+                params=message.kwargs["params"],
+                queue=message.queue,
+                countdown=message.countdown,
+                identity=Delegation.decoded(message.kwargs["identity"]).caller,
+                trace_id=message.kwargs["trace_id"],
+            )
+            for message in self._broker.sent()
+        ]
+
+
+class SQSWire:
+    """The SQS transport over a client that keeps the messages it was handed."""
+
+    def __init__(self) -> None:
+        self._client = SQSClient()
+        queues = {name: QueueConfig(url=url) for name, url in SQS_QUEUE_URLS.items()}
+        self.service = JobService(SQSJobTransport(self._client, SQSConfig(queues=queues)))
+
+    def sent(self) -> list[DispatchedJob]:
+        queue_of = {url: name for name, url in SQS_QUEUE_URLS.items()}
+        sent: list[DispatchedJob] = []
+        for request in self._client.requests:
+            envelope = decode_job_envelope(request["MessageBody"])
+            sent.append(
+                DispatchedJob(
+                    job_type=DISPATCH_JOBS[envelope.job_name],
+                    task_id=str(envelope.task_id),
+                    payload=envelope.payload or {},
+                    params=envelope.params,
+                    queue=queue_of[request["QueueUrl"]],
+                    countdown=request.get("DelaySeconds", 0),
+                    identity=Delegation.decoded(envelope.identity).caller,
+                    trace_id=envelope.trace_id,
+                )
+            )
+        return sent
+
+
+@pytest.fixture(params=["recording", "celery", "sqs"])
+def wire(request: pytest.FixtureRequest) -> Wire:
+    """A job service over each transport that sends a message."""
+    wires: dict[str, Callable[[], Wire]] = {
+        "recording": RecordingWire,
+        "celery": CeleryWire,
+        "sqs": SQSWire,
+    }
+    return wires[request.param]()
+
+
+@pytest.fixture(autouse=True)
+def _no_leftover_dispatches() -> Iterator[None]:
+    yield
+    clear_pending_dispatches()

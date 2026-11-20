@@ -140,12 +140,14 @@ class DispatchedJob:
     """One dispatch :class:`RecordingJobTransport` saw committed, as it was at dispatch."""
 
     job_type: type[Job[Any]]
+    task_id: str
     payload: dict[str, Any]
     params: dict[str, Any] | None
     queue: str
     countdown: int
     identity: Identity | None
     """The authenticated caller acting at dispatch, ``None`` for none (as the real services)."""
+    trace_id: str | None = None
 
 
 class ManualTimer:
@@ -234,11 +236,13 @@ class RecordingJobTransport:
     def _record(self, dispatch: JobDispatch) -> tuple[DispatchedJob, JobHandle[Any]]:
         record = DispatchedJob(
             job_type=dispatch.job_type,
+            task_id=str(dispatch.envelope.task_id),
             payload=copy.deepcopy(dispatch.envelope.payload or {}),
             params=copy.deepcopy(dispatch.envelope.params),
             queue=dispatch.queue,
             countdown=dispatch.countdown.seconds,
             identity=dispatch.delegation.caller,
+            trace_id=dispatch.envelope.trace_id,
         )
         handle: JobHandle[Any] = JobHandle(
             job_id=str(dispatch.envelope.task_id),
