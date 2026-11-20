@@ -2,17 +2,43 @@
 
 ## 💥 Breaking
 
-- **jobs:** `JobService` is the one public dispatch service. The former
-  `JobRouter`, `InlineJobService`, `CeleryJobService` and `SQSJobService` are
-  removed; composition now routes by effective queue to `InlineJobTransport`,
-  `CeleryJobTransport` or `SQSJobTransport` through the `JobTransport` port.
-  `JobBackendContext`, `JobBackendError` and `MixedJobBackendsError` become
-  `JobTransportContext`, `JobTransportError` and `MixedJobTransportsError`.
-  `JobDelivery.task_id` now reads `envelope.task_id`, and
-  `JobOptions.delivery_for` builds each delivery. `LoomError.retryable` is
-  `LoomError.is_retryable`; foreign exceptions are retryable by default.
-  **Migration:** inject `JobService`, override `JobTransport` for test sends,
-  and rename error declarations and transport integrations to these types.
+- **jobs:** `JobService` is the one public job API, and it is a class, not a
+  protocol: it holds `run`, `dispatch_after_commit`, `dispatch_now` and
+  `dispatch_parallel` once, builds a validated `JobDispatch` (options, countdown,
+  envelope, callbacks, reserved payload keys) and sends it through the
+  `JobTransport` of the effective queue. `JobTransport` is the port a transport
+  implements (`send_after_commit`, `send` and the two callback checks); the
+  transports are `InlineJobTransport` (`loom.core.job.inline`),
+  `CeleryJobTransport` and `SQSJobTransport`. `JobRouter`, `InlineJobService`,
+  `CeleryJobService` and `SQSJobService` are removed, and "backend" leaves the
+  jobs vocabulary: `JobBackendContext`, `JobBackendError` and
+  `MixedJobBackendsError` are `JobTransportContext`, `JobTransportError` and
+  `MixedJobTransportsError`. `JobService(default, *, factory=None, executor=None,
+  routes=None, settings=None, callbacks=...)` takes the transport first;
+  `default_transport` and `transport_for(queue)` return the transport that
+  serves a queue. `JobOptions.delivery_for` is the only builder of a
+  `JobDelivery`, whose `task_id` reads `envelope.task_id`.
+  **Migration:** inject `JobService`; rename the error and context types;
+  `app.job_service: module:Class` now names a `JobTransport` built as
+  `Class(context)`; a custom service that implemented the old protocol
+  becomes a `JobTransport`.
+- **jobs:** `RecordingJobService` is `RecordingJobTransport`
+  (`app.job_service: loom.testing:RecordingJobTransport`). It records the same
+  `DispatchedJob`s in `dispatched`, once the execution commits, but it is the
+  transport, not the service: read it with
+  `service.default_transport.dispatched`, and build a unit-test service as
+  `JobService(RecordingJobTransport())`. A composed service still validates
+  dispatches and runs jobs in process; one built without a factory and executor
+  raises `NotImplementedError` from `run()` instead of `RuntimeError`.
+  `loom.testing` also exports `JobTestData` and `NoopJob` to build valid
+  envelopes, deliveries and dispatches.
+- **errors:** `LoomError.retryable` is `LoomError.is_retryable`, in every
+  subclass (`PostCommitError` included). **Behaviour change:** the job runner
+  asks only loom errors whether a failure is retryable, and every foreign
+  exception is retried; a foreign exception that carries a `retryable = False`
+  attribute used to be abandoned and is now retried until its attempts run out.
+  Raise a loom error with `is_retryable = False`, or `JobAbandonment`, to give
+  up.
 - **jobs:** one word per concept: *postpone* is a job asking to run later,
   without failing and without spending an attempt; *retry* is running again
   after a failure, spending an attempt; *abandon* is giving up for good (the

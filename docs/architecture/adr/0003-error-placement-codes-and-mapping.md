@@ -211,7 +211,7 @@ Compile and startup errors do not move.
 |---|---|
 | REST | `HttpErrorMapper`, `rest/errors.py` |
 | AI | `_STATUS_BY_CODE`, `ai/fastapi/endpoints.py` |
-| Celery | `_is_retryable`, `celery/runner.py` |
+| Jobs | `JobRunner._decide`, `core/job/runner.py` |
 
 Nothing else builds an error status or an error body.
 

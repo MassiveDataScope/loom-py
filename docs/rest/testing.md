@@ -363,19 +363,19 @@ def test_an_invoice_event_imports_it(handler) -> None:
 
 ### Dispatched jobs
 
-`RecordingJobService` sends nothing: it records each dispatch once the
+`RecordingJobTransport` sends nothing: it records each dispatch once the
 execution that made it commits, with its job, payload, params, effective queue
 and caller, and records nothing when it rolls back. Select it in the test
 configuration:
 
 ```yaml
 app:
-  job_service: loom.testing:RecordingJobService
+  job_service: loom.testing:RecordingJobTransport
 ```
 
 ```python
 from loom.core.job.service import JobService
-from loom.testing import LambdaTestClient, RecordingJobService
+from loom.testing import LambdaTestClient, RecordingJobTransport
 
 def test_placing_an_order_ships_it(token: str) -> None:
     with LambdaTestClient("config.yaml", function="orders", environment="test") as client:
@@ -383,21 +383,37 @@ def test_placing_an_order_ships_it(token: str) -> None:
         assert client.application is not None
         jobs = client.application.kernel.container.resolve(JobService)
 
-    assert isinstance(jobs, RecordingJobService)
-    assert [(job.job_type, job.queue) for job in jobs.dispatched] == [
+    transport = jobs.default_transport
+    assert isinstance(transport, RecordingJobTransport)
+    assert [(job.job_type, job.queue) for job in transport.dispatched] == [
         (ShipOrderJob, "shipping")
     ]
 ```
 
 `dispatched` lists every committed dispatch as a frozen `DispatchedJob`
-(`job_type`, `payload`, `params`, `queue`, `identity`), payload and params
-copied at dispatch. `run()` executes a job in process. It also works without
-configuration, as `RecordingJobService()`; it then records dispatches made
-outside an execution on `flush_pending_dispatches()` and cannot `run()`.
+(`job_type`, `payload`, `params`, `queue`, `countdown`, `identity`), payload
+and params copied at dispatch. The application's `JobService` still validates
+every dispatch and `run()` still executes a job in process. A unit test
+without composition builds `JobService(RecordingJobTransport())`; it then
+records dispatches made outside an execution on `flush_pending_dispatches()`
+and cannot `run()`.
+
+### Job test data
+
+`JobTestData` builds valid job envelopes, deliveries and dispatches for tests
+of a transport or a runner; `with_job_type`, `with_policy` and `with_trace_id`
+return copies, and `NoopJob` is its default job:
+
+```python
+from loom.testing import JobTestData
+
+data = JobTestData().with_job_type(ShipOrderJob)
+delivery = data.delivery(attempt=2)
+```
 
 ### Delayed inline jobs
 
-The inline job service waits on a `JobTimer`. A test replaces it with a
+The inline job transport waits on a `JobTimer`. A test replaces it with a
 `ManualTimer`, which never sleeps and runs a step only when the test moves its
 clock:
 

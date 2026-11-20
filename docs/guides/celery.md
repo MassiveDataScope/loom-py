@@ -276,10 +276,10 @@ recover entity IDs and other parameters the callback needs.
 
 ---
 
-## Pick the job backend
+## Pick the job transport
 
 `app.job_service` names the backend of every queue `celery.queues` does not
-list, and of Celery's default queue; see [Pick the job backend](../rest/celery.md#pick-the-job-backend).
+list, and of Celery's default queue; see [Pick the job transport](../rest/celery.md#pick-the-job-transport).
 
 ---
 
@@ -377,7 +377,7 @@ attempt it waits `Backoff(first_s, factor, max_s, jitter)`: `first_s * factor **
 seconds, capped at `max_s` (never above 900) and, with `jitter` (the default), drawn
 uniformly from zero to that value. A job may raise `JobPostponement(reason, delay_s=None)`
 to run again later without using an attempt, or `JobAbandonment(reason)` to give up at
-once; an error whose `is_retryable` is `False` is abandoned at its first attempt.
+once; a loom error whose `is_retryable` is `False` is abandoned at its first attempt, and any other exception is retried.
 
 The most specific layer wins, and a section that sets only some fields inherits the
 rest from the layer below: `jobs.<Job>.retry`, then `jobs.defaults.retry`, then the
