@@ -68,6 +68,7 @@ class _AppSection(msgspec.Struct, kw_only=True):
     name: str
     code_path: str = DEFAULT_CODE_PATH
     packages: list[str] = msgspec.field(default_factory=list)
+    entry_points: list[str] = msgspec.field(default_factory=list)
 
 
 @dataclass(frozen=True, slots=True)
@@ -142,7 +143,9 @@ def load_store_schema(
     spec = catalog.require(store, backend=SQLALCHEMY_BACKEND, purpose="the application's schema")
     database = spec.decode(DatabaseConfig)
     add_code_path(app.code_path, Path(paths[0]).resolve().parent)
-    stores = catalog.models_by_store(PackageScanner(app.packages).discover().models)
+    stores = catalog.models_by_store(
+        PackageScanner(app.packages, entry_points=app.entry_points).discover().models
+    )
     models = stores.get(store, ())
     skipped = sorted(key for key, held in stores.items() if held and key != store)
     if skipped:

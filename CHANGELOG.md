@@ -1029,6 +1029,11 @@
 
 ### composition
 
+- **composition:** `app.entry_points: [group, ...]` scans the module of every
+  installed entry point in those groups like an `app.packages` entry, so an
+  installed plugin's models, use cases, jobs and installers are found without
+  the YAML naming its package. A group no installed distribution provides is a
+  `ConfigError` at startup and in `loom check`.
 - **composition:** `app.packages` recursively scans models, use cases, jobs,
   REST interfaces and `Installer` classes, skipping abstract classes, classes
   imported from elsewhere and models without their own `__tablename__`; two

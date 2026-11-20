@@ -78,6 +78,14 @@ subclasses), REST interfaces and `Installer` classes defined in it are found, in
 qualified-name order. Abstract classes, classes imported from elsewhere and
 models without their own `__tablename__` are skipped.
 
+- `app.entry_points` lists entry-point groups for code the YAML does not name:
+  the module of every installed entry point in each group is scanned exactly
+  like an `app.packages` entry, and both lists together are scanned once per
+  module, in a fixed order. A plugin distribution registers its package in a
+  group (`[project.entry-points."acme.plugins"]`, `acme_billing = "acme_billing"`)
+  and the application declares `entry_points: [acme.plugins]`. A group no
+  installed distribution provides is a `ConfigError` naming it, at startup and
+  in `loom check`.
 - Every module in a listed package is imported at scan: keep script-like
   modules such as `__main__.py` out of it.
 - A directory inside a listed package that holds `.py` files but no

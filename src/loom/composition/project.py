@@ -46,13 +46,18 @@ T = TypeVar("T")
 
 
 class AppConfig(msgspec.Struct, kw_only=True):
-    """The keys of ``app`` every entry point reads; a transport reads its own."""
+    """The keys of ``app`` every entry point reads; a transport reads its own.
+
+    ``entry_points`` lists entry-point groups: the module of every installed
+    entry point in each group is scanned like an ``app.packages`` entry.
+    """
 
     name: str
     entry: str | None = None
     job_service: str | None = None
     code_path: str = DEFAULT_CODE_PATH
     packages: list[str] = msgspec.field(default_factory=list)
+    entry_points: list[str] = msgspec.field(default_factory=list)
     agents: list[str] = msgspec.field(default_factory=list)
 
     @classmethod
@@ -64,7 +69,8 @@ class AppConfig(msgspec.Struct, kw_only=True):
 
         Raises:
             ConfigError: When ``app.name`` is missing (a ``${...}`` placeholder
-                counts as written, none is resolved) or the removed ``app.discovery`` is declared.
+                counts as written, none is resolved), the removed ``app.discovery`` is
+                declared, or an ``app.entry_points`` group has no installed entry point.
         """
         if ctx.raw(f"{ConfigKey.APP}.name") is None:
             raise ConfigError(
@@ -73,6 +79,10 @@ class AppConfig(msgspec.Struct, kw_only=True):
             )
         if ctx.raw("app.discovery") is not None:
             raise ConfigError("app.discovery is removed; declare app.packages and app.agents")
+        declared = ctx.raw(f"{ConfigKey.APP}.entry_points", [])
+        if isinstance(declared, list):
+            literal_groups = [g for g in declared if isinstance(g, str) and INTERPOLATION not in g]
+            PackageScanner(entry_points=literal_groups).package_names()
 
     @classmethod
     def from_config(cls, ctx: ConfigContext) -> AppConfig:
@@ -286,7 +296,9 @@ class Project:
         Raises:
             ConfigError: When a package cannot be scanned.
         """
-        return PackageScanner(self.app.packages).discover(agents=self.app.agents)
+        return PackageScanner(self.app.packages, entry_points=self.app.entry_points).discover(
+            agents=self.app.agents
+        )
 
     @functools.cached_property
     def catalog(self) -> StoreCatalog:
