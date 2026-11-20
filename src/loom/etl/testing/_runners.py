@@ -18,7 +18,7 @@ from loom.etl.backends.polars._reader import (
 )
 from loom.etl.backends.polars._writer import _check_null_dtype_columns_lazy
 from loom.etl.checkpoint import CheckpointScope, CheckpointStore
-from loom.etl.checkpoint._backends._memory import _InMemoryCheckpointBackend
+from loom.etl.checkpoint._backends._memory import _InMemoryCheckpointIO
 from loom.etl.compiler import ETLCompiler
 from loom.etl.declarative.source import FileSourceSpec, SourceSpec, TableSourceSpec
 from loom.etl.declarative.target import TargetSpec
@@ -202,7 +202,7 @@ class PolarsStepRunner:
 
     def __init__(self, *scenarios: ETLScenario, delta_root: str | Path | None = None) -> None:
         self._tables: dict[str, pl.LazyFrame] = {}
-        self._temp_backend = _InMemoryCheckpointBackend()
+        self._temp_backend = _InMemoryCheckpointIO()
         self._temps = CheckpointStore(_TEMP_ROOT, backend=self._temp_backend)
         self._context = RunContext(run_id="step-runner-run", correlation_id="step-runner")
         self._writer = _CapturingWriter()

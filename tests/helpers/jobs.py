@@ -7,7 +7,7 @@ from collections.abc import Awaitable, Callable
 from pathlib import Path
 from typing import Any, cast
 
-from loom.celery.runner import _CeleryAsyncRuntime, _make_callback_task, _make_job_task
+from loom.celery.runner import _CeleryProcessBridge, _make_callback_task, _make_job_task
 from loom.celery.service import CeleryJobTransport
 from loom.composition import AppConfig, Application, Project, Recipe
 from loom.core.config import ConfigContext
@@ -254,7 +254,7 @@ class CeleryWorker:
     def __init__(self, *, settings: JobSettings | None = None, initialized: bool = True) -> None:
         self.broker = CeleryBroker([DEFAULT_QUEUE])
         self.kernel = JobKernel()
-        self.runtime = _CeleryAsyncRuntime()
+        self.runtime = _CeleryProcessBridge()
         self.metrics = RecordingMetrics()
         self._settings = settings or JobSettings()
         if initialized:

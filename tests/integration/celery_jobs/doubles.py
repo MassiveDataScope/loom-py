@@ -8,7 +8,7 @@ from typing import Any, ClassVar
 from billiard.exceptions import SoftTimeLimitExceeded  # type: ignore[import-untyped]
 
 from loom.celery.constants import callback_task_name
-from loom.celery.runner import _CeleryAsyncRuntime
+from loom.celery.runner import _CeleryProcessBridge
 from loom.core.job.callback import CallbackOutcome, JobCallback
 from loom.core.job.job import Job
 from loom.core.job.outcome import JobAbandonment
@@ -98,7 +98,7 @@ class AcmeKeywordError(Exception):
 SOFT_LIMIT = SoftTimeLimitExceeded(30)
 
 
-class FailingRuntime(_CeleryAsyncRuntime):
+class FailingRuntime(_CeleryProcessBridge):
     """A runtime whose bridge raises *error*, as Celery's own machinery would from outside."""
 
     def __init__(self, error: BaseException) -> None:

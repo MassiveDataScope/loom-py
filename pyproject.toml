@@ -198,9 +198,9 @@ oauth = "loom.ai.remote_auth:standard_oauth"
 bearer = "loom.ai.remote_auth:bearer_token"
 static = "loom.ai.remote_auth:static_headers"
 
-[project.entry-points."loom.etl.backends"]
-polars = "loom.etl.backends.polars.engine:PolarsProvider"
-spark = "loom.etl.backends.spark.engine:SparkProvider"
+[project.entry-points."loom.etl.engines"]
+polars = "loom.etl.backends.polars.engine:PolarsEtlEngine"
+spark = "loom.etl.backends.spark.engine:SparkEtlEngine"
 
 # Store backends a store's `backend` key resolves. A deployment registers
 # its own under the same group from its own package.

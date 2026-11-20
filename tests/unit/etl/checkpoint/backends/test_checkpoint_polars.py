@@ -10,12 +10,12 @@ import fsspec.core as fsspec_core
 import polars as pl
 import pytest
 
-from loom.etl.checkpoint._backends._polars import _PolarsCheckpointBackend
+from loom.etl.checkpoint._backends._polars import _PolarsCheckpointIO
 
 
 class TestCheckpointPolarsWriter:
     def test_append_aligns_to_existing_schema(self, tmp_path: Path) -> None:
-        backend = _PolarsCheckpointBackend(storage_options={})
+        backend = _PolarsCheckpointIO(storage_options={})
         base = str(tmp_path / "checkpoints")
 
         # Create base directory only (cloud storage doesn't need pre-created subdirs)
@@ -55,7 +55,7 @@ class TestCheckpointPolarsWriter:
         monkeypatch.setattr(fsspec_core, "url_to_fs", _url_to_fs)
 
         frame = MagicMock(spec=pl.LazyFrame)
-        backend = _PolarsCheckpointBackend(
+        backend = _PolarsCheckpointIO(
             storage_options={
                 "aws_server_side_encryption": "aws:kms",
                 "aws_sse_kms_key_id": "alias/loom-temp",
@@ -86,9 +86,7 @@ class TestCheckpointPolarsWriter:
             pl, "scan_ipc", lambda _path, **kwargs: scanned.update(kwargs) or MagicMock()
         )
 
-        backend = _PolarsCheckpointBackend(
-            storage_options={"aws_server_side_encryption": "aws:kms"}
-        )
+        backend = _PolarsCheckpointIO(storage_options={"aws_server_side_encryption": "aws:kms"})
         backend.probe("orders", "s3://bucket/tmp")
 
         assert "storage_options" not in scanned
@@ -114,7 +112,7 @@ class TestCheckpointPolarsWriter:
             pl, "scan_ipc", lambda _path, **kwargs: scanned.update(kwargs) or MagicMock()
         )
 
-        _PolarsCheckpointBackend(storage_options={}).probe("orders", base)
+        _PolarsCheckpointIO(storage_options={}).probe("orders", base)
 
         assert scanned["memory_map"] is memory_map
 
@@ -139,7 +137,7 @@ class TestCheckpointPolarsWriter:
         monkeypatch.setattr(fsspec_core, "url_to_fs", _url_to_fs)
 
         frame = MagicMock(spec=pl.LazyFrame)
-        backend = _PolarsCheckpointBackend(storage_options={"aws_sse_bucket_key_enabled": declared})
+        backend = _PolarsCheckpointIO(storage_options={"aws_sse_bucket_key_enabled": declared})
         backend.write("orders", "s3://bucket/tmp", frame, append=False)
 
         sunk = frame.sink_ipc.call_args.kwargs["storage_options"]

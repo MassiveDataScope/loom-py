@@ -30,7 +30,7 @@ from typing import NamedTuple, Protocol, cast
 
 from pydantic_ai.models import Model
 
-from loom.ai.engines.pydantic_ai.providers._shared import ProviderIsland
+from loom.ai.engines.pydantic_ai.providers._shared import ModelBuilder
 from loom.ai.errors import AgentCompilationError, AgentErrorCode
 from loom.ai.inference import InferenceTarget
 from loom.ai.registry import require_provider_sdk
@@ -86,7 +86,7 @@ SUPPORTED_PROVIDERS: frozenset[str] = frozenset(_BINDINGS)
 """Provider identifiers this release binds to a pydantic-ai model."""
 
 
-def _island_for(provider: str) -> ProviderIsland:
+def _island_for(provider: str) -> ModelBuilder:
     """Load the island of one provider identifier.
 
     Raises:
@@ -104,7 +104,7 @@ def _island_for(provider: str) -> ProviderIsland:
             ]
         )
     module = require_provider_sdk(provider, f"{_ISLANDS}.{binding.island}", binding.extra)
-    return cast(ProviderIsland, module)
+    return cast(ModelBuilder, module)
 
 
 def model_class_for(target: InferenceTarget) -> type[Model]:

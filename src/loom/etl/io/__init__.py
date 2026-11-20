@@ -3,13 +3,13 @@
 from loom.etl.declarative.source import (
     ClickHouseSourceSpec,
     FromClickHouse,
-    FromDynamoDb,
+    FromDynamoDB,
     FromMongo,
     SourceRef,
 )
-from loom.etl.declarative.source._specs import DynamoDbSourceSpec, MongoSourceSpec
+from loom.etl.declarative.source._specs import DynamoDBSourceSpec, MongoSourceSpec
 from loom.etl.io.sources._clickhouse import ClickHouseSourceReader
-from loom.etl.io.sources._dynamodb import DynamoDbSourceReader
+from loom.etl.io.sources._dynamodb import DynamoDBSourceReader
 from loom.etl.io.sources._mongo import MongoSourceReader
 from loom.etl.io.targets._clickhouse import (
     ClickHouseClientExecutor,
@@ -24,10 +24,10 @@ __all__ = [
     "ClickHouseSourceSpec",
     "ClickHouseTableSpec",
     "ClickHouseTargetWriter",
-    "DynamoDbSourceReader",
-    "DynamoDbSourceSpec",
+    "DynamoDBSourceReader",
+    "DynamoDBSourceSpec",
     "FromClickHouse",
-    "FromDynamoDb",
+    "FromDynamoDB",
     "FromMongo",
     "IntoClickHouse",
     "MongoSourceReader",

@@ -131,7 +131,7 @@ def _find_sql_loader_factory(loader_type: type) -> _SqlLoaderFactory | None:
     return None
 
 
-def make_sql_loader(loader: Any, rel_step: Any) -> Any:
+def build_sql_loader(loader: Any, rel_step: Any) -> Any:
     """Create an SQL-path loader from a public descriptor and a compiled relation step.
 
     Args:

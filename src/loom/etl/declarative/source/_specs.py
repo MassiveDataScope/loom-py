@@ -244,12 +244,12 @@ class MongoSourceSpec:
 
 
 @dataclass(frozen=True)
-class DynamoDbSourceSpec:
+class DynamoDBSourceSpec:
     """Normalized internal representation of a DynamoDB ETL source.
 
-    Produced by :meth:`~loom.etl.declarative.source.FromDynamoDb._to_spec`.
+    Produced by :meth:`~loom.etl.declarative.source.FromDynamoDB._to_spec`.
     Consumed by the executor and
-    :class:`~loom.etl.io.sources.DynamoDbSourceReader`.
+    :class:`~loom.etl.io.sources.DynamoDBSourceReader`.
 
     Args:
         alias:             Name matching the ``execute()`` parameter.
@@ -293,15 +293,15 @@ class DynamoDbSourceSpec:
     def __post_init__(self) -> None:
         if not 1 <= self.batch_size <= 10_000:
             raise ValueError(
-                f"DynamoDbSourceSpec.batch_size must be between 1 and 10000, got {self.batch_size}"
+                f"DynamoDBSourceSpec.batch_size must be between 1 and 10000, got {self.batch_size}"
             )
         if self.total_segments is not None and not 2 <= self.total_segments <= 64:
             raise ValueError(
-                f"DynamoDbSourceSpec.total_segments must be between 2 and 64, "
+                f"DynamoDBSourceSpec.total_segments must be between 2 and 64, "
                 f"got {self.total_segments}"
             )
         if self.limit is not None and self.limit < 1:
-            raise ValueError(f"DynamoDbSourceSpec.limit must be >= 1, got {self.limit}")
+            raise ValueError(f"DynamoDBSourceSpec.limit must be >= 1, got {self.limit}")
 
     @property
     def kind(self) -> SourceKind:
@@ -315,5 +315,5 @@ SourceSpec = (
     | TempSourceSpec
     | MongoSourceSpec
     | ClickHouseSourceSpec
-    | DynamoDbSourceSpec
+    | DynamoDBSourceSpec
 )

@@ -24,14 +24,14 @@ class TestOptionalMongoProvider:
 
             sys.modules["pymongo"] = None
             from loom.core.model.redaction import Dsn
-            from loom.etl.backends.polars.engine import PolarsProvider
+            from loom.etl.backends.polars.engine import PolarsEtlEngine
             from loom.etl.storage._config import StorageConfig, StorageDefaults, TablePathConfig
 
             config = StorageConfig(
                 engine="polars",
                 defaults=StorageDefaults(table_path=TablePathConfig(uri=Dsn({str(tmp_path)!r}))),
             )
-            reader, writer = PolarsProvider().create_backends(config)
+            reader, writer = PolarsEtlEngine().create_backends(config)
             print(type(reader).__name__, type(writer).__name__)
             """
         )
@@ -49,7 +49,7 @@ class TestOptionalMongoProvider:
     def test_mongo_source_without_pymongo_names_the_extra(
         self, monkeypatch: pytest.MonkeyPatch, tmp_path: Path
     ) -> None:
-        from loom.etl.backends.polars.engine import PolarsProvider
+        from loom.etl.backends.polars.engine import PolarsEtlEngine
 
         without_extra(monkeypatch, ["pymongo"], [MONGO_ISLAND])
         config = StorageConfig(
@@ -58,7 +58,7 @@ class TestOptionalMongoProvider:
             mongo=MongoConnection(url=Dsn("mongodb://localhost:27017"), database="app"),
         )
 
-        provider = PolarsProvider()
+        provider = PolarsEtlEngine()
 
         with pytest.raises(MissingExtraError, match="needs the 'mongo' extra") as raised:
             provider.create_backends(config)

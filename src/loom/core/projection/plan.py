@@ -14,7 +14,7 @@ from loom.core.model.projection import (
 PROJECTION_DEP_PREFIX = "projection:"
 
 
-class BackendProjectionLoader(Protocol):
+class BatchProjectionLoader(Protocol):
     async def load_many(
         self,
         backend_context: Any,

@@ -34,7 +34,7 @@ from loom.celery.constants import (
     TASK_JOB_PREFIX,
 )
 from loom.celery.errors import WorkerNotOpenError
-from loom.celery.runner import _CeleryAsyncRuntime
+from loom.celery.runner import _CeleryProcessBridge
 from loom.celery.runtime import CeleryAdapter, _connect_lifecycle_signals, _WorkerLifecycle
 from loom.composition import AppConfig, Application, ApplicationHost
 from loom.core.config import ConfigContext, ConfigError
@@ -117,7 +117,7 @@ class _RuntimeSpy:
 
 
 def _connect(application: _ApplicationSpy, runtime: Any | None = None) -> Any:
-    bridge = runtime if runtime is not None else _CeleryAsyncRuntime()
+    bridge = runtime if runtime is not None else _CeleryProcessBridge()
     _connect_lifecycle_signals(_WorkerLifecycle(cast(Any, application), bridge))
     return bridge
 

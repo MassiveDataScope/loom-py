@@ -37,8 +37,8 @@ from loom.rest.fastapi._errors import register_error_handlers
 from loom.rest.fastapi._exclusions import verify_exclusion_paths
 from loom.rest.fastapi.app import CompiledApi, compile_api
 from loom.rest.fastapi.router import (
+    _ResolvedRoute,
     _RouteHandler,
-    _RouteRuntime,
     path_param_annotation,
 )
 from loom.rest.fastapi.runtime import RestDeclaration, compose_rest, mount_request_stack
@@ -142,7 +142,7 @@ class _RouteEndpoint:
     def __init__(
         self, compiled: CompiledRoute, api: CompiledApi, observability: ObservabilityRuntime
     ) -> None:
-        runtime = _RouteRuntime.of(compiled)
+        runtime = _ResolvedRoute.of(compiled)
         self._handler = _RouteHandler(runtime, api.factory, api.executor, observability)
         param_types = dict(compiled.execute_param_types)
         self._coercers: dict[str, TypeAdapter[Any]] = {

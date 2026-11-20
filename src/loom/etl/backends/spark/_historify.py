@@ -1,4 +1,4 @@
-"""Spark HistorifyBackend implementation."""
+"""Spark HistorifyOps implementation."""
 
 from __future__ import annotations
 
@@ -28,8 +28,8 @@ def _next_period(col: Column, spec: HistorifySpec) -> Column:
     return col + F.expr("INTERVAL 1 MICROSECOND")
 
 
-class SparkHistorifyBackend:
-    """Spark implementation of HistorifyBackend."""
+class SparkHistorifyOps:
+    """Spark implementation of HistorifyOps."""
 
     def columns(self, frame: DataFrame) -> list[str]:
         return list(frame.columns)

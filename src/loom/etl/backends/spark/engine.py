@@ -10,13 +10,13 @@ from loom.etl.backends.spark._writer import SparkTargetWriter
 from loom.etl.lineage._config import LineageConfig
 from loom.etl.lineage.sinks import RecordFrameTargetWriter, TargetLineageWriter
 from loom.etl.ports.contracts import ClientCommandExecutor, SourceReader, TargetWriter
-from loom.etl.runner._engines import BackendProvider
+from loom.etl.runner._engines import EtlEngine
 from loom.etl.storage._config import StorageConfig
 from loom.etl.storage._locator import PrefixLocator
 from loom.etl.storage.routing import build_table_resolver
 
 
-class SparkProvider(BackendProvider):
+class SparkEtlEngine(EtlEngine):
     """Create Spark reader/writer pair from storage config."""
 
     def create_backends(
@@ -86,4 +86,4 @@ class SparkProvider(BackendProvider):
         return None
 
 
-__all__ = ["SparkProvider"]
+__all__ = ["SparkEtlEngine"]

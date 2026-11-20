@@ -22,7 +22,7 @@ import polars as pl  # noqa: E402
 
 from loom.etl.backends._historify._log import apply_log  # noqa: E402
 from loom.etl.backends._historify._transform import scd2_transform  # noqa: E402
-from loom.etl.backends.polars._historify import PolarsHistorifyBackend  # noqa: E402
+from loom.etl.backends.polars._historify import PolarsHistorifyOps  # noqa: E402
 from loom.etl.backends.polars._writer import PolarsTargetWriter  # noqa: E402
 from loom.etl.declarative.expr._refs import TableRef  # noqa: E402
 from loom.etl.declarative.target._history import (  # noqa: E402
@@ -71,7 +71,7 @@ class TestLogDeleteMarkerDtype:
         frame = pl.DataFrame(
             {"wo": ["W1"], "rid": ["R1"], "event_ts": [datetime(2026, 10, 10)], "cost": [1]}
         ).with_columns(pl.lit(None).alias("is_deleted"))
-        backend = PolarsHistorifyBackend()
+        backend = PolarsHistorifyOps()
         spec = _replacement_spec()
         with pytest.raises(HistorifyDeleteMarkerError, match="dtype Null.*cast it to Boolean"):
             scd2_transform(backend, frame, None, spec, None)
@@ -109,7 +109,7 @@ class TestLogDeleteMarkerZeroWidthVector:
 
 
 def _stamp_new_rows(frame: pl.DataFrame, spec: HistorifySpec, eff_date: Any) -> pl.DataFrame:
-    ops = PolarsHistorifyBackend()
+    ops = PolarsHistorifyOps()
     dtype = ops.history_dtype(spec)
     frame = ops.stamp_col(frame, spec.valid_from, eff_date, dtype)
     return ops.stamp_col(frame, spec.valid_to, None, dtype)
@@ -118,11 +118,11 @@ def _stamp_new_rows(frame: pl.DataFrame, spec: HistorifySpec, eff_date: Any) -> 
 class TestDuplicateKeys:
     def test_unique_frame_has_none(self) -> None:
         frame = pl.DataFrame({"player_id": [1, 2], "team_id": ["RM", "BCA"]})
-        assert PolarsHistorifyBackend().duplicate_keys(frame, ["player_id", "team_id"]) is None
+        assert PolarsHistorifyOps().duplicate_keys(frame, ["player_id", "team_id"]) is None
 
     def test_duplicates_are_described(self) -> None:
         frame = pl.DataFrame({"player_id": [1, 1], "team_id": ["RM", "RM"]})
-        described = PolarsHistorifyBackend().duplicate_keys(frame, ["player_id", "team_id"])
+        described = PolarsHistorifyOps().duplicate_keys(frame, ["player_id", "team_id"])
         assert described is not None
         assert "'player_id': 1" in described
 
@@ -136,7 +136,7 @@ class TestAssertNoDateCollisions:
                 "event_date": [date(2024, 1, 1), date(2024, 6, 1)],
             }
         )
-        PolarsHistorifyBackend().assert_no_date_collisions(
+        PolarsHistorifyOps().assert_no_date_collisions(
             frame, ["subscription_id", "plan"], "event_date", _log_spec()
         )
 
@@ -148,7 +148,7 @@ class TestAssertNoDateCollisions:
                 "event_date": [date(2024, 1, 1), date(2024, 1, 1)],
             }
         )
-        backend = PolarsHistorifyBackend()
+        backend = PolarsHistorifyOps()
         spec = _log_spec()
         with pytest.raises(HistorifyDateCollisionError):
             backend.assert_no_date_collisions(
@@ -171,7 +171,7 @@ class TestAssertNoDateCollisions:
             track=("plan",),
             date_type=HistoryDateType.TIMESTAMP,
         )
-        PolarsHistorifyBackend().assert_no_date_collisions(
+        PolarsHistorifyOps().assert_no_date_collisions(
             frame, ["subscription_id", "plan"], "event_date", spec
         )
 
@@ -179,17 +179,17 @@ class TestAssertNoDateCollisions:
 class TestBackendHelpers:
     def test_filter_eq_with_dtype(self) -> None:
         frame = pl.DataFrame({"d": [date(2024, 1, 1), date(2024, 1, 2)]})
-        result = PolarsHistorifyBackend().filter_eq(frame, "d", "2024-01-01", pl.Date)
+        result = PolarsHistorifyOps().filter_eq(frame, "d", "2024-01-01", pl.Date)
         assert result["d"].to_list() == [date(2024, 1, 1)]
 
     def test_filter_ne_with_dtype(self) -> None:
         frame = pl.DataFrame({"d": [date(2024, 1, 1), date(2024, 1, 2)]})
-        result = PolarsHistorifyBackend().filter_ne(frame, "d", "2024-01-01", pl.Date)
+        result = PolarsHistorifyOps().filter_ne(frame, "d", "2024-01-01", pl.Date)
         assert result["d"].to_list() == [date(2024, 1, 2)]
 
     def test_null_col(self) -> None:
         frame = pl.DataFrame({"a": [1]})
-        result = PolarsHistorifyBackend().null_col(frame, "n", pl.Date)
+        result = PolarsHistorifyOps().null_col(frame, "n", pl.Date)
         assert result["n"].is_null().all()
         assert result["n"].dtype == pl.Date
 
@@ -198,7 +198,7 @@ class TestBackendHelpers:
             pl.col("t").dt.replace_time_zone("UTC")
         )
         naive = pl.DataFrame({"t": [datetime(2024, 1, 2, 8)]})
-        result = PolarsHistorifyBackend().union([aware, naive])
+        result = PolarsHistorifyOps().union([aware, naive])
         assert result["t"].dtype == pl.Datetime("us", "UTC")
         assert result["t"].to_list() == [
             datetime(2024, 1, 1, 8, tzinfo=UTC),
@@ -231,7 +231,7 @@ _CLOSURE_SPEC = HistorifySpec(
 class TestClosureEvents:
     def test_returns_tombstone_after_each_closure_without_successor(self) -> None:
         frame = pl.DataFrame(_CLOSURE_HISTORY)
-        result = PolarsHistorifyBackend().closure_events(frame, _CLOSURE_SPEC)
+        result = PolarsHistorifyOps().closure_events(frame, _CLOSURE_SPEC)
         assert sorted(result.iter_rows()) == _CLOSURE_EVENTS
 
 
@@ -252,7 +252,7 @@ class TestTimestampBoundariesAreUtcAware:
                 "eff": [datetime(2024, 1, 1, 8), datetime(2024, 6, 1, 8)],
             }
         ).with_columns(pl.col("eff").dt.replace_time_zone("UTC"))
-        result, report = scd2_transform(PolarsHistorifyBackend(), frame, None, spec, None)
+        result, report = scd2_transform(PolarsHistorifyOps(), frame, None, spec, None)
         assert report is None
         assert result["valid_from"].dtype == pl.Datetime("us", "UTC")
         assert result["valid_to"].dtype == pl.Datetime("us", "UTC")
@@ -286,9 +286,7 @@ class TestBuildLogBoundariesClampsSameInstant:
                 {"id": 1, "state": "done", "event_ts": datetime(2024, 6, 1, 8)},
             ]
         )
-        result = (
-            PolarsHistorifyBackend().build_log_boundaries(events, self._SPEC).sort("valid_from")
-        )
+        result = PolarsHistorifyOps().build_log_boundaries(events, self._SPEC).sort("valid_from")
         assert len(result.filter(pl.col("valid_to") < pl.col("valid_from"))) == 0
         collided = result.filter(
             (pl.col("valid_from") == datetime(2024, 1, 1, 8, tzinfo=UTC))
@@ -303,7 +301,7 @@ class TestBuildLogBoundariesClampsSameInstant:
                 {"id": 1, "state": "true", "event_ts": datetime(2024, 1, 1, 8)},
             ]
         )
-        result = PolarsHistorifyBackend().build_log_boundaries(events, self._SPEC)
+        result = PolarsHistorifyOps().build_log_boundaries(events, self._SPEC)
         open_rows = result.filter(pl.col("valid_to").is_null())
         assert open_rows["state"].to_list() == ["true"]
 
@@ -314,9 +312,7 @@ class TestBuildLogBoundariesClampsSameInstant:
                 {"id": 1, "state": "b", "event_ts": datetime(2024, 6, 1, 8)},
             ]
         )
-        result = (
-            PolarsHistorifyBackend().build_log_boundaries(events, self._SPEC).sort("valid_from")
-        )
+        result = PolarsHistorifyOps().build_log_boundaries(events, self._SPEC).sort("valid_from")
         closed = result.filter(pl.col("state") == "a")
         assert closed["valid_to"].to_list() == [datetime(2024, 6, 1, 7, 59, 59, 999999, tzinfo=UTC)]
 
@@ -337,7 +333,7 @@ class TestBuildLogBoundariesClampsSameInstant:
                 "event_date": [date(2024, 1, 1), date(2024, 1, 1), date(2024, 6, 1)],
             }
         )
-        result = PolarsHistorifyBackend().build_log_boundaries(events, spec)
+        result = PolarsHistorifyOps().build_log_boundaries(events, spec)
         assert len(result.filter(pl.col("valid_to") < pl.col("valid_from"))) == 0
         collided = result.filter(pl.col("state") == "false")
         assert collided["valid_from"].to_list() == [date(2024, 1, 1)]
@@ -363,7 +359,7 @@ class TestBuildLogBoundariesClampsSameInstant:
             pl.col("valid_to").cast(pl.Datetime("us", "UTC")),
         )
         incoming = self._events([{"id": 1, "state": "done", "event_ts": datetime(2024, 6, 1, 8)}])
-        result = apply_log(PolarsHistorifyBackend(), incoming, existing, self._SPEC)
+        result = apply_log(PolarsHistorifyOps(), incoming, existing, self._SPEC)
         assert len(result.filter(pl.col("valid_to") < pl.col("valid_from"))) == 0
 
 
@@ -377,7 +373,7 @@ class TestLogTrackNoneNoCollapse:
                 "event_date": [date(2024, 1, 1), date(2024, 2, 1)],
             }
         )
-        result = PolarsHistorifyBackend().build_log_boundaries(frame, spec)
+        result = PolarsHistorifyOps().build_log_boundaries(frame, spec)
         assert len(result) == 2
 
 
@@ -401,13 +397,11 @@ class TestCollapseRunsLazy:
         entity_key = list(spec.keys)
         with warnings.catch_warnings():
             warnings.simplefilter("error", pl.exceptions.PerformanceWarning)
-            lazy = PolarsHistorifyBackend._collapse_same_track_runs(
+            lazy = PolarsHistorifyOps._collapse_same_track_runs(
                 events.lazy(), spec, entity_key, "event_date"
             )
             result = lazy.collect()
-        eager = PolarsHistorifyBackend._collapse_same_track_runs(
-            events, spec, entity_key, "event_date"
-        )
+        eager = PolarsHistorifyOps._collapse_same_track_runs(events, spec, entity_key, "event_date")
         assert result.to_dicts() == eager.to_dicts()
         assert result.sort(["subscription_id", "event_date"]).to_dicts() == [
             {
@@ -452,7 +446,7 @@ class TestRewindTo:
         existing = _history_frame(
             [{"player_id": 1, "team_id": "RM", "valid_from": date(2024, 6, 1), "valid_to": None}]
         )
-        result = PolarsHistorifyBackend().rewind_to(existing, _snapshot_spec(), date(2024, 6, 1))
+        result = PolarsHistorifyOps().rewind_to(existing, _snapshot_spec(), date(2024, 6, 1))
         assert len(result) == 0
 
     def test_discards_future_rows_on_backfill(self) -> None:
@@ -467,7 +461,7 @@ class TestRewindTo:
                 },
             ]
         )
-        result = PolarsHistorifyBackend().rewind_to(existing, _snapshot_spec(), date(2024, 3, 1))
+        result = PolarsHistorifyOps().rewind_to(existing, _snapshot_spec(), date(2024, 3, 1))
         assert result["team_id"].to_list() == ["RM"]
 
     def test_reopens_row_closed_by_previous_run(self) -> None:
@@ -481,7 +475,7 @@ class TestRewindTo:
                 }
             ]
         )
-        result = PolarsHistorifyBackend().rewind_to(existing, _snapshot_spec(), date(2024, 6, 1))
+        result = PolarsHistorifyOps().rewind_to(existing, _snapshot_spec(), date(2024, 6, 1))
         assert result["valid_to"].is_null().all()
 
     def test_preserves_rows_closed_before_run(self) -> None:
@@ -496,7 +490,7 @@ class TestRewindTo:
                 {"player_id": 1, "team_id": "RM", "valid_from": date(2024, 4, 1), "valid_to": None},
             ]
         )
-        result = PolarsHistorifyBackend().rewind_to(existing, _snapshot_spec(), date(2024, 6, 1))
+        result = PolarsHistorifyOps().rewind_to(existing, _snapshot_spec(), date(2024, 6, 1))
         old = result.filter(pl.col("team_id") == "OLD")
         assert old["valid_to"].to_list() == [date(2024, 3, 31)]
 
@@ -519,7 +513,7 @@ class TestRewindTo:
                 },
             ]
         )
-        result = PolarsHistorifyBackend().rewind_to(existing, _snapshot_spec(), date(2024, 6, 1))
+        result = PolarsHistorifyOps().rewind_to(existing, _snapshot_spec(), date(2024, 6, 1))
         reopened = result.filter(pl.col("player_id") == 1)
         assert reopened["valid_to"].is_null().all()
         assert reopened["deleted_at"].is_null().all()
@@ -533,7 +527,7 @@ class TestCollectFutureRows:
         existing = _history_frame(
             [{"player_id": 1, "team_id": "RM", "valid_from": date(2024, 6, 1), "valid_to": None}]
         )
-        rows = PolarsHistorifyBackend().collect_future_rows(
+        rows = PolarsHistorifyOps().collect_future_rows(
             existing, _snapshot_spec(), date(2024, 6, 1)
         )
         assert rows == []
@@ -556,7 +550,7 @@ class TestCollectFutureRows:
                 },
             ]
         )
-        rows = PolarsHistorifyBackend().collect_future_rows(
+        rows = PolarsHistorifyOps().collect_future_rows(
             existing, _snapshot_spec(), date(2024, 3, 1)
         )
         assert sorted(rows) == [(1, date(2024, 6, 1)), (2, date(2024, 9, 1))]
@@ -578,7 +572,7 @@ class TestTransformRepairReport:
         )
         incoming = pl.DataFrame({"player_id": [1], "team_id": ["LIV"]})
         _, report = scd2_transform(
-            PolarsHistorifyBackend(),
+            PolarsHistorifyOps(),
             incoming,
             existing,
             spec,
@@ -597,7 +591,7 @@ class TestTransformRepairReport:
         )
         incoming = pl.DataFrame({"player_id": [1], "team_id": ["RM"]})
         _, report = scd2_transform(
-            PolarsHistorifyBackend(),
+            PolarsHistorifyOps(),
             incoming,
             existing,
             spec,

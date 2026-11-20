@@ -4,7 +4,7 @@ from __future__ import annotations
 
 from typing import TypeVar
 
-from loom.etl.backends._historify._ops import HistorifyBackend
+from loom.etl.backends._historify._ops import HistorifyOps
 from loom.etl.declarative.target._history import HistorifySpec
 
 F = TypeVar("F")
@@ -13,7 +13,7 @@ _ORIGIN_COL = "__origin__"
 
 
 def apply_log(
-    ops: HistorifyBackend[F],
+    ops: HistorifyOps[F],
     frame: F,
     existing: F,
     spec: HistorifySpec,
@@ -59,7 +59,7 @@ def apply_log(
     return ops.union([untouched, rebuilt])
 
 
-def build_log_history(ops: HistorifyBackend[F], events: F, spec: HistorifySpec) -> F:
+def build_log_history(ops: HistorifyOps[F], events: F, spec: HistorifySpec) -> F:
     """Build LOG history vectors from an event frame, resolving tombstones.
 
     Tombstones take part in boundary computation as events of their own, so the

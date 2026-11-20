@@ -274,7 +274,7 @@ class TestReloadedModuleUsage:
         [
             ("loom.etl.declarative.target._history", "IntoHistory"),
             ("loom.etl.runner.core", "ETLRunner"),
-            ("loom.etl.runner._engines", "load_backend_provider"),
+            ("loom.etl.runner._engines", "load_etl_engine"),
             ("loom.etl.runner._wiring", "make_backends"),
             ("loom.etl.runner.config_loader", "_load_yaml"),
             ("loom.etl.storage.routing", "RoutedCatalog"),

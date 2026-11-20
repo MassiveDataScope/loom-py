@@ -1,4 +1,4 @@
-"""HistorifyBackend Protocol — backend-specific primitives for SCD Type 2 algorithms."""
+"""HistorifyOps Protocol — backend-specific primitives for SCD Type 2 algorithms."""
 
 from __future__ import annotations
 
@@ -9,7 +9,7 @@ from loom.etl.declarative.target._history import HistorifySpec
 F = TypeVar("F")
 
 
-class HistorifyBackend(Protocol[F]):
+class HistorifyOps(Protocol[F]):
     """Backend-specific frame operations used by SCD2Transform."""
 
     def columns(self, frame: F) -> list[str]: ...

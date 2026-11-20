@@ -1,4 +1,4 @@
-"""Tests for DynamoDbSourceReader using a hand-rolled fake boto3 client.
+"""Tests for DynamoDBSourceReader using a hand-rolled fake boto3 client.
 
 No live DynamoDB required. Filter correctness is tested in
 test_dynamodb_predicate.py. Here we verify that the reader passes the right
@@ -16,8 +16,8 @@ import polars as pl
 import pytest
 
 from loom.etl.declarative.expr import col
-from loom.etl.declarative.source._specs import DynamoDbSourceSpec
-from loom.etl.io.sources._dynamodb import DynamoDbSourceReader, _ParallelSegmentScanner
+from loom.etl.declarative.source._specs import DynamoDBSourceSpec
+from loom.etl.io.sources._dynamodb import DynamoDBSourceReader, _ParallelSegmentScanner
 from loom.etl.io.sources._dynamodb_items import normalize_dynamo_item
 from loom.etl.schema._schema import ColumnSchema, LoomDtype
 
@@ -105,13 +105,13 @@ _ORDER_SCHEMA = (
 )
 
 
-def _reader(items: list[dict[str, Any]]) -> tuple[DynamoDbSourceReader, _FakeDynamoDBClient]:
+def _reader(items: list[dict[str, Any]]) -> tuple[DynamoDBSourceReader, _FakeDynamoDBClient]:
     client = _FakeDynamoDBClient(items)
-    return DynamoDbSourceReader(client), client
+    return DynamoDBSourceReader(client), client
 
 
-def _spec(*, table: str = "orders", **kwargs: Any) -> DynamoDbSourceSpec:
-    return DynamoDbSourceSpec(alias=table, table=table, **kwargs)
+def _spec(*, table: str = "orders", **kwargs: Any) -> DynamoDBSourceSpec:
+    return DynamoDBSourceSpec(alias=table, table=table, **kwargs)
 
 
 def _numbered_items(n: int) -> list[dict[str, Any]]:
@@ -157,7 +157,7 @@ class TestHappyPath:
 
 class TestNoClient:
     def test_read_without_client_raises(self) -> None:
-        reader = DynamoDbSourceReader()
+        reader = DynamoDBSourceReader()
         spec = _spec()
         with pytest.raises(RuntimeError, match="no client configured"):
             reader.read(spec, None)
@@ -373,7 +373,7 @@ class TestSchemaPaths:
         frame = reader.read(_spec(schema=_ORDER_SCHEMA, extra_fields_mode="error"), None)
         with pytest.raises(
             (ValueError, pl.exceptions.ComputeError),
-            match=r"DynamoDbSourceReader.*extra_col",
+            match=r"DynamoDBSourceReader.*extra_col",
         ):
             frame.collect()
 
@@ -440,7 +440,7 @@ class TestParallelScanFailures:
 
     def test_segment_error_propagates_through_collect(self) -> None:
         client = _FailingSegmentClient(pages_per_segment=3)
-        reader = DynamoDbSourceReader(client)
+        reader = DynamoDBSourceReader(client)
         lf = reader.read(_spec(total_segments=2, schema=_page_schema()), None)
         with pytest.raises((RuntimeError, pl.exceptions.ComputeError), match="throttled"):
             lf.collect()

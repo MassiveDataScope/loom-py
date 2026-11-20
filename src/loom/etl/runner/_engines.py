@@ -10,11 +10,11 @@ from loom.etl.lineage.sinks import LineageWriter
 from loom.etl.ports.contracts import ClientCommandExecutor, SourceReader, TargetWriter
 from loom.etl.storage._config import StorageConfig
 
-_BACKEND_EP_GROUP = "loom.etl.backends"
+_ENGINE_ENTRY_POINT_GROUP = "loom.etl.engines"
 
 
 @runtime_checkable
-class BackendProvider(Protocol):
+class EtlEngine(Protocol):
     """Factory protocol for backend reader/writer pairs."""
 
     def create_backends(
@@ -52,7 +52,7 @@ class BackendProvider(Protocol):
         ...
 
 
-def load_backend_provider(engine: str) -> BackendProvider:
+def load_etl_engine(engine: str) -> EtlEngine:
     """Load backend provider implementation from package entry points.
 
     Args:
@@ -65,21 +65,21 @@ def load_backend_provider(engine: str) -> BackendProvider:
         ValueError: When no backend is registered for ``engine``; the message
             names the engines that are.
     """
-    provider_cls = cast(type[BackendProvider], _load_backend_class(engine))
+    provider_cls = cast(type[EtlEngine], _load_backend_class(engine))
     return provider_cls()
 
 
 def _load_backend_class(engine: str) -> object:
     """Load the registered backend class, naming the alternatives on a miss."""
     try:
-        return load_entry_point(_BACKEND_EP_GROUP, engine, on_duplicate="warn_first")
+        return load_entry_point(_ENGINE_ENTRY_POINT_GROUP, engine, on_duplicate="warn_first")
     except EntryPointNotFoundError as exc:
         available = ", ".join(exc.available) if exc.available else "none"
         raise ValueError(
             f"Unsupported storage.engine={engine!r}. "
             f"No backend provider registered in entry point group "
-            f"'{_BACKEND_EP_GROUP}'. Registered engines: {available}."
+            f"'{_ENGINE_ENTRY_POINT_GROUP}'. Registered engines: {available}."
         ) from exc
 
 
-__all__ = ["BackendProvider", "load_backend_provider"]
+__all__ = ["EtlEngine", "load_etl_engine"]

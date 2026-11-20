@@ -92,7 +92,7 @@ from loom.etl.executor import AgentMapper
 from loom.etl.io import (
     ClickHouseClientExecutor,
     FromClickHouse,
-    FromDynamoDb,
+    FromDynamoDB,
     FromMongo,
     IntoClickHouse,
     SourceRef,
@@ -183,7 +183,7 @@ __all__ = [
     "AgentMapper",
     "FromClickHouse",
     "FromMongo",
-    "FromDynamoDb",
+    "FromDynamoDB",
     "SourceRef",
     "IntoTable",
     "IntoFile",

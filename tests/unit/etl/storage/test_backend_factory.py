@@ -15,12 +15,12 @@ require_pyspark()
 
 from loom.core.connections import ClickHouseConnection  # noqa: E402
 from loom.core.model.redaction import Dsn, RedactedMap, Secret  # noqa: E402
-from loom.etl.backends.spark.engine import SparkProvider  # noqa: E402
-from loom.etl.checkpoint._backends._polars import _PolarsCheckpointBackend  # noqa: E402
+from loom.etl.backends.spark.engine import SparkEtlEngine  # noqa: E402
+from loom.etl.checkpoint._backends._polars import _PolarsCheckpointIO  # noqa: E402
 from loom.etl.lineage._config import LineageConfig  # noqa: E402
 from loom.etl.lineage._records import EventName, PipelineRunRecord, RunStatus  # noqa: E402
 from loom.etl.lineage.sinks import TableLineageStore  # noqa: E402
-from loom.etl.runner._engines import load_backend_provider  # noqa: E402
+from loom.etl.runner._engines import load_etl_engine  # noqa: E402
 from loom.etl.runner._wiring import (  # noqa: E402
     make_backends,
     make_checkpoint_store,
@@ -153,19 +153,19 @@ class TestMakeBackends:
         assert isinstance(writer, SparkTargetWriter)
 
 
-class TestLoadBackendProvider:
+class TestLoadEtlEngine:
     def test_load_backend_provider_resolves_registered_providers(self) -> None:
-        assert type(load_backend_provider("polars")).__name__ == "PolarsProvider"
-        assert type(load_backend_provider("spark")).__name__ == "SparkProvider"
+        assert type(load_etl_engine("polars")).__name__ == "PolarsEtlEngine"
+        assert type(load_etl_engine("spark")).__name__ == "SparkEtlEngine"
 
     def test_load_backend_provider_rejects_unknown_engine(self) -> None:
         with pytest.raises(ValueError, match="No backend provider registered"):
-            load_backend_provider("duckdb")
+            load_etl_engine("duckdb")
 
     def test_load_backend_provider_names_the_registered_engines_when_rejecting(self) -> None:
         """The failure must tell the operator which engines it could have asked for."""
         with pytest.raises(ValueError) as excinfo:
-            load_backend_provider("duckdb")
+            load_etl_engine("duckdb")
 
         message = str(excinfo.value)
         assert "polars" in message
@@ -199,7 +199,7 @@ class TestLineageWiring:
         from unittest.mock import MagicMock
 
         spark = MagicMock()
-        provider = SparkProvider()
+        provider = SparkEtlEngine()
         store = LineageConfig(enabled=True, root=Dsn("s3://bucket/runs"))
 
         writer = provider.create_lineage_writer(
@@ -228,7 +228,7 @@ class TestLineageWiring:
                 captured["policy"] = missing_table_policy
 
         spark = MagicMock()
-        provider = SparkProvider()
+        provider = SparkEtlEngine()
         store = LineageConfig(enabled=True, root=Dsn("s3://bucket/runs"))
         config = StorageConfig(engine="spark", missing_table_policy=MissingTablePolicy.CREATE)
 
@@ -245,7 +245,7 @@ class TestLineageWiring:
         assert captured["policy"] is MissingTablePolicy.CREATE
 
     def test_polars_provider_lineage_writer_honors_missing_table_policy(self) -> None:
-        from loom.etl.backends.polars.engine import PolarsProvider
+        from loom.etl.backends.polars.engine import PolarsEtlEngine
 
         captured: dict[str, MissingTablePolicy] = {}
 
@@ -260,7 +260,7 @@ class TestLineageWiring:
                 _ = (locator, file_locator)
                 captured["policy"] = missing_table_policy
 
-        provider = PolarsProvider()
+        provider = PolarsEtlEngine()
         store = LineageConfig(enabled=True, root=Dsn("s3://bucket/runs"))
         config = StorageConfig(engine="polars", missing_table_policy=MissingTablePolicy.CREATE)
 
@@ -371,7 +371,7 @@ class TestMakeCheckpointStore:
         result = make_checkpoint_store(config)
 
         assert result is not None
-        assert isinstance(result._backend, _PolarsCheckpointBackend)
+        assert isinstance(result._backend, _PolarsCheckpointIO)
 
     def test_make_checkpoint_store_warns_encryption_is_lost_on_spark(
         self,

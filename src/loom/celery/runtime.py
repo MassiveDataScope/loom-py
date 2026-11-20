@@ -56,7 +56,7 @@ from loom.celery._discovery import (
 from loom.celery.config import CeleryConfig, CeleryRuntimeConfig, create_celery_app
 from loom.celery.runner import (
     REDELIVERY,
-    _CeleryAsyncRuntime,
+    _CeleryProcessBridge,
     _make_callback_task,
     _make_job_task,
 )
@@ -97,7 +97,7 @@ _SIGNAL_UIDS = {
 }
 
 
-class _AsyncRuntimeProtocol(Protocol):
+class _ProcessBridgeProtocol(Protocol):
     backend: str
 
     def initialize(self) -> None: ...
@@ -109,9 +109,9 @@ class _AsyncRuntimeProtocol(Protocol):
     def shutdown(self) -> None: ...
 
 
-def _build_async_runtime(runtime_cfg: CeleryRuntimeConfig) -> _CeleryAsyncRuntime:
+def _build_process_bridge(runtime_cfg: CeleryRuntimeConfig) -> _CeleryProcessBridge:
     """Build the per-process async runtime used by Celery worker tasks."""
-    return _CeleryAsyncRuntime(
+    return _CeleryProcessBridge(
         backend=runtime_cfg.backend,
         backend_options=build_backend_options(runtime_cfg.backend, runtime_cfg.use_uvloop),
         shutdown_timeout_ms=runtime_cfg.shutdown_timeout_ms,
@@ -148,12 +148,12 @@ class _WorkerLifecycle:
 
     Args:
         application: The composed application of the worker.
-        async_runtime: Per-process async bridge the tasks run on.
+        process_bridge: Per-process async bridge the tasks run on.
     """
 
-    def __init__(self, application: Application, async_runtime: _AsyncRuntimeProtocol) -> None:
+    def __init__(self, application: Application, process_bridge: _ProcessBridgeProtocol) -> None:
         self._application = application
-        self._runtime = async_runtime
+        self._runtime = process_bridge
         self._stop: _Step | None = None
 
     def on_worker_init(self, worker: Any) -> None:
@@ -274,7 +274,7 @@ def _register_tasks(
     celery_app: Celery,
     declared: _Declared,
     application: Application,
-    async_runtime: _CeleryAsyncRuntime,
+    process_bridge: _CeleryProcessBridge,
     metrics: MetricsAdapter | None,
 ) -> None:
     """Register one task per job and one per callback class and outcome."""
@@ -291,7 +291,7 @@ def _register_tasks(
             job_type,
             kernel.factory,
             kernel.executor,
-            async_runtime,
+            process_bridge,
             metrics,
             observability_runtime=observability,
             settings=application.job_settings,
@@ -303,7 +303,7 @@ def _register_tasks(
                 callback_type,
                 outcome,
                 kernel.factory,
-                async_runtime,
+                process_bridge,
                 observability_runtime=observability,
             )
 
@@ -410,10 +410,10 @@ class CeleryAdapter:
             )
         declared = self._declared
 
-        async_runtime = _build_async_runtime(declared.celery.runtime)
+        process_bridge = _build_process_bridge(declared.celery.runtime)
         celery_app = create_celery_app(declared.celery)
-        _register_tasks(celery_app, declared, application, async_runtime, self._metrics)
-        _connect_lifecycle_signals(_WorkerLifecycle(application, async_runtime))
+        _register_tasks(celery_app, declared, application, process_bridge, self._metrics)
+        _connect_lifecycle_signals(_WorkerLifecycle(application, process_bridge))
         return celery_app
 
 

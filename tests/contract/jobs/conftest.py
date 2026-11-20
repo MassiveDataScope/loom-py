@@ -21,7 +21,7 @@ import pytest
 from celery import Celery  # type: ignore[import-untyped]
 from celery.exceptions import Retry  # type: ignore[import-untyped]
 
-from loom.celery.runner import _CeleryAsyncRuntime, _make_job_task
+from loom.celery.runner import _CeleryProcessBridge, _make_job_task
 from loom.celery.service import CeleryJobTransport
 from loom.connections.aws import AwsClients
 from loom.core.identity import Delegation
@@ -217,7 +217,7 @@ class CeleryDriver:
 
     def __init__(self, kernel: JobKernel) -> None:
         self._kernel = kernel
-        self._runtime = _CeleryAsyncRuntime()
+        self._runtime = _CeleryProcessBridge()
         self._runtime.initialize()
         self._app = Celery(broker="memory://", backend="cache+memory://")
 

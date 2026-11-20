@@ -12,18 +12,18 @@ from loom.etl.backends.polars._reader import PolarsSourceReader
 from loom.etl.backends.polars._writer import PolarsTargetWriter
 from loom.etl.io._registry import WriterRegistry
 from loom.etl.io.sources._clickhouse import ClickHouseSourceReader
-from loom.etl.io.sources._dynamodb import DynamoDbSourceReader
+from loom.etl.io.sources._dynamodb import DynamoDBSourceReader
 from loom.etl.io.sources._mongo import MongoSourceReader
 from loom.etl.io.targets._clickhouse import ClickHouseClientExecutor, ClickHouseTargetWriter
 from loom.etl.lineage._config import LineageConfig
 from loom.etl.lineage.sinks import RecordFrameTargetWriter, TargetLineageWriter
 from loom.etl.ports.contracts import ClientCommandExecutor, SourceReader, TargetWriter
-from loom.etl.runner._engines import BackendProvider
+from loom.etl.runner._engines import EtlEngine
 from loom.etl.storage._config import CatalogConnection, StorageConfig
 from loom.etl.storage._locator import MappingLocator, PrefixLocator, TableLocation, TableLocator
 
 
-class PolarsProvider(BackendProvider):
+class PolarsEtlEngine(EtlEngine):
     """Create Polars reader/writer pair from storage config.
 
     Args:
@@ -49,9 +49,9 @@ class PolarsProvider(BackendProvider):
         )
         clickhouse_reader = ClickHouseSourceReader(connection=config.clickhouse)
         dynamodb_reader = (
-            DynamoDbSourceReader(self._clients.client("dynamodb", config.dynamodb))
+            DynamoDBSourceReader(self._clients.client("dynamodb", config.dynamodb))
             if config.dynamodb is not None
-            else DynamoDbSourceReader()
+            else DynamoDBSourceReader()
         )
         polars_reader = PolarsSourceReader(
             locator,
@@ -196,4 +196,4 @@ def _unity_storage_options_from_connection(connection: CatalogConnection) -> dic
     return options
 
 
-__all__ = ["PolarsProvider"]
+__all__ = ["PolarsEtlEngine"]

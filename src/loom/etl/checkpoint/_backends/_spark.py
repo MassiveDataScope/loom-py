@@ -14,7 +14,7 @@ from loom.etl.checkpoint._cleaners import _join_path
 _log = logging.getLogger(__name__)
 
 
-class _SparkCheckpointBackend:
+class _SparkCheckpointIO:
     """PySpark Parquet backend for :class:`~loom.etl.checkpoint.CheckpointStore`.
 
     Writes Spark DataFrames as Parquet directories via ``df.write.parquet()``

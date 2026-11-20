@@ -13,7 +13,7 @@ from loom.etl.checkpoint._backends._polars import (
 )
 
 
-class _InMemoryCheckpointBackend:
+class _InMemoryCheckpointIO:
     """Polars checkpoint backend holding collected frames in a dict.
 
     Keeps the checks of the Arrow IPC backend: only a ``LazyFrame`` is accepted,

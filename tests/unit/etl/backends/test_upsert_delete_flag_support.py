@@ -105,7 +105,7 @@ class _UnsupportedWriter(_WritePolicy[list[int], list[int], dict[str, Any]]):
     ) -> list[int] | None:
         return None
 
-    def _historify_backend(self) -> Any:
+    def _historify_ops(self) -> Any:
         return object()
 
     def _write_file(

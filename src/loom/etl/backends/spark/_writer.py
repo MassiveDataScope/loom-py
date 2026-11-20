@@ -27,7 +27,7 @@ from loom.etl.backends._path_template import resolve_file_uri
 from loom.etl.backends._predicate import predicate_to_sql
 from loom.etl.backends._write_policy import _WritePolicy
 from loom.etl.backends.spark._dtype import loom_type_to_spark
-from loom.etl.backends.spark._historify import SparkHistorifyBackend
+from loom.etl.backends.spark._historify import SparkHistorifyOps
 from loom.etl.backends.spark._schema import SparkPhysicalSchema, apply_schema_spark
 from loom.etl.declarative._format import Format
 from loom.etl.declarative._write_options import (
@@ -390,8 +390,8 @@ class SparkTargetWriter(_WritePolicy[DataFrame, DataFrame, SparkPhysicalSchema])
             return self._spark.read.format("delta").load(target.location.uri)
         return None
 
-    def _historify_backend(self) -> SparkHistorifyBackend:
-        return SparkHistorifyBackend()
+    def _historify_ops(self) -> SparkHistorifyOps:
+        return SparkHistorifyOps()
 
     def _write_file(
         self,

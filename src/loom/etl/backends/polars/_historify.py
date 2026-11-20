@@ -1,4 +1,4 @@
-"""Polars HistorifyBackend implementation."""
+"""Polars HistorifyOps implementation."""
 
 from __future__ import annotations
 
@@ -26,8 +26,8 @@ def _period_offset(spec: HistorifySpec) -> pl.Expr:
     return pl.duration(microseconds=1)
 
 
-class PolarsHistorifyBackend:
-    """Polars implementation of HistorifyBackend."""
+class PolarsHistorifyOps:
+    """Polars implementation of HistorifyOps."""
 
     def columns(self, frame: pl.DataFrame) -> list[str]:
         return list(frame.columns)

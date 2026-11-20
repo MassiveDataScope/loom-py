@@ -7,13 +7,13 @@ from unittest.mock import AsyncMock, MagicMock, patch
 import pytest
 
 from loom.celery.config import CeleryRuntimeConfig
-from loom.celery.runner import _CeleryAsyncRuntime
+from loom.celery.runner import _CeleryProcessBridge
 
 
 class TestCeleryAsyncRuntime:
     def test_initialize_builds_async_bridge_once(self) -> None:
         loop_factory = object()
-        runtime = _CeleryAsyncRuntime(
+        runtime = _CeleryProcessBridge(
             backend="asyncio",
             backend_options={"loop_factory": loop_factory},
             shutdown_timeout_ms=10,
@@ -30,7 +30,7 @@ class TestCeleryAsyncRuntime:
         )
 
     def test_run_uses_bridge_when_initialized(self) -> None:
-        runtime = _CeleryAsyncRuntime()
+        runtime = _CeleryProcessBridge()
         bridge = MagicMock()
         bridge.is_alive = True
         bridge.run = MagicMock(return_value=123)
@@ -43,7 +43,7 @@ class TestCeleryAsyncRuntime:
         bridge.run.assert_called_once()
 
     def test_run_falls_back_to_asyncio_in_eager_mode(self) -> None:
-        runtime = _CeleryAsyncRuntime()
+        runtime = _CeleryProcessBridge()
         coro = AsyncMock(return_value="ok")()
 
         result = runtime.run(coro, eager_fallback=True)
@@ -51,7 +51,7 @@ class TestCeleryAsyncRuntime:
         assert result == "ok"
 
     def test_run_closes_and_raises_when_bridge_missing(self) -> None:
-        runtime = _CeleryAsyncRuntime()
+        runtime = _CeleryProcessBridge()
         coro = MagicMock()
 
         with pytest.raises(RuntimeError, match="not initialized"):
@@ -60,7 +60,7 @@ class TestCeleryAsyncRuntime:
         coro.close.assert_called_once()
 
     def test_shutdown_is_idempotent(self) -> None:
-        runtime = _CeleryAsyncRuntime()
+        runtime = _CeleryProcessBridge()
         bridge = MagicMock()
         runtime._bridge = bridge
 

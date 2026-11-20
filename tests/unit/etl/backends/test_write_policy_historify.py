@@ -5,7 +5,7 @@ Verifies that:
 * HistorifySpec is routed to _do_historify (not any other handler).
 * _do_historify validates missing-table policy before delegating.
 * _do_historify materializes the frame, runs the SCD2 transform with the
-  engine's _historify_backend and writes its result through the create/replace
+  engine's _historify_ops and writes its result through the create/replace
   hooks, releasing the existing frame before the write.
 * Temp specs still raise TypeError.
 * Specs that are not a table write mode raise TypeError.
@@ -50,7 +50,7 @@ from loom.etl.storage.routing import ResolvedTarget
 # ---------------------------------------------------------------------------
 
 
-class _FakeHistorifyBackend:
+class _FakeHistorifyOps:
     """Engine stand-in: the patched transform records its calls here."""
 
     def __init__(self) -> None:
@@ -59,7 +59,7 @@ class _FakeHistorifyBackend:
 
 
 def _fake_scd2_transform(
-    ops: _FakeHistorifyBackend,
+    ops: _FakeHistorifyOps,
     frame: list[int],
     existing: Any,
     spec: HistorifySpec,
@@ -87,7 +87,7 @@ class _StubWritePolicy(_WritePolicy[list[int], list[int], dict[str, Any]]):
         resolver.resolve.return_value = MagicMock(spec=ResolvedTarget)
         super().__init__(resolver=resolver, missing_table_policy=missing_table_policy)
         self._schema_exists = schema_exists
-        self.historify = _FakeHistorifyBackend()
+        self.historify = _FakeHistorifyOps()
         self.historify_calls = self.historify.calls
         self.create_calls: list[tuple[Any, ...]] = []
         self.replace_calls: list[tuple[Any, ...]] = []
@@ -176,7 +176,7 @@ class _StubWritePolicy(_WritePolicy[list[int], list[int], dict[str, Any]]):
     ) -> list[int] | None:
         return [0] if self._schema_exists else None
 
-    def _historify_backend(self) -> Any:
+    def _historify_ops(self) -> Any:
         return self.historify
 
     def _write_file(self, frame: list[int], spec: Any, *, streaming: bool) -> None:
@@ -408,7 +408,7 @@ _HOOKS = (
     "_replace_where",
     "_upsert",
     "_update",
-    "_historify_backend",
+    "_historify_ops",
 )
 
 _TABLE_REF = TableRef("wh.players")
@@ -429,7 +429,7 @@ _WRITE_MODES: tuple[tuple[Any, str], ...] = (
     ),
     (UpsertSpec(table_ref=_TABLE_REF, upsert_keys=("player_id",)), "_upsert"),
     (UpdateSpec(table_ref=_TABLE_REF, keys=("player_id",)), "_update"),
-    (_spec(), "_historify_backend"),
+    (_spec(), "_historify_ops"),
 )
 
 
@@ -438,7 +438,7 @@ def _recorder(log: list[str], name: str) -> Callable[..., None]:
 
     def record(*_args: Any, **_kwargs: Any) -> Any:
         log.append(name)
-        return _FakeHistorifyBackend() if name == "_historify_backend" else None
+        return _FakeHistorifyOps() if name == "_historify_ops" else None
 
     return record
 
@@ -455,7 +455,7 @@ class TestWriteModeRouting:
 
         writer.write([1], spec, None)
 
-        writes_history = hook == "_historify_backend"
+        writes_history = hook == "_historify_ops"
         assert reached == ([hook, "_replace"] if writes_history else [hook])
 
     def test_a_spec_that_is_not_a_table_write_mode_raises(self) -> None:

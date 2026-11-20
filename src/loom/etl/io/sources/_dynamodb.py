@@ -14,8 +14,8 @@ import polars as pl
 
 from loom.core.logger import get_logger
 from loom.etl.backends.polars._dtype import loom_type_to_polars
-from loom.etl.declarative.source._from_dynamodb import FromDynamoDb
-from loom.etl.declarative.source._specs import DynamoDbSourceSpec, ExtraFieldsMode
+from loom.etl.declarative.source._from_dynamodb import FromDynamoDB
+from loom.etl.declarative.source._specs import DynamoDBSourceSpec, ExtraFieldsMode
 from loom.etl.io.sources._dynamodb_items import normalize_dynamo_item
 from loom.etl.io.sources._dynamodb_predicate import predicate_to_dynamo
 from loom.etl.io.sources._mongo_batch import (
@@ -30,11 +30,11 @@ from loom.etl.schema._schema import LoomDtype
 _log = get_logger(__name__)
 
 _QUEUE_POLL_S = 0.1
-_SOURCE_LABEL = "DynamoDbSourceReader"
+_SOURCE_LABEL = "DynamoDBSourceReader"
 
 
-class DynamoDbSourceReader:
-    """Read a :class:`~loom.etl.declarative.source.DynamoDbSourceSpec` into a Polars LazyFrame.
+class DynamoDBSourceReader:
+    """Read a :class:`~loom.etl.declarative.source.DynamoDBSourceSpec` into a Polars LazyFrame.
 
     DynamoDB I/O is deferred until ``.collect()`` is called. With ``schema``
     declared, zero requests are issued during ``read()`` — the scan starts
@@ -58,7 +58,7 @@ class DynamoDbSourceReader:
 
         if self._client is None:
             raise RuntimeError(
-                "DynamoDbSourceReader: no client configured. "
+                "DynamoDBSourceReader: no client configured. "
                 "Pass a boto3 dynamodb client at construction time."
             )
 
@@ -99,7 +99,7 @@ class DynamoDbSourceReader:
         )
 
     def _resolve_declared_schema(
-        self, spec: DynamoDbSourceSpec
+        self, spec: DynamoDBSourceSpec
     ) -> tuple[dict[str, pl.DataType], frozenset[str]]:
         if not spec.schema:
             return {}, frozenset()
@@ -109,7 +109,7 @@ class DynamoDbSourceReader:
 
     def _prepare_scan(
         self,
-        spec: DynamoDbSourceSpec,
+        spec: DynamoDBSourceSpec,
         client: Any,
         scan_kwargs: dict[str, Any],
         declared_schema: dict[str, pl.DataType],
@@ -123,7 +123,7 @@ class DynamoDbSourceReader:
         return _infer_schema_from_sample(client, scan_kwargs, spec, batch_processor)
 
 
-def _build_scan_kwargs(spec: DynamoDbSourceSpec, params_instance: Any) -> dict[str, Any]:
+def _build_scan_kwargs(spec: DynamoDBSourceSpec, params_instance: Any) -> dict[str, Any]:
     """Compile the spec into the base ``client.scan()`` keyword arguments."""
     kwargs: dict[str, Any] = {"TableName": spec.table, "Limit": spec.batch_size}
     if spec.consistent_read:
@@ -293,7 +293,7 @@ class _ParallelSegmentScanner:
 def _open_item_source(
     client: Any,
     scan_kwargs: dict[str, Any],
-    spec: DynamoDbSourceSpec,
+    spec: DynamoDBSourceSpec,
     effective_limit: int | None,
 ) -> Generator[dict[str, Any], None, None] | _ParallelSegmentScanner:
     _log.info(
@@ -327,7 +327,7 @@ def _normalize_null_dtypes(schema: dict[str, pl.DataType]) -> dict[str, pl.DataT
 def _infer_schema_from_sample(
     client: Any,
     scan_kwargs: dict[str, Any],
-    spec: DynamoDbSourceSpec,
+    spec: DynamoDBSourceSpec,
     batch_processor: BatchProcessorProtocol,
 ) -> dict[str, pl.DataType]:
     inference_size = min(spec.batch_size, 1024)
@@ -432,7 +432,7 @@ class _ScanTracker:
 
 def _frames_from_items(
     items: Generator[dict[str, Any], None, None] | _ParallelSegmentScanner,
-    spec: DynamoDbSourceSpec,
+    spec: DynamoDBSourceSpec,
     batch_processor: BatchProcessorProtocol,
     declared_schema: dict[str, pl.DataType],
     registered_schema: dict[str, pl.DataType],
@@ -474,7 +474,7 @@ def _frames_from_items(
 def _scan(
     client: Any,
     scan_kwargs: dict[str, Any],
-    spec: DynamoDbSourceSpec,
+    spec: DynamoDBSourceSpec,
     batch_processor: BatchProcessorProtocol,
     declared_schema: dict[str, pl.DataType],
     registered_schema: dict[str, pl.DataType],
@@ -500,4 +500,4 @@ def _scan(
         tracker.log_complete()
 
 
-__all__ = ["DynamoDbSourceReader", "DynamoDbSourceSpec", "FromDynamoDb"]
+__all__ = ["DynamoDBSourceReader", "DynamoDBSourceSpec", "FromDynamoDB"]

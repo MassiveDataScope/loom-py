@@ -13,7 +13,7 @@ from celery.exceptions import Retry
 
 from loom.celery.constants import TASK_JOB_PREFIX, callback_task_name
 from loom.celery.errors import WorkerNotOpenError
-from loom.celery.runner import _CeleryAsyncRuntime, _make_callback_task
+from loom.celery.runner import _CeleryProcessBridge, _make_callback_task
 from loom.core.engine.events import EventKind
 from loom.core.errors import (
     PostCommitError,
@@ -640,7 +640,7 @@ class TestLinkContextOnTheWorker:
             callback,
             CallbackOutcome.SUCCESS,
             Builds(),
-            _CeleryAsyncRuntime(),  # type: ignore[arg-type]
+            _CeleryProcessBridge(),  # type: ignore[arg-type]
         )
 
         task.apply(

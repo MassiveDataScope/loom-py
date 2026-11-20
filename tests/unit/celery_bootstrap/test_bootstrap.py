@@ -170,7 +170,7 @@ class TestBootstrapWorkerTaskRegistration:
         result = self._run(tmp_path)
         assert result.celery_app.conf.task_always_eager is True
 
-    def test_builds_async_runtime_from_yaml(self, tmp_path: Any) -> None:
+    def test_builds_process_bridge_from_yaml(self, tmp_path: Any) -> None:
         import yaml
 
         runtime_cfg: dict[str, object] = {
@@ -192,7 +192,7 @@ class TestBootstrapWorkerTaskRegistration:
         config_path.write_text(yaml.dump(cfg))
 
         with patch.object(
-            adapter, "_build_async_runtime", wraps=adapter._build_async_runtime
+            adapter, "_build_process_bridge", wraps=adapter._build_process_bridge
         ) as spy:
             boot.bootstrap_worker(str(config_path), jobs=[_SyncJob])
 

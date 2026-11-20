@@ -32,9 +32,9 @@ from loom.core.model import BaseModel
 from loom.core.model.convert import to_struct
 from loom.core.model.introspection import get_projections
 from loom.core.projection.loaders import (
+    build_memory_loader,
     find_relation_name_for_loader,
     is_projection_descriptor,
-    make_memory_loader,
 )
 from loom.core.projection.plan import (
     ProjectionPlan,
@@ -278,7 +278,7 @@ class InMemoryRepository(Readable[T], Creatable[T], Updatable[T], Deletable[T], 
                         f"({type(loader).__name__}(model={loader.model.__name__})). "
                         "Provide 'via' on the loader or annotate the relation with the target type."
                     )
-                result[name] = replace(proj, loader=make_memory_loader(loader, rel_name))
+                result[name] = replace(proj, loader=build_memory_loader(loader, rel_name))
             else:
                 result[name] = proj
         return result

@@ -37,7 +37,7 @@ def _require_polars_lazy_frame(data: Any) -> pl.LazyFrame:
     return data
 
 
-class _PolarsCheckpointBackend:
+class _PolarsCheckpointIO:
     """Polars Arrow IPC backend with atomic write-then-rename."""
 
     def __init__(self, storage_options: dict[str, str]) -> None:

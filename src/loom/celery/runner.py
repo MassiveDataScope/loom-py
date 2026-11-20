@@ -69,7 +69,7 @@ REDELIVERY = Redelivery.DELAYED
 
 
 @dataclass(slots=True)
-class _CeleryAsyncRuntime:
+class _CeleryProcessBridge:
     """Per-process async bridge for Celery worker coroutines."""
 
     backend: str = "asyncio"
@@ -170,7 +170,7 @@ def _make_job_task(
     job_type: type[Job[Any]],
     factory: UseCaseFactory,
     executor: RuntimeExecutor,
-    async_runtime: _CeleryAsyncRuntime,
+    process_bridge: _CeleryProcessBridge,
     metrics: MetricsAdapter | None = None,
     observability_runtime: ObservabilityRuntime | None = None,
     *,
@@ -257,7 +257,7 @@ def _make_job_task(
             postponements=postponements,
             timeout_s=run_timeout,
         )
-        outcome: JobOutcome = async_runtime.run(
+        outcome: JobOutcome = process_bridge.run(
             runner.run(delivery), eager_fallback=_is_eager_request(task_self)
         )
         return outcome
@@ -341,7 +341,7 @@ def _make_callback_task(
     callback_type: type[Any],
     outcome: CallbackOutcome,
     factory: UseCaseFactory,
-    async_runtime: _CeleryAsyncRuntime,
+    process_bridge: _CeleryProcessBridge,
     observability_runtime: ObservabilityRuntime | None = None,
 ) -> Any:
     """Register and return the Celery task calling *callback_type*'s hook for *outcome*.
@@ -363,7 +363,7 @@ def _make_callback_task(
             subclass.
         outcome: The outcome whose hook the task calls.
         factory: Used to build the callback instance via DI.
-        async_runtime: Runs an async hook.
+        process_bridge: Runs an async hook.
         observability_runtime: Opens the callback's span.
 
     Returns:
@@ -412,9 +412,9 @@ def _make_callback_task(
         exc_type: str = "Unknown",
         exc_msg: str = "",
     ) -> None:
-        async_runtime.ensure_open()
+        process_bridge.ensure_open()
         if hook_is_async:
-            async_runtime.run(
+            process_bridge.run(
                 notified(job_id, job_result, trace_id, identity, context, exc_type, exc_msg),
                 eager_fallback=_is_eager_request(self),
             )

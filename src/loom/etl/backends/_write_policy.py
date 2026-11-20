@@ -12,7 +12,7 @@ from dataclasses import dataclass
 from typing import TYPE_CHECKING, Any, Generic, TypeVar
 
 from loom.core.logger import get_logger
-from loom.etl.backends._historify import HistorifyBackend, scd2_transform
+from loom.etl.backends._historify import HistorifyOps, scd2_transform
 from loom.etl.declarative.target import (
     AppendSpec,
     ClientSpec,
@@ -473,7 +473,7 @@ class _WritePolicy(TargetWriter, Generic[InputFrameT, WriteFrameT, PhysicalSchem
 
         Reads existing target data, validates creation rights when absent, runs
         :func:`~loom.etl.backends._historify.scd2_transform` with the engine's
-        :meth:`_historify_backend`, then writes the rebuilt history. The existing
+        :meth:`_historify_ops`, then writes the rebuilt history. The existing
         frame is dropped before the write, so eager backends release the table
         snapshot instead of holding it alongside the rebuilt history.
 
@@ -504,7 +504,7 @@ class _WritePolicy(TargetWriter, Generic[InputFrameT, WriteFrameT, PhysicalSchem
             )
         materialized = self._materialize_checked(frame, target, streaming=False)
         result, report = scd2_transform(
-            self._historify_backend(), materialized, existing, spec, params_instance
+            self._historify_ops(), materialized, existing, spec, params_instance
         )
         del existing
         if report is not None:
@@ -749,7 +749,7 @@ class _WritePolicy(TargetWriter, Generic[InputFrameT, WriteFrameT, PhysicalSchem
         """Matched-only merge into existing table — never inserts."""
 
     @abstractmethod
-    def _historify_backend(self) -> HistorifyBackend[WriteFrameT]:
+    def _historify_ops(self) -> HistorifyOps[WriteFrameT]:
         """Return the SCD2 primitives of this engine."""
 
     @abstractmethod

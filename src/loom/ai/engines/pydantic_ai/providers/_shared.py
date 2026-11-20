@@ -13,7 +13,7 @@ from loom.core.environment import configured_variable
 
 
 @runtime_checkable
-class ProviderIsland(Protocol):
+class ModelBuilder(Protocol):
     """The two names a provider island publishes.
 
     Attributes:

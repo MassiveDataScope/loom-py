@@ -422,7 +422,7 @@ class _DeclaredQuery:
         ``profile`` is accepted only under the condition OpenAPI publishes it:
         the route exposes it and ``execute`` declares an annotated ``profile``
         parameter, and only with one of the route's allowed profiles;
-        :meth:`_RouteRuntime._profile` then selects it.
+        :meth:`_ResolvedRoute._profile` then selects it.
 
         Raises:
             LoomError: ``unsupported_query`` for an unknown or repeated key.
@@ -448,7 +448,7 @@ class _DeclaredQuery:
 
 
 @dataclass(frozen=True, slots=True)
-class _RouteRuntime:
+class _ResolvedRoute:
     """Per-route facts resolved once at startup and read on every request."""
 
     compiled_route: CompiledRoute
@@ -461,7 +461,7 @@ class _RouteRuntime:
     filter_values: _FilterValues
 
     @classmethod
-    def of(cls, compiled_route: CompiledRoute) -> _RouteRuntime:
+    def of(cls, compiled_route: CompiledRoute) -> _ResolvedRoute:
         """Resolve the request-time facts of one compiled route."""
         uc_type = compiled_route.route.use_case
         plan = getattr(uc_type, "__execution_plan__", None)
@@ -620,7 +620,7 @@ class _RouteHandler:
 
     def __init__(
         self,
-        runtime: _RouteRuntime,
+        runtime: _ResolvedRoute,
         factory: UseCaseFactory,
         executor: RuntimeExecutor,
         observability: ObservabilityRuntime,
@@ -754,7 +754,7 @@ def bind_interfaces(
     component_registry: dict[str, Any] = {}
 
     for cr in compiled_routes:
-        handler = _RouteHandler(_RouteRuntime.of(cr), factory, executor, observability_runtime)
+        handler = _RouteHandler(_ResolvedRoute.of(cr), factory, executor, observability_runtime)
         summary, description = _route_docs(cr)
         request_body = build_request_body_schema(cr, component_registry)
         responses = build_success_responses(cr, component_registry)

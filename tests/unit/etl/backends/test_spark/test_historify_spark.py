@@ -21,7 +21,7 @@ pytest.importorskip("delta")
 from pyspark.sql import DataFrame, SparkSession  # noqa: E402
 from pyspark.sql import types as T  # noqa: E402
 
-from loom.etl.backends.spark._historify import SparkHistorifyBackend  # noqa: E402
+from loom.etl.backends.spark._historify import SparkHistorifyOps  # noqa: E402
 from loom.etl.backends.spark._writer import SparkTargetWriter  # noqa: E402
 from loom.etl.declarative.expr._refs import TableRef  # noqa: E402
 from loom.etl.declarative.target._history import (  # noqa: E402
@@ -91,7 +91,7 @@ class TestHistorifySparkTarget(HistorifyContractTests):
 
 
 def _stamp_new_rows(frame: DataFrame, spec: HistorifySpec, eff_date: Any) -> DataFrame:
-    ops = SparkHistorifyBackend()
+    ops = SparkHistorifyOps()
     dtype = ops.history_dtype(spec)
     frame = ops.stamp_col(frame, spec.valid_from, eff_date, dtype)
     return ops.stamp_col(frame, spec.valid_to, None, dtype)
@@ -102,13 +102,13 @@ class TestDuplicateKeys:
         frame = spark.createDataFrame(
             [{"player_id": 1, "team_id": "RM"}, {"player_id": 2, "team_id": "BCA"}]
         )
-        assert SparkHistorifyBackend().duplicate_keys(frame, ["player_id", "team_id"]) is None
+        assert SparkHistorifyOps().duplicate_keys(frame, ["player_id", "team_id"]) is None
 
     def test_duplicates_are_described(self, spark: SparkSession) -> None:
         frame = spark.createDataFrame(
             [{"player_id": 1, "team_id": "RM"}, {"player_id": 1, "team_id": "RM"}]
         )
-        described = SparkHistorifyBackend().duplicate_keys(frame, ["player_id", "team_id"])
+        described = SparkHistorifyOps().duplicate_keys(frame, ["player_id", "team_id"])
         assert described is not None
         assert "'player_id': 1" in described
 
@@ -121,7 +121,7 @@ class TestAssertNoDateCollisions:
                 {"subscription_id": 1, "plan": "b", "event_date": date(2024, 6, 1)},
             ]
         )
-        SparkHistorifyBackend().assert_no_date_collisions(
+        SparkHistorifyOps().assert_no_date_collisions(
             frame, ["subscription_id", "plan"], "event_date", _log_spec()
         )
 
@@ -132,7 +132,7 @@ class TestAssertNoDateCollisions:
                 {"subscription_id": 1, "plan": "pro", "event_date": date(2024, 1, 1)},
             ]
         )
-        backend = SparkHistorifyBackend()
+        backend = SparkHistorifyOps()
         spec = _log_spec()
         with pytest.raises(HistorifyDateCollisionError):
             backend.assert_no_date_collisions(
@@ -154,7 +154,7 @@ class TestAssertNoDateCollisions:
             track=("plan",),
             date_type=HistoryDateType.TIMESTAMP,
         )
-        SparkHistorifyBackend().assert_no_date_collisions(
+        SparkHistorifyOps().assert_no_date_collisions(
             frame, ["subscription_id", "plan"], "event_date", spec
         )
 
@@ -162,19 +162,19 @@ class TestAssertNoDateCollisions:
 class TestBackendHelpers:
     def test_filter_eq_with_dtype(self, spark: SparkSession) -> None:
         frame = spark.createDataFrame([{"d": date(2024, 1, 1)}, {"d": date(2024, 1, 2)}])
-        result = SparkHistorifyBackend().filter_eq(frame, "d", "2024-01-01", "date")
+        result = SparkHistorifyOps().filter_eq(frame, "d", "2024-01-01", "date")
         assert result.count() == 1
         assert result.collect()[0]["d"] == date(2024, 1, 1)
 
     def test_filter_ne_with_dtype(self, spark: SparkSession) -> None:
         frame = spark.createDataFrame([{"d": date(2024, 1, 1)}, {"d": date(2024, 1, 2)}])
-        result = SparkHistorifyBackend().filter_ne(frame, "d", "2024-01-01", "date")
+        result = SparkHistorifyOps().filter_ne(frame, "d", "2024-01-01", "date")
         assert result.count() == 1
         assert result.collect()[0]["d"] == date(2024, 1, 2)
 
     def test_null_col(self, spark: SparkSession) -> None:
         frame = spark.createDataFrame([{"a": 1}])
-        result = SparkHistorifyBackend().null_col(frame, "n", "date")
+        result = SparkHistorifyOps().null_col(frame, "n", "date")
         row = result.collect()[0]
         assert row["n"] is None
         assert "n" in result.columns
@@ -194,7 +194,7 @@ class TestBackendHelpers:
                 {"subscription_id": 1, "plan": "b", "event_date": datetime(2024, 1, 1, 12, 0, 0)},
             ]
         )
-        result = SparkHistorifyBackend().build_log_boundaries(frame, spec)
+        result = SparkHistorifyOps().build_log_boundaries(frame, spec)
         rows = result.collect()
         assert rows[0]["valid_from"] == datetime(2024, 1, 1, 10, 0, 0)
         assert rows[0]["valid_to"] == datetime(2024, 1, 1, 11, 59, 59, 999999)
@@ -216,7 +216,7 @@ class TestBackendHelpers:
                 {"id": 1, "state": "done", "event_ts": datetime(2024, 6, 1, 8)},
             ]
         )
-        rows = SparkHistorifyBackend().build_log_boundaries(frame, spec).collect()
+        rows = SparkHistorifyOps().build_log_boundaries(frame, spec).collect()
         assert all(r["valid_to"] is None or r["valid_to"] >= r["valid_from"] for r in rows)
         collided = [r for r in rows if r["state"] == "false"]
         assert collided[0]["valid_to"] == collided[0]["valid_from"] == datetime(2024, 1, 1, 8)
@@ -240,7 +240,7 @@ class TestBackendHelpers:
                 {"id": 1, "state": "done", "event_date": date(2024, 6, 1)},
             ]
         )
-        rows = SparkHistorifyBackend().build_log_boundaries(frame, spec).collect()
+        rows = SparkHistorifyOps().build_log_boundaries(frame, spec).collect()
         assert all(r["valid_to"] is None or r["valid_to"] >= r["valid_from"] for r in rows)
         collided = [r for r in rows if r["state"] == "false"]
         assert collided[0]["valid_to"] == collided[0]["valid_from"] == date(2024, 1, 1)
@@ -259,7 +259,7 @@ class TestLogTrackNoneNoCollapse:
                 {"subscription_id": 1, "plan": "basic", "event_date": date(2024, 2, 1)},
             ]
         )
-        result = SparkHistorifyBackend().build_log_boundaries(frame, spec)
+        result = SparkHistorifyOps().build_log_boundaries(frame, spec)
         assert result.count() == 2
 
 
@@ -293,7 +293,7 @@ class TestRewindTo:
             [{"player_id": 1, "team_id": "RM", "valid_from": date(2024, 6, 1), "valid_to": None}],
             schema=_HISTORY_SCHEMA,
         )
-        result = SparkHistorifyBackend().rewind_to(existing, _snapshot_spec(), date(2024, 6, 1))
+        result = SparkHistorifyOps().rewind_to(existing, _snapshot_spec(), date(2024, 6, 1))
         assert result.count() == 0
 
     def test_discards_future_rows_on_backfill(self, spark: SparkSession) -> None:
@@ -309,7 +309,7 @@ class TestRewindTo:
             ],
             schema=_HISTORY_SCHEMA,
         )
-        result = SparkHistorifyBackend().rewind_to(existing, _snapshot_spec(), date(2024, 3, 1))
+        result = SparkHistorifyOps().rewind_to(existing, _snapshot_spec(), date(2024, 3, 1))
         rows = result.collect()
         assert [r["team_id"] for r in rows] == ["RM"]
 
@@ -325,7 +325,7 @@ class TestRewindTo:
             ],
             schema=_HISTORY_SCHEMA,
         )
-        result = SparkHistorifyBackend().rewind_to(existing, _snapshot_spec(), date(2024, 6, 1))
+        result = SparkHistorifyOps().rewind_to(existing, _snapshot_spec(), date(2024, 6, 1))
         rows = result.collect()
         assert rows[0]["valid_to"] is None
 
@@ -349,7 +349,7 @@ class TestRewindTo:
             ],
             schema=_HISTORY_SCHEMA_SOFT,
         )
-        result = SparkHistorifyBackend().rewind_to(existing, _snapshot_spec(), date(2024, 6, 1))
+        result = SparkHistorifyOps().rewind_to(existing, _snapshot_spec(), date(2024, 6, 1))
         rows = {r["player_id"]: r for r in result.collect()}
         assert rows[1]["valid_to"] is None
         assert rows[1]["deleted_at"] is None
@@ -363,9 +363,7 @@ class TestCollectFutureRows:
             [{"player_id": 1, "team_id": "RM", "valid_from": date(2024, 6, 1), "valid_to": None}],
             schema=_HISTORY_SCHEMA,
         )
-        rows = SparkHistorifyBackend().collect_future_rows(
-            existing, _snapshot_spec(), date(2024, 6, 1)
-        )
+        rows = SparkHistorifyOps().collect_future_rows(existing, _snapshot_spec(), date(2024, 6, 1))
         assert rows == []
 
     def test_returns_keys_and_valid_from_of_future_rows(self, spark: SparkSession) -> None:
@@ -387,9 +385,7 @@ class TestCollectFutureRows:
             ],
             schema=_HISTORY_SCHEMA,
         )
-        rows = SparkHistorifyBackend().collect_future_rows(
-            existing, _snapshot_spec(), date(2024, 3, 1)
-        )
+        rows = SparkHistorifyOps().collect_future_rows(existing, _snapshot_spec(), date(2024, 3, 1))
         assert sorted(rows) == [(1, date(2024, 6, 1)), (2, date(2024, 9, 1))]
 
 
@@ -423,5 +419,5 @@ class TestClosureEvents:
         frame = spark.createDataFrame(
             [(r["id"], r["valid_from"], r["valid_to"]) for r in _CLOSURE_HISTORY], schema
         )
-        result = SparkHistorifyBackend().closure_events(frame, _CLOSURE_SPEC)
+        result = SparkHistorifyOps().closure_events(frame, _CLOSURE_SPEC)
         assert sorted(tuple(r) for r in result.collect()) == _CLOSURE_EVENTS

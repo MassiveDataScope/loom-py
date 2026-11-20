@@ -1,4 +1,4 @@
-"""Backend-agnostic SCD2 transform delegating frame operations to a HistorifyBackend."""
+"""Backend-agnostic SCD2 transform delegating frame operations to a HistorifyOps."""
 
 from __future__ import annotations
 
@@ -10,7 +10,7 @@ from loom.etl.backends._historify._common import (
     resolve_track_cols,
 )
 from loom.etl.backends._historify._log import apply_log, build_log_history
-from loom.etl.backends._historify._ops import HistorifyBackend
+from loom.etl.backends._historify._ops import HistorifyOps
 from loom.etl.backends._historify._snapshot import apply_snapshot
 from loom.etl.declarative.target._history import (
     HistorifyDeleteMarkerError,
@@ -25,7 +25,7 @@ F = TypeVar("F")
 
 
 def scd2_transform(
-    ops: HistorifyBackend[F],
+    ops: HistorifyOps[F],
     frame: F,
     existing: F | None,
     spec: HistorifySpec,
@@ -76,7 +76,7 @@ def scd2_transform(
     return apply_log(ops, frame, existing, spec), None
 
 
-def _assert_delete_marker(ops: HistorifyBackend[F], frame: F, marker: str) -> None:
+def _assert_delete_marker(ops: HistorifyOps[F], frame: F, marker: str) -> None:
     """Raise unless the incoming frame carries ``marker`` as a boolean column."""
     if marker not in ops.columns(frame):
         raise HistorifyDeleteMarkerError(marker, "is missing from the incoming frame")
@@ -88,7 +88,7 @@ def _assert_delete_marker(ops: HistorifyBackend[F], frame: F, marker: str) -> No
 
 
 def _first_run(
-    ops: HistorifyBackend[F],
+    ops: HistorifyOps[F],
     frame: F,
     spec: HistorifySpec,
     eff_date: Any,
@@ -107,7 +107,7 @@ def _first_run(
 
 
 def _rewind_report_if_enabled(
-    ops: HistorifyBackend[F],
+    ops: HistorifyOps[F],
     existing: F,
     spec: HistorifySpec,
     eff_date: Any,
@@ -119,7 +119,7 @@ def _rewind_report_if_enabled(
 
 
 def _temporal_guard(
-    ops: HistorifyBackend[F],
+    ops: HistorifyOps[F],
     existing: F,
     spec: HistorifySpec,
     eff_date: Any,
