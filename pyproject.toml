@@ -269,6 +269,7 @@ dev = [
     "omegaconf>=2.3,<2.5",
     "pydantic>=2.0,<3.0",
     "pre-commit>=3.8.0",
+    "poethepoet>=0.32,<1",
     "pyright>=1.1.390,<2.0",
     "pytest>=8.3.0",
     "pytest-asyncio>=0.24.0",
@@ -493,6 +494,43 @@ TEST_SERVER_MODE_ENDPOINT = { unset = true }
 TEST_PROXY_MODE = { unset = true }
 TEST_PROXY_MODE_ENDPOINT = { unset = true }
 INITIAL_NO_AUTH_ACTION_COUNT = { unset = true }
+
+[tool.poe]
+verbosity = -1
+
+[tool.poe.tasks]
+# Every job has one command: `uv run poe <task>`. Pytest tasks forward extra
+# arguments, so `uv run poe test-fast tests/unit/core/job -k backoff` narrows a
+# run; explicit paths replace the lane's default `testpaths` override.
+lint = [
+    { cmd = "ruff check ." },
+    { cmd = "ruff format --check src tests" },
+]
+fmt = [
+    { cmd = "ruff format src tests" },
+    { cmd = "ruff check --fix ." },
+]
+test = "pytest -n auto --dist worksteal -q -p no:cacheprovider"
+test-fast = "pytest -n auto --dist worksteal -q -p no:cacheprovider -o 'testpaths=tests/unit tests/contract tests/docs'"
+test-int = "pytest -n auto --dist worksteal -q -p no:cacheprovider -o testpaths=tests/integration --ignore=tests/integration/rls"
+test-props = { cmd = "pytest -n auto --dist worksteal -q -p no:cacheprovider -o testpaths=tests/unit -k Properties", env = { HYPOTHESIS_PROFILE = "ci" } }
+test-cov = "pytest -n auto --dist worksteal -q -p no:cacheprovider --cov=src/loom --cov-report=term-missing --cov-report=xml"
+test-logs = "pytest -n 0 -p no:cacheprovider -o log_cli=true -o log_cli_level=DEBUG"
+golden-update = "pytest -q -p no:cacheprovider --update-golden"
+gate = ["lint", "types", "test-fast", "test-int"]
+
+[tool.poe.tasks.types]
+help = "mypy src, failing only when the error count grows past MYPY_BASELINE"
+env = { MYPY_BASELINE = "51" }
+shell = """
+out=$(mypy src 2>&1)
+found=$(printf '%s\\n' "$out" | sed -n 's/^Found \\([0-9]*\\) error.*/\\1/p')
+echo "mypy: ${found:-0} errors (baseline $MYPY_BASELINE)"
+if [ "${found:-0}" -gt "$MYPY_BASELINE" ]; then
+  printf '%s\\n' "$out" | tail -n 40
+  exit 1
+fi
+"""
 
 [tool.commitizen]
 name = "cz_conventional_commits"
