@@ -476,8 +476,6 @@ pythonpath = [
 addopts = "-ra --log-disable=aiosqlite -m 'not slow and not live' --allow-hosts=127.0.0.1,::1,localhost --allow-unix-socket"
 asyncio_mode = "auto"
 timeout = 300
-log_cli = true
-log_cli_level = "DEBUG"
 log_cli_format = "%(asctime)s %(levelname)s %(name)s %(message)s"
 markers = [
     "bytewax: tests that exercise the Bytewax adapter and runtime wiring",
