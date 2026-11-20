@@ -439,6 +439,45 @@ The cache instances (`CacheConfig`, `CacheGateway`, `CacheGateways`,
 `GenerationalDependencyResolver`) are built by the cache module from the
 `cache` section; configure them there rather than binding them.
 
+## Installers with their own settings
+
+An `Installer` is built with no arguments. One that needs settings of its own
+extends `ConfiguredInstaller`, naming the section and the type it decodes into:
+
+```python
+class StoresSettings(msgspec.Struct):
+    bucket: str
+    backend: str = "s3"
+
+
+class StoresInstaller(ConfiguredInstaller[StoresSettings]):
+    section = "trachinus.stores"
+    settings_type = StoresSettings
+
+    def install(self, container: LoomContainer) -> None:
+        container.register_instance(Bucket, Bucket(self.settings.bucket, self.settings.backend))
+```
+
+```yaml
+trachinus:
+  stores:
+    bucket: trachinus-data
+```
+
+Composition builds every discovered installer through
+`Installer.from_config(project.config)`; a `ConfiguredInstaller` decodes its
+section once there and keeps it as `self.settings`. A missing section or a
+value of the wrong type is a `ConfigError` naming the section and the
+installer, and `loom check --deploy` raises the same error, so CI catches it
+before a deploy. `loom check` reads the section as written and resolves no
+placeholder, so it runs without the application's secrets: a section with no
+placeholder is decoded in full, with the start-up error; one holding
+`${secrets:...}` or `${ssm:...}` values is checked for its shape only (it
+exists, no key the settings forbid, no required field missing) and its values
+are judged at start-up, once resolved. To build an installer differently, override `from_config`.
+`Recipe.overrides` is for test doubles only; production dependencies belong in
+an installer.
+
 ## Later deliveries
 
 The composition is the base of two later deliveries of the same

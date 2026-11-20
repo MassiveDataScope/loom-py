@@ -260,8 +260,9 @@ class Project:
         Raises:
             ConfigError: When the configuration does not load, breaks an ``app``
                 rule, declares a store whose backend is unknown or not
-                installed, ``app.code_path`` is not a literal path, or the
-                ``checks`` section is invalid.
+                installed, ``app.code_path`` is not a literal path, the
+                ``checks`` section is invalid, or the section of a discovered
+                ``ConfiguredInstaller`` is missing or invalid, as at start-up.
         """
         resolved_environment = resolve_environment(environment)
         paths = select_config_paths(
@@ -281,13 +282,15 @@ class Project:
             )
         code_path = add_code_path(raw_code_path, config_root)
         scope = CheckScope.declared_by(ctx, excluded=excluded)
-        return CheckedProject(
+        checked = CheckedProject(
             config=ctx,
             environment=resolved_environment,
             report=run_deploy_checks(ctx, scope=scope),
             config_root=config_root,
             code_path=code_path,
         )
+        phases.check_installers(ctx, checked.discovered.installers)
+        return checked
 
     @functools.cached_property
     def discovered(self) -> DiscoveryResult:
