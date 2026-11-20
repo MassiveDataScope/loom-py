@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import asyncio
+import random
 import time
 from collections.abc import Awaitable, Callable
 from typing import Any
@@ -40,6 +41,7 @@ class JobRunner:
         invocation: Runs the job of a delivery.
         redelivery: What the transport does with a job that must run again.
         metrics: Receives the job events; none when omitted.
+        rng: The source of the backoff jitter; a fresh one when omitted.
     """
 
     def __init__(
@@ -48,8 +50,10 @@ class JobRunner:
         *,
         redelivery: Redelivery,
         metrics: MetricsAdapter | None = None,
+        rng: random.Random | None = None,
     ) -> None:
         self._invocation = invocation
+        self._rng = random.Random() if rng is None else rng
         self._redelivery = redelivery
         self._metrics: MetricsAdapter = NoMetrics() if metrics is None else metrics
 
@@ -85,7 +89,9 @@ class JobRunner:
         except JobPostponement as signal:
             if not self._redelivery.can_postpone:
                 return Abandoned(f"cannot wait: {signal.reason}", signal)
-            delay = signal.delay or delivery.policy.backoff.delay(delivery.postponements + 1)
+            delay = signal.delay or delivery.policy.backoff.delay(
+                delivery.postponements + 1, self._rng
+            )
             return Postponed(delay, signal.reason)
         except JobAbandonment as signal:
             return Abandoned(signal.reason, signal)
@@ -118,7 +124,7 @@ class JobRunner:
             and policy.can_retry_after(attempt)
         )
         if can_retry:
-            return Failed(error, policy.backoff.delay(attempt))
+            return Failed(error, policy.backoff.delay(attempt, self._rng))
         return Abandoned(type(error).__qualname__, error)
 
     @staticmethod

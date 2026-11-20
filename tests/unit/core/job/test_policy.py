@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+import random
+
 import pytest
 
 from loom.core.job.delivery import JobDelivery
@@ -30,11 +32,12 @@ class TestBackoff:
         self, attempt: int, expected: int
     ) -> None:
         backoff = Backoff(first_s=5, factor=2, max_s=300, jitter=False)
-        assert backoff.delay(attempt).seconds == expected
+        assert backoff.delay(attempt, random.Random(0)).seconds == expected
 
     def test_jitter_draws_from_zero_to_the_ceiling(self) -> None:
         backoff = Backoff(first_s=5, factor=2, max_s=300)
-        draws = {backoff.delay(3).seconds for _ in range(400)}
+        rng = random.Random(0)
+        draws = {backoff.delay(3, rng).seconds for _ in range(400)}
         assert max(draws) <= 20
         assert len(draws) > 5
 
@@ -44,7 +47,7 @@ class TestBackoff:
     )
     def test_a_huge_growth_saturates_at_the_cap(self, factor: float, attempt: int) -> None:
         backoff = Backoff(first_s=5, factor=factor, max_s=300, jitter=False)
-        assert backoff.delay(attempt).seconds == 300
+        assert backoff.delay(attempt, random.Random(0)).seconds == 300
 
     def test_a_cap_above_the_countdown_bound_is_refused(self) -> None:
         with pytest.raises(ValueError, match="max_s must be 0 to 900"):

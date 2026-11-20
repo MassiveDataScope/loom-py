@@ -85,11 +85,12 @@ class Backoff:
         if self.factor < MIN_BACKOFF_FACTOR:
             raise ValueError(f"factor must be at least 1, not {self.factor}")
 
-    def delay(self, attempt: int) -> Countdown:
+    def delay(self, attempt: int, rng: random.Random) -> Countdown:
         """The wait after failed attempt number *attempt*, counting from 1.
 
         Args:
             attempt: The attempt that failed, or the postponement being scheduled.
+            rng: The source of the jitter draw; unused without jitter.
 
         Returns:
             The ceiling for that attempt, or a draw from zero to it with jitter.
@@ -99,7 +100,7 @@ class Backoff:
         except OverflowError:
             ceiling = self.max_s
         capped = int(min(self.max_s, ceiling))
-        return Countdown(random.randint(0, capped) if self.jitter else capped)
+        return Countdown(rng.randint(0, capped) if self.jitter else capped)
 
 
 @dataclass(frozen=True, slots=True)

@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+import random
+
 import msgspec
 from hypothesis import given
 from hypothesis import strategies as st
@@ -49,7 +51,9 @@ class TestBackoffProperties:
     ) -> None:
         backoff = Backoff(first_s=first, factor=factor, max_s=cap, jitter=False)
 
-        assert backoff.delay(attempt).seconds == min(cap, first * factor ** (attempt - 1))
+        assert backoff.delay(attempt, random.Random(0)).seconds == min(
+            cap, first * factor ** (attempt - 1)
+        )
 
 
 class TestEnvelopeProperties:
