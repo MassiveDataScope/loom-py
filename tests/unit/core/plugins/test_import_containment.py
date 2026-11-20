@@ -27,7 +27,7 @@ _SCRIPT = """
 import json
 import sys
 
-import loom.etl.runner._providers  # noqa: F401
+import loom.etl.runner._engines  # noqa: F401
 
 forbidden = {forbidden!r}
 leaked = [

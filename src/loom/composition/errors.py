@@ -14,9 +14,9 @@
     A job transport ``app.job_service`` or ``celery.queues`` needs cannot be built.
 
 ``CompositionStateError``
-    An adapter or an :class:`~loom.composition.ApplicationHost` was used out
-    of its lifecycle: an adapter composing a second application or bound
-    before its recipe, a host started twice or stopped while opening.
+    A runtime or an :class:`~loom.composition.ApplicationHost` was used out
+    of its lifecycle: a runtime composing a second application or mounted
+    before its recipe, a host started twice or shut down while opening.
 """
 
 from __future__ import annotations
@@ -47,13 +47,13 @@ class CompositionErrorCode(IssueCode):
         "APPLICATION_ALREADY_OPEN",
         Template("Application is already open; close it before opening it again", component=""),
     )
-    ADAPTER_ALREADY_COMPOSED = (
-        "ADAPTER_ALREADY_COMPOSED",
-        Template("one adapter instance composes one application; create another adapter"),
+    RUNTIME_ALREADY_COMPOSED = (
+        "RUNTIME_ALREADY_COMPOSED",
+        Template("one runtime instance composes one application; create another runtime"),
     )
-    ADAPTER_RECIPE_MISSING = (
-        "ADAPTER_RECIPE_MISSING",
-        Template("{component}.bind needs the recipe it declared; call recipe first"),
+    RUNTIME_RECIPE_MISSING = (
+        "RUNTIME_RECIPE_MISSING",
+        Template("{component}.mount needs the recipe it declared; call recipe first"),
     )
     HOST_ALREADY_STARTED = (
         "HOST_ALREADY_STARTED",
@@ -62,10 +62,10 @@ class CompositionErrorCode(IssueCode):
             component="ApplicationHost",
         ),
     )
-    HOST_STOPPED_WHILE_OPENING = (
-        "HOST_STOPPED_WHILE_OPENING",
+    HOST_SHUT_DOWN_WHILE_OPENING = (
+        "HOST_SHUT_DOWN_WHILE_OPENING",
         Template(
-            "ApplicationHost was stopped while opening; the application is closed",
+            "ApplicationHost was shut down while opening; the application is closed",
             component="ApplicationHost",
         ),
     )
@@ -80,19 +80,19 @@ class ApplicationAlreadyOpenError(RuntimeError):
 
 
 class CompositionStateError(RuntimeError):
-    """Raised when an adapter or a host is used out of its lifecycle.
+    """Raised when a runtime or a host is used out of its lifecycle.
 
     A :class:`RuntimeError`, so a caller catching the lifecycle misuse as
     one keeps catching it.
 
     Attributes:
-        issue: The typed issue: code, component (the adapter or the host) and
+        issue: The typed issue: code, component (the runtime or the host) and
             message.
 
     Example::
 
         raise CompositionStateError(
-            CompositionErrorCode.ADAPTER_RECIPE_MISSING.issue(component="CeleryAdapter")
+            CompositionErrorCode.RUNTIME_RECIPE_MISSING.issue(component="CeleryRuntime")
         )
     """
 

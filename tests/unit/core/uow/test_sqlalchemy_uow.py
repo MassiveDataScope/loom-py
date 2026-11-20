@@ -11,7 +11,7 @@ from sqlalchemy.engine import make_url
 from sqlalchemy.exc import DBAPIError, IntegrityError, InterfaceError, OperationalError
 
 from loom.core.concurrency import run_to_completion
-from loom.core.errors import StoresNotCommitted
+from loom.core.errors import StoresNotCommittedError
 from loom.core.stores.catalog import DEFAULT_STORE
 from loom.core.stores.uow.abc import UnitOfWork, UnitOfWorkFactory
 from loom.core.stores.uow.alone import single_store
@@ -317,11 +317,11 @@ class TestSqlAlchemyCommitFailure:
     async def test_a_failed_commit_is_classified_and_the_caller_gets_the_driver_error(
         self, step: str, error: Exception, outcome: type[Uncertain | RolledBack]
     ) -> None:
-        """An uncertain one wrapped in the non-retryable ``StoresNotCommitted`` (T101)."""
+        """An uncertain one wrapped in the non-retryable ``StoresNotCommittedError`` (T101)."""
         session = make_session()
         session.fail_on(step, error)
         uow = SQLAlchemyUnitOfWork(RecordingSessionManager(session))  # type: ignore[arg-type]
-        raised_type = StoresNotCommitted if outcome is Uncertain else type(error)
+        raised_type = StoresNotCommittedError if outcome is Uncertain else type(error)
 
         with pytest.raises(raised_type) as raised:
             async with single_store(DEFAULT_STORE, uow) as scope:
@@ -340,7 +340,7 @@ class TestSqlAlchemyCommitFailure:
         session.fail_on("invalidate", OSError("socket gone"))
         uow = SQLAlchemyUnitOfWork(RecordingSessionManager(session))  # type: ignore[arg-type]
 
-        with pytest.raises(StoresNotCommitted) as raised:
+        with pytest.raises(StoresNotCommittedError) as raised:
             async with single_store(DEFAULT_STORE, uow) as scope:
                 pass
 

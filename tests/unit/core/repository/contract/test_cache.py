@@ -38,7 +38,7 @@ _FIRST_PAGE = make(PageParams, page=1, limit=20)
 
 
 class _MemoryCache:
-    """Dict-backed :class:`~loom.core.cache.abc.backend.CacheBackend`.
+    """Dict-backed :class:`~loom.core.cache.abc.store.CacheStore`.
 
     Values are stored as given, so ``type`` is not needed to rebuild them.
     """

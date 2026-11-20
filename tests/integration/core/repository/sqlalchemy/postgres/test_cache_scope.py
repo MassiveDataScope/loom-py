@@ -13,10 +13,10 @@ from sqlalchemy.ext.asyncio import create_async_engine
 from sqlalchemy.pool import NullPool
 
 from loom.core.cache import (
-    CacheBackend,
     CacheConfig,
     CachedRepository,
     CacheGateway,
+    CacheStore,
     GenerationalDependencyResolver,
 )
 from loom.core.cache.decorators import cache_query
@@ -143,7 +143,7 @@ async def repository(pg_admin_uri: str) -> AsyncIterator[NoteRepository]:
             session_manager=manager, model=Note, cursor_codec=CursorCodec(signing="ephemeral")
         )
     finally:
-        await manager.dispose()
+        await manager.close()
         await _run_as_admin(pg_admin_uri, _TEARDOWN_STATEMENTS)
         reset_registry()
 
@@ -179,8 +179,8 @@ async def cached(
         yield CachedRepository(
             repository=cast(Repository[Note, Any, Any, int], repository),
             config=config,
-            cache=cast(CacheBackend, data),
-            dependency_resolver=GenerationalDependencyResolver(cast(CacheBackend, counters)),
+            cache=cast(CacheStore, data),
+            dependency_resolver=GenerationalDependencyResolver(cast(CacheStore, counters)),
         )
     finally:
         await data.clear()

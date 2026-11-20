@@ -240,16 +240,16 @@ class TestStructlogLifecycleObserver:
         assert captured["node_count"] == 3
 
 
-class TestPrometheusLifecycleAdapter:
+class TestPrometheusLifecycleObserver:
     pytest.importorskip("prometheus_client")
 
     def test_records_duration_on_end_event(self) -> None:
         from prometheus_client import CollectorRegistry
 
-        from loom.prometheus.lifecycle import PrometheusLifecycleAdapter
+        from loom.prometheus.lifecycle import PrometheusLifecycleObserver
 
         registry = CollectorRegistry()
-        adapter = PrometheusLifecycleAdapter(registry=registry)
+        adapter = PrometheusLifecycleObserver(registry=registry)
 
         adapter.on_event(
             LifecycleEvent(
@@ -265,10 +265,10 @@ class TestPrometheusLifecycleAdapter:
     def test_increments_errors_on_error_event(self) -> None:
         from prometheus_client import CollectorRegistry
 
-        from loom.prometheus.lifecycle import PrometheusLifecycleAdapter
+        from loom.prometheus.lifecycle import PrometheusLifecycleObserver
 
         registry = CollectorRegistry()
-        adapter = PrometheusLifecycleAdapter(registry=registry)
+        adapter = PrometheusLifecycleObserver(registry=registry)
 
         adapter.on_event(LifecycleEvent(scope=Scope.NODE, name="transform", kind=EventKind.ERROR))
 
@@ -280,10 +280,10 @@ class TestPrometheusLifecycleAdapter:
     def test_start_event_is_ignored(self) -> None:
         from prometheus_client import CollectorRegistry
 
-        from loom.prometheus.lifecycle import PrometheusLifecycleAdapter
+        from loom.prometheus.lifecycle import PrometheusLifecycleObserver
 
         registry = CollectorRegistry()
-        adapter = PrometheusLifecycleAdapter(registry=registry)
+        adapter = PrometheusLifecycleObserver(registry=registry)
 
         adapter.on_event(LifecycleEvent(scope=Scope.NODE, name="x", kind=EventKind.START))
 

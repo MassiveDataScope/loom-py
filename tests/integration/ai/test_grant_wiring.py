@@ -6,7 +6,7 @@ then fail:
 * ``a2a`` was missing from the kinds the pydantic-ai provider announces, so the
   compiler refused every grant of it and the whole outbound A2A path was
   unreachable.
-* The composition root built the runtime without either client factory, so a
+* The composition root built the host without either client factory, so a
   grant that *did* compile aborted start-up with "no MCP client factory is
   configured".
 
@@ -35,10 +35,10 @@ from loom.ai.declarative import (
     JsonSchemaOutput,
     McpCapability,
 )
-from loom.ai.engines.pydantic_ai import PydanticAIEngineProvider
+from loom.ai.engines.pydantic_ai import PydanticAIEnginePlugin
 from loom.ai.engines.pydantic_ai._mcp import SharedMcpToolsets
+from loom.ai.execution import AgentHost
 from loom.ai.inference import InferenceTarget
-from loom.ai.runtime import AgentRuntime
 from loom.core.di import LoomContainer
 from loom.core.model.redaction import Dsn
 from loom.core.use_case.registry import UseCaseRegistry
@@ -132,17 +132,17 @@ def _compile(*capabilities: object) -> AgentPlan:
     compiler = AgentCompiler(
         config=_config(),
         registry=UseCaseRegistry.build([]),
-        supported_kinds=PydanticAIEngineProvider().supported_capability_kinds(),
+        supported_kinds=PydanticAIEnginePlugin().supported_capability_kinds(),
     )
     return compiler.compile(_spec(*capabilities), source_path=f"ai/agents/{_AGENT}/agent.yaml")
 
 
-def _runtime(plan: AgentPlan) -> AgentRuntime:
-    """Build the runtime the composition root builds, over local stubs only."""
-    return AgentRuntime(
+def _host(plan: AgentPlan) -> AgentHost:
+    """Build the host the composition root builds, over local stubs only."""
+    return AgentHost(
         plans=[plan],
         config=_config(),
-        engine_provider=PydanticAIEngineProvider(model_resolver=lambda target: _silent_model()),
+        engine_plugin=PydanticAIEnginePlugin(model_resolver=lambda target: _silent_model()),
         deps=StubDepsFactory(),  # type: ignore[arg-type]
         container=LoomContainer(),
         mcp_client_factory=_stub_mcp_client,  # type: ignore[arg-type]
@@ -155,7 +155,7 @@ class TestGrantA2A:
 
     def test_the_provider_announces_a2a_when_asked(self) -> None:
         """Announcing the kind is what makes the compiler admit the grant."""
-        assert "a2a" in PydanticAIEngineProvider().supported_capability_kinds()
+        assert "a2a" in PydanticAIEnginePlugin().supported_capability_kinds()
 
     def test_the_compiler_admits_the_grant_when_the_agent_is_registered(self) -> None:
         """Through the real compiler: one compiled capability, not zero."""
@@ -167,15 +167,15 @@ class TestGrantA2A:
         """Start-up opens the remote client and builds the engine for the plan."""
         plan = _compile(A2ACapability(agent=_REMOTE))
 
-        async with _runtime(plan) as runtime:
-            assert runtime.has_agent(_AGENT)
+        async with _host(plan) as host:
+            assert host.has_agent(_AGENT)
 
     async def test_the_agent_declares_the_a2a_capability_once_started(self) -> None:
         """The started agent reports the kind, so the mount announces it too."""
         plan = _compile(A2ACapability(agent=_REMOTE))
 
-        async with _runtime(plan) as runtime:
-            assert runtime.capability_kinds(_AGENT) == ("a2a",)
+        async with _host(plan) as host:
+            assert host.capability_kinds(_AGENT) == ("a2a",)
 
 
 class TestGrantMcp:
@@ -199,8 +199,8 @@ class TestGrantMcp:
         """The grant no longer fails start-up for want of a client factory."""
         plan = _compile(McpCapability(server=_SERVER))
 
-        async with _runtime(plan) as runtime:
-            assert runtime.has_agent(_AGENT)
+        async with _host(plan) as host:
+            assert host.has_agent(_AGENT)
 
     async def test_validates_the_filter_against_the_server_when_the_grant_declares_it(
         self,
@@ -208,8 +208,8 @@ class TestGrantMcp:
         """A declared filter is checked against the tools the server lists."""
         plan = _compile(McpCapability(server=_SERVER, include=("alpha",)))
 
-        async with _runtime(plan) as runtime:
-            assert runtime.has_agent(_AGENT)
+        async with _host(plan) as host:
+            assert host.has_agent(_AGENT)
 
 
 class TestCombinedGrants:
@@ -228,7 +228,7 @@ class TestCombinedGrants:
         """One plan, two live dependencies, one entered runtime."""
         plan = _compile(McpCapability(server=_SERVER), A2ACapability(agent=_REMOTE))
 
-        async with _runtime(plan) as runtime:
-            kinds = set(runtime.capability_kinds(_AGENT))
+        async with _host(plan) as host:
+            kinds = set(host.capability_kinds(_AGENT))
 
         assert kinds == {"mcp", "a2a"}

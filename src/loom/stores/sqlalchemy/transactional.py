@@ -16,7 +16,7 @@ from loom.core.engine.post_commit import PostCommitChannel
 from loom.core.errors import (
     ForeignSessionError,
     PostCommitError,
-    StoresNotCommitted,
+    StoresNotCommittedError,
     UndeclaredStoreWrite,
 )
 from loom.core.logger import get_logger
@@ -49,7 +49,7 @@ def record_mutation(event: MutationEvent) -> None:
         event: The mutation event to record.
     """
     scope = current_scope()
-    if scope is not None and scope.mutations is not None and scope.owned_here():
+    if scope is not None and scope.mutations is not None and scope.is_owned_here():
         scope.mutations.append(event)
 
 
@@ -162,7 +162,7 @@ async def _run_in_own_invocation(
             result = await method(owner, *args, **kwargs)
             pending = tuple(scope.mutations)
             _enqueue_post_commit_hooks(owner, pending, hooks)
-    except (PostCommitError, StoresNotCommitted):
+    except (PostCommitError, StoresNotCommittedError):
         raise
     except Exception:
         _log.exception(

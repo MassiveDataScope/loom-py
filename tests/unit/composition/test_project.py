@@ -21,10 +21,10 @@ from loom.core.stores.profile import (
     SERVER_PROFILE,
     PoolDefaults,
     RuntimeProfile,
-    StoreRuntime,
+    StorePluginContext,
 )
 from loom.core.use_case.use_case import UseCase
-from loom.stores.sqlalchemy.backend import SQLAlchemyBackend
+from loom.stores.sqlalchemy.plugin import SQLAlchemyStorePlugin
 from tests.helpers.composition import ProjectFactory, coordinator_of
 
 
@@ -35,10 +35,10 @@ class AcmeTransportFreeAdapter:
         return Recipe(
             profile=SERVER_PROFILE,
             discovered=project.discovered,
-            default_store_backend="sqlalchemy",
+            default_store_plugin="sqlalchemy",
         )
 
-    def bind(self, application: Application) -> Application:
+    def mount(self, application: Application) -> Application:
         return application
 
 
@@ -79,20 +79,20 @@ class _TinyAdapter:
             discovered=dataclasses.replace(discovered, use_cases=(*discovered.use_cases, _Answer)),
         )
 
-    def bind(self, application: Application) -> _Handler:
+    def mount(self, application: Application) -> _Handler:
         return _Handler(application)
 
 
 class TestTransportFreeComposition:
-    async def test_an_adapter_of_its_own_gets_its_profile_its_use_case_and_its_type(
-        self, fixture_project: ProjectFactory, runtimes: list[StoreRuntime]
+    async def test_a_runtime_of_its_own_gets_its_profile_its_use_case_and_its_type(
+        self, fixture_project: ProjectFactory, contexts: list[StorePluginContext]
     ) -> None:
         config = fixture_project()
 
-        handler = create_app(config, adapter=_TinyAdapter(), environment="test")
+        handler = create_app(config, runtime=_TinyAdapter(), environment="test")
 
         assert_type(handler, _Handler)
-        assert [runtime.profile for runtime in runtimes] == [_TINY]
+        assert [context.profile for context in contexts] == [_TINY]
         async with handler.application.running():
             assert await handler() == 42
 
@@ -122,7 +122,7 @@ class TestTransportFreeComposition:
         assert found.name == "first"
         assert answer == "pong"
 
-    def test_serve_mounts_the_adapter_transport_on_the_composed_application(
+    def test_serve_mounts_the_runtime_transport_on_the_composed_application(
         self, fixture_project: ProjectFactory
     ) -> None:
         project = Project.load(fixture_project(), environment="test")
@@ -133,10 +133,10 @@ class TestTransportFreeComposition:
         assert isinstance(handler.application, Application)
         assert not handler.application.is_open
 
-    def test_the_adapter_under_test_stays_under_thirty_lines(self) -> None:
+    def test_the_runtime_under_test_stays_under_thirty_lines(self) -> None:
         source = Path(__file__).read_text(encoding="utf-8")
         start = source.index("class _TinyAdapter:")
-        end = source.index("async def test_an_adapter_of_its_own")
+        end = source.index("async def test_a_runtime_of_its_own")
         lines = [line for line in source[start:end].splitlines() if line.strip()]
 
         assert len(lines) < 30
@@ -176,21 +176,21 @@ class TestTransportFreeComposition:
             Project.load(project, environment="test").compose(adapter)
 
     @pytest.fixture
-    def runtimes(self, monkeypatch: pytest.MonkeyPatch) -> list[StoreRuntime]:
-        """Record the runtime the composition hands the SQLAlchemy backend."""
-        recorded: list[StoreRuntime] = []
-        build = SQLAlchemyBackend.build
+    def contexts(self, monkeypatch: pytest.MonkeyPatch) -> list[StorePluginContext]:
+        """Record the context the composition hands the SQLAlchemy backend."""
+        recorded: list[StorePluginContext] = []
+        build = SQLAlchemyStorePlugin.build
 
         def recording(
-            self: SQLAlchemyBackend,
+            self: SQLAlchemyStorePlugin,
             ctx: ConfigContext,
             models: Sequence[type[BaseModel]],
-            runtime: StoreRuntime,
+            context: StorePluginContext,
         ) -> StoreWiring:
-            recorded.append(runtime)
-            return build(self, ctx, models, runtime)
+            recorded.append(context)
+            return build(self, ctx, models, context)
 
-        monkeypatch.setattr(SQLAlchemyBackend, "build", recording)
+        monkeypatch.setattr(SQLAlchemyStorePlugin, "build", recording)
         return recorded
 
 
@@ -228,7 +228,7 @@ class TestLoadSource:
         [
             (
                 lambda *p, config_dir: create_app(
-                    *p, adapter=AcmeTransportFreeAdapter(), config_dir=config_dir
+                    *p, runtime=AcmeTransportFreeAdapter(), config_dir=config_dir
                 ),
                 "create_app",
             ),

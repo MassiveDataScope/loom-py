@@ -129,7 +129,7 @@ class TestSessionSettings:
                 assert isinstance(session.sync_session, Session)
             assert not manager.has_session_settings
         finally:
-            await manager.dispose()
+            await manager.close()
 
     def test_a_provider_returning_none_lets_the_transaction_run_untouched(self) -> None:
         engine, session_class = _sqlite_session_class(lambda: None)
@@ -182,7 +182,7 @@ class TestSessionSettings:
         try:
             assert manager.session_factory.kw["sync_session_class"].__name__ == "LoomSession"
         finally:
-            await manager.dispose()
+            await manager.close()
 
     async def test_the_configured_constructor_installs_the_provider_on_a_postgres_url(self) -> None:
         manager = build_session_manager(
@@ -194,7 +194,7 @@ class TestSessionSettings:
         try:
             assert manager.session_factory.kw["sync_session_class"].__name__ == "LoomSession"
         finally:
-            await manager.dispose()
+            await manager.close()
 
     def test_keys_with_more_than_two_parts_are_accepted(self) -> None:
         clause, params = settings_statement({"app.scope.extra": "x"})

@@ -91,7 +91,7 @@ class DependencyPath:
             return ResolutionError(f"No binding registered for: {describe_key(key)}")
         return DependencyGraphError(f"{self}: no binding is registered for it")
 
-    def revisits(self) -> bool:
+    def has_revisit(self) -> bool:
         """Whether the end of this path is held earlier, since its last call edge.
 
         A call edge runs its target in another execution, so a loop through one builds.
@@ -137,13 +137,13 @@ def _refuse_missing_binding(node: Node, path: DependencyPath, graph: DependencyG
 
 def _refuse_cycle(node: Node, path: DependencyPath, graph: DependencyGraph) -> str | None:
     """The construction since the last call edge reaches a node it already holds."""
-    return "dependency cycle" if path.revisits() else None
+    return "dependency cycle" if path.has_revisit() else None
 
 
 def _refuse_captive(node: Node, path: DependencyPath, graph: DependencyGraph) -> str | None:
     """A singleton holds a binding built per execution."""
     scope = graph.scope(node)
-    if scope is not None and scope.per_execution and graph.held_by_singleton(path):
+    if scope is not None and scope.is_per_execution and graph.held_by_singleton(path):
         return "an APPLICATION binding cannot hold a per-execution one"
     return None
 

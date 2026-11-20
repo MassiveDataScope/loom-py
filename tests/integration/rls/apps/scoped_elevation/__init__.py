@@ -16,7 +16,9 @@ from loom.stores.sqlalchemy.session_manager import SessionManager
 from tests.integration.agnosticism import notes
 from tests.integration.rls.conftest import FLAG, U1
 
-DECISION = Decision(allowed=True, grant=Grant(subject=U1, role="admin", scope=Scope.of(U1)))
+DECISION = Decision(
+    allowed=True, grant=Grant(subject=U1, role="admin", scope=Scope.from_segments(U1))
+)
 _INSERT = f"INSERT INTO notes (owner_id, editor, body) VALUES ('{U1}', 'ana', 'outer')"
 FLAGS: list[str] = []
 """The flag each elevating execution saw, kept even when its invocation fails."""
@@ -33,7 +35,7 @@ class EditBobElevated(UseCase[notes.Note, None]):
         self._session_manager = session_manager
 
     async def execute(self) -> None:
-        await elevate("editor", DECISION, at=Scope.of(U1))
+        await elevate("editor", DECISION, at=Scope.from_segments(U1))
         session = _session(self._session_manager)
         FLAGS.append((await session.execute(text(FLAG))).scalar_one())
         await session.execute(text("UPDATE notes SET body = 'edited' WHERE editor = 'bob'"))
@@ -62,7 +64,7 @@ class ElevateFromGatherChild(UseCase[notes.Note, tuple[object, frozenset[str], s
         self._session_manager = session_manager
 
     async def execute(self) -> tuple[object, frozenset[str], str]:
-        elevation = elevate("editor", DECISION, at=Scope.of(U1))
+        elevation = elevate("editor", DECISION, at=Scope.from_segments(U1))
         (refused,) = await asyncio.gather(elevation, return_exceptions=True)
         flag = (await _session(self._session_manager).execute(text(FLAG))).scalar_one()
         return refused, elevated_scopes(), flag

@@ -1,9 +1,9 @@
 """The store catalog: the ``stores.<name>`` sections and the store each model belongs to.
 
 Each ``stores.<name>`` section declares one store: its ``backend``, one of the
-names registered in the ``loom.stores.backends`` entry-point group, and
-the connection that backend reads. A connection-only store
-(:data:`CONNECTION_ONLY_BACKENDS`, ``clickhouse``) is no store backend:
+names registered in the ``loom.stores.plugins`` entry-point group, and
+the connection that the plugin reads. A connection-only store
+(:data:`CONNECTION_ONLY_BACKENDS`, ``clickhouse``) is no store plugin:
 it serves no model and no repository, never joins a unit of work, and only
 hands its connection to the streaming and ETL sinks that name it. A model
 declares ``__store__``; without it, it belongs to :data:`DEFAULT_STORE`.
@@ -38,12 +38,12 @@ from loom.core.connections import ConnectionSettings
 from loom.core.model import BaseModel
 from loom.core.plugins.entrypoints import registered_names
 from loom.core.stores.registry import (
-    BACKEND_ENTRY_POINT_GROUP,
-    resolve_store_backend,
+    PLUGIN_ENTRY_POINT_GROUP,
+    resolve_store_plugin,
 )
 
 if TYPE_CHECKING:
-    from loom.core.stores.backend import StoreBackend
+    from loom.core.stores.plugin import StorePlugin
 
 T = TypeVar("T")
 
@@ -57,19 +57,19 @@ DEFAULT_STORE_PATH: Final = f"{ConfigKey.STORES}.{DEFAULT_STORE}"
 """Dotted path of the default store's section, for messages about a store none names."""
 
 BACKEND_KEY: Final = "backend"
-"""The key of a store section naming its backend."""
+"""The key of a store section naming its plugin."""
 
 SETTINGS_KEY: Final = "settings"
 """The reserved store name holding the shared settings, and the key of a store's own settings."""
 
 SQLALCHEMY_BACKEND: Final = "sqlalchemy"
-"""The backend whose stores hold a relational database section."""
+"""The plugin whose stores hold a relational database section."""
 
 CLICKHOUSE_BACKEND: Final = "clickhouse"
 """The connection-only kind of a ClickHouse store."""
 
 NONE_BACKEND: Final = "none"
-"""The backend that persists nothing."""
+"""The plugin that persists nothing."""
 
 CONNECTION_ONLY_BACKENDS: Final = frozenset({CLICKHOUSE_BACKEND})
 """Store kinds that only hold a connection: no model, no repository, no unit of work."""
@@ -134,7 +134,7 @@ class StoreCapabilities:
 
 MODELS_ONLY: Final = StoreCapabilities(can_serve_models=True, is_transactional=False)
 """A store that serves models, without rollback; the conservative default
-of a backend that does not describe itself."""
+of a plugin that does not describe itself."""
 
 NO_CAPABILITIES: Final = StoreCapabilities(can_serve_models=False, is_transactional=False)
 """A store that supports none of them: ``none``, or a connection-only kind."""
@@ -146,7 +146,7 @@ class StoreSpec:
 
     Args:
         key: The store's name.
-        backend: Name of the store backend serving it, or of a
+        backend: Name of the store plugin serving it, or of a
             connection-only kind (:data:`CONNECTION_ONLY_BACKENDS`).
         config: The whole configuration, against which the section's
             interpolations resolve.
@@ -158,34 +158,34 @@ class StoreSpec:
 
     @property
     def backend_path(self) -> str:
-        """Dotted path of the key naming the store's backend, for error messages."""
+        """Dotted path of the key naming the store's plugin, for error messages."""
         return f"{self.path}.{BACKEND_KEY}"
 
-    def resolve_backend(self) -> StoreBackend:
-        """Build the backend the store names.
+    def resolve_plugin(self) -> StorePlugin:
+        """Build the plugin the store names.
 
         Raises:
-            ConfigError: When no backend is registered under that name, or it
+            ConfigError: When no plugin is registered under that name, or it
                 needs a module that is not installed.
         """
-        return resolve_store_backend(self.backend, path=self.backend_path)
+        return resolve_store_plugin(self.backend, path=self.backend_path)
 
     @functools.cached_property
     def capabilities(self) -> StoreCapabilities:
-        """What the store supports, asked of its backend on first read and kept.
+        """What the store supports, asked of its plugin on first read and kept.
 
         A connection-only store has fixed capabilities; every other store asks
-        its backend's required ``capabilities`` method.
+        its plugin's required ``capabilities`` method.
 
         Raises:
-            ConfigError: When the backend does not implement ``capabilities``.
+            ConfigError: When the plugin does not implement ``capabilities``.
         """
         if self.backend in CONNECTION_ONLY_BACKENDS:
             return NO_CAPABILITIES
-        backend = self.resolve_backend()
+        backend = self.resolve_plugin()
         if not callable(getattr(backend, "capabilities", None)):
             raise ConfigError(
-                f"store backend {self.backend!r} ({type(backend).__qualname__}) serving "
+                f"store plugin {self.backend!r} ({type(backend).__qualname__}) serving "
                 f"{self.path} does not implement the required method 'capabilities'"
             )
         return backend.capabilities(self)
@@ -205,7 +205,7 @@ class StoreSpec:
     def section(self) -> dict[str, Any]:
         """Return a copy of the resolved section without ``backend``.
 
-        It is what the backend decodes.
+        It is what the plugin decodes.
 
         Raises:
             ConfigError: When an interpolation of the section does not resolve.
@@ -241,11 +241,11 @@ class StoreCatalog:
 
         Args:
             key: The store's name.
-            backend: The backend the store must declare; ``None`` takes any.
+            backend: The plugin the store must declare; ``None`` takes any.
             purpose: Who needs the store, for the message (``"the 'mongo' backend"``).
 
         Raises:
-            ConfigError: When the store is not declared, or declares another backend.
+            ConfigError: When the store is not declared, or declares another plugin.
         """
         spec = self.specs.get(StoreKey(key))
         if spec is None:
@@ -258,24 +258,24 @@ class StoreCatalog:
         return spec
 
     def require_installed(self) -> None:
-        """Fail unless the backend of every declared store can be built.
+        """Fail unless the plugin of every declared store can be built.
 
-        A connection-only store has no backend to build and is left out.
+        A connection-only store has no plugin to build and is left out.
 
         Raises:
-            ConfigError: Naming the first store whose backend is not
-                installed, as :meth:`StoreSpec.resolve_backend`.
+            ConfigError: Naming the first store whose plugin is not
+                installed, as :meth:`StoreSpec.resolve_plugin`.
         """
         for spec in self.specs.values():
             if spec.backend not in CONNECTION_ONLY_BACKENDS:
-                spec.resolve_backend()
+                spec.resolve_plugin()
 
     def served_by(self, backend: str, key: StoreKey) -> StoreSpec:
         """Return the store *key* that *backend* serves.
 
         Args:
-            backend: The backend the store must declare.
-            key: The store's name; a backend takes it from ``runtime.store``.
+            backend: The plugin the store must declare.
+            key: The store's name; a plugin takes it from ``context.store``.
 
         Raises:
             ConfigError: As :meth:`require`.
@@ -371,7 +371,7 @@ def store_binding(binding: type[Any], key: StoreKey) -> object:
 def load_catalog(ctx: ConfigContext) -> StoreCatalog:
     """Read the ``stores`` section of *ctx* into a catalog.
 
-    A composition loads it once and shares it: the backends, the sinks and
+    A composition loads it once and shares it: the plugins, the sinks and
     the container read that one catalog.
 
     Args:
@@ -384,7 +384,7 @@ def load_catalog(ctx: ConfigContext) -> StoreCatalog:
         ConfigError: When the configuration declares a retired persistence
             key (``database``, ``persistence``, ...), ``stores`` or
             one of its entries is not a mapping, a key is not a store key, a store declares no
-            backend, or one that is neither a registered store backend
+            ``backend``, or one that is neither a registered store plugin
             nor a connection-only kind, :data:`DEFAULT_STORE` is
             connection-only, ``stores.settings`` holds a key that is no store
             setting, or a store declares its own ``settings``.
@@ -395,7 +395,7 @@ def load_catalog(ctx: ConfigContext) -> StoreCatalog:
         return StoreCatalog(specs=MappingProxyType({}))
     if not isinstance(written, Mapping):
         raise ConfigError(f"{ConfigKey.STORES} must map each store name to its section")
-    registered = registered_names(BACKEND_ENTRY_POINT_GROUP)
+    registered = registered_names(PLUGIN_ENTRY_POINT_GROUP)
     specs: dict[StoreKey, StoreSpec] = {}
     for name, section in written.items():
         if name == SETTINGS_KEY:
@@ -435,10 +435,10 @@ def _store_key(value: object, *, owner: str) -> StoreKey:
 
 
 def _spec(ctx: ConfigContext, key: StoreKey, registered: tuple[str, ...]) -> StoreSpec:
-    """Build the spec of store *key*, whose backend is one of *registered* or connection-only.
+    """Build the spec of store *key*, whose plugin is one of *registered* or connection-only.
 
     Raises:
-        ConfigError: When the backend is missing or not registered, or the
+        ConfigError: When the plugin is missing or not registered, or the
             default store is connection-only.
     """
     path = _path(key)
@@ -449,19 +449,19 @@ def _spec(ctx: ConfigContext, key: StoreKey, registered: tuple[str, ...]) -> Sto
         )
     backend = ctx.section_or_default(f"{path}.{BACKEND_KEY}", str, "")
     if not backend:
-        raise ConfigError(f"{path}.{BACKEND_KEY} is missing: name the store's store backend")
+        raise ConfigError(f"{path}.{BACKEND_KEY} is missing: name the store's plugin")
     connection_only = backend in CONNECTION_ONLY_BACKENDS
     if not connection_only and backend not in registered:
         kinds = ", ".join(sorted(CONNECTION_ONLY_BACKENDS))
         raise ConfigError(
-            f"{path}.{BACKEND_KEY}: Unknown store backend {backend!r}. "
-            f"Registered backends: {', '.join(registered)}. "
+            f"{path}.{BACKEND_KEY}: Unknown store plugin {backend!r}. "
+            f"Registered store plugins: {', '.join(registered)}. "
             f"Connection-only stores: {kinds}."
         )
     if connection_only and key == DEFAULT_STORE:
         raise ConfigError(
             f"{path}.{BACKEND_KEY} is {backend!r}, a connection-only store that "
-            "serves no model; declare the application's store backend there"
+            "serves no model; declare the application's store plugin there"
         )
     return StoreSpec(key=key, backend=backend, config=ctx)
 

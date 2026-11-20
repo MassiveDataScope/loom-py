@@ -288,7 +288,7 @@ class TestStartupRefusals:
         self, fixture_project: Callable[..., str], tmp_path: Path
     ) -> None:
         pytest.importorskip("fastapi")
-        from loom.rest.fastapi.adapter import FastAPIAdapter
+        from loom.rest.fastapi.runtime import FastAPIRuntime
 
         config_path = Path(fixture_project("pipeline_modules_job"))
         config: dict[str, Any] = yaml.safe_load(config_path.read_text(encoding="utf-8"))
@@ -299,7 +299,7 @@ class TestStartupRefusals:
         config_path.write_text(yaml.safe_dump(config), encoding="utf-8")
 
         with pytest.raises(CompilationError) as caught:
-            Project.load(str(config_path), environment="test").compose(FastAPIAdapter())
+            Project.load(str(config_path), environment="test").compose(FastAPIRuntime())
 
         recorded = describe_refusal(caught.value, tmp_path=tmp_path)
         matches_snapshot("refusals/job-compilation.http", recorded)

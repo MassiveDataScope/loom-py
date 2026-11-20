@@ -20,7 +20,7 @@ import pytest
 
 import loom.core.stores.uow.scope as scope_module
 from loom.core.engine.compiler import UseCaseCompiler
-from loom.core.engine.executor import RuntimeExecutor
+from loom.core.engine.executor import UseCaseExecutor
 from loom.core.engine.post_commit import PostCommitChannel, active_channel, drain_after_failure
 from loom.core.stores.catalog import DEFAULT_STORE
 from loom.core.stores.uow.coordinator import OrderedCommits
@@ -93,7 +93,7 @@ class _DispatchStartsNestedExecution(UseCase[Any, str]):
     job-dispatch machinery.
     """
 
-    def __init__(self, executor: RuntimeExecutor, log: Log) -> None:
+    def __init__(self, executor: UseCaseExecutor, log: Log) -> None:
         self._executor = executor
         self._log = log
 
@@ -117,7 +117,7 @@ class TestPostCommitTeardownGuard:
     ) -> None:
         log = Log()
         factory = StubUnitOfWorkFactory(log)
-        executor = RuntimeExecutor(
+        executor = UseCaseExecutor(
             UseCaseCompiler(), coordinator=OrderedCommits({DEFAULT_STORE: factory})
         )
         monkeypatch.setattr(scope_module, "_scope", _FailingResetScopeVar(scope_module._scope))
@@ -145,7 +145,7 @@ class TestPostCommitTeardownGuard:
         """
         log = Log()
         factory = StubUnitOfWorkFactory(log)
-        executor = RuntimeExecutor(
+        executor = UseCaseExecutor(
             UseCaseCompiler(), coordinator=OrderedCommits({DEFAULT_STORE: factory})
         )
         monkeypatch.setattr(scope_module, "_scope", _FailingResetScopeVar(scope_module._scope))

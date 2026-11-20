@@ -13,8 +13,8 @@ if TYPE_CHECKING:
     from loom.ai.config import AiConfig
     from loom.composition import Project
 
-COMPONENT = "LambdaAdapter"
-"""The adapter refusals and composition errors name."""
+COMPONENT = "LambdaRuntime"
+"""The runtime refusals and composition errors name."""
 _STDIO = "stdio"
 """The MCP transport that runs a server as a subprocess, which a frozen function cannot keep."""
 
@@ -22,7 +22,7 @@ _log = get_logger(__name__)
 
 
 class LambdaUnservedConfigError(ConfigError):
-    """Raised when the configuration declares something a Lambda adapter does not serve.
+    """Raised when the configuration declares something a Lambda runtime does not serve.
 
     Raised by the recipe, before anything opens.
 
@@ -95,7 +95,7 @@ def _refuse_stdio(transports: Mapping[str, object]) -> None:
             raise LambdaUnservedConfigError(
                 f"{ConfigKey.AI}.mcp_servers.{name}.transport",
                 f"{COMPONENT} cannot run an MCP server over stdio: a frozen function keeps "
-                "no subprocess. Reach the server over http, or serve it with FastAPIAdapter.",
+                "no subprocess. Reach the server over http, or serve it with FastAPIRuntime.",
             )
 
 

@@ -9,24 +9,24 @@ from typing import TYPE_CHECKING, Any, TypeAlias
 import polars as pl
 
 from loom.core.config import ConfigContext
-from loom.etl.backends._predicate import predicate_to_sql
-from loom.etl.backends.polars._dtype import loom_type_to_polars
-from loom.etl.backends.polars._reader import (
-    _apply_source_schema,
-    _finalize_source_frame,
-    execute_sql,
-)
-from loom.etl.backends.polars._writer import _check_null_dtype_columns_lazy
 from loom.etl.checkpoint import CheckpointScope, CheckpointStore
-from loom.etl.checkpoint._backends._memory import _InMemoryCheckpointBackend
+from loom.etl.checkpoint._io._memory import _InMemoryCheckpointIO
 from loom.etl.compiler import ETLCompiler
 from loom.etl.declarative.source import FileSourceSpec, SourceSpec, TableSourceSpec
 from loom.etl.declarative.target import TargetSpec
 from loom.etl.declarative.target._table import ReplaceWhereSpec
 from loom.etl.declarative.target._temp import TempFanInSpec, TempSpec
+from loom.etl.engines._predicate import predicate_to_sql
+from loom.etl.engines.polars._dtype import loom_type_to_polars
+from loom.etl.engines.polars._reader import (
+    _apply_source_schema,
+    _finalize_source_frame,
+    execute_sql,
+)
+from loom.etl.engines.polars._writer import _check_null_dtype_columns_lazy
 from loom.etl.executor import ETLExecutor
 from loom.etl.lineage._records import RunContext
-from loom.etl.runtime.contracts import SourceReader, TargetWriter
+from loom.etl.ports.contracts import SourceReader, TargetWriter
 from loom.etl.schema._schema import ColumnSchema, LoomType, SchemaError
 from loom.etl.testing._delta import _DeltaRoot
 from loom.etl.testing._result import StepResult
@@ -202,7 +202,7 @@ class PolarsStepRunner:
 
     def __init__(self, *scenarios: ETLScenario, delta_root: str | Path | None = None) -> None:
         self._tables: dict[str, pl.LazyFrame] = {}
-        self._temp_backend = _InMemoryCheckpointBackend()
+        self._temp_backend = _InMemoryCheckpointIO()
         self._temps = CheckpointStore(_TEMP_ROOT, backend=self._temp_backend)
         self._context = RunContext(run_id="step-runner-run", correlation_id="step-runner")
         self._writer = _CapturingWriter()

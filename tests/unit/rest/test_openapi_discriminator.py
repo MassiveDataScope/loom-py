@@ -18,15 +18,15 @@ from fastapi.testclient import TestClient
 from loom.core.command import Command
 from loom.core.di.container import LoomContainer
 from loom.core.engine.compiler import UseCaseCompiler
-from loom.core.engine.executor import RuntimeExecutor
-from loom.core.observability.runtime import ObservabilityRuntime
+from loom.core.engine.executor import UseCaseExecutor
+from loom.core.observability.observability import Observability
 from loom.core.stores.repository.registration import classify_key
 from loom.core.use_case.factory import UseCaseFactory, main_repository
 from loom.core.use_case.markers import Input
 from loom.core.use_case.use_case import UseCase
 from loom.rest.compiler import RestInterfaceCompiler
 from loom.rest.fastapi.app import _register_openapi_components
-from loom.rest.fastapi.router_runtime import bind_interfaces
+from loom.rest.fastapi.router import mount_interfaces
 from loom.rest.model import RestInterface, RestRoute
 
 _COMPONENT_PREFIX = "#/components/schemas/"
@@ -100,12 +100,12 @@ def _openapi() -> dict[str, Any]:
         compiler.compile(route.use_case)
         factory.register(route.use_case)
     app = FastAPI()
-    registry = bind_interfaces(
+    registry = mount_interfaces(
         app,
         RestInterfaceCompiler(compiler).compile(Payments),
         factory,
-        RuntimeExecutor(compiler),
-        ObservabilityRuntime.noop(),
+        UseCaseExecutor(compiler),
+        Observability.noop(),
     )
     _register_openapi_components(app, registry)
     document: dict[str, Any] = TestClient(app).get("/openapi.json").json()

@@ -13,7 +13,7 @@ from loom.connections.aws import AwsClients
 from loom.core.config import ConfigContext, ConfigError
 from loom.core.config.convert import convert_config
 from loom.core.stores.profile import SERVER_PROFILE
-from loom.stores.dynamodb.backend import DynamoDBBackend, DynamoDBRepositoryConfig
+from loom.stores.dynamodb.plugin import DynamoDBRepositoryConfig, DynamoDBStorePlugin
 from loom.stores.dynamodb.repository import DynamoDBRepository
 from tests.helpers.aws import OTHER_REGION
 from tests.helpers.aws_island import FakeAwsIsland
@@ -36,7 +36,7 @@ def botocore_config(island: FakeAwsIsland) -> BotocoreConfig:
         ctx = ConfigContext.from_dict(
             {"stores": {"default": {"backend": "dynamodb", **_REQUIRED, **section}}}
         )
-        build_backend(DynamoDBBackend(), ctx, (), SERVER_PROFILE)
+        build_backend(DynamoDBStorePlugin(), ctx, (), SERVER_PROFILE)
         [(service, config)] = island.built
         assert service == "dynamodb"
         options: dict[str, Any] = config.client_options()["config"]
@@ -90,7 +90,7 @@ class TestDynamoDBClientConfig:
     def test_a_missing_section_still_names_the_section(self) -> None:
         ctx = ConfigContext.from_dict({"stores": {"default": {"backend": "dynamodb"}}})
 
-        backend = DynamoDBBackend()
+        backend = DynamoDBStorePlugin()
         with pytest.raises(ConfigError, match="stores.default"):
             build_backend(backend, ctx, (), SERVER_PROFILE)
 

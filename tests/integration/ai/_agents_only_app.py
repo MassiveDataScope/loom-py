@@ -76,7 +76,7 @@ class _UnbuiltEngine:
     """Placeholder engine.
 
     ``create_app`` compiles the plans but never enters the app lifespan, which
-    is where ``AgentRuntime`` builds engines, so nothing here is instantiated.
+    is where ``AgentHost`` builds engines, so nothing here is instantiated.
     """
 
     def __init__(self) -> None:
@@ -84,7 +84,7 @@ class _UnbuiltEngine:
 
 
 class _EngineProvider:
-    """Smallest provider ``resolve_engine_provider`` accepts."""
+    """Smallest provider ``resolve_engine_plugin`` accepts."""
 
     LOOM_AI_ENGINE_API = 2
 

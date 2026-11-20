@@ -1,9 +1,9 @@
 """``McpMarkerResolver`` (T302) and its degradation (T303).
 
-Builds real ``AgentRuntime`` instances over stub MCP clients — the same
-shape ``test_use_case_mcp_runtime.py`` (T203) uses — and resolves through
-:class:`~loom.ai.runtime._handle.McpMarkerResolver`, the resolver
-``RuntimeExecutor.bind_mcp_resolver`` takes, instead of constructing
+Builds real ``AgentHost`` instances over stub MCP clients — the same
+shape ``test_use_case_mcp_agent_host.py`` (T203) uses — and resolves through
+:class:`~loom.ai.execution._handle.McpMarkerResolver`, the resolver
+``UseCaseExecutor.bind_mcp_resolver`` takes, instead of constructing
 ``McpGrantView`` by hand. This is the seam T203's suite deliberately stops
 short of: the resolving *binding's own* ``include``, not the shared
 substrate grant's, must be what a resolved view enforces.
@@ -17,14 +17,14 @@ import pytest
 
 from loom.ai.compiler._plan import CompiledMcpCapability
 from loom.ai.errors import AgentRunError, AgentRunErrorCode
-from loom.ai.runtime import AgentRuntime
-from loom.ai.runtime._handle import McpMarkerResolver
-from loom.ai.runtime._lifecycle import UseCaseMcpGrant
+from loom.ai.execution import AgentHost
+from loom.ai.execution._handle import McpMarkerResolver
+from loom.ai.execution._lifecycle import UseCaseMcpGrant
 from loom.core.di import LoomContainer
 from loom.core.execution import ExecutionScope
 from loom.core.identity import Identity
 from loom.core.observability.event import Scope
-from loom.core.observability.runtime import ObservabilityRuntime
+from loom.core.observability.observability import Observability
 from tests.integration.ai.conftest import (
     CountingEngineProvider,
     RecordingMcpSession,
@@ -59,20 +59,20 @@ def _grant(
     return UseCaseMcpGrant(capability=capability, usecase=usecase, parameter=parameter)
 
 
-def _runtime(
+def _host(
     *,
     clients: dict[str, StubMcpClient],
     use_case_mcp: tuple[UseCaseMcpGrant, ...],
     deps: StubDepsFactory,
     container: LoomContainer,
     remote_clients: str = "required",
-) -> AgentRuntime:
-    return AgentRuntime(
+) -> AgentHost:
+    return AgentHost(
         plans=[],
         config=make_ai_config(
             mcp_servers=make_mcp_servers(*clients), remote_clients=remote_clients
         ),
-        engine_provider=CountingEngineProvider(),  # type: ignore[arg-type]
+        engine_plugin=CountingEngineProvider(),  # type: ignore[arg-type]
         deps=deps,
         container=container,
         mcp_client_factory=mcp_client_factory(clients),  # type: ignore[arg-type]
@@ -94,15 +94,15 @@ class TestTheResolverAppliesTheResolvingBindingsFilter:
             tools=("search", "delete"), schemas=("search",), results={"search": {"hits": 1}}
         )
         clients = {_SERVER_A: StubMcpClient(label="a", session=session, log=lifecycle_log)}
-        runtime = _runtime(
+        host = _host(
             clients=clients,
             use_case_mcp=(_grant(_SERVER_A, include=("search",)),),
             deps=deps,
             container=container,
         )
 
-        async with runtime:
-            resolve = McpMarkerResolver(runtime, observability=None)
+        async with host:
+            resolve = McpMarkerResolver(host, observability=None)
             handle = resolve(_SERVER_A, ("search",), identity)
 
             with ExecutionScope(identity):
@@ -123,7 +123,7 @@ class TestTheResolverAppliesTheResolvingBindingsFilter:
     ) -> None:
         session = RecordingMcpSession(tools=("search", "delete"))
         clients = {_SERVER_A: StubMcpClient(label="a", session=session, log=lifecycle_log)}
-        runtime = _runtime(
+        host = _host(
             clients=clients,
             use_case_mcp=(
                 _grant(_SERVER_A, include=("search",), usecase="orders.first"),
@@ -133,8 +133,8 @@ class TestTheResolverAppliesTheResolvingBindingsFilter:
             container=container,
         )
 
-        async with runtime:
-            resolve = McpMarkerResolver(runtime, observability=None)
+        async with host:
+            resolve = McpMarkerResolver(host, observability=None)
             first = resolve(_SERVER_A, ("search",), identity)
             second = resolve(_SERVER_A, ("delete",), identity)
 
@@ -165,20 +165,20 @@ class TestTheResolverAppliesTheResolvingBindingsFilter:
         """
         session = RecordingMcpSession(tools=("search", "delete"))
         clients = {_SERVER_A: StubMcpClient(label="a", session=session, log=lifecycle_log)}
-        runtime = _runtime(
+        host = _host(
             clients=clients,
             use_case_mcp=(_grant(_SERVER_A, include=("search",)),),
             deps=deps,
             container=container,
         )
 
-        async with runtime:
-            grant = runtime.use_case_mcp_grant(_SERVER_A)
+        async with host:
+            grant = host.use_case_mcp_grant(_SERVER_A)
             assert grant is not None
             # The shared substrate carries no filter of its own (H1, T203).
             assert grant.capability.include == ()
 
-            resolve = McpMarkerResolver(runtime, observability=None)
+            resolve = McpMarkerResolver(host, observability=None)
             handle = resolve(_SERVER_A, ("search",), identity)
 
             with ExecutionScope(identity):
@@ -198,17 +198,17 @@ class TestTheSpanDistinguishesTheUseCasePath:
     ) -> None:
         session = RecordingMcpSession(tools=("search",), results={"search": {"ok": True}})
         clients = {_SERVER_A: StubMcpClient(label="a", session=session, log=lifecycle_log)}
-        runtime = _runtime(
+        host = _host(
             clients=clients,
             use_case_mcp=(_grant(_SERVER_A, include=("search",)),),
             deps=deps,
             container=container,
         )
         observer = RecordingObserver()
-        observability = ObservabilityRuntime(observers=[observer])
+        observability = Observability(observers=[observer])
 
-        async with runtime:
-            resolve = McpMarkerResolver(runtime, observability=observability)
+        async with host:
+            resolve = McpMarkerResolver(host, observability=observability)
             handle = resolve(_SERVER_A, ("search",), identity)
             with ExecutionScope(identity):
                 await handle.call_untyped("search", {})
@@ -247,15 +247,15 @@ class TestTimeoutComesFromTheServersOwnDeadline:
 
         session = SlowSession(tools=("search",), results={"search": {"ok": 1}})
         clients = {_SERVER_A: StubMcpClient(label="a", session=session, log=lifecycle_log)}
-        runtime = _runtime(
+        host = _host(
             clients=clients,
             use_case_mcp=(_grant(_SERVER_A, include=("search",), timeout_ms=40),),
             deps=deps,
             container=container,
         )
 
-        async with runtime:
-            resolve = McpMarkerResolver(runtime, observability=None)
+        async with host:
+            resolve = McpMarkerResolver(host, observability=None)
             handle = resolve(_SERVER_A, ("search",), identity)
             with ExecutionScope(identity), pytest.raises(AgentRunError) as excinfo:
                 await handle.call_untyped("search", {})
@@ -276,7 +276,7 @@ class TestUnreachableServerTolerated:
         identity: Identity,
     ) -> None:
         client = StubMcpClient(label="a", session=None, log=lifecycle_log, connect_error="refused")
-        runtime = _runtime(
+        host = _host(
             clients={_SERVER_A: client},
             use_case_mcp=(_grant(_SERVER_A, include=("search",)),),
             deps=deps,
@@ -284,8 +284,8 @@ class TestUnreachableServerTolerated:
             remote_clients="optional",
         )
 
-        async with runtime:
-            resolve = McpMarkerResolver(runtime, observability=None)
+        async with host:
+            resolve = McpMarkerResolver(host, observability=None)
             handle = resolve(_SERVER_A, ("search",), identity)
 
             with ExecutionScope(identity):
@@ -311,13 +311,13 @@ class TestUnreachableServerTolerated:
     ) -> None:
         """Distinguishes 'never entered' (a wiring bug) from 'tolerated down'."""
         client = StubMcpClient(label="a", session=None, log=lifecycle_log)
-        runtime = _runtime(
+        host = _host(
             clients={_SERVER_A: client},
             use_case_mcp=(_grant(_SERVER_A, include=("search",)),),
             deps=deps,
             container=container,
         )
-        handle = McpMarkerResolver(runtime, observability=None)(_SERVER_A, ("search",), identity)
+        handle = McpMarkerResolver(host, observability=None)(_SERVER_A, ("search",), identity)
 
         with (
             ExecutionScope(identity),

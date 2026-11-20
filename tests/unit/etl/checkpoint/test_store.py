@@ -22,7 +22,7 @@ from loom.etl import (
 from loom.etl.checkpoint import CheckpointStore
 from loom.etl.compiler import ETLCompilationError, ETLCompiler
 from loom.etl.declarative.source import SourceKind
-from loom.etl.testing import StubCatalog, StubSourceReader, StubTargetWriter
+from loom.etl.testing import InMemoryCatalog, InMemorySourceReader, InMemoryTargetWriter
 from tests.unit.etl.doubles import RunDateIgnoredParams
 
 
@@ -51,8 +51,8 @@ class TempPipeline(ETLPipeline[RunDateIgnoredParams]):
 
 
 @pytest.fixture
-def catalog() -> StubCatalog:
-    return StubCatalog(tables={"raw.orders": (), "mart.summary": ()})
+def catalog() -> InMemoryCatalog:
+    return InMemoryCatalog(tables={"raw.orders": (), "mart.summary": ()})
 
 
 class TestTempSpecConstruction:
@@ -101,7 +101,7 @@ class TestCompilerTempValidation:
     ) -> None:
         assert check(ETLCompiler().compile_step(step_type))
 
-    def test_compile_pipeline_with_temp_passes(self, catalog: StubCatalog) -> None:
+    def test_compile_pipeline_with_temp_passes(self, catalog: InMemoryCatalog) -> None:
         assert ETLCompiler(catalog).compile(TempPipeline) is not None
 
     @pytest.mark.parametrize(
@@ -119,7 +119,7 @@ class TestCompilerTempValidation:
     )
     def test_compile_pipeline_temp_errors(
         self,
-        catalog: StubCatalog,
+        catalog: InMemoryCatalog,
         pipeline_builder: Callable[[], type[ETLPipeline[RunDateIgnoredParams]]],
         error: str,
     ) -> None:
@@ -130,7 +130,7 @@ class TestCompilerTempValidation:
 
     def test_compile_pipeline_sequential_step_sees_prior_parallel_temp(
         self,
-        catalog: StubCatalog,
+        catalog: InMemoryCatalog,
     ) -> None:
         ETLCompiler(catalog).compile(_build_parallel_then_consume_pipeline())
 
@@ -197,7 +197,7 @@ class TestRunnerTempCleanup:
     def test_runner_cleanup_correlation_without_temp_store_raises(self) -> None:
         from loom.etl.runner import ETLRunner
 
-        runner = ETLRunner(StubSourceReader({}), StubTargetWriter())
+        runner = ETLRunner(InMemorySourceReader({}), InMemoryTargetWriter())
         with pytest.raises(RuntimeError, match="storage.temp.root"):
             runner.cleanup_correlation("job-123")
 

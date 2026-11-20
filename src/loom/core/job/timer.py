@@ -11,7 +11,7 @@ Step = Callable[[], Awaitable[None]]
 """What runs when a delay is over."""
 
 
-class JobDelayRefused(RuntimeError):
+class JobDelayRefusedError(RuntimeError):
     """Raised when a job is delayed where no timer waits for it.
 
     Attributes:

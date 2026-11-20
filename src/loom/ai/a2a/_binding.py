@@ -21,8 +21,8 @@ from loom.ai.a2a.card import build_agent_card, card_path
 from loom.ai.compiler import AgentPlan
 from loom.ai.config import AgentEndpointConfig, AiConfig
 from loom.ai.errors import AgentCompilationError, AgentErrorCode
+from loom.ai.execution import AgentHost
 from loom.ai.fastapi.response import ENCODER
-from loom.ai.runtime import AgentRuntime
 from loom.core.config.errors import ConfigError
 from loom.rest.auth.abc import Authenticator
 from loom.rest.auth.middleware import AuthenticationMiddleware
@@ -47,7 +47,7 @@ def published_agents(
     *,
     config: AiConfig,
     plans: Mapping[str, AgentPlan],
-    runtime: AgentRuntime,
+    host: AgentHost,
     mechanism: str | None,
     prefix: str,
 ) -> tuple[PublishedAgent, ...]:
@@ -69,7 +69,7 @@ def published_agents(
     published: list[PublishedAgent] = []
     for name in a2a.expose:
         plan = plans.get(name)
-        if plan is None or not runtime.has_agent(name):
+        if plan is None or not host.has_agent(name):
             _logger.warning(
                 "Agent %s is listed in 'ai.a2a.expose' but no compiled agent has that name: "
                 "it is not published over A2A",
@@ -184,7 +184,7 @@ def mounted_exclusions(app: FastAPI) -> tuple[str, ...]:
     """Return the authentication exclusions the deployment actually runs with.
 
     The authoritative list is the one mounted on the middleware, not the one
-    the caller of :func:`bind_a2a_endpoints` chose to repeat in its argument —
+    the caller of :func:`mount_a2a_endpoints` chose to repeat in its argument —
     which defaults to empty. Reading it here makes the exclusion guard
     fail closed.
     """

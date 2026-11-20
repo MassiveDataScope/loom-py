@@ -20,7 +20,7 @@ if TYPE_CHECKING:
     from loom.core.config import ConfigContext
     from loom.core.discovery.base import DiscoveryResult
     from loom.core.environment import Environment
-    from loom.core.observability.runtime import ObservabilityRuntime
+    from loom.core.observability.observability import Observability
 
 
 @dataclass(eq=False, kw_only=True)
@@ -29,7 +29,7 @@ class Application:
 
     :meth:`running` opens the resources in the order of their
     :class:`~loom.composition.resources.ResourceKind`, running each one's startup checks
-    right before it opens, and closes them in reverse. A transport adapter
+    right before it opens, and closes them in reverse. A transport runtime
     enters :meth:`running` and never opens these resources itself.
 
     Args:
@@ -37,10 +37,10 @@ class Application:
         config: Loaded configuration.
         environment: Environment the application runs in.
         code_path: Application code directory.
-        discovered: What discovery found, as the adapter's recipe left it.
+        discovered: What discovery found, as the runtime's recipe left it.
         observability: Logging, tracing and metrics runtime.
         sql: SQL registry and services.
-        ai: Agent runtime and its plans.
+        ai: Agent host and its plans.
         job_settings: Each job's queue, retries, countdown, timeout and
             priority in this application.
         resources: What the application owns, in any order.
@@ -51,7 +51,7 @@ class Application:
     environment: Environment
     code_path: Path
     discovered: DiscoveryResult
-    observability: ObservabilityRuntime
+    observability: Observability
     sql: SqlWiring
     ai: AiWiring
     job_settings: JobSettings = field(default_factory=JobSettings)

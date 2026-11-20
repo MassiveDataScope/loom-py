@@ -12,7 +12,7 @@ import time
 
 import pytest
 
-from loom.core.engine.executor import RuntimeExecutor
+from loom.core.engine.executor import UseCaseExecutor
 from loom.core.errors import Unauthenticated
 from loom.core.execution import current_execution
 from loom.core.job.callback import CallbackOutcome, notify
@@ -50,7 +50,7 @@ class TestInlineCallbacks:
     async def test_act_as_their_dispatcher(
         self,
         factory: UseCaseFactory,
-        executor: RuntimeExecutor,
+        executor: UseCaseExecutor,
         callback_log: CallbackLog,
         callback: type[AcmeCallback],
         job: type[Job[object]],
@@ -73,7 +73,7 @@ class TestInlineCallbacks:
     async def test_a_callback_overriding_one_hook_serves_both_outcomes(
         self,
         factory: UseCaseFactory,
-        executor: RuntimeExecutor,
+        executor: UseCaseExecutor,
         callback_log: CallbackLog,
         job: type[Job[object]],
         moments: list[str],
@@ -90,7 +90,7 @@ class TestInlineCallbacks:
         assert [moment for moment, _ in callback_log] == moments
 
     async def test_a_dispatch_with_no_caller_gives_the_job_and_them_none(
-        self, factory: UseCaseFactory, executor: RuntimeExecutor, callback_log: CallbackLog
+        self, factory: UseCaseFactory, executor: UseCaseExecutor, callback_log: CallbackLog
     ) -> None:
         """The job's constructor ``Caller()`` fails closed, and its failure callback has none."""
         jobs = InlineServiceFixture(factory, executor)

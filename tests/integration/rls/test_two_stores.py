@@ -40,7 +40,7 @@ from loom.core.stores.repository import CursorCodec
 from loom.core.stores.uow.abc import UnitOfWork
 from loom.core.stores.uow.coordinator import OrderedCommits
 from loom.core.stores.uow.scope import Frame, current_scope, invocation
-from loom.stores.sqlalchemy.backend import SQLAlchemyBackend
+from loom.stores.sqlalchemy.plugin import SQLAlchemyStorePlugin
 from loom.stores.sqlalchemy.repository import SQLAlchemyRepository
 from loom.stores.sqlalchemy.rls import elevate
 from loom.stores.sqlalchemy.session_manager import SessionManager
@@ -173,7 +173,7 @@ class Store:
 
 
 def _build(ctx: ConfigContext, key: StoreKey) -> Store:
-    wiring = build_backend(SQLAlchemyBackend(), ctx, notes.MODELS, store=key)
+    wiring = build_backend(SQLAlchemyStorePlugin(), ctx, notes.MODELS, store=key)
     wiring.prepare_models(notes.MODELS)
     container = LoomContainer()
     wiring.repo_registration_module(container)
@@ -198,7 +198,7 @@ async def _wired(ctx: ConfigContext) -> AsyncIterator[dict[StoreKey, Store]]:
         yield stores
     finally:
         for store in stores.values():
-            await store.manager.dispose()
+            await store.manager.close()
 
 
 @asynccontextmanager
@@ -312,7 +312,7 @@ async def _flags_after_elevating(stores: Mapping[StoreKey, Store], elevated: Sto
         for store in stores.values():
             await _active(store).execute(OWNER)
         async with elevation_scope(owns_transaction=True, sink=stores[elevated].sink):
-            await elevate("editor", DECISION, at=Scope.of(U1))
+            await elevate("editor", DECISION, at=Scope.from_segments(U1))
             return {
                 key: (await _active(store).execute(EDITOR_FLAG)).scalar_one()
                 for key, store in stores.items()
@@ -332,7 +332,7 @@ async def _provider_flag_after_elevating(
         scope.frame(Frame(elevated)),
         elevation_scope(owns_transaction=True, sink=stores[elevated].sink),
     ):
-        await elevate("editor", DECISION, at=Scope.of(U1))
+        await elevate("editor", DECISION, at=Scope.from_segments(U1))
         return str((await _active(stores[elevated]).execute(EDITOR_FLAG)).scalar_one())
 
 

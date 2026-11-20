@@ -369,12 +369,12 @@ the file to see the exact assertion.
 
 | Refusal | Code | Message (from the code) | What to do |
 |---|---|---|---|
-| Anonymous caller | `UNAUTHORIZED` | `agent 'incident-triage' requires an authenticated caller` | A marker-filled handle never accepts an anonymous identity, with no configuration to relax it — the caller must already be authenticated at the use case's own route. In a test, register one with `.with_caller(identity)`. See `tests/unit/ai/runtime/test_agent_handle.py::TestIdentidadAnonima::test_el_mensaje_es_el_que_muestra_use_case_dsl_md`. |
+| Anonymous caller | `UNAUTHORIZED` | `agent 'incident-triage' requires an authenticated caller` | A marker-filled handle never accepts an anonymous identity, with no configuration to relax it — the caller must already be authenticated at the use case's own route. In a test, register one with `.with_caller(identity)`. See `tests/unit/ai/execution/test_agent_handle.py::TestIdentidadAnonima::test_el_mensaje_es_el_que_muestra_use_case_dsl_md`. |
 | A cycle: the same agent already in the chain (agent names `outer`/`inner` below, as the pinning test names them) | `AGENT_CALL_CYCLE` | `agent call cycle detected: outer -> outer` | Break the cycle: an `on_output` hook or any use case an agent's run invokes must not call the same agent back. Route to a different named agent instead. See `tests/integration/ai/test_agent_call_chain.py::TestProfundidadPorDefecto::test_una_corrida_anidada_del_mismo_agente_es_un_ciclo`. |
 | A depth past `ai.max_agent_depth` | `AGENT_CALL_TOO_DEEP` | `agent call chain outer -> inner exceeds ai.max_agent_depth=1` | Raise `ai.max_agent_depth` deliberately if the nesting is intended — see [the nesting bound](../ai/overview.md#nesting-how-deep-an-agent-may-call-another) for what that costs — or remove the nested `Agent()` call. See `tests/integration/ai/test_agent_call_chain.py::TestProfundidadPorDefecto::test_una_corrida_anidada_de_otro_agente_excede_la_profundidad`. |
-| A shape override (`expect=` or `run_text`) on an artefact whose `on_output` hook declares the `output` field | `AGENT_RUN_SHAPE_WITH_HOOK` | `agent 'incident-triage' declares an output hook that reads the run's output, so this run cannot use a per-run shape; call run(prompt) for the artefact's own declared output instead` | Call `run(prompt)` with no `expect` so the hook receives the artefact's declared shape, or narrow the hook's `Input` to conversation-bookkeeping fields only (drop `output`) so any mode is accepted. See `tests/unit/ai/runtime/test_agent_handle.py::TestRechazoPorHookDeSalida::test_el_mensaje_es_el_que_muestra_use_case_dsl_md`. |
-| A tool outside the artefact's own `mcp` grant filter | `TOOL_UNKNOWN` | `mcp server 'runbooks' grants no tool named 'delete_incident'; tools this grant admits: search_incident` | Call one of the tools `handle.mcp(server).tools()` lists, or widen the artefact's `include` / `exclude` filter for that server. See `tests/unit/ai/runtime/test_grants.py::TestElFiltroDelPermisoMcp::test_el_mensaje_de_tool_fuera_del_permiso_es_el_que_muestra_use_case_dsl_md`. |
-| A tool that publishes no output schema, called through `call(..., expect=X)` | `TOOL_UNTYPED` | `tool 'legacy_lookup' of mcp server 'runbooks' publishes no output schema; call it with call_untyped() instead` | Call `call_untyped(tool, arguments)` instead, and treat the result as the server's own, undecoded JSON. See `tests/unit/ai/runtime/test_grants.py::TestLlamadaTipada::test_el_mensaje_de_tool_sin_forma_es_el_que_muestra_use_case_dsl_md`. |
+| A shape override (`expect=` or `run_text`) on an artefact whose `on_output` hook declares the `output` field | `AGENT_RUN_SHAPE_WITH_HOOK` | `agent 'incident-triage' declares an output hook that reads the run's output, so this run cannot use a per-run shape; call run(prompt) for the artefact's own declared output instead` | Call `run(prompt)` with no `expect` so the hook receives the artefact's declared shape, or narrow the hook's `Input` to conversation-bookkeeping fields only (drop `output`) so any mode is accepted. See `tests/unit/ai/execution/test_agent_handle.py::TestRechazoPorHookDeSalida::test_el_mensaje_es_el_que_muestra_use_case_dsl_md`. |
+| A tool outside the artefact's own `mcp` grant filter | `TOOL_UNKNOWN` | `mcp server 'runbooks' grants no tool named 'delete_incident'; tools this grant admits: search_incident` | Call one of the tools `handle.mcp(server).tools()` lists, or widen the artefact's `include` / `exclude` filter for that server. See `tests/unit/ai/execution/test_grants.py::TestElFiltroDelPermisoMcp::test_el_mensaje_de_tool_fuera_del_permiso_es_el_que_muestra_use_case_dsl_md`. |
+| A tool that publishes no output schema, called through `call(..., expect=X)` | `TOOL_UNTYPED` | `tool 'legacy_lookup' of mcp server 'runbooks' publishes no output schema; call it with call_untyped() instead` | Call `call_untyped(tool, arguments)` instead, and treat the result as the server's own, undecoded JSON. See `tests/unit/ai/execution/test_grants.py::TestLlamadaTipada::test_el_mensaje_de_tool_sin_forma_es_el_que_muestra_use_case_dsl_md`. |
 
 ---
 
@@ -591,7 +591,7 @@ array, a string, a number, `null` — is a `boundary_validation` 422 whose
 message and single `body` violation read `Request body must be a JSON object`.
 The body is decoded as JSON whatever its `Content-Type` says.
 
-A single `RuleViolation(field, message)` raised from `execute()` also answers
+A single `RuleViolationError(field, message)` raised from `execute()` also answers
 422, with `code: "rule_violation"`, its `message` and its `field` at the top
 level of the body, so a client tells two such 422s apart by `field` instead of
 by the message text:
@@ -604,7 +604,7 @@ by the message text:
 ### Rule.check — field validation
 
 `Rule.check` validates a single field. The `via=` function returns an error
-string (or a `RuleViolation`) when the value is invalid, or `None` when it is
+string (or a `RuleViolationError`) when the value is invalid, or `None` when it is
 valid. Any other result, a `bool` included, raises `TypeError`; a boolean
 condition belongs in `Rule.forbid`:
 
@@ -802,7 +802,7 @@ hold only characters allowed in an RFC 3986 URI reference; otherwise it raises
 `ValueError`. OpenAPI documents both statuses with the `OrderView` schema and
 declares `Location` on the `201`. `Created` must wrap one of the other members
 of the result, and a route whose `status_code` is already `201` cannot return
-it; either fails at startup. `LoomRestAdapter` answers a `Created` the same
+it; either fails at startup. `RestUseCaseDispatcher` answers a `Created` the same
 way; other callers receive the wrapper and read `.value`.
 
 ### `429` when the caller spent its budget
@@ -992,7 +992,7 @@ await self._app.entity(Product).update(params={"id": product_id}, payload={"stoc
 
 ## Execution lifecycle
 
-`RuntimeExecutor.execute` owns one execution end to end — from opening the
+`UseCaseExecutor.execute` owns one execution end to end — from opening the
 unit of work to running the post-commit actions it queued. REST use cases
 and Celery jobs run through the same lifecycle; the Celery worker drives it
 through the async bridge, not through a lifecycle of its own.
@@ -1182,7 +1182,7 @@ methods stay on the protocol. Closing is the context manager's job
 | `Exists(Model, from_param=..., against=...)` | Check existence; 404 on missing if `RAISE` |
 | `Compute.set(F).from_command(...)` | Derive/normalise a command field |
 | `Compute.set(F).from_params(...)` | Include path params in derive computation |
-| `Rule.check(F, via=fn)` | Validate a field; `fn` returns a message, a `RuleViolation`, or `None` |
+| `Rule.check(F, via=fn)` | Validate a field; `fn` returns a message, a `RuleViolationError`, or `None` |
 | `Rule.forbid(predicate, message=...)` | Enforce invariant; predicate returns `True` to fail |
 | `.from_command(F1, F2, ...)` | Pass command fields to rule predicate |
 | `.from_params("name")` | Pass path parameter to rule predicate |

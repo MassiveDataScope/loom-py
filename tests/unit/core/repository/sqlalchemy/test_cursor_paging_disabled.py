@@ -55,7 +55,7 @@ async def repository() -> AsyncIterator[SQLAlchemyRepository[_Row, int]]:
     )
     await repo.create_many([_CreateRow(rank=rank) for rank in (1, 2, 3)])
     yield repo
-    await manager.dispose()
+    await manager.close()
 
 
 class TestCursorPagingWithTheDisabledCodec:

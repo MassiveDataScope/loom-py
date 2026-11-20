@@ -1,4 +1,4 @@
-"""What an entry point declares, and the contract every adapter fulfils."""
+"""What an entry point declares, and the contract every runtime fulfils."""
 
 from __future__ import annotations
 
@@ -27,7 +27,7 @@ if TYPE_CHECKING:
     from loom.core.config import ConfigContext
     from loom.core.di.container import LoomContainer
     from loom.core.discovery.base import DiscoveryResult
-    from loom.core.engine.metrics import MetricsAdapter
+    from loom.core.engine.metrics import MetricsRecorder
     from loom.core.stores.profile import PoolMetricsSink, RuntimeProfile
 
 T_co = TypeVar("T_co", covariant=True)
@@ -40,12 +40,12 @@ class Recipe:
     Args:
         profile: Pool defaults of the entry point (server, worker, ...).
         discovered: Use cases, models, interfaces, job callbacks and agent specs, final:
-            with whatever the adapter added or pruned.
-        default_store_backend: Backend of the default store when ``stores.default``
+            with whatever the runtime added or pruned.
+        default_store_plugin: Store plugin of the default store when ``stores.default``
             is not declared.
         check_scope: Configuration paths whose deploy checks this entry point
             requires or leaves out, such as ``app.rest`` for a worker.
-        agents: Whether this entry point hosts the agent runtime; without it
+        agents: Whether this entry point hosts the agent host; without it
             an ``ai`` section is ignored and any compiled use case declaring
             an ``Agent()`` or ``Mcp()`` marker is refused at start-up.
         agent_endpoints: Whether this entry point serves its agents over
@@ -57,7 +57,7 @@ class Recipe:
             serves a scrape.
         connection_only: Ask the backend for its connection only, no
             repository; for an entry point with no model (see
-            :class:`~loom.core.stores.StoreRuntime`).
+            :class:`~loom.core.stores.StorePluginContext`).
         overrides: DI modules run right after the discovered installers, under the
             same reserved-key check; a test double of a repository binds under
             the key its store would bind it. Test-only, set by the testing
@@ -73,11 +73,11 @@ class Recipe:
 
     profile: RuntimeProfile
     discovered: DiscoveryResult
-    default_store_backend: str = NONE_BACKEND
+    default_store_plugin: str = NONE_BACKEND
     check_scope: CheckScope = UNSCOPED
     agents: bool = False
     agent_endpoints: bool = True
-    metrics: MetricsAdapter | None = None
+    metrics: MetricsRecorder | None = None
     pool_metrics: PoolMetricsSink | None = None
     connection_only: bool = False
     overrides: tuple[Callable[[LoomContainer], None], ...] = ()
@@ -129,15 +129,15 @@ class Recipe:
         return CursorCodec.disabled() if self.connection_only else CursorCodec.from_context(ctx)
 
 
-class Adapter(Protocol[T_co]):
+class Runtime(Protocol[T_co]):
     """A transport mounted on a composed application.
 
-    :meth:`recipe` declares what to compose and opens nothing. :meth:`bind`
+    :meth:`recipe` declares what to compose and opens nothing. :meth:`mount`
     mounts the transport on the composed application and returns what the
     entry point serves (an ASGI app, a Celery app, a handler); it opens no
     resource either, since :meth:`Application.running` owns them and the
     platform's lifespan hook enters it. The exception is a platform with no
-    lifespan hook, such as a Lambda function's Init: there :meth:`bind` opens
+    lifespan hook, such as a Lambda function's Init: there :meth:`mount` opens
     the application through a :class:`~loom.composition.LoopHost` and returns
     an object that owns closing it.
     """
@@ -146,6 +146,6 @@ class Adapter(Protocol[T_co]):
         """Declare how to compose the application from *project*."""
         ...
 
-    def bind(self, application: Application) -> T_co:
+    def mount(self, application: Application) -> T_co:
         """Mount the transport on *application*."""
         ...

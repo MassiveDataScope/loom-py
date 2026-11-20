@@ -86,7 +86,7 @@ class TestImportsWithoutOtelSdk:
             """
 import loom.core.observability as obs
 
-runtime = obs.ObservabilityRuntime.from_config(obs.ObservabilityConfig())
+runtime = obs.Observability.from_config(obs.ObservabilityConfig())
 with runtime.span(obs.Scope.JOB, "sdk-less"):
     pass
 
@@ -109,13 +109,13 @@ print("OBSERVERS:" + str([type(o).__name__ for o in runtime.observers]))
         result = _run_without_sdk(
             """
 from loom.core.config.observability import OtelConfig
-from loom.core.observability import ObservabilityConfig, ObservabilityRuntime, Scope
+from loom.core.observability import ObservabilityConfig, Observability, Scope
 from loom.core.observability.config import OtelObservabilityConfig
 
 config = ObservabilityConfig(
     otel=OtelObservabilityConfig(enabled=True, config=OtelConfig())
 )
-runtime = ObservabilityRuntime.from_config(config)
+runtime = Observability.from_config(config)
 with runtime.span(Scope.JOB, "sdk-less"):
     pass
 
@@ -146,7 +146,7 @@ class TestOtelRequestedWithoutTheSdk:
             """
 from loom.core.config.observability import OtelConfig
 from loom.core.model.redaction import Dsn
-from loom.core.observability import ObservabilityConfig, ObservabilityRuntime
+from loom.core.observability import ObservabilityConfig, Observability
 from loom.core.observability.config import OtelObservabilityConfig
 
 config = ObservabilityConfig(
@@ -156,7 +156,7 @@ config = ObservabilityConfig(
     )
 )
 try:
-    ObservabilityRuntime.from_config(config)
+    Observability.from_config(config)
 except Exception as exc:
     print("ERROR_TYPE:" + type(exc).__name__)
     print("ERROR_MSG:" + str(exc))
@@ -176,7 +176,7 @@ else:
             """
 from loom.core.config.observability import OtelConfig
 from loom.core.logger.config import LoggerConfig
-from loom.core.observability import ObservabilityConfig, ObservabilityRuntime
+from loom.core.observability import ObservabilityConfig, Observability
 from loom.core.observability.config import LogObservabilityConfig, OtelObservabilityConfig
 
 config = ObservabilityConfig(
@@ -186,7 +186,7 @@ config = ObservabilityConfig(
     ),
 )
 try:
-    ObservabilityRuntime.from_config(config)
+    Observability.from_config(config)
 except Exception as exc:
     print("ERROR_TYPE:" + type(exc).__name__)
     print("ERROR_MSG:" + str(exc))

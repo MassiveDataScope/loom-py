@@ -1,9 +1,9 @@
 """The ordered phases that :meth:`~loom.composition.project.Project.compose` runs.
 
-The order: :func:`plan` takes the adapter's recipe; :func:`build_stores` builds
+The order: :func:`plan` takes the runtime's recipe; :func:`build_stores` builds
 every store before any registration; :func:`register` fills the container and
 builds the kernel; :meth:`Recipe.analysed` analyses the dependency graph;
-:func:`wire_ai` builds the optional agent runtime; :func:`seal` seals the
+:func:`wire_ai` builds the optional agent host; :func:`seal` seals the
 container. Nothing registers after :func:`register`.
 """
 
@@ -19,7 +19,7 @@ from loom.composition._jobs import configure_job_service
 from loom.composition._reserved import reserved_keys
 from loom.composition._sql import SqlWiring, register_sql_collaborators, resolve_sql
 from loom.composition.errors import ReservedBindingError
-from loom.composition.recipe import Adapter, Recipe
+from loom.composition.recipe import Recipe, Runtime
 from loom.composition.resources import Resource, ResourceKind
 from loom.connections.aws import AwsClients
 from loom.core.authz.elevation import ElevationSink
@@ -38,8 +38,8 @@ from loom.core.identity import DEFAULT_MAX_DELEGATION_SECONDS, configure_delegat
 from loom.core.job.config import JobSettings
 from loom.core.logger import LoggerPort
 from loom.core.model import BaseModel
-from loom.core.observability.runtime import ObservabilityRuntime
-from loom.core.stores import StoreRuntime, StoreWiring
+from loom.core.observability.observability import Observability
+from loom.core.stores import StorePluginContext, StoreWiring
 from loom.core.stores.catalog import (
     DEFAULT_STORE,
     DEFAULT_STORE_PATH,
@@ -94,13 +94,13 @@ class Stores:
 
     Args:
         job_settings: Each discovered job's settings.
-        store_backends: The name of the backend each store's wiring was built by.
+        store_plugins: The name of the store plugin each store's wiring was built by.
         models: The models each store serves.
         wirings: Each store's wiring, its models prepared.
     """
 
     job_settings: JobSettings
-    store_backends: dict[StoreKey, str]
+    store_plugins: dict[StoreKey, str]
     models: dict[StoreKey, tuple[type[BaseModel], ...]]
     wirings: dict[StoreKey, StoreWiring]
 
@@ -119,20 +119,20 @@ class Stores:
                 manager=wiring.lifespan_init,
                 check=wiring.startup_checks,
                 readiness=wiring.readiness,
-                readiness_key=self.store_backends[key] if key == DEFAULT_STORE else key,
+                readiness_key=self.store_plugins[key] if key == DEFAULT_STORE else key,
             )
             for key, wiring in self.wirings.items()
         )
 
 
-def plan(project: Project, adapter: Adapter[object]) -> Recipe:
-    """Ask *adapter* for its recipe, then refuse a failing deploy check.
+def plan(project: Project, runtime: Runtime[object]) -> Recipe:
+    """Ask *runtime* for its recipe, then refuse a failing deploy check.
 
     A lenient recipe runs no deploy check.
 
     Args:
         project: What the application composes from.
-        adapter: Whose recipe to take.
+        runtime: Whose recipe to take.
 
     Returns:
         The recipe.
@@ -141,7 +141,7 @@ def plan(project: Project, adapter: Adapter[object]) -> Recipe:
         DeployCheckError: When a deploy check of level error fails in a
             deployed environment.
     """
-    recipe = adapter.recipe(project)
+    recipe = runtime.recipe(project)
     if not recipe.lenient:
         enforce_deploy_checks(project.config, project.environment, scope=recipe.check_scope)
     return recipe
@@ -170,7 +170,7 @@ def build_stores(project: Project, recipe: Recipe, aws: AwsClients) -> Stores:
     job_settings = JobSettings.from_config(ctx, discovered.jobs)
     stores = catalog.models_by_store(discovered.models)
     backends = {
-        key: project.resolve_store_backend(key, default=recipe.default_store_backend)
+        key: project.resolve_store_plugin(key, default=recipe.default_store_plugin)
         for key in stores
     }
     default_label = backends[DEFAULT_STORE].name
@@ -182,7 +182,7 @@ def build_stores(project: Project, recipe: Recipe, aws: AwsClients) -> Stores:
     cursor_codec = recipe.build_cursor_codec(ctx)
     wirings: dict[StoreKey, StoreWiring] = {}
     for key, models in stores.items():
-        runtime = StoreRuntime(
+        context = StorePluginContext(
             recipe.profile,
             pool_metrics=recipe.pool_metrics,
             connection_only=recipe.connection_only,
@@ -191,11 +191,11 @@ def build_stores(project: Project, recipe: Recipe, aws: AwsClients) -> Stores:
             cursor_codec=cursor_codec,
             aws=aws,
         )
-        wiring = wirings[key] = backends[key].build(ctx, models, runtime)
+        wiring = wirings[key] = backends[key].build(ctx, models, context)
         wiring.prepare_models(models)
     return Stores(
         job_settings=job_settings,
-        store_backends={key: backends[key].name for key in stores},
+        store_plugins={key: backends[key].name for key in stores},
         models=stores,
         wirings=wirings,
     )
@@ -212,7 +212,7 @@ def register(
     """Fill a container and build the kernel on it, then register the job service and SQL.
 
     The order: the seed keys (the application's ``AppConfig``,
-    ``Environment``, ``ObservabilityRuntime`` and ``StoreCatalog``); the
+    ``Environment``, ``Observability`` and ``StoreCatalog``); the
     discovered installers; the recipe's overrides; each store's repositories and the
     ``RepositoryCatalog`` over them; the cache module; the framework's keys,
     among them the kernel, whose construction compiles the discovered use
@@ -265,7 +265,7 @@ def register(
     seeds = {
         type(project.app): project.app,
         Environment: project.environment,
-        ObservabilityRuntime: observability,
+        Observability: observability,
         StoreCatalog: catalog,
     }
     installers = tuple(
@@ -336,7 +336,7 @@ def wire_ai(
     analysis: GraphAnalysis,
     sql: SqlWiring,
 ) -> AiWiring:
-    """Build the agent runtime when the entry point hosts it, else nothing.
+    """Build the agent host when the entry point hosts it, else nothing.
 
     Every ``Agent()`` and ``Mcp()`` declaration the analysed graph reaches
     counts, in a use case's ``execute()`` or on an adapter it is built
@@ -362,7 +362,7 @@ def wire_ai(
     """
     if not recipe.agents and recipe.lenient:
         return AiWiring.ABSENT
-    declared = MarkerDeclarations.of(analysis, kernel.compiler, kernel.registry)
+    declared = MarkerDeclarations.from_analysis(analysis, kernel.compiler, kernel.registry)
     if not recipe.agents:
         declared.mcp_grants({})
         declared.verify({})

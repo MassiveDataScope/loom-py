@@ -5,7 +5,7 @@ from __future__ import annotations
 import pytest
 
 from loom.core.engine.events import EventKind
-from loom.core.engine.executor import RuntimeExecutor
+from loom.core.engine.executor import UseCaseExecutor
 from loom.core.errors import PostCommitError, UndeclaredStoreWrite
 
 from .._lifecycle_doubles import (
@@ -22,7 +22,7 @@ from .conftest import LifecycleCase
 
 class TestDispatchAfterClose:
     async def test_dispatch_is_sent_after_the_close_and_after_exec_done(
-        self, executor: RuntimeExecutor, broker: Broker, log: Log
+        self, executor: UseCaseExecutor, broker: Broker, log: Log
     ) -> None:
         await executor.execute(Dispatching(broker), params={"value": "job-A"})
 
@@ -39,7 +39,7 @@ class TestDispatchAfterClose:
     async def test_broker_failure_is_a_post_commit_error_after_a_committed_transaction(
         self,
         case: LifecycleCase,
-        executor: RuntimeExecutor,
+        executor: UseCaseExecutor,
         broker: Broker,
         metrics: Metrics,
         log: Log,
@@ -59,7 +59,7 @@ class TestDispatchAfterClose:
         assert context_is_clean()
 
     async def test_a_read_only_execution_may_not_dispatch_a_job(
-        self, case: LifecycleCase, executor: RuntimeExecutor, broker: Broker, metrics: Metrics
+        self, case: LifecycleCase, executor: UseCaseExecutor, broker: Broker, metrics: Metrics
     ) -> None:
         """T120: a read-only execution writes nothing, through a job neither."""
         action = Dispatching(broker)
@@ -73,7 +73,7 @@ class TestDispatchAfterClose:
         assert context_is_clean()
 
     async def test_failed_execution_discards_and_the_next_one_sends_nothing_stale(
-        self, case: LifecycleCase, executor: RuntimeExecutor, broker: Broker, log: Log
+        self, case: LifecycleCase, executor: UseCaseExecutor, broker: Broker, log: Log
     ) -> None:
         action = DispatchThenFail(broker)
         with pytest.raises(RuntimeError, match="after dispatch"):

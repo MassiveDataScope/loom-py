@@ -285,7 +285,7 @@ class InstalledChecks:
         try:
             loaded: CheckSet = self.entry.load()
         except ModuleNotFoundError as exc:
-            missing = MissingDependency.of(exc, self.entry)
+            missing = MissingDependency.from_import_error(exc, self.entry)
             if missing is None:
                 raise
             dist = self.entry.dist

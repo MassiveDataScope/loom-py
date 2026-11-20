@@ -35,9 +35,9 @@
       "resolved": "JobService",
       "scope": "APPLICATION"
     },
-    "ObservabilityRuntime": {
+    "Observability": {
       "provider": "LoomContainer.register_instance.<locals>.<lambda>",
-      "resolved": "ObservabilityRuntime",
+      "resolved": "Observability",
       "scope": "APPLICATION"
     },
     "RepositoryCatalog": {
@@ -55,11 +55,6 @@
       "resolved": "InMemoryRepository",
       "scope": "APPLICATION"
     },
-    "RuntimeExecutor": {
-      "provider": "LoomContainer.register_instance.<locals>.<lambda>",
-      "resolved": "RuntimeExecutor",
-      "scope": "APPLICATION"
-    },
     "SqlQueryService": {
       "provider": "register_sql_collaborators.<locals>.<lambda>",
       "resolved": "NullSqlQueryService",
@@ -68,6 +63,11 @@
     "StoreCatalog": {
       "provider": "LoomContainer.register_instance.<locals>.<lambda>",
       "resolved": "StoreCatalog",
+      "scope": "APPLICATION"
+    },
+    "UseCaseExecutor": {
+      "provider": "LoomContainer.register_instance.<locals>.<lambda>",
+      "resolved": "UseCaseExecutor",
       "scope": "APPLICATION"
     },
     "UseCaseFactory": {

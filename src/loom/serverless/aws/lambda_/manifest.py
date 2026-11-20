@@ -200,7 +200,7 @@ def _http_event(
 ) -> dict[str, Any]:
     """The routes of the function's interfaces, as published, and the authentication it verifies."""
     from loom.rest.compiler import InterfaceCompilationError, published_routes
-    from loom.rest.fastapi.adapter import served_routes
+    from loom.rest.fastapi.runtime import served_routes
 
     served = http_function(project.config, name, functions)
     try:

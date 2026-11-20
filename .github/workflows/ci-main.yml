@@ -53,7 +53,7 @@ jobs:
           set -euo pipefail
           uv run --frozen --group mcp-tests \
             pytest -m "not integration and not slow and not live" \
-            --ignore=tests/unit/etl/backends/test_spark \
+            --ignore=tests/unit/etl/engines/test_spark \
             -n 4 --junitxml=junit-fast.xml -o junit_family=legacy
 
       # A wall-clock budget measured under four workers measures the contention.
@@ -63,7 +63,7 @@ jobs:
           set -euo pipefail
           uv run --frozen --group mcp-tests \
             pytest -m "slow and not integration and not live" \
-            --ignore=tests/unit/etl/backends/test_spark \
+            --ignore=tests/unit/etl/engines/test_spark \
             --junitxml=junit-slow.xml -o junit_family=legacy
 
       - name: Store fast lane results

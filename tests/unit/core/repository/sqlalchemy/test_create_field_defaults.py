@@ -58,7 +58,7 @@ async def repo() -> AsyncIterator[SQLAlchemyRepository[_Asset, int]]:
         model=_Asset,
         cursor_codec=CursorCodec(signing="ephemeral"),
     )
-    await manager.dispose()
+    await manager.close()
 
 
 class TestCreateKeepsFieldDefaults:

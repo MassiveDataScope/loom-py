@@ -11,8 +11,8 @@ from loom.core.bootstrap import BootstrapError, Kernel, create_kernel
 from loom.core.di.container import LoomContainer
 from loom.core.di.scope import Scope
 from loom.core.engine.compiler import UseCaseCompiler
-from loom.core.engine.events import RuntimeEvent
-from loom.core.engine.executor import RuntimeExecutor
+from loom.core.engine.events import ExecutionEvent
+from loom.core.engine.executor import UseCaseExecutor
 from loom.core.environment import ENVIRONMENT_VARIABLE, Environment
 from loom.core.stores.catalog import DEFAULT_STORE
 from loom.core.stores.uow.coordinator import InvocationOutcome, OrderedCommits, ParticipantScope
@@ -61,7 +61,7 @@ def kernel() -> Kernel:
 class TestCreateKernel:
     def test_create_kernel_returns_kernel(self, kernel: Kernel) -> None:
         assert isinstance(kernel, Kernel)
-        assert isinstance(kernel.executor, RuntimeExecutor)
+        assert isinstance(kernel.executor, UseCaseExecutor)
 
     def test_create_kernel_carries_container_compiler_and_factory(self, kernel: Kernel) -> None:
         assert isinstance(kernel.container, LoomContainer)
@@ -114,11 +114,11 @@ class TestCreateKernel:
 
         assert isinstance(built.factory.build(_RepoDepsUseCase), _RepoDepsUseCase)
 
-    def test_create_kernel_reports_compilation_to_the_metrics_adapter(self) -> None:
-        events: list[RuntimeEvent] = []
+    def test_create_kernel_reports_compilation_to_the_metrics_recorder(self) -> None:
+        events: list[ExecutionEvent] = []
 
         class RecordingMetrics:
-            def on_event(self, event: RuntimeEvent) -> None:
+            def on_event(self, event: ExecutionEvent) -> None:
                 events.append(event)
 
         create_kernel(
@@ -128,7 +128,7 @@ class TestCreateKernel:
         assert any(event.use_case_name == "_NoDepsUseCase" for event in events)
 
     def test_create_kernel_registers_executor_in_container(self, kernel: Kernel) -> None:
-        resolved = kernel.container.resolve(RuntimeExecutor)
+        resolved = kernel.container.resolve(UseCaseExecutor)
         assert resolved is kernel.executor
 
     def test_create_kernel_executes_modules_before_validation(self) -> None:

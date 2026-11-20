@@ -2,7 +2,7 @@
 
 Each store is declared under `stores.<name>`: its `backend` names a plugin,
 and the rest of the section is the connection that backend reads. loom
-resolves the backend from the `loom.stores.backends` entry point group
+resolves the backend from the `loom.stores.plugins` entry point group
 at bootstrap, asks it once for everything the host needs, and never imports a
 backend it was not asked for. Four ship with loom — `sqlalchemy`, `dynamodb`,
 `mongo` and `none` — and a package of your own registers a fifth the same way.
@@ -84,17 +84,17 @@ nothing reads them any more. The whole `persistence` section is gone.
 
 A backend is a class with a no-argument constructor, a `name`, a
 `repository_type` and a `build` method:
-`build(ctx, models, runtime) -> StoreWiring`. `repository_type` is the
+`build(ctx, models, context) -> StoreWiring`. `repository_type` is the
 repository class the auto-CRUD gate inspects, and it is known before `build`.
-`None` means the backend serves no repositories. `runtime` is a
-`StoreRuntime`: the `RuntimeProfile` of the entry point building it
+`None` means the backend serves no repositories. `context` is a
+`StorePluginContext`: the `RuntimeProfile` of the entry point building it
 (`server`, `worker`, ...), whose defaults size any connection pool the backend
 opens, an optional pool-metrics sink, `connection_only`, and `catalog`, the
 `StoreCatalog` the composition loaded once, `store`, the key of the store it
 serves, and `cursor_codec`, the application's one cursor codec. The
 composition builds one backend per store: the default one, and each other
 store a model belongs to. The class takes its store from that catalog
-(`runtime.catalog.served_by(self.name, runtime.store)`) and decodes its
+(`context.catalog.served_by(self.name, context.store)`) and decodes its
 section; the host knows nothing about the keys of that section. It reads any
 other section from `ctx`. A backend with no pool ignores the profile.
 `connection_only` is set by an entry point with no model (a worker running
@@ -130,7 +130,7 @@ import msgspec
 from loom.core.config import ConfigContext
 from loom.core.model import BaseModel
 from loom.core.model.introspection import get_id_attribute
-from loom.core.stores import StoreRuntime, StoreWiring
+from loom.core.stores import StorePluginContext, StoreWiring
 from loom.core.stores.repository import RepositoryBuildContext, build_repository_registration_module
 
 from billing_ledger.client import LedgerClient
@@ -147,10 +147,10 @@ class LedgerBackend:
     repository_type: ClassVar[type[Any] | None] = RepositoryLedger
 
     def build(
-        self, ctx: ConfigContext, models: Sequence[type[BaseModel]], runtime: StoreRuntime
+        self, ctx: ConfigContext, models: Sequence[type[BaseModel]], context: StorePluginContext
     ) -> StoreWiring:
         # ConfigError when the store is missing, names another backend or is invalid.
-        store = runtime.catalog.served_by(self.name, runtime.store)
+        store = context.catalog.served_by(self.name, context.store)
         cfg = store.decode(_LedgerConfig)
         client = LedgerClient(cfg.url, cfg.namespace)
         return StoreWiring(
@@ -160,7 +160,7 @@ class LedgerBackend:
                 build_registered_repository=lambda context, registration: _build(client, context),
                 default_repository_type=RepositoryLedger,
                 default_builder=lambda context: _build(client, context),
-                store=runtime.store,
+                store=context.store,
             ),
             lifespan_init=lambda: _lifespan(client),
             prepare_models=_validate_identifiers,
@@ -188,7 +188,7 @@ async def _lifespan(client: LedgerClient) -> AsyncIterator[None]:
 
 ```toml
 # pyproject.toml of the billing_ledger package
-[project.entry-points."loom.stores.backends"]
+[project.entry-points."loom.stores.plugins"]
 ledger = "billing_ledger.backend:LedgerBackend"
 ```
 
@@ -660,7 +660,7 @@ stores:
 - The SNS notifier reads `aws:` from the flow's YAML; the topic's region wins.
 
 loom's own integration tests run these products (the `sqs` job transport and the
-Lambda SQS adapter, the `secrets` and `ssm` resolvers, a `dynamodb` store, the
+Lambda SQS runtime, the `secrets` and `ssm` resolvers, a `dynamodb` store, the
 SNS notifier) against LocalStack, configured only through `aws:`. Without
 `LOOM_AWS_IT_URL` they skip:
 
@@ -921,8 +921,8 @@ class Measurement(BaseModel):
     at startup with `UnservedModelError`, in the API as well as the worker.
   - A `JobService` your `modules` register is kept instead of being replaced;
     the framework-owned keys (`SessionManager`, `SqlQueryService`,
-    `CallerBoundSql`, `ObservabilityRuntime`, `ElevationSink`,
-    `RuntimeExecutor`, `UseCaseRegistry`, `ApplicationInvoker`) are reserved
+    `CallerBoundSql`, `Observability`, `ElevationSink`,
+    `UseCaseExecutor`, `UseCaseRegistry`, `ApplicationInvoker`) are reserved
     and a module that binds one fails startup; see
     [Caller bindings and framework defaults](../getting-started/composition.md#caller-bindings-and-framework-defaults).
 - Every engine's connection follows one standard
@@ -990,7 +990,7 @@ class Measurement(BaseModel):
   connections per process (it allowed thirty); the API keeps five plus five
   and recycles connections every 1800 s. Declare `database.pool` to keep
   other values.
-- `StoreBackend.build` takes a third argument, the `StoreRuntime`.
+- `StorePlugin.build` takes a third argument, the `StorePluginContext`.
 - A worker with a malformed `database` section now fails at startup instead
   of running without its database.
 

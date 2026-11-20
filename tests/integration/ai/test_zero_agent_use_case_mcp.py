@@ -23,7 +23,7 @@ import pytest
 import yaml
 
 from loom.ai.errors import AgentCompilationError, AgentErrorCode
-from loom.core.engine.executor import RuntimeExecutor
+from loom.core.engine.executor import UseCaseExecutor
 from loom.core.plugins import entrypoints as entrypoints_module
 from loom.rest.fastapi.auto import create_app
 from tests.integration.ai._entrypoints import fake_entry_points
@@ -196,15 +196,15 @@ class TestOnlyMcpWithNoAgentArtefacts:
         itself ever reaches it.
         """
         calls: list[Any] = []
-        original = RuntimeExecutor.bind_mcp_resolver
+        original = UseCaseExecutor.bind_mcp_resolver
 
-        def _recording_bind(self: RuntimeExecutor, resolver: Any) -> None:
+        def _recording_bind(self: UseCaseExecutor, resolver: Any) -> None:
             calls.append(resolver)
             original(self, resolver)
 
-        monkeypatch.setattr(RuntimeExecutor, "bind_mcp_resolver", _recording_bind)
+        monkeypatch.setattr(UseCaseExecutor, "bind_mcp_resolver", _recording_bind)
         config_path = _write_project(tmp_path, declares_use_case=True)
 
         create_app(config_path)
 
-        assert calls, "create_app never called RuntimeExecutor.bind_mcp_resolver"
+        assert calls, "create_app never called UseCaseExecutor.bind_mcp_resolver"

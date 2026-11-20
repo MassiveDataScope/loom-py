@@ -10,12 +10,12 @@ import pytest
 from prometheus_client import REGISTRY, CollectorRegistry
 
 from loom.core.engine.events import EventKind as UseCaseEventKind
-from loom.core.engine.events import RuntimeEvent
+from loom.core.engine.events import ExecutionEvent
 from loom.core.observability.event import EventKind, LifecycleEvent, Scope
 from loom.prometheus import (
     KafkaPrometheusMetrics,
-    PrometheusLifecycleAdapter,
-    PrometheusMetricsAdapter,
+    PrometheusLifecycleObserver,
+    PrometheusMetricsRecorder,
     PrometheusMiddleware,
 )
 from loom.prometheus._instruments import cached_instruments, counter_spec, histogram_spec
@@ -67,7 +67,7 @@ def _instrument_contract(registry: CollectorRegistry) -> set[tuple[str, str, str
 class TestMetricContract:
     def test_use_case_adapter_declares_its_instruments(self) -> None:
         registry = CollectorRegistry()
-        PrometheusMetricsAdapter(registry=registry)
+        PrometheusMetricsRecorder(registry=registry)
         assert _instrument_contract(registry) == {
             (
                 "loom_usecase_requests",
@@ -97,7 +97,7 @@ class TestMetricContract:
 
     def test_lifecycle_adapter_declares_its_instruments(self) -> None:
         registry = CollectorRegistry()
-        PrometheusLifecycleAdapter(registry=registry)
+        PrometheusLifecycleObserver(registry=registry)
         assert _instrument_contract(registry) == {
             (
                 "lifecycle_duration_seconds",
@@ -165,9 +165,9 @@ class TestMetricContract:
 class TestDefaultRegistryCache:
     def test_two_use_case_adapters_share_default_instruments(self) -> None:
         use_case = "UseCaseCacheProbe"
-        for adapter in (PrometheusMetricsAdapter(), PrometheusMetricsAdapter()):
+        for adapter in (PrometheusMetricsRecorder(), PrometheusMetricsRecorder()):
             adapter.on_event(
-                RuntimeEvent(
+                ExecutionEvent(
                     kind=UseCaseEventKind.EXEC_DONE,
                     use_case_name=use_case,
                     status="success",
@@ -180,9 +180,9 @@ class TestDefaultRegistryCache:
 
     def test_the_default_registry_passed_explicitly_shares_its_instruments(self) -> None:
         use_case = "UseCaseAliasedRegistryProbe"
-        for adapter in (PrometheusMetricsAdapter(), PrometheusMetricsAdapter(registry=REGISTRY)):
+        for adapter in (PrometheusMetricsRecorder(), PrometheusMetricsRecorder(registry=REGISTRY)):
             adapter.on_event(
-                RuntimeEvent(
+                ExecutionEvent(
                     kind=UseCaseEventKind.EXEC_DONE,
                     use_case_name=use_case,
                     status="success",
@@ -195,7 +195,7 @@ class TestDefaultRegistryCache:
 
     def test_two_lifecycle_adapters_share_default_instruments(self) -> None:
         span = "LifecycleCacheProbe"
-        for adapter in (PrometheusLifecycleAdapter(), PrometheusLifecycleAdapter()):
+        for adapter in (PrometheusLifecycleObserver(), PrometheusLifecycleObserver()):
             adapter.on_event(LifecycleEvent(scope=Scope.USE_CASE, name=span, kind=EventKind.ERROR))
         assert REGISTRY.get_sample_value(
             "lifecycle_errors_total",

@@ -77,7 +77,7 @@ class TestPoolBounds:
             stop.set()
             peak = await monitor
         finally:
-            await manager.dispose()
+            await manager.close()
 
         assert peak <= 3
         assert outcomes.count("held") == 3

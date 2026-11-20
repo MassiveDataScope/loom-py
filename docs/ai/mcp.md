@@ -13,7 +13,7 @@ your application, not in front of it.
                     ┌──────────────────────────┐
    HTTP / A2A  ────► │  your loom application   │
    (authenticated)   │  ┌────────────────────┐  │
-                     │  │    AgentRuntime    │  │
+                     │  │     AgentHost     │  │
                      │  └─────────┬──────────┘  │
                      │            │             │
                      │   usecase / sql grants   │
@@ -98,7 +98,7 @@ makes in `asyncio.timeout(policies.tool_timeout_ms / 1000)` (`capability_call`,
 in `loom/ai/engines/pydantic_ai/_guards.py`), before and after this change,
 raising `TOOL_TIMEOUT` on expiry. This is the table's third row, "Call
 (supervisor)" — the *model-facing* MCP path, contrasted below with the
-marker's own `Mcp()` grant (`loom/ai/runtime/_grants.py`), whose own
+marker's own `Mcp()` grant (`loom/ai/execution/_grants.py`), whose own
 `asyncio.timeout` guard raises the same `TOOL_TIMEOUT` directly to the caller,
 never a refusal value the model reads: a use case invoked outside a run has no
 model to hand the refusal to. With both deadlines at their default of `20000`
@@ -186,7 +186,7 @@ What stdio does not do:
   Lambda](#mcp-on-aws-lambda));
 - **it spawns one process per server, for the whole worker.** Start-up spawns
   it and every agent granted that server speaks to that one child. It dies with
-  the last holder of the connection — normally the runtime, briefly a straggler
+  the last holder of the connection — normally the host, briefly a straggler
   run that outlived it — so none survives the worker. Two entries of
   `ai.mcp_servers` are two children even when they run the same command;
 - **it does not inherit your environment.** The child receives only `HOME`,
@@ -237,7 +237,7 @@ ai:
 | Value | A client that fails to *connect* |
 |---|---|
 | `required` (default) | Aborts start-up, by name, with `MCP_SERVER_UNREACHABLE` — or `A2A_AGENT_UNREACHABLE` for a remote agent. |
-| `optional` | Logged at WARNING and dropped; the runtime starts without it. |
+| `optional` | Logged at WARNING and dropped; the host starts without it. |
 
 The switch is process-wide and covers the remote agents of `ai.a2a_agents` as
 well as the servers of `ai.mcp_servers`. An unknown value fails configuration
@@ -271,7 +271,7 @@ carries its own `init_timeout`, and the group of concurrent connection
 attempts is wrapped in its own deadline — but both are the *same*
 `ai.startup_timeout_ms`. The group's deadline is not armed when the
 connection attempts themselves start; it is computed once, as an absolute
-clock reading (`AgentRuntime._startup_deadline`), at the very top of
+clock reading (`AgentHost._startup_deadline`), at the very top of
 `__aenter__`, before `_verify_sql_readonly`, `_verify_invoker` and
 `_verify_mcp_connections` run — three synchronous checks with no timeout of
 their own — and only then handed to `_open_clients`, which arms
@@ -310,7 +310,7 @@ spent the shared start-up budget, the verification pass is given a fresh
 `startup_timeout_ms` rather than the exhausted one — otherwise one hanging
 server would fail the filters of every server that answered.
 
-**A server that never opened connects on each use.** The runtime does not
+**A server that never opened connects on each use.** The host does not
 reconnect a start-up client that failed; that would need a supervisor task that
 does not exist. The agent path and a `kind: python` factory's `remote()` still
 reach the server through the connection's one session, but that session holds
@@ -335,7 +335,7 @@ rather than per worker.
 
 That recovery belongs to the agent's own `mcp` capability and `remote()`. A
 server reached through an `Mcp()` marker does not recover: its grant is
-resolved once, when the runtime is entered, so a tolerated outage keeps every
+resolved once, when the host is entered, so a tolerated outage keeps every
 marker call failing `TOOL_UNAVAILABLE` ("the server never connected at
 start-up") until the worker restarts. `handle.mcp(server)` does not recover
 either: the agent's grants hold only servers that opened, so it raises
@@ -656,7 +656,7 @@ in-flight response matched to its own request id regardless.
 
 Only the serialised fallback changes this: a session this engine did not
 open falls back to `SharedMcpSession`'s single lock
-(`loom/ai/runtime/_mcp.py`), which shields and drains the call it is
+(`loom/ai/execution/_mcp.py`), which shields and drains the call it is
 currently holding — a caller cancelled by its own deadline still waits out
 that in-flight round trip before the lock is released and its cancellation
 reaches it (`shield_and_drain`, `loom/ai/_concurrency.py`). That drain
@@ -764,7 +764,7 @@ loom does not ask the client whether it is connected before a call. Over
 streamable HTTP the client still reports itself connected after the server has
 restarted, so the answer would not catch a dead connection. Two other things
 are unchanged. A server that never connected at start-up under `optional` is
-not reconnected by the runtime, and is connected on each use (above). The
+not reconnected by the host, and is connected on each use (above). The
 health probe still does not see a server named only by an `Mcp()` marker.
 
 ### An idle gap replaces pooled connections, not the session
@@ -801,7 +801,7 @@ stock transport.
 ## MCP on AWS Lambda
 
 A Lambda function hosts the `ai` section on every trigger: `http`, `jobs`,
-and the event triggers (`eventbridge`, `s3`, `sns`, `schedule`). The agent runtime is opened once, during Init, together with the
+and the event triggers (`eventbridge`, `s3`, `sns`, `schedule`). The agent host is opened once, during Init, together with the
 session of every server the function can reach. The sessions stay open across
 warm invocations and close at shutdown, as on FastAPI. Every rule of [When a
 call fails](#when-a-call-fails) applies unchanged.
@@ -892,7 +892,7 @@ idempotent on the server, or keep it off a queue.
 ### What it costs, and how it is measured (A3)
 
 These request counts are tested on every pull request, against a real
-`LambdaAdapter` function on both triggers and a real streamable-HTTP FastMCP
+`LambdaRuntime` function on both triggers and a real streamable-HTTP FastMCP
 server behind a local TCP proxy
 ([`tests/integration/ai/freeze/test_cost.py`](https://github.com/MassiveDataScope/loom-py/blob/master/tests/integration/ai/freeze/test_cost.py)):
 
@@ -1010,7 +1010,7 @@ address, credential and deadline. Two grants that disagree abort start-up with
 `MCP_CONNECTION_CONFLICT`, naming the server and both agents; `include` and
 `exclude` are per-agent views over the shared connection and never conflict.
 
-**Sessions are lifespan-scoped.** The runtime opens every client inside a
+**Sessions are lifespan-scoped.** The host opens every client inside a
 single `AsyncExitStack` and releases them in strict reverse order from the task
 that entered it. Releasing a session closes every toolset it holds, each in a
 task of its own, and waits for them all; a call still in flight at that moment

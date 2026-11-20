@@ -244,7 +244,7 @@ async def _sqlalchemy_repository() -> AsyncIterator[SQLAlchemyRepository[AcmeCon
             cursor_codec=CursorCodec(signing="ephemeral"),
         )
     finally:
-        await manager.dispose()
+        await manager.close()
 
 
 @asynccontextmanager

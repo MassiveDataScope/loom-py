@@ -16,7 +16,7 @@ import pytest
 
 _BUILT_IN_SINKS = textwrap.dedent("""
     from loom.core.model import LoomStruct
-    from loom.streaming import Backend, FromTopic, IntoTable, IntoTopic, Process, StreamFlow
+    from loom.streaming import FromTopic, IntoTable, IntoTopic, Process, StreamFlow, TableEngine
 
     class Ev(LoomStruct):
         id: str
@@ -24,7 +24,7 @@ _BUILT_IN_SINKS = textwrap.dedent("""
     table: StreamFlow[Ev, Ev] = StreamFlow(
         name="t",
         source=FromTopic("in", payload=Ev),
-        process=Process(IntoTable(payload=Ev, table="t", backend=Backend.CLICKHOUSE, name="s")),
+        process=Process(IntoTable(payload=Ev, table="t", engine=TableEngine.CLICKHOUSE, name="s")),
     )
     topic: StreamFlow[Ev, Ev] = StreamFlow(
         name="k",

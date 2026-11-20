@@ -23,9 +23,9 @@ from loom.core.config import ConfigContext
 from loom.core.config.errors import ConfigError
 from loom.core.identity import Identity
 from loom.core.model import BaseModel
-from loom.core.stores import NoneBackend, StoreWiring
+from loom.core.stores import NullStorePlugin, StoreWiring
 from loom.core.stores.catalog import NO_CAPABILITIES, StoreCapabilities, StoreSpec
-from loom.core.stores.profile import StoreRuntime
+from loom.core.stores.profile import StorePluginContext
 from loom.rest.auth import RequestCredentials
 from loom.rest.compiler import InterfaceCompilationError
 from loom.rest.fastapi import health as health_module
@@ -79,9 +79,9 @@ class _ProbedBackend:
         return NO_CAPABILITIES
 
     def build(
-        self, ctx: ConfigContext, models: Sequence[type[BaseModel]], runtime: StoreRuntime
+        self, ctx: ConfigContext, models: Sequence[type[BaseModel]], context: StorePluginContext
     ) -> StoreWiring:
-        wiring = NoneBackend().build(ctx, models, runtime)
+        wiring = NullStorePlugin().build(ctx, models, context)
         readiness = None if self.ready is None else self._probe
         return StoreWiring(
             uow_factory=wiring.uow_factory,
@@ -97,7 +97,7 @@ class _ProbedBackend:
 
 class _ProbedEntryPoint:
     name = _ProbedBackend.name
-    group = "loom.stores.backends"
+    group = "loom.stores.plugins"
 
     def load(self) -> type[_ProbedBackend]:
         return _ProbedBackend

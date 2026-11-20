@@ -6,7 +6,7 @@ configs plus a minimal discoverable app package, mirroring the structure used by
 connection: the ClickHouse registry is only entered during the app lifespan,
 which these tests never start.
 
-The last test drives :func:`loom.rest.fastapi.sql.bind_sql_endpoints` directly:
+The last test drives :func:`loom.rest.fastapi.sql.mount_sql_endpoints` directly:
 the same invariant must hold for a hand-written composition root, where no YAML
 gate ever runs.
 """
@@ -28,7 +28,7 @@ from loom.core.stores.sql.config import SqlConfig, SqlConnectionConfig, SqlEndpo
 from loom.core.stores.sql.service import NullSqlQueryService
 from loom.rest.auth import AuthenticationMiddleware, RequestCredentials
 from loom.rest.fastapi.auto import create_app
-from loom.rest.fastapi.sql import bind_sql_endpoints
+from loom.rest.fastapi.sql import mount_sql_endpoints
 from tests.unit.rest.doubles import route_paths
 
 _SECRET_PATH = str(Path(tempfile.mkdtemp()) / "hs.key")
@@ -377,4 +377,4 @@ class TestBinderRefusesAMultiRoleEndpointWithoutIdentity:
         service = NullSqlQueryService()
 
         with pytest.raises(ConfigError, match="binds them to the caller identity"):
-            bind_sql_endpoints(app, service=service, config=config)
+            mount_sql_endpoints(app, service=service, config=config)

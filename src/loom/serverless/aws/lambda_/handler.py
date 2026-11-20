@@ -58,7 +58,7 @@ from loom.serverless.aws.lambda_.triggers.sqs import QueueSource, SQSBatch
 if TYPE_CHECKING:
     from loom.composition import Application, Project
     from loom.core.engine.compilable import Compilable
-    from loom.core.engine.metrics import MetricsAdapter
+    from loom.core.engine.metrics import MetricsRecorder
     from loom.core.job.job import Job
     from loom.rest.auth import Authenticator
 
@@ -73,7 +73,7 @@ _VIA_SQS: Final[Mapping[str, Decoder]] = {**_DIRECT, "sns": sns.decode_message}
 
 
 class LambdaHandler(Protocol):
-    """The Lambda function handler :meth:`LambdaAdapter.bind` returns, owning its application."""
+    """The Lambda function handler :meth:`LambdaRuntime.mount` returns, owning its application."""
 
     def __call__(self, event: dict[str, Any], context: Any) -> Any:
         """Answer one invocation."""
@@ -87,14 +87,14 @@ class LambdaHandler(Protocol):
 _Bind = Callable[["Application"], LambdaHandler]
 
 
-class LambdaAdapter:
+class LambdaRuntime:
     """Serve a composed application from AWS Lambda, as the deployed function's trigger asks.
 
-    Swapping ``FastAPIAdapter()`` for ``LambdaAdapter()`` in ``create_app``
+    Swapping ``FastAPIRuntime()`` for ``LambdaRuntime()`` in ``create_app``
     serves the same routes, authentication and error bodies to API Gateway
     HTTP API (payload 2.0); without a declared function, every interface.
 
-    Unlike other adapters, :meth:`bind` opens the application: Lambda calls
+    Unlike other adapters, :meth:`mount` opens the application: Lambda calls
     ``create_app`` at Init, and the handler returned keeps it open across warm
     invocations. A failure to open propagates, so Init fails.
 
@@ -118,7 +118,7 @@ class LambdaAdapter:
         authenticator: Authenticator | None = None,
         jobs: Sequence[type[Job[Any]]] = (),
         use_cases: Sequence[type[Compilable]] = (),
-        metrics: MetricsAdapter | None = None,
+        metrics: MetricsRecorder | None = None,
     ) -> None:
         self._function = function
         self._authenticator = authenticator
@@ -142,7 +142,7 @@ class LambdaAdapter:
         """
         if self._bind is not None:
             raise CompositionStateError(
-                CompositionErrorCode.ADAPTER_ALREADY_COMPOSED.issue(component=COMPONENT)
+                CompositionErrorCode.RUNTIME_ALREADY_COMPOSED.issue(component=COMPONENT)
             )
         refuse_unserved_config(project)
         name, trigger = served_trigger(project.config, self._function, project.app.entry)
@@ -153,7 +153,7 @@ class LambdaAdapter:
             recipe, self._bind = self._compose_jobs(project, name, trigger)
         return recipe
 
-    def bind(self, application: Application) -> LambdaHandler:
+    def mount(self, application: Application) -> LambdaHandler:
         """Open *application* once, at Init, and return the warm invocation handler.
 
         Raises:
@@ -165,11 +165,11 @@ class LambdaAdapter:
         """
         if self._bind is None:
             raise CompositionStateError(
-                CompositionErrorCode.ADAPTER_RECIPE_MISSING.issue(component=COMPONENT)
+                CompositionErrorCode.RUNTIME_RECIPE_MISSING.issue(component=COMPONENT)
             )
         if self._handler is not None:
             raise CompositionStateError(
-                CompositionErrorCode.ADAPTER_ALREADY_COMPOSED.issue(component=COMPONENT)
+                CompositionErrorCode.RUNTIME_ALREADY_COMPOSED.issue(component=COMPONENT)
             )
         check_resolved_ai(application.ai.config)
         self._handler = self._bind(application)
@@ -209,9 +209,11 @@ def _bind_jobs(
 ) -> LambdaHandler:
     """The SQS batch handler of a ``jobs`` function: a final failure is abandoned."""
     served = [
-        job for job in declared.values() if application.job_settings.of(job).queue == queue_name
+        job
+        for job in declared.values()
+        if application.job_settings.options_for(job).queue == queue_name
     ]
-    consumer = QueueConsumer.bind(application, queue_name, served)
+    consumer = QueueConsumer.from_application(application, queue_name, served)
     return SQSBatch(application, declared, open_host(application), consumer)
 
 
@@ -223,7 +225,7 @@ def _bind_queued_events(
 ) -> LambdaHandler:
     """The SQS batch handler of a queued event trigger: a final failure is abandoned."""
     assert trigger.queue is not None
-    consumer = QueueConsumer.bind(application, trigger.queue.name, [job_type])
+    consumer = QueueConsumer.from_application(application, trigger.queue.name, [job_type])
     reader = _event_reader(name, trigger, _VIA_SQS, trusts_requester=False)
     source = QueueSource(
         read=lambda body: reader(parsed(body, "the SQS message body")),

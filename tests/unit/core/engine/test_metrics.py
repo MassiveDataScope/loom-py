@@ -7,9 +7,9 @@ import pytest
 
 from loom.core.command import Command
 from loom.core.engine.compiler import UseCaseCompiler
-from loom.core.engine.events import EventKind, RuntimeEvent
-from loom.core.engine.executor import RuntimeExecutor
-from loom.core.errors import NotFound, PostCommitError, RuleViolation, RuleViolations
+from loom.core.engine.events import EventKind, ExecutionEvent
+from loom.core.engine.executor import UseCaseExecutor
+from loom.core.errors import NotFound, PostCommitError, RuleViolationError, RuleViolationsError
 from loom.core.use_case.markers import Input, LoadById
 from loom.core.use_case.use_case import UseCase
 
@@ -27,18 +27,18 @@ class Entity:
 
 
 class _RecordingAdapter:
-    """In-memory MetricsAdapter for test assertions."""
+    """In-memory MetricsRecorder for test assertions."""
 
     def __init__(self) -> None:
-        self.events: list[RuntimeEvent] = []
+        self.events: list[ExecutionEvent] = []
 
-    def on_event(self, event: RuntimeEvent) -> None:
+    def on_event(self, event: ExecutionEvent) -> None:
         self.events.append(event)
 
     def kinds(self) -> list[EventKind]:
         return [e.kind for e in self.events]
 
-    def by_kind(self, kind: EventKind) -> list[RuntimeEvent]:
+    def by_kind(self, kind: EventKind) -> list[ExecutionEvent]:
         return [e for e in self.events if e.kind == kind]
 
 
@@ -60,7 +60,7 @@ class _FailingAfterCommitUseCase(UseCase[Any, str]):
 def _always_bad(
     command: Command, fields_set: frozenset[str], context: dict[str, object] | None = None
 ) -> None:
-    raise RuleViolation("value", "bad")
+    raise RuleViolationError("value", "bad")
 
 
 class _RuleFailUseCase(UseCase[Any, str]):
@@ -86,19 +86,19 @@ def _make_compiler(adapter: _RecordingAdapter | None = None) -> UseCaseCompiler:
 def _make_executor(
     compiler: UseCaseCompiler,
     adapter: _RecordingAdapter | None = None,
-) -> RuntimeExecutor:
-    return RuntimeExecutor(compiler, metrics=adapter)
+) -> UseCaseExecutor:
+    return UseCaseExecutor(compiler, metrics=adapter)
 
 
 # ---------------------------------------------------------------------------
-# MetricsAdapter protocol
+# MetricsRecorder protocol
 # ---------------------------------------------------------------------------
 
 
-class TestMetricsAdapterProtocol:
-    def test_recording_adapter_satisfies_protocol(self) -> None:
+class TestMetricsRecorderProtocol:
+    def test_a_recording_double_satisfies_the_protocol(self) -> None:
         adapter = _RecordingAdapter()
-        event = RuntimeEvent(kind=EventKind.EXEC_DONE, use_case_name="X")
+        event = ExecutionEvent(kind=EventKind.EXEC_DONE, use_case_name="X")
         # duck-typing — no TypeError expected
         adapter.on_event(event)
         assert len(adapter.events) == 1
@@ -277,7 +277,7 @@ class TestExecutorEventsRuleFailure:
         adapter = _RecordingAdapter()
         executor = _make_executor(_make_compiler(), adapter)
         use_case = _RuleFailUseCase()
-        with pytest.raises(RuleViolations):
+        with pytest.raises(RuleViolationsError):
             await executor.execute(use_case, payload={"value": "x"})
         assert adapter.kinds() == [EventKind.EXEC_START, EventKind.EXEC_ERROR]
 
@@ -285,7 +285,7 @@ class TestExecutorEventsRuleFailure:
         adapter = _RecordingAdapter()
         executor = _make_executor(_make_compiler(), adapter)
         use_case = _RuleFailUseCase()
-        with pytest.raises(RuleViolations):
+        with pytest.raises(RuleViolationsError):
             await executor.execute(use_case, payload={"value": "x"})
         err = adapter.by_kind(EventKind.EXEC_ERROR)[0]
         assert err.status == "rule_failure"
@@ -294,10 +294,10 @@ class TestExecutorEventsRuleFailure:
         adapter = _RecordingAdapter()
         executor = _make_executor(_make_compiler(), adapter)
         use_case = _RuleFailUseCase()
-        with pytest.raises(RuleViolations):
+        with pytest.raises(RuleViolationsError):
             await executor.execute(use_case, payload={"value": "x"})
         err = adapter.by_kind(EventKind.EXEC_ERROR)[0]
-        assert isinstance(err.error, RuleViolations)
+        assert isinstance(err.error, RuleViolationsError)
 
 
 # ---------------------------------------------------------------------------
@@ -361,7 +361,7 @@ class TestStructuredLogs:
     async def test_done_has_usecase_field(self) -> None:
         log = _RecordingLogger()
         compiler = UseCaseCompiler(logger=log)
-        executor = RuntimeExecutor(compiler, logger=log)
+        executor = UseCaseExecutor(compiler, logger=log)
         await executor.execute(_SimpleUseCase(), payload={"value": "x"})
         fields = log.fields_for("[DONE]")
         assert fields.get("usecase") == "_SimpleUseCase"
@@ -369,7 +369,7 @@ class TestStructuredLogs:
     async def test_done_has_duration_ms_and_status(self) -> None:
         log = _RecordingLogger()
         compiler = UseCaseCompiler(logger=log)
-        executor = RuntimeExecutor(compiler, logger=log)
+        executor = UseCaseExecutor(compiler, logger=log)
         await executor.execute(_SimpleUseCase(), payload={"value": "x"})
         fields = log.fields_for("[DONE]")
         assert "duration_ms" in fields
@@ -378,7 +378,7 @@ class TestStructuredLogs:
     async def test_fail_log_has_status_failure(self) -> None:
         log = _RecordingLogger()
         compiler = UseCaseCompiler(logger=log)
-        executor = RuntimeExecutor(compiler, logger=log)
+        executor = UseCaseExecutor(compiler, logger=log)
         use_case = _FailingUseCase()
         with pytest.raises(RuntimeError):
             await executor.execute(use_case, payload={"value": "x"})
@@ -387,7 +387,7 @@ class TestStructuredLogs:
 
     async def test_fail_log_says_whether_a_post_commit_failure_committed(self) -> None:
         log = _RecordingLogger()
-        executor = RuntimeExecutor(UseCaseCompiler(logger=log), logger=log)
+        executor = UseCaseExecutor(UseCaseCompiler(logger=log), logger=log)
         use_case = _FailingAfterCommitUseCase()
         with pytest.raises(PostCommitError):
             await executor.execute(use_case, payload={"value": "x"})

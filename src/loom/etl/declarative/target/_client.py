@@ -16,7 +16,7 @@ class ClientSpec:
 
     Produced by :meth:`IntoClient._to_spec`. Consumed by
     :class:`~loom.etl.executor.ETLExecutor` to route execution to
-    :class:`~loom.etl.runtime.contracts.ClientCommandExecutor` instead of
+    :class:`~loom.etl.ports.contracts.ClientCommandExecutor` instead of
     the normal read → execute → write path.
 
     Never constructed directly in user code.

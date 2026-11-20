@@ -122,7 +122,7 @@ def evaluate(
         The decision, carrying the grant that allowed it.
 
     Raises:
-        UnknownPermission: When *permission* is not declared in the catalog.
+        UnknownPermissionError: When *permission* is not declared in the catalog.
         TypeError: When *now* is not a datetime.
         ValueError: When *now* is naive, or is ``None`` while some grant
             carries an expiry.
@@ -165,7 +165,7 @@ def scopes_with(
         The minimal set of scopes covering everything the subject may reach.
 
     Raises:
-        UnknownPermission: When *permission* is not declared in the catalog.
+        UnknownPermissionError: When *permission* is not declared in the catalog.
         TypeError: When *now* is not a datetime.
         ValueError: When *now* is naive, or is ``None`` while some grant
             carries an expiry.
@@ -220,8 +220,8 @@ def can_grant(
         The check, listing the permissions the granter lacks there.
 
     Raises:
-        UnknownRole: When *role* is not declared in the catalog.
-        UnknownPermission: When *delegate* is not declared in the catalog.
+        UnknownRoleError: When *role* is not declared in the catalog.
+        UnknownPermissionError: When *delegate* is not declared in the catalog.
         TypeError: When *now* is not a datetime.
         ValueError: When *now* is naive, or is ``None`` while some of the
             granter's grants carry an expiry.
@@ -257,7 +257,7 @@ def can_revoke(
         The check, listing the permissions the granter lacks there.
 
     Raises:
-        UnknownPermission: When *delegate* is not declared in the catalog.
+        UnknownPermissionError: When *delegate* is not declared in the catalog.
         TypeError: When *now* is not a datetime.
         ValueError: When *now* is naive, or is ``None`` while some of the
             granter's grants carry an expiry.

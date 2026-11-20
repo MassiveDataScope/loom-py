@@ -83,7 +83,7 @@ _KIND_CHANGES: dict[str, Callable[[ExecutionKinds], None]] = {
     "declare_type": lambda kinds: kinds.declare_type(_AcmeMarker, _ACME),
     "declare_origin": lambda kinds: kinds.declare_origin(list, _ACME),
     "refuse": lambda kinds: kinds.refuse(_AcmeMarker, "acme declares an input"),
-    "bind": lambda kinds: kinds.bind(_ACME, _AcmeResolver()),
+    "register": lambda kinds: kinds.register(_ACME, _AcmeResolver()),
 }
 
 
@@ -113,12 +113,12 @@ class TestSealedKinds:
         resolver = _AcmeResolver()
 
         with pytest.raises(ContainerSealed):
-            sealed.kinds.bind(_ACME, resolver)
+            sealed.kinds.register(_ACME, resolver)
 
     def test_a_declaration_made_before_seal_still_resolves(self) -> None:
         container = LoomContainer()
         container.kinds.declare_type(_AcmeMarker, _ACME)
-        container.kinds.bind(_ACME, _AcmeResolver())
+        container.kinds.register(_ACME, _AcmeResolver())
         container.seal()
 
         marker = _AcmeMarker()

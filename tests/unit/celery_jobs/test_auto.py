@@ -44,7 +44,7 @@ class TestCreateApp:
 
         assert wire_job_name(AutoJob.__qualname__) in app.tasks
 
-    def test_the_application_runs_a_job_and_reports_it_to_the_metrics_adapter(
+    def test_the_application_runs_a_job_and_reports_it_to_the_metrics_recorder(
         self, config_path: str
     ) -> None:
         metrics = RecordingMetrics()

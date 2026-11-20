@@ -110,7 +110,7 @@ class DeltaTableMaintainer(Protocol):
     Implementations receive the full :class:`~loom.etl.storage._locator.TableLocation`
     so they can propagate ``storage_options``, ``writer_properties``, and
     ``commit_properties`` to every delta-rs call — matching the behaviour of
-    :class:`~loom.etl.backends.polars.PolarsTargetWriter`.
+    :class:`~loom.etl.engines.polars.PolarsTargetWriter`.
     """
 
     def vacuum(

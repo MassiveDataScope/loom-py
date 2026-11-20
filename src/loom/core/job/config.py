@@ -258,7 +258,7 @@ class JobSettings:
                 raise ConfigError(f"{section}.retry: {exc}") from exc
         return cls(resolved)
 
-    def of(self, job_type: type[Job[Any]]) -> JobOptions:
+    def options_for(self, job_type: type[Job[Any]]) -> JobOptions:
         """The options of *job_type* in this application.
 
         Raises:
@@ -270,7 +270,9 @@ class JobSettings:
 
     def with_retries(self, retries: Mapping[type[Job[Any]], ResolvedRetry]) -> JobSettings:
         """These settings with the retry policy of each job in *retries* replaced."""
-        replaced = {job: replace(self.of(job), retry=retry) for job, retry in retries.items()}
+        replaced = {
+            job: replace(self.options_for(job), retry=retry) for job, retry in retries.items()
+        }
         return replace(self, jobs={**self.jobs, **replaced})
 
     def describe_retries(
@@ -283,6 +285,9 @@ class JobSettings:
             jobs: The jobs the runner serves.
         """
         return [
-            {"job": job_type.__qualname__, "retry": self.of(job_type).retry.describe(redelivery)}
+            {
+                "job": job_type.__qualname__,
+                "retry": self.options_for(job_type).retry.describe(redelivery),
+            }
             for job_type in jobs
         ]

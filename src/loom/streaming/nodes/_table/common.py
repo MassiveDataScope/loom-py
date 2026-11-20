@@ -6,15 +6,15 @@ registration or inheritance.
 
 Supported backends
 ------------------
-- ``Backend.SQLALCHEMY``: bulk-inserts rows using SQLAlchemy async sessions.
+- ``TableEngine.SQLALCHEMY``: bulk-inserts rows using SQLAlchemy async sessions.
   Requires an async bridge and a shared SQLAlchemy session manager from the
   Bytewax runtime.
   Install: ``pip install sqlalchemy``.
-- ``Backend.DELTA``: stages rows as a PyArrow IPC stream in a spooled
+- ``TableEngine.DELTA``: stages rows as a PyArrow IPC stream in a spooled
   temporary file and appends it to Delta via delta-rs.
   Requires a ``uri`` key in the resolved config section.
   Install: ``pip install deltalake polars``.
-- ``Backend.CLICKHOUSE``: bulk-inserts rows via ``clickhouse-connect``.
+- ``TableEngine.CLICKHOUSE``: bulk-inserts rows via ``clickhouse-connect``.
   Requires a ``store`` reference to a ``stores.<name>`` section with
   ``backend: clickhouse``: a connection-only store holding the ClickHouse
   connection (``url``, optional credentials and timeouts).
@@ -124,7 +124,7 @@ _DEFAULT_BUFFER_MAX_AGE_S = 60.0
 _DEFAULT_FLUSH_ON_SHUTDOWN = True
 
 
-class Backend(StrEnum):
+class TableEngine(StrEnum):
     """Storage backend used by :class:`IntoTable` to write epoch batches.
 
     Args:
@@ -179,7 +179,7 @@ class IntoTable(Generic[EventT]):
         payload: Concrete event type written by this sink.
         table:   Target table name.  May be overridden by the resolved config
                  section or left empty when the config supplies it.
-        backend: Storage backend.  Defaults to :attr:`Backend.SQLALCHEMY`.
+        engine: Table engine.  Defaults to :attr:`TableEngine.SQLALCHEMY`.
         name:    Config section key (``streaming.sinks.<name>``).  Required
                  when the sink is resolved from ``ConfigContext``.
         router_branch_safe: Always ``True`` — IntoTable may appear inside
@@ -208,7 +208,7 @@ class IntoTable(Generic[EventT]):
 
     payload: type[EventT]
     table: str = ""
-    backend: Backend = Backend.SQLALCHEMY
+    engine: TableEngine = TableEngine.SQLALCHEMY
     name: str = ""
     router_branch_safe: ClassVar[bool] = True
 
@@ -241,16 +241,16 @@ class IntoTable(Generic[EventT]):
                 payload type has no fields.
         """
         del worker_index, worker_count
-        if self.backend is Backend.SQLALCHEMY:
+        if self.engine is TableEngine.SQLALCHEMY:
             if not isinstance(config, SqlAlchemySinkConfig):
-                raise TypeError("IntoTable backend=sqlalchemy requires a SqlAlchemySinkConfig.")
+                raise TypeError("IntoTable engine=sqlalchemy requires a SqlAlchemySinkConfig.")
             if bridge is None:
                 raise RuntimeError(
-                    "IntoTable backend=sqlalchemy requires an AsyncBridge from the Bytewax runtime."
+                    "IntoTable engine=sqlalchemy requires an AsyncBridge from the Bytewax runtime."
                 )
             if session_manager is None:
                 raise RuntimeError(
-                    "IntoTable backend=sqlalchemy requires a shared "
+                    "IntoTable engine=sqlalchemy requires a shared "
                     "SessionManager from the Bytewax runtime."
                 )
             sqlalchemy = cast(
@@ -266,12 +266,12 @@ class IntoTable(Generic[EventT]):
                     logger=logger,
                 ),
             )
-        if self.backend is Backend.DELTA:
+        if self.engine is TableEngine.DELTA:
             if not isinstance(config, DeltaSinkConfig):
-                raise TypeError("IntoTable backend=delta requires a DeltaSinkConfig.")
+                raise TypeError("IntoTable engine=delta requires a DeltaSinkConfig.")
             if not _column_names(self.payload):
                 raise ValueError(
-                    f"IntoTable backend=delta requires a payload type with fields; "
+                    f"IntoTable engine=delta requires a payload type with fields; "
                     f"{self.payload.__name__} has none, so it has no row to write."
                 )
             delta = cast(
@@ -281,9 +281,9 @@ class IntoTable(Generic[EventT]):
                 SinkPartition[EventT],
                 delta._DeltaTablePartition(config, self.payload, logger=logger),
             )
-        if self.backend is Backend.CLICKHOUSE:
+        if self.engine is TableEngine.CLICKHOUSE:
             if not isinstance(config, ClickHouseSinkConfig):
-                raise TypeError("IntoTable backend=clickhouse requires a ClickHouseSinkConfig.")
+                raise TypeError("IntoTable engine=clickhouse requires a ClickHouseSinkConfig.")
             clickhouse = cast(
                 Any, import_optional("loom.streaming.nodes._table._clickhouse", extra="clickhouse")
             )
@@ -291,7 +291,7 @@ class IntoTable(Generic[EventT]):
                 SinkPartition[EventT],
                 clickhouse._ClickHouseTablePartition(config, self.payload, logger=logger),
             )
-        raise ValueError(f"Unsupported backend: {self.backend!r}")
+        raise ValueError(f"Unsupported table engine: {self.engine!r}")
 
 
 def _optional_int(value: Any, default: int) -> int:
@@ -560,7 +560,7 @@ def _set_column_values(item: Any, column_names: Sequence[str], target: str) -> l
     """Return the column values of *item*'s attributes named by *column_names*, in that order.
 
     Each value is converted by :func:`~loom.core.model.convert.to_column_value`,
-    as ``Backend.SQLALCHEMY`` converts it: an ``Enum`` becomes its value and a
+    as ``TableEngine.SQLALCHEMY`` converts it: an ``Enum`` becomes its value and a
     struct a dict, while ``bytes``, ``datetime``, ``date``, ``time``,
     ``Decimal`` and ``UUID`` are kept.
 
@@ -601,7 +601,7 @@ def _validate_delta_mode(value: object) -> Literal["error", "append", "ignore"]:
 
 __all__ = [
     "SQLALCHEMY_INLINE_DATABASE_KEYS",
-    "Backend",
+    "TableEngine",
     "ClickHouseSinkConfig",
     "DeltaSinkConfig",
     "IntoTable",

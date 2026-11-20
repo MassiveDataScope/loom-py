@@ -13,17 +13,17 @@ from loom.composition import AppConfig
 from loom.core.command import Command
 from loom.core.config import ConfigContext, ConfigError
 from loom.core.engine.events import EventKind as RuntimeEventKind
-from loom.core.engine.events import RuntimeEvent
+from loom.core.engine.events import ExecutionEvent
 from loom.core.errors import BoundaryValidationError, LoomError, MalformedJobMessage
 from loom.core.identity import Identity, current_identity
 from loom.core.job.job import Job
 from loom.core.job.outcome import JobPostponement
 from loom.core.observability.event import EventKind, LifecycleEvent, Scope
-from loom.core.observability.runtime import ObservabilityRuntime
+from loom.core.observability.observability import Observability
 from loom.core.use_case import Input
 from loom.jobs.aws.queue import ABANDONMENT_REASON_ATTRIBUTE
 from loom.rest.auth import RequestCredentials
-from loom.serverless.aws.lambda_ import LambdaAdapter, S3Object
+from loom.serverless.aws.lambda_ import LambdaRuntime, S3Object
 from loom.serverless.aws.lambda_.triggers import eventbridge, s3, schedule, sns
 from loom.testing import LambdaEvent
 from loom.testing.serverless import QueueableEvent
@@ -82,7 +82,7 @@ class _Metrics:
     def __init__(self) -> None:
         self.kinds: list[RuntimeEventKind] = []
 
-    def on_event(self, event: RuntimeEvent) -> None:
+    def on_event(self, event: ExecutionEvent) -> None:
         if event.kind.name.startswith("JOB_"):
             self.kinds.append(event.kind)
 
@@ -114,7 +114,7 @@ def sqs() -> FakeSqs:
 @pytest.fixture
 def serve(tmp_path: Path, island: FakeAwsIsland) -> Iterator[Serve]:
     """Compose the function *name* of the given *trigger* and bind its handler."""
-    adapters: list[LambdaAdapter] = []
+    adapters: list[LambdaRuntime] = []
 
     def compose(
         trigger: dict[str, Any],
@@ -136,12 +136,12 @@ def serve(tmp_path: Path, island: FakeAwsIsland) -> Iterator[Serve]:
             code_path=tmp_path,
             config_root=tmp_path,
         )
-        adapter = LambdaAdapter(jobs=[ImportInvoice, ImportObject], **options)
+        adapter = LambdaRuntime(jobs=[ImportInvoice, ImportObject], **options)
         application = project.compose(adapter)
         if observer is not None:
-            application.observability = ObservabilityRuntime([observer])
+            application.observability = Observability([observer])
         adapters.append(adapter)
-        return adapter.bind(application)
+        return adapter.mount(application)
 
     yield compose
     for adapter in adapters:

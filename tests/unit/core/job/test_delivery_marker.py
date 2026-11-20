@@ -7,8 +7,8 @@ import pytest
 
 from loom.core.di.container import LoomContainer
 from loom.core.engine.compiler import CompilationError, UseCaseCompiler
-from loom.core.engine.events import EventKind, RuntimeEvent, Status
-from loom.core.engine.executor import RuntimeExecutor
+from loom.core.engine.events import EventKind, ExecutionEvent, Status
+from loom.core.engine.executor import UseCaseExecutor
 from loom.core.job.delivery import JobDelivery
 from loom.core.job.job import Job
 from loom.core.job.outcome import JobAbandonment, JobPostponement
@@ -22,9 +22,9 @@ from tests.helpers.jobs import InlineServiceFixture
 
 class Metrics:
     def __init__(self) -> None:
-        self.events: list[RuntimeEvent] = []
+        self.events: list[ExecutionEvent] = []
 
-    def on_event(self, event: RuntimeEvent) -> None:
+    def on_event(self, event: ExecutionEvent) -> None:
         self.events.append(event)
 
 
@@ -75,13 +75,13 @@ def factory() -> UseCaseFactory:
 
 
 @pytest.fixture
-def executor(metrics: Metrics) -> RuntimeExecutor:
-    return RuntimeExecutor(UseCaseCompiler(), metrics=metrics)
+def executor(metrics: Metrics) -> UseCaseExecutor:
+    return UseCaseExecutor(UseCaseCompiler(), metrics=metrics)
 
 
 class TestDeliveryMarker:
     async def test_a_job_receives_the_delivery_it_was_run_with(
-        self, factory: UseCaseFactory, executor: RuntimeExecutor
+        self, factory: UseCaseFactory, executor: UseCaseExecutor
     ) -> None:
         InnerJob.seen.clear()
         delivery = JobTestData().with_job_type(InnerJob).delivery(attempt=2, postponements=1)
@@ -89,14 +89,14 @@ class TestDeliveryMarker:
         assert InnerJob.seen == [delivery]
 
     async def test_a_job_run_without_a_delivery_receives_none(
-        self, factory: UseCaseFactory, executor: RuntimeExecutor
+        self, factory: UseCaseFactory, executor: UseCaseExecutor
     ) -> None:
         InnerJob.seen.clear()
         await executor.run(InnerJob, factory=factory)
         assert InnerJob.seen == [None]
 
     async def test_a_job_run_by_another_job_does_not_see_the_delivery_of_its_caller(
-        self, factory: UseCaseFactory, executor: RuntimeExecutor
+        self, factory: UseCaseFactory, executor: UseCaseExecutor
     ) -> None:
         InnerJob.seen.clear()
         OuterJob.seen.clear()
@@ -122,7 +122,7 @@ class TestJobSignalReporting:
     async def test_a_signal_is_not_logged_as_a_failure_nor_reported_as_one(
         self,
         factory: UseCaseFactory,
-        executor: RuntimeExecutor,
+        executor: UseCaseExecutor,
         metrics: Metrics,
         caplog: pytest.LogCaptureFixture,
         job_type: type[Job[Any]],

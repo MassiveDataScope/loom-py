@@ -32,7 +32,7 @@ import msgspec
 from celery import Celery  # type: ignore[import-untyped]
 
 from loom.celery.constants import callback_task_name
-from loom.core.engine.events import EventKind, RuntimeEvent
+from loom.core.engine.events import EventKind, ExecutionEvent
 from loom.core.engine.metrics import NoMetrics
 from loom.core.job.callback import CallbackOutcome
 from loom.core.job.context import add_pending_publish
@@ -40,10 +40,10 @@ from loom.core.job.dispatch import JobDispatch
 from loom.core.job.handle import JobHandle
 from loom.core.logger import get_logger
 from loom.core.observability.event import Scope
-from loom.core.observability.runtime import ObservabilityRuntime
+from loom.core.observability.observability import Observability
 
 if TYPE_CHECKING:
-    from loom.core.engine.metrics import MetricsAdapter
+    from loom.core.engine.metrics import MetricsRecorder
     from loom.core.job.callback import JobCallback
 
 ResultT = TypeVar("ResultT")
@@ -67,11 +67,11 @@ class _PendingCeleryDispatch:
     soft_time_limit: int | None
     link: Any | None
     failure_callback: str | None
-    observability_runtime: ObservabilityRuntime
+    observability: Observability
 
     def __call__(self) -> None:
         """Invoke ``send_task`` synchronously. Called by flush."""
-        with self.observability_runtime.span(
+        with self.observability.span(
             Scope.TRANSPORT,
             self.task_name,
             trace_id=self.trace_id,
@@ -157,18 +157,18 @@ class CeleryJobTransport:
     Args:
         celery_app: Broker application owned by this transport.
         metrics: Receives dispatch events.
-        observability_runtime: Traces each broker send.
+        observability: Traces each broker send.
     """
 
     def __init__(
         self,
         celery_app: Celery,
-        metrics: MetricsAdapter | None = None,
-        observability_runtime: ObservabilityRuntime | None = None,
+        metrics: MetricsRecorder | None = None,
+        observability: Observability | None = None,
     ) -> None:
         self._app = celery_app
         self._metrics = NoMetrics() if metrics is None else metrics
-        self._observability_runtime = observability_runtime or ObservabilityRuntime.noop()
+        self._observability = observability or Observability.noop()
 
     def close(self) -> None:
         """Close this transport's Celery application."""
@@ -222,10 +222,10 @@ class CeleryJobTransport:
             failure_callback=None
             if dispatch.on_failure is None
             else callback_task_name(dispatch.on_failure, CallbackOutcome.FAILURE),
-            observability_runtime=self._observability_runtime,
+            observability=self._observability,
         )
         self._metrics.on_event(
-            RuntimeEvent(
+            ExecutionEvent(
                 kind=EventKind.JOB_DISPATCHED,
                 use_case_name=dispatch.job_type.__qualname__,
                 trace_id=envelope.trace_id,

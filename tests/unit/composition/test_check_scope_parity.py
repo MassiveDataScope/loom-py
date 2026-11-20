@@ -7,7 +7,7 @@ from pathlib import Path
 import pytest
 import yaml
 
-from loom.celery.adapter import CeleryAdapter
+from loom.celery.runtime import CeleryRuntime
 from loom.composition.checked import CheckedProject
 from loom.core.checks import (
     CheckScope,
@@ -17,7 +17,7 @@ from loom.core.checks import (
 )
 from loom.core.config import ConfigContext
 from loom.core.environment import Environment
-from loom.rest.fastapi.adapter import FastAPIAdapter
+from loom.rest.fastapi.runtime import FastAPIRuntime
 from tests.helpers.composition import composition_project
 from tests.helpers.lambda_jobs import jobs_trigger
 
@@ -106,7 +106,7 @@ class TestRecipeScopes:
         )
 
         with pytest.raises(DeployCheckError, match=r"loom\.rest\.E001"):
-            project.compose(FastAPIAdapter())
+            project.compose(FastAPIRuntime())
 
     def test_a_worker_reports_app_rest_as_left_out_by_the_process(self) -> None:
         document = {
@@ -116,7 +116,7 @@ class TestRecipeScopes:
         project = composition_project(
             ConfigContext.from_dict(document), environment=Environment.PRODUCTION
         )
-        recipe = CeleryAdapter(jobs=[]).recipe(project)
+        recipe = CeleryRuntime(jobs=[]).recipe(project)
 
         report = enforce_deploy_checks(
             project.config, project.environment, scope=recipe.check_scope

@@ -10,7 +10,7 @@ from typing import Any
 import pytest
 
 from loom.composition import create_app
-from loom.serverless.aws.lambda_ import LambdaAdapter
+from loom.serverless.aws.lambda_ import LambdaRuntime
 from loom.serverless.aws.lambda_.triggers.http import LambdaHTTPHandler
 from loom.testing import LambdaTestClient
 from loom.testing.lambda_http import EventFormat
@@ -34,7 +34,7 @@ def config(tmp_path_factory: pytest.TempPathFactory) -> str:
 
 @pytest.fixture(scope="module")
 def handler(config: str) -> Iterator[LambdaHTTPHandler]:
-    served = create_app(config, adapter=LambdaAdapter(), environment="test")
+    served = create_app(config, runtime=LambdaRuntime(), environment="test")
     yield served
     served.close()
 

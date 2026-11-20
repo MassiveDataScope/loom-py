@@ -20,7 +20,7 @@ from loom.core.checks import DeployCheckError
 from loom.core.environment import Environment
 from loom.core.job.job import Job
 from loom.core.observability.config import ObservabilityConfig
-from loom.core.observability.runtime import ObservabilityRuntime
+from loom.core.observability.observability import Observability
 from loom.core.stores.repository import CURSOR_SIGNING_CHECK
 from loom.core.use_case import Agent, Mcp
 from loom.core.use_case.use_case import UseCase
@@ -166,20 +166,20 @@ class TestBootstrapWorkerResult:
         config_file.write_text(yaml.dump(cfg))
 
         captured: dict[str, Any] = {}
-        runtime = ObservabilityRuntime.noop()
+        runtime = Observability.noop()
 
         def _fake_from_config(
-            cls: type[ObservabilityRuntime],
+            cls: type[Observability],
             config: ObservabilityConfig,
             *,
             environment: Environment,
-        ) -> ObservabilityRuntime:
+        ) -> Observability:
             captured["config"] = config
             captured["environment"] = environment
             return runtime
 
         monkeypatch.setattr(
-            ObservabilityRuntime,
+            Observability,
             "from_config",
             classmethod(_fake_from_config),
         )

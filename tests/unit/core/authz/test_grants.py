@@ -17,7 +17,7 @@ from loom.core.authz import (
     evaluate,
 )
 
-ADA_VIEWER = Grant("ada", "viewer", Scope.of("T"))
+ADA_VIEWER = Grant("ada", "viewer", Scope.from_segments("T"))
 BOB_ADMIN = Grant("bob", "admin", Scope.root())
 
 
@@ -54,16 +54,16 @@ class TestGrant:
     def test_expiry_takes_part_in_equality_and_hashing(self) -> None:
         utc = datetime(2030, 1, 1, 12, tzinfo=UTC)
         madrid = utc.astimezone(timezone(timedelta(hours=2)))
-        expiring = Grant("ada", "viewer", Scope.of("T"), utc)
+        expiring = Grant("ada", "viewer", Scope.from_segments("T"), utc)
 
-        assert expiring == Grant("ada", "viewer", Scope.of("T"), madrid)
-        assert hash(expiring) == hash(Grant("ada", "viewer", Scope.of("T"), madrid))
+        assert expiring == Grant("ada", "viewer", Scope.from_segments("T"), madrid)
+        assert hash(expiring) == hash(Grant("ada", "viewer", Scope.from_segments("T"), madrid))
         assert expiring != ADA_VIEWER
         assert len({expiring, ADA_VIEWER}) == 2
 
     def test_orders_grants_that_differ_only_in_expiry(self) -> None:
-        early = Grant("ada", "viewer", Scope.of("T"), datetime(2030, 1, 1, tzinfo=UTC))
-        late = Grant("ada", "viewer", Scope.of("T"), datetime(2031, 1, 1, tzinfo=UTC))
+        early = Grant("ada", "viewer", Scope.from_segments("T"), datetime(2030, 1, 1, tzinfo=UTC))
+        late = Grant("ada", "viewer", Scope.from_segments("T"), datetime(2031, 1, 1, tzinfo=UTC))
 
         assert sorted([late, ADA_VIEWER, early]) == [ADA_VIEWER, early, late]
         assert sorted([early, late, ADA_VIEWER]) == [ADA_VIEWER, early, late]
@@ -71,11 +71,13 @@ class TestGrant:
         assert late > early >= early > ADA_VIEWER
 
     def test_orders_by_subject_role_and_scope_before_expiry(self) -> None:
-        expiring = Grant("ada", "viewer", Scope.of("T"), datetime(2030, 1, 1, tzinfo=UTC))
+        expiring = Grant(
+            "ada", "viewer", Scope.from_segments("T"), datetime(2030, 1, 1, tzinfo=UTC)
+        )
 
         assert expiring < BOB_ADMIN
-        assert Grant("ada", "admin", Scope.of("Z")) < expiring
-        assert expiring < Grant("ada", "viewer", Scope.of("U"))
+        assert Grant("ada", "admin", Scope.from_segments("Z")) < expiring
+        assert expiring < Grant("ada", "viewer", Scope.from_segments("U"))
 
     @pytest.mark.parametrize("compare", [operator.lt, operator.le, operator.gt, operator.ge])
     def test_does_not_order_against_other_types(
@@ -98,8 +100,10 @@ class TestGrant:
         catalog = RoleCatalog([read], [Role("viewer", {read}), Role("admin", {read})])
         source = InMemoryGrantSource([ADA_VIEWER, BOB_ADMIN])
 
-        assert evaluate(catalog, await source.grants_for("ada"), read, Scope.of("T", "x"))
-        assert not evaluate(catalog, await source.grants_for("ada"), read, Scope.of("U"))
+        assert evaluate(
+            catalog, await source.grants_for("ada"), read, Scope.from_segments("T", "x")
+        )
+        assert not evaluate(catalog, await source.grants_for("ada"), read, Scope.from_segments("U"))
 
 
 class _TableSource:
@@ -128,7 +132,9 @@ class TestGrantSource:
 
     def test_expiry_is_stored_in_utc(self) -> None:
         tokyo = timezone(timedelta(hours=9))
-        grant = Grant("ada", "viewer", Scope.of("T"), datetime(2026, 1, 1, 9, tzinfo=tokyo))
+        grant = Grant(
+            "ada", "viewer", Scope.from_segments("T"), datetime(2026, 1, 1, 9, tzinfo=tokyo)
+        )
 
         assert grant.expires_at == datetime(2026, 1, 1, tzinfo=UTC)
         assert grant.expires_at is not None

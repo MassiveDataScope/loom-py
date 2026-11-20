@@ -12,11 +12,11 @@ What is deliberately **not** projected:
 * ``model_role`` — a loom concept; the concrete model is bound separately
   (``_models``) and passed as an object, not as a ``provider:model`` string.
 * ``run_timeout_ms`` / ``max_iterations`` — enforced by
-  :class:`~loom.ai.runtime.AgentRuntime`, which supervises every stream; a
+  :class:`~loom.ai.execution.AgentHost`, which supervises every stream; a
   second enforcement here would be a hidden, divergent limit.
 * ``tool_timeout_ms`` — enforced on loom's side, by
   ``_guards.capability_call`` around every granted tool and by
-  ``AgentRuntime``'s own tool deadline. Those two agree: same code, same
+  ``AgentHost``'s own tool deadline. Those two agree: same code, same
   retry class, so which one fires first is not observable. Projecting it as
   the engine's ``tool_timeout`` too
   would race the two deadlines over the same value: whichever fired first
@@ -24,7 +24,7 @@ What is deliberately **not** projected:
   ``PROVIDER_UNAVAILABLE`` (retried) where loom's is ``TOOL_TIMEOUT`` (not
   retried). One value, two retry behaviours, chosen by the event loop.
 
-``retries`` **is** projected, and it is not the same axis as the runtime's
+``retries`` **is** projected, and it is not the same axis as the host's
 ``plan.policies.retries + 1`` attempts (``_engine``): the engine's counter
 replays a failed *tool* call inside one run, loom's replays a failed
 *provider* call across runs. They share one artifact field on purpose — a

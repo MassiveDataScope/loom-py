@@ -440,7 +440,7 @@ class TestKeepAlive:
 
 
 class TestObservabilityPassthrough:
-    def test_partition_clients_receive_the_observability_runtime(
+    def test_partition_clients_receive_the_observability(
         self,
         monkeypatch: pytest.MonkeyPatch,
     ) -> None:

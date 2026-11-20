@@ -81,7 +81,7 @@ class TestClosureAutowiring:
 
     def test_an_execution_kind_is_resolved_through_its_resolver_per_build(self) -> None:
         container = acme.container()
-        container.kinds.bind(acme.CALLER, AcmeCallerResolver())
+        container.kinds.register(acme.CALLER, AcmeCallerResolver())
         container.register(AcmeCallerAware, AcmeCallerAware)
 
         with ExecutionScope(ANONYMOUS):
@@ -104,7 +104,7 @@ class TestClosureAutowiring:
         with pytest.raises(ResolutionError):
             container.resolve(AcmeCallerAware)
 
-        container.kinds.bind(acme.CALLER, AcmeCallerResolver())
+        container.kinds.register(acme.CALLER, AcmeCallerResolver())
 
         assert container.resolve(AcmeCallerAware).caller is ANONYMOUS
 

@@ -21,7 +21,7 @@ import pytest
 from celery import Celery  # type: ignore[import-untyped]
 from celery.exceptions import Retry  # type: ignore[import-untyped]
 
-from loom.celery.runner import _CeleryAsyncRuntime, _make_job_task
+from loom.celery.runner import _CeleryProcessBridge, _make_job_task
 from loom.celery.service import CeleryJobTransport
 from loom.connections.aws import AwsClients
 from loom.core.identity import Delegation
@@ -98,7 +98,7 @@ class RunnerDriver:
         delivery = (
             JobTestData()
             .with_job_type(job_type)
-            .with_policy(JobSettings().of(job_type).retry.policy)
+            .with_policy(JobSettings().options_for(job_type).retry.policy)
             .delivery(attempt=attempt, postponements=postponements)
         )
         return _settlement(await self._runner.run(delivery))
@@ -169,7 +169,7 @@ class SQSDriver:
         data = (
             JobTestData()
             .with_job_type(job_type)
-            .with_policy(JobSettings().of(job_type).retry.policy)
+            .with_policy(JobSettings().options_for(job_type).retry.policy)
         )
         outcome = await self._runner.run(
             data.delivery(
@@ -217,7 +217,7 @@ class CeleryDriver:
 
     def __init__(self, kernel: JobKernel) -> None:
         self._kernel = kernel
-        self._runtime = _CeleryAsyncRuntime()
+        self._runtime = _CeleryProcessBridge()
         self._runtime.initialize()
         self._app = Celery(broker="memory://", backend="cache+memory://")
 

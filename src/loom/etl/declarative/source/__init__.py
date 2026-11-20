@@ -7,7 +7,7 @@ Builders (user-facing):
 * :class:`FromTemp`   — intermediate store source
 * :class:`FromConfig` — config value injected into ``execute()`` (not a frame)
 * :class:`FromMongo`  — MongoDB collection source
-* :class:`FromDynamoDb` — DynamoDB table source
+* :class:`FromDynamoDB` — DynamoDB table source
 * :class:`FromClickHouse` — ClickHouse table/view source
 * :class:`SourceRef`  — cross-step column reference for ``isin()``
 * :class:`Sources`    — named group of sources
@@ -19,7 +19,7 @@ Spec types (internal — compiler and executor only):
 * :class:`FileSourceSpec`
 * :class:`TempSourceSpec`
 * :class:`MongoSourceSpec`
-* :class:`DynamoDbSourceSpec`
+* :class:`DynamoDBSourceSpec`
 * :class:`ClickHouseSourceSpec`
 * :data:`SourceSpec`   — union type alias
 * :class:`SourceKind`  — physical kind enum
@@ -30,11 +30,11 @@ Spec types (internal — compiler and executor only):
 from loom.etl.declarative.source._from import FromFile, FromTable, FromTemp, Sources, SourceSet
 from loom.etl.declarative.source._from_clickhouse import FromClickHouse
 from loom.etl.declarative.source._from_config import FromConfig
-from loom.etl.declarative.source._from_dynamodb import FromDynamoDb
+from loom.etl.declarative.source._from_dynamodb import FromDynamoDB
 from loom.etl.declarative.source._from_mongo import FromMongo, SourceRef
 from loom.etl.declarative.source._specs import (
     ClickHouseSourceSpec,
-    DynamoDbSourceSpec,
+    DynamoDBSourceSpec,
     ExtraFieldsMode,
     FileSourceSpec,
     JsonColumnSpec,
@@ -51,7 +51,7 @@ __all__ = [
     "FromTemp",
     "FromConfig",
     "FromMongo",
-    "FromDynamoDb",
+    "FromDynamoDB",
     "FromClickHouse",
     "SourceRef",
     "Sources",
@@ -63,7 +63,7 @@ __all__ = [
     "FileSourceSpec",
     "TempSourceSpec",
     "MongoSourceSpec",
-    "DynamoDbSourceSpec",
+    "DynamoDBSourceSpec",
     "ClickHouseSourceSpec",
     "JsonColumnSpec",
 ]

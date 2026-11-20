@@ -10,7 +10,7 @@ from loom.composition.resources import Resource, ResourceKind
 from loom.core.config import ConfigContext, ConfigKey
 from loom.core.di.container import LoomContainer
 from loom.core.di.scope import Scope
-from loom.core.observability.runtime import ObservabilityRuntime
+from loom.core.observability.observability import Observability
 from loom.core.plugins.optional import import_optional
 from loom.core.stores.sql import (
     CallerBoundSql,
@@ -112,7 +112,7 @@ def build_sql_registry(sql_cfg: SqlConfig) -> ClickHouseConnectionRegistry:
 
 
 def register_sql_collaborators(
-    container: LoomContainer, sql: SqlWiring, observability: ObservabilityRuntime
+    container: LoomContainer, sql: SqlWiring, observability: Observability
 ) -> None:
     """Register both SQL collaborators (APPLICATION scope).
 

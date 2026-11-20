@@ -21,7 +21,7 @@ from opentelemetry.sdk.trace import TracerProvider
 
 from loom.core.di.container import LoomContainer
 from loom.core.di.scope import Scope as DiScope
-from loom.core.engine.executor import RuntimeExecutor
+from loom.core.engine.executor import UseCaseExecutor
 from loom.core.engine.post_commit import active_channel
 from loom.core.errors import Unauthenticated
 from loom.core.execution import ExecutionScope, execution_identity
@@ -64,31 +64,31 @@ async def acting_now() -> tuple[Identity, Identity, Identity | None]:
 class TestEffectiveIdentity:
     """Given, else the one acting, else no caller."""
 
-    async def test_an_explicit_identity_reaches_all_three(self, executor: RuntimeExecutor) -> None:
+    async def test_an_explicit_identity_reaches_all_three(self, executor: UseCaseExecutor) -> None:
         assert await executor.execute(AcmeWho(), identity=ALICE) == (ALICE,) * 3
 
     async def test_a_nested_execution_acts_as_the_enclosing_identity(
-        self, executor: RuntimeExecutor
+        self, executor: UseCaseExecutor
     ) -> None:
         outer = AcmeNests(executor, AcmeWho(), None)
 
         assert await executor.execute(outer, identity=ALICE) == (ALICE,) * 3
 
     async def test_given_no_identity_it_acts_as_the_caller_a_transport_installed(
-        self, executor: RuntimeExecutor
+        self, executor: UseCaseExecutor
     ) -> None:
         with acting_as(ALICE):
             assert await executor.execute(AcmeWho()) == (ALICE,) * 3
 
     async def test_with_nothing_given_and_nothing_acting_it_has_no_caller(
-        self, executor: RuntimeExecutor
+        self, executor: UseCaseExecutor
     ) -> None:
         assert await executor.execute(AcmeAnyone()) == (None, ANONYMOUS, None)
         with pytest.raises(Unauthenticated, match="carried no identity"):
             await executor.execute(AcmeWho())
 
     async def test_a_nested_execution_under_one_with_no_caller_has_none(
-        self, executor: RuntimeExecutor
+        self, executor: UseCaseExecutor
     ) -> None:
         outer = AcmeNests(executor, AcmeAnyone(), None)
 
@@ -99,21 +99,21 @@ class TestExplicitSwitch:
     """``executor.run(..., identity=X)`` inside work acting as someone else: logged, isolated."""
 
     async def test_the_given_identity_governs_the_nested_execution(
-        self, executor: RuntimeExecutor
+        self, executor: UseCaseExecutor
     ) -> None:
         outer = AcmeNests(executor, AcmeWho(), BOB)
 
         assert await executor.execute(outer, identity=ALICE) == (BOB,) * 3
 
     async def test_work_caused_under_the_switch_acts_as_the_switched_identity(
-        self, executor: RuntimeExecutor
+        self, executor: UseCaseExecutor
     ) -> None:
         outer = AcmeNests(executor, AcmeNests(executor, AcmeWho(), None), BOB)
 
         assert await executor.execute(outer, identity=ALICE) == (BOB,) * 3
 
     async def test_it_is_logged_with_subjects_roles_the_use_case_and_the_trace(
-        self, executor: RuntimeExecutor, switches: RecordingLogger
+        self, executor: UseCaseExecutor, switches: RecordingLogger
     ) -> None:
         with active_trace_id("acme-trace"):
             await executor.execute(AcmeNests(executor, AcmeWho(), BOB), identity=ALICE)
@@ -134,7 +134,7 @@ class TestExplicitSwitch:
         ]
 
     async def test_a_roles_change_under_the_same_subject_is_a_switch(
-        self, executor: RuntimeExecutor, switches: RecordingLogger
+        self, executor: UseCaseExecutor, switches: RecordingLogger
     ) -> None:
         await executor.execute(AcmeNests(executor, AcmeWho(), PROMOTED_ALICE), identity=ALICE)
 
@@ -143,7 +143,7 @@ class TestExplicitSwitch:
         assert (line["from_roles"], line["to_roles"]) == (ALICE.roles, ("admin",))
 
     async def test_a_roles_change_keeps_the_delegation_and_is_refused_past_it(
-        self, executor: RuntimeExecutor, past_the_window: Callable[[], None]
+        self, executor: UseCaseExecutor, past_the_window: Callable[[], None]
     ) -> None:
         """Other roles under the same subject never renew the window."""
 
@@ -155,7 +155,7 @@ class TestExplicitSwitch:
             await executor.execute(Run(promote_late))
 
     async def test_another_subject_starts_a_delegation_of_its_own(
-        self, executor: RuntimeExecutor, past_the_window: Callable[[], None]
+        self, executor: UseCaseExecutor, past_the_window: Callable[[], None]
     ) -> None:
         """The documented path for long work: run it as a system identity."""
 
@@ -167,7 +167,7 @@ class TestExplicitSwitch:
             assert await executor.execute(Run(as_the_system_late)) == (BOB,) * 3
 
     async def test_an_invoker_bound_with_for_identity_is_a_logged_switch(
-        self, executor: RuntimeExecutor, switches: RecordingLogger
+        self, executor: UseCaseExecutor, switches: RecordingLogger
     ) -> None:
         bound = AppInvoker(BUILDING, executor, cast(UseCaseRegistry, None)).for_identity(BOB)
 
@@ -191,7 +191,7 @@ class TestExplicitSwitch:
             "ExecutionScope",
         )
 
-    async def test_it_annotates_the_current_span(self, executor: RuntimeExecutor) -> None:
+    async def test_it_annotates_the_current_span(self, executor: UseCaseExecutor) -> None:
         with TracerProvider().get_tracer("acme").start_as_current_span("acme-request") as span:
             await executor.execute(AcmeNests(executor, AcmeWho(), BOB), identity=ALICE)
 
@@ -207,7 +207,7 @@ class TestExplicitSwitch:
     )
     async def test_acting_as_the_identity_already_acting_is_no_switch(
         self,
-        executor: RuntimeExecutor,
+        executor: UseCaseExecutor,
         switches: RecordingLogger,
         around: Callable[[], AbstractContextManager[object]],
     ) -> None:
@@ -243,7 +243,7 @@ class TestInsideAnExecution:
         ids=["gather", "task-group", "to-thread"],
     )
     async def test_children_act_as_the_caller(
-        self, executor: RuntimeExecutor, spawn: Callable[[], Awaitable[Any]]
+        self, executor: UseCaseExecutor, spawn: Callable[[], Awaitable[Any]]
     ) -> None:
         assert await executor.execute(Run(spawn), identity=ALICE) == (ALICE,) * 3
 
@@ -252,12 +252,12 @@ class TestATaskOutlivingItsExecution:
     """What the executor adds for it: a unit of work, a channel and jobs of its own."""
 
     @pytest.fixture
-    def executor(self, transactional_executor: RuntimeExecutor) -> RuntimeExecutor:
+    def executor(self, transactional_executor: UseCaseExecutor) -> UseCaseExecutor:
         """These executions open an invocation scope over the phased stores."""
         return transactional_executor
 
     @pytest.fixture
-    def outliving(self, executor: RuntimeExecutor) -> Outliving:
+    def outliving(self, executor: UseCaseExecutor) -> Outliving:
         """Run ``late`` in a task created by an execution as bob, once that execution ended."""
 
         async def start(
@@ -273,7 +273,7 @@ class TestATaskOutlivingItsExecution:
         return start
 
     async def test_a_use_case_it_runs_acts_as_the_caller_in_its_own_execution(
-        self, outliving: Outliving, stores: AcmeStores, executor: RuntimeExecutor
+        self, outliving: Outliving, stores: AcmeStores, executor: UseCaseExecutor
     ) -> None:
         seen: list[object] = []
 
@@ -293,7 +293,7 @@ class TestATaskOutlivingItsExecution:
         assert len(stores.created) == 2
 
     async def test_a_use_case_it_runs_as_another_identity_is_a_switch(
-        self, outliving: Outliving, executor: RuntimeExecutor
+        self, outliving: Outliving, executor: UseCaseExecutor
     ) -> None:
         task = await outliving(lambda: executor.run(AcmeAsCaller, factory=BUILDING, identity=ANA))
 
@@ -302,7 +302,7 @@ class TestATaskOutlivingItsExecution:
         assert identity is ANA
 
     async def test_does_not_reuse_the_departed_post_commit_channel(
-        self, outliving: Outliving, executor: RuntimeExecutor
+        self, outliving: Outliving, executor: UseCaseExecutor
     ) -> None:
         seen: list[object] = []
 
@@ -317,7 +317,7 @@ class TestATaskOutlivingItsExecution:
         assert channel is not seen[0]
 
     async def test_a_job_dispatched_inside_a_use_case_it_runs_runs(
-        self, outliving: Outliving, executor: RuntimeExecutor
+        self, outliving: Outliving, executor: UseCaseExecutor
     ) -> None:
         sent: list[str] = []
 
@@ -330,7 +330,7 @@ class TestATaskOutlivingItsExecution:
         assert sent == ["acme-job"]
 
     async def test_a_job_it_dispatches_goes_out_detached_as_the_caller(
-        self, outliving: Outliving, executor: RuntimeExecutor
+        self, outliving: Outliving, executor: UseCaseExecutor
     ) -> None:
         jobs = InlineServiceFixture(BUILDING, executor)
 
@@ -348,7 +348,7 @@ class TestATaskOutlivingItsTransport:
     """A task started at the transport, outside any execution, is bounded by the request too."""
 
     async def test_runs_as_the_caller_within_the_window_and_is_refused_past_it(
-        self, executor: RuntimeExecutor, past_the_window: Callable[[], None]
+        self, executor: UseCaseExecutor, past_the_window: Callable[[], None]
     ) -> None:
         go = asyncio.Event()
 
@@ -369,7 +369,7 @@ class TestATaskOutlivingItsTransport:
 class TestSingletons:
     """A singleton built lazily inside an execution acts as no one (D2)."""
 
-    async def test_a_lazily_built_singleton_sees_anonymous(self, executor: RuntimeExecutor) -> None:
+    async def test_a_lazily_built_singleton_sees_anonymous(self, executor: UseCaseExecutor) -> None:
         class AcmeLazy:
             def __init__(self) -> None:
                 self.saw = (current_identity(), current_caller())

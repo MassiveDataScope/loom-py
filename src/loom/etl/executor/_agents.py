@@ -6,7 +6,7 @@ from collections.abc import Sequence
 from typing import Any
 
 from loom.etl.compiler._plan import AgentBinding
-from loom.etl.runtime.contracts import AgentBatchRunner
+from loom.etl.ports.contracts import AgentBatchRunner
 
 
 class AgentMapper:

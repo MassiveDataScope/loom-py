@@ -6,7 +6,7 @@ own ``PutItem`` / ``DeleteItem`` call inside
 :class:`~loom.stores.dynamodb.repository.DynamoDBRepository`. This
 Unit of Work therefore satisfies the
 :class:`~loom.core.stores.uow.abc.UnitOfWork` protocol with empty ``begin`` /
-``commit`` / ``rollback`` so :class:`~loom.core.engine.executor.RuntimeExecutor`
+``commit`` / ``rollback`` so :class:`~loom.core.engine.executor.UseCaseExecutor`
 can wrap UseCases uniformly regardless of backend.
 """
 
@@ -56,7 +56,7 @@ class DynamoDBUnitOfWorkFactory:
     """Factory that creates fresh :class:`DynamoDBUnitOfWork` instances.
 
     Register one instance and inject it into
-    :class:`~loom.core.engine.executor.RuntimeExecutor` at startup, mirroring
+    :class:`~loom.core.engine.executor.UseCaseExecutor` at startup, mirroring
     :class:`~loom.stores.sqlalchemy.uow.SQLAlchemyUnitOfWorkFactory`.
     """
 

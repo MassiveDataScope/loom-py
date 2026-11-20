@@ -2,10 +2,10 @@ from __future__ import annotations
 
 from typing import Protocol
 
-from loom.core.engine.events import RuntimeEvent
+from loom.core.engine.events import ExecutionEvent
 
 
-class MetricsAdapter(Protocol):
+class MetricsRecorder(Protocol):
     """Port for recording runtime and compile-time events.
 
     Implement this protocol to plug in any metrics backend
@@ -17,15 +17,15 @@ class MetricsAdapter(Protocol):
 
     Example::
 
-        class PrometheusAdapter:
-            def on_event(self, event: RuntimeEvent) -> None:
+        class PrometheusRecorder:
+            def on_event(self, event: ExecutionEvent) -> None:
                 if event.kind == EventKind.EXEC_DONE:
                     DURATION.labels(usecase=event.use_case_name).observe(
                         (event.duration_ms or 0) / 1000
                     )
     """
 
-    def on_event(self, event: RuntimeEvent) -> None:
+    def on_event(self, event: ExecutionEvent) -> None:
         """Process a runtime or compile-time event.
 
         Args:
@@ -36,9 +36,9 @@ class MetricsAdapter(Protocol):
 
 
 class NoMetrics:
-    """A metrics adapter recording nothing, for an engine given none."""
+    """A metrics recorder recording nothing, for an engine given none."""
 
     __slots__ = ()
 
-    def on_event(self, event: RuntimeEvent) -> None:
+    def on_event(self, event: ExecutionEvent) -> None:
         """Ignore *event*."""

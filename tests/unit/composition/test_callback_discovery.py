@@ -7,7 +7,7 @@ from pathlib import Path
 
 import pytest
 
-from loom.celery.adapter import CeleryAdapter
+from loom.celery.runtime import CeleryRuntime
 from loom.composition import AppConfig, Project, Recipe
 from loom.core.bootstrap import BootstrapError
 from loom.core.config import ConfigContext
@@ -15,9 +15,9 @@ from loom.core.job.callback import JobCallback
 from loom.core.job.job import Job
 from loom.core.job.service import JobService
 from loom.rest.compiler import RouteSources
-from loom.serverless.aws.lambda_ import LambdaAdapter
+from loom.serverless.aws.lambda_ import LambdaRuntime
 from loom.serverless.aws.lambda_._jobs import jobs_recipe
-from loom.testing.http_harness import _HarnessAdapter
+from loom.testing.http_harness import _HarnessRuntime
 from tests.helpers import acme_callbacks, acme_installers, acme_unbound_callbacks
 from tests.helpers.composition import composition_project
 from tests.unit.serverless.aws.lambda_._records import WORKER, with_worker
@@ -47,12 +47,12 @@ def _project(tmp_path: Path, *modules: str, job_service: str = "celery") -> Proj
 RECIPES = pytest.mark.parametrize(
     "recipe_of",
     [
-        pytest.param(lambda project: CeleryAdapter(jobs=[_AcmeJob]).recipe(project), id="celery"),
+        pytest.param(lambda project: CeleryRuntime(jobs=[_AcmeJob]).recipe(project), id="celery"),
         pytest.param(
             lambda project: jobs_recipe(project, [_AcmeJob], [], None)[0], id="lambda-jobs"
         ),
         pytest.param(
-            lambda project: _HarnessAdapter(RouteSources(), overrides=()).recipe(project),
+            lambda project: _HarnessRuntime(RouteSources(), overrides=()).recipe(project),
             id="http-harness",
         ),
     ],
@@ -90,7 +90,7 @@ class TestJobServiceFromContext:
         project = _project(
             tmp_path, acme_callbacks.MODULE, job_service="loom.testing.jobs:RecordingJobTransport"
         )
-        adapter = CeleryAdapter(jobs=[_AcmeJob])
+        adapter = CeleryRuntime(jobs=[_AcmeJob])
         service = project.compose(adapter).kernel.container.resolve(JobService)
 
         service.dispatch_after_commit(_AcmeJob, on_success=acme_callbacks.AcmePingCallback)
@@ -103,7 +103,7 @@ class TestLambdaJobCallbacks:
         self, tmp_path: Path
     ) -> None:
         project = _project(tmp_path, acme_callbacks.MODULE)
-        adapter = LambdaAdapter(jobs=[_AcmeJob])
+        adapter = LambdaRuntime(jobs=[_AcmeJob])
         application = project.compose(adapter)
         service = application.kernel.container.resolve(JobService)
 
@@ -118,4 +118,4 @@ class TestLambdaJobCallbacks:
         project = _project(tmp_path, acme_unbound_callbacks.MODULE)
 
         with pytest.raises(BootstrapError, match="AcmeNeedsUnboundCallback"):
-            project.compose(LambdaAdapter(jobs=[_AcmeJob]))
+            project.compose(LambdaRuntime(jobs=[_AcmeJob]))

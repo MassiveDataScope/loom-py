@@ -16,10 +16,10 @@ from loom.connections.aws import AwsClients
 from loom.core.config import ConfigContext, ConfigError
 from loom.core.discovery.base import DiscoveryResult
 from loom.core.model import BaseModel, ColumnField
-from loom.core.stores import SERVER_PROFILE, StoreRuntime
-from loom.core.stores.none import NoneBackend
+from loom.core.stores import SERVER_PROFILE, StorePluginContext
+from loom.core.stores.none import NullStorePlugin
 from loom.core.stores.repository import CursorCodec
-from loom.stores.sqlalchemy.backend import SQLAlchemyBackend
+from loom.stores.sqlalchemy.plugin import SQLAlchemyStorePlugin
 from tests.helpers.composition import composition_project
 
 _SQLITE = {"default": {"backend": "sqlalchemy", "url": "sqlite+aiosqlite:///:memory:"}}
@@ -46,15 +46,15 @@ def _recipe(*, connection_only: bool = False) -> Recipe:
 
 class TestStoreCursorCodec:
     @pytest.fixture
-    def runtimes(self, monkeypatch: pytest.MonkeyPatch) -> list[StoreRuntime]:
-        """Every runtime a ``none`` or SQLAlchemy store is built with, in order."""
-        seen: list[StoreRuntime] = []
-        for backend in (NoneBackend, SQLAlchemyBackend):
+    def contexts(self, monkeypatch: pytest.MonkeyPatch) -> list[StorePluginContext]:
+        """Every context a ``none`` or SQLAlchemy store is built with, in order."""
+        seen: list[StorePluginContext] = []
+        for backend in (NullStorePlugin, SQLAlchemyStorePlugin):
             build = backend.build
 
-            def recorded(self: Any, ctx: Any, models: Any, runtime: Any, build: Any = build) -> Any:
-                seen.append(runtime)
-                return build(self, ctx, models, runtime)
+            def recorded(self: Any, ctx: Any, models: Any, context: Any, build: Any = build) -> Any:
+                seen.append(context)
+                return build(self, ctx, models, context)
 
             monkeypatch.setattr(backend, "build", recorded)
         return seen
@@ -65,16 +65,18 @@ class TestStoreCursorCodec:
         ids=["no-stores", "sqlalchemy-without-keys", "declared-none"],
     )
     def test_without_cursor_settings_the_codec_is_disabled(
-        self, raw: dict[str, Any], runtimes: list[StoreRuntime]
+        self, raw: dict[str, Any], contexts: list[StorePluginContext]
     ) -> None:
         _build(raw)
 
-        assert [runtime.cursor_codec for runtime in runtimes] == [CursorCodec.disabled()]
+        assert [context.cursor_codec for context in contexts] == [CursorCodec.disabled()]
 
-    def test_configured_cursor_settings_share_one_codec(self, runtimes: list[StoreRuntime]) -> None:
+    def test_configured_cursor_settings_share_one_codec(
+        self, contexts: list[StorePluginContext]
+    ) -> None:
         _build({"stores": {**_SQLITE, "settings": {"cursors": {"signing": "ephemeral"}}}})
 
-        assert [type(runtime.cursor_codec) for runtime in runtimes] == [CursorCodec]
+        assert [type(context.cursor_codec) for context in contexts] == [CursorCodec]
 
     def test_cursor_settings_without_a_signing_key_fail_naming_the_section(self) -> None:
         with pytest.raises(ConfigError, match=r"stores\.settings\.cursors\.current_key_id"):
@@ -93,18 +95,18 @@ class TestStoreCursorCodec:
         assert isinstance(_recipe().build_cursor_codec(ctx), CursorCodec)
 
     def test_a_connection_only_composition_gets_the_disabled_codec(
-        self, runtimes: list[StoreRuntime]
+        self, contexts: list[StorePluginContext]
     ) -> None:
         _build({"stores": _SQLITE}, connection_only=True)
 
-        assert [runtime.cursor_codec for runtime in runtimes] == [CursorCodec.disabled()]
+        assert [context.cursor_codec for context in contexts] == [CursorCodec.disabled()]
 
     def test_a_connection_only_composition_ignores_configured_cursor_settings(
-        self, runtimes: list[StoreRuntime]
+        self, contexts: list[StorePluginContext]
     ) -> None:
         _build(
             {"stores": {**_SQLITE, "settings": {"cursors": {"signing": "ephemeral"}}}},
             connection_only=True,
         )
 
-        assert [runtime.cursor_codec for runtime in runtimes] == [CursorCodec.disabled()]
+        assert [context.cursor_codec for context in contexts] == [CursorCodec.disabled()]

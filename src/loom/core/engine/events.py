@@ -7,7 +7,7 @@ from enum import StrEnum
 class EventKind(StrEnum):
     """Discriminator for runtime and compile-time events.
 
-    Used by ``MetricsAdapter`` and structured loggers to route events
+    Used by ``MetricsRecorder`` and structured loggers to route events
     without isinstance checks.
     """
 
@@ -56,10 +56,10 @@ class Phase(StrEnum):
 
 
 @dataclass(frozen=True)
-class RuntimeEvent:
+class ExecutionEvent:
     """Immutable event emitted by the compiler and runtime executor.
 
-    Consumed by ``MetricsAdapter`` and structured loggers. Carries no
+    Consumed by ``MetricsRecorder`` and structured loggers. Carries no
     transport-specific data — adapters translate to their own formats.
 
     Args:
@@ -79,7 +79,7 @@ class RuntimeEvent:
 
     Example::
 
-        event = RuntimeEvent(
+        event = ExecutionEvent(
             kind=EventKind.EXEC_DONE,
             use_case_name="UpdateUserUseCase",
             duration_ms=12.4,

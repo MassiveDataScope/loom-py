@@ -15,7 +15,7 @@ from celery.contrib.testing.worker import start_worker  # type: ignore[import-un
 from celery.exceptions import Ignore, Reject  # type: ignore[import-untyped]
 from celery.result import AsyncResult  # type: ignore[import-untyped]
 
-from loom.celery.runner import _CeleryAsyncRuntime, _make_callback_task, _make_job_task
+from loom.celery.runner import _CeleryProcessBridge, _make_callback_task, _make_job_task
 from loom.core.job.callback import CallbackOutcome
 from loom.core.job.config import JobConfig, JobOptions, JobSettings, RetryConfig
 from loom.core.job.job import Job
@@ -57,7 +57,7 @@ class Workbench:
     every case; each case sends its own task id and reads what was recorded under it.
     """
 
-    def __init__(self, serializer: str, runtime: _CeleryAsyncRuntime) -> None:
+    def __init__(self, serializer: str, runtime: _CeleryProcessBridge) -> None:
         self.queue = f"{QUEUE}-{serializer}"
         self.app = Celery(broker="memory://", backend="cache+memory://")
         self.app.conf.update(
@@ -76,7 +76,7 @@ class Workbench:
         job_type: type[Job[Any]],
         *,
         max_attempts: int | None = None,
-        runtime: _CeleryAsyncRuntime | None = None,
+        runtime: _CeleryProcessBridge | None = None,
     ) -> Any:
         """Register *job_type*'s task; *max_attempts* makes its first failure final when 1."""
         self.kernel.factory.register(job_type)
@@ -176,7 +176,7 @@ def workbench() -> Generator[Callable[[str], Workbench]]:
     with ExitStack() as cleanup:
 
         def build(serializer: str = "json") -> Workbench:
-            runtime = _CeleryAsyncRuntime()
+            runtime = _CeleryProcessBridge()
             runtime.initialize()
             cleanup.callback(runtime.shutdown)
             return Workbench(serializer, runtime)
@@ -205,14 +205,14 @@ def served(
     workers are never up together, as they would share one in-memory broker.
     """
     bench = workbench(request.param)
-    unopened = _CeleryAsyncRuntime()
+    unopened = _CeleryProcessBridge()
     unopened.refuse(ConnectionError("database down"))
     bench.job_task(RaisingJob, max_attempts=1)
     bench.job_task(AbandonedJob)
     bench.job_task(SucceedingJob)
     bench.job_task(FlakyJob)
     bench.job_task(NotOpenJob, runtime=unopened)
-    bench.job_task(BridgeDownJob, runtime=_CeleryAsyncRuntime())
+    bench.job_task(BridgeDownJob, runtime=_CeleryProcessBridge())
     bench.job_task(SoftLimitJob, runtime=FailingRuntime(SOFT_LIMIT))
     bench.job_task(RejectingTaskJob, runtime=FailingRuntime(Reject("refused", requeue=False)))
     bench.job_task(IgnoringTaskJob, runtime=FailingRuntime(Ignore()))

@@ -1,4 +1,4 @@
-"""Per-run and per-worker bounds enforced by ``AgentRuntime`` (T082, FR-033a).
+"""Per-run and per-worker bounds enforced by ``AgentHost`` (T082, FR-033a).
 
 Four bounds, one code each: ``max_concurrent_runs`` → ``TOO_MANY_RUNS``,
 ``run_timeout_ms`` → ``RUN_TIMEOUT``, ``max_iterations`` →
@@ -15,7 +15,7 @@ import pytest
 
 from loom.ai.abc import AgentEvent, FinalEvent, TextDeltaEvent, ToolCallEvent, ToolResultEvent
 from loom.ai.errors import AgentRunErrorCode
-from loom.ai.runtime import AgentRunError, AgentRuntime
+from loom.ai.execution import AgentHost, AgentRunError
 from loom.core.di import LoomContainer
 from loom.core.identity import Identity
 from tests.integration.ai.conftest import (
@@ -31,7 +31,7 @@ from tests.integration.ai.conftest import (
 _AGENT = "analyst"
 
 
-def _runtime(
+def _host(
     engine: ScriptedEngine,
     *,
     deps: StubDepsFactory,
@@ -40,7 +40,7 @@ def _runtime(
     tool_timeout_ms: int = 1000,
     max_iterations: int = 8,
     run_timeout_ms: int = 5000,
-) -> AgentRuntime:
+) -> AgentHost:
     """Build a runtime with one scripted agent and explicit limits."""
     plan = make_plan(
         _AGENT,
@@ -50,10 +50,10 @@ def _runtime(
             run_timeout_ms=run_timeout_ms,
         ),
     )
-    return AgentRuntime(
+    return AgentHost(
         plans=[plan],
         config=make_ai_config(max_concurrent_runs=max_concurrent_runs),
-        engine_provider=CountingEngineProvider(engines={_AGENT: engine}),  # type: ignore[arg-type]
+        engine_plugin=CountingEngineProvider(engines={_AGENT: engine}),  # type: ignore[arg-type]
         deps=deps,
         container=container,
     )
@@ -81,13 +81,13 @@ class TestConcurrentRuns:
     ) -> None:
         """A second run with the single slot taken is refused, not admitted."""
         engine = ScriptedEngine(delays_ms=(0, 40))
-        runtime = _runtime(engine, deps=deps, container=container, max_concurrent_runs=1)
+        host = _host(engine, deps=deps, container=container, max_concurrent_runs=1)
 
-        async with runtime:
-            first = asyncio.create_task(runtime.run(_AGENT, "p1", identity=identity))
+        async with host:
+            first = asyncio.create_task(host.run(_AGENT, "p1", identity=identity))
             await engine.started.wait()
             with pytest.raises(AgentRunError) as failure:
-                await runtime.run(_AGENT, "p2", identity=identity)
+                await host.run(_AGENT, "p2", identity=identity)
             await first
 
         assert failure.value.code is AgentRunErrorCode.TOO_MANY_RUNS
@@ -100,15 +100,15 @@ class TestConcurrentRuns:
     ) -> None:
         """Refusal is immediate: the caller never waits for the run in flight."""
         engine = ScriptedEngine(delays_ms=(0, 40))
-        runtime = _runtime(engine, deps=deps, container=container, max_concurrent_runs=1)
+        host = _host(engine, deps=deps, container=container, max_concurrent_runs=1)
         loop = asyncio.get_running_loop()
 
-        async with runtime:
-            first = asyncio.create_task(runtime.run(_AGENT, "p1", identity=identity))
+        async with host:
+            first = asyncio.create_task(host.run(_AGENT, "p1", identity=identity))
             await engine.started.wait()
             started = loop.time()
             with pytest.raises(AgentRunError):
-                await runtime.run(_AGENT, "p2", identity=identity)
+                await host.run(_AGENT, "p2", identity=identity)
             elapsed = loop.time() - started
             await first
 
@@ -126,11 +126,11 @@ class TestExecutionBudget:
     ) -> None:
         """A stream slower than the budget ends with ``RUN_TIMEOUT``."""
         engine = ScriptedEngine(delays_ms=(0, 400))
-        runtime = _runtime(engine, deps=deps, container=container, run_timeout_ms=30)
+        host = _host(engine, deps=deps, container=container, run_timeout_ms=30)
 
-        async with runtime:
+        async with host:
             with pytest.raises(AgentRunError) as failure:
-                await runtime.run(_AGENT, "prompt", identity=identity)
+                await host.run(_AGENT, "prompt", identity=identity)
 
         assert failure.value.code is AgentRunErrorCode.RUN_TIMEOUT
 
@@ -146,11 +146,11 @@ class TestIterations:
     ) -> None:
         """Three tool cycles under a limit of one end with the limit code."""
         engine = ScriptedEngine(script=_tool_script(3))
-        runtime = _runtime(engine, deps=deps, container=container, max_iterations=1)
+        host = _host(engine, deps=deps, container=container, max_iterations=1)
 
-        async with runtime:
+        async with host:
             with pytest.raises(AgentRunError) as failure:
-                await runtime.run(_AGENT, "prompt", identity=identity)
+                await host.run(_AGENT, "prompt", identity=identity)
 
         assert failure.value.code is AgentRunErrorCode.MAX_ITERATIONS_EXCEEDED
 
@@ -162,11 +162,11 @@ class TestIterations:
     ) -> None:
         """The failure message states the limit that stopped the run."""
         engine = ScriptedEngine(script=_tool_script(3))
-        runtime = _runtime(engine, deps=deps, container=container, max_iterations=2)
+        host = _host(engine, deps=deps, container=container, max_iterations=2)
 
-        async with runtime:
+        async with host:
             with pytest.raises(AgentRunError) as failure:
-                await runtime.run(_AGENT, "prompt", identity=identity)
+                await host.run(_AGENT, "prompt", identity=identity)
 
         assert "2" in str(failure.value)
 
@@ -188,11 +188,11 @@ class TestToolTimeout:
             FinalEvent(output={"answer": "done"}, usage=DEFAULT_USAGE),
         )
         engine = ScriptedEngine(script=script, delays_ms=(0, 0, 400, 0))
-        runtime = _runtime(engine, deps=deps, container=container, tool_timeout_ms=20)
+        host = _host(engine, deps=deps, container=container, tool_timeout_ms=20)
 
-        async with runtime:
+        async with host:
             with pytest.raises(AgentRunError) as failure:
-                await runtime.run(_AGENT, "prompt", identity=identity)
+                await host.run(_AGENT, "prompt", identity=identity)
 
         assert failure.value.code is AgentRunErrorCode.TOOL_TIMEOUT
 
@@ -209,10 +209,10 @@ class TestToolTimeout:
             FinalEvent(output={"answer": "done"}, usage=DEFAULT_USAGE),
         )
         engine = ScriptedEngine(script=script, delays_ms=(0, 400, 0))
-        runtime = _runtime(engine, deps=deps, container=container, tool_timeout_ms=20)
+        host = _host(engine, deps=deps, container=container, tool_timeout_ms=20)
 
-        async with runtime:
+        async with host:
             with pytest.raises(AgentRunError) as failure:
-                await runtime.run(_AGENT, "prompt", identity=identity)
+                await host.run(_AGENT, "prompt", identity=identity)
 
         assert "sales:velocity" in str(failure.value)

@@ -21,7 +21,7 @@ from loom.core.stores.catalog import StoreKey
 from loom.core.stores.uow.scope import current_scope
 
 if TYPE_CHECKING:
-    from loom.core.stores.backend import StoreWiring
+    from loom.core.stores.plugin import StoreWiring
 
 
 @unique

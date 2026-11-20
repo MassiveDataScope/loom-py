@@ -400,7 +400,7 @@ class CompiledOutputHook(CompiledUseCaseCall, frozen=True, kw_only=True):
 
     The compiler proves that every required, user-supplied name of the use
     case's Input is one of :data:`HOOK_OUTPUT_FIELD` or
-    :data:`HOOK_CONTEXT_FIELDS`, so the runtime never discovers a missing
+    :data:`HOOK_CONTEXT_FIELDS`, so the host never discovers a missing
     field at the end of a run.
     """
 

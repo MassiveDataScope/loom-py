@@ -7,7 +7,7 @@ from typing import Any
 from loom.core.bootstrap import Kernel
 from loom.core.di import LoomContainer
 from loom.core.engine.compiler import UseCaseCompiler
-from loom.core.engine.executor import RuntimeExecutor
+from loom.core.engine.executor import UseCaseExecutor
 from loom.core.job.job import Job
 from loom.core.use_case.factory import UseCaseFactory
 from loom.core.use_case.invoker import AppInvoker
@@ -36,7 +36,7 @@ def kernel_runtime(*use_case_types: type[UseCase[Any, Any]]) -> Kernel:
     factory = UseCaseFactory(container)
     for uc in use_case_types:
         factory.register(uc)
-    executor = RuntimeExecutor(compiler)
+    executor = UseCaseExecutor(compiler)
     registry = UseCaseRegistry.build(list(use_case_types))
     invoker = AppInvoker(factory=factory, executor=executor, registry=registry)
     return Kernel(

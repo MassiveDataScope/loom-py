@@ -17,7 +17,7 @@ from loom.core.discovery.base import DiscoveryResult
 from loom.core.environment import Environment
 from loom.core.locator import DEFAULT_CODE_PATH, add_code_path
 from loom.core.observability.config import ObservabilityConfig
-from loom.core.observability.runtime import ObservabilityRuntime
+from loom.core.observability.observability import Observability
 from loom.core.stores.catalog import load_catalog
 
 
@@ -120,7 +120,7 @@ class CheckedProject:
             code_path=self.code_path,
             config_root=self.config_root,
             app=convert_section(self.config.raw(ConfigKey.APP), ConfigKey.APP, AppConfig),
-            observability=ObservabilityRuntime.noop(),
+            observability=Observability.noop(),
             observability_config=ObservabilityConfig(),
         )
 

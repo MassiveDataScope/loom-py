@@ -33,7 +33,7 @@ from loom.core.config import ConfigContext
 from loom.core.di.container import LoomContainer
 from loom.core.environment import resolve_environment
 from loom.core.observability.config import ObservabilityConfig
-from loom.core.observability.runtime import ObservabilityRuntime
+from loom.core.observability.observability import Observability
 from loom.core.stores import SERVER_PROFILE
 from loom.rest.compiler import RouteSources
 from loom.rest.fastapi.app import create_fastapi_app
@@ -42,7 +42,7 @@ from loom.testing.golden import _ErrorProxy
 from loom.testing.overrides import Override
 
 
-class _HarnessAdapter:
+class _HarnessRuntime:
     """Compose the use cases *routes* serve, with *overrides*, leniently; mount *routes*.
 
     Discovers no model, so no store registers a repository: *overrides* bind
@@ -80,7 +80,7 @@ class _HarnessAdapter:
             code_path=Path.cwd(),
             config_root=Path.cwd(),
             app=app,
-            observability=ObservabilityRuntime.noop(),
+            observability=Observability.noop(),
             observability_config=ObservabilityConfig(),
         )
 
@@ -95,7 +95,7 @@ class _HarnessAdapter:
             lenient=True,
         )
 
-    def bind(self, application: Application) -> FastAPI:
+    def mount(self, application: Application) -> FastAPI:
         """Mount the routes on *application*'s kernel."""
         return create_fastapi_app(application.kernel, self._routes, **self._fastapi_kwargs)
 
@@ -263,11 +263,11 @@ class HttpTestHarness:
             resp = client.post("/products/", json={"name": "Widget"})
             assert resp.status_code == 201
         """
-        adapter = _HarnessAdapter(
+        runtime = _HarnessRuntime(
             RouteSources(python=interfaces, config=config_interfaces, disabled=disable_routes),
             overrides=(self._build_module(),),
             **fastapi_kwargs,
         )
-        self.application = adapter.project().compose(adapter)
-        app = adapter.bind(self.application)
+        self.application = runtime.project().compose(runtime)
+        app = runtime.mount(self.application)
         return TestClient(app, raise_server_exceptions=False)

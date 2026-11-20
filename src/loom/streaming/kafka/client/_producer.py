@@ -10,7 +10,7 @@ from confluent_kafka import Message as _RawMessage
 from confluent_kafka import Producer as _Producer
 
 from loom.core.observability.event import LifecycleEvent, Scope
-from loom.core.observability.runtime import ObservabilityRuntime
+from loom.core.observability.observability import Observability
 from loom.streaming.kafka._config import ProducerSettings
 from loom.streaming.kafka._errors import KafkaDeliveryError
 from loom.streaming.kafka._message import HEADER_CORRELATION_ID, HEADER_TRACE_ID
@@ -35,7 +35,7 @@ class KafkaProducerClient:
         self,
         settings: ProducerSettings,
         delivery_callback: DeliveryCallback | None = None,
-        obs: ObservabilityRuntime | None = None,
+        obs: Observability | None = None,
     ) -> None:
         self._producer = _Producer(settings.to_confluent_config())
         self._delivery_callback = delivery_callback

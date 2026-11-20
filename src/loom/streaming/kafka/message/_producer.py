@@ -7,7 +7,7 @@ from typing import Generic, Literal, TypeVar
 
 from loom.core.model import LoomFrozenStruct, LoomStruct
 from loom.core.observability.event import LifecycleEvent, Scope
-from loom.core.observability.runtime import ObservabilityRuntime
+from loom.core.observability.observability import Observability
 from loom.streaming.kafka._codec import KafkaCodec
 from loom.streaming.kafka._key_resolver import PartitionKeyResolver
 from loom.streaming.kafka._message import (
@@ -67,7 +67,7 @@ class KafkaMessageProducer(Generic[PayloadT]):
         codec: KafkaCodec[PayloadT],
         key_resolver: PartitionKeyResolver[MessageEnvelope[PayloadT]] | None = None,
         use_message_timestamp: bool = True,
-        obs: ObservabilityRuntime | None = None,
+        obs: Observability | None = None,
     ) -> None:
         self._raw = raw
         self._codec = codec

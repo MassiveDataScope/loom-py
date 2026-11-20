@@ -6,12 +6,12 @@ from typing import Any, cast
 
 import pytest
 
-from loom.celery.adapter import CeleryAdapter
+from loom.celery.runtime import CeleryRuntime
 from loom.composition import Project
 from loom.core.command import Command, CommandField
 from loom.core.di.container import LoomContainer
 from loom.core.di.scope import Scope
-from loom.core.engine.executor import RuntimeExecutor
+from loom.core.engine.executor import UseCaseExecutor
 from loom.core.job import JobService
 from loom.core.job.callback import JobCallback
 from loom.core.job.job import Job
@@ -264,7 +264,7 @@ async def _create_schema(db_url: str) -> None:
         async with manager.engine.begin() as conn:
             await conn.run_sync(get_metadata().create_all)
     finally:
-        await manager.dispose()
+        await manager.close()
 
 
 async def _drop_schema(db_url: str) -> None:
@@ -273,7 +273,7 @@ async def _drop_schema(db_url: str) -> None:
         async with manager.engine.begin() as conn:
             await conn.run_sync(get_metadata().drop_all)
     finally:
-        await manager.dispose()
+        await manager.close()
 
 
 @pytest.fixture
@@ -308,7 +308,7 @@ def celery_files(tmp_path: Path, monkeypatch: Any) -> Any:
             JobService,
             lambda: InlineServiceFixture(
                 container.resolve(UseCaseFactory),
-                container.resolve(RuntimeExecutor),
+                container.resolve(UseCaseExecutor),
             ),
             scope=Scope.APPLICATION,
         )
@@ -329,7 +329,7 @@ class TestAutoCreateAppIntegration:
     ) -> None:
         config_path, _db_path, module, callback_sink = celery_files
 
-        adapter = CeleryAdapter(
+        adapter = CeleryRuntime(
             jobs=[
                 _CreateRecordViaUseCaseJob,
                 _GetRecordViaLoadByIdJob,
@@ -345,7 +345,7 @@ class TestAutoCreateAppIntegration:
             Project.load(config_path, code_path=None, caller="test"),
             acme_recording_callbacks.MODULE,
         )
-        celery_app = adapter.bind(project.compose(WithOverrides(adapter, module)))
+        celery_app = adapter.mount(project.compose(WithOverrides(adapter, module)))
 
         create_task = celery_app.tasks[f"loom.job.{_CreateRecordViaUseCaseJob.__qualname__}"]
         get_task = celery_app.tasks[f"loom.job.{_GetRecordViaLoadByIdJob.__qualname__}"]

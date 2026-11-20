@@ -216,7 +216,7 @@ async def session_manager() -> AsyncIterator[SessionManager]:
     async with manager.engine.begin() as connection:
         await connection.run_sync(compiled.metadata.create_all)
     yield manager
-    await manager.dispose()
+    await manager.close()
 
 
 class TestJsonColumns:

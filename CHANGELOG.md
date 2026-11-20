@@ -2,6 +2,22 @@
 
 ## 💥 Breaking
 
+- **names:** Runtime runs the application. Plugin is what an entry point registers. Store, Engine, Ops and IO name the role. `close` ends a session and `shutdown` ends the application. `from_<source>` builds from an origin. `is_` and `has_` name booleans. Exceptions end in `Error`.
+  **Migration:**
+  - **Modules:** `loom.ai.runtime` → `loom.ai.execution`; `loom.etl.runtime` → `loom.etl.ports`; `loom.rest.fastapi.adapter` → `loom.rest.fastapi.runtime`; `loom.celery.adapter` → `loom.celery.runtime`; `loom.prometheus.adapter` → `loom.prometheus.recorder`; `loom.core.transport.adapter` → `loom.core.transport.dispatcher`; `loom.core.command.adapter` → `loom.core.command.parser`; `loom.rest.adapter` → `loom.rest.parser`; `loom.rest.rest_adapter` → `loom.rest.dispatcher`; `loom.core.cache.abc.backend` → `loom.core.cache.abc.store`; `loom.core.stores.backend` → `loom.core.stores.plugin`; `loom.stores.sqlalchemy.backend` → `loom.stores.sqlalchemy.plugin`; `loom.stores.dynamodb.backend` → `loom.stores.dynamodb.plugin`; `loom.stores.mongo.backend` → `loom.stores.mongo.plugin`; `loom.ai.engines.pydantic_ai.provider` → `loom.ai.engines.pydantic_ai.plugin`; `loom.etl.backends.polars.provider` → `loom.etl.engines.polars.engine`; `loom.etl.backends.spark.provider` → `loom.etl.engines.spark.engine`; `loom.etl.runner._providers` → `loom.etl.runner._engines`; `loom.core.observability.runtime` → `loom.core.observability.observability`; `loom.core.projection.runtime` → `loom.core.projection.plan`; `loom.rest.fastapi.router_runtime` → `loom.rest.fastapi.router`; `loom.etl.backends` → `loom.etl.engines`; `loom.etl.checkpoint._backends` → `loom.etl.checkpoint._io`.
+  - **Runtimes and composition:** `Adapter` → `Runtime`; `FastAPIAdapter` → `FastAPIRuntime`; `CeleryAdapter` → `CeleryRuntime`; `LambdaAdapter` → `LambdaRuntime`; `OverrideAdapter` → `OverrideRuntime`; `_HarnessAdapter` → `_HarnessRuntime`; `ObservabilityRuntime` → `Observability`; `RuntimeExecutor` → `UseCaseExecutor`; `RuntimeEvent` → `ExecutionEvent`; `_CeleryAsyncRuntime` → `_CeleryProcessBridge`; `_AsyncRuntimeProtocol` → `_ProcessBridgeProtocol`; `_build_async_runtime` → `_build_process_bridge`; `async_runtime` (Celery only) → `process_bridge`; `_RouteRuntime` → `_ResolvedRoute`; `build_agent_runtime` → `build_agent_host`; `AiWiring.runtime` → `agent_host`; the composed log field `adapter` → `runtime`.
+  - **Ports and implementations:** `LoomAdapter` → `UseCaseDispatcher`; `LoomRestAdapter` → `RestUseCaseDispatcher`; `AdapterRequest` → `ExecutionRequest`; `CommandAdapter` → `CommandParser`; `PydanticAdapter` → `PydanticCommandParser`; `MetricsAdapter` → `MetricsRecorder`; `PrometheusMetricsAdapter` → `PrometheusMetricsRecorder`; `PrometheusLifecycleAdapter` → `PrometheusLifecycleObserver`; `CacheBackend` → `CacheStore`; `cache_backend` → `cache_store`; `ContextFactory` → `ContextSupplier`; `ResourceManager` and `resource_manager_for` are removed from `loom.streaming.bytewax._operators` (callers use `ResourceLifecycle`; the class `ResourceManager` in `_resource_manager.py` stays); `StubCatalog` → `InMemoryCatalog`; `StubSourceReader` → `InMemorySourceReader`; `StubTargetWriter` → `InMemoryTargetWriter`; `StubRunObserver` → `RecordingRunObserver`.
+  - **Stores and plugins:** `StoreBackend` → `StorePlugin`; `NoneBackend` → `NullStorePlugin`; `SQLAlchemyBackend` → `SQLAlchemyStorePlugin`; `DynamoDBBackend` → `DynamoDBStorePlugin`; `MongoBackend` → `MongoStorePlugin`; `StoreRuntime` → `StorePluginContext`; `BACKEND_ENTRY_POINT_GROUP` → `PLUGIN_ENTRY_POINT_GROUP`; `resolve_store_backend` → `resolve_store_plugin`; `Recipe.default_store_backend` → `default_store_plugin`; `StoreSpec.resolve_backend` → `resolve_plugin`; `store_backends` → `store_plugins`; the composed log field `backends` → `store_plugins`.
+  - **ETL:** `BackendProvider` → `EtlEngine`; `PolarsProvider` → `PolarsEtlEngine`; `SparkProvider` → `SparkEtlEngine`; `load_backend_provider` → `load_etl_engine`; `_BACKEND_EP_GROUP` → `_ENGINE_ENTRY_POINT_GROUP`; pyproject targets `loom.etl.engines.polars.engine:PolarsEtlEngine` and `loom.etl.engines.spark.engine:SparkEtlEngine`; `HistorifyBackend` → `HistorifyOps`; `PolarsHistorifyBackend` → `PolarsHistorifyOps`; `SparkHistorifyBackend` → `SparkHistorifyOps`; `_CheckpointBackend` → `_CheckpointIO`; `_PolarsCheckpointBackend` → `_PolarsCheckpointIO`; `_SparkCheckpointBackend` → `_SparkCheckpointIO`; `_InMemoryCheckpointBackend` → `_InMemoryCheckpointIO`; `BackendProjectionLoader` → `BatchProjectionLoader`; `make_memory_loader` → `build_memory_loader` (the function only; the descriptor method stays); `make_sql_loader` → `build_sql_loader`; `FromDynamoDb` → `FromDynamoDB`; `DynamoDbSourceSpec` → `DynamoDBSourceSpec`; `DynamoDbSourceReader` → `DynamoDBSourceReader`.
+  - **Streaming:** enum `Backend` → `TableEngine`; `IntoTable(backend=)` → `IntoTable(engine=)`. The YAML `backend:` key is unchanged.
+  - **AI:** `AgentRuntime` → `AgentHost`; `AgentEngineProvider` → `AgentEnginePlugin`; `PydanticAIEngineProvider` → `PydanticAIEnginePlugin`; `engine_provider` → `engine_plugin`; `ProviderIsland` → `ModelBuilder`.
+  - **Exceptions:** `RuleViolation` → `RuleViolationError`; `RuleViolations` → `RuleViolationsError`; `StoresNotCommitted` → `StoresNotCommittedError`; `UnknownRole` → `UnknownRoleError`; `UnknownPermission` → `UnknownPermissionError`; `JobDelayRefused` → `JobDelayRefusedError`.
+  - **Methods:** `Runtime.bind` → `mount`; `bind_interfaces` → `mount_interfaces`; `bind_sql_endpoints` → `mount_sql_endpoints`; `bind_agent_endpoints` → `mount_agent_endpoints`; `bind_a2a_endpoints` → `mount_a2a_endpoints`; `StructBinder.bind` and `ConfigContext.bind` → `convert`; `ExecutionKinds.bind` → `register`; `DeferredScopedSettings.bind` → `attach`; `CachedCalls.bind` → `wrap_methods`; `SessionManager.dispose` → `close`; log event `SessionManagerDisposed` → `SessionManagerClosed`; `ApplicationHost.stop` → `shutdown`; `Outcome.of` → `from_exception`; `BuildContext.of` → `from_plan`; `Scope.of` → `from_segments`; `CommandStep.of` → `from_callable`; `StoresNotCommittedError.of` → `from_outcome`; `Delegation.of` → `from_caller`; `MissingDependency.of` → `from_import_error`; `JobSettings.of` → `options_for`; `_OpenToolset.of` → `from_toolset`; `MarkerDeclarations.of` → `from_analysis`; `_ResolvedRoute.of` → `from_compiled_route`; `QueueConsumer.bind` → `from_application`; `Boundaries.of` → `boundary_for`.
+  - **Booleans:** `InvocationOutcome.succeeded` → `has_succeeded`; the `phased` marker → `is_phased`; `InvocationScope.owned_here` → `is_owned_here`; `DependencyPath.revisits` → `has_revisit`; `Scope.per_execution` → `is_per_execution`; `SqlEndpointConfig.binds_identity` → `is_identity_bound`.
+  - **Entry points:** group `loom.stores.backends` → `loom.stores.plugins`; group `loom.etl.backends` → `loom.etl.engines`. Third-party packages re-register. The YAML `backend:` key and the entry names (`sqlalchemy`, `dynamodb`, `mongo`, `none`, `polars`, `spark`, `pydantic-ai`) are unchanged.
+  - **Error codes:** `ADAPTER_ALREADY_COMPOSED` → `RUNTIME_ALREADY_COMPOSED`; `ADAPTER_RECIPE_MISSING` → `RUNTIME_RECIPE_MISSING`; `HOST_STOPPED_WHILE_OPENING` → `HOST_SHUT_DOWN_WHILE_OPENING`.
+  - **Parameters:** `create_app` / `compose` `adapter=` → `runtime=`; `IntoTable(backend=)` → `IntoTable(engine=)`; `observability_runtime=` → `observability=`; `engine_provider=` → `engine_plugin=`; `context_factories` → `context_suppliers`; Celery `async_runtime` → `process_bridge`; `mount_agent_endpoints` and `mount_a2a_endpoints` `runtime=` → `host=`; `StorePlugin.build` `runtime` → `context`.
+
 - **core:** `create_kernel(...)` is the only way to build the application core.
   `bootstrap_app` and `BootstrapResult` are removed, and `KernelRuntime` is
   `Kernel`: its own frozen dataclass (no longer a subclass of the bootstrap
@@ -27,11 +43,11 @@
 - **jobs:** abandonment is observable. `Abandoned.reason` is an `AbandonReason`
   (`attempts_exhausted`, `not_retryable`, `job_asked`, `cannot_wait`; the class and
   message of the error stay on `Abandoned.error`), `JobDelivery` carries the
-  `queue` the job is configured for, and `RuntimeEvent.reason` carries the reason on
+  `queue` the job is configured for, and `ExecutionEvent.reason` carries the reason on
   `JOB_ABANDONED`. The runner logs one WARNING `Job abandoned` for every message it
   abandons, on every transport, with `job`, `queue`, `attempt`, `postponements`,
   `reason`, `error_type`, `error_message` and `task_id`; the Lambda SQS trigger no
-  longer logs its own `SQS job failed finally`. `PrometheusMetricsAdapter` counts
+  longer logs its own `SQS job failed finally`. `PrometheusMetricsRecorder` counts
   job events in `loom_job_events_total{kind, job, reason}`. The dead-letter
   attribute `loom.abandonment_reason` keeps its text.
 - **jobs:** `EventTrigger.queued` is `is_queued`.
@@ -244,7 +260,7 @@
   asynchronous event carries the retry number: every run is attempt 1,
   `JOB_FAILED` and `JOB_REJECTED` are per invocation, and the trigger's
   `maximum_retry_attempts` governs the retries. A countdown
-  above zero with no timer is still refused at dispatch with `JobDelayRefused`.
+  above zero with no timer is still refused at dispatch with `JobDelayRefusedError`.
   **Migration:** pass `redelivery=` to a `JobRunner` built by hand and call
   `runner.unrunnable` where `JobRunner.decide` was called.
 - **jobs:** a Lambda function consuming an SQS queue settles each message by
@@ -339,7 +355,7 @@
   are dependency-graph roots in every adapter, like jobs, so one injecting an
   unbound service is refused at start-up. `loom.celery` registers a success and
   a failure task for each; the `callbacks=` parameter is removed from
-  `CeleryAdapter`, `loom.celery.bootstrap.bootstrap_worker` and
+  `CeleryRuntime`, `loom.celery.bootstrap.bootstrap_worker` and
   `loom.celery.auto.create_app`. Every job service the composition builds
   (inline, Celery, recording, and custom backends using `context.callbacks`)
   refuses, with a `ValueError`, a dispatch naming a callback class the scan did
@@ -407,7 +423,7 @@
   path) or `UnservedModelError`. **Migration:** register
   required ports in a module passed to `create_kernel`; handle start-up failure
   where the kernel is created rather than waiting for the first invocation.
-- **core:** `RuntimeExecutor.bind_agent_resolver`, `bind_mcp_resolver`, their
+- **core:** `UseCaseExecutor.bind_agent_resolver`, `bind_mcp_resolver`, their
   constructor arguments, and `create_kernel(agent_resolver=, mcp_resolver=)`
   require an `ExecutionResolver` with `resolve(declaration, annotation)`.
   Before: positional `(name, identity)` or `(server, include, identity)`
@@ -483,14 +499,14 @@
   raise `UnsupportedQuery`, and `is_enabled` is `False`), where
   `Recipe.cursor_codec(ctx)` returned `None`; the repositories, compiler and
   registration modules always take and register a codec,
-  `StoreRuntime.cursor_codec` is required, a cursor page is refused when the
+  `StorePluginContext.cursor_codec` is required, a cursor page is refused when the
   query starts (`CursorCodec.require_enabled()`), not only when a next page
   needs a token,
   and `StoreCapabilities.pages_with_cursors` is removed (nothing reads it). **Migration:** an
   application that pages by cursor keeps its `stores.settings.cursors`
   section; one that does not can delete it (and its unused keys); a custom
   backend's `capabilities()` drops the `pages_with_cursors` argument; code
-  building a `StoreRuntime` passes `cursor_codec=` (`CursorCodec.disabled()`
+  building a `StorePluginContext` passes `cursor_codec=` (`CursorCodec.disabled()`
   for none), and code testing a codec for `None` tests `is_enabled`.
 - **discovery:** `DiscoveryResult.interfaces` is removed and
   `DiscoveryResult.classes` is added: every concrete class the scan found. Core
@@ -498,7 +514,7 @@
   interfaces (`loom.rest.discovery.interfaces_in`) and folds the use cases their
   routes reference. **Behaviour change:** only the REST adapter folds route use
   cases into the discovered ones, so a Celery worker compiles the use cases of
-  an interface only when it is passed to `CeleryAdapter(interfaces=...)`.
+  an interface only when it is passed to `CeleryRuntime(interfaces=...)`.
   `collect_use_cases_from_interfaces` is removed.
 - **composition:** `Project.check` is `CheckedProject.load`
   (`loom.composition.checked`), with the same arguments and behaviour;
@@ -573,14 +589,14 @@
   list first, and read `FunctionManifest.event` as a `dict` with the keys of
   the removed structs.
 
-- **lambda:** one adapter, `LambdaAdapter`, serves every Lambda function: it
+- **lambda:** one runtime, `LambdaRuntime`, serves every Lambda function: it
   binds the handler of the trigger the deployed function declares. Nothing
   of the previous surface remains:
 
   | Before | Now |
   |---|---|
-  | `LambdaHTTPAdapter()` | `LambdaAdapter()` |
-  | `LambdaSQSAdapter(jobs=...)` | `LambdaAdapter(jobs=...)` on a function with `trigger: {source: jobs, queue: {name: ...}}` |
+  | `LambdaHTTPAdapter()` | `LambdaRuntime()` |
+  | `LambdaSQSAdapter(jobs=...)` | `LambdaRuntime(jobs=...)` on a function with `trigger: {source: jobs, queue: {name: ...}}` |
   | `app.entry: lambda_http` | `app.entry: lambda` |
   | `app.entry: lambda_sqs` | `app.entry: <function>` with `trigger: {source: jobs, queue: {name: ...}}` |
   | `lambda.functions.<f>.http: [...]` | `lambda.functions.<f>.trigger: {source: http, interfaces: [...]}` |
@@ -598,7 +614,7 @@
   | `loom.testing.sqs_raw_record(body, ...)` | `loom.testing.LambdaEvent.sqs_record(body, ...)["Records"][0]` |
   | Deploy manifest `manifest_version: 1`, event `type` (`http`, `sqs`) | `manifest_version: 2`: each function's `source` and `via` |
 
-  `loom.serverless.aws.lambda_` exports `LambdaAdapter`, `LambdaHandler`,
+  `loom.serverless.aws.lambda_` exports `LambdaRuntime`, `LambdaHandler`,
   `LambdaUnservedConfigError` and `S3Object` only.
 
 - **lambda:** a `jobs` trigger must declare `trigger.queue`, naming the
@@ -664,7 +680,7 @@
   | Old path | New path |
   |---|---|
   | every class of the removed `errors` submodule of `loom.core.errors` | `loom.core.errors` |
-  | `loom.core.uow.scope.ScopeOwnershipError`, `UnitOfWorkInsideScope`, `UndeclaredStoreWrite`, `NestedIdentityMismatch`, `NestedElevation`, `StoresNotCommitted` (also `loom.core.uow.*`) | `loom.core.errors` |
+  | `loom.core.uow.scope.ScopeOwnershipError`, `UnitOfWorkInsideScope`, `UndeclaredStoreWrite`, `NestedIdentityMismatch`, `NestedElevation`, `StoresNotCommittedError` (also `loom.core.uow.*`) | `loom.core.errors` |
   | `loom.core.uow.coordinator.UncomposedStore` | `loom.core.errors` |
   | `loom.core.job.handle.JobTimeoutError`, `JobFailedError` (also `loom.core.job.*`) | `loom.core.errors` |
   | `loom.core.job.router.MixedJobBackendsError` (also `loom.core.job.*`) | `loom.core.errors` |
@@ -701,21 +717,21 @@
 
 ### rest
 
-- **rest:** `LoomRestAdapter.handle(use_case, request)` and the
-  `loom.core.transport.LoomAdapter` protocol take the use case **class** and
+- **rest:** `RestUseCaseDispatcher.handle(use_case, request)` and the
+  `loom.core.transport.UseCaseDispatcher` protocol take the use case **class** and
   build it inside its execution, as every other entry point does:
-  `LoomRestAdapter(executor, *, factory, error_mapper=None)` runs
+  `RestUseCaseDispatcher(executor, *, factory, error_mapper=None)` runs
   `executor.run(use_case, factory=factory, params=..., payload=...,
   identity=current_identity())`, so constructor ports, `Caller()` and
   per-execution adapters are injected by the container, as the request's
-  caller. `AdapterRequest.dependencies` is removed: repositories for
+  caller. `ExecutionRequest.dependencies` is removed: repositories for
   `LoadById` / `Load` / `Exists` come from the executor's repository resolver
   (the kernel's executor resolves them from the container). **Migration**, one
-  line per route: `LoomRestAdapter(executor)` →
-  `LoomRestAdapter(kernel.executor, factory=kernel.factory)`, and
-  `await adapter.handle(CreateUser(repo=users), AdapterRequest(params=p,
+  line per route: `RestUseCaseDispatcher(executor)` →
+  `RestUseCaseDispatcher(kernel.executor, factory=kernel.factory)`, and
+  `await adapter.handle(CreateUser(repo=users), ExecutionRequest(params=p,
   dependencies={User: users}))` → `await adapter.handle(CreateUser,
-  AdapterRequest(params=p))`, with `users` bound in the container.
+  ExecutionRequest(params=p))`, with `users` bound in the container.
 
 ### di
 
@@ -737,7 +753,7 @@
   could be bound after start-up. Now: after `seal()`,
   declaring a kind on `container.kinds` (`declare_type`, `declare_origin`,
   `refuse`) or binding its resolver (`container.kinds.bind`,
-  `RuntimeExecutor.bind_agent_resolver`, `bind_mcp_resolver`) raises
+  `UseCaseExecutor.bind_agent_resolver`, `bind_mcp_resolver`) raises
   `ContainerSealed` and changes nothing. A singleton a lenient composition
   left unbuilt for an unbound `Agent()` or `Mcp()` kind therefore fails at
   every resolve; no resolver can be bound for it later.
@@ -747,7 +763,7 @@
   mcp_resolver=...)`, or let the composed application's AI phase bind it.
 - **core:** `create_kernel` refuses a module that binds a key the kernel binds
   itself (`loom.core.bootstrap.kernel.KERNEL_KEYS`: `UseCaseFactory`,
-  `RuntimeExecutor`, `UseCaseRegistry`, `ApplicationInvoker`): it raises
+  `UseCaseExecutor`, `UseCaseRegistry`, `ApplicationInvoker`): it raises
   `BootstrapError` naming the module and the key, where the kernel used to
   replace that binding without a word. A composed application also refuses a
   module binding `UseCaseFactory`, with `ReservedBindingError`, as it already
@@ -860,7 +876,7 @@
     as `EXPIRED`, never as `null`. Links from earlier versions decode to no caller, so
     a callback declaring `Caller()` fails closed.
     **Migration:** nothing for loom's own job backends; a custom producer
-    writes the identity with `Delegation.of(caller, until).encoded()`.
+    writes the identity with `Delegation.from_caller(caller, until).encoded()`.
   - Signatures: `encode_job_message(..., identity=)` also takes a
     `Delegation`, whose deadline it writes; `job_context(trace_id, identity)`
     reads it from the encoded identity.
@@ -875,7 +891,7 @@
     `Acting.resumed(delegation)` returns what queued work installs to resume
     a dispatcher's delegation, its deadline the sooner of the captured one
     and the caller's; `Acting.current().refuse_expired()` refuses
-    a caller past its deadline), `Delegation` (`Delegation.of(caller,
+    a caller past its deadline), `Delegation` (`Delegation.from_caller(caller,
     until)` keeps only an authenticated caller), `NO_DELEGATION`,
     `current_caller`,
     `configure_delegation`, `captured_delegation`, `IdentityFixed` (also in
@@ -924,7 +940,7 @@
     `Mcp()` handle looks its server's grant up on every call. A server that
     no `Mcp()` declaration reached at start-up raises the new
     `AgentRunErrorCode.MCP_SERVER_NOT_GRANTED` (authorization class), and so
-    does `AgentRuntime.use_case_mcp_grant(server)`, which returned `None`
+    does `AgentHost.use_case_mcp_grant(server)`, which returned `None`
     for it before. It still returns `None` for a server tolerated as
     unreachable, whose calls keep raising `TOOL_UNAVAILABLE`. A caller with
     no subject keeps `UNAUTHORIZED`, on the `Mcp()` handle too (its
@@ -972,18 +988,18 @@
     `ApplicationInvoker`.
     **Migration:** drop `identity=` from `AgentDeps(...)`; a custom bundle
     or tool reads the caller with `execution_identity()`.
-  - **Migration (signatures):** `RuntimeExecutor.bind_agent_resolver`,
+  - **Migration (signatures):** `UseCaseExecutor.bind_agent_resolver`,
     `bind_mcp_resolver` and the `agent_resolver=` and `mcp_resolver=`
-    arguments of `RuntimeExecutor` and `create_kernel` now require a
+    arguments of `UseCaseExecutor` and `create_kernel` now require a
     `loom.core.execution.ExecutionResolver`, as described in the breaking
-    change above. In the private `loom.ai.runtime._handle` module, the
+    change above. In the private `loom.ai.execution._handle` module, the
     `agent_marker_resolver(runtime, ...)` and `mcp_marker_resolver(runtime,
     ...)` functions are replaced by the `AgentMarkerResolver` and
     `McpMarkerResolver` classes, which take the same arguments and accept
     both resolver shapes. Inside an execution, an identity passed to the
     legacy shape must be the execution identity, or `IdentityFixed` is
     raised. `_UnavailableMcpHandle` is removed.
-    `loom.ai.runtime._grants.McpGrantView` and `SqlGrantView` lose their
+    `loom.ai.execution._grants.McpGrantView` and `SqlGrantView` lose their
     `identity=` argument.
 
 - **ai:** `HealthState` is a `StrEnum` (`OK`, `DEGRADED`, `UNAVAILABLE`)
@@ -995,8 +1011,8 @@
   `UNAVAILABLE`, as the `/health` aggregate did before, instead of failing
   the probe. **Migration:** for a type checker, replace a string literal typed
   as `HealthState` (`"ok"`) with its member (`HealthState.OK`).
-- **ai (private modules):** `loom.ai.runtime._hooks`, `_conversation` and
-  `_bounded` merge into `loom.ai.runtime._turn`: `TurnCallbacks(plan,
+- **ai (private modules):** `loom.ai.execution._hooks`, `_conversation` and
+  `_bounded` merge into `loom.ai.execution._turn`: `TurnCallbacks(plan,
   identity, interaction_id, conversation_id, invoker)` runs the conversation
   loader (`conversation()`) and the output hook (`events()`, `terminal()`),
   and builds both commands (`command()`, `hook_command()`).
@@ -1004,14 +1020,14 @@
   logs and errors. The fixed client texts and the denial table live in
   `loom.ai.errors` (`HOOK_FAILED_MESSAGE`, `NO_TERMINAL_MESSAGE`,
   `DENIED_MESSAGE`, `DENIALS`).
-  `loom.ai.runtime._health` merges into `_lifecycle` (`AgentHealth` is still
-  exported by `loom.ai.runtime`). `loom.ai._roles.bound_query_roles` becomes
+  `loom.ai.execution._health` merges into `_lifecycle` (`AgentHealth` is still
+  exported by `loom.ai.execution`). `loom.ai._roles.bound_query_roles` becomes
   `CompiledSqlCapability.roles_of(identity)`. In the pydantic-ai engine,
   `build_capabilities(plan)` drops `container`, `native_capability(capability)`
   drops `context`, `capability_deps` becomes `bundle_container` (read by the
   `sql` tool only) and `CapabilityDeps` is removed,
-  `_failures.classify` becomes `Outcome.of`, and
-  `loom.ai.runtime._grants.INTERRUPTED_CALL_CODE` is removed
+  `_failures.classify` becomes `Outcome.from_exception`, and
+  `loom.ai.execution._grants.INTERRUPTED_CALL_CODE` is removed
   (`AgentRunErrorCode.MCP_CALL_INTERRUPTED` is the code). **Migration:** code
   importing these private names (tests patching them included) imports the
   new owner listed above.
@@ -1033,7 +1049,7 @@
   | `loom.core.repository.{mutation,record,registration,registry}` | `loom.core.stores.repository.{same name}` |
   | `loom.core.uow` and `loom.core.uow.{abc,alone,coordinator,scope}` | `loom.core.stores.uow` and `loom.core.stores.uow.{same name}` |
   | `loom.core.persistence` | `loom.core.stores` |
-  | `loom.core.persistence.abc` | `loom.core.stores.backend` |
+  | `loom.core.persistence.abc` | `loom.core.stores.plugin` |
   | `loom.core.persistence.stores` | `loom.core.stores.catalog` |
   | `loom.core.persistence.{audit_checks,database,elevation,none,profile,registry}` | `loom.core.stores.{same name}` |
   | `loom.core.connections.relational` | `loom.core.stores.database` |
@@ -1054,8 +1070,8 @@
   | `loom.core.sql.loader` (`sql_island`, `SqlIsland`) | removed; the composition root loads `loom.stores.clickhouse` itself |
 - **stores:** the SQLAlchemy store and its schema loader live under
   `loom.stores.sqlalchemy`, and `loom.core` imports neither `sqlalchemy` nor
-  `loom.stores`. The `sqlalchemy` entry point of `loom.stores.backends`
-  now targets `loom.stores.sqlalchemy.backend:SQLAlchemyBackend`.
+  `loom.stores`. The `sqlalchemy` entry point of `loom.stores.plugins`
+  now targets `loom.stores.sqlalchemy.plugin:SQLAlchemyStorePlugin`.
   **Migration:**
   - Alembic `env.py` files importing `loom.core.repository.sqlalchemy.migrations`
     or `loom.core.locator.load_application` import
@@ -1069,29 +1085,29 @@
     below it) must name `loom.stores.sqlalchemy` instead, or it stops matching.
 - **stores:** the DynamoDB and Mongo stores live under `loom.stores.dynamodb`
   and `loom.stores.mongo`. The `dynamodb` and `mongo` entry points of
-  `loom.stores.backends` now target
-  `loom.stores.dynamodb.backend:DynamoDBBackend` and
-  `loom.stores.mongo.backend:MongoBackend`. `run_in_executor` is public API
+  `loom.stores.plugins` now target
+  `loom.stores.dynamodb.plugin:DynamoDBStorePlugin` and
+  `loom.stores.mongo.plugin:MongoStorePlugin`. `run_in_executor` is public API
   at `loom.core.concurrency`. `loom.core.repository` is gone.
   **Migration:** update the imports in the table above.
 - **stores:** the backend contract carries the store vocabulary, and the entry
   point group moves with it. A third-party backend package must re-register
-  its entry point under `[project.entry-points."loom.stores.backends"]`
+  its entry point under `[project.entry-points."loom.stores.plugins"]`
   (`loom.persistence.backends` lists nothing any more) and implement
-  `StoreBackend`.
+  `StorePlugin`.
   **Migration:**
 
   | Before | After |
   |---|---|
-  | `PersistenceBackend` | `StoreBackend` |
+  | `PersistenceBackend` | `StorePlugin` |
   | `PersistenceWiring` | `StoreWiring` |
-  | `BackendRuntime` | `StoreRuntime` |
+  | `BackendRuntime` | `StorePluginContext` |
   | `resolve_backend` | `resolve_store_backend` |
   | `unknown_backend_message` | private |
   | `CompositionSource.backend()` | `Project.resolve_store_backend()` |
   | `loom.composition.phases.Stores.backends` | `Stores.store_backends` |
   | `Recipe.default_backend` | `Recipe.default_store_backend` |
-  | entry point group `loom.persistence.backends` | `loom.stores.backends` |
+  | entry point group `loom.persistence.backends` | `loom.stores.plugins` |
   | `docs/rest/persistence-backends.md` | `docs/rest/stores.md` |
 - **stores:** `BulkCreatable.create_many` takes a keyword-only
   `on_conflict: OnConflict = OnConflict.ERROR`, and `CachedRepository`
@@ -1143,7 +1159,7 @@
   | `build_application(*paths, adapter=a, **load)` | `Project.load(*paths, **load).compose(a)` |
   | `compose_application(source, a)` | `source.compose(a)` |
   | `load_source(*paths, **load)` | `Project.load(*paths, **load)` |
-  | `Adapter.recipe(source)` parameter | `Adapter.recipe(project)` parameter |
+  | `Runtime.recipe(source)` parameter | `Runtime.recipe(project)` parameter |
 
   **Migration:**
 
@@ -1258,7 +1274,7 @@
   A misdeclaration answers the fixed JSON 500 (`code`, message, `trace_id`, no
   extra fields) and is logged at `ERROR` without the declared values. It covers
   an unregistered status, a colliding field, and a `public_detail()` that raises
-  or does not return a mapping. FastAPI and the Lambda HTTP adapter give the
+  or does not return a mapping. FastAPI and the Lambda HTTP runtime give the
   same answer. Existing errors are unchanged.
 
 ### security
@@ -1340,7 +1356,7 @@
   jitter, capped at 900 s) or is rejected (`JobRejection`, an error whose
   `retryable` is `False`, or attempts exhausted: the reason is the error class),
   and it emits `job_started`, `job_succeeded`, `job_deferred`, `job_failed` and
-  `job_rejected` to the metrics adapter it is given. The retry policy resolves from
+  `job_rejected` to the metrics recorder it is given. The retry policy resolves from
   `jobs.<Job>.retry`, `jobs.defaults.retry`, `__retry__` and the loom default
   (`Backoff(5, 2, 300)`, 3 attempts), each partial section inheriting the layer
   below; each process that runs jobs logs one `Job retry policies` line at
@@ -1376,7 +1392,7 @@
   that names no mechanism (`{}`, `jwt: null`, `custom: false`): it replaces
   `app.rest.auth` for that function.
 - **lambda:** a Lambda function hosts the `ai` section and manifest `AGENTS`
-  on every trigger (`http`, `jobs`, `eventbridge`, `s3`, `sns`, `schedule`). The agent runtime and every reachable MCP
+  on every trigger (`http`, `jobs`, `eventbridge`, `s3`, `sns`, `schedule`). The agent host and every reachable MCP
   server's session open once at Init and stay open across warm invocations.
   Only the agents an `Agent()` marker names are compiled, and only their
   servers and the `Mcp()` servers are opened. `transport: stdio` is refused
@@ -1465,7 +1481,7 @@
   `(SessionManager, "<store>")` for the others. One invocation enlists the
   stores it uses and commits them one after another (ADR 0008); nothing is
   atomic across stores. When they do not all end the same way the execution
-  raises `StoresNotCommitted` (`stores_not_committed`, HTTP 500) with each
+  raises `StoresNotCommittedError` (`stores_not_committed`, HTTP 500) with each
   store's outcome.
 - **stores:** `Joined[...]` (`loom.core.use_case`) wraps a repository a use
   case or job injects, such as `Joined[RepoFor[AuditEntry]]`, to declare that
@@ -1485,7 +1501,7 @@
 - **stores:** `stores.settings.rollback_timeout` (seconds, default 30) bounds the
   rollbacks of one invocation together.
 - **stores:** the errors a caller catches have public import paths:
-  `StoresNotCommitted`, `ScopeOwnershipError`, `UnitOfWorkInsideScope`,
+  `StoresNotCommittedError`, `ScopeOwnershipError`, `UnitOfWorkInsideScope`,
   `UndeclaredStoreWrite`, `NestedElevation` and `ForeignSessionError` from
   `loom.core.errors`, and `ReadOnlyElevation` from
   `loom.stores.sqlalchemy.rls`, next to `elevate`.
@@ -1576,7 +1592,7 @@
   that mutate state need a function-scoped runner on their own `tmp_path`.
 - **etl:** `ExtraFieldsMode` (`IGNORE`, `WARN`, `CAPTURE`, `ERROR`) is
   exported from `loom.etl.declarative.source`. `FromMongo.on_extra_fields` and
-  `FromDynamoDb.on_extra_fields` accept a member or its string value, as
+  `FromDynamoDB.on_extra_fields` accept a member or its string value, as
   before, and the specs they build carry the member; an unknown value raises
   the same `ValueError`.
 
@@ -1603,9 +1619,9 @@
 
 - **composition:** a composed application (`create_app`, `Project.compose`,
   the Celery worker and every Lambda entry) builds one
-  `RuntimeExecutor`, not a throwaway one first. An `APPLICATION` provider that
-  resolves `RuntimeExecutor`, `ApplicationInvoker`, `UseCaseRegistry`,
-  `ObservabilityRuntime` or `StoreCatalog` while start-up validates the
+  `UseCaseExecutor`, not a throwaway one first. An `APPLICATION` provider that
+  resolves `UseCaseExecutor`, `ApplicationInvoker`, `UseCaseRegistry`,
+  `Observability` or `StoreCatalog` while start-up validates the
   container gets the application's own instances.
 - **composition:** a composed application logs one structured info event,
   `loom.composition.composed`, through `loom.core.logger` (logger
@@ -1757,7 +1773,7 @@
   passed to the application, instead of re-registering after a first
   resolve.
 - **engine (behaviour change):** each execution opens one execution context,
-  and `RuntimeExecutor.run` builds the use case or job inside it, before
+  and `UseCaseExecutor.run` builds the use case or job inside it, before
   `EXEC_START`: a constructor's `Caller()`, a per-execution adapter declaring
   `Caller()`, and the `Agent()` / `Mcp()` resolvers of `execute()` all read
   the identity of that execution, and a constructor failure raises as is with
@@ -1793,11 +1809,11 @@
   `Unauthenticated` without one).
 - **testing:** `UseCaseTest` binds its `Agent()` and `Mcp()` doubles through
   execution resolvers and serves doubles to adapters declaring the markers too.
-- **engine (new API):** `RuntimeExecutor(builder=...)` builds the class
+- **engine (new API):** `UseCaseExecutor(builder=...)` builds the class
   `run(type)` executes; `create_kernel` passes its factory's `build`.
   `run(type, factory=...)` still works and overrides it; `factory` is now
   optional, and `run` raises `TypeError` when neither is given.
-- **engine (internal):** `RuntimeExecutor` is split by its reasons to change.
+- **engine (internal):** `UseCaseExecutor` is split by its reasons to change.
   `loom.core.engine.boundaries` runs each execution in one unit of work
   (`OpensScope`, `JoinsScope`, `WithoutUnitOfWork` or `ReadsOnItsOwn`) and
   settles its post-commit actions;
@@ -1813,12 +1829,12 @@
   so `ComputeStep is RuleStep` and a compute step compares equal to a rule
   step with the same function. **Migration:** tell the two apart by the plan
   field holding them (`compute_steps` or `rule_steps`), not by type.
-- **engine (events):** `RuntimeEvent.status` is typed
-  `loom.core.engine.events.Status | None` and `RuntimeEvent.error_kind`
+- **engine (events):** `ExecutionEvent.status` is typed
+  `loom.core.engine.events.Status | None` and `ExecutionEvent.error_kind`
   `loom.core.engine.events.Phase | None`, both string enums with the same
   values as before (`"success"`, `"failure"`, `"rule_failure"`, `"begin"`,
   `"build"`, ...). A plain string still works at run time; a type checker
-  flags code building `RuntimeEvent(status="success")`. **Migration:** pass
+  flags code building `ExecutionEvent(status="success")`. **Migration:** pass
   `Status.SUCCESS` (and the matching `Phase` member).
 - **engine (logs):** every attempted execution logs exactly one line, its
   terminal outcome. The `[EXEC] <use case>` line logged when it started is
@@ -1826,7 +1842,7 @@
   key on `[DONE]` / `[FAIL]`. A run refused before its unit of work opens now
   logs one `[FAIL]` with `error_kind="begin"` where it logged nothing: a plan
   that fails to compile on demand, a caller past its delegation, a writer
-  under a read-only execution, and a metrics adapter raising on the start
+  under a read-only execution, and a metrics recorder raising on the start
   event. With `debug_execution=True`, the `[STEP] <step>` lines are replaced
   by a `steps` field on the `[DONE]` or `[FAIL]` line, listing the steps run
   in order. A broken rule no longer logs its own
@@ -1856,7 +1872,7 @@
   refused with `UndeclaredStoreWrite` before it is built, so its constructor
   no longer runs first.
 - **core:** `create_kernel` takes `agent_resolver=` and `mcp_resolver=`, bound
-  on its `RuntimeExecutor` as `bind_agent_resolver` / `bind_mcp_resolver`
+  on its `UseCaseExecutor` as `bind_agent_resolver` / `bind_mcp_resolver`
   bind them, so a standalone kernel serves an adapter declaring `Agent()` or
   `Mcp()` (a singleton one only with `ExecutionResolver`s).
 - **composition:** a use case built through `UseCase.__init__` reaches its
@@ -1908,9 +1924,9 @@
   and `loom.core.di.graph.BINDING_REFUSALS` (the missing-binding and cycle
   refusals). **Migration:** match the new error text, and replace
   `DepToken` with the key itself.
-- **core:** `create_kernel` builds one `RuntimeExecutor`, not a throwaway one
+- **core:** `create_kernel` builds one `UseCaseExecutor`, not a throwaway one
   first, and validates its container once, with the kernel's keys bound: an
-  `APPLICATION` provider resolving `RuntimeExecutor` while it validates gets
+  `APPLICATION` provider resolving `UseCaseExecutor` while it validates gets
   the one the kernel serves, and resolving `ApplicationInvoker` or
   `UseCaseRegistry` gets the kernel's own instead of failing as unbound.
 - **deprecation:** `loom.core.bootstrap.bootstrap_app` warns with a
@@ -1952,7 +1968,7 @@
   marker; a failing `APPLICATION` binding is still refused. Its container
   binds the `AppConfig` of a `test-harness` application in place of a private
   placeholder config, and also an inline `JobService`, `SqlQueryService`,
-  `CallerBoundSql`, `ObservabilityRuntime`, `StoreCatalog`,
+  `CallerBoundSql`, `Observability`, `StoreCatalog`,
   `UseCaseRegistry`, `ApplicationInvoker` and the unconfigured cache keys, so
   a use case injecting one of them is served. It logs the
   `loom.composition.composed` event. It no longer calls the deprecated
@@ -1989,11 +2005,11 @@
   lacking a default still raises `STATE_REQUIRED`; its message no longer
   quotes the validation error.
 - **ai:** the application's `ApplicationInvoker` is resolved once: by the
-  agent runtime when it starts, for the output hook and the conversation
+  agent host when it starts, for the output hook and the conversation
   loader, and when each engine is built, for `usecase` tools. An invoker
   registered or replaced in the container afterwards is not used. Each call
   still acts as the identity acting where it runs.
-- **ai:** the agent runtime refuses to start with `INVOKER_BOUND` when the
+- **ai:** the agent host refuses to start with `INVOKER_BOUND` when the
   container's `ApplicationInvoker` is bound to an identity
   (`AppInvoker.for_identity`), and with `USECASE_INVOKER_MISSING`, naming the
   agents, when a plan grants use cases and the container holds no invoker.
@@ -2026,7 +2042,7 @@
   reaches, not only those in a use case's `execute()`: one declared by an
   adapter, a factory or a constructor counts, from each use case, job and
   callback that reaches it. Its server is opened and its tool filter checked
-  when the agent runtime starts, sharing the one session per server with
+  when the agent host starts, sharing the one session per server with
   every other declaration, and its agent is compiled on a Lambda jobs or
   event function (which compiles only the agents a declaration names) and
   reported by that agent's health. An unknown server or agent, an `include`
@@ -2108,7 +2124,7 @@
   at once. Starting an application with an `AsyncioTimer` logs a warning:
   delayed jobs live in process memory and are lost when it stops, so
   production uses Celery or SQS. A Lambda function composes no timer
-  (`Redelivery.NONE`): its inline service raises `JobDelayRefused` for a
+  (`Redelivery.NONE`): its inline service raises `JobDelayRefusedError` for a
   countdown above zero, rejects a job that raises `JobRetry` as one that cannot
   wait, and rejects a failing job at its first attempt with its own error; the
   start-up line "Job retry policies" of that service (`transport=inline`)
@@ -2158,12 +2174,12 @@
 - **jobs:** without `app.job_service` the job service is still chosen from the
   `celery` section, now with a `DeprecationWarning` when Celery is installed or
   configured. Set `app.job_service` to keep the choice explicit.
-- **jobs:** the Lambda SQS adapter logs the type of its job service instead
+- **jobs:** the Lambda SQS runtime logs the type of its job service instead
   of assuming Celery for anything that is not inline.
 - **jobs:** job settings belong to the application:
   `MyJob.__queue__`, `__retries__`, `__countdown__`, `__timeout__` and
   `__priority__` no longer reflect `jobs.<Job>`; read
-  `application.job_settings.of(MyJob)`. `apply_job_config`,
+  `application.job_settings.options_for(MyJob)`. `apply_job_config`,
   `apply_job_overrides`, `read_job_config`, `resolve_binding` and
   `validate_bindings` are removed, and an invalid or unknown `jobs.<Job>` key
   fails composition.
@@ -2211,7 +2227,7 @@
   invalidation asks the invocation scope instead
   (`InvocationScope.owners_of`): it waits for the commit only while the
   model's store is enlisted and its unit of work declares both
-  `transactional = True` and `phased = True`, which is all a third-party unit
+  `transactional = True` and `is_phased = True`, which is all a third-party unit
   of work now needs. A write already durable (a store not enlisted, a unit of
   work driven in a single phase, DynamoDB, Mongo without transactions) bumps
   at once, so a later failure of the invocation no longer discards it.
@@ -2258,7 +2274,7 @@
   SQLAlchemy `OperationalError`, `InterfaceError`, an invalidated connection
   or a transport timeout during `COMMIT`, and Mongo
   `UnknownTransactionCommitResult`. The connection is invalidated and only the
-  cache invalidations run. The caller gets `StoresNotCommitted`, even with
+  cache invalidations run. The caller gets `StoresNotCommittedError`, even with
   one store, caused by the driver error; job runners never retry it, and REST
   still answers 500, now with the code `stores_not_committed`.
 - **stores:** `SessionManager.active_session` and
@@ -2276,12 +2292,12 @@
   report `NonTransactional(wrote=True)`; `delete` is conditional. Its thread
   pool starts when the store is built, shuts down when the application closes
   and starts again when it reopens.
-- **stores:** wiring API. `RuntimeExecutor(uow_factory=)` and
+- **stores:** wiring API. `UseCaseExecutor(uow_factory=)` and
   `create_kernel(uow_factory=)` become `coordinator=` (`OrderedCommits`);
   `Recipe.default_backend` becomes `Recipe.default_store_backend`, and
   `Project.resolve_store_backend(key, *, default=)` takes the store;
   `Application.persistence` and `require_single_store` are removed. `store`
-  is required by `StoreCatalog.served_by`, `StoreRuntime`, `SessionManager`,
+  is required by `StoreCatalog.served_by`, `StorePluginContext`, `SessionManager`,
   `build_session_manager`, `MongoSessions`, `MongoUnitOfWork` and
   `MongoUnitOfWorkFactory.transactional`;
   `build_repository_registration_module` takes `default_builder=` and

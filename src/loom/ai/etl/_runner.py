@@ -1,4 +1,4 @@
-"""The Polars implementation of :class:`~loom.etl.runtime.contracts.AgentBatchRunner`."""
+"""The Polars implementation of :class:`~loom.etl.ports.contracts.AgentBatchRunner`."""
 
 from __future__ import annotations
 
@@ -13,8 +13,8 @@ from typing import Any, TypeVar
 
 import polars as pl
 
-from loom.ai.abc import AgentEngineProvider
-from loom.ai.bootstrap import build_agent_runtime
+from loom.ai.abc import AgentEnginePlugin
+from loom.ai.bootstrap import build_agent_host
 from loom.ai.compiler import AgentPlan
 from loom.ai.config import AiConfig
 from loom.ai.etl._batch import Batch
@@ -22,10 +22,10 @@ from loom.ai.etl._columns import output_columns
 from loom.ai.etl._frames import answers_frame, no_answers, prompt_rows, require_free_keys
 from loom.ai.etl._ledger import SpendLedger
 from loom.ai.etl._validation import validation_issues
-from loom.ai.registry import resolve_engine_provider
-from loom.ai.runtime import AgentRuntime
+from loom.ai.execution import AgentHost
+from loom.ai.registry import resolve_engine_plugin
 from loom.core.model import loom_type
-from loom.etl.runtime.contracts import AgentIssue
+from loom.etl.ports.contracts import AgentIssue
 
 ResultT = TypeVar("ResultT")
 
@@ -33,7 +33,7 @@ ResultT = TypeVar("ResultT")
 class PolarsAgentRunner:
     """Runs the agents of an ``ai:`` section over Polars frames, for ETL steps.
 
-    Every call to :meth:`map` builds, enters and closes a runtime of its own,
+    Every call to :meth:`map` builds, enters and closes a host of its own,
     so two steps mapping at once never share one. ``map`` is synchronous: it
     runs its batch on an event loop of its own, in a dedicated thread, which
     sees the caller's context variables, when the calling thread already runs
@@ -45,7 +45,7 @@ class PolarsAgentRunner:
     Args:
         config: Parsed ``ai:`` section.
         root: Directory the artifact globs are resolved against.
-        engine_provider: Builds the engine provider of each runtime; resolved
+        engine_plugin: Builds the engine of each host; resolved
             from ``config.engine`` when omitted.
     """
 
@@ -54,11 +54,11 @@ class PolarsAgentRunner:
         config: AiConfig,
         *,
         root: Path,
-        engine_provider: Callable[[], AgentEngineProvider] | None = None,
+        engine_plugin: Callable[[], AgentEnginePlugin] | None = None,
     ) -> None:
         self._config = config
         self._root = root
-        self._engine_provider = engine_provider or partial(resolve_engine_provider, config.engine)
+        self._engine_plugin = engine_plugin or partial(resolve_engine_plugin, config.engine)
         self._compiled: dict[str, tuple[AgentPlan, ...]] = {}
 
     def validate(
@@ -79,7 +79,7 @@ class PolarsAgentRunner:
             output_type,
             max_usd=max_usd,
             compile_plans=partial(self._plans, name),
-            engine_provider=self._engine_provider,
+            engine_plugin=self._engine_plugin,
         )
 
     def version(self, name: str) -> str:
@@ -98,7 +98,7 @@ class PolarsAgentRunner:
     ) -> pl.DataFrame:
         """Run agent *name* once per row of *frame*, never aborting on a row.
 
-        A frame without rows compiles nothing and opens no runtime.
+        A frame without rows compiles nothing and opens no host.
 
         Args:
             name: Agent to run.
@@ -123,11 +123,11 @@ class PolarsAgentRunner:
         rows, prompts = prompt_rows(frame, keys, prompt)
         if not prompts:
             return no_answers(rows, columns)
-        runtime = self._runtime(name)
-        plan = _only_plan(runtime.plans, name)
-        self._compiled[name] = runtime.plans
+        host = self._host(name)
+        plan = _only_plan(host.plans, name)
+        self._compiled[name] = host.plans
         batch = Batch(
-            runtime=runtime,
+            host=host,
             name=name,
             limit=self._config.max_concurrent_runs,
             ledger=SpendLedger(max_usd),
@@ -137,18 +137,18 @@ class PolarsAgentRunner:
         outcomes = _run_blocking(partial(batch.answer_all, prompts))
         return answers_frame(rows, outcomes, columns, plan.fingerprint)
 
-    def _runtime(self, name: str) -> AgentRuntime:
-        return build_agent_runtime(
+    def _host(self, name: str) -> AgentHost:
+        return build_agent_host(
             self._config,
             root=self._root,
             names={name},
-            engine_provider=self._engine_provider(),
+            engine_plugin=self._engine_plugin(),
         )
 
     def _plans(self, name: str) -> tuple[AgentPlan, ...]:
         plans = self._compiled.get(name)
         if plans is None:
-            plans = self._compiled[name] = self._runtime(name).plans
+            plans = self._compiled[name] = self._host(name).plans
         return plans
 
 

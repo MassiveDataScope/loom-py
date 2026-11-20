@@ -20,11 +20,11 @@ import pytest
 from celery import Celery  # type: ignore[import-untyped]
 
 from loom.celery.runner import (
-    _CeleryAsyncRuntime,  # pyright: ignore[reportPrivateUsage]
+    _CeleryProcessBridge,  # pyright: ignore[reportPrivateUsage]
     _make_callback_task,  # pyright: ignore[reportPrivateUsage]
     _make_job_task,  # pyright: ignore[reportPrivateUsage]
 )
-from loom.core.engine.executor import RuntimeExecutor
+from loom.core.engine.executor import UseCaseExecutor
 from loom.core.errors import DelegationExpired, Unauthenticated
 from loom.core.identity import Delegation, Identity
 from loom.core.job.callback import CallbackOutcome, DispatchableCallbacks
@@ -75,7 +75,7 @@ def succeed(celery_app: Celery, factory: UseCaseFactory) -> Callable[[type[Any]]
 
     def apply(callback: type[Any], **link: Any) -> Any:
         task = _make_callback_task(
-            celery_app, callback, CallbackOutcome.SUCCESS, factory, _CeleryAsyncRuntime()
+            celery_app, callback, CallbackOutcome.SUCCESS, factory, _CeleryProcessBridge()
         )
         kwargs = {"job_id": "acme-job", "context": {}, **link}
         return task.apply(args=("acme-result",), kwargs=kwargs)
@@ -85,7 +85,7 @@ def succeed(celery_app: Celery, factory: UseCaseFactory) -> Callable[[type[Any]]
 
 class TestCeleryJobTransport:
     async def test_run_builds_inside_an_execution_as_the_caller_acting(
-        self, factory: UseCaseFactory, executor: RuntimeExecutor
+        self, factory: UseCaseFactory, executor: UseCaseExecutor
     ) -> None:
         service = CeleryServiceFixture(cast(Any, None), factory=factory, executor=executor)
 
@@ -96,7 +96,7 @@ class TestCeleryJobTransport:
         assert job.session.execution is job.ran_in
 
     async def test_run_with_nothing_acting_has_no_caller(
-        self, factory: UseCaseFactory, executor: RuntimeExecutor
+        self, factory: UseCaseFactory, executor: UseCaseExecutor
     ) -> None:
         service = CeleryServiceFixture(cast(Any, None), factory=factory, executor=executor)
 
@@ -112,10 +112,10 @@ class TestCeleryJobTask:
         self,
         celery_app: Celery,
         factory: UseCaseFactory,
-        executor: RuntimeExecutor,
+        executor: UseCaseExecutor,
         bridged: bool,
     ) -> None:
-        runtime = _CeleryAsyncRuntime()
+        runtime = _CeleryProcessBridge()
         if bridged:
             runtime.initialize()
         try:
@@ -132,7 +132,7 @@ class TestCeleryJobTask:
         assert job.session.execution is job.ran_in
 
     async def test_a_dispatch_and_its_success_link_carry_the_caller_and_its_deadline(
-        self, factory: UseCaseFactory, executor: RuntimeExecutor, window: float
+        self, factory: UseCaseFactory, executor: UseCaseExecutor, window: float
     ) -> None:
         broker = CeleryBroker([AcmeProbeJob.__queue__])
         service = CeleryServiceFixture(
@@ -181,7 +181,7 @@ class TestCeleryCallbackTasks:
         callback: type[AcmeCallback],
     ) -> None:
         task = _make_callback_task(
-            celery_app, callback, CallbackOutcome.FAILURE, factory, _CeleryAsyncRuntime()
+            celery_app, callback, CallbackOutcome.FAILURE, factory, _CeleryProcessBridge()
         )
         link = link_from(BOB, until=time.time() + AN_HOUR)
 
@@ -219,7 +219,7 @@ class TestCeleryCallbackTasks:
         moments: list[str],
     ) -> None:
         task = _make_callback_task(
-            celery_app, AcmeSuccessOnlyCallback, outcome, factory, _CeleryAsyncRuntime()
+            celery_app, AcmeSuccessOnlyCallback, outcome, factory, _CeleryProcessBridge()
         )
         link = {
             "job_id": "acme-job",
@@ -273,7 +273,7 @@ class TestFailureCallbackDeadline:
         callback: type[AcmeCallback],
     ) -> None:
         task = _make_callback_task(
-            celery_app, callback, CallbackOutcome.FAILURE, factory, _CeleryAsyncRuntime()
+            celery_app, callback, CallbackOutcome.FAILURE, factory, _CeleryProcessBridge()
         )
         link = link_from(BOB, until=time.time() - 1)
         result = task.apply(kwargs={"job_id": "acme-job", "context": {}, **FAILURE, **link})
@@ -318,7 +318,7 @@ def bridged(request: pytest.FixtureRequest, monkeypatch: pytest.MonkeyPatch) -> 
     """A worker runtime whose bridge is anyio's portal, or one that carries no context variable."""
     if request.param == "context-free":
         monkeypatch.setattr("loom.celery.runner.AsyncBridge", _ContextFreeBridge)
-    runtime = _CeleryAsyncRuntime()
+    runtime = _CeleryProcessBridge()
     runtime.initialize()
     try:
         yield runtime

@@ -18,7 +18,7 @@ from unittest.mock import patch
 import pytest
 from celery import current_app
 
-from loom.celery.adapter import CeleryAdapter
+from loom.celery.runtime import CeleryRuntime
 from loom.celery.service import CeleryJobTransport
 from loom.composition import Application, Project, Recipe
 from loom.composition.resources import ResourceKind
@@ -28,10 +28,10 @@ from loom.core.errors import JobTimeoutError
 from loom.core.job.context import flush_pending_dispatches
 from loom.core.job.job import Job
 from loom.core.job.service import JobService
-from loom.core.job.timer import JobDelayRefused, JobTimer
+from loom.core.job.timer import JobDelayRefusedError, JobTimer
 from loom.core.stores.profile import LAMBDA_PROFILE
 from loom.jobs.inline import InlineJobTransport
-from loom.rest.fastapi.adapter import FastAPIAdapter
+from loom.rest.fastapi.runtime import FastAPIRuntime
 from loom.testing import ManualTimer, Override
 from tests.helpers.composition import ProjectFactory, WithOverrides
 from tests.helpers.jobs import BROKER, InlineServiceFixture, JobsAdapter, job_project
@@ -61,7 +61,7 @@ class TestRegisteredJobService:
     def test_composing_celery_service_preserves_current_app(self, tmp_path: Path) -> None:
         before = current_app._get_current_object()
 
-        job_project(tmp_path, _CELERY).compose(CeleryAdapter(jobs=[AcmePingJob]))
+        job_project(tmp_path, _CELERY).compose(CeleryRuntime(jobs=[AcmePingJob]))
 
         assert current_app._get_current_object() is before
 
@@ -74,7 +74,7 @@ class TestRegisteredJobService:
         self, tmp_path: Path, config: dict[str, Any], job_service: str | None
     ) -> None:
         project = job_project(tmp_path, config, job_service)
-        application = project.compose(CeleryAdapter(jobs=[AcmePingJob]))
+        application = project.compose(CeleryRuntime(jobs=[AcmePingJob]))
         assert [resource.kind for resource in application.resources].count(ResourceKind.CELERY) == 1
 
         with patch.object(CeleryJobTransport, "close", autospec=True) as close:
@@ -84,13 +84,13 @@ class TestRegisteredJobService:
 
     def test_caller_service_has_no_celery_resource(self, tmp_path: Path) -> None:
         application = job_project(tmp_path, _CELERY).compose(
-            WithOverrides(CeleryAdapter(jobs=[AcmePingJob]), _own_job_service)
+            WithOverrides(CeleryRuntime(jobs=[AcmePingJob]), _own_job_service)
         )
 
         assert all(resource.kind != ResourceKind.CELERY for resource in application.resources)
 
     def test_inline_service_has_no_celery_resource(self, fixture_project: ProjectFactory) -> None:
-        application = Project.load(fixture_project(), environment="test").compose(FastAPIAdapter())
+        application = Project.load(fixture_project(), environment="test").compose(FastAPIRuntime())
 
         assert all(resource.kind != ResourceKind.CELERY for resource in application.resources)
 
@@ -99,7 +99,7 @@ class TestRegisteredJobService:
         fixture_project: ProjectFactory,
     ) -> None:
         application = Project.load(fixture_project(), environment="test").compose(
-            WithOverrides(FastAPIAdapter(), _own_job_service)
+            WithOverrides(FastAPIRuntime(), _own_job_service)
         )
 
         assert isinstance(application.kernel.container.resolve(JobService), _OwnJobService)
@@ -109,7 +109,7 @@ class TestRegisteredJobService:
         project = job_project(tmp_path, _CELERY)
 
         application = project.compose(
-            WithOverrides(CeleryAdapter(jobs=[AcmePingJob]), _own_job_service)
+            WithOverrides(CeleryRuntime(jobs=[AcmePingJob]), _own_job_service)
         )
 
         assert isinstance(application.kernel.container.resolve(JobService), _OwnJobService)
@@ -216,7 +216,7 @@ class TestInlineTimer:
         application = self._compose(tmp_path, _LambdaJobsAdapter(AcmePingJob))
         service = application.kernel.container.resolve(JobService)
 
-        with pytest.raises(JobDelayRefused):
+        with pytest.raises(JobDelayRefusedError):
             service.dispatch_after_commit(AcmePingJob, countdown=60)
         assert all(resource.kind != ResourceKind.TIMER for resource in application.resources)
         ((event, fields),) = warnings_logged.calls

@@ -9,7 +9,7 @@ from tests.helpers.version_limited_extras import require_bytewax
 require_bytewax()
 
 from loom.core.observability.event import EventKind, Scope  # noqa: E402
-from loom.core.observability.runtime import ObservabilityRuntime  # noqa: E402
+from loom.core.observability.observability import Observability  # noqa: E402
 from loom.streaming import Message, MessageMeta, StreamFlow  # noqa: E402
 from loom.streaming.core._errors import ErrorKind  # noqa: E402
 from loom.streaming.testing import StreamingTestRunner  # noqa: E402
@@ -41,7 +41,7 @@ class TestStreamingTestRunner:
         runner = StreamingTestRunner.from_dict(
             drop_flow,
             config,
-            observability_runtime=ObservabilityRuntime([recording_flow_observer]),
+            observability=Observability([recording_flow_observer]),
         )
         msg = Message(payload=drop_item, meta=MessageMeta(message_id="m1"))
 
@@ -59,7 +59,7 @@ class TestStreamingTestRunner:
         runner = StreamingTestRunner.from_flow(
             async_flow_case.flow,
             config=async_flow_case.config,
-            observability_runtime=ObservabilityRuntime([recording_flow_observer]),
+            observability=Observability([recording_flow_observer]),
         ).with_messages(list(async_flow_case.input_messages))
 
         runner.run()
@@ -107,7 +107,7 @@ class TestStreamingTestRunner:
         runner = StreamingTestRunner.from_dict(
             drop_flow,
             config,
-            observability_runtime=ObservabilityRuntime([recording_flow_observer]),
+            observability=Observability([recording_flow_observer]),
         )
         trace_id = "a" * 32
         message = Message(payload=drop_item, meta=MessageMeta(message_id="m1", trace_id=trace_id))

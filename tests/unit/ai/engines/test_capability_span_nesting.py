@@ -48,16 +48,16 @@ class TestToolSpanNesting:
     @pytest.fixture
     def traced_run(self) -> Callable[..., tuple[InMemorySpanExporter, BuildContext, LoomSpan]]:
         def open_run(*, timeout_s: float) -> tuple[InMemorySpanExporter, BuildContext, LoomSpan]:
-            runtime, exporter = tracing_runtime()
+            host, exporter = tracing_runtime()
             context = BuildContext(
                 agent="analyst",
                 container=LoomContainer(),
-                observability=runtime,
+                observability=host,
                 timeout_s=timeout_s,
                 mcp=SharedMcpToolsets(),
                 mcp_grants=(),
             )
-            agent = runtime.open_span(Scope.AGENT, "agent_run", agent="analyst")
+            agent = host.open_span(Scope.AGENT, "agent_run", agent="analyst")
             return exporter, context, agent
 
         return open_run

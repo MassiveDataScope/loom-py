@@ -8,7 +8,7 @@ from pathlib import Path
 import msgspec
 import pytest
 
-from loom.celery.adapter import CeleryAdapter
+from loom.celery.runtime import CeleryRuntime
 from loom.composition.checked import CheckedProject
 from loom.composition.project import Project
 from loom.core.config import ConfigContext, ConfigError, ConfigResolver
@@ -73,7 +73,7 @@ def project_config(write_package: PackageWriter, tmp_path: Path) -> Callable[[st
 
 
 def _bucket(config: str) -> AcmeBucket:
-    application = Project.load(config, environment="test").compose(CeleryAdapter())
+    application = Project.load(config, environment="test").compose(CeleryRuntime())
     return application.kernel.container.resolve(AcmeBucket)
 
 

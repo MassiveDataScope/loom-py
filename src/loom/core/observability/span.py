@@ -1,6 +1,6 @@
-"""Span handles for the observability runtime.
+"""Span handles for observability.
 
-:meth:`~loom.core.observability.runtime.ObservabilityRuntime.span` covers the
+:meth:`~loom.core.observability.observability.Observability.span` covers the
 common case: a span that opens and closes inside one lexical scope, and can
 therefore be made *current* for its whole body.
 
@@ -48,7 +48,7 @@ class SpanIdentity:
     """Everything the START and closing events of one span have in common.
 
     Internal to the observability package: it exists so that
-    ``ObservabilityRuntime.span`` and :class:`LoomSpan` cannot drift in the
+    ``Observability.span`` and :class:`LoomSpan` cannot drift in the
     events they emit for the same span.
     """
 
@@ -155,7 +155,7 @@ class LoomSpan:
 
     Use :meth:`as_current` for an inner region that *is* lexically safe.
 
-    Prefer :meth:`~loom.core.observability.runtime.ObservabilityRuntime.span`
+    Prefer :meth:`~loom.core.observability.observability.Observability.span`
     whenever the span opens and closes in one scope.
 
     Example::

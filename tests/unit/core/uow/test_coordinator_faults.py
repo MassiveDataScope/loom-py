@@ -128,13 +128,13 @@ def _shape(outcome: StoreOutcome) -> Shape:
 
 def _commit_order(case: Case) -> list[int]:
     """Phased writers by first write, other phased by enlistment, then third-party LIFO."""
-    phased = [i for i, kind in enumerate(case.kinds) if kind.phased]
+    phased = [i for i, kind in enumerate(case.kinds) if kind.is_phased]
     writers = [i for i in case.writes if i in phased]
     lifo = reversed(range(len(case.kinds)))
     return (
         writers
         + [i for i in phased if i not in case.writes]
-        + [i for i in lifo if not case.kinds[i].phased]
+        + [i for i in lifo if not case.kinds[i].is_phased]
     )
 
 
@@ -201,7 +201,7 @@ class _Oracle:
         return (
             case.cancels
             and case.phase_is("close")
-            and not case.kinds[index].phased
+            and not case.kinds[index].is_phased
             and index < (case.target or 0)
         )
 

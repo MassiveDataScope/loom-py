@@ -17,14 +17,14 @@ import pytest
 import yaml
 
 from loom.ai import registry
-from loom.ai.runtime import AgentRuntime
+from loom.ai.execution import AgentHost
 from loom.composition import AppConfig, Project, create_app
 from loom.core.config import ConfigContext
 from loom.core.discovery.base import DiscoveryResult
 from loom.core.discovery.scanner import PackageScanner
 from loom.core.job.job import Job
-from loom.rest.fastapi import FastAPIAdapter
-from loom.serverless.aws.lambda_ import LambdaAdapter, LambdaUnservedConfigError
+from loom.rest.fastapi import FastAPIRuntime
+from loom.serverless.aws.lambda_ import LambdaRuntime, LambdaUnservedConfigError
 from loom.serverless.aws.lambda_.triggers.http import LambdaHTTPHandler
 from tests.helpers.ai import CountingEngineProvider
 from tests.helpers.composition import composition_project
@@ -115,20 +115,20 @@ def jobs_manifest(probe: ProbeFixture, monkeypatch: pytest.MonkeyPatch, tmp_path
 
 @pytest.fixture
 def lifetime(monkeypatch: pytest.MonkeyPatch) -> list[str]:
-    """Every entry into and exit from an :class:`AgentRuntime`, in order.
+    """Every entry into and exit from an :class:`AgentHost`, in order.
 
     The engine provider is an in-process double, so the runtime opens no
     network client.
     """
     events: list[str] = []
-    enter, exit_ = AgentRuntime.__aenter__, AgentRuntime.__aexit__
+    enter, exit_ = AgentHost.__aenter__, AgentHost.__aexit__
 
-    async def entered(self: AgentRuntime) -> AgentRuntime:
+    async def entered(self: AgentHost) -> AgentHost:
         events.append("enter")
         return await enter(self)
 
     async def exited(
-        self: AgentRuntime,
+        self: AgentHost,
         exc_type: type[BaseException] | None,
         exc: BaseException | None,
         tb: TracebackType | None,
@@ -136,9 +136,9 @@ def lifetime(monkeypatch: pytest.MonkeyPatch) -> list[str]:
         events.append("exit")
         await exit_(self, exc_type, exc, tb)
 
-    monkeypatch.setattr(registry, "resolve_engine_provider", lambda _: CountingEngineProvider())
-    monkeypatch.setattr(AgentRuntime, "__aenter__", entered)
-    monkeypatch.setattr(AgentRuntime, "__aexit__", exited)
+    monkeypatch.setattr(registry, "resolve_engine_plugin", lambda _: CountingEngineProvider())
+    monkeypatch.setattr(AgentHost, "__aenter__", entered)
+    monkeypatch.setattr(AgentHost, "__aexit__", exited)
     return events
 
 
@@ -161,7 +161,7 @@ class TestLambdaAiRefusals:
     def test_a_stdio_mcp_server_is_refused_before_discovery(
         self, tmp_path: Path, make_project: Callable[[Path], Project]
     ) -> None:
-        adapter = LambdaAdapter()
+        adapter = LambdaRuntime()
 
         with pytest.raises(LambdaUnservedConfigError) as raised:
             adapter.recipe(make_project(tmp_path))
@@ -172,7 +172,7 @@ class TestLambdaAiRefusals:
     def test_a_jobs_function_hosts_agents_without_their_endpoints(
         self, tmp_path: Path, jobs_manifest: str
     ) -> None:
-        adapter = LambdaAdapter()
+        adapter = LambdaRuntime()
 
         recipe = adapter.recipe(_jobs_project(tmp_path, jobs_manifest, _HTTP_AI))
 
@@ -182,8 +182,8 @@ class TestLambdaAiRefusals:
     @pytest.mark.parametrize(
         ("adapter", "endpoints"),
         [
-            pytest.param(LambdaAdapter, False, id="lambda"),
-            pytest.param(FastAPIAdapter, True, id="fastapi"),
+            pytest.param(LambdaRuntime, False, id="lambda"),
+            pytest.param(FastAPIRuntime, True, id="fastapi"),
         ],
     )
     def test_only_fastapi_serves_agent_endpoints(
@@ -200,13 +200,13 @@ class TestLambdaAiRefusals:
         assert (recipe.agents, recipe.agent_endpoints) == (True, endpoints)
         assert recipe.discovered.agent_specs == (_AGENTS_GLOB,)
 
-    def test_a_jobs_function_enters_the_agent_runtime_once_at_init(
+    def test_a_jobs_function_enters_the_agent_host_once_at_init(
         self, tmp_path: Path, jobs_manifest: str, probe: ProbeFixture, lifetime: list[str]
     ) -> None:
-        adapter = LambdaAdapter()
+        adapter = LambdaRuntime()
         application = _jobs_project(tmp_path, jobs_manifest, _AI).compose(adapter)
 
-        handler = adapter.bind(application)
+        handler = adapter.mount(application)
         assert lifetime == ["enter"]
         for message_id in ("1", "2"):
             record = make_record(message_id, "a", job_name=probe[0].__qualname__)
@@ -217,13 +217,13 @@ class TestLambdaAiRefusals:
         assert lifetime == ["enter", "exit"]
         assert [seen[0] for seen in probe[1].seen] == ["a", "a"]
 
-    def test_an_http_function_enters_the_agent_runtime_once_at_init(
+    def test_an_http_function_enters_the_agent_host_once_at_init(
         self, tmp_path: Path, lifetime: list[str]
     ) -> None:
         _write_agent(tmp_path)
         config = write_contract_project(tmp_path, agents=(_AGENTS_GLOB,), ai=_AI)
 
-        handler = create_app(config, adapter=LambdaAdapter(), environment=_TEST)
+        handler = create_app(config, runtime=LambdaRuntime(), environment=_TEST)
         assert isinstance(handler, LambdaHTTPHandler)
         assert lifetime == ["enter"]
         client = lambda_client(handler)
@@ -243,13 +243,13 @@ class TestLambdaAiRefusals:
     ) -> None:
         monkeypatch.setenv("LOOM_TEST_MCP_TRANSPORT", "stdio")
         server = {"transport": "${oc.env:LOOM_TEST_MCP_TRANSPORT}", "command": "mcp-server"}
-        adapter = LambdaAdapter()
+        adapter = LambdaRuntime()
         application = _jobs_project(
             tmp_path, jobs_manifest, {**_AI, "mcp_servers": {"x": server}}
         ).compose(adapter)
 
         with pytest.raises(LambdaUnservedConfigError) as raised:
-            adapter.bind(application)
+            adapter.mount(application)
 
         assert raised.value.key == "ai.mcp_servers.x.transport"
         assert "stdio" in str(raised.value)
@@ -279,11 +279,11 @@ class TestLambdaAiRefusals:
         ai: dict[str, Any],
         keys: list[str],
     ) -> None:
-        adapter = LambdaAdapter()
+        adapter = LambdaRuntime()
         application = _jobs_project(tmp_path, jobs_manifest, ai).compose(adapter)
 
         caplog.clear()
-        handler = adapter.bind(application)
+        handler = adapter.mount(application)
         for message_id in ("1", "2"):
             handler(
                 {"Records": [make_record(message_id, "a", job_name=probe[0].__qualname__)]}, None

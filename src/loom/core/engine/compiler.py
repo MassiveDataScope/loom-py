@@ -6,8 +6,8 @@ from dataclasses import dataclass, field
 from typing import Any, Final, get_args, get_origin
 
 from loom.core.engine.compilable import Compilable
-from loom.core.engine.events import EventKind, RuntimeEvent
-from loom.core.engine.metrics import MetricsAdapter, NoMetrics
+from loom.core.engine.events import EventKind, ExecutionEvent
+from loom.core.engine.metrics import MetricsRecorder, NoMetrics
 from loom.core.engine.plan import (
     CallerBinding,
     CommandStep,
@@ -88,11 +88,11 @@ class UseCaseCompiler:
     structural constraints, and caches the resulting plan.
 
     No reflection occurs after compilation — the plan drives all runtime
-    execution via ``RuntimeExecutor``.
+    execution via ``UseCaseExecutor``.
 
     Args:
         logger: Optional logger. Defaults to the framework logger.
-        metrics: Optional metrics adapter. When provided, receives
+        metrics: Optional metrics recorder. When provided, receives
             ``COMPILE_START`` and ``COMPILE_DONE`` events.
 
     Example::
@@ -104,11 +104,11 @@ class UseCaseCompiler:
     def __init__(
         self,
         logger: LoggerPort | None = None,
-        metrics: MetricsAdapter | None = None,
+        metrics: MetricsRecorder | None = None,
     ) -> None:
         self._cache: dict[type[Any], ExecutionPlan] = {}
         self._logger = logger or get_logger(__name__)
-        self._metrics: MetricsAdapter = NoMetrics() if metrics is None else metrics
+        self._metrics: MetricsRecorder = NoMetrics() if metrics is None else metrics
 
     def compile(self, use_case_type: type[Compilable]) -> ExecutionPlan:
         """Return the ExecutionPlan for ``use_case_type``, compiling if needed.
@@ -146,11 +146,11 @@ class UseCaseCompiler:
 
     def _build_plan(self, use_case_type: type[Compilable]) -> ExecutionPlan:
         uc_name = use_case_type.__qualname__
-        self._metrics.on_event(RuntimeEvent(kind=EventKind.COMPILE_START, use_case_name=uc_name))
+        self._metrics.on_event(ExecutionEvent(kind=EventKind.COMPILE_START, use_case_name=uc_name))
 
         bindings = self._inspect_execute(use_case_type)
-        compute_steps = tuple(CommandStep.of(fn) for fn in use_case_type.computes)
-        rule_steps = tuple(CommandStep.of(fn) for fn in use_case_type.rules)
+        compute_steps = tuple(CommandStep.from_callable(fn) for fn in use_case_type.computes)
+        rule_steps = tuple(CommandStep.from_callable(fn) for fn in use_case_type.rules)
 
         total = (
             len(bindings.load_steps)
@@ -166,7 +166,7 @@ class UseCaseCompiler:
             rules=len(rule_steps),
             steps=total,
         )
-        self._metrics.on_event(RuntimeEvent(kind=EventKind.COMPILE_DONE, use_case_name=uc_name))
+        self._metrics.on_event(ExecutionEvent(kind=EventKind.COMPILE_DONE, use_case_name=uc_name))
 
         primary = _primary_store(use_case_type)
         plan = ExecutionPlan(

@@ -126,7 +126,7 @@ class TestConcurrentRequests:
         assert sorted(seen.calls, key=repr) == sorted(acted_as(ANA, BO), key=repr)
 
 
-class TestStartupWithoutTheAgentRuntime:
+class TestStartupWithoutTheAgentHost:
     @pytest.mark.parametrize("transport", TRANSPORTS)
     def test_refuses_the_mcp_server_an_adapter_declares_naming_its_path(
         self, compose_strictly: Callable[..., Application], transport: str

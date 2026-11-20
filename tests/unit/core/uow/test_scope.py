@@ -22,7 +22,7 @@ from loom.core.errors import (
     NestedElevation,
     NestedIdentityMismatch,
     ScopeOwnershipError,
-    StoresNotCommitted,
+    StoresNotCommittedError,
     SystemError,
     UndeclaredStoreWrite,
     UnitOfWorkInsideScope,
@@ -303,7 +303,7 @@ class TestParticipantForASinglePhaseStore:
 
         outcome = await scope.coordinator.finish(scope, error)
 
-        assert isinstance(invocation_error(outcome, error), StoresNotCommitted)
+        assert isinstance(invocation_error(outcome, error), StoresNotCommittedError)
 
 
 async def _with_autocommit() -> InvocationScope:
@@ -439,15 +439,15 @@ class TestWritesStayInTheInnermostFrame:
         assert participant.wrote is True
 
 
-class TestOwnedHere:
+class TestIsOwnedHere:
     async def test_the_owner_task_owns_the_scope(self) -> None:
-        assert _scope_for().owned_here() is True
+        assert _scope_for().is_owned_here() is True
 
     async def test_a_gather_child_does_not(self) -> None:
         scope = _scope_for()
 
         async def owned() -> bool:
-            return scope.owned_here()
+            return scope.is_owned_here()
 
         assert await asyncio.gather(owned()) == [False]
 
@@ -455,7 +455,7 @@ class TestOwnedHere:
         scope = _scope_for()
         scope.closed = True
 
-        assert scope.owned_here() is False
+        assert scope.is_owned_here() is False
 
 
 class TestCurrentHandle:
@@ -826,7 +826,7 @@ class TestInvocationError:
 
         error = invocation_error(_outcome(Uncertain(S0, cause)), None)
 
-        assert isinstance(error, StoresNotCommitted)
+        assert isinstance(error, StoresNotCommittedError)
         assert (error.is_retryable, error.__cause__) == (False, cause)
 
     def test_one_store_re_raises_the_business_error(self) -> None:
@@ -864,14 +864,14 @@ class TestInvocationError:
         ids=["committed-and-rolled-back", "wrote-and-rolled-back", "uncertain", "uncertain-only"],
     )
     def test_stores_that_ended_apart_raise_stores_not_committed(self, stores: Any) -> None:
-        assert isinstance(invocation_error(_outcome(*stores), None), StoresNotCommitted)
+        assert isinstance(invocation_error(_outcome(*stores), None), StoresNotCommittedError)
 
     def test_stores_not_committed_carries_the_outcome(self) -> None:
         outcome = _outcome(Committed(S0), RolledBack(S1, Boom("commit")))
 
         error = invocation_error(outcome, None)
 
-        assert isinstance(error, StoresNotCommitted)
+        assert isinstance(error, StoresNotCommittedError)
         assert error.outcome is outcome
 
     def test_stores_not_committed_is_caused_by_the_first_failure(self) -> None:
@@ -904,7 +904,8 @@ _ERRORS = [
     pytest.param(ScopeOwnershipError("closed"), id="ownership"),
     pytest.param(UnitOfWorkInsideScope.entering(object()), id="inside-scope"),
     pytest.param(
-        StoresNotCommitted.of(_outcome(Committed(S0), RolledBack(S1, Boom("pw=1")))), id="stores"
+        StoresNotCommittedError.from_outcome(_outcome(Committed(S0), RolledBack(S1, Boom("pw=1")))),
+        id="stores",
     ),
     pytest.param(NestedIdentityMismatch.joining("Child"), id="nested-identity"),
     pytest.param(NestedElevation.opening("Child", frozenset({"editor"})), id="nested-elevation"),
@@ -917,43 +918,51 @@ class TestErrors:
         assert error.is_retryable is False
 
     def test_stores_not_committed_names_every_store_and_how_it_ended(self) -> None:
-        error = StoresNotCommitted.of(_outcome(Committed(S0), RolledBack(S1, Boom("pw=1"))))
+        error = StoresNotCommittedError.from_outcome(
+            _outcome(Committed(S0), RolledBack(S1, Boom("pw=1")))
+        )
 
         assert str(error) == (
             "the stores of this invocation did not all commit: s0=Committed, s1=RolledBack"
         )
 
     def test_stores_not_committed_has_its_code(self) -> None:
-        error = StoresNotCommitted.of(_outcome(Committed(S0)))
+        error = StoresNotCommittedError.from_outcome(_outcome(Committed(S0)))
 
         assert error.code == ErrorCode.STORES_NOT_COMMITTED
 
     def test_stores_not_committed_pickles_its_message(self) -> None:
-        error = StoresNotCommitted.of(_outcome(Committed(S0), RolledBack(S1, Boom("pw=1"))))
+        error = StoresNotCommittedError.from_outcome(
+            _outcome(Committed(S0), RolledBack(S1, Boom("pw=1")))
+        )
 
         restored = pickle.loads(pickle.dumps(error))
 
-        assert (type(restored), str(restored)) == (StoresNotCommitted, str(error))
+        assert (type(restored), str(restored)) == (StoresNotCommittedError, str(error))
 
     def test_stores_not_committed_pickles_its_code(self) -> None:
-        error = StoresNotCommitted.of(_outcome(Committed(S0)))
+        error = StoresNotCommittedError.from_outcome(_outcome(Committed(S0)))
 
         assert pickle.loads(pickle.dumps(error)).code == ErrorCode.STORES_NOT_COMMITTED
 
     def test_stores_not_committed_leaves_the_outcome_behind(self) -> None:
-        error = StoresNotCommitted.of(_outcome(Committed(S0), RolledBack(S1, Boom("pw=1"))))
+        error = StoresNotCommittedError.from_outcome(
+            _outcome(Committed(S0), RolledBack(S1, Boom("pw=1")))
+        )
 
         assert pickle.loads(pickle.dumps(error)).outcome is None
 
     def test_stores_not_committed_pickles_no_cause_text(self) -> None:
-        error = StoresNotCommitted.of(_outcome(Committed(S0), RolledBack(S1, Boom("pw=1"))))
+        error = StoresNotCommittedError.from_outcome(
+            _outcome(Committed(S0), RolledBack(S1, Boom("pw=1")))
+        )
 
         assert b"pw=1" not in pickle.dumps(error)
 
     def test_stores_not_committed_pickles_with_an_unpicklable_cause(self) -> None:
         cause = Boom()
         cause.socket = _Unpicklable()  # type: ignore[attr-defined]
-        error = StoresNotCommitted.of(_outcome(Committed(S0), RolledBack(S1, cause)))
+        error = StoresNotCommittedError.from_outcome(_outcome(Committed(S0), RolledBack(S1, cause)))
 
         assert pickle.loads(pickle.dumps(error)).message == error.message
 

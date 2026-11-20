@@ -32,7 +32,7 @@ from typing import Any
 
 from loom.core.identity import Identity
 from loom.core.observability.event import Scope
-from loom.core.observability.runtime import ObservabilityRuntime
+from loom.core.observability.observability import Observability
 from loom.core.stores.sql.abc.contracts import SqlQueryResult
 from loom.core.stores.sql.abc.errors import RolesNotBoundError
 from loom.core.stores.sql.config import SqlConfig
@@ -68,7 +68,7 @@ class CallerBoundSql:
     caller subject and the authentication mechanism. Those labels match what
     the REST endpoint records, but the span is its own: a narrower scope and a
     different name, so the two are auditable on the same terms rather than
-    being one record. Without an observability runtime there is no span and no
+    being one record. Without observability there is no span and no
     other difference.
 
     Args:
@@ -99,7 +99,7 @@ class CallerBoundSql:
         self,
         service: SqlQueryService,
         config: SqlConfig,
-        observability: ObservabilityRuntime | None = None,
+        observability: Observability | None = None,
     ) -> None:
         self._service = service
         self._observability = observability

@@ -12,7 +12,7 @@ from loom.core.di.container import LoomContainer
 from loom.core.model import BaseModel, Field, Integer, String
 from loom.core.stores import StoreWiring
 from loom.core.stores.repository import Creatable, Deletable, Readable
-from loom.stores.dynamodb.backend import DynamoDBBackend
+from loom.stores.dynamodb.plugin import DynamoDBStorePlugin
 from tests.helpers.persistence import build_backend
 from tests.integration.aws.conftest import AwsClientFactory, ConfigWriter, unique
 
@@ -52,7 +52,7 @@ def wiring(write_config: ConfigWriter, table: str) -> StoreWiring:
             "stores": {"default": {"backend": "dynamodb", "table": table}},
         }
     )
-    return build_backend(DynamoDBBackend(), ConfigContext.from_yaml(str(path)), (Gadget,))
+    return build_backend(DynamoDBStorePlugin(), ConfigContext.from_yaml(str(path)), (Gadget,))
 
 
 class TestDynamodbStore:

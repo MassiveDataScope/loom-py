@@ -93,7 +93,7 @@ class _SingleStoreAdapter:
             ),
         )
 
-    def bind(self, application: Application) -> Application:
+    def mount(self, application: Application) -> Application:
         return application
 
 
@@ -259,8 +259,8 @@ async def two_stores(
         await _create_schema(second)
         yield first, second, first_path, second_path
     finally:
-        await first.dispose()
-        await second.dispose()
+        await first.close()
+        await second.close()
 
 
 def _note_repo(manager: SessionManager) -> SQLAlchemyRepository[_Note, int]:
@@ -285,7 +285,7 @@ class _NoteService:
 
 _WRITE = Permission("rows.write")
 _CATALOG = RoleCatalog((_WRITE,), (Role("editor", (_WRITE,)),))
-_BOUNDARY = Scope.of("b1")
+_BOUNDARY = Scope.from_segments("b1")
 
 
 class TestSingleStoreCharacterisation:

@@ -20,7 +20,7 @@ runs as the only participant of an invocation of its own.
 Usage::
 
     factory = SQLAlchemyUnitOfWorkFactory(session_manager)
-    executor = RuntimeExecutor(compiler, uow_factory=factory)
+    executor = UseCaseExecutor(compiler, uow_factory=factory)
 """
 
 from __future__ import annotations
@@ -63,7 +63,7 @@ class SQLAlchemyUnitOfWork(EntersAlone):
     """
 
     is_transactional: ClassVar[bool] = True
-    phased: ClassVar[bool] = True
+    is_phased: ClassVar[bool] = True
 
     def __init__(self, session_manager: SessionManager) -> None:
         self._session_manager = session_manager
@@ -180,7 +180,7 @@ class SQLAlchemyUnitOfWorkFactory:
     """Factory that creates fresh :class:`SQLAlchemyUnitOfWork` instances.
 
     Register one instance in the DI container and inject it into
-    :class:`~loom.core.engine.executor.RuntimeExecutor` at startup.
+    :class:`~loom.core.engine.executor.UseCaseExecutor` at startup.
 
     Args:
         session_manager: Shared session manager used by all created UoWs.
@@ -188,7 +188,7 @@ class SQLAlchemyUnitOfWorkFactory:
     Example::
 
         factory = SQLAlchemyUnitOfWorkFactory(session_manager)
-        executor = RuntimeExecutor(compiler, uow_factory=factory)
+        executor = UseCaseExecutor(compiler, uow_factory=factory)
     """
 
     def __init__(self, session_manager: SessionManager) -> None:

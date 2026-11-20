@@ -26,7 +26,7 @@ from tests.helpers.elevation import sink_for
 
 WRITE = Permission("rows.write")
 CATALOG = RoleCatalog((WRITE,), (Role("editor", (WRITE,)),))
-BOUNDARY = Scope.of("b1")
+BOUNDARY = Scope.from_segments("b1")
 ON = {"loom.scope.editor.any": "on"}
 CLEARED = {"loom.scope.editor.any": ""}
 
@@ -68,7 +68,7 @@ class _PhasedUnitOfWork:
     """A phased unit of work of ``owner`` whose session is ``session``."""
 
     is_transactional: ClassVar[bool] = True
-    phased: ClassVar[bool] = True
+    is_phased: ClassVar[bool] = True
 
     def __init__(self, owner: SessionManager, session: _RecordingSession) -> None:
         self.owner = owner
@@ -118,7 +118,7 @@ async def manager() -> AsyncIterator[SessionManager]:
     try:
         yield built
     finally:
-        await built.dispose()
+        await built.close()
 
 
 def _decision() -> Decision:

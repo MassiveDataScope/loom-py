@@ -38,7 +38,7 @@ print(json.dumps(sorted(
 # imports ``celery.signals``: neither is the worker. Its adapter, its
 # bootstrap and the prefork pool are.
 _WORKER = (
-    "loom.celery.adapter",
+    "loom.celery.runtime",
     "loom.celery.bootstrap",
     "celery.concurrency.prefork",
     "fastapi",
@@ -65,7 +65,7 @@ class Bare:
             discovered=DiscoveryResult(models=(), use_cases=()),
         )
 
-    def bind(self, application):
+    def mount(self, application):
         return application
 
 

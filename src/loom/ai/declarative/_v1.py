@@ -203,7 +203,7 @@ class OutputHookSpec(
     kw_only=True,
     forbid_unknown_fields=True,
 ):
-    """Use case the runtime executes once per completed run, with the validated output.
+    """Use case the host executes once per completed run, with the validated output.
 
     The key uses the same vocabulary as :attr:`UsecaseCapability.keys` and is
     resolved against the same registry at compile time. The model never sees
@@ -222,7 +222,7 @@ class ConversationSpec(
     kw_only=True,
     forbid_unknown_fields=True,
 ):
-    """Use case the runtime executes before a run that carries a ``conversation_id``.
+    """Use case the host executes before a run that carries a ``conversation_id``.
 
     It returns the prior history of that conversation as opaque bytes in the
     engine's serialised form, or ``None`` on the first turn. The key uses the

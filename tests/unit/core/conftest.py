@@ -168,4 +168,4 @@ async def sqlite_manager_for() -> AsyncIterator[SessionManagerFactory]:
 
     yield open_for
     for manager in managers:
-        await manager.dispose()
+        await manager.close()

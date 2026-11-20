@@ -8,7 +8,7 @@ It is intentionally kept thin — route validation happens during
 :class:`~loom.rest.compiler.RestInterfaceCompiler` compilation, the cursor-key
 check in :func:`compile_api` (both fail-fast at startup; a route that merely lets
 callers choose cursor pages is refused per request without a key), and all request
-handling is delegated to :func:`~loom.rest.fastapi.router_runtime.bind_interfaces`.
+handling is delegated to :func:`~loom.rest.fastapi.router.mount_interfaces`.
 
 An application normally gets it through :func:`~loom.composition.create_app`,
 which composes the kernel from configuration. Directly::
@@ -21,7 +21,7 @@ which composes the kernel from configuration. Directly::
     app = create_fastapi_app(
         kernel,
         RouteSources(python=[OrderRestInterface]),
-        observability_runtime=ObservabilityRuntime.noop(),
+        observability=Observability.noop(),
         title="Orders API",
         version="1.0.0",
     )
@@ -36,8 +36,8 @@ from typing import Any
 from fastapi import FastAPI
 
 from loom.core.bootstrap.kernel import Kernel
-from loom.core.engine.executor import RuntimeExecutor
-from loom.core.observability.runtime import ObservabilityRuntime
+from loom.core.engine.executor import UseCaseExecutor
+from loom.core.observability.observability import Observability
 from loom.core.stores.repository import CursorCodec
 from loom.core.stores.repository.cursor import CURSORS_SECTION
 from loom.core.stores.repository.query import PaginationMode
@@ -49,7 +49,7 @@ from loom.rest.compiler import (
     RouteSources,
 )
 from loom.rest.fastapi._errors import register_error_handlers
-from loom.rest.fastapi.router_runtime import bind_interfaces
+from loom.rest.fastapi.router import mount_interfaces
 from loom.rest.model import RestApiDefaults
 
 _MiddlewareClass = Any
@@ -85,7 +85,7 @@ class CompiledApi:
 
     routes: tuple[CompiledRoute, ...]
     factory: UseCaseFactory
-    executor: RuntimeExecutor
+    executor: UseCaseExecutor
 
 
 def compile_api(
@@ -122,7 +122,7 @@ def create_fastapi_app(
     kernel: Kernel,
     routes: RouteSources,
     *,
-    observability_runtime: ObservabilityRuntime | None = None,
+    observability: Observability | None = None,
     middleware: Sequence[_MiddlewareClass] = (),
     defaults: RestApiDefaults | None = None,
     **fastapi_kwargs: Any,
@@ -150,7 +150,7 @@ def create_fastapi_app(
             route can be redeclared in ``routes.config`` without colliding
             with itself; an entry matching no Python-declared route aborts
             startup instead of doing nothing.
-        observability_runtime: Shared runtime used to emit lifecycle events
+        observability: Shared runtime used to emit lifecycle events
             around each request.
         middleware: ASGI middleware classes to register on the application.
             Added in declaration order (first = outermost wrapper).
@@ -163,7 +163,7 @@ def create_fastapi_app(
                 app = create_fastapi_app(
                     kernel,
                     RouteSources(python=[...]),
-                    observability_runtime=ObservabilityRuntime.noop(),
+                    observability=Observability.noop(),
                     middleware=[TraceIdMiddleware, PrometheusMiddleware],
                 )
         defaults: Global REST API defaults (pagination mode, profile policy).
@@ -186,25 +186,25 @@ def create_fastapi_app(
             kernel,
             RouteSources(python=[UserRestInterface, OrderRestInterface]),
             defaults=RestApiDefaults(pagination_mode=PaginationMode.CURSOR),
-            observability_runtime=ObservabilityRuntime.noop(),
+            observability=Observability.noop(),
             title="My API",
             version="2.0.0",
         )
     """
     api = compile_api(kernel, routes, defaults=defaults)
-    runtime = observability_runtime or ObservabilityRuntime.noop()
+    runtime = observability or Observability.noop()
     app = FastAPI(**fastapi_kwargs)
     register_error_handlers(app)
 
     for mw_class in middleware:
         app.add_middleware(mw_class)
 
-    component_registry = bind_interfaces(
+    component_registry = mount_interfaces(
         app,
         api.routes,
         api.factory,
         api.executor,
-        observability_runtime=runtime,
+        observability=runtime,
     )
     if component_registry:
         _register_openapi_components(app, component_registry)

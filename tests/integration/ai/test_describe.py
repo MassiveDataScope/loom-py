@@ -29,8 +29,8 @@ from fastapi import FastAPI
 
 from loom.ai.describe import AGENTS_CONTRIBUTOR, AGENTS_SECTION, describe_agents
 from loom.core.plugins import entrypoints as entrypoints_module
-from loom.rest.fastapi.adapter import _AGENTS_CONTRIBUTOR, _AGENTS_SECTION
 from loom.rest.fastapi.auto import create_app, describe_fastapi_app
+from loom.rest.fastapi.runtime import _AGENTS_CONTRIBUTOR, _AGENTS_SECTION
 from tests.integration.ai._entrypoints import fake_entry_points
 from tests.integration.ai.conftest import CountingEngineProvider
 

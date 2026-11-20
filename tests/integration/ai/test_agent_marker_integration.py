@@ -1,8 +1,8 @@
 """End-to-end coverage of the ``Agent()`` marker (spec 014, PR2).
 
 Drives the whole path a consumer would: a real ``UseCaseCompiler`` compiles a
-use case declaring ``Agent()``, a real ``RuntimeExecutor`` runs it, and a real
-``AgentRuntime`` serves the named agent — only the model (a scripted engine)
+use case declaring ``Agent()``, a real ``UseCaseExecutor`` runs it, and a real
+``AgentHost`` serves the named agent — only the model (a scripted engine)
 and the network are faked, at the edge. Nothing here stubs the seam the tests
 are meant to prove: the marker resolution, the identity binding, the cycle
 and depth bounds, and the concurrency admission all run through the genuine
@@ -22,11 +22,11 @@ import pytest
 
 from loom.ai.abc import AgentEvent
 from loom.ai.errors import AgentRunError, AgentRunErrorCode
-from loom.ai.runtime import AgentRuntime
-from loom.ai.runtime._handle import AgentMarkerResolver
+from loom.ai.execution import AgentHost
+from loom.ai.execution._handle import AgentMarkerResolver
 from loom.core.di import LoomContainer
 from loom.core.engine.compiler import UseCaseCompiler
-from loom.core.engine.executor import RuntimeExecutor
+from loom.core.engine.executor import UseCaseExecutor
 from loom.core.identity import Identity
 from loom.core.stores.sql.service import NullSqlQueryService
 from tests.integration.ai.conftest import (
@@ -52,13 +52,13 @@ _ALICE = Identity(subject="alice", roles=("analyst",), mechanism="test")
 def _wired(
     *,
     plans: dict[str, object],
-    compiler_and_executor: tuple[UseCaseCompiler, RuntimeExecutor],
+    compiler_and_executor: tuple[UseCaseCompiler, UseCaseExecutor],
     deps: StubDepsFactory,
     container: LoomContainer,
     max_concurrent_runs: int = 8,
     max_agent_depth: int = 1,
-) -> tuple[RuntimeExecutor, AgentRuntime]:
-    """Wire a real executor to a real ``AgentRuntime`` through the marker resolver.
+) -> tuple[UseCaseExecutor, AgentHost]:
+    """Wire a real executor to a real ``AgentHost`` through the marker resolver.
 
     Mirrors the composition a deployment's ``create_app`` performs between
     ``AiWiring.build`` and ``result.factory.verify()``: the executor is built
@@ -66,19 +66,19 @@ def _wired(
     """
     _, executor = compiler_and_executor
     provider = CountingEngineProvider(engines=dict(plans))  # type: ignore[arg-type]
-    runtime = AgentRuntime(
+    host = AgentHost(
         plans=[make_plan(name) for name in plans],
         config=make_ai_config(
             max_concurrent_runs=max_concurrent_runs, max_agent_depth=max_agent_depth
         ),
-        engine_provider=provider,  # type: ignore[arg-type]
+        engine_plugin=provider,  # type: ignore[arg-type]
         deps=deps,
         container=container,
     )
     executor.bind_agent_resolver(
-        AgentMarkerResolver(runtime, sql_query_service=NullSqlQueryService(), observability=None)
+        AgentMarkerResolver(host, sql_query_service=NullSqlQueryService(), observability=None)
     )
-    return executor, runtime
+    return executor, host
 
 
 class TestTheHandleRunsAsTheVerifiedCaller:
@@ -88,14 +88,14 @@ class TestTheHandleRunsAsTheVerifiedCaller:
         self, deps: StubDepsFactory, container: LoomContainer
     ) -> None:
         engine = RecordingScriptedEngine()
-        executor, runtime = _wired(
+        executor, host = _wired(
             plans={MARKER_AGENT_NAME: engine},
             compiler_and_executor=marker_use_case_executor(MarkerAgentUseCase),
             deps=deps,
             container=container,
         )
 
-        async with runtime:
+        async with host:
             result = await executor.execute(MarkerAgentUseCase(), identity=_ALICE)
 
         assert result["caller_subject"] == "alice"
@@ -107,7 +107,7 @@ class TestTheHandleRunsAsTheVerifiedCaller:
         """Concurrent runs each bind their own caller."""
         bob = Identity(subject="bob", mechanism="test")
         engine = RecordingScriptedEngine()
-        executor, runtime = _wired(
+        executor, host = _wired(
             plans={MARKER_AGENT_NAME: engine},
             compiler_and_executor=marker_use_case_executor(MarkerAgentUseCase),
             deps=deps,
@@ -115,7 +115,7 @@ class TestTheHandleRunsAsTheVerifiedCaller:
             max_concurrent_runs=2,
         )
 
-        async with runtime:
+        async with host:
             results = await asyncio.gather(
                 executor.execute(MarkerAgentUseCase(), identity=_ALICE),
                 executor.execute(MarkerAgentUseCase(), identity=bob),
@@ -132,14 +132,14 @@ class TestAParameterDoesNotOverrideTheVerifiedIdentity:
         self, deps: StubDepsFactory, container: LoomContainer
     ) -> None:
         engine = RecordingScriptedEngine()
-        executor, runtime = _wired(
+        executor, host = _wired(
             plans={MARKER_AGENT_NAME: engine},
             compiler_and_executor=marker_use_case_executor(ShadowedIdentityParamUseCase),
             deps=deps,
             container=container,
         )
 
-        async with runtime:
+        async with host:
             result = await executor.execute(
                 ShadowedIdentityParamUseCase(),
                 params={"identity": "attacker"},
@@ -194,7 +194,7 @@ class TestCycleAndDepthThroughTheMarker:
             assert excinfo.value.code is AgentRunErrorCode.AGENT_CALL_TOO_DEEP
 
         outer_engine = _CallbackScriptedEngine(_run_inner)
-        _, runtime = _wired(
+        _, host = _wired(
             plans={OUTER_MARKER_AGENT_NAME: outer_engine, INNER_MARKER_AGENT_NAME: inner_engine},
             compiler_and_executor=compiler_and_executor,
             deps=deps,
@@ -202,7 +202,7 @@ class TestCycleAndDepthThroughTheMarker:
             max_agent_depth=1,
         )
 
-        async with runtime:
+        async with host:
             await executor.execute(OuterMarkerUseCase(), identity=_ALICE)
 
         assert inner_engine.identities == []
@@ -219,7 +219,7 @@ class TestCycleAndDepthThroughTheMarker:
             assert result["output"] == {"answer": "42"}  # ScriptedEngine's DEFAULT_OUTPUT
 
         outer_engine = _CallbackScriptedEngine(_run_inner)
-        _, runtime = _wired(
+        _, host = _wired(
             plans={OUTER_MARKER_AGENT_NAME: outer_engine, INNER_MARKER_AGENT_NAME: inner_engine},
             compiler_and_executor=compiler_and_executor,
             deps=deps,
@@ -227,7 +227,7 @@ class TestCycleAndDepthThroughTheMarker:
             max_agent_depth=2,
         )
 
-        async with runtime:
+        async with host:
             await executor.execute(OuterMarkerUseCase(), identity=_ALICE)
 
         assert inner_engine.identities == [_ALICE]
@@ -242,7 +242,7 @@ class TestTheConcurrencyPermitIsRefusedInsteadOfQueued:
         # First event fires immediately (started), second after 40ms, holding
         # the concurrency permit open long enough for a rival call to arrive.
         held_engine = ScriptedEngine(delays_ms=(0, 40))
-        executor, runtime = _wired(
+        executor, host = _wired(
             plans={MARKER_AGENT_NAME: held_engine},
             compiler_and_executor=marker_use_case_executor(MarkerAgentUseCase),
             deps=deps,
@@ -250,7 +250,7 @@ class TestTheConcurrencyPermitIsRefusedInsteadOfQueued:
             max_concurrent_runs=1,
         )
 
-        async with runtime:
+        async with host:
             first = asyncio.ensure_future(executor.execute(MarkerAgentUseCase(), identity=_ALICE))
             await held_engine.started.wait()
 

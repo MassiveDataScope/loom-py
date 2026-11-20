@@ -21,7 +21,7 @@ class ResourceKind(StrEnum):
     The AWS clients and the cache gateways only need closing, so they open first
     and close last, the clients after everything that calls AWS;
     the Celery producer opens next and closes after the stores, agents and SQL;
-    the SQL registry opens before the agent runtime, which may query it; the
+    the SQL registry opens before the agent host, which may query it; the
     stores open next, after their startup checks, and the job timer last, so it
     closes first and no delayed job runs against a closed store.
     """

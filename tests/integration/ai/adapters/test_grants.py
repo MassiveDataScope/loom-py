@@ -33,10 +33,10 @@ class TestOneSessionTwoViews:
         identity: Identity,
     ) -> None:
         application = compose(AcmeMarket, AcmeHistory, advice=AcmeFakeAdvice())
-        runtime, executor = application.ai.runtime, application.kernel.executor
-        assert runtime is not None
+        host, executor = application.ai.agent_host, application.kernel.executor
+        assert host is not None
 
-        async with runtime:
+        async with host:
             market = await executor.run(AcmeMarket, identity=identity)
             history = await executor.run(AcmeHistory, identity=identity)
 
@@ -65,12 +65,12 @@ class TestGraphReadAtStartupOnly:
         monkeypatch.setattr(_ai.DeclarationWalk, "reached", counted_walk)
         monkeypatch.setattr(DependencyGraph, "edges", counted_edges)
         application = compose(AcmeMarket, AcmeHistory, advice=AcmeFakeAdvice())
-        runtime = application.ai.runtime
-        assert runtime is not None
+        host = application.ai.agent_host
+        assert host is not None
         reads_at_startup = len(edge_reads)
         edge_reads.clear()
 
-        async with runtime:
+        async with host:
             for _ in range(3):
                 await application.kernel.executor.run(AcmeMarket, identity=identity)
 

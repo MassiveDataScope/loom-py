@@ -16,7 +16,7 @@ ends every participant and records the :class:`InvocationOutcome`.
    what did not commit, then close.
 
 A single-phase participant (any unit of work that does not declare the
-``phased`` marker of :class:`PhasedUnitOfWork`) commits and closes in the
+``is_phased`` marker of :class:`PhasedUnitOfWork`) commits and closes in the
 same ``__aexit__`` call, so it commits at its LIFO position in phase 3,
 after every phased participant. Its writes are never recorded by loom's
 repositories, so it would sit among "the rest" of the commit order anyway.
@@ -121,7 +121,7 @@ class InvocationOutcome:
     stores: tuple[StoreOutcome, ...]
 
     @property
-    def succeeded(self) -> bool:
+    def has_succeeded(self) -> bool:
         """Whether every store committed or is non-transactional."""
         return all(_is_success(store) for store in self.stores)
 
@@ -144,7 +144,7 @@ class CommitUncertain(Exception):
 class PhasedUnitOfWork(UnitOfWork, Protocol):
     """A unit of work whose flush, commit, rollback and close are separate calls.
 
-    A unit of work opts in explicitly with ``phased: ClassVar[bool] = True``
+    A unit of work opts in explicitly with ``is_phased: ClassVar[bool] = True``
     and then implements every member below. Without the marker it is driven
     through its context manager in a single phase, whatever methods it
     happens to define, so a third-party ``flush`` or ``close`` changes nothing.
@@ -157,7 +157,7 @@ class PhasedUnitOfWork(UnitOfWork, Protocol):
       cancellation lets it finish. It is also called when ``begin`` fails.
     """
 
-    phased: ClassVar[bool]
+    is_phased: ClassVar[bool]
     """``True``: the coordinator drives this unit of work phase by phase."""
 
     @property
@@ -185,14 +185,14 @@ class PhasedUnitOfWork(UnitOfWork, Protocol):
 
 
 def _is_phased(uow: UnitOfWork) -> TypeGuard[PhasedUnitOfWork]:
-    """Whether ``uow`` opted into phased driving with the ``phased`` marker."""
-    return getattr(type(uow), "phased", False) is True
+    """Whether ``uow`` opted into phased driving with the ``is_phased`` marker."""
+    return getattr(type(uow), "is_phased", False) is True
 
 
 class _Driver(Protocol):
     """The five phases, as one kind of unit of work runs them, and what it declares."""
 
-    phased: ClassVar[bool]
+    is_phased: ClassVar[bool]
 
     @property
     def physical(self) -> PhysicalStore: ...
@@ -209,7 +209,7 @@ class _Driver(Protocol):
 class _PhasedDriver:
     """Drives a :class:`PhasedUnitOfWork` one phase per call."""
 
-    phased: ClassVar[bool] = True
+    is_phased: ClassVar[bool] = True
 
     def __init__(self, key: StoreKey, uow: PhasedUnitOfWork) -> None:
         self._key = key
@@ -276,7 +276,7 @@ class _SinglePhaseDriver:
     so it runs in the caller's task; the protocol has it shield its own I/O.
     """
 
-    phased: ClassVar[bool] = False
+    is_phased: ClassVar[bool] = False
 
     def __init__(self, uow: UnitOfWork) -> None:
         self._uow = uow
@@ -348,9 +348,9 @@ class Participant:
         )
 
     @property
-    def phased(self) -> bool:
+    def is_phased(self) -> bool:
         """Whether its unit of work declares the :class:`PhasedUnitOfWork` marker."""
-        return self._driver.phased
+        return self._driver.is_phased
 
     @property
     def physical(self) -> PhysicalStore:
@@ -589,7 +589,7 @@ class _Settlement:
         self._interrupt: BaseException | None = None
 
     async def run(self) -> InvocationOutcome:
-        phased = _commit_order(p for p in self._enlisted if p.phased)
+        phased = _commit_order(p for p in self._enlisted if p.is_phased)
         if self._failure is None:
             await self._flush(phased)
         if self._failure is None:
@@ -597,7 +597,7 @@ class _Settlement:
         for participant in reversed(self._enlisted):
             await self._commit_if_pending(participant)
             await self._teardown(participant)
-        single = [p for p in reversed(self._enlisted) if not p.phased]
+        single = [p for p in reversed(self._enlisted) if not p.is_phased]
         return InvocationOutcome(tuple(self._outcomes[p.key] for p in [*phased, *single]))
 
     def raise_interrupt(self) -> None:
@@ -682,7 +682,7 @@ def _log_outcome(outcome: InvocationOutcome, participants: Mapping[StoreKey, Par
         }
         for store in outcome.stores
     ]
-    if outcome.succeeded:
+    if outcome.has_succeeded:
         _log.debug(UowEvent.INVOCATION_OUTCOME, stores=stores)
     else:
         _log.warning(UowEvent.INVOCATION_OUTCOME, stores=stores)

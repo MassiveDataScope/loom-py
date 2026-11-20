@@ -3,10 +3,10 @@
 from __future__ import annotations
 
 from loom.core.observability.event import EventKind, LifecycleEvent, LifecycleStatus, Scope
+from loom.core.observability.observability import Observability
 from loom.core.observability.observer.noop import NoopObserver
 from loom.core.observability.observer.structlog import StructlogLifecycleObserver
 from loom.core.observability.protocol import LifecycleObserver
-from loom.core.observability.runtime import ObservabilityRuntime
 from tests.unit.streaming.observability.cases import FailingFlowObserver, RecordingFlowObserver
 
 
@@ -23,11 +23,11 @@ class TestFlowObserverProtocol:
         observer.on_event(LifecycleEvent(scope=Scope.NODE, name="test", kind=EventKind.START))
 
 
-class TestObservabilityRuntime:
+class TestObservability:
     def test_runtime_fans_out_events(self) -> None:
         first = RecordingFlowObserver()
         second = RecordingFlowObserver()
-        runtime = ObservabilityRuntime([first, second])
+        runtime = Observability([first, second])
 
         runtime.emit(LifecycleEvent(scope=Scope.POLL_CYCLE, name="my_flow", kind=EventKind.START))
         runtime.emit(
@@ -57,7 +57,7 @@ class TestObservabilityRuntime:
 
     def test_runtime_isolates_errors(self) -> None:
         good = RecordingFlowObserver()
-        runtime = ObservabilityRuntime([FailingFlowObserver(), good])
+        runtime = Observability([FailingFlowObserver(), good])
 
         runtime.emit(LifecycleEvent(scope=Scope.POLL_CYCLE, name="test", kind=EventKind.START))
         runtime.emit(LifecycleEvent(scope=Scope.NODE, name="test:0", kind=EventKind.START, meta={}))
@@ -75,6 +75,6 @@ class TestObservabilityRuntime:
         assert len(good.events) == 4
 
     def test_runtime_empty_is_noop(self) -> None:
-        runtime = ObservabilityRuntime([])
+        runtime = Observability([])
         runtime.emit(LifecycleEvent(scope=Scope.POLL_CYCLE, name="test", kind=EventKind.START))
         runtime.emit(LifecycleEvent(scope=Scope.POLL_CYCLE, name="test", kind=EventKind.END))

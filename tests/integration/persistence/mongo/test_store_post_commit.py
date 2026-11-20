@@ -17,8 +17,8 @@ from pymongo import AsyncMongoClient
 
 from loom.core.command import Command
 from loom.core.engine.compiler import UseCaseCompiler
-from loom.core.engine.executor import RuntimeExecutor
-from loom.core.errors import StoresNotCommitted
+from loom.core.engine.executor import UseCaseExecutor
+from loom.core.errors import StoresNotCommittedError
 from loom.core.job.context import add_pending_dispatch
 from loom.core.model import BaseModel, ColumnField
 from loom.core.stores.catalog import DEFAULT_STORE, StoreKey
@@ -85,7 +85,7 @@ class _WriteEntry(UseCase[_Entry, None]):
 
 
 class _WriteOrderThenEntry(UseCase[_Order, None]):
-    def __init__(self, executor: RuntimeExecutor, orders: Any, nested: _WriteEntry) -> None:
+    def __init__(self, executor: UseCaseExecutor, orders: Any, nested: _WriteEntry) -> None:
         self.executor, self.orders, self.nested = executor, orders, nested
 
     async def execute(self) -> None:
@@ -112,7 +112,7 @@ async def sql() -> AsyncIterator[SessionManager]:
     try:
         yield manager
     finally:
-        await manager.dispose()
+        await manager.close()
 
 
 class TestStorePostCommit:
@@ -120,7 +120,7 @@ class TestStorePostCommit:
         ("refuse", "ran", "error", "stored"),
         [
             pytest.param(False, ["sql", "mongo"], None, 1, id="both-commit"),
-            pytest.param(True, ["sql"], StoresNotCommitted, 0, id="mongo-rolls-back"),
+            pytest.param(True, ["sql"], StoresNotCommittedError, 0, id="mongo-rolls-back"),
         ],
     )
     async def test_each_store_runs_its_actions_by_its_own_outcome(
@@ -146,7 +146,7 @@ class TestStorePostCommit:
         coordinator = OrderedCommits(
             {DEFAULT_STORE: SQLAlchemyUnitOfWorkFactory(sql), AUDIT: _Mongo(mongo_client, refuse)}
         )
-        executor = RuntimeExecutor(UseCaseCompiler(), coordinator=coordinator)
+        executor = UseCaseExecutor(UseCaseCompiler(), coordinator=coordinator)
         labels: list[str] = []
         orders = SQLAlchemyRepository(sql, _Order, cursor_codec=codec)
         use_case = _WriteOrderThenEntry(executor, orders, _WriteEntry(entries, labels))

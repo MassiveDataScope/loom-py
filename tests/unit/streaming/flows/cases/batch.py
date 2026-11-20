@@ -8,7 +8,7 @@ from omegaconf import DictConfig
 
 from loom.streaming import (
     CollectBatch,
-    ContextFactory,
+    ContextSupplier,
     FromTopic,
     IntoTopic,
     Process,
@@ -73,7 +73,7 @@ def build_with_batch_flow_case(config: DictConfig) -> StreamFlowCase:
 
 
 def build_with_batch_scope_flow_case(config: DictConfig) -> StreamFlowCase:
-    """Build a batch flow using a fresh ContextFactory client per batch."""
+    """Build a batch flow using a fresh ContextSupplier client per batch."""
     events = ResourceEvents()
     flow: StreamFlow[Any, Any] = StreamFlow(
         name="orders_price_batch_scope",
@@ -85,7 +85,7 @@ def build_with_batch_scope_flow_case(config: DictConfig) -> StreamFlowCase:
                     PriceOrder(),
                     IntoTopic(_ORDERS_PRICED_BATCH_SCOPE_TOPIC, payload=PricedOrder),
                 ),
-                client=ContextFactory(events.create_pricing_client),
+                client=ContextSupplier(events.create_pricing_client),
                 scope=ResourceScope.BATCH,
             ),
         ),

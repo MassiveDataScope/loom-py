@@ -24,7 +24,7 @@ from loom.etl.compiler import (
     ParallelStepGroup,
 )
 from loom.etl.declarative.target import SchemaMode
-from loom.etl.testing import StubCatalog
+from loom.etl.testing import InMemoryCatalog
 from tests.unit.etl.doubles import RunDateCountriesParams, RunDateIgnoredParams
 
 
@@ -503,7 +503,7 @@ class TestCatalogValidation:
         catalog_tables: dict[str, tuple[str, ...]],
         error: str | None,
     ) -> None:
-        compiler = ETLCompiler(StubCatalog(tables=catalog_tables))
+        compiler = ETLCompiler(InMemoryCatalog(tables=catalog_tables))
         if error is None:
             compiler.compile(pipeline_type)
             return

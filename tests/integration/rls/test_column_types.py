@@ -57,7 +57,7 @@ class TestColumnTypes:
             hidden = await repository.get_by_id((host.id, OWNER))
         finally:
             reset_identity(other)
-            await manager.dispose()
+            await manager.close()
             reset_registry()
 
         assert (host.fingerprint, host.address) == (FINGERPRINT, "10.1.2.3")

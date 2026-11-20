@@ -41,11 +41,11 @@ import yaml  # noqa: E402
 from httpcore2._backends.auto import AutoBackend  # noqa: E402
 
 from loom.ai import registry  # noqa: E402
-from loom.ai.engines.pydantic_ai import PydanticAIEngineProvider, _mcp  # noqa: E402
+from loom.ai.engines.pydantic_ai import PydanticAIEnginePlugin, _mcp  # noqa: E402
 from loom.ai.engines.pydantic_ai import _transport as _transport  # noqa: E402
 from loom.ai.errors import AgentRunErrorCode  # noqa: E402
 from loom.composition import create_app  # noqa: E402
-from loom.serverless.aws.lambda_ import LambdaAdapter, LambdaHandler  # noqa: E402
+from loom.serverless.aws.lambda_ import LambdaHandler, LambdaRuntime  # noqa: E402
 from loom.testing import LambdaTestClient  # noqa: E402
 from tests.integration.ai.freeze import measure, probe  # noqa: E402
 from tests.integration.ai.freeze.server import Era, LiveMcpServer, serving  # noqa: E402
@@ -327,8 +327,8 @@ def _function_with_a_spare_server(
 ) -> LambdaHandler:
     """T06's function, plus an agent no use case or job reaches, granted a second server."""
     monkeypatch.setattr(_transport, "time", _WallClock())
-    provider = PydanticAIEngineProvider(model_resolver=_Model().model)
-    monkeypatch.setattr(registry, "resolve_engine_provider", lambda name: provider)
+    provider = PydanticAIEnginePlugin(model_resolver=_Model().model)
+    monkeypatch.setattr(registry, "resolve_engine_plugin", lambda name: provider)
     path = Path(_write_project(tmp_path, server.url, trigger, agents=True))
     config = yaml.safe_load(path.read_text(encoding="utf-8"))
     spare_server = {"url": spare.url, "timeout_ms": 5000, "auth": {"kind": _TOKEN_KIND}}
@@ -340,7 +340,7 @@ def _function_with_a_spare_server(
     spec |= {"name": "idle", "capabilities": [grant]}
     (agents / "idle.yaml").write_text(yaml.safe_dump(spec), encoding="utf-8")
     function = "worker" if trigger == "jobs" else None
-    return create_app(str(path), adapter=LambdaAdapter(function=function), environment="test")
+    return create_app(str(path), runtime=LambdaRuntime(function=function), environment="test")
 
 
 # ---------------------------------------------------------------------------
@@ -403,7 +403,7 @@ def probe_function(
             monkeypatch.setenv(probe.CURSOR_KEY_VARIABLE, _CURSOR_KEY)
             monkeypatch.setenv("A3_JWT_SECRET", _PROBE_SECRET)
             config = probe.project(tmp_path, server.url)
-            handler = create_app(str(config), adapter=LambdaAdapter(), environment="test")
+            handler = create_app(str(config), runtime=LambdaRuntime(), environment="test")
             stack.callback(handler.close)
             return _ProbeFunction(server, handler, clock, capsys)
 

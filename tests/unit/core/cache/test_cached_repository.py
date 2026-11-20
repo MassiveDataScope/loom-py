@@ -10,9 +10,9 @@ import msgspec
 import pytest
 
 from loom.core.cache import (
-    CacheBackend,
     CacheConfig,
     CachedRepository,
+    CacheStore,
     GenerationalDependencyResolver,
     cache_query,
     cached,
@@ -41,7 +41,7 @@ from ._doubles import (
     AcmeCacheWidget,
     CachedEnv,
     CodeWidget,
-    CountingCacheBackend,
+    CountingCacheStore,
     CountingRepository,
     DateWidget,
     UuidWidget,
@@ -55,7 +55,7 @@ from ._doubles import (
 T = TypeVar("T")
 
 
-class _MemoryCacheBackend:
+class _MemoryCacheStore:
     def __init__(self) -> None:
         self.data: dict[str, Any] = {}
 
@@ -377,7 +377,7 @@ def wrapped_repository(
     cache_config: CacheConfig,
 ) -> CachedRepository[_EntityOut, _Create, _Update, int]:
     repository = _FakeRepository()
-    cache = _MemoryCacheBackend()
+    cache = _MemoryCacheStore()
     resolver = GenerationalDependencyResolver(cache)
     return CachedRepository(
         repository, config=cache_config, cache=cache, dependency_resolver=resolver
@@ -537,7 +537,7 @@ class TestDependencySpecs:
         self, cache_config: CacheConfig
     ) -> None:
         repository = _RepoWithModelDependsOn()
-        cache = _MemoryCacheBackend()
+        cache = _MemoryCacheStore()
         resolver = GenerationalDependencyResolver(cache)
         wrapped = CachedRepository(
             repository, config=cache_config, cache=cache, dependency_resolver=resolver
@@ -552,7 +552,7 @@ class TestDependencySpecs:
 
     def test_invalid_dependency_spec_fails_fast(self, cache_config: CacheConfig) -> None:
         repository = _RepoWithInvalidDependsOn()
-        cache = _MemoryCacheBackend()
+        cache = _MemoryCacheStore()
         resolver = GenerationalDependencyResolver(cache)
 
         with pytest.raises(ValueError, match="Invalid dependency spec"):
@@ -564,7 +564,7 @@ class TestDependencySpecs:
         self, cache_config: CacheConfig
     ) -> None:
         """ONE_TO_MANY relation without explicit depends_on → spec auto-inferred."""
-        cache = _MemoryCacheBackend()
+        cache = _MemoryCacheStore()
         resolver = GenerationalDependencyResolver(cache)
         wrapped = CachedRepository(
             _AutoProductRepo(), config=cache_config, cache=cache, dependency_resolver=resolver
@@ -575,7 +575,7 @@ class TestDependencySpecs:
 
     def test_projection_dep_auto_inferred_via_loader_model(self, cache_config: CacheConfig) -> None:
         """Projection with loader.model and no depends_on → auto-inferred from sibling relation."""
-        cache = _MemoryCacheBackend()
+        cache = _MemoryCacheStore()
         resolver = GenerationalDependencyResolver(cache)
         wrapped = CachedRepository(
             _AutoProductRepo(), config=cache_config, cache=cache, dependency_resolver=resolver
@@ -589,7 +589,7 @@ class TestDependencySpecs:
         self, cache_config: CacheConfig
     ) -> None:
         """Fully-qualified FK ``table.column`` is normalised to bare column name."""
-        cache = _MemoryCacheBackend()
+        cache = _MemoryCacheStore()
         resolver = GenerationalDependencyResolver(cache)
         wrapped = CachedRepository(
             _FqAutoParentRepo(), config=cache_config, cache=cache, dependency_resolver=resolver
@@ -600,7 +600,7 @@ class TestDependencySpecs:
 
     def test_explicit_depends_on_wins_over_auto_inference(self, cache_config: CacheConfig) -> None:
         """Explicit depends_on is used as-is; auto-inference is skipped for that field."""
-        cache = _MemoryCacheBackend()
+        cache = _MemoryCacheStore()
         resolver = GenerationalDependencyResolver(cache)
         wrapped = CachedRepository(
             _RepoWithModelDependsOn(),
@@ -635,7 +635,7 @@ class _BulkFakeRepository(_FakeRepository):
 
 
 class _RecordingResolver(GenerationalDependencyResolver):
-    def __init__(self, cache: CacheBackend) -> None:
+    def __init__(self, cache: CacheStore) -> None:
         super().__init__(cache)
         self.events: list[MutationEvent] = []
 
@@ -647,7 +647,7 @@ class _RecordingResolver(GenerationalDependencyResolver):
 def _wrap(
     repository: _FakeRepository, cache_config: CacheConfig
 ) -> tuple[CachedRepository[_EntityOut, _Create, _Update, int], _RecordingResolver]:
-    cache = _MemoryCacheBackend()
+    cache = _MemoryCacheStore()
     resolver = _RecordingResolver(cache)
     wrapped = CachedRepository(
         repository, config=cache_config, cache=cache, dependency_resolver=resolver
@@ -734,7 +734,7 @@ def _generation(
     equivalent observation of whether the bump ran.
     """
     cache = wrapped._cache
-    assert isinstance(cache, _MemoryCacheBackend)
+    assert isinstance(cache, _MemoryCacheStore)
     return int(cache.data.get(resolver._tag_key(f"{wrapped.entity_name}:list")) or 0)
 
 
@@ -949,7 +949,7 @@ class TestPrimaryKeyByName:
     @pytest.mark.asyncio
     async def test_create_event_ids_carry_the_declared_key(self, cache_config: CacheConfig) -> None:
         repository = WritableRepository([CodeWidget(code=1, name="a")], CodeWidget)
-        backend = CountingCacheBackend()
+        backend = CountingCacheStore()
         resolver = _RecordingResolver(backend)
         wrapped = CachedRepository(
             repository, config=cache_config, cache=backend, dependency_resolver=resolver
@@ -987,7 +987,7 @@ class TestPrimaryKeyByName:
     def test_a_repository_without_a_model_is_refused(self, cache_config: CacheConfig) -> None:
         repository = WritableRepository([AcmeCacheWidget(id=1, name="a")], AcmeCacheWidget)
         del repository.model
-        backend = CountingCacheBackend()
+        backend = CountingCacheStore()
         resolver = _RecordingResolver(backend)
 
         with pytest.raises(TypeError, match="has no model, so the store"):
@@ -1143,7 +1143,7 @@ class TestDelegationPrecondition:
     def test_refuses_a_repository_missing_delegated_methods(
         self, cache_config: CacheConfig
     ) -> None:
-        cache = _MemoryCacheBackend()
+        cache = _MemoryCacheStore()
         repository = cast(Any, _ReadOnlyRepository())
         dependency_resolver = GenerationalDependencyResolver(cache)
 

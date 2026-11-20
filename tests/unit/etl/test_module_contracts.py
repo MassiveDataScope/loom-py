@@ -81,7 +81,7 @@ class TestModuleReloadContracts:
             ("loom.core.observability.protocol", "LifecycleObserver"),
             ("loom.etl.lineage.sinks._protocol", "LineageStore"),
             ("loom.etl.pipeline._params", "ETLParams"),
-            ("loom.etl.runtime.contracts", "TableDiscovery"),
+            ("loom.etl.ports.contracts", "TableDiscovery"),
             ("loom.etl.lineage._config", "ETLObservabilityConfig"),
         ],
     )
@@ -104,14 +104,14 @@ class TestReloadedModuleUsage:
             "loom.etl.declarative.target",
             "loom.etl.declarative.expr._predicate",
             "loom.etl.declarative.expr._predicate_dialect",
-            "loom.etl.backends._predicate",
+            "loom.etl.engines._predicate",
         )
 
         compiler_errors = modules["loom.etl.compiler._errors"]
         target_variants = modules["loom.etl.declarative.target"]
         predicate_nodes = modules["loom.etl.declarative.expr._predicate"]
         predicate_dialect = modules["loom.etl.declarative.expr._predicate_dialect"]
-        predicate_utils = modules["loom.etl.backends._predicate"]
+        predicate_utils = modules["loom.etl.engines._predicate"]
 
         class _Step:
             __qualname__ = "ReloadStep"
@@ -220,8 +220,8 @@ class TestReloadedModuleUsage:
 
     def test_reload_checkpoint_store_module_and_helpers(self) -> None:
         _reload_module("loom.etl.checkpoint._store")
-        polars_temp_mod = _reload_module("loom.etl.checkpoint._backends._polars")
-        spark_temp_mod = _reload_module("loom.etl.checkpoint._backends._spark")
+        polars_temp_mod = _reload_module("loom.etl.checkpoint._io._polars")
+        spark_temp_mod = _reload_module("loom.etl.checkpoint._io._spark")
 
         import polars as pl
 
@@ -274,7 +274,7 @@ class TestReloadedModuleUsage:
         [
             ("loom.etl.declarative.target._history", "IntoHistory"),
             ("loom.etl.runner.core", "ETLRunner"),
-            ("loom.etl.runner._providers", "load_backend_provider"),
+            ("loom.etl.runner._engines", "load_etl_engine"),
             ("loom.etl.runner._wiring", "make_backends"),
             ("loom.etl.runner.config_loader", "_load_yaml"),
             ("loom.etl.storage.routing", "RoutedCatalog"),
@@ -299,7 +299,7 @@ class TestStableRuntimeContracts:
         assert ETLProcess is not None
 
     def test_lazy_sql_exports_resolve(self) -> None:
-        from loom.etl.backends._predicate import sql_literal
+        from loom.etl.engines._predicate import sql_literal
         from loom.etl.pipeline import StepSQL
         from loom.etl.pipeline._sql import resolve_sql
 
@@ -383,7 +383,7 @@ class TestStableRuntimeContracts:
 
     def test_storage_protocols_runtime_checkable_contracts(self) -> None:
         from loom.etl.declarative.expr._refs import TableRef
-        from loom.etl.runtime.contracts import (
+        from loom.etl.ports.contracts import (
             SourceReader,
             SQLExecutor,
             TableDiscovery,

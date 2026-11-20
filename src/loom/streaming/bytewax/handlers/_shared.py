@@ -20,7 +20,7 @@ from loom.core.async_bridge import AsyncBridge
 from loom.core.logger import log_context
 from loom.core.model import LoomFrozenStruct, LoomStruct
 from loom.core.observability.event import Scope, TerminalReason
-from loom.core.observability.runtime import ObservabilityRuntime
+from loom.core.observability.observability import Observability
 from loom.core.stores.database import DatabaseConfig
 from loom.streaming.bytewax._commit_tracker import CommitCompletionPort
 from loom.streaming.bytewax._operators import ResourceLifecycle
@@ -108,7 +108,7 @@ class _BuildContextProtocol(Protocol):
     plan: CompiledPlan
     bridge: AsyncBridge | None
     commit_tracker: CommitCompletionPort | None
-    flow_runtime: ObservabilityRuntime
+    flow_runtime: Observability
     flow_run_id: str
 
     def wire_branch(
@@ -196,7 +196,7 @@ def _node_log_context(flow_name: str, idx: int, node_type: str) -> AbstractConte
 
 @contextmanager
 def _observe_node(
-    observer: ObservabilityRuntime,
+    observer: Observability,
     flow_name: str,
     idx: int,
     node_type: str,
@@ -396,7 +396,7 @@ def _register_row_fanout(
     tracker: CommitCompletionPort | None,
     declared_types: frozenset[type],
     has_default: bool,
-    observer: ObservabilityRuntime,
+    observer: Observability,
     flow_name: str,
 ) -> Any:
     """Account for the rows an ``ExpandRoutes`` node actually produced.
@@ -430,7 +430,7 @@ def _register_row_fanout(
 
 
 def _record_dropped_no_route(
-    observer: ObservabilityRuntime,
+    observer: Observability,
     message: Any,
     declared_types: frozenset[type],
     has_default: bool,

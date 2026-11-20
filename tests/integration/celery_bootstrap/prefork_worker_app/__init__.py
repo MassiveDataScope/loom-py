@@ -20,7 +20,7 @@ from typing import Any
 from celery import Celery
 from sqlalchemy import event, text
 
-import loom.stores.sqlalchemy.backend as sqlalchemy_backend
+import loom.stores.sqlalchemy.plugin as sqlalchemy_backend
 from loom.celery.bootstrap import bootstrap_worker
 from loom.core.environment import Environment
 from loom.core.job.job import Job

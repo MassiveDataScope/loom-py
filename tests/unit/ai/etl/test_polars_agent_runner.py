@@ -20,9 +20,9 @@ from pydantic_ai.models.function import AgentInfo, FunctionModel
 from pydantic_ai.usage import RequestUsage
 
 from loom.ai import AgentResult, AiConfig, InferenceTarget, ModelPrice
-from loom.ai.engines.pydantic_ai import PydanticAIEngineProvider
+from loom.ai.engines.pydantic_ai import PydanticAIEnginePlugin
 from loom.ai.etl import PolarsAgentRunner
-from loom.ai.runtime import AgentRuntime
+from loom.ai.execution import AgentHost
 from tests.unit.ai.etl._types import Reply
 
 _AGENT = """\
@@ -49,14 +49,14 @@ class _Crash(Exception):
 
 @pytest.fixture
 def crash_on_prompt(monkeypatch: pytest.MonkeyPatch) -> None:
-    original = AgentRuntime.run
+    original = AgentHost.run
 
-    async def run(self: AgentRuntime, name: str, prompt: str, **options: Any) -> AgentResult:
+    async def run(self: AgentHost, name: str, prompt: str, **options: Any) -> AgentResult:
         if prompt == "crash":
-            raise _Crash("the runtime broke")
+            raise _Crash("the host broke")
         return await original(self, name, prompt, **options)
 
-    monkeypatch.setattr(AgentRuntime, "run", run)
+    monkeypatch.setattr(AgentHost, "run", run)
 
 
 def _prompt_of(messages: list[ModelMessage]) -> str:
@@ -125,11 +125,11 @@ def _runner(
     )
     built = [] if providers_built is None else providers_built
 
-    def provider() -> PydanticAIEngineProvider:
+    def provider() -> PydanticAIEnginePlugin:
         built.append(object())
-        return PydanticAIEngineProvider(model_resolver=lambda _: model())
+        return PydanticAIEnginePlugin(model_resolver=lambda _: model())
 
-    return PolarsAgentRunner(config, root=tmp_path, engine_provider=provider)
+    return PolarsAgentRunner(config, root=tmp_path, engine_plugin=provider)
 
 
 def _messages(*texts: str | None) -> pl.DataFrame:

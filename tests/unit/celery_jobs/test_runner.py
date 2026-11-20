@@ -13,12 +13,12 @@ from celery.exceptions import Retry
 
 from loom.celery.constants import TASK_JOB_PREFIX, callback_task_name
 from loom.celery.errors import WorkerNotOpenError
-from loom.celery.runner import _CeleryAsyncRuntime, _make_callback_task
+from loom.celery.runner import _CeleryProcessBridge, _make_callback_task
 from loom.core.engine.events import EventKind
 from loom.core.errors import (
     PostCommitError,
     ScopeOwnershipError,
-    StoresNotCommitted,
+    StoresNotCommittedError,
     UnitOfWorkInsideScope,
 )
 from loom.core.identity import Identity, current_identity
@@ -91,7 +91,7 @@ ERRORS: dict[str, Callable[[], Exception]] = {
     "post-commit-uncommitted": lambda: PostCommitError(
         committed=False, failures=(ConnectionError("broker down"),)
     ),
-    "stores-not-committed": lambda: StoresNotCommitted("audit=Committed, default=RolledBack"),
+    "stores-not-committed": lambda: StoresNotCommittedError("audit=Committed, default=RolledBack"),
     "scope-ownership": lambda: ScopeOwnershipError("the invocation scope is already closed"),
     "uow-inside-scope": lambda: UnitOfWorkInsideScope.entering(object()),
     "one-store-uncertain": lambda: invocation_error(
@@ -203,7 +203,7 @@ class TestExecution:
     def test_a_job_span_lands_in_the_trace_the_dispatcher_sent(self, worker: CeleryWorker) -> None:
         recorder = build_recorder()
 
-        worker.run(TraceJob, trace_id=WIRE_TRACE, observability_runtime=recorder.runtime)
+        worker.run(TraceJob, trace_id=WIRE_TRACE, observability=recorder.runtime)
 
         span = recorder.one("job:TraceJob")
         assert hex_trace(span) == WIRE_TRACE
@@ -214,7 +214,7 @@ class TestExecution:
     ) -> None:
         recorder = build_recorder()
 
-        worker.run(TraceJob, observability_runtime=recorder.runtime)
+        worker.run(TraceJob, observability=recorder.runtime)
 
         assert hex_trace(recorder.one("job:TraceJob")) != WIRE_TRACE
 
@@ -640,7 +640,7 @@ class TestLinkContextOnTheWorker:
             callback,
             CallbackOutcome.SUCCESS,
             Builds(),
-            _CeleryAsyncRuntime(),  # type: ignore[arg-type]
+            _CeleryProcessBridge(),  # type: ignore[arg-type]
         )
 
         task.apply(

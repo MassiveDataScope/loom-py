@@ -104,7 +104,7 @@ class AcmeAgentEntryPoint:
             agent_endpoints=self._agent_endpoints,
         )
 
-    def bind(self, application: Application) -> Application:
+    def mount(self, application: Application) -> Application:
         return application
 
 
@@ -167,7 +167,7 @@ class TestReachableAgents:
     @pytest.fixture
     def provider(self, monkeypatch: pytest.MonkeyPatch) -> _OpeningProvider:
         opening = _OpeningProvider()
-        monkeypatch.setattr(registry, "resolve_engine_provider", lambda _: opening)
+        monkeypatch.setattr(registry, "resolve_engine_plugin", lambda _: opening)
         return opening
 
     def test_without_endpoints_only_marker_named_agents_are_compiled_and_opened(

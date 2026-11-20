@@ -36,8 +36,8 @@ class _ResourceManagerProtocol(Protocol):
 class _SharedSessionManagerProtocol(Protocol):
     """Minimal SQLAlchemy session-manager contract cached by the adapter."""
 
-    def dispose(self) -> Coroutine[Any, Any, None]:
-        """Dispose pooled connections and release engine resources."""
+    def close(self) -> Coroutine[Any, Any, None]:
+        """Close pooled connections and release engine resources."""
         ...
 
 
@@ -83,7 +83,7 @@ class ResourceManager:
             if bridge is None:
                 break
             try:
-                bridge.run(session_manager.dispose())
+                bridge.run(session_manager.close())
             except Exception as exc:
                 errors.append(exc)
         self._managers.clear()
@@ -107,7 +107,7 @@ def _session_manager_builder() -> Callable[
         from loom.stores.sqlalchemy.session_manager import build_session_manager
     except ImportError as exc:
         raise ImportError(
-            "IntoTable(backend=SQLALCHEMY) requires SQLAlchemy. "
+            "IntoTable(engine=SQLALCHEMY) requires SQLAlchemy. "
             "Install loom-kernel[sqlalchemy] to write to SQLAlchemy tables."
         ) from exc
     return cast(

@@ -4,7 +4,7 @@ import dataclasses
 
 import pytest
 
-from loom.core.engine.events import EventKind, RuntimeEvent
+from loom.core.engine.events import EventKind, ExecutionEvent
 from loom.core.engine.plan import (
     ComputeStep,
     ExecutionPlan,
@@ -14,7 +14,7 @@ from loom.core.engine.plan import (
     ParamBinding,
     RuleStep,
 )
-from loom.core.errors import RuleViolation
+from loom.core.errors import RuleViolationError
 from loom.core.use_case.markers import LookupKind, SourceKind
 
 # ---------------------------------------------------------------------------
@@ -226,13 +226,13 @@ class TestExecutionPlan:
 
 
 # ---------------------------------------------------------------------------
-# RuntimeEvent
+# ExecutionEvent
 # ---------------------------------------------------------------------------
 
 
-class TestRuntimeEvent:
+class TestExecutionEvent:
     def test_minimal_event(self) -> None:
-        event = RuntimeEvent(kind=EventKind.EXEC_START, use_case_name="MyUseCase")
+        event = ExecutionEvent(kind=EventKind.EXEC_START, use_case_name="MyUseCase")
         assert event.kind == EventKind.EXEC_START
         assert event.use_case_name == "MyUseCase"
         assert event.step_name is None
@@ -241,8 +241,8 @@ class TestRuntimeEvent:
         assert event.error is None
 
     def test_full_event(self) -> None:
-        err = RuleViolation("field", "msg")
-        event = RuntimeEvent(
+        err = RuleViolationError("field", "msg")
+        event = ExecutionEvent(
             kind=EventKind.EXEC_ERROR,
             use_case_name="MyUseCase",
             step_name="Load User",
@@ -256,7 +256,7 @@ class TestRuntimeEvent:
         assert event.error is err
 
     def test_is_frozen(self) -> None:
-        event = RuntimeEvent(kind=EventKind.EXEC_DONE, use_case_name="X")
+        event = ExecutionEvent(kind=EventKind.EXEC_DONE, use_case_name="X")
         with pytest.raises(dataclasses.FrozenInstanceError):
             event.use_case_name = "Y"  # type: ignore[misc]
 

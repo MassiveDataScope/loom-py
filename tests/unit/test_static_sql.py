@@ -20,7 +20,7 @@ SCANNED_MODULES = (
     LOOM / "core" / "locator.py",
     LOOM / "core" / "schema_names.py",
     SQLALCHEMY / "__init__.py",
-    SQLALCHEMY / "backend.py",
+    SQLALCHEMY / "plugin.py",
     SQLALCHEMY / "session_manager.py",
     SQLALCHEMY / "session_settings.py",
 )

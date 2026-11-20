@@ -15,7 +15,7 @@ from tests.helpers.version_limited_extras import require_bytewax
 require_bytewax()
 
 from loom.core.model.redaction import Dsn  # noqa: E402
-from loom.core.observability.runtime import ObservabilityRuntime  # noqa: E402
+from loom.core.observability.observability import Observability  # noqa: E402
 from loom.core.plugins.optional import MissingExtraError  # noqa: E402
 from loom.streaming.bytewax import _adapter, _runtime_io  # noqa: E402
 from loom.streaming.bytewax._commit_tracker import KafkaCommitTracker  # noqa: E402
@@ -414,7 +414,7 @@ class TestRuntimeIOBuilders:
         ctx = _adapter._BuildContext(
             plan=build_compiled_plan(),
             bridge=None,
-            flow_runtime=ObservabilityRuntime.noop(),
+            flow_runtime=Observability.noop(),
             flow_run_id="run-1",
             sink=None,
             terminal_sinks={},

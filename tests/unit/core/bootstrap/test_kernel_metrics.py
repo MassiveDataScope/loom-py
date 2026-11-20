@@ -8,9 +8,9 @@ from unittest.mock import MagicMock
 import pytest
 
 from loom.core.bootstrap import create_kernel
-from loom.core.engine.events import EventKind, RuntimeEvent
-from loom.core.engine.executor import RuntimeExecutor
-from loom.core.engine.metrics import MetricsAdapter
+from loom.core.engine.events import EventKind, ExecutionEvent
+from loom.core.engine.executor import UseCaseExecutor
+from loom.core.engine.metrics import MetricsRecorder
 from loom.core.model import LoomStruct
 from loom.core.use_case.use_case import UseCase
 
@@ -30,7 +30,7 @@ class TestKernelCarriesMetrics:
         assert result.metrics is None
 
     def test_metrics_stored_when_provided(self) -> None:
-        adapter = MagicMock(spec=MetricsAdapter)
+        adapter = MagicMock(spec=MetricsRecorder)
         result = create_kernel(
             config=object(),
             use_cases=[_SimpleUseCase],
@@ -40,8 +40,8 @@ class TestKernelCarriesMetrics:
 
 
 class TestCreateFastapiAppWiresMetrics:
-    async def test_executor_receives_metrics_adapter(self) -> None:
-        """create_kernel must register RuntimeExecutor with the metrics adapter."""
+    async def test_executor_receives_metrics_recorder(self) -> None:
+        """create_kernel must register UseCaseExecutor with the metrics recorder."""
         pytest.importorskip("fastapi")
 
         from loom.rest.compiler import RouteSources
@@ -52,7 +52,7 @@ class TestCreateFastapiAppWiresMetrics:
             def __init__(self) -> None:
                 self.kinds: list[EventKind] = []
 
-            def on_event(self, event: RuntimeEvent) -> None:
+            def on_event(self, event: ExecutionEvent) -> None:
                 self.kinds.append(event.kind)
 
         adapter = _Adapter()
@@ -66,7 +66,7 @@ class TestCreateFastapiAppWiresMetrics:
             prefix = "/test"
             routes = (RestRoute(use_case=_SimpleUseCase, method="GET", path="/"),)
 
-        executor = result.container.resolve(RuntimeExecutor)
+        executor = result.container.resolve(UseCaseExecutor)
         await executor.execute(_SimpleUseCase())
         assert adapter.kinds[-2:] == [EventKind.EXEC_START, EventKind.EXEC_DONE]
         app = create_fastapi_app(result, RouteSources(python=[_Iface]))
@@ -80,7 +80,7 @@ class TestCreateFastapiAppWiresMetrics:
         from loom.rest.model import RestInterface, RestRoute
 
         result = create_kernel(config=object(), use_cases=[_SimpleUseCase])
-        shared_executor = result.container.resolve(RuntimeExecutor)
+        shared_executor = result.container.resolve(UseCaseExecutor)
 
         class _Iface(RestInterface[_Model]):
             prefix = "/test"
@@ -88,4 +88,4 @@ class TestCreateFastapiAppWiresMetrics:
 
         app = create_fastapi_app(result, RouteSources(python=[_Iface]))
         assert app is not None
-        assert result.container.resolve(RuntimeExecutor) is shared_executor
+        assert result.container.resolve(UseCaseExecutor) is shared_executor

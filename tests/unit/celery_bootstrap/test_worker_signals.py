@@ -27,15 +27,15 @@ from celery.signals import (
     worker_shutdown,
 )
 
-import loom.celery.adapter as adapter_module
-from loom.celery.adapter import CeleryAdapter, _connect_lifecycle_signals, _WorkerLifecycle
+import loom.celery.runtime as adapter_module
 from loom.celery.constants import (
     TASK_CALLBACK_ERROR_PREFIX,
     TASK_CALLBACK_PREFIX,
     TASK_JOB_PREFIX,
 )
 from loom.celery.errors import WorkerNotOpenError
-from loom.celery.runner import _CeleryAsyncRuntime
+from loom.celery.runner import _CeleryProcessBridge
+from loom.celery.runtime import CeleryRuntime, _connect_lifecycle_signals, _WorkerLifecycle
 from loom.composition import AppConfig, Application, ApplicationHost
 from loom.core.config import ConfigContext, ConfigError
 from loom.core.job.job import Job
@@ -117,7 +117,7 @@ class _RuntimeSpy:
 
 
 def _connect(application: _ApplicationSpy, runtime: Any | None = None) -> Any:
-    bridge = runtime if runtime is not None else _CeleryAsyncRuntime()
+    bridge = runtime if runtime is not None else _CeleryProcessBridge()
     _connect_lifecycle_signals(_WorkerLifecycle(cast(Any, application), bridge))
     return bridge
 
@@ -263,7 +263,7 @@ class TestFailedChildOpen:
     """Celery swallows a failure in ``worker_process_init``; the child must not serve."""
 
     def _worker(self, tmp_path: Path) -> Any:
-        adapter = CeleryAdapter(jobs=[_PingJob])
+        adapter = CeleryRuntime(jobs=[_PingJob])
         project = composition_project(
             ConfigContext.from_dict(
                 {
@@ -287,14 +287,14 @@ class TestFailedChildOpen:
             yield application
 
         cast(Any, application).running = _failing
-        return adapter.bind(application)
+        return adapter.mount(application)
 
     def test_every_task_fails_fast_naming_the_failure_to_open(
         self, tmp_path: Path, caplog: pytest.LogCaptureFixture
     ) -> None:
         task = self._worker(tmp_path).tasks[f"{TASK_JOB_PREFIX}.{_PingJob.__qualname__}"]
 
-        with caplog.at_level(logging.ERROR, logger="loom.celery.adapter"):
+        with caplog.at_level(logging.ERROR, logger="loom.celery.runtime"):
             worker_process_init.send(sender=None)
             failures = [task.apply().result for _ in range(2)]
 
@@ -346,7 +346,7 @@ class TestClosing:
         bridge = _connect(application)
         worker_process_init.send(sender=None)
 
-        with caplog.at_level(logging.WARNING, logger="loom.celery.adapter"):
+        with caplog.at_level(logging.WARNING, logger="loom.celery.runtime"):
             worker_process_shutdown.send(sender=None)
 
         assert "pool gone" in caplog.text
@@ -384,7 +384,7 @@ class TestTaskAffineResources:
         bridge = _connect(cast(Any, application))
         worker_init.send(sender=WorkerDouble(pool))
 
-        with caplog.at_level(logging.WARNING, logger="loom.celery.adapter"):
+        with caplog.at_level(logging.WARNING, logger="loom.celery.runtime"):
             opening()
             assert application.is_open
             closing.send(sender=None)

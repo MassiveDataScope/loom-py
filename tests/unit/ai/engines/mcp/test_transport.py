@@ -120,7 +120,7 @@ class TestTheHttpTransportCarriesTheCredentials:
     def test_the_session_holds_the_pool_the_builder_made(self) -> None:
         toolset = build_mcp_toolset(_capability(), init_timeout=10.0)
 
-        session = _ToolsetSession(_OpenToolset.of(toolset))
+        session = _ToolsetSession(_OpenToolset.from_toolset(toolset))
 
         assert session._current.pool is toolset.client.transport.pool
 

@@ -17,8 +17,8 @@ from loom.core.model.types import Integer, Text
 from loom.core.stores.catalog import DEFAULT_STORE
 from loom.core.stores.database import DatabaseConfig, SchemaConfig
 from loom.core.stores.profile import SERVER_PROFILE
-from loom.stores.sqlalchemy.backend import (
-    SQLAlchemyBackend,
+from loom.stores.sqlalchemy.plugin import (
+    SQLAlchemyStorePlugin,
     check_time_zone_columns,
     startup_checks,
 )
@@ -68,7 +68,7 @@ def _wiring(url: str, *models: type, **schema: object):
         },
     }
     return build_backend(
-        SQLAlchemyBackend(), ConfigContext.from_dict(config), models, SERVER_PROFILE
+        SQLAlchemyStorePlugin(), ConfigContext.from_dict(config), models, SERVER_PROFILE
     )
 
 

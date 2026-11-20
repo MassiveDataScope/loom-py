@@ -11,7 +11,7 @@ from tests.unit.core.authz._elevation_doubles import FakeSink
 WRITE = Permission("rows.write")
 READ = Permission("rows.read")
 CATALOG = RoleCatalog((WRITE, READ), (Role("editor", (WRITE, READ)), Role("viewer", (READ,))))
-BOUNDARY = Scope.of("b1")
+BOUNDARY = Scope.from_segments("b1")
 
 
 def _allowed(role: str = "editor", scope: Scope = BOUNDARY) -> Decision:
@@ -104,7 +104,7 @@ class TestElevationClearing:
 
     async def test_a_grant_that_does_not_cover_the_boundary_cannot_elevate(self) -> None:
         sink = FakeSink()
-        narrow = _allowed(scope=Scope.of("b1", "dept", "x"))
+        narrow = _allowed(scope=Scope.from_segments("b1", "dept", "x"))
         async with elevation_scope(owns_transaction=True, sink=sink):
             with pytest.raises(PermissionError, match="cover"):
                 await _elevate(narrow, at=BOUNDARY)

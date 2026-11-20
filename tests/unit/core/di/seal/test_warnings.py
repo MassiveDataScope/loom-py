@@ -55,8 +55,8 @@ class AcmeResolver:
 
 def _bound(*keys: type) -> LoomContainer:
     container = acme.container()
-    container.kinds.bind(acme.CALLER, AcmeResolver())
-    container.kinds.bind(acme.CALL, AcmeResolver())
+    container.kinds.register(acme.CALLER, AcmeResolver())
+    container.kinds.register(acme.CALL, AcmeResolver())
     container.register(AcmeSession, AcmeSession)
     if AcmeLoopFirst in keys:
         container.register(AcmeLoopSecond, AcmeLoopSecond, scope=Scope.APPLICATION)

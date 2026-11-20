@@ -21,7 +21,7 @@ from loom.core.di.container import LoomContainer
 from loom.core.discovery.base import DiscoveryResult
 from loom.core.job.callback import JobCallback
 from loom.core.stores import SERVER_PROFILE
-from loom.serverless.aws.lambda_ import LambdaAdapter
+from loom.serverless.aws.lambda_ import LambdaRuntime
 from tests.helpers.ai import CountingEngineProvider
 from tests.helpers.aws_island import FakeAwsIsland
 from tests.helpers.composition import WithOverrides, composition_project
@@ -82,7 +82,7 @@ class AgentlessHost:
         )
         return Recipe(profile=SERVER_PROFILE, discovered=discovered, agents=False)
 
-    def bind(self, application: Application) -> Application:
+    def mount(self, application: Application) -> Application:
         return application
 
 
@@ -107,7 +107,7 @@ def engines(
     """The engine provider ``ai.engine`` resolves to; ``calls`` names each agent built."""
     provider = CountingEngineProvider()
     provider.mcp_client_factory = sessions  # type: ignore[assignment]
-    monkeypatch.setattr(registry, "resolve_engine_provider", lambda _: provider)
+    monkeypatch.setattr(registry, "resolve_engine_plugin", lambda _: provider)
     return provider
 
 
@@ -167,7 +167,7 @@ def compose(project: Project, engines: CountingEngineProvider) -> Compose:
         cases = use_cases or (AcmeMarket,)
         return project.compose(
             WithOverrides(
-                host or LambdaAdapter(use_cases=cases),
+                host or LambdaRuntime(use_cases=cases),
                 binding(AcmeQuotes, quotes),
                 binding(AcmeAdvice, advice),
             )

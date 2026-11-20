@@ -29,7 +29,7 @@ async def manager() -> AsyncIterator[SessionManager]:
         store=DEFAULT_STORE,
     )
     yield manager
-    await manager.dispose()
+    await manager.close()
 
 
 class TestATransactionBegin:

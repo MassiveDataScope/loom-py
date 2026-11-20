@@ -12,8 +12,8 @@ from loom.core.command import Command, Patch
 from loom.core.config.loader import load_config, section
 from loom.core.di.container import LoomContainer
 from loom.core.di.scope import Scope
-from loom.core.engine.executor import RuntimeExecutor
-from loom.core.errors import RuleViolations
+from loom.core.engine.executor import UseCaseExecutor
+from loom.core.errors import RuleViolationsError
 from loom.core.use_case import Compute, F, Input, Rule
 from loom.core.use_case.use_case import UseCase
 from loom.testing import RepositoryIntegrationHarness
@@ -47,7 +47,7 @@ class _IntegrationAppConfig(msgspec.Struct, kw_only=True):
 
 class UseCaseConfigSnapshot(Command, frozen=True):
     env: str
-    cache_backend: str
+    cache_store: str
     timeout_ms: int
     pagination_mode: str
 
@@ -128,7 +128,7 @@ class ReadTypedConfigUseCase(UseCase[object, UseCaseConfigSnapshot]):
         products_list = self._settings.use_cases.products_list
         return UseCaseConfigSnapshot(
             env=self._settings.env,
-            cache_backend=self._settings.cache.backend,
+            cache_store=self._settings.cache.backend,
             timeout_ms=products_list.timeout_ms,
             pagination_mode=products_list.pagination_mode,
         )
@@ -164,7 +164,7 @@ class TestUseCaseCrudIntegration:
             modules=[_repo_module(integration_context)],
         )
 
-        executor = RuntimeExecutor(result.compiler)
+        executor = UseCaseExecutor(result.compiler)
 
         create_uc = result.factory.build(CreateProductUseCase)
         created = await executor.execute(
@@ -205,7 +205,7 @@ class TestUseCaseCrudIntegration:
             use_cases=[CreateProductWithComputeAndRulesUseCase],
             modules=[_repo_module(integration_context)],
         )
-        executor = RuntimeExecutor(result.compiler)
+        executor = UseCaseExecutor(result.compiler)
         create_uc = result.factory.build(CreateProductWithComputeAndRulesUseCase)
 
         created = await executor.execute(
@@ -226,10 +226,10 @@ class TestUseCaseCrudIntegration:
             use_cases=[CreateProductWithComputeAndRulesUseCase],
             modules=[_repo_module(integration_context)],
         )
-        executor = RuntimeExecutor(result.compiler)
+        executor = UseCaseExecutor(result.compiler)
         create_uc = result.factory.build(CreateProductWithComputeAndRulesUseCase)
 
-        with pytest.raises(RuleViolations):
+        with pytest.raises(RuleViolationsError):
             await executor.execute(
                 create_uc,
                 payload={"name": "bad", "price": -1.0},
@@ -248,13 +248,13 @@ class TestUseCaseCrudIntegration:
             cache=_CacheSettings(backend="redis", ttl_seconds=120),
         )
         result = create_kernel(config=config, use_cases=[ReadTypedConfigUseCase])
-        executor = RuntimeExecutor(result.compiler)
+        executor = UseCaseExecutor(result.compiler)
 
         use_case = result.factory.build(ReadTypedConfigUseCase)
         snapshot = await executor.execute(use_case)
 
         assert snapshot.env == "integration"
-        assert snapshot.cache_backend == "redis"
+        assert snapshot.cache_store == "redis"
         assert snapshot.timeout_ms == 750
         assert snapshot.pagination_mode == "offset"
 
@@ -286,11 +286,11 @@ class TestUseCaseCrudIntegration:
         typed_cfg = section(raw_cfg, "app", _IntegrationAppConfig)
 
         result = create_kernel(config=typed_cfg, use_cases=[ReadTypedConfigUseCase])
-        executor = RuntimeExecutor(result.compiler)
+        executor = UseCaseExecutor(result.compiler)
         use_case = result.factory.build(ReadTypedConfigUseCase)
         snapshot = await executor.execute(use_case)
 
         assert snapshot.env == "test-yaml"
-        assert snapshot.cache_backend == "memory"
+        assert snapshot.cache_store == "memory"
         assert snapshot.timeout_ms == 900
         assert snapshot.pagination_mode == "cursor"

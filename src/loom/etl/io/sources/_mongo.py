@@ -8,9 +8,9 @@ from typing import Any
 import polars as pl
 
 from loom.core.logger import get_logger
-from loom.etl.backends.polars._dtype import loom_type_to_polars
 from loom.etl.declarative.source._from_mongo import FromMongo, SourceRef
 from loom.etl.declarative.source._specs import ExtraFieldsMode, MongoSourceSpec
+from loom.etl.engines.polars._dtype import loom_type_to_polars
 from loom.etl.io.sources._mongo_batch import (
     BatchProcessorProtocol,
     MongoBatchProcessor,

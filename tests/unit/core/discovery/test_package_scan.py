@@ -6,14 +6,14 @@ from typing import Any
 
 import pytest
 
-from loom.celery.adapter import CeleryAdapter
+from loom.celery.runtime import CeleryRuntime
 from loom.composition import Project, Recipe
 from loom.core.config import ConfigError
 from loom.core.discovery.base import DiscoveryResult
 from loom.core.discovery.scanner import PackageScanner
 from loom.core.stores import SERVER_PROFILE
-from loom.rest.fastapi.adapter import FastAPIAdapter
-from loom.serverless.aws.lambda_ import LambdaAdapter
+from loom.rest.fastapi.runtime import FastAPIRuntime
+from loom.serverless.aws.lambda_ import LambdaRuntime
 from tests.helpers.package_writer import PackageWriter
 
 _MODEL = (
@@ -267,7 +267,7 @@ class _Adapter:
     def recipe(self, project: Project) -> Recipe:
         return Recipe(profile=SERVER_PROFILE, discovered=project.discovered, lenient=True)
 
-    def bind(self, application: object) -> object:
+    def mount(self, application: object) -> object:
         return application
 
 
@@ -302,15 +302,15 @@ class TestProjectScan:
     @pytest.mark.parametrize(
         ("adapter", "sections"),
         [
-            pytest.param(lambda: CeleryAdapter(), _CELERY, id="celery"),
+            pytest.param(lambda: CeleryRuntime(), _CELERY, id="celery"),
             pytest.param(
-                lambda: LambdaAdapter(function="worker"),
+                lambda: LambdaRuntime(function="worker"),
                 "lambda:\n  functions:\n    worker:\n      trigger:\n        source: jobs\n"
                 "        queue:\n          name: jobs\n",
                 id="lambda-jobs",
             ),
             pytest.param(
-                lambda: FastAPIAdapter(), "stores:\n  default:\n    backend: none\n", id="fastapi"
+                lambda: FastAPIRuntime(), "stores:\n  default:\n    backend: none\n", id="fastapi"
             ),
             pytest.param(lambda: _Adapter(), "", id="plain"),
         ],

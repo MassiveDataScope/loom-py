@@ -10,7 +10,7 @@ from loom.etl import ETLPipeline, ETLProcess, ETLStep, FromTable, IntoTable
 from loom.etl.compiler import ETLCompilationError, ETLCompiler, ETLErrorCode, validate_plan_catalog
 from loom.etl.compiler._plan import PipelinePlan
 from loom.etl.declarative.target import SchemaMode
-from loom.etl.testing import StubCatalog
+from loom.etl.testing import InMemoryCatalog
 from tests.unit.etl.doubles import RunDateIgnoredParams
 
 
@@ -60,17 +60,17 @@ def _plan(pipeline_type: type[ETLPipeline[RunDateIgnoredParams]]) -> PipelinePla
 
 class TestValidatePlanCatalogValid:
     def test_valid_catalog_passes(self) -> None:
-        catalog = StubCatalog({"raw.orders": (), "staging.out": (), "mart.summary": ()})
+        catalog = InMemoryCatalog({"raw.orders": (), "staging.out": (), "mart.summary": ()})
         validate_plan_catalog(_plan(ReplacePipeline), catalog)
 
     def test_overwrite_target_creates_for_next_step(self) -> None:
-        catalog = StubCatalog({"raw.orders": (), "mart.summary": ()})
+        catalog = InMemoryCatalog({"raw.orders": (), "mart.summary": ()})
         validate_plan_catalog(_plan(OverwritePipeline), catalog)
 
 
 class TestValidatePlanCatalogErrors:
     def test_missing_source_raises(self) -> None:
-        catalog = StubCatalog({"staging.out": (), "mart.summary": ()})
+        catalog = InMemoryCatalog({"staging.out": (), "mart.summary": ()})
         plan = _plan(ReplacePipeline)
         with pytest.raises(ETLCompilationError, match="raw.orders") as exc_info:
             validate_plan_catalog(plan, catalog)
@@ -78,7 +78,7 @@ class TestValidatePlanCatalogErrors:
         assert exc_info.value.code is ETLErrorCode.UNKNOWN_SOURCE_TABLE
 
     def test_missing_non_overwrite_target_raises(self) -> None:
-        catalog = StubCatalog({"raw.orders": (), "mart.summary": ()})
+        catalog = InMemoryCatalog({"raw.orders": (), "mart.summary": ()})
         plan = _plan(ReplacePipeline)
         with pytest.raises(ETLCompilationError, match="staging.out") as exc_info:
             validate_plan_catalog(plan, catalog)
@@ -86,7 +86,7 @@ class TestValidatePlanCatalogErrors:
         assert exc_info.value.code is ETLErrorCode.UNKNOWN_TARGET_TABLE
 
     def test_error_message_includes_table_name(self) -> None:
-        catalog = StubCatalog({"staging.out": (), "mart.summary": ()})
+        catalog = InMemoryCatalog({"staging.out": (), "mart.summary": ()})
         plan = _plan(ReplacePipeline)
         with pytest.raises(ETLCompilationError) as exc_info:
             validate_plan_catalog(plan, catalog)

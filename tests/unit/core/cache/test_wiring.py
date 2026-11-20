@@ -421,7 +421,7 @@ class _UserCalls:
     def wrap(self, func: AsyncCallable) -> AsyncCallable:
         return func
 
-    def bind(self, obj: object) -> list[AsyncCallable]:
+    def wrap_methods(self, obj: object) -> list[AsyncCallable]:
         del obj
         return []
 

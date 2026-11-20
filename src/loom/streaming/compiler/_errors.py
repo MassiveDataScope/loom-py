@@ -65,7 +65,7 @@ class StreamingErrorCode(IssueCode):
         "BATCH_SCOPE_DIRECT_CONTEXT",
         Template(
             "{component} with scope=BATCH cannot use direct context manager instances: "
-            "{direct_cms}. Use ContextFactory for batch-scoped resources."
+            "{direct_cms}. Use ContextSupplier for batch-scoped resources."
         ),
     )
     SHAPE_MISMATCH = (

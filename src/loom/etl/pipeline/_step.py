@@ -4,8 +4,8 @@
 one target, and a pure ``execute()`` transformation method.
 
 The backend (Polars, Spark) is determined by the configured
-:class:`~loom.etl.runtime.contracts.SourceReader` and
-:class:`~loom.etl.runtime.contracts.TargetWriter` injected at runner build time —
+:class:`~loom.etl.ports.contracts.SourceReader` and
+:class:`~loom.etl.ports.contracts.TargetWriter` injected at runner build time —
 no declaration is needed on the step itself.
 
 Definition-time validation (via ``__init_subclass__``) catches the most

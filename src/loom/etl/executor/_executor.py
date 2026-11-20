@@ -2,20 +2,20 @@
 
 Walks a compiled :class:`~loom.etl.compiler._plan.PipelinePlan` and drives
 read → execute → write for each step, emitting lifecycle events through the
-shared :class:`~loom.core.observability.runtime.ObservabilityRuntime`.
+shared :class:`~loom.core.observability.observability.Observability`.
 
 This class is **not** part of the public API.  It is instantiated exclusively
 by :class:`~loom.etl.ETLRunner`, which wires reader, writer, catalog, and the
-shared observability runtime from a :data:`~loom.etl.StorageConfig`.
+shared observability from a :data:`~loom.etl.StorageConfig`.
 
 For normal usage::
 
     from loom.etl import ETLRunner
-    from loom.core.observability import ObservabilityRuntime
+    from loom.core.observability import Observability
 
     runner = ETLRunner.from_yaml(
         "loom.yaml",
-        observability=ObservabilityRuntime.noop(),
+        observability=Observability.noop(),
     )
     runner.run(DailyOrdersPipeline, DailyOrdersParams(run_date=date.today()))
 
@@ -38,7 +38,7 @@ from typing import Any
 
 from loom.core.config import ConfigContext
 from loom.core.observability.event import Scope
-from loom.core.observability.runtime import ObservabilityRuntime
+from loom.core.observability.observability import Observability
 from loom.core.runner import SupportsFlush
 from loom.etl.checkpoint import CheckpointCleanupError, CheckpointStore
 from loom.etl.compiler._plan import (
@@ -59,8 +59,8 @@ from loom.etl.executor._agents import AgentMapper
 from loom.etl.executor._dispatcher import ParallelDispatcher, ThreadDispatcher
 from loom.etl.lineage._records import RunContext, RunStatus, WriteContext
 from loom.etl.pipeline._step_sql import StepSQL
-from loom.etl.runtime._config_values import resolve_config_value
-from loom.etl.runtime.contracts import (
+from loom.etl.ports._config_values import resolve_config_value
+from loom.etl.ports.contracts import (
     AgentBatchRunner,
     ClientCommandExecutor,
     SourceReader,
@@ -82,7 +82,7 @@ class ETLExecutor:
     * Bind the step's ``WithAgent`` declarations to the injected agent runner.
     * Invoke the step's ``execute()`` with the resulting frames and values.
     * Write the result via the injected :class:`~loom.etl._io.TargetWriter`.
-    * Emit lifecycle events to the shared observability runtime.
+    * Emit lifecycle events to the shared observability.
     * Dispatch parallel groups through the :class:`~loom.etl.executor.ParallelDispatcher`.
 
     All collaborators are injected — the executor has no dependency on any
@@ -96,7 +96,7 @@ class ETLExecutor:
     Args:
         reader:     Source reader implementation.
         writer:     Target writer implementation.
-        observability: Shared observability runtime.  Defaults to a no-op runtime.
+        observability: Shared observability.  Defaults to a no-op.
         dispatcher: Parallel task dispatcher.  Defaults to
                     :class:`~loom.etl.executor.ThreadDispatcher`.
         config_context: Config the ``FromConfig`` values are resolved from,
@@ -110,7 +110,7 @@ class ETLExecutor:
         self,
         reader: SourceReader,
         writer: TargetWriter,
-        observability: ObservabilityRuntime | None = None,
+        observability: Observability | None = None,
         dispatcher: ParallelDispatcher | None = None,
         checkpoint_store: CheckpointStore | None = None,
         client_executor: ClientCommandExecutor | None = None,
@@ -119,7 +119,7 @@ class ETLExecutor:
     ) -> None:
         self._reader = reader
         self._writer = writer
-        self._observability = observability or ObservabilityRuntime.noop()
+        self._observability = observability or Observability.noop()
         self._dispatcher: ParallelDispatcher = dispatcher or ThreadDispatcher()
         self._checkpoint_store: CheckpointStore | None = checkpoint_store
         self._client_executor: ClientCommandExecutor | None = client_executor
@@ -127,8 +127,8 @@ class ETLExecutor:
         self._agents: AgentBatchRunner | None = agents
 
     @property
-    def observability(self) -> ObservabilityRuntime:
-        """Return the shared observability runtime."""
+    def observability(self) -> Observability:
+        """Return the shared observability."""
         return self._observability
 
     def flush(self) -> None:

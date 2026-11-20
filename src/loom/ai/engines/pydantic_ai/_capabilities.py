@@ -523,7 +523,7 @@ def build_toolsets(
             its context here, at build time, and every other toolset resolves
             through the per-invocation bundle instead.
         mcp: The worker's MCP toolsets. Passing the *same* store for every plan
-            is what makes an ``mcp`` grant reuse the connection the runtime
+            is what makes an ``mcp`` grant reuse the connection the host
             already opened instead of adding one per agent.
 
     Returns:
@@ -536,7 +536,7 @@ def build_toolsets(
             name is longer than a provider accepts, an optional dependency is
             missing, or a factory does not produce a toolset.
     """
-    context = BuildContext.of(plan, container, mcp)
+    context = BuildContext.from_plan(plan, container, mcp)
     reject_unusable_names(plan.capabilities, context.agent)
     return tuple(_build(plan, _Destination.TOOLSET, context))
 

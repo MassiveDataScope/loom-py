@@ -227,7 +227,7 @@ class TestEtlFlow:
 
         monkeypatch.setenv("PROMETHEUS_PUSHGATEWAY_URL", "https://pushgateway:9091")
         observers = build_observers(flow_run_id=None, manifest_store=None, manifest=None)
-        assert any(type(o).__name__ == "PrometheusLifecycleAdapter" for o in observers)
+        assert any(type(o).__name__ == "PrometheusLifecycleObserver" for o in observers)
 
     def test_prometheus_adapter_is_absent_when_env_is_missing(
         self, monkeypatch: pytest.MonkeyPatch
@@ -236,7 +236,7 @@ class TestEtlFlow:
 
         monkeypatch.delenv("PROMETHEUS_PUSHGATEWAY_URL", raising=False)
         observers = build_observers(flow_run_id=None, manifest_store=None, manifest=None)
-        assert not any(type(o).__name__ == "PrometheusLifecycleAdapter" for o in observers)
+        assert not any(type(o).__name__ == "PrometheusLifecycleObserver" for o in observers)
 
     def test_rejects_non_string_tags(self, tmp_path: Path) -> None:
         content = textwrap.dedent(

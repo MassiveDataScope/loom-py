@@ -7,7 +7,7 @@ from typing import Any
 import pytest
 
 from loom.core.engine.compiler import UseCaseCompiler
-from loom.core.engine.executor import RuntimeExecutor
+from loom.core.engine.executor import UseCaseExecutor
 from loom.core.errors import JobTimeoutError
 from loom.core.job.context import clear_pending_dispatches, flush_pending_dispatches
 from loom.core.job.handle import JobHandle
@@ -140,7 +140,7 @@ class TestRoutedInlineTransport:
         kernel.factory.register(_ReportJob)
         inline = InlineJobTransport(kernel.factory, kernel.executor)
         service = JobService(default, routes={"reports": inline})
-        executor = RuntimeExecutor(
+        executor = UseCaseExecutor(
             UseCaseCompiler(),
             coordinator=OrderedCommits({DEFAULT_STORE: StubUnitOfWorkFactory(Log())}),
         )

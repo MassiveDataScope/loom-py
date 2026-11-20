@@ -437,7 +437,7 @@ interfaces, and installers declared in their own modules.
 
 ### Choose the store backend
 
-Backends are plugins resolved by name from the `loom.stores.backends`
+Backends are plugins resolved by name from the `loom.stores.plugins`
 entry point group. `stores.default.backend` selects it, and the rest of
 `stores.default` is the connection it reads. Without a `stores.default`
 section the API selects `sqlalchemy` and fails at startup naming the missing

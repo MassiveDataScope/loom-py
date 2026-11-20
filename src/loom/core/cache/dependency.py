@@ -4,8 +4,8 @@ import asyncio
 from collections.abc import Sequence
 
 from loom.core.cache._batching import COUNTER_BATCH_SIZE, batched
-from loom.core.cache.abc.backend import CacheBackend
 from loom.core.cache.abc.dependency import BatchFingerprintResolver, DependencyResolver
+from loom.core.cache.abc.store import CacheStore
 from loom.core.cache.keys import stable_hash
 from loom.core.stores.repository.mutation import MutationEvent
 
@@ -21,7 +21,7 @@ class GenerationalDependencyResolver(DependencyResolver, BatchFingerprintResolve
     entity at once.
     """
 
-    def __init__(self, cache: CacheBackend) -> None:
+    def __init__(self, cache: CacheStore) -> None:
         """Initialise the resolver with a cache backend for counter storage.
 
         Args:

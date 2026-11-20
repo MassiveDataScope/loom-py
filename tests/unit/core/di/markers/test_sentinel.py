@@ -35,7 +35,7 @@ class GatewayResolver:
 def _container() -> LoomContainer:
     container = LoomContainer(classify_key=classify_key)
     declare_kinds(container.kinds)
-    container.kinds.bind(MCP, GatewayResolver())
+    container.kinds.register(MCP, GatewayResolver())
     return container
 
 

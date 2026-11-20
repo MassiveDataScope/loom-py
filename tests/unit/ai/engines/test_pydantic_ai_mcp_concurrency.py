@@ -1,8 +1,8 @@
 """``_ToolsetSession`` declares itself safe for concurrent calls.
 
-The runtime's ``mcp_session_for`` decides whether to serialise a session by
+The host's ``mcp_session_for`` decides whether to serialise a session by
 checking whether it subclasses :class:`~loom.ai.abc.ConcurrentMcpSession`
-(``loom/ai/runtime/_mcp.py``). This pins the engine's own half of that
+(``loom/ai/execution/_mcp.py``). This pins the engine's own half of that
 contract: its session must keep declaring it, or every grant view
 (``handle.mcp()``, a use case's ``Mcp()``) queues behind its own neighbours
 again. The second test measures that end to end, through the real dispatch
@@ -34,7 +34,7 @@ import pytest
 
 from loom.ai.abc import ConcurrentMcpSession
 from loom.ai.engines.pydantic_ai._mcp import _OpenToolset, _ToolsetSession
-from loom.ai.runtime._mcp import mcp_session_for
+from loom.ai.execution._mcp import mcp_session_for
 from tests.helpers.gates import CallGate, await_cancelled
 
 
@@ -92,14 +92,14 @@ class TestTheEngineAdapterDeclaresConcurrency:
     def test_toolset_session_declares_a_concurrent_mcp_session(self) -> None:
         # ``object()`` basta: la anotacion del toolset es solo de tipos (future
         # annotations), y el constructor no toca el objeto que recibe.
-        session = _ToolsetSession(_OpenToolset.of(object()))  # type: ignore[arg-type]
+        session = _ToolsetSession(_OpenToolset.from_toolset(object()))  # type: ignore[arg-type]
         assert isinstance(session, ConcurrentMcpSession)
 
     async def test_calls_under_one_grant_really_run_in_parallel(self) -> None:
         """Eight calls on one grant are all inside the remote before any of them finishes."""
         gate = CallGate()
         toolset = _FakeToolset(gate)
-        engine_session = _ToolsetSession(_OpenToolset.of(toolset))  # type: ignore[arg-type]
+        engine_session = _ToolsetSession(_OpenToolset.from_toolset(toolset))  # type: ignore[arg-type]
         session = mcp_session_for(engine_session, label="crm")
 
         async def run_eight() -> None:
@@ -124,7 +124,7 @@ class TestTheErrorResultIsTranslated:
     def error_result(self) -> Callable[..., Awaitable[Any]]:
         async def translate(*, is_error: bool) -> Any:
             toolset = _FakeToolset(is_error=is_error)
-            session = _ToolsetSession(_OpenToolset.of(toolset))  # type: ignore[arg-type]
+            session = _ToolsetSession(_OpenToolset.from_toolset(toolset))  # type: ignore[arg-type]
             return await session.call_tool("tool", {})
 
         return translate
@@ -148,8 +148,8 @@ class TestCancellingDoesNotBlockTheSession:
     sostener, cancelar una llamada corta de inmediato en lugar de esperar a
     que el remoto termine. Lo que antes garantizaba
     :func:`~loom.ai._concurrency.shield_and_drain` en esta clase ahora solo
-    hace falta donde hay un candado real -- :class:`~loom.ai.runtime._mcp.SharedMcpSession`
-    (ver ``tests/unit/ai/runtime/test_mcp_session.py``).
+    hace falta donde hay un candado real -- :class:`~loom.ai.execution._mcp.SharedMcpSession`
+    (ver ``tests/unit/ai/execution/test_mcp_session.py``).
     """
 
     @pytest.fixture
@@ -157,7 +157,7 @@ class TestCancellingDoesNotBlockTheSession:
         """A session whose remote calls wait on the returned gate."""
         gate = CallGate()
         toolset = _FakeToolset(gate)
-        session = _ToolsetSession(_OpenToolset.of(toolset))  # type: ignore[arg-type]
+        session = _ToolsetSession(_OpenToolset.from_toolset(toolset))  # type: ignore[arg-type]
         return toolset, session, gate
 
     async def test_cancel_returns_control_immediately(

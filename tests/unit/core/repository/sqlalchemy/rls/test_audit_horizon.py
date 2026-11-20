@@ -6,7 +6,7 @@ import logging
 
 import pytest
 
-from loom.stores.sqlalchemy.backend import _warn_audit_horizon
+from loom.stores.sqlalchemy.plugin import _warn_audit_horizon
 from loom.stores.sqlalchemy.rls.audit_verify import AuditState, audit_findings
 
 

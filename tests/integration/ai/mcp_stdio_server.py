@@ -1,7 +1,7 @@
 """MCP server over stdio, run as a child process by the stdio end-to-end test.
 
 Writes its pid to the path given as the first argument so the test can assert
-the process is gone once the runtime that spawned it has exited; the second
+the process is gone once the host that spawned it has exited; the second
 argument is the marker a tool result carries back.
 """
 

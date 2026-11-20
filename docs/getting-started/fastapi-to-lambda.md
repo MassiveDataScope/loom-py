@@ -11,9 +11,9 @@ of code.
 pip install "loom-kernel[lambda]"
 ```
 
-## 2. Switch the adapter
+## 2. Switch the runtime
 
-Write one entry module and let the configuration pick the adapter:
+Write one entry module and let the configuration pick the runtime:
 
 ```python
 # src/entry.py
@@ -33,22 +33,22 @@ To run it on Lambda, set `entry: lambda`, or keep the YAML and set
 is allowed in every environment. The code does not change. Uvicorn serves
 `entry:app` and Lambda runs `entry.app` as its handler.
 
-If you prefer to pass the adapter in code, the change is two lines, the import
+If you prefer to pass the runtime in code, the change is two lines, the import
 and the call:
 
 ```python
 from loom.composition import create_app
-from loom.serverless.aws.lambda_ import LambdaAdapter
+from loom.serverless.aws.lambda_ import LambdaRuntime
 
-app = create_app("config/app.yaml", adapter=LambdaAdapter())
+app = create_app("config/app.yaml", runtime=LambdaRuntime())
 ```
 
-An explicit `adapter=` wins over `app.entry`. Keep the call at module level:
+An explicit `runtime=` wins over `app.entry`. Keep the call at module level:
 Lambda runs it once during Init, opens the application there and keeps it
 open across warm invocations. If the application fails to open, Init fails.
 
 Routes, authentication, the error envelope, status codes and headers are the
-same on both adapters. A contract suite runs the same requests against both
+same on both runtimes. A contract suite runs the same requests against both
 and requires identical replies. Some features have no Lambda equivalent:
 
 | On FastAPI | On Lambda |

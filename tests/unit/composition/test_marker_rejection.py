@@ -61,11 +61,11 @@ class _WithoutAgents:
             discovered=dataclasses.replace(
                 discovered, use_cases=(*discovered.use_cases, AcmeNotifyIncident)
             ),
-            default_store_backend="sqlalchemy",
+            default_store_plugin="sqlalchemy",
             agents=False,
         )
 
-    def bind(self, application: Application) -> Application:
+    def mount(self, application: Application) -> Application:
         return application
 
 

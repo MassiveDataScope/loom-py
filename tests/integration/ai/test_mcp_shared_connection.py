@@ -15,7 +15,7 @@ under test and no socket is.
 
 Sharing the toolset must not serialise the worker: the concurrency test is the
 regression guard against ever routing runs through
-:class:`~loom.ai.runtime.SharedMcpSession`, whose lock would queue every
+:class:`~loom.ai.execution.SharedMcpSession`, whose lock would queue every
 agent's tool call behind every other agent's.
 """
 
@@ -30,10 +30,10 @@ import pytest
 
 from loom.ai.compiler import AgentPlan, CompiledMcpCapability
 from loom.ai.config import AiConfig
-from loom.ai.engines.pydantic_ai import PydanticAIEngineProvider, create_mcp_client
+from loom.ai.engines.pydantic_ai import PydanticAIEnginePlugin, create_mcp_client
 from loom.ai.engines.pydantic_ai import _mcp as engine_mcp
 from loom.ai.errors import AgentCompilationError, AgentRunError, AgentRunErrorCode
-from loom.ai.runtime import AgentRuntime
+from loom.ai.execution import AgentHost
 from loom.core.di import LoomContainer
 from loom.core.identity import Identity
 from tests.integration.ai.conftest import (
@@ -134,7 +134,7 @@ def connections(server: _Server, monkeypatch: pytest.MonkeyPatch) -> Iterator[_C
 
     monkeypatch.setattr(engine_mcp, "_mcp_client", _client)
     yield counted
-    assert counted.live == 0, "a session outlived the runtime that opened it"
+    assert counted.live == 0, "a session outlived the host that opened it"
 
 
 def _config(**overrides: Any) -> AiConfig:
@@ -146,13 +146,13 @@ def _config(**overrides: Any) -> AiConfig:
     )
 
 
-def _runtime(plans: list[AgentPlan], model: ScriptedToolModel, **overrides: Any) -> AgentRuntime:
-    """Build the runtime the composition root builds, MCP factory included."""
-    provider = PydanticAIEngineProvider(model_resolver=lambda target: model.as_model())
-    return AgentRuntime(
+def _host(plans: list[AgentPlan], model: ScriptedToolModel, **overrides: Any) -> AgentHost:
+    """Build the host the composition root builds, MCP factory included."""
+    provider = PydanticAIEnginePlugin(model_resolver=lambda target: model.as_model())
+    return AgentHost(
         plans=plans,
         config=_config(**overrides),
-        engine_provider=provider,
+        engine_plugin=provider,
         deps=CapabilityDepsFactory(),  # type: ignore[arg-type]
         container=LoomContainer(),
         mcp_client_factory=provider.mcp_client_factory,
@@ -172,9 +172,9 @@ class TestOneConnectionPerServer:
             for name in ("clerk", "auditor", "analyst")
         ]
 
-        async with _runtime(plans, model) as runtime:
+        async with _host(plans, model) as host:
             for plan in plans:
-                await runtime.run(plan.name, "what has acme ordered?", identity=caller)
+                await host.run(plan.name, "what has acme ordered?", identity=caller)
 
         assert connections.opened == 1
 
@@ -188,9 +188,9 @@ class TestOneConnectionPerServer:
             make_plan("biller", capabilities=(make_mcp_capability(_OTHER_SERVER),)),
         ]
 
-        async with _runtime(plans, model) as runtime:
+        async with _host(plans, model) as host:
             for plan in plans:
-                await runtime.run(plan.name, "what has acme ordered?", identity=caller)
+                await host.run(plan.name, "what has acme ordered?", identity=caller)
 
         assert connections.opened == 2
 
@@ -208,12 +208,12 @@ class TestPerAgentViewsOverOneConnection:
             make_plan("writer", capabilities=(make_mcp_capability(_SERVER, exclude=("read_*",)),)),
         ]
 
-        async with _runtime(plans, model) as runtime:
-            await runtime.run("reader", "read", identity=caller)
+        async with _host(plans, model) as host:
+            await host.run("reader", "read", identity=caller)
             reader_first = model.offered_tools
-            await runtime.run("writer", "write", identity=caller)
+            await host.run("writer", "write", identity=caller)
             writer_tools = model.offered_tools
-            await runtime.run("reader", "read again", identity=caller)
+            await host.run("reader", "read again", identity=caller)
             reader_again = model.offered_tools
 
         assert reader_first == ("read_orders",)
@@ -242,20 +242,20 @@ class TestConcurrentCallsOverTheSharedToolset:
         # One engine is built per plan, in plan order, so the models line up
         # with ``plans`` and each agent drives its own script.
         models = iter((blocked_model, quick_model))
-        provider = PydanticAIEngineProvider(model_resolver=lambda target: next(models).as_model())
-        runtime = AgentRuntime(
+        provider = PydanticAIEnginePlugin(model_resolver=lambda target: next(models).as_model())
+        host = AgentHost(
             plans=plans,
             config=_config(),
-            engine_provider=provider,
+            engine_plugin=provider,
             deps=CapabilityDepsFactory(),  # type: ignore[arg-type]
             container=LoomContainer(),
             mcp_client_factory=provider.mcp_client_factory,
         )
 
-        async with runtime:
-            blocked = asyncio.create_task(runtime.run("blocked", "slow", identity=caller))
+        async with host:
+            blocked = asyncio.create_task(host.run("blocked", "slow", identity=caller))
             await asyncio.wait_for(server.entered.wait(), timeout=5)
-            await asyncio.wait_for(runtime.run("quick", "fast", identity=caller), timeout=5)
+            await asyncio.wait_for(host.run("quick", "fast", identity=caller), timeout=5)
             assert not blocked.done()
             server.released.set()
             await asyncio.wait_for(blocked, timeout=5)
@@ -274,9 +274,9 @@ class TestConcurrentCallsOverTheSharedToolset:
             policies=make_policies(tool_timeout_ms=100),
         )
 
-        async with _runtime([plan], model) as runtime:
+        async with _host([plan], model) as host:
             with pytest.raises(AgentRunError) as failure:
-                await runtime.run("impatient", "slow", identity=caller)
+                await host.run("impatient", "slow", identity=caller)
             server.released.set()
 
         assert failure.value.code is AgentRunErrorCode.TOOL_TIMEOUT
@@ -291,25 +291,25 @@ class TestTheWiringIsChecked:
     ) -> None:
         """A foreign client factory is a boot failure, not 1 + N connections.
 
-        ``create_mcp_client`` opens a toolset of its own, so the runtime would
+        ``create_mcp_client`` opens a toolset of its own, so the host would
         validate one connection's tool filters and every agent would then run
         over another. Engines are built after the clients open, so a grant the
         shared store was never asked to open can only mean this.
         """
         model = ScriptedToolModel()
         plan = make_plan("clerk", capabilities=(make_mcp_capability(_SERVER),))
-        provider = PydanticAIEngineProvider(model_resolver=lambda target: model.as_model())
-        runtime = AgentRuntime(
+        provider = PydanticAIEnginePlugin(model_resolver=lambda target: model.as_model())
+        host = AgentHost(
             plans=[plan],
             config=_config(),
-            engine_provider=provider,
+            engine_plugin=provider,
             deps=CapabilityDepsFactory(),  # type: ignore[arg-type]
             container=LoomContainer(),
             mcp_client_factory=create_mcp_client,
         )
 
         with pytest.raises(AgentCompilationError) as failure:
-            await runtime.__aenter__()
+            await host.__aenter__()
 
         message = str(failure.value)
         assert _SERVER in message
@@ -321,16 +321,16 @@ class TestTheWiringIsChecked:
         """Resolving the provider twice is the same hole with a friendlier face."""
         model = ScriptedToolModel()
         plan = make_plan("clerk", capabilities=(make_mcp_capability(_SERVER),))
-        opener = PydanticAIEngineProvider(model_resolver=lambda target: model.as_model())
-        builder = PydanticAIEngineProvider(model_resolver=lambda target: model.as_model())
-        runtime = AgentRuntime(
+        opener = PydanticAIEnginePlugin(model_resolver=lambda target: model.as_model())
+        builder = PydanticAIEnginePlugin(model_resolver=lambda target: model.as_model())
+        host = AgentHost(
             plans=[plan],
             config=_config(),
-            engine_provider=builder,
+            engine_plugin=builder,
             deps=CapabilityDepsFactory(),  # type: ignore[arg-type]
             container=LoomContainer(),
             mcp_client_factory=opener.mcp_client_factory,
         )
 
         with pytest.raises(AgentCompilationError):
-            await runtime.__aenter__()
+            await host.__aenter__()

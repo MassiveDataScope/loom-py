@@ -157,7 +157,9 @@ class Acting(msgspec.Struct, frozen=True, gc=False):
             if until is not None and until < self.deadline:
                 Acting(caller, caller, until, self.work).refuse_expired()
             return None
-        return Delegation.of(caller, self.deadline if until is None else min(until, self.deadline))
+        return Delegation.from_caller(
+            caller, self.deadline if until is None else min(until, self.deadline)
+        )
 
     def refuse_expired(self) -> None:
         """Refuse acting as this caller past its deadline, logging ``delegation_expired``.
@@ -328,4 +330,4 @@ def captured_delegation() -> Delegation:
         deadline.
     """
     acting = _acting.get()
-    return Delegation.of(acting.caller, acting.deadline)
+    return Delegation.from_caller(acting.caller, acting.deadline)

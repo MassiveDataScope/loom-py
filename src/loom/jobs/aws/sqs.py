@@ -14,7 +14,7 @@ import msgspec
 
 from loom.core.config import ConfigKey
 from loom.core.connections.aws import AwsClientConfig, aws_error_code
-from loom.core.engine.events import EventKind, RuntimeEvent
+from loom.core.engine.events import EventKind, ExecutionEvent
 from loom.core.engine.metrics import NoMetrics
 from loom.core.engine.post_commit import log_never_ran
 from loom.core.job.config import JobSettings
@@ -37,7 +37,7 @@ from loom.jobs.aws.queue import (
 if TYPE_CHECKING:
     from loom.composition import JobTransportContext
     from loom.core.config import ConfigContext
-    from loom.core.engine.metrics import MetricsAdapter
+    from loom.core.engine.metrics import MetricsRecorder
     from loom.core.job.callback import JobCallback
 
 ResultT = TypeVar("ResultT")
@@ -79,7 +79,7 @@ def check_queues(
 ) -> None:
     """Fail at startup unless every job's queue has a URL and a FIFO job names its group."""
     for job_type in jobs:
-        queue = settings.of(job_type).queue
+        queue = settings.options_for(job_type).queue
         config = queues.get(queue)
         if config is None:
             raise SQSQueueConfigError(
@@ -232,7 +232,7 @@ class SQSJobTransport:
     """Send validated jobs to SQS, batching the post-commit channel when configured."""
 
     def __init__(
-        self, client: Any, config: SQSConfig, *, metrics: MetricsAdapter | None = None
+        self, client: Any, config: SQSConfig, *, metrics: MetricsRecorder | None = None
     ) -> None:
         self._config = config
         self._queues = SQSQueues(client, config.queues)
@@ -285,7 +285,7 @@ class SQSJobTransport:
         )
         send = _PendingSQSSend(target, envelope.job, task_id, message)
         self._metrics.on_event(
-            RuntimeEvent(
+            ExecutionEvent(
                 kind=EventKind.JOB_DISPATCHED,
                 use_case_name=dispatch.job_type.__qualname__,
                 trace_id=envelope.trace_id,

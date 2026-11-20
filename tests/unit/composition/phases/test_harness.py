@@ -20,7 +20,7 @@ from loom.core.bootstrap import BootstrapError
 from loom.core.checks import DeployCheckError
 from loom.core.config import ConfigContext
 from loom.core.di.container import ResolutionError
-from loom.core.engine.executor import RuntimeExecutor
+from loom.core.engine.executor import UseCaseExecutor
 from loom.core.environment import Environment
 from loom.core.use_case.errors import UncomposedWriteStore, UnservedModelError
 from tests.helpers.composition import Serving, composition_project
@@ -80,7 +80,7 @@ class TestLenientHarness:
 
         kernel = ledger_project.compose(adapter).kernel
 
-        assert kernel.container.resolve(RuntimeExecutor) is kernel.executor
+        assert kernel.container.resolve(UseCaseExecutor) is kernel.executor
 
     def test_a_lenient_recipe_still_refuses_an_unbuildable_singleton(
         self,

@@ -18,8 +18,8 @@ from loom.core.errors import (
     LoomError,
     NotFound,
     RateLimited,
-    RuleViolation,
-    RuleViolations,
+    RuleViolationError,
+    RuleViolationsError,
     SystemError,
     Unauthenticated,
 )
@@ -74,8 +74,8 @@ class TestErrorHierarchy:
             (Conflict, DomainError),
             (RateLimited, DomainError),
             (InsufficientAuthentication, Unauthenticated),
-            (RuleViolation, DomainError),
-            (RuleViolations, DomainError),
+            (RuleViolationError, DomainError),
+            (RuleViolationsError, DomainError),
         ],
     )
     def test_error_hierarchy(self, subclass: type, base: type) -> None:
@@ -95,8 +95,8 @@ class TestErrorCodes:
             (lambda: RateLimited(1), ErrorCode.RATE_LIMITED),
             (lambda: InsufficientAuthentication(), ErrorCode.INSUFFICIENT_AUTHENTICATION),
             (lambda: SystemError("x"), ErrorCode.SYSTEM_ERROR),
-            (lambda: RuleViolation("f", "m"), ErrorCode.RULE_VIOLATION),
-            (lambda: RuleViolations([]), ErrorCode.RULE_VIOLATIONS),
+            (lambda: RuleViolationError("f", "m"), ErrorCode.RULE_VIOLATION),
+            (lambda: RuleViolationsError([]), ErrorCode.RULE_VIOLATIONS),
         ],
     )
     def test_error_codes(self, factory: Any, expected_code: ErrorCode) -> None:
@@ -197,51 +197,53 @@ class TestSystemErrorIsNotADomainError:
 
 
 # ---------------------------------------------------------------------------
-# RuleViolation
+# RuleViolationError
 # ---------------------------------------------------------------------------
 
 
-class TestRuleViolation:
+class TestRuleViolationError:
     def test_field_and_message(self) -> None:
-        err = RuleViolation("email", "Invalid format")
+        err = RuleViolationError("email", "Invalid format")
         assert err.field == "email"
         assert err.message == "Invalid format"
 
     def test_str_contains_field_and_message(self) -> None:
-        err = RuleViolation("email", "Invalid format")
+        err = RuleViolationError("email", "Invalid format")
         assert "email" in str(err)
         assert "Invalid format" in str(err)
 
     def test_catchable_as_domain_error(self) -> None:
         with pytest.raises(DomainError):
-            raise RuleViolation("x", "y")
+            raise RuleViolationError("x", "y")
 
 
 # ---------------------------------------------------------------------------
-# RuleViolations
+# RuleViolationsError
 # ---------------------------------------------------------------------------
 
 
-class TestRuleViolations:
+class TestRuleViolationsError:
     def test_stores_violations_as_tuple(self) -> None:
-        v1 = RuleViolation("email", "bad")
-        v2 = RuleViolation("name", "empty")
-        err = RuleViolations([v1, v2])
+        v1 = RuleViolationError("email", "bad")
+        v2 = RuleViolationError("name", "empty")
+        err = RuleViolationsError([v1, v2])
         assert err.violations == (v1, v2)
 
     def test_message_joins_violations(self) -> None:
-        err = RuleViolations([RuleViolation("email", "bad"), RuleViolation("name", "empty")])
+        err = RuleViolationsError(
+            [RuleViolationError("email", "bad"), RuleViolationError("name", "empty")]
+        )
         assert "email" in err.message
         assert "name" in err.message
 
     def test_catchable_as_domain_error(self) -> None:
-        error = RuleViolations([RuleViolation("f", "m")])
+        error = RuleViolationsError([RuleViolationError("f", "m")])
         with pytest.raises(DomainError):
             raise error
 
 
 class TestRuleErrorsAreExportedOnce:
-    @pytest.mark.parametrize("name", ["RuleViolation", "RuleViolations"])
+    @pytest.mark.parametrize("name", ["RuleViolationError", "RuleViolationsError"])
     @pytest.mark.parametrize("module", [use_case_package, rule_module])
     def test_rule_errors_are_public_only_from_loom_core_errors(
         self, module: ModuleType, name: str
@@ -259,7 +261,7 @@ class TestExecutorUsesNotFound:
         from unittest.mock import AsyncMock
 
         from loom.core.engine.compiler import UseCaseCompiler
-        from loom.core.engine.executor import RuntimeExecutor
+        from loom.core.engine.executor import UseCaseExecutor
         from loom.core.use_case.markers import LoadById
         from loom.core.use_case.use_case import UseCase
 
@@ -277,7 +279,7 @@ class TestExecutorUsesNotFound:
         repo = AsyncMock()
         repo.get_by_id = AsyncMock(return_value=None)
 
-        executor = RuntimeExecutor(UseCaseCompiler())
+        executor = UseCaseExecutor(UseCaseCompiler())
         uc = _UC()
         with pytest.raises(NotFound) as exc_info:
             await executor.execute(

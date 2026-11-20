@@ -15,7 +15,7 @@ from loom.core.config import ConfigContext
 from loom.core.identity import Identity, current_identity
 from loom.core.job.context import clear_pending_dispatches, flush_pending_dispatches
 from loom.core.job.job import Job
-from loom.serverless.aws.lambda_ import LambdaAdapter, LambdaHandler
+from loom.serverless.aws.lambda_ import LambdaHandler, LambdaRuntime
 from loom.testing import TEST_QUEUE, LambdaEvent
 from tests.helpers.aws import REGION
 from tests.helpers.aws_island import FakeAwsIsland
@@ -69,9 +69,9 @@ def handler(
         code_path=tmp_path,
         config_root=tmp_path,
     )
-    adapter = LambdaAdapter(jobs=[MarkJob])
+    adapter = LambdaRuntime(jobs=[MarkJob])
     FakeAwsIsland(client=sqs).install(monkeypatch)
-    yield adapter.bind(project.compose(adapter))
+    yield adapter.mount(project.compose(adapter))
     adapter.close()
 
 

@@ -65,7 +65,7 @@ from loom.etl.compiler._validators_step import StepCompilationContext, validate_
 from loom.etl.declarative.target import AppendSpec
 from loom.etl.pipeline._pipeline import ETLPipeline, ETLProcess
 from loom.etl.pipeline._step import ETLStep
-from loom.etl.runtime.contracts import AgentBatchRunner, TableDiscovery
+from loom.etl.ports.contracts import AgentBatchRunner, TableDiscovery
 
 _log = logging.getLogger(__name__)
 

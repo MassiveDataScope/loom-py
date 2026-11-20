@@ -22,7 +22,9 @@ from tests.integration.rls.conftest import FLAG, U1, U2
 
 ANA = Identity(subject=U1)
 ZOE = Identity(subject=U2)
-DECISION = Decision(allowed=True, grant=Grant(subject=U1, role="admin", scope=Scope.of(U1)))
+DECISION = Decision(
+    allowed=True, grant=Grant(subject=U1, role="admin", scope=Scope.from_segments(U1))
+)
 
 _OWNER = "SELECT coalesce(current_setting('loom.scope.owner', true), '')"
 _BODIES = "SELECT body FROM notes ORDER BY body"
@@ -81,7 +83,7 @@ class ElevateThenNest(UseCase[notes.Note, Seen]):
         self._app = app
 
     async def execute(self) -> Seen:
-        await elevate("editor", DECISION, at=Scope.of(U1))
+        await elevate("editor", DECISION, at=Scope.from_segments(U1))
         return cast(Seen, await self._app.invoke(ProbeRls))
 
 
@@ -131,7 +133,7 @@ class ElevatingChild(UseCase[notes.Note, Seen]):
         self._session_manager = session_manager
 
     async def execute(self) -> Seen:
-        await elevate("editor", DECISION, at=Scope.of(U1))
+        await elevate("editor", DECISION, at=Scope.from_segments(U1))
         return await _observe(self._session_manager, None)
 
 
@@ -169,7 +171,7 @@ class ElevateThenDispatch(UseCase[notes.Note, Any]):
         self._jobs = jobs
 
     async def execute(self) -> Any:
-        await elevate("editor", DECISION, at=Scope.of(U1))
+        await elevate("editor", DECISION, at=Scope.from_segments(U1))
         return self._jobs.dispatch_after_commit(ProbeJob)
 
 

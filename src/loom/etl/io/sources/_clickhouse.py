@@ -18,11 +18,11 @@ except ImportError:
 
 from loom.core.connections import ClickHouseConnection
 from loom.core.logger import get_logger
-from loom.etl.backends.polars._dtype import loom_type_to_polars
 from loom.etl.declarative.expr._predicate_dialect import PredicateDialect, fold_predicate
 from loom.etl.declarative.source._specs import ClickHouseSourceSpec
+from loom.etl.engines.polars._dtype import loom_type_to_polars
 from loom.etl.io._clickhouse_connection import open_client, resolve_connection
-from loom.etl.runtime.contracts import ClientCommandExecutor, SourceReader
+from loom.etl.ports.contracts import ClientCommandExecutor, SourceReader
 from loom.etl.schema._schema import ColumnSchema
 
 _log = get_logger(__name__)
@@ -86,8 +86,8 @@ _CLICKHOUSE_PREDICATE_DIALECT = _ClickHousePredicateDialect()
 class ClickHouseSourceReader(SourceReader, ClientCommandExecutor):
     """Read ClickHouse sources and execute client commands via clickhouse-connect.
 
-    Implements both :class:`~loom.etl.runtime.contracts.SourceReader` (DataFrame
-    reads) and :class:`~loom.etl.runtime.contracts.ClientCommandExecutor`
+    Implements both :class:`~loom.etl.ports.contracts.SourceReader` (DataFrame
+    reads) and :class:`~loom.etl.ports.contracts.ClientCommandExecutor`
     (side-effect commands), so one instance can serve as both ``reader`` and
     ``client_executor`` in :class:`~loom.etl.ETLRunner` — reusing a single
     connection for both roles.
@@ -186,7 +186,7 @@ class ClickHouseSourceReader(SourceReader, ClientCommandExecutor):
     def command(self, fn: Callable[[Any], None]) -> None:
         """Obtain the ClickHouse client and invoke *fn* with it.
 
-        Implements :class:`~loom.etl.runtime.contracts.ClientCommandExecutor`
+        Implements :class:`~loom.etl.ports.contracts.ClientCommandExecutor`
         so the reader can be passed as ``client_executor`` to avoid opening
         a second connection when the runner already holds one.
 

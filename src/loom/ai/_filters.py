@@ -3,7 +3,7 @@
 ``mcp``, ``skills`` and ``a2a`` all narrow a list of names the same way: an
 ``include`` allow-list of glob patterns, then an ``exclude`` deny-list applied
 on top.  The rule lives here once so the compiler (which filters skill names
-offline) and the runtime (which filters real tool names at start-up) cannot
+offline) and the host (which filters real tool names at start-up) cannot
 drift apart.
 
 Matching is case-sensitive on every platform: names come from a remote server
@@ -37,7 +37,7 @@ def admits(name: str, *, include: Sequence[str], exclude: Sequence[str]) -> bool
 
     The single-name counterpart of :func:`select_names`, for a caller that
     decides one name at a time instead of narrowing a whole list — the
-    engine's own per-tool predicate and a runtime grant view both do.
+    engine's own per-tool predicate and a host grant view both do.
 
     Args:
         name: Candidate name.

@@ -23,7 +23,7 @@ from sqlalchemy import event, inspect, make_url, text
 from sqlalchemy.ext.asyncio import create_async_engine
 from sqlalchemy.pool import NullPool
 
-from loom.celery.adapter import CeleryAdapter
+from loom.celery.runtime import CeleryRuntime
 from loom.composition import AppConfig
 from loom.core.config import ConfigContext, ConfigError
 from loom.core.job.job import Job
@@ -105,7 +105,7 @@ def _worker(tmp_path: Path, url: str) -> Any:
         code_path=tmp_path,
         config_root=tmp_path,
     )
-    return project.compose(CeleryAdapter(jobs=[_RawSqlJob]))
+    return project.compose(CeleryRuntime(jobs=[_RawSqlJob]))
 
 
 async def _connections(database: str, name: str) -> int:
@@ -165,7 +165,7 @@ class TestConnectionOnlyWorker:
             assert await _settled_connections(database, name) == 0
             assert not await _has_table(database)
         finally:
-            await manager.dispose()
+            await manager.close()
 
     async def test_a_superuser_fails_the_check_and_leaves_no_connection(
         self, tmp_path: Path
@@ -182,4 +182,4 @@ class TestConnectionOnlyWorker:
             pool: Any = manager.engine.sync_engine.pool
             assert (pool.checkedout(), pool.checkedin()) == (0, 0)
         finally:
-            await manager.dispose()
+            await manager.close()

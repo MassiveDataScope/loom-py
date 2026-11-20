@@ -8,7 +8,6 @@ live under ``loom.stores`` and are reached only through their entry
 points.
 """
 
-from loom.core.stores.backend import StoreBackend, StoreWiring
 from loom.core.stores.database import (
     DatabaseConfig,
     PoolConfig,
@@ -16,7 +15,8 @@ from loom.core.stores.database import (
     decode_database_config,
     load_database_config,
 )
-from loom.core.stores.none import NoneBackend
+from loom.core.stores.none import NullStorePlugin
+from loom.core.stores.plugin import StorePlugin, StoreWiring
 from loom.core.stores.profile import (
     LAMBDA_PROFILE,
     SERVER_PROFILE,
@@ -25,20 +25,20 @@ from loom.core.stores.profile import (
     PoolDefaults,
     PoolMetricsSink,
     RuntimeProfile,
-    StoreRuntime,
+    StorePluginContext,
 )
-from loom.core.stores.registry import BACKEND_ENTRY_POINT_GROUP, resolve_store_backend
+from loom.core.stores.registry import PLUGIN_ENTRY_POINT_GROUP, resolve_store_plugin
 
 __all__ = [
-    "BACKEND_ENTRY_POINT_GROUP",
+    "PLUGIN_ENTRY_POINT_GROUP",
     "LAMBDA_PROFILE",
     "SERVER_PROFILE",
     "STREAMING_PROFILE",
     "WORKER_PROFILE",
-    "StoreRuntime",
+    "StorePluginContext",
     "DatabaseConfig",
-    "NoneBackend",
-    "StoreBackend",
+    "NullStorePlugin",
+    "StorePlugin",
     "StoreWiring",
     "PoolConfig",
     "PoolDefaults",
@@ -47,5 +47,5 @@ __all__ = [
     "SchemaConfig",
     "decode_database_config",
     "load_database_config",
-    "resolve_store_backend",
+    "resolve_store_plugin",
 ]

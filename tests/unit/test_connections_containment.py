@@ -103,7 +103,7 @@ _ISLANDS: dict[str, frozenset[str]] = {
     "pymongo": frozenset(
         {
             "connections/mongo/client.py",
-            "stores/mongo/backend.py",  # client type of the backend
+            "stores/mongo/plugin.py",  # client type of the backend
             "stores/mongo/repository.py",  # results, errors
             "stores/mongo/uow.py",  # sessions
             "streaming/mongo/_bytewax_source.py",  # change-stream errors

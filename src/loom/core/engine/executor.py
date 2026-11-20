@@ -8,7 +8,7 @@ from loom.core.engine.boundaries import Boundaries, outside_departed_execution
 from loom.core.engine.compilable import Compilable
 from loom.core.engine.compiler import UseCaseCompiler
 from loom.core.engine.events import Phase
-from loom.core.engine.metrics import MetricsAdapter
+from loom.core.engine.metrics import MetricsRecorder
 from loom.core.engine.observation import ExecutionReporter
 from loom.core.engine.plan import ExecutionPlan, ParameterBindingError
 from loom.core.engine.preparation import ArgumentBinder, ExecutionInputs
@@ -30,13 +30,13 @@ if TYPE_CHECKING:
     from loom.core.use_case.factory import UseCaseFactory
     from loom.core.use_case.use_case import UseCase
 
-__all__ = ["ParameterBindingError", "RuntimeExecutor"]
+__all__ = ["ParameterBindingError", "UseCaseExecutor"]
 
 ResultT = TypeVar("ResultT")
 _TargetT = TypeVar("_TargetT")
 
 
-class RuntimeExecutor:
+class UseCaseExecutor:
     """Executes UseCases from their compiled ExecutionPlan without reflection.
 
     The public facade of one execution: it computes who the execution acts
@@ -75,7 +75,7 @@ class RuntimeExecutor:
         debug_execution: When ``True``, each execution's terminal log lists
             the steps it ran under ``steps``. Defaults to ``False``.
         logger: Optional logger. Defaults to the framework logger.
-        metrics: Optional metrics adapter. When provided, receives
+        metrics: Optional metrics recorder. When provided, receives
             ``EXEC_START``, ``EXEC_DONE``, and ``EXEC_ERROR`` events.
         repo_resolver: Optional callable that resolves a repository instance
             from an entity model type. Used by ``Load``/``Exists`` when
@@ -91,7 +91,7 @@ class RuntimeExecutor:
 
     Example::
 
-        executor = RuntimeExecutor(
+        executor = UseCaseExecutor(
             compiler,
             coordinator=OrderedCommits({DEFAULT_STORE: uow_factory}),
             metrics=prometheus_adapter,
@@ -110,7 +110,7 @@ class RuntimeExecutor:
         coordinator: Coordinator | None = None,
         debug_execution: bool = False,
         logger: LoggerPort | None = None,
-        metrics: MetricsAdapter | None = None,
+        metrics: MetricsRecorder | None = None,
         repo_resolver: Callable[[type[Any]], Any] | None = None,
         resolvers: ExecutionKinds | None = None,
         builder: Callable[[type[Any]], Any] | None = None,
@@ -168,8 +168,8 @@ class RuntimeExecutor:
             RuntimeError: If *kind* already has a resolver.
         """
         if self._kinds.is_bound(kind):
-            raise RuntimeError(f"RuntimeExecutor.bind_{kind.name}_resolver() called more than once")
-        self._kinds.bind(kind, resolver)
+            raise RuntimeError(f"UseCaseExecutor.bind_{kind.name}_resolver() called more than once")
+        self._kinds.register(kind, resolver)
 
     async def run(
         self,
@@ -219,7 +219,7 @@ class RuntimeExecutor:
         build = self._builder if factory is None else factory.build
         if build is None:
             raise TypeError(
-                "RuntimeExecutor.run() needs factory=... or an executor constructed "
+                "UseCaseExecutor.run() needs factory=... or an executor constructed "
                 "with builder=..."
             )
         return await self._execute(
@@ -330,7 +330,7 @@ class RuntimeExecutor:
             The result produced by ``execute()``.
 
         Raises:
-            loom.core.errors.RuleViolations: If one or more rule steps fail.
+            loom.core.errors.RuleViolationsError: If one or more rule steps fail.
             NotFound: If a Load step finds no entity in the repository.
             Unauthenticated: If the plan declares ``Caller()`` and no identity
                 was supplied.
@@ -339,7 +339,7 @@ class RuntimeExecutor:
             loom.core.errors.ScopeOwnershipError: If a scope is published
                 in this context but this task does not own it, or it is
                 already closed.
-            loom.core.errors.StoresNotCommitted: If two or more stores
+            loom.core.errors.StoresNotCommittedError: If two or more stores
                 of the invocation did not end the same way.
             loom.core.errors.NestedIdentityMismatch: If this execution
                 joins the invocation scope of this task as an identity other
@@ -414,7 +414,7 @@ class RuntimeExecutor:
             started = self._reporter.start(use_case)
             call = self._binder.call
             return await self._boundaries.run(
-                self._boundaries.of(scope, plan, read_only),
+                self._boundaries.boundary_for(scope, plan, read_only),
                 plan,
                 started,
                 lambda: started.business(call(plan, compilable, inputs, identity, started)),
@@ -435,5 +435,5 @@ class RuntimeExecutor:
 
 
 def _handed_instance(compilable: Compilable) -> Compilable:
-    """What :meth:`RuntimeExecutor.execute` builds: the instance it was handed."""
+    """What :meth:`UseCaseExecutor.execute` builds: the instance it was handed."""
     return compilable

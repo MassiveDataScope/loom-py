@@ -1,6 +1,6 @@
 """Native pydantic output through pydantic-ai's own ``output_type`` (D7, FR-012, spec US5).
 
-Drives the real engine adapter — :class:`~loom.ai.engines.pydantic_ai.PydanticAIEngineProvider`
+Drives the real engine adapter — :class:`~loom.ai.engines.pydantic_ai.PydanticAIEnginePlugin`
 and :class:`~loom.ai.engines.pydantic_ai._engine.PydanticAIEngine` — against a
 ``FunctionModel``, no network, in the shape of ``test_pydantic_ai_output_check.py``.
 Pins US5 items 1-6:

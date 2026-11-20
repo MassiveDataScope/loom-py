@@ -179,7 +179,7 @@ class ClickHouseTargetWriter:
 class ClickHouseClientExecutor:
     """Provides a ClickHouse client to :class:`~loom.etl.ClientStep` instances.
 
-    Implements :class:`~loom.etl.runtime.contracts.ClientCommandExecutor`.
+    Implements :class:`~loom.etl.ports.contracts.ClientCommandExecutor`.
     Inject into :class:`~loom.etl.executor.ETLExecutor` (or
     :class:`~loom.etl.ETLRunner`) to enable ``ClientStep`` execution against
     ClickHouse.

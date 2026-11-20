@@ -70,7 +70,7 @@ from loom.core.model.introspection import (
 from loom.core.model.privilege import READ_WRITE, Privilege
 from loom.core.model.relation import Relation
 from loom.core.model.scoped import ScopeColumn, ScopedTable
-from loom.core.projection.runtime import ProjectionStep, build_projection_plan_from_steps
+from loom.core.projection.plan import ProjectionStep, build_projection_plan_from_steps
 from loom.core.schema_names import MAX_IDENTIFIER_LENGTH, naming_convention
 from loom.stores.sqlalchemy.core_model import CoreModel, CoreProfilePlan, CoreRelationStep
 from loom.stores.sqlalchemy.scoped_ddl import SCHEMA_KEY, register_listeners
@@ -1103,8 +1103,8 @@ def _resolve_descriptor_loader(
     Raises:
         ValueError: When no matching relation is found via compiled steps or type hints.
     """
-    from loom.core.projection.loaders import find_relation_name_for_loader, make_memory_loader
-    from loom.stores.sqlalchemy.loaders import make_sql_loader
+    from loom.core.projection.loaders import build_memory_loader, find_relation_name_for_loader
+    from loom.stores.sqlalchemy.loaders import build_sql_loader
 
     rel_step = _find_relation_for_loader(loader, all_relation_steps)
     if rel_step is None:
@@ -1116,12 +1116,12 @@ def _resolve_descriptor_loader(
                 f"on {struct_cls.__name__}. "
                 "Ensure the model has a relation typed with the target class."
             )
-        return make_memory_loader(loader, rel_name), True
+        return build_memory_loader(loader, rel_name), True
 
     if rel_step.attr in profile_relation_names:
-        return make_memory_loader(loader, rel_step.attr), True
+        return build_memory_loader(loader, rel_step.attr), True
 
-    return make_sql_loader(loader, rel_step), False
+    return build_sql_loader(loader, rel_step), False
 
 
 def _resolve_projection_steps(

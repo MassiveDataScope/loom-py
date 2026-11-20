@@ -30,14 +30,14 @@ from loom.core.environment import Environment, resolve_environment, select_confi
 from loom.core.locator import DEFAULT_CODE_PATH, add_code_path
 from loom.core.logger import get_logger
 from loom.core.observability.config import ObservabilityConfig
-from loom.core.observability.runtime import ObservabilityRuntime
-from loom.core.stores import resolve_store_backend
+from loom.core.observability.observability import Observability
+from loom.core.stores import resolve_store_plugin
 from loom.core.stores.catalog import StoreCatalog, StoreKey, load_catalog
 
 if TYPE_CHECKING:
-    from loom.composition.recipe import Adapter
+    from loom.composition.recipe import Runtime
     from loom.core.discovery.base import DiscoveryResult
-    from loom.core.stores import StoreBackend
+    from loom.core.stores import StorePlugin
 
 
 T = TypeVar("T")
@@ -155,7 +155,7 @@ class Project:
         observability: Logging, tracing and metrics, configured before
             anything else can fail.
         observability_config: The ``observability`` section *observability*
-            was built from; an adapter reads its own keys there.
+            was built from; a runtime reads its own keys there.
     """
 
     config: ConfigContext
@@ -163,7 +163,7 @@ class Project:
     code_path: Path
     config_root: Path
     app: AppConfig
-    observability: ObservabilityRuntime
+    observability: Observability
     observability_config: ObservabilityConfig
 
     @classmethod
@@ -203,7 +203,7 @@ class Project:
         observability_config = loaded.config.section_or_default(
             ConfigKey.OBSERVABILITY, ObservabilityConfig, ObservabilityConfig()
         )
-        observability = ObservabilityRuntime.from_config(
+        observability = Observability.from_config(
             observability_config, environment=loaded.environment
         )
         app_cfg = AppConfig.from_config(loaded.config)
@@ -240,7 +240,7 @@ class Project:
         """
         return load_catalog(self.config)
 
-    def resolve_store_backend(self, key: StoreKey, *, default: str) -> StoreBackend:
+    def resolve_store_plugin(self, key: StoreKey, *, default: str) -> StorePlugin:
         """Build the backend ``stores.<key>.backend`` names; *default* without that store.
 
         Raises:
@@ -248,13 +248,13 @@ class Project:
                 registered under that name.
         """
         spec = self.catalog.specs.get(key)
-        return resolve_store_backend(default) if spec is None else spec.resolve_backend()
+        return resolve_store_plugin(default) if spec is None else spec.resolve_plugin()
 
     def compose(
         self,
-        adapter: Adapter[object],
+        runtime: Runtime[object],
     ) -> Application:
-        """Compose the application *adapter* asks for, without mounting a transport.
+        """Compose the application *runtime* asks for, without mounting a transport.
 
         Opens nothing: building a backend creates its engine or client, not a
         connection. :meth:`Application.check` and :meth:`Application.running`
@@ -262,7 +262,7 @@ class Project:
         event with the milliseconds of each phase.
 
         Args:
-            adapter: Whose recipe to compose.
+            runtime: Whose recipe to compose.
 
         Returns:
             The composed, closed application.
@@ -282,7 +282,7 @@ class Project:
         logger = get_logger(__name__)
         clock = phases.PhaseClock()
         clock.lap("scan", self.discovered)
-        recipe = clock.lap("plan", phases.plan(self, adapter))
+        recipe = clock.lap("plan", phases.plan(self, runtime))
         aws = AwsClients()
         stores = clock.lap("build_stores", phases.build_stores(self, recipe, aws))
         kernel, sql, job_resources = clock.lap(
@@ -322,10 +322,10 @@ class Project:
         )
         logger.info(
             "loom.composition.composed",
-            adapter=type(adapter).__qualname__,
+            runtime=type(runtime).__qualname__,
             use_cases=len(discovered.use_cases),
             jobs=len(discovered.jobs),
-            backends=stores.store_backends,
+            store_plugins=stores.store_plugins,
             keys=len(kernel.container.bindings()),
             installers=len(discovered.installers),
             overrides=len(recipe.overrides),
@@ -338,19 +338,19 @@ class Project:
 
     def serve(
         self,
-        adapter: Adapter[T],
+        runtime: Runtime[T],
     ) -> T:
-        """Compose the application *adapter* asks for and mount its transport on it.
+        """Compose the application *runtime* asks for and mount its transport on it.
 
         Args:
-            adapter: The transport, and how it wants the application composed.
+            runtime: The transport, and how it wants the application composed.
 
         Returns:
-            What *adapter* binds: an ASGI app, a Celery app, a handler.
+            What *runtime* mounts: an ASGI app, a Celery app, a handler.
 
         Raises:
             ConfigError: As :meth:`compose`.
             DeployCheckError: As :meth:`compose`.
             ReservedBindingError: As :meth:`compose`.
         """
-        return adapter.bind(self.compose(adapter))
+        return runtime.mount(self.compose(runtime))

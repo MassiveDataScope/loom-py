@@ -40,7 +40,7 @@ from loom.core.errors import (
     ForeignSessionError,
     NestedIdentityMismatch,
     ScopeOwnershipError,
-    StoresNotCommitted,
+    StoresNotCommittedError,
     UndeclaredStoreWrite,
     UnitOfWorkInsideScope,
 )
@@ -134,7 +134,7 @@ class InvocationScope:
         if problem is not None:
             raise ScopeOwnershipError(problem)
 
-    def owned_here(self) -> bool:
+    def is_owned_here(self) -> bool:
         """Whether the caller may touch this scope's participants (:meth:`require_owner` passes)."""
         return self._ownership_problem() is None
 
@@ -147,7 +147,7 @@ class InvocationScope:
             NestedIdentityMismatch: When the scope writes, this task owns it
                 and the acting identity differs.
         """
-        if not self.read_only and self.owned_here() and current_identity() != self.identity:
+        if not self.read_only and self.is_owned_here() and current_identity() != self.identity:
             raise NestedIdentityMismatch.joining(use_case)
 
     def _ownership_problem(self) -> str | None:
@@ -196,7 +196,7 @@ class InvocationScope:
                 innermost frame, or no frame is pushed.
         """
         participant = self.participants.get(key)
-        if not write and (participant is None or not participant.phased):
+        if not write and (participant is None or not participant.is_phased):
             return None
         self.require_owner()
         if participant is not None and not participant.accepts(owner):
@@ -279,7 +279,7 @@ class InvocationScope:
         if outcome is None or unowned is None:
             return
         failed = error is not None or self.poisoned is not None
-        if not failed and outcome.succeeded:
+        if not failed and outcome.has_succeeded:
             into.adopt(unowned)
         lanes = {store.key: _lanes(store, failed=failed) for store in outcome.stores}
         for owners, channel in self.store_channels.items():
@@ -307,18 +307,20 @@ class InvocationScope:
             store (:attr:`post_commit` unset), another task asks, or the
             action need not wait.
         """
-        if self.post_commit is None or not self.owned_here():
+        if self.post_commit is None or not self.is_owned_here():
             return None
         if store is not None:
             participant = self.participants.get(store)
-            holds = participant is not None and participant.is_transactional and participant.phased
+            holds = (
+                participant is not None and participant.is_transactional and participant.is_phased
+            )
             return frozenset((store,)) if holds else None
         owners = frozenset(next((f.stores for f in reversed(self.frames) if f.primary), ()))
         return owners if owners and owners <= self.participants.keys() else None
 
     def channels(self) -> list[PostCommitChannel]:
         """Return the channels of :attr:`store_channels`, while this task settles."""
-        settles = self.post_commit is not None and self.owned_here()
+        settles = self.post_commit is not None and self.is_owned_here()
         return list(self.store_channels.values()) if settles else []
 
     @asynccontextmanager
@@ -515,7 +517,7 @@ def invocation_error(
     """Return what an invocation that ended with ``outcome`` raises, if anything.
 
     The business ``error`` wins over the stores' own failures. The
-    invocation raises :class:`StoresNotCommitted` instead, which no retry
+    invocation raises :class:`StoresNotCommittedError` instead, which no retry
     repeats, when a store is ``Uncertain`` (one store alone too), or when one
     committed or wrote without a transaction while another failed. An
     interruption (``asyncio.CancelledError`` and the like) is never
@@ -531,7 +533,7 @@ def invocation_error(
     failure = error if error is not None else _first_failure(outcome.stores)
     if not isinstance(failure, Exception) or not _split(outcome.stores):
         return failure
-    stores_error = StoresNotCommitted.of(outcome)
+    stores_error = StoresNotCommittedError.from_outcome(outcome)
     stores_error.__cause__ = failure
     return stores_error
 

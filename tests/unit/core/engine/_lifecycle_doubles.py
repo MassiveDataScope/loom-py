@@ -8,8 +8,8 @@ from typing import Any, ClassVar
 
 import pytest
 
-from loom.core.engine.events import EventKind, RuntimeEvent
-from loom.core.engine.executor import RuntimeExecutor
+from loom.core.engine.events import EventKind, ExecutionEvent
+from loom.core.engine.executor import UseCaseExecutor
 from loom.core.engine.post_commit import active_channel
 from loom.core.job.context import add_pending_dispatch
 from loom.core.stores.uow.abc import UnitOfWork
@@ -34,10 +34,10 @@ class Metrics:
     """Metrics adapter recording every event, in order, on the shared log when given."""
 
     def __init__(self, log: Log | None = None) -> None:
-        self.events: list[RuntimeEvent] = []
+        self.events: list[ExecutionEvent] = []
         self._log = log
 
-    def on_event(self, event: RuntimeEvent) -> None:
+    def on_event(self, event: ExecutionEvent) -> None:
         self.events.append(event)
         if self._log is not None:
             self._log(f"event.{event.kind.name}")
@@ -45,7 +45,7 @@ class Metrics:
     def kinds(self) -> list[EventKind]:
         return [event.kind for event in self.events]
 
-    def only(self, kind: EventKind) -> RuntimeEvent:
+    def only(self, kind: EventKind) -> ExecutionEvent:
         matching = [event for event in self.events if event.kind is kind]
         assert len(matching) == 1, matching
         return matching[0]
@@ -206,7 +206,7 @@ def context_is_clean() -> bool:
     return current_scope() is None and active_channel() is None
 
 
-def start_hanging(executor: RuntimeExecutor) -> tuple[asyncio.Task[None], list[bool]]:
+def start_hanging(executor: UseCaseExecutor) -> tuple[asyncio.Task[None], list[bool]]:
     """Start a hanging execution in a task that records its own context state at the end.
 
     The task runs in a copied context, so the cleanliness check must happen
@@ -223,7 +223,7 @@ def start_hanging(executor: RuntimeExecutor) -> tuple[asyncio.Task[None], list[b
     return asyncio.create_task(run()), observed
 
 
-async def cancel_mid_flight(executor: RuntimeExecutor) -> None:
+async def cancel_mid_flight(executor: UseCaseExecutor) -> None:
     """Cancel a hanging execution once and assert the task saw a clean context."""
     task, observed = start_hanging(executor)
     await asyncio.sleep(0.01)

@@ -39,7 +39,7 @@ _ALLOWED: dict[tuple[str, str], int] = {
     ("ai/fastapi/endpoints.py", "msgspec.json.Decoder"): 1,
     ("ai/fastapi/response.py", "msgspec.json.Encoder"): 1,
     ("ai/remote_auth.py", "msgspec.convert"): 1,
-    ("ai/runtime/_grants.py", "msgspec.json.encode"): 1,
+    ("ai/execution/_grants.py", "msgspec.json.encode"): 1,
     # Path parameters validated as FastAPI validates them, so the 422 is identical.
     ("serverless/aws/lambda_/triggers/http.py", "pydantic.TypeAdapter"): 1,
     ("core/cache/calls.py", "msgspec.json.encode"): 1,
@@ -51,10 +51,10 @@ _ALLOWED: dict[tuple[str, str], int] = {
     ("rest/_body.py", "msgspec.json.encode"): 1,
     ("rest/auth/middleware.py", "msgspec.json.encode"): 1,
     ("rest/fastapi/response.py", "msgspec.json.encode"): 1,
-    ("rest/fastapi/router_runtime.py", "msgspec.json.decode"): 1,
+    ("rest/fastapi/router.py", "msgspec.json.decode"): 1,
     ("rest/fastapi/sql.py", "msgspec.json.Decoder"): 1,
     ("rest/fastapi/sql.py", "msgspec.json.Encoder"): 1,
-    ("rest/rest_adapter.py", "msgspec.to_builtins"): 1,
+    ("rest/dispatcher.py", "msgspec.to_builtins"): 1,
     ("serverless/aws/lambda_/manifest.py", "msgspec.to_builtins"): 2,
 }
 

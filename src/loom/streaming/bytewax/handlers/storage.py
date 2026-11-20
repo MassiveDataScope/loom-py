@@ -28,7 +28,7 @@ from bytewax.outputs import DynamicSink, StatelessSinkPartition
 
 from loom.core.logger import get_logger
 from loom.core.observability.event import Scope, TerminalReason
-from loom.core.observability.runtime import ObservabilityRuntime
+from loom.core.observability.observability import Observability
 from loom.core.observability.span import LoomSpan
 from loom.streaming.bytewax._batch_spans import BatchSpan, BatchWindow, emit_batch_spans
 from loom.streaming.bytewax._commit_tracker import CommitCompletionPort
@@ -38,7 +38,7 @@ from loom.streaming.core._exceptions import UnsupportedNodeError
 from loom.streaming.core._message import Message, MessageMeta
 from loom.streaming.core._tracing import open_terminal_span
 from loom.streaming.nodes._sink import IntoSink, SinkPartition
-from loom.streaming.nodes._table import Backend, IntoTable
+from loom.streaming.nodes._table import IntoTable, TableEngine
 
 Stream = Any
 logger = get_logger(__name__)
@@ -70,7 +70,7 @@ class _StorageSinkPartition(StatelessSinkPartition[Message[Any]]):
         node_name: str,
         flow_name: str,
         flow_run_id: str,
-        observer: ObservabilityRuntime,
+        observer: Observability,
         commit_tracker: CommitCompletionPort | None = None,
     ) -> None:
         self._partition = partition
@@ -263,15 +263,15 @@ class _StorageDynamicSink(DynamicSink[Message[Any]]):
         )
         if isinstance(node, IntoTable):
             session_manager = None
-            if node.backend is Backend.SQLALCHEMY:
+            if node.engine is TableEngine.SQLALCHEMY:
                 if self._ctx.bridge is None:
                     raise RuntimeError(
-                        "IntoTable backend=sqlalchemy requires an AsyncBridge "
+                        "IntoTable engine=sqlalchemy requires an AsyncBridge "
                         "from the Bytewax runtime."
                     )
                 if self._compiled.database_config is None:
                     raise RuntimeError(
-                        "IntoTable backend=sqlalchemy requires a resolved database config."
+                        "IntoTable engine=sqlalchemy requires a resolved database config."
                     )
                 session_manager = self._ctx.session_manager_for(self._compiled.database_config)
             partition = node.build_partition(

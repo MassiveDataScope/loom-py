@@ -21,8 +21,8 @@ from loom.core.di.container import BindingKey, LoomContainer
 from loom.core.di.errors import describe_key
 from loom.core.engine.compilable import Compilable
 from loom.core.engine.compiler import UseCaseCompiler
-from loom.core.engine.executor import RuntimeExecutor
-from loom.core.engine.metrics import MetricsAdapter
+from loom.core.engine.executor import UseCaseExecutor
+from loom.core.engine.metrics import MetricsRecorder
 from loom.core.environment import Environment, resolve_environment
 from loom.core.execution import ExecutionResolver
 from loom.core.logger import LoggerPort, get_logger
@@ -35,7 +35,7 @@ from loom.core.use_case.registry import UseCaseRegistry
 
 KERNEL_KEYS: tuple[BindingKey, ...] = (
     UseCaseFactory,
-    RuntimeExecutor,
+    UseCaseExecutor,
     UseCaseRegistry,
     ApplicationInvoker,
 )
@@ -56,16 +56,16 @@ class Kernel:
             it invokes acts as the identity acting where it is called;
             :meth:`~loom.core.use_case.invoker.AppInvoker.for_identity` binds a
             copy to one caller.
-        metrics: Optional metrics adapter the executor reports to.
+        metrics: Optional metrics recorder the executor reports to.
     """
 
     container: LoomContainer
     compiler: UseCaseCompiler
     factory: UseCaseFactory
-    executor: RuntimeExecutor
+    executor: UseCaseExecutor
     registry: UseCaseRegistry
     invoker: AppInvoker
-    metrics: MetricsAdapter | None = None
+    metrics: MetricsRecorder | None = None
 
 
 def create_kernel(
@@ -74,7 +74,7 @@ def create_kernel(
     use_cases: Sequence[type[Compilable]],
     modules: Sequence[Callable[[LoomContainer], None]] = (),
     logger: LoggerPort | None = None,
-    metrics: MetricsAdapter | None = None,
+    metrics: MetricsRecorder | None = None,
     coordinator: Coordinator | None = None,
     repo_resolver: Callable[[type[Any]], Any] | None = None,
     environment: Environment | str | None = None,
@@ -96,7 +96,7 @@ def create_kernel(
         use_cases: Compilable classes to compile at startup.
         modules: Container registration modules, run in order.
         logger: Optional logger override; defaults to ``loom.bootstrap``.
-        metrics: Optional metrics adapter.
+        metrics: Optional metrics recorder.
         coordinator: Coordinator of the application's stores, which runs
             each execution in their units of work; ``None`` runs without one.
         repo_resolver: Optional repository resolver used by marker-based loads.
@@ -107,9 +107,9 @@ def create_kernel(
             module's service or a use case can inject
             :class:`~loom.core.environment.Environment`.
         agent_resolver: An :class:`~loom.core.execution.ExecutionResolver`
-            bound as by :meth:`~loom.core.engine.executor.RuntimeExecutor.bind_agent_resolver`.
+            bound as by :meth:`~loom.core.engine.executor.UseCaseExecutor.bind_agent_resolver`.
         mcp_resolver: An :class:`~loom.core.execution.ExecutionResolver`
-            bound as by :meth:`~loom.core.engine.executor.RuntimeExecutor.bind_mcp_resolver`.
+            bound as by :meth:`~loom.core.engine.executor.UseCaseExecutor.bind_mcp_resolver`.
 
     Returns:
         Fully built :class:`Kernel`.
@@ -209,7 +209,7 @@ class KernelRecipe:
     Args:
         use_cases: Compilable classes to compile.
         logger: Logger of the compilation.
-        metrics: Optional metrics adapter.
+        metrics: Optional metrics recorder.
         coordinator: Coordinator of the application's stores; ``None`` runs without one.
         repo_resolver: Repository resolver of marker-based loads; defaults to
             the container's ``resolve_repo``.
@@ -219,7 +219,7 @@ class KernelRecipe:
 
     use_cases: Sequence[type[Compilable]]
     logger: LoggerPort
-    metrics: MetricsAdapter | None = None
+    metrics: MetricsRecorder | None = None
     coordinator: Coordinator | None = None
     repo_resolver: Callable[[type[Any]], Any] | None = None
     agent_resolver: ExecutionResolver | None = None
@@ -244,7 +244,7 @@ class KernelRecipe:
         """Compile the use cases and register the kernel's keys in the filled *container*.
 
         Registers :class:`~loom.core.use_case.factory.UseCaseFactory`, one
-        :class:`~loom.core.engine.executor.RuntimeExecutor` (whose elevation
+        :class:`~loom.core.engine.executor.UseCaseExecutor` (whose elevation
         sink is the bound :class:`~loom.core.authz.elevation.ElevationSink`,
         if any), :class:`~loom.core.use_case.registry.UseCaseRegistry` and
         :class:`~loom.core.use_case.invoker.ApplicationInvoker`. Gives the
@@ -256,7 +256,7 @@ class KernelRecipe:
             CompilationError: When a use case does not compile.
         """
         compiler, factory = self._install_use_cases(container)
-        executor = RuntimeExecutor(
+        executor = UseCaseExecutor(
             compiler,
             coordinator=self.coordinator,
             metrics=self.metrics,
@@ -269,7 +269,7 @@ class KernelRecipe:
         )
         registry = UseCaseRegistry.build(list(self.use_cases))
         invoker = AppInvoker(factory=factory, executor=executor, registry=registry)
-        container.register_instance(RuntimeExecutor, executor)
+        container.register_instance(UseCaseExecutor, executor)
         container.register_instance(UseCaseRegistry, registry)
         container.register_instance(ApplicationInvoker, invoker)
         return Kernel(

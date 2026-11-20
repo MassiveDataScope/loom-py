@@ -2,7 +2,7 @@
 
 :func:`bootstrap_worker` is the shortcut that starts a Loom Celery worker: it
 loads the configuration, composes the application with
-:class:`~loom.celery.adapter.CeleryAdapter` through the same recipe the API
+:class:`~loom.celery.runtime.CeleryRuntime` through the same recipe the API
 runs (:meth:`loom.composition.Project.compose`), and returns the Celery
 app with every job and callback task registered.
 
@@ -12,7 +12,7 @@ Composing opens nothing: building a backend creates its engine, not a
 connection.  ``worker_init`` runs the startup checks once in the parent,
 which leave no connection open, and each prefork child opens the
 application on its own async bridge in ``worker_process_init``.  See
-:mod:`loom.celery.adapter` for the signal table.
+:mod:`loom.celery.runtime` for the signal table.
 
 Typical YAML layout (stores optional for pure in-memory jobs)::
 
@@ -42,7 +42,7 @@ from typing import TYPE_CHECKING, Any
 
 from celery import Celery  # type: ignore[import-untyped]
 
-from loom.celery.adapter import CeleryAdapter
+from loom.celery.runtime import CeleryRuntime
 from loom.composition import Project
 from loom.core.config import ConfigResolver
 from loom.core.di.container import LoomContainer
@@ -51,7 +51,7 @@ from loom.core.use_case.factory import UseCaseFactory
 
 if TYPE_CHECKING:
     from loom.core.engine.compilable import Compilable
-    from loom.core.engine.metrics import MetricsAdapter
+    from loom.core.engine.metrics import MetricsRecorder
     from loom.core.job.job import Job
 
 
@@ -82,7 +82,7 @@ def bootstrap_worker(
     jobs: Sequence[type[Job[Any]]] = (),
     use_cases: Sequence[type[Compilable]] = (),
     interfaces: Sequence[type[Any]] = (),
-    metrics: MetricsAdapter | None = None,
+    metrics: MetricsRecorder | None = None,
     resolvers: Sequence[ConfigResolver] = (),
 ) -> WorkerBootstrapResult:
     """Bootstrap a Celery worker process and register all Job tasks.
@@ -90,7 +90,7 @@ def bootstrap_worker(
     Resolves the environment once (*environment*, else ``LOOM_ENV``, else
     production; see :mod:`loom.core.environment`), loads configuration from
     ``config_dir`` or ``config_paths`` and composes the worker with
-    :class:`~loom.celery.adapter.CeleryAdapter`: discovery, deploy checks
+    :class:`~loom.celery.runtime.CeleryRuntime`: discovery, deploy checks
     (except the ``loom.rest`` ones: a worker serves no HTTP), persistence,
     kernel, ``JobService`` and ``SqlQueryService``, then the Celery tasks (one
     per job, and one per discovered ``JobCallback`` subclass and outcome) and
@@ -125,7 +125,7 @@ def bootstrap_worker(
             same classes via ``use_cases=`` but without having to enumerate
             individual use-case types — useful when callbacks interact with
             AutoCRUD-generated use-cases that are not importable by name.
-        metrics: Optional metrics adapter forwarded to the compiler and
+        metrics: Optional metrics recorder forwarded to the compiler and
             executor.
         resolvers: Resolvers for ``${name:key}`` placeholders, registered
             before the built-in ``secrets`` and ``ssm`` defaults.  A resolver
@@ -164,14 +164,14 @@ def bootstrap_worker(
         resolvers=resolvers,
         caller="bootstrap_worker",
     )
-    adapter = CeleryAdapter(
+    runtime = CeleryRuntime(
         jobs=jobs,
         use_cases=use_cases,
         interfaces=interfaces,
         metrics=metrics,
     )
-    application = project.compose(adapter)
-    celery_app = adapter.bind(application)
+    application = project.compose(runtime)
+    celery_app = runtime.mount(application)
     return WorkerBootstrapResult(
         container=application.kernel.container,
         factory=application.kernel.factory,

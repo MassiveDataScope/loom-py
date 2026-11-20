@@ -21,9 +21,9 @@ from opentelemetry.trace import ProxyTracerProvider
 from loom.core.config.observability import OtelConfig
 from loom.core.model.redaction import Dsn
 from loom.core.observability.event import Scope
+from loom.core.observability.observability import Observability
 from loom.core.observability.observer import otel as _otel
 from loom.core.observability.otel_ids import LoomMessageIdGenerator
-from loom.core.observability.runtime import ObservabilityRuntime
 
 _TRACE_A = "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa1"
 _ADOPT_SETTING = "observability.otel.config.adopt_host_id_generator"
@@ -45,7 +45,7 @@ def _hex_trace(span: ReadableSpan) -> str:
 
 
 def _emit(tracer: Any, trace_id: str | None) -> None:
-    with ObservabilityRuntime([], tracer=tracer).span(Scope.NODE, "n", trace_id=trace_id):
+    with Observability([], tracer=tracer).span(Scope.NODE, "n", trace_id=trace_id):
         pass
 
 

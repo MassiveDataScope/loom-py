@@ -1,6 +1,6 @@
 """Persistence resolution in the auto-bootstrap REST app.
 
-Backends are reached by name through the ``loom.stores.backends`` entry
+Backends are reached by name through the ``loom.stores.plugins`` entry
 point group; these tests exercise the three loom registers, an injected one,
 and the bootstrap steps around them.
 """
@@ -15,19 +15,19 @@ from typing import Any, ClassVar, cast
 import pytest
 
 import loom.core.plugins.entrypoints as entrypoints_module
-import loom.stores.mongo.backend as mongo_backend_module
-import loom.stores.sqlalchemy.backend as sqlalchemy_backend_module
+import loom.stores.mongo.plugin as mongo_backend_module
+import loom.stores.sqlalchemy.plugin as sqlalchemy_backend_module
 from loom.composition import AiWiring, AppConfig
 from loom.core.config import ConfigContext
 from loom.core.config.errors import ConfigError
 from loom.core.discovery.base import DiscoveryResult
 from loom.core.model import BaseModel, ColumnField
-from loom.core.stores import NoneBackend, StoreWiring
+from loom.core.stores import NullStorePlugin, StoreWiring
 from loom.core.stores.catalog import MODELS_ONLY, StoreCapabilities, StoreSpec
-from loom.core.stores.profile import SERVER_PROFILE, StoreRuntime
+from loom.core.stores.profile import SERVER_PROFILE, StorePluginContext
 from loom.core.use_case.use_case import UseCase
-from loom.rest.fastapi.adapter import _discover_components
 from loom.rest.fastapi.auto import create_app
+from loom.rest.fastapi.runtime import _discover_components
 from loom.rest.model import RestInterface, RestRoute
 from loom.stores.dynamodb.uow import DynamoDBUnitOfWorkFactory
 from loom.stores.mongo.uow import MongoUnitOfWorkFactory
@@ -125,7 +125,7 @@ class TestBackendSelection:
             tmp_path, store={"backend": "mongodb", "url": "sqlite+aiosqlite:///"}
         )
 
-        with pytest.raises(ConfigError, match="Unknown store backend 'mongodb'") as exc_info:
+        with pytest.raises(ConfigError, match="Unknown store plugin 'mongodb'") as exc_info:
             create_app(config_path)
 
         message = str(exc_info.value)
@@ -198,18 +198,18 @@ class _RecordingBackend:
     name: ClassVar[str] = "recording"
     repository_type: ClassVar[type[Any] | None] = None
     events: ClassVar[list[tuple[str, tuple[type[BaseModel], ...]]]] = []
-    runtimes: ClassVar[list[StoreRuntime]] = []
+    contexts: ClassVar[list[StorePluginContext]] = []
 
     def capabilities(self, spec: StoreSpec) -> StoreCapabilities:
         del spec
         return MODELS_ONLY
 
     def build(
-        self, ctx: ConfigContext, models: Sequence[type[BaseModel]], runtime: StoreRuntime
+        self, ctx: ConfigContext, models: Sequence[type[BaseModel]], context: StorePluginContext
     ) -> StoreWiring:
         self.events.append(("build", tuple(models)))
-        self.runtimes.append(runtime)
-        wiring = NoneBackend().build(ctx, models, runtime)
+        self.contexts.append(context)
+        wiring = NullStorePlugin().build(ctx, models, context)
         return StoreWiring(
             uow_factory=wiring.uow_factory,
             repo_registration_module=wiring.repo_registration_module,
@@ -223,7 +223,7 @@ class _RecordingBackend:
 
 class _RecordingEntryPoint:
     name = _RecordingBackend.name
-    group = "loom.stores.backends"
+    group = "loom.stores.plugins"
 
     def load(self) -> type[_RecordingBackend]:
         return _RecordingBackend
@@ -234,7 +234,7 @@ class _RecordingEntryPoints:
         return (_RecordingEntryPoint(),) if group == _RecordingEntryPoint.group else ()
 
 
-class TestInjectedStoreBackend:
+class TestInjectedStorePlugin:
     def test_injected_backend_boots_and_prepares_models_after_build(
         self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
     ) -> None:
@@ -256,13 +256,13 @@ class TestInjectedStoreBackend:
     ) -> None:
         monkeypatch.setattr(entrypoints_module, "entry_points", lambda: _RecordingEntryPoints())
         monkeypatch.setattr(_RecordingBackend, "events", [])
-        monkeypatch.setattr(_RecordingBackend, "runtimes", [])
+        monkeypatch.setattr(_RecordingBackend, "contexts", [])
         config_path = write_project(tmp_path, store={"backend": "recording"})
 
         create_app(config_path)
 
-        assert [runtime.profile for runtime in _RecordingBackend.runtimes] == [SERVER_PROFILE]
-        assert _RecordingBackend.runtimes[0].pool_metrics is None
+        assert [context.profile for context in _RecordingBackend.contexts] == [SERVER_PROFILE]
+        assert _RecordingBackend.contexts[0].pool_metrics is None
 
 
 class TestDiscoverComponents:

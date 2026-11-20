@@ -8,17 +8,17 @@ from typing import Any, ClassVar
 from loom.core.config import ConfigContext
 from loom.core.di.container import LoomContainer
 from loom.core.model import BaseModel
-from loom.core.stores.backend import StoreWiring
 from loom.core.stores.catalog import (
     NO_CAPABILITIES,
     NONE_BACKEND,
     StoreCapabilities,
     StoreSpec,
 )
-from loom.core.stores.profile import StoreRuntime
+from loom.core.stores.plugin import StoreWiring
+from loom.core.stores.profile import StorePluginContext
 
 
-class NoneBackend:
+class NullStorePlugin:
     """Backend for ``stores.<name>.backend: none``, and for a worker without ``stores``.
 
     No unit-of-work factory, no repositories, no startup resource; the rest
@@ -37,19 +37,19 @@ class NoneBackend:
         self,
         ctx: ConfigContext,
         models: Sequence[type[BaseModel]],
-        runtime: StoreRuntime,
+        context: StorePluginContext,
     ) -> StoreWiring:
         """Build a wiring in which every hook is a no-op.
 
         Args:
             ctx: Ignored; this backend reads no configuration.
             models: Ignored; this backend serves no repositories.
-            runtime: Ignored; this backend opens no connection.
+            context: Ignored; this backend opens no connection.
 
         Returns:
             The no-persistence wiring.
         """
-        del ctx, models, runtime
+        del ctx, models, context
         return StoreWiring(
             uow_factory=None,
             repo_registration_module=_register_no_repositories,
@@ -60,4 +60,4 @@ def _register_no_repositories(container: LoomContainer) -> None:
     """No-op DI module: nothing to register."""
 
 
-__all__ = ["NoneBackend"]
+__all__ = ["NullStorePlugin"]

@@ -118,7 +118,7 @@ Prefer the public surface:
 from loom.streaming import (
     Broadcast,
     CollectBatch,
-    ContextFactory,
+    ContextSupplier,
     Fork,
     FromTopic,
     IntoTopic,

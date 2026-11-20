@@ -9,7 +9,12 @@ from typing import Annotated, Any, NoReturn
 import pytest
 from botocore.exceptions import ClientError
 
-from loom.core.errors import Conflict, ScopeOwnershipError, StoresNotCommitted, UndeclaredStoreWrite
+from loom.core.errors import (
+    Conflict,
+    ScopeOwnershipError,
+    StoresNotCommittedError,
+    UndeclaredStoreWrite,
+)
 from loom.core.model import BaseModel, Field, Integer, String
 from loom.core.stores.catalog import DEFAULT_STORE, StoreKey
 from loom.core.stores.repository import OnConflict
@@ -130,7 +135,7 @@ class TestDynamoDBFailedWriteCheckpoint:
         ("unavailable", "raised", "wrote"),
         [
             pytest.param(False, Conflict, False, id="condition-failed"),
-            pytest.param(True, StoresNotCommitted, True, id="may-have-written"),
+            pytest.param(True, StoresNotCommittedError, True, id="may-have-written"),
         ],
     )
     async def test_a_failed_write_beside_a_transactional_store_counts_only_if_it_may_have_landed(

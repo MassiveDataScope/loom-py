@@ -140,7 +140,7 @@ class TestRoleComposition:
         assert RoleCatalog.compose(BASE, {}, rules(), namespace="acme").digest() == BASE.digest()
 
     def test_a_grant_on_a_removed_custom_role_is_inert(self) -> None:
-        grant = Grant("ana", "custom:acme/analyst", Scope.of("acme"))
+        grant = Grant("ana", "custom:acme/analyst", Scope.from_segments("acme"))
         with_role = RoleCatalog.compose(
             BASE,
             {"analyst": RoleSpec(permissions=frozenset({"query.run"}))},
@@ -149,24 +149,24 @@ class TestRoleComposition:
         )
         without_role = RoleCatalog.compose(BASE, {}, rules(), namespace="acme")
 
-        assert evaluate(with_role, [grant], QUERY, Scope.of("acme", "sales"))
-        assert not evaluate(without_role, [grant], QUERY, Scope.of("acme", "sales"))
+        assert evaluate(with_role, [grant], QUERY, Scope.from_segments("acme", "sales"))
+        assert not evaluate(without_role, [grant], QUERY, Scope.from_segments("acme", "sales"))
 
     def test_holders_of_an_edited_custom_role_are_rechecked_with_can_grant(self) -> None:
         """P3: widening a custom role must be allowed for every holder as a fresh grant."""
-        granter = [Grant("ana", "admin", Scope.of("acme"))]
+        granter = [Grant("ana", "admin", Scope.from_segments("acme"))]
         widened = RoleCatalog.compose(
             BASE,
             {"analyst": RoleSpec(permissions=frozenset({"query.run", "etl.operate"}))},
             rules(),
             namespace="acme",
         )
-        holder_scope = Scope.of("acme", "sales")
+        holder_scope = Scope.from_segments("acme", "sales")
 
         check = can_grant(widened, granter, "custom:acme/analyst", holder_scope, delegate=MANAGE)
 
         assert check
-        outsider = [Grant("bob", "admin", Scope.of("globex"))]
+        outsider = [Grant("bob", "admin", Scope.from_segments("globex"))]
         assert not can_grant(
             widened, outsider, "custom:acme/analyst", holder_scope, delegate=MANAGE
         )

@@ -29,8 +29,8 @@ from typing import Any, Protocol, cast
 import msgspec
 
 from loom.core.cache._single_flight import SingleFlight
-from loom.core.cache.abc.backend import CacheBackend
 from loom.core.cache.abc.config import CacheConfig
+from loom.core.cache.abc.store import CacheStore
 from loom.core.cache.decorators import _CallPolicy, declares_cache_call
 from loom.core.cache.keys import call_key
 from loom.core.cache.result_codec import ResultCodec, build_call_codec
@@ -55,7 +55,7 @@ class CachedCalls(Protocol):
         """Return the cached form of *func*, or *func* itself."""
         ...
 
-    def bind(self, obj: object) -> list[AsyncCallable]:
+    def wrap_methods(self, obj: object) -> list[AsyncCallable]:
         """Return the public coroutine methods of *obj*, cached where declared."""
         ...
 
@@ -421,7 +421,7 @@ class _ConfiguredCalls:
     def __init__(
         self,
         config: CacheConfig,
-        cache: CacheBackend,
+        cache: CacheStore,
         flight: SingleFlight,
         rng: random.Random,
     ) -> None:
@@ -464,7 +464,7 @@ class _ConfiguredCalls:
         wrapper.__annotations__ = resolve_type_hints(func, include_extras=True)
         return wrapper
 
-    def bind(self, obj: object) -> list[AsyncCallable]:
+    def wrap_methods(self, obj: object) -> list[AsyncCallable]:
         """Return the public coroutine methods of *obj*, cached where declared.
 
         Every public coroutine method is published, so adding a public helper
@@ -608,7 +608,7 @@ class _UnconfiguredCalls:
             self._warn_once("CacheCallNotConfigured", func)
         return func
 
-    def bind(self, obj: object) -> list[AsyncCallable]:
+    def wrap_methods(self, obj: object) -> list[AsyncCallable]:
         """Return the public coroutine methods of *obj*, all uncached.
 
         Args:

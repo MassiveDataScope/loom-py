@@ -24,7 +24,7 @@ pip install "loom-kernel[celery]"
 | `JobService.run()` | Execute a job immediately in the calling process |
 | `JobCallback` | Hook invoked by the broker on task success or failure |
 | `bootstrap_worker()` | Single entry point to start a Celery worker |
-| `CeleryAdapter` | The worker's adapter over the shared composition (`loom.celery.adapter`) |
+| `CeleryRuntime` | The worker's runtime over the shared composition (`loom.celery.runtime`) |
 | `WorkerNotOpenError` | Raised by every task of a worker process whose application failed to open |
 | `CeleryConfig` | YAML-driven broker and worker settings |
 | `JobConfig` | Per-job routing and retry overrides from YAML |
@@ -178,7 +178,7 @@ with its attempt and postponements carried. Exhausted attempts abandon the job a
 call `on_failure`. A job delayed this way is lost when the process stops (the
 timer logs them, by job and task id, in one line at shutdown), so the service logs a warning at
 start-up: use Celery or SQS in production. A Lambda function composes no
-timer: its inline service refuses a countdown above zero with `JobDelayRefused`,
+timer: its inline service refuses a countdown above zero with `JobDelayRefusedError`,
 abandons a `JobPostponement`, and abandons a failing job at its first attempt with its own error.
 
 ---
@@ -403,7 +403,7 @@ section and the extra select Celery, and anything else runs inline.
 ### SQS
 
 `app.job_service: sqs` sends each dispatched job to Amazon SQS as one message
-whose body is the `JobEnvelope` the Lambda SQS adapter runs. Install
+whose body is the `JobEnvelope` the Lambda SQS runtime runs. Install
 `loom-kernel[aws]`.
 
 ```yaml
@@ -919,7 +919,7 @@ uv run celery -A app.worker_main:celery_app worker \
 The worker composes on the same recipe as the API
 ([Composition and lifecycle](../getting-started/composition.md)):
 `bootstrap_worker`, `loom.celery.auto.create_app` and
-`loom.composition.create_app(..., adapter=CeleryAdapter(...))` build the same
+`loom.composition.create_app(..., runtime=CeleryRuntime(...))` build the same
 application. What stays specific to the worker is its discovery, its pool
 profile (`WORKER_PROFILE`), the agent markers it refuses, and which Celery
 signal checks, opens and closes the application:
@@ -931,10 +931,10 @@ signal checks, opens and closes the application:
 
 ```python
 # src/app/worker_main.py
-from loom.celery.adapter import CeleryAdapter
+from loom.celery.runtime import CeleryRuntime
 from loom.composition import create_app
 
-celery_app = create_app("config/worker.yaml", adapter=CeleryAdapter())
+celery_app = create_app("config/worker.yaml", runtime=CeleryRuntime())
 ```
 
 - The startup checks — `create_all`, or with `schema.mode: external` the
@@ -966,7 +966,7 @@ celery_app = create_app("config/worker.yaml", adapter=CeleryAdapter())
 ### Persistence
 
 The worker resolves its backend like the API, through the
-`loom.stores.backends` entry points:
+`loom.stores.plugins` entry points:
 
 1. `stores.default.backend`, when the `stores.default` section is declared —
    `sqlalchemy`, `mongo`, `dynamodb`, `none` or a backend of your own;
@@ -977,7 +977,7 @@ With `sqlalchemy` the worker applies row-level security exactly as the API
 does: session settings per transaction, the pool reset, and the
 `schema.mode: external` checks. A backend whose extra is not installed stops
 startup with a `ConfigError` naming `loom-kernel[<backend>]`. Agent and MCP
-markers are still refused at startup: the worker hosts no agent runtime.
+markers are still refused at startup: the worker hosts no agent host.
 
 A worker that discovers no model runs connection-only: no repository and no
 cursor codec, and its startup check is a single `SELECT 1` that, on Postgres,

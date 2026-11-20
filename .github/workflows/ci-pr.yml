@@ -81,7 +81,7 @@ jobs:
           fi
           uv run --frozen --group mcp-tests --with "pytest-cov==7.1.0" \
             pytest -m "not integration and not slow and not live" \
-            --ignore=tests/unit/etl/backends/test_spark \
+            --ignore=tests/unit/etl/engines/test_spark \
             -n 4 "${coverage_args[@]}" \
             --junitxml=junit-fast.xml -o junit_family=legacy
 
@@ -99,7 +99,7 @@ jobs:
           fi
           uv run --frozen --group mcp-tests --with "pytest-cov==7.1.0" \
             pytest -m "slow and not integration and not live" \
-            --ignore=tests/unit/etl/backends/test_spark \
+            --ignore=tests/unit/etl/engines/test_spark \
             "${coverage_args[@]}" \
             --junitxml=junit-slow.xml -o junit_family=legacy
 
@@ -175,7 +175,7 @@ jobs:
         run: |
           set -euo pipefail
           uv run --frozen --with "pytest-cov==7.1.0" \
-            pytest tests/unit/etl/backends/test_spark \
+            pytest tests/unit/etl/engines/test_spark \
             --cov --cov-report= \
             --junitxml=junit-spark.xml -o junit_family=legacy
 

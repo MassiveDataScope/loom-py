@@ -21,8 +21,8 @@ from loom.core.authz._roles import (
     Role,
     RoleCatalog,
     RoleSpec,
-    UnknownPermission,
-    UnknownRole,
+    UnknownPermissionError,
+    UnknownRoleError,
 )
 from loom.core.authz._scope import Scope
 from loom.core.authz.product import AuthzProduct, load_authz_product
@@ -40,8 +40,8 @@ __all__ = [
     "RoleCatalog",
     "RoleSpec",
     "Scope",
-    "UnknownPermission",
-    "UnknownRole",
+    "UnknownPermissionError",
+    "UnknownRoleError",
     "can_grant",
     "can_revoke",
     "evaluate",

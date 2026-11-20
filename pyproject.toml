@@ -186,7 +186,7 @@ lambda = [
 ]
 
 [project.entry-points."loom.ai.engines"]
-pydantic-ai = "loom.ai.engines.pydantic_ai.provider:PydanticAIEngineProvider"
+pydantic-ai = "loom.ai.engines.pydantic_ai.plugin:PydanticAIEnginePlugin"
 
 # Authentication strategies for the remote endpoints loom calls out to: MCP
 # servers and A2A agents alike, since the contract is httpx.Auth and knows
@@ -198,17 +198,17 @@ oauth = "loom.ai.remote_auth:standard_oauth"
 bearer = "loom.ai.remote_auth:bearer_token"
 static = "loom.ai.remote_auth:static_headers"
 
-[project.entry-points."loom.etl.backends"]
-polars = "loom.etl.backends.polars.provider:PolarsProvider"
-spark = "loom.etl.backends.spark.provider:SparkProvider"
+[project.entry-points."loom.etl.engines"]
+polars = "loom.etl.engines.polars.engine:PolarsEtlEngine"
+spark = "loom.etl.engines.spark.engine:SparkEtlEngine"
 
-# Store backends a store's `backend` key resolves. A deployment registers
+# Store plugins a store's `backend` key resolves. A deployment registers
 # its own under the same group from its own package.
-[project.entry-points."loom.stores.backends"]
-sqlalchemy = "loom.stores.sqlalchemy.backend:SQLAlchemyBackend"
-dynamodb = "loom.stores.dynamodb.backend:DynamoDBBackend"
-mongo = "loom.stores.mongo.backend:MongoBackend"
-none = "loom.core.stores.none:NoneBackend"
+[project.entry-points."loom.stores.plugins"]
+sqlalchemy = "loom.stores.sqlalchemy.plugin:SQLAlchemyStorePlugin"
+dynamodb = "loom.stores.dynamodb.plugin:DynamoDBStorePlugin"
+mongo = "loom.stores.mongo.plugin:MongoStorePlugin"
+none = "loom.core.stores.none:NullStorePlugin"
 
 # Check sets by the configuration path they validate; a set is imported only
 # when the process uses that path. A package shipping checks registers under
@@ -396,7 +396,7 @@ extend-immutable-calls = [
 "tests/integration/core/repository/sqlalchemy/test_cache_integration.py" = ["TID251"]
 "tests/integration/streaming/test_into_table_integration.py" = ["TID251"]
 "tests/unit/ai/engines/test_pydantic_ai_output_check.py" = ["TID251"]
-"tests/unit/celery_bootstrap/test_async_runtime.py" = ["TID251"]
+"tests/unit/celery_bootstrap/test_process_bridge.py" = ["TID251"]
 "tests/unit/celery_bootstrap/test_bootstrap_cache.py" = ["TID251"]
 "tests/unit/celery_bootstrap/test_bootstrap.py" = ["TID251"]
 "tests/unit/composition/test_job_service.py" = ["TID251"]
@@ -414,18 +414,18 @@ extend-immutable-calls = [
 "tests/unit/core/engine/test_metrics.py" = ["TID251"]
 "tests/unit/core/engine/test_post_commit_publish.py" = ["TID251"]
 "tests/unit/core/errors/test_errors.py" = ["TID251"]
-"tests/unit/core/repository/dynamodb/test_backend.py" = ["TID251"]
+"tests/unit/core/repository/dynamodb/test_plugin.py" = ["TID251"]
 "tests/unit/core/repository/test_record_layout.py" = ["TID251"]
-"tests/unit/etl/backends/test_upsert_delete_flag_support.py" = ["TID251"]
-"tests/unit/etl/backends/test_write_policy_historify.py" = ["TID251"]
-"tests/unit/etl/checkpoint/backends/test_checkpoint_polars.py" = ["TID251"]
+"tests/unit/etl/engines/test_upsert_delete_flag_support.py" = ["TID251"]
+"tests/unit/etl/engines/test_write_policy_historify.py" = ["TID251"]
+"tests/unit/etl/checkpoint/io/test_checkpoint_polars.py" = ["TID251"]
 "tests/unit/etl/checkpoint/test_cleaners.py" = ["TID251"]
 "tests/unit/etl/client_step/test_client_step.py" = ["TID251"]
 "tests/unit/etl/io/sources/test_mongo_reader.py" = ["TID251"]
 "tests/unit/etl/io/targets/test_clickhouse_writer.py" = ["TID251"]
 "tests/unit/etl/io/test_writer_registry.py" = ["TID251"]
 "tests/unit/etl/storage/doubles.py" = ["TID251"]
-"tests/unit/etl/storage/test_backend_factory.py" = ["TID251"]
+"tests/unit/etl/storage/test_engine_factory.py" = ["TID251"]
 "tests/unit/etl/test_config_loader.py" = ["TID251"]
 "tests/unit/etl/test_runner_environment.py" = ["TID251"]
 "tests/unit/etl/test_runner_resolvers.py" = ["TID251"]
@@ -442,7 +442,7 @@ extend-immutable-calls = [
 "tests/unit/prefect/test_observer.py" = ["TID251"]
 "tests/unit/prefect/test_run_params.py" = ["TID251"]
 "tests/unit/prefect/test_task_run_observer.py" = ["TID251"]
-"tests/unit/rest/test_rest_adapter.py" = ["TID251"]
+"tests/unit/rest/test_rest_dispatcher.py" = ["TID251"]
 "tests/unit/testing/test_http_harness.py" = ["TID251"]
 "tests/unit/testing/test_runner.py" = ["TID251"]
 

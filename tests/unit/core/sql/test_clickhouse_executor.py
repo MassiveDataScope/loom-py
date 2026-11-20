@@ -9,7 +9,7 @@ from typing import Any
 import pytest
 from clickhouse_connect.driver.exceptions import DatabaseError, OperationalError
 
-from loom.core.errors import RuleViolation
+from loom.core.errors import RuleViolationError
 from loom.core.errors import SystemError as LoomSystemError
 from loom.core.stores.sql.abc import SqlColumn, SqlExecutionError, SqlExecutionOptions
 from loom.stores.clickhouse import ClickHouseConnectionRegistry, ClickHouseSqlExecutor
@@ -225,5 +225,5 @@ class TestClickHouseExecutor:
         assert "secret-host" not in str(exc_info.value)
 
     def test_sql_execution_error_inherits_from_rule_violation(self) -> None:
-        """SqlExecutionError reuses RuleViolation to map to 422 without touching the API."""
-        assert issubclass(SqlExecutionError, RuleViolation)
+        """SqlExecutionError reuses RuleViolationError to map to 422 without touching the API."""
+        assert issubclass(SqlExecutionError, RuleViolationError)

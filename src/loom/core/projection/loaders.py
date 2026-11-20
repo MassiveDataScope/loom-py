@@ -268,7 +268,7 @@ class _MemoryJoinFieldsLoader:
         ]
 
 
-def make_memory_loader(loader: Any, rel_name: str) -> Any:
+def build_memory_loader(loader: Any, rel_name: str) -> Any:
     """Convert a public loader descriptor to its memory-path counterpart.
 
     Args:

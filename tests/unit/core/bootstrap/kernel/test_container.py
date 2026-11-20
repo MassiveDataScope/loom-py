@@ -15,7 +15,7 @@ from loom.core.di.container import LoomContainer
 from loom.core.di.graph import KeyNode
 from loom.core.di.scope import Scope
 from loom.core.engine.compiler import CompilationError
-from loom.core.engine.executor import RuntimeExecutor
+from loom.core.engine.executor import UseCaseExecutor
 from loom.core.environment import Environment
 from loom.core.execution import ExecutionScope
 from loom.core.identity import Identity
@@ -72,7 +72,7 @@ class TestKernelContainer:
 
     @pytest.mark.parametrize(
         "key",
-        [UseCaseFactory, RuntimeExecutor, UseCaseRegistry, ApplicationInvoker],
+        [UseCaseFactory, UseCaseExecutor, UseCaseRegistry, ApplicationInvoker],
         ids=lambda key: key.__name__,
     )
     def test_a_module_binding_a_kernel_key_is_refused(self, key: type[Any]) -> None:
@@ -106,14 +106,14 @@ class TestKernelContainer:
         assert set(container.bindings()) == {
             AcmeUnbuildable,
             UseCaseFactory,
-            RuntimeExecutor,
+            UseCaseExecutor,
             UseCaseRegistry,
             ApplicationInvoker,
         }
-        assert container.resolve(RuntimeExecutor) is kernel.executor
+        assert container.resolve(UseCaseExecutor) is kernel.executor
         assert kernel.compiler.get_plan(AcmePing) is not None
 
-    def test_installing_constructs_one_executor(self, executors: list[RuntimeExecutor]) -> None:
+    def test_installing_constructs_one_executor(self, executors: list[UseCaseExecutor]) -> None:
         kernel = KernelRecipe([AcmePing], LOG).install(KernelRecipe.container())
 
         assert executors == [kernel.executor]

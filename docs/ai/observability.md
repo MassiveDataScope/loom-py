@@ -1,6 +1,6 @@
 # Observability and Logfire
 
-Agent runs emit OpenTelemetry spans through the same `ObservabilityRuntime` the
+Agent runs emit OpenTelemetry spans through the same `Observability` the
 rest of loom uses. This page covers the packaged Logfire setup, the one
 configuration rule that makes it work, and — with no varnish — what the result
 does **not** give you today.

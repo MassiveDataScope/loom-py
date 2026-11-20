@@ -16,7 +16,7 @@ from loom.core.model.redaction import reveal_for_driver
 from loom.core.stores.profile import SERVER_PROFILE
 from loom.etl.runner.config_loader import _parse_sections
 from loom.prefect.notify._sns import SnsNotifier
-from loom.stores.dynamodb.backend import DynamoDBBackend
+from loom.stores.dynamodb.plugin import DynamoDBStorePlugin
 from tests.helpers.aws import ACCOUNT, OTHER_REGION, REGION
 from tests.helpers.aws_island import FakeAwsIsland
 from tests.helpers.persistence import build_backend
@@ -47,7 +47,7 @@ def store(island: FakeAwsIsland) -> Store:
     """Build the dynamodb store of a configuration and report what it asked the island for."""
 
     def build(config: dict[str, Any]) -> _Built:
-        build_backend(DynamoDBBackend(), ConfigContext.from_dict(config), (), SERVER_PROFILE)
+        build_backend(DynamoDBStorePlugin(), ConfigContext.from_dict(config), (), SERVER_PROFILE)
         return _Built(island)
 
     return build
@@ -105,7 +105,7 @@ class TestDynamoDbAwsInheritance:
         ctx = ConfigContext.from_dict(
             {"stores": {"default": {"backend": "dynamodb", "table": "t"}}}
         )
-        backend = DynamoDBBackend()
+        backend = DynamoDBStorePlugin()
         with pytest.raises(ConfigError, match="region is required"):
             build_backend(backend, ctx, (), SERVER_PROFILE)
 

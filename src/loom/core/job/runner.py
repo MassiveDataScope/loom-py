@@ -9,8 +9,8 @@ from collections.abc import Awaitable, Callable
 from dataclasses import asdict, dataclass
 from typing import Any
 
-from loom.core.engine.events import AbandonReason, EventKind, RuntimeEvent, Status
-from loom.core.engine.metrics import MetricsAdapter, NoMetrics
+from loom.core.engine.events import AbandonReason, EventKind, ExecutionEvent, Status
+from loom.core.engine.metrics import MetricsRecorder, NoMetrics
 from loom.core.errors import LoomError
 from loom.core.job.delivery import JobDelivery
 from loom.core.job.outcome import (
@@ -92,13 +92,13 @@ class JobRunner:
         invocation: Invocation,
         *,
         redelivery: Redelivery,
-        metrics: MetricsAdapter | None = None,
+        metrics: MetricsRecorder | None = None,
         rng: random.Random | None = None,
     ) -> None:
         self._invocation = invocation
         self._rng = random.Random() if rng is None else rng
         self._redelivery = redelivery
-        self._metrics: MetricsAdapter = NoMetrics() if metrics is None else metrics
+        self._metrics: MetricsRecorder = NoMetrics() if metrics is None else metrics
 
     async def run(self, delivery: JobDelivery) -> JobOutcome:
         """Run *delivery* once.
@@ -117,7 +117,7 @@ class JobRunner:
         """
         trace_id = delivery.envelope.trace_id
         name = delivery.job_type.__qualname__
-        self._metrics.on_event(RuntimeEvent(EventKind.JOB_STARTED, name, trace_id=trace_id))
+        self._metrics.on_event(ExecutionEvent(EventKind.JOB_STARTED, name, trace_id=trace_id))
         started = time.monotonic()
         outcome = await self._run_once(delivery)
         self._metrics.on_event(
@@ -176,7 +176,7 @@ class JobRunner:
     @staticmethod
     def _build_event(
         outcome: JobOutcome, name: str, trace_id: str | None, duration_ms: float | None
-    ) -> RuntimeEvent:
+    ) -> ExecutionEvent:
         reason: AbandonReason | None = None
         match outcome:
             case Succeeded():
@@ -187,7 +187,7 @@ class JobRunner:
                 kind, status = EventKind.JOB_FAILED, Status.FAILURE
             case Abandoned(error=error, reason=reason):
                 kind, status = EventKind.JOB_ABANDONED, Status.ABANDONED
-        return RuntimeEvent(
+        return ExecutionEvent(
             kind,
             name,
             duration_ms=duration_ms,

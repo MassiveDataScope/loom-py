@@ -19,7 +19,7 @@ from loom.core.errors import Unauthenticated
 from loom.core.execution import ExecutionScope
 from loom.core.identity import Identity
 from loom.core.observability.event import EventKind, Scope
-from loom.core.observability.runtime import ObservabilityRuntime
+from loom.core.observability.observability import Observability
 from loom.core.stores.repository.registration import classify_key
 from loom.core.stores.sql.service import SqlQueryService
 from loom.core.use_case import Caller, UseCase
@@ -71,7 +71,7 @@ _GRANTS = {"python": _python, "mcp": _mcp, "a2a": _a2a}
 
 @asynccontextmanager
 async def _alice_guard() -> AsyncIterator[None]:
-    """The guard the runtime hands over: the run's body is an execution acting as Alice."""
+    """The guard the host hands over: the run's body is an execution acting as Alice."""
     with ExecutionScope(ALICE):
         yield
 
@@ -82,7 +82,7 @@ def carrier(request: pytest.FixtureRequest, monkeypatch: pytest.MonkeyPatch) -> 
     calls: list[str] = []
     recorder = RecordingObserver()
     container = LoomContainer(classify_key=classify_key, implicit=main_repository)
-    container.register_instance(ObservabilityRuntime, ObservabilityRuntime([recorder]))
+    container.register_instance(Observability, Observability([recorder]))
     capability, tool = _GRANTS[request.param](calls, monkeypatch)
     model = ScriptedToolModel(calls=((tool, {"prompt": "p"} if tool == REMOTE_TOOL else {}),))
     engine: Any = build_engine(
@@ -194,7 +194,7 @@ class Governed:
     def built_for(self, identity: Identity) -> NativeAgent:
         """Build the carrier, its bundle built for *identity*."""
         container = LoomContainer(classify_key=classify_key, implicit=main_repository)
-        container.register_instance(ObservabilityRuntime, ObservabilityRuntime([self.recorder]))
+        container.register_instance(Observability, Observability([self.recorder]))
         container.register_instance(CallersSeen, self.seen)
         container.register_instance(SqlQueryService, self.sql)
         self.deps.registered_in(container)

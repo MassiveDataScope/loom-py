@@ -40,7 +40,7 @@ def _error_detail(resp):  # type: ignore[no-untyped-def]
 
 
 # ---------------------------------------------------------------------------
-# Validation errors (RuleViolations → 422)
+# Validation errors (RuleViolationsError → 422)
 # ---------------------------------------------------------------------------
 
 

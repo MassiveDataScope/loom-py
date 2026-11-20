@@ -6,7 +6,7 @@ Verifies that:
   - A missing header causes the middleware to generate a valid trace-id.
   - Error response bodies carry the same ``trace_id`` that was set by the
     middleware (end-to-end correlation).
-  - ``ObservabilityRuntime.span()`` emits START → END/ERROR events to every
+  - ``Observability.span()`` emits START → END/ERROR events to every
     observer wired into the REST layer.
 
 Infrastructure:
@@ -23,7 +23,7 @@ from fastapi.testclient import TestClient
 from loom.core.bootstrap import Kernel, create_kernel
 from loom.core.errors import NotFound
 from loom.core.observability.event import EventKind, LifecycleEvent, Scope
-from loom.core.observability.runtime import ObservabilityRuntime
+from loom.core.observability.observability import Observability
 from loom.rest.compiler import RouteSources
 from loom.rest.fastapi.app import create_fastapi_app
 from loom.rest.middleware import TraceIdMiddleware
@@ -87,11 +87,11 @@ def _build_full_stack_client(
         harness.force_error(Product, method, exc)
 
     result = _product_kernel(harness)
-    runtime = ObservabilityRuntime([observer]) if observer else ObservabilityRuntime.noop()
+    runtime = Observability([observer]) if observer else Observability.noop()
     app = create_fastapi_app(
         result,
         RouteSources(python=[ProductRestInterface]),
-        observability_runtime=runtime,
+        observability=runtime,
         middleware=[TraceIdMiddleware],
     )
     return TestClient(app, raise_server_exceptions=False)
@@ -163,7 +163,7 @@ class TestTraceIdInErrorBody:
 
 
 # ---------------------------------------------------------------------------
-# ObservabilityRuntime span events through REST layer
+# Observability span events through REST layer
 # ---------------------------------------------------------------------------
 
 
@@ -229,11 +229,11 @@ class TestSpanEventsFromRESTLayer:
         harness = HttpTestHarness()
         harness.inject_repo(Product, InMemoryProductRepository())
         result = _product_kernel(harness)
-        runtime = ObservabilityRuntime([_BrokenObserver()])
+        runtime = Observability([_BrokenObserver()])
         app = create_fastapi_app(
             result,
             RouteSources(python=[ProductRestInterface]),
-            observability_runtime=runtime,
+            observability=runtime,
             middleware=[TraceIdMiddleware],
         )
         client = TestClient(app, raise_server_exceptions=False)

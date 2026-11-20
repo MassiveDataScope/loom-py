@@ -22,15 +22,15 @@ from loom.core.job.service import JobService
 from loom.core.job.timer import JobTimer
 from loom.core.job.transport import JobTransport
 from loom.core.logger import get_logger
-from loom.core.observability.runtime import ObservabilityRuntime
+from loom.core.observability.observability import Observability
 from loom.core.plugins.optional import MissingExtraError
 from loom.core.symbols import import_symbol
 from loom.jobs.inline import AsyncioJobTimer, InlineJobTransport
 
 if TYPE_CHECKING:
     from loom.celery.config import CeleryConfig
-    from loom.core.engine.executor import RuntimeExecutor
-    from loom.core.engine.metrics import MetricsAdapter
+    from loom.core.engine.executor import UseCaseExecutor
+    from loom.core.engine.metrics import MetricsRecorder
     from loom.core.use_case.factory import UseCaseFactory
 
 _log = get_logger(__name__)
@@ -52,9 +52,9 @@ class JobTransportContext:
     config: ConfigContext
     aws: AwsClients
     factory: UseCaseFactory
-    executor: RuntimeExecutor
-    metrics: MetricsAdapter | None
-    observability: ObservabilityRuntime | None
+    executor: UseCaseExecutor
+    metrics: MetricsRecorder | None
+    observability: Observability | None
     jobs: tuple[type[Job[Any]], ...] = ()
     callbacks: DispatchableCallbacks = field(default_factory=DispatchableCallbacks.any)
     settings: JobSettings = field(default_factory=JobSettings)
@@ -86,7 +86,7 @@ def _celery_transport(context: JobTransportContext, celery_cfg: CeleryConfig) ->
     service = CeleryJobTransport(
         app,
         metrics=context.metrics,
-        observability_runtime=context.observability,
+        observability=context.observability,
     )
     closer = Resource(
         kind=ResourceKind.CELERY,
@@ -166,7 +166,9 @@ def _routed(
         return transport, {}, resources
     celery_cfg = _celery_config(context.config)
     queues = [queue for queue in celery_cfg.queues if queue != celery_cfg.task_default_queue]
-    served = tuple(job for job in context.jobs if context.settings.of(job).queue not in queues)
+    served = tuple(
+        job for job in context.jobs if context.settings.options_for(job).queue not in queues
+    )
     transport, resources = _transport(default, replace(context, jobs=served))
     if not queues:
         return transport, {}, resources
@@ -204,7 +206,7 @@ def _implicit(context: JobTransportContext) -> _Built:
 def configure_job_service(
     ctx: ConfigContext,
     result: Kernel,
-    observability_runtime: ObservabilityRuntime | None,
+    observability: Observability | None,
     *,
     transport: str | None = None,
     jobs: tuple[type[Job[Any]], ...] = (),
@@ -226,7 +228,7 @@ def configure_job_service(
     Args:
         ctx: Resolved configuration context.
         result: Kernel runtime carrying container, factory and executor.
-        observability_runtime: Observability runtime the transports trace
+        observability: Observability runtime the transports trace
             with, or ``None``.
         transport: ``app.job_service``: a built-in name or ``module:Class``.
         jobs: The discovered jobs.
@@ -255,7 +257,7 @@ def configure_job_service(
         factory=result.factory,
         executor=result.executor,
         metrics=result.metrics,
-        observability=observability_runtime,
+        observability=observability,
         jobs=jobs,
         callbacks=DispatchableCallbacks(callbacks),
         settings=settings,

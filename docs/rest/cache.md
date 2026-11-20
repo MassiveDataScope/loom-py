@@ -163,7 +163,7 @@ of any job dispatch queued in the same pipeline, so a reader cannot cache a row
 the transaction later rolled back, and a job cannot read a stale entry (see
 [What runs after commit](use-case-dsl.md#what-runs-after-commit)). Anywhere
 else — a store the invocation did not enlist, a unit of work without the
-`phased` marker, Mongo without transactions, DynamoDB — the write commits on
+`is_phased` marker, Mongo without transactions, DynamoDB — the write commits on
 its own and the bump runs inline, even if the invocation fails afterwards.
 
 The bare `user` tag is in every key's tag list but the framework never bumps
@@ -214,14 +214,14 @@ unit-testable on its own. Applied to anything that is not a coroutine function �
 a `def`, a generator, an async generator — it raises `TypeError` at decoration
 time, naming the function.
 
-### Binding
+### Wrapping methods
 
 ```python
 from loom.core.cache import cached_calls
 
 
 def build_toolset(ctx: ToolsetContext) -> AbstractToolset[Any]:
-    return FunctionToolset(cached_calls(ctx.container).bind(SearchTools()))
+    return FunctionToolset(cached_calls(ctx.container).wrap_methods(SearchTools()))
 ```
 
 `cached_calls(container)` returns the `CachedCalls` that boot built from the
@@ -232,10 +232,10 @@ whether it was. The engine calls that factory as `factory(ctx, **params)` — se
 [the `python` capability](#python-application-owned-toolsets).
 
 `wrap(func)` caches one coroutine and returns a function with the original's
-name, signature and resolved annotations. `bind(obj)` does the same across an
+name, signature and resolved annotations. `wrap_methods(obj)` does the same across an
 object and hands the result straight to a `FunctionToolset`.
 
-`bind` publishes **every public coroutine method** of the object, inherited ones
+`wrap_methods` publishes **every public coroutine method** of the object, inherited ones
 included; marked methods come back cached, unmarked ones bound and otherwise
 untouched, in declaration order with base classes first. Adding a public
 coroutine helper to a toolset class therefore publishes a tool — give it a
@@ -245,11 +245,11 @@ cached the same way. Methods are read off the class, so a property is never
 evaluated.
 
 Inheritance is the trap, because a leading underscore only covers the methods
-you wrote. `bind` walks the whole MRO, so a class deriving from an async HTTP
+you wrote. `wrap_methods` walks the whole MRO, so a class deriving from an async HTTP
 client or an SDK base hands the model that base's public coroutines — `request`,
 `send`, `aclose` — as callable tools, and `kind: python` has no `include`/
 `exclude` to filter them the way `skills`, `mcp` and `a2a` do. A class meant for
-`bind` should not subclass anything with public coroutines: **compose, do not
+`wrap_methods` should not subclass anything with public coroutines: **compose, do not
 inherit** — hold the client as an attribute and expose the calls you mean to
 publish.
 
@@ -489,7 +489,7 @@ deployment's concern; the memory backend is unaffected.
 ## Lifecycle
 
 The application closes the cache gateways when it closes, last, after the
-persistence store, the agent runtime and the SQL registry — in the API's
+persistence store, the agent host and the SQL registry — in the API's
 lifespan and in each Celery worker process alike (see
 [Composition and lifecycle](../getting-started/composition.md#lifecycle)):
 one `close` per distinct alias, so two with a separate `counter_alias` and one

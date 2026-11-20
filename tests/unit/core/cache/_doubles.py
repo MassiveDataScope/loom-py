@@ -116,7 +116,7 @@ class WidgetUpdate(msgspec.Struct, kw_only=True):
     name: str | msgspec.UnsetType = msgspec.UNSET
 
 
-class CountingCacheBackend:
+class CountingCacheStore:
     """In-memory cache backend that serializes values and counts its batches.
 
     Attributes:
@@ -492,7 +492,7 @@ class CachedEnv(NamedTuple, Generic[RowT]):
     """A cached repository together with the doubles it was built on."""
 
     repository: CountingRepository[RowT]
-    backend: CountingCacheBackend
+    backend: CountingCacheStore
     resolver: GenerationalDependencyResolver
     wrapper: CachedRepository[RowT, WidgetCreate, WidgetUpdate, Any]
 
@@ -510,7 +510,7 @@ def wrap_with_cache(
     Returns:
         The wrapper and every double it talks to.
     """
-    backend = CountingCacheBackend()
+    backend = CountingCacheStore()
     resolver = GenerationalDependencyResolver(backend)
     wrapper: CachedRepository[RowT, WidgetCreate, WidgetUpdate, Any] = CachedRepository(
         repository,

@@ -41,7 +41,9 @@ class CallerResolver(ExecutionResolver):
 
 
 def declare_kinds(kinds: ExecutionKinds) -> None:
-    """Declare ``Caller()``, ``Agent()`` and ``Mcp()`` on *kinds*, bind ``Caller()``, refuse inputs.
+    """Declare ``Caller()``, ``Agent()`` and ``Mcp()`` on *kinds*.
+
+    Register ``Caller()`` and refuse inputs.
 
     ``Caller()`` is :data:`CALLER`, resolved by :class:`CallerResolver`;
     ``Agent()`` is :data:`AGENT` and ``Mcp()`` is :data:`MCP`, whose resolvers
@@ -58,4 +60,4 @@ def declare_kinds(kinds: ExecutionKinds) -> None:
     kinds.declare_type(_McpMarker, MCP)
     for marker in _INPUT_MARKERS:
         kinds.refuse(marker, f"{marker.spelling} declares an input of execute(), not a dependency")
-    kinds.bind(CALLER, CallerResolver())
+    kinds.register(CALLER, CallerResolver())

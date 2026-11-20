@@ -19,7 +19,7 @@ class TestAnEtlBatch:
     ) -> None:
         engine = AcmeActingEngine()
         batch = Batch(
-            runtime=make_runtime(engine),
+            host=make_runtime(engine),
             name=AGENT,
             limit=2,
             ledger=SpendLedger(None),

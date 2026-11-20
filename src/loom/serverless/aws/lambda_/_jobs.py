@@ -34,7 +34,7 @@ from loom.jobs.aws.sqs import SQSConfig
 if TYPE_CHECKING:
     from loom.composition import Application, Project
     from loom.core.engine.compilable import Compilable
-    from loom.core.engine.metrics import MetricsAdapter
+    from loom.core.engine.metrics import MetricsRecorder
     from loom.core.job.job import Job
 
 _log = get_logger(__name__)
@@ -49,7 +49,7 @@ def jobs_recipe(
     project: Project,
     jobs: Sequence[type[Job[Any]]],
     use_cases: Sequence[type[Compilable]],
-    metrics: MetricsAdapter | None,
+    metrics: MetricsRecorder | None,
 ) -> tuple[Recipe, dict[str, type[Job[Any]]]]:
     """The recipe of a function running jobs, with Lambda pool defaults, and the jobs by name.
 
@@ -112,7 +112,7 @@ class JobConsumer:
         postponements: int,
     ) -> JobOutcome:
         """Run an envelope using this consumer's policy and invocation time limit."""
-        options = self.settings.of(job_type)
+        options = self.settings.options_for(job_type)
         return await self.runner.run(
             options.delivery_for(
                 job_type,
@@ -132,7 +132,7 @@ class QueueConsumer(JobConsumer):
     settlement: JobSettlement[SQSRecord]
 
     @classmethod
-    def bind(
+    def from_application(
         cls, application: Application, queue_name: str, jobs: Iterable[type[Job[Any]]]
     ) -> QueueConsumer:
         """Check the queue *queue_name* at Init, and fix the policies *jobs* run under.
@@ -166,7 +166,9 @@ class QueueConsumer(JobConsumer):
                 ) from exc
         served = list(jobs)
         base = application.job_settings
-        settings = base.with_retries(queue.retries_for(served, lambda job: base.of(job).retry))
+        settings = base.with_retries(
+            queue.retries_for(served, lambda job: base.options_for(job).retry)
+        )
         redelivery = queue.redelivery
         if served:
             _log.info(

@@ -49,7 +49,7 @@ async def single_store(
         The open scope.
 
     Raises:
-        StoresNotCommitted: When the commit's result is unknown.
+        StoresNotCommittedError: When the commit's result is unknown.
         PostCommitError: When a post-commit action failed after the commit.
         Exception: What the commit failed with, when the block did not raise.
     """

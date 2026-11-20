@@ -131,7 +131,7 @@ def _build_app(db_path: Path, codec: CursorCodec | None = None) -> FastAPI:
         try:
             yield
         finally:
-            await session_manager.dispose()
+            await session_manager.close()
             reset_registry()
 
     return create_fastapi_app(
@@ -173,7 +173,7 @@ def _build_logical_app(db_path: Path) -> FastAPI:
         try:
             yield
         finally:
-            await session_manager.dispose()
+            await session_manager.close()
 
     return create_fastapi_app(
         result,

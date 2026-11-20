@@ -20,7 +20,7 @@ from typing import TYPE_CHECKING, Any, TypeAlias, cast
 from loom.core.engine.compilable import Compilable
 from loom.core.engine.observation import StartedExecution
 from loom.core.engine.plan import ExecutionPlan, ExistsStep, LoadStep, ParameterBindingError
-from loom.core.errors import MissingCaller, RuleViolation, RuleViolations
+from loom.core.errors import MissingCaller, RuleViolationError, RuleViolationsError
 from loom.core.execution import ExecutionKinds, UnboundKind
 from loom.core.identity import Identity
 from loom.core.use_case.kinds import CALLER
@@ -174,7 +174,7 @@ class ArgumentBinder:
                     raise RuntimeError(
                         f"{use_case}.execute declares an {binding.kind.spelling} parameter but "
                         f"no {binding.kind.name!r} resolver is bound on this executor. Call "
-                        f"RuntimeExecutor.bind_{binding.kind.name}_resolver() once the AI "
+                        f"UseCaseExecutor.bind_{binding.kind.name}_resolver() once the AI "
                         "runtime exists."
                     ) from None
 
@@ -354,7 +354,7 @@ def _rules(plan: ExecutionPlan) -> Bind | None:
 
     def check(call: _ExecuteArguments) -> None:
         command = call.bound[binding.name]
-        violations: list[RuleViolation] = []
+        violations: list[RuleViolationError] = []
         for fn, accepts_context, label, step_label in rules:
             try:
                 if accepts_context:
@@ -362,10 +362,10 @@ def _rules(plan: ExecutionPlan) -> Bind | None:
                 else:
                     fn(command, call.fields_set)
                 call.started.step(step_label)
-            except RuleViolation as exc:
+            except RuleViolationError as exc:
                 violations.append(exc)
                 call.started.rule_failed(label, exc)
         if violations:
-            raise RuleViolations(violations)
+            raise RuleViolationsError(violations)
 
     return check

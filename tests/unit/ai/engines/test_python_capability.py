@@ -186,7 +186,7 @@ def toolset_builder(monkeypatch: pytest.MonkeyPatch) -> CountingToolsetBuilder:
 
 
 async def opened(grant: CompiledMcpCapability) -> SharedMcpToolsets:
-    """Return a store whose connection for ``grant`` the runtime already opened."""
+    """Return a store whose connection for ``grant`` the host already opened."""
     shared = SharedMcpToolsets()
     await shared.open(grant).__aenter__()
     return shared
@@ -398,7 +398,7 @@ class TestKindPythonRespectsToolTimeout:
             mcp_grants=(),
         )
         toolset = _HungFakeMcpToolset()
-        session = _ToolsetSession(_OpenToolset.of(toolset))  # type: ignore[arg-type]
+        session = _ToolsetSession(_OpenToolset.from_toolset(toolset))  # type: ignore[arg-type]
 
         async def call_until_cut_off() -> None:
             """Run the lookup until the plan timeout cancels it."""

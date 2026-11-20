@@ -24,7 +24,7 @@ class TestRetiredStoreSections:
         )
 
         with pytest.raises(ConfigError, match="stores.default"):
-            project.resolve_store_backend(DEFAULT_STORE, default="none")
+            project.resolve_store_plugin(DEFAULT_STORE, default="none")
 
     def test_each_store_names_the_backend_composed_for_it(self) -> None:
         stores = {"default": {"backend": "none"}, "audit": {"backend": "sqlalchemy"}}
@@ -34,7 +34,7 @@ class TestRetiredStoreSections:
 
         keys = (DEFAULT_STORE, StoreKey("audit"))
 
-        backends = [project.resolve_store_backend(key, default="mongo").name for key in keys]
+        backends = [project.resolve_store_plugin(key, default="mongo").name for key in keys]
 
         assert backends == ["none", "sqlalchemy"]
 
@@ -80,7 +80,7 @@ class TestClickHouseStoreReaders:
             _catalog({"events": {"backend": "kafka"}})
 
         message = str(error.value)
-        assert "Unknown store backend 'kafka'. Registered backends:" in message
+        assert "Unknown store plugin 'kafka'. Registered store plugins:" in message
         assert "Connection-only stores: clickhouse." in message
 
     def test_a_model_of_a_named_clickhouse_store_fails_at_composition(self) -> None:
@@ -99,4 +99,4 @@ class TestClickHouseStoreReaders:
         )
 
         with pytest.raises(ConfigError, match=r"stores\.default\.backend is 'clickhouse'"):
-            project.resolve_store_backend(DEFAULT_STORE, default="none")
+            project.resolve_store_plugin(DEFAULT_STORE, default="none")

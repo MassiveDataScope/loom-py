@@ -1,6 +1,6 @@
 """Output-hook phase: resolve ``on_output.usecase`` and prove its Input is feedable.
 
-The runtime offers one nested ``output`` key, the run's serialised new
+The host offers one nested ``output`` key, the run's serialised new
 ``messages`` and a fixed set of run-context names
 (:data:`~loom.ai.compiler._plan.HOOK_CONTEXT_FIELDS`).  The feedability proof
 itself lives in :mod:`loom.ai.compiler.phases._feedable`, shared with the

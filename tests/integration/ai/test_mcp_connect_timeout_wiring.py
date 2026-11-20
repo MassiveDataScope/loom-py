@@ -16,7 +16,7 @@ at an unreachable address and start-up still fails, exactly as
 Guards mutants a mocked-provider test cannot: ``ai.startup_timeout_ms /
 1000`` silently turned into ``* 1.0`` in ``auto.py``, or either
 ``configure_engine_mcp_connect_timeout`` (``registry.py``) or the provider's
-own ``configure_mcp_connect_timeout`` (``provider.py``) reduced to a no-op —
+own ``configure_mcp_connect_timeout`` (``plugin.py``) reduced to a no-op —
 every one of those leaves the rest of the suite green without this file.
 """
 

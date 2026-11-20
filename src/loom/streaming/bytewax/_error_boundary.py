@@ -11,7 +11,7 @@ from bytewax.operators import branch, flat_map
 from loom.core.errors import DomainError
 from loom.core.logger import get_logger
 from loom.core.observability.event import TerminalReason
-from loom.core.observability.runtime import ObservabilityRuntime
+from loom.core.observability.observability import Observability
 from loom.streaming.core._errors import ErrorEnvelope, ErrorKind, snapshot_message
 from loom.streaming.core._message import Message
 from loom.streaming.core._tracing import open_terminal_span
@@ -52,7 +52,7 @@ class ErrorBoundary:
         flow: Name of the enclosing flow, stamped on that span.
     """
 
-    observer: ObservabilityRuntime
+    observer: Observability
     flow: str
 
 

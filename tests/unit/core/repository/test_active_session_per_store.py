@@ -87,7 +87,7 @@ async def stores(request: pytest.FixtureRequest) -> AsyncIterator[AcmeActiveSess
         yield _sqlalchemy_stores(managers)
     finally:
         for manager in managers.values():
-            await manager.dispose()
+            await manager.close()
 
 
 def _handles(scope: InvocationScope) -> tuple[object, object]:

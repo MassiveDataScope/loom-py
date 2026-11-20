@@ -16,7 +16,7 @@ from typing import Any, cast
 import pytest
 
 from loom.composition import AppConfig, Application, Project
-from loom.composition.recipe import Adapter
+from loom.composition.recipe import Runtime
 from loom.core.bootstrap import create_kernel
 from loom.core.config import ConfigContext
 from loom.core.di.container import LoomContainer
@@ -71,47 +71,47 @@ def fastapi(
     composition: Composition, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> LoomContainer:
     pytest.importorskip("fastapi")
-    from loom.rest.fastapi.adapter import FastAPIAdapter
+    from loom.rest.fastapi.runtime import FastAPIRuntime
 
-    return _composed(composition, {}, None, FastAPIAdapter(), tmp_path, monkeypatch)
+    return _composed(composition, {}, None, FastAPIRuntime(), tmp_path, monkeypatch)
 
 
 def lambda_http(
     composition: Composition, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> LoomContainer:
     pytest.importorskip("mangum")
-    from loom.serverless.aws.lambda_ import LambdaAdapter
+    from loom.serverless.aws.lambda_ import LambdaRuntime
 
-    return _composed(composition, {}, None, LambdaAdapter(), tmp_path, monkeypatch)
+    return _composed(composition, {}, None, LambdaRuntime(), tmp_path, monkeypatch)
 
 
 def lambda_jobs(
     composition: Composition, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> LoomContainer:
-    from loom.serverless.aws.lambda_ import LambdaAdapter
+    from loom.serverless.aws.lambda_ import LambdaRuntime
 
     document = {**jobs_queue(), "lambda": {"functions": {_WORKER: {"trigger": jobs_trigger()}}}}
-    return _composed(composition, document, _WORKER, LambdaAdapter(), tmp_path, monkeypatch)
+    return _composed(composition, document, _WORKER, LambdaRuntime(), tmp_path, monkeypatch)
 
 
 def lambda_events(
     composition: Composition, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> LoomContainer:
-    from loom.serverless.aws.lambda_ import LambdaAdapter
+    from loom.serverless.aws.lambda_ import LambdaRuntime
 
     trigger = {"source": "eventbridge", "job": AcmeJob.__qualname__, "identity": _SYSTEM}
     document = {"lambda": {"functions": {_EVENTS: {"trigger": trigger}}}}
-    return _composed(composition, document, _EVENTS, LambdaAdapter(), tmp_path, monkeypatch)
+    return _composed(composition, document, _EVENTS, LambdaRuntime(), tmp_path, monkeypatch)
 
 
 def celery(
     composition: Composition, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> LoomContainer:
     pytest.importorskip("celery")
-    from loom.celery.adapter import CeleryAdapter
+    from loom.celery.runtime import CeleryRuntime
 
     document = {"app": {"job_service": "celery"}, "celery": BROKER}
-    return _composed(composition, document, None, CeleryAdapter(), tmp_path, monkeypatch)
+    return _composed(composition, document, None, CeleryRuntime(), tmp_path, monkeypatch)
 
 
 def harness(
@@ -129,7 +129,7 @@ def harness(
 
     compose = Project.compose
 
-    def captured(self: Project, adapter: Adapter[object], **kwargs: Any) -> Application:
+    def captured(self: Project, adapter: Runtime[object], **kwargs: Any) -> Application:
         application = compose(self, adapter, **kwargs)
         applications.append(application)
         return application
@@ -191,13 +191,13 @@ def _composed(
         config_root=tmp_path,
     )
     application = project.compose(
-        _OverridesAdapter(cast(Adapter[object], adapter), composition.overrides)
+        _OverridesAdapter(cast(Runtime[object], adapter), composition.overrides)
     )
     return application.kernel.container
 
 
 class _OverridesAdapter:
-    def __init__(self, adapter: Adapter[object], overrides: tuple[Module, ...]) -> None:
+    def __init__(self, adapter: Runtime[object], overrides: tuple[Module, ...]) -> None:
         self._adapter = adapter
         self._overrides = overrides
 
@@ -208,8 +208,8 @@ class _OverridesAdapter:
             overrides=(*recipe.overrides, *self._overrides),
         )
 
-    def bind(self, application: Application) -> object:
-        return self._adapter.bind(application)
+    def mount(self, application: Application) -> object:
+        return self._adapter.mount(application)
 
 
 def _merged(base: Mapping[str, Any], over: Mapping[str, Any]) -> dict[str, Any]:

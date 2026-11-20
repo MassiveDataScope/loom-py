@@ -11,14 +11,14 @@ import pytest
 from loom.composition import AppConfig, Application, Project
 from loom.composition.resources import Resource, ResourceKind
 from loom.core.config import ConfigContext
-from loom.core.errors import PostCommitError, StoresNotCommitted
+from loom.core.errors import PostCommitError, StoresNotCommittedError
 from loom.core.identity import current_identity
 from loom.core.job.job import Job
 from loom.core.stores.catalog import DEFAULT_STORE
 from loom.core.stores.uow.coordinator import InvocationOutcome, Uncertain
 from loom.core.stores.uow.scope import invocation_error
 from loom.core.tracing import get_trace_id
-from loom.serverless.aws.lambda_ import LambdaAdapter, LambdaHandler
+from loom.serverless.aws.lambda_ import LambdaHandler, LambdaRuntime
 from tests.helpers.aws_island import FakeAwsIsland
 from tests.helpers.composition import composition_project
 from tests.helpers.loops import event_loops
@@ -63,7 +63,7 @@ def probe() -> tuple[type[Job[None]], Probe]:
             if marker == "committed":
                 raise PostCommitError(committed=True, failures=(ValueError("post commit"),))
             if marker == "scope":
-                raise StoresNotCommitted("partially committed")
+                raise StoresNotCommittedError("partially committed")
             if marker == "uncertain":
                 outcome = InvocationOutcome((Uncertain(DEFAULT_STORE, OSError("ack lost")),))
                 raise invocation_error(outcome, None) or AssertionError(outcome)
@@ -104,8 +104,8 @@ def project(tmp_path: Path, island: FakeAwsIsland, fifo: bool) -> Project:
 @pytest.fixture
 def built(
     project: Project, probe: tuple[type[Job[None]], Probe]
-) -> tuple[LambdaAdapter, Application, list[str]]:
-    adapter = LambdaAdapter(jobs=[probe[0]])
+) -> tuple[LambdaRuntime, Application, list[str]]:
+    adapter = LambdaRuntime(jobs=[probe[0]])
     lifecycle: list[str] = []
 
     @asynccontextmanager
@@ -123,9 +123,9 @@ def built(
 
 
 @pytest.fixture
-def handler(built: tuple[LambdaAdapter, Application, list[str]]) -> Iterator[LambdaHandler]:
+def handler(built: tuple[LambdaRuntime, Application, list[str]]) -> Iterator[LambdaHandler]:
     adapter, application, _ = built
-    yield adapter.bind(application)
+    yield adapter.mount(application)
     adapter.close()
 
 

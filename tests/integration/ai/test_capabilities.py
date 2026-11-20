@@ -52,7 +52,7 @@ from loom.ai.compiler._plan import (
     CompiledUsecaseCapability,
 )
 from loom.ai.declarative import PolicySpec
-from loom.ai.engines.pydantic_ai import PydanticAIEngineProvider, _capabilities
+from loom.ai.engines.pydantic_ai import PydanticAIEnginePlugin, _capabilities
 from loom.ai.engines.pydantic_ai._events import translate
 from loom.ai.engines.pydantic_ai._mcp import SharedMcpToolsets
 from loom.ai.errors import (
@@ -62,7 +62,7 @@ from loom.ai.errors import (
     AgentRunErrorCode,
     run_error_class,
 )
-from loom.ai.runtime import AgentRunError, AgentRuntime
+from loom.ai.execution import AgentHost, AgentRunError
 from loom.composition._ai import AgentDepsFactory
 from loom.core.bootstrap import create_kernel
 from loom.core.command import Command
@@ -505,7 +505,7 @@ def build_engine(
     policies: PolicySpec | None = None,
 ) -> AgentEngine:
     """Build the real adapter for a plan carrying ``capabilities``."""
-    provider = PydanticAIEngineProvider(model_resolver=lambda target: model.as_model())
+    provider = PydanticAIEnginePlugin(model_resolver=lambda target: model.as_model())
     plan = make_plan("analyst", capabilities=tuple(capabilities), policies=policies)
     return provider.create_engine(plan, deps=deps, container=container)  # type: ignore[arg-type]
 
@@ -873,7 +873,7 @@ class TestSupportedCapabilityKinds:
         self,
     ) -> None:
         """Every kind the adapter can serve is announced, ``a2a`` included."""
-        kinds = PydanticAIEngineProvider().supported_capability_kinds()
+        kinds = PydanticAIEnginePlugin().supported_capability_kinds()
 
         assert kinds == frozenset({"usecase", "sql", "mcp", "skills", "python", "a2a", "native"})
 
@@ -1882,11 +1882,11 @@ class TestIdentityReachesTheExecutor:
 
 class TestTheRuntimeStartChecksTheInvoker:
     @staticmethod
-    def _runtime(container: LoomContainer, provider: CountingEngineProvider) -> AgentRuntime:
-        return AgentRuntime(
+    def _host(container: LoomContainer, provider: CountingEngineProvider) -> AgentHost:
+        return AgentHost(
             plans=[make_plan("analyst", capabilities=(whoami_capability(),))],
             config=make_ai_config(),
-            engine_provider=provider,  # type: ignore[arg-type]
+            engine_plugin=provider,  # type: ignore[arg-type]
             deps=StubDepsFactory(),
             container=container,
         )
@@ -1897,7 +1897,7 @@ class TestTheRuntimeStartChecksTheInvoker:
         provider = CountingEngineProvider()
 
         with pytest.raises(AgentCompilationError) as failure:
-            async with self._runtime(kernel.container, provider):
+            async with self._host(kernel.container, provider):
                 pass
 
         assert [issue.code for issue in failure.value.issues] == [AgentErrorCode.INVOKER_BOUND]
@@ -1909,7 +1909,7 @@ class TestTheRuntimeStartChecksTheInvoker:
         provider = CountingEngineProvider()
 
         with pytest.raises(AgentCompilationError) as failure:
-            async with self._runtime(LoomContainer(), provider):
+            async with self._host(LoomContainer(), provider):
                 pass
 
         issues = failure.value.issues
@@ -1921,7 +1921,7 @@ class TestTheRuntimeStartChecksTheInvoker:
         kernel = create_kernel(config=object(), use_cases=[WhoAmIUseCase])
         provider = CountingEngineProvider()
 
-        async with self._runtime(kernel.container, provider):
+        async with self._host(kernel.container, provider):
             pass
 
         assert provider.calls == ["analyst"]

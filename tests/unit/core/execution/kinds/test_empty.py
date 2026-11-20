@@ -7,7 +7,7 @@ from typing import Any
 import pytest
 
 from loom.core.engine.compiler import UseCaseCompiler
-from loom.core.engine.executor import RuntimeExecutor
+from loom.core.engine.executor import UseCaseExecutor
 from loom.core.execution import ExecutionContext, ExecutionKinds, Kind
 from loom.core.identity import Identity
 from loom.core.use_case.use_case import UseCase
@@ -53,7 +53,7 @@ class TestAnExecutionFreePlan:
         kinds = AcmeCountingKinds()
         compiler = UseCaseCompiler()
         plan = compiler.compile(AcmePongUseCase)
-        executor = RuntimeExecutor(compiler, resolvers=kinds)
+        executor = UseCaseExecutor(compiler, resolvers=kinds)
 
         assert await executor.execute(AcmePongUseCase(), identity=identity) == "pong"
         assert plan.execution_bindings == ()

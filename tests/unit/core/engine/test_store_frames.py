@@ -2,7 +2,7 @@
 
 A use case's primary store is the ``__store__`` of its main model, and
 ``Joined[...]`` repositories declare the further stores it writes to. Every
-use case here runs through ``RuntimeExecutor.execute`` inside an invocation
+use case here runs through ``UseCaseExecutor.execute`` inside an invocation
 of two SQLite stores the test opens, as the composition does. A refused write
 must never reach the driver: a listener on the audit store's engine sees every
 statement sent to it.
@@ -21,7 +21,7 @@ from loom.core.command import Command
 from loom.core.di.container import LoomContainer
 from loom.core.di.scope import Scope
 from loom.core.engine.compiler import CompilationError, UseCaseCompiler
-from loom.core.engine.executor import RuntimeExecutor
+from loom.core.engine.executor import UseCaseExecutor
 from loom.core.errors import UndeclaredStoreWrite
 from loom.core.model import BaseModel, ColumnField
 from loom.core.stores.catalog import DEFAULT_STORE, StoreKey
@@ -100,7 +100,7 @@ class _Stores:
     async def run(self, use_case: UseCase[Any, Any]) -> InvocationOutcome:
         """Execute ``use_case`` in an invocation of both stores and end it."""
         async with invocation(self.coordinator()) as scope:
-            await RuntimeExecutor(UseCaseCompiler()).execute(use_case)
+            await UseCaseExecutor(UseCaseCompiler()).execute(use_case)
             return await scope.coordinator.finish(scope, None)
 
     @property
@@ -142,8 +142,8 @@ async def stores() -> AsyncIterator[_Stores]:
     try:
         yield pair
     finally:
-        await default.dispose()
-        await audit.dispose()
+        await default.close()
+        await audit.close()
 
 
 EntryWrite = Callable[[Any], Awaitable[object]]
@@ -201,7 +201,7 @@ class _WriteAudit(UseCase[_AuditEntry, None]):
 class _WriteAuditAfterNesting(UseCase[_Order, None]):
     """Runs a use case on audit, then writes to audit itself, which it did not declare."""
 
-    def __init__(self, executor: RuntimeExecutor, entries: RepoFor[_AuditEntry]) -> None:
+    def __init__(self, executor: UseCaseExecutor, entries: RepoFor[_AuditEntry]) -> None:
         self.executor = executor
         self.entries = entries
 
@@ -255,7 +255,7 @@ class _WriteOrder(UseCase[_Order, None]):
 class _NestReadOnlyWriter(UseCase[_Order, None]):
     """Runs a writing use case as read-only inside its own execution."""
 
-    def __init__(self, executor: RuntimeExecutor, orders: RepoFor[_Order]) -> None:
+    def __init__(self, executor: UseCaseExecutor, orders: RepoFor[_Order]) -> None:
         self.executor = executor
         self.orders = orders
 
@@ -265,9 +265,9 @@ class _NestReadOnlyWriter(UseCase[_Order, None]):
 
 _READ_ONLY_RUNS: dict[str, Callable[[_Stores], Awaitable[object]]] = {
     "nested": lambda stores: stores.run(
-        _NestReadOnlyWriter(RuntimeExecutor(UseCaseCompiler()), stores.order_port)
+        _NestReadOnlyWriter(UseCaseExecutor(UseCaseCompiler()), stores.order_port)
     ),
-    "top-level": lambda stores: RuntimeExecutor(
+    "top-level": lambda stores: UseCaseExecutor(
         UseCaseCompiler(), coordinator=stores.coordinator()
     ).execute(_WriteOrder(stores.order_port), read_only=True),
 }
@@ -289,7 +289,7 @@ class TestUndeclaredWrite:
     async def test_after_a_nested_execution_on_another_store_the_outer_one_may_not_write_to_it(
         self, stores: _Stores
     ) -> None:
-        use_case = _WriteAuditAfterNesting(RuntimeExecutor(UseCaseCompiler()), stores.entry_port)
+        use_case = _WriteAuditAfterNesting(UseCaseExecutor(UseCaseCompiler()), stores.entry_port)
 
         with pytest.raises(UndeclaredStoreWrite, match="store 'audit'"):
             await stores.run(use_case)
@@ -329,7 +329,7 @@ class TestJoinedWrite:
     async def test_a_joined_repository_commits_with_the_invocation(self, stores: _Stores) -> None:
         outcome = await stores.run(_WriteBothStores(stores.order_port, stores.entry_port))
 
-        assert outcome.succeeded
+        assert outcome.has_succeeded
         assert {store.key for store in outcome.stores} == {DEFAULT_STORE, AUDIT}
         assert (await stores.orders.count(), await stores.entries.count()) == (1, 2)
 

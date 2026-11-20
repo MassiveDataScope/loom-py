@@ -19,7 +19,7 @@ from loom.core.job.delivery import JobDelivery
 from loom.core.job.job import Job
 from loom.core.job.outcome import JobPostponement
 from loom.core.job.policy import Backoff, Countdown
-from loom.core.job.timer import JobDelayRefused
+from loom.core.job.timer import JobDelayRefusedError
 from loom.core.use_case import Delivery
 from loom.jobs.inline import AsyncioJobTimer
 from loom.testing.jobs import ManualTimer
@@ -180,11 +180,11 @@ class TestRetries:
 
 class TestWithoutATimer:
     def test_dispatch_after_commit_refuses_a_countdown(self) -> None:
-        with pytest.raises(JobDelayRefused, match="60s"):
+        with pytest.raises(JobDelayRefusedError, match="60s"):
             Acme(timed=False).service.dispatch_after_commit(SucceedingJob, countdown=60)
 
     async def test_dispatch_now_refuses_a_countdown(self) -> None:
-        with pytest.raises(JobDelayRefused, match="60s"):
+        with pytest.raises(JobDelayRefusedError, match="60s"):
             await Acme(timed=False).service.dispatch_now(SucceedingJob, countdown=60)
 
     async def test_a_zero_countdown_still_runs(self) -> None:

@@ -9,11 +9,11 @@ from omegaconf import DictConfig, OmegaConf
 
 from loom.core.config import ConfigContext
 from loom.streaming import (
-    Backend,
     FromTopic,
     IntoTable,
     Process,
     StreamFlow,
+    TableEngine,
 )
 from loom.streaming.compiler import CompilationError, compile_flow
 
@@ -25,7 +25,7 @@ def _flow() -> StreamFlow[Order, Result]:
     sink = IntoTable(
         payload=Result,
         table="results",
-        backend=Backend.CLICKHOUSE,
+        engine=TableEngine.CLICKHOUSE,
         name="results_sink",
     )
     return StreamFlow(

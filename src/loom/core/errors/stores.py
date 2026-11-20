@@ -169,7 +169,7 @@ class NestedElevation(SystemError):
         )
 
 
-class StoresNotCommitted(SystemError):
+class StoresNotCommittedError(SystemError):
     """The stores of one invocation did not all end the same way.
 
     Some store committed, or wrote without a transaction, while another did
@@ -196,7 +196,7 @@ class StoresNotCommitted(SystemError):
         super().__init__(message, code=ErrorCode.STORES_NOT_COMMITTED)
 
     @classmethod
-    def of(cls, outcome: InvocationOutcome) -> StoresNotCommitted:
+    def from_outcome(cls, outcome: InvocationOutcome) -> StoresNotCommittedError:
         """The error for ``outcome``, whose message names every store and how it ended.
 
         Args:
@@ -205,7 +205,7 @@ class StoresNotCommitted(SystemError):
         stores = ", ".join(f"{store.key}={type(store).__name__}" for store in outcome.stores)
         return cls(f"the stores of this invocation did not all commit: {stores}", outcome)
 
-    def __reduce__(self) -> tuple[type[StoresNotCommitted], tuple[str]]:
+    def __reduce__(self) -> tuple[type[StoresNotCommittedError], tuple[str]]:
         return type(self), (self.message,)
 
 

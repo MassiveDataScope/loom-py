@@ -1,4 +1,4 @@
-"""An agent run is an execution acting as its caller, opened by the runtime around the run."""
+"""An agent run is an execution acting as its caller, opened by the host around the run."""
 
 from __future__ import annotations
 
@@ -18,8 +18,8 @@ class TestARun:
     ) -> None:
         engine = AcmeActingEngine()
 
-        async with make_runtime(engine) as runtime:
-            await runtime.run(AGENT, "p", identity=ALICE)
+        async with make_runtime(engine) as host:
+            await host.run(AGENT, "p", identity=ALICE)
 
         assert engine.acting == [ALICE, ALICE]
         assert engine.in_execution == [True, True]
@@ -31,8 +31,8 @@ class TestARun:
     ) -> None:
         engine = AcmeActingEngine()
 
-        async with make_runtime(engine) as runtime:
-            async with runtime.run_stream(AGENT, "p", identity=ALICE) as events:
+        async with make_runtime(engine) as host:
+            async with host.run_stream(AGENT, "p", identity=ALICE) as events:
                 inside = [current_execution() is not None async for _ in events]
             after = current_execution()
 
@@ -47,7 +47,7 @@ class TestTheHttpStream:
     ) -> None:
         engine = AcmeActingEngine()
 
-        async with make_runtime(engine) as runtime, serving(runtime) as app:
+        async with make_runtime(engine) as host, serving(host) as app:
             transport = httpx.ASGITransport(app=app)
             async with httpx.AsyncClient(transport=transport, base_url="http://acme") as client:
                 response = await client.post(f"{PREFIX}/{AGENT}/stream", json={"prompt": "p"})

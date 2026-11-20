@@ -6,7 +6,7 @@ from typing import Any
 
 import pytest
 
-from loom.core.engine.events import AbandonReason, EventKind, RuntimeEvent, Status
+from loom.core.engine.events import AbandonReason, EventKind, ExecutionEvent, Status
 from loom.core.errors import SystemError
 from loom.core.job.delivery import JobDelivery
 from loom.core.job.job import Job
@@ -33,9 +33,9 @@ class AcmeJob(Job[None]):
 
 class Metrics:
     def __init__(self) -> None:
-        self.events: list[RuntimeEvent] = []
+        self.events: list[ExecutionEvent] = []
 
-    def on_event(self, event: RuntimeEvent) -> None:
+    def on_event(self, event: ExecutionEvent) -> None:
         self.events.append(event)
 
 

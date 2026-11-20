@@ -118,7 +118,7 @@ class TestPendingDispatches:
         calls: list[str] = []
         add_pending_dispatch(lambda: calls.append("queued"))
 
-        with pytest.raises(RuntimeError, match="RuntimeExecutor owns the post-commit channel"):
+        with pytest.raises(RuntimeError, match="UseCaseExecutor owns the post-commit channel"):
             await flush_pending_dispatches()
 
         await bound_channel.drain(committed=False)

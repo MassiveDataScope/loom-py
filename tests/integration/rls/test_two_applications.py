@@ -43,10 +43,10 @@ class _Tickets:
         return Recipe(
             profile=SERVER_PROFILE,
             discovered=DiscoveryResult(models=(_Ticket,), use_cases=()),
-            default_store_backend="sqlalchemy",
+            default_store_plugin="sqlalchemy",
         )
 
-    def bind(self, application: Application) -> Application:
+    def mount(self, application: Application) -> Application:
         return application
 
 
@@ -80,7 +80,7 @@ async def _desk(application: Application) -> str:
         async with manager.session() as session:
             return str(await session.scalar(DESK))
     finally:
-        await manager.dispose()
+        await manager.close()
 
 
 class TestTwoApplications:

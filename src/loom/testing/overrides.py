@@ -21,7 +21,7 @@ from loom.core.stores.repository.registry import (
 if TYPE_CHECKING:
     from loom.composition.application import Application
     from loom.composition.project import Project
-    from loom.composition.recipe import Adapter, Recipe
+    from loom.composition.recipe import Recipe, Runtime
 
 
 class OverrideKind(StrEnum):
@@ -94,21 +94,21 @@ class Override:
         return self.key
 
 
-class OverrideAdapter:
-    """Apply test overrides to an adapter recipe during composition."""
+class OverrideRuntime:
+    """Apply test overrides to a runtime recipe during composition."""
 
-    def __init__(self, adapter: Adapter[Any], overrides: tuple[Override, ...]) -> None:
-        self._adapter = adapter
+    def __init__(self, runtime: Runtime[Any], overrides: tuple[Override, ...]) -> None:
+        self._runtime = runtime
         self._overrides = overrides
 
     def recipe(self, project: Project) -> Recipe:
         """Return the wrapped recipe with the test overrides."""
-        recipe = self._adapter.recipe(project)
+        recipe = self._runtime.recipe(project)
         return replace(
             recipe,
             overrides=(*recipe.overrides, *(override.install for override in self._overrides)),
         )
 
-    def bind(self, application: Application) -> Any:
-        """Bind the wrapped adapter to the composed application."""
-        return self._adapter.bind(application)
+    def mount(self, application: Application) -> Any:
+        """Bind the wrapped runtime to the composed application."""
+        return self._runtime.mount(application)

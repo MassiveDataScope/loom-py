@@ -5,7 +5,7 @@ considered part of the public API of the optional ``loom[celery]`` extra.
 
 The names load on first access: the composition imports
 :mod:`loom.celery.config` and :mod:`loom.celery.service` to dispatch jobs,
-and must not load the worker (its adapter, bootstrap and Celery signals)
+and must not load the worker (its runtime, bootstrap and Celery signals)
 by doing so.
 
 Install with::

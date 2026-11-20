@@ -14,9 +14,14 @@ from unittest.mock import MagicMock
 import pytest
 
 from loom.core.engine.compiler import CompilationError
-from loom.core.engine.events import EventKind, RuntimeEvent
-from loom.core.engine.executor import RuntimeExecutor
-from loom.core.errors import DelegationExpired, RuleViolation, RuleViolations, UndeclaredStoreWrite
+from loom.core.engine.events import EventKind, ExecutionEvent
+from loom.core.engine.executor import UseCaseExecutor
+from loom.core.errors import (
+    DelegationExpired,
+    RuleViolationError,
+    RuleViolationsError,
+    UndeclaredStoreWrite,
+)
 from loom.core.execution import current_execution
 from loom.core.identity import ANONYMOUS, current_identity
 from loom.core.job.context import flush_pending_dispatches
@@ -96,10 +101,10 @@ class TestLogs:
         self, make_executor: MakeExecutor, logger: AcmeRecordingLogger
     ) -> None:
         def bad_email(cmd: Any, fs: Any) -> None:
-            raise RuleViolation("email", "bad")
+            raise RuleViolationError("email", "bad")
 
         def bad_name(cmd: Any, fs: Any) -> None:
-            raise RuleViolation("name", "short")
+            raise RuleViolationError("name", "short")
 
         class RuleUseCase(UseCase[Any, None]):
             rules = [bad_email, bad_name]
@@ -109,7 +114,7 @@ class TestLogs:
 
         executor = make_executor(debug_execution=False, logger=logger)
         use_case = RuleUseCase()
-        with pytest.raises(RuleViolations):
+        with pytest.raises(RuleViolationsError):
             await executor.execute(use_case, payload={"email": "x@x.com", "name": "X"})
 
         [(event, fields)] = logger.calls
@@ -125,12 +130,12 @@ class TestLogs:
     ) -> None:
         class RaisesViolations(UseCase[Any, None]):
             async def execute(self) -> None:
-                raise RuleViolations([RuleViolation("email", "taken")])
+                raise RuleViolationsError([RuleViolationError("email", "taken")])
 
         executor = make_executor(logger=logger)
         use_case = RaisesViolations()
 
-        with pytest.raises(RuleViolations):
+        with pytest.raises(RuleViolationsError):
             await executor.execute(use_case)
 
         [(_, fields)] = logger.calls
@@ -210,7 +215,7 @@ class TestBuildFailure:
     """
 
     async def test_a_constructor_failure_raises_before_the_execution_starts(
-        self, executor: RuntimeExecutor, factory: UseCaseFactory
+        self, executor: UseCaseExecutor, factory: UseCaseFactory
     ) -> None:
         with pytest.raises(LookupError, match="acme constructor failed"):
             await executor.run(AcmeBroken, factory=factory, identity=ALICE)
@@ -303,7 +308,7 @@ class TestOneTerminalOutcome:
 
 
 class _RaisesOnStart(Metrics):
-    def on_event(self, event: RuntimeEvent) -> None:
+    def on_event(self, event: ExecutionEvent) -> None:
         if event.kind is EventKind.EXEC_START:
             raise RuntimeError("acme metrics down")
         super().on_event(event)
@@ -358,7 +363,7 @@ class TestUnstartedRunsLogOneTerminalLine:
 
         assert _terminal_lines(logger, "AcmeNoMarkersUseCase") == [("[FAIL]", "begin")]
 
-    async def test_a_metrics_adapter_raising_on_start(
+    async def test_a_metrics_recorder_raising_on_start(
         self, make_executor: MakeExecutor, logger: AcmeRecordingLogger
     ) -> None:
         metrics = _RaisesOnStart()
