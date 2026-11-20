@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import msgspec
 import pytest
 
 from loom.core.errors import MalformedJobMessage, PostCommitError, UnknownJob
@@ -53,7 +54,10 @@ class TestJobEnvelope:
 
 class TestJobEnvelopeTaskId:
     def test_a_message_without_a_task_id_decodes_to_none(self) -> None:
-        assert decode_job_envelope('{"job": "Task"}').task_id is None
+        wire = msgspec.to_builtins(make(JobEnvelope, job="Task"))
+        del wire["task_id"]
+
+        assert decode_job_envelope(msgspec.json.encode(wire).decode()).task_id is None
 
     def test_a_task_id_survives_the_wire(self) -> None:
         body = encode_job_message(

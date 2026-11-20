@@ -491,7 +491,7 @@ print([name for name in loaded if name in sys.modules])
     ) -> None:
         item: object = record("1", "a")
         if kind == "unknown":
-            item = record("1", "a", body=json.dumps({"job": "UnknownJob"}))
+            item = record("1", "a", job_name="UnknownJob")
         elif kind == "malformed":
             item = record("1", "a", body="{")
         elif kind == "null_payload":

@@ -2,7 +2,6 @@
 
 from __future__ import annotations
 
-import json
 from collections.abc import Callable, Iterator
 from pathlib import Path
 from typing import Any, ClassVar
@@ -187,14 +186,14 @@ class TestSettlementThroughTheHandler:
         self, serve: Serve, body_task_id: str | None, task_id: str
     ) -> None:
         AcmeRecordingJob.seen.clear()
-        body = json.dumps(
-            {
-                "job": AcmeRecordingJob.__qualname__,
-                "params": {"marker": "x"},
-                "task_id": body_task_id,
-            }
+        record = make_record(
+            "m-1",
+            "x",
+            job_name=AcmeRecordingJob.__qualname__,
+            task_id=body_task_id,
+            receive_count=4,
+            postponements=2,
         )
-        record = make_record("m-1", "x", body=body, receive_count=4, postponements=2)
 
         serve()({"Records": [record]}, None)
 
