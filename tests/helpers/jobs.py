@@ -20,7 +20,6 @@ from loom.core.engine.metrics import MetricsAdapter
 from loom.core.job.callback import ANY_CALLBACKS, CallbackOutcome, DispatchableCallbacks
 from loom.core.job.config import JobSettings
 from loom.core.job.delivery import JobDelivery
-from loom.core.job.inline import InlineJobTransport
 from loom.core.job.job import Job
 from loom.core.job.run import EnvelopeInvocation
 from loom.core.job.service import JobService
@@ -32,6 +31,7 @@ from loom.core.use_case.factory import UseCaseFactory, main_repository
 from loom.core.use_case.kinds import declare_kinds
 from loom.jobs.aws.queue import QueueConfig
 from loom.jobs.aws.sqs import SQSConfig, SQSJobTransport
+from loom.jobs.inline import InlineJobTransport
 from tests.helpers.celery import BrokerMessage, CeleryBroker
 from tests.helpers.composition import composition_project
 

@@ -11,12 +11,12 @@ from loom.core.engine.executor import RuntimeExecutor
 from loom.core.errors import JobTimeoutError
 from loom.core.job.context import clear_pending_dispatches, flush_pending_dispatches
 from loom.core.job.handle import JobHandle
-from loom.core.job.inline import InlineJobTransport
 from loom.core.job.job import Job
 from loom.core.job.service import JobService
 from loom.core.stores.catalog import DEFAULT_STORE
 from loom.core.stores.uow.coordinator import OrderedCommits
 from loom.core.use_case.use_case import UseCase
+from loom.jobs.inline import InlineJobTransport
 from loom.testing import RecordingJobTransport
 from tests.helpers.jobs import EmailJob, JobKernel
 from tests.unit.core.engine._lifecycle_doubles import Log, StubUnitOfWorkFactory

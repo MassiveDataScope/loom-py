@@ -17,15 +17,15 @@ from loom.core.connections.aws import AwsClients
 from loom.core.di.scope import Scope
 from loom.core.job.callback import DispatchableCallbacks, JobCallback
 from loom.core.job.config import JobSettings
-from loom.core.job.inline import InlineJobTransport
 from loom.core.job.job import Job
 from loom.core.job.service import JobService
-from loom.core.job.timer import AsyncioJobTimer, JobTimer
+from loom.core.job.timer import JobTimer
 from loom.core.job.transport import JobTransport
 from loom.core.logger import get_logger
 from loom.core.observability.runtime import ObservabilityRuntime
 from loom.core.plugins.optional import MissingExtraError
 from loom.core.symbols import import_symbol
+from loom.jobs.inline import AsyncioJobTimer, InlineJobTransport
 
 if TYPE_CHECKING:
     from loom.celery.config import CeleryConfig
@@ -220,7 +220,7 @@ def configure_job_service(
     :class:`~loom.core.job.service.JobService` sends to Celery.
     Without it, :class:`~loom.celery.service.CeleryJobTransport` is registered
     when a ``celery`` section is present and the ``loom[celery]`` extra is
-    installed, :class:`~loom.core.job.service.InlineJobTransport` otherwise. A
+    installed, :class:`~loom.jobs.inline.InlineJobTransport` otherwise. A
     ``JobService`` a caller's DI module already registered is kept.
 
     Args:
