@@ -197,7 +197,7 @@ class LambdaAdapter:
             assert trigger.queue is not None
             return recipe, functools.partial(_bind_jobs, declared, trigger.queue.name)
         job_type = trigger_job(name, trigger, declared)
-        if trigger.queued:
+        if trigger.is_queued:
             return recipe, functools.partial(_bind_queued_events, name, trigger, job_type)
         return recipe, functools.partial(_bind_direct_events, name, trigger, job_type)
 
