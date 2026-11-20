@@ -18,9 +18,9 @@ except ImportError:
 
 from loom.core.connections import ClickHouseConnection
 from loom.core.logger import get_logger
-from loom.etl.backends.polars._dtype import loom_type_to_polars
 from loom.etl.declarative.expr._predicate_dialect import PredicateDialect, fold_predicate
 from loom.etl.declarative.source._specs import ClickHouseSourceSpec
+from loom.etl.engines.polars._dtype import loom_type_to_polars
 from loom.etl.io._clickhouse_connection import open_client, resolve_connection
 from loom.etl.ports.contracts import ClientCommandExecutor, SourceReader
 from loom.etl.schema._schema import ColumnSchema

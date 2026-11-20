@@ -13,8 +13,8 @@ from loom.core.config import ConfigContext, ConfigKey
 from loom.core.plugins.optional import import_optional
 from loom.etl._uri import is_cloud_path
 from loom.etl.checkpoint import CheckpointStore, FsspecTempCleaner, TempCleaner
-from loom.etl.checkpoint._backends._polars import _PolarsCheckpointIO
-from loom.etl.checkpoint._backends._spark import _SparkCheckpointIO
+from loom.etl.checkpoint._io._polars import _PolarsCheckpointIO
+from loom.etl.checkpoint._io._spark import _SparkCheckpointIO
 from loom.etl.checkpoint._options import encryption_options
 from loom.etl.lineage._config import LineageConfig
 from loom.etl.lineage.sinks import LineageStore, LineageWriter, TableLineageStore

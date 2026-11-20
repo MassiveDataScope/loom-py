@@ -15,8 +15,8 @@ require_pyspark()
 
 from loom.core.connections import ClickHouseConnection  # noqa: E402
 from loom.core.model.redaction import Dsn, RedactedMap, Secret  # noqa: E402
-from loom.etl.backends.spark.engine import SparkEtlEngine  # noqa: E402
-from loom.etl.checkpoint._backends._polars import _PolarsCheckpointIO  # noqa: E402
+from loom.etl.checkpoint._io._polars import _PolarsCheckpointIO  # noqa: E402
+from loom.etl.engines.spark.engine import SparkEtlEngine  # noqa: E402
 from loom.etl.lineage._config import LineageConfig  # noqa: E402
 from loom.etl.lineage._records import EventName, PipelineRunRecord, RunStatus  # noqa: E402
 from loom.etl.lineage.sinks import TableLineageStore  # noqa: E402
@@ -62,7 +62,7 @@ class TestMakeBackends:
     # ---------------------------------------------------------------------------
 
     def test_make_backends_polars_path_defaults_returns_polars_types(self, tmp_path: Path) -> None:
-        from loom.etl.backends.polars import PolarsSourceReader, PolarsTargetWriter
+        from loom.etl.engines.polars import PolarsSourceReader, PolarsTargetWriter
 
         config = StorageConfig(defaults=_path_defaults(str(tmp_path / "test-lake")))
         reader, writer = make_backends(config)
@@ -78,7 +78,7 @@ class TestMakeBackends:
     def test_make_backends_prefers_spark_when_session_is_provided(self) -> None:
         from unittest.mock import MagicMock
 
-        from loom.etl.backends.spark import SparkSourceReader, SparkTargetWriter
+        from loom.etl.engines.spark import SparkSourceReader, SparkTargetWriter
 
         spark = MagicMock()
         config = StorageConfig(engine="polars")
@@ -88,7 +88,7 @@ class TestMakeBackends:
         assert isinstance(writer, SparkTargetWriter)
 
     def test_make_backends_polars_catalog_route_builds_backends(self) -> None:
-        from loom.etl.backends.polars import PolarsSourceReader, PolarsTargetWriter
+        from loom.etl.engines.polars import PolarsSourceReader, PolarsTargetWriter
 
         config = StorageConfig(
             catalogs={
@@ -104,7 +104,7 @@ class TestMakeBackends:
         assert isinstance(writer, PolarsTargetWriter)
 
     def test_make_backends_polars_mixed_routes_builds_backends(self, tmp_path: Path) -> None:
-        from loom.etl.backends.polars import PolarsSourceReader, PolarsTargetWriter
+        from loom.etl.engines.polars import PolarsSourceReader, PolarsTargetWriter
 
         config = StorageConfig(
             defaults=_path_defaults(str(tmp_path / "lake")),
@@ -136,7 +136,7 @@ class TestMakeBackends:
     def test_make_backends_spark_catalog_route_builds_backends(self) -> None:
         from unittest.mock import MagicMock
 
-        from loom.etl.backends.spark import SparkSourceReader, SparkTargetWriter
+        from loom.etl.engines.spark import SparkSourceReader, SparkTargetWriter
 
         spark = MagicMock()
         config = StorageConfig(
@@ -234,7 +234,7 @@ class TestLineageWiring:
 
         monkeypatch = pytest.MonkeyPatch()
         monkeypatch.setattr(
-            "loom.etl.backends.spark.engine.SparkTargetWriter", _FakeSparkTargetWriter
+            "loom.etl.engines.spark.engine.SparkTargetWriter", _FakeSparkTargetWriter
         )
         try:
             writer = provider.create_lineage_writer(config, store, spark=spark)
@@ -245,7 +245,7 @@ class TestLineageWiring:
         assert captured["policy"] is MissingTablePolicy.CREATE
 
     def test_polars_provider_lineage_writer_honors_missing_table_policy(self) -> None:
-        from loom.etl.backends.polars.engine import PolarsEtlEngine
+        from loom.etl.engines.polars.engine import PolarsEtlEngine
 
         captured: dict[str, MissingTablePolicy] = {}
 
@@ -266,7 +266,7 @@ class TestLineageWiring:
 
         monkeypatch = pytest.MonkeyPatch()
         monkeypatch.setattr(
-            "loom.etl.backends.polars.engine.PolarsTargetWriter", _FakePolarsTargetWriter
+            "loom.etl.engines.polars.engine.PolarsTargetWriter", _FakePolarsTargetWriter
         )
         try:
             writer = provider.create_lineage_writer(config, store)

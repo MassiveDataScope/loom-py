@@ -100,7 +100,7 @@ on any target builder (:class:`IntoTable`, :class:`IntoFile`,
     :meth:`~loom.etl.ports.contracts.TargetWriter.write`.  The executor
     intercepts it before the write path and routes it to
     :class:`~loom.etl.ports.contracts.ClientCommandExecutor`.  Both
-    :class:`~loom.etl.backends._write_policy.WritePolicy` and
+    :class:`~loom.etl.engines._write_policy.WritePolicy` and
     :class:`~loom.etl.io.targets.ClickHouseTargetWriter` reject it explicitly
     with a :exc:`TypeError` as a defensive guard.
 """

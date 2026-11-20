@@ -13,9 +13,9 @@ from typing import Any
 import polars as pl
 
 from loom.core.logger import get_logger
-from loom.etl.backends.polars._dtype import loom_type_to_polars
 from loom.etl.declarative.source._from_dynamodb import FromDynamoDB
 from loom.etl.declarative.source._specs import DynamoDBSourceSpec, ExtraFieldsMode
+from loom.etl.engines.polars._dtype import loom_type_to_polars
 from loom.etl.io.sources._dynamodb_items import normalize_dynamo_item
 from loom.etl.io.sources._dynamodb_predicate import predicate_to_dynamo
 from loom.etl.io.sources._mongo_batch import (

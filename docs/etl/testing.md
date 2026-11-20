@@ -50,7 +50,7 @@ the reader's own decoding (including the normalisation of fields whose JSON
 type changes between rows) on an eager or lazy frame:
 
 ```python
-from loom.etl.backends.polars import decode_json_columns
+from loom.etl.engines.polars import decode_json_columns
 
 events = decode_json_columns(raw_events, EnrichEvents.events.json_columns)
 result = EnrichEvents().execute(params, events=events.lazy())

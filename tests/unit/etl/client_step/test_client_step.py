@@ -322,7 +322,7 @@ class TestClientSpecWriteGuards:
         """Verify the ClientSpec guard is present in _write_policy.py source code."""
         import inspect
 
-        from loom.etl.backends import _write_policy
+        from loom.etl.engines import _write_policy
 
         src = inspect.getsource(_write_policy)
         assert "ClientSpec" in src, "_write_policy must import and guard against ClientSpec"

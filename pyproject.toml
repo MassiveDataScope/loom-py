@@ -199,8 +199,8 @@ bearer = "loom.ai.remote_auth:bearer_token"
 static = "loom.ai.remote_auth:static_headers"
 
 [project.entry-points."loom.etl.engines"]
-polars = "loom.etl.backends.polars.engine:PolarsEtlEngine"
-spark = "loom.etl.backends.spark.engine:SparkEtlEngine"
+polars = "loom.etl.engines.polars.engine:PolarsEtlEngine"
+spark = "loom.etl.engines.spark.engine:SparkEtlEngine"
 
 # Store plugins a store's `backend` key resolves. A deployment registers
 # its own under the same group from its own package.
@@ -416,9 +416,9 @@ extend-immutable-calls = [
 "tests/unit/core/errors/test_errors.py" = ["TID251"]
 "tests/unit/core/repository/dynamodb/test_backend.py" = ["TID251"]
 "tests/unit/core/repository/test_record_layout.py" = ["TID251"]
-"tests/unit/etl/backends/test_upsert_delete_flag_support.py" = ["TID251"]
-"tests/unit/etl/backends/test_write_policy_historify.py" = ["TID251"]
-"tests/unit/etl/checkpoint/backends/test_checkpoint_polars.py" = ["TID251"]
+"tests/unit/etl/engines/test_upsert_delete_flag_support.py" = ["TID251"]
+"tests/unit/etl/engines/test_write_policy_historify.py" = ["TID251"]
+"tests/unit/etl/checkpoint/io/test_checkpoint_polars.py" = ["TID251"]
 "tests/unit/etl/checkpoint/test_cleaners.py" = ["TID251"]
 "tests/unit/etl/client_step/test_client_step.py" = ["TID251"]
 "tests/unit/etl/io/sources/test_mongo_reader.py" = ["TID251"]

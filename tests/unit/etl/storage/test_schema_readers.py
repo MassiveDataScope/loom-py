@@ -8,7 +8,7 @@ import polars as pl
 import pytest
 from deltalake import write_deltalake
 
-from loom.etl.backends.polars._schema import (
+from loom.etl.engines.polars._schema import (
     PolarsPhysicalSchema,
     read_delta_physical_schema,
 )
@@ -70,7 +70,7 @@ class TestDeltaPhysicalSchema:
             def metadata(self) -> _FakeMetadata:
                 return _FakeMetadata()
 
-        monkeypatch.setattr("loom.etl.backends.polars._schema.DeltaTable", _FakeDeltaTable)
+        monkeypatch.setattr("loom.etl.engines.polars._schema.DeltaTable", _FakeDeltaTable)
 
         storage_options = {
             "databricks_workspace_url": "https://dbc.example",
