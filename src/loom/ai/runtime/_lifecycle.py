@@ -16,7 +16,7 @@ from collections.abc import AsyncIterator, Callable, Iterable, Mapping, Sequence
 from contextlib import AbstractAsyncContextManager, AsyncExitStack, asynccontextmanager
 from dataclasses import dataclass
 from types import MappingProxyType, TracebackType
-from typing import Any, Self
+from typing import Any, Self, cast
 from uuid import uuid4
 
 from loom.ai._filters import select_names
@@ -579,7 +579,9 @@ class AgentRuntime:
                 ``CONVERSATION_INVOKER_MISSING`` and ``USECASE_INVOKER_MISSING``
                 naming the agents that need the missing invoker.
         """
-        invoker = self._container.resolve_or_none(ApplicationInvoker)
+        invoker = cast(
+            ApplicationInvoker | None, self._container.resolve_or_none(ApplicationInvoker)
+        )
         if invoker is None:
             self._refuse_plans_needing_an_invoker()
         elif getattr(invoker, "identity", None) is not None:

@@ -455,6 +455,38 @@ module = [
 ]
 ignore_missing_imports = true
 
+# bytewax is an extra installed only on Python < 3.13. fastmcp, and the mcp
+# package it brings, live in the opt-in `mcp-tests` group. Neither is in the
+# default environment this gate type-checks.
+[[tool.mypy.overrides]]
+module = [
+    "bytewax",
+    "bytewax.*",
+]
+ignore_missing_imports = true
+
+[[tool.mypy.overrides]]
+module = [
+    "fastmcp",
+    "fastmcp.*",
+    "mcp",
+    "mcp.*",
+]
+ignore_missing_imports = true
+
+# Those modules subclass bytewax or fastmcp classes. With the packages
+# absent the bases are Any, and strict mypy rejects subclassing Any. The
+# flag applies to the module being checked, not to the missing package.
+[[tool.mypy.overrides]]
+module = [
+    "loom.ai.engines.pydantic_ai._transport",
+    "loom.streaming.bytewax._adapter",
+    "loom.streaming.bytewax._runtime_io",
+    "loom.streaming.bytewax.handlers.storage",
+    "loom.streaming.mongo._bytewax_source",
+]
+disallow_subclassing_any = false
+
 [[tool.mypy.overrides]]
 module = [
     "loom.stores.sqlalchemy.scoped_ddl",
@@ -520,7 +552,7 @@ gate = ["lint", "types", "test-fast", "test-int"]
 
 [tool.poe.tasks.types]
 help = "mypy src, failing only when the error count grows past MYPY_BASELINE"
-env = { MYPY_BASELINE = "51" }
+env = { MYPY_BASELINE = "4" }
 shell = """
 out=$(mypy src 2>&1)
 found=$(printf '%s\\n' "$out" | sed -n 's/^Found \\([0-9]*\\) error.*/\\1/p')

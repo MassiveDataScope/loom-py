@@ -111,7 +111,7 @@ class _OpenToolset:
         try:
             try:
                 if self.in_flight:
-                    await self.toolset.client.close()  # type: ignore[no-untyped-call]
+                    await cast(Callable[[], Awaitable[None]], self.toolset.client.close)()
             finally:
                 if self.held:
                     await self.toolset.__aexit__(None, None, None)
