@@ -22,7 +22,7 @@ from loom.testing.runner import (
 from loom.testing.serverless import TEST_QUEUE, LambdaEvent
 
 if TYPE_CHECKING:
-    from loom.testing.data import Factory, make
+    from loom.testing.data import SampleFactory, make
     from loom.testing.http_harness import HttpTestHarness
     from loom.testing.jwt_auth import JwtTestAuth, jwt_test_auth
     from loom.testing.lambda_http import LambdaTestClient
@@ -43,7 +43,7 @@ __all__ = [
     "InMemoryRepository",
     "JobTestData",
     "JwtTestAuth",
-    "Factory",
+    "SampleFactory",
     "TEST_QUEUE",
     "LambdaEvent",
     "LambdaTestClient",
@@ -108,7 +108,7 @@ _LAZY_EXPORTS: Final = {
         "Install loom-kernel[lambda,testing] to test Lambda HTTP functions.",
     ),
     "LambdaWorker": _LazyExport(("loom.testing.lambda_jobs",)),
-    **dict.fromkeys(("Factory", "make"), _DATA),
+    **dict.fromkeys(("SampleFactory", "make"), _DATA),
     **dict.fromkeys(("JwtTestAuth", "jwt_test_auth"), _JWT),
     **dict.fromkeys(
         ("RepositoryIntegrationHarness", "ScenarioDict", "build_repository_harness"),

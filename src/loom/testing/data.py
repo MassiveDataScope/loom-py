@@ -15,7 +15,7 @@ T = TypeVar("T")
 _SEED = 20261120
 
 
-class Factory(DataclassFactory[T], MsgspecFactory[T], Generic[T]):  # type: ignore[type-var]
+class SampleFactory(DataclassFactory[T], MsgspecFactory[T], Generic[T]):  # type: ignore[type-var]
     """Base factory for dataclasses and msgspec Structs, deterministic by seed.
 
     It is registered as a polyfactory base factory, so ``make(Model)`` and every
@@ -25,7 +25,7 @@ class Factory(DataclassFactory[T], MsgspecFactory[T], Generic[T]):  # type: igno
     invariant, a reference to another type) gets a subclass in the area that
     owns the type::
 
-        class BackoffFactory(Factory[Backoff]):
+        class BackoffFactory(SampleFactory[Backoff]):
             __set_as_default_factory_for_type__ = True
 
             first_s = Use(lambda: 1.0)
@@ -63,9 +63,9 @@ class Factory(DataclassFactory[T], MsgspecFactory[T], Generic[T]):  # type: igno
 
     @classmethod
     def _declares(cls, name: str) -> bool:
-        """Report whether a factory between this class and ``Factory`` declares *name*."""
+        """Report whether a factory between this class and ``SampleFactory`` declares *name*."""
         for owner in cls.__mro__:
-            if owner is Factory:
+            if owner is SampleFactory:
                 return False
             if name in vars(owner):
                 return True
@@ -85,7 +85,7 @@ def make(model: type[T], /, **fields: Any) -> T:
     Every value in *fields* is used as given. Every other field is generated
     deterministically (the same call builds the same values), honouring the
     ``Annotated`` constraints of the type, or comes from a registered
-    ``Factory`` subclass. A test must pass explicitly every value it asserts
+    ``SampleFactory`` subclass. A test must pass explicitly every value it asserts
     on, because generated values may change.
 
     Args:
@@ -95,6 +95,6 @@ def make(model: type[T], /, **fields: Any) -> T:
     Returns:
         A real instance of *model*.
     """
-    Factory.restart_sequence()
-    builder: type[BaseFactory[T]] = Factory._get_or_create_factory(model)  # noqa: SLF001
+    SampleFactory.restart_sequence()
+    builder: type[BaseFactory[T]] = SampleFactory._get_or_create_factory(model)  # noqa: SLF001
     return builder.build(**fields)
