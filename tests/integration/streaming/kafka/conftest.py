@@ -30,8 +30,8 @@ from confluent_kafka.admin import AdminClient, NewTopic
 
 from loom.core.model import LoomFrozenStruct
 from loom.streaming.compiler._plan import CompiledMultiSource, CompiledSingleSource
+from loom.streaming.core import DispatchTable
 from loom.streaming.kafka._config import ConsumerSettings
-from loom.streaming.kafka._wire import DispatchTable
 
 BOOTSTRAP_ENV_VAR = "LOOM_KAFKA_IT_BOOTSTRAP"
 DEFAULT_BOOTSTRAP = "localhost:19092"

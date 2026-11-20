@@ -2,8 +2,6 @@
 
 from __future__ import annotations
 
-from collections.abc import Mapping
-from dataclasses import dataclass
 from typing import Any, Generic, TypeAlias, TypeVar
 
 import msgspec
@@ -11,6 +9,7 @@ import msgspec
 from loom.core.logger import get_logger
 from loom.core.model import LoomFrozenStruct, LoomStruct
 from loom.core.tracing import generate_trace_id
+from loom.streaming.core._dispatch import DispatchTable
 from loom.streaming.core._errors import ErrorEnvelope, ErrorKind
 from loom.streaming.core._message import Message, MessageMeta
 from loom.streaming.kafka._codec import KafkaCodec
@@ -57,23 +56,6 @@ class _ErrorPayloadProbe(msgspec.Struct, frozen=True):
 class _EnvelopeErrorProbe(msgspec.Struct, frozen=True):
     meta: _MetadataProbe
     payload: _ErrorPayloadProbe
-
-
-@dataclass(frozen=True)
-class DispatchTable:
-    """Pre-built decode dispatch table for heterogeneous Kafka topics.
-
-    Args:
-        plain: Maps outer ``message_type`` strings to their payload types.
-        error: Maps inner ``ErrorEnvelope.payload_type`` strings to the
-            corresponding ``ErrorEnvelope[T]`` generic alias.
-        wire: Maps outer wire-error ``message_type`` strings to their payload
-            types.
-    """
-
-    plain: Mapping[str, type[LoomStruct | LoomFrozenStruct]]
-    error: Mapping[str, Any]
-    wire: Mapping[str, type[LoomStruct | LoomFrozenStruct]]
 
 
 class DecodeOk(LoomFrozenStruct, Generic[PayloadT], frozen=True):

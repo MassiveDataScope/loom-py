@@ -13,12 +13,12 @@ import pytest
 
 from loom.core.model import LoomFrozenStruct
 from loom.streaming import ErrorKind
+from loom.streaming.core import DispatchTable
 from loom.streaming.core._errors import ErrorEnvelope
 from loom.streaming.kafka import (
     ConsumerSettings,
     DecodeError,
     DecodeOk,
-    DispatchTable,
     KafkaConsumerClient,
     KafkaRecord,
     MsgspecCodec,

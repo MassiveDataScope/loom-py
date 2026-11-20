@@ -26,10 +26,11 @@ from loom.streaming.compiler.phases.validate import (
     node_output_shape,
     walk_process_nodes,
 )
+from loom.streaming.core import DispatchTable
 from loom.streaming.core._errors import ErrorEnvelope
 from loom.streaming.graph._flow import StreamFlow
 from loom.streaming.kafka._config import KafkaSettings
-from loom.streaming.kafka._wire import DecodeError, DispatchTable
+from loom.streaming.kafka._wire import DecodeError
 from loom.streaming.mongo._config import load_mongo_config
 from loom.streaming.nodes._boundary import FromMultiTypeTopic, FromTopic, IntoTopic
 from loom.streaming.nodes._branches import is_branching_node, iter_branches
