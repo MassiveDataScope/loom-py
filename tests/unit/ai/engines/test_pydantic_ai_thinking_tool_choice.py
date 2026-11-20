@@ -21,7 +21,7 @@ from pydantic_ai.models import Model
 from pydantic_ai.models.bedrock import BedrockConverseModel
 from pydantic_ai.providers.bedrock import BedrockProvider
 
-from loom.ai.engines.pydantic_ai.provider import PydanticAIEngineProvider
+from loom.ai.engines.pydantic_ai.plugin import PydanticAIEngineProvider
 from loom.ai.engines.pydantic_ai.providers._shared import model_settings
 from loom.ai.inference import InferenceTarget
 from loom.ai.pricing import ModelPrice

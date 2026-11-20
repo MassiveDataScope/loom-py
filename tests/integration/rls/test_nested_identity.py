@@ -27,7 +27,7 @@ from loom.composition import Project
 from loom.core.errors import NestedElevation, NestedIdentityMismatch, UndeclaredStoreWrite
 from loom.core.identity import Identity, reset_identity, set_identity
 from loom.core.use_case.invoker import AppInvoker
-from loom.rest.fastapi.adapter import FastAPIAdapter
+from loom.rest.fastapi.runtime import FastAPIAdapter
 from loom.stores.sqlalchemy.rls import create_schema
 from tests.integration.agnosticism import notes
 from tests.integration.rls.apps.nested_identity import (

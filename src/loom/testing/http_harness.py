@@ -33,7 +33,7 @@ from loom.core.config import ConfigContext
 from loom.core.di.container import LoomContainer
 from loom.core.environment import resolve_environment
 from loom.core.observability.config import ObservabilityConfig
-from loom.core.observability.runtime import ObservabilityRuntime
+from loom.core.observability.observability import ObservabilityRuntime
 from loom.core.stores import SERVER_PROFILE
 from loom.rest.compiler import RouteSources
 from loom.rest.fastapi.app import create_fastapi_app

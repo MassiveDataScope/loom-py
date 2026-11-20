@@ -8,7 +8,7 @@ from tests.helpers.version_limited_extras import require_bytewax
 
 require_bytewax()
 
-from loom.core.observability.runtime import ObservabilityRuntime  # noqa: E402
+from loom.core.observability.observability import ObservabilityRuntime  # noqa: E402
 from loom.streaming.bytewax import _adapter  # noqa: E402
 from loom.streaming.compiler import CompiledSink  # noqa: E402
 from loom.streaming.core._errors import ErrorKind  # noqa: E402

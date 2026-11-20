@@ -38,7 +38,7 @@ Testing stubs::
 
 Namespaced API (discoverable by bounded context)::
 
-    from loom.etl import declarative, pipeline, runner, schema, storage, runtime
+    from loom.etl import declarative, pipeline, runner, schema, storage, ports
 
 Internal modules (``_*.py``) and ``loom.etl.compiler._*`` are not part of
 the public API and may change without notice.
@@ -120,15 +120,15 @@ from loom.etl.pipeline import (
     StepSQL,
     params,
 )
-from loom.etl.runner import ETLRunner
-from loom.etl.runner.errors import UnsupportedFormatError
-from loom.etl.runtime.contracts import (
+from loom.etl.ports.contracts import (
     AgentBatchRunner,
     ClientCommandExecutor,
     SourceReader,
     TableDiscovery,
     TargetWriter,
 )
+from loom.etl.runner import ETLRunner
+from loom.etl.runner.errors import UnsupportedFormatError
 from loom.etl.schema import (
     ArrayType,
     CategoricalType,

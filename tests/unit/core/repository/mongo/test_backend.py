@@ -13,7 +13,7 @@ from typing import Any
 import pytest
 
 import loom.connections.mongo.client as mongo_island
-import loom.stores.mongo.backend as backend_module
+import loom.stores.mongo.plugin as backend_module
 from loom.core.config import ConfigContext, ConfigError
 from loom.core.di.container import LoomContainer
 from loom.core.model import BaseModel, ColumnField
@@ -23,7 +23,7 @@ from loom.core.stores.profile import SERVER_PROFILE, WORKER_PROFILE, RuntimeProf
 from loom.core.stores.repository import Creatable
 from loom.core.stores.uow.coordinator import OrderedCommits
 from loom.core.stores.uow.scope import Frame, invocation
-from loom.stores.mongo.backend import MongoBackend
+from loom.stores.mongo.plugin import MongoBackend
 from loom.stores.mongo.repository import MongoRepository
 from loom.stores.mongo.uow import MongoSessions, MongoUnitOfWorkFactory
 from tests.helpers.persistence import build_backend

@@ -19,7 +19,7 @@ from pydantic_ai.models.typesafe import TypeSafeModel
 from loom.ai.compiler._plan import AgentPlan, CompiledInstruction
 from loom.ai.engines.pydantic_ai._models import SUPPORTED_PROVIDERS, resolve_model
 from loom.ai.engines.pydantic_ai._spec import build_agent_spec, build_output_type
-from loom.ai.engines.pydantic_ai.provider import PydanticAIEngineProvider
+from loom.ai.engines.pydantic_ai.plugin import PydanticAIEngineProvider
 from loom.ai.errors import AgentCompilationError, AgentErrorCode
 from loom.ai.inference import InferenceTarget
 from loom.core.config import ConfigError
@@ -321,8 +321,8 @@ class _FromSpecRecorder:
 def from_spec(monkeypatch: pytest.MonkeyPatch) -> _FromSpecRecorder:
     """Patch ``Agent.from_spec`` and record the provider's marker, in its module."""
     recorder = _FromSpecRecorder()
-    monkeypatch.setattr("loom.ai.engines.pydantic_ai.provider.Agent.from_spec", recorder)
-    monkeypatch.setattr("loom.ai.engines.pydantic_ai.provider.build_output_type", recorder.build)
+    monkeypatch.setattr("loom.ai.engines.pydantic_ai.plugin.Agent.from_spec", recorder)
+    monkeypatch.setattr("loom.ai.engines.pydantic_ai.plugin.build_output_type", recorder.build)
     return recorder
 
 

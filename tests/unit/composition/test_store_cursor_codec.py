@@ -19,7 +19,7 @@ from loom.core.model import BaseModel, ColumnField
 from loom.core.stores import SERVER_PROFILE, StoreRuntime
 from loom.core.stores.none import NoneBackend
 from loom.core.stores.repository import CursorCodec
-from loom.stores.sqlalchemy.backend import SQLAlchemyBackend
+from loom.stores.sqlalchemy.plugin import SQLAlchemyBackend
 from tests.helpers.composition import composition_project
 
 _SQLITE = {"default": {"backend": "sqlalchemy", "url": "sqlite+aiosqlite:///:memory:"}}

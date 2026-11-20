@@ -11,11 +11,11 @@ from typing import Any
 
 import pytest
 
-import loom.stores.dynamodb.backend as backend_module
+import loom.stores.dynamodb.plugin as backend_module
 from loom.core.config import ConfigContext
 from loom.core.stores import StoreWiring
 from loom.core.stores.profile import SERVER_PROFILE
-from loom.stores.dynamodb.backend import DynamoDBBackend
+from loom.stores.dynamodb.plugin import DynamoDBBackend
 from loom.stores.dynamodb.repository import DynamoDBRepository
 from tests.helpers.aws import REGION
 from tests.helpers.dynamodb import MotoTable

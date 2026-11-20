@@ -22,7 +22,7 @@ from loom.core.engine.executor import RuntimeExecutor
 from loom.core.environment import Environment
 from loom.core.model import BaseModel
 from loom.core.observability.config import ObservabilityConfig
-from loom.core.observability.runtime import ObservabilityRuntime
+from loom.core.observability.observability import ObservabilityRuntime
 from loom.core.stores import SERVER_PROFILE
 from loom.core.stores.catalog import DEFAULT_STORE, StoreKey
 from loom.core.stores.uow.abc import UnitOfWorkFactory

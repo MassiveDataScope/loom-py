@@ -26,7 +26,7 @@ from loom.etl.declarative.target._table import ReplaceWhereSpec
 from loom.etl.declarative.target._temp import TempFanInSpec, TempSpec
 from loom.etl.executor import ETLExecutor
 from loom.etl.lineage._records import RunContext
-from loom.etl.runtime.contracts import SourceReader, TargetWriter
+from loom.etl.ports.contracts import SourceReader, TargetWriter
 from loom.etl.schema._schema import ColumnSchema, LoomType, SchemaError
 from loom.etl.testing._delta import _DeltaRoot
 from loom.etl.testing._result import StepResult

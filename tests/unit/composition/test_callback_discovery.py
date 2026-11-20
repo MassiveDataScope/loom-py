@@ -7,7 +7,7 @@ from pathlib import Path
 
 import pytest
 
-from loom.celery.adapter import CeleryAdapter
+from loom.celery.runtime import CeleryAdapter
 from loom.composition import AppConfig, Project, Recipe
 from loom.core.bootstrap import BootstrapError
 from loom.core.config import ConfigContext

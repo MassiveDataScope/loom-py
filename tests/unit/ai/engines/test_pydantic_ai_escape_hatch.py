@@ -28,8 +28,8 @@ from loom.ai.declarative import PolicySpec
 from loom.ai.engines.pydantic_ai import NativeAgent, PydanticAIEngineProvider, native_agent
 from loom.ai.engines.pydantic_ai._engine import PydanticAIEngine
 from loom.ai.errors import AgentRunError, AgentRunErrorCode
-from loom.ai.runtime import AgentRuntime
-from loom.ai.runtime._chain import current_chain
+from loom.ai.execution import AgentRuntime
+from loom.ai.execution._chain import current_chain
 from loom.core.di import LoomContainer
 from loom.core.execution import ExecutionScope
 from loom.core.identity import Identity

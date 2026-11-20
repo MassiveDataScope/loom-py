@@ -12,8 +12,8 @@ and classifying failures.
 
 :func:`create_a2a_client` is exported beside the provider because it is not
 part of the engine contract: it is the
-:data:`~loom.ai.runtime.A2AClientFactory` a composition root hands to
-:class:`~loom.ai.runtime.AgentRuntime`, so that an outbound grant is validated
+:data:`~loom.ai.execution.A2AClientFactory` a composition root hands to
+:class:`~loom.ai.execution.AgentRuntime`, so that an outbound grant is validated
 against the live remote at start-up rather than on its first use. The MCP
 counterpart is ``PydanticAIEngineProvider.mcp_client_factory`` rather than a
 free function, because the session it opens is the very toolset the run path
@@ -37,7 +37,7 @@ from loom.ai.engines.pydantic_ai._a2a import create_a2a_client
 from loom.ai.engines.pydantic_ai._errors import as_run_error
 from loom.ai.engines.pydantic_ai._escape import NativeAgent, native_agent
 from loom.ai.engines.pydantic_ai._mcp import create_mcp_client
-from loom.ai.engines.pydantic_ai.provider import PydanticAIEngineProvider
+from loom.ai.engines.pydantic_ai.plugin import PydanticAIEngineProvider
 
 __all__ = [
     "NativeAgent",

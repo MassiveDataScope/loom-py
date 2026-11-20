@@ -2,7 +2,7 @@
 
 Nothing here touches the network, a credential or a token: every live client
 is a local stub and every engine replays a fixed script.  The module
-deliberately imports no symbol from ``loom.ai.runtime`` or
+deliberately imports no symbol from ``loom.ai.execution`` or
 ``loom.ai.fastapi``: a ``conftest`` import error aborts the whole session,
 while the red state of the phase must come from each test module's own
 import.
@@ -846,9 +846,9 @@ def conversation_deps(container: LoomContainer) -> RecordingDepsFactory:
 # Agent() marker doubles (spec 014, PR2)
 #
 # 'AgentRuntime' and the marker resolver it feeds
-# ('loom.ai.runtime._handle.agent_marker_resolver') are deliberately absent
+# ('loom.ai.execution._handle.agent_marker_resolver') are deliberately absent
 # from this module, for the reason the module docstring states: importing
-# 'loom.ai.runtime' here would abort collection of every test in this
+# 'loom.ai.execution' here would abort collection of every test in this
 # package on one bad import, hiding which module actually regressed. Each
 # marker test module builds its own 'AgentRuntime' and resolver, over the
 # plan and use-case doubles this section provides.

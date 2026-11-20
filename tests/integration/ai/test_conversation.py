@@ -28,8 +28,8 @@ from loom.ai.errors import (
     is_retriable,
     run_error_class,
 )
-from loom.ai.runtime import AgentRunError, AgentRuntime
-from loom.ai.runtime._turn import TurnCallbacks
+from loom.ai.execution import AgentRunError, AgentRuntime
+from loom.ai.execution._turn import TurnCallbacks
 from loom.core.command import Command
 from loom.core.di import LoomContainer
 from loom.core.errors import Forbidden
@@ -626,7 +626,7 @@ class TestLoaderFailures:
 
         async with runtime:
             with (
-                caplog.at_level(logging.ERROR, logger="loom.ai.runtime._turn"),
+                caplog.at_level(logging.ERROR, logger="loom.ai.execution._turn"),
                 pytest.raises(AgentRunError) as failure,
             ):
                 await runtime.run(_AGENT, "prompt", identity=identity, conversation_id="c-42")
@@ -640,7 +640,7 @@ class TestLoaderFailures:
         records = [
             record
             for record in caplog.records
-            if record.name == "loom.ai.runtime._turn" and record.levelno == logging.ERROR
+            if record.name == "loom.ai.execution._turn" and record.levelno == logging.ERROR
         ]
         assert len(records) == 1
         assert records[0].exc_text is not None

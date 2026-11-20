@@ -8,7 +8,7 @@ from typing import Any
 from bytewax.operators import flat_map
 from bytewax.operators import map as bw_map
 
-from loom.core.observability.runtime import ObservabilityRuntime
+from loom.core.observability.observability import ObservabilityRuntime
 from loom.streaming.bytewax._error_boundary import (
     ErrorBoundary,
     NodeResult,

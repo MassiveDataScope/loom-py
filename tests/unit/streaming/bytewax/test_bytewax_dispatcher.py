@@ -18,7 +18,7 @@ require_bytewax()
 
 from loom.core.errors import RuleViolation  # noqa: E402
 from loom.core.observability.event import EventKind, LifecycleEvent, Scope  # noqa: E402
-from loom.core.observability.runtime import ObservabilityRuntime  # noqa: E402
+from loom.core.observability.observability import ObservabilityRuntime  # noqa: E402
 from loom.streaming.bytewax._error_boundary import ErrorBoundary  # noqa: E402
 from loom.streaming.bytewax.handlers import _shared as _shared  # noqa: E402
 from loom.streaming.bytewax.handlers import dispatcher as _dispatcher  # noqa: E402

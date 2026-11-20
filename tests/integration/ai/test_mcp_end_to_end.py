@@ -237,7 +237,7 @@ def _compile(url: str, capability: McpCapability) -> AgentPlan:
 
 def _runtime(url: str, plan: AgentPlan, model: ScriptedToolModel) -> Any:
     """Build the runtime the composition root builds, with the real MCP factory."""
-    from loom.ai.runtime import AgentRuntime
+    from loom.ai.execution import AgentRuntime
 
     provider = PydanticAIEngineProvider(model_resolver=lambda target: model.as_model())
     return AgentRuntime(

@@ -17,7 +17,7 @@ from loom.core.model.types import Integer, Text
 from loom.core.stores.catalog import DEFAULT_STORE
 from loom.core.stores.database import DatabaseConfig, SchemaConfig
 from loom.core.stores.profile import SERVER_PROFILE
-from loom.stores.sqlalchemy.backend import (
+from loom.stores.sqlalchemy.plugin import (
     SQLAlchemyBackend,
     check_time_zone_columns,
     startup_checks,

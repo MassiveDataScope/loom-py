@@ -11,7 +11,7 @@ from bytewax.operators import branch, flat_map
 from bytewax.operators import map as bw_map
 
 from loom.core.observability.event import Scope
-from loom.core.observability.runtime import ObservabilityRuntime
+from loom.core.observability.observability import ObservabilityRuntime
 from loom.core.observability.span import LoomSpan
 from loom.streaming.bytewax._batch_spans import BatchSpan, BatchWindow, emit_batch_spans
 from loom.streaming.bytewax._error_boundary import (

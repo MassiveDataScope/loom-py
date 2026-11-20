@@ -16,7 +16,7 @@ The concrete client type depends on the backend configured in the runner:
 * ClickHouse runner → ``clickhouse_connect.driver.Client`` (native HTTP client)
 
 To use ``ClientStep``, wire the runner with a
-:class:`~loom.etl.runtime.contracts.ClientCommandExecutor` implementation
+:class:`~loom.etl.ports.contracts.ClientCommandExecutor` implementation
 (e.g. :class:`~loom.etl.io.ClickHouseClientExecutor`)::
 
     from loom.etl import ETLRunner

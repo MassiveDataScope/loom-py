@@ -16,7 +16,7 @@ from collections.abc import Callable
 from typing import TYPE_CHECKING, cast
 
 if TYPE_CHECKING:
-    from loom.ai.runtime import A2AClientFactory, McpClientFactory
+    from loom.ai.execution import A2AClientFactory, McpClientFactory
 
 from types import ModuleType
 

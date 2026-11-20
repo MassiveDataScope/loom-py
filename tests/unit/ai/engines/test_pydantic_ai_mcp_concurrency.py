@@ -2,7 +2,7 @@
 
 The runtime's ``mcp_session_for`` decides whether to serialise a session by
 checking whether it subclasses :class:`~loom.ai.abc.ConcurrentMcpSession`
-(``loom/ai/runtime/_mcp.py``). This pins the engine's own half of that
+(``loom/ai/execution/_mcp.py``). This pins the engine's own half of that
 contract: its session must keep declaring it, or every grant view
 (``handle.mcp()``, a use case's ``Mcp()``) queues behind its own neighbours
 again. The second test measures that end to end, through the real dispatch
@@ -34,7 +34,7 @@ import pytest
 
 from loom.ai.abc import ConcurrentMcpSession
 from loom.ai.engines.pydantic_ai._mcp import _OpenToolset, _ToolsetSession
-from loom.ai.runtime._mcp import mcp_session_for
+from loom.ai.execution._mcp import mcp_session_for
 from tests.helpers.gates import CallGate, await_cancelled
 
 
@@ -148,8 +148,8 @@ class TestCancellingDoesNotBlockTheSession:
     sostener, cancelar una llamada corta de inmediato en lugar de esperar a
     que el remoto termine. Lo que antes garantizaba
     :func:`~loom.ai._concurrency.shield_and_drain` en esta clase ahora solo
-    hace falta donde hay un candado real -- :class:`~loom.ai.runtime._mcp.SharedMcpSession`
-    (ver ``tests/unit/ai/runtime/test_mcp_session.py``).
+    hace falta donde hay un candado real -- :class:`~loom.ai.execution._mcp.SharedMcpSession`
+    (ver ``tests/unit/ai/execution/test_mcp_session.py``).
     """
 
     @pytest.fixture

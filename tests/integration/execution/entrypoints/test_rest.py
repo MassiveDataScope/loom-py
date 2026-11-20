@@ -25,13 +25,13 @@ from loom.core.identity import (
     reset_identity,
     set_identity,
 )
-from loom.core.observability.runtime import ObservabilityRuntime
-from loom.core.transport.adapter import AdapterRequest
+from loom.core.observability.observability import ObservabilityRuntime
+from loom.core.transport.dispatcher import AdapterRequest
 from loom.core.use_case.factory import UseCaseFactory
 from loom.rest.auth import AuthenticationMiddleware
 from loom.rest.compiler import RestInterfaceCompiler
-from loom.rest.fastapi.router_runtime import bind_interfaces
-from loom.rest.rest_adapter import LoomRestAdapter
+from loom.rest.dispatcher import LoomRestAdapter
+from loom.rest.fastapi.router import bind_interfaces
 from tests.helpers.delegation import acting_as, assert_new_delegation
 from tests.helpers.loggers import RecordingLogger
 

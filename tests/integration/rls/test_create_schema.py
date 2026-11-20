@@ -60,7 +60,7 @@ class TestCreateSchema:
     ) -> None:
         from loom.core.config import ConfigContext
         from loom.core.identity import Identity, reset_identity, set_identity
-        from loom.stores.sqlalchemy.backend import SQLAlchemyBackend
+        from loom.stores.sqlalchemy.plugin import SQLAlchemyBackend
         from loom.stores.sqlalchemy.rls.sources import (
             clear_scope_sources,
             register_scope_source,
@@ -140,7 +140,7 @@ class TestCreateSchema:
         scoped_database: BootstrapFactory,
     ) -> None:
         from loom.core.config import ConfigContext
-        from loom.stores.sqlalchemy.backend import SQLAlchemyBackend
+        from loom.stores.sqlalchemy.plugin import SQLAlchemyBackend
         from tests.unit.core.locator_fixtures.plain import Widget
 
         database = await scoped_database("plain_external")

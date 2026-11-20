@@ -36,8 +36,8 @@ from loom.core.config.observability import OtelConfig
 from loom.core.model.redaction import Dsn
 from loom.core.observability.config import ObservabilityConfig, OtelObservabilityConfig
 from loom.core.observability.event import EventKind, LifecycleEvent, Scope
+from loom.core.observability.observability import ObservabilityRuntime
 from loom.core.observability.observer import otel as _otel_module
-from loom.core.observability.runtime import ObservabilityRuntime
 from loom.core.observability.span import LoomSpan
 
 _TRACE_ID_HEX = "4b3f9a1c2d8e0f7b6a5c3e1d9f2b4a0c"

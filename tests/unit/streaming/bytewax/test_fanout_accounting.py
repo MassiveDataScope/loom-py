@@ -40,7 +40,7 @@ from bytewax.testing import TestingSink, TestingSource  # noqa: E402
 
 from loom.core.config import ConfigContext  # noqa: E402
 from loom.core.model import LoomStruct  # noqa: E402
-from loom.core.observability.runtime import ObservabilityRuntime  # noqa: E402
+from loom.core.observability.observability import ObservabilityRuntime  # noqa: E402
 from loom.streaming import (  # noqa: E402
     Backend,
     BatchExpandStep,

@@ -1,7 +1,7 @@
 """``create_app``: the HTTP entry point composed from YAML configuration.
 
 A shortcut over :func:`loom.composition.create_app` with
-:class:`~loom.rest.fastapi.adapter.FastAPIAdapter`; the composition owns the
+:class:`~loom.rest.fastapi.runtime.FastAPIAdapter`; the composition owns the
 resources, the adapter mounts the routes.
 """
 
@@ -23,7 +23,7 @@ from loom.core.introspection import (
     describe_app,
 )
 from loom.rest.auth import Authenticator
-from loom.rest.fastapi.adapter import FastAPIAdapter
+from loom.rest.fastapi.runtime import FastAPIAdapter
 
 
 def create_app(

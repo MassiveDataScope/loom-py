@@ -6,7 +6,7 @@ from typing import Any
 
 import pytest
 
-from loom.celery.adapter import CeleryAdapter
+from loom.celery.runtime import CeleryAdapter
 from loom.composition import Application
 from loom.composition.checked import CheckedProject
 from loom.composition.project import Project
@@ -15,7 +15,7 @@ from loom.core.discovery.base import DiscoveryResult
 from loom.core.discovery.scanner import PackageScanner
 from loom.core.job.job import Job
 from loom.core.stores.repository import RepositoryCatalog
-from loom.rest.fastapi.adapter import FastAPIAdapter
+from loom.rest.fastapi.runtime import FastAPIAdapter
 from loom.serverless.aws.lambda_ import LambdaAdapter
 from loom.serverless.aws.lambda_.trigger_jobs import check_triggers
 from tests.helpers.package_writer import PackageWriter

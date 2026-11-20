@@ -52,15 +52,15 @@ from loom.ai.abc import (
 )
 from loom.ai.config import AgentEndpointConfig, AiConfig
 from loom.ai.errors import AgentRunError, AgentRunErrorCode
+from loom.ai.execution import AgentRuntime
 from loom.ai.fastapi.response import AgentJSONResponse, error_response, result_payload
 from loom.ai.fastapi.streaming import encode_sse_event, stream_sse
-from loom.ai.runtime import AgentRuntime
 from loom.core.config.errors import ConfigError
 from loom.core.errors import BoundaryValidationError
 from loom.core.identity import Identity, current_identity
 from loom.core.model import LoomFrozenStruct
 from loom.core.observability.event import Scope
-from loom.core.observability.runtime import ObservabilityRuntime
+from loom.core.observability.observability import ObservabilityRuntime
 from loom.core.observability.span import LoomSpan
 from loom.core.tracing import get_trace_id
 from loom.rest.auth.abc import Authenticator
@@ -152,7 +152,7 @@ def _decode_state(
     Args:
         name: Agent this request targets, named in a raised error.
         state_shape: The agent's declared state shape
-            (:meth:`~loom.ai.runtime.AgentRuntime.state_shape`), or ``None``
+            (:meth:`~loom.ai.execution.AgentRuntime.state_shape`), or ``None``
             when it declares neither ``deps_type`` nor ``deps_schema``.
         raw: Undecoded ``state`` bytes from the request body; :data:`_ABSENT_STATE`
             when the caller sent none.
@@ -201,7 +201,7 @@ async def _read_request(
         max_state_bytes: Cap on the raw ``state`` bytes alone, measured
             before decode — cheap, and independent of the prompt's own cap.
         state_shape: The agent's declared state shape, read once by the
-            caller through :meth:`~loom.ai.runtime.AgentRuntime.state_shape`.
+            caller through :meth:`~loom.ai.execution.AgentRuntime.state_shape`.
 
     Returns:
         The decoded request, and its ``state`` normalised against
@@ -614,7 +614,7 @@ def bind_agent_endpoints(
             ``allow_anonymous``.
         observability_runtime: Runtime emitting one span per run, over both
             ``/run`` and ``/stream``. This surface is the single owner of that
-            span: :class:`~loom.ai.runtime.AgentRuntime` emits none.
+            span: :class:`~loom.ai.execution.AgentRuntime` emits none.
         prefix: Path prefix the routes are mounted under.
 
     Raises:

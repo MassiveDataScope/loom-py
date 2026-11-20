@@ -12,7 +12,7 @@ from __future__ import annotations
 import pytest
 
 from loom.ai.abc import HealthStatus
-from loom.ai.runtime import AgentRuntime
+from loom.ai.execution import AgentRuntime
 from loom.core.di import LoomContainer
 from tests.integration.ai.conftest import (
     CountingEngineProvider,

@@ -20,7 +20,7 @@ from loom.ai.compiler import CompiledMcpCapability
 from loom.ai.engines.pydantic_ai._failures import McpCallInterrupted
 from loom.ai.engines.pydantic_ai._mcp import _entered, _OpenToolset, _ToolsetSession
 from loom.ai.errors import AgentRunError, AgentRunErrorCode
-from loom.ai.runtime._grants import McpGrantView
+from loom.ai.execution._grants import McpGrantView
 from loom.core.execution import ExecutionScope
 from loom.core.identity import Identity
 from tests.unit.ai.engines.doubles import AcmeToolsetFactory

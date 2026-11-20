@@ -2,7 +2,7 @@
 
 One ``MCPToolset`` per connection serves the whole worker, held by
 :class:`SharedMcpToolsets`: :meth:`SharedMcpToolsets.open` is the
-:data:`~loom.ai.runtime.McpClientFactory` the runtime enters at start-up, and
+:data:`~loom.ai.execution.McpClientFactory` the runtime enters at start-up, and
 :meth:`SharedMcpToolsets.for_build` puts that same session behind the run's
 capability boundary (:class:`_SessionToolset`). :class:`_ToolsetSession` is a
 :class:`~loom.ai.abc.ConcurrentMcpSession`: grant views, ``python`` factories
@@ -256,7 +256,7 @@ class _ToolsetSession(ConcurrentMcpSession):
 
         ``MCPToolset.list_tools`` caches its result (``cache_tools=True`` by
         default), so a second call from
-        :class:`~loom.ai.runtime._grants.McpGrantView` costs no extra round
+        :class:`~loom.ai.execution._grants.McpGrantView` costs no extra round
         trip beyond the one start-up already pays.
         """
         tools = await self.invoke(None, lambda toolset: toolset.list_tools())
@@ -743,7 +743,7 @@ class SharedMcpToolsets:
     async def open(self, capability: CompiledMcpCapability) -> AsyncIterator[_ToolsetSession]:
         """Open the worker's session for one grant, connected and ready to list.
 
-        Satisfies :data:`~loom.ai.runtime.McpClientFactory`: nothing happens
+        Satisfies :data:`~loom.ai.execution.McpClientFactory`: nothing happens
         until the context is entered, so the runtime's start-up deadline bounds
         the whole of it and a failure is reported as a coded start-up issue
         rather than as an exception escaping ``create_app``. Holding the

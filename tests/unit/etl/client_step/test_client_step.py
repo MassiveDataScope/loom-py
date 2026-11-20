@@ -15,7 +15,7 @@ from loom.etl.declarative.target._client import ClientSpec, IntoClient
 from loom.etl.executor import ETLExecutor
 from loom.etl.io.targets._clickhouse import ClickHouseClientExecutor
 from loom.etl.pipeline._step_client import ClientStep
-from loom.etl.runtime.contracts import ClientCommandExecutor
+from loom.etl.ports.contracts import ClientCommandExecutor
 from loom.etl.testing import StubSourceReader, StubTargetWriter
 
 # ---------------------------------------------------------------------------

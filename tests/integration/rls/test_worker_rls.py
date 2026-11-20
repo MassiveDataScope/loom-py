@@ -26,7 +26,7 @@ from loom.composition import Project
 from loom.core.environment import Environment
 from loom.core.identity import Identity, reset_identity, set_identity
 from loom.core.identity.wire import encode_identity
-from loom.rest.fastapi.adapter import FastAPIAdapter
+from loom.rest.fastapi.runtime import FastAPIAdapter
 from loom.stores.sqlalchemy.rls import create_schema, register_scope_source
 from loom.stores.sqlalchemy.rls.sources import clear_scope_sources
 from tests.helpers.celery import WorkerDouble, isolated_signals

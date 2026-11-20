@@ -18,7 +18,7 @@ from unittest.mock import patch
 import pytest
 from celery import current_app
 
-from loom.celery.adapter import CeleryAdapter
+from loom.celery.runtime import CeleryAdapter
 from loom.celery.service import CeleryJobTransport
 from loom.composition import Application, Project, Recipe
 from loom.composition.resources import ResourceKind
@@ -31,7 +31,7 @@ from loom.core.job.service import JobService
 from loom.core.job.timer import JobDelayRefused, JobTimer
 from loom.core.stores.profile import LAMBDA_PROFILE
 from loom.jobs.inline import InlineJobTransport
-from loom.rest.fastapi.adapter import FastAPIAdapter
+from loom.rest.fastapi.runtime import FastAPIAdapter
 from loom.testing import ManualTimer, Override
 from tests.helpers.composition import ProjectFactory, WithOverrides
 from tests.helpers.jobs import BROKER, InlineServiceFixture, JobsAdapter, job_project

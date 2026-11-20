@@ -16,7 +16,7 @@ from loom.core.model.redaction import reveal_for_driver
 from loom.core.stores.profile import SERVER_PROFILE
 from loom.etl.runner.config_loader import _parse_sections
 from loom.prefect.notify._sns import SnsNotifier
-from loom.stores.dynamodb.backend import DynamoDBBackend
+from loom.stores.dynamodb.plugin import DynamoDBBackend
 from tests.helpers.aws import ACCOUNT, OTHER_REGION, REGION
 from tests.helpers.aws_island import FakeAwsIsland
 from tests.helpers.persistence import build_backend

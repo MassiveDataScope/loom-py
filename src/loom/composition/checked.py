@@ -17,7 +17,7 @@ from loom.core.discovery.base import DiscoveryResult
 from loom.core.environment import Environment
 from loom.core.locator import DEFAULT_CODE_PATH, add_code_path
 from loom.core.observability.config import ObservabilityConfig
-from loom.core.observability.runtime import ObservabilityRuntime
+from loom.core.observability.observability import ObservabilityRuntime
 from loom.core.stores.catalog import load_catalog
 
 

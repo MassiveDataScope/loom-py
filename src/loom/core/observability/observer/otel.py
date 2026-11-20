@@ -5,7 +5,7 @@ exporters are extras-only, so every import that touches them is deferred to the
 call that needs them and guarded with an actionable error.
 
 Spans are not opened here: they are opened by
-:class:`~loom.core.observability.runtime.ObservabilityRuntime`, the only place
+:class:`~loom.core.observability.observability.ObservabilityRuntime`, the only place
 that owns one lexical scope covering both ends of a unit of work.
 """
 

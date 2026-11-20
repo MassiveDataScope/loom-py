@@ -1,7 +1,7 @@
 """Assembly of an agent runtime from a deployment's ``ai:`` section.
 
 The one path every transport takes from configuration to a live
-:class:`~loom.ai.runtime.AgentRuntime`: resolve the engine, load and compile
+:class:`~loom.ai.execution.AgentRuntime`: resolve the engine, load and compile
 the artifacts, and hand both to the runtime, which opens nothing until it is
 entered.
 """
@@ -16,6 +16,7 @@ from loom.ai.abc import AgentEngineProvider, DepsFactory
 from loom.ai.compiler import AgentCompiler
 from loom.ai.config import AiConfig
 from loom.ai.declarative import DecodedSpec, load_specs
+from loom.ai.execution import AgentRuntime, UseCaseMcpGrant
 from loom.ai.registry import (
     configure_engine_mcp_connect_timeout,
     engine_client_factories,
@@ -23,7 +24,6 @@ from loom.ai.registry import (
     engine_supported_kinds,
     resolve_engine_provider,
 )
-from loom.ai.runtime import AgentRuntime, UseCaseMcpGrant
 from loom.core.di import LoomContainer
 from loom.core.identity import Identity
 from loom.core.stores.sql.config import SqlConfig

@@ -6,13 +6,13 @@ from typing import Any
 
 import pytest
 
-from loom.celery.adapter import CeleryAdapter
+from loom.celery.runtime import CeleryAdapter
 from loom.composition import Project, Recipe
 from loom.core.config import ConfigError
 from loom.core.discovery.base import DiscoveryResult
 from loom.core.discovery.scanner import PackageScanner
 from loom.core.stores import SERVER_PROFILE
-from loom.rest.fastapi.adapter import FastAPIAdapter
+from loom.rest.fastapi.runtime import FastAPIAdapter
 from loom.serverless.aws.lambda_ import LambdaAdapter
 from tests.helpers.package_writer import PackageWriter
 

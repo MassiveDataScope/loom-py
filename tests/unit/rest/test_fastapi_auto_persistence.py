@@ -15,8 +15,8 @@ from typing import Any, ClassVar, cast
 import pytest
 
 import loom.core.plugins.entrypoints as entrypoints_module
-import loom.stores.mongo.backend as mongo_backend_module
-import loom.stores.sqlalchemy.backend as sqlalchemy_backend_module
+import loom.stores.mongo.plugin as mongo_backend_module
+import loom.stores.sqlalchemy.plugin as sqlalchemy_backend_module
 from loom.composition import AiWiring, AppConfig
 from loom.core.config import ConfigContext
 from loom.core.config.errors import ConfigError
@@ -26,8 +26,8 @@ from loom.core.stores import NoneBackend, StoreWiring
 from loom.core.stores.catalog import MODELS_ONLY, StoreCapabilities, StoreSpec
 from loom.core.stores.profile import SERVER_PROFILE, StoreRuntime
 from loom.core.use_case.use_case import UseCase
-from loom.rest.fastapi.adapter import _discover_components
 from loom.rest.fastapi.auto import create_app
+from loom.rest.fastapi.runtime import _discover_components
 from loom.rest.model import RestInterface, RestRoute
 from loom.stores.dynamodb.uow import DynamoDBUnitOfWorkFactory
 from loom.stores.mongo.uow import MongoUnitOfWorkFactory

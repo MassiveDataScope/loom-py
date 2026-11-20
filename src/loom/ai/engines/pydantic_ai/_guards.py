@@ -39,7 +39,7 @@ from loom.ai.errors import (
 from loom.core.di import LoomContainer
 from loom.core.identity import Identity
 from loom.core.observability.event import Scope
-from loom.core.observability.runtime import ObservabilityRuntime
+from loom.core.observability.observability import ObservabilityRuntime
 
 _logger = logging.getLogger(__name__)
 

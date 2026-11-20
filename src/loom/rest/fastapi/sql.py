@@ -36,7 +36,7 @@ from loom.core.errors import BODY_FIELD, LoomError, RuleViolation
 from loom.core.identity import current_identity
 from loom.core.model import LoomFrozenStruct
 from loom.core.observability.event import Scope
-from loom.core.observability.runtime import ObservabilityRuntime
+from loom.core.observability.observability import ObservabilityRuntime
 from loom.core.stores.sql.config import SqlConfig, SqlConnectionConfig, roles_need_identity_binding
 from loom.core.stores.sql.roles import resolve_query_roles
 from loom.core.stores.sql.service import SqlQueryService

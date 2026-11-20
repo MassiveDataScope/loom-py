@@ -22,8 +22,8 @@ from loom.ai.abc import AgentHandle
 from loom.ai.engines.pydantic_ai import PydanticAIEngineProvider, native_agent
 from loom.ai.engines.pydantic_ai._engine import PydanticAIEngine
 from loom.ai.errors import AgentRunError, AgentRunErrorCode
-from loom.ai.runtime import AgentRuntime
-from loom.ai.runtime._handle import AgentMarkerResolver
+from loom.ai.execution import AgentRuntime
+from loom.ai.execution._handle import AgentMarkerResolver
 from loom.composition._ai import AgentDepsFactory
 from loom.core.bootstrap import create_kernel
 from loom.core.execution import ExecutionScope
@@ -104,7 +104,7 @@ class TestTheHatchOverTheRealRuntime:
 
         ``AgentHandle.native()`` already refuses an anonymous caller before
         the engine is ever asked (see ``TestAnonymousIdentity`` in
-        ``tests/unit/ai/runtime/test_agent_handle.py``); this pins the
+        ``tests/unit/ai/execution/test_agent_handle.py``); this pins the
         engine's own, independent guard: a bundle built for the analyst,
         driven in an execution acting as no one, runs no tool.
         """

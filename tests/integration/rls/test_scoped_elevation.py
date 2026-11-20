@@ -30,7 +30,7 @@ from loom.core.errors import ScopeOwnershipError
 from loom.core.identity import Identity, reset_identity, set_identity
 from loom.core.stores.elevation import ScopedElevationSink
 from loom.core.use_case.invoker import AppInvoker
-from loom.rest.fastapi.adapter import FastAPIAdapter
+from loom.rest.fastapi.runtime import FastAPIAdapter
 from loom.stores.sqlalchemy.rls import SQLAlchemyStoreElevation, create_schema
 from loom.stores.sqlalchemy.session_manager import SessionManager
 from tests.integration.agnosticism import notes

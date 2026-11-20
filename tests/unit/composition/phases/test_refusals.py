@@ -288,7 +288,7 @@ class TestStartupRefusals:
         self, fixture_project: Callable[..., str], tmp_path: Path
     ) -> None:
         pytest.importorskip("fastapi")
-        from loom.rest.fastapi.adapter import FastAPIAdapter
+        from loom.rest.fastapi.runtime import FastAPIAdapter
 
         config_path = Path(fixture_project("pipeline_modules_job"))
         config: dict[str, Any] = yaml.safe_load(config_path.read_text(encoding="utf-8"))

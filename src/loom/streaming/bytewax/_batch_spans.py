@@ -39,7 +39,7 @@ from time import time_ns
 from opentelemetry.trace import Link
 
 from loom.core.observability.event import Scope
-from loom.core.observability.runtime import ObservabilityRuntime
+from loom.core.observability.observability import ObservabilityRuntime
 from loom.core.observability.span import LoomSpan
 from loom.core.tracing.context import generate_trace_id
 from loom.streaming.core._message import MessageMeta

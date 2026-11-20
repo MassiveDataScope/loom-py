@@ -16,7 +16,7 @@ from loom.etl.backends.spark._dtype import loom_type_to_spark
 from loom.etl.declarative._format import Format
 from loom.etl.declarative._read_options import CsvReadOptions, JsonReadOptions
 from loom.etl.declarative.source import FileSourceSpec, SourceSpec, TableSourceSpec
-from loom.etl.runtime.contracts import SourceReader
+from loom.etl.ports.contracts import SourceReader
 from loom.etl.schema._schema import ColumnSchema
 from loom.etl.storage._file_locator import FileLocator
 from loom.etl.storage._locator import TableLocator, _as_locator

@@ -12,7 +12,7 @@ from loom.core.model.projection import (
     PROJECTION_DEFAULT_MISSING,
     Projection,
 )
-from loom.core.projection.runtime import build_projection_plan, execute_projection_plan
+from loom.core.projection.plan import build_projection_plan, execute_projection_plan
 
 
 @dataclass

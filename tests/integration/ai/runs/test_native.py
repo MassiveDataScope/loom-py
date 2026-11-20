@@ -8,7 +8,7 @@ from typing import Any
 import pytest
 
 from loom.ai.abc import AgentHandle
-from loom.ai.runtime._handle import AgentMarkerResolver
+from loom.ai.execution._handle import AgentMarkerResolver
 from loom.core.errors import DelegationExpired
 from loom.core.execution import (
     ExecutionRequired,

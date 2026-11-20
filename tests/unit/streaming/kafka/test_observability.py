@@ -4,7 +4,7 @@ import pytest
 from prometheus_client import CollectorRegistry, generate_latest
 
 from loom.core.observability.event import LifecycleEvent, Scope
-from loom.core.observability.runtime import ObservabilityRuntime
+from loom.core.observability.observability import ObservabilityRuntime
 from loom.prometheus import KafkaPrometheusMetrics
 
 pytestmark = pytest.mark.kafka

@@ -8,7 +8,6 @@ For FastAPI-specific bindings (response class, route registration, app
 factory) see :mod:`loom.rest.fastapi`.
 """
 
-from loom.rest.adapter import PydanticAdapter
 from loom.rest.checks import AUTHENTICATION_CHECK, SCHEMA_CHECK
 from loom.rest.compiler import (
     CompiledRoute,
@@ -17,6 +16,7 @@ from loom.rest.compiler import (
     RouteSources,
 )
 from loom.rest.config import RestInterfaceConfigError
+from loom.rest.dispatcher import LoomRestAdapter
 from loom.rest.errors import HttpErrorMapper
 from loom.rest.middleware import TraceIdMiddleware
 from loom.rest.model import (
@@ -26,7 +26,7 @@ from loom.rest.model import (
     RestInterface,
     RestRoute,
 )
-from loom.rest.rest_adapter import LoomRestAdapter
+from loom.rest.parser import PydanticAdapter
 
 __all__ = [
     "ALL",

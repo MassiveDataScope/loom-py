@@ -126,7 +126,7 @@ class PydanticAIEngine:
             registered. Defaults to *agent* when not given, which is
             correct whenever the plan declares no ``output_check``: the
             two agents would behave identically, so
-            :class:`~loom.ai.engines.pydantic_ai.provider.PydanticAIEngineProvider`
+            :class:`~loom.ai.engines.pydantic_ai.plugin.PydanticAIEngineProvider`
             builds only one and passes it for both.
         deps: Per-invocation dependency factory; singleton services are
             captured here, at build, and the caller's identity is supplied per
@@ -187,7 +187,7 @@ class PydanticAIEngine:
             conversation: The conversation this run continues, or ``None``
                 for a single shot.
             state: This run's state, already resolved against the plan's
-                declared shape by :class:`~loom.ai.runtime.AgentRuntime`;
+                declared shape by :class:`~loom.ai.execution.AgentRuntime`;
                 forwarded to :attr:`_deps` unchanged.
 
         Returns:
@@ -262,7 +262,7 @@ class PydanticAIEngine:
         """Run the agent, streaming events decoded into *output_type* for this call only.
 
         An optional engine capability, read with ``getattr`` by
-        :func:`~loom.ai.runtime._lifecycle._open_engine_stream`. pydantic-ai
+        :func:`~loom.ai.execution._lifecycle._open_engine_stream`. pydantic-ai
         validates the answer against *output_type*; loom's own output check
         of a ``msgspec.Struct`` plan is skipped.
 
@@ -311,7 +311,7 @@ class PydanticAIEngine:
         """Return this engine's own objects, for a caller driving the run itself.
 
         Serves :meth:`~loom.ai.abc.AgentHandle.native` through
-        :meth:`~loom.ai.runtime.AgentRuntime.native`; the accessor that names
+        :meth:`~loom.ai.execution.AgentRuntime.native`; the accessor that names
         the returned type for calling code is
         :func:`~loom.ai.engines.pydantic_ai.native_agent`. What a driver keeps
         and loses is stated once, on :meth:`~loom.ai.abc.AgentHandle.native`.
@@ -319,11 +319,11 @@ class PydanticAIEngine:
         Args:
             identity: Verified caller the dependency bundle is built for.
             state: This run's state, already resolved against the plan's
-                declared shape by :class:`~loom.ai.runtime.AgentRuntime`.
+                declared shape by :class:`~loom.ai.execution.AgentRuntime`.
             guard: Zero-argument factory of the async context manager a
                 driven run enters to rejoin this runtime's chain and
                 admission bounds; built by
-                :meth:`~loom.ai.runtime.AgentRuntime.native` and carried on
+                :meth:`~loom.ai.execution.AgentRuntime.native` and carried on
                 the returned carrier unchanged.
 
         Returns:

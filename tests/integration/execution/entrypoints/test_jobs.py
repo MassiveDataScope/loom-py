@@ -24,7 +24,7 @@ from loom.core.job.context import flush_pending_dispatches
 from loom.core.job.envelope import JobEnvelope, job_context
 from loom.core.job.handle import JobHandle
 from loom.core.job.run import EnvelopeInvocation
-from loom.core.observability.runtime import ObservabilityRuntime
+from loom.core.observability.observability import ObservabilityRuntime
 from loom.core.use_case.factory import UseCaseFactory
 from loom.testing import JobTestData, make
 from tests.helpers.celery import CeleryBroker

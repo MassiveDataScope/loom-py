@@ -29,8 +29,8 @@ from typing import Any, Protocol, cast
 import msgspec
 
 from loom.core.cache._single_flight import SingleFlight
-from loom.core.cache.abc.backend import CacheBackend
 from loom.core.cache.abc.config import CacheConfig
+from loom.core.cache.abc.store import CacheBackend
 from loom.core.cache.decorators import _CallPolicy, declares_cache_call
 from loom.core.cache.keys import call_key
 from loom.core.cache.result_codec import ResultCodec, build_call_codec

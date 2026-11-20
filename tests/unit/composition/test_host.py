@@ -213,8 +213,8 @@ class TestTaskAffinity:
 
     async def test_a_real_agent_runtime_closes_cleanly(self) -> None:
         # Local imports: the AI pillar is an optional extra.
-        pytest.importorskip("loom.ai.runtime")
-        from loom.ai.runtime import AgentRuntime
+        pytest.importorskip("loom.ai.execution")
+        from loom.ai.execution import AgentRuntime
         from loom.core.di import LoomContainer
         from tests.helpers.ai import CountingEngineProvider, StubDepsFactory, make_ai_config
 

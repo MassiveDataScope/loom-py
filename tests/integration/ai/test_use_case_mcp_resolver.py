@@ -2,7 +2,7 @@
 
 Builds real ``AgentRuntime`` instances over stub MCP clients — the same
 shape ``test_use_case_mcp_runtime.py`` (T203) uses — and resolves through
-:class:`~loom.ai.runtime._handle.McpMarkerResolver`, the resolver
+:class:`~loom.ai.execution._handle.McpMarkerResolver`, the resolver
 ``RuntimeExecutor.bind_mcp_resolver`` takes, instead of constructing
 ``McpGrantView`` by hand. This is the seam T203's suite deliberately stops
 short of: the resolving *binding's own* ``include``, not the shared
@@ -17,14 +17,14 @@ import pytest
 
 from loom.ai.compiler._plan import CompiledMcpCapability
 from loom.ai.errors import AgentRunError, AgentRunErrorCode
-from loom.ai.runtime import AgentRuntime
-from loom.ai.runtime._handle import McpMarkerResolver
-from loom.ai.runtime._lifecycle import UseCaseMcpGrant
+from loom.ai.execution import AgentRuntime
+from loom.ai.execution._handle import McpMarkerResolver
+from loom.ai.execution._lifecycle import UseCaseMcpGrant
 from loom.core.di import LoomContainer
 from loom.core.execution import ExecutionScope
 from loom.core.identity import Identity
 from loom.core.observability.event import Scope
-from loom.core.observability.runtime import ObservabilityRuntime
+from loom.core.observability.observability import ObservabilityRuntime
 from tests.integration.ai.conftest import (
     CountingEngineProvider,
     RecordingMcpSession,

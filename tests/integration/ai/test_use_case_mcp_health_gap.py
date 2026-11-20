@@ -16,9 +16,9 @@ import pytest
 
 from loom.ai.abc import McpHandle
 from loom.ai.errors import AgentRunError, AgentRunErrorCode
-from loom.ai.runtime import AgentRuntime
-from loom.ai.runtime._handle import McpMarkerResolver
-from loom.ai.runtime._lifecycle import UseCaseMcpGrant
+from loom.ai.execution import AgentRuntime
+from loom.ai.execution._handle import McpMarkerResolver
+from loom.ai.execution._lifecycle import UseCaseMcpGrant
 from loom.core.di import LoomContainer
 from loom.core.execution import ExecutionScope
 from loom.core.identity import Identity

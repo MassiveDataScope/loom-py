@@ -12,7 +12,7 @@ from loom.core.di.container import LoomContainer
 from loom.core.model import BaseModel, Field, Integer, String
 from loom.core.stores import StoreWiring
 from loom.core.stores.repository import Creatable, Deletable, Readable
-from loom.stores.dynamodb.backend import DynamoDBBackend
+from loom.stores.dynamodb.plugin import DynamoDBBackend
 from tests.helpers.persistence import build_backend
 from tests.integration.aws.conftest import AwsClientFactory, ConfigWriter, unique
 

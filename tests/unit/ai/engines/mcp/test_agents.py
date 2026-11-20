@@ -42,9 +42,9 @@ from loom.ai.engines.pydantic_ai import _capabilities, _mcp, _transport
 from loom.ai.engines.pydantic_ai._guards import BuildContext
 from loom.ai.engines.pydantic_ai._mcp import SharedMcpToolsets, _SessionToolset, _ToolsetSession
 from loom.ai.errors import AgentRunError, AgentRunErrorCode
-from loom.ai.runtime import AgentRuntime
-from loom.ai.runtime._handle import McpMarkerResolver, _AgentHandle
-from loom.ai.runtime._lifecycle import UseCaseMcpGrant
+from loom.ai.execution import AgentRuntime
+from loom.ai.execution._handle import McpMarkerResolver, _AgentHandle
+from loom.ai.execution._lifecycle import UseCaseMcpGrant
 from loom.core.di.container import LoomContainer
 from loom.core.execution import ExecutionScope
 from loom.core.identity import Identity

@@ -9,7 +9,7 @@ from confluent_kafka import TopicPartition
 
 from loom.core.model import LoomFrozenStruct, LoomStruct
 from loom.core.observability.event import LifecycleEvent, Scope
-from loom.core.observability.runtime import ObservabilityRuntime
+from loom.core.observability.observability import ObservabilityRuntime
 from loom.streaming.kafka._codec import KafkaCodec
 from loom.streaming.kafka._errors import KafkaDeserializationError
 from loom.streaming.kafka._message import HEADER_CORRELATION_ID, HEADER_TRACE_ID, MessageEnvelope

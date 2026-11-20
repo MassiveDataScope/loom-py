@@ -26,7 +26,7 @@ from loom.core.observability.event import (  # noqa: E402
     LifecycleStatus,
     Scope,
 )
-from loom.core.observability.runtime import ObservabilityRuntime  # noqa: E402
+from loom.core.observability.observability import ObservabilityRuntime  # noqa: E402
 from loom.streaming import Drain, FromMongoCDC, Process, StreamFlow  # noqa: E402
 from loom.streaming.bytewax.runner import (  # noqa: E402
     BytewaxRuntimeConfig,

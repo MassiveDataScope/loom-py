@@ -8,7 +8,7 @@ from loom.etl.declarative.expr._refs import TableRef
 from loom.etl.declarative.source import TableSourceSpec
 from loom.etl.declarative.target import TargetSpec
 from loom.etl.declarative.target._table import ReplaceSpec
-from loom.etl.runtime.contracts import SourceReader, SQLExecutor, TableDiscovery, TargetWriter
+from loom.etl.ports.contracts import SourceReader, SQLExecutor, TableDiscovery, TargetWriter
 from loom.etl.testing import StubCatalog, StubSourceReader, StubTargetWriter
 
 _SENTINEL = object()

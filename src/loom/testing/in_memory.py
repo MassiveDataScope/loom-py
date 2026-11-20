@@ -36,7 +36,7 @@ from loom.core.projection.loaders import (
     is_projection_descriptor,
     make_memory_loader,
 )
-from loom.core.projection.runtime import (
+from loom.core.projection.plan import (
     ProjectionPlan,
     build_projection_plan,
     execute_projection_plan,

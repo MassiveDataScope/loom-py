@@ -8,7 +8,7 @@ It is intentionally kept thin — route validation happens during
 :class:`~loom.rest.compiler.RestInterfaceCompiler` compilation, the cursor-key
 check in :func:`compile_api` (both fail-fast at startup; a route that merely lets
 callers choose cursor pages is refused per request without a key), and all request
-handling is delegated to :func:`~loom.rest.fastapi.router_runtime.bind_interfaces`.
+handling is delegated to :func:`~loom.rest.fastapi.router.bind_interfaces`.
 
 An application normally gets it through :func:`~loom.composition.create_app`,
 which composes the kernel from configuration. Directly::
@@ -37,7 +37,7 @@ from fastapi import FastAPI
 
 from loom.core.bootstrap.kernel import Kernel
 from loom.core.engine.executor import RuntimeExecutor
-from loom.core.observability.runtime import ObservabilityRuntime
+from loom.core.observability.observability import ObservabilityRuntime
 from loom.core.stores.repository import CursorCodec
 from loom.core.stores.repository.cursor import CURSORS_SECTION
 from loom.core.stores.repository.query import PaginationMode
@@ -49,7 +49,7 @@ from loom.rest.compiler import (
     RouteSources,
 )
 from loom.rest.fastapi._errors import register_error_handlers
-from loom.rest.fastapi.router_runtime import bind_interfaces
+from loom.rest.fastapi.router import bind_interfaces
 from loom.rest.model import RestApiDefaults
 
 _MiddlewareClass = Any

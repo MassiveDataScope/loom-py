@@ -30,7 +30,7 @@ from loom.etl.declarative.target import (
     UpsertSpec,
 )
 from loom.etl.declarative.target._history import HistorifyRepairReport, HistorifySpec
-from loom.etl.runtime.contracts import TargetWriter
+from loom.etl.ports.contracts import TargetWriter
 from loom.etl.schema._schema import SchemaNotFoundError
 from loom.etl.storage._config import AuditConfig, MissingTablePolicy
 from loom.etl.storage.routing import ResolvedTarget, TableRouteResolver

@@ -23,7 +23,7 @@ import pytest
 from pydantic_ai.capabilities import AbstractCapability
 from pydantic_ai.tools import RunContext
 
-from loom.ai.engines.pydantic_ai import provider as _provider
+from loom.ai.engines.pydantic_ai import plugin as _provider
 from loom.ai.errors import AgentCompilationError, AgentErrorCode
 from loom.ai.inference import InferenceTarget
 from tests.helpers.pydantic_ai_engine import build_engine, make_plan, prose_model

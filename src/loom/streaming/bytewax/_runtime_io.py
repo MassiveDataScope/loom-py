@@ -15,7 +15,7 @@ from confluent_kafka import OFFSET_BEGINNING, OFFSET_END, KafkaError
 from confluent_kafka.admin import AdminClient
 
 from loom.core.observability.event import Scope, TerminalReason
-from loom.core.observability.runtime import ObservabilityRuntime
+from loom.core.observability.observability import ObservabilityRuntime
 from loom.core.observability.span import LoomSpan
 from loom.core.plugins.optional import import_optional
 from loom.core.tracing import generate_trace_id

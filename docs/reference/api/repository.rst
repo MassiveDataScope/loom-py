@@ -31,7 +31,7 @@ DynamoDB adapter
    :toctree: generated
 
    loom.stores.dynamodb
-   loom.stores.dynamodb.backend
+   loom.stores.dynamodb.plugin
    loom.stores.dynamodb.repository
 
 Mongo adapter
@@ -41,7 +41,7 @@ Mongo adapter
    :toctree: generated
 
    loom.stores.mongo
-   loom.stores.mongo.backend
+   loom.stores.mongo.plugin
    loom.stores.mongo.repository
 
 Cache layer

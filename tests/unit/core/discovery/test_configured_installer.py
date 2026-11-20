@@ -8,7 +8,7 @@ from pathlib import Path
 import msgspec
 import pytest
 
-from loom.celery.adapter import CeleryAdapter
+from loom.celery.runtime import CeleryAdapter
 from loom.composition.checked import CheckedProject
 from loom.composition.project import Project
 from loom.core.config import ConfigContext, ConfigError, ConfigResolver

@@ -38,7 +38,7 @@ from loom.core.identity import DEFAULT_MAX_DELEGATION_SECONDS, configure_delegat
 from loom.core.job.config import JobSettings
 from loom.core.logger import LoggerPort
 from loom.core.model import BaseModel
-from loom.core.observability.runtime import ObservabilityRuntime
+from loom.core.observability.observability import ObservabilityRuntime
 from loom.core.stores import StoreRuntime, StoreWiring
 from loom.core.stores.catalog import (
     DEFAULT_STORE,

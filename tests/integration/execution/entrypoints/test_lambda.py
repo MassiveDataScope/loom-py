@@ -20,7 +20,7 @@ from loom.core.identity.wire import encode_identity
 from loom.core.job.config import JobSettings
 from loom.core.job.envelope import JobEnvelope
 from loom.core.job.policy import Redelivery
-from loom.core.observability.runtime import ObservabilityRuntime
+from loom.core.observability.observability import ObservabilityRuntime
 from loom.core.use_case.factory import UseCaseFactory
 from loom.rest.compiler import RestInterfaceCompiler
 from loom.serverless.aws.lambda_._jobs import JobConsumer, job_runner

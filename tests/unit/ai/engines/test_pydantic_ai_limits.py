@@ -30,7 +30,7 @@ from loom.ai.declarative import PolicySpec
 from loom.ai.engines.pydantic_ai import _limits
 from loom.ai.engines.pydantic_ai._limits import usage_limits, warn_if_model_not_priceable
 from loom.ai.engines.pydantic_ai._models import ModelResolver
-from loom.ai.engines.pydantic_ai.provider import PydanticAIEngineProvider
+from loom.ai.engines.pydantic_ai.plugin import PydanticAIEngineProvider
 from loom.ai.inference import InferenceTarget
 from loom.core.di import LoomContainer
 from loom.core.model.redaction import Dsn
@@ -117,7 +117,7 @@ class TestPricingProbe:
     The probe is fed the identifiers the *built* pydantic-ai model reports —
     never ``InferenceTarget.provider`` — so every case here passes a model
     name and a provider name directly, the same two strings
-    :meth:`~loom.ai.engines.pydantic_ai.provider.PydanticAIEngineProvider.create_engine`
+    :meth:`~loom.ai.engines.pydantic_ai.plugin.PydanticAIEngineProvider.create_engine`
     reads off the resolved model.
     """
 

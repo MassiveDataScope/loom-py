@@ -25,8 +25,8 @@ from loom.etl import (
 )
 from loom.etl.compiler import ETLCompilationError, ETLCompiler, ETLErrorCode
 from loom.etl.executor import ETLExecutor
+from loom.etl.ports import ConfigValueError
 from loom.etl.runner import ETLRunner
-from loom.etl.runtime import ConfigValueError
 from loom.etl.testing import PolarsStepRunner, StubSourceReader, StubTargetWriter
 from tests.unit._resolver_stubs import MappingResolver
 from tests.unit.etl.doubles import RunDateIgnoredParams

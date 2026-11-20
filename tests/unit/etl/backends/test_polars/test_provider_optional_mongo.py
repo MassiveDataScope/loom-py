@@ -24,7 +24,7 @@ class TestOptionalMongoProvider:
 
             sys.modules["pymongo"] = None
             from loom.core.model.redaction import Dsn
-            from loom.etl.backends.polars.provider import PolarsProvider
+            from loom.etl.backends.polars.engine import PolarsProvider
             from loom.etl.storage._config import StorageConfig, StorageDefaults, TablePathConfig
 
             config = StorageConfig(
@@ -49,7 +49,7 @@ class TestOptionalMongoProvider:
     def test_mongo_source_without_pymongo_names_the_extra(
         self, monkeypatch: pytest.MonkeyPatch, tmp_path: Path
     ) -> None:
-        from loom.etl.backends.polars.provider import PolarsProvider
+        from loom.etl.backends.polars.engine import PolarsProvider
 
         without_extra(monkeypatch, ["pymongo"], [MONGO_ISLAND])
         config = StorageConfig(

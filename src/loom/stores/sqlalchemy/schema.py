@@ -70,7 +70,7 @@ from loom.core.model.introspection import (
 from loom.core.model.privilege import READ_WRITE, Privilege
 from loom.core.model.relation import Relation
 from loom.core.model.scoped import ScopeColumn, ScopedTable
-from loom.core.projection.runtime import ProjectionStep, build_projection_plan_from_steps
+from loom.core.projection.plan import ProjectionStep, build_projection_plan_from_steps
 from loom.core.schema_names import MAX_IDENTIFIER_LENGTH, naming_convention
 from loom.stores.sqlalchemy.core_model import CoreModel, CoreProfilePlan, CoreRelationStep
 from loom.stores.sqlalchemy.scoped_ddl import SCHEMA_KEY, register_listeners

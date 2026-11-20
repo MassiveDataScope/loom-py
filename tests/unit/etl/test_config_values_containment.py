@@ -10,12 +10,12 @@ from typing import Any, Literal
 import pytest
 
 from loom.core.config import ConfigContext
-from loom.core.observability.runtime import ObservabilityRuntime
+from loom.core.observability.observability import ObservabilityRuntime
 from loom.etl import ETLPipeline, ETLProcess, ETLStep, FromConfig, IntoTable
 from loom.etl.compiler import ETLCompilationError, ETLCompiler
 from loom.etl.executor import ETLExecutor
+from loom.etl.ports import ConfigValueError
 from loom.etl.runner import ETLRunner
-from loom.etl.runtime import ConfigValueError
 from loom.etl.testing import StubRunObserver, StubSourceReader, StubTargetWriter
 from tests.unit.etl.doubles import RunDateIgnoredParams
 

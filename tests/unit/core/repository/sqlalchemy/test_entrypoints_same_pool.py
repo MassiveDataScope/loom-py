@@ -11,7 +11,7 @@ from loom.core.model import LoomStruct
 from loom.core.stores.catalog import DEFAULT_STORE, load_catalog
 from loom.core.stores.database import load_database_config
 from loom.core.stores.profile import SERVER_PROFILE, STREAMING_PROFILE
-from loom.stores.sqlalchemy.backend import SQLAlchemyBackend
+from loom.stores.sqlalchemy.plugin import SQLAlchemyBackend
 from loom.stores.sqlalchemy.session_manager import SessionManager, build_session_manager
 from loom.streaming.nodes._table import IntoTable
 from loom.streaming.nodes._table.config import resolve_sqlalchemy_table_config
@@ -47,7 +47,7 @@ def _api_manager(database: dict[str, Any]) -> SessionManager:
 
 def _worker_manager(database: dict[str, Any]) -> SessionManager:
     pytest.importorskip("celery")
-    from loom.celery.adapter import CeleryAdapter
+    from loom.celery.runtime import CeleryAdapter
     from loom.composition import AppConfig
     from loom.core.job.job import Job
 

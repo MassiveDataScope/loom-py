@@ -26,7 +26,7 @@ from loom.core.engine.executor import RuntimeExecutor
 from loom.core.execution import ExecutionScope, Kind
 from loom.core.identity import Identity
 from loom.core.model import msgspec_type
-from loom.core.observability.runtime import ObservabilityRuntime
+from loom.core.observability.observability import ObservabilityRuntime
 from loom.core.stores.repository.registration import classify_key
 from loom.core.stores.sql.service import NullSqlQueryService, SqlQueryService
 from loom.core.use_case import Agent
@@ -187,7 +187,7 @@ def _fake_agent_runtime() -> Any:
     So a real ``AgentRuntime`` never entered as a context manager is a
     faithful double for this seam — no fake class needed.
     """
-    from loom.ai.runtime import AgentRuntime
+    from loom.ai.execution import AgentRuntime
 
     return object.__new__(AgentRuntime)
 

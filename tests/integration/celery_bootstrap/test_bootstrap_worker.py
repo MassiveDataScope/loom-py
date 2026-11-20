@@ -20,7 +20,7 @@ from loom.core.checks import DeployCheckError
 from loom.core.environment import Environment
 from loom.core.job.job import Job
 from loom.core.observability.config import ObservabilityConfig
-from loom.core.observability.runtime import ObservabilityRuntime
+from loom.core.observability.observability import ObservabilityRuntime
 from loom.core.stores.repository import CURSOR_SIGNING_CHECK
 from loom.core.use_case import Agent, Mcp
 from loom.core.use_case.use_case import UseCase

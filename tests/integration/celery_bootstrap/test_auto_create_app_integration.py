@@ -6,7 +6,7 @@ from typing import Any, cast
 
 import pytest
 
-from loom.celery.adapter import CeleryAdapter
+from loom.celery.runtime import CeleryAdapter
 from loom.composition import Project
 from loom.core.command import Command, CommandField
 from loom.core.di.container import LoomContainer

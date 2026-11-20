@@ -1,6 +1,6 @@
 """Shielding one in-flight call from its own caller's cancellation.
 
-An MCP session — wrapped in :class:`~loom.ai.runtime.SharedMcpSession` or
+An MCP session — wrapped in :class:`~loom.ai.execution.SharedMcpSession` or
 already declaring :class:`~loom.ai.abc.ConcurrentMcpSession` — makes the same
 promise to every caller sharing it: a call already running finishes even if
 the caller waiting on it is cancelled, so the session stays consistent for

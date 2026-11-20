@@ -26,7 +26,7 @@ from loom.etl.declarative.source._specs import (
     JsonColumnSpec,
     MongoSourceSpec,
 )
-from loom.etl.runtime.contracts import SourceReader
+from loom.etl.ports.contracts import SourceReader
 from loom.etl.schema._schema import (
     ArrayType,
     ColumnSchema,

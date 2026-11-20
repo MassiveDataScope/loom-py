@@ -8,7 +8,6 @@ live under ``loom.stores`` and are reached only through their entry
 points.
 """
 
-from loom.core.stores.backend import StoreBackend, StoreWiring
 from loom.core.stores.database import (
     DatabaseConfig,
     PoolConfig,
@@ -17,6 +16,7 @@ from loom.core.stores.database import (
     load_database_config,
 )
 from loom.core.stores.none import NoneBackend
+from loom.core.stores.plugin import StoreBackend, StoreWiring
 from loom.core.stores.profile import (
     LAMBDA_PROFILE,
     SERVER_PROFILE,

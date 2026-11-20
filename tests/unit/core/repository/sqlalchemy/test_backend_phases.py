@@ -11,9 +11,9 @@ from sqlalchemy.pool import QueuePool
 from loom.core.config import ConfigContext, ConfigError
 from loom.core.model import BaseModel, ColumnField, RowScoped, ScopedField
 from loom.core.model.types import Integer
-from loom.core.stores.backend import StoreWiring
+from loom.core.stores.plugin import StoreWiring
 from loom.core.stores.profile import SERVER_PROFILE
-from loom.stores.sqlalchemy.backend import SQLAlchemyBackend
+from loom.stores.sqlalchemy.plugin import SQLAlchemyBackend
 from loom.stores.sqlalchemy.schema import get_compiled
 from tests.helpers.persistence import build_backend
 

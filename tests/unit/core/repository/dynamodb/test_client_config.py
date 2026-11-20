@@ -13,7 +13,7 @@ from loom.connections.aws import AwsClients
 from loom.core.config import ConfigContext, ConfigError
 from loom.core.config.convert import convert_config
 from loom.core.stores.profile import SERVER_PROFILE
-from loom.stores.dynamodb.backend import DynamoDBBackend, DynamoDBRepositoryConfig
+from loom.stores.dynamodb.plugin import DynamoDBBackend, DynamoDBRepositoryConfig
 from loom.stores.dynamodb.repository import DynamoDBRepository
 from tests.helpers.aws import OTHER_REGION
 from tests.helpers.aws_island import FakeAwsIsland

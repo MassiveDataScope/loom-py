@@ -21,8 +21,8 @@ from loom.ai.a2a.card import build_agent_card, card_path
 from loom.ai.compiler import AgentPlan
 from loom.ai.config import AgentEndpointConfig, AiConfig
 from loom.ai.errors import AgentCompilationError, AgentErrorCode
+from loom.ai.execution import AgentRuntime
 from loom.ai.fastapi.response import ENCODER
-from loom.ai.runtime import AgentRuntime
 from loom.core.config.errors import ConfigError
 from loom.rest.auth.abc import Authenticator
 from loom.rest.auth.middleware import AuthenticationMiddleware

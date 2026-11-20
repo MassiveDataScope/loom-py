@@ -19,7 +19,7 @@ from tests.helpers.version_limited_extras import require_bytewax
 require_bytewax()
 
 from loom.core.observability.event import Scope, TerminalReason  # noqa: E402
-from loom.core.observability.runtime import ObservabilityRuntime  # noqa: E402
+from loom.core.observability.observability import ObservabilityRuntime  # noqa: E402
 from loom.core.observability.span import LoomSpan  # noqa: E402
 from loom.streaming.bytewax import _batch_spans as _batch_spans_mod  # noqa: E402
 from loom.streaming.bytewax import _error_boundary as _boundary_mod  # noqa: E402

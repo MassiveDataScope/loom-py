@@ -11,7 +11,7 @@ from loom.core.discovery.base import DiscoveryResult
 from loom.core.environment import Environment
 from loom.core.stores.uow.abc import UnitOfWorkFactory
 from loom.rest.discovery import interfaces_in
-from loom.rest.fastapi.adapter import FastAPIAdapter
+from loom.rest.fastapi.runtime import FastAPIAdapter
 from loom.rest.model import RestInterface
 from tests.helpers.composition import composition_project, uow_factory
 

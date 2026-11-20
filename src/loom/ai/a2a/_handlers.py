@@ -1,6 +1,6 @@
 """The A2A methods themselves: ``message/send``, ``message/stream``, the rest.
 
-One handler per method, over :class:`~loom.ai.runtime.AgentRuntime`, reusing
+One handler per method, over :class:`~loom.ai.execution.AgentRuntime`, reusing
 the pure event projection of :mod:`loom.ai.a2a.events`. The rules every agent
 transport shares — the span that survives a disconnect and the heartbeat race —
 come from :mod:`loom.ai._transport` rather than from the HTTP surface's private
@@ -44,11 +44,11 @@ from loom.ai.a2a.events import A2AEventProjector, TaskState
 from loom.ai.abc import CONVERSATION_ID_MAX_LENGTH, AgentResult
 from loom.ai.config import AiConfig
 from loom.ai.errors import AgentRunError
+from loom.ai.execution import AgentRuntime
 from loom.ai.fastapi.response import ENCODER, AgentJSONResponse
-from loom.ai.runtime import AgentRuntime
 from loom.core.identity import Identity
 from loom.core.observability.event import Scope
-from loom.core.observability.runtime import ObservabilityRuntime
+from loom.core.observability.observability import ObservabilityRuntime
 from loom.core.observability.span import LoomSpan
 from loom.core.tracing import get_trace_id
 

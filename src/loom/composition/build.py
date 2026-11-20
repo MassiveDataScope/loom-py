@@ -81,7 +81,7 @@ def create_app(
 
 
 def _fastapi() -> Adapter[object]:
-    from loom.rest.fastapi.adapter import FastAPIAdapter
+    from loom.rest.fastapi.runtime import FastAPIAdapter
 
     return FastAPIAdapter()
 

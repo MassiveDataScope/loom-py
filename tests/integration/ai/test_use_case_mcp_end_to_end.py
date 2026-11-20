@@ -2,7 +2,7 @@
 
 Every test here drives a real :class:`~loom.core.engine.compiler.UseCaseCompiler`,
 a real :class:`~loom.core.engine.executor.RuntimeExecutor` and a real
-:class:`~loom.ai.runtime.AgentRuntime`, wired through the same production glue
+:class:`~loom.ai.execution.AgentRuntime`, wired through the same production glue
 ``create_app`` uses — ``MarkerDeclarations.of``
 and ``MarkerDeclarations.mcp_grants`` — rather than hand-built
 ``UseCaseMcpGrant`` instances. The seam faked is the MCP client itself, at the
@@ -35,8 +35,8 @@ import yaml
 
 from loom.ai.abc import AgentHandle, McpHandle
 from loom.ai.errors import AgentCompilationError, AgentErrorCode, AgentRunError, AgentRunErrorCode
-from loom.ai.runtime import AgentRuntime
-from loom.ai.runtime._handle import AgentMarkerResolver, McpMarkerResolver
+from loom.ai.execution import AgentRuntime
+from loom.ai.execution._handle import AgentMarkerResolver, McpMarkerResolver
 from loom.core.di import LoomContainer
 from loom.core.engine.compilable import Compilable
 from loom.core.engine.compiler import UseCaseCompiler

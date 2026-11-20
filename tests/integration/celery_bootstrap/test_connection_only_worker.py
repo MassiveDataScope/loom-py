@@ -23,7 +23,7 @@ from sqlalchemy import event, inspect, make_url, text
 from sqlalchemy.ext.asyncio import create_async_engine
 from sqlalchemy.pool import NullPool
 
-from loom.celery.adapter import CeleryAdapter
+from loom.celery.runtime import CeleryAdapter
 from loom.composition import AppConfig
 from loom.core.config import ConfigContext, ConfigError
 from loom.core.job.job import Job

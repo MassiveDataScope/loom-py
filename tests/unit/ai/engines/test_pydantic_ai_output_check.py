@@ -267,7 +267,7 @@ class TestAnArtefactWithNoOutputCheckBuildsOneAgent:
         plan = make_plan()
 
         with patch(
-            "loom.ai.engines.pydantic_ai.provider.Agent.from_spec", wraps=Agent.from_spec
+            "loom.ai.engines.pydantic_ai.plugin.Agent.from_spec", wraps=Agent.from_spec
         ) as spy:
             build_engine(plan, answering_model(_GOOD))
 

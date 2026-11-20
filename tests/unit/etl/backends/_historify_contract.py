@@ -4,7 +4,7 @@ All backend-agnostic scenario tests live here as a single class.
 Backend-specific test classes inherit :class:`HistorifyContractTests` and
 provide four pytest fixtures:
 
-* ``writer``     — :class:`~loom.etl.runtime.contracts.TargetWriter` rooted
+* ``writer``     — :class:`~loom.etl.ports.contracts.TargetWriter` rooted
                    at the test's temporary directory.
 * ``root``       — :class:`~pathlib.Path` of that temporary directory (used
                    to build expected table URIs in assertions).

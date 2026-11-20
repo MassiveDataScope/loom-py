@@ -1,7 +1,7 @@
 """Inbound A2A transport: one JSON-RPC endpoint and one card per published agent.
 
 Serves the A2A protocol on top of
-:class:`~loom.ai.runtime.AgentRuntime`, reusing the pure projections of
+:class:`~loom.ai.execution.AgentRuntime`, reusing the pure projections of
 :mod:`loom.ai.a2a.card` and :mod:`loom.ai.a2a.events`. Nothing here re-derives
 the card or the event mapping: this module is transport only, and the rules
 every agent transport shares — the body cap, the caller check, the span that
@@ -10,7 +10,7 @@ survives a disconnect and the heartbeat race — come from
 
 ``fasta2a.schema`` supplies the wire contract and the error taxonomy; the
 ready-made ``fasta2a`` application is not mounted. Every run goes through
-:class:`~loom.ai.runtime.AgentRuntime`, under the caller's ``Identity``,
+:class:`~loom.ai.execution.AgentRuntime`, under the caller's ``Identity``,
 ``max_concurrent_runs``, ``run_timeout_ms``, the run span and the outward
 redaction.
 
@@ -60,10 +60,10 @@ from loom.ai.a2a._rpc import (
 from loom.ai.a2a.card import DEFAULT_A2A_PREFIX, card_path
 from loom.ai.compiler import AgentPlan
 from loom.ai.config import AiConfig
+from loom.ai.execution import AgentRuntime
 from loom.ai.fastapi.response import error_response as flat_error_response
-from loom.ai.runtime import AgentRuntime
 from loom.core.identity import Identity
-from loom.core.observability.runtime import ObservabilityRuntime
+from loom.core.observability.observability import ObservabilityRuntime
 from loom.rest.auth.abc import Authenticator
 
 _logger = logging.getLogger(__name__)

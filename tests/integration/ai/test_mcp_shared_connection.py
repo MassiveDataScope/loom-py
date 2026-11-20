@@ -15,7 +15,7 @@ under test and no socket is.
 
 Sharing the toolset must not serialise the worker: the concurrency test is the
 regression guard against ever routing runs through
-:class:`~loom.ai.runtime.SharedMcpSession`, whose lock would queue every
+:class:`~loom.ai.execution.SharedMcpSession`, whose lock would queue every
 agent's tool call behind every other agent's.
 """
 
@@ -33,7 +33,7 @@ from loom.ai.config import AiConfig
 from loom.ai.engines.pydantic_ai import PydanticAIEngineProvider, create_mcp_client
 from loom.ai.engines.pydantic_ai import _mcp as engine_mcp
 from loom.ai.errors import AgentCompilationError, AgentRunError, AgentRunErrorCode
-from loom.ai.runtime import AgentRuntime
+from loom.ai.execution import AgentRuntime
 from loom.core.di import LoomContainer
 from loom.core.identity import Identity
 from tests.integration.ai.conftest import (

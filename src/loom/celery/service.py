@@ -40,7 +40,7 @@ from loom.core.job.dispatch import JobDispatch
 from loom.core.job.handle import JobHandle
 from loom.core.logger import get_logger
 from loom.core.observability.event import Scope
-from loom.core.observability.runtime import ObservabilityRuntime
+from loom.core.observability.observability import ObservabilityRuntime
 
 if TYPE_CHECKING:
     from loom.core.engine.metrics import MetricsAdapter

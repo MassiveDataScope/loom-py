@@ -38,7 +38,7 @@ print(json.dumps(sorted(
 # imports ``celery.signals``: neither is the worker. Its adapter, its
 # bootstrap and the prefork pool are.
 _WORKER = (
-    "loom.celery.adapter",
+    "loom.celery.runtime",
     "loom.celery.bootstrap",
     "celery.concurrency.prefork",
     "fastapi",

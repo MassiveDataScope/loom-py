@@ -8,7 +8,7 @@ Usage::
 
     from prometheus_client import CollectorRegistry
     from loom.prometheus import KafkaPrometheusMetrics
-    from loom.core.observability.runtime import ObservabilityRuntime
+    from loom.core.observability.observability import ObservabilityRuntime
 
     registry = CollectorRegistry()
     metrics = KafkaPrometheusMetrics(registry=registry)
@@ -72,7 +72,7 @@ class KafkaPrometheusMetrics:
     - ``streaming_kafka_encode_duration_seconds`` — encode latency by content type.
     - ``streaming_kafka_decode_duration_seconds`` — decode latency by content type.
 
-    Wire this into an :class:`~loom.core.observability.runtime.ObservabilityRuntime`
+    Wire this into an :class:`~loom.core.observability.observability.ObservabilityRuntime`
     and pass the runtime to the Kafka client constructors via ``obs=``.
 
     Args:

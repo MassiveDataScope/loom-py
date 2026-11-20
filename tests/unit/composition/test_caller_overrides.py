@@ -15,7 +15,7 @@ from typing import Any
 
 import pytest
 
-from loom.celery.adapter import CeleryAdapter
+from loom.celery.runtime import CeleryAdapter
 from loom.composition import AppConfig, Application, Project
 from loom.composition.errors import CompositionErrorCode, ReservedBindingError
 from loom.core.authz.elevation import ElevationSink
@@ -25,13 +25,13 @@ from loom.core.di.container import BindingKey, LoomContainer
 from loom.core.di.scope import Scope
 from loom.core.engine.executor import RuntimeExecutor
 from loom.core.job.job import Job
-from loom.core.observability.runtime import ObservabilityRuntime
+from loom.core.observability.observability import ObservabilityRuntime
 from loom.core.stores.catalog import StoreCatalog, StoreKey
 from loom.core.stores.repository import DefaultRepositoryBuilder
 from loom.core.stores.sql import CallerBoundSql, SqlQueryService
 from loom.core.use_case.invoker import ApplicationInvoker
 from loom.core.use_case.registry import UseCaseRegistry
-from loom.rest.fastapi.adapter import FastAPIAdapter
+from loom.rest.fastapi.runtime import FastAPIAdapter
 from loom.stores.mongo.uow import MongoSessions
 from loom.stores.sqlalchemy.session_manager import SessionManager
 from tests.helpers.composition import (

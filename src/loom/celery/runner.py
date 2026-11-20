@@ -2,7 +2,7 @@
 
 Each ``_make_*`` function registers one Celery task against a given
 ``celery_app`` and returns the task object.  They are called once, when
-:meth:`~loom.celery.adapter.CeleryAdapter.bind` registers the tasks, and
+:meth:`~loom.celery.runtime.CeleryAdapter.bind` registers the tasks, and
 never again. Every task is registered with ``shared=False``: it belongs to
 its ``celery_app`` alone.
 
@@ -53,7 +53,7 @@ from loom.core.job.run import EnvelopeInvocation
 from loom.core.job.runner import JobRunner
 from loom.core.logger import get_logger
 from loom.core.observability.event import Scope
-from loom.core.observability.runtime import ObservabilityRuntime
+from loom.core.observability.observability import ObservabilityRuntime
 from loom.core.tracing import active_trace_id
 
 if TYPE_CHECKING:

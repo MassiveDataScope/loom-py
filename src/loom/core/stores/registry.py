@@ -13,7 +13,7 @@ from loom.core.plugins.entrypoints import (
 )
 
 if TYPE_CHECKING:
-    from loom.core.stores.backend import StoreBackend
+    from loom.core.stores.plugin import StoreBackend
 
 BACKEND_ENTRY_POINT_GROUP = "loom.stores.backends"
 """Entry point group store backends register under."""

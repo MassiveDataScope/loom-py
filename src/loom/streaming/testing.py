@@ -27,7 +27,7 @@ from bytewax.outputs import Sink
 
 from loom.core.config import ConfigContext
 from loom.core.observability.event import Scope
-from loom.core.observability.runtime import ObservabilityRuntime
+from loom.core.observability.observability import ObservabilityRuntime
 from loom.core.tracing import generate_trace_id
 from loom.streaming import Message, MessageMeta
 from loom.streaming.bytewax.runner import _prepare_run

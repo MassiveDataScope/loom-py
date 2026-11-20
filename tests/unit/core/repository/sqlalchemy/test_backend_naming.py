@@ -14,7 +14,7 @@ from loom.core.config import ConfigContext, ConfigError
 from loom.core.stores import StoreWiring
 from loom.core.stores.profile import SERVER_PROFILE
 from loom.stores.sqlalchemy.alembic import load_store_schema
-from loom.stores.sqlalchemy.backend import SQLAlchemyBackend
+from loom.stores.sqlalchemy.plugin import SQLAlchemyBackend
 from loom.stores.sqlalchemy.schema import get_metadata, reset_registry
 from tests.helpers.persistence import build_backend
 from tests.integration.agnosticism import rosters

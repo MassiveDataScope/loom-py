@@ -10,7 +10,7 @@ from fastapi.testclient import TestClient
 from loom.composition import CompositionErrorCode, CompositionStateError
 from loom.composition import create_app as compose
 from loom.rest.fastapi import create_app
-from loom.rest.fastapi.adapter import FastAPIAdapter
+from loom.rest.fastapi.runtime import FastAPIAdapter
 from tests.helpers.composition import ProjectFactory
 
 

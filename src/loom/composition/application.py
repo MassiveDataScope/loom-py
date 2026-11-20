@@ -20,7 +20,7 @@ if TYPE_CHECKING:
     from loom.core.config import ConfigContext
     from loom.core.discovery.base import DiscoveryResult
     from loom.core.environment import Environment
-    from loom.core.observability.runtime import ObservabilityRuntime
+    from loom.core.observability.observability import ObservabilityRuntime
 
 
 @dataclass(eq=False, kw_only=True)

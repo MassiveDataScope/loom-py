@@ -232,7 +232,7 @@ class TestBrokenBackendImport:
             "which is not installed"
         )
 
-    @pytest.mark.parametrize("missing", ["loom.stores.mongo.backend", "loom"])
+    @pytest.mark.parametrize("missing", ["loom.stores.mongo.plugin", "loom"])
     def test_a_missing_loom_module_propagates_unchanged(
         self, monkeypatch: pytest.MonkeyPatch, missing: str
     ) -> None:

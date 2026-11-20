@@ -12,7 +12,7 @@ from loom.ai.errors import AgentCompilationError
 from loom.ai.etl._columns import output_columns
 from loom.ai.etl._frames import metadata_clashes
 from loom.ai.registry import engine_prices_model
-from loom.etl.runtime.contracts import AgentIssue, AgentIssueKind
+from loom.etl.ports.contracts import AgentIssue, AgentIssueKind
 
 
 def validation_issues(

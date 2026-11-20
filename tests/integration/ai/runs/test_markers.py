@@ -5,12 +5,12 @@ from __future__ import annotations
 from typing import Any
 
 from loom.ai.abc import McpHandle
-from loom.ai.runtime._handle import McpMarkerResolver
+from loom.ai.execution._handle import McpMarkerResolver
 from loom.core.engine.compiler import UseCaseCompiler
 from loom.core.engine.executor import RuntimeExecutor
 from loom.core.identity import Identity
 from loom.core.observability.event import EventKind, Scope
-from loom.core.observability.runtime import ObservabilityRuntime
+from loom.core.observability.observability import ObservabilityRuntime
 from loom.core.use_case import Caller, Mcp, UseCase
 from tests.integration.ai.conftest import RecordingMcpSession, RecordingObserver
 

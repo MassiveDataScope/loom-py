@@ -1,6 +1,6 @@
 """The composition root hands the runtime its client factories (FR-025, FR-040).
 
-``create_app`` used to build :class:`~loom.ai.runtime.AgentRuntime` with neither
+``create_app`` used to build :class:`~loom.ai.execution.AgentRuntime` with neither
 ``mcp_client_factory`` nor ``a2a_client_factory``. An artifact granting either
 kind therefore compiled and then aborted start-up with "no MCP client factory is
 configured" — a failure no deployment could act on, because nothing in the

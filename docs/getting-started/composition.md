@@ -11,7 +11,7 @@ transport adapter then mounts itself on that application. Nothing in
 
 ```python
 from loom.composition import create_app
-from loom.rest.fastapi.adapter import FastAPIAdapter
+from loom.rest.fastapi.runtime import FastAPIAdapter
 
 app = create_app("config/api.yaml", adapter=FastAPIAdapter())
 ```
@@ -204,8 +204,8 @@ shortcuts over the composition:
 | `loom.celery.auto.create_app(..., jobs=, metrics=)` | `create_app(..., adapter=CeleryAdapter(jobs=, metrics=))` |
 | `loom.celery.bootstrap.bootstrap_worker(...)` | the same composition; returns `WorkerBootstrapResult` |
 
-`FastAPIAdapter` lives in `loom.rest.fastapi.adapter` and `CeleryAdapter` in
-`loom.celery.adapter`.
+`FastAPIAdapter` lives in `loom.rest.fastapi.runtime` and `CeleryAdapter` in
+`loom.celery.runtime`.
 
 ## What `create_app` runs
 

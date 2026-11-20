@@ -17,7 +17,7 @@ import pytest
 import yaml
 
 from loom.ai import registry
-from loom.ai.runtime import AgentRuntime
+from loom.ai.execution import AgentRuntime
 from loom.composition import AppConfig, Project, create_app
 from loom.core.config import ConfigContext
 from loom.core.discovery.base import DiscoveryResult

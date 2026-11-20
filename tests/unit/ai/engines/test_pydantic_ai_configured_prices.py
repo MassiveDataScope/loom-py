@@ -14,7 +14,7 @@ from pydantic_ai.usage import RequestUsage
 
 from loom.ai.abc import AgentEngine, AgentEvent, ErrorEvent, FinalEvent, OutputCheck
 from loom.ai.declarative import PolicySpec
-from loom.ai.engines.pydantic_ai.provider import PydanticAIEngineProvider
+from loom.ai.engines.pydantic_ai.plugin import PydanticAIEngineProvider
 from loom.ai.errors import AgentRunError, AgentRunErrorCode
 from loom.ai.inference import InferenceTarget
 from loom.ai.pricing import ModelPrice

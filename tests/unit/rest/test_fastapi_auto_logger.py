@@ -14,19 +14,19 @@ from loom.core.config import ConfigContext
 from loom.core.discovery.base import DiscoveryResult
 from loom.core.environment import Environment
 from loom.core.observability.config import ObservabilityConfig, PrometheusObservabilityConfig
-from loom.core.observability.runtime import ObservabilityRuntime
+from loom.core.observability.observability import ObservabilityRuntime
 from loom.prometheus.middleware import PrometheusMiddleware
 from loom.rest._body import BodySizeLimitMiddleware
 from loom.rest.compiler import RouteSources
 from loom.rest.cors import CorsConfig
 from loom.rest.fastapi._auto_auth import _AuthWiring
-from loom.rest.fastapi.adapter import (
+from loom.rest.fastapi.auto import create_app
+from loom.rest.fastapi.runtime import (
     RestDeclaration,
     _mount_metrics,
     _RestConfig,
     mount_request_stack,
 )
-from loom.rest.fastapi.auto import create_app
 from loom.rest.middleware import TraceIdMiddleware
 
 
@@ -125,7 +125,7 @@ class TestRequestObservabilityStack:
         # The config names no interface module. An empty result lets recipe()
         # continue so create_app still mounts the middlewares under test.
         monkeypatch.setattr(
-            "loom.rest.fastapi.adapter._discover_components",
+            "loom.rest.fastapi.runtime._discover_components",
             lambda _source: DiscoveryResult(models=(), use_cases=()),
         )
         monkeypatch.setattr(
@@ -133,7 +133,7 @@ class TestRequestObservabilityStack:
             _fake_configure_job_service,
         )
         monkeypatch.setattr(
-            "loom.rest.fastapi.adapter.create_fastapi_app", _fake_create_fastapi_app
+            "loom.rest.fastapi.runtime.create_fastapi_app", _fake_create_fastapi_app
         )
         monkeypatch.setattr(
             "loom.composition.project.add_code_path",

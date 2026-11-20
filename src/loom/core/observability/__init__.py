@@ -16,8 +16,8 @@ from loom.core.observability.event import (
     Scope,
     TerminalReason,
 )
+from loom.core.observability.observability import ObservabilityRuntime
 from loom.core.observability.protocol import LifecycleObserver
-from loom.core.observability.runtime import ObservabilityRuntime
 from loom.core.observability.span import LoomSpan
 
 __all__ = [

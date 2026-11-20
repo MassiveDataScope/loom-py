@@ -7,7 +7,7 @@ from pathlib import Path
 import pytest
 import yaml
 
-from loom.celery.adapter import CeleryAdapter
+from loom.celery.runtime import CeleryAdapter
 from loom.composition.checked import CheckedProject
 from loom.core.checks import (
     CheckScope,
@@ -17,7 +17,7 @@ from loom.core.checks import (
 )
 from loom.core.config import ConfigContext
 from loom.core.environment import Environment
-from loom.rest.fastapi.adapter import FastAPIAdapter
+from loom.rest.fastapi.runtime import FastAPIAdapter
 from tests.helpers.composition import composition_project
 from tests.helpers.lambda_jobs import jobs_trigger
 

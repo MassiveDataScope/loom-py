@@ -19,7 +19,7 @@ import pytest
 
 from loom.ai.abc import AgentEngine, FinalEvent
 from loom.ai.errors import AgentRunErrorCode
-from loom.ai.runtime import AgentRunError
+from loom.ai.execution import AgentRunError
 from loom.core.identity import Identity
 from loom.core.model import LoomType
 from loom.testing import ContractScenario, agent_engine_contract_suite

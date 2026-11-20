@@ -15,7 +15,7 @@ import pytest
 
 from loom.ai.abc import AgentEvent, FinalEvent, TextDeltaEvent, ToolCallEvent, ToolResultEvent
 from loom.ai.errors import AgentRunErrorCode
-from loom.ai.runtime import AgentRunError, AgentRuntime
+from loom.ai.execution import AgentRunError, AgentRuntime
 from loom.core.di import LoomContainer
 from loom.core.identity import Identity
 from tests.integration.ai.conftest import (

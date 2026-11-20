@@ -98,7 +98,7 @@ makes in `asyncio.timeout(policies.tool_timeout_ms / 1000)` (`capability_call`,
 in `loom/ai/engines/pydantic_ai/_guards.py`), before and after this change,
 raising `TOOL_TIMEOUT` on expiry. This is the table's third row, "Call
 (supervisor)" — the *model-facing* MCP path, contrasted below with the
-marker's own `Mcp()` grant (`loom/ai/runtime/_grants.py`), whose own
+marker's own `Mcp()` grant (`loom/ai/execution/_grants.py`), whose own
 `asyncio.timeout` guard raises the same `TOOL_TIMEOUT` directly to the caller,
 never a refusal value the model reads: a use case invoked outside a run has no
 model to hand the refusal to. With both deadlines at their default of `20000`
@@ -656,7 +656,7 @@ in-flight response matched to its own request id regardless.
 
 Only the serialised fallback changes this: a session this engine did not
 open falls back to `SharedMcpSession`'s single lock
-(`loom/ai/runtime/_mcp.py`), which shields and drains the call it is
+(`loom/ai/execution/_mcp.py`), which shields and drains the call it is
 currently holding — a caller cancelled by its own deadline still waits out
 that in-flight round trip before the lock is released and its cancellation
 reaches it (`shield_and_drain`, `loom/ai/_concurrency.py`). That drain

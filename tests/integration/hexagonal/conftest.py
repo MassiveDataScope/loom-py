@@ -21,7 +21,7 @@ import pytest
 
 from loom.ai.abc import AgentAnswer, AgentUsage
 from loom.ai.errors import require_authenticated
-from loom.celery.adapter import CeleryAdapter
+from loom.celery.runtime import CeleryAdapter
 from loom.composition import Adapter, Application, Project, Recipe
 from loom.core.config import ConfigContext
 from loom.core.di.container import LoomContainer

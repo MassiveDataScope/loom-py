@@ -17,8 +17,8 @@ from opentelemetry.sdk.trace.export.in_memory_span_exporter import InMemorySpanE
 from opentelemetry.sdk.trace.sampling import Sampler
 
 from loom.core.observability.event import LifecycleEvent, Scope
+from loom.core.observability.observability import ObservabilityRuntime
 from loom.core.observability.otel_ids import LoomMessageIdGenerator
-from loom.core.observability.runtime import ObservabilityRuntime
 
 
 class EventCollector:

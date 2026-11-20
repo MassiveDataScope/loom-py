@@ -9,7 +9,7 @@ from tests.helpers.version_limited_extras import require_bytewax
 require_bytewax()
 
 from loom.core.observability.event import EventKind, Scope  # noqa: E402
-from loom.core.observability.runtime import ObservabilityRuntime  # noqa: E402
+from loom.core.observability.observability import ObservabilityRuntime  # noqa: E402
 from loom.streaming import Message, MessageMeta, StreamFlow  # noqa: E402
 from loom.streaming.core._errors import ErrorKind  # noqa: E402
 from loom.streaming.testing import StreamingTestRunner  # noqa: E402

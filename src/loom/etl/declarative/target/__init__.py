@@ -97,9 +97,9 @@ on any target builder (:class:`IntoTable`, :class:`IntoFile`,
 .. note::
     :class:`ClientSpec` is included in this union because it is produced by
     :meth:`IntoClient._to_spec`, but it is **never** passed to
-    :meth:`~loom.etl.runtime.contracts.TargetWriter.write`.  The executor
+    :meth:`~loom.etl.ports.contracts.TargetWriter.write`.  The executor
     intercepts it before the write path and routes it to
-    :class:`~loom.etl.runtime.contracts.ClientCommandExecutor`.  Both
+    :class:`~loom.etl.ports.contracts.ClientCommandExecutor`.  Both
     :class:`~loom.etl.backends._write_policy.WritePolicy` and
     :class:`~loom.etl.io.targets.ClickHouseTargetWriter` reject it explicitly
     with a :exc:`TypeError` as a defensive guard.

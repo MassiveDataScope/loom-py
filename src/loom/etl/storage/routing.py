@@ -15,7 +15,7 @@ from typing import Protocol, runtime_checkable
 
 from loom.core.model.redaction import reveal_for_driver
 from loom.etl.declarative.expr._refs import TableRef
-from loom.etl.runtime.contracts import TableDiscovery
+from loom.etl.ports.contracts import TableDiscovery
 from loom.etl.schema._schema import ColumnSchema
 from loom.etl.storage._config import StorageConfig
 from loom.etl.storage._locator import PrefixLocator, TableLocation, TableLocator

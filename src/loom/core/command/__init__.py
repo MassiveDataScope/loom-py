@@ -1,4 +1,3 @@
-from loom.core.command.adapter import CommandAdapter
 from loom.core.command.base import Command
 from loom.core.command.field import CommandField, Computed, Internal, Patch
 from loom.core.command.introspection import (
@@ -9,6 +8,7 @@ from loom.core.command.introspection import (
     get_patch_fields,
     is_patch_command,
 )
+from loom.core.command.parser import CommandAdapter
 
 __all__ = [
     "Command",

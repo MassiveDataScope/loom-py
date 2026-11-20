@@ -11,7 +11,7 @@ from fastapi.testclient import TestClient
 
 from loom.core.errors import SystemError as LoomSystemError
 from loom.core.observability.event import EventKind, Scope
-from loom.core.observability.runtime import ObservabilityRuntime
+from loom.core.observability.observability import ObservabilityRuntime
 from loom.core.stores.sql.abc import SqlExecutionError
 from loom.core.stores.sql.config import SqlConfig, SqlConnectionConfig, SqlEndpointConfig
 from loom.core.stores.sql.service import SqlQueryService

@@ -44,7 +44,7 @@ _RULES: dict[str, tuple[tuple[str, ...], tuple[str, ...]]] = {
         (
             "loom.celery.service",
             "loom.celery.config",
-            "loom.rest.fastapi.adapter",
+            "loom.rest.fastapi.runtime",
             "loom.serverless.aws.lambda_.handler",
         ),
     ),

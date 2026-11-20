@@ -26,8 +26,8 @@ from loom.ai.compiler._plan import CompiledCapability
 from loom.ai.config import AiConfig, McpServerConfig
 from loom.ai.declarative import PolicySpec
 from loom.ai.errors import AgentRunError, AgentRunErrorCode
-from loom.ai.runtime import AgentRuntime
-from loom.ai.runtime._handle import AgentMarkerResolver
+from loom.ai.execution import AgentRuntime
+from loom.ai.execution._handle import AgentMarkerResolver
 from loom.core.di import LoomContainer
 from loom.core.engine.compiler import UseCaseCompiler
 from loom.core.engine.executor import RuntimeExecutor
@@ -35,7 +35,7 @@ from loom.core.execution import ExecutionScope
 from loom.core.identity import Identity
 from loom.core.model.redaction import Dsn
 from loom.core.observability.event import Scope
-from loom.core.observability.runtime import ObservabilityRuntime
+from loom.core.observability.observability import ObservabilityRuntime
 from loom.core.stores.sql.abc.contracts import SqlColumn, SqlQueryResult
 from loom.core.stores.sql.config import SqlConfig, SqlConnectionConfig
 from loom.core.stores.sql.service import NullSqlQueryService, SqlQueryService

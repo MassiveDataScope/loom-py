@@ -23,7 +23,7 @@ from loom.core.engine.compiler import UseCaseCompiler
 from loom.core.engine.executor import RuntimeExecutor
 from loom.core.environment import Environment
 from loom.core.job.service import JobService
-from loom.core.observability.runtime import ObservabilityRuntime
+from loom.core.observability.observability import ObservabilityRuntime
 from loom.core.stores.catalog import StoreCatalog
 from loom.core.stores.repository.capabilities import Creatable
 from loom.core.stores.repository.registry import RepositoryToken

@@ -26,7 +26,7 @@ import pytest
 
 from loom.ai.compiler._plan import AgentPlan, CompiledA2ACapability
 from loom.ai.errors import AgentCompilationError, AgentErrorCode
-from loom.ai.runtime import AgentRuntime
+from loom.ai.execution import AgentRuntime
 from loom.core.di import LoomContainer
 from loom.core.identity import Identity
 from tests.integration.ai.conftest import (
@@ -47,7 +47,7 @@ _SERVER_B = "beta-tools"
 _REMOTE = "translations"
 _AGENT = "analyst"
 
-_LOGGER = "loom.ai.runtime._lifecycle"
+_LOGGER = "loom.ai.execution._lifecycle"
 _REFUSED = "connection refused by https://alpha-tools.internal/mcp"
 
 _MISSING_MCP_FACTORY = "no MCP client factory is configured"

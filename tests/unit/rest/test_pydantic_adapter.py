@@ -4,7 +4,7 @@ import pydantic
 import pytest
 
 from loom.core.command import Command, Computed, Internal, Patch
-from loom.rest.adapter import PydanticAdapter
+from loom.rest.parser import PydanticAdapter
 
 
 class CreateUser(Command, frozen=True):

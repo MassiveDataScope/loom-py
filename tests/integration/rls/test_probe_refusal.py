@@ -18,7 +18,7 @@ from sqlalchemy.engine import make_url
 from loom.core.config import ConfigContext, ConfigError
 from loom.core.model import BaseModel, ColumnField
 from loom.core.stores.profile import WORKER_PROFILE
-from loom.stores.sqlalchemy.backend import SQLAlchemyBackend
+from loom.stores.sqlalchemy.plugin import SQLAlchemyBackend
 from tests.helpers.persistence import build_backend
 from tests.integration.rls.conftest import execute, scalar
 

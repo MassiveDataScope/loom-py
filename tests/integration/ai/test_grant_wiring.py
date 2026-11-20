@@ -37,8 +37,8 @@ from loom.ai.declarative import (
 )
 from loom.ai.engines.pydantic_ai import PydanticAIEngineProvider
 from loom.ai.engines.pydantic_ai._mcp import SharedMcpToolsets
+from loom.ai.execution import AgentRuntime
 from loom.ai.inference import InferenceTarget
-from loom.ai.runtime import AgentRuntime
 from loom.core.di import LoomContainer
 from loom.core.model.redaction import Dsn
 from loom.core.use_case.registry import UseCaseRegistry

@@ -31,9 +31,9 @@ from loom.etl import (
 )
 from loom.etl.compiler import ETLCompilationError, ETLCompiler, ETLErrorCode
 from loom.etl.executor import ETLExecutor
+from loom.etl.ports import AgentIssue, AgentIssueKind
 from loom.etl.runner import ETLRunner
 from loom.etl.runner._wiring import agents_for_engine, make_agent_runner
-from loom.etl.runtime import AgentIssue, AgentIssueKind
 from loom.etl.storage._config import StorageConfig
 from loom.etl.testing import StubSourceReader, StubTargetWriter
 from tests.unit.ai.etl._types import Reply as StrictReply

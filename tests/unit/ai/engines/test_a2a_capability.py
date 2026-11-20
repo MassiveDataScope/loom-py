@@ -33,8 +33,8 @@ from loom.ai.engines.pydantic_ai import PydanticAIEngineProvider, _a2a, _capabil
 from loom.ai.engines.pydantic_ai._mcp import SharedMcpToolsets
 from loom.ai.engines.pydantic_ai.extras import a2a as a2a_island
 from loom.ai.errors import AgentCompilationError, AgentErrorCode, AgentRunErrorCode
+from loom.ai.execution import AgentRunError, AgentRuntime
 from loom.ai.inference import InferenceTarget
-from loom.ai.runtime import AgentRunError, AgentRuntime
 from loom.core.di import LoomContainer
 from loom.core.execution import ExecutionScope
 from loom.core.identity import ANONYMOUS, Identity

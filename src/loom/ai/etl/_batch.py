@@ -12,7 +12,7 @@ from typing import Any, Final
 from loom.ai.abc import AgentUsage
 from loom.ai.errors import AgentRunError
 from loom.ai.etl._ledger import SpendLedger
-from loom.ai.runtime import AgentRuntime
+from loom.ai.execution import AgentRuntime
 from loom.core.identity import Identity
 
 PROMPT_MISSING: Final = "PROMPT_MISSING"

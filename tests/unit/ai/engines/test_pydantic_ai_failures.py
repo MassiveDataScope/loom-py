@@ -22,7 +22,7 @@ from loom.ai.engines.pydantic_ai._engine import MAX_LOGGED_CAUSE_CHARS, Pydantic
 from loom.ai.engines.pydantic_ai._errors import classify
 from loom.ai.engines.pydantic_ai._events import IGNORED_EVENT_KINDS, MAPPED_EVENT_KINDS
 from loom.ai.errors import AgentRunErrorClass, AgentRunErrorCode, is_retriable, run_error_class
-from loom.ai.runtime import AgentRunError
+from loom.ai.execution import AgentRunError
 from loom.core.di import LoomContainer
 from loom.core.identity import Identity
 from tests.helpers.pydantic_ai_engine import (

@@ -14,7 +14,7 @@ from pathlib import Path
 import polars as pl
 import pytest
 
-from loom.core.observability.runtime import ObservabilityRuntime
+from loom.core.observability.observability import ObservabilityRuntime
 from loom.etl import ETLStep, FromTable, IntoTable
 from loom.etl.compiler import ETLCompiler
 from loom.etl.declarative.expr._refs import TableRef

@@ -42,7 +42,7 @@ INDIRECT_CALLS: Mapping[str, tuple[str, ...]] = {
         "tests/unit/ai/compiler/test_state_phase.py::"
         "test_an_invalid_deps_schema_reports_schema_invalid",
     ),
-    "ai/runtime/_lifecycle.py::_refuse_plans_needing_an_invoker": (
+    "ai/execution/_lifecycle.py::_refuse_plans_needing_an_invoker": (
         "tests/integration/ai/test_conversation.py::"
         "test_reports_both_codes_when_the_plan_declares_a_hook_and_a_loader",
         "tests/integration/ai/test_capabilities.py::"

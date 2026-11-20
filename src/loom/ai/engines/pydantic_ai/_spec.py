@@ -12,7 +12,7 @@ What is deliberately **not** projected:
 * ``model_role`` — a loom concept; the concrete model is bound separately
   (``_models``) and passed as an object, not as a ``provider:model`` string.
 * ``run_timeout_ms`` / ``max_iterations`` — enforced by
-  :class:`~loom.ai.runtime.AgentRuntime`, which supervises every stream; a
+  :class:`~loom.ai.execution.AgentRuntime`, which supervises every stream; a
   second enforcement here would be a hidden, divergent limit.
 * ``tool_timeout_ms`` — enforced on loom's side, by
   ``_guards.capability_call`` around every granted tool and by

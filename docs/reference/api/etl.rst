@@ -9,7 +9,7 @@ Entrypoints and Runtime Contracts
 
    loom.etl.runner
    loom.etl.compiler
-   loom.etl.runtime
+   loom.etl.ports
 
 Declarative Authoring
 ---------------------

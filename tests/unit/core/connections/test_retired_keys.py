@@ -14,7 +14,7 @@ from loom.core.stores.database import DatabaseConfig
 from loom.core.stores.profile import SERVER_PROFILE
 from loom.core.stores.sql.config import reject_retired_sql_keys
 from loom.etl.storage._config import normalise_storage_section
-from loom.stores.dynamodb.backend import DynamoDBBackend
+from loom.stores.dynamodb.plugin import DynamoDBBackend
 from loom.streaming.mongo._config import load_mongo_config
 from tests.helpers.persistence import build_backend
 
@@ -51,7 +51,7 @@ class TestRetiredConnectionKeys:
     @pytest.mark.parametrize(("retired", "value", "replacement"), _MONGO_RETIRED)
     def test_persistence_mongo(self, retired: str, value: Any, replacement: str) -> None:
         pytest.importorskip("pymongo")
-        from loom.stores.mongo.backend import MongoBackend
+        from loom.stores.mongo.plugin import MongoBackend
 
         section = {"url": "mongodb://h", "database": "app", retired: value}
         ctx = ConfigContext.from_dict({"stores": {"default": {"backend": "mongo", **section}}})

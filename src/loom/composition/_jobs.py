@@ -22,7 +22,7 @@ from loom.core.job.service import JobService
 from loom.core.job.timer import JobTimer
 from loom.core.job.transport import JobTransport
 from loom.core.logger import get_logger
-from loom.core.observability.runtime import ObservabilityRuntime
+from loom.core.observability.observability import ObservabilityRuntime
 from loom.core.plugins.optional import MissingExtraError
 from loom.core.symbols import import_symbol
 from loom.jobs.inline import AsyncioJobTimer, InlineJobTransport

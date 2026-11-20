@@ -81,7 +81,7 @@ class TestModuleReloadContracts:
             ("loom.core.observability.protocol", "LifecycleObserver"),
             ("loom.etl.lineage.sinks._protocol", "LineageStore"),
             ("loom.etl.pipeline._params", "ETLParams"),
-            ("loom.etl.runtime.contracts", "TableDiscovery"),
+            ("loom.etl.ports.contracts", "TableDiscovery"),
             ("loom.etl.lineage._config", "ETLObservabilityConfig"),
         ],
     )
@@ -274,7 +274,7 @@ class TestReloadedModuleUsage:
         [
             ("loom.etl.declarative.target._history", "IntoHistory"),
             ("loom.etl.runner.core", "ETLRunner"),
-            ("loom.etl.runner._providers", "load_backend_provider"),
+            ("loom.etl.runner._engines", "load_backend_provider"),
             ("loom.etl.runner._wiring", "make_backends"),
             ("loom.etl.runner.config_loader", "_load_yaml"),
             ("loom.etl.storage.routing", "RoutedCatalog"),
@@ -383,7 +383,7 @@ class TestStableRuntimeContracts:
 
     def test_storage_protocols_runtime_checkable_contracts(self) -> None:
         from loom.etl.declarative.expr._refs import TableRef
-        from loom.etl.runtime.contracts import (
+        from loom.etl.ports.contracts import (
             SourceReader,
             SQLExecutor,
             TableDiscovery,

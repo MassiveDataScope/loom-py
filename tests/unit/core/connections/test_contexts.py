@@ -23,8 +23,8 @@ from loom.etl.storage._config import (
     convert_storage_config,
     normalise_storage_section,
 )
-from loom.stores.dynamodb.backend import DynamoDBRepositoryConfig
-from loom.stores.mongo.backend import MongoRepositoryConfig
+from loom.stores.dynamodb.plugin import DynamoDBRepositoryConfig
+from loom.stores.mongo.plugin import MongoRepositoryConfig
 from loom.streaming.mongo import MongoSourceConfig
 
 _AWS = {"region": "eu-west-1", "url": "http://localhost:8000", "read_timeout": 9}

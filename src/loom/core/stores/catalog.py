@@ -43,7 +43,7 @@ from loom.core.stores.registry import (
 )
 
 if TYPE_CHECKING:
-    from loom.core.stores.backend import StoreBackend
+    from loom.core.stores.plugin import StoreBackend
 
 T = TypeVar("T")
 

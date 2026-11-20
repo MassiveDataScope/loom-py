@@ -27,7 +27,7 @@ from loom.core.model import LoomFrozenStruct
 from loom.core.model.types import PositiveInt
 from loom.core.observability.config import ObservabilityConfig
 from loom.core.observability.event import Scope
-from loom.core.observability.runtime import ObservabilityRuntime
+from loom.core.observability.observability import ObservabilityRuntime
 from loom.core.runner import shutdown_runner
 from loom.core.tracing import generate_trace_id
 from loom.streaming.bytewax._adapter import build_dataflow_with_shutdown

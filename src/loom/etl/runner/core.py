@@ -14,8 +14,8 @@ from loom.core.checks import CheckScope, enforce_deploy_checks
 from loom.core.config import ConfigContext, ConfigResolver
 from loom.core.config.convert import convert_config
 from loom.core.environment import Environment, resolve_environment
+from loom.core.observability.observability import ObservabilityRuntime
 from loom.core.observability.protocol import LifecycleObserver
-from loom.core.observability.runtime import ObservabilityRuntime
 from loom.core.runner import flush_runner
 from loom.etl.checkpoint import CheckpointStore, TempCleaner
 from loom.etl.compiler import ETLCompiler, filter_plan
@@ -24,6 +24,12 @@ from loom.etl.lineage._config import ETLObservabilityConfig
 from loom.etl.lineage._observer import LineageObserver
 from loom.etl.lineage._records import RunContext
 from loom.etl.pipeline._pipeline import ETLPipeline
+from loom.etl.ports.contracts import (
+    AgentBatchRunner,
+    ClientCommandExecutor,
+    SourceReader,
+    TargetWriter,
+)
 from loom.etl.runner._wiring import (
     agents_for_engine,
     make_agent_runner,
@@ -33,12 +39,6 @@ from loom.etl.runner._wiring import (
     make_lineage_store,
 )
 from loom.etl.runner.config_loader import _load_context, _parse_sections, config_dir
-from loom.etl.runtime.contracts import (
-    AgentBatchRunner,
-    ClientCommandExecutor,
-    SourceReader,
-    TargetWriter,
-)
 from loom.etl.storage._config import (
     StorageConfig,
     convert_storage_config,

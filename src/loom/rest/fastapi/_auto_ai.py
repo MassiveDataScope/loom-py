@@ -7,7 +7,7 @@ from typing import TYPE_CHECKING
 from fastapi import FastAPI
 
 from loom.composition import AiWiring
-from loom.core.observability.runtime import ObservabilityRuntime
+from loom.core.observability.observability import ObservabilityRuntime
 from loom.rest.fastapi._auto_auth import _AuthWiring
 
 if TYPE_CHECKING:

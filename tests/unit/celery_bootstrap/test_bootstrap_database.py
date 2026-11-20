@@ -8,7 +8,7 @@ import pytest
 
 pytest.importorskip("celery")
 
-from loom.celery.adapter import CeleryAdapter  # noqa: E402
+from loom.celery.runtime import CeleryAdapter  # noqa: E402
 from loom.composition import AppConfig  # noqa: E402
 from loom.core.config import ConfigContext, ConfigError  # noqa: E402
 from loom.core.job.job import Job  # noqa: E402

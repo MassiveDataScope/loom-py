@@ -15,12 +15,12 @@ from opentelemetry.sdk.trace.id_generator import IdGenerator
 
 from loom.core.config.observability import OtelConfig
 from loom.core.observability.event import Scope
+from loom.core.observability.observability import ObservabilityRuntime
 from loom.core.observability.otel_ids import (
     LoomMessageIdGenerator,
     build_sampler,
     parse_otel_trace_id,
 )
-from loom.core.observability.runtime import ObservabilityRuntime
 from loom.core.tracing.context import active_trace_id
 
 _TRACE_A = "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa1"

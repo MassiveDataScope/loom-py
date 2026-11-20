@@ -11,7 +11,7 @@ import msgspec
 import pytest
 
 from loom.core.model.redaction import Dsn
-from loom.core.observability.runtime import ObservabilityRuntime
+from loom.core.observability.observability import ObservabilityRuntime
 from loom.core.runner import SupportsFlush
 from loom.etl import ETLParams, ETLPipeline, ETLProcess, ETLStep, FromTable, IntoTable
 from loom.etl.compiler import ETLCompiler, InvalidStageError, filter_plan, iter_all_steps

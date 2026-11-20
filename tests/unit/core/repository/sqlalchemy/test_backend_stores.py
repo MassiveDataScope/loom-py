@@ -20,7 +20,7 @@ from loom.core.stores import StoreWiring
 from loom.core.stores.catalog import DEFAULT_STORE, StoreKey, load_catalog
 from loom.core.stores.profile import SERVER_PROFILE, StoreRuntime
 from loom.core.stores.repository import CursorCodec
-from loom.stores.sqlalchemy.backend import SQLAlchemyBackend
+from loom.stores.sqlalchemy.plugin import SQLAlchemyBackend
 
 _AUDIT = StoreKey("audit")
 _POSTGRES = "postgresql+asyncpg://app:secret@db.invalid/app"

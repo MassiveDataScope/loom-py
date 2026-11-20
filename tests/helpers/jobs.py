@@ -24,7 +24,7 @@ from loom.core.job.job import Job
 from loom.core.job.run import EnvelopeInvocation
 from loom.core.job.service import JobService
 from loom.core.job.timer import JobTimer
-from loom.core.observability.runtime import ObservabilityRuntime
+from loom.core.observability.observability import ObservabilityRuntime
 from loom.core.stores.profile import WORKER_PROFILE
 from loom.core.stores.repository.registration import classify_key
 from loom.core.use_case.factory import UseCaseFactory, main_repository

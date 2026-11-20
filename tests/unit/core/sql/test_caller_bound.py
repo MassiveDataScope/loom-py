@@ -13,7 +13,7 @@ import pytest
 from loom.core.config.errors import ConfigError
 from loom.core.identity import ANONYMOUS, Identity
 from loom.core.observability.event import EventKind, LifecycleEvent, Scope
-from loom.core.observability.runtime import ObservabilityRuntime
+from loom.core.observability.observability import ObservabilityRuntime
 from loom.core.stores.sql.abc import RolesNotBoundError, UnknownConnectionError
 from loom.core.stores.sql.caller_bound import CallerBoundSql
 from loom.core.stores.sql.config import SqlConfig, SqlConnectionConfig

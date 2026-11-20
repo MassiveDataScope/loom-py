@@ -22,8 +22,8 @@ from loom.ai.config import AiConfig
 from loom.ai.declarative import AgentSpecV1, JsonSchemaOutput, PolicySpec
 from loom.ai.engines.pydantic_ai import PydanticAIEngineProvider
 from loom.ai.errors import AgentRunErrorCode
+from loom.ai.execution import AgentRunError
 from loom.ai.inference import InferenceTarget
-from loom.ai.runtime import AgentRunError
 from loom.core.di import LoomContainer
 from loom.core.identity import Identity
 from loom.core.use_case.registry import UseCaseRegistry
@@ -156,7 +156,7 @@ class TestRuntimeWiring:
     ) -> None:
         """``create_engine`` runs once per plan, in ``__aenter__`` (FR-026)."""
         from loom.ai.config import AiConfig as _AiConfig
-        from loom.ai.runtime import AgentRuntime
+        from loom.ai.execution import AgentRuntime
         from tests.helpers.pydantic_ai_engine import answering_model, encode
 
         builds: list[str] = []

@@ -10,8 +10,8 @@ from unittest.mock import MagicMock, patch
 import pytest
 
 import loom.celery._discovery as discovery
-import loom.celery.adapter as adapter
 import loom.celery.bootstrap as boot
+import loom.celery.runtime as adapter
 from loom.celery.bootstrap import WorkerBootstrapResult
 from loom.celery.config import CeleryRuntimeConfig
 from loom.celery.constants import TASK_CALLBACK_ERROR_PREFIX, TASK_CALLBACK_PREFIX, TASK_JOB_PREFIX

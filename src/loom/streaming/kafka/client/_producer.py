@@ -10,7 +10,7 @@ from confluent_kafka import Message as _RawMessage
 from confluent_kafka import Producer as _Producer
 
 from loom.core.observability.event import LifecycleEvent, Scope
-from loom.core.observability.runtime import ObservabilityRuntime
+from loom.core.observability.observability import ObservabilityRuntime
 from loom.streaming.kafka._config import ProducerSettings
 from loom.streaming.kafka._errors import KafkaDeliveryError
 from loom.streaming.kafka._message import HEADER_CORRELATION_ID, HEADER_TRACE_ID

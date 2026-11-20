@@ -3,10 +3,10 @@
 from __future__ import annotations
 
 from loom.core.observability.event import EventKind, LifecycleEvent, LifecycleStatus, Scope
+from loom.core.observability.observability import ObservabilityRuntime
 from loom.core.observability.observer.noop import NoopObserver
 from loom.core.observability.observer.structlog import StructlogLifecycleObserver
 from loom.core.observability.protocol import LifecycleObserver
-from loom.core.observability.runtime import ObservabilityRuntime
 from tests.unit.streaming.observability.cases import FailingFlowObserver, RecordingFlowObserver
 
 

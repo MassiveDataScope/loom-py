@@ -71,7 +71,7 @@ def fastapi(
     composition: Composition, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> LoomContainer:
     pytest.importorskip("fastapi")
-    from loom.rest.fastapi.adapter import FastAPIAdapter
+    from loom.rest.fastapi.runtime import FastAPIAdapter
 
     return _composed(composition, {}, None, FastAPIAdapter(), tmp_path, monkeypatch)
 
@@ -108,7 +108,7 @@ def celery(
     composition: Composition, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> LoomContainer:
     pytest.importorskip("celery")
-    from loom.celery.adapter import CeleryAdapter
+    from loom.celery.runtime import CeleryAdapter
 
     document = {"app": {"job_service": "celery"}, "celery": BROKER}
     return _composed(composition, document, None, CeleryAdapter(), tmp_path, monkeypatch)

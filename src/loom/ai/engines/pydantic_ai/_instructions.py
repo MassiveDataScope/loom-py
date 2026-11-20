@@ -52,7 +52,7 @@ def ensure_templating_available(plan: AgentPlan) -> None:
     check, an artifact declaring ``template:`` while the extra is absent
     would only fail on its first request, after already taking the caller's
     prompt. Checking here, at the point
-    :meth:`~loom.ai.engines.pydantic_ai.provider.PydanticAIEngineProvider.create_engine`
+    :meth:`~loom.ai.engines.pydantic_ai.plugin.PydanticAIEngineProvider.create_engine`
     builds the agent, moves that failure to start-up.
 
     An artifact with no templated block never attempts the import, which is

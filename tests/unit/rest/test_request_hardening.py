@@ -23,7 +23,7 @@ from loom.core.config.errors import ConfigError
 from loom.core.di.container import LoomContainer
 from loom.core.engine.compiler import UseCaseCompiler
 from loom.core.engine.executor import RuntimeExecutor
-from loom.core.observability.runtime import ObservabilityRuntime
+from loom.core.observability.observability import ObservabilityRuntime
 from loom.core.stores.repository.query import QuerySpec
 from loom.core.stores.repository.registration import classify_key
 from loom.core.tracing import get_trace_id
@@ -33,7 +33,7 @@ from loom.rest._body import DEFAULT_MAX_BODY_BYTES, BodySizeLimitMiddleware, sen
 from loom.rest.compiler import RestInterfaceCompiler
 from loom.rest.fastapi._errors import register_error_handlers
 from loom.rest.fastapi._exclusions import verify_exclusion_paths
-from loom.rest.fastapi.router_runtime import bind_interfaces
+from loom.rest.fastapi.router import bind_interfaces
 from loom.rest.middleware import TraceIdMiddleware, _accepted_trace_id
 from loom.rest.model import RestApiDefaults, RestInterface, RestRoute
 

@@ -2,7 +2,7 @@
 
 Walks a compiled :class:`~loom.etl.compiler._plan.PipelinePlan` and drives
 read → execute → write for each step, emitting lifecycle events through the
-shared :class:`~loom.core.observability.runtime.ObservabilityRuntime`.
+shared :class:`~loom.core.observability.observability.ObservabilityRuntime`.
 
 This class is **not** part of the public API.  It is instantiated exclusively
 by :class:`~loom.etl.ETLRunner`, which wires reader, writer, catalog, and the
@@ -38,7 +38,7 @@ from typing import Any
 
 from loom.core.config import ConfigContext
 from loom.core.observability.event import Scope
-from loom.core.observability.runtime import ObservabilityRuntime
+from loom.core.observability.observability import ObservabilityRuntime
 from loom.core.runner import SupportsFlush
 from loom.etl.checkpoint import CheckpointCleanupError, CheckpointStore
 from loom.etl.compiler._plan import (
@@ -59,8 +59,8 @@ from loom.etl.executor._agents import AgentMapper
 from loom.etl.executor._dispatcher import ParallelDispatcher, ThreadDispatcher
 from loom.etl.lineage._records import RunContext, RunStatus, WriteContext
 from loom.etl.pipeline._step_sql import StepSQL
-from loom.etl.runtime._config_values import resolve_config_value
-from loom.etl.runtime.contracts import (
+from loom.etl.ports._config_values import resolve_config_value
+from loom.etl.ports.contracts import (
     AgentBatchRunner,
     ClientCommandExecutor,
     SourceReader,

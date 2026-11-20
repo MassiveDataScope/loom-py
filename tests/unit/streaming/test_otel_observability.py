@@ -9,7 +9,7 @@ from opentelemetry.trace import StatusCode
 
 from loom.core.observability.config import ObservabilityConfig
 from loom.core.observability.event import Scope
-from loom.core.observability.runtime import ObservabilityRuntime
+from loom.core.observability.observability import ObservabilityRuntime
 
 
 class TestObservabilityConfig:

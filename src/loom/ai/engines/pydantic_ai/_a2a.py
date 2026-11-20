@@ -4,7 +4,7 @@ Two entry points, one connection recipe, both served by the
 :mod:`~loom.ai.engines.pydantic_ai.extras.a2a` island, the one module of the
 engine that imports the ``a2a-sdk``:
 
-* :func:`create_a2a_client` is the :data:`~loom.ai.runtime.A2AClientFactory`
+* :func:`create_a2a_client` is the :data:`~loom.ai.execution.A2AClientFactory`
   the runtime opens at start-up. Entering it fetches the remote card, applies
   the grant's skill filter to it and hands back a usable session, so an
   unreachable or mismatched agent fails start-up as ``A2A_AGENT_UNREACHABLE``
@@ -60,7 +60,7 @@ def require_a2a_sdk() -> None:
 def create_a2a_client(capability: CompiledA2ACapability) -> AbstractAsyncContextManager[Client]:
     """Open one session against a remote agent, card fetched and checked.
 
-    Satisfies :data:`~loom.ai.runtime.A2AClientFactory`. See the island's
+    Satisfies :data:`~loom.ai.execution.A2AClientFactory`. See the island's
     ``create_a2a_client`` for what entering the context does and raises.
 
     Example::

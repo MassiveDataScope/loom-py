@@ -186,7 +186,7 @@ lambda = [
 ]
 
 [project.entry-points."loom.ai.engines"]
-pydantic-ai = "loom.ai.engines.pydantic_ai.provider:PydanticAIEngineProvider"
+pydantic-ai = "loom.ai.engines.pydantic_ai.plugin:PydanticAIEngineProvider"
 
 # Authentication strategies for the remote endpoints loom calls out to: MCP
 # servers and A2A agents alike, since the contract is httpx.Auth and knows
@@ -199,15 +199,15 @@ bearer = "loom.ai.remote_auth:bearer_token"
 static = "loom.ai.remote_auth:static_headers"
 
 [project.entry-points."loom.etl.backends"]
-polars = "loom.etl.backends.polars.provider:PolarsProvider"
-spark = "loom.etl.backends.spark.provider:SparkProvider"
+polars = "loom.etl.backends.polars.engine:PolarsProvider"
+spark = "loom.etl.backends.spark.engine:SparkProvider"
 
 # Store backends a store's `backend` key resolves. A deployment registers
 # its own under the same group from its own package.
 [project.entry-points."loom.stores.backends"]
-sqlalchemy = "loom.stores.sqlalchemy.backend:SQLAlchemyBackend"
-dynamodb = "loom.stores.dynamodb.backend:DynamoDBBackend"
-mongo = "loom.stores.mongo.backend:MongoBackend"
+sqlalchemy = "loom.stores.sqlalchemy.plugin:SQLAlchemyBackend"
+dynamodb = "loom.stores.dynamodb.plugin:DynamoDBBackend"
+mongo = "loom.stores.mongo.plugin:MongoBackend"
 none = "loom.core.stores.none:NoneBackend"
 
 # Check sets by the configuration path they validate; a set is imported only

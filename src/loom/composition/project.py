@@ -30,7 +30,7 @@ from loom.core.environment import Environment, resolve_environment, select_confi
 from loom.core.locator import DEFAULT_CODE_PATH, add_code_path
 from loom.core.logger import get_logger
 from loom.core.observability.config import ObservabilityConfig
-from loom.core.observability.runtime import ObservabilityRuntime
+from loom.core.observability.observability import ObservabilityRuntime
 from loom.core.stores import resolve_store_backend
 from loom.core.stores.catalog import StoreCatalog, StoreKey, load_catalog
 

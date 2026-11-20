@@ -7,7 +7,7 @@ from confluent_kafka import TopicPartition
 from prometheus_client import CollectorRegistry, generate_latest
 
 from loom.core.observability.event import LifecycleEvent
-from loom.core.observability.runtime import ObservabilityRuntime
+from loom.core.observability.observability import ObservabilityRuntime
 from loom.prometheus import KafkaPrometheusMetrics
 from loom.streaming.kafka import (
     ConsumerSettings,

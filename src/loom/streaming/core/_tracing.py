@@ -14,7 +14,7 @@ from __future__ import annotations
 from collections.abc import Mapping
 
 from loom.core.observability.event import Scope, TerminalReason
-from loom.core.observability.runtime import ObservabilityRuntime
+from loom.core.observability.observability import ObservabilityRuntime
 from loom.core.observability.span import LoomSpan
 from loom.streaming.core._message import MessageMeta
 

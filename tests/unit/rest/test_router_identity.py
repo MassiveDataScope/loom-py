@@ -1,6 +1,6 @@
 """The router hands the verified caller to the executor, one per request.
 
-``router_runtime`` is the single place in the REST layer that reads the
+``loom.rest.fastapi.router`` is the single place in the REST layer that reads the
 ambient identity; from there the caller travels as an explicit argument.  These
 tests pin that hand-off and, above all, that two concurrent requests never see
 each other's caller.
@@ -19,13 +19,13 @@ from loom.core.di.container import LoomContainer
 from loom.core.engine.compiler import UseCaseCompiler
 from loom.core.engine.executor import RuntimeExecutor
 from loom.core.identity import Identity, reset_identity, set_identity
-from loom.core.observability.runtime import ObservabilityRuntime
+from loom.core.observability.observability import ObservabilityRuntime
 from loom.core.stores.repository.registration import classify_key
 from loom.core.use_case.factory import UseCaseFactory, main_repository
 from loom.core.use_case.markers import Caller
 from loom.core.use_case.use_case import UseCase
 from loom.rest.compiler import RestInterfaceCompiler
-from loom.rest.fastapi.router_runtime import bind_interfaces
+from loom.rest.fastapi.router import bind_interfaces
 from loom.rest.model import RestInterface, RestRoute
 
 _SUBJECT_HEADER = "x-test-subject"

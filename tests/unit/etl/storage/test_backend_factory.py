@@ -15,12 +15,12 @@ require_pyspark()
 
 from loom.core.connections import ClickHouseConnection  # noqa: E402
 from loom.core.model.redaction import Dsn, RedactedMap, Secret  # noqa: E402
-from loom.etl.backends.spark.provider import SparkProvider  # noqa: E402
+from loom.etl.backends.spark.engine import SparkProvider  # noqa: E402
 from loom.etl.checkpoint._backends._polars import _PolarsCheckpointBackend  # noqa: E402
 from loom.etl.lineage._config import LineageConfig  # noqa: E402
 from loom.etl.lineage._records import EventName, PipelineRunRecord, RunStatus  # noqa: E402
 from loom.etl.lineage.sinks import TableLineageStore  # noqa: E402
-from loom.etl.runner._providers import load_backend_provider  # noqa: E402
+from loom.etl.runner._engines import load_backend_provider  # noqa: E402
 from loom.etl.runner._wiring import (  # noqa: E402
     make_backends,
     make_checkpoint_store,
@@ -234,7 +234,7 @@ class TestLineageWiring:
 
         monkeypatch = pytest.MonkeyPatch()
         monkeypatch.setattr(
-            "loom.etl.backends.spark.provider.SparkTargetWriter", _FakeSparkTargetWriter
+            "loom.etl.backends.spark.engine.SparkTargetWriter", _FakeSparkTargetWriter
         )
         try:
             writer = provider.create_lineage_writer(config, store, spark=spark)
@@ -245,7 +245,7 @@ class TestLineageWiring:
         assert captured["policy"] is MissingTablePolicy.CREATE
 
     def test_polars_provider_lineage_writer_honors_missing_table_policy(self) -> None:
-        from loom.etl.backends.polars.provider import PolarsProvider
+        from loom.etl.backends.polars.engine import PolarsProvider
 
         captured: dict[str, MissingTablePolicy] = {}
 
@@ -266,7 +266,7 @@ class TestLineageWiring:
 
         monkeypatch = pytest.MonkeyPatch()
         monkeypatch.setattr(
-            "loom.etl.backends.polars.provider.PolarsTargetWriter", _FakePolarsTargetWriter
+            "loom.etl.backends.polars.engine.PolarsTargetWriter", _FakePolarsTargetWriter
         )
         try:
             writer = provider.create_lineage_writer(config, store)

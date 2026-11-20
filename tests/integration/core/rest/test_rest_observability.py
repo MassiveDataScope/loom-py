@@ -23,7 +23,7 @@ from fastapi.testclient import TestClient
 from loom.core.bootstrap import Kernel, create_kernel
 from loom.core.errors import NotFound
 from loom.core.observability.event import EventKind, LifecycleEvent, Scope
-from loom.core.observability.runtime import ObservabilityRuntime
+from loom.core.observability.observability import ObservabilityRuntime
 from loom.rest.compiler import RouteSources
 from loom.rest.fastapi.app import create_fastapi_app
 from loom.rest.middleware import TraceIdMiddleware

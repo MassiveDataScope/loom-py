@@ -62,7 +62,7 @@ from loom.ai.errors import (
     AgentRunErrorCode,
     run_error_class,
 )
-from loom.ai.runtime import AgentRunError, AgentRuntime
+from loom.ai.execution import AgentRunError, AgentRuntime
 from loom.composition._ai import AgentDepsFactory
 from loom.core.bootstrap import create_kernel
 from loom.core.command import Command

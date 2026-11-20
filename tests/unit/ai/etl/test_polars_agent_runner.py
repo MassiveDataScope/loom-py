@@ -22,7 +22,7 @@ from pydantic_ai.usage import RequestUsage
 from loom.ai import AgentResult, AiConfig, InferenceTarget, ModelPrice
 from loom.ai.engines.pydantic_ai import PydanticAIEngineProvider
 from loom.ai.etl import PolarsAgentRunner
-from loom.ai.runtime import AgentRuntime
+from loom.ai.execution import AgentRuntime
 from tests.unit.ai.etl._types import Reply
 
 _AGENT = """\

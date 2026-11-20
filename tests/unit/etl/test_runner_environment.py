@@ -72,7 +72,7 @@ class TestRunnerEnvironment:
     ) -> None:
         captured: dict[str, object] = {}
         monkeypatch.setattr(
-            "loom.core.observability.runtime.configure_logging_from_values",
+            "loom.core.observability.observability.configure_logging_from_values",
             lambda **kwargs: captured.update(kwargs),
         )
         ETLRunner.from_dict(

@@ -7,7 +7,7 @@ from typing import Generic, Literal, TypeVar
 
 from loom.core.model import LoomFrozenStruct, LoomStruct
 from loom.core.observability.event import LifecycleEvent, Scope
-from loom.core.observability.runtime import ObservabilityRuntime
+from loom.core.observability.observability import ObservabilityRuntime
 from loom.streaming.kafka._codec import KafkaCodec
 from loom.streaming.kafka._key_resolver import PartitionKeyResolver
 from loom.streaming.kafka._message import (

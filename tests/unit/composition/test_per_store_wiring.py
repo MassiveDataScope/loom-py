@@ -23,9 +23,9 @@ from loom.core.stores.catalog import StoreKey
 from loom.core.stores.repository import DefaultRepositoryBuilder, RepoFor, RepositoryBuildContext
 from loom.core.use_case import Input, UseCase
 from loom.core.use_case.errors import UncomposedWriteStore
-from loom.rest.fastapi.adapter import FastAPIAdapter
+from loom.rest.fastapi.runtime import FastAPIAdapter
 from loom.rest.model import RestInterface
-from loom.stores.sqlalchemy.backend import SQLAlchemyBackend
+from loom.stores.sqlalchemy.plugin import SQLAlchemyBackend
 from loom.stores.sqlalchemy.session_manager import SessionManager
 from loom.stores.sqlalchemy.transactional import transactional
 from tests.helpers.composition import Serving, composition_project

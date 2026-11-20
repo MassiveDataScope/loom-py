@@ -40,16 +40,16 @@ from loom.core.stores.repository.registration import classify_key
 from loom.core.stores.sql import SqlExecutionError
 from loom.core.stores.uow.coordinator import Committed, InvocationOutcome
 from loom.core.tracing import get_trace_id
-from loom.core.transport.adapter import AdapterRequest, LoomAdapter
+from loom.core.transport.dispatcher import AdapterRequest, LoomAdapter
 from loom.core.use_case import Created
 from loom.core.use_case.factory import UseCaseFactory, main_repository
 from loom.core.use_case.markers import Input
 from loom.core.use_case.use_case import UseCase
 from loom.etl import Format, UnsupportedFormatError
 from loom.rest.auth import AuthenticationUnavailable
+from loom.rest.dispatcher import LoomRestAdapter
 from loom.rest.errors import ErrorField, HttpErrorMapper
 from loom.rest.fastapi._errors import register_error_handlers
-from loom.rest.rest_adapter import LoomRestAdapter
 
 # ---------------------------------------------------------------------------
 # Domain fixtures

@@ -9,11 +9,11 @@ from typing import Any
 import pytest
 from fastapi import FastAPI
 
+from loom.ai.execution import AgentRuntime
+from loom.ai.execution._lifecycle import UseCaseMcpGrant
 from loom.ai.fastapi.endpoints import bind_agent_endpoints
-from loom.ai.runtime import AgentRuntime
-from loom.ai.runtime._lifecycle import UseCaseMcpGrant
 from loom.core.di import LoomContainer
-from loom.core.observability.runtime import ObservabilityRuntime
+from loom.core.observability.observability import ObservabilityRuntime
 from tests.integration.ai.conftest import (
     CountingEngineProvider,
     RecordingMcpSession,

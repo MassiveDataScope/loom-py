@@ -12,7 +12,7 @@ from fastapi.testclient import TestClient
 from loom.core.di.container import LoomContainer
 from loom.core.engine.compiler import UseCaseCompiler
 from loom.core.engine.executor import RuntimeExecutor
-from loom.core.observability.runtime import ObservabilityRuntime
+from loom.core.observability.observability import ObservabilityRuntime
 from loom.core.stores.repository.registration import classify_key
 from loom.core.use_case import Created
 from loom.core.use_case.factory import UseCaseFactory, main_repository
@@ -20,7 +20,7 @@ from loom.core.use_case.use_case import UseCase
 from loom.rest.compiler import RestInterfaceCompiler
 from loom.rest.fastapi._errors import register_error_handlers
 from loom.rest.fastapi.app import _register_openapi_components
-from loom.rest.fastapi.router_runtime import bind_interfaces
+from loom.rest.fastapi.router import bind_interfaces
 from loom.rest.model import RestInterface, RestRoute
 
 

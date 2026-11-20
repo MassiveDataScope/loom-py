@@ -19,7 +19,7 @@ from loom.core.identity import Identity, current_identity
 from loom.core.job.job import Job
 from loom.core.job.outcome import JobPostponement
 from loom.core.observability.event import EventKind, LifecycleEvent, Scope
-from loom.core.observability.runtime import ObservabilityRuntime
+from loom.core.observability.observability import ObservabilityRuntime
 from loom.core.use_case import Input
 from loom.jobs.aws.queue import ABANDONMENT_REASON_ATTRIBUTE
 from loom.rest.auth import RequestCredentials

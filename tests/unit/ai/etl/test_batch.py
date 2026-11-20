@@ -11,7 +11,7 @@ import pytest
 
 from loom.ai.etl._batch import PROMPT_MISSING, Batch, RowOutcome
 from loom.ai.etl._ledger import SpendLedger
-from loom.ai.runtime import AgentRuntime
+from loom.ai.execution import AgentRuntime
 from loom.core.identity import Identity
 
 _LIMIT = 3

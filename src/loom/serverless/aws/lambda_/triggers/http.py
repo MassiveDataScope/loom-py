@@ -28,20 +28,20 @@ from starlette.routing import Route
 
 from loom.composition import Application, LoopHost, Project, Recipe
 from loom.core.config import ConfigContext, ConfigKey
-from loom.core.observability.runtime import ObservabilityRuntime
+from loom.core.observability.observability import ObservabilityRuntime
 from loom.core.stores import LAMBDA_PROFILE
 from loom.core.stores.sql import SqlConfig
 from loom.rest.auth import Authenticator
 from loom.rest.compiler import CompiledRoute
 from loom.rest.fastapi._errors import register_error_handlers
 from loom.rest.fastapi._exclusions import verify_exclusion_paths
-from loom.rest.fastapi.adapter import RestDeclaration, compose_rest, mount_request_stack
 from loom.rest.fastapi.app import CompiledApi, compile_api
-from loom.rest.fastapi.router_runtime import (
+from loom.rest.fastapi.router import (
     _RouteHandler,
     _RouteRuntime,
     path_param_annotation,
 )
+from loom.rest.fastapi.runtime import RestDeclaration, compose_rest, mount_request_stack
 from loom.rest.fastapi.sql import mounted_sql_endpoints
 from loom.serverless.aws.lambda_._refusals import COMPONENT, LambdaUnservedConfigError
 from loom.serverless.aws.lambda_.interfaces import http_function
@@ -72,7 +72,7 @@ def compose_http(
     Raises:
         LambdaUnservedConfigError: When the configuration mounts an SQL
             endpoint.
-        ConfigError: For any reason :func:`~loom.rest.fastapi.adapter.compose_rest`
+        ConfigError: For any reason :func:`~loom.rest.fastapi.runtime.compose_rest`
             raises it.
     """
     _refuse_sql_endpoints(project.config)

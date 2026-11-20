@@ -21,9 +21,9 @@ from opentelemetry.trace import ProxyTracerProvider
 from loom.core.config.observability import OtelConfig
 from loom.core.model.redaction import Dsn
 from loom.core.observability.event import Scope
+from loom.core.observability.observability import ObservabilityRuntime
 from loom.core.observability.observer import otel as _otel
 from loom.core.observability.otel_ids import LoomMessageIdGenerator
-from loom.core.observability.runtime import ObservabilityRuntime
 
 _TRACE_A = "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa1"
 _ADOPT_SETTING = "observability.otel.config.adopt_host_id_generator"

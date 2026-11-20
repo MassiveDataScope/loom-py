@@ -27,7 +27,7 @@ from sqlalchemy import Column, Select, Table, select
 
 from loom.core.model.convert import to_struct
 from loom.core.model.enums import Cardinality
-from loom.core.projection.runtime import ProjectionPlan, execute_projection_plan
+from loom.core.projection.plan import ProjectionPlan, execute_projection_plan
 
 if TYPE_CHECKING:
     from sqlalchemy.ext.asyncio import AsyncSession

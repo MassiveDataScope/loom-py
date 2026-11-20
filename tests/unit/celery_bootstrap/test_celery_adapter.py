@@ -9,8 +9,8 @@ import pytest
 from celery import Celery
 
 from loom.ai.abc import AgentHandle, McpHandle
-from loom.celery.adapter import CeleryAdapter
 from loom.celery.constants import TASK_CALLBACK_ERROR_PREFIX, TASK_CALLBACK_PREFIX, TASK_JOB_PREFIX
+from loom.celery.runtime import CeleryAdapter
 from loom.composition import (
     AppConfig,
     Application,
@@ -206,7 +206,7 @@ class TestBind:
         self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
     ) -> None:
         log = RecordingLogger()
-        monkeypatch.setattr("loom.celery.adapter._log", log)
+        monkeypatch.setattr("loom.celery.runtime._log", log)
         adapter = CeleryAdapter(jobs=[_PingJob, _SecondJob])
 
         adapter.bind(_application(tmp_path, {}, adapter))

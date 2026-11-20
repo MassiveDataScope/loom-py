@@ -21,7 +21,7 @@ from sqlalchemy.pool import NullPool
 from loom.core.config import ConfigContext, ConfigError
 from loom.core.stores.profile import SERVER_PROFILE
 from loom.stores.sqlalchemy.alembic import StoreSchema
-from loom.stores.sqlalchemy.backend import SQLAlchemyBackend
+from loom.stores.sqlalchemy.plugin import SQLAlchemyBackend
 from loom.stores.sqlalchemy.rls import create_schema, verify
 from loom.stores.sqlalchemy.rls.integrity import startup_problems
 from loom.stores.sqlalchemy.rls.sources import clear_scope_sources, register_scope_source

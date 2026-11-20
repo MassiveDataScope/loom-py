@@ -18,7 +18,7 @@ from loom.core.observability.config import (
     PrometheusObservabilityConfig,
 )
 from loom.core.observability.event import EventKind, LifecycleEvent, LifecycleStatus, Scope
-from loom.core.observability.runtime import ObservabilityRuntime
+from loom.core.observability.observability import ObservabilityRuntime
 
 
 class AcmeRuntimeRecordingObserver:
@@ -166,7 +166,7 @@ class TestFromConfig:
             return object()
 
         monkeypatch.setattr(
-            "loom.core.observability.runtime.configure_logging_from_values",
+            "loom.core.observability.observability.configure_logging_from_values",
             _fake_configure_logging_from_values,
         )
         # Patched on the owning module: ``runtime`` imports the OTEL bootstrap
@@ -205,7 +205,7 @@ class TestFromConfig:
     ) -> None:
         captured: dict[str, object] = {}
         monkeypatch.setattr(
-            "loom.core.observability.runtime.configure_logging_from_values",
+            "loom.core.observability.observability.configure_logging_from_values",
             lambda **kwargs: captured.update(kwargs),
         )
         config = ObservabilityConfig(log=LogObservabilityConfig(config=LoggerConfig()))
@@ -220,7 +220,7 @@ class TestStartScrapeServer:
         runtime = ObservabilityRuntime([], _scrape_port=None)
         called: list[int] = []
         monkeypatch.setattr(
-            "loom.core.observability.runtime.start_http_server",
+            "loom.core.observability.observability.start_http_server",
             lambda p, addr=None: called.append(p),
         )
 
@@ -234,7 +234,7 @@ class TestStartScrapeServer:
         runtime = ObservabilityRuntime([], _scrape_port=9090, _scrape_addr="127.0.0.1")
         calls: list[tuple[int, str]] = []
         monkeypatch.setattr(
-            "loom.core.observability.runtime.start_http_server",
+            "loom.core.observability.observability.start_http_server",
             lambda p, addr=None: calls.append((p, addr)),
         )
 
@@ -246,7 +246,7 @@ class TestStartScrapeServer:
         runtime = ObservabilityRuntime([], _scrape_port=9090)
         called: list[int] = []
         monkeypatch.setattr(
-            "loom.core.observability.runtime.start_http_server",
+            "loom.core.observability.observability.start_http_server",
             lambda p, addr=None: called.append(p),
         )
 
@@ -269,7 +269,7 @@ class TestStartScrapeServer:
             )
         )
         monkeypatch.setattr(
-            "loom.core.observability.runtime.start_http_server", lambda p, addr=None: None
+            "loom.core.observability.observability.start_http_server", lambda p, addr=None: None
         )
 
         runtime = ObservabilityRuntime.from_config(config)

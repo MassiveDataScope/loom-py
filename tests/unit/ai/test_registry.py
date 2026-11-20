@@ -284,7 +284,7 @@ class TestConfigureEngineMcpConnectTimeout:
             exc_type=ImportError,
         )
         from loom.ai.compiler import CompiledMcpCapability
-        from loom.ai.engines.pydantic_ai.provider import PydanticAIEngineProvider
+        from loom.ai.engines.pydantic_ai.plugin import PydanticAIEngineProvider
 
         provider = resolve_engine_provider(_ENGINE_NAME)
         assert isinstance(provider, PydanticAIEngineProvider)

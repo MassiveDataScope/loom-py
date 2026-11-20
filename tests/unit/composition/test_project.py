@@ -24,7 +24,7 @@ from loom.core.stores.profile import (
     StoreRuntime,
 )
 from loom.core.use_case.use_case import UseCase
-from loom.stores.sqlalchemy.backend import SQLAlchemyBackend
+from loom.stores.sqlalchemy.plugin import SQLAlchemyBackend
 from tests.helpers.composition import ProjectFactory, coordinator_of
 
 

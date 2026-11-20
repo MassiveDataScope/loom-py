@@ -93,7 +93,7 @@ _SQL_REEXPORTED_NAMES = (
 
 # loom.ai re-exports: canonical docs live in the modules that DEFINE each
 # symbol (loom.ai.abc, loom.ai.config, loom.ai.errors, loom.ai.inference,
-# loom.ai.runtime), listed in reference/api/ai.rst. The 'loom.ai' facade and
+# loom.ai.execution), listed in reference/api/ai.rst. The 'loom.ai' facade and
 # 'loom.ai.compiler' re-export them for import convenience; documenting them
 # twice makes every cross-reference ambiguous. Same treatment as loom.core.stores.sql.
 _AI_PACKAGE = "loom.ai"

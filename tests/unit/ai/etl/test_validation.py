@@ -19,9 +19,9 @@ from loom.ai.engines.pydantic_ai import PydanticAIEngineProvider
 from loom.ai.etl import PolarsAgentRunner
 from loom.ai.etl import _runner as _runner_module
 from loom.ai.etl._validation import validation_issues
-from loom.ai.runtime import AgentRuntime
+from loom.ai.execution import AgentRuntime
 from loom.core.model import loom_type
-from loom.etl.runtime import AgentIssueKind
+from loom.etl.ports import AgentIssueKind
 from tests.helpers.pydantic_ai_engine import make_plan
 from tests.unit.ai.etl._types import Clashing, Other, PydanticDecision, Reply
 

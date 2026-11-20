@@ -20,7 +20,7 @@ from loom.composition import JobTransportContext, JobTransportError, Project
 from loom.core.job.context import flush_pending_dispatches
 from loom.core.job.service import JobService
 from loom.jobs.inline import InlineJobTransport
-from loom.rest.fastapi.adapter import FastAPIAdapter
+from loom.rest.fastapi.runtime import FastAPIAdapter
 from loom.testing import RecordingJobTransport
 from tests.helpers.composition import ProjectFactory
 from tests.helpers.jobs import BROKER, EmailJob, JobsAdapter, job_project

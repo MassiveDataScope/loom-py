@@ -24,7 +24,7 @@ pip install "loom-kernel[celery]"
 | `JobService.run()` | Execute a job immediately in the calling process |
 | `JobCallback` | Hook invoked by the broker on task success or failure |
 | `bootstrap_worker()` | Single entry point to start a Celery worker |
-| `CeleryAdapter` | The worker's adapter over the shared composition (`loom.celery.adapter`) |
+| `CeleryAdapter` | The worker's adapter over the shared composition (`loom.celery.runtime`) |
 | `WorkerNotOpenError` | Raised by every task of a worker process whose application failed to open |
 | `CeleryConfig` | YAML-driven broker and worker settings |
 | `JobConfig` | Per-job routing and retry overrides from YAML |
@@ -931,7 +931,7 @@ signal checks, opens and closes the application:
 
 ```python
 # src/app/worker_main.py
-from loom.celery.adapter import CeleryAdapter
+from loom.celery.runtime import CeleryAdapter
 from loom.composition import create_app
 
 celery_app = create_app("config/worker.yaml", adapter=CeleryAdapter())

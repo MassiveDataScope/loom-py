@@ -23,10 +23,10 @@ scrape path, when ``observability.prometheus.enabled`` is set::
     app = create_app("config/app.yaml")
 """
 
-from loom.prometheus.adapter import PrometheusMetricsAdapter
 from loom.prometheus.kafka import KafkaMetricName, KafkaPrometheusMetrics
 from loom.prometheus.lifecycle import PrometheusLifecycleAdapter
 from loom.prometheus.middleware import PrometheusMiddleware
+from loom.prometheus.recorder import PrometheusMetricsAdapter
 
 __all__ = [
     "KafkaMetricName",

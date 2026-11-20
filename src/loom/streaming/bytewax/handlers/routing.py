@@ -9,7 +9,7 @@ from bytewax.operators import branch as bw_branch
 from bytewax.operators import flat_map as bw_flat_map
 from bytewax.operators import map as bw_map
 
-from loom.core.observability.runtime import ObservabilityRuntime
+from loom.core.observability.observability import ObservabilityRuntime
 from loom.streaming.bytewax._error_boundary import (
     ErrorBoundary,
     _classify_routing,

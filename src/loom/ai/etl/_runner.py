@@ -1,4 +1,4 @@
-"""The Polars implementation of :class:`~loom.etl.runtime.contracts.AgentBatchRunner`."""
+"""The Polars implementation of :class:`~loom.etl.ports.contracts.AgentBatchRunner`."""
 
 from __future__ import annotations
 
@@ -22,10 +22,10 @@ from loom.ai.etl._columns import output_columns
 from loom.ai.etl._frames import answers_frame, no_answers, prompt_rows, require_free_keys
 from loom.ai.etl._ledger import SpendLedger
 from loom.ai.etl._validation import validation_issues
+from loom.ai.execution import AgentRuntime
 from loom.ai.registry import resolve_engine_provider
-from loom.ai.runtime import AgentRuntime
 from loom.core.model import loom_type
-from loom.etl.runtime.contracts import AgentIssue
+from loom.etl.ports.contracts import AgentIssue
 
 ResultT = TypeVar("ResultT")
 
