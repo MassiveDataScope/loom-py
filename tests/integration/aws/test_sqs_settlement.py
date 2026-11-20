@@ -11,7 +11,8 @@ import pytest
 
 from loom.core.config import ConfigContext
 from loom.core.connections.aws import AwsClients
-from loom.core.job.outcome import Abandoned, Failed, JobOutcome, Postponed
+from loom.core.engine.events import AbandonReason
+from loom.core.job.outcome import Abandoned, Failed, JobAbandonment, JobOutcome, Postponed
 from loom.core.job.policy import Countdown
 from loom.jobs.aws.queue import POSTPONEMENTS_ATTRIBUTE, SQSRecord
 from loom.jobs.aws.settlement import SQSJobSettlement
@@ -85,7 +86,7 @@ def test_an_abandonment_a_postponement_and_a_failure_are_each_settled_on_a_real_
     settlement = SQSJobSettlement(AwsClients(), config)
     received = {record.body: record for record in _received(sqs, source, 3, arn)}
     outcomes: dict[str, JobOutcome] = {
-        "abandoned": Abandoned("tenant deleted"),
+        "abandoned": Abandoned(AbandonReason.JOB_ASKED, JobAbandonment("tenant deleted")),
         "postponed": Postponed(Countdown(1), "warming up"),
         "failed": Failed(ValueError("boom"), Countdown(1)),
     }

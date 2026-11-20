@@ -1,18 +1,17 @@
-"""CeleryJobTransport — Celery-backed implementation of the JobService protocol.
+"""CeleryJobTransport: the :class:`~loom.core.job.transport.JobTransport` for a Celery broker.
 
-Dispatches Jobs to the broker post-commit by enqueuing a sync callable on
-the post-commit channel of the current execution
-(:mod:`loom.core.engine.post_commit`, through
-:func:`~loom.core.job.context.add_pending_publish`).  No broker call is
-made inside :meth:`~CeleryJobTransport.dispatch_after_commit`; the actual
-``send_task`` runs when the executor drains the channel after the Unit of
-Work has closed, or at the end of an execution without one.
+:meth:`~CeleryJobTransport.send_after_commit` enqueues a sync callable on the
+post-commit channel of the current execution (:mod:`loom.core.engine.post_commit`,
+through :func:`~loom.core.job.context.add_pending_publish`).  No broker call is
+made there; the ``send_task`` runs when the executor drains the channel after the
+Unit of Work has closed, or at the end of an execution without one.
+:meth:`~CeleryJobTransport.send` publishes at once, off the event loop.
 
 Usage::
 
     from loom.celery.service import CeleryJobTransport
 
-    service = CeleryJobTransport(celery_app)
+    service = JobService(CeleryJobTransport(celery_app))
 
     class NotifyUsersUseCase(UseCase[User, None]):
         def __init__(self, jobs: JobService) -> None:
@@ -24,6 +23,7 @@ Usage::
 
 from __future__ import annotations
 
+import asyncio
 from dataclasses import dataclass
 from datetime import UTC, datetime
 from typing import TYPE_CHECKING, Any, TypeVar
@@ -181,9 +181,15 @@ class CeleryJobTransport:
         return handle
 
     async def send(self, dispatch: JobDispatch) -> JobHandle[Any]:
-        """Send the task to the broker before returning."""
+        """Send the task to the broker before returning, without blocking the event loop.
+
+        The blocking ``send_task`` runs in a worker thread with a copy of the
+        caller's context. A thread cannot be interrupted: when the awaiting task
+        is cancelled, the send that already started still finishes and the job is
+        published, though no handle reaches the caller.
+        """
         pending, handle = self._build_pending(dispatch)
-        pending()
+        await asyncio.to_thread(pending)
         return handle
 
     def check_callbacks(
@@ -191,21 +197,6 @@ class CeleryJobTransport:
     ) -> None:
         """Accept callbacks, whose discovery is checked by the service."""
         return None
-
-    def check_parallel_callbacks(
-        self, on_all_success: type[JobCallback] | None, on_any_failure: type[JobCallback] | None
-    ) -> None:
-        """Refuse group callbacks until Celery chord support is implemented.
-
-        Raises:
-            NotImplementedError: Either callback is supplied.
-        """
-        if on_all_success is not None or on_any_failure is not None:
-            raise NotImplementedError(
-                "dispatch_parallel() callbacks (on_all_success / on_any_failure) "
-                "require Celery chord support, which is not yet implemented. "
-                "Pass None for both callback arguments."
-            )
 
     def _build_pending(
         self, dispatch: JobDispatch

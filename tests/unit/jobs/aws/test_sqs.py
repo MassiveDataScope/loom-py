@@ -7,7 +7,7 @@ import hashlib
 import threading
 from collections.abc import Callable, Iterator
 from pathlib import Path
-from typing import Any, cast
+from typing import Any
 
 import pytest
 
@@ -333,12 +333,6 @@ class TestSQSDispatch:
 
         assert (raised.value.code, raised.value.is_retryable) == (code, False)
         assert client.requests == []
-
-    def test_dispatch_parallel_refuses_callbacks(self, service: JobService) -> None:
-        jobs = [(EmailJob, {})]
-        callback = cast(Any, object)
-        with pytest.raises(SQSDispatchError, match="no callbacks"):
-            service.dispatch_parallel(jobs, on_all_success=callback)
 
     async def test_a_failed_send_names_job_task_queue_and_code(
         self, tmp_path: Path, caplog: pytest.LogCaptureFixture, compose: Compose

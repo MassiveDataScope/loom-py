@@ -131,7 +131,7 @@ def _function(
     event: dict[str, Any]
     if isinstance(trigger, HttpTrigger):
         event = _http_event(project, functions, name)
-    elif isinstance(trigger, EventTrigger) and not trigger.queued:
+    elif isinstance(trigger, EventTrigger) and not trigger.is_queued:
         event = _direct_event(trigger)
     else:
         event = _queue_event(name, trigger, queues)

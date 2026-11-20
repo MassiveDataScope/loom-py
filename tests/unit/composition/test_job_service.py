@@ -26,11 +26,11 @@ from loom.core.di.container import LoomContainer
 from loom.core.di.scope import Scope
 from loom.core.errors import JobTimeoutError
 from loom.core.job.context import flush_pending_dispatches
-from loom.core.job.inline import InlineJobTransport
 from loom.core.job.job import Job
 from loom.core.job.service import JobService
 from loom.core.job.timer import JobDelayRefused, JobTimer
 from loom.core.stores.profile import LAMBDA_PROFILE
+from loom.jobs.inline import InlineJobTransport
 from loom.rest.fastapi.adapter import FastAPIAdapter
 from loom.testing import ManualTimer, Override
 from tests.helpers.composition import ProjectFactory, WithOverrides

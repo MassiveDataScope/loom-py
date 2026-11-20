@@ -107,9 +107,8 @@ class JobHandle(Generic[ResultT]):
 class JobGroup:
     """Represents a group of concurrently dispatched jobs.
 
-    Created by ``JobService.dispatch_parallel()``.  Provides a
-    ``wait_all()`` to collect all results and a ``then()`` stub for
-    Celery chord support.
+    Created by ``JobService.dispatch_parallel()``.  ``wait_all()`` collects
+    every result.
 
     Attributes:
         handles: Ordered tuple of handles, one per dispatched job.
@@ -140,25 +139,3 @@ class JobGroup:
             JobFailedError: If any job failed.
         """
         return [handle.wait(timeout) for handle in self.handles]
-
-    def then(
-        self,
-        job_type: type[Any],
-        payload: dict[str, Any] | None = None,
-        on_success: type[Any] | None = None,
-        on_failure: type[Any] | None = None,
-    ) -> JobGroup:
-        """Schedule a job to run after all handles complete (chord).
-
-        Stub in the core layer.  The real implementation is provided by
-        ``CeleryJobTransport``, which returns a chord-capable ``JobGroup``
-        subclass from ``dispatch_parallel()``.
-
-        Raises:
-            NotImplementedError: Always — use ``CeleryJobTransport`` for
-                chord support.
-        """
-        raise NotImplementedError(
-            "JobGroup.then() requires a Celery-backed service. "
-            "Use CeleryJobTransport.dispatch_parallel() to obtain chord support."
-        )

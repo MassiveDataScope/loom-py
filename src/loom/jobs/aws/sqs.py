@@ -261,16 +261,6 @@ class SQSJobTransport:
         if on_success is not None or on_failure is not None:
             raise SQSDispatchError("SQS jobs take no callbacks", code=SQSErrorCode.CALLBACKS)
 
-    def check_parallel_callbacks(
-        self, on_all_success: type[JobCallback] | None, on_any_failure: type[JobCallback] | None
-    ) -> None:
-        """Refuse callbacks unsupported by SQS.
-
-        Raises:
-            SQSDispatchError: Either callback is supplied.
-        """
-        self.check_callbacks(on_all_success, on_any_failure)
-
     def _build_send(self, dispatch: JobDispatch) -> tuple[_PendingSQSSend, JobHandle[Any]]:
         self.check_callbacks(dispatch.on_success, dispatch.on_failure)
         if dispatch.priority != dispatch.options.priority:

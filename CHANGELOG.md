@@ -2,18 +2,45 @@
 
 ## 💥 Breaking
 
+- **jobs:** group callbacks are removed: `dispatch_parallel(jobs)` takes no
+  `on_all_success` or `on_any_failure` (the inline and recording transports
+  accepted them and never called them, Celery refused them), `JobGroup.then()`
+  (it always raised), `JobTransport.check_parallel_callbacks`,
+  `MixedJobTransportsError` and `ErrorCode.JOB_BACKENDS_MIXED` are gone.
+  `dispatch_parallel` still sends a group of jobs and returns their handles.
+- **jobs:** `InlineJobTransport` and `AsyncioJobTimer` are adapters, imported
+  from `loom.jobs.inline`; `loom.core.job` exports only the ports (`JobTransport`,
+  `JobTimer`), `JobService` and the job values.
+- **jobs:** `Backoff.delay(attempt, rng)` takes the `random.Random` that draws the
+  jitter, and `JobRunner(rng=...)` supplies it once; a runner built without one
+  draws from its own.
+- **jobs:** abandonment is observable. `Abandoned.reason` is an `AbandonReason`
+  (`attempts_exhausted`, `not_retryable`, `job_asked`, `cannot_wait`; the class and
+  message of the error stay on `Abandoned.error`), `JobDelivery` carries the
+  `queue` the job is configured for, and `RuntimeEvent.reason` carries the reason on
+  `JOB_ABANDONED`. The runner logs one WARNING `Job abandoned` for every message it
+  abandons, on every transport, with `job`, `queue`, `attempt`, `postponements`,
+  `reason`, `error_type`, `error_message` and `task_id`; the Lambda SQS trigger no
+  longer logs its own `SQS job failed finally`. `PrometheusMetricsAdapter` counts
+  job events in `loom_job_events_total{kind, job, reason}`. The dead-letter
+  attribute `loom.abandonment_reason` keeps its text.
+- **jobs:** `EventTrigger.queued` is `is_queued`.
+- **testing:** `LambdaWorker` closes through the function only: it owns the moto
+  mock and its own setup client, and the function owns the application and its
+  clients. A closed worker no longer raises `the worker is closed`.
+
 - **jobs:** `JobService` is the one public job API, and it is a class, not a
   protocol: it holds `run`, `dispatch_after_commit`, `dispatch_now` and
   `dispatch_parallel` once, builds a validated `JobDispatch` (options, countdown,
   envelope, callbacks, reserved payload keys) and sends it through the
   `JobTransport` of the effective queue. `JobTransport` is the port a transport
-  implements (`send_after_commit`, `send` and the two callback checks); the
-  transports are `InlineJobTransport` (`loom.core.job.inline`),
+  implements (`send_after_commit`, `send` and `check_callbacks`); the
+  transports are `InlineJobTransport` (`loom.jobs.inline`),
   `CeleryJobTransport` and `SQSJobTransport`. `JobRouter`, `InlineJobService`,
   `CeleryJobService` and `SQSJobService` are removed, and "backend" leaves the
   jobs vocabulary: `JobBackendContext`, `JobBackendError` and
-  `MixedJobBackendsError` are `JobTransportContext`, `JobTransportError` and
-  `MixedJobTransportsError`. `JobService(default, *, factory=None, executor=None,
+  `MixedJobBackendsError` are `JobTransportContext` and `JobTransportError`
+  (the mixed-transports error is gone with the group callbacks). `JobService(default, *, factory=None, executor=None,
   routes=None, settings=None, callbacks=...)` takes the transport first;
   `default_transport` and `transport_for(queue)` return the transport that
   serves a queue. `JobOptions.delivery_for` is the only builder of a
@@ -1472,6 +1499,15 @@
   table for this release.
 
 ## ⚠ Behaviour changes
+
+### jobs
+
+- A job no layer configures has the default
+  retry policy, 3 attempts (5 s first delay, factor 2, capped at 300 s), or the
+  queue's `maxReceiveCount` on a `redrive` SQS queue. A failure beyond it is
+  abandoned, logged and counted.
+- `CeleryJobTransport.send` publishes from a worker thread instead of blocking the
+  event loop; cancelling the awaiting task does not recall a send that started.
 
 ### composition
 

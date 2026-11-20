@@ -87,6 +87,12 @@ class TestMetricContract:
                 "counter",
                 ("usecase", "error_kind"),
             ),
+            (
+                "loom_job_events",
+                "Total number of job events by kind, job and abandonment reason.",
+                "counter",
+                ("kind", "job", "reason"),
+            ),
         }
 
     def test_lifecycle_adapter_declares_its_instruments(self) -> None:

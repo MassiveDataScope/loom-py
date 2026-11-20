@@ -43,12 +43,10 @@ class _Plan:
             match outcome:
                 case Succeeded():
                     continue
-                case Abandoned(reason=reason) if (
-                    queue.dead_letter_policy is DeadLetterPolicy.REDRIVE
-                ):
-                    plan.abandonments.append((record, reason))
-                case Abandoned(reason=reason):
-                    plan.discards.append((record, reason))
+                case Abandoned() if queue.dead_letter_policy is DeadLetterPolicy.REDRIVE:
+                    plan.abandonments.append((record, outcome.statement))
+                case Abandoned():
+                    plan.discards.append((record, outcome.statement))
                 case Postponed(delay=delay):
                     plan.postponements.append((record, delay))
                 case Failed(delay=delay):

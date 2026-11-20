@@ -6,7 +6,11 @@ the dispatch contract of ``tests/contract/jobs``.
 
 from __future__ import annotations
 
+import threading
+from typing import Any
+
 import pytest
+from celery import Celery
 
 from loom.celery.constants import TASK_JOB_PREFIX
 from loom.celery.service import CallbackLink, CeleryJobTransport
@@ -104,6 +108,28 @@ class TestBrokerOptions:
         ]
 
 
+class _ThreadRecordingCelery(Celery):  # type: ignore[misc]
+    """A Celery application that notes the thread each ``send_task`` runs on."""
+
+    def __init__(self) -> None:
+        super().__init__(broker="memory://", backend="cache+memory://")
+        self.send_threads: list[int] = []
+
+    def send_task(self, *args: Any, **kwargs: Any) -> Any:
+        self.send_threads.append(threading.get_ident())
+        return super().send_task(*args, **kwargs)
+
+
+class TestSendNow:
+    async def test_the_broker_call_leaves_the_event_loop_thread(self) -> None:
+        app = _ThreadRecordingCelery()
+        service = JobService(CeleryJobTransport(app))
+
+        await service.dispatch_now(EmailJob)
+
+        assert [thread == threading.get_ident() for thread in app.send_threads] == [False]
+
+
 class TestCallbacks:
     async def test_without_callbacks_the_message_has_no_link_and_no_failure_callback(
         self, service: JobService, broker: CeleryBroker
@@ -148,12 +174,6 @@ class TestCallbacks:
 
         (message,) = broker.sent()
         assert message.kwargs["failure_callback"] == "loom.callback_error.FailureCallback"
-
-    def test_a_group_with_callbacks_is_refused_until_celery_chords_are_supported(
-        self, service: JobService
-    ) -> None:
-        with pytest.raises(NotImplementedError, match="chord"):
-            service.dispatch_parallel([(EmailJob, {})], on_all_success=SuccessCallback)
 
 
 class TestFailureCallbackSend:

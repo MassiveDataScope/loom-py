@@ -146,7 +146,7 @@ class TestFunctionDeclarations:
         ).trigger
 
         assert isinstance(trigger, EventTrigger)
-        assert (trigger.job, trigger.via, trigger.queued) == ("ImportInvoice", None, False)
+        assert (trigger.job, trigger.via, trigger.is_queued) == ("ImportInvoice", None, False)
         assert trigger.identity is not None
         assert (trigger.identity.subject, trigger.identity.roles) == ("svc:invoices", ("importer",))
         assert trigger.identity.attributes == {"tenant": "acme"}

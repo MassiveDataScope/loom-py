@@ -101,14 +101,14 @@ class EventTrigger(
     maximum_event_age_s: Annotated[int, msgspec.Meta(ge=60, le=21600)] | None = None
 
     @property
-    def queued(self) -> bool:
+    def is_queued(self) -> bool:
         """Whether the events arrive through a queue: a ``queue`` block is declared."""
         return self.queue is not None
 
     @property
     def via(self) -> str | None:
         """``"sqs"`` when the events arrive through a queue, else ``None``, for the manifest."""
-        return "sqs" if self.queued else None
+        return "sqs" if self.is_queued else None
 
     def written_values(self) -> Iterator[str]:
         """The job and every identity value, to refuse a placeholder among them."""
@@ -208,7 +208,7 @@ def _check_event_trigger(where: str, trigger: EventTrigger) -> None:
 
 def _refuse_retries_when_queued(where: str, trigger: EventTrigger) -> None:
     """Lambda's retry settings belong to a direct trigger; SQS retries a queued one."""
-    if not trigger.queued:
+    if not trigger.is_queued:
         return
     for key in _RETRIES:
         if getattr(trigger, key) is not None:

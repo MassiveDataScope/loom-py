@@ -189,7 +189,7 @@ _WRITERS: dict[str, tuple[str, ...]] = {
         _IDENTITY_CONTEXT,
         "loom.rest.auth.middleware",
         "loom.core.job.envelope",
-        "loom.core.job.inline",
+        "loom.jobs.inline.transport",
     ),
     "pinned_for": (_IDENTITY_CONTEXT, _EXECUTION),
     "enter": (

@@ -51,17 +51,26 @@ _ERRORS_TOTAL = counter_spec(
     "usecase",
     "error_kind",
 )
-_INSTRUMENTS = (_REQUESTS_TOTAL, _DURATION_SECONDS, _ERRORS_TOTAL)
+_JOB_EVENTS_TOTAL = counter_spec(
+    "loom_job_events",
+    "Total number of job events by kind, job and abandonment reason.",
+    "kind",
+    "job",
+    "reason",
+)
+_JOB_EVENT_KINDS = frozenset(kind for kind in EventKind if kind.startswith("job_"))
+_INSTRUMENTS = (_REQUESTS_TOTAL, _DURATION_SECONDS, _ERRORS_TOTAL, _JOB_EVENTS_TOTAL)
 
 
 class PrometheusMetricsAdapter:
     """Prometheus implementation of the ``MetricsAdapter`` protocol.
 
-    Records three instruments per use-case:
+    Records the use-case instruments and one for jobs:
 
     - ``loom_usecase_requests_total`` — Counter, labels: ``usecase``, ``status``.
     - ``loom_usecase_duration_seconds`` — Histogram, labels: ``usecase``.
     - ``loom_usecase_errors_total`` — Counter, labels: ``usecase``, ``error_kind``.
+    - ``loom_job_events_total`` — Counter, labels: ``kind``, ``job``, ``reason``.
 
     Event mapping:
 
@@ -72,6 +81,8 @@ class PrometheusMetricsAdapter:
     EXEC_DONE     increment ``requests_total{status="success"}``; observe histogram
     EXEC_ERROR    increment ``requests_total{status=<event.status>}``; increment
                   ``errors_total{error_kind=<type(error).__name__>}``
+    JOB_*         increment ``job_events_total{kind, job, reason}``; the reason
+                  is the abandonment reason on ``JOB_ABANDONED``, else empty
     others        noop
     ============  ============================================================
 
@@ -95,6 +106,7 @@ class PrometheusMetricsAdapter:
         self._requests_total = instruments[_REQUESTS_TOTAL]
         self._duration_seconds = instruments[_DURATION_SECONDS]
         self._errors_total = instruments[_ERRORS_TOTAL]
+        self._job_events_total = instruments[_JOB_EVENTS_TOTAL]
 
     def on_event(self, event: RuntimeEvent) -> None:
         """Process a runtime event and update Prometheus instruments.
@@ -102,7 +114,14 @@ class PrometheusMetricsAdapter:
         Args:
             event: Immutable event from the executor or compiler.
         """
-        if event.kind == EventKind.EXEC_DONE:
+        if event.kind in _JOB_EVENT_KINDS:
+            self._job_events_total.labels(
+                kind=event.kind.value,
+                job=event.use_case_name,
+                reason=event.reason or "",
+            ).inc()
+
+        elif event.kind == EventKind.EXEC_DONE:
             self._requests_total.labels(
                 usecase=event.use_case_name,
                 status=event.status or "success",

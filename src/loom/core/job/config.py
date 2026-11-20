@@ -191,6 +191,7 @@ class JobOptions:
             attempt=attempt,
             postponements=postponements,
             policy=self.retry.policy,
+            queue=self.queue,
             timeout_s=timeout_s,
         )
 

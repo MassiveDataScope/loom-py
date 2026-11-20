@@ -12,6 +12,8 @@ from __future__ import annotations
 
 import uuid
 from collections.abc import Sequence
+from contextlib import ExitStack
+from functools import partial
 from types import TracebackType
 from typing import Any
 
@@ -40,13 +42,15 @@ class LambdaWorker:
     """The handler of a Lambda ``jobs`` function, composed over a moto SQS.
 
     The harness enters moto's AWS mock and creates the queue the function consumes,
-    and for a ``redrive`` queue its dead-letter queue with a real ``RedrivePolicy``,
-    through the application's own ``sqs`` client: botocore resolves the region as it
-    does for the application (``aws.region``, a profile, ``AWS_DEFAULT_REGION``) and
-    moto's account is ``MOTO_ACCOUNT_ID`` or its default. The harness sets and
-    restores no environment, and the queue must come out at the configured URL.
-    Inside a user's own ``mock_aws()`` the worker joins it, and closing it leaves that
-    one running.
+    and for a ``redrive`` queue its dead-letter queue with a real ``RedrivePolicy``, before
+    the function binds, which reads the queue at Init. It does so with an ``sqs`` client
+    of its own, built as the application's: botocore resolves the region as it does for
+    the application (``aws.region``, a profile, ``AWS_DEFAULT_REGION``) and moto's account
+    is ``MOTO_ACCOUNT_ID`` or its default. The harness sets and restores no environment,
+    and the queue must come out at the configured URL. The worker owns the mock and that
+    client; the function owns the application and its clients, and closing the worker
+    closes the function. Inside a user's own ``mock_aws()`` the worker joins it, and
+    closing it leaves that one running.
 
     Args:
         config: A configuration path, or none for the default config directory.
@@ -103,29 +107,27 @@ class LambdaWorker:
             if "region" in (project.config.raw(ConfigKey.SQS) or {})
             else "aws.region or AWS_DEFAULT_REGION"
         )
-        self._closed = False
-        self._bound = False
-        self._aws: AwsClients | None = None
         self._adapter = LambdaAdapter(function=function)
-        self._mock = island.start()
-        try:
+        with ExitStack() as opening:
+            self._mock = island.start()
+            opening.callback(self._mock.stop)
+            setup_clients = AwsClients()
+            opening.callback(setup_clients.close)
+            setup_sqs = self._guarded(setup_clients.client("sqs", sqs_config))
+            self.queue_url, self.dead_letter_url = self._declare(setup_sqs, entry)
             self.application: Application = project.compose(
                 OverrideAdapter(self._adapter, tuple(overrides))
             )
-            self._aws = self.application.kernel.container.resolve(AwsClients)
-            self.sqs = self._aws.client("sqs", sqs_config)
-            self.sqs.meta.events.register_last("before-send", self._unanswered)
-            self.queue_url, self.dead_letter_url = self._declare(entry)
+            self._handler = self._adapter.bind(self.application)
+            opening.callback(self._adapter.close)
+            aws = self.application.kernel.container.resolve(AwsClients)
+            self.sqs = self._guarded(aws.client("sqs", sqs_config))
             self._queue = SQSQueue(self.sqs, trigger.queue.name, entry)
             arn = self.sqs.get_queue_attributes(
                 QueueUrl=self.queue_url, AttributeNames=["QueueArn"]
             )
             self._queue_arn: str = arn["Attributes"]["QueueArn"]
-            self._handler = self._adapter.bind(self.application)
-            self._bound = True
-        except BaseException:
-            self.close()
-            raise
+            self._resources = opening.pop_all()
 
     def __call__(self, event: dict[str, Any], context: Any = None) -> dict[str, Any]:
         """Answer *event*, a batch of SQS records, with the handler's ``batchItemFailures``.
@@ -160,9 +162,7 @@ class LambdaWorker:
 
         Raises:
             SQSDispatchError: As the queue's placement refuses a FIFO message.
-            RuntimeError: When the worker is closed.
         """
-        self._refuse_when_closed()
         task_id = str(uuid.uuid4())
         body = encode_job_message(
             job_type, payload=payload, params=params, identity=identity, task_id=task_id
@@ -182,7 +182,6 @@ class LambdaWorker:
         Returns:
             The handler's ``batchItemFailures`` for the batch received; empty when none.
         """
-        self._refuse_when_closed()
         received = self.sqs.receive_message(
             QueueUrl=self.queue_url,
             MaxNumberOfMessages=self._batch_size,
@@ -201,18 +200,11 @@ class LambdaWorker:
         return result
 
     def close(self) -> None:
-        """Close the function, its clients and stop the mock, once; a second call does nothing."""
-        if self._closed:
-            return
-        self._closed = True
-        try:
-            self._adapter.close()
-        finally:
-            try:
-                if not self._bound and self._aws is not None:
-                    self._aws.close()
-            finally:
-                self._mock.stop()
+        """Close the function, which closes the application and its clients, then stop the mock.
+
+        A second call does nothing.
+        """
+        self._resources.close()
 
     def __enter__(self) -> LambdaWorker:
         return self
@@ -225,13 +217,14 @@ class LambdaWorker:
     ) -> None:
         self.close()
 
-    def _refuse_when_closed(self) -> None:
-        if self._closed:
-            raise RuntimeError("the worker is closed")
+    def _guarded(self, sqs: Any) -> Any:
+        """*sqs* with a ``before-send`` handler that refuses what moto did not answer."""
+        sqs.meta.events.register_last("before-send", partial(self._unanswered, sqs))
+        return sqs
 
-    def _unanswered(self, request: Any, **_: Any) -> Any:
+    def _unanswered(self, sqs: Any, request: Any, **_: Any) -> Any:
         """A ``before-send`` handler that runs after moto's: what moto did not answer is refused."""
-        endpoint = self.sqs.meta.endpoint_url
+        endpoint = sqs.meta.endpoint_url
         return self._island.unanswered(
             request,
             f"moto did not answer the request to {endpoint}, so it would have left the "
@@ -240,7 +233,7 @@ class LambdaWorker:
             "the environment, and any endpoint_url of the AWS profile",
         )
 
-    def _declare(self, entry: QueueConfig) -> tuple[str, str | None]:
+    def _declare(self, sqs: Any, entry: QueueConfig) -> tuple[str, str | None]:
         """Create the queue and its dead-letter queue, and check they are where *entry* says.
 
         Raises:
@@ -249,12 +242,12 @@ class LambdaWorker:
         """
         try:
             queue_url, dead_letter_url = self._island.declare_queue(
-                self.sqs,
+                sqs,
                 entry.queue_name,
                 redrive=entry.dead_letter is DeadLetterPolicy.REDRIVE,
                 max_receive_count=_MAX_RECEIVE_COUNT,
             )
-        except self.sqs.exceptions.ClientError as exc:
+        except sqs.exceptions.ClientError as exc:
             error = exc.response["Error"]
             if error["Code"] == self._island.UNANSWERED:
                 raise ConfigError(error["Message"]) from exc
@@ -263,7 +256,7 @@ class LambdaWorker:
         differs = [
             f"{fact} {wanted!r} against {got!r}"
             for fact, wanted, got in (
-                ("region", entry.region, self.sqs.meta.region_name),
+                ("region", entry.region, sqs.meta.region_name),
                 ("account", entry.account_id, made.account_id),
             )
             if wanted != got

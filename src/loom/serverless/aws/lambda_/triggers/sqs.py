@@ -18,7 +18,6 @@ from typing import TYPE_CHECKING, Any, NoReturn
 from loom.core.errors import MalformedJobMessage, UnknownJob
 from loom.core.job.envelope import JobEnvelope, decode_job_envelope
 from loom.core.job.outcome import (
-    Abandoned,
     Failed,
     JobOutcome,
     Postponed,
@@ -133,6 +132,7 @@ class SQSBatch:
             MalformedJobMessage(reason),
             record.receive_count,
             self._consumer.unknown_job_policy,
+            message_id=record.message_id,
         )
         self._log_outcome(record, outcome)
         return outcome
@@ -159,7 +159,10 @@ class SQSBatch:
                     break
         except (MalformedJobMessage, UnknownJob) as exc:
             outcome = self._consumer.runner.decide_unrunnable(
-                exc, record.receive_count, self._consumer.unknown_job_policy
+                exc,
+                record.receive_count,
+                self._consumer.unknown_job_policy,
+                message_id=record.message_id,
             )
         self._log_outcome(record, outcome)
         return outcome
@@ -204,17 +207,6 @@ class SQSBatch:
                 error = outcome.as_exception()
                 _log.exception(
                     "SQS job failed",
-                    job=job,
-                    message_id=record.message_id,
-                    attempt=record.receive_count,
-                    error_class=type(error).__name__,
-                    exc_info=error,
-                    **failure_log_fields(error),
-                )
-            case Abandoned():
-                error = outcome.as_exception()
-                _log.exception(
-                    "SQS job failed finally",
                     job=job,
                     message_id=record.message_id,
                     attempt=record.receive_count,

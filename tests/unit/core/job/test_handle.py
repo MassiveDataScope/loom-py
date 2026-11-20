@@ -71,11 +71,6 @@ class TestJobHandle:
         group = JobGroup(handles=(_inline_handle("ok"),))
         assert group.wait_all() == ["ok"]
 
-    def test_then_raises_not_implemented(self) -> None:
-        group = JobGroup(handles=(_inline_handle(1),))
-        with pytest.raises(NotImplementedError):
-            group.then(object)
-
     # ---------------------------------------------------------------------------
     # Error types
     # ---------------------------------------------------------------------------
