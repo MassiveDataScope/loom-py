@@ -27,9 +27,8 @@ from typing import Any, Generic, TypeVar
 
 import msgspec
 
-from loom.core.config import ConfigError
 from loom.core.model import BaseModel
-from loom.core.model.introspection import get_id_attributes, get_projections
+from loom.core.model.introspection import get_projections
 from loom.core.projection.loaders import (
     find_relation_name_for_loader,
     is_projection_descriptor,
@@ -40,6 +39,7 @@ from loom.core.projection.runtime import (
     build_projection_plan,
     execute_projection_plan,
 )
+from loom.core.stores.repository.record import single_id_attribute
 
 T = TypeVar("T", bound=msgspec.Struct)
 
@@ -297,12 +297,8 @@ def _refuse_composite_key(entity_type: type) -> None:
     if not issubclass(entity_type, BaseModel):
         return
     try:
-        key = get_id_attributes(entity_type)
+        single_id_attribute(
+            entity_type, why_single="the in-memory repository keys each entity by one id field"
+        )
     except ValueError:
         return
-    if len(key) > 1:
-        raise ConfigError(
-            f"{entity_type.__qualname__} has the composite primary key ({', '.join(key)}); "
-            "the in-memory repository keys each entity by one id field, so declare a "
-            "single primary key"
-        )

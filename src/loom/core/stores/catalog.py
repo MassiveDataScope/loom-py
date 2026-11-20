@@ -298,9 +298,11 @@ class StoreCatalog:
         Raises:
             ConfigError: When a model declares the retired ``__database__``,
                 or belongs to a store the catalog does not declare or to a
-                connection-only store, naming the model and the store.
+                connection-only store, or a store serves one table from two
+                models, naming the models and the store.
         """
         groups: dict[StoreKey, list[type[BaseModel]]] = {DEFAULT_STORE: []}
+        served_tables: dict[tuple[StoreKey, str], type[BaseModel]] = {}
         for model in models:
             key = store_of(model)
             if key != DEFAULT_STORE:
@@ -311,6 +313,14 @@ class StoreCatalog:
                         f"{spec.backend} store that serves no model; {spec.path} only hands "
                         "its connection to the sinks that name it"
                     )
+            table = getattr(model, "__tablename__", None)
+            previous = served_tables.setdefault((key, table), model) if table else model
+            if previous is not model:
+                raise ConfigError(
+                    f"Store {key!r} serves table {table!r} twice: "
+                    f"{previous.__module__}.{previous.__qualname__} and "
+                    f"{model.__module__}.{model.__qualname__}"
+                )
             groups.setdefault(key, []).append(model)
         return {key: tuple(groups[key]) for key in (DEFAULT_STORE, *self.specs) if key in groups}
 

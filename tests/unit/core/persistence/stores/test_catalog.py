@@ -30,6 +30,17 @@ class SecondDefaultRecord(BaseModel):
     id: int = ColumnField(Integer, primary_key=True)
 
 
+class DefaultRecordCopy(BaseModel):
+    __tablename__ = "default_records"
+    id: int = ColumnField(Integer, primary_key=True)
+
+
+class AuditRecordOfDefaultTable(BaseModel):
+    __tablename__ = "default_records"
+    __store__ = "audit"
+    id: int = ColumnField(Integer, primary_key=True)
+
+
 class TestStoreCatalog:
     def test_default_store_loads_its_backend_and_own_config_section(self) -> None:
         ctx = ConfigContext.from_dict(
@@ -248,3 +259,33 @@ class TestStoreCatalog:
 
         assert "AuditRecord" in str(error.value)
         assert "audit" in str(error.value)
+
+    def test_a_store_serving_one_table_from_two_models_is_refused(self) -> None:
+        catalog = load_catalog(
+            ConfigContext.from_dict({"stores": {"default": {"backend": "sqlalchemy"}}})
+        )
+
+        with pytest.raises(
+            ConfigError,
+            match=r"twice: .*DefaultRecord and .*DefaultRecordCopy",
+        ):
+            catalog.models_by_store([DefaultRecord, DefaultRecordCopy])
+
+    def test_two_stores_may_serve_one_table_name(self) -> None:
+        catalog = load_catalog(
+            ConfigContext.from_dict(
+                {
+                    "stores": {
+                        "default": {"backend": "sqlalchemy"},
+                        "audit": {"backend": "sqlalchemy"},
+                    }
+                }
+            )
+        )
+
+        groups = catalog.models_by_store([DefaultRecord, AuditRecordOfDefaultTable])
+
+        assert groups == {
+            DEFAULT_STORE: (DefaultRecord,),
+            StoreKey("audit"): (AuditRecordOfDefaultTable,),
+        }

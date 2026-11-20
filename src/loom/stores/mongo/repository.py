@@ -33,7 +33,6 @@ from pymongo.asynchronous.client_session import AsyncClientSession
 from pymongo.errors import BulkWriteError, DuplicateKeyError, PyMongoError
 from pymongo.results import DeleteResult, InsertManyResult, InsertOneResult
 
-from loom.core.config import ConfigError
 from loom.core.errors import Conflict
 from loom.core.logger import get_logger
 from loom.core.model.convert import to_struct
@@ -41,7 +40,6 @@ from loom.core.model.enums import ServerDefault, ServerOnUpdate
 from loom.core.model.introspection import (
     column_annotations,
     get_column_fields,
-    get_id_attributes,
     get_table_name,
 )
 from loom.core.stores.repository import (
@@ -71,7 +69,7 @@ from loom.core.stores.repository import (
     build_page_result,
 )
 from loom.core.stores.repository.cursor import require_cursor_sort
-from loom.core.stores.repository.record import RecordLayout
+from loom.core.stores.repository.record import RecordLayout, single_id_attribute
 from loom.stores.mongo.ids import IdPolicy, Uuid4IdPolicy
 from loom.stores.mongo.query_compiler import MongoFilter, MongoQueryCompiler, MongoSort
 from loom.stores.mongo.values import to_storage_datetime, to_storage_value
@@ -226,7 +224,7 @@ class RepositoryMongo(
         self._collection = collection
         self._ids: IdPolicy = id_policy if id_policy is not None else Uuid4IdPolicy()
         self._session = session_provider
-        self._id_attr = _single_id_attribute(model)
+        self._id_attr = single_id_attribute(model, why_single="Mongo stores one key value in _id")
         column_fields = get_column_fields(model)
         self._column_fields = frozenset(column_fields)
         self._cursor_columns = column_annotations(model)
@@ -678,16 +676,6 @@ class RepositoryMongo(
             if isinstance(value, datetime):
                 kwargs[name] = value.replace(tzinfo=None)
         return cast(OutputT, to_struct(self._model, kwargs))
-
-
-def _single_id_attribute(model: type) -> str:
-    key = get_id_attributes(model)
-    if len(key) == 1:
-        return key[0]
-    raise ConfigError(
-        f"{model.__qualname__} has the composite primary key ({', '.join(key)}); "
-        "Mongo stores one key value in _id, so declare a single primary key"
-    )
 
 
 def _equality_group(filter_params: FilterParams | None) -> FilterGroup:

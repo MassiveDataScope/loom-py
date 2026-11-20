@@ -24,12 +24,14 @@ from typing import Any, ClassVar, Generic, cast
 import msgspec
 
 from loom.core.concurrency import run_in_executor
-from loom.core.config import ConfigError
 from loom.core.connections.aws import aws_error_code
 from loom.core.errors import Conflict
 from loom.core.logger import get_logger
 from loom.core.model.convert import to_struct
-from loom.core.model.introspection import get_column_fields, get_id_attributes, get_table_name
+from loom.core.model.introspection import (
+    get_column_fields,
+    get_table_name,
+)
 from loom.core.stores.catalog import store_of
 from loom.core.stores.repository import (
     BulkCreatable,
@@ -41,7 +43,7 @@ from loom.core.stores.repository import (
     Readable,
     Updatable,
 )
-from loom.core.stores.repository.record import RecordLayout
+from loom.core.stores.repository.record import RecordLayout, single_id_attribute
 from loom.core.stores.uow.coordinator import Participant
 from loom.core.stores.uow.scope import InvocationScope, current_scope
 
@@ -100,7 +102,9 @@ class RepositoryDynamoDB(
         self._table_name = table_name
         self._model = model
         self._store = store_of(model)
-        self._id_attr = _single_id_attribute(model)
+        self._id_attr = single_id_attribute(
+            model, why_single="the repository keys each item by one partition key"
+        )
         self._column_fields = frozenset(get_column_fields(model).keys())
         self._serializer = TypeSerializer()
         self._deserializer = TypeDeserializer()
@@ -386,17 +390,6 @@ class RepositoryDynamoDB(
         stores it, so a key such as a ``UUID`` matches its stored form.
         """
         return {self._id_attr: self._encode_value(msgspec.to_builtins(obj_id))}
-
-
-def _single_id_attribute(model: type) -> str:
-    key = get_id_attributes(model)
-    if len(key) == 1:
-        return key[0]
-    raise ConfigError(
-        f"{model.__qualname__} has the composite primary key ({', '.join(key)}); "
-        "the repository keys each item by one partition key, so declare a single "
-        "primary key"
-    )
 
 
 def _floats_to_decimal(value: Any) -> Any:

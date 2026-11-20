@@ -73,16 +73,6 @@ class TestEntryPointScan:
             "acme_plugin_y.models",
         ]
 
-    def test_refuses_two_models_serving_one_table_across_sources(
-        self, write_package: PackageWriter, install_distribution: DistributionWriter
-    ) -> None:
-        write_package("acme_plugin_d", {"models.py": _MODEL.format(name="One", table="twice")})
-        write_package("acme_plugin_e", {"models.py": _MODEL.format(name="Two", table="twice")})
-        install_distribution("acme-plugin-d", {_GROUP: ["acme_plugin_d"]})
-
-        with pytest.raises(ConfigError, match="serves table 'twice' twice"):
-            PackageScanner(["acme_plugin_e"], entry_points=[_GROUP]).discover()
-
     def test_a_group_without_an_installed_entry_point_is_named(self) -> None:
         with pytest.raises(ConfigError, match="'acme.unknown'.*no installed distribution"):
             PackageScanner(entry_points=["acme.unknown"]).discover()

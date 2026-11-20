@@ -2,6 +2,12 @@
 
 ## 💥 Breaking
 
+- **stores:** the duplicate (store, table) refusal moves from
+  `PackageScanner.discover` to `StoreCatalog.models_by_store`, the one place
+  that groups models by store, so `discover` returns models that two stores
+  or one store serve under the same table and the composition refuses them.
+  The single primary-key rule of the DynamoDB, Mongo and in-memory
+  repositories is `single_id_attribute` in `loom.core.stores.repository.record`.
 - **stores:** a repository no longer promises a lookup it cannot serve.
   `Readable` is now the lookup by primary key (`get_by_id`) and the new
   `FieldReadable` (`get_by`) is the lookup by any field; `RepoFor` composes
