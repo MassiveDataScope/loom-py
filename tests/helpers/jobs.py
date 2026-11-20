@@ -18,9 +18,10 @@ from loom.core.engine.metrics import MetricsAdapter
 from loom.core.job.callback import ANY_CALLBACKS, DispatchableCallbacks
 from loom.core.job.config import JobSettings
 from loom.core.job.delivery import JobDelivery
+from loom.core.job.inline import InlineJobTransport
 from loom.core.job.job import Job
 from loom.core.job.run import EnvelopeInvocation
-from loom.core.job.service import InlineJobTransport, JobService
+from loom.core.job.service import JobService
 from loom.core.job.timer import JobTimer
 from loom.core.observability.runtime import ObservabilityRuntime
 from loom.core.stores.profile import WORKER_PROFILE
@@ -29,7 +30,6 @@ from loom.core.use_case.factory import UseCaseFactory, main_repository
 from loom.core.use_case.kinds import declare_kinds
 from loom.jobs.aws.queue import QueueConfig
 from loom.jobs.aws.sqs import SQSConfig, SQSJobTransport
-from loom.testing.jobs import RecordingJobTransport
 from tests.helpers.composition import composition_project
 
 BROKER = {"broker_url": "memory://", "result_backend": "cache+memory://"}
@@ -133,20 +133,28 @@ def sqs_service(client: SQSClient, **knobs: Any) -> JobService:
     """A job service over *client* sending ``emails`` and FIFO ``orders``."""
     queues = {"emails": QueueConfig(url=SQS_URL), "orders": QueueConfig(url=SQS_FIFO_URL)}
     config = SQSConfig(queues=queues, **knobs)
-    return JobService(cast(Any, None), cast(Any, None), SQSJobTransport(client, config))
+    return JobService(SQSJobTransport(client, config))
 
 
 class InlineServiceFixture(JobService):
     """A public job service using inline transport for direct tests."""
 
     def __init__(
-        self, factory: Any, executor: Any, *, settings: JobSettings | None = None,
-        callbacks: DispatchableCallbacks = ANY_CALLBACKS, timer: JobTimer | None = None,
+        self,
+        factory: Any,
+        executor: Any,
+        *,
+        settings: JobSettings | None = None,
+        callbacks: DispatchableCallbacks = ANY_CALLBACKS,
+        timer: JobTimer | None = None,
         metrics: MetricsAdapter | None = None,
     ) -> None:
         super().__init__(
-            factory, executor, InlineJobTransport(factory, executor, timer=timer, metrics=metrics),
-            settings=settings, callbacks=callbacks,
+            InlineJobTransport(factory, executor, timer=timer, metrics=metrics),
+            factory=factory,
+            executor=executor,
+            settings=settings,
+            callbacks=callbacks,
         )
 
 
@@ -154,14 +162,22 @@ class CeleryServiceFixture(JobService):
     """A public job service using Celery transport for direct tests."""
 
     def __init__(
-        self, app: Any, metrics: MetricsAdapter | None = None, factory: Any = None,
-        executor: Any = None, observability_runtime: Any = None, *,
-        settings: JobSettings | None = None, callbacks: DispatchableCallbacks = ANY_CALLBACKS,
+        self,
+        app: Any,
+        metrics: MetricsAdapter | None = None,
+        factory: Any = None,
+        executor: Any = None,
+        observability_runtime: Any = None,
+        *,
+        settings: JobSettings | None = None,
+        callbacks: DispatchableCallbacks = ANY_CALLBACKS,
     ) -> None:
         super().__init__(
-            factory, executor,
             CeleryJobTransport(app, metrics=metrics, observability_runtime=observability_runtime),
-            settings=settings, callbacks=callbacks,
+            factory=factory,
+            executor=executor,
+            settings=settings,
+            callbacks=callbacks,
         )
 
 
@@ -169,46 +185,21 @@ class SQSServiceFixture(JobService):
     """A public job service using SQS transport for direct tests."""
 
     def __init__(
-        self, client: Any, config: SQSConfig, *, factory: Any, executor: Any,
-        metrics: MetricsAdapter | None = None, settings: JobSettings | None = None,
+        self,
+        client: Any,
+        config: SQSConfig,
+        *,
+        factory: Any,
+        executor: Any,
+        metrics: MetricsAdapter | None = None,
+        settings: JobSettings | None = None,
     ) -> None:
         super().__init__(
-            factory, executor, SQSJobTransport(client, config, metrics=metrics),
+            SQSJobTransport(client, config, metrics=metrics),
+            factory=factory,
+            executor=executor,
             settings=settings,
         )
-
-
-class RecordingServiceFixture(JobService):
-    """A public job service with a recording transport visible to tests."""
-
-    def __init__(self, context: Any = None) -> None:
-        self._context = context
-        self.transport = RecordingJobTransport(context)
-        factory = None if context is None else context.factory
-        executor = None if context is None else context.executor
-        super().__init__(
-            factory, executor, self.transport,
-            settings=None if context is None else context.settings,
-            callbacks=ANY_CALLBACKS if context is None else context.callbacks,
-        )
-
-    @property
-    def dispatched(self) -> list[Any]:
-        """The committed dispatches seen by the recording transport."""
-        return self.transport.dispatched
-
-    async def run(
-        self, job_type: type[Job[Any]], *, params: dict[str, Any] | None = None,
-        payload: dict[str, Any] | None = None,
-    ) -> Any:
-        """Run only when the fixture has a composition context.
-
-        Raises:
-            RuntimeError: The fixture was built without a context.
-        """
-        if self._context is None:
-            raise RuntimeError("RecordingJobTransport runs jobs only when built with a context")
-        return await super().run(job_type, params=params, payload=payload)
 
 
 class JobKernel:

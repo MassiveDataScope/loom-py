@@ -9,8 +9,6 @@ link envelope's identity governs, never the worker's (D7 revised, T09a).
 
 from __future__ import annotations
 
-from tests.helpers.jobs import CeleryServiceFixture
-
 import asyncio
 import contextvars
 import time
@@ -36,6 +34,7 @@ from loom.core.job.envelope import wire_job_name
 from loom.core.use_case.factory import UseCaseFactory
 from loom.core.use_case.markers import Caller
 from tests.helpers.delegation import acting_as, assert_new_delegation
+from tests.helpers.jobs import CeleryServiceFixture
 
 from .doubles import (
     BOB,
@@ -84,7 +83,7 @@ def succeed(celery_app: Celery, factory: UseCaseFactory) -> Callable[[type[Any]]
     return apply
 
 
-class TestCeleryServiceFixture:
+class TestCeleryJobTransport:
     async def test_run_builds_inside_an_execution_as_the_caller_acting(
         self, factory: UseCaseFactory, executor: RuntimeExecutor
     ) -> None:

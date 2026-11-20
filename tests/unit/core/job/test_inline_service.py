@@ -1,17 +1,16 @@
 from __future__ import annotations
 
-from tests.helpers.jobs import InlineServiceFixture
-
 from typing import Any
 from unittest.mock import AsyncMock, MagicMock
 
 import pytest
 
-from loom.core.errors import JobFailedError, SystemError, JobTimeoutError
+from loom.core.errors import JobFailedError, JobTimeoutError, SystemError
 from loom.core.job.context import flush_pending_dispatches
 from loom.core.job.handle import JobGroup, JobHandle
 from loom.core.job.job import Job
 from loom.core.job.outcome import JobAbandonment
+from tests.helpers.jobs import InlineServiceFixture
 
 # ---------------------------------------------------------------------------
 # Minimal job fixtures

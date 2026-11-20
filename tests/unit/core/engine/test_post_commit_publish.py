@@ -2,8 +2,6 @@
 
 from __future__ import annotations
 
-from tests.helpers.jobs import CeleryServiceFixture
-
 import asyncio
 import logging
 from collections.abc import Callable, Iterator
@@ -23,6 +21,7 @@ from loom.core.job.job import Job
 from loom.core.stores.catalog import DEFAULT_STORE
 from loom.core.stores.uow.coordinator import OrderedCommits
 from loom.core.use_case.use_case import UseCase
+from tests.helpers.jobs import CeleryServiceFixture
 
 from ._lifecycle_doubles import Log, StubUnitOfWorkFactory
 

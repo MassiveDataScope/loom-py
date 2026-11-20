@@ -2,8 +2,6 @@
 
 from __future__ import annotations
 
-from tests.helpers.jobs import SQSServiceFixture
-
 import json
 import time
 from collections.abc import Iterator

@@ -2,8 +2,6 @@
 
 from __future__ import annotations
 
-from tests.helpers.jobs import SQSServiceFixture
-
 import asyncio
 import hashlib
 import threading
@@ -46,6 +44,7 @@ from tests.helpers.jobs import (
     EmailJob,
     JobsAdapter,
     SQSClient,
+    SQSServiceFixture,
     job_project,
     sqs_service,
 )
@@ -177,7 +176,9 @@ class _DispatchAfterCommit(UseCase[Any, None]):
         self.service.dispatch_after_commit(EmailJob)
 
 
-def _queued(service: SQSServiceFixture, channel: PostCommitChannel, *jobs: type[Job[Any]]) -> list[str]:
+def _queued(
+    service: SQSServiceFixture, channel: PostCommitChannel, *jobs: type[Job[Any]]
+) -> list[str]:
     token = bind_channel(channel)
     try:
         payload = {"customer": "hunter2", "secret": "hunter2"}

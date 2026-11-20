@@ -7,8 +7,6 @@ failure reports ``[FAIL]`` with ``error_kind="build"`` and no event.
 
 from __future__ import annotations
 
-from tests.helpers.jobs import InlineServiceFixture
-
 import time
 from typing import Any
 from unittest.mock import MagicMock
@@ -27,6 +25,7 @@ from loom.core.use_case.factory import UseCaseFactory
 from loom.core.use_case.markers import Input, LoadById
 from loom.core.use_case.use_case import UseCase
 from tests.helpers.delegation import acting_as
+from tests.helpers.jobs import InlineServiceFixture
 
 from .._lifecycle_doubles import Metrics
 from .conftest import MakeExecutor

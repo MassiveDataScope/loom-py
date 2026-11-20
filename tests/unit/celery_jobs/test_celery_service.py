@@ -1,8 +1,6 @@
-"""Unit tests for CeleryServiceFixture."""
+"""Unit tests for the Celery job transport."""
 
 from __future__ import annotations
-
-from tests.helpers.jobs import CeleryServiceFixture
 
 from collections.abc import Generator
 from unittest.mock import MagicMock
@@ -18,6 +16,7 @@ from loom.core.job.handle import JobGroup, JobHandle
 from loom.core.job.job import Job
 from loom.core.observability.event import Scope
 from loom.core.tracing import reset_trace_id, set_trace_id
+from tests.helpers.jobs import CeleryServiceFixture
 
 # ---------------------------------------------------------------------------
 # Helpers

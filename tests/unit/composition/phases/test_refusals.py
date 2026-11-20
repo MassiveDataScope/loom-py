@@ -159,10 +159,10 @@ REFUSALS: dict[str, _Refusal] = {  # test_precedence pins families of these too
         # The HTTP paths also report the REST deploy check.
         variants={"http": paths.HTTP},
     ),
-    "job-backend": _Refusal(
+    "job-transport": _Refusal(
         paths.Composition(config={"app": {"job_service": "rabbit"}}), JobTransportError
     ),
-    "job-backend-celery-extra": _Refusal(
+    "job-transport-celery-extra": _Refusal(
         paths.Composition(config={"app": {"job_service": "celery"}, "celery": BROKER}),
         JobTransportError,
         # The worker adapter module itself imports loom.celery.config, so the worker path cannot
@@ -170,7 +170,7 @@ REFUSALS: dict[str, _Refusal] = {  # test_precedence pins families of these too
         tuple(path for path in _COMPOSED if path != "celery"),
         prepare=_without_celery_extra,
     ),
-    "job-backend-celery-section": _Refusal(
+    "job-transport-celery-section": _Refusal(
         paths.Composition(
             config={
                 "app": {"job_service": "inline"},

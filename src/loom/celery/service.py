@@ -212,9 +212,7 @@ class CeleryJobTransport:
     ) -> tuple[_PendingCeleryDispatch, JobHandle[Any]]:
         envelope = dispatch.envelope
         task_id = str(envelope.task_id)
-        link = CallbackLink(
-            task_id, envelope.payload or {}, envelope.trace_id, envelope.identity
-        )
+        link = CallbackLink(task_id, envelope.payload or {}, envelope.trace_id, envelope.identity)
         pending = _PendingCeleryDispatch(
             celery_app=self._app,
             task_name=envelope.job,
@@ -227,17 +225,21 @@ class CeleryJobTransport:
             countdown=dispatch.countdown.seconds,
             priority=dispatch.priority,
             soft_time_limit=dispatch.options.timeout,
-            link=None if dispatch.on_success is None
+            link=None
+            if dispatch.on_success is None
             else link.success_signature(self._app, dispatch.on_success),
-            failure_callback=None if dispatch.on_failure is None
+            failure_callback=None
+            if dispatch.on_failure is None
             else callback_task_name(dispatch.on_failure, CallbackOutcome.FAILURE),
             observability_runtime=self._observability_runtime,
         )
-        self._metrics.on_event(RuntimeEvent(
-            kind=EventKind.JOB_DISPATCHED,
-            use_case_name=dispatch.job_type.__qualname__,
-            trace_id=envelope.trace_id,
-        ))
+        self._metrics.on_event(
+            RuntimeEvent(
+                kind=EventKind.JOB_DISPATCHED,
+                use_case_name=dispatch.job_type.__qualname__,
+                trace_id=envelope.trace_id,
+            )
+        )
         return pending, JobHandle(
             job_id=task_id, queue=dispatch.queue, dispatched_at=datetime.now(UTC)
         )

@@ -50,7 +50,7 @@ class TestClientsFailWithinDeclaredBounds:
                 connect_timeout=1,
                 read_timeout=1,
                 max_attempts=1,
-            )
+            ),
         )
 
         assert _elapsed(lambda: client.describe_table(TableName="t")) < _BOUND

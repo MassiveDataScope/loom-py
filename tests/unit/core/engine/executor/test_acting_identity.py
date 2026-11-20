@@ -11,8 +11,6 @@ file keeps what the executor adds.
 
 from __future__ import annotations
 
-from tests.helpers.jobs import InlineServiceFixture
-
 import asyncio
 from collections.abc import Awaitable, Callable
 from contextlib import AbstractContextManager, nullcontext
@@ -34,6 +32,7 @@ from loom.core.tracing import active_trace_id
 from loom.core.use_case.invoker import AppInvoker
 from loom.core.use_case.registry import UseCaseRegistry
 from tests.helpers.delegation import acting_as
+from tests.helpers.jobs import InlineServiceFixture
 from tests.helpers.loggers import RecordingLogger
 from tests.helpers.outliving import outlive
 

@@ -451,7 +451,8 @@ class SQSQueue:
             return False
         same_region = self.region in (None, arn.region)
         return same_region and (self.account_id, self.queue_name) == (
-            arn.account_id, arn.queue_name
+            arn.account_id,
+            arn.queue_name,
         )
 
     def send(self, message: OutgoingMessage) -> None:
@@ -616,9 +617,9 @@ class SQSQueue:
                 f"queue {self.name!r} has a RedrivePolicy loom cannot read "
                 f"({type(exc).__name__}: {exc}): it needs deadLetterTargetArn and maxReceiveCount"
             ) from exc
-        url = client.get_queue_url(
-            QueueName=arn.queue_name, QueueOwnerAWSAccountId=arn.account_id
-        )["QueueUrl"]
+        url = client.get_queue_url(QueueName=arn.queue_name, QueueOwnerAWSAccountId=arn.account_id)[
+            "QueueUrl"
+        ]
         target = SQSQueue(
             self._client, arn.queue_name, QueueConfig(url=url, dead_letter=DeadLetterPolicy.DISCARD)
         )

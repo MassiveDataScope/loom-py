@@ -2,8 +2,6 @@
 
 from __future__ import annotations
 
-from tests.helpers.jobs import CeleryServiceFixture, InlineServiceFixture
-
 import asyncio
 from collections.abc import AsyncIterator, Callable, Iterator
 from contextlib import AbstractAsyncContextManager, asynccontextmanager
@@ -17,7 +15,13 @@ from loom.core.job.service import JobService
 from loom.core.stores.catalog import DEFAULT_STORE
 from loom.core.stores.uow.coordinator import OrderedCommits
 from loom.core.stores.uow.scope import Frame, InvocationScope, invocation
-from tests.helpers.jobs import EmailJob, SQSClient, sqs_service
+from tests.helpers.jobs import (
+    CeleryServiceFixture,
+    EmailJob,
+    InlineServiceFixture,
+    SQSClient,
+    sqs_service,
+)
 from tests.unit.core.uow._coordinator_fakes import Factory, Ledger, PhasedStore
 
 pytestmark = pytest.mark.timeout(10)

@@ -294,10 +294,13 @@ class SQSJobTransport:
             dispatch.job_type, envelope.payload or {}, task_id, dispatch.countdown, body.decode()
         )
         send = _PendingSQSSend(target, envelope.job, task_id, message)
-        self._metrics.on_event(RuntimeEvent(
-            kind=EventKind.JOB_DISPATCHED,
-            use_case_name=dispatch.job_type.__qualname__, trace_id=envelope.trace_id,
-        ))
+        self._metrics.on_event(
+            RuntimeEvent(
+                kind=EventKind.JOB_DISPATCHED,
+                use_case_name=dispatch.job_type.__qualname__,
+                trace_id=envelope.trace_id,
+            )
+        )
         return send, JobHandle(
             job_id=task_id, queue=dispatch.queue, dispatched_at=datetime.now(UTC)
         )

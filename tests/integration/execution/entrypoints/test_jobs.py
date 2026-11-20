@@ -6,8 +6,6 @@ The job runner is the transport-neutral body the Celery worker and the Lambda
 
 from __future__ import annotations
 
-from tests.helpers.jobs import CeleryServiceFixture, InlineServiceFixture
-
 import asyncio
 import math
 import time
@@ -22,16 +20,16 @@ from loom.core.errors import DelegationExpired, PostCommitError, Unauthenticated
 from loom.core.execution import ExecutionScope
 from loom.core.identity import ANONYMOUS, Delegation, IdentityFixed, captured_delegation
 from loom.core.identity.wire import encode_identity
-from loom.core.job import service
+from loom.core.job import inline
 from loom.core.job.context import flush_pending_dispatches
-from loom.core.job.delivery import JobDelivery
 from loom.core.job.envelope import JobEnvelope, job_context
 from loom.core.job.handle import JobHandle
-from loom.core.job.policy import DEFAULT_RETRY
 from loom.core.job.run import EnvelopeInvocation
 from loom.core.observability.runtime import ObservabilityRuntime
 from loom.core.use_case.factory import UseCaseFactory
+from loom.testing import JobTestData
 from tests.helpers.delegation import acting_as, assert_new_delegation
+from tests.helpers.jobs import CeleryServiceFixture, InlineServiceFixture
 
 from .doubles import (
     ALICE,
@@ -48,17 +46,11 @@ from .doubles import (
 async def run_envelope(
     envelope: JobEnvelope, factory: UseCaseFactory, executor: RuntimeExecutor
 ) -> Any:
-    delivery = JobDelivery(
-        job_type=AcmeProbeJob,
-        envelope=envelope,
-        attempt=1,
-        postponements=0,
-        policy=DEFAULT_RETRY,
-    )
+    delivery = JobTestData().with_job_type(AcmeProbeJob).delivery(envelope=envelope)
     return await EnvelopeInvocation(factory, executor, ObservabilityRuntime.noop())(delivery)
 
 
-class TestInlineServiceFixture:
+class TestInlineJobTransport:
     async def test_run_builds_inside_an_execution_as_the_caller_acting(
         self, factory: UseCaseFactory, executor: RuntimeExecutor
     ) -> None:
@@ -165,7 +157,7 @@ class TestAQueuedDispatch:
     ) -> list[Callable[[], Awaitable[None]]]:
         """Alice's dispatch, kept here instead of queued: the test drains it where it chooses."""
         kept: list[Callable[[], Awaitable[None]]] = []
-        monkeypatch.setattr(service, "add_pending_dispatch", kept.append)
+        monkeypatch.setattr(inline, "add_pending_dispatch", kept.append)
         with acting_as(ALICE):
             InlineServiceFixture(factory, executor).dispatch_after_commit(
                 AcmeProbeJob, on_success=AcmeCallback
@@ -272,7 +264,7 @@ class TestADispatchWithNoCaller:
     ) -> None:
         """As the Celery and SQS wire carry it: its job and callbacks have none."""
         kept: list[Callable[[], Awaitable[None]]] = []
-        monkeypatch.setattr(service, "add_pending_dispatch", kept.append)
+        monkeypatch.setattr(inline, "add_pending_dispatch", kept.append)
         with acting_as(ANONYMOUS):
             InlineServiceFixture(factory, executor).dispatch_after_commit(
                 AcmeProbeJob, on_failure=AcmeCallback
@@ -291,7 +283,7 @@ class TestADispatchWithNoCaller:
     ) -> None:
         """As on Celery, a dispatch with no caller never borrows the caller of the work draining."""
         kept: list[Callable[[], Awaitable[None]]] = []
-        monkeypatch.setattr(service, "add_pending_dispatch", kept.append)
+        monkeypatch.setattr(inline, "add_pending_dispatch", kept.append)
         InlineServiceFixture(factory, executor).dispatch_after_commit(
             AcmeProbeJob, on_success=AcmeCallback
         )

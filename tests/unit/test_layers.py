@@ -9,8 +9,6 @@ run time, catching what a module pulls in transitively:
 
 from __future__ import annotations
 
-from tests.helpers.jobs import CeleryServiceFixture
-
 import ast
 from functools import cache
 from pathlib import Path
@@ -72,7 +70,7 @@ _RULES: dict[str, tuple[tuple[str, ...], tuple[str, ...]]] = {
     ),
     "loom.core.engine": (("loom.core.observability", "opentelemetry"), ()),
     "loom.rest": (("loom.serverless",), ()),
-    # A job backend raises its own errors; the composition root maps them.
+    # A job transport raises its own errors; the composition root maps them.
     "loom.jobs": (("loom.composition",), ()),
 }
 
@@ -114,7 +112,7 @@ def test_the_check_sees_function_local_and_relative_imports() -> None:
         "if TYPE_CHECKING:\n"
         "    from loom.rest.model import RestInterface\n"
         "def build():\n"
-        "    from loom.celery.service import CeleryServiceFixture\n"
+        "    from loom.celery.service import CeleryJobTransport\n"
         "from ..rest import errors\n"
         "from . import sibling\n"
         "from loom import composition\n"
@@ -124,7 +122,7 @@ def test_the_check_sees_function_local_and_relative_imports() -> None:
         "typing",
         "typing.TYPE_CHECKING",
         "loom.celery.service",
-        "loom.celery.service.CeleryServiceFixture",
+        "loom.celery.service.CeleryJobTransport",
         "loom.core.rest",
         "loom.core.rest.errors",
         "loom.core.engine",
@@ -191,7 +189,7 @@ _WRITERS: dict[str, tuple[str, ...]] = {
         _IDENTITY_CONTEXT,
         "loom.rest.auth.middleware",
         "loom.core.job.envelope",
-        "loom.core.job.service",
+        "loom.core.job.inline",
     ),
     "pinned_for": (_IDENTITY_CONTEXT, _EXECUTION),
     "enter": (

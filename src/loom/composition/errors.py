@@ -11,7 +11,7 @@
     framework service is registered.
 
 ``JobTransportError``
-    A job backend ``app.job_service`` or ``celery.queues`` needs cannot be built.
+    A job transport ``app.job_service`` or ``celery.queues`` needs cannot be built.
 
 ``CompositionStateError``
     An adapter or an :class:`~loom.composition.ApplicationHost` was used out
@@ -132,7 +132,7 @@ class ReservedBindingError(BootstrapError):
 
 
 class JobTransportError(ConfigError):
-    """Raised at start-up when a job backend the configuration needs cannot be built."""
+    """Raised at start-up when a job transport the configuration needs cannot be built."""
 
 
 __all__ = [

@@ -8,8 +8,6 @@ minted before the contract existed.
 
 from __future__ import annotations
 
-from tests.helpers.jobs import CeleryServiceFixture
-
 import asyncio
 from typing import Any
 from unittest.mock import MagicMock
@@ -25,6 +23,7 @@ from loom.core.job.config import JobSettings
 from loom.core.job.context import clear_pending_dispatches, flush_pending_dispatches
 from loom.core.job.job import Job
 from loom.core.use_case.markers import Caller
+from tests.helpers.jobs import CeleryServiceFixture
 
 _SUBJECT = "user-1"
 _ROLES = ("role_a",)

@@ -2,8 +2,6 @@
 
 from __future__ import annotations
 
-from tests.helpers.jobs import InlineServiceFixture
-
 import asyncio
 from collections.abc import Callable, Iterator
 from contextlib import AbstractContextManager, nullcontext
@@ -31,6 +29,7 @@ from loom.core.use_case.factory import UseCaseFactory
 from loom.core.use_case.invoker import AppInvoker
 from loom.core.use_case.registry import UseCaseRegistry
 from tests.helpers.delegation import acting_as
+from tests.helpers.jobs import InlineServiceFixture
 from tests.unit.core.authz._elevation_doubles import FakeSink
 from tests.unit.core.engine._lifecycle_doubles import Body, Log, Run, StubUnitOfWorkFactory
 

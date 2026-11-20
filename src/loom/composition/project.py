@@ -328,7 +328,7 @@ class Project:
         Raises:
             ConfigError: When a package in ``app.packages`` cannot be scanned,
                 a model belongs to a store the catalog does not serve, or the
-                store section is invalid, or a job backend cannot be built.
+                store section is invalid, or a job transport cannot be built.
             JoinedAutocommitStore: When a use case declares ``Joined`` on a store
                 that cannot roll back.
             UncomposedWriteStore: When a use case or job writes to a store with

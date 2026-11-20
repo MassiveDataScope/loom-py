@@ -8,8 +8,6 @@ no caller gives callbacks none, and they fail closed.
 
 from __future__ import annotations
 
-from tests.helpers.jobs import InlineServiceFixture
-
 import time
 
 import pytest
@@ -21,6 +19,7 @@ from loom.core.job.callback import CallbackOutcome, notify
 from loom.core.job.job import Job
 from loom.core.use_case.factory import UseCaseFactory
 from tests.helpers.delegation import acting_as
+from tests.helpers.jobs import InlineServiceFixture
 
 from .doubles import (
     ALICE,

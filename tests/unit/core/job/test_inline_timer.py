@@ -2,8 +2,6 @@
 
 from __future__ import annotations
 
-from tests.helpers.jobs import InlineServiceFixture
-
 import asyncio
 from collections.abc import Iterator
 from typing import Any
@@ -18,6 +16,7 @@ from loom.core.job.outcome import JobPostponement
 from loom.core.job.policy import Backoff, Countdown
 from loom.core.job.timer import AsyncioJobTimer, JobDelayRefused
 from loom.testing.jobs import ManualTimer
+from tests.helpers.jobs import InlineServiceFixture
 from tests.helpers.loggers import RecordingLogger
 
 pytestmark = pytest.mark.timeout(10)

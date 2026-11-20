@@ -89,8 +89,8 @@ def open_host(application: Application) -> LoopHost:
     host = LoopHost(application)
     host.start()
     _log.info(
-        "Lambda dispatched jobs go through the configured job service",
-        job_service=type(service).__qualname__,
+        "Lambda dispatched jobs go through the configured job transport",
+        job_transport=type(service.default_transport).__qualname__,
     )
     return host
 
@@ -184,7 +184,6 @@ class QueueConsumer(JobConsumer):
         )
 
 
-
 def remaining_ms(context: Any) -> int | None:
     """The milliseconds left in the invocation; ``None`` without a Lambda context."""
     remaining = getattr(context, "get_remaining_time_in_millis", None)
@@ -210,7 +209,6 @@ def job_runner(application: Application, redelivery: Redelivery) -> JobRunner:
         redelivery=redelivery,
         metrics=kernel.metrics,
     )
-
 
 
 def fail_in_span(application: Application, error: Exception, name: str, **meta: Any) -> NoReturn:

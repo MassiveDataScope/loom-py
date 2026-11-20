@@ -16,7 +16,7 @@ class MalformedJobMessage(SystemError):
 
 
 class UnknownJob(SystemError):
-    """A message names a job absent from this application's registry; it is is_retryable."""
+    """A message names a job absent from this application's registry; it is retryable."""
 
     def __init__(self, name: str) -> None:
         self.name = name
@@ -77,7 +77,7 @@ class MixedJobTransportsError(SystemError):
 
     def __init__(self) -> None:
         super().__init__(
-            "dispatch_parallel callbacks need every job on one job backend; "
+            "dispatch_parallel callbacks need every job on one job transport; "
             "these jobs route to several",
             code=ErrorCode.JOB_BACKENDS_MIXED,
         )

@@ -1,9 +1,0 @@
-{
-  "cause": {
-    "message": "import of loom.celery.config halted; None in sys.modules",
-    "type": "builtins.ModuleNotFoundError"
-  },
-  "message": "jobs are routed to celery, but the loom[celery] extra is not installed",
-  "type": "loom.composition.errors.JobBackendError",
-  "wrapped": false
-}

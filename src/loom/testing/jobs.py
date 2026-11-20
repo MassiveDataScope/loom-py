@@ -1,9 +1,10 @@
-"""Observe the jobs an application dispatches, and move the clock inline jobs wait on.
+"""Observe the jobs an application dispatches, build valid job data, and move the inline clock.
 
 :class:`RecordingJobTransport` records each dispatch once the execution that
 made it commits; ``app.job_service: loom.testing:RecordingJobTransport``
-selects it. :class:`ManualTimer` replaces the timer of the inline job service:
-``Override.instance(JobTimer, ManualTimer())``.
+selects it, and ``JobService.default_transport`` returns it. :class:`JobTestData`
+builds valid envelopes, deliveries and dispatches. :class:`ManualTimer` replaces
+the timer of the inline transport: ``Override.instance(JobTimer, ManualTimer())``.
 """
 
 from __future__ import annotations
@@ -35,11 +36,24 @@ if TYPE_CHECKING:
 ResultT = TypeVar("ResultT")
 
 
+class NoopJob(Job[None]):
+    """A job that does nothing: the default job of :class:`JobTestData`."""
+
+    def execute(self) -> None:
+        return None
+
+
 @dataclass(frozen=True, slots=True)
 class JobTestData:
-    """Shared valid job data for tests of envelopes, deliveries and dispatches."""
+    """Shared valid job data for tests of envelopes, deliveries and dispatches.
 
-    job_type: type[Job[Any]] = Job
+    Attributes:
+        job_type: The job every built object names.
+        policy: The retry policy of every built delivery.
+        trace_id: The trace every built envelope carries.
+    """
+
+    job_type: type[Job[Any]] = NoopJob
     policy: RetryPolicy = DEFAULT_RETRY
     trace_id: str | None = None
 
@@ -56,29 +70,45 @@ class JobTestData:
         return replace(self, trace_id=trace_id)
 
     def envelope(
-        self, *, payload: dict[str, Any] | None = None,
-        params: dict[str, Any] | None = None, task_id: str | None = "task-1",
+        self,
+        *,
+        payload: dict[str, Any] | None = None,
+        params: dict[str, Any] | None = None,
+        task_id: str | None = "task-1",
         identity: dict[str, Any] | None = None,
     ) -> JobEnvelope:
         """Build one valid wire envelope using this test data's job and trace."""
         return JobEnvelope(
-            job=wire_job_name(self.job_type.__qualname__), payload=payload or {},
-            params=params, task_id=task_id, trace_id=self.trace_id, identity=identity,
+            job=wire_job_name(self.job_type.__qualname__),
+            payload=payload or {},
+            params=params,
+            task_id=task_id,
+            trace_id=self.trace_id,
+            identity=identity,
         )
 
     def delivery(
-        self, *, envelope: JobEnvelope | None = None, attempt: int = 1,
-        postponements: int = 0, timeout_s: float | None = None,
+        self,
+        *,
+        envelope: JobEnvelope | None = None,
+        attempt: int = 1,
+        postponements: int = 0,
+        timeout_s: float | None = None,
     ) -> JobDelivery:
         """Build one delivery with this test data's policy and envelope."""
         return JobDelivery(
-            job_type=self.job_type, envelope=envelope or self.envelope(),
-            attempt=attempt, postponements=postponements,
-            policy=self.policy, timeout_s=timeout_s,
+            job_type=self.job_type,
+            envelope=envelope or self.envelope(),
+            attempt=attempt,
+            postponements=postponements,
+            policy=self.policy,
+            timeout_s=timeout_s,
         )
 
     def dispatch(
-        self, *, settings: JobSettings | None = None,
+        self,
+        *,
+        settings: JobSettings | None = None,
         callbacks: DispatchableCallbacks = ANY_CALLBACKS,
         payload: dict[str, Any] | None = None,
         params: dict[str, Any] | None = None,
@@ -88,10 +118,14 @@ class JobTestData:
     ) -> JobDispatch:
         """Build a validated dispatch for transport tests."""
         return JobDispatch.build(
-            self.job_type, options=(settings or JobSettings()).of(self.job_type),
+            self.job_type,
+            options=(settings or JobSettings()).of(self.job_type),
             callbacks=callbacks,
-            payload=payload, params=params, queue=queue,
-            countdown=countdown, priority=priority,
+            payload=payload,
+            params=params,
+            queue=queue,
+            countdown=countdown,
+            priority=priority,
         )
 
 
@@ -200,8 +234,9 @@ class RecordingJobTransport:
             countdown=dispatch.countdown.seconds,
             identity=dispatch.delegation.caller,
         )
-        handle = JobHandle(
-            job_id=str(dispatch.envelope.task_id), queue=dispatch.queue,
+        handle: JobHandle[Any] = JobHandle(
+            job_id=str(dispatch.envelope.task_id),
+            queue=dispatch.queue,
             dispatched_at=datetime.now(UTC),
         )
         return record, handle

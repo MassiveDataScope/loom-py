@@ -246,8 +246,12 @@ def _make_job_task(
         delivery = options.delivery_for(
             job_type,
             JobEnvelope(
-                job=name, payload=payload, params=params, trace_id=trace_id,
-                identity=identity, task_id=task_id,
+                job=name,
+                payload=payload,
+                params=params,
+                trace_id=trace_id,
+                identity=identity,
+                task_id=task_id,
             ),
             attempt=task_self.request.retries - postponements + 1,
             postponements=postponements,

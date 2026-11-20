@@ -8,7 +8,6 @@ import pytest
 from loom.core.engine.events import EventKind, RuntimeEvent, Status
 from loom.core.errors import SystemError
 from loom.core.job.delivery import JobDelivery
-from loom.core.job.envelope import JobEnvelope
 from loom.core.job.job import Job
 from loom.core.job.outcome import (
     Abandoned,
@@ -21,6 +20,7 @@ from loom.core.job.outcome import (
 )
 from loom.core.job.policy import Backoff, Redelivery, RetryPolicy
 from loom.core.job.runner import JobRunner
+from loom.testing import JobTestData
 
 POLICY = RetryPolicy(Backoff(first_s=4, factor=2, max_s=100, jitter=False), max_attempts=3)
 
@@ -42,17 +42,7 @@ class UnretryableError(SystemError):
     is_retryable = False
 
 
-def _delivery(
-    *, attempt: int = 1, postponements: int = 0, timeout_s: float | None = None
-) -> JobDelivery:
-    return JobDelivery(
-        job_type=AcmeJob,
-        envelope=JobEnvelope(job="AcmeJob", trace_id="trace-1", task_id="task-1"),
-        attempt=attempt,
-        postponements=postponements,
-        policy=POLICY,
-        timeout_s=timeout_s,
-    )
+_DATA = JobTestData().with_job_type(AcmeJob).with_policy(POLICY).with_trace_id("trace-1")
 
 
 def _runner(
@@ -80,29 +70,31 @@ def _raising(error: BaseException) -> Any:
 
 class TestJobRunnerOutcome:
     async def test_a_result_succeeds(self) -> None:
-        assert await _runner(_returning(7)).run(_delivery()) == Succeeded(7)
+        assert await _runner(_returning(7)).run(_DATA.delivery()) == Succeeded(7)
 
     async def test_a_failure_with_attempts_left_fails_with_the_backoff_delay(self) -> None:
         error = ValueError("boom")
-        outcome = await _runner(_raising(error)).run(_delivery(attempt=2))
+        outcome = await _runner(_raising(error)).run(_DATA.delivery(attempt=2))
         assert isinstance(outcome, Failed)
         assert outcome.error is error
         assert outcome.delay.seconds == 8
 
     async def test_the_last_attempt_abandons_with_the_class_of_the_error(self) -> None:
         error = ValueError("boom")
-        assert await _runner(_raising(error)).run(_delivery(attempt=3)) == Abandoned(
+        assert await _runner(_raising(error)).run(_DATA.delivery(attempt=3)) == Abandoned(
             "ValueError", error
         )
 
     async def test_an_error_that_cannot_succeed_again_abandons_at_the_first_attempt(self) -> None:
         error = UnretryableError("never")
-        assert await _runner(_raising(error)).run(_delivery()) == Abandoned(
+        assert await _runner(_raising(error)).run(_DATA.delivery()) == Abandoned(
             "UnretryableError", error
         )
 
     async def test_a_job_postponement_postpones_with_its_delay(self) -> None:
-        outcome = await _runner(_raising(JobPostponement("later", 30))).run(_delivery(attempt=3))
+        outcome = await _runner(_raising(JobPostponement("later", 30))).run(
+            _DATA.delivery(attempt=3)
+        )
         assert outcome == Postponed(outcome.delay, "later")
         assert isinstance(outcome, Postponed)
         assert outcome.delay.seconds == 30
@@ -110,25 +102,27 @@ class TestJobRunnerOutcome:
     async def test_a_job_postponement_without_a_delay_takes_the_next_backoff_step(
         self,
     ) -> None:
-        outcome = await _runner(_raising(JobPostponement("later"))).run(_delivery(postponements=2))
+        outcome = await _runner(_raising(JobPostponement("later"))).run(
+            _DATA.delivery(postponements=2)
+        )
         assert isinstance(outcome, Postponed)
         assert outcome.delay.seconds == 16
 
     async def test_a_job_postponement_never_exhausts_the_attempts(self) -> None:
         outcome = await _runner(_raising(JobPostponement("later", 1))).run(
-            _delivery(attempt=3, postponements=9)
+            _DATA.delivery(attempt=3, postponements=9)
         )
         assert isinstance(outcome, Postponed)
 
     async def test_postponements_do_not_spend_attempts_of_a_later_failure(self) -> None:
         outcome = await _runner(_raising(ValueError("boom"))).run(
-            _delivery(attempt=1, postponements=9)
+            _DATA.delivery(attempt=1, postponements=9)
         )
         assert isinstance(outcome, Failed)
 
     async def test_a_job_abandonment_abandons_with_its_reason(self) -> None:
         signal = JobAbandonment("no such tenant")
-        assert await _runner(_raising(signal)).run(_delivery()) == Abandoned(
+        assert await _runner(_raising(signal)).run(_DATA.delivery()) == Abandoned(
             "no such tenant", signal
         )
 
@@ -136,13 +130,13 @@ class TestJobRunnerOutcome:
         async def hang(delivery: JobDelivery) -> None:
             await asyncio.sleep(5)
 
-        outcome = await _runner(hang).run(_delivery(timeout_s=0.01))
+        outcome = await _runner(hang).run(_DATA.delivery(timeout_s=0.01))
         assert isinstance(outcome, Failed)
         assert isinstance(outcome.error, TimeoutError)
 
     async def test_a_cancellation_is_not_an_outcome(self) -> None:
         with pytest.raises(asyncio.CancelledError):
-            await _runner(_raising(asyncio.CancelledError())).run(_delivery())
+            await _runner(_raising(asyncio.CancelledError())).run(_DATA.delivery())
 
 
 class TestJobRunnerDelivery:
@@ -152,7 +146,7 @@ class TestJobRunnerDelivery:
         async def behave(delivery: JobDelivery) -> None:
             seen.append(delivery)
 
-        delivery = _delivery(attempt=2, postponements=1)
+        delivery = _DATA.delivery(attempt=2, postponements=1)
         await _runner(behave).run(delivery)
 
         assert seen == [delivery]
@@ -173,7 +167,7 @@ class TestJobRunnerEvents:
         self, behaviour: Any, kind: EventKind, status: Status
     ) -> None:
         metrics = Metrics()
-        await _runner(behaviour, metrics).run(_delivery())
+        await _runner(behaviour, metrics).run(_DATA.delivery())
 
         started, settled = metrics.events
         assert started.kind is EventKind.JOB_STARTED
@@ -185,11 +179,11 @@ class TestJobRunnerEvents:
     async def test_a_failed_event_carries_the_error(self) -> None:
         metrics = Metrics()
         error = ValueError("boom")
-        await _runner(_raising(error), metrics).run(_delivery())
+        await _runner(_raising(error), metrics).run(_DATA.delivery())
         assert metrics.events[-1].error is error
 
     async def test_a_runner_without_metrics_runs(self) -> None:
-        outcome: JobOutcome = await _runner(_returning(1)).run(_delivery())
+        outcome: JobOutcome = await _runner(_returning(1)).run(_DATA.delivery())
         assert outcome == Succeeded(1)
 
 
@@ -199,19 +193,19 @@ class TestJobRunnerRedelivery:
     ) -> None:
         signal = JobPostponement("later", 30)
         for redelivery in (Redelivery.NONE, Redelivery.SAME):
-            outcome = await _runner(_raising(signal), redelivery=redelivery).run(_delivery())
+            outcome = await _runner(_raising(signal), redelivery=redelivery).run(_DATA.delivery())
             assert outcome == Abandoned("cannot wait: later", signal)
 
     async def test_a_transport_that_retries_nothing_abandons_a_failure_at_the_first_attempt(
         self,
     ) -> None:
         error = ValueError("boom")
-        outcome = await _runner(_raising(error), redelivery=Redelivery.NONE).run(_delivery())
+        outcome = await _runner(_raising(error), redelivery=Redelivery.NONE).run(_DATA.delivery())
         assert outcome == Abandoned("ValueError", error)
 
     async def test_a_transport_that_brings_the_same_message_back_retries_a_failure(self) -> None:
         outcome = await _runner(_raising(ValueError("boom")), redelivery=Redelivery.SAME).run(
-            _delivery(attempt=2)
+            _DATA.delivery(attempt=2)
         )
         assert isinstance(outcome, Failed)
         assert outcome.delay.seconds == 8
@@ -220,7 +214,7 @@ class TestJobRunnerRedelivery:
         self,
     ) -> None:
         outcome = await _runner(_raising(ValueError("boom")), redelivery=Redelivery.SAME).run(
-            _delivery(attempt=3)
+            _DATA.delivery(attempt=3)
         )
         assert isinstance(outcome, Abandoned)
 
@@ -229,7 +223,7 @@ class TestJobRunnerRedelivery:
         self, redelivery: Redelivery
     ) -> None:
         signal = JobAbandonment("no such tenant")
-        outcome = await _runner(_raising(signal), redelivery=redelivery).run(_delivery())
+        outcome = await _runner(_raising(signal), redelivery=redelivery).run(_DATA.delivery())
         assert outcome == Abandoned("no such tenant", signal)
 
     async def test_an_abandoned_job_postponement_emits_the_abandonment_not_a_postponement(
@@ -238,7 +232,7 @@ class TestJobRunnerRedelivery:
         metrics = Metrics()
         await _runner(
             _raising(JobPostponement("later", 30)), metrics, redelivery=Redelivery.NONE
-        ).run(_delivery())
+        ).run(_DATA.delivery())
 
         assert [event.kind for event in metrics.events] == [
             EventKind.JOB_STARTED,

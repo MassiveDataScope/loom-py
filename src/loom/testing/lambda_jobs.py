@@ -167,9 +167,7 @@ class LambdaWorker:
         body = encode_job_message(
             job_type, payload=payload, params=params, identity=identity, task_id=task_id
         ).decode()
-        message = self._queue.build_message(
-            job_type, payload or {}, task_id, Countdown(0), body
-        )
+        message = self._queue.build_message(job_type, payload or {}, task_id, Countdown(0), body)
         self.sqs.send_message(QueueUrl=self.queue_url, **message.request())
         return self.redeliver()
 

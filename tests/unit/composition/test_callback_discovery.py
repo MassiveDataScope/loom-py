@@ -2,8 +2,6 @@
 
 from __future__ import annotations
 
-from tests.helpers.jobs import RecordingServiceFixture
-
 from collections.abc import Callable
 from pathlib import Path
 
@@ -86,7 +84,7 @@ class TestRecipeKeepsTheScan:
 
 
 class TestJobServiceFromContext:
-    def test_a_recording_service_selected_by_app_job_service_refuses_an_undiscovered_callback(
+    def test_a_recording_transport_selected_by_app_job_service_refuses_an_undiscovered_callback(
         self, tmp_path: Path
     ) -> None:
         project = _project(

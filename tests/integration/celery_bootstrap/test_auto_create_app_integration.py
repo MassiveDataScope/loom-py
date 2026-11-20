@@ -1,7 +1,5 @@
 from __future__ import annotations
 
-from tests.helpers.jobs import InlineServiceFixture
-
 import asyncio
 from pathlib import Path
 from typing import Any, cast
@@ -15,7 +13,6 @@ from loom.core.di.container import LoomContainer
 from loom.core.di.scope import Scope
 from loom.core.engine.executor import RuntimeExecutor
 from loom.core.job import JobService
-from tests.helpers.jobs import InlineServiceFixture
 from loom.core.job.callback import JobCallback
 from loom.core.job.job import Job
 from loom.core.model import BaseModel, ColumnField
@@ -36,6 +33,7 @@ from tests.helpers.acme_recording_callbacks import (
     AcmeRecordSuccessCallback,
 )
 from tests.helpers.composition import WithOverrides, scanning
+from tests.helpers.jobs import InlineServiceFixture
 
 
 class _Record(BaseModel):
