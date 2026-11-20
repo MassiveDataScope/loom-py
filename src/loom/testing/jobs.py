@@ -78,7 +78,10 @@ class JobTestData:
         identity: dict[str, Any] | None = None,
     ) -> JobEnvelope:
         """Build one valid wire envelope using this test data's job and trace."""
-        return JobEnvelope(
+        from loom.testing.data import make
+
+        return make(
+            JobEnvelope,
             job=wire_job_name(self.job_type.__qualname__),
             payload=payload or {},
             params=params,
@@ -95,14 +98,16 @@ class JobTestData:
         postponements: int = 0,
         timeout_s: float | None = None,
     ) -> JobDelivery:
-        """Build one delivery, through ``JobOptions.delivery_for``, with this test data's policy."""
-        resolved = JobSettings().of(self.job_type)
-        options = replace(resolved, retry=replace(resolved.retry, policy=self.policy))
-        return options.delivery_for(
-            self.job_type,
-            envelope or self.envelope(),
+        """Build one delivery of this test data's job under its policy."""
+        from loom.testing.data import make
+
+        return make(
+            JobDelivery,
+            job_type=self.job_type,
+            envelope=envelope or self.envelope(),
             attempt=attempt,
             postponements=postponements,
+            policy=self.policy,
             timeout_s=timeout_s,
         )
 

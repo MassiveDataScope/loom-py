@@ -5,7 +5,15 @@ from __future__ import annotations
 import random
 from dataclasses import dataclass
 from enum import StrEnum
-from typing import ClassVar
+from typing import Annotated, ClassVar
+
+import msgspec
+
+MAX_COUNTDOWN_SECONDS = 900
+"""The longest delay any job transport can wait."""
+
+Seconds = Annotated[int, msgspec.Meta(ge=0, le=MAX_COUNTDOWN_SECONDS)]
+"""Whole seconds within the bound of a countdown."""
 
 
 class Redelivery(StrEnum):
@@ -34,9 +42,9 @@ class Countdown:
         ValueError: When the seconds fall outside the bound.
     """
 
-    MAX_SECONDS: ClassVar[int] = 900
+    MAX_SECONDS: ClassVar[int] = MAX_COUNTDOWN_SECONDS
 
-    seconds: int
+    seconds: Seconds
 
     def __post_init__(self) -> None:
         if not 0 <= self.seconds <= self.MAX_SECONDS:
@@ -58,9 +66,9 @@ class Backoff:
             or *factor* is below 1.
     """
 
-    first_s: int
-    factor: float
-    max_s: int
+    first_s: Annotated[int, msgspec.Meta(ge=0)]
+    factor: Annotated[float, msgspec.Meta(ge=1)]
+    max_s: Seconds
     jitter: bool = True
 
     def __post_init__(self) -> None:
@@ -102,7 +110,7 @@ class RetryPolicy:
     """
 
     backoff: Backoff
-    max_attempts: int | None
+    max_attempts: Annotated[int, msgspec.Meta(ge=1)] | None
 
     def __post_init__(self) -> None:
         if self.max_attempts is not None and self.max_attempts < 1:

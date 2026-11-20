@@ -69,3 +69,6 @@ def make(model: type[T], /, **fields: Any) -> T:
     """
     builder: type[BaseFactory[T]] = LoomFactory._get_or_create_factory(model)  # noqa: SLF001
     return builder.build(**fields)
+
+
+from loom.testing import job_factories  # noqa: E402, F401

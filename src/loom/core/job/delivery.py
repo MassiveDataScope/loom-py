@@ -3,13 +3,13 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
-from typing import TYPE_CHECKING, Any
+from typing import Annotated, Any
 
+import msgspec
+
+from loom.core.job.envelope import JobEnvelope
+from loom.core.job.job import Job
 from loom.core.job.policy import RetryPolicy
-
-if TYPE_CHECKING:
-    from loom.core.job.envelope import JobEnvelope
-    from loom.core.job.job import Job
 
 
 @dataclass(frozen=True, slots=True)
@@ -31,8 +31,8 @@ class JobDelivery:
 
     job_type: type[Job[Any]]
     envelope: JobEnvelope
-    attempt: int
-    postponements: int
+    attempt: Annotated[int, msgspec.Meta(ge=1)]
+    postponements: Annotated[int, msgspec.Meta(ge=0)]
     policy: RetryPolicy
     timeout_s: float | None = None
 
