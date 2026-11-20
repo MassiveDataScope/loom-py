@@ -30,9 +30,9 @@ _CORE_DRIVERS = ("sqlalchemy", *_SDKS, "motor")
 
 _CORE_CLIENT_ISLANDS = frozenset(
     {
-        "loom.core.connections.aws.client",
-        "loom.core.connections.mongo.client",
-        "loom.core.connections.clickhouse.client",
+        "loom.connections.aws.client",
+        "loom.connections.mongo.client",
+        "loom.connections.clickhouse.client",
     }
 )
 
@@ -59,13 +59,13 @@ import sys
 import loom.core.connections
 import loom.core.connections.aws
 import loom.core.connections.aws.config
-import loom.core.connections.aws.loader
+import loom.connections.aws.loader
 import loom.core.connections.clickhouse
 import loom.core.connections.clickhouse.config
-import loom.core.connections.clickhouse.loader
+import loom.connections.clickhouse.loader
 import loom.core.connections.mongo
 import loom.core.connections.mongo.config
-import loom.core.connections.mongo.loader
+import loom.connections.mongo.loader
 
 sdks = {sdks!r}
 print(json.dumps(sorted(
@@ -80,7 +80,7 @@ print(json.dumps(sorted(
 _ISLANDS: dict[str, frozenset[str]] = {
     "boto3": frozenset(
         {
-            "core/connections/aws/client.py",
+            "connections/aws/client.py",
             "stores/dynamodb/repository.py",  # item serializers, conditions
             "etl/io/sources/_dynamodb_items.py",  # item deserializers
             "etl/io/sources/_dynamodb_predicate.py",  # condition builders
@@ -88,7 +88,7 @@ _ISLANDS: dict[str, frozenset[str]] = {
     ),
     "botocore": frozenset(
         {
-            "core/connections/aws/client.py",
+            "connections/aws/client.py",
             "stores/dynamodb/repository.py",  # error types
             "prefect/notify/_sns.py",  # error types
             "testing/_moto.py",  # the response of a request nobody answered
@@ -96,13 +96,13 @@ _ISLANDS: dict[str, frozenset[str]] = {
     ),
     "clickhouse_connect": frozenset(
         {
-            "core/connections/clickhouse/client.py",
+            "connections/clickhouse/client.py",
             "stores/clickhouse/_client.py",  # error types, multi-role transport
         }
     ),
     "pymongo": frozenset(
         {
-            "core/connections/mongo/client.py",
+            "connections/mongo/client.py",
             "stores/mongo/backend.py",  # client type of the backend
             "stores/mongo/repository.py",  # results, errors
             "stores/mongo/uow.py",  # sessions
@@ -120,7 +120,7 @@ def _core_module_names() -> list[str]:
         if parts[-1] == "__init__":
             parts.pop()
         names.append(".".join(parts))
-    return [name for name in names if name not in _CORE_CLIENT_ISLANDS]
+    return names
 
 
 class TestCoreImportWeight:
@@ -142,6 +142,18 @@ class TestCoreImportWeight:
 
         assert result.returncode == 0, result.stderr
         assert json.loads(result.stdout.splitlines()[-1]) == {}
+
+
+class TestCoreImportsNoDriver:
+    def test_no_core_module_imports_a_driver(self) -> None:
+        """A driver is an adapter's: nothing under ``loom.core`` imports one, even lazily."""
+        offenders = [
+            f"{path.relative_to(_SRC).as_posix()} imports {driver}"
+            for path in sorted((_SRC / "loom" / "core").rglob("*.py"))
+            for driver in sorted(imported_roots(parsed(path)) & set(_CORE_DRIVERS))
+        ]
+
+        assert offenders == []
 
 
 class TestConnectionsContainment:

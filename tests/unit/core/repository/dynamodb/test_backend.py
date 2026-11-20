@@ -9,8 +9,8 @@ from unittest.mock import MagicMock
 import pytest
 
 import loom.stores.dynamodb.backend as backend_module
+from loom.connections.aws import AwsClients
 from loom.core.config import ConfigContext
-from loom.core.connections.aws import AwsClients
 from loom.core.stores import StoreWiring
 from loom.core.stores.profile import SERVER_PROFILE
 from loom.stores.dynamodb.backend import DynamoDBBackend

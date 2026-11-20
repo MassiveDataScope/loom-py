@@ -1,7 +1,7 @@
 """The typed way to load the pymongo island, and what the island publishes.
 
 Importing this module loads no SDK: :func:`mongo_island` loads
-:mod:`loom.core.connections.mongo.client` through
+:mod:`loom.connections.mongo.client` through
 :func:`~loom.core.plugins.optional.import_optional`.
 """
 
@@ -16,11 +16,11 @@ if TYPE_CHECKING:
 
     from loom.core.connections.mongo.config import MongoConnection
 
-_ISLAND = "loom.core.connections.mongo.client"
+_ISLAND = "loom.connections.mongo.client"
 
 
 class MongoIsland(Protocol):
-    """What :mod:`loom.core.connections.mongo.client` publishes."""
+    """What :mod:`loom.connections.mongo.client` publishes."""
 
     def build_mongo_client(self, connection: MongoConnection, **extra: Any) -> MongoClient[Any]: ...
 

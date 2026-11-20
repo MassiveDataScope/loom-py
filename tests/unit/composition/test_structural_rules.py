@@ -12,8 +12,8 @@ import yaml
 from loom.composition import Recipe
 from loom.composition.phases import build_stores
 from loom.composition.project import Project
+from loom.connections.aws import AwsClients
 from loom.core.config import ConfigError
-from loom.core.connections.aws import AwsClients
 from loom.core.discovery.base import DiscoveryResult
 from loom.core.stores import SERVER_PROFILE
 from loom.core.stores import catalog as catalog_module

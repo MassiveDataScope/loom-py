@@ -1,6 +1,6 @@
 """The pymongo island: the one module of loom that builds a MongoDB client.
 
-Loaded with :func:`~loom.core.connections.mongo.loader.mongo_island`. Options
+Loaded with :func:`~loom.connections.mongo.loader.mongo_island`. Options
 passed as keywords win over those of the URL, as in the driver.
 """
 
@@ -16,8 +16,8 @@ from loom.core.connections.mongo.config import MongoConnection
 from loom.core.model.redaction import reveal_for_driver
 
 if TYPE_CHECKING:
-    from loom.core.connections.mongo import client as _self
-    from loom.core.connections.mongo.loader import MongoIsland
+    from loom.connections.mongo import client as _self
+    from loom.connections.mongo.loader import MongoIsland
 
     _conforms: MongoIsland = _self
 

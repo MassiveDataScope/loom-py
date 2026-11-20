@@ -8,9 +8,10 @@ from typing import Any
 
 import pytest
 
+from loom.connections.aws import AwsClients
+from loom.connections.aws.loader import aws_island
 from loom.core.config._resolver_utils import build_resolver_client
-from loom.core.connections.aws import AwsClientConfig, AwsClients, AwsPool
-from loom.core.connections.aws.loader import aws_island
+from loom.core.connections.aws import AwsClientConfig, AwsPool
 from loom.core.model.redaction import Dsn
 from loom.core.plugins.optional import MissingExtraError
 from loom.serverless.aws.lambda_ import _jobs
@@ -144,7 +145,7 @@ class TestClose:
     @pytest.fixture
     def pooled(self, monkeypatch: pytest.MonkeyPatch) -> _PooledIsland:
         island = _PooledIsland()
-        monkeypatch.setattr("loom.core.connections.aws.clients.aws_island", lambda: island)
+        monkeypatch.setattr("loom.connections.aws.clients.aws_island", lambda: island)
         return island
 
     def test_a_reopened_client_is_the_same_and_the_second_close_releases_its_connection(

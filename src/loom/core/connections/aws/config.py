@@ -3,7 +3,7 @@
 The DynamoDB repository (a ``dynamodb`` store), the ETL DynamoDB sources
 (``storage.dynamodb``), the ``secrets`` and ``ssm`` resolvers and the SNS
 notifier build their clients from :class:`AwsClientConfig` through
-:class:`~loom.core.connections.aws.clients.AwsClients`.
+:class:`~loom.connections.aws.clients.AwsClients`.
 
 Every bound is finite by default: botocore waits 60 s for a read, longer than
 a typical serverless invocation, so a hung call would consume the whole

@@ -16,8 +16,8 @@ from types import TracebackType
 from typing import Any
 
 from loom.composition import Application, Project
+from loom.connections.aws import AwsClients
 from loom.core.config import ConfigError, ConfigKey
-from loom.core.connections.aws import AwsClients
 from loom.core.identity import Identity
 from loom.core.job.envelope import encode_job_message
 from loom.core.job.job import Job

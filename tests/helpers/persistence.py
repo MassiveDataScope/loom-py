@@ -7,8 +7,8 @@ from typing import Any
 
 import pytest
 
+from loom.connections.aws import AwsClients
 from loom.core.config import ConfigContext
-from loom.core.connections.aws import AwsClients
 from loom.core.model import BaseModel
 from loom.core.stores import (
     SERVER_PROFILE,

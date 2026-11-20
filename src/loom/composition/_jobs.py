@@ -11,9 +11,9 @@ from typing import TYPE_CHECKING, Any, Final, cast
 
 from loom.composition.errors import JobTransportError
 from loom.composition.resources import Resource, ResourceKind, closing
+from loom.connections.aws import AwsClients
 from loom.core.bootstrap import KernelRuntime
 from loom.core.config import ConfigContext, ConfigKey
-from loom.core.connections.aws import AwsClients
 from loom.core.di.scope import Scope
 from loom.core.job.callback import DispatchableCallbacks, JobCallback
 from loom.core.job.config import JobSettings

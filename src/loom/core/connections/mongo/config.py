@@ -3,7 +3,7 @@
 The repository (a ``mongo`` store), the ETL sources (``storage.mongo``) and
 the change-stream sources (``mongo.source`` / ``mongo.sources.<name>``) declare
 :class:`MongoConnection` or a subclass of it, and build their clients through
-:mod:`loom.core.connections.mongo.client`. Unset bounds keep the driver's
+:mod:`loom.connections.mongo.client`. Unset bounds keep the driver's
 defaults.
 """
 

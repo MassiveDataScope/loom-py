@@ -1,7 +1,7 @@
 """The typed way to load the AWS island, and what the island publishes.
 
 Importing this module loads no SDK: :func:`aws_island` loads
-:mod:`loom.core.connections.aws.client` through
+:mod:`loom.connections.aws.client` through
 :func:`~loom.core.plugins.optional.import_optional`.
 """
 
@@ -14,11 +14,11 @@ from loom.core.plugins.optional import import_optional
 if TYPE_CHECKING:
     from loom.core.connections.aws.config import AwsClientConfig
 
-_ISLAND = "loom.core.connections.aws.client"
+_ISLAND = "loom.connections.aws.client"
 
 
 class AwsIsland(Protocol):
-    """What :mod:`loom.core.connections.aws.client` publishes."""
+    """What :mod:`loom.connections.aws.client` publishes."""
 
     def open_session(self, profile: str | None) -> Any: ...
 

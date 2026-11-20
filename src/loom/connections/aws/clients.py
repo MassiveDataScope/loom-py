@@ -6,8 +6,8 @@ from collections.abc import Hashable
 from threading import Lock
 from typing import Any
 
+from loom.connections.aws.loader import aws_island
 from loom.core.connections.aws.config import AwsClientConfig
-from loom.core.connections.aws.loader import aws_island
 
 
 class AwsClients:

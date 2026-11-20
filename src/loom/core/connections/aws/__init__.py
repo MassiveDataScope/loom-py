@@ -1,26 +1,22 @@
-"""AWS: the client settings every context shares, and the typed loader of its island.
+"""AWS: the client settings every context shares, and the port that serves their clients.
 
-Importing this package loads no SDK; the SDK is touched only by
-:mod:`loom.core.connections.aws.client`, loaded with :func:`aws_island` by :class:`AwsClients`.
+The SDK client is built by :mod:`loom.connections.aws`; importing this package loads no SDK.
 """
 
 from __future__ import annotations
 
-from loom.core.connections.aws.clients import AwsClients
 from loom.core.connections.aws.config import (
     AwsClientConfig,
     AwsPool,
     RetryMode,
     aws_error_code,
 )
-from loom.core.connections.aws.loader import AwsIsland, aws_island
+from loom.core.connections.aws.source import AwsClientSource
 
 __all__ = [
     "AwsClientConfig",
-    "AwsClients",
-    "AwsIsland",
+    "AwsClientSource",
     "AwsPool",
     "RetryMode",
     "aws_error_code",
-    "aws_island",
 ]

@@ -5,7 +5,7 @@ from __future__ import annotations
 from collections.abc import Callable, Iterable, Mapping
 from typing import Any
 
-from loom.core.connections.aws import AwsClients
+from loom.connections.aws import AwsClients
 from loom.core.model.redaction import Dsn
 from loom.prefect.notify._port import Notifier
 from loom.prefect.notify._slack import SlackNotifier

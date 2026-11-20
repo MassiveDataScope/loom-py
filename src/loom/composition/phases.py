@@ -21,13 +21,13 @@ from loom.composition._sql import SqlWiring, register_sql_collaborators, resolve
 from loom.composition.errors import ReservedBindingError
 from loom.composition.recipe import Adapter, Recipe
 from loom.composition.resources import Resource, ResourceKind
+from loom.connections.aws import AwsClients
 from loom.core.authz.elevation import ElevationSink
 from loom.core.bootstrap import BootstrapError, KernelRuntime
 from loom.core.bootstrap.kernel import KernelRecipe, seeded_container
 from loom.core.cache.wiring import cache_module_for
 from loom.core.checks import enforce_deploy_checks
 from loom.core.config import ConfigContext, ConfigError, ConfigKey
-from loom.core.connections.aws import AwsClients
 from loom.core.di.container import ResolutionError
 from loom.core.di.graph import GraphAnalysis
 from loom.core.di.installer import Installer

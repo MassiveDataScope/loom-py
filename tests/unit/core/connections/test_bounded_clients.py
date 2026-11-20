@@ -13,8 +13,8 @@ from typing import Any
 
 import pytest
 
+from loom.connections.aws import AwsClients
 from loom.core.connections import AwsClientConfig
-from loom.core.connections.aws import AwsClients
 from loom.core.model.redaction import Dsn
 from tests.helpers.aws import OTHER_REGION
 from tests.helpers.silent_endpoint import silent_endpoint  # noqa: F401 - pytest fixture

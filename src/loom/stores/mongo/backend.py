@@ -16,9 +16,9 @@ from typing import Any, ClassVar, Literal
 import msgspec
 from pymongo import AsyncMongoClient
 
+from loom.connections.mongo.client import build_async_mongo_client
 from loom.core.config import ConfigContext
 from loom.core.connections.mongo import MongoConnection, MongoPool
-from loom.core.connections.mongo.client import build_async_mongo_client
 from loom.core.di.container import LoomContainer
 from loom.core.model import BaseModel
 from loom.core.model.types import NonNegativeInt, PositiveInt

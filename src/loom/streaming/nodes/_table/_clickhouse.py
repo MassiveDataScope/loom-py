@@ -10,8 +10,8 @@ from uuid import uuid4
 
 import msgspec
 
+from loom.connections.clickhouse.client import build_clickhouse_client
 from loom.core.connections import ClickHouseConnection
-from loom.core.connections.clickhouse.client import build_clickhouse_client
 from loom.streaming.nodes._table.common import (
     ClickHouseSinkConfig,
     _column_names,

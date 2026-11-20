@@ -12,14 +12,14 @@ from typing import Any, cast
 from loom.core.config.context import ConfigContext
 from loom.core.config.errors import ConfigError
 from loom.core.config.keys import INTERPOLATION, ConfigKey
-from loom.core.connections.aws import AwsClientConfig, AwsClients
+from loom.core.connections.aws import AwsClientConfig, AwsClientSource
 from loom.core.plugins.optional import MissingExtraError
 
 _CLIENT = ("client",)
 
 
 def build_resolver_client(
-    clients: AwsClients, service: str, region: str | None, *, resolver: str, root: Any
+    clients: AwsClientSource, service: str, region: str | None, *, resolver: str, root: Any
 ) -> Any:
     """Build one boto3 client through the AWS island from the ``aws:`` section as written.
 

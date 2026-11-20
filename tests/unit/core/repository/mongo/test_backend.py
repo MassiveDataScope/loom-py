@@ -12,7 +12,7 @@ from typing import Any
 
 import pytest
 
-import loom.core.connections.mongo.client as mongo_island
+import loom.connections.mongo.client as mongo_island
 import loom.stores.mongo.backend as backend_module
 from loom.core.config import ConfigContext, ConfigError
 from loom.core.di.container import LoomContainer

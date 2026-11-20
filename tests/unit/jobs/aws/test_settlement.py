@@ -7,7 +7,7 @@ from typing import Any
 
 import pytest
 
-from loom.core.connections.aws import AwsClients
+from loom.connections.aws import AwsClients
 from loom.core.job.outcome import Abandoned, Failed, JobOutcome, Postponed, Succeeded
 from loom.core.job.policy import Countdown
 from loom.jobs.aws.queue import (

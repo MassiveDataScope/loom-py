@@ -14,6 +14,7 @@ import msgspec
 from loom.composition import phases
 from loom.composition.application import Application
 from loom.composition.resources import Resource, ResourceKind, closing
+from loom.connections.aws import AwsClients
 from loom.core.cache.wiring import CacheGateways
 from loom.core.checks import CheckScope, DeployReport, run_deploy_checks
 from loom.core.config import (
@@ -26,7 +27,6 @@ from loom.core.config import (
 from loom.core.config.keys import INTERPOLATION
 from loom.core.config.loader import convert_section
 from loom.core.config.overrides import load_application_config
-from loom.core.connections.aws import AwsClients
 from loom.core.discovery.scanner import PackageScanner
 from loom.core.environment import Environment, resolve_environment, select_config_paths
 from loom.core.locator import DEFAULT_CODE_PATH, add_code_path

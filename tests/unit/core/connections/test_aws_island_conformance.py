@@ -8,8 +8,8 @@ from typing import Any
 import pytest
 from botocore.exceptions import BotoCoreError, ClientError
 
+from loom.connections.aws.loader import AwsIsland
 from loom.core.connections.aws import AwsClientConfig
-from loom.core.connections.aws.loader import AwsIsland
 from tests.helpers.aws import OTHER_REGION, build_moto_client
 from tests.helpers.aws_island import FakeAwsIsland
 
@@ -77,7 +77,7 @@ class RealAwsIslandPort(MotoAwsIslandPort):
 class TestRealAwsIsland(RealAwsIslandPort):
     @pytest.fixture
     def aws_island(self, mocked_aws: None) -> AwsIsland:
-        island: AwsIsland = importlib.import_module("loom.core.connections.aws.client")  # type: ignore[assignment]
+        island: AwsIsland = importlib.import_module("loom.connections.aws.client")  # type: ignore[assignment]
         return island
 
 

@@ -9,9 +9,9 @@ from typing import Any
 import msgspec
 import pytest
 
+from loom.connections.aws import AwsClients
 from loom.core.config import ConfigContext, ConfigError
 from loom.core.config.convert import convert_config
-from loom.core.connections.aws import AwsClients
 from loom.core.stores.profile import SERVER_PROFILE
 from loom.stores.dynamodb.backend import DynamoDBBackend, DynamoDBRepositoryConfig
 from loom.stores.dynamodb.repository import RepositoryDynamoDB

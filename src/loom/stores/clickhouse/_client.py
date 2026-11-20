@@ -28,7 +28,7 @@ try:
         OperationalError,
     )
 
-    from loom.core.connections.clickhouse.client import open_async_client
+    from loom.connections.clickhouse.client import open_async_client
 except ImportError as exc:  # pragma: no cover
     raise ImportError(_INSTALL_HINT) from exc
 
@@ -181,7 +181,7 @@ async def create_driver_client(**kwargs: Any) -> AsyncClickHouseClient:
     """Create an adapted driver ``AsyncClient`` from ``get_async_client`` kwargs.
 
     The client is opened by the ClickHouse island,
-    :mod:`loom.core.connections.clickhouse.client`, the one place loom builds
+    :mod:`loom.connections.clickhouse.client`, the one place loom builds
     a ClickHouse client.
 
     Args:

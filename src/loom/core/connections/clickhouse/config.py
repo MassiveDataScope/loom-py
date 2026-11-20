@@ -3,7 +3,7 @@
 The SQL service (``sql.connections.<name>``), the ETL (``storage.clickhouse``)
 and the streaming sinks (a ``clickhouse`` store, ``stores.<name>``, named by
 a sink) declare :class:`ClickHouseConnection` or a subclass of it, and build
-their clients through :mod:`loom.core.connections.clickhouse.client`.
+their clients through :mod:`loom.connections.clickhouse.client`.
 """
 
 from __future__ import annotations

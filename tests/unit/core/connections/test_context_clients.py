@@ -11,8 +11,8 @@ from unittest.mock import MagicMock
 
 import pytest
 
+from loom.connections.aws import AwsClients
 from loom.core.connections import AwsClientConfig, ClickHouseConnection
-from loom.core.connections.aws import AwsClients
 from loom.core.model.redaction import Dsn, Secret
 from tests.helpers.aws import OTHER_REGION
 

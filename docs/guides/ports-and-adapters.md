@@ -351,7 +351,7 @@ separately.
 
 Known debt:
 
-- Island clients under `loom.core.connections` (`aws`, `mongo`, `clickhouse`)
+- Island clients under `loom.connections` (`aws`, `mongo`, `clickhouse`)
   still import their drivers. The store adapters live in `loom.stores`.
 - The logger does not fit AWS Lambda. Its redesign is planned next.
 

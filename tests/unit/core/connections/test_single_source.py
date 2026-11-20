@@ -33,9 +33,9 @@ _DRIVER_FACTORIES = frozenset({"client", "resource", "Session", "get_client", "g
 _DRIVER_CLASSES = frozenset({"MongoClient", "AsyncMongoClient"})
 _BUILDERS = frozenset(
     {
-        "core/connections/aws/client.py",
-        "core/connections/clickhouse/client.py",
-        "core/connections/mongo/client.py",
+        "connections/aws/client.py",
+        "connections/clickhouse/client.py",
+        "connections/mongo/client.py",
     }
 )
 

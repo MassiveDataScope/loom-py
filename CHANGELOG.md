@@ -2,6 +2,16 @@
 
 ## 💥 Breaking
 
+- **connections:** the SDK client builders leave the core. `AwsClients`,
+  `aws_island`, `AwsIsland`, `mongo_island`, `MongoIsland`, `clickhouse_island`,
+  `ClickHouseIsland` and the `client` modules are now in `loom.connections.aws`,
+  `loom.connections.mongo` and `loom.connections.clickhouse`;
+  `loom.core.connections` keeps the settings, the value types and the new
+  `AwsClientSource` port that `RuntimeProfile.aws` and the config resolvers
+  accept. Nothing under `loom.core` imports an SDK.
+  **Migration:** `from loom.core.connections.aws import AwsClients` becomes
+  `from loom.connections.aws import AwsClients`; likewise for the islands and
+  `loom.core.connections.<engine>.client`.
 - **jobs:** `JobService` is the one public job API, and it is a class, not a
   protocol: it holds `run`, `dispatch_after_commit`, `dispatch_now` and
   `dispatch_parallel` once, builds a validated `JobDispatch` (options, countdown,

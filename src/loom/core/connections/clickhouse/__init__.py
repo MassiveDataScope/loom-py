@@ -1,12 +1,10 @@
-"""ClickHouse: the connection every context shares, and the typed loader of its island.
+"""ClickHouse: the connection every context shares.
 
-Importing this package loads no SDK; the client is built by
-:mod:`loom.core.connections.clickhouse.client`, loaded with :func:`clickhouse_island`.
+The driver client is built by :mod:`loom.connections.clickhouse`; this package loads no SDK.
 """
 
 from __future__ import annotations
 
 from loom.core.connections.clickhouse.config import ClickHouseConnection
-from loom.core.connections.clickhouse.loader import ClickHouseIsland, clickhouse_island
 
-__all__ = ["ClickHouseConnection", "ClickHouseIsland", "clickhouse_island"]
+__all__ = ["ClickHouseConnection"]

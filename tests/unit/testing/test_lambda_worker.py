@@ -20,8 +20,8 @@ import yaml
 from botocore.exceptions import ClientError
 from moto import mock_aws
 
+from loom.connections.aws import AwsClients
 from loom.core.config import ConfigError
-from loom.core.connections.aws import AwsClients
 from loom.core.identity import Identity
 from loom.core.job.envelope import JobEnvelope, decode_job_envelope
 from loom.core.job.job import Job
