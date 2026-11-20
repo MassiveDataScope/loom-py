@@ -22,6 +22,7 @@ from loom.core.connections.aws import AwsPool
 from loom.core.connections.mongo import MongoPool
 from loom.core.model.redaction import Dsn, Secret
 from loom.core.plugins.optional import import_optional
+from tests.helpers.aws import OTHER_REGION
 
 
 class _Recorder:
@@ -44,17 +45,13 @@ class _Recorder:
 
 class TestAwsClientBuilder:
     def test_aws_builder_opens_a_session_of_the_profile_and_gives_every_bound(
-        self,
-        monkeypatch: pytest.MonkeyPatch,
+        self, mocked_aws: None, dev_profile: str
     ) -> None:
         island = import_optional("loom.core.connections.aws.client", extra="aws")
-        session = _Recorder()
-        session.client = _Recorder()  # type: ignore[attr-defined]
-        monkeypatch.setattr(island.boto3, "Session", session)
         config = AwsClientConfig(
-            region="eu-west-1",
+            region=OTHER_REGION,
             url=Dsn("http://localhost:8000"),
-            profile="dev",
+            profile=dev_profile,
             pool=AwsPool(size=4),
             connect_timeout=1,
             read_timeout=7,
@@ -62,14 +59,14 @@ class TestAwsClientBuilder:
             retry_mode="adaptive",
         )
 
-        island.build_aws_client(island.open_session("dev"), "dynamodb", config)
+        session = island.open_session(dev_profile)
+        client = island.build_aws_client(session, "dynamodb", config)
 
-        assert session.kwargs == {"profile_name": "dev"}
-        client_args, client_kwargs = session.client.calls[-1]  # type: ignore[attr-defined]
-        assert client_args == ("dynamodb",)
-        assert client_kwargs["endpoint_url"] == "http://localhost:8000"
-        assert client_kwargs["region_name"] == "eu-west-1"
-        botocore = client_kwargs["config"]
+        assert session.profile_name == dev_profile
+        assert client.meta.service_model.service_name == "dynamodb"
+        assert client.meta.endpoint_url == "http://localhost:8000"
+        assert client.meta.region_name == OTHER_REGION
+        botocore = client.meta.config
         bounds = (botocore.connect_timeout, botocore.read_timeout, botocore.max_pool_connections)
         assert bounds == (1, 7, 4)
         assert botocore.retries == {"total_max_attempts": 2, "mode": "adaptive"}

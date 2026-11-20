@@ -1,12 +1,13 @@
 from __future__ import annotations
 
+from collections.abc import Iterator
 from typing import Annotated, Any, NoReturn
 
 import pytest
 
 from loom.core.model import BaseModel, Field, Float, Integer, String
-
-from ._fake import FakeClient as FakeClient
+from tests.helpers.aws import moto_client
+from tests.helpers.dynamodb import MotoTable
 
 
 class Product(BaseModel):
@@ -32,17 +33,28 @@ def product_model() -> type[Product]:
 
 
 @pytest.fixture
-def fake_client() -> FakeClient:
-    return FakeClient(key_name="id")
+def products_table(mocked_aws: None) -> MotoTable:
+    """The ``products`` table of the moto account."""
+    return MotoTable.create(moto_client("dynamodb"), "products")
 
 
 @pytest.fixture
-def refusing_client(fake_client: FakeClient, monkeypatch: pytest.MonkeyPatch) -> FakeClient:
-    """The fake client with every item call failing the test."""
+def transactions(products_table: MotoTable) -> Iterator[list[int]]:
+    """The size of every transaction committed on ``products`` during the test, in order."""
+    with products_table.record_transactions() as sizes:
+        yield sizes
 
-    def _refuse(**kwargs: Any) -> NoReturn:
-        raise AssertionError(f"the client was called with {kwargs}")
 
-    for method in ("get_item", "put_item", "delete_item", "transact_write_items"):
-        monkeypatch.setattr(fake_client, method, _refuse)
-    return fake_client
+@pytest.fixture
+def refusing_client(mocked_aws: None) -> Iterator[Any]:
+    """The shared DynamoDB client with every call failing the test until the test ends."""
+
+    def refuse(model: Any, params: Any, **_: Any) -> NoReturn:
+        raise AssertionError(f"{model.name} was called with {params}")
+
+    client = moto_client("dynamodb")
+    client.meta.events.register("before-call", refuse)
+    try:
+        yield client
+    finally:
+        client.meta.events.unregister("before-call", refuse)

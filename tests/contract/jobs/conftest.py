@@ -48,9 +48,10 @@ from loom.jobs.aws.queue import (
 from loom.jobs.aws.settlement import SqsSettlement
 from loom.jobs.aws.sqs import SQSConfig
 from loom.testing.jobs import ManualTimer
+from tests.helpers.aws import ACCOUNT
 from tests.helpers.extras import patched_aws_clients
 from tests.helpers.jobs import JobKernel
-from tests.helpers.sqs import ACCOUNT, URL_BASE, FakeSqs
+from tests.helpers.sqs import URL_BASE, FakeSqs
 
 BACKENDS = ["envelope", "celery", "sqs"]
 UNDELAYED_BACKENDS = ["envelope", "sqs-fifo"]

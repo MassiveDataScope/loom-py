@@ -52,7 +52,7 @@ jobs:
         run: |
           set -euo pipefail
           uv run --frozen --group mcp-tests \
-            pytest -m "not integration and not slow" \
+            pytest -m "not integration and not slow and not live" \
             --ignore=tests/unit/etl/backends/test_spark \
             -n 4 --junitxml=junit-fast.xml -o junit_family=legacy
 
@@ -62,7 +62,7 @@ jobs:
         run: |
           set -euo pipefail
           uv run --frozen --group mcp-tests \
-            pytest -m "slow and not integration" \
+            pytest -m "slow and not integration and not live" \
             --ignore=tests/unit/etl/backends/test_spark \
             --junitxml=junit-slow.xml -o junit_family=legacy
 
@@ -135,7 +135,7 @@ jobs:
         run: |
           set -euo pipefail
           uv run --frozen --group mcp-tests --with "pytest-cov==7.1.0" \
-            pytest -m "not integration" --cov --junitxml=junit.xml -o junit_family=legacy
+            pytest -m "not integration and not live" --cov --junitxml=junit.xml -o junit_family=legacy
 
       - name: Upload coverage to Codecov
         if: ${{ hashFiles('coverage.xml') != '' }}

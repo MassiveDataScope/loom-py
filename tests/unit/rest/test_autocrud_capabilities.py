@@ -134,9 +134,7 @@ def discover(monkeypatch: pytest.MonkeyPatch) -> Any:
 
 
 class TestDefaultInclude:
-    def test_dynamodb_mounts_only_the_key_operations(
-        self, discover: Any, aws_test_credentials: None
-    ) -> None:
+    def test_dynamodb_mounts_only_the_key_operations(self, discover: Any) -> None:
         class RecordsOnDynamo(RestInterface[CapabilityRecord]):
             prefix = "/records"
             auto = True
@@ -147,9 +145,7 @@ class TestDefaultInclude:
 
         assert _ops(RecordsOnDynamo) == _KEY_OPS
 
-    def test_booting_again_on_sqlalchemy_restores_the_list_route(
-        self, discover: Any, aws_test_credentials: None
-    ) -> None:
+    def test_booting_again_on_sqlalchemy_restores_the_list_route(self, discover: Any) -> None:
         class RecordsOnBoth(RestInterface[CapabilityRecord]):
             prefix = "/records"
             auto = True
@@ -162,9 +158,7 @@ class TestDefaultInclude:
         _build_bootstrap(AppConfig(name="demo"), _ctx(store=SQLITE_STORE))
         assert _ops(RecordsOnBoth) == _KEY_OPS | {CrudOp.LIST}
 
-    def test_a_pruned_use_case_mounted_elsewhere_survives(
-        self, discover: Any, aws_test_credentials: None
-    ) -> None:
+    def test_a_pruned_use_case_mounted_elsewhere_survives(self, discover: Any) -> None:
         """Only a use case no interface mounts any more leaves the discovery result."""
         shared_list = next(
             r.use_case
@@ -241,9 +235,7 @@ class TestDefaultInclude:
 
 
 class TestExplicitInclude:
-    def test_absent_operation_names_model_op_and_backend(
-        self, discover: Any, aws_test_credentials: None
-    ) -> None:
+    def test_absent_operation_names_model_op_and_backend(self, discover: Any) -> None:
         class RecordListing(RestInterface[CapabilityRecord]):
             prefix = "/records"
             auto = True
@@ -261,9 +253,7 @@ class TestExplicitInclude:
         assert "'list'" in message
         assert "'dynamodb'" in message
 
-    def test_supported_operations_are_kept_as_declared(
-        self, discover: Any, aws_test_credentials: None
-    ) -> None:
+    def test_supported_operations_are_kept_as_declared(self, discover: Any) -> None:
         class RecordReads(RestInterface[CapabilityRecord]):
             prefix = "/records"
             auto = True
@@ -308,7 +298,7 @@ class _CountInterface(RestInterface[int]):
 
 class TestHandWrittenCapabilityDependency:
     def test_fails_at_create_app_on_a_backend_without_it(
-        self, tmp_path: Path, discover: Any, aws_test_credentials: None
+        self, tmp_path: Path, discover: Any
     ) -> None:
         discover(_CountInterface)
         config_path = write_project(tmp_path, store=_DYNAMODB_STORE)

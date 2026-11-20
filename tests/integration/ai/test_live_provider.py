@@ -32,6 +32,7 @@ from tests.helpers.pydantic_ai_engine import NullDeps, compiled_output
 
 pytestmark = pytest.mark.live
 
+
 _SCHEMA: Mapping[str, Any] = {
     "type": "object",
     "properties": {"answer": {"type": "string"}},

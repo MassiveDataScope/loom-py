@@ -2,13 +2,13 @@
 
 from __future__ import annotations
 
+import json
 from typing import Any
 from unittest.mock import MagicMock
 
 import pytest
 from botocore.exceptions import ClientError
 
-from loom.core.connections.aws import AwsClients
 from loom.prefect.notify import (
     NotifyEvent,
     SlackNotifier,
@@ -16,9 +16,10 @@ from loom.prefect.notify import (
     build_notifiers,
 )
 from loom.prefect.notify import _sns as sns_module
-from tests.helpers.extras import patched_aws_clients
+from tests.helpers.aws import ACCOUNT, OTHER_REGION, moto_client
+from tests.helpers.aws_island import FakeAwsIsland
 
-_TOPIC = "arn:aws:sns:eu-west-1:123456789012:etl-failures"
+_TOPIC = f"arn:aws:sns:{OTHER_REGION}:{ACCOUNT}:etl-failures"
 
 
 def _make_event(
@@ -209,15 +210,13 @@ class TestSnsNotifier:
             "SNS publish failed", flow="etl-x", run="run-1", state="Failed", exc_info=True
         )
 
-    def test_default_client_uses_the_topic_region(self) -> None:
-        with patched_aws_clients() as clients:
-            SnsNotifier(topic_arn=_TOPIC)
-        clients.assert_called_once_with("sns", region_name="eu-west-1")
+    def test_default_client_uses_the_topic_region(self, island: FakeAwsIsland) -> None:
+        SnsNotifier(topic_arn=_TOPIC)
+        assert island.regions_built == [("sns", OTHER_REGION)]
 
 
 class TestBuildSnsNotifier:
-    def test_builds_sns_notifier_from_yaml_block(self, monkeypatch: pytest.MonkeyPatch) -> None:
-        monkeypatch.setattr(AwsClients, "client", MagicMock())
+    def test_builds_sns_notifier_from_yaml_block(self, no_aws_clients: None) -> None:
         block = [{"kind": "sns", "topic_arn": _TOPIC, "on_failure": True}]
         (notifier,) = build_notifiers(block)
         assert isinstance(notifier, SnsNotifier)
@@ -225,3 +224,45 @@ class TestBuildSnsNotifier:
     @pytest.mark.parametrize("topic_arn", ["", "   ", None])
     def test_skips_sns_when_topic_arn_empty(self, topic_arn: str | None) -> None:
         assert build_notifiers([{"kind": "sns", "topic_arn": topic_arn}]) == ()
+
+
+class _Topic:
+    """The SNS topic ``_TOPIC`` on moto, with an SQS queue subscribed to read what it published."""
+
+    def __init__(self) -> None:
+        sns = moto_client("sns", OTHER_REGION)
+        self._sqs = moto_client("sqs", OTHER_REGION)
+        sns.create_topic(Name="etl-failures")
+        self._queue = self._sqs.create_queue(QueueName="published")["QueueUrl"]
+        arn = self._sqs.get_queue_attributes(QueueUrl=self._queue, AttributeNames=["QueueArn"])
+        sns.subscribe(TopicArn=_TOPIC, Protocol="sqs", Endpoint=arn["Attributes"]["QueueArn"])
+
+    def published(self) -> list[dict[str, str]]:
+        received = self._sqs.receive_message(QueueUrl=self._queue, MaxNumberOfMessages=10)
+        return [json.loads(message["Body"]) for message in received.get("Messages", [])]
+
+
+class TestSnsNotifierOnMoto:
+    """The real request shape: a publish captured by a queue subscribed to a moto topic."""
+
+    def test_a_failure_is_published_to_the_topic_of_its_arn_region(self, mocked_aws: None) -> None:
+        topic = _Topic()
+
+        SnsNotifier(topic_arn=_TOPIC).notify(_make_event(state="Failed"))
+
+        [published] = topic.published()
+        assert published["TopicArn"] == _TOPIC
+        assert published["Subject"] == "[Failed] etl-x"
+        assert "Open in Prefect: https://prefect/runs/1" in published["Message"]
+
+    def test_a_publish_to_a_missing_topic_is_swallowed_and_logged(
+        self, mocked_aws: None, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        log = MagicMock()
+        monkeypatch.setattr(sns_module, "_log", log)
+
+        SnsNotifier(topic_arn=_TOPIC).notify(_make_event(state="Failed"))
+
+        log.warning.assert_called_once_with(
+            "SNS publish failed", flow="etl-x", run="run-1", state="Failed", exc_info=True
+        )

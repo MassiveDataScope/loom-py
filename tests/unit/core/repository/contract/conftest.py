@@ -36,8 +36,9 @@ from loom.stores.sqlalchemy.repository import RepositorySQLAlchemy
 from loom.stores.sqlalchemy.schema import compile_all, get_compiled
 from loom.stores.sqlalchemy.session_manager import SessionManager
 from loom.stores.sqlalchemy.uow import SQLAlchemyUnitOfWork
+from tests.helpers.aws import moto_client
+from tests.helpers.dynamodb import MotoTable
 
-from ..dynamodb._fake import FakeClient
 from ..mongo._fake import FakeMongoClient
 
 _TABLE = "contract_orders"
@@ -193,6 +194,7 @@ class BackendCase:
         unit_of_work: Builds a unit of work bound to the repository's store.
         fail_commit: Arms a failure that surfaces from ``commit``, not the
             body. Called inside the unit of work after the first write.
+        fixtures: Fixtures the backend's store needs while the repository is open.
     """
 
     name: str
@@ -202,6 +204,7 @@ class BackendCase:
     transactions: bool
     unit_of_work: Callable[[Any], UnitOfWork]
     fail_commit: Callable[[Any], Awaitable[None]] | None = None
+    fixtures: tuple[str, ...] = ()
 
 
 @asynccontextmanager
@@ -233,8 +236,8 @@ async def _sqlalchemy_repository() -> AsyncIterator[RepositorySQLAlchemy[AcmeCon
 
 @asynccontextmanager
 async def _dynamodb_repository() -> AsyncIterator[RepositoryDynamoDB[AcmeContractOrder, int]]:
-    client = FakeClient(key_name="id", table_names=(_TABLE,))
-    yield RepositoryDynamoDB(client=client, table_name=_TABLE, model=AcmeContractOrder)
+    table = MotoTable.create(moto_client("dynamodb"), _TABLE)
+    yield RepositoryDynamoDB(client=table.client, table_name=_TABLE, model=AcmeContractOrder)
 
 
 @asynccontextmanager
@@ -305,6 +308,7 @@ def _dynamodb_case() -> BackendCase:
         capabilities=frozenset(capabilities_of(RepositoryDynamoDB)),
         transactions=False,
         unit_of_work=lambda _repository: DynamoUnitOfWork(),
+        fixtures=("mocked_aws",),
     )
 
 
@@ -354,7 +358,9 @@ def case(request: pytest.FixtureRequest) -> BackendCase:
 
 
 @pytest.fixture
-async def repository(case: BackendCase) -> AsyncIterator[Any]:
+async def repository(case: BackendCase, request: pytest.FixtureRequest) -> AsyncIterator[Any]:
+    for name in case.fixtures:
+        request.getfixturevalue(name)
     async with case.repository_factory() as repo:
         yield repo
 

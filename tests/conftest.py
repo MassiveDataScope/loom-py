@@ -3,12 +3,14 @@
 from __future__ import annotations
 
 import json
+import os
 from collections.abc import Iterator
 from functools import lru_cache
 from pathlib import Path
 from typing import Any
 
 import pytest
+from moto import mock_aws
 from omegaconf import OmegaConf
 
 from loom.core.config import default_resolvers
@@ -17,6 +19,9 @@ from loom.core.environment import ENVIRONMENT_VARIABLE, Environment
 from loom.core.logger import configure_logging
 from loom.core.plugins.entrypoints import list_entry_points
 from loom.testing.golden import GoldenHarness, _serialize_result, serialize_plan
+from tests.helpers.aws import ACCOUNT, FAKE_KEY, REGION, is_moto_answering, scrub_aws_environment
+from tests.helpers.aws_island import FakeAwsIsland
+from tests.helpers.extras import BOTO3_ISLAND, without_extra
 
 pytest_plugins = ["tests.helpers.delegation"]
 
@@ -40,6 +45,66 @@ def clear_builtin_resolvers() -> Iterator[None]:
     _clear_builtin_resolvers()
 
 
+@pytest.fixture(autouse=True)
+def _bare_environment(request: pytest.FixtureRequest, monkeypatch: pytest.MonkeyPatch) -> None:
+    """Remove the AWS setup and the proxy variables, and let every host bypass a proxy.
+
+    A ``live`` test keeps the environment it was given.
+    """
+    if request.node.get_closest_marker("live"):
+        return
+    scrub_aws_environment(monkeypatch)
+    for name in tuple(os.environ):
+        if name.lower().endswith("_proxy"):
+            monkeypatch.delenv(name)
+    monkeypatch.setenv("NO_PROXY", "*")
+    monkeypatch.setenv("no_proxy", "*")
+
+
+@pytest.fixture
+def mocked_aws(monkeypatch: pytest.MonkeyPatch) -> Iterator[None]:
+    """Serve every AWS service from moto, in ``REGION`` and the account of ``ACCOUNT``.
+
+    Raises:
+        AssertionError: When moto still answers after the test, which means a mock leaked.
+    """
+    monkeypatch.setenv("AWS_DEFAULT_REGION", REGION)
+    monkeypatch.setenv("MOTO_ACCOUNT_ID", ACCOUNT)
+    with mock_aws():
+        yield
+    assert not is_moto_answering(), "moto still answers after the test: a mock was left running"
+
+
+@pytest.fixture
+def island(monkeypatch: pytest.MonkeyPatch) -> FakeAwsIsland:
+    """The fake AWS island, handing out a mock client per build."""
+    return FakeAwsIsland().install(monkeypatch)
+
+
+@pytest.fixture
+def no_aws_clients(island: FakeAwsIsland) -> None:
+    """Hand every AWS client loom builds out as a mock: nothing reaches AWS or moto."""
+
+
+@pytest.fixture
+def absent_boto3(monkeypatch: pytest.MonkeyPatch) -> None:
+    """The ``aws`` extra is absent."""
+    without_extra(monkeypatch, ["boto3"], [BOTO3_ISLAND])
+
+
+@pytest.fixture
+def dev_profile(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> str:
+    """A config file with the profile ``dev``, fake keys included; returns the profile name."""
+    config = tmp_path / "config"
+    config.write_text(
+        f"[profile dev]\nregion = {REGION}\naws_access_key_id = {FAKE_KEY}\n"
+        f"aws_secret_access_key = {FAKE_KEY}\n",
+        encoding="utf-8",
+    )
+    monkeypatch.setenv("AWS_CONFIG_FILE", str(config))
+    return "dev"
+
+
 def pytest_addoption(parser: pytest.Parser) -> None:
     parser.addoption(
         "--update-golden",
@@ -50,7 +115,7 @@ def pytest_addoption(parser: pytest.Parser) -> None:
 
 
 def pytest_collection_modifyitems(items: list[pytest.Item]) -> None:
-    """Run reload-based contract tests last to avoid module identity drift.
+    """Run reload-based contract tests last, and let ``live`` tests use the network.
 
     Some ETL contract tests intentionally call ``importlib.reload`` on modules.
     Running those tests early can invalidate class/enum identity assumptions
@@ -61,6 +126,9 @@ def pytest_collection_modifyitems(items: list[pytest.Item]) -> None:
     """
 
     items.sort(key=_is_reload_contract_item)
+    for item in items:
+        if item.get_closest_marker("live"):
+            item.add_marker(pytest.mark.enable_socket)
 
 
 def _is_reload_contract_item(item: pytest.Item) -> bool:

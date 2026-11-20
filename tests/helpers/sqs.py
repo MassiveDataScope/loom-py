@@ -6,8 +6,9 @@ import json
 from collections import Counter
 from typing import Any
 
-ACCOUNT = "123456789012"
-URL_BASE = f"https://sqs.eu-west-1.amazonaws.com/{ACCOUNT}"
+from tests.helpers.aws import ACCOUNT, OTHER_REGION
+
+URL_BASE = f"https://sqs.{OTHER_REGION}.amazonaws.com/{ACCOUNT}"
 
 
 def queue_url(name: str) -> str:
@@ -78,7 +79,7 @@ class FakeSqs:
     def get_queue_url(self, QueueName: str, QueueOwnerAWSAccountId: str) -> dict[str, str]:  # noqa: N803
         self.calls["get_queue_url"] += 1
         return {
-            "QueueUrl": f"https://sqs.eu-west-1.amazonaws.com/{QueueOwnerAWSAccountId}/{QueueName}"
+            "QueueUrl": f"https://sqs.{OTHER_REGION}.amazonaws.com/{QueueOwnerAWSAccountId}/{QueueName}"
         }
 
     def _batch(self, method: str, url: str, entries: list[dict[str, Any]]) -> dict[str, Any]:

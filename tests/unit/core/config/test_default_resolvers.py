@@ -6,7 +6,6 @@ import logging
 import subprocess
 import sys
 from pathlib import Path
-from unittest.mock import MagicMock
 
 import pytest
 from omegaconf import OmegaConf
@@ -20,7 +19,7 @@ from loom.core.config import (
     merge_resolvers,
     with_default_resolvers,
 )
-from tests.helpers.extras import with_boto3, without_boto3
+from tests.helpers.aws_island import FakeAwsIsland
 
 
 class StubResolver:
@@ -135,10 +134,7 @@ class TestDefaultResolvers:
 
         assert merge_resolvers([a, b], ()) == (a, b)
 
-    def test_default_resolvers_construct_without_boto3(
-        self, monkeypatch: pytest.MonkeyPatch
-    ) -> None:
-        without_boto3(monkeypatch)
+    def test_default_resolvers_construct_without_boto3(self, absent_boto3: None) -> None:
 
         resolvers = default_resolvers()
 
@@ -148,20 +144,17 @@ class TestDefaultResolvers:
                 resolver.resolve("/x")
 
     def test_no_client_created_without_placeholders(
-        self, plain_yaml: str, monkeypatch: pytest.MonkeyPatch
+        self, plain_yaml: str, island: FakeAwsIsland
     ) -> None:
-        boto3 = MagicMock()
-        with_boto3(monkeypatch, boto3)
 
         cfg = load_config(plain_yaml, resolvers=default_resolvers())
 
         assert cfg.app.name == "demo"
-        boto3.Session.assert_not_called()
+        assert island.sessions == []
 
     def test_default_secrets_resolver_reports_the_extra_on_access(
-        self, secrets_yaml: str, monkeypatch: pytest.MonkeyPatch
+        self, secrets_yaml: str, absent_boto3: None
     ) -> None:
-        without_boto3(monkeypatch)
         cfg = load_config(secrets_yaml, resolvers=default_resolvers())
 
         with pytest.raises(InterpolationResolutionError, match=r"loom-kernel\[aws\]"):

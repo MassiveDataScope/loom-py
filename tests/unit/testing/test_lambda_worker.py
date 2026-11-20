@@ -6,7 +6,6 @@ import hashlib
 import http.server
 import importlib
 import json
-import os
 import socket
 import sys
 import threading
@@ -29,6 +28,7 @@ from loom.core.plugins.optional import MissingExtraError
 from loom.jobs.aws.sqs import SQSConfig
 from loom.serverless.aws.lambda_.handler import LambdaAdapter
 from loom.testing import TEST_QUEUE, LambdaWorker, Override
+from tests.helpers.aws import ACCOUNT, OTHER_REGION, REGION, is_moto_answering
 
 _JOBS = """
 from loom.core.job.job import Job
@@ -64,28 +64,10 @@ class FlakyOrderJob(Job[None]):
 """
 _REJECTION = "loom.rejection_reason"
 _NOTHING = {"batchItemFailures": []}
-_FIFO_URL = "https://sqs.us-east-1.amazonaws.com/123456789012/loom-orders.fifo"
+_QUEUE_REGION = TEST_QUEUE["url"].split(".")[1]
+_FIFO_URL = f"https://sqs.{_QUEUE_REGION}.amazonaws.com/{ACCOUNT}/loom-orders.fifo"
 
 Config = Callable[..., str]
-
-
-@pytest.fixture(autouse=True)
-def _no_ambient_aws(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
-    for name in (
-        "AWS_DEFAULT_REGION",
-        "AWS_REGION",
-        "AWS_PROFILE",
-        "AWS_ENDPOINT_URL",
-        "AWS_ENDPOINT_URL_SQS",
-        "AWS_USE_FIPS_ENDPOINT",
-        "AWS_USE_DUALSTACK_ENDPOINT",
-        "AWS_IGNORE_CONFIGURED_ENDPOINT_URLS",
-        "MOTO_ACCOUNT_ID",
-        "AWS_ACCESS_KEY_ID",
-    ):
-        monkeypatch.delenv(name, raising=False)
-    monkeypatch.setenv("AWS_CONFIG_FILE", str(tmp_path / "no-aws-config"))
-    monkeypatch.setenv("AWS_SHARED_CREDENTIALS_FILE", str(tmp_path / "no-aws-credentials"))
 
 
 @pytest.fixture
@@ -100,7 +82,7 @@ def config(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Iterator[Config]:
         dead_letter: str = "discard",
         *,
         url: str = TEST_QUEUE["url"],
-        region: str | None = "us-east-1",
+        region: str | None = _QUEUE_REGION,
         batch_size: int | None = None,
         job_service: str = "inline",
         function: dict[str, Any] | None = None,
@@ -317,12 +299,12 @@ class TestWhereTheQueueLives:
     def test_a_queue_of_another_region_and_account_is_created_where_the_url_says(
         self, config: Config, monkeypatch: pytest.MonkeyPatch, where: str
     ) -> None:
-        url = "https://sqs.eu-west-1.amazonaws.com/111122223333/orders"
+        url = f"https://sqs.{OTHER_REGION}.amazonaws.com/111122223333/orders"
         monkeypatch.setenv("MOTO_ACCOUNT_ID", "111122223333")
         if where == "environment":
-            monkeypatch.setenv("AWS_DEFAULT_REGION", "eu-west-1")
+            monkeypatch.setenv("AWS_DEFAULT_REGION", OTHER_REGION)
 
-        with _open(config(url=url, region="eu-west-1" if where == "configuration" else None)) as w:
+        with _open(config(url=url, region=OTHER_REGION if where == "configuration" else None)) as w:
             result = w.deliver(_job("SendEmailJob"), params={"marker": "ok"})
 
             assert (w.queue_url, result) == (url, _NOTHING)
@@ -331,23 +313,23 @@ class TestWhereTheQueueLives:
         ("url", "region", "made", "differs"),
         [
             (
-                "https://sqs.us-east-1.amazonaws.com/111122223333/orders",
-                "us-east-1",
-                "https://sqs.us-east-1.amazonaws.com/123456789012/orders",
-                "account '111122223333' against '123456789012'",
+                f"https://sqs.{_QUEUE_REGION}.amazonaws.com/111122223333/orders",
+                _QUEUE_REGION,
+                f"https://sqs.{_QUEUE_REGION}.amazonaws.com/{ACCOUNT}/orders",
+                f"account '111122223333' against '{ACCOUNT}'",
             ),
             (
                 TEST_QUEUE["url"],
-                "eu-west-1",
-                "https://sqs.eu-west-1.amazonaws.com/123456789012/loom-jobs",
-                "region 'us-east-1' against 'eu-west-1'",
+                OTHER_REGION,
+                f"https://sqs.{OTHER_REGION}.amazonaws.com/{ACCOUNT}/loom-jobs",
+                f"region '{_QUEUE_REGION}' against '{OTHER_REGION}'",
             ),
             (
-                "https://sqs.eu-west-1.amazonaws.com/111122223333/orders",
-                "us-east-1",
-                "https://sqs.us-east-1.amazonaws.com/123456789012/orders",
-                "region 'eu-west-1' against 'us-east-1'; "
-                "account '111122223333' against '123456789012'",
+                f"https://sqs.{OTHER_REGION}.amazonaws.com/111122223333/orders",
+                _QUEUE_REGION,
+                f"https://sqs.{_QUEUE_REGION}.amazonaws.com/{ACCOUNT}/orders",
+                f"region '{OTHER_REGION}' against '{_QUEUE_REGION}'; "
+                f"account '111122223333' against '{ACCOUNT}'",
             ),
         ],
         ids=["account", "region", "region-and-account"],
@@ -366,7 +348,7 @@ class TestWhereTheQueueLives:
 
         assert str(refused.value) == expected
 
-    @pytest.mark.parametrize("url", ["http://localhost:4566/123456789012/orders", "orders"])
+    @pytest.mark.parametrize("url", [f"http://localhost:4566/{ACCOUNT}/orders", "orders"])
     def test_a_url_that_is_not_an_aws_sqs_one_is_refused_before_any_call(
         self, config: Config, url: str
     ) -> None:
@@ -384,9 +366,9 @@ class TestWhereTheQueueLives:
     def test_the_way_out_names_sqs_region_when_the_sqs_section_sets_one(
         self, config: Config, tmp_path: Path
     ) -> None:
-        path = Path(config(region="eu-west-1"))
+        path = Path(config(region=OTHER_REGION))
         document = yaml.safe_load(path.read_text())
-        document["sqs"]["region"] = "eu-west-1"
+        document["sqs"]["region"] = OTHER_REGION
         path.write_text(yaml.safe_dump(document))
 
         with pytest.raises(ConfigError, match=r"set sqs\.region to the URL's region"):
@@ -400,8 +382,9 @@ class TestWhereTheQueueLives:
         monkeypatch.setenv("AWS_CONFIG_FILE", str(profile))
 
         expected = (
-            "moto made the queue https://sqs.ap-south-1.amazonaws.com/123456789012/loom-jobs "
-            f"for the configured {TEST_QUEUE['url']} (region 'us-east-1' against 'ap-south-1'): "
+            f"moto made the queue https://sqs.ap-south-1.amazonaws.com/{ACCOUNT}/loom-jobs "
+            f"for the configured {TEST_QUEUE['url']} "
+            f"(region '{_QUEUE_REGION}' against 'ap-south-1'): "
             "set aws.region or AWS_DEFAULT_REGION to the URL's region, MOTO_ACCOUNT_ID to its "
             "account, or use loom.testing.TEST_QUEUE"
         )
@@ -426,7 +409,7 @@ class TestWhereTheQueueLives:
     def test_a_jobs_function_that_dispatches_through_the_sqs_job_service_binds(
         self, config: Config, monkeypatch: pytest.MonkeyPatch
     ) -> None:
-        monkeypatch.setenv("AWS_DEFAULT_REGION", "us-east-1")
+        monkeypatch.setenv("AWS_DEFAULT_REGION", _QUEUE_REGION)
 
         with _open(config(job_service="sqs", region=None)) as worker:
             assert worker.deliver(_job("SendEmailJob"), params={"marker": "ok"}) == _NOTHING
@@ -487,7 +470,7 @@ class TestNothingReachesAnotherEndpoint:
     ) -> None:
         endpoint = "http://localhost:4566"
         profile = tmp_path / "aws-config"
-        profile.write_text(f"[default]\nregion = us-east-1\nendpoint_url = {endpoint}\n")
+        profile.write_text(f"[default]\nregion = {_QUEUE_REGION}\nendpoint_url = {endpoint}\n")
         monkeypatch.setenv("AWS_CONFIG_FILE", str(profile))
 
         with pytest.raises(ConfigError) as refused:
@@ -514,12 +497,12 @@ class TestNothingReachesAnotherEndpoint:
     def test_an_aws_host_with_an_explicit_port_is_refused_not_sent(
         self, config: Config, tmp_path: Path, monkeypatch: pytest.MonkeyPatch, source: str
     ) -> None:
-        endpoint = "https://sqs.us-east-1.amazonaws.com:443"
+        endpoint = f"https://sqs.{_QUEUE_REGION}.amazonaws.com:443"
         if source == "aws.url":
             path = config(endpoint=endpoint)
         else:
             profile = tmp_path / "aws-config"
-            profile.write_text(f"[default]\nregion = us-east-1\nendpoint_url = {endpoint}\n")
+            profile.write_text(f"[default]\nregion = {_QUEUE_REGION}\nendpoint_url = {endpoint}\n")
             monkeypatch.setenv("AWS_CONFIG_FILE", str(profile))
             path = config(region=None)
 
@@ -532,7 +515,7 @@ class TestNothingReachesAnotherEndpoint:
         self, config: Config, monkeypatch: pytest.MonkeyPatch
     ) -> None:
         monkeypatch.setenv("AWS_USE_DUALSTACK_ENDPOINT", "true")
-        endpoint = "https://sqs.us-east-1.api.aws"
+        endpoint = f"https://sqs.{_QUEUE_REGION}.api.aws"
 
         with pytest.raises(ConfigError) as refused:
             _open(config())
@@ -599,7 +582,7 @@ class TestLifecycle:
         with pytest.raises(RuntimeError, match="clients failed"):
             _open(config())
 
-        assert "AWS_ACCESS_KEY_ID" not in os.environ
+        assert not is_moto_answering()
 
     def test_a_closed_worker_refuses_to_deliver_or_redeliver(self, config: Config) -> None:
         worker = _open(config())
@@ -634,7 +617,7 @@ class TestLifecycle:
 
     def test_closing_leaves_a_mock_the_user_entered_running(self, config: Config) -> None:
         with mock_aws():
-            outside = boto3.client("sqs", region_name="us-east-1")
+            outside = boto3.client("sqs", region_name=REGION)
             outside.create_queue(QueueName="user-queue")
 
             with _open(config()):
@@ -661,7 +644,7 @@ class TestLifecycle:
         with pytest.raises(RuntimeError, match="bind failed"):
             _open(config())
 
-        assert (closed, "AWS_ACCESS_KEY_ID" in os.environ) == (["adapter"], False)
+        assert (closed, is_moto_answering()) == (["adapter"], False)
 
     def test_a_base_exception_during_init_still_closes_the_application_and_the_mock(
         self, config: Config, monkeypatch: pytest.MonkeyPatch
@@ -682,7 +665,7 @@ class TestLifecycle:
         with pytest.raises(KeyboardInterrupt):
             _open(config())
 
-        assert (closed, "AWS_ACCESS_KEY_ID" in os.environ) == (["adapter"], False)
+        assert (closed, is_moto_answering()) == (["adapter"], False)
 
     @pytest.mark.parametrize("failure", ["refusal", "bind"])
     def test_a_failed_init_closes_the_applications_clients_once(
@@ -701,7 +684,7 @@ class TestLifecycle:
         monkeypatch.setattr(AwsClients, "close", close)
         if failure == "bind":
             monkeypatch.setattr(LambdaAdapter, "bind", bind)
-        path = config(region="eu-west-1") if failure == "refusal" else config()
+        path = config(region=OTHER_REGION) if failure == "refusal" else config()
 
         with pytest.raises((ConfigError, RuntimeError)):
             _open(path)
@@ -722,7 +705,7 @@ class TestLifecycle:
         with pytest.raises(RuntimeError, match="clients failed"):
             worker.close()
 
-        assert "AWS_ACCESS_KEY_ID" not in os.environ
+        assert not is_moto_answering()
 
     def test_the_mock_stops_even_when_closing_the_function_raises(
         self, config: Config, monkeypatch: pytest.MonkeyPatch
@@ -738,7 +721,7 @@ class TestLifecycle:
         with pytest.raises(RuntimeError, match="close failed"):
             worker.close()
 
-        assert "AWS_ACCESS_KEY_ID" not in os.environ
+        assert not is_moto_answering()
 
     def test_without_moto_the_error_names_the_extra(
         self, config: Config, monkeypatch: pytest.MonkeyPatch

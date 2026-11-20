@@ -10,24 +10,33 @@ import pytest
 
 from loom.core.config._resolver_utils import build_resolver_client
 from loom.core.connections.aws import AwsClientConfig, AwsClients, AwsPool
+from loom.core.connections.aws.loader import aws_island
 from loom.core.model.redaction import Dsn
 from loom.core.plugins.optional import MissingExtraError
-from tests.helpers.extras import FakeAwsIsland, fake_aws_island, patched_aws_clients, without_boto3
+from loom.serverless.aws.lambda_ import _jobs
+from tests.helpers.aws import OTHER_REGION, REGION
+from tests.helpers.aws_island import FakeAwsIsland, FakeSdkError
 
 _THREADS = 8
 
 
-@pytest.fixture
-def island(monkeypatch: pytest.MonkeyPatch) -> FakeAwsIsland:
-    return fake_aws_island(monkeypatch)
-
-
-_CONFIG = AwsClientConfig(region="eu-west-1")
+_CONFIG = AwsClientConfig(region=OTHER_REGION)
 
 
 @pytest.fixture
 def clients() -> AwsClients:
     return AwsClients()
+
+
+class TestFakeIsland:
+    def test_every_importer_of_the_island_resolves_the_fake(self, island: FakeAwsIsland) -> None:
+        assert aws_island() is island
+        assert _jobs.aws_island() is island
+
+    def test_an_island_of_mock_clients_reports_only_its_own_error(
+        self, island: FakeAwsIsland
+    ) -> None:
+        assert aws_island().sdk_errors() == (FakeSdkError,)
 
 
 class TestClientCache:
@@ -37,7 +46,7 @@ class TestClientCache:
         first = clients.client("dynamodb", _CONFIG)
 
         assert clients.client("dynamodb", _CONFIG) is first
-        assert clients.client("dynamodb", AwsClientConfig(region="eu-west-1")) is first
+        assert clients.client("dynamodb", AwsClientConfig(region=OTHER_REGION)) is first
         assert len(island.built) == 1
 
     def test_another_service_gives_another_client(
@@ -48,10 +57,10 @@ class TestClientCache:
     @pytest.mark.parametrize(
         "other",
         [
-            AwsClientConfig(region="us-east-1"),
-            AwsClientConfig(region="eu-west-1", url=Dsn("http://localhost:4566")),
-            AwsClientConfig(region="eu-west-1", pool=AwsPool(size=2)),
-            AwsClientConfig(region="eu-west-1", read_timeout=30),
+            AwsClientConfig(region=REGION),
+            AwsClientConfig(region=OTHER_REGION, url=Dsn("http://localhost:4566")),
+            AwsClientConfig(region=OTHER_REGION, pool=AwsPool(size=2)),
+            AwsClientConfig(region=OTHER_REGION, read_timeout=30),
         ],
     )
     def test_other_settings_give_another_client(
@@ -65,25 +74,23 @@ class TestClientCache:
         class Queued(AwsClientConfig, frozen=True, kw_only=True):
             queues: dict[str, str]
 
-        base = clients.client("sqs", AwsClientConfig(region="eu-west-1"))
+        base = clients.client("sqs", AwsClientConfig(region=OTHER_REGION))
 
-        assert clients.client("sqs", Queued(region="eu-west-1", queues={"a": "u"})) is base
+        assert clients.client("sqs", Queued(region=OTHER_REGION, queues={"a": "u"})) is base
 
     def test_one_session_serves_every_client_of_a_profile(
         self, island: FakeAwsIsland, clients: AwsClients
     ) -> None:
         clients.client("dynamodb", _CONFIG)
         clients.client("sqs", _CONFIG)
-        clients.client("sqs", AwsClientConfig(region="us-east-1"))
+        clients.client("sqs", AwsClientConfig(region=REGION))
         clients.client("sns", AwsClientConfig(profile="dev"))
 
         assert island.sessions == [None, "dev"]
 
     def test_a_missing_boto3_names_the_aws_extra(
-        self, clients: AwsClients, monkeypatch: pytest.MonkeyPatch
+        self, clients: AwsClients, absent_boto3: None
     ) -> None:
-        without_boto3(monkeypatch)
-
         with pytest.raises(MissingExtraError, match=r"needs the 'aws' extra"):
             clients.client("s3", _CONFIG)
 
@@ -92,7 +99,7 @@ class TestConcurrentFirstCalls:
     def test_threads_asking_at_once_build_exactly_one_client(
         self, monkeypatch: pytest.MonkeyPatch, clients: AwsClients
     ) -> None:
-        island = fake_aws_island(monkeypatch, build_seconds=0.05)
+        island = FakeAwsIsland(build_seconds=0.05).install(monkeypatch)
         start = Barrier(_THREADS)
 
         def ask(_: int) -> Any:
@@ -177,19 +184,20 @@ class TestClose:
 
 
 class TestRealIslandPath:
-    def test_the_region_and_endpoint_of_the_settings_reach_boto3(self) -> None:
-        settings = AwsClientConfig(region="eu-west-1", url=Dsn("http://localhost:4566"))
+    def test_the_region_and_endpoint_of_the_settings_reach_boto3(self, mocked_aws: None) -> None:
+        settings = AwsClientConfig(region=OTHER_REGION, url=Dsn("http://localhost:4566"))
 
-        with patched_aws_clients() as factory:
-            AwsClients().client("sqs", settings)
+        client = AwsClients().client("sqs", settings)
 
-        factory.assert_called_once_with("sqs", region_name="eu-west-1")
-        assert factory.options[-1]["endpoint_url"] == "http://localhost:4566"
+        assert client.meta.region_name == OTHER_REGION
+        assert client.meta.endpoint_url == "http://localhost:4566"
 
 
 class TestWithoutAContainer:
-    def test_the_resolver_path_builds_its_client_with_clients_of_its_own(self) -> None:
-        with patched_aws_clients() as factory:
-            build_resolver_client("ssm", "eu-west-3", resolver="SsmResolver", root=None)
+    def test_the_resolver_path_builds_its_client_with_clients_of_its_own(
+        self, mocked_aws: None
+    ) -> None:
+        client = build_resolver_client("ssm", "eu-west-3", resolver="SsmResolver", root=None)
 
-        factory.assert_called_once_with("ssm", region_name="eu-west-3")
+        assert client.meta.service_model.service_name == "ssm"
+        assert client.meta.region_name == "eu-west-3"

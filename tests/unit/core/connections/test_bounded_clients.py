@@ -15,6 +15,7 @@ import pytest
 
 from loom.core.connections import AwsClientConfig
 from loom.core.model.redaction import Dsn
+from tests.helpers.aws import OTHER_REGION
 from tests.helpers.silent_endpoint import silent_endpoint  # noqa: F401 - pytest fixture
 
 # (connect + read) x attempts plus at most one second of standard backoff jitter.
@@ -33,23 +34,16 @@ def _elapsed(call: Callable[[], Any]) -> float:
     return elapsed
 
 
-@pytest.fixture
-def aws_credentials(monkeypatch: pytest.MonkeyPatch) -> None:
-    monkeypatch.setenv("AWS_ACCESS_KEY_ID", "test")
-    monkeypatch.setenv("AWS_SECRET_ACCESS_KEY", "test")
-
-
 class TestClientsFailWithinDeclaredBounds:
     def test_the_etl_dynamodb_client_fails_within_its_bounds(
         self,
-        aws_credentials: None,
         silent_endpoint: str,  # noqa: F811
     ) -> None:
         from loom.etl.backends.polars.provider import _build_dynamodb_client
 
         client = _build_dynamodb_client(
             AwsClientConfig(
-                region="eu-west-1",
+                region=OTHER_REGION,
                 url=Dsn(silent_endpoint),
                 connect_timeout=1,
                 read_timeout=1,
@@ -62,7 +56,6 @@ class TestClientsFailWithinDeclaredBounds:
     @pytest.mark.slow
     def test_the_ssm_resolver_fails_within_the_default_bounds(
         self,
-        aws_credentials: None,
         silent_endpoint: str,  # noqa: F811
         monkeypatch: pytest.MonkeyPatch,
     ) -> None:
@@ -73,4 +66,4 @@ class TestClientsFailWithinDeclaredBounds:
         defaults = AwsClientConfig()
         bound = (defaults.connect_timeout + defaults.read_timeout) * defaults.max_attempts + 1
 
-        assert _elapsed(lambda: SsmResolver("eu-west-1").resolve("/x")) < bound
+        assert _elapsed(lambda: SsmResolver(OTHER_REGION).resolve("/x")) < bound

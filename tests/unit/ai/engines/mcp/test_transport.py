@@ -302,6 +302,8 @@ class TestBehindAProxy:
     ) -> None:
         """The proxy here is the server itself: a host that never resolves is reached through it."""
         async with _proxy_that_serves() as (address, requests):
+            monkeypatch.delenv("NO_PROXY")
+            monkeypatch.delenv("no_proxy")
             monkeypatch.setenv("HTTP_PROXY", address)
             capability = CompiledMcpCapability(
                 server="orders", url="http://orders.invalid/mcp", timeout_ms=5000

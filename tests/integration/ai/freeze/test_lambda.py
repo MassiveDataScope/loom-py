@@ -18,9 +18,7 @@ from __future__ import annotations
 
 import contextlib
 import json
-import os
 import time
-import urllib.request
 from collections import Counter
 from collections.abc import AsyncIterator, Callable, Generator, Iterator
 from concurrent.futures import ThreadPoolExecutor
@@ -65,7 +63,6 @@ from loom.core.job.job import Job  # noqa: E402
 from loom.core.plugins import entrypoints as entrypoints_module  # noqa: E402
 from loom.serverless.aws.lambda_ import LambdaAdapter, LambdaHandler  # noqa: E402
 from loom.testing import LambdaEvent, LambdaTestClient  # noqa: E402
-from tests.helpers.extras import patched_aws_clients
 from tests.helpers.lambda_jobs import jobs_queue, jobs_trigger
 from tests.integration.ai._entrypoints import fake_entry_points  # noqa: E402
 from tests.integration.ai.freeze.server import Era, LiveMcpServer, serving  # noqa: E402
@@ -429,15 +426,6 @@ def _write_agent(directory: Path) -> None:
 
 
 @pytest.fixture(autouse=True)
-def _no_proxy(monkeypatch: pytest.MonkeyPatch) -> None:
-    """A proxy on the machine would make the toolset keep fastmcp's stock transport."""
-    for key in list(os.environ):
-        if key.lower().endswith("_proxy"):
-            monkeypatch.delenv(key)
-    monkeypatch.setattr(urllib.request, "getproxies", urllib.request.getproxies_environment)
-
-
-@pytest.fixture(autouse=True)
 def _isolated(monkeypatch: pytest.MonkeyPatch) -> Iterator[None]:
     """One credential and one list of raised codes per test."""
     remote_auth._STRATEGIES._by_endpoint.clear()
@@ -476,14 +464,13 @@ World = Callable[..., _World]
 
 
 @pytest.fixture
-def world(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Iterator[World]:
+def world(tmp_path: Path, monkeypatch: pytest.MonkeyPatch, no_aws_clients: None) -> Iterator[World]:
     """Builds a server of one era and a Lambda function of one trigger over it, at Init.
 
     The pool's wall clock is patched before anything is built, so every pool
     reads it; the counters are marked once Init is done.
     """
     with contextlib.ExitStack() as stack:
-        stack.enter_context(patched_aws_clients())
 
         def build(era: Era, trigger: Trigger, *, agents: bool = True) -> _World:
             server = stack.enter_context(serving(era))

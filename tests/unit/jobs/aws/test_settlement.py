@@ -2,9 +2,10 @@
 
 from __future__ import annotations
 
-from collections.abc import Callable, Iterator
-from contextlib import ExitStack
+import json
+from collections.abc import Callable
 from typing import Any
+from unittest.mock import MagicMock
 
 import pytest
 
@@ -21,18 +22,19 @@ from loom.jobs.aws.queue import (
 )
 from loom.jobs.aws.settlement import SETTLEMENT_TIMEOUT_S, SqsSettlement
 from loom.jobs.aws.sqs import SQSConfig
-from tests.helpers.extras import AwsClientFactory, patched_aws_clients
-from tests.helpers.sqs import ACCOUNT, FakeSqs, queue_url
+from tests.helpers.aws import ACCOUNT, OTHER_REGION
+from tests.helpers.aws_island import FakeAwsIsland
+from tests.helpers.sqs import FakeSqs, queue_url
 
 pytestmark = pytest.mark.timeout(10)
 
 _SOURCE = queue_url("jobs")
 _DEAD = queue_url("jobs-dlq")
-_ARN = f"arn:aws:sqs:eu-west-1:{ACCOUNT}:jobs"
+_ARN = f"arn:aws:sqs:{OTHER_REGION}:{ACCOUNT}:jobs"
 _FIFO_ARN = f"{_ARN}.fifo"
 _POLICY = {
     _SOURCE: {
-        "deadLetterTargetArn": f"arn:aws:sqs:eu-west-1:{ACCOUNT}:jobs-dlq",
+        "deadLetterTargetArn": f"arn:aws:sqs:{OTHER_REGION}:{ACCOUNT}:jobs-dlq",
         "maxReceiveCount": 4,
     }
 }
@@ -46,46 +48,48 @@ def _failed(error: str = "boom", seconds: int = 4) -> Failed:
     return Failed(ValueError(error), Countdown(seconds))
 
 
-class Settling:
-    """A settlement over a fake SQS client, with what the fake and the client factory saw."""
+def _script_redrive_policy(client: MagicMock) -> None:
+    client.get_queue_attributes.return_value = {
+        "Attributes": {"RedrivePolicy": json.dumps(_POLICY[_SOURCE])}
+    }
+    client.get_queue_url.return_value = {"QueueUrl": _DEAD}
+    client.send_message_batch.return_value = {"Successful": [], "Failed": []}
 
-    def __init__(
-        self, client: FakeSqs, settlement: SqsSettlement, factory: AwsClientFactory
-    ) -> None:
+
+class Settling:
+    """A settlement over a fake SQS client, with what the fake and the AWS island saw."""
+
+    def __init__(self, client: FakeSqs, settlement: SqsSettlement, island: FakeAwsIsland) -> None:
         self.client = client
         self.settlement = settlement
-        self.factory = factory
+        self.island = island
 
     def settle_all(self, settled: list[tuple[SqsRecord, JobOutcome]]) -> list[SqsRecord]:
         return self.settlement.settle_all(settled)
 
 
 @pytest.fixture
-def settling() -> Iterator[Callable[..., Settling]]:
-    with ExitStack() as stack:
+def settling(monkeypatch: pytest.MonkeyPatch) -> Callable[..., Settling]:
+    def build(
+        dead_letter: str = "redrive",
+        prime: bool = True,
+        consumes: str = "jobs",
+        **options: Any,
+    ) -> Settling:
+        client = FakeSqs(_POLICY, **options)
+        island = FakeAwsIsland(client=client).install(monkeypatch)
+        config = SQSConfig(
+            queues={
+                "jobs": QueueConfig(url=_SOURCE, dead_letter=DeadLetterPolicy(dead_letter)),
+                "ordered": QueueConfig(url=f"{_SOURCE}.fifo", dead_letter=DeadLetterPolicy.DISCARD),
+            }
+        )
+        settlement = SqsSettlement(AwsClients(), config, consumes)
+        if prime and settlement.queue.dead_letter_policy is DeadLetterPolicy.REDRIVE:
+            settlement.queue.read_dead_letter(client)
+        return Settling(client, settlement, island)
 
-        def build(
-            dead_letter: str = "redrive",
-            prime: bool = True,
-            consumes: str = "jobs",
-            **options: Any,
-        ) -> Settling:
-            client = FakeSqs(_POLICY, **options)
-            factory = stack.enter_context(patched_aws_clients(client))
-            config = SQSConfig(
-                queues={
-                    "jobs": QueueConfig(url=_SOURCE, dead_letter=DeadLetterPolicy(dead_letter)),
-                    "ordered": QueueConfig(
-                        url=f"{_SOURCE}.fifo", dead_letter=DeadLetterPolicy.DISCARD
-                    ),
-                }
-            )
-            settlement = SqsSettlement(AwsClients(), config, consumes)
-            if prime and settlement.queue.dead_letter_policy is DeadLetterPolicy.REDRIVE:
-                settlement.queue.read_dead_letter(client)
-            return Settling(client, settlement, factory)
-
-        yield build
+    return build
 
 
 def _logged(
@@ -111,7 +115,7 @@ class TestSqsSettlement:
 
         redelivered = sqs.settle_all([(_record("a"), Succeeded(None))])
 
-        assert (redelivered, sum(sqs.client.calls.values()), sqs.factory.call_count) == ([], 0, 0)
+        assert (redelivered, sum(sqs.client.calls.values()), len(sqs.island.built)) == ([], 0, 0)
 
     def test_a_rejected_message_goes_to_the_dead_letter_queue_with_its_reason(
         self, settling: Callable[..., Settling]
@@ -216,17 +220,7 @@ class TestSqsSettlement:
     def test_dead_letter_sends_go_through_the_bounded_client_and_the_init_client_sends_none(
         self, monkeypatch: pytest.MonkeyPatch
     ) -> None:
-        retrying, bounded = FakeSqs(_POLICY), FakeSqs(_POLICY)
-
-        def session(**_: Any) -> Any:
-            class Session:
-                def client(self, service: str, **options: Any) -> FakeSqs:
-                    attempts = options["config"].retries["total_max_attempts"]
-                    return bounded if attempts == 1 else retrying
-
-            return Session()
-
-        monkeypatch.setattr("boto3.Session", session)
+        island = FakeAwsIsland(setup=_script_redrive_policy).install(monkeypatch)
         clients = AwsClients()
         config = SQSConfig(queues={"jobs": QueueConfig(url=_SOURCE)})
         settlement = SqsSettlement(clients, config, "jobs")
@@ -234,16 +228,18 @@ class TestSqsSettlement:
 
         redelivered = settlement.settle_all([(_record("a"), Rejected("no"))])
 
-        assert (
-            redelivered,
-            retrying.batches,
-            len(bounded.entries("send_message_batch", _DEAD)),
-        ) == (
-            [],
-            [],
-            1,
-        )
-        assert (retrying.calls["get_queue_attributes"], bounded.metadata_calls) == (1, 0)
+        by_attempts = {
+            config.max_attempts: client
+            for (_, config), client in zip(island.built, island.created, strict=True)
+        }
+        bounded = by_attempts.pop(1)
+        [retrying] = by_attempts.values()
+        assert redelivered == []
+        assert retrying.send_message_batch.call_count == 0
+        [(_, sent)] = bounded.send_message_batch.call_args_list
+        assert (sent["QueueUrl"], len(sent["Entries"])) == (_DEAD, 1)
+        assert retrying.get_queue_attributes.call_count == 1
+        assert bounded.get_queue_attributes.call_count + bounded.get_queue_url.call_count == 0
 
     def test_a_dead_letter_queue_not_read_at_init_lists_the_rejections_without_a_call(
         self, settling: Callable[..., Settling]
@@ -273,7 +269,7 @@ class TestSqsSettlement:
         self, settling: Callable[..., Settling]
     ) -> None:
         sqs = settling()
-        stray = _record("a", arn=f"arn:aws:sqs:eu-west-1:{ACCOUNT}:elsewhere")
+        stray = _record("a", arn=f"arn:aws:sqs:{OTHER_REGION}:{ACCOUNT}:elsewhere")
 
         redelivered = sqs.settle_all([(stray, Rejected("no"))])
 
@@ -283,7 +279,7 @@ class TestSqsSettlement:
         self, settling: Callable[..., Settling], caplog: pytest.LogCaptureFixture
     ) -> None:
         sqs = settling()
-        foreign = f"arn:aws:sqs:eu-west-1:{ACCOUNT}:elsewhere"
+        foreign = f"arn:aws:sqs:{OTHER_REGION}:{ACCOUNT}:elsewhere"
         stray = [(_record(name, arn=foreign), Rejected("no")) for name in "ab"]
 
         redelivered = sqs.settle_all(stray)
@@ -324,9 +320,9 @@ class TestSqsSettlement:
 
         sqs.settle_all([(_record("a"), _failed())])
 
-        config = sqs.factory.options[0]["config"]
+        _, config = sqs.island.built[0]
         assert (config.connect_timeout, config.read_timeout) == (
             SETTLEMENT_TIMEOUT_S,
             SETTLEMENT_TIMEOUT_S,
         )
-        assert config.retries["total_max_attempts"] == 1
+        assert config.max_attempts == 1

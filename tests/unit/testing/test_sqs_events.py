@@ -17,9 +17,10 @@ from loom.core.job.context import clear_pending_dispatches, flush_pending_dispat
 from loom.core.job.job import Job
 from loom.serverless.aws.lambda_ import LambdaAdapter, LambdaHandler
 from loom.testing import TEST_QUEUE, LambdaEvent
+from tests.helpers.aws import REGION
+from tests.helpers.aws_island import FakeAwsIsland
 from tests.helpers.composition import composition_project
 from tests.helpers.delegation import acting_as
-from tests.helpers.extras import patched_aws_clients
 from tests.helpers.jobs import SQSClient, sqs_service
 from tests.helpers.sqs import FakeSqs
 
@@ -49,11 +50,13 @@ def sqs() -> FakeSqs:
 
 
 @pytest.fixture
-def handler(tmp_path: Path, sqs: FakeSqs) -> Iterator[LambdaHandler]:
+def handler(
+    tmp_path: Path, sqs: FakeSqs, monkeypatch: pytest.MonkeyPatch
+) -> Iterator[LambdaHandler]:
     project = composition_project(
         ConfigContext.from_dict(
             {
-                "aws": {"region": "us-east-1"},
+                "aws": {"region": REGION},
                 "sqs": {"queues": {"jobs": TEST_QUEUE}},
                 "lambda": {
                     "functions": {
@@ -67,9 +70,9 @@ def handler(tmp_path: Path, sqs: FakeSqs) -> Iterator[LambdaHandler]:
         config_root=tmp_path,
     )
     adapter = LambdaAdapter(jobs=[MarkJob])
-    with patched_aws_clients(sqs):
-        yield adapter.bind(project.compose(adapter))
-        adapter.close()
+    FakeAwsIsland(client=sqs).install(monkeypatch)
+    yield adapter.bind(project.compose(adapter))
+    adapter.close()
 
 
 def _failed(result: dict[str, Any]) -> list[str]:

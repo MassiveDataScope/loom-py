@@ -18,9 +18,10 @@ from loom.core.job.policy import Backoff
 from loom.core.use_case import Delivery
 from loom.jobs.aws.queue import DEFERRALS_ATTRIBUTE, REJECTION_REASON_ATTRIBUTE
 from loom.serverless.aws.lambda_ import LambdaAdapter, LambdaHandler
+from tests.helpers.aws import ACCOUNT, OTHER_REGION
+from tests.helpers.aws_island import FakeAwsIsland
 from tests.helpers.composition import composition_project
-from tests.helpers.extras import patched_aws_clients
-from tests.helpers.sqs import ACCOUNT, FakeSqs, queue_url
+from tests.helpers.sqs import FakeSqs, queue_url
 from tests.unit.serverless.aws.lambda_._records import (
     WORKER,
     make_record,
@@ -84,14 +85,14 @@ Serve = Callable[..., LambdaHandler]
 def sqs(request: pytest.FixtureRequest) -> FakeSqs:
     options: dict[str, Any] = getattr(request, "param", {})
     policy = {
-        "deadLetterTargetArn": f"arn:aws:sqs:eu-west-1:{ACCOUNT}:jobs-dlq",
+        "deadLetterTargetArn": f"arn:aws:sqs:{OTHER_REGION}:{ACCOUNT}:jobs-dlq",
         "maxReceiveCount": options.get("max_receive", 4),
     }
     return FakeSqs({_JOBS: policy}, refuse=options.get("refuse", frozenset()))
 
 
 @pytest.fixture
-def serve(tmp_path: Path, sqs: FakeSqs) -> Iterator[Serve]:
+def serve(tmp_path: Path, sqs: FakeSqs, monkeypatch: pytest.MonkeyPatch) -> Iterator[Serve]:
     adapters: list[LambdaAdapter] = []
 
     def build(dead_letter: str = "redrive", *, fifo: bool = False) -> LambdaHandler:
@@ -116,10 +117,10 @@ def serve(tmp_path: Path, sqs: FakeSqs) -> Iterator[Serve]:
         adapters.append(adapter)
         return adapter.bind(project.compose(adapter))
 
-    with patched_aws_clients(sqs):
-        yield build
-        for adapter in adapters:
-            adapter.close()
+    FakeAwsIsland(client=sqs).install(monkeypatch)
+    yield build
+    for adapter in adapters:
+        adapter.close()
 
 
 def _record(message_id: str, job: type[Job[Any]], **options: Any) -> dict[str, Any]:
