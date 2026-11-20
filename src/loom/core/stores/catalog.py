@@ -275,7 +275,7 @@ class StoreCatalog:
 
         Args:
             backend: The plugin the store must declare.
-            key: The store's name; a plugin takes it from ``runtime.store``.
+            key: The store's name; a plugin takes it from ``context.store``.
 
         Raises:
             ConfigError: As :meth:`require`.

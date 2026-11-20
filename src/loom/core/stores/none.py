@@ -37,19 +37,19 @@ class NullStorePlugin:
         self,
         ctx: ConfigContext,
         models: Sequence[type[BaseModel]],
-        runtime: StorePluginContext,
+        context: StorePluginContext,
     ) -> StoreWiring:
         """Build a wiring in which every hook is a no-op.
 
         Args:
             ctx: Ignored; this backend reads no configuration.
             models: Ignored; this backend serves no repositories.
-            runtime: Ignored; this backend opens no connection.
+            context: Ignored; this backend opens no connection.
 
         Returns:
             The no-persistence wiring.
         """
-        del ctx, models, runtime
+        del ctx, models, context
         return StoreWiring(
             uow_factory=None,
             repo_registration_module=_register_no_repositories,

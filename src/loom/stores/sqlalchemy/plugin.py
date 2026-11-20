@@ -91,7 +91,7 @@ class _Store:
 class SQLAlchemyStorePlugin:
     """Backend for ``stores.<name>.backend: sqlalchemy``.
 
-    Reads the section of the store the host hands it (``runtime.store``) and
+    Reads the section of the store the host hands it (``context.store``) and
     ``stores.settings.cursors``, opens one engine shared by the unit of work and
     every repository of that store, compiles its models into a metadata of its
     own, creates their tables at startup and disposes the engine at shutdown.
@@ -110,20 +110,20 @@ class SQLAlchemyStorePlugin:
         self,
         ctx: ConfigContext,
         models: Sequence[type[BaseModel]],
-        runtime: StorePluginContext,
+        context: StorePluginContext,
     ) -> StoreWiring:
-        """Build the SQLAlchemy wiring of the store ``runtime.store`` for the discovered models.
+        """Build the SQLAlchemy wiring of the store ``context.store`` for the discovered models.
 
         Args:
             ctx: Configuration context holding the ``stores.settings.cursors`` section.
             models: Models whose repositories the DI module registers.
-            runtime: Entry-point pool defaults, the optional pool-metrics
+            context: Entry-point pool defaults, the optional pool-metrics
                 receiver, the catalog and the store to serve.
 
         Returns:
             The SQLAlchemy wiring.
 
-        With ``runtime.connection_only`` no repository is served; see
+        With ``context.connection_only`` no repository is served; see
         :class:`~loom.core.stores.StorePluginContext`.
 
         Raises:
@@ -131,7 +131,7 @@ class SQLAlchemyStorePlugin:
                 backend or is invalid, or repositories are served and
                 ``stores.settings.cursors`` cannot build a cursor codec.
         """
-        spec = runtime.catalog.served_by(self.name, runtime.store)
+        spec = context.catalog.served_by(self.name, context.store)
         db_cfg = spec.decode(DatabaseConfig)
         postgres = make_url(str(db_cfg.url)).get_backend_name() == POSTGRES_DIALECT
         settings = (
@@ -143,8 +143,8 @@ class SQLAlchemyStorePlugin:
         prepare: Callable[[Sequence[type[BaseModel]]], None]
         check: Callable[[_Store], Awaitable[None]]
         elevation: SQLAlchemyStoreElevation | None = None
-        if runtime.connection_only:
-            session_manager = _open_session_manager(db_cfg, runtime, spec.key, settings, None)
+        if context.connection_only:
+            session_manager = _open_session_manager(db_cfg, context, spec.key, settings, None)
             module = functools.partial(register_session_manager, session_manager=session_manager)
             prepare = no_model_preparation
             check = _probe_connection
@@ -154,8 +154,8 @@ class SQLAlchemyStorePlugin:
                     db_cfg.schema.naming_convention, path=spec.path
                 )
             )
-            cursor_codec = runtime.cursor_codec
-            session_manager = _open_session_manager(db_cfg, runtime, spec.key, settings, metadata)
+            cursor_codec = context.cursor_codec
+            session_manager = _open_session_manager(db_cfg, context, spec.key, settings, metadata)
             module = build_sqlalchemy_repository_registration_module(
                 session_manager, models, cursor_codec=cursor_codec
             )
@@ -182,7 +182,7 @@ class SQLAlchemyStorePlugin:
 
 def _open_session_manager(
     db_cfg: DatabaseConfig,
-    runtime: StorePluginContext,
+    context: StorePluginContext,
     database: StoreKey,
     settings: DeferredScopedSettings | None,
     metadata: MetaData | None,
@@ -190,8 +190,8 @@ def _open_session_manager(
     """Build the store's session manager, resetting pooled connections when RLS settings apply."""
     session_manager = build_session_manager(
         db_cfg,
-        runtime.profile,
-        pool_metrics=runtime.pool_metrics,
+        context.profile,
+        pool_metrics=context.pool_metrics,
         database=database,
         session_settings=settings,
         metadata=metadata,

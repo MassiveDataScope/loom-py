@@ -99,14 +99,14 @@ class MongoStorePlugin:
         self,
         ctx: ConfigContext,
         models: Sequence[type[BaseModel]],
-        runtime: StorePluginContext,
+        context: StorePluginContext,
     ) -> StoreWiring:
         """Build the Mongo wiring for the discovered models.
 
         Args:
             ctx: Configuration context holding the ``stores.settings.cursors`` section.
             models: Models whose repositories the DI module registers.
-            runtime: The catalog, store and entry-point pool defaults.
+            context: The catalog, store and entry-point pool defaults.
 
         Returns:
             The Mongo wiring.
@@ -116,10 +116,10 @@ class MongoStorePlugin:
                 another backend, holds a retired key or is invalid, or
                 ``stores.settings.cursors`` cannot build a cursor codec.
         """
-        spec = runtime.catalog.served_by(self.name, runtime.store)
+        spec = context.catalog.served_by(self.name, context.store)
         mongo_cfg = spec.decode(MongoRepositoryConfig)
-        cursor_codec = runtime.cursor_codec
-        pool = mongo_cfg.pool.resolve(runtime.profile)
+        cursor_codec = context.cursor_codec
+        pool = mongo_cfg.pool.resolve(context.profile)
         client_cfg = msgspec.structs.replace(
             mongo_cfg,
             pool=MongoRepositoryPool(size=pool.size + pool.max_overflow, timeout=pool.timeout_s),

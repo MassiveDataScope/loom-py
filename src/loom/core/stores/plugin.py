@@ -83,8 +83,8 @@ class StorePlugin(Protocol):
 
     The entry point targets a class with a no-argument constructor; the
     registry instantiates it. Each plugin serves the store the host names
-    (``runtime.store``), taken from the catalog the host loaded once:
-    ``runtime.catalog.served_by(name, runtime.store)``. The host builds one
+    (``context.store``), taken from the catalog the host loaded once:
+    ``context.catalog.served_by(name, context.store)``. The host builds one
     plugin per store, so a plugin registers nothing another store's
     instance would overwrite. It reads any other section from the context it
     is given.
@@ -107,14 +107,14 @@ class StorePlugin(Protocol):
         self,
         ctx: ConfigContext,
         models: Sequence[type[BaseModel]],
-        runtime: StorePluginContext,
+        context: StorePluginContext,
     ) -> StoreWiring:
         """Build the persistence wiring for the discovered models.
 
         Args:
             ctx: Configuration context the plugin reads its other sections from.
             models: Models discovered by the host.
-            runtime: Defaults of the entry point building the plugin, the
+            context: Defaults of the entry point building the plugin, the
                 optional pool-metrics receiver and the store catalog.
 
         Returns:

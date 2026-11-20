@@ -108,7 +108,7 @@ class StorePluginContext:
             stay installed but unbound, so they fail closed.
         catalog: The stores the configuration declares, loaded once by the
             host; the backend takes its store from it
-            (``catalog.served_by(name, runtime.store)``) instead of reading
+            (``catalog.served_by(name, context.store)``) instead of reading
             ``stores`` from the configuration again.
         store: The store the backend serves.
         cursor_codec: The application's one cursor codec, which the host

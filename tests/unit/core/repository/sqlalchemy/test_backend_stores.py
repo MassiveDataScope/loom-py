@@ -61,7 +61,7 @@ def _build(
     *models: type[BaseModel],
     pool_metrics: _Labels | None = None,
 ) -> StoreWiring:
-    runtime = StorePluginContext(
+    context = StorePluginContext(
         SERVER_PROFILE,
         pool_metrics=pool_metrics,
         catalog=load_catalog(ctx),
@@ -69,7 +69,7 @@ def _build(
         cursor_codec=CursorCodec.from_context(ctx),
         aws=AwsClients(),
     )
-    return SQLAlchemyStorePlugin().build(ctx, models, runtime)
+    return SQLAlchemyStorePlugin().build(ctx, models, context)
 
 
 class TestBackendStores:
@@ -130,13 +130,13 @@ class TestBackendStores:
         container.register_instance(Environment, Environment.TEST)
 
         for store in (DEFAULT_STORE, _AUDIT):
-            runtime = StorePluginContext(
+            context = StorePluginContext(
                 SERVER_PROFILE,
                 catalog=load_catalog(ctx),
                 store=store,
                 cursor_codec=codec,
                 aws=AwsClients(),
             )
-            SQLAlchemyStorePlugin().build(ctx, (), runtime).repo_registration_module(container)
+            SQLAlchemyStorePlugin().build(ctx, (), context).repo_registration_module(container)
 
         assert container.resolve(CursorCodec) is codec

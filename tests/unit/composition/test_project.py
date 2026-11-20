@@ -85,14 +85,14 @@ class _TinyAdapter:
 
 class TestTransportFreeComposition:
     async def test_a_runtime_of_its_own_gets_its_profile_its_use_case_and_its_type(
-        self, fixture_project: ProjectFactory, runtimes: list[StorePluginContext]
+        self, fixture_project: ProjectFactory, contexts: list[StorePluginContext]
     ) -> None:
         config = fixture_project()
 
         handler = create_app(config, runtime=_TinyAdapter(), environment="test")
 
         assert_type(handler, _Handler)
-        assert [runtime.profile for runtime in runtimes] == [_TINY]
+        assert [context.profile for context in contexts] == [_TINY]
         async with handler.application.running():
             assert await handler() == 42
 
@@ -176,8 +176,8 @@ class TestTransportFreeComposition:
             Project.load(project, environment="test").compose(adapter)
 
     @pytest.fixture
-    def runtimes(self, monkeypatch: pytest.MonkeyPatch) -> list[StorePluginContext]:
-        """Record the runtime the composition hands the SQLAlchemy backend."""
+    def contexts(self, monkeypatch: pytest.MonkeyPatch) -> list[StorePluginContext]:
+        """Record the context the composition hands the SQLAlchemy backend."""
         recorded: list[StorePluginContext] = []
         build = SQLAlchemyStorePlugin.build
 
@@ -185,10 +185,10 @@ class TestTransportFreeComposition:
             self: SQLAlchemyStorePlugin,
             ctx: ConfigContext,
             models: Sequence[type[BaseModel]],
-            runtime: StorePluginContext,
+            context: StorePluginContext,
         ) -> StoreWiring:
-            recorded.append(runtime)
-            return build(self, ctx, models, runtime)
+            recorded.append(context)
+            return build(self, ctx, models, context)
 
         monkeypatch.setattr(SQLAlchemyStorePlugin, "build", recording)
         return recorded

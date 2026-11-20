@@ -182,7 +182,7 @@ def build_stores(project: Project, recipe: Recipe, aws: AwsClients) -> Stores:
     cursor_codec = recipe.build_cursor_codec(ctx)
     wirings: dict[StoreKey, StoreWiring] = {}
     for key, models in stores.items():
-        runtime = StorePluginContext(
+        context = StorePluginContext(
             recipe.profile,
             pool_metrics=recipe.pool_metrics,
             connection_only=recipe.connection_only,
@@ -191,7 +191,7 @@ def build_stores(project: Project, recipe: Recipe, aws: AwsClients) -> Stores:
             cursor_codec=cursor_codec,
             aws=aws,
         )
-        wiring = wirings[key] = backends[key].build(ctx, models, runtime)
+        wiring = wirings[key] = backends[key].build(ctx, models, context)
         wiring.prepare_models(models)
     return Stores(
         job_settings=job_settings,

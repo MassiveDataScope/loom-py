@@ -63,7 +63,7 @@ class TestServerProfile:
         assert SERVER_PROFILE.pool.size == 5
 
     def test_backend_runtime_carries_no_metrics_unless_given(self) -> None:
-        runtime = StorePluginContext(
+        context = StorePluginContext(
             SERVER_PROFILE,
             catalog=StoreCatalog(specs={}),
             store=DEFAULT_STORE,
@@ -71,7 +71,7 @@ class TestServerProfile:
             aws=AwsClients(),
         )
 
-        assert runtime.pool_metrics is None
+        assert context.pool_metrics is None
 
     def test_the_profile_module_imports_without_sqlalchemy(self) -> None:
         script = (

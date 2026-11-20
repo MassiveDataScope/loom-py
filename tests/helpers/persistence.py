@@ -34,7 +34,7 @@ def build_backend(
     aws: AwsClients | None = None,
 ) -> StoreWiring:
     """Build *backend* for *store* with the catalog of *ctx*, loaded once, as a composition does."""
-    runtime = StorePluginContext(
+    context = StorePluginContext(
         profile,
         pool_metrics=pool_metrics,
         connection_only=connection_only,
@@ -43,7 +43,7 @@ def build_backend(
         cursor_codec=CursorCodec.from_context(ctx),
         aws=AwsClients() if aws is None else aws,
     )
-    return backend.build(ctx, models, runtime)
+    return backend.build(ctx, models, context)
 
 
 def record_catalogs(monkeypatch: pytest.MonkeyPatch) -> list[StoreCatalog]:

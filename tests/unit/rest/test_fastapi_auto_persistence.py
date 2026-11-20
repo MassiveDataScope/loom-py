@@ -198,18 +198,18 @@ class _RecordingBackend:
     name: ClassVar[str] = "recording"
     repository_type: ClassVar[type[Any] | None] = None
     events: ClassVar[list[tuple[str, tuple[type[BaseModel], ...]]]] = []
-    runtimes: ClassVar[list[StorePluginContext]] = []
+    contexts: ClassVar[list[StorePluginContext]] = []
 
     def capabilities(self, spec: StoreSpec) -> StoreCapabilities:
         del spec
         return MODELS_ONLY
 
     def build(
-        self, ctx: ConfigContext, models: Sequence[type[BaseModel]], runtime: StorePluginContext
+        self, ctx: ConfigContext, models: Sequence[type[BaseModel]], context: StorePluginContext
     ) -> StoreWiring:
         self.events.append(("build", tuple(models)))
-        self.runtimes.append(runtime)
-        wiring = NullStorePlugin().build(ctx, models, runtime)
+        self.contexts.append(context)
+        wiring = NullStorePlugin().build(ctx, models, context)
         return StoreWiring(
             uow_factory=wiring.uow_factory,
             repo_registration_module=wiring.repo_registration_module,
@@ -256,13 +256,13 @@ class TestInjectedStorePlugin:
     ) -> None:
         monkeypatch.setattr(entrypoints_module, "entry_points", lambda: _RecordingEntryPoints())
         monkeypatch.setattr(_RecordingBackend, "events", [])
-        monkeypatch.setattr(_RecordingBackend, "runtimes", [])
+        monkeypatch.setattr(_RecordingBackend, "contexts", [])
         config_path = write_project(tmp_path, store={"backend": "recording"})
 
         create_app(config_path)
 
-        assert [runtime.profile for runtime in _RecordingBackend.runtimes] == [SERVER_PROFILE]
-        assert _RecordingBackend.runtimes[0].pool_metrics is None
+        assert [context.profile for context in _RecordingBackend.contexts] == [SERVER_PROFILE]
+        assert _RecordingBackend.contexts[0].pool_metrics is None
 
 
 class TestDiscoverComponents:

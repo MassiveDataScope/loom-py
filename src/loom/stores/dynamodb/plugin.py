@@ -72,14 +72,14 @@ class DynamoDBStorePlugin:
         self,
         ctx: ConfigContext,
         models: Sequence[type[BaseModel]],
-        runtime: StorePluginContext,
+        context: StorePluginContext,
     ) -> StoreWiring:
         """Build the DynamoDB wiring for the discovered models.
 
         Args:
-            ctx: Ignored; the store's section comes from ``runtime.catalog``.
+            ctx: Ignored; the store's section comes from ``context.catalog``.
             models: Models whose repositories the DI module registers.
-            runtime: The catalog and the store it serves (``runtime.store``);
+            context: The catalog and the store it serves (``context.store``);
                 the DynamoDB client takes none of the entry-point defaults yet.
 
         Returns:
@@ -90,12 +90,12 @@ class DynamoDBStorePlugin:
                 required key, names another backend, holds a retired key or
                 is invalid.
         """
-        spec = runtime.catalog.served_by(self.name, runtime.store)
+        spec = context.catalog.served_by(self.name, context.store)
         del ctx
         dynamo_cfg = DynamoDBRepositoryConfig.from_config(
             spec.config, spec.path, own=spec.section()
         )
-        client = runtime.aws.client("dynamodb", dynamo_cfg)
+        client = context.aws.client("dynamodb", dynamo_cfg)
         executor = _ReopenableThreads(dynamo_cfg.pool.size)
         return StoreWiring(
             uow_factory=DynamoDBUnitOfWorkFactory(),

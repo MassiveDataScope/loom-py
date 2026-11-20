@@ -46,15 +46,15 @@ def _recipe(*, connection_only: bool = False) -> Recipe:
 
 class TestStoreCursorCodec:
     @pytest.fixture
-    def runtimes(self, monkeypatch: pytest.MonkeyPatch) -> list[StorePluginContext]:
-        """Every runtime a ``none`` or SQLAlchemy store is built with, in order."""
+    def contexts(self, monkeypatch: pytest.MonkeyPatch) -> list[StorePluginContext]:
+        """Every context a ``none`` or SQLAlchemy store is built with, in order."""
         seen: list[StorePluginContext] = []
         for backend in (NullStorePlugin, SQLAlchemyStorePlugin):
             build = backend.build
 
-            def recorded(self: Any, ctx: Any, models: Any, runtime: Any, build: Any = build) -> Any:
-                seen.append(runtime)
-                return build(self, ctx, models, runtime)
+            def recorded(self: Any, ctx: Any, models: Any, context: Any, build: Any = build) -> Any:
+                seen.append(context)
+                return build(self, ctx, models, context)
 
             monkeypatch.setattr(backend, "build", recorded)
         return seen
@@ -65,18 +65,18 @@ class TestStoreCursorCodec:
         ids=["no-stores", "sqlalchemy-without-keys", "declared-none"],
     )
     def test_without_cursor_settings_the_codec_is_disabled(
-        self, raw: dict[str, Any], runtimes: list[StorePluginContext]
+        self, raw: dict[str, Any], contexts: list[StorePluginContext]
     ) -> None:
         _build(raw)
 
-        assert [runtime.cursor_codec for runtime in runtimes] == [CursorCodec.disabled()]
+        assert [context.cursor_codec for context in contexts] == [CursorCodec.disabled()]
 
     def test_configured_cursor_settings_share_one_codec(
-        self, runtimes: list[StorePluginContext]
+        self, contexts: list[StorePluginContext]
     ) -> None:
         _build({"stores": {**_SQLITE, "settings": {"cursors": {"signing": "ephemeral"}}}})
 
-        assert [type(runtime.cursor_codec) for runtime in runtimes] == [CursorCodec]
+        assert [type(context.cursor_codec) for context in contexts] == [CursorCodec]
 
     def test_cursor_settings_without_a_signing_key_fail_naming_the_section(self) -> None:
         with pytest.raises(ConfigError, match=r"stores\.settings\.cursors\.current_key_id"):
@@ -95,18 +95,18 @@ class TestStoreCursorCodec:
         assert isinstance(_recipe().build_cursor_codec(ctx), CursorCodec)
 
     def test_a_connection_only_composition_gets_the_disabled_codec(
-        self, runtimes: list[StorePluginContext]
+        self, contexts: list[StorePluginContext]
     ) -> None:
         _build({"stores": _SQLITE}, connection_only=True)
 
-        assert [runtime.cursor_codec for runtime in runtimes] == [CursorCodec.disabled()]
+        assert [context.cursor_codec for context in contexts] == [CursorCodec.disabled()]
 
     def test_a_connection_only_composition_ignores_configured_cursor_settings(
-        self, runtimes: list[StorePluginContext]
+        self, contexts: list[StorePluginContext]
     ) -> None:
         _build(
             {"stores": {**_SQLITE, "settings": {"cursors": {"signing": "ephemeral"}}}},
             connection_only=True,
         )
 
-        assert [runtime.cursor_codec for runtime in runtimes] == [CursorCodec.disabled()]
+        assert [context.cursor_codec for context in contexts] == [CursorCodec.disabled()]

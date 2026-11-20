@@ -79,9 +79,9 @@ class _ProbedBackend:
         return NO_CAPABILITIES
 
     def build(
-        self, ctx: ConfigContext, models: Sequence[type[BaseModel]], runtime: StorePluginContext
+        self, ctx: ConfigContext, models: Sequence[type[BaseModel]], context: StorePluginContext
     ) -> StoreWiring:
-        wiring = NullStorePlugin().build(ctx, models, runtime)
+        wiring = NullStorePlugin().build(ctx, models, context)
         readiness = None if self.ready is None else self._probe
         return StoreWiring(
             uow_factory=wiring.uow_factory,

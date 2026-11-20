@@ -84,9 +84,9 @@ nothing reads them any more. The whole `persistence` section is gone.
 
 A backend is a class with a no-argument constructor, a `name`, a
 `repository_type` and a `build` method:
-`build(ctx, models, runtime) -> StoreWiring`. `repository_type` is the
+`build(ctx, models, context) -> StoreWiring`. `repository_type` is the
 repository class the auto-CRUD gate inspects, and it is known before `build`.
-`None` means the backend serves no repositories. `runtime` is a
+`None` means the backend serves no repositories. `context` is a
 `StorePluginContext`: the `RuntimeProfile` of the entry point building it
 (`server`, `worker`, ...), whose defaults size any connection pool the backend
 opens, an optional pool-metrics sink, `connection_only`, and `catalog`, the
@@ -94,7 +94,7 @@ opens, an optional pool-metrics sink, `connection_only`, and `catalog`, the
 serves, and `cursor_codec`, the application's one cursor codec. The
 composition builds one backend per store: the default one, and each other
 store a model belongs to. The class takes its store from that catalog
-(`runtime.catalog.served_by(self.name, runtime.store)`) and decodes its
+(`context.catalog.served_by(self.name, context.store)`) and decodes its
 section; the host knows nothing about the keys of that section. It reads any
 other section from `ctx`. A backend with no pool ignores the profile.
 `connection_only` is set by an entry point with no model (a worker running
@@ -147,10 +147,10 @@ class LedgerBackend:
     repository_type: ClassVar[type[Any] | None] = RepositoryLedger
 
     def build(
-        self, ctx: ConfigContext, models: Sequence[type[BaseModel]], runtime: StorePluginContext
+        self, ctx: ConfigContext, models: Sequence[type[BaseModel]], context: StorePluginContext
     ) -> StoreWiring:
         # ConfigError when the store is missing, names another backend or is invalid.
-        store = runtime.catalog.served_by(self.name, runtime.store)
+        store = context.catalog.served_by(self.name, context.store)
         cfg = store.decode(_LedgerConfig)
         client = LedgerClient(cfg.url, cfg.namespace)
         return StoreWiring(
@@ -160,7 +160,7 @@ class LedgerBackend:
                 build_registered_repository=lambda context, registration: _build(client, context),
                 default_repository_type=RepositoryLedger,
                 default_builder=lambda context: _build(client, context),
-                store=runtime.store,
+                store=context.store,
             ),
             lifespan_init=lambda: _lifespan(client),
             prepare_models=_validate_identifiers,

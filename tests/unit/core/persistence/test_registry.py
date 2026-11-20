@@ -62,8 +62,8 @@ class _FakeBackend:
     name: ClassVar[str] = "fake"
     repository_type: ClassVar[type | None] = None
 
-    def build(self, ctx: ConfigContext, models: object, runtime: StorePluginContext) -> StoreWiring:
-        return NullStorePlugin().build(ctx, (), runtime)
+    def build(self, ctx: ConfigContext, models: object, context: StorePluginContext) -> StoreWiring:
+        return NullStorePlugin().build(ctx, (), context)
 
 
 def _install(
