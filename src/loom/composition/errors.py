@@ -16,7 +16,7 @@
 ``CompositionStateError``
     A runtime or an :class:`~loom.composition.ApplicationHost` was used out
     of its lifecycle: a runtime composing a second application or mounted
-    before its recipe, a host started twice or stopped while opening.
+    before its recipe, a host started twice or shut down while opening.
 """
 
 from __future__ import annotations
@@ -65,7 +65,7 @@ class CompositionErrorCode(IssueCode):
     HOST_STOPPED_WHILE_OPENING = (
         "HOST_STOPPED_WHILE_OPENING",
         Template(
-            "ApplicationHost was stopped while opening; the application is closed",
+            "ApplicationHost was shut down while opening; the application is closed",
             component="ApplicationHost",
         ),
     )

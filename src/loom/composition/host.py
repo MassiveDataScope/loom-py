@@ -1,4 +1,4 @@
-"""Keep an application open in one task of its own, across the calls that start and stop it."""
+"""Keep an application open in one task of its own, across the calls that start and shut it down."""
 
 from __future__ import annotations
 
@@ -27,13 +27,13 @@ class ApplicationHost:
     in a task of its own, and an agent runtime, an MCP client or a cancel
     scope refuses to be exited from a task other than the one that entered it.
     The host spawns one owner task on the running loop that enters
-    :meth:`~Application.running`, waits until :meth:`stop`, and exits it.
+    :meth:`~Application.running`, waits until :meth:`shutdown`, and exits it.
 
     A host opens its application once; compose a new host to open it again.
     The owner task runs on the loop that called :meth:`start`, so
-    :meth:`stop` must run on that same loop. If the loop is cancelled before
-    :meth:`stop`, the owner still exits :meth:`~Application.running` in its own
-    task. A failure to close that no :meth:`stop` can raise, after a cancelled
+    :meth:`shutdown` must run on that same loop. If the loop is cancelled before
+    :meth:`shutdown`, the owner still exits :meth:`~Application.running` in its own
+    task. A failure to close that no :meth:`shutdown` can raise, after a cancelled
     :meth:`start` say, is logged.
 
     Args:
@@ -57,7 +57,7 @@ class ApplicationHost:
 
         Raises:
             CompositionStateError: When this host was already started, or
-                when :meth:`stop` was called before the application finished
+                when :meth:`shutdown` was called before the application finished
                 opening; it is closed by then.
             Exception: The failure to open the application, as itself; nothing
                 is left open.
@@ -78,11 +78,11 @@ class ApplicationHost:
             await asyncio.wait({owner})
             raise
 
-    async def stop(self) -> None:
+    async def shutdown(self) -> None:
         """Close the application in its owner task and wait until it is closed.
 
         Every call waits for the same close, including one made while
-        :meth:`start` is still opening. Stopping a host that never opened, or
+        :meth:`start` is still opening. Shutting down a host that never opened, or
         one already closed, does nothing. Cancelling the call does not
         interrupt the closing.
 
@@ -110,7 +110,7 @@ class ApplicationHost:
             raise failure
 
     async def _own(self, opened: asyncio.Future[None]) -> None:
-        """Enter the application, report it open, wait for :meth:`stop` and exit."""
+        """Enter the application, report it open, wait for :meth:`shutdown` and exit."""
         entered = False
         try:
             async with self._application.running(check=self._check):
@@ -132,7 +132,7 @@ class ApplicationHost:
             opened.set_exception(_stopped_while_opening())
 
     def _record_close_failure(self, owner: asyncio.Task[None]) -> None:
-        """Keep the owner's failure to close for :meth:`stop`, or log it if none is waiting."""
+        """Keep the owner's failure to close for :meth:`shutdown`, or log it if none is waiting."""
         self._close_failure = _failure_to_close(owner)
         if not self._stopping.is_set():
             self._log_failure()
@@ -201,7 +201,7 @@ class LoopHost:
         if self._closed:
             return
         try:
-            self._loop.run_until_complete(self._host.stop())
+            self._loop.run_until_complete(self._host.shutdown())
         finally:
             self._dispose()
 

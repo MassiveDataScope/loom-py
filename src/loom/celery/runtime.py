@@ -234,7 +234,7 @@ class _WorkerLifecycle:
         """How this process opens and closes its application, each a bridge call."""
         if self._runtime.backend == "asyncio":
             host = ApplicationHost(self._application, check=check)
-            return host.start, host.stop
+            return host.start, host.shutdown
         running = self._application.running(check=check)
         stack = AsyncExitStack()
         return partial(stack.enter_async_context, running), stack.aclose
