@@ -75,7 +75,8 @@ class CallbackOutcome(StrEnum):
         Returns:
             Its ``on_success`` or ``on_failure``.
         """
-        return getattr(callback, f"on_{self}")
+        hook: Callable[..., Any] = getattr(callback, f"on_{self}")
+        return hook
 
 
 class DispatchableCallbacks:
