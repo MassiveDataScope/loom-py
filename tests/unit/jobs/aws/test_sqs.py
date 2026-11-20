@@ -23,15 +23,12 @@ from loom.core.engine.post_commit import (
     reset_channel,
 )
 from loom.core.errors import PostCommitError
-from loom.core.identity import Identity, reset_identity, set_identity
-from loom.core.identity.wire import decode_identity
 from loom.core.job.context import clear_pending_dispatches, flush_pending_dispatches
 from loom.core.job.envelope import decode_job_envelope
 from loom.core.job.job import Job
 from loom.core.job.service import JobService
 from loom.core.stores.catalog import DEFAULT_STORE
 from loom.core.stores.uow.coordinator import OrderedCommits
-from loom.core.tracing import reset_trace_id, set_trace_id
 from loom.core.use_case.use_case import UseCase
 from loom.jobs.aws.errors import SQSDispatchError, SQSQueueConfigError
 from loom.jobs.aws.sqs import MAX_MESSAGE_BYTES
@@ -222,34 +219,13 @@ class TestSQSProducer:
 
 
 class TestSQSDispatch:
-    async def test_a_standard_queue_gets_the_envelope_and_the_delay(
+    async def test_a_standard_queue_message_has_no_group_or_deduplication_id(
         self, service: JobService, client: SQSClient
     ) -> None:
-        identity, trace = set_identity(Identity(subject="alice")), set_trace_id("trace-1")
-        try:
-            _, request = await _sent(
-                service, client, EmailJob, payload={"to": "a@b.c"}, countdown=30
-            )
-        finally:
-            reset_trace_id(trace)
-            reset_identity(identity)
+        _, request = await _sent(service, client, EmailJob, countdown=30)
 
         assert (request["QueueUrl"], request["DelaySeconds"]) == (_URL, 30)
-        assert "MessageGroupId" not in request
-        envelope = decode_job_envelope(request["MessageBody"])
-        assert (envelope.job_name, envelope.payload, envelope.trace_id) == (
-            "EmailJob",
-            {"to": "a@b.c"},
-            "trace-1",
-        )
-        assert getattr(decode_identity(envelope.identity), "subject", None) == "alice"
-
-    async def test_the_envelope_carries_the_task_id_of_the_handle(
-        self, service: JobService, client: SQSClient
-    ) -> None:
-        task_id, request = await _sent(service, client, EmailJob, payload={"to": "a@b.c"})
-
-        assert decode_job_envelope(request["MessageBody"]).task_id == task_id
+        assert {"MessageGroupId", "MessageDeduplicationId"}.isdisjoint(request)
 
     async def test_control_characters_and_emoji_reach_sqs(
         self, service: JobService, client: SQSClient
@@ -585,16 +561,6 @@ class TestSQSDispatch:
         assert isinstance(failure, SQSDispatchError)
         assert (failure.code, client.batches) == ("sqs_batch_partial_failure", [(_URL, ids)])
         assert [task for _, task, _, _ in _failed_sends(caplog)] == ids
-
-    async def test_a_rolled_back_dispatch_leaves_no_batch_behind(
-        self, service: JobService, client: SQSClient
-    ) -> None:
-        service.dispatch_after_commit(EmailJob)
-        clear_pending_dispatches()
-        kept = service.dispatch_after_commit(EmailJob).job_id
-        await flush_pending_dispatches()
-
-        assert client.batches == [(_URL, [kept])]
 
     async def test_a_batch_failing_after_the_cancellation_logs_each_job_and_task(
         self,

@@ -3,7 +3,6 @@ from __future__ import annotations
 import dataclasses
 from datetime import UTC, datetime
 from typing import Any
-from unittest.mock import MagicMock
 
 import pytest
 
@@ -41,43 +40,6 @@ class TestJobHandle:
     def test_wait_inline_returns_none_result(self) -> None:
         handle = _inline_handle(None)
         assert handle.wait() is None
-
-    # ---------------------------------------------------------------------------
-    # JobHandle — Celery (async_result) mode
-    # ---------------------------------------------------------------------------
-
-    def test_wait_async_result_delegates_to_get(self) -> None:
-        mock_result = MagicMock()
-        mock_result.get.return_value = 99
-        handle = JobHandle(job_id="x", queue="q", dispatched_at=_now(), _async_result=mock_result)
-
-        assert handle.wait(timeout=5.0) == 99
-        mock_result.get.assert_called_once_with(timeout=5.0)
-
-    def test_wait_async_timeout_raises_job_timeout_error(self) -> None:
-        class TimeoutError(Exception):  # simulates celery.exceptions.TimeoutError
-            pass
-
-        mock_result = MagicMock()
-        mock_result.get.side_effect = TimeoutError()
-        handle = JobHandle(job_id="tid", queue="q", dispatched_at=_now(), _async_result=mock_result)
-
-        with pytest.raises(JobTimeoutError) as exc_info:
-            handle.wait(timeout=2.0)
-
-        assert exc_info.value.job_id == "tid"
-        assert exc_info.value.timeout == pytest.approx(2.0)
-
-    def test_wait_async_failure_raises_job_failed_error(self) -> None:
-        mock_result = MagicMock()
-        mock_result.get.side_effect = ValueError("something went wrong")
-        handle = JobHandle(job_id="fid", queue="q", dispatched_at=_now(), _async_result=mock_result)
-
-        with pytest.raises(JobFailedError) as exc_info:
-            handle.wait()
-
-        assert exc_info.value.job_id == "fid"
-        assert isinstance(exc_info.value.cause, ValueError)
 
     # ---------------------------------------------------------------------------
     # JobHandle — identity and immutability

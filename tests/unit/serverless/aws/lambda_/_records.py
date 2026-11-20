@@ -2,11 +2,13 @@
 
 from __future__ import annotations
 
-import json
 from collections.abc import Callable
 from typing import Any
 
-from loom.testing import LambdaEvent
+import msgspec
+
+from loom.core.job.envelope import JobEnvelope
+from loom.testing import LambdaEvent, make
 
 RecordFactory = Callable[..., dict[str, Any]]
 WORKER = "worker"
@@ -45,12 +47,21 @@ def make_record(
     fifo: bool = False,
     job_name: str = "ProbeJob",
     body: str | None = None,
+    task_id: str | None = None,
     receive_count: int = 1,
     postponements: int | str | None = None,
 ) -> dict[str, Any]:
     if body is None:
-        envelope = {"job": job_name, "params": {"marker": marker}, "identity": identity}
-        body = json.dumps(envelope | {"payload": {}, "trace_id": trace_id})
+        envelope = make(
+            JobEnvelope,
+            job=job_name,
+            params={"marker": marker},
+            payload={},
+            identity=identity,
+            trace_id=trace_id,
+            task_id=task_id,
+        )
+        body = msgspec.json.encode(envelope).decode()
     arn = JOBS_ARN + (".fifo" if fifo else "")
     event = LambdaEvent.sqs_record(
         body, message_id=message_id, group_id="group" if fifo else None, queue_arn=arn

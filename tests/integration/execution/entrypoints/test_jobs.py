@@ -9,25 +9,25 @@ from __future__ import annotations
 import asyncio
 import math
 import time
-from collections.abc import Awaitable, Callable
+from collections.abc import Callable, Iterator
 from typing import Any
-from unittest.mock import MagicMock
 
 import pytest
 
 from loom.core.engine.executor import RuntimeExecutor
+from loom.core.engine.post_commit import PostCommitChannel, bind_channel, reset_channel
 from loom.core.errors import DelegationExpired, PostCommitError, Unauthenticated
 from loom.core.execution import ExecutionScope
 from loom.core.identity import ANONYMOUS, Delegation, IdentityFixed, captured_delegation
 from loom.core.identity.wire import encode_identity
-from loom.core.job import inline
 from loom.core.job.context import flush_pending_dispatches
 from loom.core.job.envelope import JobEnvelope, job_context
 from loom.core.job.handle import JobHandle
 from loom.core.job.run import EnvelopeInvocation
 from loom.core.observability.runtime import ObservabilityRuntime
 from loom.core.use_case.factory import UseCaseFactory
-from loom.testing import JobTestData
+from loom.testing import JobTestData, make
+from tests.helpers.celery import CeleryBroker
 from tests.helpers.delegation import acting_as, assert_new_delegation
 from tests.helpers.jobs import CeleryServiceFixture, InlineServiceFixture
 
@@ -41,6 +41,17 @@ from .doubles import (
     AcmeRun,
     CallbackLog,
 )
+
+
+@pytest.fixture
+def channel() -> Iterator[PostCommitChannel]:
+    """The post-commit channel an execution would bind, drained by the test where it chooses."""
+    channel = PostCommitChannel()
+    token = bind_channel(channel)
+    try:
+        yield channel
+    finally:
+        reset_channel(token)
 
 
 async def run_envelope(
@@ -88,7 +99,7 @@ class TestJobRunner:
     async def test_builds_inside_an_execution_as_the_envelope_caller(
         self, factory: UseCaseFactory, executor: RuntimeExecutor
     ) -> None:
-        envelope = JobEnvelope(job="AcmeProbeJob", identity=encode_identity(ALICE))
+        envelope = make(JobEnvelope, job="AcmeProbeJob", identity=encode_identity(ALICE))
 
         job = await run_envelope(envelope, factory, executor)
 
@@ -98,8 +109,8 @@ class TestJobRunner:
     async def test_acts_as_the_envelope_caller_within_its_delegation(
         self, factory: UseCaseFactory, executor: RuntimeExecutor
     ) -> None:
-        envelope = JobEnvelope(
-            job="AcmeProbeJob", identity=Delegation(ALICE, time.time() + 60).encoded()
+        envelope = make(
+            JobEnvelope, job="AcmeProbeJob", identity=Delegation(ALICE, time.time() + 60).encoded()
         )
 
         job = await run_envelope(envelope, factory, executor)
@@ -115,7 +126,7 @@ class TestJobRunner:
         self, factory: UseCaseFactory, executor: RuntimeExecutor, deadline: Any
     ) -> None:
         identity = {**(encode_identity(ALICE) or {}), "until": deadline}
-        envelope = JobEnvelope(job="AcmeProbeJob", identity=identity)
+        envelope = make(JobEnvelope, job="AcmeProbeJob", identity=identity)
 
         with pytest.raises(Unauthenticated, match="system identity"):
             await run_envelope(envelope, factory, executor)
@@ -153,16 +164,14 @@ class TestAQueuedDispatch:
 
     @pytest.fixture
     def pending(
-        self, factory: UseCaseFactory, executor: RuntimeExecutor, monkeypatch: pytest.MonkeyPatch
-    ) -> list[Callable[[], Awaitable[None]]]:
-        """Alice's dispatch, kept here instead of queued: the test drains it where it chooses."""
-        kept: list[Callable[[], Awaitable[None]]] = []
-        monkeypatch.setattr(inline, "add_pending_dispatch", kept.append)
+        self, factory: UseCaseFactory, executor: RuntimeExecutor, channel: PostCommitChannel
+    ) -> PostCommitChannel:
+        """Alice's dispatch, kept on a channel the test drains where it chooses."""
         with acting_as(ALICE):
             InlineServiceFixture(factory, executor).dispatch_after_commit(
                 AcmeProbeJob, on_success=AcmeCallback
             )
-        return kept
+        return channel
 
     async def test_runs_as_its_dispatcher_within_the_deadline(
         self, queued: JobHandle[Any], callback_log: CallbackLog
@@ -193,15 +202,12 @@ class TestAQueuedDispatch:
         factory: UseCaseFactory,
         executor: RuntimeExecutor,
         callback_log: CallbackLog,
-        monkeypatch: pytest.MonkeyPatch,
     ) -> None:
         """Alice acting again with a fresh window does not extend the dispatch's delegation."""
-        soon = time.time() + 5
-        with acting_as(ALICE, until=soon):
+        with acting_as(ALICE, until=time.time() - 1):
             InlineServiceFixture(factory, executor).dispatch_after_commit(
                 AcmeProbeJob, on_success=AcmeCallback, on_failure=AcmeCallback
             )
-        monkeypatch.setattr(time, "time", lambda: soon + 1)
 
         with acting_as(ALICE), pytest.raises(PostCommitError) as refused:
             await flush_pending_dispatches()
@@ -236,19 +242,21 @@ class TestAQueuedDispatch:
         assert callback_log == []
 
     async def test_drained_inside_work_acting_as_its_dispatcher_runs(
-        self, pending: list[Callable[[], Awaitable[None]]], callback_log: CallbackLog
+        self, pending: PostCommitChannel, callback_log: CallbackLog
     ) -> None:
         with ExecutionScope(ALICE):
-            await pending[0]()
+            await pending.drain(committed=True)
 
         assert callback_log == [("built", AS_ALICE), ("on_success", AS_ALICE)]
 
     async def test_drained_inside_work_acting_as_another_is_refused(
-        self, pending: list[Callable[[], Awaitable[None]]], callback_log: CallbackLog
+        self, pending: PostCommitChannel, callback_log: CallbackLog
     ) -> None:
-        with ExecutionScope(BOB), pytest.raises(IdentityFixed):
-            await pending[0]()
+        with ExecutionScope(BOB), pytest.raises(PostCommitError) as refused:
+            await pending.drain(committed=True)
 
+        [failure] = refused.value.failures
+        assert isinstance(failure, IdentityFixed)
         assert callback_log == []
 
 
@@ -260,17 +268,15 @@ class TestADispatchWithNoCaller:
         factory: UseCaseFactory,
         executor: RuntimeExecutor,
         callback_log: CallbackLog,
-        monkeypatch: pytest.MonkeyPatch,
+        channel: PostCommitChannel,
     ) -> None:
         """As the Celery and SQS wire carry it: its job and callbacks have none."""
-        kept: list[Callable[[], Awaitable[None]]] = []
-        monkeypatch.setattr(inline, "add_pending_dispatch", kept.append)
         with acting_as(ANONYMOUS):
             InlineServiceFixture(factory, executor).dispatch_after_commit(
                 AcmeProbeJob, on_failure=AcmeCallback
             )
 
-        await kept[0]()
+        await channel.drain(committed=True)
 
         assert callback_log == [("built", NO_CALLER), ("on_failure", NO_CALLER)]
 
@@ -279,18 +285,18 @@ class TestADispatchWithNoCaller:
         factory: UseCaseFactory,
         executor: RuntimeExecutor,
         callback_log: CallbackLog,
-        monkeypatch: pytest.MonkeyPatch,
+        channel: PostCommitChannel,
     ) -> None:
         """As on Celery, a dispatch with no caller never borrows the caller of the work draining."""
-        kept: list[Callable[[], Awaitable[None]]] = []
-        monkeypatch.setattr(inline, "add_pending_dispatch", kept.append)
         InlineServiceFixture(factory, executor).dispatch_after_commit(
             AcmeProbeJob, on_success=AcmeCallback
         )
 
-        with ExecutionScope(ALICE), pytest.raises(IdentityFixed):
-            await kept[0]()
+        with ExecutionScope(ALICE), pytest.raises(PostCommitError) as refused:
+            await channel.drain(committed=True)
 
+        [failure] = refused.value.failures
+        assert isinstance(failure, IdentityFixed)
         assert callback_log == []
 
     async def test_inline_runs_the_job_with_no_caller(
@@ -313,16 +319,17 @@ class TestADispatchWithNoCaller:
     async def test_celery_runs_the_job_with_no_caller(
         self, factory: UseCaseFactory, executor: RuntimeExecutor
     ) -> None:
-        app = MagicMock()
-        jobs = CeleryServiceFixture(app, factory=factory, executor=executor)
+        broker = CeleryBroker([AcmeProbeJob.__queue__])
+        jobs = CeleryServiceFixture(broker.app, factory=factory, executor=executor)
 
         async def dispatch() -> None:
             jobs.dispatch_after_commit(AcmeProbeJob)
 
         await executor.execute(AcmeRun(dispatch))
-        sent = {**app.send_task.call_args.kwargs["kwargs"]}
+        (message,) = broker.sent()
+        sent = {**message.kwargs}
         del sent["failure_callback"]
-        envelope = JobEnvelope(job="AcmeProbeJob", **sent)
+        envelope = make(JobEnvelope, job="AcmeProbeJob", **sent)
 
         with pytest.raises(Unauthenticated):
             await run_envelope(envelope, factory, executor)

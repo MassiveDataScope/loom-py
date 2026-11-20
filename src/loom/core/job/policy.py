@@ -5,7 +5,21 @@ from __future__ import annotations
 import random
 from dataclasses import dataclass
 from enum import StrEnum
-from typing import ClassVar
+from typing import Annotated, ClassVar
+
+import msgspec
+
+MIN_SECONDS = 0
+"""The shortest delay, and the lowest start of a backoff."""
+MAX_COUNTDOWN_SECONDS = 900
+"""The longest delay any job transport can wait."""
+MIN_BACKOFF_FACTOR = 1
+"""The lowest growth of a backoff: a delay never shrinks."""
+MIN_ATTEMPTS = 1
+"""The fewest attempts a policy allows, and the number of the first attempt."""
+
+Seconds = Annotated[int, msgspec.Meta(ge=MIN_SECONDS, le=MAX_COUNTDOWN_SECONDS)]
+"""Whole seconds within the bound of a countdown."""
 
 
 class Redelivery(StrEnum):
@@ -34,12 +48,12 @@ class Countdown:
         ValueError: When the seconds fall outside the bound.
     """
 
-    MAX_SECONDS: ClassVar[int] = 900
+    MAX_SECONDS: ClassVar[int] = MAX_COUNTDOWN_SECONDS
 
-    seconds: int
+    seconds: Seconds
 
     def __post_init__(self) -> None:
-        if not 0 <= self.seconds <= self.MAX_SECONDS:
+        if not MIN_SECONDS <= self.seconds <= self.MAX_SECONDS:
             raise ValueError(f"a countdown is 0 to {self.MAX_SECONDS} seconds, not {self.seconds}")
 
 
@@ -58,17 +72,17 @@ class Backoff:
             or *factor* is below 1.
     """
 
-    first_s: int
-    factor: float
-    max_s: int
+    first_s: Annotated[int, msgspec.Meta(ge=MIN_SECONDS)]
+    factor: Annotated[float, msgspec.Meta(ge=MIN_BACKOFF_FACTOR)]
+    max_s: Seconds
     jitter: bool = True
 
     def __post_init__(self) -> None:
-        if not 0 <= self.max_s <= Countdown.MAX_SECONDS:
+        if not MIN_SECONDS <= self.max_s <= Countdown.MAX_SECONDS:
             raise ValueError(f"max_s must be 0 to {Countdown.MAX_SECONDS}, not {self.max_s}")
-        if self.first_s < 0:
+        if self.first_s < MIN_SECONDS:
             raise ValueError(f"first_s cannot be negative, not {self.first_s}")
-        if self.factor < 1:
+        if self.factor < MIN_BACKOFF_FACTOR:
             raise ValueError(f"factor must be at least 1, not {self.factor}")
 
     def delay(self, attempt: int) -> Countdown:
@@ -102,10 +116,10 @@ class RetryPolicy:
     """
 
     backoff: Backoff
-    max_attempts: int | None
+    max_attempts: Annotated[int, msgspec.Meta(ge=MIN_ATTEMPTS)] | None
 
     def __post_init__(self) -> None:
-        if self.max_attempts is not None and self.max_attempts < 1:
+        if self.max_attempts is not None and self.max_attempts < MIN_ATTEMPTS:
             raise ValueError(f"max_attempts must be at least 1, not {self.max_attempts}")
 
     def can_retry_after(self, attempt: int) -> bool:

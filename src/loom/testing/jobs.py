@@ -78,7 +78,10 @@ class JobTestData:
         identity: dict[str, Any] | None = None,
     ) -> JobEnvelope:
         """Build one valid wire envelope using this test data's job and trace."""
-        return JobEnvelope(
+        from loom.testing import make
+
+        return make(
+            JobEnvelope,
             job=wire_job_name(self.job_type.__qualname__),
             payload=payload or {},
             params=params,
@@ -95,14 +98,16 @@ class JobTestData:
         postponements: int = 0,
         timeout_s: float | None = None,
     ) -> JobDelivery:
-        """Build one delivery, through ``JobOptions.delivery_for``, with this test data's policy."""
-        resolved = JobSettings().of(self.job_type)
-        options = replace(resolved, retry=replace(resolved.retry, policy=self.policy))
-        return options.delivery_for(
-            self.job_type,
-            envelope or self.envelope(),
+        """Build one delivery of this test data's job under its policy."""
+        from loom.testing import make
+
+        return make(
+            JobDelivery,
+            job_type=self.job_type,
+            envelope=envelope or self.envelope(),
             attempt=attempt,
             postponements=postponements,
+            policy=self.policy,
             timeout_s=timeout_s,
         )
 
@@ -135,12 +140,14 @@ class DispatchedJob:
     """One dispatch :class:`RecordingJobTransport` saw committed, as it was at dispatch."""
 
     job_type: type[Job[Any]]
+    task_id: str
     payload: dict[str, Any]
     params: dict[str, Any] | None
     queue: str
     countdown: int
     identity: Identity | None
     """The authenticated caller acting at dispatch, ``None`` for none (as the real services)."""
+    trace_id: str | None = None
 
 
 class ManualTimer:
@@ -229,11 +236,13 @@ class RecordingJobTransport:
     def _record(self, dispatch: JobDispatch) -> tuple[DispatchedJob, JobHandle[Any]]:
         record = DispatchedJob(
             job_type=dispatch.job_type,
+            task_id=str(dispatch.envelope.task_id),
             payload=copy.deepcopy(dispatch.envelope.payload or {}),
             params=copy.deepcopy(dispatch.envelope.params),
             queue=dispatch.queue,
             countdown=dispatch.countdown.seconds,
             identity=dispatch.delegation.caller,
+            trace_id=dispatch.envelope.trace_id,
         )
         handle: JobHandle[Any] = JobHandle(
             job_id=str(dispatch.envelope.task_id),

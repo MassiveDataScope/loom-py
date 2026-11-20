@@ -2,7 +2,9 @@ from __future__ import annotations
 
 import pytest
 
+from loom.core.job.delivery import JobDelivery
 from loom.core.job.policy import DEFAULT_RETRY, Backoff, Countdown, RetryPolicy
+from loom.testing import make
 
 
 class TestCountdown:
@@ -77,3 +79,19 @@ class TestRetryPolicy:
     ) -> None:
         policy = RetryPolicy(Backoff(1, 1, 1), max_attempts)
         assert policy.can_retry_after(attempt) is allowed
+
+
+class TestJobDelivery:
+    @pytest.mark.parametrize("attempt", [0, -1])
+    def test_refuses_an_attempt_before_the_first(self, attempt: int) -> None:
+        with pytest.raises(ValueError, match="attempt must be at least 1"):
+            make(JobDelivery, attempt=attempt)
+
+    def test_refuses_negative_postponements(self) -> None:
+        with pytest.raises(ValueError, match="postponements cannot be negative"):
+            make(JobDelivery, postponements=-1)
+
+    def test_accepts_the_first_attempt_with_no_postponements(self) -> None:
+        delivery = make(JobDelivery, attempt=1, postponements=0)
+
+        assert (delivery.attempt, delivery.postponements) == (1, 0)

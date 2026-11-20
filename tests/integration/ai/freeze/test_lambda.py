@@ -61,10 +61,11 @@ from loom.ai.errors import AgentRunErrorCode  # noqa: E402
 from loom.composition import create_app  # noqa: E402
 from loom.core.identity import Identity  # noqa: E402
 from loom.core.identity.wire import encode_identity  # noqa: E402
+from loom.core.job.envelope import JobEnvelope  # noqa: E402
 from loom.core.job.job import Job  # noqa: E402
 from loom.core.plugins import entrypoints as entrypoints_module  # noqa: E402
 from loom.serverless.aws.lambda_ import LambdaAdapter, LambdaHandler  # noqa: E402
-from loom.testing import LambdaEvent, LambdaTestClient  # noqa: E402
+from loom.testing import LambdaEvent, LambdaTestClient, make  # noqa: E402
 from tests.helpers.lambda_jobs import jobs_queue, jobs_trigger
 from tests.integration.ai._entrypoints import fake_entry_points  # noqa: E402
 from tests.integration.ai.freeze.server import Era, LiveMcpServer, serving  # noqa: E402
@@ -366,8 +367,12 @@ class _World:
             body = {key: value for key, value in params.items() if key in ("tool", "text")}
             client = LambdaTestClient(self.handler)  # type: ignore[arg-type]
             return client.post(f"/mcp/{route}", json=body, headers=_BEARER).status_code == 200
-        envelope = {"job": job.__qualname__, "params": params, "payload": {}, "identity": _CALLER}
-        event = LambdaEvent.sqs_record(json.dumps(envelope), message_id=str(next(self._ids)))
+        envelope = make(
+            JobEnvelope, job=job.__qualname__, params=params, identity=_CALLER, task_id=None
+        )
+        event = LambdaEvent.sqs_record(
+            msgspec.json.encode(envelope).decode(), message_id=str(next(self._ids))
+        )
         return self.handler(event, None) == {"batchItemFailures": []}
 
 

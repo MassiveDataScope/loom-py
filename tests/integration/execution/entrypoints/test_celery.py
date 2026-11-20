@@ -15,7 +15,6 @@ import time
 from collections.abc import Callable, Coroutine, Iterator
 from dataclasses import replace
 from typing import Any, cast
-from unittest.mock import MagicMock
 
 import pytest
 from celery import Celery  # type: ignore[import-untyped]
@@ -33,6 +32,7 @@ from loom.core.job.config import JobSettings
 from loom.core.job.envelope import wire_job_name
 from loom.core.use_case.factory import UseCaseFactory
 from loom.core.use_case.markers import Caller
+from tests.helpers.celery import CeleryBroker
 from tests.helpers.delegation import acting_as, assert_new_delegation
 from tests.helpers.jobs import CeleryServiceFixture
 
@@ -134,9 +134,12 @@ class TestCeleryJobTask:
     async def test_a_dispatch_and_its_success_link_carry_the_caller_and_its_deadline(
         self, factory: UseCaseFactory, executor: RuntimeExecutor, window: float
     ) -> None:
-        app = MagicMock()
+        broker = CeleryBroker([AcmeProbeJob.__queue__])
         service = CeleryServiceFixture(
-            app, factory=factory, executor=executor, callbacks=DispatchableCallbacks([AcmeCallback])
+            broker.app,
+            factory=factory,
+            executor=executor,
+            callbacks=DispatchableCallbacks([AcmeCallback]),
         )
 
         async def dispatch() -> None:
@@ -147,8 +150,9 @@ class TestCeleryJobTask:
         before = time.time()
         await executor.execute(AcmeRun(dispatch), identity=BOB)
 
-        sent = app.send_task.call_args.kwargs["kwargs"]["identity"]
-        links = [call.kwargs["kwargs"]["identity"] for call in app.signature.call_args_list]
+        (message,) = broker.sent()
+        sent = message.kwargs["identity"]
+        links = [link["kwargs"]["identity"] for link in message.callbacks]
         assert_new_delegation(sent["until"], before, window)
         assert sent == Delegation(BOB, sent["until"]).encoded()
         assert links == [sent]

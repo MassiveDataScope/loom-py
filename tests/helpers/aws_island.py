@@ -34,6 +34,8 @@ class FakeAwsIsland:
         client: The one client every build hands out.
         setup: Called with each mock client built, to script what it answers.
         build_seconds: How long each build takes, to widen a race between threads.
+        make_client: Called with the service and settings of each build to make
+            its client, for a test that needs one fake per build.
 
     Attributes:
         sessions: The profile of every session opened.
@@ -46,21 +48,23 @@ class FakeAwsIsland:
         client: Any = None,
         setup: Callable[[MagicMock], None] | None = None,
         build_seconds: float = 0.0,
+        make_client: Callable[[str, Any], Any] | None = None,
     ) -> None:
         self._client = client
         self._setup = setup
+        self._make_client = make_client
         self._build_seconds = build_seconds
         self.sessions: list[str | None] = []
         self.built: list[tuple[str, Any]] = []
-        self.created: list[MagicMock] = []
+        self.created: list[Any] = []
 
     @property
     def regions_built(self) -> list[tuple[str, str | None]]:
         """The service and region of every client built, in order."""
         return [(service, config.region) for service, config in self.built]
 
-    def created_by_max_attempts(self) -> dict[int, MagicMock]:
-        """The mock client built for each ``max_attempts`` of the settings it was built with."""
+    def created_by_max_attempts(self) -> dict[int, Any]:
+        """The client built for each ``max_attempts`` of the settings it was built with."""
         return {
             config.max_attempts: client
             for (_, config), client in zip(self.built, self.created, strict=True)
@@ -86,6 +90,10 @@ class FakeAwsIsland:
     def _new_client(self, service: str, config: Any) -> Any:
         if self._client is not None:
             return self._client
+        if self._make_client is not None:
+            made = self._make_client(service, config)
+            self.created.append(made)
+            return made
         client = MagicMock(name=f"{service}-client")
         self.created.append(client)
         if self._setup is not None:

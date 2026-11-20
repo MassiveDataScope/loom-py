@@ -7,15 +7,17 @@ from collections.abc import Awaitable, Callable
 from pathlib import Path
 from typing import Any, cast
 
+from loom.celery.runner import _CeleryAsyncRuntime, _make_callback_task, _make_job_task
 from loom.celery.service import CeleryJobTransport
 from loom.composition import AppConfig, Application, Project, Recipe
 from loom.core.config import ConfigContext
 from loom.core.di.container import LoomContainer
 from loom.core.discovery.base import DiscoveryResult
 from loom.core.engine.compiler import UseCaseCompiler
+from loom.core.engine.events import EventKind, RuntimeEvent
 from loom.core.engine.executor import RuntimeExecutor
 from loom.core.engine.metrics import MetricsAdapter
-from loom.core.job.callback import ANY_CALLBACKS, DispatchableCallbacks
+from loom.core.job.callback import ANY_CALLBACKS, CallbackOutcome, DispatchableCallbacks
 from loom.core.job.config import JobSettings
 from loom.core.job.delivery import JobDelivery
 from loom.core.job.inline import InlineJobTransport
@@ -30,8 +32,10 @@ from loom.core.use_case.factory import UseCaseFactory, main_repository
 from loom.core.use_case.kinds import declare_kinds
 from loom.jobs.aws.queue import QueueConfig
 from loom.jobs.aws.sqs import SQSConfig, SQSJobTransport
+from tests.helpers.celery import BrokerMessage, CeleryBroker
 from tests.helpers.composition import composition_project
 
+DEFAULT_QUEUE = "celery"
 BROKER = {"broker_url": "memory://", "result_backend": "cache+memory://"}
 SQS_URL = "https://sqs.eu-west-1.amazonaws.com/123456789012/emails"
 SQS_FIFO_URL = "https://sqs.eu-west-1.amazonaws.com/123456789012/orders.fifo"
@@ -42,6 +46,21 @@ class EmailJob(Job[str]):
 
     def execute(self) -> str:
         return "email"
+
+
+class RecordingMetrics:
+    """A metrics adapter that keeps every runtime event it receives."""
+
+    def __init__(self) -> None:
+        self.events: list[RuntimeEvent] = []
+
+    @property
+    def kinds(self) -> list[EventKind]:
+        """The kind of each event received, in order."""
+        return [event.kind for event in self.events]
+
+    def on_event(self, event: RuntimeEvent) -> None:
+        self.events.append(event)
 
 
 class JobsAdapter:
@@ -213,3 +232,106 @@ class JobKernel:
 
     def invoke_envelope(self) -> Callable[[JobDelivery], Awaitable[Any]]:
         return EnvelopeInvocation(self.factory, self.executor, ObservabilityRuntime.noop())
+
+
+class CeleryWorker:
+    """The Celery tasks of jobs and callbacks over the in-memory broker, run as a worker runs them.
+
+    A retry or a failure callback a task publishes lands in :attr:`broker`.
+
+    Args:
+        settings: The job settings the tasks are built with.
+        initialized: Whether the async runtime is up, as in a forked worker;
+            without it only an eager request runs.
+
+    Attributes:
+        broker: The broker every task of this worker publishes to.
+        kernel: The factory and executor the tasks run jobs with.
+        runtime: The per-process async runtime.
+        metrics: The events the job tasks emitted.
+    """
+
+    TASK_ID = "task-1"
+
+    def __init__(self, *, settings: JobSettings | None = None, initialized: bool = True) -> None:
+        self.broker = CeleryBroker([DEFAULT_QUEUE])
+        self.kernel = JobKernel()
+        self.runtime = _CeleryAsyncRuntime()
+        self.metrics = RecordingMetrics()
+        self._settings = settings or JobSettings()
+        if initialized:
+            self.runtime.initialize()
+
+    def close(self) -> None:
+        """Shut the async runtime down."""
+        self.runtime.shutdown()
+
+    def published(self, task_prefix: str) -> list[BrokerMessage]:
+        """The messages published so far for the tasks whose name starts with *task_prefix*.
+
+        A retry is a job message published again; a failure callback is the message of its task.
+        """
+        return [m for m in self.broker.sent() if m.task.startswith(task_prefix)]
+
+    def task(
+        self, job_type: type[Job[Any]], observability_runtime: ObservabilityRuntime | None = None
+    ) -> Any:
+        """Register *job_type* and return its Celery task."""
+        self.kernel.factory.register(job_type)
+        return _make_job_task(
+            self.broker.app,
+            job_type,
+            self.kernel.factory,
+            self.kernel.executor,
+            self.runtime,
+            self.metrics,
+            observability_runtime,
+            settings=self._settings,
+        )
+
+    def callback_task(self, callback_type: type[Any], outcome: CallbackOutcome) -> Any:
+        """Register *callback_type* and return the task calling its hook for *outcome*."""
+        self.kernel.factory.register(callback_type)
+        return _make_callback_task(
+            self.broker.app, callback_type, outcome, self.kernel.factory, self.runtime
+        )
+
+    def run(
+        self,
+        job_type: type[Job[Any]],
+        *,
+        attempt: int = 1,
+        eager: bool | None = False,
+        observability_runtime: ObservabilityRuntime | None = None,
+        **kwargs: Any,
+    ) -> Any:
+        """Run one delivery of *job_type* as the worker does and return its result.
+
+        Args:
+            job_type: The job the task runs.
+            attempt: The attempt the request carries; postponements add retries to it.
+            eager: Whether the request is eager; ``None`` for a request that does not say.
+            observability_runtime: What opens the job's span.
+            **kwargs: The task's keyword arguments: ``payload``, ``params``,
+                ``trace_id``, ``identity``, ``postponements``, ``failure_callback``.
+
+        Returns:
+            What the job returned.
+
+        Raises:
+            Retry: The task retried: its message is in :attr:`broker`.
+            Exception: The error that ended the task.
+        """
+        task = self.task(job_type, observability_runtime)
+        task.push_request(
+            id=self.TASK_ID,
+            retries=attempt - 1 + kwargs.get("postponements", 0),
+            kwargs=kwargs,
+            is_eager=eager,
+            called_directly=False,
+            delivery_info={"routing_key": DEFAULT_QUEUE},
+        )
+        try:
+            return task.run(**kwargs)
+        finally:
+            task.pop_request()

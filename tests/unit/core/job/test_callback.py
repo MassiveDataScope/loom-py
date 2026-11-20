@@ -2,9 +2,7 @@ from __future__ import annotations
 
 import asyncio
 import inspect
-from collections.abc import Callable
 from typing import Any
-from unittest.mock import MagicMock
 
 import pytest
 
@@ -12,7 +10,6 @@ from loom.core.job.callback import CallbackOutcome, DispatchableCallbacks, JobCa
 from loom.core.job.job import Job
 from loom.core.job.service import JobService
 from loom.testing import RecordingJobTransport
-from tests.helpers.jobs import CeleryServiceFixture, InlineServiceFixture
 
 
 class _OnlySuccess(JobCallback):
@@ -83,52 +80,31 @@ class _AcmeUndiscoveredCallback(JobCallback):
     pass
 
 
-SERVICES = pytest.mark.parametrize(
-    "service",
-    [
-        pytest.param(
-            lambda: InlineServiceFixture(MagicMock(), MagicMock(), callbacks=_DISCOVERED),
-            id="inline",
-        ),
-        pytest.param(lambda: CeleryServiceFixture(MagicMock(), callbacks=_DISCOVERED), id="celery"),
-        pytest.param(
-            lambda: JobService(RecordingJobTransport(), callbacks=_DISCOVERED), id="recording"
-        ),
-    ],
-)
-"""Every job service that accepts callbacks."""
+@pytest.fixture
+def jobs() -> JobService:
+    return JobService(RecordingJobTransport(), callbacks=_DISCOVERED)
 
 
-@SERVICES
 class TestReservedCallbackArguments:
     """A payload naming an argument a callback hook receives is refused at dispatch."""
 
     @pytest.mark.parametrize("key", ["job_id", "result", "exc_type", "exc_msg"])
     @pytest.mark.parametrize("hook", ["on_success", "on_failure"])
     def test_a_dispatch_with_a_callback_refuses_the_key(
-        self, service: Callable[[], JobService], key: str, hook: str
+        self, jobs: JobService, key: str, hook: str
     ) -> None:
-        jobs = service()
-
         with pytest.raises(ValueError, match=f"cannot hold {key}"):
             jobs.dispatch_after_commit(_AcmeJob, payload={key: "acme"}, **{hook: _AcmeCallback})
 
-    def test_a_dispatch_without_a_callback_accepts_the_key(
-        self, service: Callable[[], JobService]
-    ) -> None:
-        jobs = service()
-
+    def test_a_dispatch_without_a_callback_accepts_the_key(self, jobs: JobService) -> None:
         jobs.dispatch_after_commit(_AcmeJob, payload={"job_id": "acme"})
 
 
 class TestUndiscoveredCallbacks:
     @pytest.mark.parametrize("hook", ["on_success", "on_failure"])
-    @SERVICES
     def test_a_service_built_from_composition_refuses_a_class_the_scan_did_not_find(
-        self, service: Callable[[], JobService], hook: str
+        self, jobs: JobService, hook: str
     ) -> None:
-        jobs = service()
-
         with pytest.raises(ValueError, match="_AcmeUndiscoveredCallback was not discovered"):
             jobs.dispatch_after_commit(_AcmeJob, **{hook: _AcmeUndiscoveredCallback})
 

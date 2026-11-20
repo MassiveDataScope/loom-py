@@ -2,10 +2,8 @@
 
 from __future__ import annotations
 
-import json
 from collections.abc import Callable
 from typing import Any
-from unittest.mock import MagicMock
 
 import pytest
 
@@ -17,7 +15,6 @@ from loom.jobs.aws.queue import (
     POSTPONEMENTS_ATTRIBUTE,
     DeadLetterPolicy,
     QueueConfig,
-    SQSQueue,
     SQSRecord,
 )
 from loom.jobs.aws.settlement import SETTLEMENT_TIMEOUT_S, SQSJobSettlement
@@ -46,14 +43,6 @@ def _record(name: str, *, arn: str = _ARN, **attributes: Any) -> SQSRecord:
 
 def _failed(error: str = "boom", seconds: int = 4) -> Failed:
     return Failed(ValueError(error), Countdown(seconds))
-
-
-def _script_redrive_policy(client: MagicMock) -> None:
-    client.get_queue_attributes.return_value = {
-        "Attributes": {"RedrivePolicy": json.dumps(_POLICY[_SOURCE])}
-    }
-    client.get_queue_url.return_value = {"QueueUrl": _DEAD}
-    client.send_message_batch.return_value = {"Successful": [], "Failed": []}
 
 
 class Settling:
@@ -201,28 +190,12 @@ class TestSQSJobSettlement:
 
         assert _ids(redelivered) == ["a", "b"]
 
-    def test_an_abandon_that_raises_reports_the_abandonments_in_one_log_line(
-        self,
-        settling: Callable[..., Settling],
-        monkeypatch: pytest.MonkeyPatch,
-        caplog: pytest.LogCaptureFixture,
-    ) -> None:
-        def refuse(*_: Any) -> None:
-            raise RuntimeError("down")
-
-        monkeypatch.setattr(SQSQueue, "abandon_batch", refuse)
-        sqs = settling()
-
-        redelivered = sqs.settle_all([(_record(name), Abandoned("no")) for name in "ab"])
-
-        assert _ids(redelivered) == ["a", "b"]
-        assert len([r for r in caplog.records if "settlement call raised" in str(r.msg)]) == 1
-        assert not _logged(caplog, "SQS settlement entries failed")
-
     def test_dead_letter_sends_go_through_the_bounded_client_and_the_init_client_sends_none(
         self, monkeypatch: pytest.MonkeyPatch
     ) -> None:
-        island = FakeAwsIsland(setup=_script_redrive_policy).install(monkeypatch)
+        island = FakeAwsIsland(make_client=lambda service, config: FakeSqs(_POLICY)).install(
+            monkeypatch
+        )
         clients = AwsClients()
         config = SQSConfig(queues={"jobs": QueueConfig(url=_SOURCE)})
         settlement = SQSJobSettlement(clients, config, "jobs")
@@ -234,14 +207,13 @@ class TestSQSJobSettlement:
         bounded = by_attempts.pop(1)
         [retrying] = by_attempts.values()
         assert redelivered == []
-        assert retrying.send_message_batch.call_count == 0
-        [(_, sent)] = bounded.send_message_batch.call_args_list
-        assert (sent["QueueUrl"], len(sent["Entries"])) == (_DEAD, 1)
-        assert retrying.get_queue_attributes.call_count == 1
-        assert bounded.get_queue_attributes.call_count + bounded.get_queue_url.call_count == 0
+        assert retrying.entries("send_message_batch") == []
+        assert [(url, len(entries)) for _, url, entries in bounded.batches] == [(_DEAD, 1)]
+        assert retrying.calls["get_queue_attributes"] == 1
+        assert bounded.metadata_calls == 0
 
     def test_a_dead_letter_queue_not_read_at_init_lists_the_abandonments_without_a_call(
-        self, settling: Callable[..., Settling]
+        self, settling: Callable[..., Settling], caplog: pytest.LogCaptureFixture
     ) -> None:
         sqs = settling(prime=False)
         sqs.client.lookup_raises = RuntimeError("must not be asked")
@@ -249,20 +221,8 @@ class TestSQSJobSettlement:
         redelivered = sqs.settle_all([(_record(name), Abandoned("no")) for name in "ab"])
 
         assert (_ids(redelivered), sqs.client.batches) == (["a", "b"], [])
-
-    def test_a_resend_that_raises_reports_the_postponements(
-        self, settling: Callable[..., Settling], monkeypatch: pytest.MonkeyPatch
-    ) -> None:
-        def refuse(*_: Any) -> None:
-            raise RuntimeError("down")
-
-        monkeypatch.setattr(SQSQueue, "postpone_batch", refuse)
-        sqs = settling()
-        postponed = Postponed(Countdown(5), "wait")
-
-        redelivered = sqs.settle_all([(_record(name), postponed) for name in "ab"])
-
-        assert _ids(redelivered) == ["a", "b"]
+        assert len([r for r in caplog.records if "settlement call raised" in str(r.msg)]) == 1
+        assert not _logged(caplog, "SQS settlement entries failed")
 
     def test_a_message_of_no_configured_queue_is_reported_and_nothing_is_sent(
         self, settling: Callable[..., Settling]

@@ -14,6 +14,7 @@ from pathlib import Path
 from typing import Any
 
 import boto3
+import msgspec
 import pytest
 import yaml
 from botocore.exceptions import ClientError
@@ -22,12 +23,12 @@ from moto import mock_aws
 from loom.core.config import ConfigError
 from loom.core.connections.aws import AwsClients
 from loom.core.identity import Identity
-from loom.core.job.envelope import decode_job_envelope
+from loom.core.job.envelope import JobEnvelope, decode_job_envelope
 from loom.core.job.job import Job
 from loom.core.plugins.optional import MissingExtraError
 from loom.jobs.aws.sqs import SQSConfig
 from loom.serverless.aws.lambda_.handler import LambdaAdapter
-from loom.testing import TEST_QUEUE, LambdaWorker, Override
+from loom.testing import TEST_QUEUE, LambdaWorker, Override, make
 from tests.helpers.aws import ACCOUNT, OTHER_REGION, REGION, is_moto_answering
 
 _JOBS = """
@@ -68,6 +69,17 @@ _QUEUE_REGION = TEST_QUEUE["url"].split(".")[1]
 _FIFO_URL = f"https://sqs.{_QUEUE_REGION}.amazonaws.com/{ACCOUNT}/loom-orders.fifo"
 
 Config = Callable[..., str]
+FAILING = {"marker": "fail"}
+
+
+@pytest.fixture
+def body() -> Callable[..., str]:
+    """The wire body of a job message: the envelope of *job* with the fields a test names."""
+
+    def build(job: str, **fields: Any) -> str:
+        return msgspec.json.encode(make(JobEnvelope, job=job, task_id=None, **fields)).decode()
+
+    return build
 
 
 @pytest.fixture
@@ -207,11 +219,14 @@ class TestDelivery:
             (dead,) = _messages(worker, worker.dead_letter_url)
         assert (result, dead["Body"]) == (_NOTHING, "{")
 
-    def test_redeliver_takes_up_to_the_batch_size_of_the_trigger(self, config: Config) -> None:
+    def test_redeliver_takes_up_to_the_batch_size_of_the_trigger(
+        self, config: Config, body: Callable[..., str]
+    ) -> None:
         with _open(config(batch_size=2)) as worker:
             for _ in range(3):
-                body = '{"job": "SendEmailJob", "params": {"marker": "fail"}}'
-                worker.sqs.send_message(QueueUrl=worker.queue_url, MessageBody=body)
+                worker.sqs.send_message(
+                    QueueUrl=worker.queue_url, MessageBody=body("SendEmailJob", params=FAILING)
+                )
 
             sizes = [len(worker.redeliver()["batchItemFailures"]) for _ in range(2)]
 
@@ -253,13 +268,13 @@ class TestRecords:
         assert dead["Attributes"]["MessageGroupId"] == hashlib.sha256(b"c-7").hexdigest()
 
     def test_a_record_carries_the_message_attributes_to_the_dead_letter_queue(
-        self, config: Config
+        self, config: Config, body: Callable[..., str]
     ) -> None:
         trace = {"DataType": "String", "StringValue": "trace-9"}
         with _open(config("redrive")) as worker:
             worker.sqs.send_message(
                 QueueUrl=worker.queue_url,
-                MessageBody='{"job": "FlakyEmailJob"}',
+                MessageBody=body("FlakyEmailJob"),
                 MessageAttributes={"trace": trace},
             )
             for _ in range(3):
@@ -275,21 +290,25 @@ class TestRecords:
             (message,) = _messages(worker, worker.queue_url)
         assert decode_job_envelope(message["Body"]).identity["subject"] == "alice"  # type: ignore[index]
 
-    def test_redeliver_takes_ten_messages_by_default(self, config: Config) -> None:
+    def test_redeliver_takes_ten_messages_by_default(
+        self, config: Config, body: Callable[..., str]
+    ) -> None:
         with _open(config()) as worker:
             for _ in range(12):
-                body = '{"job": "SendEmailJob", "params": {"marker": "fail"}}'
-                worker.sqs.send_message(QueueUrl=worker.queue_url, MessageBody=body)
+                worker.sqs.send_message(
+                    QueueUrl=worker.queue_url, MessageBody=body("SendEmailJob", params=FAILING)
+                )
 
             assert len(worker.redeliver()["batchItemFailures"]) == 10
 
     def test_redeliver_receives_at_most_ten_messages_whatever_the_batch_size(
-        self, config: Config
+        self, config: Config, body: Callable[..., str]
     ) -> None:
         with _open(config(batch_size=50)) as worker:
             for _ in range(12):
-                body = '{"job": "SendEmailJob", "params": {"marker": "fail"}}'
-                worker.sqs.send_message(QueueUrl=worker.queue_url, MessageBody=body)
+                worker.sqs.send_message(
+                    QueueUrl=worker.queue_url, MessageBody=body("SendEmailJob", params=FAILING)
+                )
 
             assert len(worker.redeliver()["batchItemFailures"]) == 10
 

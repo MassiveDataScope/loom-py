@@ -3,13 +3,16 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
-from typing import TYPE_CHECKING, Any
+from typing import Annotated, Any
 
-from loom.core.job.policy import RetryPolicy
+import msgspec
 
-if TYPE_CHECKING:
-    from loom.core.job.envelope import JobEnvelope
-    from loom.core.job.job import Job
+from loom.core.job.envelope import JobEnvelope
+from loom.core.job.job import Job
+from loom.core.job.policy import MIN_ATTEMPTS, RetryPolicy
+
+MIN_POSTPONEMENTS = 0
+"""A delivery that was never postponed has none."""
 
 
 @dataclass(frozen=True, slots=True)
@@ -27,14 +30,23 @@ class JobDelivery:
         postponements: How many times the job asked to run again.
         policy: The resolved retry policy of the job.
         timeout_s: The seconds the run may take, or ``None`` for no limit.
+
+    Raises:
+        ValueError: When *attempt* is below 1 or *postponements* is negative.
     """
 
     job_type: type[Job[Any]]
     envelope: JobEnvelope
-    attempt: int
-    postponements: int
+    attempt: Annotated[int, msgspec.Meta(ge=MIN_ATTEMPTS)]
+    postponements: Annotated[int, msgspec.Meta(ge=MIN_POSTPONEMENTS)]
     policy: RetryPolicy
     timeout_s: float | None = None
+
+    def __post_init__(self) -> None:
+        if self.attempt < MIN_ATTEMPTS:
+            raise ValueError(f"attempt must be at least {MIN_ATTEMPTS}, not {self.attempt}")
+        if self.postponements < MIN_POSTPONEMENTS:
+            raise ValueError(f"postponements cannot be negative, not {self.postponements}")
 
     @property
     def task_id(self) -> str | None:

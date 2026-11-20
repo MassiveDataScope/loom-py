@@ -31,7 +31,8 @@
   dispatches and runs jobs in process; one built without a factory and executor
   raises `NotImplementedError` from `run()` instead of `RuntimeError`.
   `loom.testing` also exports `JobTestData` and `NoopJob` to build valid
-  envelopes, deliveries and dispatches.
+  envelopes, deliveries and dispatches through `make`, and a `DispatchedJob`
+  carries the `task_id` and `trace_id` of its dispatch.
 - **errors:** `LoomError.retryable` is `LoomError.is_retryable`, in every
   subclass (`PostCommitError` included). **Behaviour change:** the job runner
   asks only loom errors whether a failure is retryable, and every foreign

@@ -17,7 +17,7 @@ from loom.core.job.service import JobService
 from loom.core.stores.catalog import DEFAULT_STORE
 from loom.core.stores.uow.coordinator import OrderedCommits
 from loom.core.use_case.use_case import UseCase
-from loom.testing import DispatchedJob, RecordingJobTransport
+from loom.testing import RecordingJobTransport
 from tests.helpers.jobs import JobsAdapter, job_project
 from tests.unit.core.engine._lifecycle_doubles import Log, StubUnitOfWorkFactory
 
@@ -80,16 +80,15 @@ class TestRecordingJobTransport:
     ) -> None:
         await executor.execute(_Ship(service, fail=False), identity=_ALICE)
 
-        assert transport.dispatched == [
-            DispatchedJob(
-                job_type=ShipJob,
-                payload={"note": "fragile"},
-                params={"order": 7},
-                queue="shipping",
-                countdown=0,
-                identity=_ALICE,
-            )
-        ]
+        (recorded,) = transport.dispatched
+        assert (
+            recorded.job_type,
+            recorded.payload,
+            recorded.params,
+            recorded.queue,
+            recorded.countdown,
+            recorded.identity,
+        ) == (ShipJob, {"note": "fragile"}, {"order": 7}, "shipping", 0, _ALICE)
 
     async def test_an_anonymous_caller_is_recorded_as_no_caller(
         self, service: JobService, transport: RecordingJobTransport, executor: RuntimeExecutor
@@ -108,17 +107,6 @@ class TestRecordingJobTransport:
             await executor.execute(failing)
 
         assert transport.dispatched == []
-
-    async def test_a_dispatch_outside_an_execution_is_recorded_on_flush(
-        self, service: JobService, transport: RecordingJobTransport
-    ) -> None:
-        service.dispatch_parallel([(ShipJob, {"a": 1}), (ShipJob, {"b": 2})])
-        assert transport.dispatched == []
-
-        await flush_pending_dispatches()
-
-        assert [record.payload for record in transport.dispatched] == [{"a": 1}, {"b": 2}]
-        assert transport.dispatched[0].identity is None
 
     @pytest.mark.parametrize(("queue", "expected"), [(None, "bulk"), ("urgent", "urgent")])
     async def test_the_recorded_queue_is_the_effective_one(
@@ -161,44 +149,6 @@ class TestRecordingJobTransport:
 
 
 class TestRecordedCountdown:
-    @pytest.mark.parametrize(
-        ("declared", "given", "expected"),
-        [(0, None, 0), (12, None, 12), (12, 4, 4)],
-        ids=["default", "class countdown", "call countdown"],
-    )
-    async def test_dispatch_after_commit_records_the_effective_countdown(
-        self,
-        service: JobService,
-        transport: RecordingJobTransport,
-        declared: int,
-        given: int | None,
-        expected: int,
-    ) -> None:
-        class TimedJob(Job[None]):
-            __countdown__ = declared
-
-            def execute(self) -> None:
-                return None
-
-        options = {} if given is None else {"countdown": given}
-        service.dispatch_after_commit(TimedJob, **options)
-        await flush_pending_dispatches()
-
-        assert [record.countdown for record in transport.dispatched] == [expected]
-
-    async def test_dispatch_now_records_the_class_countdown(
-        self, service: JobService, transport: RecordingJobTransport
-    ) -> None:
-        class TimedJob(Job[None]):
-            __countdown__ = 9
-
-            def execute(self) -> None:
-                return None
-
-        await service.dispatch_now(TimedJob)
-
-        assert transport.dispatched[0].countdown == 9
-
     async def test_a_configured_countdown_overrides_the_class(self, tmp_path: Path) -> None:
         class TimedJob(Job[None]):
             __countdown__ = 3

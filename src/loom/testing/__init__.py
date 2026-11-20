@@ -90,9 +90,14 @@ def __getattr__(name: str) -> Any:
 
 
 def _data_export(name: str) -> Any:
-    """Import one ``data`` export, naming the ``testing`` extra when polyfactory is missing."""
+    """Import one ``data`` export, naming the ``testing`` extra when polyfactory is missing.
+
+    The area factories register here, once, so ``make`` of any loom type is valid
+    whichever module reached it.
+    """
     try:
         data = importlib.import_module("loom.testing.data")
+        importlib.import_module("loom.testing.job_factories")
     except ImportError as exc:
         raise ImportError(
             f"{name} requires polyfactory. Install loom-kernel[testing] to build test data."
