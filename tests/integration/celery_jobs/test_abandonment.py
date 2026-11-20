@@ -3,7 +3,6 @@
 from __future__ import annotations
 
 from collections.abc import Callable
-from unittest.mock import MagicMock
 
 import pytest
 from celery import signals  # type: ignore[import-untyped]
@@ -12,6 +11,7 @@ from celery.worker.request import Request  # type: ignore[import-untyped]
 from loom.core.job.envelope import wire_job_name
 from loom.core.job.job import Job
 from loom.core.job.outcome import JobAbandonment
+from tests.helpers.celery import CeleryBroker
 from tests.integration.celery_jobs.conftest import JSON, Workbench
 from tests.integration.celery_jobs.doubles import ABANDONMENT, FAILURE_CALLBACK, AbandonedJob
 
@@ -22,8 +22,7 @@ class TestEagerAbandonment:
     ) -> None:
         bench = workbench("json")
         task: Job[None] = bench.job_task(AbandonedJob)
-        sent = MagicMock()
-        monkeypatch.setattr(bench.app, "send_task", sent)
+        broker = CeleryBroker([bench.queue], bench.app)
         monkeypatch.setitem(bench.app.conf, "task_always_eager", True)
 
         result = task.apply(kwargs={"failure_callback": "on-error"})  # type: ignore[attr-defined]
@@ -31,9 +30,8 @@ class TestEagerAbandonment:
         assert result.failed()
         with pytest.raises(JobAbandonment, match=ABANDONMENT):
             result.get()
-        sent.assert_called_once()
-        assert sent.call_args.args == ("on-error",)
-        assert sent.call_args.kwargs["kwargs"]["exc_type"] == "JobAbandonment"
+        (message,) = broker.sent()
+        assert (message.task, message.kwargs["exc_type"]) == ("on-error", "JobAbandonment")
 
 
 @JSON

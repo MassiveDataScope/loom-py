@@ -75,13 +75,14 @@ class CeleryBroker:
     Args:
         queues: The queues to read; each is emptied when the broker is built,
             as the in-memory transport is shared by every application of the process.
+        app: An application on the in-memory broker to read, instead of a new one.
 
     Attributes:
         app: The application a transport sends through.
     """
 
-    def __init__(self, queues: Iterable[str]) -> None:
-        self.app = Celery(broker="memory://", backend="cache+memory://")
+    def __init__(self, queues: Iterable[str], app: Celery | None = None) -> None:
+        self.app = app or Celery(broker="memory://", backend="cache+memory://")
         self._queues = tuple(queues)
         self._left: list[BrokerMessage] = []
         with self.app.connection_for_read() as connection:

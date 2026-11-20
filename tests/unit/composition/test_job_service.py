@@ -7,6 +7,7 @@ already did, in every entry point: the API and the worker alike. Without
 
 from __future__ import annotations
 
+import logging
 import sys
 import warnings
 from dataclasses import replace
@@ -34,7 +35,7 @@ from loom.rest.fastapi.adapter import FastAPIAdapter
 from loom.testing import ManualTimer, Override
 from tests.helpers.composition import ProjectFactory, WithOverrides
 from tests.helpers.jobs import BROKER, InlineServiceFixture, JobsAdapter, job_project
-from tests.helpers.loggers import RecordingLogger
+from tests.helpers.loggers import CapturedLog
 from tests.unit.composition.doubles import AcmePingJob
 
 _CELERY = {"celery": BROKER}
@@ -150,10 +151,9 @@ class _LambdaJobsAdapter(JobsAdapter):
 
 
 @pytest.fixture
-def warnings_logged(monkeypatch: pytest.MonkeyPatch) -> RecordingLogger:
-    log = RecordingLogger()
-    monkeypatch.setattr("loom.composition._jobs._log", log)
-    return log
+def warnings_logged(caplog: pytest.LogCaptureFixture) -> CapturedLog:
+    caplog.set_level(logging.INFO)
+    return CapturedLog(caplog, "loom.composition._jobs")
 
 
 class TestInlineTimer:
@@ -161,7 +161,7 @@ class TestInlineTimer:
         return job_project(tmp_path, {}, "inline").compose(adapter)
 
     def test_the_inline_service_gets_a_timer_closed_with_the_application(
-        self, tmp_path: Path, warnings_logged: RecordingLogger
+        self, tmp_path: Path, warnings_logged: CapturedLog
     ) -> None:
         application = self._compose(tmp_path, JobsAdapter(AcmePingJob))
 
@@ -194,7 +194,7 @@ class TestInlineTimer:
         assert handle.wait() == await service.run(AcmePingJob)
 
     async def test_a_timer_bound_in_the_container_replaces_it(
-        self, tmp_path: Path, warnings_logged: RecordingLogger
+        self, tmp_path: Path, warnings_logged: CapturedLog
     ) -> None:
         timer = ManualTimer()
         application = self._compose(
@@ -211,7 +211,7 @@ class TestInlineTimer:
         assert [event for event, _ in warnings_logged.calls] == ["Job retry policies"]
 
     async def test_lambda_composes_no_timer_and_refuses_a_delay(
-        self, tmp_path: Path, warnings_logged: RecordingLogger
+        self, tmp_path: Path, warnings_logged: CapturedLog
     ) -> None:
         application = self._compose(tmp_path, _LambdaJobsAdapter(AcmePingJob))
         service = application.kernel.container.resolve(JobService)
@@ -240,14 +240,14 @@ class TestRetryPolicyLog:
     """The line is logged where a runner applies the policy; a producer applies none."""
 
     def test_a_celery_producer_logs_no_policy_line(
-        self, tmp_path: Path, warnings_logged: RecordingLogger
+        self, tmp_path: Path, warnings_logged: CapturedLog
     ) -> None:
         job_project(tmp_path, _CELERY, "celery").compose(JobsAdapter(AcmePingJob))
 
         assert warnings_logged.named("Job retry policies") == []
 
     def test_an_inline_line_lists_only_the_jobs_the_inline_runner_serves(
-        self, tmp_path: Path, warnings_logged: RecordingLogger
+        self, tmp_path: Path, warnings_logged: CapturedLog
     ) -> None:
         config = {"celery": {**BROKER, "queues": ["default", "emails"]}}
 
@@ -258,7 +258,7 @@ class TestRetryPolicyLog:
         assert [entry["job"] for entry in line["jobs"]] == ["AcmePingJob"]
 
     def test_an_app_whose_jobs_all_go_to_celery_logs_no_inline_line(
-        self, tmp_path: Path, warnings_logged: RecordingLogger
+        self, tmp_path: Path, warnings_logged: CapturedLog
     ) -> None:
         config = {"celery": {**BROKER, "queues": ["default", "emails"]}}
 
