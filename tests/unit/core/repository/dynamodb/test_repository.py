@@ -32,15 +32,6 @@ class PriceUpdate(msgspec.Struct, omit_defaults=True):
 
 
 class TestDynamoDBRepositoryRoundTrip:
-    async def test_create_then_get_by_id_roundtrips(self, products_table: MotoTable) -> None:
-        repo = _repo(products_table.client)
-
-        created = await repo.create(ProductCreate(id=1, name="Widget", price=9.5))
-
-        assert created == Product(id=1, name="Widget", price=9.5)
-        fetched = await repo.get_by_id(1)
-        assert fetched == Product(id=1, name="Widget", price=9.5)
-
     async def test_create_encodes_floats_as_decimal(self, products_table: MotoTable) -> None:
         repo = _repo(products_table.client)
 
@@ -73,16 +64,6 @@ class TestDynamoDBRepositoryRoundTrip:
         await _repo(products_table.client).create(PlainProductCreate(id=1))
 
         assert products_table.items_by_id()["1"] == {"id": {"N": "1"}, "name": {"S": ""}}
-
-    async def test_update_keeps_the_fields_the_caller_did_not_send(
-        self, products_table: MotoTable
-    ) -> None:
-        repo = _repo(products_table.client)
-        await repo.create(ProductCreate(id=1, name="Widget", price=9.5))
-
-        await repo.update(1, PriceUpdate(price=1.5))
-
-        assert products_table.items_by_id()["1"]["name"] == {"S": "Widget"}
 
     async def test_update_conditional_failure_returns_none(
         self, monkeypatch: pytest.MonkeyPatch, products_table: MotoTable

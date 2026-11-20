@@ -12,6 +12,7 @@ from loom.core.stores.catalog import (
     load_catalog,
     store_of,
 )
+from tests.helpers.store_test_data import StoreTestData
 
 
 class DefaultRecord(BaseModel):
@@ -177,19 +178,7 @@ class TestStoreCatalog:
             __database__ = "x"
             id: int = ColumnField(Integer, primary_key=True)
 
-        catalog = load_catalog(
-            ConfigContext.from_dict(
-                {
-                    "stores": {
-                        "default": {
-                            "backend": "mongo",
-                            "url": "mongodb://localhost",
-                            "database": "test",
-                        }
-                    }
-                }
-            )
-        )
+        catalog = StoreTestData().with_mongo_store("default").catalog()
 
         with pytest.raises(ConfigError) as error:
             catalog.models_by_store([LegacyRecord])
@@ -205,19 +194,8 @@ class TestStoreCatalog:
         assert store_of(AuditRecord) == StoreKey("audit")
 
     def test_models_by_store_groups_default_first_and_preserves_model_order(self) -> None:
-        catalog = load_catalog(
-            ConfigContext.from_dict(
-                {
-                    "stores": {
-                        "audit": {
-                            "backend": "mongo",
-                            "url": "mongodb://localhost",
-                            "database": "test",
-                        },
-                        "default": {"backend": "sqlalchemy"},
-                    }
-                }
-            )
+        catalog = (
+            StoreTestData().with_mongo_store("audit").with_store("default", "sqlalchemy").catalog()
         )
 
         groups = catalog.models_by_store([AuditRecord, DefaultRecord, SecondDefaultRecord])
@@ -231,28 +209,12 @@ class TestStoreCatalog:
     def test_models_by_store_keeps_an_undeclared_default_and_drops_a_store_without_models(
         self,
     ) -> None:
-        catalog = load_catalog(
-            ConfigContext.from_dict(
-                {"stores": {"audit": {"backend": "mongo", "url": "mongodb://localhost"}}}
-            )
-        )
+        catalog = StoreTestData().with_store("audit", "mongo", url="mongodb://localhost").catalog()
 
         assert catalog.models_by_store([DefaultRecord]) == {DEFAULT_STORE: (DefaultRecord,)}
 
     def test_model_declaring_an_unknown_store_names_model_and_store(self) -> None:
-        catalog = load_catalog(
-            ConfigContext.from_dict(
-                {
-                    "stores": {
-                        "default": {
-                            "backend": "mongo",
-                            "url": "mongodb://localhost",
-                            "database": "test",
-                        }
-                    }
-                }
-            )
-        )
+        catalog = StoreTestData().with_mongo_store("default").catalog()
 
         with pytest.raises(ConfigError) as error:
             catalog.models_by_store([AuditRecord])
@@ -261,9 +223,7 @@ class TestStoreCatalog:
         assert "audit" in str(error.value)
 
     def test_a_store_serving_one_table_from_two_models_is_refused(self) -> None:
-        catalog = load_catalog(
-            ConfigContext.from_dict({"stores": {"default": {"backend": "sqlalchemy"}}})
-        )
+        catalog = StoreTestData().with_store("default", "sqlalchemy").catalog()
 
         with pytest.raises(
             ConfigError,
@@ -272,15 +232,11 @@ class TestStoreCatalog:
             catalog.models_by_store([DefaultRecord, DefaultRecordCopy])
 
     def test_two_stores_may_serve_one_table_name(self) -> None:
-        catalog = load_catalog(
-            ConfigContext.from_dict(
-                {
-                    "stores": {
-                        "default": {"backend": "sqlalchemy"},
-                        "audit": {"backend": "sqlalchemy"},
-                    }
-                }
-            )
+        catalog = (
+            StoreTestData()
+            .with_store("default", "sqlalchemy")
+            .with_store("audit", "sqlalchemy")
+            .catalog()
         )
 
         groups = catalog.models_by_store([DefaultRecord, AuditRecordOfDefaultTable])

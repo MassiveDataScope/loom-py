@@ -413,7 +413,6 @@ extend-immutable-calls = [
 "tests/unit/core/engine/test_metrics.py" = ["TID251"]
 "tests/unit/core/engine/test_post_commit_publish.py" = ["TID251"]
 "tests/unit/core/errors/test_errors.py" = ["TID251"]
-"tests/unit/core/persistence/test_registry.py" = ["TID251"]
 "tests/unit/core/repository/dynamodb/test_backend.py" = ["TID251"]
 "tests/unit/core/repository/test_record_layout.py" = ["TID251"]
 "tests/unit/etl/backends/test_upsert_delete_flag_support.py" = ["TID251"]

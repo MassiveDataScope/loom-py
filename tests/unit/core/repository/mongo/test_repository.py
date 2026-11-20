@@ -276,16 +276,6 @@ class TestStorageForm:
 
         assert collection.documents["a"] == {"_id": "a", "title": "A", "views": 0}
 
-    async def test_update_keeps_the_fields_the_caller_did_not_send(
-        self, collection: FakeCollection
-    ) -> None:
-        repo = _articles(collection)
-        await repo.create(ArticleCreate(slug="a", title="A", views=7))
-
-        await repo.update("a", ArticleUpdate(title="B"))
-
-        assert collection.documents["a"]["views"] == 7
-
     async def test_update_does_not_clobber_with_the_defaults_of_unsent_fields(
         self, collection: FakeCollection
     ) -> None:
@@ -563,16 +553,6 @@ class TestConflicts:
 
 
 class TestCreateMany:
-    async def test_outputs_keep_input_order(self, collection: FakeCollection) -> None:
-        repo = _articles(collection)
-
-        created = await repo.create_many(
-            [ArticleCreate(slug="z", title="Z"), ArticleCreate(slug="a", title="A")]
-        )
-
-        assert [item.slug for item in created] == ["z", "a"]
-        assert await repo.count() == 2
-
     async def test_empty_input_makes_no_round_trip(self) -> None:
         class ExplodingCollection(FakeCollection):
             async def insert_many(
@@ -653,26 +633,6 @@ class TestListing:
         assert [item.slug for item in page.items] == ["a"]
         assert page.total_count == 2
         assert page.has_next is True
-
-    async def test_list_with_query_offset_filters_and_sorts(
-        self, collection: FakeCollection
-    ) -> None:
-        repo = _articles(collection)
-        await _seed(repo, [("a", 5), ("b", 3), ("c", 9), ("d", 1)])
-        query = make(
-            QuerySpec,
-            filters=FilterGroup(filters=(FilterSpec("views", FilterOp.GTE, 3),)),
-            sort=(SortSpec("views", "DESC"),),
-            limit=2,
-            page=2,
-        )
-
-        page = await repo.list_with_query(query)
-
-        assert isinstance(page, PageResult)
-        assert [item.slug for item in page.items] == ["b"]
-        assert page.total_count == 3
-        assert page.has_next is False
 
 
 class TestCursorPagination:

@@ -6,8 +6,7 @@ import os
 import subprocess
 import sys
 from pathlib import Path
-from typing import ClassVar
-from unittest.mock import MagicMock
+from typing import Any, ClassVar, cast
 
 import pytest
 
@@ -130,6 +129,13 @@ class TestResolveBackend:
         assert isinstance(backend, NoneBackend)
 
 
+class _UntouchedContainer:
+    """A container that fails the test as soon as anything reads or calls it."""
+
+    def __getattr__(self, name: str) -> Any:
+        raise AssertionError(f"the registration module touched container.{name}")
+
+
 class TestNoneBackend:
     def _wiring(self) -> StoreWiring:
         backend: StoreBackend = NoneBackend()
@@ -143,11 +149,7 @@ class TestNoneBackend:
         assert wiring.readiness is None
 
     def test_registration_module_registers_nothing(self) -> None:
-        container = MagicMock(spec=LoomContainer)
-
-        self._wiring().repo_registration_module(container)
-
-        assert not container.method_calls
+        self._wiring().repo_registration_module(cast(LoomContainer, _UntouchedContainer()))
 
 
 class TestPersistencePackageImport:
