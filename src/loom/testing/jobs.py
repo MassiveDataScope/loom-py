@@ -95,13 +95,14 @@ class JobTestData:
         postponements: int = 0,
         timeout_s: float | None = None,
     ) -> JobDelivery:
-        """Build one delivery with this test data's policy and envelope."""
-        return JobDelivery(
-            job_type=self.job_type,
-            envelope=envelope or self.envelope(),
+        """Build one delivery, through ``JobOptions.delivery_for``, with this test data's policy."""
+        resolved = JobSettings().of(self.job_type)
+        options = replace(resolved, retry=replace(resolved.retry, policy=self.policy))
+        return options.delivery_for(
+            self.job_type,
+            envelope or self.envelope(),
             attempt=attempt,
             postponements=postponements,
-            policy=self.policy,
             timeout_s=timeout_s,
         )
 
