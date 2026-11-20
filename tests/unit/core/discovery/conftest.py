@@ -38,7 +38,7 @@ def install_distribution(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Dis
     monkeypatch.syspath_prepend(str(tmp_path))
 
     def install(name: str, groups: dict[str, list[str]]) -> Path:
-        dist_info = tmp_path / f"{name}-0.1.0.dist-info"
+        dist_info = tmp_path / f"{name.replace('-', '_')}-0.1.0.dist-info"
         dist_info.mkdir()
         (dist_info / "METADATA").write_text(
             f"Metadata-Version: 2.1\nName: {name}\nVersion: 0.1.0\n"

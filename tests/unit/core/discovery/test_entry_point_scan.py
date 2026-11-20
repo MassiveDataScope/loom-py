@@ -61,8 +61,8 @@ class TestEntryPointScan:
     ) -> None:
         for name in ("acme_plugin_x", "acme_plugin_y"):
             write_package(name, {"models.py": _MODEL.format(name=name.title(), table=name)})
-        install_distribution("first-dist", {"acme.first": ["acme_plugin_y"]})
-        install_distribution("second-dist", {"acme.second": ["acme_plugin_x"]})
+        install_distribution("acme-plugin-y", {"acme.first": ["acme_plugin_y"]})
+        install_distribution("acme-plugin-x", {"acme.second": ["acme_plugin_x"]})
 
         forward = PackageScanner(entry_points=["acme.first", "acme.second"]).discover()
         backward = PackageScanner(entry_points=["acme.second", "acme.first"]).discover()

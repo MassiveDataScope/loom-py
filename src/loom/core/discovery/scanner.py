@@ -138,8 +138,8 @@ class PackageScanner:
         try:
             return importlib.import_module(module_name)
         except Exception as exc:
-            raise ConfigError(f"Cannot import app.packages module {module_name!r}: {exc}") from exc
+            raise ConfigError(f"Cannot import discovered module {module_name!r}: {exc}") from exc
 
     def _raise_import_error(self, module_name: str) -> None:
         cause = sys.exc_info()[1]
-        raise ConfigError(f"Cannot import app.packages module {module_name!r}: {cause}") from cause
+        raise ConfigError(f"Cannot import discovered module {module_name!r}: {cause}") from cause
