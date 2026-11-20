@@ -78,7 +78,7 @@ class JobTestData:
         identity: dict[str, Any] | None = None,
     ) -> JobEnvelope:
         """Build one valid wire envelope using this test data's job and trace."""
-        from loom.testing.data import make
+        from loom.testing import make
 
         return make(
             JobEnvelope,
@@ -99,7 +99,7 @@ class JobTestData:
         timeout_s: float | None = None,
     ) -> JobDelivery:
         """Build one delivery of this test data's job under its policy."""
-        from loom.testing.data import make
+        from loom.testing import make
 
         return make(
             JobDelivery,

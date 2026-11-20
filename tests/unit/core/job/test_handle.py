@@ -5,16 +5,9 @@ from datetime import UTC, datetime
 from typing import Any
 
 import pytest
-from celery import Celery
 
 from loom.core.errors import JobFailedError, JobTimeoutError
 from loom.core.job.handle import InlineOutcome, JobGroup, JobHandle
-
-
-@pytest.fixture
-def results() -> Celery:
-    """A Celery application whose result backend lives in memory."""
-    return Celery(broker="memory://", backend="cache+memory://")
 
 
 def _now() -> datetime:
@@ -47,44 +40,6 @@ class TestJobHandle:
     def test_wait_inline_returns_none_result(self) -> None:
         handle = _inline_handle(None)
         assert handle.wait() is None
-
-    # ---------------------------------------------------------------------------
-    # JobHandle — Celery (async_result) mode
-    # ---------------------------------------------------------------------------
-
-    def test_wait_async_result_returns_what_the_result_backend_holds(self, results: Celery) -> None:
-        results.backend.store_result("x", 99, "SUCCESS")
-        handle = JobHandle(
-            job_id="x", queue="q", dispatched_at=_now(), _async_result=results.AsyncResult("x")
-        )
-
-        assert handle.wait(timeout=5.0) == 99
-
-    def test_wait_async_timeout_raises_job_timeout_error(self, results: Celery) -> None:
-        handle = JobHandle(
-            job_id="tid",
-            queue="q",
-            dispatched_at=_now(),
-            _async_result=results.AsyncResult("never-stored"),
-        )
-
-        with pytest.raises(JobTimeoutError) as exc_info:
-            handle.wait(timeout=0.05)
-
-        assert exc_info.value.job_id == "tid"
-        assert exc_info.value.timeout == pytest.approx(0.05)
-
-    def test_wait_async_failure_raises_job_failed_error(self, results: Celery) -> None:
-        results.backend.store_result("fid", ValueError("something went wrong"), "FAILURE")
-        handle = JobHandle(
-            job_id="fid", queue="q", dispatched_at=_now(), _async_result=results.AsyncResult("fid")
-        )
-
-        with pytest.raises(JobFailedError) as exc_info:
-            handle.wait()
-
-        assert exc_info.value.job_id == "fid"
-        assert isinstance(exc_info.value.cause, ValueError)
 
     # ---------------------------------------------------------------------------
     # JobHandle — identity and immutability

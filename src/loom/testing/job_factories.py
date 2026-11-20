@@ -1,7 +1,8 @@
 """Registered factories for the job types a field rule alone cannot build.
 
-Importing :mod:`loom.testing.data` registers them, so ``make(JobDelivery)`` and
-any type nesting a delivery, an envelope or an outcome build with no declaration.
+Importing ``make`` or ``LoomFactory`` from :mod:`loom.testing` registers them, so
+``make(JobDelivery)`` and any type nesting a delivery, an envelope or an outcome
+build with no declaration.
 """
 
 from __future__ import annotations
