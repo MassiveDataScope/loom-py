@@ -13,11 +13,19 @@ Reach = Literal["read", "write", "both"]
 
 @dataclass(frozen=True, slots=True)
 class ColumnType:
-    """Backend column type descriptor stored inside ``Annotated[...]``."""
+    """Backend column type descriptor stored inside ``Annotated[...]``.
+
+    It is hashable, as ``Annotated`` metadata must be: the keyword options are
+    held as ``(name, value)`` pairs.
+    """
 
     type_name: str
     args: tuple[Any, ...] = ()
-    kwargs: dict[str, Any] = dataclass_field(default_factory=dict)
+    kwargs: tuple[tuple[str, Any], ...] = ()
+
+    def option(self, name: str, default: Any = None) -> Any:
+        """Return the keyword option *name*, or *default* when it is not set."""
+        return dict(self.kwargs).get(name, default)
 
 
 @dataclass(frozen=True, slots=True)

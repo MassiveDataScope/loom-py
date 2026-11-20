@@ -50,16 +50,16 @@ limit: Annotated[int, msgspec.Meta(ge=MIN_PAGE_LIMIT, le=MAX_PAGE_LIMIT)] = 50
 ```
 
 A rule that spans fields (such as `first <= last`) or references another type
-gets a `LoomFactory` subclass next to the type. Registered with
+gets a `SampleFactory` subclass next to the type. Registered with
 `__set_as_default_factory_for_type__`, it also builds that type wherever it is
 nested:
 
 ```python
 from polyfactory.fields import Use
-from loom.testing import LoomFactory
+from loom.testing import SampleFactory
 
 
-class BackoffFactory(LoomFactory[Backoff]):
+class BackoffFactory(SampleFactory[Backoff]):
     __set_as_default_factory_for_type__ = True
 
     first_s = Use(lambda: 1.0)

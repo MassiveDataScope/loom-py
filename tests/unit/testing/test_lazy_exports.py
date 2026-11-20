@@ -37,7 +37,7 @@ _OPTIONAL_EXPORTS = [
     ("HttpTestHarness", "loom.testing.http_harness", "fastapi", "'rest' extra"),
     ("LambdaTestClient", "loom.testing.lambda_http", "httpx", "loom-kernel[lambda,testing]"),
     ("make", "loom.testing.data", "polyfactory", "loom-kernel[testing]"),
-    ("LoomFactory", "loom.testing.data", "polyfactory", "loom-kernel[testing]"),
+    ("SampleFactory", "loom.testing.data", "polyfactory", "loom-kernel[testing]"),
     (
         "RepositoryIntegrationHarness",
         "loom.testing.repository_harness",

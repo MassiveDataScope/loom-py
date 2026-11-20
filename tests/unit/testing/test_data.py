@@ -1,4 +1,4 @@
-"""``make`` and ``LoomFactory`` build valid, deterministic loom instances."""
+"""``make`` and ``SampleFactory`` build valid, deterministic loom instances."""
 
 from __future__ import annotations
 
@@ -9,9 +9,9 @@ import msgspec
 import pytest
 from polyfactory.fields import Use
 
-from loom.core.model import LoomFrozenStruct
+from loom.core.model import BigInteger, LoomFrozenStruct
 from loom.core.stores.repository.query import MAX_PAGE_LIMIT, MIN_PAGE_LIMIT, PageParams
-from loom.testing import LoomFactory, make
+from loom.testing import SampleFactory, make
 
 BUILDS = 200
 
@@ -44,7 +44,7 @@ class Report:
     window: Window
 
 
-class WindowFactory(LoomFactory[Window]):
+class WindowFactory(SampleFactory[Window]):
     __set_as_default_factory_for_type__ = True
 
     first = Use(lambda: 1)
@@ -76,7 +76,7 @@ class TestMake:
 
     def test_annotated_range_is_respected(self):
         ages = [
-            LoomFactory.create_factory(Customer, __random_seed__=seed).build().age
+            SampleFactory.create_factory(Customer, __random_seed__=seed).build().age
             for seed in range(BUILDS)
         ]
 
@@ -84,7 +84,7 @@ class TestMake:
 
     def test_page_params_are_never_invalid(self):
         pages = [
-            LoomFactory.create_factory(PageParams, __random_seed__=seed).build()
+            SampleFactory.create_factory(PageParams, __random_seed__=seed).build()
             for seed in range(BUILDS)
         ]
 
@@ -98,3 +98,56 @@ class TestMake:
     def test_invalid_given_value_still_fails_the_type_rule(self):
         with pytest.raises(ValueError, match="limit must be in"):
             make(PageParams, limit=MAX_PAGE_LIMIT + 1)
+
+
+@dataclass(frozen=True)
+class _Counted:
+    total: Annotated[int, BigInteger]
+
+
+@dataclass(frozen=True)
+class _Registered:
+    value: int
+
+
+class _RegisteredFactory(SampleFactory[_Registered]):
+    __set_as_default_factory_for_type__ = True
+
+
+class TestMakeRegressions:
+    def test_a_field_with_column_metadata_builds(self) -> None:
+        built = make(_Counted, total=7)
+
+        assert built == _Counted(total=7)
+
+    def test_a_registered_factory_builds_the_same_values_on_every_call(self) -> None:
+        first = make(_Registered)
+
+        assert [make(_Registered) for _ in range(3)] == [first, first, first]
+
+
+class _Laddered(msgspec.Struct, frozen=True):
+    name: str
+    ladder: tuple[str, ...] = ()
+
+
+class _LadderedFactory(SampleFactory[_Laddered]):
+    __set_as_default_factory_for_type__ = True
+    __use_defaults__ = True
+
+    ladder = Use(lambda: ("plain",))
+
+
+class _ChildLadderedFactory(_LadderedFactory):
+    pass
+
+
+class TestDeclaredFieldsWinOverDefaults:
+    def test_a_declared_field_wins_over_the_model_default(self) -> None:
+        assert make(_Laddered).ladder == ("plain",)
+
+    def test_a_field_declared_on_a_parent_factory_still_wins(self) -> None:
+        assert _ChildLadderedFactory.build().ladder == ("plain",)
+
+    def test_a_given_value_wins_over_the_declared_field(self) -> None:
+        assert make(_Laddered, ladder=("given",)).ladder == ("given",)

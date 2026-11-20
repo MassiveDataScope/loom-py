@@ -272,6 +272,7 @@ dev = [
     "pydantic>=2.0,<3.0",
     "pre-commit>=3.8.0",
     "poethepoet>=0.32,<1",
+    "polyfactory>=3.5,<4",
     "pyright>=1.1.390,<2.0",
     "pytest>=8.3.0",
     "pytest-asyncio>=0.24.0",
@@ -615,8 +616,11 @@ golden-update = "pytest -q -p no:cacheprovider --update-golden"
 gate = ["lint", "types", "test-fast", "test-int"]
 
 [tool.poe.tasks.types]
-help = "mypy over src; any error fails"
-cmd = "mypy --no-color-output src"
+help = "mypy and pyright over src, as CI's quality gate runs both; any error fails"
+sequence = [
+    { cmd = "mypy --no-color-output src" },
+    { cmd = "pyright src" },
+]
 
 [tool.commitizen]
 name = "cz_conventional_commits"

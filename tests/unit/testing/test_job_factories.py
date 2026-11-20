@@ -10,7 +10,7 @@ from loom.core.job.delivery import JobDelivery
 from loom.core.job.envelope import JobEnvelope, wire_job_name
 from loom.core.job.outcome import Abandoned, Failed, Postponed, Succeeded
 from loom.core.job.policy import Backoff, Countdown, RetryPolicy
-from loom.testing import LoomFactory, NoopJob, make
+from loom.testing import NoopJob, SampleFactory, make
 
 BUILDS = 200
 
@@ -19,7 +19,7 @@ class TestAnnotatedRules:
     @pytest.mark.parametrize("model", [Countdown, Backoff, RetryPolicy])
     def test_every_generated_value_passes_the_type_checks(self, model: type[Any]) -> None:
         built = [
-            LoomFactory.create_factory(model, __random_seed__=seed).build()
+            SampleFactory.create_factory(model, __random_seed__=seed).build()
             for seed in range(BUILDS)
         ]
 

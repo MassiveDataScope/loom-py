@@ -232,7 +232,7 @@ class MongoRepository(
             name
             for name, info in column_fields.items()
             if info.column_type.type_name == "DateTime"
-            and info.column_type.kwargs.get("timezone") is False
+            and info.column_type.option("timezone") is False
         )
         self._now_fields = frozenset(
             name

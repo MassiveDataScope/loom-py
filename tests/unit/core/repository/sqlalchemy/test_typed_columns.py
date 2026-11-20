@@ -110,7 +110,7 @@ class _Slot(BaseModel):
     id: int = ColumnField(primary_key=True, autoincrement=True)
     opens_at: time = ColumnField()
     noted_at: time = ColumnField(JSON)
-    closes_at: time = ColumnField(ColumnType("Time", kwargs={"timezone": True}))
+    closes_at: time = ColumnField(ColumnType("Time", kwargs=(("timezone", True),)))
 
 
 class _CreateSlot(Command, frozen=True):

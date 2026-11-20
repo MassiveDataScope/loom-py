@@ -106,6 +106,8 @@ jobs:
       # The model layer has a branch only Python 3.14 takes (annotationlib), so
       # its coverage comes from here, in an environment with nothing but the
       # 'testing' extra: the model must not lean on a development dependency.
+      # The suite-wide conftest and addopts load development plugins, so the
+      # lane stops conftest lookup at the model tests and clears addopts.
       - name: Run the model tests with coverage
         if: ${{ matrix.python == '3.14' }}
         shell: bash
@@ -115,7 +117,8 @@ jobs:
           set -euo pipefail
           UV_PROJECT_ENVIRONMENT="$RUNNER_TEMP/uv-ci-model" \
             uv run --frozen --no-default-groups --extra testing \
-            --with "pytest-cov==7.1.0" pytest tests/unit/core/model --cov --cov-report=
+            --with "pytest-cov==7.1.0" pytest tests/unit/core/model \
+            --confcutdir=tests/unit/core/model -o addopts="" --cov --cov-report=
 
       - name: Store fast lane results
         uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
