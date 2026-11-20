@@ -6,10 +6,31 @@ from datetime import datetime
 from typing import Any, TypeVar
 
 from loom.core.cache import CacheConfig, CachedRepository, GenerationalDependencyResolver
-from loom.core.stores.repository import BulkCreatable, Listable, PageParams
+from loom.core.stores.repository import (
+    BulkCreatable,
+    Countable,
+    Creatable,
+    Deletable,
+    FieldReadable,
+    Listable,
+    PageParams,
+    Readable,
+    Updatable,
+)
 from loom.testing import make
 
 from .conftest import SEED, BackendCase, CreateOrder, OrderStatus, UpdateOrder, require
+
+_FULL_REPOSITORY = (
+    Readable,
+    FieldReadable,
+    Creatable,
+    BulkCreatable,
+    Updatable,
+    Deletable,
+    Listable,
+    Countable,
+)
 
 T = TypeVar("T")
 
@@ -71,6 +92,7 @@ class TestContractCache:
     async def test_cache_hit_returns_the_typed_output_struct(
         self, case: BackendCase, seeded: Any
     ) -> None:
+        require(case, *_FULL_REPOSITORY)
         cached, _ = _cached(seeded)
         first = await cached.get_by_id(SEED[0].id)
         # A write behind the cache is not observed: the second read is a hit.
@@ -86,6 +108,7 @@ class TestContractCache:
     async def test_entity_keys_are_namespaced_by_the_model_table(
         self, case: BackendCase, seeded: Any
     ) -> None:
+        require(case, *_FULL_REPOSITORY)
         cached, cache = _cached(seeded)
 
         await cached.get_by_id(SEED[0].id)
@@ -99,7 +122,7 @@ class TestContractCache:
     async def test_create_many_invalidates_a_cached_first_page(
         self, case: BackendCase, seeded: Any
     ) -> None:
-        require(case, BulkCreatable, Listable)
+        require(case, *_FULL_REPOSITORY)
         cached, _ = _cached(seeded)
         before = await cached.list_paginated(_FIRST_PAGE)
         assert len(before.items) == len(SEED)

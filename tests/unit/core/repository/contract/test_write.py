@@ -7,6 +7,7 @@ import pytest
 
 from loom.core.errors import Conflict
 from loom.core.stores.repository import (
+    BulkCreatable,
     Creatable,
     Deletable,
     FilterGroup,
@@ -52,7 +53,7 @@ class TestContractWrite:
     async def test_create_many_stores_the_fields_left_at_their_default(
         self, case: BackendCase, repository: Any
     ) -> None:
-        require(case, Creatable, Readable)
+        require(case, BulkCreatable, Readable)
 
         created = await repository.create_many(SEED[:2])
 

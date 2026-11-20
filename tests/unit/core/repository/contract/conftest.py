@@ -36,6 +36,7 @@ from loom.stores.sqlalchemy.repository import SQLAlchemyRepository
 from loom.stores.sqlalchemy.schema import compile_all, get_compiled
 from loom.stores.sqlalchemy.session_manager import SessionManager
 from loom.stores.sqlalchemy.uow import SQLAlchemyUnitOfWork
+from loom.testing.in_memory import InMemoryRepository
 from tests.helpers.aws import moto_client
 from tests.helpers.dynamodb import MotoTable
 
@@ -191,7 +192,8 @@ class BackendCase:
         model: The output model the repository is bound to.
         capabilities: Standard protocols the repository class declares.
         transactions: Whether ``unit_of_work`` really rolls back writes.
-        unit_of_work: Builds a unit of work bound to the repository's store.
+        unit_of_work: Builds a unit of work bound to the repository's store; ``None`` for
+            a double with no unit of work.
         fail_commit: Arms a failure that surfaces from ``commit``, not the
             body. Called inside the unit of work after the first write.
         fixtures: Fixtures the backend's store needs while the repository is open.
@@ -202,9 +204,20 @@ class BackendCase:
     model: type[AcmeContractOrder]
     capabilities: frozenset[type]
     transactions: bool
-    unit_of_work: Callable[[Any], UnitOfWork]
+    unit_of_work: Callable[[Any], UnitOfWork] | None = None
     fail_commit: Callable[[Any], Awaitable[None]] | None = None
     fixtures: tuple[str, ...] = ()
+
+    def open_unit_of_work(self, repository: Any) -> UnitOfWork:
+        """Return a unit of work bound to *repository*'s store, or skip the test without one."""
+        self.require_unit_of_work()
+        assert self.unit_of_work is not None
+        return self.unit_of_work(repository)
+
+    def require_unit_of_work(self) -> None:
+        """Skip the current test when the backend has no unit of work."""
+        if self.unit_of_work is None:
+            pytest.skip(f"{self.name} has no unit of work")
 
 
 @asynccontextmanager
@@ -288,6 +301,21 @@ async def _fail_mongo_commit(repository: Any) -> None:
     mongo_client_of(repository).commit_error = ConnectionError("commit lost")
 
 
+@asynccontextmanager
+async def _in_memory_repository() -> AsyncIterator[InMemoryRepository[AcmeContractOrder]]:
+    yield InMemoryRepository(AcmeContractOrder)
+
+
+def _in_memory_case() -> BackendCase:
+    return BackendCase(
+        name="in-memory",
+        repository_factory=_in_memory_repository,
+        model=AcmeContractOrder,
+        capabilities=frozenset(capabilities_of(InMemoryRepository)),
+        transactions=False,
+    )
+
+
 def _sqlalchemy_case() -> BackendCase:
     return BackendCase(
         name="sqlalchemy",
@@ -338,6 +366,7 @@ def _mongo_transactional_case() -> BackendCase:
 
 
 CASES: tuple[BackendCase, ...] = (
+    _in_memory_case(),
     _sqlalchemy_case(),
     _dynamodb_case(),
     _mongo_case(),

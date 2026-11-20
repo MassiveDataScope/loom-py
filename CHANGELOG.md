@@ -2,6 +2,13 @@
 
 ## 💥 Breaking
 
+- **testing:** `InMemoryRepository` declares the key capabilities (`Readable`,
+  `Creatable`, `Updatable`, `Deletable`), so a harness that injects it binds
+  those DI keys, and it behaves like a real repository on the contract the
+  adapters share: `create` keeps the id the command carries, a duplicate id
+  raises `Conflict`, and `update` leaves the fields a command did not send.
+  `loom.testing.make` also builds `PageParams`, `FilterParams` and `QuerySpec`
+  with their declared defaults.
 - **stores:** the repositories are named technology first, then port:
   `RepositorySQLAlchemy` is `SQLAlchemyRepository`, `RepositoryMongo` is
   `MongoRepository` and `RepositoryDynamoDB` is `DynamoDBRepository`;

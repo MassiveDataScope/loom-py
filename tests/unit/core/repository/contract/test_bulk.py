@@ -78,7 +78,7 @@ class TestContractBulkCreate:
         require(case, BulkCreatable, Readable)
         await repository.create(SEED[1])
 
-        async with case.unit_of_work(repository):
+        async with case.open_unit_of_work(repository):
             created = await repository.create_many(
                 [SEED[1], SEED[2]], on_conflict=OnConflict.IGNORE
             )

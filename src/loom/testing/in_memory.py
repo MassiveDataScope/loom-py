@@ -27,7 +27,9 @@ from typing import Any, Generic, TypeVar
 
 import msgspec
 
+from loom.core.errors import Conflict
 from loom.core.model import BaseModel
+from loom.core.model.convert import to_struct
 from loom.core.model.introspection import get_projections
 from loom.core.projection.loaders import (
     find_relation_name_for_loader,
@@ -39,12 +41,13 @@ from loom.core.projection.runtime import (
     build_projection_plan,
     execute_projection_plan,
 )
+from loom.core.stores.repository import Creatable, Deletable, Readable, Updatable
 from loom.core.stores.repository.record import single_id_attribute
 
 T = TypeVar("T", bound=msgspec.Struct)
 
 
-class InMemoryRepository(Generic[T]):
+class InMemoryRepository(Readable[T], Creatable[T], Updatable[T], Deletable[T], Generic[T]):
     """Generic in-memory repository for testing any ``msgspec.Struct`` model.
 
     Stores entities in a plain dict keyed by their id field value.  Provides
@@ -53,8 +56,12 @@ class InMemoryRepository(Generic[T]):
 
     The ``create`` method derives entity fields from the command automatically
     when no ``creator`` callable is provided: fields present on the command
-    are copied to the entity, and the id field is assigned from an internal
-    auto-increment counter.
+    are copied to the entity, and the id field is the command's when it carries
+    one and an internal auto-increment counter's otherwise. Creating an id the
+    store already holds raises ``Conflict``, as every real repository does.
+    It declares the key capabilities (``Readable``, ``Creatable``,
+    ``Updatable``, ``Deletable``); ``list_paginated`` is a convenience that
+    returns every entity, not the ``Listable`` contract.
 
     Args:
         entity_type: The ``msgspec.Struct`` subclass this repository stores.
@@ -139,6 +146,9 @@ class InMemoryRepository(Generic[T]):
 
         Returns:
             The created and stored entity.
+
+        Raises:
+            Conflict: When the entity's id is already stored.
         """
         if self._creator is not None:
             entity = self._creator(cmd, self._next_id)
@@ -146,6 +156,10 @@ class InMemoryRepository(Generic[T]):
         else:
             entity = self._auto_create(cmd)
         id_val = getattr(entity, self._id_field)
+        if id_val in self._store:
+            raise Conflict(
+                f"{self._entity_type.__name__} with {self._id_field}={id_val!r} already exists."
+            )
         self._store[id_val] = entity
         return entity
 
@@ -153,7 +167,8 @@ class InMemoryRepository(Generic[T]):
         """Update the entity at ``obj_id`` with fields from ``data``.
 
         Only non-``None`` fields present on both ``data`` and the entity are
-        overwritten; the id field is never changed.
+        overwritten, and a field a command leaves at its default is not sent;
+        the id field is never changed.
 
         Args:
             obj_id: Identity value of the entity to update.
@@ -166,15 +181,11 @@ class InMemoryRepository(Generic[T]):
         if entity is None:
             return None
         current = msgspec.structs.asdict(entity)
-        updates: dict[str, Any] = (
-            data
-            if isinstance(data, dict)
-            else {f.name: getattr(data, f.name) for f in msgspec.structs.fields(type(data))}
-        )
+        updates = data if isinstance(data, dict) else _sent_values(data)
         for k, v in updates.items():
             if v is not None and k in current and k != self._id_field:
                 current[k] = v
-        updated = msgspec.convert(current, self._entity_type)
+        updated = to_struct(self._entity_type, current)
         self._store[obj_id] = updated
         return updated
 
@@ -228,12 +239,12 @@ class InMemoryRepository(Generic[T]):
         entity_fields = {f.name for f in msgspec.structs.fields(self._entity_type)}
         data: dict[str, Any] = {}
         for f_name in entity_fields:
-            if f_name == self._id_field:
-                data[f_name] = self._next_id
-            elif hasattr(cmd, f_name):
+            if hasattr(cmd, f_name):
                 data[f_name] = getattr(cmd, f_name)
+        if data.get(self._id_field) is None:
+            data[self._id_field] = self._next_id
         self._next_id += 1
-        return msgspec.convert(data, self._entity_type)
+        return to_struct(self._entity_type, data)
 
     def _projection_plan_for_profile(self, profile: str) -> ProjectionPlan | None:
         if profile in self._projection_plans:
@@ -302,3 +313,22 @@ def _refuse_composite_key(entity_type: type) -> None:
         )
     except ValueError:
         return
+
+
+def _sent_values(data: msgspec.Struct) -> dict[str, Any]:
+    """The fields of *data* by name, leaving out those a command at its default omits."""
+    omits_defaults = type(data).__struct_config__.omit_defaults
+    sent: dict[str, Any] = {}
+    for field in msgspec.structs.fields(type(data)):
+        value = getattr(data, field.name)
+        if omits_defaults and value == _default_of(field):
+            continue
+        sent[field.name] = value
+    return sent
+
+
+def _default_of(field: msgspec.structs.FieldInfo) -> Any:
+    """The default of *field*, or ``NODEFAULT`` when it has none."""
+    if field.default_factory is not msgspec.NODEFAULT:
+        return field.default_factory()
+    return field.default
