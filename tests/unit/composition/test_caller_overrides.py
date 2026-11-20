@@ -15,7 +15,7 @@ from typing import Any
 
 import pytest
 
-from loom.celery.runtime import CeleryAdapter
+from loom.celery.runtime import CeleryRuntime
 from loom.composition import AppConfig, Application, Project
 from loom.composition.errors import CompositionErrorCode, ReservedBindingError
 from loom.core.authz.elevation import ElevationSink
@@ -31,7 +31,7 @@ from loom.core.stores.repository import DefaultRepositoryBuilder
 from loom.core.stores.sql import CallerBoundSql, SqlQueryService
 from loom.core.use_case.invoker import ApplicationInvoker
 from loom.core.use_case.registry import UseCaseRegistry
-from loom.rest.fastapi.runtime import FastAPIAdapter
+from loom.rest.fastapi.runtime import FastAPIRuntime
 from loom.stores.mongo.uow import MongoSessions
 from loom.stores.sqlalchemy.session_manager import SessionManager
 from tests.helpers.composition import (
@@ -80,7 +80,7 @@ def _worker(tmp_path: Path, module: Callable[[LoomContainer], None]) -> Applicat
         code_path=tmp_path,
         config_root=tmp_path,
     )
-    return project.compose(WithOverrides(CeleryAdapter(jobs=[_OverrideJob]), module))
+    return project.compose(WithOverrides(CeleryRuntime(jobs=[_OverrideJob]), module))
 
 
 def _assert_reserved(error: ReservedBindingError, key: BindingKey) -> None:
@@ -96,7 +96,7 @@ class TestCallerOverrides:
         self, fixture_project: ProjectFactory, key: BindingKey
     ) -> None:
         project = fixture_project()
-        adapter = FastAPIAdapter()
+        adapter = FastAPIRuntime()
         module = _module(key)
         with pytest.raises(ReservedBindingError) as caught:
             Project.load(project, environment="test").compose(WithOverrides(adapter, module))
@@ -136,7 +136,7 @@ class TestCallerOverrides:
         self,
         fixture_project: ProjectFactory,
     ) -> None:
-        application = Project.load(fixture_project(), environment="test").compose(FastAPIAdapter())
+        application = Project.load(fixture_project(), environment="test").compose(FastAPIRuntime())
         container = application.kernel.container
 
         manager = container.resolve(SessionManager)

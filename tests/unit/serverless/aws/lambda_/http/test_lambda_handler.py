@@ -11,7 +11,7 @@ from typing import Any
 import pytest
 
 from loom.composition import Application, Project
-from loom.serverless.aws.lambda_ import LambdaAdapter
+from loom.serverless.aws.lambda_ import LambdaRuntime
 from loom.serverless.aws.lambda_.triggers.http import LambdaHTTPHandler
 from tests.helpers.loops import RecordedLoops
 from tests.unit.serverless.aws.lambda_.http._clients import LambdaProject, Reply, lambda_client
@@ -69,9 +69,9 @@ def opened_on(monkeypatch: pytest.MonkeyPatch) -> list[asyncio.AbstractEventLoop
 
 
 @pytest.fixture
-def unreachable(contract_project: ProjectFactory) -> tuple[LambdaAdapter, Application]:
+def unreachable(contract_project: ProjectFactory) -> tuple[LambdaRuntime, Application]:
     """A composed application whose database is unreachable when it opens."""
-    adapter = LambdaAdapter()
+    adapter = LambdaRuntime()
     application = Project.load(contract_project(), environment="test").compose(adapter)
 
     async def refuse() -> None:
@@ -120,7 +120,7 @@ class TestLambdaHandler:
     def test_warm_invocations_run_the_startup_checks_once(
         self, contract_project: ProjectFactory
     ) -> None:
-        adapter = LambdaAdapter()
+        adapter = LambdaRuntime()
         application = Project.load(contract_project(), environment="test").compose(adapter)
         checks = CountedChecks()
         checks.wrap(application)
@@ -202,7 +202,7 @@ class TestLambdaHandler:
 
     def test_a_failure_to_open_fails_the_init(
         self,
-        unreachable: tuple[LambdaAdapter, Application],
+        unreachable: tuple[LambdaRuntime, Application],
     ) -> None:
         adapter, application = unreachable
 
@@ -210,7 +210,7 @@ class TestLambdaHandler:
             adapter.bind(application)
 
     def test_a_failure_to_open_closes_its_loop(
-        self, event_loops: RecordedLoops, unreachable: tuple[LambdaAdapter, Application]
+        self, event_loops: RecordedLoops, unreachable: tuple[LambdaRuntime, Application]
     ) -> None:
         adapter, application = unreachable
 
@@ -219,7 +219,7 @@ class TestLambdaHandler:
         assert event_loops.created[0].is_closed()
 
     def test_a_failure_to_open_unsets_its_loop(
-        self, event_loops: RecordedLoops, unreachable: tuple[LambdaAdapter, Application]
+        self, event_loops: RecordedLoops, unreachable: tuple[LambdaRuntime, Application]
     ) -> None:
         adapter, application = unreachable
 

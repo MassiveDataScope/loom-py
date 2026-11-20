@@ -2,7 +2,7 @@
 
 Install the ``lambda`` extra. The entry point changes one line::
 
-    handler = create_app("config.yaml", adapter=LambdaAdapter())
+    handler = create_app("config.yaml", runtime=LambdaRuntime())
 
 The recipe is the FastAPI adapter's, so the configuration, the authentication,
 discovery and the CRUD gating have one source of truth. The transport is a bare
@@ -107,7 +107,7 @@ def _refuse_sql_endpoints(ctx: ConfigContext) -> None:
         raise LambdaUnservedConfigError(
             f"sql.connections.{mounted[0]}.sql_endpoint",
             f"{COMPONENT} does not mount SQL endpoints. Disable the endpoint "
-            "(sql_endpoint.enabled: false) or serve it with FastAPIAdapter.",
+            "(sql_endpoint.enabled: false) or serve it with FastAPIRuntime.",
         )
 
 

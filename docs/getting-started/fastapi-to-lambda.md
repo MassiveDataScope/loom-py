@@ -38,12 +38,12 @@ and the call:
 
 ```python
 from loom.composition import create_app
-from loom.serverless.aws.lambda_ import LambdaAdapter
+from loom.serverless.aws.lambda_ import LambdaRuntime
 
-app = create_app("config/app.yaml", adapter=LambdaAdapter())
+app = create_app("config/app.yaml", runtime=LambdaRuntime())
 ```
 
-An explicit `adapter=` wins over `app.entry`. Keep the call at module level:
+An explicit `runtime=` wins over `app.entry`. Keep the call at module level:
 Lambda runs it once during Init, opens the application there and keeps it
 open across warm invocations. If the application fails to open, Init fails.
 

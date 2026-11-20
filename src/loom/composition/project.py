@@ -35,7 +35,7 @@ from loom.core.stores import resolve_store_backend
 from loom.core.stores.catalog import StoreCatalog, StoreKey, load_catalog
 
 if TYPE_CHECKING:
-    from loom.composition.recipe import Adapter
+    from loom.composition.recipe import Runtime
     from loom.core.discovery.base import DiscoveryResult
     from loom.core.stores import StorePlugin
 
@@ -252,9 +252,9 @@ class Project:
 
     def compose(
         self,
-        adapter: Adapter[object],
+        runtime: Runtime[object],
     ) -> Application:
-        """Compose the application *adapter* asks for, without mounting a transport.
+        """Compose the application *runtime* asks for, without mounting a transport.
 
         Opens nothing: building a backend creates its engine or client, not a
         connection. :meth:`Application.check` and :meth:`Application.running`
@@ -262,7 +262,7 @@ class Project:
         event with the milliseconds of each phase.
 
         Args:
-            adapter: Whose recipe to compose.
+            runtime: Whose recipe to compose.
 
         Returns:
             The composed, closed application.
@@ -282,7 +282,7 @@ class Project:
         logger = get_logger(__name__)
         clock = phases.PhaseClock()
         clock.lap("scan", self.discovered)
-        recipe = clock.lap("plan", phases.plan(self, adapter))
+        recipe = clock.lap("plan", phases.plan(self, runtime))
         aws = AwsClients()
         stores = clock.lap("build_stores", phases.build_stores(self, recipe, aws))
         kernel, sql, job_resources = clock.lap(
@@ -322,7 +322,7 @@ class Project:
         )
         logger.info(
             "loom.composition.composed",
-            adapter=type(adapter).__qualname__,
+            runtime=type(runtime).__qualname__,
             use_cases=len(discovered.use_cases),
             jobs=len(discovered.jobs),
             backends=stores.store_backends,
@@ -338,19 +338,19 @@ class Project:
 
     def serve(
         self,
-        adapter: Adapter[T],
+        runtime: Runtime[T],
     ) -> T:
-        """Compose the application *adapter* asks for and mount its transport on it.
+        """Compose the application *runtime* asks for and mount its transport on it.
 
         Args:
-            adapter: The transport, and how it wants the application composed.
+            runtime: The transport, and how it wants the application composed.
 
         Returns:
-            What *adapter* binds: an ASGI app, a Celery app, a handler.
+            What *runtime* binds: an ASGI app, a Celery app, a handler.
 
         Raises:
             ConfigError: As :meth:`compose`.
             DeployCheckError: As :meth:`compose`.
             ReservedBindingError: As :meth:`compose`.
         """
-        return adapter.bind(self.compose(adapter))
+        return runtime.bind(self.compose(runtime))

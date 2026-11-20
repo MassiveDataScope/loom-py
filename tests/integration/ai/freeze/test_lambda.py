@@ -64,7 +64,7 @@ from loom.core.identity.wire import encode_identity  # noqa: E402
 from loom.core.job.envelope import JobEnvelope  # noqa: E402
 from loom.core.job.job import Job  # noqa: E402
 from loom.core.plugins import entrypoints as entrypoints_module  # noqa: E402
-from loom.serverless.aws.lambda_ import LambdaAdapter, LambdaHandler  # noqa: E402
+from loom.serverless.aws.lambda_ import LambdaHandler, LambdaRuntime  # noqa: E402
 from loom.testing import LambdaEvent, LambdaTestClient, make  # noqa: E402
 from tests.helpers.lambda_jobs import jobs_queue, jobs_trigger
 from tests.integration.ai._entrypoints import fake_entry_points  # noqa: E402
@@ -491,8 +491,8 @@ def world(
             builds, drops = _counted(monkeypatch)
             config = _write_project(tmp_path, server.url, trigger, agents=agents)
             function = "worker" if trigger == "jobs" else None
-            adapter = LambdaAdapter(function=function)
-            handler = create_app(config, adapter=adapter, environment="test")
+            adapter = LambdaRuntime(function=function)
+            handler = create_app(config, runtime=adapter, environment="test")
             stack.callback(handler.close)
             built = _World(server, handler, model, clock, builds, drops, trigger)
             built.mark()

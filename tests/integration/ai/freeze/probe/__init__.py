@@ -304,11 +304,11 @@ def __getattr__(name: str) -> Any:
         raise AttributeError(name)
     if not _HANDLER:
         from loom.composition import create_app
-        from loom.serverless.aws.lambda_ import LambdaAdapter
+        from loom.serverless.aws.lambda_ import LambdaRuntime
 
         install()
         auth = json.loads(os.environ.get("A3_MCP_AUTH", "null"))
         directory = Path(os.environ.get("A3_DIRECTORY", "/tmp/a3"))  # noqa: S108
         config = project(directory, os.environ["A3_MCP_URL"], auth=auth)
-        _HANDLER.append(create_app(str(config), adapter=LambdaAdapter()))
+        _HANDLER.append(create_app(str(config), runtime=LambdaRuntime()))
     return _HANDLER[0]

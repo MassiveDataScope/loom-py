@@ -653,7 +653,7 @@ def compose_rest(
     return recipe, declared
 
 
-class FastAPIAdapter:
+class FastAPIRuntime:
     """Serve a composed application over HTTP with FastAPI.
 
     One instance composes one application: :meth:`recipe` keeps the
@@ -691,7 +691,7 @@ class FastAPIAdapter:
         """
         if self._declared is not None:
             raise CompositionStateError(
-                CompositionErrorCode.ADAPTER_ALREADY_COMPOSED.issue(component="FastAPIAdapter")
+                CompositionErrorCode.RUNTIME_ALREADY_COMPOSED.issue(component="FastAPIRuntime")
             )
         recipe, self._declared = compose_rest(
             project,
@@ -708,7 +708,7 @@ class FastAPIAdapter:
         """
         if self._declared is None:
             raise CompositionStateError(
-                CompositionErrorCode.ADAPTER_RECIPE_MISSING.issue(component="FastAPIAdapter")
+                CompositionErrorCode.RUNTIME_RECIPE_MISSING.issue(component="FastAPIRuntime")
             )
         declared = self._declared
         rest_cfg, auth = declared.rest, declared.auth

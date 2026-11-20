@@ -175,7 +175,7 @@ construct that takes one manifest entry:
 - who may invoke the function and write to its queue: whoever can runs the
   declared job as the declared identity, so restrict `lambda:InvokeFunction`
   and the queue policy, and pin an identity-bearing function in code with
-  `LambdaAdapter(function=...)`;
+  `LambdaRuntime(function=...)`;
 - an IAM role that reads only the listed secrets and parameters and sends to
   the listed queues.
 

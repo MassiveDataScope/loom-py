@@ -23,8 +23,8 @@ from loom.core.config import ConfigContext
 from loom.core.discovery.base import DiscoveryResult
 from loom.core.discovery.scanner import PackageScanner
 from loom.core.job.job import Job
-from loom.rest.fastapi import FastAPIAdapter
-from loom.serverless.aws.lambda_ import LambdaAdapter, LambdaUnservedConfigError
+from loom.rest.fastapi import FastAPIRuntime
+from loom.serverless.aws.lambda_ import LambdaRuntime, LambdaUnservedConfigError
 from loom.serverless.aws.lambda_.triggers.http import LambdaHTTPHandler
 from tests.helpers.ai import CountingEngineProvider
 from tests.helpers.composition import composition_project
@@ -161,7 +161,7 @@ class TestLambdaAiRefusals:
     def test_a_stdio_mcp_server_is_refused_before_discovery(
         self, tmp_path: Path, make_project: Callable[[Path], Project]
     ) -> None:
-        adapter = LambdaAdapter()
+        adapter = LambdaRuntime()
 
         with pytest.raises(LambdaUnservedConfigError) as raised:
             adapter.recipe(make_project(tmp_path))
@@ -172,7 +172,7 @@ class TestLambdaAiRefusals:
     def test_a_jobs_function_hosts_agents_without_their_endpoints(
         self, tmp_path: Path, jobs_manifest: str
     ) -> None:
-        adapter = LambdaAdapter()
+        adapter = LambdaRuntime()
 
         recipe = adapter.recipe(_jobs_project(tmp_path, jobs_manifest, _HTTP_AI))
 
@@ -182,8 +182,8 @@ class TestLambdaAiRefusals:
     @pytest.mark.parametrize(
         ("adapter", "endpoints"),
         [
-            pytest.param(LambdaAdapter, False, id="lambda"),
-            pytest.param(FastAPIAdapter, True, id="fastapi"),
+            pytest.param(LambdaRuntime, False, id="lambda"),
+            pytest.param(FastAPIRuntime, True, id="fastapi"),
         ],
     )
     def test_only_fastapi_serves_agent_endpoints(
@@ -203,7 +203,7 @@ class TestLambdaAiRefusals:
     def test_a_jobs_function_enters_the_agent_host_once_at_init(
         self, tmp_path: Path, jobs_manifest: str, probe: ProbeFixture, lifetime: list[str]
     ) -> None:
-        adapter = LambdaAdapter()
+        adapter = LambdaRuntime()
         application = _jobs_project(tmp_path, jobs_manifest, _AI).compose(adapter)
 
         handler = adapter.bind(application)
@@ -223,7 +223,7 @@ class TestLambdaAiRefusals:
         _write_agent(tmp_path)
         config = write_contract_project(tmp_path, agents=(_AGENTS_GLOB,), ai=_AI)
 
-        handler = create_app(config, adapter=LambdaAdapter(), environment=_TEST)
+        handler = create_app(config, runtime=LambdaRuntime(), environment=_TEST)
         assert isinstance(handler, LambdaHTTPHandler)
         assert lifetime == ["enter"]
         client = lambda_client(handler)
@@ -243,7 +243,7 @@ class TestLambdaAiRefusals:
     ) -> None:
         monkeypatch.setenv("LOOM_TEST_MCP_TRANSPORT", "stdio")
         server = {"transport": "${oc.env:LOOM_TEST_MCP_TRANSPORT}", "command": "mcp-server"}
-        adapter = LambdaAdapter()
+        adapter = LambdaRuntime()
         application = _jobs_project(
             tmp_path, jobs_manifest, {**_AI, "mcp_servers": {"x": server}}
         ).compose(adapter)
@@ -279,7 +279,7 @@ class TestLambdaAiRefusals:
         ai: dict[str, Any],
         keys: list[str],
     ) -> None:
-        adapter = LambdaAdapter()
+        adapter = LambdaRuntime()
         application = _jobs_project(tmp_path, jobs_manifest, ai).compose(adapter)
 
         caplog.clear()

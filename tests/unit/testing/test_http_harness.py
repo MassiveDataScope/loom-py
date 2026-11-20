@@ -8,7 +8,7 @@ from unittest.mock import patch
 import pytest
 
 from loom.composition import Application, Project
-from loom.composition.recipe import Adapter
+from loom.composition.recipe import Runtime
 from loom.core.command.base import Command
 from loom.core.errors import Conflict, NotFound
 from loom.core.model import LoomStruct
@@ -379,7 +379,7 @@ class TestCapabilityKeys:
         composed: list[Application] = []
         compose = Project.compose
 
-        def captured(self: Project, adapter: Adapter[object], **kwargs: Any) -> Application:
+        def captured(self: Project, adapter: Runtime[object], **kwargs: Any) -> Application:
             composed.append(compose(self, adapter, **kwargs))
             return composed[-1]
 
@@ -401,7 +401,7 @@ def shared_override_harness() -> tuple[HttpTestHarness, Any, list[int]]:
     calls: list[int] = []
     compose = Project.compose
 
-    def counted(project: Project, adapter: Adapter[object]) -> Application:
+    def counted(project: Project, adapter: Runtime[object]) -> Application:
         calls.append(1)
         return compose(project, adapter)
 

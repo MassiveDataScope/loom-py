@@ -27,7 +27,7 @@ from loom.composition import Project
 from loom.core.errors import NestedElevation, NestedIdentityMismatch, UndeclaredStoreWrite
 from loom.core.identity import Identity, reset_identity, set_identity
 from loom.core.use_case.invoker import AppInvoker
-from loom.rest.fastapi.runtime import FastAPIAdapter
+from loom.rest.fastapi.runtime import FastAPIRuntime
 from loom.stores.sqlalchemy.rls import create_schema
 from tests.integration.agnosticism import notes
 from tests.integration.rls.apps.nested_identity import (
@@ -71,7 +71,7 @@ async def app(scoped_database: BootstrapFactory, tmp_path: Path) -> AsyncIterato
     application = application_for(notes, database, tmp_path, schema=schema)
     await create_schema(database.migrator, application)
     await seed_notes(database.bypass)
-    composed = Project.load(_config(tmp_path, schema), environment="test").compose(FastAPIAdapter())
+    composed = Project.load(_config(tmp_path, schema), environment="test").compose(FastAPIRuntime())
     async with composed.running():
         yield cast(AppInvoker, composed.kernel.invoker)
 

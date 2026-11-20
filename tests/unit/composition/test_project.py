@@ -89,7 +89,7 @@ class TestTransportFreeComposition:
     ) -> None:
         config = fixture_project()
 
-        handler = create_app(config, adapter=_TinyAdapter(), environment="test")
+        handler = create_app(config, runtime=_TinyAdapter(), environment="test")
 
         assert_type(handler, _Handler)
         assert [runtime.profile for runtime in runtimes] == [_TINY]
@@ -228,7 +228,7 @@ class TestLoadSource:
         [
             (
                 lambda *p, config_dir: create_app(
-                    *p, adapter=AcmeTransportFreeAdapter(), config_dir=config_dir
+                    *p, runtime=AcmeTransportFreeAdapter(), config_dir=config_dir
                 ),
                 "create_app",
             ),

@@ -73,7 +73,7 @@ _VIA_SQS: Final[Mapping[str, Decoder]] = {**_DIRECT, "sns": sns.decode_message}
 
 
 class LambdaHandler(Protocol):
-    """The Lambda function handler :meth:`LambdaAdapter.bind` returns, owning its application."""
+    """The Lambda function handler :meth:`LambdaRuntime.bind` returns, owning its application."""
 
     def __call__(self, event: dict[str, Any], context: Any) -> Any:
         """Answer one invocation."""
@@ -87,10 +87,10 @@ class LambdaHandler(Protocol):
 _Bind = Callable[["Application"], LambdaHandler]
 
 
-class LambdaAdapter:
+class LambdaRuntime:
     """Serve a composed application from AWS Lambda, as the deployed function's trigger asks.
 
-    Swapping ``FastAPIAdapter()`` for ``LambdaAdapter()`` in ``create_app``
+    Swapping ``FastAPIRuntime()`` for ``LambdaRuntime()`` in ``create_app``
     serves the same routes, authentication and error bodies to API Gateway
     HTTP API (payload 2.0); without a declared function, every interface.
 
@@ -142,7 +142,7 @@ class LambdaAdapter:
         """
         if self._bind is not None:
             raise CompositionStateError(
-                CompositionErrorCode.ADAPTER_ALREADY_COMPOSED.issue(component=COMPONENT)
+                CompositionErrorCode.RUNTIME_ALREADY_COMPOSED.issue(component=COMPONENT)
             )
         refuse_unserved_config(project)
         name, trigger = served_trigger(project.config, self._function, project.app.entry)
@@ -165,11 +165,11 @@ class LambdaAdapter:
         """
         if self._bind is None:
             raise CompositionStateError(
-                CompositionErrorCode.ADAPTER_RECIPE_MISSING.issue(component=COMPONENT)
+                CompositionErrorCode.RUNTIME_RECIPE_MISSING.issue(component=COMPONENT)
             )
         if self._handler is not None:
             raise CompositionStateError(
-                CompositionErrorCode.ADAPTER_ALREADY_COMPOSED.issue(component=COMPONENT)
+                CompositionErrorCode.RUNTIME_ALREADY_COMPOSED.issue(component=COMPONENT)
             )
         check_resolved_ai(application.ai.config)
         self._handler = self._bind(application)

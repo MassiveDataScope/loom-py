@@ -35,7 +35,7 @@ from loom.celery.constants import (
 )
 from loom.celery.errors import WorkerNotOpenError
 from loom.celery.runner import _CeleryProcessBridge
-from loom.celery.runtime import CeleryAdapter, _connect_lifecycle_signals, _WorkerLifecycle
+from loom.celery.runtime import CeleryRuntime, _connect_lifecycle_signals, _WorkerLifecycle
 from loom.composition import AppConfig, Application, ApplicationHost
 from loom.core.config import ConfigContext, ConfigError
 from loom.core.job.job import Job
@@ -263,7 +263,7 @@ class TestFailedChildOpen:
     """Celery swallows a failure in ``worker_process_init``; the child must not serve."""
 
     def _worker(self, tmp_path: Path) -> Any:
-        adapter = CeleryAdapter(jobs=[_PingJob])
+        adapter = CeleryRuntime(jobs=[_PingJob])
         project = composition_project(
             ConfigContext.from_dict(
                 {

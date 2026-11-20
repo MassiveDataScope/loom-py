@@ -37,7 +37,7 @@ class TestComposedEvent:
         assert total >= sum(phase_ms.values())
         assert fields.pop("keys") > 10
         assert fields == {
-            "adapter": "Serving",
+            "runtime": "Serving",
             "use_cases": 1,
             "jobs": 1,
             "backends": {"default": "sqlalchemy"},

@@ -30,7 +30,7 @@ from loom.core.errors import ScopeOwnershipError
 from loom.core.identity import Identity, reset_identity, set_identity
 from loom.core.stores.elevation import ScopedElevationSink
 from loom.core.use_case.invoker import AppInvoker
-from loom.rest.fastapi.runtime import FastAPIAdapter
+from loom.rest.fastapi.runtime import FastAPIRuntime
 from loom.stores.sqlalchemy.rls import SQLAlchemyStoreElevation, create_schema
 from loom.stores.sqlalchemy.session_manager import SessionManager
 from tests.integration.agnosticism import notes
@@ -80,7 +80,7 @@ async def composed(scoped_database: BootstrapFactory, tmp_path: Path) -> AsyncIt
     document["stores"]["default"]["pool"] = {"size": 1, "max_overflow": 0}
     document["stores"]["settings"] = {"cursors": {"signing": "ephemeral"}}
     (tmp_path / "app.yaml").write_text(yaml.safe_dump(document))
-    built = Project.load(str(tmp_path / "app.yaml"), environment="test").compose(FastAPIAdapter())
+    built = Project.load(str(tmp_path / "app.yaml"), environment="test").compose(FastAPIRuntime())
     FLAGS.clear()
     identity = set_identity(Identity(subject=U1))
     try:

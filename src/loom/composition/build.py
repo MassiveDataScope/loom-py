@@ -11,7 +11,7 @@ from loom.core.config.keys import FASTAPI_ENTRY
 from loom.core.environment import Environment
 
 if TYPE_CHECKING:
-    from loom.composition.recipe import Adapter
+    from loom.composition.recipe import Runtime
 
 T = TypeVar("T")
 
@@ -19,7 +19,7 @@ T = TypeVar("T")
 @overload
 def create_app(
     *config_paths: str,
-    adapter: Adapter[T],
+    runtime: Runtime[T],
     config_dir: str | None = None,
     environment: Environment | str | None = None,
     code_path: str | None = None,
@@ -30,7 +30,7 @@ def create_app(
 @overload
 def create_app(
     *config_paths: str,
-    adapter: None = None,
+    runtime: None = None,
     config_dir: str | None = None,
     environment: Environment | str | None = None,
     code_path: str | None = None,
@@ -40,17 +40,17 @@ def create_app(
 
 def create_app(
     *config_paths: str,
-    adapter: Adapter[object] | None = None,
+    runtime: Runtime[object] | None = None,
     config_dir: str | None = None,
     environment: Environment | str | None = None,
     code_path: str | None = None,
     resolvers: Sequence[ConfigResolver] = (),
 ) -> object:
-    """Compose an application from configuration and mount *adapter*'s transport on it.
+    """Compose an application from configuration and mount *runtime*'s transport on it.
 
     Args:
         *config_paths: YAML files merged left to right; exclusive with *config_dir*.
-        adapter: The transport, and how it wants the application composed;
+        runtime: The transport, and how it wants the application composed;
             ``app.entry`` picks it when omitted: ``fastapi``, ``lambda`` or a
             function of ``lambda.functions``.
         config_dir: Directory with ``base.yaml`` and the per-environment overlays;
@@ -61,7 +61,7 @@ def create_app(
             built-in ``secrets`` and ``ssm``.
 
     Returns:
-        What *adapter* binds: an ASGI app, a Celery app, a handler.
+        What *runtime* binds: an ASGI app, a Celery app, a handler.
 
     Raises:
         ConfigError: When the configuration is incomplete or invalid.
@@ -77,30 +77,30 @@ def create_app(
         resolvers=resolvers,
         caller="create_app",
     )
-    return project.serve(adapter if adapter is not None else _adapter_from_entry(project))
+    return project.serve(runtime if runtime is not None else _runtime_from_entry(project))
 
 
-def _fastapi() -> Adapter[object]:
-    from loom.rest.fastapi.runtime import FastAPIAdapter
+def _fastapi() -> Runtime[object]:
+    from loom.rest.fastapi.runtime import FastAPIRuntime
 
-    return FastAPIAdapter()
-
-
-def _lambda(function: str | None = None) -> Adapter[object]:
-    from loom.serverless.aws.lambda_.handler import LambdaAdapter
-
-    return LambdaAdapter(function=function)
+    return FastAPIRuntime()
 
 
-_BUILTIN_ENTRIES: Final[Mapping[str, Callable[[], Adapter[object]]]] = {
+def _lambda(function: str | None = None) -> Runtime[object]:
+    from loom.serverless.aws.lambda_.handler import LambdaRuntime
+
+    return LambdaRuntime(function=function)
+
+
+_BUILTIN_ENTRIES: Final[Mapping[str, Callable[[], Runtime[object]]]] = {
     FASTAPI_ENTRY: _fastapi,
     "lambda": _lambda,
 }
 
 
-def _adapter_from_entry(project: Project) -> Adapter[object]:
+def _runtime_from_entry(project: Project) -> Runtime[object]:
     entry = project.app.entry
     if entry is None:
-        raise ConfigError("create_app needs adapter= or app.entry")
+        raise ConfigError("create_app needs runtime= or app.entry")
     builtin = _BUILTIN_ENTRIES.get(entry)
     return builtin() if builtin is not None else _lambda(entry)

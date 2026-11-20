@@ -42,7 +42,7 @@ from loom.testing.golden import _ErrorProxy
 from loom.testing.overrides import Override
 
 
-class _HarnessAdapter:
+class _HarnessRuntime:
     """Compose the use cases *routes* serve, with *overrides*, leniently; mount *routes*.
 
     Discovers no model, so no store registers a repository: *overrides* bind
@@ -263,11 +263,11 @@ class HttpTestHarness:
             resp = client.post("/products/", json={"name": "Widget"})
             assert resp.status_code == 201
         """
-        adapter = _HarnessAdapter(
+        runtime = _HarnessRuntime(
             RouteSources(python=interfaces, config=config_interfaces, disabled=disable_routes),
             overrides=(self._build_module(),),
             **fastapi_kwargs,
         )
-        self.application = adapter.project().compose(adapter)
-        app = adapter.bind(self.application)
+        self.application = runtime.project().compose(runtime)
+        app = runtime.bind(self.application)
         return TestClient(app, raise_server_exceptions=False)

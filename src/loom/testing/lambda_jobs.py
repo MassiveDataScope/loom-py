@@ -28,8 +28,8 @@ from loom.core.plugins.optional import import_optional
 from loom.jobs.aws.queue import DeadLetterPolicy, QueueConfig, SQSQueue
 from loom.jobs.aws.sqs import SQSConfig
 from loom.serverless.aws.lambda_.functions import JobsTrigger, served_trigger
-from loom.serverless.aws.lambda_.handler import LambdaAdapter
-from loom.testing.overrides import Override, OverrideAdapter
+from loom.serverless.aws.lambda_.handler import LambdaRuntime
+from loom.testing.overrides import Override, OverrideRuntime
 
 _ISLAND = "loom.testing._moto"
 _EXTRA = "testing-aws"
@@ -107,7 +107,7 @@ class LambdaWorker:
             if "region" in (project.config.raw(ConfigKey.SQS) or {})
             else "aws.region or AWS_DEFAULT_REGION"
         )
-        self._adapter = LambdaAdapter(function=function)
+        self._runtime = LambdaRuntime(function=function)
         with ExitStack() as opening:
             self._mock = island.start()
             opening.callback(self._mock.stop)
@@ -116,10 +116,10 @@ class LambdaWorker:
             setup_sqs = self._guarded(setup_clients.client("sqs", sqs_config))
             self.queue_url, self.dead_letter_url = self._declare(setup_sqs, entry)
             self.application: Application = project.compose(
-                OverrideAdapter(self._adapter, tuple(overrides))
+                OverrideRuntime(self._runtime, tuple(overrides))
             )
-            self._handler = self._adapter.bind(self.application)
-            opening.callback(self._adapter.close)
+            self._handler = self._runtime.bind(self.application)
+            opening.callback(self._runtime.close)
             aws = self.application.kernel.container.resolve(AwsClients)
             self.sqs = self._guarded(aws.client("sqs", sqs_config))
             self._queue = SQSQueue(self.sqs, trigger.queue.name, entry)

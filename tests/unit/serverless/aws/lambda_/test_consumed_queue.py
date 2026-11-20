@@ -13,7 +13,7 @@ from loom.composition import AppConfig, Application
 from loom.core.config import ConfigContext, ConfigError
 from loom.core.job.job import Job
 from loom.jobs.aws.errors import SQSQueueConfigError
-from loom.serverless.aws.lambda_ import LambdaAdapter
+from loom.serverless.aws.lambda_ import LambdaRuntime
 from tests.helpers.aws import ACCOUNT, OTHER_REGION
 from tests.helpers.aws_island import FakeAwsIsland, FakeSdkError
 from tests.helpers.composition import composition_project
@@ -55,7 +55,7 @@ def bind(monkeypatch: pytest.MonkeyPatch) -> Bind:
             code_path=tmp_path,
             config_root=tmp_path,
         )
-        adapter = LambdaAdapter(jobs=[probe[0]])
+        adapter = LambdaRuntime(jobs=[probe[0]])
         if client is not None:
             FakeAwsIsland(client=client).install(monkeypatch)
         application = project.compose(adapter)

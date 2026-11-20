@@ -186,7 +186,7 @@ seal. The container `create_kernel` returns stays unsealed.
 
 ## The composition pipeline
 
-`Project.compose(adapter)` runs these phases in
+`Project.compose(runtime)` runs these phases in
 order; `create_app` loads the project (`Project.load`) and calls
 `Project.serve`. Nothing registers after `register`.
 

@@ -16,7 +16,7 @@ from loom.core.job.outcome import JobAbandonment, JobPostponement
 from loom.core.job.policy import Backoff
 from loom.core.use_case import Delivery
 from loom.jobs.aws.queue import ABANDONMENT_REASON_ATTRIBUTE, POSTPONEMENTS_ATTRIBUTE
-from loom.serverless.aws.lambda_ import LambdaAdapter, LambdaHandler
+from loom.serverless.aws.lambda_ import LambdaHandler, LambdaRuntime
 from tests.helpers.aws import ACCOUNT, OTHER_REGION
 from tests.helpers.aws_island import FakeAwsIsland
 from tests.helpers.composition import composition_project
@@ -92,7 +92,7 @@ def sqs(request: pytest.FixtureRequest) -> FakeSqs:
 
 @pytest.fixture
 def serve(tmp_path: Path, sqs: FakeSqs, monkeypatch: pytest.MonkeyPatch) -> Iterator[Serve]:
-    adapters: list[LambdaAdapter] = []
+    adapters: list[LambdaRuntime] = []
 
     def build(dead_letter: str = "redrive", *, fifo: bool = False) -> LambdaHandler:
         document = with_worker(
@@ -112,7 +112,7 @@ def serve(tmp_path: Path, sqs: FakeSqs, monkeypatch: pytest.MonkeyPatch) -> Iter
             code_path=tmp_path,
             config_root=tmp_path,
         )
-        adapter = LambdaAdapter(jobs=_JOB_TYPES)
+        adapter = LambdaRuntime(jobs=_JOB_TYPES)
         adapters.append(adapter)
         return adapter.bind(project.compose(adapter))
 

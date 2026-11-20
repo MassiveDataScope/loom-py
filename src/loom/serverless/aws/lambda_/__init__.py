@@ -14,18 +14,18 @@ from typing import TYPE_CHECKING, Any
 
 if TYPE_CHECKING:
     from loom.serverless.aws.lambda_._refusals import LambdaUnservedConfigError
-    from loom.serverless.aws.lambda_.handler import LambdaAdapter, LambdaHandler
+    from loom.serverless.aws.lambda_.handler import LambdaHandler, LambdaRuntime
     from loom.serverless.aws.lambda_.triggers.s3 import S3Object
 
 _EXPORTS = {
-    "LambdaAdapter": "loom.serverless.aws.lambda_.handler",
+    "LambdaRuntime": "loom.serverless.aws.lambda_.handler",
     "LambdaHandler": "loom.serverless.aws.lambda_.handler",
     "LambdaUnservedConfigError": "loom.serverless.aws.lambda_._refusals",
     "S3Object": "loom.serverless.aws.lambda_.triggers.s3",
 }
 
 __all__ = [
-    "LambdaAdapter",
+    "LambdaRuntime",
     "LambdaHandler",
     "LambdaUnservedConfigError",
     "S3Object",

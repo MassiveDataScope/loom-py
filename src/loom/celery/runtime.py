@@ -310,13 +310,13 @@ def _register_tasks(
 
 @dataclass(frozen=True)
 class _Declared:
-    """What :meth:`CeleryAdapter.recipe` resolved and :meth:`CeleryAdapter.bind` registers."""
+    """What :meth:`CeleryRuntime.recipe` resolved and :meth:`CeleryRuntime.bind` registers."""
 
     celery: CeleryConfig
     jobs: tuple[type[Job[Any]], ...]
 
 
-class CeleryAdapter:
+class CeleryRuntime:
     """Serve a composed application as a Celery worker.
 
     One instance composes one application: :meth:`recipe` keeps the jobs,
@@ -360,7 +360,7 @@ class CeleryAdapter:
         """
         if self._declared is not None:
             raise CompositionStateError(
-                CompositionErrorCode.ADAPTER_ALREADY_COMPOSED.issue(component="CeleryAdapter")
+                CompositionErrorCode.RUNTIME_ALREADY_COMPOSED.issue(component="CeleryRuntime")
             )
         ctx = project.config
         celery_cfg = ctx.section(ConfigKey.CELERY, CeleryConfig)
@@ -406,7 +406,7 @@ class CeleryAdapter:
         """
         if self._declared is None:
             raise CompositionStateError(
-                CompositionErrorCode.ADAPTER_RECIPE_MISSING.issue(component="CeleryAdapter")
+                CompositionErrorCode.RUNTIME_RECIPE_MISSING.issue(component="CeleryRuntime")
             )
         declared = self._declared
 
@@ -417,4 +417,4 @@ class CeleryAdapter:
         return celery_app
 
 
-__all__ = ["CeleryAdapter"]
+__all__ = ["CeleryRuntime"]

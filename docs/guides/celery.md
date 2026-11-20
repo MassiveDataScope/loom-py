@@ -24,7 +24,7 @@ pip install "loom-kernel[celery]"
 | `JobService.run()` | Execute a job immediately in the calling process |
 | `JobCallback` | Hook invoked by the broker on task success or failure |
 | `bootstrap_worker()` | Single entry point to start a Celery worker |
-| `CeleryAdapter` | The worker's adapter over the shared composition (`loom.celery.runtime`) |
+| `CeleryRuntime` | The worker's adapter over the shared composition (`loom.celery.runtime`) |
 | `WorkerNotOpenError` | Raised by every task of a worker process whose application failed to open |
 | `CeleryConfig` | YAML-driven broker and worker settings |
 | `JobConfig` | Per-job routing and retry overrides from YAML |
@@ -577,7 +577,7 @@ uv run celery -A app.worker_main:celery_app worker \
 The worker composes on the same recipe as the API
 ([Composition and lifecycle](../getting-started/composition.md)):
 `bootstrap_worker`, `loom.celery.auto.create_app` and
-`loom.composition.create_app(..., adapter=CeleryAdapter(...))` build the same
+`loom.composition.create_app(..., runtime=CeleryRuntime(...))` build the same
 application. What stays specific to the worker is its discovery, its pool
 profile (`WORKER_PROFILE`), the agent markers it refuses, and which Celery
 signal checks, opens and closes the application:
@@ -589,10 +589,10 @@ signal checks, opens and closes the application:
 
 ```python
 # src/app/worker_main.py
-from loom.celery.runtime import CeleryAdapter
+from loom.celery.runtime import CeleryRuntime
 from loom.composition import create_app
 
-celery_app = create_app("config/worker.yaml", adapter=CeleryAdapter())
+celery_app = create_app("config/worker.yaml", runtime=CeleryRuntime())
 ```
 
 - The startup checks — `create_all`, or with `schema.mode: external` the

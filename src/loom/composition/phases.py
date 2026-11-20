@@ -19,7 +19,7 @@ from loom.composition._jobs import configure_job_service
 from loom.composition._reserved import reserved_keys
 from loom.composition._sql import SqlWiring, register_sql_collaborators, resolve_sql
 from loom.composition.errors import ReservedBindingError
-from loom.composition.recipe import Adapter, Recipe
+from loom.composition.recipe import Recipe, Runtime
 from loom.composition.resources import Resource, ResourceKind
 from loom.connections.aws import AwsClients
 from loom.core.authz.elevation import ElevationSink
@@ -125,14 +125,14 @@ class Stores:
         )
 
 
-def plan(project: Project, adapter: Adapter[object]) -> Recipe:
-    """Ask *adapter* for its recipe, then refuse a failing deploy check.
+def plan(project: Project, runtime: Runtime[object]) -> Recipe:
+    """Ask *runtime* for its recipe, then refuse a failing deploy check.
 
     A lenient recipe runs no deploy check.
 
     Args:
         project: What the application composes from.
-        adapter: Whose recipe to take.
+        runtime: Whose recipe to take.
 
     Returns:
         The recipe.
@@ -141,7 +141,7 @@ def plan(project: Project, adapter: Adapter[object]) -> Recipe:
         DeployCheckError: When a deploy check of level error fails in a
             deployed environment.
     """
-    recipe = adapter.recipe(project)
+    recipe = runtime.recipe(project)
     if not recipe.lenient:
         enforce_deploy_checks(project.config, project.environment, scope=recipe.check_scope)
     return recipe

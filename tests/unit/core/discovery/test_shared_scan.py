@@ -6,7 +6,7 @@ from typing import Any
 
 import pytest
 
-from loom.celery.runtime import CeleryAdapter
+from loom.celery.runtime import CeleryRuntime
 from loom.composition import Application
 from loom.composition.checked import CheckedProject
 from loom.composition.project import Project
@@ -15,8 +15,8 @@ from loom.core.discovery.base import DiscoveryResult
 from loom.core.discovery.scanner import PackageScanner
 from loom.core.job.job import Job
 from loom.core.stores.repository import RepositoryCatalog
-from loom.rest.fastapi.runtime import FastAPIAdapter
-from loom.serverless.aws.lambda_ import LambdaAdapter
+from loom.rest.fastapi.runtime import FastAPIRuntime
+from loom.serverless.aws.lambda_ import LambdaRuntime
 from loom.serverless.aws.lambda_.trigger_jobs import check_triggers
 from tests.helpers.package_writer import PackageWriter
 
@@ -95,9 +95,9 @@ class TestWorkerDiscoveryErrors:
     @pytest.mark.parametrize(
         "adapter",
         [
-            pytest.param(lambda: FastAPIAdapter(), id="rest"),
-            pytest.param(lambda: CeleryAdapter(), id="celery"),
-            pytest.param(lambda: LambdaAdapter(function="worker"), id="lambda-jobs"),
+            pytest.param(lambda: FastAPIRuntime(), id="rest"),
+            pytest.param(lambda: CeleryRuntime(), id="celery"),
+            pytest.param(lambda: LambdaRuntime(function="worker"), id="lambda-jobs"),
         ],
     )
     @pytest.mark.parametrize(
@@ -130,7 +130,7 @@ class TestWorkerDiscoveryErrors:
         config = write_config("[acme_unknown]", _CELERY)
 
         with pytest.raises(ConfigError, match="acme_unknown") as error:
-            Project.load(config, environment="test").compose(CeleryAdapter())
+            Project.load(config, environment="test").compose(CeleryRuntime())
 
         assert isinstance(error.value.__cause__, ImportError)
 
@@ -139,7 +139,7 @@ class TestWorkerDiscoveryErrors:
     ) -> None:
         project = Project.load(write_config("[]", _CELERY), environment="test")
 
-        application = project.compose(CeleryAdapter(jobs=[_AcmeExplicitJob]))
+        application = project.compose(CeleryRuntime(jobs=[_AcmeExplicitJob]))
 
         assert application.discovered.jobs == (_AcmeExplicitJob,)
         assert application.discovered.models == ()
@@ -150,7 +150,7 @@ class TestWorkerDiscoveryErrors:
         write_package("acme_shared", {"jobs.py": _JOB})
         project = Project.load(write_config("[acme_shared]", _CELERY), environment="test")
 
-        application = project.compose(CeleryAdapter(jobs=[_AcmeExplicitJob]))
+        application = project.compose(CeleryRuntime(jobs=[_AcmeExplicitJob]))
 
         assert application.discovered.jobs == (_AcmeExplicitJob,)
 
@@ -166,9 +166,9 @@ class TestOneScanAcrossEntryPoints:
         config = write_config("[acme_shared]", _STORES + _CELERY + _LAMBDA)
         project = Project.load(config, environment="test")
         adapters: dict[str, Callable[[], Any]] = {
-            "rest": lambda: FastAPIAdapter(),
-            "celery": lambda: CeleryAdapter(),
-            "lambda": lambda: LambdaAdapter(function="worker"),
+            "rest": lambda: FastAPIRuntime(),
+            "celery": lambda: CeleryRuntime(),
+            "lambda": lambda: LambdaRuntime(function="worker"),
         }
 
         applications: dict[str, Application] = {

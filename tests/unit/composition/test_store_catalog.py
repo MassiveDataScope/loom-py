@@ -14,11 +14,11 @@ import pytest
 
 import loom.core.stores.catalog as stores_module
 import loom.stores.mongo.plugin as mongo_backend_module
-from loom.celery.runtime import CeleryAdapter
+from loom.celery.runtime import CeleryRuntime
 from loom.composition import AppConfig, Project
 from loom.core.config import ConfigContext, ConfigError
 from loom.core.stores.catalog import DEFAULT_STORE, StoreCatalog, StoreSpec
-from loom.rest.fastapi.runtime import FastAPIAdapter
+from loom.rest.fastapi.runtime import FastAPIRuntime
 from tests.helpers.composition import ProjectFactory, composition_project
 from tests.helpers.persistence import record_catalogs
 from tests.unit.composition.doubles import AcmePingJob
@@ -72,7 +72,7 @@ class TestStoreCatalog:
         self, fixture_project: ProjectFactory, catalogs: list[StoreCatalog]
     ) -> None:
         application = Project.load(fixture_project("catalog_api"), environment="test").compose(
-            FastAPIAdapter()
+            FastAPIRuntime()
         )
 
         assert len(catalogs) == 1
@@ -86,7 +86,7 @@ class TestStoreCatalog:
             {DEFAULT_STORE: {"backend": "sqlalchemy", "url": "sqlite+aiosqlite:///"}}
         )
 
-        application = project.compose(CeleryAdapter(jobs=[AcmePingJob]))
+        application = project.compose(CeleryRuntime(jobs=[AcmePingJob]))
 
         assert len(catalogs) == 1
         assert application.kernel.container.resolve(StoreCatalog) is project.catalog is catalogs[0]
@@ -96,7 +96,7 @@ class TestStoreCatalog:
             {DEFAULT_STORE: {"backend": "clickhouse", "url": "clickhouse://ch"}}
         )
 
-        adapter = CeleryAdapter(jobs=[AcmePingJob])
+        adapter = CeleryRuntime(jobs=[AcmePingJob])
         with pytest.raises(ConfigError, match=r"stores\.default\.backend is 'clickhouse'"):
             project.compose(adapter)
 
@@ -108,7 +108,7 @@ class TestStoreCatalog:
             "resolved_sqlalchemy", store={"backend": "sqlalchemy", "url": "${count:url}"}
         )
 
-        Project.load(path, environment="test", resolvers=[counter]).compose(FastAPIAdapter())
+        Project.load(path, environment="test", resolvers=[counter]).compose(FastAPIRuntime())
 
         assert counter.calls == Counter({"url": 1})
         assert store_resolutions == Counter({"stores.default": 1})
@@ -130,7 +130,7 @@ class TestStoreCatalog:
             id_field=UUID4_ID_FIELD,
         )
 
-        Project.load(path, environment="test", resolvers=[counter]).compose(FastAPIAdapter())
+        Project.load(path, environment="test", resolvers=[counter]).compose(FastAPIRuntime())
 
         assert counter.calls == Counter({"url": 1, "database": 1})
         # section() for the retired keys and decode() share the one resolution.

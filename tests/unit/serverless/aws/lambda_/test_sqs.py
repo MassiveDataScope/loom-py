@@ -28,8 +28,8 @@ from loom.core.observability.observability import Observability
 from loom.core.stores import LAMBDA_PROFILE
 from loom.core.tracing import get_trace_id, reset_trace_id, set_trace_id
 from loom.serverless.aws.lambda_ import (
-    LambdaAdapter,
     LambdaHandler,
+    LambdaRuntime,
     LambdaUnservedConfigError,
 )
 from loom.testing import RecordingJobTransport
@@ -102,7 +102,7 @@ class TestSQSHandler:
             code_path=tmp_path,
             config_root=tmp_path,
         )
-        adapter = LambdaAdapter(jobs=[probe[0]])
+        adapter = LambdaRuntime(jobs=[probe[0]])
         with pytest.raises(ConfigError, match="needs batching_window_s"):
             adapter.recipe(project)
 
@@ -170,7 +170,7 @@ class TestSQSHandler:
         self,
         handler: LambdaHandler,
         record: RecordFactory,
-        built: tuple[LambdaAdapter, Application, list[str]],
+        built: tuple[LambdaRuntime, Application, list[str]],
         seen: list[tuple[str, str | None, str | None]],
         loops: list[asyncio.AbstractEventLoop],
     ) -> None:
@@ -187,7 +187,7 @@ class TestSQSHandler:
         code = """
 import sys
 from pathlib import Path
-from loom.serverless.aws.lambda_ import LambdaAdapter
+from loom.serverless.aws.lambda_ import LambdaRuntime
 from loom.composition import AppConfig, Project
 from loom.core.config import ConfigContext, ConfigError
 from loom.core.environment import Environment
@@ -207,7 +207,7 @@ project = Project(
     observability=Observability.noop(),
     observability_config=ObservabilityConfig(),
 )
-LambdaAdapter(jobs=[Probe]).recipe(project)
+LambdaRuntime(jobs=[Probe]).recipe(project)
 loaded = ("fastapi", "starlette", "mangum", "pydantic", "celery")
 print([name for name in loaded if name in sys.modules])
 """
@@ -225,7 +225,7 @@ print([name for name in loaded if name in sys.modules])
             handler(event, None)
 
     def test_bind_requires_recipe(self) -> None:
-        adapter = LambdaAdapter()
+        adapter = LambdaRuntime()
         with pytest.raises(CompositionStateError, match="call recipe first"):
             adapter.bind(None)  # type: ignore[arg-type]
 
@@ -234,7 +234,7 @@ print([name for name in loaded if name in sys.modules])
             def execute(self) -> None:
                 return None
 
-        adapter = LambdaAdapter(jobs=[LocalJob])
+        adapter = LambdaRuntime(jobs=[LocalJob])
         recipe = adapter.recipe(project)
         assert recipe.profile is LAMBDA_PROFILE
         assert (recipe.agents, recipe.agent_endpoints) == (True, False)
@@ -242,7 +242,7 @@ print([name for name in loaded if name in sys.modules])
 
     def test_bind_propagates_open_failure(
         self,
-        built: tuple[LambdaAdapter, Application, list[str]],
+        built: tuple[LambdaRuntime, Application, list[str]],
     ) -> None:
         adapter, application, _ = built
         _add_broken_resource(application)
@@ -361,7 +361,7 @@ print([name for name in loaded if name in sys.modules])
     @pytest.mark.parametrize("action", ["recipe", "bind", "bind_after_close"])
     def test_adapter_already_composed(
         self,
-        built: tuple[LambdaAdapter, Application, list[str]],
+        built: tuple[LambdaRuntime, Application, list[str]],
         project: Project,
         action: str,
     ) -> None:
@@ -378,13 +378,13 @@ print([name for name in loaded if name in sys.modules])
         try:
             with pytest.raises(CompositionStateError) as caught:
                 again()
-            assert caught.value.issue.code == "ADAPTER_ALREADY_COMPOSED"
+            assert caught.value.issue.code == "RUNTIME_ALREADY_COMPOSED"
         finally:
             adapter.close()
 
     def test_close_closes_opened_resources(
         self,
-        built: tuple[LambdaAdapter, Application, list[str]],
+        built: tuple[LambdaRuntime, Application, list[str]],
     ) -> None:
         adapter, application, lifecycle = built
         adapter.bind(application)
@@ -399,12 +399,12 @@ print([name for name in loaded if name in sys.modules])
 
             return Duplicate
 
-        adapter = LambdaAdapter(jobs=[make_job(), make_job()])
+        adapter = LambdaRuntime(jobs=[make_job(), make_job()])
         with pytest.raises(DuplicateJobName):
             adapter.recipe(project)
 
     def test_failed_open_closes_its_loop(
-        self, built: tuple[LambdaAdapter, Application, list[str]], event_loops: RecordedLoops
+        self, built: tuple[LambdaRuntime, Application, list[str]], event_loops: RecordedLoops
     ) -> None:
         adapter, application, _ = built
         _add_broken_resource(application)
@@ -413,7 +413,7 @@ print([name for name in loaded if name in sys.modules])
         assert event_loops.created[0].is_closed()
 
     def test_failed_open_unsets_its_loop(
-        self, built: tuple[LambdaAdapter, Application, list[str]], event_loops: RecordedLoops
+        self, built: tuple[LambdaRuntime, Application, list[str]], event_loops: RecordedLoops
     ) -> None:
         adapter, application, _ = built
         _add_broken_resource(application)
@@ -424,7 +424,7 @@ print([name for name in loaded if name in sys.modules])
     @pytest.mark.parametrize("closes", [1, 2], ids=["once", "twice"])
     def test_closing_the_handler_closes_its_loop(
         self,
-        built: tuple[LambdaAdapter, Application, list[str]],
+        built: tuple[LambdaRuntime, Application, list[str]],
         event_loops: RecordedLoops,
         closes: int,
     ) -> None:
@@ -438,7 +438,7 @@ print([name for name in loaded if name in sys.modules])
 
     def test_closing_the_handler_closes_the_application(
         self,
-        built: tuple[LambdaAdapter, Application, list[str]],
+        built: tuple[LambdaRuntime, Application, list[str]],
     ) -> None:
         adapter, application, lifecycle = built
         handler = adapter.bind(application)
@@ -448,7 +448,7 @@ print([name for name in loaded if name in sys.modules])
         assert lifecycle == ["open", "close"]
 
     def test_job_span_is_emitted(
-        self, built: tuple[LambdaAdapter, Application, list[str]], record: RecordFactory
+        self, built: tuple[LambdaRuntime, Application, list[str]], record: RecordFactory
     ) -> None:
         class Observer:
             def __init__(self) -> None:
@@ -535,7 +535,7 @@ print([name for name in loaded if name in sys.modules])
             code_path=project.code_path,
             config_root=project.config_root,
         )
-        adapter = LambdaAdapter(jobs=[SlowJob])
+        adapter = LambdaRuntime(jobs=[SlowJob])
         handler = adapter.bind(configured.compose(adapter))
         try:
             result = handler(
@@ -548,7 +548,7 @@ print([name for name in loaded if name in sys.modules])
         assert SlowJob.__timeout__ == 0.001
 
     def test_malformed_record_emits_error_span(
-        self, built: tuple[LambdaAdapter, Application, list[str]], record: RecordFactory
+        self, built: tuple[LambdaRuntime, Application, list[str]], record: RecordFactory
     ) -> None:
         class Observer:
             def __init__(self) -> None:
@@ -574,7 +574,7 @@ print([name for name in loaded if name in sys.modules])
 
     def test_bind_reports_inline_dispatch(
         self,
-        built: tuple[LambdaAdapter, Application, list[str]],
+        built: tuple[LambdaRuntime, Application, list[str]],
         caplog: pytest.LogCaptureFixture,
     ) -> None:
         adapter, application, _ = built
@@ -590,7 +590,7 @@ print([name for name in loaded if name in sys.modules])
         probe: tuple[type[Job[None]], Probe],
         caplog: pytest.LogCaptureFixture,
     ) -> None:
-        adapter = LambdaAdapter(jobs=[probe[0]])
+        adapter = LambdaRuntime(jobs=[probe[0]])
         from tests.helpers.composition import WithOverrides
 
         application = project.compose(
@@ -627,7 +627,7 @@ print([name for name in loaded if name in sys.modules])
             lambda self, **kwargs: DiscoveryResult(models=(DiscoveredModel,), use_cases=()),
         )
         configured = _manifest_project(project, "acme_jobs")
-        LambdaAdapter(jobs=[probe[0]]).recipe(configured)
+        LambdaRuntime(jobs=[probe[0]]).recipe(configured)
         assert any("ignores AutoCRUD" in message for message in caplog.messages)
 
     def test_committed_failure_logs_final_outcome(
@@ -660,7 +660,7 @@ print([name for name in loaded if name in sys.modules])
             project, "tests.unit.serverless.aws.lambda_._no_such_manifest", **sections
         )
 
-        adapter = LambdaAdapter()
+        adapter = LambdaRuntime()
 
         with pytest.raises(LambdaUnservedConfigError) as raised:
             adapter.recipe(undiscoverable)

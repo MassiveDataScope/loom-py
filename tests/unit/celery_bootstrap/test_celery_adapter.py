@@ -1,4 +1,4 @@
-"""``CeleryAdapter`` composes the worker on the shared, transport-neutral recipe (US4, T026)."""
+"""``CeleryRuntime`` composes the worker on the shared, transport-neutral recipe (US4, T026)."""
 
 from __future__ import annotations
 
@@ -10,7 +10,7 @@ from celery import Celery
 
 from loom.ai.abc import AgentHandle, McpHandle
 from loom.celery.constants import TASK_CALLBACK_ERROR_PREFIX, TASK_CALLBACK_PREFIX, TASK_JOB_PREFIX
-from loom.celery.runtime import CeleryAdapter
+from loom.celery.runtime import CeleryRuntime
 from loom.composition import (
     AppConfig,
     Application,
@@ -82,7 +82,7 @@ def _project(tmp_path: Path, config: dict[str, Any], *modules: str) -> Project:
 def _application(
     tmp_path: Path,
     config: dict[str, Any],
-    adapter: CeleryAdapter,
+    adapter: CeleryRuntime,
     *modules: str,
 ) -> Application:
     return _project(tmp_path, config, *modules).compose(adapter)
@@ -104,14 +104,14 @@ class TestBackendRule:
         config = {"stores": {"default": {"backend": backend, "url": _SQLITE}}}
 
         project = _project(tmp_path, config)
-        recipe = CeleryAdapter(jobs=[_PingJob]).recipe(project)
+        recipe = CeleryRuntime(jobs=[_PingJob]).recipe(project)
 
         assert _default_backend(project, recipe) == backend
 
     def test_a_database_url_without_backend_serves_sqlalchemy(self, tmp_path: Path) -> None:
         stores = {"default": {"backend": "sqlalchemy", "url": _SQLITE}}
         project = _project(tmp_path, {"stores": stores})
-        recipe = CeleryAdapter(jobs=[_PingJob]).recipe(project)
+        recipe = CeleryRuntime(jobs=[_PingJob]).recipe(project)
 
         assert _default_backend(project, recipe) == "sqlalchemy"
 
@@ -122,17 +122,17 @@ class TestBackendRule:
             tmp_path, {"stores": {"default": {"backend": "sqlalchemy", "username": "app"}}}
         )
 
-        recipe = CeleryAdapter(jobs=[_PingJob]).recipe(project)
+        recipe = CeleryRuntime(jobs=[_PingJob]).recipe(project)
 
         assert _default_backend(project, recipe) == "sqlalchemy"
-        adapter = CeleryAdapter(jobs=[_PingJob])
+        adapter = CeleryRuntime(jobs=[_PingJob])
         with pytest.raises(ConfigError, match="url"):
             project.compose(adapter)
 
 
 class TestRecipe:
     def test_the_worker_declares_its_profile_checks_and_no_agents(self, tmp_path: Path) -> None:
-        recipe = CeleryAdapter(jobs=[_PingJob]).recipe(_project(tmp_path, {}))
+        recipe = CeleryRuntime(jobs=[_PingJob]).recipe(_project(tmp_path, {}))
 
         assert recipe.profile is WORKER_PROFILE
         assert recipe.check_scope == CheckScope.without_rest()
@@ -143,12 +143,12 @@ class TestRecipe:
             async def execute(self) -> object:
                 return None
 
-        recipe = CeleryAdapter(jobs=[_PingJob], use_cases=[_Lookup]).recipe(_project(tmp_path, {}))
+        recipe = CeleryRuntime(jobs=[_PingJob], use_cases=[_Lookup]).recipe(_project(tmp_path, {}))
 
         assert set(recipe.discovered.use_cases) == {_PingJob, _Lookup}
 
     def test_the_discovered_callbacks_reach_the_recipe_as_graph_roots(self, tmp_path: Path) -> None:
-        adapter = CeleryAdapter(jobs=[_PingJob])
+        adapter = CeleryRuntime(jobs=[_PingJob])
 
         recipe = adapter.recipe(_project(tmp_path, {}, acme_callbacks.MODULE))
 
@@ -158,30 +158,30 @@ class TestRecipe:
     def test_the_metrics_reach_the_recipe(self, tmp_path: Path) -> None:
         metrics: Any = object()
 
-        recipe = CeleryAdapter(jobs=[_PingJob], metrics=metrics).recipe(_project(tmp_path, {}))
+        recipe = CeleryRuntime(jobs=[_PingJob], metrics=metrics).recipe(_project(tmp_path, {}))
 
         assert recipe.metrics is metrics
 
     def test_a_second_recipe_on_the_same_adapter_is_refused(self, tmp_path: Path) -> None:
-        adapter = CeleryAdapter(jobs=[_PingJob])
+        adapter = CeleryRuntime(jobs=[_PingJob])
         adapter.recipe(_project(tmp_path, {}))
 
         project = _project(tmp_path, {})
         with pytest.raises(
-            CompositionStateError, match="one adapter instance composes one application"
+            CompositionStateError, match="one runtime instance composes one application"
         ) as raised:
             adapter.recipe(project)
-        assert raised.value.issue.code is CompositionErrorCode.ADAPTER_ALREADY_COMPOSED
+        assert raised.value.issue.code is CompositionErrorCode.RUNTIME_ALREADY_COMPOSED
 
     def test_bind_before_recipe_is_refused(self) -> None:
-        adapter = CeleryAdapter(jobs=[_PingJob])
+        adapter = CeleryRuntime(jobs=[_PingJob])
         application: Any = object()
 
-        with pytest.raises(CompositionStateError, match="CeleryAdapter.bind .* call recipe first"):
+        with pytest.raises(CompositionStateError, match="CeleryRuntime.bind .* call recipe first"):
             adapter.bind(application)
 
     def test_a_failed_recipe_can_be_retried(self, tmp_path: Path) -> None:
-        adapter = CeleryAdapter(jobs=[_PingJob])
+        adapter = CeleryRuntime(jobs=[_PingJob])
         project = _project(tmp_path, {"celery": {"broker_url": 5}})
         with pytest.raises(ConfigError):
             adapter.recipe(project)
@@ -193,7 +193,7 @@ class TestBind:
     def test_bind_returns_a_celery_app_with_jobs_and_discovered_callbacks(
         self, tmp_path: Path
     ) -> None:
-        adapter = CeleryAdapter(jobs=[_PingJob])
+        adapter = CeleryRuntime(jobs=[_PingJob])
 
         app = adapter.bind(_application(tmp_path, {}, adapter, acme_callbacks.MODULE))
 
@@ -207,7 +207,7 @@ class TestBind:
     ) -> None:
         log = RecordingLogger()
         monkeypatch.setattr("loom.celery.runtime._log", log)
-        adapter = CeleryAdapter(jobs=[_PingJob, _SecondJob])
+        adapter = CeleryRuntime(jobs=[_PingJob, _SecondJob])
 
         adapter.bind(_application(tmp_path, {}, adapter))
 
@@ -220,15 +220,15 @@ class TestBind:
         assert "max_attempts=3" in line["jobs"][0]["retry"]
 
     def test_bind_without_recipe_is_refused(self, tmp_path: Path) -> None:
-        adapter = CeleryAdapter(jobs=[_PingJob])
+        adapter = CeleryRuntime(jobs=[_PingJob])
         application = _application(tmp_path, {}, adapter)
 
-        unbound = CeleryAdapter(jobs=[_PingJob])
+        unbound = CeleryRuntime(jobs=[_PingJob])
         with pytest.raises(RuntimeError, match="recipe"):
             unbound.bind(application)
 
     def test_an_ai_section_is_ignored(self, tmp_path: Path) -> None:
-        adapter = CeleryAdapter(jobs=[_PingJob])
+        adapter = CeleryRuntime(jobs=[_PingJob])
 
         application = _application(tmp_path, {"ai": {"agents": {}}}, adapter)
 
@@ -239,7 +239,7 @@ class TestServices:
     def test_the_job_service_dispatches_the_discovered_callbacks_and_refuses_others(
         self, tmp_path: Path
     ) -> None:
-        adapter = CeleryAdapter(jobs=[_PingJob])
+        adapter = CeleryRuntime(jobs=[_PingJob])
         container = _application(tmp_path, {}, adapter, acme_callbacks.MODULE).kernel.container
         service = container.resolve(JobService)
 
@@ -248,7 +248,7 @@ class TestServices:
             service.dispatch_after_commit(_PingJob, on_success=_OtherCallback)
 
     def test_job_and_sql_services_are_resolvable(self, tmp_path: Path) -> None:
-        adapter = CeleryAdapter(jobs=[_PingJob])
+        adapter = CeleryRuntime(jobs=[_PingJob])
 
         container = _application(tmp_path, {}, adapter).kernel.container
 
@@ -266,7 +266,7 @@ class TestServices:
 
         monkeypatch.setattr(CacheGateway, "close", _close)
         config = {"cache": {"aiocache_config": {"default": dict(SERIALIZED_BACKEND)}}}
-        application = _application(tmp_path, config, CeleryAdapter(jobs=[_PingJob]))
+        application = _application(tmp_path, config, CeleryRuntime(jobs=[_PingJob]))
 
         async with application.running():
             assert closed == []
@@ -280,7 +280,7 @@ class TestAwsClientsLifecycle:
         stores = {
             "stores": {"default": {"backend": "dynamodb", "region": OTHER_REGION, "table": "t"}}
         }
-        return _application(tmp_path, stores, CeleryAdapter(jobs=[_PingJob]))
+        return _application(tmp_path, stores, CeleryRuntime(jobs=[_PingJob]))
 
     async def test_the_parent_check_builds_no_further_aws_client_and_calls_none(
         self, tmp_path: Path, island: FakeAwsIsland
@@ -296,7 +296,7 @@ class TestAwsClientsLifecycle:
     async def test_a_worker_without_aws_builds_no_client_across_check_and_close(
         self, tmp_path: Path, island: FakeAwsIsland
     ) -> None:
-        application = _application(tmp_path, {}, CeleryAdapter(jobs=[_PingJob]))
+        application = _application(tmp_path, {}, CeleryRuntime(jobs=[_PingJob]))
 
         await application.check()
         async with application.running(check=False):

@@ -129,7 +129,7 @@ class Recipe:
         return CursorCodec.disabled() if self.connection_only else CursorCodec.from_context(ctx)
 
 
-class Adapter(Protocol[T_co]):
+class Runtime(Protocol[T_co]):
     """A transport mounted on a composed application.
 
     :meth:`recipe` declares what to compose and opens nothing. :meth:`bind`

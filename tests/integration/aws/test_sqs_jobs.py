@@ -18,7 +18,7 @@ from loom.core.job.envelope import decode_job_envelope
 from loom.core.job.job import Job
 from loom.core.job.service import JobService
 from loom.core.use_case.use_case import UseCase
-from loom.serverless.aws.lambda_ import LambdaAdapter
+from loom.serverless.aws.lambda_ import LambdaRuntime
 from loom.testing import LambdaEvent
 from tests.helpers.jobs import JobsAdapter
 from tests.integration.aws.conftest import AwsClientFactory, ConfigWriter, unique
@@ -240,7 +240,7 @@ class TestSQSJobs:
             message["Body"], message_id=message["MessageId"], queue_arn=queue.arn
         )
         function = "fifo_worker" if job_type is OrderJob else "worker"
-        adapter = LambdaAdapter(function=function, jobs=[WelcomeJob, OrderJob])
+        adapter = LambdaRuntime(function=function, jobs=[WelcomeJob, OrderJob])
         consumer = Project.load(
             str(config_path), environment="test", code_path=str(tmp_path)
         ).compose(adapter)

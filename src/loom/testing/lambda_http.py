@@ -23,8 +23,8 @@ from typing import Any, cast
 import httpx
 
 from loom.composition import Application, Project
-from loom.serverless.aws.lambda_.handler import LambdaAdapter, LambdaHandler
-from loom.testing.overrides import Override, OverrideAdapter
+from loom.serverless.aws.lambda_.handler import LambdaHandler, LambdaRuntime
+from loom.testing.overrides import Override, OverrideRuntime
 from loom.testing.serverless import EventFormat, LambdaEvent
 
 HttpHandler = Callable[[dict[str, Any], Any], dict[str, Any]]
@@ -36,7 +36,7 @@ class LambdaTestClient(httpx.Client):
     Args:
         app: The handler ``create_app`` returned, which the caller closes; or a
             configuration path, or none for the default config directory, composed
-            here as ``create_app`` would with ``LambdaAdapter(function=function)``
+            here as ``create_app`` would with ``LambdaRuntime(function=function)``
             and closed with the client.
         function: The function of ``lambda.functions`` to serve; with a
             configuration path only.
@@ -65,11 +65,11 @@ class LambdaTestClient(httpx.Client):
         owned: LambdaHandler | None = None
         if app is None or isinstance(app, str):
             paths = () if app is None else (app,)
-            adapter = LambdaAdapter(function=function)
+            runtime = LambdaRuntime(function=function)
             self.application = Project.load(*paths, **options).compose(
-                OverrideAdapter(adapter, tuple(overrides))
+                OverrideRuntime(runtime, tuple(overrides))
             )
-            owned = adapter.bind(self.application)
+            owned = runtime.bind(self.application)
             app = cast(HttpHandler, owned)
         elif function is not None or options:
             raise TypeError("function and create_app options need a configuration path")

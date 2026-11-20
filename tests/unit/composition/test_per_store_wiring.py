@@ -23,7 +23,7 @@ from loom.core.stores.catalog import StoreKey
 from loom.core.stores.repository import DefaultRepositoryBuilder, RepoFor, RepositoryBuildContext
 from loom.core.use_case import Input, UseCase
 from loom.core.use_case.errors import UncomposedWriteStore
-from loom.rest.fastapi.runtime import FastAPIAdapter
+from loom.rest.fastapi.runtime import FastAPIRuntime
 from loom.rest.model import RestInterface
 from loom.stores.sqlalchemy.plugin import SQLAlchemyStorePlugin
 from loom.stores.sqlalchemy.session_manager import SessionManager
@@ -355,7 +355,7 @@ class TestPerStoreWiring:
             {"default": {"backend": "none"}, "ledger": _SQLITE_LEDGER}, monkeypatch
         )
 
-        application = project.compose(FastAPIAdapter())
+        application = project.compose(FastAPIRuntime())
 
         assert {route.path for route in _Entries.routes} >= {"/", "/{id}"}
         assert application.kernel.container.resolve_repo(AcmeLedgerStoreEntry) is not None
@@ -366,7 +366,7 @@ class TestPerStoreWiring:
     ) -> None:
         stores = {"default": _SQLITE_LEDGER, "ledger": {"backend": "none"}}
         project = _rest_project(stores, monkeypatch)
-        adapter = FastAPIAdapter()
+        adapter = FastAPIRuntime()
 
         with pytest.raises(RuntimeError, match=r"stores\.ledger\.backend 'none' serves no"):
             project.compose(adapter)

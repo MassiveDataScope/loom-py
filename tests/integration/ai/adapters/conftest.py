@@ -21,7 +21,7 @@ from loom.core.di.container import LoomContainer
 from loom.core.discovery.base import DiscoveryResult
 from loom.core.job.callback import JobCallback
 from loom.core.stores import SERVER_PROFILE
-from loom.serverless.aws.lambda_ import LambdaAdapter
+from loom.serverless.aws.lambda_ import LambdaRuntime
 from tests.helpers.ai import CountingEngineProvider
 from tests.helpers.aws_island import FakeAwsIsland
 from tests.helpers.composition import WithOverrides, composition_project
@@ -167,7 +167,7 @@ def compose(project: Project, engines: CountingEngineProvider) -> Compose:
         cases = use_cases or (AcmeMarket,)
         return project.compose(
             WithOverrides(
-                host or LambdaAdapter(use_cases=cases),
+                host or LambdaRuntime(use_cases=cases),
                 binding(AcmeQuotes, quotes),
                 binding(AcmeAdvice, advice),
             )

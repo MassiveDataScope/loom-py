@@ -10,7 +10,7 @@ from fastapi.testclient import TestClient
 from loom.composition import CompositionErrorCode, CompositionStateError
 from loom.composition import create_app as compose
 from loom.rest.fastapi import create_app
-from loom.rest.fastapi.runtime import FastAPIAdapter
+from loom.rest.fastapi.runtime import FastAPIRuntime
 from tests.helpers.composition import ProjectFactory
 
 
@@ -22,13 +22,13 @@ def _routes(app: FastAPI) -> set[tuple[str, frozenset[str]]]:
     }
 
 
-class TestFastApiAdapter:
+class TestFastApiRuntime:
     def test_the_shortcut_and_the_adapter_serve_the_same_application(
         self,
         fixture_project: ProjectFactory,
     ) -> None:
         shortcut = create_app(fixture_project("shortcut"), environment="test")
-        composed = compose(fixture_project("adapter"), adapter=FastAPIAdapter(), environment="test")
+        composed = compose(fixture_project("adapter"), runtime=FastAPIRuntime(), environment="test")
 
         assert _routes(shortcut) == _routes(composed)
         assert shortcut.openapi()["paths"].keys() == composed.openapi()["paths"].keys()
@@ -52,23 +52,23 @@ class TestFastApiAdapter:
     def test_bind_before_recipe_is_refused(
         self,
     ) -> None:
-        adapter = FastAPIAdapter()
+        adapter = FastAPIRuntime()
         application = object()
         with pytest.raises(
-            CompositionStateError, match="FastAPIAdapter.bind .* call recipe first"
+            CompositionStateError, match="FastAPIRuntime.bind .* call recipe first"
         ) as raised:
             adapter.bind(application)  # type: ignore[arg-type]
-        assert raised.value.issue.code is CompositionErrorCode.ADAPTER_RECIPE_MISSING
+        assert raised.value.issue.code is CompositionErrorCode.RUNTIME_RECIPE_MISSING
 
     def test_a_second_recipe_on_the_same_adapter_is_refused(
         self, fixture_project: ProjectFactory
     ) -> None:
-        adapter = FastAPIAdapter()
-        compose(fixture_project("first"), adapter=adapter, environment="test")
+        adapter = FastAPIRuntime()
+        compose(fixture_project("first"), runtime=adapter, environment="test")
 
         second = fixture_project("second")
         with pytest.raises(
-            CompositionStateError, match="one adapter instance composes one application"
+            CompositionStateError, match="one runtime instance composes one application"
         ) as raised:
-            compose(second, adapter=adapter, environment="test")
-        assert raised.value.issue.code is CompositionErrorCode.ADAPTER_ALREADY_COMPOSED
+            compose(second, runtime=adapter, environment="test")
+        assert raised.value.issue.code is CompositionErrorCode.RUNTIME_ALREADY_COMPOSED

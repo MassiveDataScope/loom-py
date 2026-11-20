@@ -47,12 +47,12 @@ class CompositionErrorCode(IssueCode):
         "APPLICATION_ALREADY_OPEN",
         Template("Application is already open; close it before opening it again", component=""),
     )
-    ADAPTER_ALREADY_COMPOSED = (
-        "ADAPTER_ALREADY_COMPOSED",
-        Template("one adapter instance composes one application; create another adapter"),
+    RUNTIME_ALREADY_COMPOSED = (
+        "RUNTIME_ALREADY_COMPOSED",
+        Template("one runtime instance composes one application; create another runtime"),
     )
-    ADAPTER_RECIPE_MISSING = (
-        "ADAPTER_RECIPE_MISSING",
+    RUNTIME_RECIPE_MISSING = (
+        "RUNTIME_RECIPE_MISSING",
         Template("{component}.bind needs the recipe it declared; call recipe first"),
     )
     HOST_ALREADY_STARTED = (
@@ -92,7 +92,7 @@ class CompositionStateError(RuntimeError):
     Example::
 
         raise CompositionStateError(
-            CompositionErrorCode.ADAPTER_RECIPE_MISSING.issue(component="CeleryAdapter")
+            CompositionErrorCode.RUNTIME_RECIPE_MISSING.issue(component="CeleryRuntime")
         )
     """
 

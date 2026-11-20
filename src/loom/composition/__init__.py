@@ -21,10 +21,10 @@ from loom.composition.errors import (
 )
 from loom.composition.host import ApplicationHost, LoopHost
 from loom.composition.project import AppConfig, Project
-from loom.composition.recipe import Adapter, Recipe
+from loom.composition.recipe import Recipe, Runtime
 
 __all__ = [
-    "Adapter",
+    "Runtime",
     "AiWiring",
     "AppConfig",
     "Application",

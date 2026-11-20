@@ -11,18 +11,18 @@ transport adapter then mounts itself on that application. Nothing in
 
 ```python
 from loom.composition import create_app
-from loom.rest.fastapi.runtime import FastAPIAdapter
+from loom.rest.fastapi.runtime import FastAPIRuntime
 
-app = create_app("config/api.yaml", adapter=FastAPIAdapter())
+app = create_app("config/api.yaml", runtime=FastAPIRuntime())
 ```
 
 When `app.entry` is set, `create_app("config/api.yaml")` selects the adapter
 from the loaded configuration. The built-in entries are `fastapi` and
 `lambda`; any other entry names a function of `lambda.functions`, served by
-`LambdaAdapter`. An explicit `adapter=` takes precedence. Without either
-`app.entry` or `adapter=`, startup raises `ConfigError`.
+`LambdaRuntime`. An explicit `runtime=` takes precedence. Without either
+`app.entry` or `runtime=`, startup raises `ConfigError`.
 
-`entry: lambda`, or `LambdaAdapter()` without a declared function, serves
+`entry: lambda`, or `LambdaRuntime()` without a declared function, serves
 every interface over HTTP. Several Lambda functions can share one YAML file:
 name each one under `lambda.functions`, declare what invokes it under its
 `trigger`, then set `app.entry` to the function to serve:
@@ -140,7 +140,7 @@ every change the job makes. The identity grants roles only: it implies no elevat
 and no `BYPASSRLS`. Whoever may invoke the function, or write to its queue,
 runs the declared job as the declared identity: restrict
 `lambda:InvokeFunction` and the queue policy, and pin such a function in code
-with `LambdaAdapter(function=...)`.
+with `LambdaRuntime(function=...)`.
 
 When AWS itself records who caused the event, the identity acts on their
 behalf: the audit log's `on_behalf_of` holds the `userIdentity.principalId` of
@@ -181,10 +181,10 @@ The design and its sources are recorded in ADR 0007
 
 | Call | Returns | Use it for |
 |---|---|---|
-| `create_app(*config_paths, adapter=..., ...)` | what the adapter's `bind` returns: a `FastAPI` app, a `Celery` app, a handler | starting a process; `adapter=` may be omitted when `app.entry` is set |
+| `create_app(*config_paths, runtime=..., ...)` | what the adapter's `bind` returns: a `FastAPI` app, a `Celery` app, a handler | starting a process; `runtime=` may be omitted when `app.entry` is set |
 | `Project.load(*config_paths, ...)` | the `Project`: configuration, environment and code, not yet composed | tests, scripts, a host that holds its configuration in memory |
-| `project.compose(adapter)` | the composed, closed `Application`; no transport mounted | tests, scripts, a host that drives the application itself |
-| `project.serve(adapter)` | what the adapter's `bind` returns | `create_app` without the shortcut |
+| `project.compose(runtime)` | the composed, closed `Application`; no transport mounted | tests, scripts, a host that drives the application itself |
+| `project.serve(runtime)` | what the adapter's `bind` returns | `create_app` without the shortcut |
 
 `create_app` and `Project.load` take the same loading arguments: the YAML
 `config_paths` or `config_dir`, `environment`, `code_path` and `resolvers`,
@@ -200,11 +200,11 @@ shortcuts over the composition:
 
 | Shortcut | Equivalent to |
 |---|---|
-| `loom.rest.fastapi.create_app(..., metrics_registry=, authenticator=)` | `create_app(..., adapter=FastAPIAdapter(metrics_registry=, authenticator=))` |
-| `loom.celery.auto.create_app(..., jobs=, metrics=)` | `create_app(..., adapter=CeleryAdapter(jobs=, metrics=))` |
+| `loom.rest.fastapi.create_app(..., metrics_registry=, authenticator=)` | `create_app(..., runtime=FastAPIRuntime(metrics_registry=, authenticator=))` |
+| `loom.celery.auto.create_app(..., jobs=, metrics=)` | `create_app(..., runtime=CeleryRuntime(jobs=, metrics=))` |
 | `loom.celery.bootstrap.bootstrap_worker(...)` | the same composition; returns `WorkerBootstrapResult` |
 
-`FastAPIAdapter` lives in `loom.rest.fastapi.runtime` and `CeleryAdapter` in
+`FastAPIRuntime` lives in `loom.rest.fastapi.runtime` and `CeleryRuntime` in
 `loom.celery.runtime`.
 
 ## What `create_app` runs
@@ -239,7 +239,7 @@ reach the outside.
 
 ## Recipes and adapters
 
-An adapter is any object with two methods, the `Adapter` protocol:
+A runtime is any object with two methods, the `Runtime` protocol:
 
 - `recipe(project) -> Recipe` declares what to compose. It is synchronous and
   opens nothing.
@@ -285,7 +285,7 @@ class ScriptAdapter:
 
 
 async def main(operator: Identity) -> None:  # Product: a model of your app
-    application = create_app("config/script.yaml", adapter=ScriptAdapter())
+    application = create_app("config/script.yaml", runtime=ScriptAdapter())
     async with application.running():
         invoker = application.kernel.invoker.for_identity(operator)
         await invoker.entity(Product).get(params={"id": 1})
@@ -343,7 +343,7 @@ the fork.
 
 ## Wiring per adapter
 
-| Adapter | Checks | Opens | Closes |
+| Runtime | Checks | Opens | Closes |
 |---|---|---|---|
 | FastAPI | lifespan | lifespan | lifespan |
 | Celery, prefork pool | `worker_init`, in the parent | `worker_process_init`, in each child, with `check=False` | `worker_process_shutdown` and `worker_shutdown`, best effort |

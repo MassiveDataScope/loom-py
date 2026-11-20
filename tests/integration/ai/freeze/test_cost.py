@@ -45,7 +45,7 @@ from loom.ai.engines.pydantic_ai import PydanticAIEnginePlugin, _mcp  # noqa: E4
 from loom.ai.engines.pydantic_ai import _transport as _transport  # noqa: E402
 from loom.ai.errors import AgentRunErrorCode  # noqa: E402
 from loom.composition import create_app  # noqa: E402
-from loom.serverless.aws.lambda_ import LambdaAdapter, LambdaHandler  # noqa: E402
+from loom.serverless.aws.lambda_ import LambdaHandler, LambdaRuntime  # noqa: E402
 from loom.testing import LambdaTestClient  # noqa: E402
 from tests.integration.ai.freeze import measure, probe  # noqa: E402
 from tests.integration.ai.freeze.server import Era, LiveMcpServer, serving  # noqa: E402
@@ -340,7 +340,7 @@ def _function_with_a_spare_server(
     spec |= {"name": "idle", "capabilities": [grant]}
     (agents / "idle.yaml").write_text(yaml.safe_dump(spec), encoding="utf-8")
     function = "worker" if trigger == "jobs" else None
-    return create_app(str(path), adapter=LambdaAdapter(function=function), environment="test")
+    return create_app(str(path), runtime=LambdaRuntime(function=function), environment="test")
 
 
 # ---------------------------------------------------------------------------
@@ -403,7 +403,7 @@ def probe_function(
             monkeypatch.setenv(probe.CURSOR_KEY_VARIABLE, _CURSOR_KEY)
             monkeypatch.setenv("A3_JWT_SECRET", _PROBE_SECRET)
             config = probe.project(tmp_path, server.url)
-            handler = create_app(str(config), adapter=LambdaAdapter(), environment="test")
+            handler = create_app(str(config), runtime=LambdaRuntime(), environment="test")
             stack.callback(handler.close)
             return _ProbeFunction(server, handler, clock, capsys)
 

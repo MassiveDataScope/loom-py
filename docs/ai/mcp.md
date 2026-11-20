@@ -892,7 +892,7 @@ idempotent on the server, or keep it off a queue.
 ### What it costs, and how it is measured (A3)
 
 These request counts are tested on every pull request, against a real
-`LambdaAdapter` function on both triggers and a real streamable-HTTP FastMCP
+`LambdaRuntime` function on both triggers and a real streamable-HTTP FastMCP
 server behind a local TCP proxy
 ([`tests/integration/ai/freeze/test_cost.py`](https://github.com/MassiveDataScope/loom-py/blob/master/tests/integration/ai/freeze/test_cost.py)):
 

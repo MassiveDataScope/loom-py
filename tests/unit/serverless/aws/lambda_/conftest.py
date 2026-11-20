@@ -18,7 +18,7 @@ from loom.core.stores.catalog import DEFAULT_STORE
 from loom.core.stores.uow.coordinator import InvocationOutcome, Uncertain
 from loom.core.stores.uow.scope import invocation_error
 from loom.core.tracing import get_trace_id
-from loom.serverless.aws.lambda_ import LambdaAdapter, LambdaHandler
+from loom.serverless.aws.lambda_ import LambdaHandler, LambdaRuntime
 from tests.helpers.aws_island import FakeAwsIsland
 from tests.helpers.composition import composition_project
 from tests.helpers.loops import event_loops
@@ -104,8 +104,8 @@ def project(tmp_path: Path, island: FakeAwsIsland, fifo: bool) -> Project:
 @pytest.fixture
 def built(
     project: Project, probe: tuple[type[Job[None]], Probe]
-) -> tuple[LambdaAdapter, Application, list[str]]:
-    adapter = LambdaAdapter(jobs=[probe[0]])
+) -> tuple[LambdaRuntime, Application, list[str]]:
+    adapter = LambdaRuntime(jobs=[probe[0]])
     lifecycle: list[str] = []
 
     @asynccontextmanager
@@ -123,7 +123,7 @@ def built(
 
 
 @pytest.fixture
-def handler(built: tuple[LambdaAdapter, Application, list[str]]) -> Iterator[LambdaHandler]:
+def handler(built: tuple[LambdaRuntime, Application, list[str]]) -> Iterator[LambdaHandler]:
     adapter, application, _ = built
     yield adapter.bind(application)
     adapter.close()
