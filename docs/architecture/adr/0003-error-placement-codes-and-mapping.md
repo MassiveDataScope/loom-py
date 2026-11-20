@@ -719,4 +719,4 @@ What the hotfix did where this ADR left a choice, and what it found:
 4. **The ETL historify checks sharing `INVALID_TARGET_TYPE`.** Decided: each
    gets its own code in the 2.x hotfix.
 
-> Renamed in 12.0.0: modules rest/fastapi/router_runtime.py → rest/fastapi/router.py, ai/runtime/ → ai/execution/.
+> Renamed in 12.0.0: modules rest/fastapi/router_runtime.py → rest/fastapi/router.py, ai/runtime/ → ai/execution/, etl/backends/ → etl/engines/.

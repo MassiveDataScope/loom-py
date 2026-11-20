@@ -245,4 +245,4 @@ that state machine, and the planned Lambda adapters would repeat it again.
 Moving it into the composition (for instance, `recipe` returning the state
 `bind` receives) is a candidate for a later change; it is left as is here.
 
-> Renamed in 12.0.0: Adapter → Runtime, FastAPIAdapter → FastAPIRuntime, CeleryAdapter → CeleryRuntime, Adapter.bind → Runtime.mount, StoreBackend → StorePlugin, ObservabilityRuntime → Observability, RuntimeExecutor → UseCaseExecutor, adapter= → runtime=.
+> Renamed in 12.0.0: Adapter → Runtime, FastAPIAdapter → FastAPIRuntime, CeleryAdapter → CeleryRuntime, Adapter.bind → Runtime.mount, StoreBackend → StorePlugin, ObservabilityRuntime → Observability, RuntimeExecutor → UseCaseExecutor, adapter= → runtime=, resolve_store_backend → resolve_store_plugin.
