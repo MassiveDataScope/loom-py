@@ -49,15 +49,15 @@ class TestFastApiRuntime:
 
         assert application_openings == ["open", "close"]
 
-    def test_bind_before_recipe_is_refused(
+    def test_mount_before_recipe_is_refused(
         self,
     ) -> None:
         adapter = FastAPIRuntime()
         application = object()
         with pytest.raises(
-            CompositionStateError, match="FastAPIRuntime.bind .* call recipe first"
+            CompositionStateError, match="FastAPIRuntime.mount .* call recipe first"
         ) as raised:
-            adapter.bind(application)  # type: ignore[arg-type]
+            adapter.mount(application)  # type: ignore[arg-type]
         assert raised.value.issue.code is CompositionErrorCode.RUNTIME_RECIPE_MISSING
 
     def test_a_second_recipe_on_the_same_adapter_is_refused(

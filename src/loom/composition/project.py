@@ -155,7 +155,7 @@ class Project:
         observability: Logging, tracing and metrics, configured before
             anything else can fail.
         observability_config: The ``observability`` section *observability*
-            was built from; an adapter reads its own keys there.
+            was built from; a runtime reads its own keys there.
     """
 
     config: ConfigContext
@@ -346,11 +346,11 @@ class Project:
             runtime: The transport, and how it wants the application composed.
 
         Returns:
-            What *runtime* binds: an ASGI app, a Celery app, a handler.
+            What *runtime* mounts: an ASGI app, a Celery app, a handler.
 
         Raises:
             ConfigError: As :meth:`compose`.
             DeployCheckError: As :meth:`compose`.
             ReservedBindingError: As :meth:`compose`.
         """
-        return runtime.bind(self.compose(runtime))
+        return runtime.mount(self.compose(runtime))

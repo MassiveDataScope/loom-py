@@ -36,9 +36,9 @@ def _bind_agent_surfaces(
     if config is None or runtime is None:
         return
     _validate_agent_endpoint_auth(config, auth)
-    from loom.ai.fastapi.endpoints import bind_agent_endpoints
+    from loom.ai.fastapi.endpoints import mount_agent_endpoints
 
-    bind_agent_endpoints(
+    mount_agent_endpoints(
         app,
         runtime=runtime,
         config=config,
@@ -48,9 +48,9 @@ def _bind_agent_surfaces(
     )
     if config.a2a is None:
         return
-    from loom.ai.a2a.server import bind_a2a_endpoints
+    from loom.ai.a2a.server import mount_a2a_endpoints
 
-    bind_a2a_endpoints(
+    mount_a2a_endpoints(
         app,
         runtime=runtime,
         config=config,

@@ -33,7 +33,7 @@ from loom.rest._body import DEFAULT_MAX_BODY_BYTES, BodySizeLimitMiddleware, sen
 from loom.rest.compiler import RestInterfaceCompiler
 from loom.rest.fastapi._errors import register_error_handlers
 from loom.rest.fastapi._exclusions import verify_exclusion_paths
-from loom.rest.fastapi.router import bind_interfaces
+from loom.rest.fastapi.router import mount_interfaces
 from loom.rest.middleware import TraceIdMiddleware, _accepted_trace_id
 from loom.rest.model import RestApiDefaults, RestInterface, RestRoute
 
@@ -112,7 +112,7 @@ def _items_client(max_limit: int = 1000) -> TestClient:
     factory.register(ListItemsUseCase)
     app = FastAPI()
     register_error_handlers(app)
-    bind_interfaces(
+    mount_interfaces(
         app,
         RestInterfaceCompiler(compiler, defaults=RestApiDefaults(max_limit=max_limit)).compile(
             ItemsInterface

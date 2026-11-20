@@ -188,8 +188,8 @@ class Stubbed:
             overrides=(*recipe.overrides, self._root, self._stubs.bind),
         )
 
-    def bind(self, application: Application) -> Any:
-        return self._transport.bind(application)
+    def mount(self, application: Application) -> Any:
+        return self._transport.mount(application)
 
 
 def acme_config() -> dict[str, Any]:
@@ -278,7 +278,7 @@ def compose(project: Project, stubs: Stubs) -> Iterator[Compose]:
             opened.append(adapter)
         stubbed = Stubbed(adapter, stubs, root)
         application = project.compose(stubbed)
-        return application, stubbed.bind(application)
+        return application, stubbed.mount(application)
 
     yield build
     for adapter in opened:

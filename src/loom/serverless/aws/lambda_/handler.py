@@ -73,7 +73,7 @@ _VIA_SQS: Final[Mapping[str, Decoder]] = {**_DIRECT, "sns": sns.decode_message}
 
 
 class LambdaHandler(Protocol):
-    """The Lambda function handler :meth:`LambdaRuntime.bind` returns, owning its application."""
+    """The Lambda function handler :meth:`LambdaRuntime.mount` returns, owning its application."""
 
     def __call__(self, event: dict[str, Any], context: Any) -> Any:
         """Answer one invocation."""
@@ -94,7 +94,7 @@ class LambdaRuntime:
     serves the same routes, authentication and error bodies to API Gateway
     HTTP API (payload 2.0); without a declared function, every interface.
 
-    Unlike other adapters, :meth:`bind` opens the application: Lambda calls
+    Unlike other adapters, :meth:`mount` opens the application: Lambda calls
     ``create_app`` at Init, and the handler returned keeps it open across warm
     invocations. A failure to open propagates, so Init fails.
 
@@ -153,7 +153,7 @@ class LambdaRuntime:
             recipe, self._bind = self._compose_jobs(project, name, trigger)
         return recipe
 
-    def bind(self, application: Application) -> LambdaHandler:
+    def mount(self, application: Application) -> LambdaHandler:
         """Open *application* once, at Init, and return the warm invocation handler.
 
         Raises:

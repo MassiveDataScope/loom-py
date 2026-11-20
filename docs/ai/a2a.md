@@ -7,12 +7,12 @@ published and no endpoint exists.
 | Direction | What it means | Status |
 |---|---|---|
 | **Outbound** | your agent delegates to a remote agent (`kind: a2a` capability) | wired end to end |
-| **Inbound** | other agents call *your* agent, and read its card | the surface exists; mounting it is a manual `bind_a2a_endpoints` call |
+| **Inbound** | other agents call *your* agent, and read its card | the surface exists; mounting it is a manual `mount_a2a_endpoints` call |
 
 ```{admonition} Inbound mounting is not automatic yet
 :class: warning
 `create_app` wires the HTTP surface (`/run`, `/stream`, `/health`) but does
-**not** yet call `bind_a2a_endpoints`. Publishing an agent over A2A today
+**not** yet call `mount_a2a_endpoints`. Publishing an agent over A2A today
 means calling it yourself against the app you built. This is tracked work,
 not a design decision — the projection, the card and the server are complete
 and tested; only the automatic wiring in `auto.py` is outstanding.
@@ -301,7 +301,7 @@ you already run**, unchanged. The agent layer defines no authentication of its
 own. An A2A caller is an identity like any other, and an anonymous one is
 refused unless that specific agent opted out.
 
-**Only the card is unauthenticated.** `bind_a2a_endpoints` registers the
+**Only the card is unauthenticated.** `mount_a2a_endpoints` registers the
 well-known card path as the sole authentication exclusion, and start-up fails if
 the deployment excludes any other path under the A2A or agents prefix.
 Exclusions are matched as **exact strings**, so a hand-written `/a2a` exclusion

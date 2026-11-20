@@ -19,7 +19,7 @@ from loom.core.stores.repository.registration import classify_key
 from loom.core.use_case.factory import UseCaseFactory, main_repository
 from loom.core.use_case.use_case import UseCase
 from loom.rest.compiler import RestInterfaceCompiler
-from loom.rest.fastapi.router import bind_interfaces
+from loom.rest.fastapi.router import mount_interfaces
 from loom.rest.model import RestInterface, RestRoute
 
 ANA = Identity(subject="ana", mechanism="test")
@@ -45,7 +45,7 @@ def _app(caller: Identity) -> FastAPI:
     factory = UseCaseFactory(LoomContainer(classify_key=classify_key, implicit=main_repository))
     factory.register(RefusedRunUseCase)
     app = FastAPI()
-    bind_interfaces(
+    mount_interfaces(
         app,
         RestInterfaceCompiler(compiler).compile(RefusedRunInterface),
         factory,

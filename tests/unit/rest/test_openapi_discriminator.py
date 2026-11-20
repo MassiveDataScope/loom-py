@@ -26,7 +26,7 @@ from loom.core.use_case.markers import Input
 from loom.core.use_case.use_case import UseCase
 from loom.rest.compiler import RestInterfaceCompiler
 from loom.rest.fastapi.app import _register_openapi_components
-from loom.rest.fastapi.router import bind_interfaces
+from loom.rest.fastapi.router import mount_interfaces
 from loom.rest.model import RestInterface, RestRoute
 
 _COMPONENT_PREFIX = "#/components/schemas/"
@@ -100,7 +100,7 @@ def _openapi() -> dict[str, Any]:
         compiler.compile(route.use_case)
         factory.register(route.use_case)
     app = FastAPI()
-    registry = bind_interfaces(
+    registry = mount_interfaces(
         app,
         RestInterfaceCompiler(compiler).compile(Payments),
         factory,

@@ -114,7 +114,7 @@ def serve(tmp_path: Path, sqs: FakeSqs, monkeypatch: pytest.MonkeyPatch) -> Iter
         )
         adapter = LambdaRuntime(jobs=_JOB_TYPES)
         adapters.append(adapter)
-        return adapter.bind(project.compose(adapter))
+        return adapter.mount(project.compose(adapter))
 
     FakeAwsIsland(client=sqs).install(monkeypatch)
     yield build

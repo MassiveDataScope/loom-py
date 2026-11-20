@@ -708,7 +708,7 @@ class _RouteHandler:
         return MsgspecJSONResponse(content=result, status_code=status_code)
 
 
-def bind_interfaces(
+def mount_interfaces(
     app: FastAPI,
     compiled_routes: Sequence[CompiledRoute],
     factory: UseCaseFactory,
@@ -743,7 +743,7 @@ def bind_interfaces(
 
         compiler = RestInterfaceCompiler(use_case_compiler)
         routes = compiler.compile(UserRestInterface)
-        component_schemas = bind_interfaces(
+        component_schemas = mount_interfaces(
             app,
             routes,
             factory,

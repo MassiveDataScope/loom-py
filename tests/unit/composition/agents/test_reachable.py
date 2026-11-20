@@ -104,7 +104,7 @@ class AcmeAgentEntryPoint:
             agent_endpoints=self._agent_endpoints,
         )
 
-    def bind(self, application: Application) -> Application:
+    def mount(self, application: Application) -> Application:
         return application
 
 

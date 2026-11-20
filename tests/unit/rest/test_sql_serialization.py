@@ -15,7 +15,7 @@ from fastapi.testclient import TestClient
 from loom.core.stores.sql.abc import SqlColumn, SqlQueryResult
 from loom.core.stores.sql.config import SqlEndpointConfig
 from loom.core.stores.sql.service import SqlQueryService
-from loom.rest.fastapi.sql import bind_sql_endpoints
+from loom.rest.fastapi.sql import mount_sql_endpoints
 from tests.unit.core.sql._fakes import (
     FakeSqlExecutor,
     make_connection_config,
@@ -54,7 +54,7 @@ def _post(result: SqlQueryResult) -> Any:
     service = SqlQueryService(
         executors={"analytics": FakeSqlExecutor(result=result)}, config=config
     )
-    bind_sql_endpoints(app, service=service, config=config)
+    mount_sql_endpoints(app, service=service, config=config)
     client = TestClient(app, raise_server_exceptions=False)
     return client.post("/sql/analytics", json={"sql": "SELECT v"})
 

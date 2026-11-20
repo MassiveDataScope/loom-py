@@ -1,4 +1,4 @@
-"""What an entry point declares, and the contract every adapter fulfils."""
+"""What an entry point declares, and the contract every runtime fulfils."""
 
 from __future__ import annotations
 
@@ -40,7 +40,7 @@ class Recipe:
     Args:
         profile: Pool defaults of the entry point (server, worker, ...).
         discovered: Use cases, models, interfaces, job callbacks and agent specs, final:
-            with whatever the adapter added or pruned.
+            with whatever the runtime added or pruned.
         default_store_backend: Backend of the default store when ``stores.default``
             is not declared.
         check_scope: Configuration paths whose deploy checks this entry point
@@ -132,12 +132,12 @@ class Recipe:
 class Runtime(Protocol[T_co]):
     """A transport mounted on a composed application.
 
-    :meth:`recipe` declares what to compose and opens nothing. :meth:`bind`
+    :meth:`recipe` declares what to compose and opens nothing. :meth:`mount`
     mounts the transport on the composed application and returns what the
     entry point serves (an ASGI app, a Celery app, a handler); it opens no
     resource either, since :meth:`Application.running` owns them and the
     platform's lifespan hook enters it. The exception is a platform with no
-    lifespan hook, such as a Lambda function's Init: there :meth:`bind` opens
+    lifespan hook, such as a Lambda function's Init: there :meth:`mount` opens
     the application through a :class:`~loom.composition.LoopHost` and returns
     an object that owns closing it.
     """
@@ -146,6 +146,6 @@ class Runtime(Protocol[T_co]):
         """Declare how to compose the application from *project*."""
         ...
 
-    def bind(self, application: Application) -> T_co:
+    def mount(self, application: Application) -> T_co:
         """Mount the transport on *application*."""
         ...

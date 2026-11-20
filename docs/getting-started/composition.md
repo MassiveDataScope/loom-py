@@ -5,7 +5,7 @@ composes its application the same way. `loom.composition` loads the
 configuration, discovers the code, builds persistence, the kernel,
 observability, the job and SQL services and, when the entry point hosts them,
 the agents, and returns an `Application` that owns every resource it built. A
-transport adapter then mounts itself on that application. Nothing in
+runtime then mounts itself on that application. Nothing in
 `loom.composition` imports FastAPI, Starlette, the Celery worker or
 `loom.rest`.
 
@@ -16,7 +16,7 @@ from loom.rest.fastapi.runtime import FastAPIRuntime
 app = create_app("config/api.yaml", runtime=FastAPIRuntime())
 ```
 
-When `app.entry` is set, `create_app("config/api.yaml")` selects the adapter
+When `app.entry` is set, `create_app("config/api.yaml")` selects the runtime
 from the loaded configuration. The built-in entries are `fastapi` and
 `lambda`; any other entry names a function of `lambda.functions`, served by
 `LambdaRuntime`. An explicit `runtime=` takes precedence. Without either
@@ -181,10 +181,10 @@ The design and its sources are recorded in ADR 0007
 
 | Call | Returns | Use it for |
 |---|---|---|
-| `create_app(*config_paths, runtime=..., ...)` | what the adapter's `bind` returns: a `FastAPI` app, a `Celery` app, a handler | starting a process; `runtime=` may be omitted when `app.entry` is set |
+| `create_app(*config_paths, runtime=..., ...)` | what the runtime's `mount` returns: a `FastAPI` app, a `Celery` app, a handler | starting a process; `runtime=` may be omitted when `app.entry` is set |
 | `Project.load(*config_paths, ...)` | the `Project`: configuration, environment and code, not yet composed | tests, scripts, a host that holds its configuration in memory |
 | `project.compose(runtime)` | the composed, closed `Application`; no transport mounted | tests, scripts, a host that drives the application itself |
-| `project.serve(runtime)` | what the adapter's `bind` returns | `create_app` without the shortcut |
+| `project.serve(runtime)` | what the runtime's `mount` returns | `create_app` without the shortcut |
 
 `create_app` and `Project.load` take the same loading arguments: the YAML
 `config_paths` or `config_dir`, `environment`, `code_path` and `resolvers`,
@@ -192,7 +192,7 @@ exactly as the REST `create_app` documented in
 [Environments](environments.md) and [Bootstrap with YAML](rest.md#bootstrap-with-yaml);
 DI bindings come from the `Installer` classes `app.packages` finds, not from a
 parameter.
-`compose` needs the adapter: its recipe decides what is composed (pool
+`compose` needs the runtime: its recipe decides what is composed (pool
 profile, discovery, backend), even though no transport is mounted.
 
 The transport-specific factories stay, with the same signatures, as
@@ -209,14 +209,14 @@ shortcuts over the composition:
 
 ## What `create_app` runs
 
-The order is fixed; no adapter reorders it:
+The order is fixed; no runtime reorders it:
 
 1. Resolve the environment, select and load the configuration (resolvers,
    `LOOM__*` overrides).
 2. Configure observability from `observability`.
 3. Put the code path on `sys.path`.
-4. Ask the adapter for its recipe: `adapter.recipe(project)`. Discovery runs
-   here, inside the adapter.
+4. Ask the runtime for its recipe: `runtime.recipe(project)`. Discovery runs
+   here, inside the runtime.
 5. Run the deploy checks of the configuration paths the process uses: the
    ones the recipe requires, plus the ones the configuration declares, minus
    the ones the recipe leaves out (`check_scope`).
@@ -231,19 +231,19 @@ The order is fixed; no adapter reorders it:
 9. When the recipe hosts agents and an `ai` section exists, build the agent
    runtime and verify the `Agent()` and `Mcp()` markers.
 10. Verify every use case's dependencies (`UseCaseFactory.verify()`).
-11. Hand the application to the adapter: `adapter.bind(application)`.
+11. Hand the application to the runtime: `runtime.mount(application)`.
 
 No step talks to a database. Building a backend creates its engine or client,
 not a connection; only `Application.check()` and `Application.running()`
 reach the outside.
 
-## Recipes and adapters
+## Recipes and runtimes
 
 A runtime is any object with two methods, the `Runtime` protocol:
 
 - `recipe(project) -> Recipe` declares what to compose. It is synchronous and
   opens nothing.
-- `bind(application) -> T` mounts the transport and returns what the entry
+- `mount(application) -> T` mounts the transport and returns what the entry
   point serves. It opens nothing either: the application's lifecycle owns
   every resource.
 
@@ -252,16 +252,16 @@ A `Recipe` is a frozen dataclass:
 | Field | Meaning |
 |---|---|
 | `profile` | Pool defaults of the entry point: `SERVER_PROFILE`, `WORKER_PROFILE`, `STREAMING_PROFILE` or your own `RuntimeProfile`. A key in `stores.default.pool` still wins. |
-| `discovered` | The `DiscoveryResult` to compile: models, use cases, interfaces, agent specs, after whatever the adapter added or pruned. |
+| `discovered` | The `DiscoveryResult` to compile: models, use cases, interfaces, agent specs, after whatever the runtime added or pruned. |
 | `default_store_backend` | Backend of the default store when `stores.default` is not declared. Default `none`. |
 | `check_scope` | A `CheckScope`: configuration paths whose deploy checks the entry point requires or leaves out, such as `CheckScope.without_rest()` for a worker. |
 | `agents` | Whether the entry point hosts the agent runtime; without it an `ai` section is ignored. Default `False`. |
-| `agent_endpoints` | Whether the adapter mounts agent endpoints. `False` mounts none, so only the agents an `Agent()` marker names are compiled, as on Lambda. Matters only with `agents=True`. Default `True`. |
+| `agent_endpoints` | Whether the runtime mounts agent endpoints. `False` mounts none, so only the agents an `Agent()` marker names are compiled, as on Lambda. Matters only with `agents=True`. Default `True`. |
 | `metrics` | Use-case metrics, or `None`. |
 | `pool_metrics` | Connection-pool metrics, for an entry point that serves a scrape. |
 | `connection_only` | Ask the backend for its connection only, no repository (see [Workers without models](#workers-without-models)). |
 
-A complete adapter, for a script that runs use cases with no transport:
+A complete runtime, for a script that runs use cases with no transport:
 
 ```python
 # app/script.py
@@ -280,7 +280,7 @@ class ScriptAdapter:
             check_scope=CheckScope.without_rest(),
         )
 
-    def bind(self, application: Application) -> Application:
+    def mount(self, application: Application) -> Application:
         return application
 
 
@@ -341,7 +341,7 @@ MCP client must be closed by the task that opened it:
 the parent checks, the children open, and nothing the parent touched crosses
 the fork.
 
-## Wiring per adapter
+## Wiring per runtime
 
 | Runtime | Checks | Opens | Closes |
 |---|---|---|---|
@@ -482,6 +482,6 @@ an installer.
 
 The composition is the base of two later deliveries of the same
 specification, which add no promise to this page yet: several named stores
-in one application, each with its own unit of work, and AWS Lambda adapters
+in one application, each with its own unit of work, and AWS Lambda runtimes
 for HTTP and SQS. Until they land, an application serves one persistence
 backend, its `stores.default` store, selected by `stores.default.backend`.

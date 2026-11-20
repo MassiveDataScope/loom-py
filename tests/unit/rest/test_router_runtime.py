@@ -1,4 +1,4 @@
-"""Unit tests for bind_interfaces and create_fastapi_app."""
+"""Unit tests for mount_interfaces and create_fastapi_app."""
 
 from __future__ import annotations
 
@@ -49,7 +49,7 @@ from loom.rest.compiler import (
     RouteSources,
 )
 from loom.rest.fastapi.app import _register_openapi_components, create_fastapi_app
-from loom.rest.fastapi.router import bind_interfaces
+from loom.rest.fastapi.router import mount_interfaces
 from loom.rest.model import ALL, RestApiDefaults, RestInterface, RestRoute
 from loom.stores.sqlalchemy.query_compiler import QuerySpecCompiler
 from loom.stores.sqlalchemy.schema import compile_all, get_compiled
@@ -350,7 +350,7 @@ def _make_app(
     factory = _factory(uc_comp, *types)
     executor = UseCaseExecutor(uc_comp)
     app = FastAPI()
-    component_registry = bind_interfaces(
+    component_registry = mount_interfaces(
         app,
         list(compiled_routes),
         factory,
@@ -467,8 +467,8 @@ class TestRoutesArgument:
             )
 
 
-class TestBindInterfacesRouting:
-    def test_bind_interfaces_registers_route(
+class TestMountInterfacesRouting:
+    def test_mount_interfaces_registers_route(
         self,
     ) -> None:
         class IFace(RestInterface[str]):
@@ -482,7 +482,7 @@ class TestBindInterfacesRouting:
         assert response.status_code == 200
         assert response.json() == "pong"
 
-    def test_bind_interfaces_content_type_is_json(
+    def test_mount_interfaces_content_type_is_json(
         self,
     ) -> None:
         class IFace(RestInterface[str]):
@@ -495,7 +495,7 @@ class TestBindInterfacesRouting:
         response = client.get("/ping/")
         assert "application/json" in response.headers["content-type"]
 
-    def test_bind_interfaces_path_param_extracted(
+    def test_mount_interfaces_path_param_extracted(
         self,
     ) -> None:
         class IFace(RestInterface[dict[str, Any]]):
@@ -509,7 +509,7 @@ class TestBindInterfacesRouting:
         assert response.status_code == 200
         assert response.json()["item_id"] == "42"
 
-    def test_bind_interfaces_path_param_typed_from_execute_signature(
+    def test_mount_interfaces_path_param_typed_from_execute_signature(
         self,
     ) -> None:
         class IFace(RestInterface[dict[str, Any]]):
@@ -523,7 +523,7 @@ class TestBindInterfacesRouting:
         assert response.status_code == 200
         assert response.json()["item_id"] == 42
 
-    def test_bind_interfaces_path_param_validation_uses_typed_signature(
+    def test_mount_interfaces_path_param_validation_uses_typed_signature(
         self,
     ) -> None:
         class IFace(RestInterface[dict[str, Any]]):
@@ -536,7 +536,7 @@ class TestBindInterfacesRouting:
         response = client.get("/typed-items/not-an-int")
         assert response.status_code == 422
 
-    def test_bind_interfaces_status_code_respected(
+    def test_mount_interfaces_status_code_respected(
         self,
     ) -> None:
         class IFace(RestInterface[str]):
@@ -551,7 +551,7 @@ class TestBindInterfacesRouting:
         response = client.post("/things/")
         assert response.status_code == 201
 
-    def test_bind_interfaces_multiple_routes(
+    def test_mount_interfaces_multiple_routes(
         self,
     ) -> None:
         class IFace(RestInterface[Any]):
@@ -568,8 +568,8 @@ class TestBindInterfacesRouting:
         assert client.get("/v1/items/7").json()["item_id"] == "7"
 
 
-class TestBindInterfacesRequestBody:
-    def test_bind_interfaces_request_body_decoded(
+class TestMountInterfacesRequestBody:
+    def test_mount_interfaces_request_body_decoded(
         self,
     ) -> None:
         class IFace(RestInterface[dict[str, Any]]):
@@ -583,7 +583,7 @@ class TestBindInterfacesRequestBody:
         assert response.status_code == 200
         assert response.json() == {"status": "received"}
 
-    def test_bind_interfaces_empty_body_no_payload(
+    def test_mount_interfaces_empty_body_no_payload(
         self,
     ) -> None:
         class IFace(RestInterface[str]):
@@ -597,8 +597,8 @@ class TestBindInterfacesRequestBody:
         assert response.status_code == 200
 
 
-class TestBindInterfacesProfile:
-    def test_bind_interfaces_rejects_profile_query_when_not_exposed(
+class TestMountInterfacesProfile:
+    def test_mount_interfaces_rejects_profile_query_when_not_exposed(
         self,
     ) -> None:
         class IFace(RestInterface[str]):
@@ -612,7 +612,7 @@ class TestBindInterfacesProfile:
         assert response.status_code == 400
         assert "not allowed" in response.json()["detail"]
 
-    def test_bind_interfaces_passes_default_profile_when_use_case_accepts_it(
+    def test_mount_interfaces_passes_default_profile_when_use_case_accepts_it(
         self,
     ) -> None:
         class IFace(RestInterface[dict[str, Any]]):
@@ -627,7 +627,7 @@ class TestBindInterfacesProfile:
         assert response.status_code == 200
         assert response.json() == {"profile": "summary"}
 
-    def test_bind_interfaces_accepts_profile_query_when_exposed(
+    def test_mount_interfaces_accepts_profile_query_when_exposed(
         self,
     ) -> None:
         class IFace(RestInterface[dict[str, Any]]):
@@ -644,7 +644,7 @@ class TestBindInterfacesProfile:
         assert response.status_code == 200
         assert response.json() == {"profile": "detail"}
 
-    def test_bind_interfaces_rejects_disallowed_profile_query(
+    def test_mount_interfaces_rejects_disallowed_profile_query(
         self,
     ) -> None:
         class IFace(RestInterface[dict[str, Any]]):
@@ -661,8 +661,8 @@ class TestBindInterfacesProfile:
         assert "Invalid profile" in response.json()["detail"]
 
 
-class TestBindInterfacesPagination:
-    def test_bind_interfaces_builds_query_spec_from_offset_url_params(
+class TestMountInterfacesPagination:
+    def test_mount_interfaces_builds_query_spec_from_offset_url_params(
         self,
     ) -> None:
         class IFace(RestInterface[dict[str, Any]]):
@@ -686,7 +686,7 @@ class TestBindInterfacesPagination:
             "sort_direction": None,
         }
 
-    def test_bind_interfaces_builds_query_spec_from_cursor_url_params(
+    def test_mount_interfaces_builds_query_spec_from_cursor_url_params(
         self,
     ) -> None:
         class IFace(RestInterface[dict[str, Any]]):
@@ -710,7 +710,7 @@ class TestBindInterfacesPagination:
             "sort_direction": None,
         }
 
-    def test_bind_interfaces_refuses_a_page_whose_offset_overflows(
+    def test_mount_interfaces_refuses_a_page_whose_offset_overflows(
         self,
     ) -> None:
         class IFace(RestInterface[dict[str, Any]]):
@@ -726,7 +726,7 @@ class TestBindInterfacesPagination:
         assert detail["code"] == "query_validation"
         assert [violation["field"] for violation in detail["violations"]] == ["page"]
 
-    def test_bind_interfaces_uses_compiled_default_pagination_mode(
+    def test_mount_interfaces_uses_compiled_default_pagination_mode(
         self,
     ) -> None:
         class IFace(RestInterface[dict[str, Any]]):
@@ -741,7 +741,7 @@ class TestBindInterfacesPagination:
         assert response.status_code == 200
         assert response.json()["pagination"] == PaginationMode.CURSOR.value
 
-    def test_bind_interfaces_rejects_pagination_override_when_disabled(
+    def test_mount_interfaces_rejects_pagination_override_when_disabled(
         self,
     ) -> None:
         class IFace(RestInterface[dict[str, Any]]):
@@ -758,8 +758,8 @@ class TestBindInterfacesPagination:
         assert "cannot override" in response.json()["detail"]
 
 
-class TestBindInterfacesFilters:
-    def test_bind_interfaces_answers_400_when_the_repository_refuses_a_filter_field(
+class TestMountInterfacesFilters:
+    def test_mount_interfaces_answers_400_when_the_repository_refuses_a_filter_field(
         self,
     ) -> None:
         class IFace(RestInterface[str]):
@@ -784,7 +784,7 @@ class TestBindInterfacesFilters:
             ("sort=id&direction=DESC", [["id", "DESC"]]),
         ],
     )
-    def test_bind_interfaces_sorts_by_a_declared_column_or_the_primary_key(
+    def test_mount_interfaces_sorts_by_a_declared_column_or_the_primary_key(
         self, query: str, expected: list[list[str]]
     ) -> None:
         SORTS_SEEN.clear()
@@ -793,7 +793,7 @@ class TestBindInterfacesFilters:
         assert response.status_code == 200
         assert [expected] == SORTS_SEEN
 
-    def test_bind_interfaces_refuses_a_sort_on_any_undeclared_column_alike(
+    def test_mount_interfaces_refuses_a_sort_on_any_undeclared_column_alike(
         self,
     ) -> None:
         client = _entry_client(EntrySortUseCase)
@@ -804,7 +804,7 @@ class TestBindInterfacesFilters:
         assert existing["message"].replace("'code'", "'nope'") == missing["message"]
 
     @pytest.mark.parametrize("query", ["id=1", "id__like=1%25", "id__is_null=true"])
-    def test_bind_interfaces_refuses_a_filter_on_an_undeclared_field_for_every_operator(
+    def test_mount_interfaces_refuses_a_filter_on_an_undeclared_field_for_every_operator(
         self,
         query: str,
     ) -> None:
@@ -821,13 +821,13 @@ class TestBindInterfacesFilters:
             ("rank__ilike=1%25", "Operator 'ilike' applies to text fields only."),
         ],
     )
-    def test_bind_interfaces_refuses_an_operator_the_declared_field_cannot_take(
+    def test_mount_interfaces_refuses_an_operator_the_declared_field_cannot_take(
         self, query: str, message: str
     ) -> None:
         assert _refusal(_entry_client().get(f"/entries/?{query}"))["message"] == message
 
     @pytest.mark.parametrize("raw", ["0123", "true", "1.5"])
-    def test_bind_interfaces_keeps_a_string_field_filter_value_as_sent(self, raw: str) -> None:
+    def test_mount_interfaces_keeps_a_string_field_filter_value_as_sent(self, raw: str) -> None:
         assert _filters_seen(f"code={raw}") == {"code": raw}
 
     @pytest.mark.parametrize(
@@ -839,7 +839,7 @@ class TestBindInterfacesFilters:
             ("code__like=01%25", {"code": "01%"}),
         ],
     )
-    def test_bind_interfaces_converts_a_filter_value_by_its_field_type(
+    def test_mount_interfaces_converts_a_filter_value_by_its_field_type(
         self, query: str, expected: dict[str, Any]
     ) -> None:
         assert _filters_seen(query) == expected
@@ -848,12 +848,12 @@ class TestBindInterfacesFilters:
         ("query", "expected"),
         [("nickname=ann", {"nickname": "ann"}), ("nickname__like=an%25", {"nickname": "an%"})],
     )
-    def test_bind_interfaces_filters_an_unset_text_column_by_value_and_pattern(
+    def test_mount_interfaces_filters_an_unset_text_column_by_value_and_pattern(
         self, query: str, expected: dict[str, Any]
     ) -> None:
         assert _filters_seen(query) == expected
 
-    def test_bind_interfaces_builds_enum_and_temporal_filter_values(
+    def test_mount_interfaces_builds_enum_and_temporal_filter_values(
         self,
     ) -> None:
         seen = _filters_seen(
@@ -862,7 +862,7 @@ class TestBindInterfacesFilters:
 
         assert seen == {"tone": "_Tone", "due": "date", "seen_at": "datetime"}
 
-    def test_bind_interfaces_filters_a_str_enum_column_declared_filterable_by_its_value(
+    def test_mount_interfaces_filters_a_str_enum_column_declared_filterable_by_its_value(
         self,
     ) -> None:
         assert _filters_seen("phase=closed") == {"phase": "closed"}
@@ -872,7 +872,7 @@ class TestBindInterfacesFilters:
         ("query", "field"),
         [("rank=s3cr3t", "rank"), ("active=1", "active"), ("rank__in=1,s3cr3t", "rank")],
     )
-    def test_bind_interfaces_answers_400_when_a_filter_value_is_not_its_field_type(
+    def test_mount_interfaces_answers_400_when_a_filter_value_is_not_its_field_type(
         self, query: str, field: str
     ) -> None:
         response = _entry_client().get(f"/entries/?{query}")
@@ -890,14 +890,14 @@ class TestBindInterfacesFilters:
             ("code__in=01,true,2.5", {"code": ["01", "true", "2.5"]}),
         ],
     )
-    def test_bind_interfaces_converts_each_in_filter_item_by_its_field_type(
+    def test_mount_interfaces_converts_each_in_filter_item_by_its_field_type(
         self, query: str, expected: dict[str, Any]
     ) -> None:
         assert _filters_seen(query) == expected
 
 
-class TestBindInterfacesOpenApi:
-    def test_bind_interfaces_tags_on_routes(
+class TestMountInterfacesOpenApi:
+    def test_mount_interfaces_tags_on_routes(
         self,
     ) -> None:
         class IFace(RestInterface[str]):
@@ -933,7 +933,7 @@ class TestBindInterfacesOpenApi:
         assert endpoints
         assert all(asyncio.iscoroutinefunction(endpoint) for endpoint in endpoints)
 
-    def test_bind_interfaces_uses_use_case_docstring_for_route_docs(
+    def test_mount_interfaces_uses_use_case_docstring_for_route_docs(
         self,
     ) -> None:
         class IFace(RestInterface[str]):
@@ -1002,8 +1002,8 @@ class TestBindInterfacesOpenApi:
         assert "full_name" in request_schema["properties"]
 
 
-class TestBindInterfacesBoundaryValidation:
-    def test_bind_interfaces_bad_body_field_maps_to_422_boundary_validation(
+class TestMountInterfacesBoundaryValidation:
+    def test_mount_interfaces_bad_body_field_maps_to_422_boundary_validation(
         self,
     ) -> None:
         class IFace(RestInterface[dict[str, Any]]):
@@ -1021,7 +1021,7 @@ class TestBindInterfacesBoundaryValidation:
             {"field": "fullName", "message": "Expected `str`, got `int`"}
         ]
 
-    def test_bind_interfaces_missing_body_field_reports_that_field(
+    def test_mount_interfaces_missing_body_field_reports_that_field(
         self,
     ) -> None:
         class IFace(RestInterface[dict[str, Any]]):
@@ -1036,8 +1036,8 @@ class TestBindInterfacesBoundaryValidation:
         assert response.json()["detail"]["violations"][0]["field"] == "fullName"
 
 
-class TestBindInterfacesBaseModelResult:
-    def test_bind_interfaces_basemodel_result_renders_as_json_object(
+class TestMountInterfacesBaseModelResult:
+    def test_mount_interfaces_basemodel_result_renders_as_json_object(
         self,
     ) -> None:
         class IFace(RestInterface[Any]):

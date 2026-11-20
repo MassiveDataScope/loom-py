@@ -1,6 +1,6 @@
 """Inbound A2A surface: card, JSON-RPC methods and streaming parity (T135, T136).
 
-Drives ``bind_a2a_endpoints`` over a live :class:`AgentHost` backed by
+Drives ``mount_a2a_endpoints`` over a live :class:`AgentHost` backed by
 scripted engines, asserting ``specs/001-ai-agent-layer/contracts/a2a.md``:
 the published card validates against the A2A SDK, the streamed events are the
 same union the HTTP surface projects (FR-039a), the capability wiring never
@@ -9,7 +9,7 @@ and only the card is anonymous (FR-041b).
 
 The application is wired with the real
 :class:`~loom.rest.auth.middleware.AuthenticationMiddleware`, so the exclusion
-``bind_a2a_endpoints`` registers is exercised end to end instead of simulated.
+``mount_a2a_endpoints`` registers is exercised end to end instead of simulated.
 Nothing here touches the network: engines replay a script and every request
 goes through an in-process ASGI transport.
 """
@@ -29,7 +29,7 @@ from a2a.compat.v0_3.types import AgentCard
 from fastapi import FastAPI
 
 from loom.ai.a2a.card import card_path
-from loom.ai.a2a.server import bind_a2a_endpoints
+from loom.ai.a2a.server import mount_a2a_endpoints
 from loom.ai.abc import (
     AgentEvent,
     Conversation,
@@ -44,7 +44,7 @@ from loom.ai.compiler._plan import AgentPlan
 from loom.ai.config import A2AConfig, AgentEndpointConfig
 from loom.ai.errors import AgentCompilationError, AgentErrorCode, AgentRunErrorCode
 from loom.ai.execution import AgentHost
-from loom.ai.fastapi.endpoints import bind_agent_endpoints
+from loom.ai.fastapi.endpoints import mount_agent_endpoints
 from loom.core.config.errors import ConfigError
 from loom.core.di import LoomContainer
 from loom.core.identity import Identity
@@ -183,7 +183,7 @@ async def _serving(
 
     ``mounted_exclusions`` are the exclusions the deployment really mounts on
     the middleware; ``declared_exclusions`` are the ones the caller repeats in
-    the ``exclude_paths`` argument of ``bind_a2a_endpoints``. They are separate
+    the ``exclude_paths`` argument of ``mount_a2a_endpoints``. They are separate
     on purpose: the guard must fail on the mounted list alone.
     """
     plans = list(plans if plans is not None else (make_plan(_AGENT),))
@@ -208,14 +208,14 @@ async def _serving(
             exclude_paths=tuple(mounted_exclusions),
         )
         if with_http_endpoints:
-            bind_agent_endpoints(
+            mount_agent_endpoints(
                 app,
                 runtime=runtime,
                 config=config,
                 authenticator=authenticator,  # type: ignore[arg-type]
                 prefix=_AGENTS_PREFIX,
             )
-        bind_a2a_endpoints(
+        mount_a2a_endpoints(
             app,
             runtime=runtime,
             config=config,
@@ -269,7 +269,7 @@ async def _bind_a2a(
             authenticator=authenticator,  # type: ignore[arg-type]
             exclude_paths=tuple(mounted_exclusions),
         )
-        bind_a2a_endpoints(
+        mount_a2a_endpoints(
             app,
             runtime=runtime,
             config=config,
@@ -301,7 +301,7 @@ async def _serving_anonymously(
     runtime = _runtime(deps=deps, container=container, config=config, plans=plans)
     async with runtime:
         app = FastAPI()
-        bind_a2a_endpoints(app, runtime=runtime, config=config, plans=plans, prefix=_PREFIX)
+        mount_a2a_endpoints(app, runtime=runtime, config=config, plans=plans, prefix=_PREFIX)
         transport = httpx.ASGITransport(app=app)
         async with httpx.AsyncClient(transport=transport, base_url="http://agents.test") as client:
             yield client
@@ -425,7 +425,7 @@ class TestOptionality:
 
         async with runtime:
             app = FastAPI()
-            bind_a2a_endpoints(app, runtime=runtime, config=config, plans=plans)
+            mount_a2a_endpoints(app, runtime=runtime, config=config, plans=plans)
 
         assert not [path for path in _route_paths(app) if path.startswith(_PREFIX)]
 

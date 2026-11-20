@@ -345,7 +345,7 @@ class TestAutoCreateAppIntegration:
             Project.load(config_path, code_path=None, caller="test"),
             acme_recording_callbacks.MODULE,
         )
-        celery_app = adapter.bind(project.compose(WithOverrides(adapter, module)))
+        celery_app = adapter.mount(project.compose(WithOverrides(adapter, module)))
 
         create_task = celery_app.tasks[f"loom.job.{_CreateRecordViaUseCaseJob.__qualname__}"]
         get_task = celery_app.tasks[f"loom.job.{_GetRecordViaLoadByIdJob.__qualname__}"]

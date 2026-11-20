@@ -82,7 +82,7 @@ class AgentlessHost:
         )
         return Recipe(profile=SERVER_PROFILE, discovered=discovered, agents=False)
 
-    def bind(self, application: Application) -> Application:
+    def mount(self, application: Application) -> Application:
         return application
 
 

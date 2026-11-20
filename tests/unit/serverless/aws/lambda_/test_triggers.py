@@ -141,7 +141,7 @@ def serve(tmp_path: Path, island: FakeAwsIsland) -> Iterator[Serve]:
         if observer is not None:
             application.observability = Observability([observer])
         adapters.append(adapter)
-        return adapter.bind(application)
+        return adapter.mount(application)
 
     yield compose
     for adapter in adapters:

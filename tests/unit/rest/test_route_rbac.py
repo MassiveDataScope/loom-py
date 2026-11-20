@@ -23,7 +23,7 @@ from loom.core.stores.repository.registration import classify_key
 from loom.core.use_case.factory import UseCaseFactory, main_repository
 from loom.core.use_case.use_case import UseCase
 from loom.rest.compiler import RestInterfaceCompiler
-from loom.rest.fastapi.router import bind_interfaces
+from loom.rest.fastapi.router import mount_interfaces
 from loom.rest.model import RestInterface, RestRoute
 
 _ADMIN = "admin"
@@ -91,7 +91,7 @@ def _client(interface: type[RestInterface[Any]], identity: Identity | None) -> T
     factory = UseCaseFactory(LoomContainer(classify_key=classify_key, implicit=main_repository))
     factory.register(ReportUseCase)
     app = FastAPI()
-    bind_interfaces(
+    mount_interfaces(
         app,
         RestInterfaceCompiler(compiler).compile(interface),
         factory,

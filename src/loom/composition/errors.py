@@ -14,8 +14,8 @@
     A job transport ``app.job_service`` or ``celery.queues`` needs cannot be built.
 
 ``CompositionStateError``
-    An adapter or an :class:`~loom.composition.ApplicationHost` was used out
-    of its lifecycle: an adapter composing a second application or bound
+    A runtime or an :class:`~loom.composition.ApplicationHost` was used out
+    of its lifecycle: a runtime composing a second application or mounted
     before its recipe, a host started twice or stopped while opening.
 """
 
@@ -53,7 +53,7 @@ class CompositionErrorCode(IssueCode):
     )
     RUNTIME_RECIPE_MISSING = (
         "RUNTIME_RECIPE_MISSING",
-        Template("{component}.bind needs the recipe it declared; call recipe first"),
+        Template("{component}.mount needs the recipe it declared; call recipe first"),
     )
     HOST_ALREADY_STARTED = (
         "HOST_ALREADY_STARTED",
@@ -80,13 +80,13 @@ class ApplicationAlreadyOpenError(RuntimeError):
 
 
 class CompositionStateError(RuntimeError):
-    """Raised when an adapter or a host is used out of its lifecycle.
+    """Raised when a runtime or a host is used out of its lifecycle.
 
     A :class:`RuntimeError`, so a caller catching the lifecycle misuse as
     one keeps catching it.
 
     Attributes:
-        issue: The typed issue: code, component (the adapter or the host) and
+        issue: The typed issue: code, component (the runtime or the host) and
             message.
 
     Example::

@@ -38,7 +38,7 @@ class AcmeTransportFreeAdapter:
             default_store_backend="sqlalchemy",
         )
 
-    def bind(self, application: Application) -> Application:
+    def mount(self, application: Application) -> Application:
         return application
 
 
@@ -79,12 +79,12 @@ class _TinyAdapter:
             discovered=dataclasses.replace(discovered, use_cases=(*discovered.use_cases, _Answer)),
         )
 
-    def bind(self, application: Application) -> _Handler:
+    def mount(self, application: Application) -> _Handler:
         return _Handler(application)
 
 
 class TestTransportFreeComposition:
-    async def test_an_adapter_of_its_own_gets_its_profile_its_use_case_and_its_type(
+    async def test_a_runtime_of_its_own_gets_its_profile_its_use_case_and_its_type(
         self, fixture_project: ProjectFactory, runtimes: list[StorePluginContext]
     ) -> None:
         config = fixture_project()
@@ -122,7 +122,7 @@ class TestTransportFreeComposition:
         assert found.name == "first"
         assert answer == "pong"
 
-    def test_serve_mounts_the_adapter_transport_on_the_composed_application(
+    def test_serve_mounts_the_runtime_transport_on_the_composed_application(
         self, fixture_project: ProjectFactory
     ) -> None:
         project = Project.load(fixture_project(), environment="test")
@@ -133,10 +133,10 @@ class TestTransportFreeComposition:
         assert isinstance(handler.application, Application)
         assert not handler.application.is_open
 
-    def test_the_adapter_under_test_stays_under_thirty_lines(self) -> None:
+    def test_the_runtime_under_test_stays_under_thirty_lines(self) -> None:
         source = Path(__file__).read_text(encoding="utf-8")
         start = source.index("class _TinyAdapter:")
-        end = source.index("async def test_an_adapter_of_its_own")
+        end = source.index("async def test_a_runtime_of_its_own")
         lines = [line for line in source[start:end].splitlines() if line.strip()]
 
         assert len(lines) < 30

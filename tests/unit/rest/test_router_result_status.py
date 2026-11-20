@@ -20,7 +20,7 @@ from loom.core.use_case.use_case import UseCase
 from loom.rest.compiler import RestInterfaceCompiler
 from loom.rest.fastapi._errors import register_error_handlers
 from loom.rest.fastapi.app import _register_openapi_components
-from loom.rest.fastapi.router import bind_interfaces
+from loom.rest.fastapi.router import mount_interfaces
 from loom.rest.model import RestInterface, RestRoute
 
 
@@ -83,7 +83,7 @@ def _client(interface: type[RestInterface[Any]]) -> TestClient:
         factory.register(use_case)
     app = FastAPI()
     register_error_handlers(app)
-    registry = bind_interfaces(
+    registry = mount_interfaces(
         app,
         RestInterfaceCompiler(compiler).compile(interface),
         factory,

@@ -76,7 +76,7 @@ class JobsAdapter:
             connection_only=True,
         )
 
-    def bind(self, application: Application) -> Application:
+    def mount(self, application: Application) -> Application:
         return application
 
 

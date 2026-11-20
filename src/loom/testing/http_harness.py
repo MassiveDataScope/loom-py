@@ -95,7 +95,7 @@ class _HarnessRuntime:
             lenient=True,
         )
 
-    def bind(self, application: Application) -> FastAPI:
+    def mount(self, application: Application) -> FastAPI:
         """Mount the routes on *application*'s kernel."""
         return create_fastapi_app(application.kernel, self._routes, **self._fastapi_kwargs)
 
@@ -269,5 +269,5 @@ class HttpTestHarness:
             **fastapi_kwargs,
         )
         self.application = runtime.project().compose(runtime)
-        app = runtime.bind(self.application)
+        app = runtime.mount(self.application)
         return TestClient(app, raise_server_exceptions=False)

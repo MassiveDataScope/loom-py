@@ -65,7 +65,7 @@ class _WithoutAgents:
             agents=False,
         )
 
-    def bind(self, application: Application) -> Application:
+    def mount(self, application: Application) -> Application:
         return application
 
 

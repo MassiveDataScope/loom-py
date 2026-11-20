@@ -227,7 +227,7 @@ print([name for name in loaded if name in sys.modules])
     def test_bind_requires_recipe(self) -> None:
         adapter = LambdaRuntime()
         with pytest.raises(CompositionStateError, match="call recipe first"):
-            adapter.bind(None)  # type: ignore[arg-type]
+            adapter.mount(None)  # type: ignore[arg-type]
 
     def test_recipe_uses_lambda_profile_and_skips_rest(self, project: Project) -> None:
         class LocalJob(Job[None]):
@@ -247,7 +247,7 @@ print([name for name in loaded if name in sys.modules])
         adapter, application, _ = built
         _add_broken_resource(application)
         with pytest.raises(RuntimeError, match="open failed"):
-            adapter.bind(application)
+            adapter.mount(application)
 
     @pytest.mark.parametrize("fifo", [False, True])
     @pytest.mark.parametrize(
@@ -358,8 +358,8 @@ print([name for name in loaded if name in sys.modules])
         with pytest.raises(asyncio.CancelledError):
             handler(event, None)
 
-    @pytest.mark.parametrize("action", ["recipe", "bind", "bind_after_close"])
-    def test_adapter_already_composed(
+    @pytest.mark.parametrize("action", ["recipe", "mount", "mount_after_close"])
+    def test_runtime_already_composed(
         self,
         built: tuple[LambdaRuntime, Application, list[str]],
         project: Project,
@@ -367,13 +367,13 @@ print([name for name in loaded if name in sys.modules])
     ) -> None:
         adapter, application, _ = built
         if action != "recipe":
-            adapter.bind(application)
-        if action == "bind_after_close":
+            adapter.mount(application)
+        if action == "mount_after_close":
             adapter.close()
         again = (
             partial(adapter.recipe, project)
             if action == "recipe"
-            else partial(adapter.bind, application)
+            else partial(adapter.mount, application)
         )
         try:
             with pytest.raises(CompositionStateError) as caught:
@@ -387,7 +387,7 @@ print([name for name in loaded if name in sys.modules])
         built: tuple[LambdaRuntime, Application, list[str]],
     ) -> None:
         adapter, application, lifecycle = built
-        adapter.bind(application)
+        adapter.mount(application)
         adapter.close()
         assert lifecycle == ["open", "close"]
 
@@ -409,7 +409,7 @@ print([name for name in loaded if name in sys.modules])
         adapter, application, _ = built
         _add_broken_resource(application)
         with pytest.raises(RuntimeError, match="open failed"):
-            adapter.bind(application)
+            adapter.mount(application)
         assert event_loops.created[0].is_closed()
 
     def test_failed_open_unsets_its_loop(
@@ -418,7 +418,7 @@ print([name for name in loaded if name in sys.modules])
         adapter, application, _ = built
         _add_broken_resource(application)
         with pytest.raises(RuntimeError, match="open failed"):
-            adapter.bind(application)
+            adapter.mount(application)
         assert event_loops.made_current[-1] is None
 
     @pytest.mark.parametrize("closes", [1, 2], ids=["once", "twice"])
@@ -429,7 +429,7 @@ print([name for name in loaded if name in sys.modules])
         closes: int,
     ) -> None:
         adapter, application, _ = built
-        handler = adapter.bind(application)
+        handler = adapter.mount(application)
 
         for _ in range(closes):
             handler.close()
@@ -441,7 +441,7 @@ print([name for name in loaded if name in sys.modules])
         built: tuple[LambdaRuntime, Application, list[str]],
     ) -> None:
         adapter, application, lifecycle = built
-        handler = adapter.bind(application)
+        handler = adapter.mount(application)
 
         handler.close()
 
@@ -460,7 +460,7 @@ print([name for name in loaded if name in sys.modules])
         adapter, application, _ = built
         observer = Observer()
         application.observability = Observability([observer])
-        handler = adapter.bind(application)
+        handler = adapter.mount(application)
         try:
             result = handler({"Records": [record("1", "a", trace_id="trace")]}, None)
             job_events = [event for event in observer.events if event.scope is Scope.JOB]
@@ -536,7 +536,7 @@ print([name for name in loaded if name in sys.modules])
             config_root=project.config_root,
         )
         adapter = LambdaRuntime(jobs=[SlowJob])
-        handler = adapter.bind(configured.compose(adapter))
+        handler = adapter.mount(configured.compose(adapter))
         try:
             result = handler(
                 {"Records": [record("slow", "a", job_name=SlowJob.__qualname__)]}, Context()
@@ -560,7 +560,7 @@ print([name for name in loaded if name in sys.modules])
         adapter, application, _ = built
         observer = Observer()
         application.observability = Observability([observer])
-        handler = adapter.bind(application)
+        handler = adapter.mount(application)
         try:
             item = record("1", "a")
             item["body"] = "{"
@@ -578,7 +578,7 @@ print([name for name in loaded if name in sys.modules])
         caplog: pytest.LogCaptureFixture,
     ) -> None:
         adapter, application, _ = built
-        adapter.bind(application)
+        adapter.mount(application)
         try:
             assert any("InlineJobTransport" in message for message in caplog.messages)
         finally:
@@ -601,7 +601,7 @@ print([name for name in loaded if name in sys.modules])
                 ),
             )
         )
-        adapter.bind(application)
+        adapter.mount(application)
         try:
             assert any(
                 "through the configured job transport" in record.getMessage()

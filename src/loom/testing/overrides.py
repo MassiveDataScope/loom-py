@@ -109,6 +109,6 @@ class OverrideRuntime:
             overrides=(*recipe.overrides, *(override.install for override in self._overrides)),
         )
 
-    def bind(self, application: Application) -> Any:
+    def mount(self, application: Application) -> Any:
         """Bind the wrapped adapter to the composed application."""
-        return self._runtime.bind(application)
+        return self._runtime.mount(application)

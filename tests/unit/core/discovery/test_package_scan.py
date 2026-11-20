@@ -267,7 +267,7 @@ class _Adapter:
     def recipe(self, project: Project) -> Recipe:
         return Recipe(profile=SERVER_PROFILE, discovered=project.discovered, lenient=True)
 
-    def bind(self, application: object) -> object:
+    def mount(self, application: object) -> object:
         return application
 
 

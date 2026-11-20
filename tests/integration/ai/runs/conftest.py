@@ -11,7 +11,7 @@ from fastapi import FastAPI
 
 from loom.ai.execution import AgentHost
 from loom.ai.execution._lifecycle import UseCaseMcpGrant
-from loom.ai.fastapi.endpoints import bind_agent_endpoints
+from loom.ai.fastapi.endpoints import mount_agent_endpoints
 from loom.core.di import LoomContainer
 from loom.core.observability.observability import Observability
 from tests.integration.ai.conftest import (
@@ -69,7 +69,7 @@ def serving() -> Any:
     @asynccontextmanager
     async def serve(runtime: AgentHost) -> AsyncIterator[FastAPI]:
         app = FastAPI()
-        bind_agent_endpoints(
+        mount_agent_endpoints(
             app,
             runtime=runtime,
             config=make_ai_config(endpoints={AGENT: make_endpoint()}),

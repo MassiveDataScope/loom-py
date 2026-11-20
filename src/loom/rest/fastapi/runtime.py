@@ -86,7 +86,7 @@ from loom.rest.fastapi._exclusions import verify_exclusion_paths
 from loom.rest.fastapi.app import create_fastapi_app
 from loom.rest.fastapi.health import HEALTH_PATH, mount_health, reject_health_collision
 from loom.rest.fastapi.sql import (
-    bind_sql_endpoints,
+    mount_sql_endpoints,
 )
 from loom.rest.middleware import TraceIdMiddleware
 from loom.rest.model import RestInterface
@@ -581,7 +581,7 @@ def served_routes(
 
 @dataclasses.dataclass(frozen=True)
 class RestDeclaration:
-    """What :func:`compose_rest` resolved and an HTTP adapter's ``bind`` mounts."""
+    """What :func:`compose_rest` resolved and an HTTP adapter's ``mount`` mounts."""
 
     name: str
     rest: _RestConfig
@@ -657,7 +657,7 @@ class FastAPIRuntime:
     """Serve a composed application over HTTP with FastAPI.
 
     One instance composes one application: :meth:`recipe` keeps the
-    authentication and routes it resolves for :meth:`bind`.
+    authentication and routes it resolves for :meth:`mount`.
 
     Args:
         metrics_registry: Prometheus registry for the middleware and the
@@ -700,7 +700,7 @@ class FastAPIRuntime:
         )
         return recipe
 
-    def bind(self, application: Application) -> FastAPI:
+    def mount(self, application: Application) -> FastAPI:
         """Mount routes, authentication, health, SQL and agent endpoints on *application*.
 
         Raises:
@@ -733,7 +733,7 @@ class FastAPIRuntime:
         mount_request_stack(app, declared, mount_metrics=self._metrics_mounter(app, declared))
         sql = application.sql
         if sql.config is not None:
-            bind_sql_endpoints(
+            mount_sql_endpoints(
                 app,
                 service=sql.service,
                 config=sql.config,

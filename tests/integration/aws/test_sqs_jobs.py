@@ -244,7 +244,7 @@ class TestSQSJobs:
         consumer = Project.load(
             str(config_path), environment="test", code_path=str(tmp_path)
         ).compose(adapter)
-        handler = adapter.bind(consumer)
+        handler = adapter.mount(consumer)
         try:
             result = handler(event, None)
         finally:

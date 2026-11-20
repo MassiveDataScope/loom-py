@@ -37,7 +37,7 @@ from loom.rest.autocrud import build_auto_routes, crud_op_of
 from loom.rest.compiler import RestInterfaceCompiler
 from loom.rest.fastapi._errors import register_error_handlers
 from loom.rest.fastapi.auto import create_app
-from loom.rest.fastapi.router import bind_interfaces
+from loom.rest.fastapi.router import mount_interfaces
 from loom.rest.model import RestApiDefaults, RestInterface, RestRoute
 from tests.unit.rest._composition import SQLITE_STORE, dynamodb_store
 from tests.unit.rest._composition import build_bootstrap as _build_bootstrap
@@ -345,7 +345,7 @@ def _lookup_client() -> TestClient:
     factory.register(_LookupByName)
     app = FastAPI()
     register_error_handlers(app)
-    bind_interfaces(
+    mount_interfaces(
         app,
         RestInterfaceCompiler(compiler, defaults=RestApiDefaults()).compile(_LookupInterface),
         factory,

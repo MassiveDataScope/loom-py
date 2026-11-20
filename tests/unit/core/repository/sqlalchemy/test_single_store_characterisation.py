@@ -93,7 +93,7 @@ class _SingleStoreAdapter:
             ),
         )
 
-    def bind(self, application: Application) -> Application:
+    def mount(self, application: Application) -> Application:
         return application
 
 

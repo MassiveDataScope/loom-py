@@ -171,7 +171,7 @@ def bootstrap_worker(
         metrics=metrics,
     )
     application = project.compose(adapter)
-    celery_app = adapter.bind(application)
+    celery_app = adapter.mount(application)
     return WorkerBootstrapResult(
         container=application.kernel.container,
         factory=application.kernel.factory,

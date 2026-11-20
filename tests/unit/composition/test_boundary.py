@@ -65,7 +65,7 @@ class Bare:
             discovered=DiscoveryResult(models=(), use_cases=()),
         )
 
-    def bind(self, application):
+    def mount(self, application):
         return application
 
 

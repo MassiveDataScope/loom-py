@@ -31,7 +31,7 @@ from loom.core.use_case.factory import UseCaseFactory
 from loom.rest.auth import AuthenticationMiddleware
 from loom.rest.compiler import RestInterfaceCompiler
 from loom.rest.dispatcher import RestUseCaseDispatcher
-from loom.rest.fastapi.router import bind_interfaces
+from loom.rest.fastapi.router import mount_interfaces
 from tests.helpers.delegation import acting_as, assert_new_delegation
 from tests.helpers.loggers import RecordingLogger
 
@@ -45,7 +45,7 @@ def client(factory: UseCaseFactory, compiler: UseCaseCompiler) -> Callable[..., 
     def serve(caller: Identity | None) -> TestClient:
         app = FastAPI()
         routes = RestInterfaceCompiler(compiler).compile(AcmeRoutes)
-        bind_interfaces(app, routes, factory, UseCaseExecutor(compiler), Observability.noop())
+        mount_interfaces(app, routes, factory, UseCaseExecutor(compiler), Observability.noop())
         return TestClient(as_caller(app, caller))  # type: ignore[arg-type]
 
     return serve

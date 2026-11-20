@@ -206,7 +206,7 @@ class TestLambdaAiRefusals:
         adapter = LambdaRuntime()
         application = _jobs_project(tmp_path, jobs_manifest, _AI).compose(adapter)
 
-        handler = adapter.bind(application)
+        handler = adapter.mount(application)
         assert lifetime == ["enter"]
         for message_id in ("1", "2"):
             record = make_record(message_id, "a", job_name=probe[0].__qualname__)
@@ -249,7 +249,7 @@ class TestLambdaAiRefusals:
         ).compose(adapter)
 
         with pytest.raises(LambdaUnservedConfigError) as raised:
-            adapter.bind(application)
+            adapter.mount(application)
 
         assert raised.value.key == "ai.mcp_servers.x.transport"
         assert "stdio" in str(raised.value)
@@ -283,7 +283,7 @@ class TestLambdaAiRefusals:
         application = _jobs_project(tmp_path, jobs_manifest, ai).compose(adapter)
 
         caplog.clear()
-        handler = adapter.bind(application)
+        handler = adapter.mount(application)
         for message_id in ("1", "2"):
             handler(
                 {"Records": [make_record(message_id, "a", job_name=probe[0].__qualname__)]}, None

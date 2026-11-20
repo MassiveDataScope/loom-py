@@ -118,7 +118,7 @@ class LambdaWorker:
             self.application: Application = project.compose(
                 OverrideRuntime(self._runtime, tuple(overrides))
             )
-            self._handler = self._runtime.bind(self.application)
+            self._handler = self._runtime.mount(self.application)
             opening.callback(self._runtime.close)
             aws = self.application.kernel.container.resolve(AwsClients)
             self.sqs = self._guarded(aws.client("sqs", sqs_config))

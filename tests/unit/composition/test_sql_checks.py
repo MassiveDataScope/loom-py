@@ -34,7 +34,7 @@ class AcmeProbeAdapter:
             discovered=DiscoveryResult(models=(), use_cases=()),
         )
 
-    def bind(self, application: Application) -> Application:
+    def mount(self, application: Application) -> Application:
         return application
 
 

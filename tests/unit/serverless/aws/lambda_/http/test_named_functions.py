@@ -231,7 +231,7 @@ class TestNamedFunctions:
 
         assert reply.status == status
 
-    def test_the_entry_selects_the_function_of_an_adapter_built_in_code(
+    def test_the_entry_selects_the_function_of_a_runtime_built_in_code(
         self,
         project: Callable[..., str],
         serve: Callable[..., Any],
@@ -267,7 +267,7 @@ class TestNamedFunctions:
         with pytest.raises(InterfaceCompilationError, match="matches no route"):
             serve(path)
 
-    def test_an_explicit_adapter_wins_over_the_entry(
+    def test_an_explicit_runtime_wins_over_the_entry(
         self, project: Callable[..., str], serve: Callable[..., Any]
     ) -> None:
         path = project("no_such_function", {})
@@ -277,7 +277,7 @@ class TestNamedFunctions:
     @pytest.mark.parametrize(
         ("entry", "built"), [("fastapi", FastAPI), ("lambda", LambdaHTTPHandler)]
     )
-    def test_a_built_in_http_entry_selects_its_adapter(
+    def test_a_built_in_http_entry_selects_its_runtime(
         self, project: Callable[..., str], serve: Callable[..., Any], entry: str, built: type
     ) -> None:
         assert isinstance(serve(project(entry, {})), built)
@@ -385,7 +385,7 @@ class TestNamedFunctions:
         with pytest.raises(ConfigError, match=message):
             serve(path, **options)
 
-    def test_without_an_entry_create_app_needs_an_adapter(
+    def test_without_an_entry_create_app_needs_a_runtime(
         self, contract_project: Callable[..., str], serve: Callable[..., Any]
     ) -> None:
         path = contract_project()

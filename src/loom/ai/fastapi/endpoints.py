@@ -1,6 +1,6 @@
 """HTTP surface of the agent runtime: ``/run``, ``/stream`` and ``/health``.
 
-Mirrors :func:`loom.rest.fastapi.sql.bind_sql_endpoints`. Mounting is a double
+Mirrors :func:`loom.rest.fastapi.sql.mount_sql_endpoints`. Mounting is a double
 opt-in — an agent needs ``enabled`` **and** a named ``auth`` in ``ai.endpoints``
 — every mount is announced with a WARNING carrying its security state, and an
 agent that opts in without a usable authenticator aborts start-up instead of
@@ -590,7 +590,7 @@ def _identity_notice(
     )
 
 
-def bind_agent_endpoints(
+def mount_agent_endpoints(
     app: FastAPI,
     *,
     runtime: AgentHost,
@@ -623,7 +623,7 @@ def bind_agent_endpoints(
 
     Example::
 
-        bind_agent_endpoints(app, runtime=runtime, config=ai_config,
+        mount_agent_endpoints(app, runtime=runtime, config=ai_config,
                              authenticator=authenticator)
     """
     exposed = _exposed_agents(config, authenticator)

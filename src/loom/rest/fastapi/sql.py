@@ -352,7 +352,7 @@ def mounted_sql_endpoints(config: SqlConfig) -> tuple[str, ...]:
     )
 
 
-def bind_sql_endpoints(
+def mount_sql_endpoints(
     app: FastAPI,
     *,
     service: SqlQueryService,
@@ -383,7 +383,7 @@ def bind_sql_endpoints(
     Example::
 
         service = SqlQueryService(executors=executors, config=sql_config)
-        bind_sql_endpoints(app, service=service, config=sql_config)
+        mount_sql_endpoints(app, service=service, config=sql_config)
     """
     runtime = observability if observability is not None else Observability.noop()
     mechanism = _roles_mechanism(authenticator)

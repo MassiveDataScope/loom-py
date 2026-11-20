@@ -208,8 +208,8 @@ class _OverridesAdapter:
             overrides=(*recipe.overrides, *self._overrides),
         )
 
-    def bind(self, application: Application) -> object:
-        return self._adapter.bind(application)
+    def mount(self, application: Application) -> object:
+        return self._adapter.mount(application)
 
 
 def _merged(base: Mapping[str, Any], over: Mapping[str, Any]) -> dict[str, Any]:

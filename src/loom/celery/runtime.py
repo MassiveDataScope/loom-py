@@ -310,7 +310,7 @@ def _register_tasks(
 
 @dataclass(frozen=True)
 class _Declared:
-    """What :meth:`CeleryRuntime.recipe` resolved and :meth:`CeleryRuntime.bind` registers."""
+    """What :meth:`CeleryRuntime.recipe` resolved and :meth:`CeleryRuntime.mount` registers."""
 
     celery: CeleryConfig
     jobs: tuple[type[Job[Any]], ...]
@@ -321,7 +321,7 @@ class CeleryRuntime:
 
     One instance composes one application: :meth:`recipe` keeps the jobs,
     the discovered job callbacks and the Celery configuration it resolves for
-    :meth:`bind`.
+    :meth:`mount`.
 
     Args:
         jobs: ``Job`` subclasses to register as tasks; when empty, they are
@@ -398,7 +398,7 @@ class CeleryRuntime:
             connection_only=not resolved.models,
         )
 
-    def bind(self, application: Application) -> Celery:
+    def mount(self, application: Application) -> Celery:
         """Register the tasks and connect the lifecycle signals.
 
         Raises:

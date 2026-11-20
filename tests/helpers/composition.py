@@ -93,7 +93,7 @@ class Serving:
             lenient=self.lenient,
         )
 
-    def bind(self, application: Application) -> Application:
+    def mount(self, application: Application) -> Application:
         return application
 
 
@@ -109,9 +109,9 @@ class WithOverrides:
         recipe = self._adapter.recipe(project)
         return replace(recipe, overrides=(*recipe.overrides, *self._overrides))
 
-    def bind(self, application: Application) -> Any:
+    def mount(self, application: Application) -> Any:
         """Bind the wrapped adapter."""
-        return self._adapter.bind(application)
+        return self._adapter.mount(application)
 
 
 def coordinator_of(executor: UseCaseExecutor) -> Any:

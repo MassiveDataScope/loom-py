@@ -71,7 +71,7 @@ def handler(
     )
     adapter = LambdaRuntime(jobs=[MarkJob])
     FakeAwsIsland(client=sqs).install(monkeypatch)
-    yield adapter.bind(project.compose(adapter))
+    yield adapter.mount(project.compose(adapter))
     adapter.close()
 
 

@@ -132,15 +132,15 @@ class TestLambdaRecipe:
         with pytest.raises(InterfaceCompilationError, match="reserved for the readiness route"):
             create_app(config, runtime=adapter, environment=_TEST)
 
-    def test_bind_before_recipe_is_refused(self) -> None:
+    def test_mount_before_recipe_is_refused(self) -> None:
         application: Any = object()
         adapter = LambdaRuntime()
 
-        with pytest.raises(CompositionStateError, match="LambdaRuntime.bind") as raised:
-            adapter.bind(application)
+        with pytest.raises(CompositionStateError, match="LambdaRuntime.mount") as raised:
+            adapter.mount(application)
         assert raised.value.issue.code is CompositionErrorCode.RUNTIME_RECIPE_MISSING
 
-    def test_a_second_recipe_on_the_same_adapter_is_refused(
+    def test_a_second_recipe_on_the_same_runtime_is_refused(
         self, contract_project: ProjectFactory
     ) -> None:
         adapter = LambdaRuntime()

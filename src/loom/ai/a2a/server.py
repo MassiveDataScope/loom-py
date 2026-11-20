@@ -123,7 +123,7 @@ def _make_card_handler(card: bytes) -> Callable[[], Response]:
     return serve_card
 
 
-def bind_a2a_endpoints(
+def mount_a2a_endpoints(
     app: FastAPI,
     *,
     runtime: AgentHost,
@@ -169,7 +169,7 @@ def bind_a2a_endpoints(
 
     Example::
 
-        bind_a2a_endpoints(app, runtime=runtime, config=ai_config, plans=plans,
+        mount_a2a_endpoints(app, runtime=runtime, config=ai_config, plans=plans,
                            authenticator=authenticator, exclude_paths=("/health",))
     """
     if config.a2a is None:

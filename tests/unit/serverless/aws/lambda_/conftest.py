@@ -125,7 +125,7 @@ def built(
 @pytest.fixture
 def handler(built: tuple[LambdaRuntime, Application, list[str]]) -> Iterator[LambdaHandler]:
     adapter, application, _ = built
-    yield adapter.bind(application)
+    yield adapter.mount(application)
     adapter.close()
 
 

@@ -287,7 +287,7 @@ class TestFailedChildOpen:
             yield application
 
         cast(Any, application).running = _failing
-        return adapter.bind(application)
+        return adapter.mount(application)
 
     def test_every_task_fails_fast_naming_the_failure_to_open(
         self, tmp_path: Path, caplog: pytest.LogCaptureFixture

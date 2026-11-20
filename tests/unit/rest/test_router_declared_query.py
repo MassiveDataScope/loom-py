@@ -25,7 +25,7 @@ from loom.core.use_case.use_case import UseCase
 from loom.rest.compiler import RestInterfaceCompiler
 from loom.rest.fastapi._errors import register_error_handlers
 from loom.rest.fastapi.app import _register_openapi_components
-from loom.rest.fastapi.router import bind_interfaces
+from loom.rest.fastapi.router import mount_interfaces
 from loom.rest.model import RestInterface, RestRoute
 
 _CUSTOMER = "12345678-1234-5678-1234-567812345678"
@@ -144,7 +144,7 @@ def client(factory: _RecordingFactory) -> TestClient:
         factory.register(route.use_case)
     app = FastAPI()
     register_error_handlers(app)
-    registry = bind_interfaces(
+    registry = mount_interfaces(
         app,
         RestInterfaceCompiler(compiler).compile(AcmeOrderQueryApi),
         factory,

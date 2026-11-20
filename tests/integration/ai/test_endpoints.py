@@ -1,6 +1,6 @@
 """HTTP surface of the agent runtime (T086-T095, T098).
 
-Drives ``bind_agent_endpoints`` over a live :class:`AgentHost` backed by
+Drives ``mount_agent_endpoints`` over a live :class:`AgentHost` backed by
 scripted engines, asserting the wire contract in
 ``specs/001-ai-agent-layer/contracts/http-sse.md``: double opt-in mounting,
 401 before 404, the body cap enforced while reading, the run-error status
@@ -28,7 +28,7 @@ import yaml
 from fastapi import FastAPI
 
 from loom.ai.a2a.card import card_path
-from loom.ai.a2a.server import bind_a2a_endpoints
+from loom.ai.a2a.server import mount_a2a_endpoints
 from loom.ai.abc import (
     AgentEvent,
     DepsFactory,
@@ -48,7 +48,7 @@ from loom.ai.errors import (
     AgentRunErrorCode,
 )
 from loom.ai.execution import AgentHost
-from loom.ai.fastapi.endpoints import bind_agent_endpoints
+from loom.ai.fastapi.endpoints import mount_agent_endpoints
 from loom.core.config.errors import ConfigError
 from loom.core.di import LoomContainer
 from loom.core.errors import Forbidden
@@ -160,7 +160,7 @@ async def _serving(
     )
     async with runtime:
         app = FastAPI()
-        bind_agent_endpoints(
+        mount_agent_endpoints(
             app,
             runtime=runtime,
             config=config,
@@ -371,7 +371,7 @@ class TestMounting:
 
         async with runtime:
             with pytest.raises(ConfigError):
-                bind_agent_endpoints(
+                mount_agent_endpoints(
                     app, runtime=runtime, config=config, authenticator=None, prefix=_PREFIX
                 )
 
@@ -1778,7 +1778,7 @@ class TestAuthenticationExclusions:
                 authenticator=StubAuthenticator(),  # type: ignore[arg-type]
                 exclude_paths=tuple(exclude_paths),
             )
-            bind_a2a_endpoints(
+            mount_a2a_endpoints(
                 app,
                 runtime=runtime,
                 config=config,

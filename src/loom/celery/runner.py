@@ -2,7 +2,7 @@
 
 Each ``_make_*`` function registers one Celery task against a given
 ``celery_app`` and returns the task object.  They are called once, when
-:meth:`~loom.celery.runtime.CeleryRuntime.bind` registers the tasks, and
+:meth:`~loom.celery.runtime.CeleryRuntime.mount` registers the tasks, and
 never again. Every task is registered with ``shared=False``: it belongs to
 its ``celery_app`` alone.
 

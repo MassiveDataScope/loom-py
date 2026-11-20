@@ -1,6 +1,6 @@
 """The composition root mounts the inbound A2A surface (T183, FR-041).
 
-``bind_a2a_endpoints`` had no caller in ``src/``: the whole inbound transport
+``mount_a2a_endpoints`` had no caller in ``src/``: the whole inbound transport
 was implemented, tested in isolation, and unreachable in any application
 ``create_app`` builds. These tests drive the real ``create_app`` over a
 temporary project and speak A2A to the app it returns, so the card, one

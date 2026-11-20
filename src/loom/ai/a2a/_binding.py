@@ -184,7 +184,7 @@ def mounted_exclusions(app: FastAPI) -> tuple[str, ...]:
     """Return the authentication exclusions the deployment actually runs with.
 
     The authoritative list is the one mounted on the middleware, not the one
-    the caller of :func:`bind_a2a_endpoints` chose to repeat in its argument —
+    the caller of :func:`mount_a2a_endpoints` chose to repeat in its argument —
     which defaults to empty. Reading it here makes the exclusion guard
     fail closed.
     """

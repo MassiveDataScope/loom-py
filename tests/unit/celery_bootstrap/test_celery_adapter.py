@@ -162,7 +162,7 @@ class TestRecipe:
 
         assert recipe.metrics is metrics
 
-    def test_a_second_recipe_on_the_same_adapter_is_refused(self, tmp_path: Path) -> None:
+    def test_a_second_recipe_on_the_same_runtime_is_refused(self, tmp_path: Path) -> None:
         adapter = CeleryRuntime(jobs=[_PingJob])
         adapter.recipe(_project(tmp_path, {}))
 
@@ -173,12 +173,12 @@ class TestRecipe:
             adapter.recipe(project)
         assert raised.value.issue.code is CompositionErrorCode.RUNTIME_ALREADY_COMPOSED
 
-    def test_bind_before_recipe_is_refused(self) -> None:
+    def test_mount_before_recipe_is_refused(self) -> None:
         adapter = CeleryRuntime(jobs=[_PingJob])
         application: Any = object()
 
-        with pytest.raises(CompositionStateError, match="CeleryRuntime.bind .* call recipe first"):
-            adapter.bind(application)
+        with pytest.raises(CompositionStateError, match="CeleryRuntime.mount .* call recipe first"):
+            adapter.mount(application)
 
     def test_a_failed_recipe_can_be_retried(self, tmp_path: Path) -> None:
         adapter = CeleryRuntime(jobs=[_PingJob])
@@ -195,7 +195,7 @@ class TestBind:
     ) -> None:
         adapter = CeleryRuntime(jobs=[_PingJob])
 
-        app = adapter.bind(_application(tmp_path, {}, adapter, acme_callbacks.MODULE))
+        app = adapter.mount(_application(tmp_path, {}, adapter, acme_callbacks.MODULE))
 
         assert isinstance(app, Celery)
         assert f"{TASK_JOB_PREFIX}.{_PingJob.__qualname__}" in app.tasks
@@ -209,7 +209,7 @@ class TestBind:
         monkeypatch.setattr("loom.celery.runtime._log", log)
         adapter = CeleryRuntime(jobs=[_PingJob, _SecondJob])
 
-        adapter.bind(_application(tmp_path, {}, adapter))
+        adapter.mount(_application(tmp_path, {}, adapter))
 
         (line,) = log.named("Job retry policies")
         assert line["transport"] == "celery"
@@ -219,13 +219,13 @@ class TestBind:
         ]
         assert "max_attempts=3" in line["jobs"][0]["retry"]
 
-    def test_bind_without_recipe_is_refused(self, tmp_path: Path) -> None:
+    def test_mount_without_recipe_is_refused(self, tmp_path: Path) -> None:
         adapter = CeleryRuntime(jobs=[_PingJob])
         application = _application(tmp_path, {}, adapter)
 
         unbound = CeleryRuntime(jobs=[_PingJob])
         with pytest.raises(RuntimeError, match="recipe"):
-            unbound.bind(application)
+            unbound.mount(application)
 
     def test_an_ai_section_is_ignored(self, tmp_path: Path) -> None:
         adapter = CeleryRuntime(jobs=[_PingJob])

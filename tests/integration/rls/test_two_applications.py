@@ -46,7 +46,7 @@ class _Tickets:
             default_store_backend="sqlalchemy",
         )
 
-    def bind(self, application: Application) -> Application:
+    def mount(self, application: Application) -> Application:
         return application
 
 

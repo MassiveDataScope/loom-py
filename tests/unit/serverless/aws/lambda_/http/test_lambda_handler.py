@@ -124,7 +124,7 @@ class TestLambdaHandler:
         application = Project.load(contract_project(), environment="test").compose(adapter)
         checks = CountedChecks()
         checks.wrap(application)
-        handler = adapter.bind(application)
+        handler = adapter.mount(application)
         try:
             _invoke_warm(handler, _WARM_INVOCATIONS)
         finally:
@@ -207,7 +207,7 @@ class TestLambdaHandler:
         adapter, application = unreachable
 
         with pytest.raises(ConnectionError, match="database unreachable"):
-            adapter.bind(application)
+            adapter.mount(application)
 
     def test_a_failure_to_open_closes_its_loop(
         self, event_loops: RecordedLoops, unreachable: tuple[LambdaRuntime, Application]
@@ -215,7 +215,7 @@ class TestLambdaHandler:
         adapter, application = unreachable
 
         with pytest.raises(ConnectionError):
-            adapter.bind(application)
+            adapter.mount(application)
         assert event_loops.created[0].is_closed()
 
     def test_a_failure_to_open_unsets_its_loop(
@@ -224,5 +224,5 @@ class TestLambdaHandler:
         adapter, application = unreachable
 
         with pytest.raises(ConnectionError):
-            adapter.bind(application)
+            adapter.mount(application)
         assert event_loops.made_current[-1] is None

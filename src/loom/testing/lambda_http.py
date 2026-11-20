@@ -69,7 +69,7 @@ class LambdaTestClient(httpx.Client):
             self.application = Project.load(*paths, **options).compose(
                 OverrideRuntime(runtime, tuple(overrides))
             )
-            owned = runtime.bind(self.application)
+            owned = runtime.mount(self.application)
             app = cast(HttpHandler, owned)
         elif function is not None or options:
             raise TypeError("function and create_app options need a configuration path")

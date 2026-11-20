@@ -33,7 +33,7 @@ from loom.rest.auth import (
     JwtAuthenticator,
     RequestCredentials,
 )
-from loom.rest.fastapi.sql import bind_sql_endpoints
+from loom.rest.fastapi.sql import mount_sql_endpoints
 from tests.unit.core.sql._fakes import (
     FakeSqlExecutor,
     make_connection_config,
@@ -100,7 +100,7 @@ def _app(
     )
     config = make_sql_config(analytics=connection)
     app = FastAPI()
-    bind_sql_endpoints(
+    mount_sql_endpoints(
         app,
         service=SqlQueryService(executors={"analytics": executor}, config=config),
         config=config,
@@ -186,7 +186,7 @@ def _single_role_app(executor: FakeSqlExecutor) -> FastAPI:
     )
     config = make_sql_config(analytics=connection)
     app = FastAPI()
-    bind_sql_endpoints(
+    mount_sql_endpoints(
         app,
         service=SqlQueryService(executors={"analytics": executor}, config=config),
         config=config,
@@ -456,7 +456,7 @@ class TestSingleRoleConnection:
         )
         config = make_sql_config(analytics=connection)
         app = FastAPI()
-        bind_sql_endpoints(
+        mount_sql_endpoints(
             app,
             service=SqlQueryService(executors={"analytics": executor}, config=config),
             config=config,
