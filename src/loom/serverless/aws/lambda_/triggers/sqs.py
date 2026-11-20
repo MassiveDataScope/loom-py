@@ -111,13 +111,14 @@ class SQSBatch:
                 failed.append(record)
                 continue
             settled.append((record, outcome))
-            if fifo and not isinstance(outcome, Succeeded):
-                listed = self._consumer.settlement.settle_all(settled)
-                failed += listed
-                settled.clear()
-                if listed:
-                    failed += records[index + 1 :]
-                    break
+            if not fifo or isinstance(outcome, Succeeded):
+                continue
+            unsettled = self._consumer.settlement.settle_all(settled)
+            settled.clear()
+            failed += unsettled
+            if unsettled:
+                failed += records[index + 1 :]
+                break
         failed += self._consumer.settlement.settle_all(settled)
         return {"batchItemFailures": [{"itemIdentifier": record.message_id} for record in failed]}
 
@@ -129,7 +130,8 @@ class SQSBatch:
         if reason is None:
             return self._host.run(self._run_record(record, context))
         outcome = self._consumer.runner.decide_unrunnable(
-            MalformedJobMessage(reason), record.receive_count,
+            MalformedJobMessage(reason),
+            record.receive_count,
             self._consumer.unknown_job_policy,
         )
         self._log_outcome(record, outcome)
