@@ -96,7 +96,7 @@ class ConfiguredInstaller(Installer, Generic[SettingsT]):
         """
         written = config.raw(cls.section)
         if any(INTERPOLATION in text for _, text in config_strings(written)):
-            cls._reject_misshapen(written)
+            cls._check_written_shape(written)
         else:
             cls._decode(config)
 
@@ -109,7 +109,7 @@ class ConfiguredInstaller(Installer, Generic[SettingsT]):
         return settings
 
     @classmethod
-    def _reject_misshapen(cls, written: object) -> None:
+    def _check_written_shape(cls, written: object) -> None:
         if not isinstance(written, dict) or not issubclass(cls.settings_type, msgspec.Struct):
             return
         fields = msgspec.structs.fields(cls.settings_type)
