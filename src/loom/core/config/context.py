@@ -46,7 +46,7 @@ class ConfigContext:
 
         ctx = ConfigContext.from_yaml("config.yaml")
         cache = ctx.section("cache", CacheConfig)
-        step  = ctx.bind(ReadOrdersStep, path="pipeline.steps.orders")
+        step  = ctx.convert(ReadOrdersStep, path="pipeline.steps.orders")
         dep   = ctx.resolve(MyDep.from_config("services.dep", label="prod"))
     """
 
@@ -227,7 +227,7 @@ class ConfigContext:
         """
         return _section(self._config, _key_str(key), target)
 
-    def bind(
+    def convert(
         self,
         target: type[T],
         *,
@@ -251,14 +251,14 @@ class ConfigContext:
             ConfigError: If a required field is missing or type conversion fails.
         """
         raw: dict[str, object] = _section(self._config, _key_str(path), dict) if path else {}
-        return self._binder.bind(target, {**raw, **overrides})
+        return self._binder.convert(target, {**raw, **overrides})
 
     def resolve(self, binding: ConfigBinding) -> object:
         """Materialize a :class:`~loom.core.config.ConfigBinding` into a live object.
 
-        Delegates to :meth:`bind` using the binding's declared path and overrides.
+        Delegates to :meth:`convert` using the binding's declared path and overrides.
         Compilers and bootstrap code that operate on pre-declared bindings use
-        this method rather than calling :meth:`bind` with unpacked fields.
+        this method rather than calling :meth:`convert` with unpacked fields.
 
         Args:
             binding: Deferred binding declaration (from
@@ -271,7 +271,7 @@ class ConfigContext:
         Raises:
             ConfigError: If resolution or type conversion fails.
         """
-        return self.bind(binding.target, path=binding.config_path, **binding.overrides)
+        return self.convert(binding.target, path=binding.config_path, **binding.overrides)
 
 
 def _key_str(key: str | ConfigKey) -> str:

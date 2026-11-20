@@ -23,7 +23,7 @@ class StructBinder:
     Converts every annotated ``__init__`` parameter present in *raw* via
     ``convert_config``.  Supports primitives (``int``, ``str``, ``bool``),
     ``Literal`` constraints, and ``LoomFrozenStruct`` subclasses uniformly.
-    All reflection runs once per ``bind`` call at compile time — never on
+    All reflection runs once per ``convert`` call at compile time — never on
     the message-processing hot path.
 
     Args:
@@ -33,7 +33,7 @@ class StructBinder:
     Example::
 
         binder = StructBinder()
-        step = binder.bind(
+        step = binder.convert(
             ReadOrdersStep,
             {"db": {"host": "localhost", "port": 5432}, "mode": "batch"},
         )
@@ -42,7 +42,7 @@ class StructBinder:
     def __init__(self, strict: bool = False) -> None:
         self._strict = strict
 
-    def bind(self, target: type[T], raw: Mapping[str, object]) -> T:
+    def convert(self, target: type[T], raw: Mapping[str, object]) -> T:
         """Instantiate *target* injecting and converting values from *raw*.
 
         For each annotated ``__init__`` parameter that appears in *raw*,
