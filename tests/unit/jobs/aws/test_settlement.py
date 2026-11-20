@@ -228,10 +228,7 @@ class TestSqsSettlement:
 
         redelivered = settlement.settle_all([(_record("a"), Rejected("no"))])
 
-        by_attempts = {
-            config.max_attempts: client
-            for (_, config), client in zip(island.built, island.created, strict=True)
-        }
+        by_attempts = island.created_by_max_attempts()
         bounded = by_attempts.pop(1)
         [retrying] = by_attempts.values()
         assert redelivered == []

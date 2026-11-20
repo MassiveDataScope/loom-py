@@ -88,7 +88,7 @@ def fifo() -> bool:
 
 
 @pytest.fixture
-def project(tmp_path: Path, no_aws_clients: None, fifo: bool) -> Project:
+def project(tmp_path: Path, island: FakeAwsIsland, fifo: bool) -> Project:
     """The jobs function ``worker``, consuming a FIFO queue when ``fifo`` is true."""
     document = with_worker({"app": {"name": "lambda-sqs"}}, batch_size=5)
     if fifo:

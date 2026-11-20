@@ -147,7 +147,7 @@ _ENDPOINT = {"enabled": True, "auth": "default"}
 _A2A = {"base_url": "https://agents.example.com", "expose": [_AGENT]}
 
 
-@pytest.mark.usefixtures("no_aws_clients")
+@pytest.mark.usefixtures("island")
 class TestLambdaAiRefusals:
     @pytest.mark.parametrize(
         "make_project",

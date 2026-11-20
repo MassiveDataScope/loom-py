@@ -29,11 +29,6 @@ class _MotoAwsIsland(FakeAwsIsland):
 class AwsIslandPort:
     """The expectations every AWS island meets through its port."""
 
-    def test_a_session_keeps_the_profile_it_was_opened_for(
-        self, aws_island: AwsIsland, dev_profile: str
-    ) -> None:
-        assert aws_island.open_session(dev_profile).profile_name == dev_profile
-
     def test_the_sdk_errors_are_exception_types(self, aws_island: AwsIsland) -> None:
         errors = aws_island.sdk_errors()
 
@@ -70,7 +65,16 @@ class MotoAwsIslandPort(AwsIslandPort):
         assert isinstance(raised.value, aws_island.sdk_errors())
 
 
-class TestRealAwsIsland(MotoAwsIslandPort):
+class RealAwsIslandPort(MotoAwsIslandPort):
+    """The expectations only the real island can meet: the fakes ignore the session."""
+
+    def test_a_session_keeps_the_profile_it_was_opened_for(
+        self, aws_island: AwsIsland, dev_profile: str
+    ) -> None:
+        assert aws_island.open_session(dev_profile).profile_name == dev_profile
+
+
+class TestRealAwsIsland(RealAwsIslandPort):
     @pytest.fixture
     def aws_island(self, mocked_aws: None) -> AwsIsland:
         island: AwsIsland = importlib.import_module("loom.core.connections.aws.client")  # type: ignore[assignment]

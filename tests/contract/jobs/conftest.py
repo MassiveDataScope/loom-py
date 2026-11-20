@@ -49,7 +49,7 @@ from loom.jobs.aws.settlement import SqsSettlement
 from loom.jobs.aws.sqs import SQSConfig
 from loom.testing.jobs import ManualTimer
 from tests.helpers.aws import ACCOUNT
-from tests.helpers.extras import patched_aws_clients
+from tests.helpers.aws_island import FakeAwsIsland
 from tests.helpers.jobs import JobKernel
 from tests.helpers.sqs import URL_BASE, FakeSqs
 
@@ -138,7 +138,8 @@ class SqsDriver:
         }
         client = FakeSqs({queue: policy})
         config = SQSConfig(queues={"jobs": QueueConfig(url=queue)})
-        with patched_aws_clients(client):
+        with pytest.MonkeyPatch.context() as patch:
+            FakeAwsIsland(client=client).install(patch)
             settlement = SqsSettlement(AwsClients(), config, "jobs")
             settlement.queue.read_dead_letter(client)
             redelivery = Redelivery.SAME if fifo else Redelivery.DELAYED

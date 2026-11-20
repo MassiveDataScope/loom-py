@@ -28,6 +28,7 @@ from loom.serverless.aws.lambda_.triggers import eventbridge, s3, schedule, sns
 from loom.testing import LambdaEvent
 from loom.testing.serverless import QueueableEvent
 from tests.helpers.aws import ACCOUNT
+from tests.helpers.aws_island import FakeAwsIsland
 from tests.helpers.composition import composition_project
 from tests.helpers.sqs import FakeSqs, queue_url
 from tests.unit.serverless.aws.lambda_._records import consumed_queues
@@ -111,7 +112,7 @@ def sqs() -> FakeSqs:
 
 
 @pytest.fixture
-def serve(tmp_path: Path, no_aws_clients: None) -> Iterator[Serve]:
+def serve(tmp_path: Path, island: FakeAwsIsland) -> Iterator[Serve]:
     """Compose the function *name* of the given *trigger* and bind its handler."""
     adapters: list[LambdaAdapter] = []
 

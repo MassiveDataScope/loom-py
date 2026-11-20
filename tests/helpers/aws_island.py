@@ -59,6 +59,13 @@ class FakeAwsIsland:
         """The service and region of every client built, in order."""
         return [(service, config.region) for service, config in self.built]
 
+    def created_by_max_attempts(self) -> dict[int, MagicMock]:
+        """The mock client built for each ``max_attempts`` of the settings it was built with."""
+        return {
+            config.max_attempts: client
+            for (_, config), client in zip(self.built, self.created, strict=True)
+        }
+
     def install(self, monkeypatch: pytest.MonkeyPatch) -> FakeAwsIsland:
         """Make every ``aws_island()`` of loom answer this island, and return it."""
         monkeypatch.setitem(sys.modules, BOTO3_ISLAND, self)

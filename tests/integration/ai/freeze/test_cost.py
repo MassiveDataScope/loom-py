@@ -32,6 +32,8 @@ from typing import Any
 
 import pytest
 
+from tests.helpers.aws_island import FakeAwsIsland
+
 # fastmcp lives in the optional 'mcp-tests' group; skip before anything that imports it.
 pytest.importorskip("fastmcp", reason="fastmcp is not installed: uv sync --group mcp-tests")
 
@@ -304,7 +306,7 @@ class TestRowColdInit:
         tmp_path: Path,
         monkeypatch: pytest.MonkeyPatch,
         trigger: Trigger,
-        no_aws_clients: None,
+        island: FakeAwsIsland,
     ) -> None:
         with serving("modern") as server, serving("modern") as spare:
             handler = _function_with_a_spare_server(tmp_path, monkeypatch, server, spare, trigger)

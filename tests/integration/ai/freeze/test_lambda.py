@@ -28,6 +28,8 @@ from typing import Any, Literal
 
 import pytest
 
+from tests.helpers.aws_island import FakeAwsIsland
+
 # fastmcp lives in the optional 'mcp-tests' group; skip before anything that imports it
 # (the pool module, the server module), so a lane without the group collects no error.
 pytest.importorskip("fastmcp", reason="fastmcp is not installed: uv sync --group mcp-tests")
@@ -464,7 +466,9 @@ World = Callable[..., _World]
 
 
 @pytest.fixture
-def world(tmp_path: Path, monkeypatch: pytest.MonkeyPatch, no_aws_clients: None) -> Iterator[World]:
+def world(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, island: FakeAwsIsland
+) -> Iterator[World]:
     """Builds a server of one era and a Lambda function of one trigger over it, at Init.
 
     The pool's wall clock is patched before anything is built, so every pool

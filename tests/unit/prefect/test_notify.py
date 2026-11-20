@@ -216,7 +216,7 @@ class TestSnsNotifier:
 
 
 class TestBuildSnsNotifier:
-    def test_builds_sns_notifier_from_yaml_block(self, no_aws_clients: None) -> None:
+    def test_builds_sns_notifier_from_yaml_block(self, island: FakeAwsIsland) -> None:
         block = [{"kind": "sns", "topic_arn": _TOPIC, "on_failure": True}]
         (notifier,) = build_notifiers(block)
         assert isinstance(notifier, SnsNotifier)

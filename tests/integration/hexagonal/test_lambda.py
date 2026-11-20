@@ -16,6 +16,7 @@ import pytest
 from loom.core.identity import Identity, current_caller
 from loom.serverless.aws.lambda_ import LambdaHandler
 from loom.testing import LambdaEvent, LambdaTestClient
+from tests.helpers.aws_island import FakeAwsIsland
 from tests.integration.hexagonal.conftest import (
     ANA,
     BAD_IDENTITIES,
@@ -35,7 +36,7 @@ CONSUMED = {"batchItemFailures": []}
 
 
 @pytest.fixture
-def lambda_worker(compose: Compose, no_aws_clients: None) -> Iterator[LambdaHandler]:
+def lambda_worker(compose: Compose, island: FakeAwsIsland) -> Iterator[LambdaHandler]:
     """The ``acme-worker`` Lambda function, closed when the test ends, over a stand-in SQS."""
     yield compose("lambda-jobs")[1]
 

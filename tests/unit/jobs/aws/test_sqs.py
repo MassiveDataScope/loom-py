@@ -293,7 +293,7 @@ class TestSqsDispatch:
         ],
     )
     def test_startup_refuses_a_job_sqs_cannot_place(
-        self, tmp_path: Path, job: type[Job[Any]], message: str, no_aws_clients: None
+        self, tmp_path: Path, job: type[Job[Any]], message: str, island: FakeAwsIsland
     ) -> None:
         project = job_project(tmp_path, _CONFIG, "sqs")
         adapter = JobsAdapter(job)
@@ -313,7 +313,7 @@ class TestSqsDispatch:
         assert (ReportJob.__queue__, ReportJob.__countdown__) == ("reports", 0)
 
     def test_jobs_on_celery_queues_need_no_sqs_url(
-        self, tmp_path: Path, no_aws_clients: None
+        self, tmp_path: Path, island: FakeAwsIsland
     ) -> None:
         config = {**_CONFIG, "celery": {**BROKER, "queues": ["default", "reports"]}}
         project = job_project(tmp_path, config, "sqs")
@@ -517,7 +517,7 @@ class TestSqsDispatch:
         [{"batch_size": 0}, {"batch_size": 11}, {"max_concurrent_sends": 0}, {"batch": "yes"}],
     )
     def test_startup_refuses_an_invalid_batch_knob(
-        self, tmp_path: Path, knobs: dict[str, Any], no_aws_clients: None
+        self, tmp_path: Path, knobs: dict[str, Any], island: FakeAwsIsland
     ) -> None:
         project = job_project(tmp_path, _sqs_config(**knobs), "sqs")
         adapter = JobsAdapter(EmailJob)

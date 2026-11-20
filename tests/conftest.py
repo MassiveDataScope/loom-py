@@ -82,11 +82,6 @@ def island(monkeypatch: pytest.MonkeyPatch) -> FakeAwsIsland:
 
 
 @pytest.fixture
-def no_aws_clients(island: FakeAwsIsland) -> None:
-    """Hand every AWS client loom builds out as a mock: nothing reaches AWS or moto."""
-
-
-@pytest.fixture
 def absent_boto3(monkeypatch: pytest.MonkeyPatch) -> None:
     """The ``aws`` extra is absent."""
     without_extra(monkeypatch, ["boto3"], [BOTO3_ISLAND])

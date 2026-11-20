@@ -23,6 +23,7 @@ from loom.core.job.callback import JobCallback
 from loom.core.stores import SERVER_PROFILE
 from loom.serverless.aws.lambda_ import LambdaAdapter
 from tests.helpers.ai import CountingEngineProvider
+from tests.helpers.aws_island import FakeAwsIsland
 from tests.helpers.composition import WithOverrides, composition_project
 from tests.helpers.lambda_jobs import jobs_queue, jobs_trigger
 from tests.integration.ai.adapters.doubles import (
@@ -112,7 +113,7 @@ def engines(
 
 
 @pytest.fixture
-def project(tmp_path: Path, no_aws_clients: None) -> Iterator[Project]:
+def project(tmp_path: Path, island: FakeAwsIsland) -> Iterator[Project]:
     """A Lambda jobs function ``worker`` with ``pricing`` configured and two agent artefacts.
 
     Its SQS client is a stand-in for the test's duration.

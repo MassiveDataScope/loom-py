@@ -19,6 +19,7 @@ from loom.rest.compiler import InterfaceCompilationError
 from loom.rest.fastapi import FastAPIAdapter
 from loom.serverless.aws.lambda_ import LambdaAdapter
 from loom.serverless.aws.lambda_.triggers.http import LambdaHTTPHandler
+from tests.helpers.aws_island import FakeAwsIsland
 from tests.helpers.lambda_jobs import jobs_queue, jobs_trigger
 from tests.unit.serverless.aws.lambda_.http._clients import lambda_client
 from tests.unit.serverless.aws.lambda_.http._contract_app import bearer
@@ -282,7 +283,7 @@ class TestNamedFunctions:
         assert isinstance(serve(project(entry, {})), built)
 
     def test_an_sqs_entry_serves_the_jobs(
-        self, project: Callable[..., str], serve: Callable[..., Any], no_aws_clients: None
+        self, project: Callable[..., str], serve: Callable[..., Any], island: FakeAwsIsland
     ) -> None:
         worker = {"trigger": jobs_trigger()}
         path = project("worker", {"worker": worker}, _manifest_discovery, _jobs_queue)
