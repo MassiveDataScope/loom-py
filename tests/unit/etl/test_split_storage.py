@@ -3,7 +3,6 @@
 from __future__ import annotations
 
 import shutil
-from collections.abc import Iterator
 from pathlib import Path
 from typing import Any
 
@@ -51,17 +50,6 @@ def split_tree(tmp_path: Path) -> Path:
     root = tmp_path / "split"
     shutil.copytree(_FIXTURE, root)
     return root
-
-
-@pytest.fixture
-def memfs() -> Iterator[Any]:
-    fsspec = pytest.importorskip("fsspec")
-    fs = fsspec.filesystem("memory")
-    fs.store.clear()
-    fs.pseudo_dirs[:] = [""]
-    yield fs
-    fs.store.clear()
-    fs.pseudo_dirs[:] = [""]
 
 
 class TestSplitStorageTree:

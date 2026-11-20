@@ -2,8 +2,8 @@
 
 from __future__ import annotations
 
-from io import StringIO
 from pathlib import Path
+from typing import Any
 from unittest.mock import MagicMock, patch
 
 import pytest
@@ -65,7 +65,7 @@ class TestLoadYamlFile:
         with pytest.raises(ConfigError, match="storage"):
             _load_yaml(str(path))
 
-    def test_load_yaml_from_cloud_uri(self) -> None:
+    def test_load_yaml_from_cloud_uri(self, memfs: Any) -> None:
         yaml_content = (
             "storage:\n"
             "  defaults:\n"
@@ -77,21 +77,14 @@ class TestLoadYamlFile:
             "  lineage:\n"
             "    enabled: false\n"
         )
+        memfs.pipe("my-bucket/config/prod.yaml", yaml_content.encode())
 
-        mock_open = MagicMock()
-        mock_open.return_value.__enter__ = MagicMock(return_value=StringIO(yaml_content))
-        mock_open.return_value.__exit__ = MagicMock(return_value=False)
-
-        with patch("fsspec.open", mock_open):
-            storage, obs = _load_yaml("s3://my-bucket/config/prod.yaml")
+        storage, obs = _load_yaml("memory://my-bucket/config/prod.yaml")
 
         assert isinstance(storage, StorageConfig)
         assert storage.defaults.table_path is not None
         assert storage.defaults.table_path.uri == "s3://my-lake/delta"
         assert obs.log.enabled is True
-        mock_open.assert_called_once_with(
-            "s3://my-bucket/config/prod.yaml", mode="r", encoding="utf-8"
-        )
 
 
 # ---------------------------------------------------------------------------

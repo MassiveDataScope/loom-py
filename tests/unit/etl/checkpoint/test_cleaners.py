@@ -2,10 +2,10 @@
 
 from __future__ import annotations
 
+import logging
 from pathlib import Path
-from unittest.mock import MagicMock
+from typing import Any
 
-import fsspec.core as fsspec_core
 import pytest
 
 from loom.etl.checkpoint._cleaners import FsspecTempCleaner
@@ -13,55 +13,38 @@ from loom.etl.checkpoint._options import checkpoint_options
 
 
 class TestCheckpointCleaner:
-    def test_cleaner_calls_rm_when_path_exists(self, monkeypatch: pytest.MonkeyPatch) -> None:
-        mock_fs = MagicMock()
-        mock_fs.exists.return_value = True
-        monkeypatch.setattr(
-            fsspec_core,
-            "url_to_fs",
-            lambda *_args, **_kwargs: (mock_fs, "/bucket/tmp"),
-        )
+    def test_delete_tree_removes_an_existing_tree_and_keeps_the_sibling(self, memfs: Any) -> None:
+        memfs.pipe("bucket/tmp/part-0.arrow", b"0")
+        memfs.pipe("bucket/tmp/sub/part-1.arrow", b"1")
+        memfs.pipe("bucket/keep.arrow", b"keep")
 
-        FsspecTempCleaner().delete_tree("s3://bucket/tmp")
+        FsspecTempCleaner().delete_tree("memory://bucket/tmp")
 
-        mock_fs.rm.assert_called_once_with("/bucket/tmp", recursive=True)
+        assert not memfs.exists("bucket/tmp")
+        assert memfs.exists("bucket/keep.arrow")
 
-    def test_cleaner_skips_rm_when_path_absent(self, monkeypatch: pytest.MonkeyPatch) -> None:
-        mock_fs = MagicMock()
-        mock_fs.exists.return_value = False
-        monkeypatch.setattr(
-            fsspec_core,
-            "url_to_fs",
-            lambda *_args, **_kwargs: (mock_fs, "/bucket/tmp"),
-        )
-        FsspecTempCleaner().delete_tree("s3://bucket/tmp")
-
-        mock_fs.rm.assert_not_called()
-
-    def test_cleaner_logs_warning_on_exception(
-        self,
-        caplog: pytest.LogCaptureFixture,
-        monkeypatch: pytest.MonkeyPatch,
+    def test_delete_tree_leaves_the_store_unchanged_when_the_path_is_absent(
+        self, memfs: Any
     ) -> None:
-        def _raise(*_args: object, **_kwargs: object) -> tuple[object, str]:
-            raise PermissionError("no credentials")
+        memfs.pipe("bucket/keep.arrow", b"keep")
 
-        monkeypatch.setattr(fsspec_core, "url_to_fs", _raise)
+        FsspecTempCleaner().delete_tree("memory://bucket/tmp")
 
-        import logging
+        assert memfs.find("bucket") == ["/bucket/keep.arrow"]
 
-        log_ctx = caplog.at_level(logging.WARNING, logger="loom.etl.checkpoint._cleaners")
-        with log_ctx:
-            FsspecTempCleaner().delete_tree("s3://bucket/tmp")
+    def test_delete_tree_logs_a_warning_instead_of_raising_when_cleanup_fails(
+        self, caplog: pytest.LogCaptureFixture
+    ) -> None:
+        caplog.set_level(logging.WARNING, logger="loom.etl.checkpoint._cleaners")
 
-        assert any("cleanup skipped" in r.message for r in caplog.records)
+        FsspecTempCleaner().delete_tree("nosuchproto://bucket/tmp")
 
-    def test_cleaner_does_not_raise_on_exception(self, monkeypatch: pytest.MonkeyPatch) -> None:
-        def _raise(*_args: object, **_kwargs: object) -> tuple[object, str]:
-            raise RuntimeError("boom")
-
-        monkeypatch.setattr(fsspec_core, "url_to_fs", _raise)
-        FsspecTempCleaner().delete_tree("s3://bucket/tmp")  # must not raise
+        assert any(
+            record.name == "loom.etl.checkpoint._cleaners"
+            and record.levelno == logging.WARNING
+            and "cleanup skipped" in record.message
+            for record in caplog.records
+        )
 
     # ---------------------------------------------------------------------------
     # CheckpointStore integration — cleaner is called on cleanup
@@ -148,8 +131,6 @@ class TestCheckpointStorageOptions:
         }
 
     def test_storage_options_drop_unsupported_keys(self, caplog: pytest.LogCaptureFixture) -> None:
-        import logging
-
         log_ctx = caplog.at_level(logging.DEBUG, logger="loom.etl.checkpoint._options")
         with log_ctx:
             options = checkpoint_options({"aws_region": "eu-west-1", "aws_allow_http": "true"})
