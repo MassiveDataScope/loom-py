@@ -100,10 +100,11 @@ def _inline(context: JobTransportContext) -> _Built:
     timer = context.timer
     if timer is None and context.can_wait_in_process:
         timer = AsyncioJobTimer(context.settings.shutdown)
-        _log.warning(
-            "Inline jobs wait in process memory: a delayed job is lost when the process "
-            "stops; use Celery or SQS in production"
-        )
+        if not context.settings.shutdown.is_waiting:
+            _log.warning(
+                "Inline jobs wait in process memory: a delayed job is lost when the process "
+                "stops; use Celery or SQS in production, or jobs.shutdown.mode: wait"
+            )
     resources = (
         ()
         if timer is None

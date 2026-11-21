@@ -176,6 +176,15 @@ class TestInlineTimer:
         assert policies[1]["transport"] == "inline"
         assert "max_attempts=3" in policies[1]["jobs"][0]["retry"]
 
+    def test_waiting_at_shutdown_does_not_warn_that_delayed_jobs_are_lost(
+        self, tmp_path: Path, warnings_logged: CapturedLog
+    ) -> None:
+        job_project(tmp_path, {"jobs": {"shutdown": {"mode": "wait"}}}, "inline").compose(
+            JobsAdapter(AcmePingJob)
+        )
+
+        assert not any("wait in process memory" in str(call[0]) for call in warnings_logged.calls)
+
     async def test_a_countdown_runs_when_the_timer_of_the_application_reaches_it(
         self, tmp_path: Path
     ) -> None:
