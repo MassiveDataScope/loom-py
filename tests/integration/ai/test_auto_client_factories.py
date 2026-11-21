@@ -24,7 +24,9 @@ from fastapi.testclient import TestClient
 
 from loom.ai.errors import AgentCompilationError
 from loom.core.plugins import entrypoints as entrypoints_module
+from loom.rest.fastapi import runtime as rest_runtime
 from loom.rest.fastapi.auto import create_app
+from tests.helpers.handoffs import handed_off
 from tests.integration.ai._entrypoints import fake_entry_points
 from tests.integration.ai.test_auto_gate import (
     _APP_MODULE,
@@ -113,8 +115,9 @@ def _write_project(tmp_path: Path, *, specs: dict[str, dict[str, Any]]) -> str:
 def _start_failure(config_path: str) -> AgentCompilationError:
     """Enter the app's lifespan and return the start-up failure it raises."""
     app = create_app(config_path)
-    with pytest.raises(AgentCompilationError) as failure, TestClient(app):
+    with handed_off(rest_runtime, AgentCompilationError) as failure, TestClient(app):
         pass  # pragma: no cover - start-up never completes
+    assert isinstance(failure.value, AgentCompilationError)
     return failure.value
 
 

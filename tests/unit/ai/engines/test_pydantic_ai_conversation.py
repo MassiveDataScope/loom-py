@@ -23,9 +23,13 @@ from pydantic_ai.messages import (
 from loom.ai.abc import AgentEngine, AgentEvent, Conversation, ErrorEvent, FinalEvent
 from loom.ai.declarative import PolicySpec
 from loom.ai.declarative._v1 import MAX_HISTORY_BYTES_MIN
-from loom.ai.errors import CONVERSATION_LOAD_FAILED_MESSAGE, AgentRunError, AgentRunErrorCode
+from loom.ai.errors import (
+    CONVERSATION_LOAD_FAILED_MESSAGE,
+    RUN_ERROR_DETAILS,
+    AgentRunError,
+    AgentRunErrorCode,
+)
 from loom.core.identity import Identity
-from loom.core.logger.failure import exception_type
 from tests.helpers.pydantic_ai_engine import (
     build_engine,
     encode,
@@ -239,7 +243,7 @@ class TestMalformedHistory:
         assert events == [
             ErrorEvent(
                 code=AgentRunErrorCode.CONVERSATION_LOAD_FAILED,
-                message=exception_type(AgentRunError),
+                message=RUN_ERROR_DETAILS[AgentRunErrorCode.CONVERSATION_LOAD_FAILED],
             )
         ]
         assert seen == []

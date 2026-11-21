@@ -202,7 +202,7 @@ class TestNotFoundErrors:
         assert detail["entity"] == "Product"
         assert detail["id"] == 99
 
-    def test_not_found_body_has_message(self) -> None:
+    def test_not_found_body_has_the_public_form_not_the_message(self) -> None:
         harness = HttpTestHarness()
         harness.inject_repo(Product, InMemoryProductRepository())
         harness.force_error(Product, "get_by_id", NotFound("Product", id=1))
@@ -211,7 +211,7 @@ class TestNotFoundErrors:
         resp = client.get("/products/1")
 
         detail = _error_detail(resp)
-        assert "Product" in detail["message"]
+        assert detail["message"] == "not_found"
 
 
 # ---------------------------------------------------------------------------

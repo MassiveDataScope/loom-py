@@ -25,7 +25,7 @@ from loom.ai.abc import (
 )
 from loom.ai.compiler._plan import AgentPlan, CompiledOutputHook
 from loom.ai.errors import (
-    HOOK_FAILED_MESSAGE,
+    RUN_ERROR_DETAILS,
     AgentCompilationError,
     AgentErrorCode,
     AgentRunErrorCode,
@@ -498,7 +498,7 @@ class TestHookFailures:
 
         assert failure.value.code is AgentRunErrorCode.HOOK_FAILED
         assert failure.value.interaction_id is not None
-        assert str(failure.value) == HOOK_FAILED_MESSAGE
+        assert str(failure.value) == RUN_ERROR_DETAILS[AgentRunErrorCode.HOOK_FAILED]
         assert "secret detail" not in str(failure.value)
         assert hook_deps.uow.log == ["begin", "rollback"]
         assert engine.stream_count == 1
@@ -521,7 +521,7 @@ class TestHookFailures:
 
         assert failure.value.code is AgentRunErrorCode.HOOK_FAILED
         assert failure.value.interaction_id is not None
-        assert str(failure.value) == HOOK_FAILED_MESSAGE
+        assert str(failure.value) == RUN_ERROR_DETAILS[AgentRunErrorCode.HOOK_FAILED]
         assert len(recorder.calls) == 1
 
     async def test_emits_a_single_error_with_no_final_when_the_hook_cancels_itself_in_stream(
@@ -545,7 +545,7 @@ class TestHookFailures:
         assert isinstance(error, ErrorEvent)
         assert error.code is AgentRunErrorCode.HOOK_FAILED
         assert error.interaction_id is not None
-        assert error.message == HOOK_FAILED_MESSAGE
+        assert error.message == RUN_ERROR_DETAILS[AgentRunErrorCode.HOOK_FAILED]
 
     async def test_emits_a_single_error_with_no_final_when_the_hook_raises_in_stream(
         self,
@@ -588,7 +588,7 @@ class TestHookFailures:
                 await host.run(_AGENT, "prompt", identity=identity)
 
         assert failure.value.code is AgentRunErrorCode.UNAUTHORIZED
-        assert str(failure.value) == _DENIED_MESSAGE
+        assert str(failure.value) == RUN_ERROR_DETAILS[AgentRunErrorCode.UNAUTHORIZED]
         assert failure.value.interaction_id is not None
 
     async def test_fails_with_hook_failed_when_the_hook_exceeds_tool_timeout_ms(

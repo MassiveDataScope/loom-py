@@ -40,9 +40,7 @@ from loom.ai.abc import (
 from loom.ai.compiler._plan import AgentPlan
 from loom.ai.config import A2AConfig, AgentEndpointConfig
 from loom.ai.errors import (
-    CONVERSATION_LOAD_FAILED_MESSAGE,
-    CONVERSATION_LOAD_TIMEOUT_MESSAGE,
-    HOOK_FAILED_MESSAGE,
+    RUN_ERROR_DETAILS,
     AgentCompilationError,
     AgentErrorCode,
     AgentRunErrorCode,
@@ -686,7 +684,10 @@ class TestHookOverHttp:
             assert _sse_names(response.text) == ["text_delta", "error"]
             error = _frame(response.text, "error")
             assert len(error.pop("interaction_id")) == _INTERACTION_ID_LENGTH
-            assert error == {"code": "HOOK_FAILED", "message": HOOK_FAILED_MESSAGE}
+            assert error == {
+                "code": "HOOK_FAILED",
+                "message": RUN_ERROR_DETAILS[AgentRunErrorCode.HOOK_FAILED],
+            }
             assert "secret detail" not in response.text
 
     async def test_commits_once_and_releases_the_slot_when_the_client_abandons_during_the_hook(
@@ -838,7 +839,7 @@ class TestLoaderOverHttp:
             assert len(frame.pop("interaction_id")) == _INTERACTION_ID_LENGTH
             assert frame == {
                 "code": "CONVERSATION_LOAD_FAILED",
-                "message": CONVERSATION_LOAD_FAILED_MESSAGE,
+                "message": RUN_ERROR_DETAILS[AgentRunErrorCode.CONVERSATION_LOAD_FAILED],
             }
 
     async def test_emits_a_single_error_when_the_loader_times_out_in_stream(
@@ -865,7 +866,7 @@ class TestLoaderOverHttp:
             assert len(frame.pop("interaction_id")) == _INTERACTION_ID_LENGTH
             assert frame == {
                 "code": "CONVERSATION_LOAD_TIMEOUT",
-                "message": CONVERSATION_LOAD_TIMEOUT_MESSAGE,
+                "message": RUN_ERROR_DETAILS[AgentRunErrorCode.CONVERSATION_LOAD_TIMEOUT],
             }
 
     async def test_responds_403_when_the_loaders_rules_refuse(

@@ -334,7 +334,7 @@ class TestADispatchWithNoCaller:
         await executor.execute(AcmeRun(dispatch))
         await jobs.wait_until_idle()
 
-        assert failures == ["Unauthenticated"]
+        assert failures == [exception_type(Unauthenticated)]
 
     async def test_celery_runs_the_job_with_no_caller(
         self, factory: UseCaseFactory, executor: UseCaseExecutor

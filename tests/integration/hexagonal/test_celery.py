@@ -19,6 +19,7 @@ from loom.celery.constants import TASK_JOB_PREFIX
 from loom.core.errors import DelegationExpired, Unauthenticated
 from loom.core.identity import Identity
 from loom.core.identity.wire import encode_identity
+from loom.core.logger.failure import exception_type
 from tests.helpers.celery import WorkerDouble, isolated_signals
 from tests.integration.hexagonal.conftest import (
     ANA,
@@ -65,7 +66,7 @@ class TestTrackShipmentJobOnCelery:
     ) -> None:
         result = task.apply(kwargs=_enqueued_with(None))
 
-        assert type(result.result) is Unauthenticated
+        assert result.result.exception_type == exception_type(Unauthenticated)
         assert seen.calls == []
 
     @pytest.mark.parametrize(
@@ -83,7 +84,10 @@ class TestTrackShipmentJobOnCelery:
     ) -> None:
         result = task.apply(kwargs=_enqueued_with(BAD_IDENTITIES[bad]))
 
-        assert (result.state, type(result.result)) == ("FAILURE", refusal)
+        assert (result.state, result.result.exception_type) == (
+            "FAILURE",
+            exception_type(refusal),
+        )
         assert seen.calls == []
 
 

@@ -819,6 +819,52 @@ class AgentRunErrorCode(StrEnum):
     AGENT_RUN_SHAPE_WITH_HOOK = "AGENT_RUN_SHAPE_WITH_HOOK"
 
 
+RUN_ERROR_DETAILS: Final[Mapping[AgentRunErrorCode, str]] = MappingProxyType(
+    {
+        AgentRunErrorCode.PROVIDER_UNAVAILABLE: "the model provider is unavailable",
+        AgentRunErrorCode.PROVIDER_RATE_LIMITED: "the model provider rate limited this run",
+        AgentRunErrorCode.TOOL_TIMEOUT: "a capability call exceeded its time limit",
+        AgentRunErrorCode.TOOL_UNAVAILABLE: "a capability is unavailable",
+        AgentRunErrorCode.OUTPUT_SCHEMA_VIOLATION: "the run produced an invalid output",
+        AgentRunErrorCode.MAX_ITERATIONS_EXCEEDED: "the run exceeded its step limit",
+        AgentRunErrorCode.USAGE_LIMIT_EXCEEDED: "the run exceeded a declared spend or usage limit",
+        AgentRunErrorCode.COST_NOT_MEASURABLE: (
+            "the run's cost could not be measured, so a declared spend cap could not be enforced"
+        ),
+        AgentRunErrorCode.RUN_TIMEOUT: "the run exceeded its time limit",
+        AgentRunErrorCode.TOO_MANY_RUNS: "the agent is at its concurrency limit",
+        AgentRunErrorCode.UNAUTHORIZED: "the caller is not permitted to perform this run",
+        AgentRunErrorCode.CANCELLED: "the run was cancelled",
+        AgentRunErrorCode.HOOK_FAILED: "the output hook failed",
+        AgentRunErrorCode.CONVERSATION_LOAD_FAILED: "the conversation could not be loaded",
+        AgentRunErrorCode.CONVERSATION_LOAD_TIMEOUT: (
+            "the conversation loader exceeded its time limit"
+        ),
+        AgentRunErrorCode.STATE_UNDECLARED: "the run declares no state, so it accepts none",
+        AgentRunErrorCode.STATE_REQUIRED: (
+            "the run declares a required state field with no default, and no state was given"
+        ),
+        AgentRunErrorCode.MCP_GRANT_UNKNOWN: "the requested MCP grant is unknown",
+        AgentRunErrorCode.MCP_SERVER_NOT_GRANTED: "the MCP server is not granted to any use case",
+        AgentRunErrorCode.SQL_GRANT_UNKNOWN: "the requested SQL grant is unknown",
+        AgentRunErrorCode.TOOL_UNKNOWN: "the requested tool is unknown",
+        AgentRunErrorCode.TOOL_UNTYPED: "the requested tool publishes no output schema",
+        AgentRunErrorCode.TOOL_RESULT_UNSTRUCTURED: ("the tool returned no structured content"),
+        AgentRunErrorCode.TOOL_DECODE_FAILED: "the tool result could not be decoded",
+        AgentRunErrorCode.TOOL_CALL_FAILED: "the tool call failed",
+        AgentRunErrorCode.MCP_CALL_INTERRUPTED: (
+            "a tool call was cut off mid-flight and was not repeated"
+        ),
+        AgentRunErrorCode.AGENT_CALL_CYCLE: "the agent call graph contains a cycle",
+        AgentRunErrorCode.AGENT_CALL_TOO_DEEP: "the agent call depth limit was exceeded",
+        AgentRunErrorCode.AGENT_RUN_SHAPE_WITH_HOOK: (
+            "a per-run output shape cannot be combined with an output hook"
+        ),
+    }
+)
+"""The fixed detail of each run-error code: what a caller reads in place of the message."""
+
+
 class AgentRunError(Exception):
     """A run failed with a stable, machine-readable code.
 

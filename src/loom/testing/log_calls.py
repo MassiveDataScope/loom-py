@@ -111,11 +111,21 @@ def _is_member_of(node: ast.expr | None, suffix: str) -> bool:
     )
 
 
-class _CallSiteChecker(ast.NodeVisitor):
-    def __init__(self, path: str, allowed_spreads: frozenset[str]) -> None:
+class _Checker(ast.NodeVisitor):
+    """A visitor of one file that collects the offences it finds."""
+
+    def __init__(self, path: str) -> None:
         self.path = path
-        self.allowed_spreads = allowed_spreads
         self.offences: list[LogCallOffence] = []
+
+    def _offend(self, node: ast.AST, rule: str) -> None:
+        self.offences.append(LogCallOffence(self.path, getattr(node, "lineno", 0), rule))
+
+
+class _CallSiteChecker(_Checker):
+    def __init__(self, path: str, allowed_spreads: frozenset[str]) -> None:
+        super().__init__(path)
+        self.allowed_spreads = allowed_spreads
         self._bound: list[str] = []
 
     def visit_ExceptHandler(self, node: ast.ExceptHandler) -> None:
@@ -144,9 +154,6 @@ class _CallSiteChecker(ast.NodeVisitor):
             yield self._check_log_context
         if _name_of(func) in ATTRIBUTE_CALLS:
             yield self._check_attributes
-
-    def _offend(self, node: ast.AST, rule: str) -> None:
-        self.offences.append(LogCallOffence(self.path, getattr(node, "lineno", 0), rule))
 
     def _check_message_at(self, index: int) -> _Check:
         def check(node: ast.Call) -> None:
@@ -256,10 +263,9 @@ def _is_exception_annotation(annotation: ast.expr | None) -> bool:
     )
 
 
-class _ExceptionTextChecker(ast.NodeVisitor):
+class _ExceptionTextChecker(_Checker):
     def __init__(self, path: str) -> None:
-        self.path = path
-        self.offences: list[LogCallOffence] = []
+        super().__init__(path)
         self._scopes: list[set[str]] = [set()]
 
     def _visit_function(self, node: ast.FunctionDef | ast.AsyncFunctionDef) -> None:
@@ -330,6 +336,3 @@ class _ExceptionTextChecker(ast.NodeVisitor):
         if isinstance(value, ast.Name) and any(value.id in scope for scope in self._scopes):
             return value.id
         return None
-
-    def _offend(self, node: ast.AST, rule: str) -> None:
-        self.offences.append(LogCallOffence(self.path, getattr(node, "lineno", 0), rule))

@@ -36,12 +36,12 @@ from typing import (
 
 import msgspec
 
-from loom.ai.errors import AgentRunError, AgentRunErrorCode
+from loom.ai.errors import RUN_ERROR_DETAILS, AgentRunError, AgentRunErrorCode
 from loom.ai.inference import InferenceTarget
 from loom.core.di import LoomContainer
 from loom.core.errors.model import BoundaryValidationError
 from loom.core.identity import Identity
-from loom.core.logger.failure import Handoff, public_form
+from loom.core.logger.failure import Handoff
 from loom.core.model import LoomFrozenStruct, LoomType
 
 CONVERSATION_ID_MAX_LENGTH: Final[int] = 128
@@ -713,7 +713,7 @@ class ToolResultEvent(
 class AiHandoff(Handoff):
     """Where an agent run hands its failure to the caller: an SSE event, an HTTP body, an a2a task.
 
-    Each carries the failure's code and public form, never its text. Loom is
+    Each carries the failure's code and the code's fixed detail, never its text. Loom is
     only an MCP client: an MCP tool's failure ends the run as one of these.
     """
 
@@ -752,11 +752,11 @@ class ErrorEvent(LoomFrozenStruct, frozen=True, kw_only=True, tag="error", tag_f
         interaction_id: str | None = None,
         usage: AgentUsage | None = None,
     ) -> ErrorEvent:
-        """The event that ends a run *error* failed: its code and public form, never its text.
+        """The event that ends a run *error* failed: its code and the code's fixed detail.
 
         The event reaches the caller over SSE, HTTP and a2a, so its message is
-        :func:`~loom.core.logger.failure.public_form`; the failure's details
-        are in loom's log.
+        :data:`~loom.ai.errors.RUN_ERROR_DETAILS` for its code, never the
+        error's text; the failure's details are in loom's log.
 
         Args:
             error: The failure that ended the run.
@@ -765,7 +765,7 @@ class ErrorEvent(LoomFrozenStruct, frozen=True, kw_only=True, tag="error", tag_f
         """
         return cls(
             code=error.code,
-            message=public_form(error),
+            message=RUN_ERROR_DETAILS[error.code],
             interaction_id=interaction_id or error.interaction_id,
             usage=usage or error.usage,
         )

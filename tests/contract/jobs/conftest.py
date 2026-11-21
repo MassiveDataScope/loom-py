@@ -21,6 +21,7 @@ import pytest
 from celery import Celery  # type: ignore[import-untyped]
 from celery.exceptions import Retry  # type: ignore[import-untyped]
 
+from loom.celery import runner as celery_runner
 from loom.celery.runner import _CeleryProcessBridge, _make_job_task
 from loom.celery.service import CeleryJobTransport
 from loom.connections.aws import AwsClients
@@ -42,6 +43,7 @@ from loom.core.job.outcome import (
 from loom.core.job.policy import Redelivery
 from loom.core.job.runner import JobRunner
 from loom.core.job.service import JobService
+from loom.core.logger.failure import FailureReference
 from loom.jobs.aws.queue import (
     ABANDONMENT_REASON_ATTRIBUTE,
     POSTPONEMENTS_ATTRIBUTE,
@@ -244,6 +246,7 @@ class CeleryDriver:
 
     @staticmethod
     def _run(task: Any, attempt: int, postponements: int) -> Settlement:
+        """Run *task* once; Celery stores a reference, so the original is read in process."""
         kwargs = {"postponements": postponements}
         task.push_request(
             id="task-1",
@@ -252,19 +255,29 @@ class CeleryDriver:
             is_eager=False,
             called_directly=False,
         )
+        replaced: list[BaseException] = []
+        handing_off = celery_runner.reference
+
+        def spy(failure: BaseException) -> FailureReference:
+            replaced.append(failure)
+            return handing_off(failure)
+
+        celery_runner.reference = spy
         try:
             return Settlement("succeeded", result=task.run(**kwargs))
         except Retry as retry:
             delay = int(retry.when)
-            error = retry.exc
+            error = replaced[0]
             if isinstance(error, JobPostponement):
                 return Settlement("postponed", delay, error.reason)
             return Settlement("failed", delay, type(error).__qualname__)
-        except JobAbandonment as abandonment:
-            return Settlement("abandoned", reason=abandonment.reason)
-        except Exception as error:
+        except FailureReference:
+            error = replaced[0]
+            if isinstance(error, JobAbandonment):
+                return Settlement("abandoned", reason=error.reason)
             return Settlement("abandoned", reason=type(error).__qualname__)
         finally:
+            celery_runner.reference = handing_off
             task.pop_request()
 
 

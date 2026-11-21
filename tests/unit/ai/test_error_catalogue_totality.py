@@ -12,8 +12,7 @@ reports the gap instead of production.
 
 from __future__ import annotations
 
-from loom.ai.a2a._rpc import RUN_ERROR_DETAILS
-from loom.ai.errors import _RUN_ERROR_CLASSES, AgentRunErrorCode
+from loom.ai.errors import _RUN_ERROR_CLASSES, RUN_ERROR_DETAILS, AgentRunErrorCode
 from loom.ai.fastapi.endpoints import _STATUS_BY_CODE
 
 # The remainder of ``AgentRunErrorCode`` deliberately falls back to the plain

@@ -3,10 +3,11 @@
 from __future__ import annotations
 
 from loom.core.job.callback import DispatchableCallbacks
+from loom.core.job.outcome import JobAbandonment
+from loom.core.logger.failure import exception_type
 from tests.helpers.jobs import CeleryServiceFixture
 from tests.integration.celery_jobs.conftest import JSON, Workbench
 from tests.integration.celery_jobs.doubles import (
-    ABANDONMENT,
     AbandonedJob,
     RecordingCallback,
     SucceedingJob,
@@ -53,7 +54,7 @@ class TestDispatchThroughTheService:
             {
                 "job_id": handle.job_id,
                 "hook": "on_failure",
-                "exc_type": "JobAbandonment",
-                "exc_msg": ABANDONMENT,
+                "exc_type": exception_type(JobAbandonment),
+                "exc_msg": exception_type(JobAbandonment),
             }
         ]

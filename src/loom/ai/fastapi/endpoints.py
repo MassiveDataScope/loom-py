@@ -51,7 +51,7 @@ from loom.ai.abc import (
     StateShape,
 )
 from loom.ai.config import AgentEndpointConfig, AiConfig
-from loom.ai.errors import AgentRunError, AgentRunErrorCode
+from loom.ai.errors import RUN_ERROR_DETAILS, AgentRunError, AgentRunErrorCode
 from loom.ai.execution import AgentHost
 from loom.ai.fastapi.response import AgentJSONResponse, error_response, result_payload
 from loom.ai.fastapi.streaming import encode_sse_event, stream_sse
@@ -60,7 +60,6 @@ from loom.core.config.errors import ConfigError
 from loom.core.errors import BoundaryValidationError
 from loom.core.identity import Identity, current_identity
 from loom.core.logger import LogField
-from loom.core.logger.failure import public_form
 from loom.core.model import LoomFrozenStruct
 from loom.core.observability.event import Scope
 from loom.core.observability.observability import Observability
@@ -136,7 +135,7 @@ def _run_error_response(error: AgentRunError) -> Response:
     return error_response(
         status,
         str(error.code),
-        _public_message(status, public_form(error)),
+        _public_message(status, RUN_ERROR_DETAILS[error.code]),
         interaction_id=error.interaction_id,
     )
 
