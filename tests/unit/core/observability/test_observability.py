@@ -10,9 +10,10 @@ import pytest
 from loom.core.config import ConfigError
 from loom.core.config.observability import OtelConfig
 from loom.core.environment import Environment
-from loom.core.logger import ContextFilter, LogRuntime
+from loom.core.logger import ContextFilter, LogField, LogRuntime
 from loom.core.logger.install import HANDLER_NAME
-from loom.core.model.redaction import Dsn
+from loom.core.logger.settings import UserIdentityMode
+from loom.core.model.redaction import Dsn, Secret
 from loom.core.observability.config import (
     LogObservabilityConfig,
     ObservabilityConfig,
@@ -153,6 +154,20 @@ _OTEL = OtelObservabilityConfig(
 def _loom_handler() -> logging.Handler:
     (handler,) = [h for h in logging.getLogger().handlers if h.get_name() == HANDLER_NAME]
     return handler
+
+
+class TestUserIdentity:
+    def test_a_noop_runtime_writes_no_user(self) -> None:
+        assert Observability.noop().user_identity.fields_for("u-1") == {}
+
+    def test_the_runtime_carries_the_policy_the_log_section_declares(self) -> None:
+        log = LogObservabilityConfig(
+            format="json", user_identity=UserIdentityMode.HASH, user_hash_key=Secret("k1")
+        )
+
+        runtime = Observability.from_config(ObservabilityConfig(log=log))
+
+        assert list(runtime.user_identity.fields_for("u-1")) == [LogField.USER_HASH]
 
 
 class TestFromConfig:
