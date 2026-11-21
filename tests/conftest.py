@@ -24,6 +24,7 @@ from loom.testing.jobs import JobTestData
 from tests.helpers.aws import ACCOUNT, FAKE_KEY, REGION, is_moto_answering, scrub_aws_environment
 from tests.helpers.aws_island import FakeAwsIsland
 from tests.helpers.extras import BOTO3_ISLAND, without_extra
+from tests.helpers.jobs import Trail
 
 pytest_plugins = ["tests.helpers.delegation", "tests.helpers.log_standard"]
 
@@ -41,6 +42,12 @@ _BUILTIN_RESOLVER_NAMES = tuple(resolver.name for resolver in built_in_resolvers
 def jobs() -> JobTestData:
     """Return valid job test data with copy methods for each scenario."""
     return JobTestData()
+
+
+@pytest.fixture
+def trail() -> Trail:
+    """Return the record the jobs of a test write to; register it in their kernel."""
+    return Trail()
 
 
 def _clear_builtin_resolvers() -> None:

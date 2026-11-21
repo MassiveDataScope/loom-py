@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 import asyncio
-from typing import ClassVar
+from collections.abc import Awaitable, Callable
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
@@ -11,7 +11,7 @@ import pytest
 from loom.celery.config import CeleryRuntimeConfig
 from loom.celery.runner import _CeleryProcessBridge
 from loom.core.job.job import Job
-from tests.helpers.jobs import InlineServiceFixture, JobKernel
+from tests.helpers.jobs import InlineServiceFixture, JobKernel, Trail
 
 
 class TestCeleryAsyncRuntime:
@@ -75,13 +75,14 @@ class TestCeleryAsyncRuntime:
 
 
 class ChildJob(Job[None]):
-    """Records each run in :attr:`ran`, after some I/O."""
+    """Records each run in the trail, after some I/O."""
 
-    ran: ClassVar[list[str]] = []
+    def __init__(self, trail: Trail) -> None:
+        self._trail = trail
 
     async def execute(self) -> None:
         await asyncio.sleep(0.01)
-        self.ran.append("child")
+        self._trail.record("child")
 
 
 class AcmeTaskError(Exception):
@@ -90,34 +91,42 @@ class AcmeTaskError(Exception):
 
 class TestEagerInlineChildren:
     @pytest.fixture
-    def jobs(self) -> InlineServiceFixture:
-        ChildJob.ran.clear()
+    def inline_jobs(self, trail: Trail) -> InlineServiceFixture:
         kernel = JobKernel()
-        kernel.factory.register(ChildJob)
-        return InlineServiceFixture(kernel.factory, kernel.executor)
+        kernel.container.register_instance(Trail, trail)
+        return kernel.serve_inline(ChildJob)
+
+    @pytest.fixture
+    def dispatch_then_fail(
+        self, inline_jobs: InlineServiceFixture
+    ) -> Callable[[], Awaitable[None]]:
+        async def dispatch_child_then_raise() -> None:
+            await inline_jobs.dispatch_now(ChildJob)
+            raise AcmeTaskError
+
+        return dispatch_child_then_raise
 
     def test_an_eager_task_returns_once_its_inline_child_ran(
-        self, jobs: InlineServiceFixture
+        self, inline_jobs: InlineServiceFixture, trail: Trail
     ) -> None:
-        runtime = _CeleryProcessBridge(jobs=jobs)
+        runtime = _CeleryProcessBridge(jobs=inline_jobs)
 
-        runtime.run(jobs.dispatch_now(ChildJob), eager_fallback=True)
+        runtime.run(inline_jobs.dispatch_now(ChildJob), eager_fallback=True)
 
-        assert ChildJob.ran == ["child"]
+        assert trail.entries == ["child"]
 
     def test_an_eager_task_that_raises_still_runs_its_inline_child(
-        self, jobs: InlineServiceFixture
+        self,
+        inline_jobs: InlineServiceFixture,
+        dispatch_then_fail: Callable[[], Awaitable[None]],
+        trail: Trail,
     ) -> None:
-        runtime = _CeleryProcessBridge(jobs=jobs)
-
-        async def dispatch_then_fail() -> None:
-            await jobs.dispatch_now(ChildJob)
-            raise AcmeTaskError
+        runtime = _CeleryProcessBridge(jobs=inline_jobs)
 
         with pytest.raises(AcmeTaskError):
             runtime.run(dispatch_then_fail(), eager_fallback=True)
 
-        assert ChildJob.ran == ["child"]
+        assert trail.entries == ["child"]
 
 
 class TestCeleryRuntimeConfig:

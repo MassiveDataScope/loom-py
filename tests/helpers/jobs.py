@@ -231,14 +231,57 @@ class SQSServiceFixture(JobService):
         )
 
 
-class JobKernel:
-    """A real factory and executor, serving the jobs a test delivers."""
+class Trail:
+    """Records what the jobs of a test did; inject it into a job's constructor.
+
+    Attributes:
+        entries: What was recorded, in order.
+    """
 
     def __init__(self) -> None:
-        container = LoomContainer(classify_key=classify_key, implicit=main_repository)
-        declare_kinds(container.kinds)
-        self.factory = UseCaseFactory(container)
+        self.entries: list[str] = []
+
+    def record(self, entry: str) -> None:
+        """Append *entry* to :attr:`entries`."""
+        self.entries.append(entry)
+
+
+class JobKernel:
+    """A real factory and executor, serving the jobs a test delivers.
+
+    Attributes:
+        container: Where a test registers what its jobs take in their constructors.
+    """
+
+    def __init__(self) -> None:
+        self.container = LoomContainer(classify_key=classify_key, implicit=main_repository)
+        declare_kinds(self.container.kinds)
+        self.factory = UseCaseFactory(self.container)
         self.executor = UseCaseExecutor(UseCaseCompiler())
+
+    def serve_inline(
+        self,
+        *job_types: type[Job[Any]],
+        timer: JobTimer | None = None,
+        execution_observer: ExecutionObserver | None = None,
+    ) -> InlineServiceFixture:
+        """An inline job service running *job_types*, which the jobs get as their ``JobService``.
+
+        Args:
+            *job_types: The jobs the service can run.
+            timer: The timer the jobs wait on; without it, one that refuses delays.
+            execution_observer: Told what happens to each job.
+
+        Returns:
+            The service, registered in :attr:`container`.
+        """
+        for job_type in job_types:
+            self.factory.register(job_type)
+        service = InlineServiceFixture(
+            self.factory, self.executor, timer=timer, execution_observer=execution_observer
+        )
+        self.container.register_instance(JobService, service)
+        return service
 
     def invoke_envelope(self) -> Callable[[JobDelivery], Awaitable[Any]]:
         return EnvelopeInvocation(self.factory, self.executor, Observability.noop())

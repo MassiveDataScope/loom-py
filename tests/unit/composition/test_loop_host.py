@@ -5,7 +5,6 @@ from __future__ import annotations
 import asyncio
 from collections.abc import AsyncIterator, Callable, Iterator
 from contextlib import asynccontextmanager, suppress
-from typing import ClassVar
 
 import pytest
 
@@ -13,7 +12,7 @@ from loom.composition import LoopHost
 from loom.core.job.job import Job
 from loom.core.resources import Resource, ResourceKind
 from tests.helpers.composition import application_of
-from tests.helpers.jobs import InlineServiceFixture, JobKernel
+from tests.helpers.jobs import InlineServiceFixture, JobKernel, Trail
 from tests.helpers.loops import RecordedLoops
 
 
@@ -40,13 +39,14 @@ class _Store:
 
 
 class _RecordedJob(Job[None]):
-    """Records each run in :attr:`ran`, after some I/O."""
+    """Records each run in the trail, after some I/O."""
 
-    ran: ClassVar[list[str]] = []
+    def __init__(self, trail: Trail) -> None:
+        self._trail = trail
 
     async def execute(self) -> None:
         await asyncio.sleep(0.01)
-        self.ran.append("ran")
+        self._trail.record("ran")
 
 
 class TestLoopHost:
@@ -106,18 +106,25 @@ class TestLoopHost:
         assert event_loops.made_current[-1] is event_loops.created[0]
         stray.close()
 
-    def test_run_returns_once_the_inline_jobs_the_coroutine_dispatched_have_run(self) -> None:
-        _RecordedJob.ran.clear()
+    @pytest.fixture
+    def inline_jobs(self, trail: Trail) -> InlineServiceFixture:
         kernel = JobKernel()
-        kernel.factory.register(_RecordedJob)
-        jobs = InlineServiceFixture(kernel.factory, kernel.executor)
-        host = LoopHost(application_of(jobs=jobs))
+        kernel.container.register_instance(Trail, trail)
+        return kernel.serve_inline(_RecordedJob)
+
+    @pytest.fixture
+    def started_inline_host(self, inline_jobs: InlineServiceFixture) -> Iterator[LoopHost]:
+        host = LoopHost(application_of(jobs=inline_jobs))
         host.start()
-
-        host.run(jobs.dispatch_now(_RecordedJob))
-
-        assert _RecordedJob.ran == ["ran"]
+        yield host
         host.close()
+
+    def test_run_returns_once_the_inline_jobs_the_coroutine_dispatched_have_run(
+        self, started_inline_host: LoopHost, inline_jobs: InlineServiceFixture, trail: Trail
+    ) -> None:
+        started_inline_host.run(inline_jobs.dispatch_now(_RecordedJob))
+
+        assert trail.entries == ["ran"]
 
     def test_close_closes_the_application(self, host_of: Callable[[_Store], LoopHost]) -> None:
         store = _Store()

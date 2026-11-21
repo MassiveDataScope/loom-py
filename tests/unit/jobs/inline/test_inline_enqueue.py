@@ -7,205 +7,161 @@ A job runs once the call that dispatched it has returned, never inside it, and
 from __future__ import annotations
 
 import asyncio
-from collections.abc import Iterator
-from typing import ClassVar
+from collections.abc import Awaitable, Callable
 
 import pytest
 
 from loom.core.engine.events import EventKind
-from loom.core.job.context import clear_pending_dispatches, flush_pending_dispatches
-from loom.core.job.job import Job
-from loom.core.job.policy import Countdown
+from loom.core.job.context import flush_pending_dispatches
 from loom.core.job.service import JobService
 from loom.jobs.inline import AsyncioJobTimer
 from loom.testing.jobs import ManualTimer, RecordingJobTransport
-from tests.helpers.jobs import InlineServiceFixture, JobKernel, RecordingExecutionObserver
+from tests.helpers.jobs import InlineServiceFixture, RecordingExecutionObserver, Trail
+from tests.unit.jobs.inline._jobs import AcmeError, ChainedJob, RecordedJob
+from tests.unit.jobs.inline.conftest import InlineServiceBuilder
 
 pytestmark = pytest.mark.timeout(10)
 
-
-class AcmeError(Exception):
-    pass
-
-
-class RecordedJob(Job[str]):
-    """Records each run in :attr:`trail`."""
-
-    trail: ClassVar[list[str]] = []
-
-    async def execute(self) -> str:
-        self.trail.append("ran")
-        return "done"
-
-
-class ChainedJob(Job[None]):
-    """Dispatches the next link of a chain of three, recording when each link enters and exits."""
-
-    trail: ClassVar[list[str]] = []
-    jobs: ClassVar[JobService]
-
-    async def execute(self, link: int) -> None:
-        self.trail.append(f"enter {link}")
-        if link < 2:
-            await self.jobs.dispatch_now(ChainedJob, params={"link": link + 1})
-        self.trail.append(f"exit {link}")
-
-
-@pytest.fixture(autouse=True)
-def _forget_trails() -> Iterator[None]:
-    RecordedJob.trail.clear()
-    ChainedJob.trail.clear()
-    yield
-    clear_pending_dispatches()
-
-
-def _inline_service(
-    timer: AsyncioJobTimer | ManualTimer | None = None,
-    observer: RecordingExecutionObserver | None = None,
-) -> InlineServiceFixture:
-    kernel = JobKernel()
-    for job_type in (RecordedJob, ChainedJob):
-        kernel.factory.register(job_type)
-    service = InlineServiceFixture(
-        kernel.factory,
-        kernel.executor,
-        timer=AsyncioJobTimer() if timer is None else timer,
-        execution_observer=observer,
-    )
-    ChainedJob.jobs = service
-    return service
-
-
-async def _dispatch_then_fail(service: JobService) -> None:
-    await service.dispatch_now(RecordedJob)
-    raise AcmeError("the caller failed after sending")
+CHAIN_RUN_ONE_AFTER_ANOTHER = ["enter 0", "exit 0", "enter 1", "exit 1", "enter 2", "exit 2"]
 
 
 class TestEnqueue:
-    async def test_dispatch_now_returns_before_the_job_runs(self) -> None:
-        service = _inline_service()
+    async def test_dispatch_now_returns_before_the_job_runs(
+        self, inline_service: InlineServiceFixture, trail: Trail
+    ) -> None:
+        await inline_service.dispatch_now(RecordedJob)
 
-        await service.dispatch_now(RecordedJob)
+        assert trail.entries == []
 
-        assert RecordedJob.trail == []
+    async def test_a_job_sent_now_runs_once_the_service_waits_until_idle(
+        self, inline_service: InlineServiceFixture, trail: Trail
+    ) -> None:
+        handle = await inline_service.dispatch_now(RecordedJob)
 
-    async def test_a_job_sent_now_runs_once_the_service_waits_until_idle(self) -> None:
-        service = _inline_service()
-        handle = await service.dispatch_now(RecordedJob)
+        await inline_service.wait_until_idle()
 
-        await service.wait_until_idle()
+        assert (trail.entries, handle.wait()) == (["ran"], "done")
 
-        assert (RecordedJob.trail, handle.wait()) == (["ran"], "done")
+    async def test_a_chain_of_jobs_runs_one_after_another_without_nesting(
+        self, inline_service: InlineServiceFixture, trail: Trail
+    ) -> None:
+        await inline_service.dispatch_now(ChainedJob, params={"link": 0})
 
-    async def test_a_chain_of_jobs_runs_one_after_another_without_nesting(self) -> None:
-        service = _inline_service()
-        await service.dispatch_now(ChainedJob, params={"link": 0})
+        await inline_service.wait_until_idle()
 
-        await service.wait_until_idle()
+        assert trail.entries == CHAIN_RUN_ONE_AFTER_ANOTHER
 
-        assert ChainedJob.trail == [
-            "enter 0",
-            "exit 0",
-            "enter 1",
-            "exit 1",
-            "enter 2",
-            "exit 2",
-        ]
-
-    async def test_a_caller_failing_after_sending_does_not_stop_the_job(self) -> None:
-        service = _inline_service()
+    async def test_a_caller_failing_after_sending_does_not_stop_the_job(
+        self,
+        inline_service: InlineServiceFixture,
+        caller_failing_after_sending: Callable[[], Awaitable[None]],
+        trail: Trail,
+    ) -> None:
         with pytest.raises(AcmeError):
-            await _dispatch_then_fail(service)
+            await caller_failing_after_sending()
 
-        await service.wait_until_idle()
+        await inline_service.wait_until_idle()
 
-        assert RecordedJob.trail == ["ran"]
+        assert trail.entries == ["ran"]
 
-    async def test_the_post_commit_flush_enqueues_the_job_too(self) -> None:
-        service = _inline_service()
-        service.dispatch_after_commit(RecordedJob)
+    async def test_the_post_commit_flush_enqueues_the_job_too(
+        self, inline_service: InlineServiceFixture, trail: Trail
+    ) -> None:
+        inline_service.dispatch_after_commit(RecordedJob)
 
         await flush_pending_dispatches()
 
-        assert RecordedJob.trail == []
+        assert trail.entries == []
 
     async def test_a_job_flushed_after_the_commit_runs_once_the_service_waits_until_idle(
-        self,
+        self, inline_service: InlineServiceFixture, trail: Trail
     ) -> None:
-        service = _inline_service()
-        service.dispatch_after_commit(RecordedJob)
+        inline_service.dispatch_after_commit(RecordedJob)
         await flush_pending_dispatches()
 
-        await service.wait_until_idle()
+        await inline_service.wait_until_idle()
 
-        assert RecordedJob.trail == ["ran"]
+        assert trail.entries == ["ran"]
 
-    async def test_observers_still_see_the_job_start_and_succeed(self) -> None:
+    async def test_observers_still_see_the_job_start_and_succeed(
+        self, inline_service_on: InlineServiceBuilder
+    ) -> None:
         observer = RecordingExecutionObserver()
-        service = _inline_service(observer=observer)
+        service = inline_service_on(observer=observer)
         await service.dispatch_now(RecordedJob)
 
         await service.wait_until_idle()
 
         assert observer.kinds == [EventKind.JOB_STARTED, EventKind.JOB_SUCCEEDED]
 
-    async def test_observers_still_see_a_job_lost_at_shutdown_as_abandoned(self) -> None:
+    async def test_observers_still_see_a_job_lost_at_shutdown_as_abandoned(
+        self, inline_service_on: InlineServiceBuilder, trail: Trail
+    ) -> None:
         observer = RecordingExecutionObserver()
         timer = AsyncioJobTimer(execution_observer=observer)
-        service = _inline_service(timer, observer)
+        service = inline_service_on(timer, observer)
         await service.dispatch_now(RecordedJob)
 
         await timer.close()
 
-        assert (RecordedJob.trail, observer.kinds) == ([], [EventKind.JOB_ABANDONED])
+        assert (trail.entries, observer.kinds) == ([], [EventKind.JOB_ABANDONED])
 
 
 class TestAsyncioTimerIdle:
     async def test_it_returns_at_once_when_nothing_is_pending(self) -> None:
-        await asyncio.wait_for(AsyncioJobTimer().wait_until_idle(), 1)
+        idle = await asyncio.wait_for(AsyncioJobTimer().wait_until_idle(), 1)
 
-    async def test_it_waits_for_a_step_still_waiting_for_its_countdown(self) -> None:
-        timer = AsyncioJobTimer()
-        timer.schedule(Countdown(900), _never_runs, job="AcmeJob", task_id="t")
-        waiting = asyncio.ensure_future(timer.wait_until_idle())
-        for _ in range(3):
-            await asyncio.sleep(0)
+        assert idle is None
 
-        assert not waiting.done()
-        await timer.close()
-        await asyncio.wait_for(waiting, 1)
+    async def test_it_stays_busy_while_a_step_waits_for_its_countdown(
+        self, waiting_for_idle: asyncio.Task[None]
+    ) -> None:
+        finished, _ = await asyncio.wait({waiting_for_idle}, timeout=0.05)
 
+        assert finished == set()
 
-async def _never_runs() -> None:
-    raise AssertionError("a step waiting 900 s ran")
+    async def test_closing_the_timer_releases_a_wait_for_a_step_still_counting_down(
+        self, timer_holding_a_step: AsyncioJobTimer, waiting_for_idle: asyncio.Task[None]
+    ) -> None:
+        await timer_holding_a_step.close()
+
+        finished, _ = await asyncio.wait({waiting_for_idle}, timeout=1)
+
+        assert finished == {waiting_for_idle}
 
 
 class TestManualTimerIdle:
-    async def test_it_runs_a_job_sent_with_no_countdown(self) -> None:
+    async def test_it_runs_a_job_sent_with_no_countdown(
+        self, inline_service_on: InlineServiceBuilder, trail: Trail
+    ) -> None:
         timer = ManualTimer()
-        service = _inline_service(timer)
+        service = inline_service_on(timer)
         await service.dispatch_now(RecordedJob)
 
         await service.wait_until_idle()
 
-        assert (RecordedJob.trail, timer.pending) == (["ran"], 0)
+        assert (trail.entries, timer.pending) == (["ran"], 0)
 
-    async def test_it_runs_a_chain_sent_with_no_countdown(self) -> None:
-        service = _inline_service(ManualTimer())
+    async def test_it_runs_a_chain_sent_with_no_countdown(
+        self, inline_service_on: InlineServiceBuilder, trail: Trail
+    ) -> None:
+        service = inline_service_on(ManualTimer())
         await service.dispatch_now(ChainedJob, params={"link": 0})
 
         await service.wait_until_idle()
 
-        assert ChainedJob.trail[-1] == "exit 2"
+        assert trail.entries == CHAIN_RUN_ONE_AFTER_ANOTHER
 
-    async def test_it_leaves_a_countdown_for_the_clock(self) -> None:
+    async def test_it_leaves_a_countdown_for_the_clock(
+        self, inline_service_on: InlineServiceBuilder, trail: Trail
+    ) -> None:
         timer = ManualTimer()
-        service = _inline_service(timer)
+        service = inline_service_on(timer)
         await service.dispatch_now(RecordedJob, countdown=60)
 
         await service.wait_until_idle()
 
-        assert (RecordedJob.trail, timer.pending) == ([], 1)
+        assert (trail.entries, timer.pending) == ([], 1)
 
 
 class TestBrokerIdle:
@@ -213,4 +169,6 @@ class TestBrokerIdle:
         service = JobService(RecordingJobTransport())
         await service.dispatch_now(RecordedJob)
 
-        await asyncio.wait_for(service.wait_until_idle(), 1)
+        idle = await asyncio.wait_for(service.wait_until_idle(), 1)
+
+        assert idle is None

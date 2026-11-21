@@ -11,9 +11,10 @@ import asyncio
 import logging
 import sys
 import warnings
+from collections.abc import Callable
 from dataclasses import replace
 from pathlib import Path
-from typing import Any, ClassVar
+from typing import Any
 from unittest.mock import patch
 
 import pytest
@@ -39,7 +40,7 @@ from loom.jobs.inline import InlineJobTransport
 from loom.rest.fastapi.runtime import FastAPIRuntime
 from loom.testing import ManualTimer, Override
 from tests.helpers.composition import ProjectFactory, WithOverrides
-from tests.helpers.jobs import BROKER, InlineServiceFixture, JobsAdapter, job_project
+from tests.helpers.jobs import BROKER, InlineServiceFixture, JobsAdapter, Trail, job_project
 from tests.helpers.loggers import CapturedLog
 from tests.unit.composition.doubles import AcmePingJob
 
@@ -244,13 +245,14 @@ class TestInlineTimer:
 
 
 class PostponingOnceJob(Job[str]):
-    """Asks to run again at once the first time, and records each of its runs."""
+    """Asks to run again at once the first time, and records each of its runs in the trail."""
 
-    runs: ClassVar[list[int]] = []
+    def __init__(self, trail: Trail) -> None:
+        self._trail = trail
 
     def execute(self, delivery: JobDelivery | None = Delivery()) -> str:
         assert delivery is not None
-        self.runs.append(delivery.postponements)
+        self._trail.record(f"run {delivery.postponements}")
         if delivery.postponements == 0:
             raise JobPostponement("not yet", 0)
         return "done"
@@ -262,90 +264,132 @@ class TestInlineShutdown:
     A job sent now waits on the timer, so stopping right after the dispatch finds it pending.
     """
 
-    @staticmethod
-    async def _stop_with_a_dispatched_job(tmp_path: Path, shutdown: dict[str, Any]) -> list[int]:
-        PostponingOnceJob.runs.clear()
+    @pytest.fixture
+    def compose_over(self, tmp_path: Path, trail: Trail) -> Callable[..., Application]:
+        def compose(*overrides: Override) -> Application:
+            return job_project(tmp_path, {}, "inline").compose(
+                WithOverrides(
+                    JobsAdapter(PostponingOnceJob),
+                    Override.instance(Trail, trail).install,
+                    *(override.install for override in overrides),
+                )
+            )
+
+        return compose
+
+    @pytest.mark.parametrize(
+        ("shutdown", "runs_before_stopping"),
+        [
+            pytest.param(
+                {"mode": "wait"}, ["run 0", "run 1"], id="wait-runs-the-job-and-its-postponement"
+            ),
+            pytest.param({"mode": "cancel"}, [], id="cancel-loses-the-job-not-yet-run"),
+        ],
+    )
+    async def test_the_shutdown_mode_decides_what_runs_before_the_application_stops(
+        self,
+        tmp_path: Path,
+        trail: Trail,
+        shutdown: dict[str, Any],
+        runs_before_stopping: list[str],
+    ) -> None:
         application = job_project(tmp_path, {"jobs": {"shutdown": shutdown}}, "inline").compose(
-            JobsAdapter(PostponingOnceJob)
+            WithOverrides(JobsAdapter(PostponingOnceJob), Override.instance(Trail, trail).install)
         )
+
         async with application.running():
             await application.jobs.dispatch_now(PostponingOnceJob)
-            assert PostponingOnceJob.runs == []
-        return list(PostponingOnceJob.runs)
 
-    async def test_wait_runs_the_job_and_its_postponement_before_the_application_stops(
-        self, tmp_path: Path
+        assert trail.entries == runs_before_stopping
+
+    async def test_a_job_sent_now_waits_on_the_timer_while_the_application_runs(
+        self, compose_over: Callable[..., Application], trail: Trail
     ) -> None:
-        assert await self._stop_with_a_dispatched_job(tmp_path, {"mode": "wait"}) == [0, 1]
+        timer = ManualTimer()
+        application = compose_over(Override.instance(JobTimer, timer))
+
+        async with application.running():
+            await application.jobs.dispatch_now(PostponingOnceJob)
+
+            assert (trail.entries, timer.pending) == ([], 1)
 
     async def test_a_bound_manual_timer_is_closed_on_exit_by_its_own_policy(
-        self, tmp_path: Path
+        self, compose_over: Callable[..., Application], trail: Trail
     ) -> None:
-        PostponingOnceJob.runs.clear()
         timer = ManualTimer(JobShutdown(mode=ShutdownMode.WAIT))
-        application = self._compose_with(tmp_path, timer)
+        application = compose_over(Override.instance(JobTimer, timer))
         async with application.running():
             await application.jobs.dispatch_now(PostponingOnceJob)
-            assert (PostponingOnceJob.runs, timer.pending) == ([], 1)
 
-        assert (PostponingOnceJob.runs, timer.pending, timer.lost) == ([0, 1], 0, [])
+        assert (trail.entries, timer.pending, timer.lost) == (["run 0", "run 1"], 0, [])
 
     async def test_a_bound_manual_timer_in_cancel_mode_loses_the_job_on_exit(
-        self, tmp_path: Path
+        self, compose_over: Callable[..., Application], trail: Trail
     ) -> None:
-        PostponingOnceJob.runs.clear()
         timer = ManualTimer()
-        application = self._compose_with(tmp_path, timer)
+        application = compose_over(Override.instance(JobTimer, timer))
         async with application.running():
             await application.jobs.dispatch_now(PostponingOnceJob)
 
-        assert (PostponingOnceJob.runs, len(timer.lost)) == ([], 1)
+        assert (trail.entries, len(timer.lost)) == ([], 1)
 
-    @staticmethod
-    def _compose_with(tmp_path: Path, timer: ManualTimer) -> Application:
-        return job_project(tmp_path, {}, "inline").compose(
-            WithOverrides(
-                JobsAdapter(PostponingOnceJob), Override.instance(JobTimer, timer).install
-            )
-        )
 
-    async def test_cancel_loses_the_job_not_yet_run(self, tmp_path: Path) -> None:
-        assert await self._stop_with_a_dispatched_job(tmp_path, {"mode": "cancel"}) == []
+class OpenWatch:
+    """Records whether the application it watches is open each time a job asks it to."""
+
+    def __init__(self) -> None:
+        self.application: Application | None = None
+        self.seen_open: list[bool] = []
+
+    def record(self) -> None:
+        assert self.application is not None
+        self.seen_open.append(self.application.is_open)
 
 
 class OpenProbeJob(Job[None]):
     """Records whether its application is open, and the first link sends a second."""
 
-    application: ClassVar[Application]
-    seen_open: ClassVar[list[bool]] = []
-
-    def __init__(self, jobs: JobService) -> None:
+    def __init__(self, jobs: JobService, watch: OpenWatch) -> None:
         self._jobs = jobs
+        self._watch = watch
 
     async def execute(self, link: int) -> None:
-        self.seen_open.append(self.application.is_open)
+        self._watch.record()
         if link == 0:
             await self._jobs.dispatch_now(OpenProbeJob, params={"link": 1})
 
 
 class TestWaitUntilIdle:
+    @pytest.fixture
+    def open_watch(self) -> OpenWatch:
+        return OpenWatch()
+
+    @pytest.fixture
+    def probed_application(self, tmp_path: Path, open_watch: OpenWatch) -> Application:
+        application = job_project(tmp_path, {}, "inline").compose(
+            WithOverrides(
+                JobsAdapter(OpenProbeJob), Override.instance(OpenWatch, open_watch).install
+            )
+        )
+        open_watch.application = application
+        return application
+
     async def test_inside_running_it_returns_once_a_chain_ran_with_the_application_open(
-        self, tmp_path: Path
+        self, probed_application: Application, open_watch: OpenWatch
     ) -> None:
-        OpenProbeJob.seen_open.clear()
-        application = job_project(tmp_path, {}, "inline").compose(JobsAdapter(OpenProbeJob))
-        OpenProbeJob.application = application
-        async with application.running():
-            await application.jobs.dispatch_now(OpenProbeJob, params={"link": 0})
+        async with probed_application.running():
+            await probed_application.jobs.dispatch_now(OpenProbeJob, params={"link": 0})
 
-            await application.jobs.wait_until_idle()
+            await probed_application.jobs.wait_until_idle()
 
-            assert OpenProbeJob.seen_open == [True, True]
+        assert open_watch.seen_open == [True, True]
 
     async def test_a_celery_application_returns_at_once(self, tmp_path: Path) -> None:
         application = job_project(tmp_path, _CELERY, "celery").compose(JobsAdapter(AcmePingJob))
 
-        await asyncio.wait_for(application.jobs.wait_until_idle(), 1)
+        idle = await asyncio.wait_for(application.jobs.wait_until_idle(), 1)
+
+        assert idle is None
 
 
 class AcmeEmailJob(Job[int]):
