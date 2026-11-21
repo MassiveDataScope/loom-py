@@ -2,6 +2,14 @@
 
 ## 💥 Breaking
 
+- **discovery:** an `app.entry_points` group with no installed entry point is no
+  longer a `ConfigError`: it is a valid, empty state. Start-up logs
+  `loom.discovery.entry_point_groups_empty` once, and `loom check` reports the
+  warning `loom.discovery.W001` (silence it in `checks.silenced`).
+  **Migration:** a consumer that built its own discovery to get past the error
+  declares the group in `app.entry_points` and `app.packages` instead, so
+  `loom check` finds its installers. `AppConfig.reject_misdeclared` no longer
+  reads the installed entry points.
 - **composition:** `AwsClients` is a reserved key with one owner: the recipe.
   The stores, the job transports and the container's `AwsClients` binding are
   one object, seeded before any installer runs, no longer registered after the

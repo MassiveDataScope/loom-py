@@ -218,6 +218,7 @@ none = "loom.core.stores.none:NullStorePlugin"
 stores = "loom.core.stores.audit_checks:CHECKS"
 "stores.settings.cursors" = "loom.core.stores.repository.checks:CHECKS"
 "app.rest" = "loom.rest.checks:CHECKS"
+"app.entry_points" = "loom.core.discovery.checks:CHECKS"
 
 [build-system]
 requires = [
