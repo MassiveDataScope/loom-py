@@ -8,6 +8,9 @@ scan or a secondary index, so the class declares none of ``FieldReadable``,
 ``Listable`` or ``Countable``: the auto-CRUD gate mounts no list route over it
 and the DI container binds no such capability.
 
+A ``ServerDefault.NOW`` field left empty on create and a ``ServerOnUpdate.NOW``
+field on every update receive the current UTC time, as in the Mongo repository.
+
 Model-to-table mapping is intentionally simple: every model is stored in the
 single table configured under ``stores.<name>.table``. The item primary
 key attribute is the model's ``primary_key`` field, resolved via
@@ -18,17 +21,21 @@ from __future__ import annotations
 
 from collections.abc import Callable, Sequence
 from concurrent.futures import Executor
+from datetime import UTC, datetime
 from decimal import Decimal
 from typing import Any, ClassVar, Generic, cast
 
 import msgspec
 
 from loom.core.concurrency import run_in_executor
+from loom.core.config import ConfigError
 from loom.core.connections.aws import aws_error_code
 from loom.core.errors import Conflict
 from loom.core.logger import get_logger
 from loom.core.model.convert import to_struct
 from loom.core.model.introspection import (
+    business_key_of,
+    derived_key_of,
     get_column_fields,
     get_table_name,
 )
@@ -43,7 +50,12 @@ from loom.core.stores.repository import (
     Readable,
     Updatable,
 )
-from loom.core.stores.repository.record import RecordLayout, single_id_attribute
+from loom.core.stores.repository.record import (
+    ServerStamps,
+    creation_values,
+    refuse_key_change,
+    single_id_attribute,
+)
 from loom.core.stores.uow.coordinator import Participant
 from loom.core.stores.uow.scope import InvocationScope, current_scope
 
@@ -83,7 +95,8 @@ class DynamoDBRepository(
             event loop's default executor.
 
     Raises:
-        ConfigError: If the model's primary key is composite.
+        ConfigError: If the model's primary key is composite, or it declares a
+            business key without deriving its primary key from it.
     """
 
     backend_name: ClassVar[str] = "dynamodb"
@@ -97,6 +110,7 @@ class DynamoDBRepository(
         )
         from botocore.exceptions import ClientError  # type: ignore[import-untyped]
 
+        refuse_business_key_without_hash(model)
         self._client = client
         self._executor = executor
         self._table_name = table_name
@@ -106,6 +120,7 @@ class DynamoDBRepository(
             model, why_single="the repository keys each item by one partition key"
         )
         self._column_fields = frozenset(get_column_fields(model).keys())
+        self._stamps = ServerStamps.of(model)
         self._serializer = TypeSerializer()
         self._deserializer = TypeDeserializer()
         self._client_error = ClientError
@@ -211,6 +226,8 @@ class DynamoDBRepository(
             return None
         changes = self._to_internal(data)
         changes.pop(self._id_attr, None)
+        refuse_key_change(self._model, changes)
+        changes.update(msgspec.to_builtins(_stamp(self._stamps.on_update)))
         merged = {**self._decode_item(existing), **changes}
         try:
             await self._write(
@@ -333,12 +350,12 @@ class DynamoDBRepository(
     def _creation_item(self, data: msgspec.Struct) -> dict[str, Any]:
         """Return the item to store for *data*, keyed by internal field name.
 
-        Every field that is not ``msgspec.UNSET`` is included, defaults too.
+        Every field that is not ``msgspec.UNSET`` is included, defaults too, and
+        a ``ServerDefault.NOW`` field left empty holds the current UTC time.
         """
-        return cast(
-            dict[str, Any],
-            msgspec.to_builtins(RecordLayout.from_struct(type(data)).to_values(data)),
-        )
+        values = creation_values(self._model, data)
+        values.update(_stamp(self._stamps.missing_in(values)))
+        return cast(dict[str, Any], msgspec.to_builtins(values))
 
     def _to_internal(self, data: msgspec.Struct) -> dict[str, Any]:
         """Serialize a struct to a dict keyed by internal (snake_case) field names."""
@@ -390,6 +407,29 @@ class DynamoDBRepository(
         stores it, so a key such as a ``UUID`` matches its stored form.
         """
         return {self._id_attr: self._encode_value(msgspec.to_builtins(obj_id))}
+
+
+def refuse_business_key_without_hash(model: type) -> None:
+    """Refuse a model whose business key DynamoDB could not keep unique.
+
+    Only the primary key is unique in DynamoDB, so a ``BusinessKey`` needs a
+    ``KeyHash`` on the primary key to be enforced.
+
+    Raises:
+        ConfigError: If the model declares a business key and derives no id from it.
+    """
+    if business_key_of(model) is not None and derived_key_of(model) is None:
+        raise ConfigError(
+            f"{model.__qualname__} declares a business key, but DynamoDB only enforces "
+            "its primary key; derive the key with ColumnField(primary_key=True, "
+            "derived=KeyHash...)"
+        )
+
+
+def _stamp(fields: frozenset[str]) -> dict[str, datetime]:
+    """Return *fields* mapped to one shared current UTC time."""
+    now = datetime.now(UTC)
+    return dict.fromkeys(fields, now)
 
 
 def _floats_to_decimal(value: Any) -> Any:

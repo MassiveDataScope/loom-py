@@ -10,7 +10,8 @@ import pytest
 
 import loom.stores.dynamodb.plugin as backend_module
 from loom.connections.aws import AwsClients
-from loom.core.config import ConfigContext
+from loom.core.config import ConfigContext, ConfigError
+from loom.core.model import BaseModel, BusinessKey, ColumnField
 from loom.core.stores import StoreWiring
 from loom.core.stores.profile import SERVER_PROFILE
 from loom.stores.dynamodb.plugin import DynamoDBStorePlugin
@@ -73,6 +74,24 @@ class TestDynamoDBReadiness:
 
         assert "readiness" in caplog.text
         assert "missing" in caplog.text
+
+
+class AcmeDynamoSlot(BaseModel):
+    __tablename__ = "slots"
+    __business_key__ = BusinessKey("portal")
+
+    id: str = ColumnField(primary_key=True)
+    portal: str = ColumnField()
+
+
+class TestDynamoDBModelPreparation:
+    def test_a_business_key_without_a_hash_is_refused_naming_the_model(
+        self, products_table: MotoTable
+    ) -> None:
+        wiring = _wiring("products")
+
+        with pytest.raises(ConfigError, match="AcmeDynamoSlot declares a business key"):
+            wiring.prepare_models((AcmeDynamoSlot,))
 
 
 class TestDynamoDBClientsPerStore:
