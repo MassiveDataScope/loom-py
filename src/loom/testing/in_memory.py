@@ -115,7 +115,8 @@ class InMemoryRepository(
         business_key = business_key_of(entity_type)
         self._business_key_fields = () if business_key is None else business_key.fields
         self._creator = creator
-        self._store: dict[Any, T] = {}
+        self._store: dict[tuple[Any, ...], T] = {}
+        self._key_by_business_key: dict[tuple[Any, ...], tuple[Any, ...]] = {}
         self._next_id: int = 1
         self._projection_plans: dict[str, ProjectionPlan | None] = {}
 
@@ -133,7 +134,7 @@ class InMemoryRepository(
             repo.seed(Product(id=1, name="A"), Product(id=2, name="B"))
         """
         for entity in entities:
-            self._store[self._key.values_in(entity)] = entity
+            self._put(entity)
             id_val = getattr(entity, self._id_field, None)
             if isinstance(id_val, int) and id_val >= self._next_id:
                 self._next_id = id_val + 1
@@ -173,7 +174,7 @@ class InMemoryRepository(
         """
         entity = self._build_entity(data)
         self._refuse_collisions([entity])
-        self._store[self._key.values_in(entity)] = entity
+        self._put(entity)
         return entity
 
     async def create_many(
@@ -199,7 +200,8 @@ class InMemoryRepository(
         if on_conflict is OnConflict.IGNORE:
             entities = self._without_known_targets(entities)
         self._refuse_collisions(entities)
-        self._store.update((self._key.values_in(entity), entity) for entity in entities)
+        for entity in entities:
+            self._put(entity)
         return tuple(entities)
 
     async def update(self, obj_id: Any, data: Any) -> T | None:
@@ -230,7 +232,7 @@ class InMemoryRepository(
         refuse_key_change(self._entity_type, changes)
         current.update(changes)
         updated = to_struct(self._entity_type, current)
-        self._store[store_key] = updated
+        self._put(updated)
         return updated
 
     async def delete(self, obj_id: Any) -> bool:
@@ -243,7 +245,11 @@ class InMemoryRepository(
             ``True`` if the entity existed and was removed, ``False`` if not
             found.
         """
-        return self._store.pop(self._key.values_of(obj_id), None) is not None
+        removed = self._store.pop(self._key.values_of(obj_id), None)
+        if removed is None:
+            return False
+        self._key_by_business_key.pop(self._business_key_of(removed), None)
+        return True
 
     async def list_paginated(self, *args: Any, **kwargs: Any) -> list[T]:
         """Return all stored entities.
@@ -282,22 +288,39 @@ class InMemoryRepository(
         self._next_id += 1
         return entity
 
+    def _business_key_of(self, entity: T) -> tuple[Any, ...]:
+        return tuple(getattr(entity, name) for name in self._business_key_fields)
+
     def _ignore_target_of(self, entity: T) -> tuple[Any, ...]:
         """Return what ``IGNORE`` compares: the business key, else the primary key."""
         if self._business_key_fields:
             return self._business_key_of(entity)
         return self._key.values_in(entity)
 
-    def _business_key_of(self, entity: T) -> tuple[Any, ...]:
-        return tuple(getattr(entity, name) for name in self._business_key_fields)
+    def _is_stored_target(self, target: tuple[Any, ...]) -> bool:
+        if self._business_key_fields:
+            return target in self._key_by_business_key
+        return target in self._store
+
+    def _put(self, entity: T) -> None:
+        """Store *entity* under its primary key and index its business key."""
+        key = self._key.values_in(entity)
+        if not self._business_key_fields:
+            self._store[key] = entity
+            return
+        previous = self._store.get(key)
+        if previous is not None:
+            del self._key_by_business_key[self._business_key_of(previous)]
+        self._store[key] = entity
+        self._key_by_business_key[self._business_key_of(entity)] = key
 
     def _without_known_targets(self, entities: list[T]) -> list[T]:
-        known = {self._ignore_target_of(stored) for stored in self._store.values()}
+        seen: set[tuple[Any, ...]] = set()
         fresh = []
         for entity in entities:
             target = self._ignore_target_of(entity)
-            if target not in known:
-                known.add(target)
+            if target not in seen and not self._is_stored_target(target):
+                seen.add(target)
                 fresh.append(entity)
         return fresh
 
@@ -307,11 +330,11 @@ class InMemoryRepository(
         Raises:
             Conflict: On the first collision; nothing has been stored.
         """
-        keys = set(self._store)
-        business_keys = {self._business_key_of(stored) for stored in self._store.values()}
+        keys: set[tuple[Any, ...]] = set()
+        business_keys: set[tuple[Any, ...]] = set()
         for entity in entities:
             key = self._key.values_in(entity)
-            if key in keys:
+            if key in keys or key in self._store:
                 raise Conflict(
                     f"{self._entity_type.__name__} with "
                     f"{', '.join(self._key.names)}={key!r} already exists."
@@ -320,7 +343,7 @@ class InMemoryRepository(
             if not self._business_key_fields:
                 continue
             business_key = self._business_key_of(entity)
-            if business_key in business_keys:
+            if business_key in business_keys or business_key in self._key_by_business_key:
                 raise Conflict(
                     f"{self._entity_type.__name__} with "
                     f"{', '.join(self._business_key_fields)}={business_key!r} already exists."

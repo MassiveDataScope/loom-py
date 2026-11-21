@@ -10,7 +10,14 @@ import pytest
 
 from loom.core.config import ConfigError
 from loom.core.errors import BoundaryValidationError, Conflict
-from loom.core.stores.repository import BulkCreatable, Creatable, OnConflict, Readable, Updatable
+from loom.core.stores.repository import (
+    BulkCreatable,
+    Creatable,
+    Deletable,
+    OnConflict,
+    Readable,
+    Updatable,
+)
 
 from .conftest import (
     AcmeContractListing,
@@ -320,6 +327,20 @@ class TestContractUniqueBusinessKey:
                 await slots.create(CreateSlot(id="1", portal="idealista", slot=2))
 
             assert await slots.get_by_id("1") == stored
+
+    async def test_deleting_a_row_frees_its_business_key(
+        self, case: BackendCase, open_repository: OpenRepository
+    ) -> None:
+        require(case, Creatable, Deletable, Readable)
+        _require_unique(case)
+
+        async with open_repository(AcmeContractSlot) as slots:
+            await slots.create(CreateSlot(id="1", portal="idealista", slot=1))
+            await slots.delete("1")
+
+            recreated = await slots.create(CreateSlot(id="2", portal="idealista", slot=1))
+
+            assert await slots.get_by_id("2") == recreated
 
     async def test_a_store_that_cannot_enforce_the_key_refuses_the_model(
         self, case: BackendCase, open_repository: OpenRepository
