@@ -325,9 +325,7 @@ class TestRefuseExpired:
             with pytest.raises(DelegationExpired, match="system identity"):
                 acting.refuse_expired()
 
-        assert switches.calls == [
-            ("delegation_expired", {"guidance": DelegationExpired.default_message})
-        ]
+        assert switches.calls == [("delegation_expired", {"guidance": DelegationExpired.template})]
 
 
 class TestResumed:

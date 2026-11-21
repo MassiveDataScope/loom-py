@@ -183,7 +183,11 @@ class TestHttpContract:
                     "code": "boundary_validation",
                     "message": "Object missing required field `name`",
                     "violations": [
-                        {"field": "name", "message": "Object missing required field `name`"}
+                        {
+                            "field": "name",
+                            "code": "boundary_validation",
+                            "message": "Object missing required field `name`",
+                        }
                     ],
                 }
             },
@@ -204,6 +208,7 @@ class TestHttpContract:
                     "violations": [
                         {
                             "field": "path.item_id",
+                            "code": "rule_violations",
                             "message": "Input should be a valid integer, "
                             "unable to parse string as an integer",
                         }

@@ -1,8 +1,7 @@
 """The loom boundary: what loom hands to a foreign framework raises only clean ``LoomError``s.
 
-Every callable loom passes to a foreign registration API (a Celery task or
-signal, a Prefect flow, task or hook, a Typer command, a tool, a SQLAlchemy
-listener, a Starlette exception handler, a Lambda handler) is wrapped by
+Every function, lambda, bound method or closure loom passes as an argument,
+or applies as a decorator, to a callee outside loom is wrapped by
 :func:`boundary`, and an architecture test refuses one that is not. A loom
 class whose methods a framework calls derives from :class:`BoundaryClass`;
 the process hooks go through the boundary too (:class:`ProcessHooks`). At the boundary a
@@ -12,7 +11,8 @@ already written, turned into a ``LoomError``, and cleaned of its chain and
 notes. The exception is raised *after* the ``except`` block, so it carries
 no ``__context__``.
 
-A ``BaseException`` that is not an ``Exception`` passes untouched, and so does
+A ``BaseException`` that is not an ``Exception`` passes untouched (a group
+holding both has its ``Exception`` members translated), and so does
 each host's control flow, declared by its adapter as a pass-through constant
 beside the code that registers the callable.
 """
@@ -25,12 +25,12 @@ import logging
 import sys
 import threading
 from asyncio import AbstractEventLoop
-from collections.abc import AsyncIterator, Callable, Generator, Mapping
+from collections.abc import AsyncGenerator, Awaitable, Callable, Generator, Mapping
 from contextlib import aclosing
 from types import TracebackType
 from typing import Any, ClassVar, Final, Self, TypeVar, cast
 
-from loom.core.errors.failure import Failure
+from loom.core.errors.failure import TRANSLATED, Failure
 
 F = TypeVar("F", bound=Callable[..., Any])
 
@@ -46,85 +46,118 @@ def boundary(fn: F, /, *, pass_through: PassThrough = NO_PASS_THROUGH) -> F:
     """Wrap *fn* so that what it raises leaves loom translated, with no foreign text.
 
     A decorator, as registration APIs expect a callable, so it stays a
-    function. A generator or async generator function is wrapped step by
-    step, for streaming; ``StopIteration`` and ``StopAsyncIteration`` end it
-    as usual. Wrapping twice wraps once.
+    function. What the call returns decides the rest: an awaitable is awaited
+    through the boundary, and a generator or async generator is driven through
+    it step by step, values sent and exceptions thrown in forwarded; anything
+    else is returned as it is. So a callable instance with an ``async def
+    __call__``, or a function returning a coroutine, is covered like an
+    ``async def``. A coroutine callable is wrapped in a coroutine function that
+    awaits that same call, so frameworks that dispatch on the kind still see
+    one. Wrapping twice wraps once.
 
     Args:
-        fn: What loom hands to a foreign framework.
+        fn: What loom hands to code outside loom.
         pass_through: The host's control-flow exceptions, raised as they are.
 
     Returns:
-        A callable of the same kind and signature.
+        A callable with the same signature.
     """
     if getattr(fn, _WRAPPED, False):
         return fn
-    wrapped = _wrapper_of(fn, pass_through)
-    functools.update_wrapper(wrapped, fn)
-    setattr(wrapped, _WRAPPED, True)
-    return cast("F", wrapped)
-
-
-def _wrapper_of(fn: Callable[..., Any], pass_through: PassThrough) -> Callable[..., Any]:
-    if inspect.isasyncgenfunction(fn):
-
-        async def async_steps(*args: Any, **kwargs: Any) -> AsyncIterator[Any]:
-            try:
-                async with aclosing(fn(*args, **kwargs)) as steps:
-                    async for item in steps:
-                        yield item
-                return
-            except pass_through:
-                raise
-            except Exception as exc:
-                leaving = Failure(exc).translate()
-            raise leaving
-
-        return async_steps
-    if inspect.isgeneratorfunction(fn):
-
-        def steps(*args: Any, **kwargs: Any) -> Generator[Any, Any, Any]:
-            try:
-                return (yield from fn(*args, **kwargs))
-            except pass_through:
-                raise
-            except Exception as exc:
-                leaving = Failure(exc).translate()
-            raise leaving
-
-        return steps
-    if inspect.iscoroutinefunction(fn):
-
-        async def awaited(*args: Any, **kwargs: Any) -> Any:
-            try:
-                return await fn(*args, **kwargs)
-            except pass_through:
-                raise
-            except Exception as exc:
-                leaving = Failure(exc).translate()
-            raise leaving
-
-        return awaited
+    steps = _Steps(pass_through)
 
     def called(*args: Any, **kwargs: Any) -> Any:
         try:
-            return fn(*args, **kwargs)
+            result = fn(*args, **kwargs)
         except pass_through:
             raise
-        except Exception as exc:
+        except TRANSLATED as exc:
+            leaving = Failure(exc).translate()
+        else:
+            return steps.guard(result)
+        raise leaving
+
+    wrapper: Callable[..., Any] = called
+    if inspect.iscoroutinefunction(fn) or inspect.iscoroutinefunction(type(fn).__call__):
+
+        async def awaited(*args: Any, **kwargs: Any) -> Any:
+            return await called(*args, **kwargs)
+
+        wrapper = awaited
+    functools.update_wrapper(wrapper, fn)
+    setattr(wrapper, _WRAPPED, True)
+    return cast("F", wrapper)
+
+
+class _Steps:
+    """What a wrapped call returns, driven through the boundary: an awaitable or a generator.
+
+    Args:
+        pass_through: The host's control-flow exceptions, raised as they are.
+    """
+
+    __slots__ = ("_pass_through",)
+
+    def __init__(self, pass_through: PassThrough) -> None:
+        self._pass_through = pass_through
+
+    def guard(self, result: Any) -> Any:
+        """*result* itself, or a wrapper that drives it through the boundary."""
+        if inspect.isasyncgen(result):
+            return self._async_steps(result)
+        if inspect.isgenerator(result):
+            return self._steps(result)
+        if inspect.isawaitable(result):
+            return self._awaited(result)
+        return result
+
+    async def _awaited(self, awaitable: Awaitable[Any]) -> Any:
+        try:
+            return await awaitable
+        except self._pass_through:
+            raise
+        except TRANSLATED as exc:
             leaving = Failure(exc).translate()
         raise leaving
 
-    return called
+    def _steps(self, steps: Generator[Any, Any, Any]) -> Generator[Any, Any, Any]:
+        try:
+            return (yield from steps)
+        except self._pass_through:
+            raise
+        except TRANSLATED as exc:
+            leaving = Failure(exc).translate()
+        raise leaving
+
+    async def _async_steps(self, steps: AsyncGenerator[Any, Any]) -> AsyncGenerator[Any, Any]:
+        try:
+            async with aclosing(steps):
+                item = await steps.asend(None)
+                while True:
+                    try:
+                        sent = yield item
+                    except GeneratorExit:
+                        raise
+                    except BaseException as thrown:
+                        item = await steps.athrow(thrown)
+                    else:
+                        item = await steps.asend(sent)
+        except StopAsyncIteration:
+            return
+        except self._pass_through:
+            raise
+        except TRANSLATED as exc:
+            leaving = Failure(exc).translate()
+        raise leaving
 
 
 class BoundaryClass:
     """Base of a loom class whose methods a foreign framework calls.
 
     An adapter declares, on its own base, the methods its framework calls
-    (:attr:`BOUNDARY_METHODS`) and its control flow (:attr:`PASS_THROUGH`);
-    each of those methods a subclass defines is wrapped by :func:`boundary`
-    when the class is created.
+    (:attr:`BOUNDARY_METHODS`) and its control flow (:attr:`PASS_THROUGH`).
+    When a class is created, each of those methods it resolves, its own,
+    a mixin's or a base's, is wrapped by :func:`boundary` on the class.
     """
 
     BOUNDARY_METHODS: ClassVar[frozenset[str]] = frozenset()
@@ -132,8 +165,10 @@ class BoundaryClass:
 
     def __init_subclass__(cls, **kwargs: Any) -> None:
         super().__init_subclass__(**kwargs)
-        for name in cls.BOUNDARY_METHODS & cls.__dict__.keys():
-            setattr(cls, name, boundary(cls.__dict__[name], pass_through=cls.PASS_THROUGH))
+        for name in cls.BOUNDARY_METHODS:
+            method = inspect.getattr_static(cls, name, None)
+            if inspect.isfunction(method) and not getattr(method, _WRAPPED, False):
+                setattr(cls, name, boundary(method, pass_through=cls.PASS_THROUGH))
 
 
 class ProcessHooks:
@@ -185,7 +220,7 @@ class ProcessHooks:
         default handler writes.
         """
         exc = context.get("exception")
-        if isinstance(exc, Exception):
+        if isinstance(exc, TRANSLATED):
             Failure(exc).translate()
             return
         loop.default_exception_handler(dict(context))
@@ -193,7 +228,7 @@ class ProcessHooks:
     def _excepthook(
         self, kind: type[BaseException], exc: BaseException, tb: TracebackType | None
     ) -> None:
-        if not isinstance(exc, Exception):
+        if not isinstance(exc, TRANSLATED):
             self._previous_excepthook(kind, exc, tb)
             return
         leaving = Failure(exc).translate()
@@ -201,7 +236,7 @@ class ProcessHooks:
 
     def _thread_hook(self, args: threading.ExceptHookArgs) -> None:
         exc = args.exc_value
-        if not isinstance(exc, Exception):
+        if not isinstance(exc, TRANSLATED):
             self._previous_thread_hook(args)
             return
         leaving = Failure(exc).translate()
@@ -211,7 +246,7 @@ class ProcessHooks:
 
     def _unraisable_hook(self, args: Any) -> None:
         exc = args.exc_value
-        if not isinstance(exc, Exception):
+        if not isinstance(exc, TRANSLATED):
             self._previous_unraisable(args)
             return
         leaving = Failure(exc).translate()

@@ -9,7 +9,7 @@ import pytest
 
 from loom.core.logger import LogIdentity
 from loom.core.logger.filter import LogFilter
-from loom.core.logger.install import install_record_factory
+from loom.core.logger.record import LoomRecordFactory
 from loom.core.tracing import get_trace_id
 from loom.rest.middleware import TraceIdMiddleware, _extract_header
 from tests.helpers.loggers import CapturingHandler
@@ -177,7 +177,7 @@ class TestTraceIdMiddlewareResponseHeader:
 class TestTraceIdMiddlewareLogs:
     @pytest.mark.asyncio
     async def test_a_record_emitted_during_the_request_carries_its_trace_id(self) -> None:
-        install_record_factory(LogIdentity(environment="test"))
+        LoomRecordFactory.install(LogIdentity(environment="test"))
         stamped = CapturingHandler()
         stamped.addFilter(LogFilter())
         root = logging.getLogger()

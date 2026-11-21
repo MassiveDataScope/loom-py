@@ -12,6 +12,7 @@ exception writes its type only, and the stack of a later exception stops at it.
 
 from __future__ import annotations
 
+import copy
 import logging
 import traceback
 from collections.abc import Iterator
@@ -30,6 +31,22 @@ _TRACEBACK_HEADER: Final = "Traceback (most recent call last):\n"
 _MEMBER_INDENT: Final = "  | "
 MAX_GROUP_MEMBERS: Final = 15
 """Members of an exception group whose stack is written, as Python's own traceback does."""
+
+_SERVER_ERROR: Final = 500
+_UNAVAILABLE: Final = 503
+
+INTERNAL_ERROR_MESSAGE: Final = "An unexpected error occurred"
+"""What a client reads in a ``5xx`` answer in place of any message."""
+
+UNAVAILABLE_MESSAGE: Final = "The service is temporarily unavailable"
+"""What a client reads in a ``503`` answer in place of any message."""
+
+TRANSLATED: Final = (Exception, BaseExceptionGroup)
+"""What the loom boundary translates: any ``Exception``, and a group holding one.
+
+Any other ``BaseException`` (``KeyboardInterrupt``, ``SystemExit``, a
+cancellation) crosses as it is.
+"""
 
 
 class UnexpectedError(SystemError):
@@ -79,14 +96,13 @@ class Failure:
         return getattr(self.exc, "expected", False) is True
 
     @property
-    def is_loom_own(self) -> bool:
-        """Whether loom raised it: a ``LoomError``, or a class loom declares.
+    def is_declared(self) -> bool:
+        """Whether it is a ``LoomError`` whose class declares its code, template and attributes.
 
-        Until every loom exception is a ``LoomError`` (spec 019, L2c), a class
-        declared under the ``loom`` package (``AgentRunError``, ``ConfigError``,
-        a job signal) is loom's own too, and crosses the boundary as itself.
+        Only a declared error holds no free text, so only it crosses the loom
+        boundary as itself and only its message is ever read.
         """
-        return isinstance(self.exc, LoomError) or type(self.exc).__module__.startswith("loom.")
+        return isinstance(self.exc, LoomError) and self.exc.is_declared
 
     @property
     def is_stack_written(self) -> bool:
@@ -98,27 +114,33 @@ class Failure:
         """Whether the next record about it writes its stack: unexpected and not yet written."""
         return not self.is_expected and not self.is_stack_written
 
-    @property
-    def level(self) -> int:
+    def level(self, *, reports: bool = True) -> int:
         """The level of the record that reports it ending some work.
 
         ``INFO`` for an expected failure, ``WARNING`` once its stack is written,
         ``ERROR`` for the first report of an unexpected one, which writes the stack.
+
+        Args:
+            reports: Whether this record may be its first report. A transport's
+                end record is not: whoever answers the request reports it, so
+                that record stays at ``WARNING``.
         """
         if self.is_expected:
             return logging.INFO
-        if self.is_stack_written:
+        if self.is_stack_written or not reports:
             return logging.WARNING
         return logging.ERROR
 
     @property
     def text(self) -> str:
-        """The text that may describe it anywhere: a ``LoomError``'s message, any other's type.
+        """The text that may describe it anywhere: a declared error's message, any other's type.
 
-        A ``LoomError`` holds no free text once its class declares a template;
-        any other exception's message is never read.
+        Any other exception's message, an undeclared ``LoomError``'s included,
+        is never read.
         """
-        return str(self.exc) if isinstance(self.exc, LoomError) else self.type
+        if isinstance(self.exc, LoomError) and self.is_declared:
+            return self.exc.message
+        return self.type
 
     @property
     def client_message(self) -> str | None:
@@ -129,6 +151,29 @@ class Failure:
     def client_detail(self) -> tuple[ClientViolation, ...]:
         """The violations only a client reads; never logged."""
         return self.exc.client_detail if isinstance(self.exc, LoomError) else ()
+
+    @staticmethod
+    def fixed_message(status: int) -> str | None:
+        """The fixed text a client reads in a ``5xx`` answer in place of any message.
+
+        ``None`` below ``500``, where the answer's own message stands.
+        """
+        if status < _SERVER_ERROR:
+            return None
+        if status == _UNAVAILABLE:
+            return UNAVAILABLE_MESSAGE
+        return INTERNAL_ERROR_MESSAGE
+
+    def public_message(self, status: int) -> str:
+        """What a client reads about it in an answer with *status*.
+
+        What it declares a client reads; else, below ``500``, its code, and
+        from ``500`` up the fixed text; an exception without a code is its type.
+        """
+        declared = self.client_message
+        if declared is not None:
+            return declared
+        return Failure.fixed_message(status) or self.code or self.type
 
     def fields(self, *, stacktrace: bool = False) -> dict[str, object]:
         """The fields that describe it: declared attributes, type, code, violation codes, stack.
@@ -171,17 +216,26 @@ class Failure:
         if self.should_report:
             _log.error(ErrorLogEvent.FAILURE_LEFT_LOOM, exc_info=self.exc)
 
-    def as_loom_error(self) -> Exception:
+    def as_loom_error(self) -> BaseException:
         """The exception that leaves loom in its place, cleaned of every foreign text.
 
-        Loom's own exception (:attr:`is_loom_own`) is itself; an exception
-        group of a single ``LoomError`` is that member; any other exception is
-        an :class:`UnexpectedError` naming its type, which takes its
-        stack-written mark. The chain and the notes are
-        cleared, so nothing a framework prints carries foreign text.
+        A declared ``LoomError`` (:attr:`is_declared`) is a copy of itself; an
+        exception group of a single declared ``LoomError`` is that member's
+        copy; any other ``Exception`` is an :class:`UnexpectedError` naming its
+        type, which takes its stack-written mark. A group that also holds a
+        ``BaseException`` keeps that member and has the rest translated. The
+        chain and the notes are cleared on what leaves, never on the original,
+        so nothing a framework prints carries foreign text.
         """
+        exc = self.exc
+        if not isinstance(exc, TRANSLATED):
+            return exc
+        if not isinstance(exc, Exception):
+            translated, kept = exc.split(Exception)
+            members = [] if translated is None else [Failure(translated).as_loom_error()]
+            return BaseExceptionGroup(self.type, [*members, *(kept.exceptions if kept else ())])
         leaving = self._replacement()
-        if leaving is not self.exc and self.is_stack_written:
+        if self.is_stack_written:
             Failure(leaving).mark_stack_written()
         leaving.__cause__ = None
         leaving.__context__ = None
@@ -190,7 +244,7 @@ class Failure:
             del leaving.__notes__
         return leaving
 
-    def translate(self) -> Exception:
+    def translate(self) -> BaseException:
         """What the loom boundary raises in its place.
 
         :meth:`report`, then :meth:`as_loom_error`, in that order: the stack is
@@ -203,11 +257,10 @@ class Failure:
         exc = self.exc
         if isinstance(exc, BaseExceptionGroup):
             members = exc.exceptions
-            if len(members) == 1 and isinstance(members[0], LoomError):
-                return members[0]
-            return UnexpectedError(original_type=self.type)
-        if self.is_loom_own and isinstance(exc, Exception):
-            return exc
+            if len(members) == 1:
+                return Failure(members[0])._replacement()
+        if isinstance(exc, LoomError) and self.is_declared:
+            return copy.copy(exc).with_traceback(exc.__traceback__)
         return UnexpectedError(original_type=self.type)
 
     def stacktrace(self) -> str:
@@ -229,10 +282,7 @@ class Failure:
         return "".join(parts).rstrip("\n")
 
     def _heading(self) -> str:
-        exc = self.exc
-        if isinstance(exc, LoomError) and exc.is_declared:
-            return f"{self.type}: {exc.message}"
-        return self.type
+        return f"{self.type}: {self.text}" if self.is_declared else self.type
 
     def _chain(self) -> list[tuple[Failure, str]]:
         """It and the exceptions behind it, newest first, each with what joins it to the newer.

@@ -62,9 +62,12 @@ from loom.ai.compiler import AgentPlan
 from loom.ai.config import AiConfig
 from loom.ai.execution import AgentHost
 from loom.ai.fastapi.response import error_response as flat_error_response
+from loom.core.errors.boundary import boundary
 from loom.core.identity import Identity
 from loom.core.observability.observability import Observability
 from loom.rest.auth.abc import Authenticator
+from loom.rest.fastapi._errors import STARLETTE_PASS_THROUGH
+from loom.rest.middleware import BoundaryMiddleware
 
 _logger = logging.getLogger(__name__)
 
@@ -111,7 +114,7 @@ def _make_rpc_handler(
             return flat_error_response(exc.status_code, exc.code, exc.message)
         return await dispatch(request, identity)
 
-    return serve_rpc
+    return boundary(serve_rpc, pass_through=STARLETTE_PASS_THROUGH)
 
 
 def _make_card_handler(card: bytes) -> Callable[[], Response]:
@@ -120,7 +123,7 @@ def _make_card_handler(card: bytes) -> Callable[[], Response]:
     def serve_card() -> Response:
         return Response(content=card, media_type=_MEDIA_TYPE_JSON)
 
-    return serve_card
+    return boundary(serve_card, pass_through=STARLETTE_PASS_THROUGH)
 
 
 def mount_a2a_endpoints(
@@ -201,6 +204,7 @@ def mount_a2a_endpoints(
         prefix=prefix,
         observability=observability or Observability.noop(),
     )
+    BoundaryMiddleware.mount_on(app, STARLETTE_PASS_THROUGH)
     for agent, path in zip(agents, cards, strict=True):
         app.add_api_route(path, _make_card_handler(agent.card), methods=["GET"])
         app.add_api_route(

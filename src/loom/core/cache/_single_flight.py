@@ -22,6 +22,8 @@ from dataclasses import dataclass, field
 from functools import partial
 from typing import TypeVar, cast
 
+from loom.core.errors.boundary import boundary
+
 T = TypeVar("T")
 
 AbandonedFailureReporter = Callable[[str, BaseException], None]
@@ -101,7 +103,7 @@ class SingleFlight:
         task = cast("asyncio.Task[object]", asyncio.create_task(_await_loader(loader)))
         flight = _Flight(key=key, task=task)
         self._in_flight[key] = flight
-        task.add_done_callback(partial(self._release, flight))
+        task.add_done_callback(boundary(partial(self._release, flight)))
         return flight
 
     def _release(self, flight: _Flight, task: asyncio.Task[object]) -> None:

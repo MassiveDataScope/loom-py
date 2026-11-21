@@ -16,9 +16,10 @@ import pytest
 from celery.signals import worker_init, worker_shutdown
 
 from loom.celery.constants import TASK_JOB_PREFIX
-from loom.core.errors import DelegationExpired, Unauthenticated
+from loom.core.errors import DelegationExpired, Unauthenticated, UnexpectedError
 from loom.core.identity import Identity
 from loom.core.identity.wire import encode_identity
+from tests.helpers.boundary import type_name
 from tests.helpers.celery import WorkerDouble, isolated_signals
 from tests.integration.hexagonal.conftest import (
     ANA,
@@ -50,6 +51,13 @@ def _enqueued_with(identity: object) -> dict[str, Any]:
     return {"params": PARAMS, "identity": identity}
 
 
+def _refusal(stored: BaseException) -> str | None:
+    """The type that refused the task: a declared refusal is itself, any other is named."""
+    if isinstance(stored, UnexpectedError):
+        return stored.original_type
+    return type_name(type(stored))
+
+
 class TestTrackShipmentJobOnCelery:
     @CALLERS
     def test_runs_through_adapters_acting_as_the_enqueuer(
@@ -65,7 +73,7 @@ class TestTrackShipmentJobOnCelery:
     ) -> None:
         result = task.apply(kwargs=_enqueued_with(None))
 
-        assert isinstance(result.result, Unauthenticated)
+        assert _refusal(result.result) == type_name(Unauthenticated)
         assert seen.calls == []
 
     @pytest.mark.parametrize(
@@ -83,7 +91,7 @@ class TestTrackShipmentJobOnCelery:
     ) -> None:
         result = task.apply(kwargs=_enqueued_with(BAD_IDENTITIES[bad]))
 
-        assert (result.state, type(result.result)) == ("FAILURE", refusal)
+        assert (result.state, _refusal(result.result)) == ("FAILURE", type_name(refusal))
         assert seen.calls == []
 
 

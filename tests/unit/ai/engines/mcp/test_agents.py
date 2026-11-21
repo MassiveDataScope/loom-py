@@ -321,7 +321,7 @@ class TestACallThatMayHaveRun:
     ) -> None:
         """Round 3, H1: the client's own error arrives wrapped in ``ModelRetry``.
 
-        The toolset is a loom boundary, so the failure leaves it with its chain cleaned.
+        The run error crosses the toolset boundary as itself, for the engine to read back.
         """
         async with _world(monkeypatch) as world:
             world.server.fault("echo", "cut")
@@ -329,7 +329,6 @@ class TestACallThatMayHaveRun:
             error, model = await world.failed_run()
 
         assert error.code is AgentRunErrorCode.MCP_CALL_INTERRUPTED
-        assert error.__cause__ is None
         assert (model.calls, model.seen) == (1, [])
         assert world.server.runs["echo"] == 1
         assert len(world.built) == 1

@@ -12,6 +12,7 @@ class AiLogField(LogKey):
     CAPABILITY = "loom.ai.capability"
     MCP_SERVER = "loom.ai.mcp_server"
     INTERACTION_ID = "loom.ai.interaction_id"
+    OUTPUT_CORRECTION = "loom.ai.output_correction"
     USAGE_INPUT_TOKENS = "gen_ai.usage.input_tokens"
     USAGE_OUTPUT_TOKENS = "gen_ai.usage.output_tokens"
     USAGE_CACHE_READ_INPUT_TOKENS = "gen_ai.usage.cache_read.input_tokens"

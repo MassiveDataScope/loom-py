@@ -23,10 +23,12 @@ EXPECTED_CODES: Final = frozenset(
         ErrorCode.FORBIDDEN,
         ErrorCode.BOUNDARY_VALIDATION,
         ErrorCode.QUERY_VALIDATION,
+        ErrorCode.JOB_POSTPONED,
+        ErrorCode.JOB_ABANDONED,
     }
 )
 """The codes of an outcome the caller caused: a not-found, a rule violation, a denial, a
-validation error. Its scope ends at INFO, with no stack."""
+validation error, or a job steering its own delivery. Its scope ends at INFO, with no stack."""
 
 CLIENT_CODES: Final = frozenset(
     {

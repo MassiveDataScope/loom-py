@@ -266,7 +266,7 @@ def _tool_predicate(
         del run
         return admits(definition.name, include=include, exclude=exclude)
 
-    return allowed
+    return boundary(allowed, pass_through=PYDANTIC_AI_PASS_THROUGH)
 
 
 @dataclass(frozen=True, slots=True)

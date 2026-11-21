@@ -18,7 +18,7 @@ from datetime import UTC, datetime
 from typing import Final
 
 from loom.core.errors.log_events import ErrorLogField
-from loom.core.logger.filter import STANDARD_ATTRIBUTES
+from loom.core.logger.filter import STANDARD_ATTRIBUTES, LogFilter
 from loom.core.logger.settings import LogSettings
 from loom.core.vocabulary import render_value
 
@@ -40,10 +40,6 @@ def record_fields(record: logging.LogRecord) -> dict[str, object]:
     }
 
 
-def _type_name(value: object) -> str:
-    return type(value).__name__
-
-
 class JsonFormatter(logging.Formatter):
     """One JSON object per record: its fields first, then the four keys of Lambda's JSON format.
 
@@ -51,6 +47,10 @@ class JsonFormatter(logging.Formatter):
     no field can overwrite them. A value JSON cannot hold is written as its
     type name.
     """
+
+    @staticmethod
+    def _type_name(value: object) -> str:
+        return type(value).__name__
 
     def format(self, record: logging.LogRecord) -> str:
         """Render *record* as a JSON object on one line."""
@@ -62,7 +62,7 @@ class JsonFormatter(logging.Formatter):
         record.message = record.getMessage()
         entry["message"] = render_value(record.message)
         entry["logger"] = record.name
-        return json.dumps(entry, default=_type_name)
+        return json.dumps(entry, default=self._type_name)
 
 
 def _one_line(text: object) -> str:
@@ -125,14 +125,42 @@ def lambda_format(settings: LogSettings) -> None:
     del settings
     if os.environ.get("AWS_LAMBDA_LOG_FORMAT", "").upper() == "JSON":
         return
-    for handler in lambda_runtime_handlers():
+    for handler in ProcessHandlers().lambda_runtime():
         handler.setFormatter(JsonFormatter())
 
 
-def lambda_runtime_handlers() -> tuple[logging.Handler, ...]:
-    """The Lambda runtime's handlers on the root logger; none outside Lambda."""
-    return tuple(
-        handler
-        for handler in logging.getLogger().handlers
-        if type(handler).__name__ in LAMBDA_RUNTIME_HANDLERS
-    )
+class ProcessHandlers:
+    """The logging handlers of this process, looked up where they are installed.
+
+    Args:
+        root: The root logger whose tree is searched; the process's own by default.
+    """
+
+    __slots__ = ("_root",)
+
+    def __init__(self, root: logging.Logger | None = None) -> None:
+        self._root = root if root is not None else logging.getLogger()
+
+    def lambda_runtime(self) -> tuple[logging.Handler, ...]:
+        """The Lambda runtime's handlers on the root logger; none outside Lambda."""
+        return tuple(
+            handler
+            for handler in self._root.handlers
+            if type(handler).__name__ in LAMBDA_RUNTIME_HANDLERS
+        )
+
+    def unfiltered(self) -> tuple[logging.Handler, ...]:
+        """The handlers, on the root logger or any other, that do not render values."""
+        return tuple(
+            handler
+            for handler in self._every()
+            if not any(isinstance(f, LogFilter) for f in handler.filters)
+        )
+
+    def _every(self) -> list[logging.Handler]:
+        loggers = [self._root] + [
+            logger
+            for logger in self._root.manager.loggerDict.values()
+            if isinstance(logger, logging.Logger)
+        ]
+        return [handler for logger in loggers for handler in logger.handlers]

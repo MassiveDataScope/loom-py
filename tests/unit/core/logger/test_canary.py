@@ -36,9 +36,8 @@ from loom.core.logger.install import configure_logging
 from loom.core.logger.settings import LogSettings
 from loom.core.observability.event import Scope
 from loom.core.observability.observability import Observability
-from loom.core.observability.observer import otel as otel_module
 from loom.core.observability.observer.log import LogLifecycleObserver
-from loom.core.observability.observer.otel import install_otel_log_export
+from loom.core.observability.observer.otel import OtelLogExport, install_otel_log_export
 from loom.core.vocabulary import MAX_VALUE_LENGTH, Secret
 from tests.helpers.canary import CANARY, Leaky, canary_failure
 
@@ -87,7 +86,7 @@ class _Outputs:
 @pytest.fixture
 def outputs(monkeypatch: pytest.MonkeyPatch) -> Iterator[tuple[_Outputs, Any]]:
     """Loom's logging configured beside every kind of handler a process can have."""
-    monkeypatch.setattr(otel_module, "_LOG_EXPORT_STATE", None)
+    OtelLogExport.forget()
     monkeypatch.setenv("AWS_LAMBDA_LOG_FORMAT", "JSON")
     root = logging.getLogger()
     found = _Outputs()
@@ -124,12 +123,13 @@ def outputs(monkeypatch: pytest.MonkeyPatch) -> Iterator[tuple[_Outputs, Any]]:
     listener.stop()
     framework.handlers.clear()
     root.removeHandler(otel_logs)
+    OtelLogExport.forget()
 
 
 def _otel_text(exporter: InMemoryLogRecordExporter) -> str:
-    state = otel_module._LOG_EXPORT_STATE  # pyright: ignore[reportPrivateUsage]
-    assert state is not None
-    state[0].force_flush()
+    export = OtelLogExport.installed()
+    assert export is not None
+    export.flush()
     return repr(
         [
             (finished.log_record.body, dict(finished.log_record.attributes or {}))

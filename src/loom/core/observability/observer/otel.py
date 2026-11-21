@@ -14,7 +14,7 @@ from __future__ import annotations
 import atexit
 import logging
 import os
-from typing import TYPE_CHECKING, Any, cast
+from typing import TYPE_CHECKING, Any, ClassVar, cast
 
 from opentelemetry import _logs as otel_logs
 from opentelemetry import trace
@@ -208,7 +208,39 @@ def otel_trace_ids() -> tuple[str | None, str | None]:
     return format(ctx.trace_id, "032x"), format(ctx.span_id, "016x")
 
 
-_LOG_EXPORT_STATE: tuple[Any, LoggingHandler] | None = None
+class OtelLogExport:
+    """The process's one OTEL log export: its provider and the handler that feeds it.
+
+    :func:`install_otel_log_export` builds it once per process; :meth:`installed`
+    returns it, and :meth:`forget` drops it so the next install builds another,
+    which a test does to start from a fresh export.
+
+    Args:
+        provider: The OTEL ``LoggerProvider`` that exports the records.
+        handler: The stdlib handler writing into *provider*.
+    """
+
+    _installed: ClassVar[OtelLogExport | None] = None
+
+    __slots__ = ("handler", "_provider")
+
+    def __init__(self, provider: Any, handler: LoggingHandler) -> None:
+        self._provider = provider
+        self.handler = handler
+
+    def flush(self) -> None:
+        """Export every record the handler has buffered."""
+        self._provider.force_flush()
+
+    @classmethod
+    def installed(cls) -> OtelLogExport | None:
+        """The export installed in this process, or ``None``."""
+        return cls._installed
+
+    @classmethod
+    def forget(cls) -> None:
+        """Drop the installed export: the next install builds a new one."""
+        cls._installed = None
 
 
 def install_otel_log_export(
@@ -235,10 +267,10 @@ def install_otel_log_export(
         ImportError: If ``opentelemetry-sdk`` is not installed.
         ValueError: If the configured protocol has no installed OTLP exporter.
     """
-    global _LOG_EXPORT_STATE
     config.validate()
-    if _LOG_EXPORT_STATE is not None:
-        return _LOG_EXPORT_STATE[1]
+    installed = OtelLogExport.installed()
+    if installed is not None:
+        return installed.handler
 
     try:
         from opentelemetry.sdk._logs import LoggerProvider, LoggingHandler
@@ -261,7 +293,7 @@ def install_otel_log_export(
 
     handler = LoggingHandler(level=logging.NOTSET, logger_provider=provider)
     atexit.register(provider.shutdown)
-    _LOG_EXPORT_STATE = (provider, handler)
+    OtelLogExport._installed = OtelLogExport(provider, handler)
     return handler
 
 

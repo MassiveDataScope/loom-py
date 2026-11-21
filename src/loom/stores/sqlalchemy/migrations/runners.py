@@ -393,7 +393,7 @@ def _close_revision(
             _reconcile_present(connection, schema, guard, audited)
         assert_revision(connection, guard)
 
-    return on_version_apply
+    return boundary(on_version_apply)
 
 
 def include_object_for(names: SchemaNames) -> IncludeObject:
@@ -415,4 +415,4 @@ def include_object_for(names: SchemaNames) -> IncludeObject:
             return False
         return not (reflected and compare_to is None)
 
-    return include_object
+    return boundary(include_object)

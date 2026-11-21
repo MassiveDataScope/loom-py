@@ -9,6 +9,7 @@ from typing import Literal
 from confluent_kafka import Message as _RawMessage
 from confluent_kafka import Producer as _Producer
 
+from loom.core.errors.boundary import boundary
 from loom.core.logger import LogField
 from loom.core.observability.event import LifecycleEvent, Scope
 from loom.core.observability.observability import Observability
@@ -166,7 +167,7 @@ class KafkaProducerClient:
                     )
             _notify_delivery(self._delivery_callback, record, delivery_error)
 
-        return _callback
+        return boundary(_callback)
 
     def _raise_pending_delivery_error(self) -> None:
         with self._delivery_error_lock:

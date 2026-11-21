@@ -252,4 +252,4 @@ def _postgres_only(call: GuardCall, parameters: Parameters) -> Callable[..., Non
         call(connection, parameters)
         connection.execute(_APP_FIRST, path)
 
-    return listener
+    return boundary(listener)

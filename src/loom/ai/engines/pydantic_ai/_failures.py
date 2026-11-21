@@ -28,8 +28,15 @@ PYDANTIC_AI_PASS_THROUGH: Final[PassThrough] = (
     ToolFailed,
     CallDeferred,
     ApprovalRequired,
+    AgentRunError,
 )
-"""Engine control-flow signals a tool may raise; they leave the guard and the boundary untouched."""
+"""What a tool may raise that leaves the guard and the boundary untouched.
+
+The engine's control-flow signals, and :class:`~loom.ai.errors.AgentRunError`,
+which the engine reads back on the far side of pydantic-ai to end the run with
+its code. Its message is the fixed detail of that code; it crosses as itself
+until spec 019 L2c declares it a ``LoomError``.
+"""
 
 
 class ToolsetBoundary(BoundaryClass):

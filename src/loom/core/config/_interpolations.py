@@ -15,6 +15,7 @@ from typing import Any
 
 from loom.core.config.errors import ConfigError
 from loom.core.config.keys import INTERPOLATION
+from loom.core.errors.boundary import boundary
 
 
 def referenced(text: str, names: Collection[str]) -> dict[str, list[str]]:
@@ -38,7 +39,9 @@ def referenced(text: str, names: Collection[str]) -> dict[str, list[str]]:
     from omegaconf.grammar_parser import parse
     from omegaconf.grammar_visitor import GrammarVisitor
 
-    literal = GrammarVisitor(lambda _key, _memo: None, lambda **_kwargs: None, None)
+    literal = GrammarVisitor(
+        boundary(lambda _key, _memo: None), boundary(lambda **_kwargs: None), None
+    )
     found: dict[str, list[str]] = {}
     for node in _parse_nodes(parse(text, parser_rule="configValue")):
         if not isinstance(node, Grammar.InterpolationResolverContext):

@@ -356,11 +356,10 @@ class TestSchemaPaths:
         ]
         reader, _ = _reader(items)
         frame = reader.read(_spec(schema=_ORDER_SCHEMA, extra_fields_mode="error"), None)
-        with pytest.raises(
-            (ValueError, pl.exceptions.ComputeError),
-            match=r"DynamoDBSourceReader.*extra_col",
-        ):
+        with pytest.raises(pl.exceptions.ComputeError, match="unexpected ValueError") as raised:
             frame.collect()
+
+        assert "surprise" not in str(raised.value)
 
     def test_ignore_mode_drops_extra_field(self) -> None:
         items = [
@@ -427,7 +426,7 @@ class TestParallelScanFailures:
         client = _FailingSegmentClient(pages_per_segment=3)
         reader = DynamoDBSourceReader(client)
         lf = reader.read(_spec(total_segments=2, schema=_page_schema()), None)
-        with pytest.raises((RuntimeError, pl.exceptions.ComputeError), match="throttled"):
+        with pytest.raises(pl.exceptions.ComputeError, match="unexpected RuntimeError"):
             lf.collect()
 
     def test_close_without_iteration_logs_segment_error_and_does_not_hang(

@@ -19,7 +19,7 @@ from __future__ import annotations
 
 import logging
 from http import HTTPStatus
-from typing import Any, cast
+from typing import Any, Final, cast
 
 from fastapi import HTTPException
 from fastapi.exception_handlers import http_exception_handler
@@ -30,12 +30,13 @@ from starlette.requests import Request
 from starlette.responses import Response
 from starlette.types import ExceptionHandler
 
-from loom.core.errors import BODY_FIELD
-from loom.core.errors.boundary import boundary
+from loom.core.errors import BODY_FIELD, BoundaryValidationError
+from loom.core.errors.boundary import PassThrough, boundary
 from loom.core.errors.codes import ErrorCode
+from loom.core.errors.failure import INTERNAL_ERROR_MESSAGE, Failure
 from loom.core.tracing import get_trace_id
 from loom.rest._body import malformed_body_detail
-from loom.rest.errors import _INTERNAL_ERROR_MESSAGE, ErrorField, _public_message
+from loom.rest.errors import ErrorField, HttpErrorMapper
 from loom.rest.fastapi.response import MsgspecJSONResponse
 
 _VALIDATION_MESSAGE = "Request validation failed"
@@ -44,6 +45,10 @@ _FALLBACK_CODE = "http_error"
 _BODY_LOCATION = "body"
 
 _logger = logging.getLogger(__name__)
+_error_mapper = HttpErrorMapper()
+
+STARLETTE_PASS_THROUGH: Final[PassThrough] = (StarletteHTTPException,)
+"""Starlette's control flow, an ``HTTPException``: it crosses the ASGI boundary as it is."""
 
 
 def internal_error_response() -> MsgspecJSONResponse:
@@ -55,7 +60,7 @@ def internal_error_response() -> MsgspecJSONResponse:
         status_code=HTTPStatus.INTERNAL_SERVER_ERROR,
         content={
             ErrorField.CODE: _INTERNAL_ERROR_CODE,
-            ErrorField.MESSAGE: _INTERNAL_ERROR_MESSAGE,
+            ErrorField.MESSAGE: INTERNAL_ERROR_MESSAGE,
             ErrorField.TRACE_ID: get_trace_id() or "",
         },
     )
@@ -84,20 +89,10 @@ def register_error_handlers(app: Starlette) -> None:
 
 
 async def _handle_validation_error(request: Request, exc: Exception) -> Response:
-    """Answer a request-validation failure with the framework error body."""
-    del request
+    """Answer a request-validation failure with the body the error mapper writes."""
     violations = _violations(exc) if isinstance(exc, RequestValidationError) else ()
-    return MsgspecJSONResponse(
-        status_code=HTTPStatus.UNPROCESSABLE_ENTITY,
-        content={
-            "detail": {
-                ErrorField.CODE: ErrorCode.RULE_VIOLATIONS.value,
-                ErrorField.MESSAGE: _VALIDATION_MESSAGE,
-                ErrorField.TRACE_ID: get_trace_id(),
-                ErrorField.VIOLATIONS: list(violations),
-            }
-        },
-    )
+    error = BoundaryValidationError(_VALIDATION_MESSAGE, violations, code=ErrorCode.RULE_VIOLATIONS)
+    return await _handle_http_exception(request, _error_mapper.to_http(error))
 
 
 async def _handle_http_exception(request: Request, exc: Exception) -> Response:
@@ -122,7 +117,7 @@ def _detail(exc: HTTPException) -> dict[str, Any]:
         _logger.error("HTTP %d (trace_id=%s): %s", exc.status_code, get_trace_id(), message)
     return {
         ErrorField.CODE: _code_for(exc.status_code),
-        ErrorField.MESSAGE: _public_message(exc.status_code, message),
+        ErrorField.MESSAGE: Failure.fixed_message(exc.status_code) or message,
         ErrorField.TRACE_ID: get_trace_id(),
     }
 
@@ -135,19 +130,15 @@ def _code_for(status: int) -> str:
         return _FALLBACK_CODE
 
 
-def _violations(exc: RequestValidationError) -> tuple[dict[str, str], ...]:
-    """Project Pydantic errors onto the framework's ``field``/``message`` pairs.
+def _violations(exc: RequestValidationError) -> tuple[tuple[str, str], ...]:
+    """Project Pydantic errors onto ``(field, message)`` pairs.
 
     The offending value and the documentation URL are deliberately dropped:
     echoing input back is a reflection primitive, and the URL advertises which
     validation stack is running.
     """
     return tuple(
-        {
-            ErrorField.FIELD.value: _field_of(error.get("loc", ())),
-            ErrorField.MESSAGE.value: str(error.get("msg", "")),
-        }
-        for error in exc.errors()
+        (_field_of(error.get("loc", ())), str(error.get("msg", ""))) for error in exc.errors()
     )
 
 

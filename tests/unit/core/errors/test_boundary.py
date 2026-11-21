@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import asyncio
+import inspect
 import logging
 import sys
 import threading
@@ -13,8 +14,9 @@ from typing import Any
 import pytest
 
 from loom.core.errors import NotFound, UnexpectedError
-from loom.core.errors.boundary import ProcessHooks, boundary
+from loom.core.errors.boundary import BoundaryClass, ProcessHooks, boundary
 from loom.core.errors.log_events import ErrorLogEvent, ErrorLogField
+from tests.helpers.boundary import Refused
 
 _SECRET = "card 4111-1111-1111-1111"
 
@@ -89,19 +91,26 @@ class TestBoundary:
         with pytest.raises(UnexpectedError):
             next(steps)
 
-    def test_a_loom_error_leaves_as_itself_unlogged_when_expected(
+    def test_a_declared_loom_error_leaves_as_itself_unlogged_when_expected(
         self, reports: Callable[[], list[logging.LogRecord]]
     ) -> None:
-        error = NotFound("Invoice", id=1)
-
         def find() -> None:
-            raise error
+            raise Refused(count=1)
 
-        with pytest.raises(NotFound) as raised:
+        with pytest.raises(Refused, match="1 invoices refused"):
             boundary(find)()
 
-        assert raised.value is error
         assert reports() == []
+
+    def test_an_undeclared_loom_error_leaves_as_unexpected(self) -> None:
+        def find() -> None:
+            raise NotFound("Invoice", id=_SECRET)
+
+        with pytest.raises(UnexpectedError) as raised:
+            boundary(find)()
+
+        assert raised.value.original_type == "loom.core.errors.domain.NotFound"
+        assert _SECRET not in str(raised.value)
 
     @pytest.mark.parametrize(
         "signal", [_HostSignal(_SECRET), KeyboardInterrupt()], ids=["pass-through", "base"]
@@ -127,6 +136,84 @@ class TestBoundary:
 
         assert boundary(once) is once
         assert (once.__name__, once.__doc__, once({}, None)) == ("handle", "Handle one event.", 1)
+
+    def test_a_group_holding_a_base_exception_has_its_foreign_members_translated(self) -> None:
+        def fail() -> None:
+            raise BaseExceptionGroup("batch", [KeyboardInterrupt(), ValueError(_SECRET)])
+
+        with pytest.raises(BaseExceptionGroup) as raised:
+            boundary(fail)()
+
+        assert {type(m) for m in raised.value.exceptions} == {KeyboardInterrupt, UnexpectedError}
+
+
+class _AsyncCallable:
+    """A callable instance whose ``__call__`` is a coroutine function."""
+
+    async def __call__(self) -> None:
+        raise ValueError(_SECRET)
+
+
+def _returns_a_coroutine() -> Any:
+    return _async_failing()
+
+
+class _Echo:
+    """An async generator that echoes what it is sent and keeps what is thrown in."""
+
+    def __init__(self) -> None:
+        self.thrown: list[BaseException] = []
+
+    async def steps(self) -> AsyncIterator[str]:
+        sent = yield "ready"
+        while True:
+            try:
+                sent = yield f"got {sent}"
+            except LookupError as thrown:
+                self.thrown.append(thrown)
+                sent = yield "recovered"
+
+
+class TestWhatTheCallReturns:
+    @pytest.mark.parametrize(
+        "fn", [_AsyncCallable(), _returns_a_coroutine], ids=["async-call", "returns-coroutine"]
+    )
+    async def test_an_awaitable_result_is_awaited_through_the_boundary(
+        self, fn: Callable[..., Any]
+    ) -> None:
+        with pytest.raises(UnexpectedError) as raised:
+            await boundary(fn)()
+
+        assert raised.value.original_type == "ValueError"
+
+    def test_a_coroutine_callable_stays_one_to_introspection(self) -> None:
+        assert inspect.iscoroutinefunction(boundary(_AsyncCallable()))
+        assert inspect.iscoroutinefunction(boundary(_async_failing))
+        assert not inspect.iscoroutinefunction(boundary(_returns_a_coroutine))
+
+    async def test_an_async_generator_has_sent_values_and_thrown_exceptions_forwarded(
+        self,
+    ) -> None:
+        echo = _Echo()
+        steps = boundary(echo.steps)()
+
+        assert await steps.asend(None) == "ready"
+        assert await steps.asend("a") == "got a"
+        assert await steps.athrow(LookupError("x")) == "recovered"
+        await steps.aclose()
+
+        assert [type(t) for t in echo.thrown] == [LookupError]
+
+    def test_a_generator_has_sent_values_forwarded(self) -> None:
+        def echo() -> Iterator[str]:
+            sent = yield "ready"
+            while True:
+                sent = yield f"got {sent}"
+
+        steps = boundary(echo)()
+
+        assert next(steps) == "ready"
+        assert steps.send("b") == "got b"
 
 
 class _Recorded:
@@ -211,3 +298,33 @@ class TestProcessHooks:
 
         [record] = reports()
         assert _SECRET not in str(record.__dict__)
+
+
+class _Reading:
+    """A mixin defining a method a framework calls."""
+
+    def next_batch(self) -> list[int]:
+        raise ValueError(_SECRET)
+
+
+class _Partition(BoundaryClass):
+    BOUNDARY_METHODS = frozenset({"next_batch", "close"})
+
+
+class _LoomPartition(_Reading, _Partition):
+    def close(self) -> None:
+        raise ValueError(_SECRET)
+
+
+class TestBoundaryClass:
+    @pytest.mark.parametrize("name", ["next_batch", "close"], ids=["inherited", "own"])
+    def test_every_resolved_framework_method_goes_through_the_boundary(self, name: str) -> None:
+        method = getattr(_LoomPartition(), name)
+
+        with pytest.raises(UnexpectedError):
+            method()
+        assert getattr(method, "__loom_boundary__", False)
+
+    def test_the_mixin_itself_is_left_unwrapped(self) -> None:
+        with pytest.raises(ValueError, match="card"):
+            _Reading().next_batch()

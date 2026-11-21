@@ -238,6 +238,36 @@ class TestFreeText:
     def test_fields_or_a_fixed_literal_pass(self, tmp_path: Path, body: str) -> None:
         assert _free_text_rules(tmp_path, body) == []
 
+    @pytest.mark.parametrize(
+        "body",
+        [
+            "from pydantic_ai import ModelRetry\nraise ModelRetry(rejection)\n",
+            "raise ValueError(message)\n",
+            "import celery.exceptions\nraise celery.exceptions.Reject(reason, requeue=False)\n",
+        ],
+        ids=["library-class", "builtin", "module-attribute"],
+    )
+    def test_a_value_carried_out_by_a_foreign_exception_is_refused(
+        self, tmp_path: Path, body: str
+    ) -> None:
+        [rule] = _free_text_rules(tmp_path, body)
+
+        assert rule.startswith("a value passed to the foreign ")
+
+    @pytest.mark.parametrize(
+        "body",
+        [
+            "from pydantic_ai import ModelRetry\nraise ModelRetry(Failure(error).text)\n",
+            "raise ValueError('must not be empty')\n",
+            "class Refused(ValueError): ...\nraise Refused(reason)\n",
+        ],
+        ids=["failure-text", "literal", "own-class"],
+    )
+    def test_a_foreign_exception_carrying_a_literal_or_failure_text_passes(
+        self, tmp_path: Path, body: str
+    ) -> None:
+        assert _free_text_rules(tmp_path, body) == []
+
 
 class TestLoomConstructions:
     def test_code_outside_the_allow_list_builds_errors_from_fields(self) -> None:

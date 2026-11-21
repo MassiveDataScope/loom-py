@@ -288,7 +288,11 @@ class TestHttpErrorMapper:
         detail = _detail(self._mapper().to_http(violations))
         assert "violations" in detail
         assert len(detail["violations"]) == 2
-        assert detail["violations"][0] == {"field": "email", "message": "invalid"}
+        assert detail["violations"][0] == {
+            "field": "email",
+            "code": "rule_violation",
+            "message": "invalid",
+        }
 
     def test_rule_violation_body_carries_its_field(self) -> None:
         """Two 422s from different fields are told apart by key, not by message text."""
@@ -328,7 +332,11 @@ class TestHttpErrorMapper:
         assert exc.status_code == 422
         assert detail["code"] == ErrorCode.BOUNDARY_VALIDATION
         assert detail["violations"] == [
-            {"field": "fullName", "message": "Expected `str`, got `int`"}
+            {
+                "field": "fullName",
+                "code": "boundary_validation",
+                "message": "Expected `str`, got `int`",
+            }
         ]
 
     def test_rate_limited_maps_to_429_with_retry_after(self) -> None:
@@ -355,7 +363,7 @@ class TestHttpErrorMapper:
         assert (exc.status_code, _detail(exc)["code"], _detail(exc)["violations"]) == (
             400,
             "query_validation",
-            [{"field": "limit", "message": "Expected `int` <= 200"}],
+            [{"field": "limit", "code": "query_validation", "message": "Expected `int` <= 200"}],
         )
 
     @pytest.mark.parametrize("code", [*_SERVER_CODES, "unknown_custom"])

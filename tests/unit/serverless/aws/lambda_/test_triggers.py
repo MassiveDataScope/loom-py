@@ -17,8 +17,8 @@ from loom.core.engine.events import ExecutionEvent
 from loom.core.errors import BoundaryValidationError, LoomError, MalformedJobMessage
 from loom.core.errors.log_events import ErrorLogField
 from loom.core.identity import Identity, current_identity
+from loom.core.job.errors import JobPostponement
 from loom.core.job.job import Job
-from loom.core.job.outcome import JobPostponement
 from loom.core.observability.event import EventKind, LifecycleEvent, Scope
 from loom.core.observability.observability import Observability
 from loom.core.use_case import Input
@@ -61,7 +61,7 @@ class ImportInvoice(Job[None]):
         if invoice.number == "fail":
             raise ValueError("job failed")
         if invoice.number == "wait":
-            raise JobPostponement("tenant warming up", 30)
+            raise JobPostponement(reason="tenant warming up", delay_s=30)
         if invoice.number == "final":
             raise _Final("job failed finally", code="final")
 

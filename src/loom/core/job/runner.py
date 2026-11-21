@@ -14,16 +14,9 @@ from loom.core.engine.events import AbandonReason, EventKind, ExecutionEvent, St
 from loom.core.engine.execution_observer import ExecutionObserver, NullExecutionObserver
 from loom.core.errors import LoomError
 from loom.core.job.delivery import JobDelivery
+from loom.core.job.errors import JobAbandonment, JobPostponement
 from loom.core.job.log_events import JobLogEvent, JobLogField
-from loom.core.job.outcome import (
-    Abandoned,
-    Failed,
-    JobAbandonment,
-    JobOutcome,
-    JobPostponement,
-    Postponed,
-    Succeeded,
-)
+from loom.core.job.outcome import Abandoned, Failed, JobOutcome, Postponed, Succeeded
 from loom.core.job.policy import Redelivery, RetryPolicy
 from loom.core.logger import LogField, log_context
 
@@ -131,9 +124,9 @@ class JobRunner:
     async def run(self, delivery: JobDelivery) -> JobOutcome:
         """Run *delivery* once.
 
-        A :class:`~loom.core.job.outcome.JobPostponement` postpones without spending an
+        A :class:`~loom.core.job.errors.JobPostponement` postpones without spending an
         attempt when the transport can wait, else abandons. A
-        :class:`~loom.core.job.outcome.JobAbandonment` or an error that cannot
+        :class:`~loom.core.job.errors.JobAbandonment` or an error that cannot
         succeed again abandons, and any other error fails while the transport
         retries and the policy's attempts last, then abandons.
 

@@ -19,17 +19,13 @@ from typing import TYPE_CHECKING, Any
 from loom.core.errors import MalformedJobMessage, UnknownJob
 from loom.core.job.envelope import JobEnvelope, decode_job_envelope
 from loom.core.job.log_events import JobLogField
-from loom.core.job.outcome import (
-    JobOutcome,
-    Postponed,
-    Succeeded,
-)
+from loom.core.job.outcome import JobOutcome, Postponed, Succeeded
+from loom.core.observability.event import Scope
 from loom.jobs.aws.queue import SQSRecord
 from loom.serverless.aws.lambda_._jobs import (
     TIMEOUT_SAFETY_MARGIN_MS,
     QueueConsumer,
     Read,
-    fail_in_span,
     remaining_ms,
 )
 
@@ -170,8 +166,8 @@ class SQSBatch:
         try:
             return self._source.read(record.body)
         except MalformedJobMessage as exc:
-            fail_in_span(
-                self._application,
+            self._application.observability.fail_in_span(
+                Scope.JOB,
                 exc,
                 self._source.label or MALFORMED_JOB,
                 id=record.message_id or None,
@@ -180,8 +176,8 @@ class SQSBatch:
     def _job_type(self, envelope: JobEnvelope, record: SQSRecord) -> type[Job[Any]]:
         job_type = self._source.job or self._jobs.get(envelope.job_name)
         if job_type is None:
-            fail_in_span(
-                self._application,
+            self._application.observability.fail_in_span(
+                Scope.JOB,
                 UnknownJob(envelope.job_name),
                 envelope.job_name,
                 id=record.message_id or None,

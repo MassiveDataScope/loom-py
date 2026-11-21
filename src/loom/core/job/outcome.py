@@ -3,50 +3,11 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
-from typing import Any, ClassVar
+from typing import Any
 
-from loom.core.engine.events import AbandonReason, Status
+from loom.core.engine.events import AbandonReason
+from loom.core.job.errors import JobAbandonment, JobPostponement
 from loom.core.job.policy import Countdown
-
-
-class JobSignal(Exception):
-    """Raised by a job to steer its own delivery; not a failure, so always expected."""
-
-    status: ClassVar[Status]
-    expected: ClassVar[bool] = True
-
-
-class JobPostponement(JobSignal):
-    """Raised by a job to run again later, without counting as a failed attempt.
-
-    Args:
-        reason: Why the job waits.
-        delay_s: Seconds to wait, from 0 to 900; ``None`` takes the job's backoff step.
-
-    Raises:
-        ValueError: When *delay_s* is outside the countdown bound.
-    """
-
-    status: ClassVar[Status] = Status.POSTPONED
-
-    def __init__(self, reason: str, delay_s: int | None = None) -> None:
-        super().__init__(reason)
-        self.reason = reason
-        self.delay = None if delay_s is None else Countdown(delay_s)
-
-
-class JobAbandonment(JobSignal):
-    """Raised by a job to give up for good: the delivery is settled as abandoned.
-
-    Attributes:
-        reason: Why the job gives up.
-    """
-
-    status: ClassVar[Status] = Status.ABANDONED
-
-    def __init__(self, reason: str) -> None:
-        super().__init__(reason)
-        self.reason = reason
 
 
 @dataclass(frozen=True, slots=True)
@@ -79,7 +40,7 @@ class Abandoned:
 
     def as_exception(self) -> Exception:
         """The error that ended the job, or a :class:`JobAbandonment` naming the reason."""
-        return self.error or JobAbandonment(self.reason)
+        return self.error or JobAbandonment(reason=self.reason)
 
     @property
     def statement(self) -> str:
@@ -87,9 +48,9 @@ class Abandoned:
         error = self.as_exception()
         match error:
             case JobAbandonment():
-                return str(error)
+                return error.reason
             case JobPostponement():
-                return f"cannot wait: {error}"
+                return f"cannot wait: {error.reason}"
             case _:
                 return type(error).__qualname__
 

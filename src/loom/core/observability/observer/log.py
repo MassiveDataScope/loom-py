@@ -85,8 +85,10 @@ class LogLifecycleObserver:
     def _level_of(event: LifecycleEvent) -> int:
         """The level of the record that writes *event*."""
         if event.kind is EventKind.ERROR:
-            level = logging.ERROR if event.failure is None else Failure(event.failure).level
-            return min(level, logging.WARNING) if event.scope is Scope.TRANSPORT else level
+            reports = event.scope is not Scope.TRANSPORT
+            if event.failure is None:
+                return logging.ERROR if reports else logging.WARNING
+            return Failure(event.failure).level(reports=reports)
         if event.scope is Scope.TRANSPORT:
             return logging.DEBUG
         if event.kind is EventKind.END or event.scope is Scope.PIPELINE:

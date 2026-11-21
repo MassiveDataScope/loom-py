@@ -19,7 +19,7 @@ from collections.abc import Generator, Sequence
 from contextlib import AbstractContextManager, contextmanager, nullcontext
 from functools import partial
 from time import perf_counter
-from typing import Self
+from typing import NoReturn, Self
 
 from opentelemetry.trace import INVALID_SPAN, Link, NoOpTracer, Span, Tracer
 from prometheus_client import start_http_server
@@ -259,6 +259,24 @@ class Observability:
         The engine opens it for every execution, whatever runtime asked for it.
         """
         return self.span(Scope.USE_CASE, name, trace_id=get_trace_id(), attributes=attributes)
+
+    def fail_in_span(
+        self,
+        scope: Scope,
+        error: Exception,
+        name: str,
+        *,
+        id: str | None = None,
+        trace_id: str | None = None,
+        attributes: SpanAttributes = NO_ATTRIBUTES,
+    ) -> NoReturn:
+        """Raise *error* inside a failed span: work refused before it ran, such as a bad message.
+
+        Raises:
+            Exception: *error*, once the span has recorded it.
+        """
+        with self.span(scope, name, id=id, trace_id=trace_id, attributes=attributes):
+            raise error
 
     @contextmanager
     def span(

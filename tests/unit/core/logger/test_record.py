@@ -11,7 +11,6 @@ from loom.core.errors import NotFound, SystemError
 from loom.core.errors.log_events import ErrorLogField
 from loom.core.logger import LogField, LogIdentity, LogRuntime, log_context
 from loom.core.logger.filter import LogFilter
-from loom.core.logger.install import install_record_factory
 from loom.core.logger.record import LoomRecordFactory
 from loom.core.tracing.context import active_trace_id
 from tests.helpers.loggers import CapturingHandler
@@ -23,7 +22,7 @@ _log = logging.getLogger("tests.record")
 @pytest.fixture
 def stamped(handler: CapturingHandler) -> Iterator[CapturingHandler]:
     """A root handler with loom's filter, behind loom's record factory."""
-    install_record_factory(
+    LoomRecordFactory.install(
         LogIdentity(environment="test", runtime=LogRuntime.CLI, service_name="billing")
     )
     handler.addFilter(LogFilter())
@@ -75,9 +74,9 @@ class TestStamp:
         assert stamped.records[0].__dict__[LogField.TRACE_ID] == "given"
 
     def test_a_second_installation_replaces_the_first_instead_of_stacking(self) -> None:
-        first = install_record_factory(LogIdentity(environment="test"))
+        first = LoomRecordFactory.install(LogIdentity(environment="test"))
 
-        second = install_record_factory(LogIdentity(environment="test"))
+        second = LoomRecordFactory.install(LogIdentity(environment="test"))
 
         assert logging.getLogRecordFactory() is second
         assert second.previous is first.previous

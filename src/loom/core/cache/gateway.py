@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 from collections.abc import Awaitable, Callable, Mapping
-from typing import TYPE_CHECKING, Any, TypeVar, cast, overload
+from typing import TYPE_CHECKING, Any, Final, TypeVar, cast, overload
 
 import msgspec
 from aiocache import caches  # type: ignore[import-untyped]
@@ -9,6 +9,7 @@ from aiocache import caches  # type: ignore[import-untyped]
 from loom.core.cache.errors import CacheWriteError
 from loom.core.cache.serializer import MsgspecSerializer
 from loom.core.config.errors import ConfigError
+from loom.core.errors.boundary import boundary
 from loom.core.model import loom_type_of
 from loom.core.model.redaction import reveal_for_driver
 
@@ -26,6 +27,10 @@ _MEMORY_FALLBACK = {"cache": "aiocache.SimpleMemoryCache"}
 def _identity(value: Any) -> Any:
     """``dumps_fn`` handed to aiocache once loom has already encoded the value."""
     return value
+
+
+_IDENTITY: Final = boundary(_identity)
+"""The identity serializer aiocache calls, through the boundary."""
 
 
 def _is_raw_backend(cache: Any) -> bool:
@@ -264,7 +269,7 @@ class CacheGateway:
         if self._raw_backend:
             await self._cache.set(key, value, ttl=ttl)
             return
-        await self._cache.set(key, self._encode(key, value), ttl=ttl, dumps_fn=_identity)
+        await self._cache.set(key, self._encode(key, value), ttl=ttl, dumps_fn=_IDENTITY)
 
     async def multi_set_values(
         self,
@@ -287,7 +292,7 @@ class CacheGateway:
             await self._cache.multi_set(pairs, ttl=ttl)
             return
         encoded = [(key, self._encode(key, value)) for key, value in pairs]
-        await self._cache.multi_set(encoded, ttl=ttl, dumps_fn=_identity)
+        await self._cache.multi_set(encoded, ttl=ttl, dumps_fn=_IDENTITY)
 
     async def incr(self, key: str, delta: int = 1) -> int:
         """Increment a numeric value at the given key.

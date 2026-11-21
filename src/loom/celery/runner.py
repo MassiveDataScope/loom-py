@@ -44,14 +44,8 @@ from loom.core.identity import Acting, current_caller
 from loom.core.job.callback import CallbackOutcome, notify
 from loom.core.job.config import JobSettings
 from loom.core.job.envelope import JobEnvelope, job_context, wire_job_name
-from loom.core.job.outcome import (
-    Abandoned,
-    Failed,
-    JobOutcome,
-    JobPostponement,
-    Postponed,
-    Succeeded,
-)
+from loom.core.job.errors import JobPostponement
+from loom.core.job.outcome import Abandoned, Failed, JobOutcome, Postponed, Succeeded
 from loom.core.job.policy import Redelivery
 from loom.core.job.run import EnvelopeInvocation
 from loom.core.job.runner import JobRunner
@@ -86,7 +80,7 @@ class _CeleryProcessBridge:
     shutdown_timeout_ms: int | None = None
     jobs: JobService | None = None
     _bridge: AsyncBridge | None = None
-    _open_failure: Exception | None = None
+    _open_failure: BaseException | None = None
 
     def initialize(self) -> None:
         """Create the async bridge once per forked worker process."""
@@ -98,7 +92,7 @@ class _CeleryProcessBridge:
             shutdown_timeout_ms=self.shutdown_timeout_ms,
         )
 
-    def refuse(self, cause: Exception) -> None:
+    def refuse(self, cause: BaseException) -> None:
         """Fail every later :meth:`run` of this process: its application did not open."""
         self._open_failure = cause
 
@@ -305,7 +299,7 @@ def _make_job_task(
             case Postponed(delay=delay) as postponed:
                 kwargs = {**(task_self.request.kwargs or {}), "postponements": postponements + 1}
                 raise task_self.retry(
-                    exc=Failure(JobPostponement(postponed.reason, delay.seconds)).as_loom_error(),
+                    exc=JobPostponement(reason=postponed.reason, delay_s=delay.seconds),
                     countdown=delay.seconds,
                     kwargs=kwargs,
                 )

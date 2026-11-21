@@ -1,11 +1,11 @@
 """The behavioural canary of spec 019, one test per rule.
 
-Rule 1: whatever loom hands a foreign framework goes through the boundary, so
-a failure leaves loom with no foreign text. Every registration API on the
-boundary list hands its framework one of the callable kinds below; each one
-raises a foreign exception holding the canary, or a ``LoomError`` raised from
-it, and what leaves holds no canary in its message, its fields, its chain, its
-notes or its pickle, while the log holds the type and frames only.
+Rule 1: whatever loom hands to code outside loom goes through the boundary, so
+a failure leaves loom with no foreign text. Each callable kind below raises a
+foreign exception holding the canary, or a ``LoomError`` raised from it, and
+what leaves holds no canary in its message, its fields, its chain, its notes or
+its pickle, while the log holds the type and frames only. Each kind of foreign
+callee the boundary rule finds is driven once through its real API too.
 
 Rule 2: a ``LoomError`` is built from declared fields, rendered once, so a
 ``Secret`` and a long string never reach its message.
@@ -103,8 +103,8 @@ _CALLABLE_KINDS = {
     "async-generator": _async_generator,
     "framework-method": _method,
 }
-"""The kinds of callable the registration APIs hand over: Celery, Typer, SQLAlchemy and
-bytewax operators take functions; pydantic-ai tools, Starlette handlers and ASGI take
+"""The kinds of callable loom hands out: Celery, Typer, SQLAlchemy and bytewax
+operators take functions; pydantic-ai tools, Starlette handlers and ASGI take
 coroutines; SSE streams are generators; bytewax partitions and pydantic-ai toolsets
 are methods of a loom class."""
 
@@ -168,3 +168,92 @@ class TestRuleTwoCanary:
         assert MASK in str(error)
         assert TRUNCATION_MARKER in str(error)
         assert not _carries_canary(error)
+
+
+def _failing() -> None:
+    raise canary_failure()
+
+
+async def _async_failing() -> None:
+    raise canary_failure()
+
+
+def _through_celery() -> list[BaseException]:
+    from celery import Celery
+
+    from loom.celery.runner import CELERY_PASS_THROUGH
+
+    app = Celery("canary", set_as_current=False)
+    app.conf.task_always_eager = True
+    task = app.task(name="canary.task")(boundary(_failing, pass_through=CELERY_PASS_THROUGH))
+    return [task.apply().result]
+
+
+def _through_typer() -> list[BaseException]:
+    import typer
+    from typer.testing import CliRunner
+
+    from loom.cli.app import TYPER_PASS_THROUGH
+
+    app = typer.Typer()
+    app.command()(boundary(_failing, pass_through=TYPER_PASS_THROUGH))
+    result = CliRunner().invoke(app, [])
+    assert CANARY not in result.output
+    return [result.exception] if result.exception is not None else []
+
+
+def _through_starlette() -> list[BaseException]:
+    from starlette.applications import Starlette
+    from starlette.routing import Route
+    from starlette.testclient import TestClient
+
+    from loom.rest.fastapi._errors import STARLETTE_PASS_THROUGH
+    from loom.rest.middleware import BoundaryMiddleware
+
+    async def endpoint(_: object) -> None:
+        await _async_failing()
+
+    app = Starlette(routes=[Route("/", boundary(endpoint, pass_through=STARLETTE_PASS_THROUGH))])
+    BoundaryMiddleware.mount_on(app, STARLETTE_PASS_THROUGH)
+    response = TestClient(app, raise_server_exceptions=False).get("/")
+    assert CANARY not in response.text
+    with pytest.raises(Exception) as raised:
+        TestClient(app).get("/")
+    return [raised.value]
+
+
+def _through_pydantic_ai() -> list[BaseException]:
+    from pydantic_ai import Agent
+    from pydantic_ai.models.test import TestModel
+
+    from loom.ai.engines.pydantic_ai._failures import PYDANTIC_AI_PASS_THROUGH
+
+    agent: Agent[None, str] = Agent(TestModel())
+    agent.tool_plain(boundary(_async_failing, pass_through=PYDANTIC_AI_PASS_THROUGH))
+    with pytest.raises(Exception) as raised:
+        agent.run_sync("go")
+    return [raised.value]
+
+
+_FOREIGN_CALLEES = {
+    "celery-task": _through_celery,
+    "typer-command": _through_typer,
+    "starlette-route-and-middleware": _through_starlette,
+    "pydantic-ai-tool": _through_pydantic_ai,
+}
+"""The kinds of foreign callee the boundary rule finds, each driven through its real API.
+
+A Prefect task is not here: running one needs Prefect's engine, which the unit
+lane does not start; its flow, task and hooks take the same wrapped callables."""
+
+
+class TestRuleOneCanaryPerCallee:
+    @pytest.mark.parametrize("drive", _FOREIGN_CALLEES.values(), ids=_FOREIGN_CALLEES.keys())
+    def test_what_the_framework_raises_prints_or_logs_carries_no_canary(
+        self, drive: Callable[[], list[BaseException]], log_text: Callable[[], str]
+    ) -> None:
+        leaving = drive()
+
+        assert leaving
+        assert not any(map(_carries_canary, leaving))
+        assert CANARY not in log_text()

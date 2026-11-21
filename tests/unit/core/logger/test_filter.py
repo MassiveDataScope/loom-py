@@ -9,7 +9,8 @@ import pytest
 from loom.core.environment import Environment
 from loom.core.logger import LogField, LogIdentity, current_log_fields, log_context
 from loom.core.logger.filter import LogFilter
-from loom.core.logger.install import configure_logging, install_record_factory
+from loom.core.logger.install import configure_logging
+from loom.core.logger.record import LoomRecordFactory
 from loom.core.logger.settings import LogSettings
 
 
@@ -21,7 +22,7 @@ class _Card:
 class TestLogFilter:
     @pytest.fixture
     def record(self) -> logging.LogRecord:
-        install_record_factory(LogIdentity(environment="test", service_name="billing"))
+        LoomRecordFactory.install(LogIdentity(environment="test", service_name="billing"))
         record = logging.getLogger("tests.filter").makeRecord(
             "tests.filter",
             logging.INFO,

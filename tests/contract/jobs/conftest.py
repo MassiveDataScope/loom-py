@@ -30,16 +30,9 @@ from loom.core.job.config import JobSettings
 from loom.core.job.context import clear_pending_dispatches
 from loom.core.job.delivery import JobDelivery
 from loom.core.job.envelope import TASK_JOB_PREFIX, decode_job_envelope
+from loom.core.job.errors import JobAbandonment, JobPostponement
 from loom.core.job.job import Job
-from loom.core.job.outcome import (
-    Abandoned,
-    Failed,
-    JobAbandonment,
-    JobOutcome,
-    JobPostponement,
-    Postponed,
-    Succeeded,
-)
+from loom.core.job.outcome import Abandoned, Failed, JobOutcome, Postponed, Succeeded
 from loom.core.job.policy import Redelivery
 from loom.core.job.runner import JobRunner
 from loom.core.job.service import JobService

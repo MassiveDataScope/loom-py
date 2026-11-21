@@ -33,6 +33,7 @@ from starlette.responses import Response
 
 from loom.core.config.errors import ConfigError
 from loom.core.errors import BODY_FIELD, LoomError, RuleViolationError
+from loom.core.errors.boundary import boundary
 from loom.core.identity import current_identity
 from loom.core.logger import LogField
 from loom.core.model import LoomFrozenStruct
@@ -46,8 +47,13 @@ from loom.core.tracing import get_trace_id
 from loom.rest._body import MALFORMED_BODY_ERRORS, payload_too_large_detail
 from loom.rest.auth.abc import Authenticator
 from loom.rest.errors import HttpErrorMapper
-from loom.rest.fastapi._errors import internal_error_response, malformed_body_error
+from loom.rest.fastapi._errors import (
+    STARLETTE_PASS_THROUGH,
+    internal_error_response,
+    malformed_body_error,
+)
 from loom.rest.fastapi.response import MsgspecJSONResponse
+from loom.rest.middleware import BoundaryMiddleware
 
 _logger = logging.getLogger(__name__)
 _error_mapper = HttpErrorMapper()
@@ -277,7 +283,7 @@ def _make_sql_handler(
             return internal_error_response()
 
     _handler.__name__ = handler_name
-    return _handler
+    return boundary(_handler, pass_through=STARLETTE_PASS_THROUGH)
 
 
 def _require_identity_binding(
@@ -393,6 +399,7 @@ def mount_sql_endpoints(
     """
     runtime = observability if observability is not None else Observability.noop()
     mechanism = _roles_mechanism(authenticator)
+    BoundaryMiddleware.mount_on(app, STARLETTE_PASS_THROUGH)
     for name in mounted_sql_endpoints(config):
         _mount_endpoint(
             app,

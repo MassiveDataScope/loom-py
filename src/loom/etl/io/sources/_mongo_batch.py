@@ -10,6 +10,7 @@ from typing import Any, Protocol, runtime_checkable
 
 import polars as pl
 
+from loom.core.errors.boundary import boundary
 from loom.etl.declarative.source._specs import ExtraFieldsMode
 from loom.etl.io.sources._mongo_bson import _is_bson_type, deep_normalize_for_json
 from loom.etl.io.sources._serialization import _record_serialization_failure
@@ -210,7 +211,7 @@ def _series_to_json_string(s: pl.Series) -> pl.Series:
     if s.dtype == pl.String:
         return s
     if isinstance(s.dtype, (pl.Struct, pl.List, pl.Array)):
-        return s.map_elements(_safe_dumps, return_dtype=pl.String)
+        return s.map_elements(boundary(_safe_dumps), return_dtype=pl.String)
     return s.cast(pl.String)
 
 
@@ -626,9 +627,9 @@ def apply_declared_schema(
             )
         if mode == ExtraFieldsMode.CAPTURE:
             extra_struct = pl.struct([df[c] for c in extra_cols])
-            extra_series = extra_struct.map_elements(_safe_dumps, return_dtype=pl.String).alias(
-                "_extra"
-            )
+            extra_series = extra_struct.map_elements(
+                boundary(_safe_dumps), return_dtype=pl.String
+            ).alias("_extra")
             df = df.drop(extra_cols).with_columns(extra_series)
         else:
             df = df.drop(extra_cols)

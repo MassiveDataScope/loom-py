@@ -8,12 +8,18 @@ from types import MappingProxyType
 
 import pytest
 
-from loom.core.errors import NotFound, RuleViolationError, SystemError, UnexpectedError
+from loom.core.errors import (
+    NotFound,
+    RuleViolationError,
+    SystemError,
+    UnexpectedError,
+)
 from loom.core.errors.failure import Failure
 from loom.core.errors.log_events import ErrorLogEvent, ErrorLogField
-from loom.core.job.outcome import JobAbandonment
+from loom.core.job.errors import JobAbandonment
 from loom.core.logger import LogField
 from loom.core.vocabulary import MASK, Secret
+from tests.helpers.boundary import Refused
 
 _SECRET = "iban ES91 2100 0418 4502 0005 1332"
 _log = logging.getLogger("tests.failure")
@@ -150,7 +156,7 @@ class TestOnceStack:
         [
             (NotFound("Invoice", id=1), logging.INFO),
             (RuleViolationError("amount", "negative"), logging.INFO),
-            (JobAbandonment("gave up"), logging.INFO),
+            (JobAbandonment(reason="gave up"), logging.INFO),
             (ValueError("x"), logging.ERROR),
         ],
         ids=["not-found", "rule-violation", "job-signal", "foreign"],
@@ -158,7 +164,17 @@ class TestOnceStack:
     def test_the_level_of_a_failure_follows_what_the_exception_declares(
         self, error: BaseException, level: int
     ) -> None:
-        assert Failure(error).level == level
+        assert Failure(error).level() == level
+
+    @pytest.mark.parametrize(
+        ("error", "level"),
+        [(ValueError("x"), logging.WARNING), (NotFound("Invoice", id=1), logging.INFO)],
+        ids=["unexpected", "expected"],
+    )
+    def test_a_record_that_may_not_report_it_first_stays_at_warning(
+        self, error: BaseException, level: int
+    ) -> None:
+        assert Failure(error).level(reports=False) == level
 
     def test_a_failure_whose_stack_is_written_is_reported_at_warning_after(
         self, stamped: pytest.LogCaptureFixture
@@ -166,7 +182,7 @@ class TestOnceStack:
         error = _raised(ValueError("x"))
         _log.error("billing.invoice_failed", exc_info=error)
 
-        assert Failure(error).level == logging.WARNING
+        assert Failure(error).level() == logging.WARNING
         assert not Failure(error).should_report
 
 
@@ -192,13 +208,33 @@ class TestTranslate:
 
         assert Failure(leaving).is_stack_written
 
-    def test_an_expected_failure_is_not_logged_and_leaves_as_itself(
+    def test_an_expected_declared_failure_is_not_logged_and_leaves_as_a_copy_of_itself(
         self, stamped: pytest.LogCaptureFixture
     ) -> None:
-        error = NotFound("Invoice", id=1)
+        error = Refused(count=2)
 
-        assert Failure(error).translate() is error
+        leaving = Failure(error).translate()
+
+        assert type(leaving) is Refused
+        assert str(leaving) == str(error)
         assert stamped.records == []
+
+    @pytest.mark.parametrize(
+        "error",
+        [NotFound("Invoice", id=1), RuleViolationError("amount", _SECRET)],
+        ids=["not-found", "rule-violation"],
+    )
+    def test_an_undeclared_loom_error_leaves_as_unexpected(self, error: Exception) -> None:
+        leaving = Failure(error).as_loom_error()
+
+        assert isinstance(leaving, UnexpectedError)
+        assert _SECRET not in str(leaving)
+
+    def test_the_text_of_an_undeclared_loom_error_is_its_type_as_in_its_stack(self) -> None:
+        failure = Failure(_raised(RuleViolationError("amount", _SECRET)))
+
+        assert failure.text == "loom.core.errors.domain.RuleViolationError"
+        assert _SECRET not in failure.stacktrace()
 
     def test_the_chain_and_the_notes_are_cleaned(self) -> None:
         leaving = Failure(_chained()).as_loom_error()
@@ -215,15 +251,17 @@ class TestTranslate:
             error.add_note(_SECRET)
             leaving = Failure(error).as_loom_error()
 
-        assert leaving is error
+        assert type(leaving) is _Declaring
         assert _SECRET.encode() not in pickle.dumps(leaving)
         assert (leaving.__cause__, getattr(leaving, "__notes__", None)) == (None, None)
+        assert isinstance(error.__cause__, ValueError)
+        assert error.__notes__ == [_SECRET]
 
     @pytest.mark.parametrize(
         ("members", "leaves_as"),
         [
-            ([NotFound("Invoice", id=1)], NotFound),
-            ([NotFound("Invoice", id=1), ValueError(_SECRET)], UnexpectedError),
+            ([Refused(count=1)], Refused),
+            ([Refused(count=1), ValueError(_SECRET)], UnexpectedError),
             ([ValueError(_SECRET)], UnexpectedError),
         ],
         ids=["one-loom-member", "mixed", "one-foreign-member"],
@@ -234,6 +272,17 @@ class TestTranslate:
         leaving = Failure(ExceptionGroup("batch", members)).as_loom_error()
 
         assert type(leaving) is leaves_as
+
+    def test_a_group_holding_a_base_exception_keeps_it_and_translates_the_rest(self) -> None:
+        group = BaseExceptionGroup("batch", [KeyboardInterrupt(), ValueError(_SECRET)])
+
+        leaving = Failure(group).as_loom_error()
+
+        assert isinstance(leaving, BaseExceptionGroup)
+        assert not isinstance(leaving, Exception)
+        kinds = sorted(type(member).__name__ for member in leaving.exceptions)
+        assert kinds == ["KeyboardInterrupt", "UnexpectedError"]
+        assert _SECRET not in repr(leaving.exceptions)
 
     def test_the_unexpected_error_rebuilds_from_its_code_and_pickles_without_the_original(
         self,

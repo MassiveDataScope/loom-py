@@ -30,7 +30,7 @@ from starlette.responses import Response
 
 from loom.ai.errors import RUN_ERROR_DETAILS, AgentRunErrorCode
 from loom.ai.fastapi.response import AgentJSONResponse
-from loom.rest.errors import _INTERNAL_ERROR_MESSAGE
+from loom.core.errors.failure import INTERNAL_ERROR_MESSAGE
 
 _JSONRPC_VERSION: Final = "2.0"
 
@@ -108,7 +108,7 @@ def internal_error(code: AgentRunErrorCode) -> InternalError:
     return InternalError(
         code=-32603,
         message="Internal error",
-        data={"code": str(code), "detail": RUN_ERROR_DETAILS.get(code, _INTERNAL_ERROR_MESSAGE)},
+        data={"code": str(code), "detail": RUN_ERROR_DETAILS.get(code, INTERNAL_ERROR_MESSAGE)},
     )
 
 
@@ -119,7 +119,7 @@ def unexpected_error() -> InternalError:
         message="Internal error",
         data={
             "code": str(AgentRunErrorCode.PROVIDER_UNAVAILABLE),
-            "detail": _INTERNAL_ERROR_MESSAGE,
+            "detail": INTERNAL_ERROR_MESSAGE,
         },
     )
 

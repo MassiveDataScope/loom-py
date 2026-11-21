@@ -14,7 +14,7 @@ from loom.core.engine.executor import UseCaseExecutor
 from loom.core.execution import current_execution
 from loom.core.identity import ANONYMOUS, current_identity
 from loom.core.logger import LogIdentity
-from loom.core.logger.install import install_record_factory
+from loom.core.logger.record import LoomRecordFactory
 from loom.core.observability.observability import Observability
 from loom.core.observability.observer import log as log_observer
 from loom.core.observability.observer.log import LogLifecycleObserver
@@ -67,7 +67,7 @@ def executor(make_executor: MakeExecutor) -> UseCaseExecutor:
 @pytest.fixture
 def logger(caplog: pytest.LogCaptureFixture) -> CapturedLog:
     """What the executor and its scopes record during the test, behind loom's record factory."""
-    install_record_factory(LogIdentity(environment="test"))
+    LoomRecordFactory.install(LogIdentity(environment="test"))
     caplog.set_level(logging.DEBUG, logger=observation.__name__)
     caplog.set_level(logging.DEBUG, logger=log_observer.__name__)
     return CapturedLog(caplog)

@@ -29,6 +29,7 @@ logger.handlers_unfiltered
 loom.ai.capability
 loom.ai.interaction_id
 loom.ai.mcp_server
+loom.ai.output_correction
 loom.attempt
 loom.auth.mechanism
 loom.batch_id
@@ -46,8 +47,10 @@ loom.duration_ms
 loom.engine.steps
 loom.error.class
 loom.error.code
+loom.error.marker
 loom.error.misdeclaration
 loom.error.original_type
+loom.error.parameter
 loom.error.violation_codes
 loom.error.violation_count
 loom.etl.last_attempt
@@ -64,6 +67,7 @@ loom.flow_run_id
 loom.has_default_route
 loom.job
 loom.job.payload_size
+loom.job.postpone_delay_s
 loom.job.postponements
 loom.job.retry_delay_s
 loom.links_truncated

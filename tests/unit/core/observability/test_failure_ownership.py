@@ -12,7 +12,7 @@ from loom.core.bootstrap.kernel import create_kernel
 from loom.core.errors import NotFound
 from loom.core.errors.log_events import ErrorLogField
 from loom.core.logger import LogField, LogIdentity
-from loom.core.logger.install import install_record_factory
+from loom.core.logger.record import LoomRecordFactory
 from loom.core.observability.event import EventKind, Scope
 from loom.core.observability.log_events import ObservabilityLogEvent
 from loom.core.observability.observability import Observability
@@ -31,7 +31,7 @@ class _Ping(UseCase[Any, str]):
 @pytest.fixture
 def lifecycle(caplog: pytest.LogCaptureFixture) -> pytest.LogCaptureFixture:
     """Lifecycle records captured as a loom handler sees them, behind loom's record factory."""
-    install_record_factory(LogIdentity(environment="test"))
+    LoomRecordFactory.install(LogIdentity(environment="test"))
     caplog.set_level(logging.DEBUG, logger="loom.core.observability.observer.log")
     return caplog
 

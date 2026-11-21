@@ -32,6 +32,7 @@ from loom.core.job.config import JobSettings
 from loom.core.job.envelope import wire_job_name
 from loom.core.use_case.factory import UseCaseFactory
 from loom.core.use_case.markers import Caller
+from tests.helpers.boundary import left_loom
 from tests.helpers.celery import CeleryBroker
 from tests.helpers.delegation import acting_as, assert_new_delegation
 from tests.helpers.jobs import CeleryServiceFixture
@@ -248,7 +249,7 @@ class TestCeleryCallbackTasks:
     ) -> None:
         result = succeed(AcmeCallerCallback)
 
-        with pytest.raises(Unauthenticated, match="identity="):
+        with left_loom(Unauthenticated):
             result.get()
 
     def test_a_link_past_its_delegation_deadline_is_refused(

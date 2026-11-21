@@ -32,6 +32,7 @@ from fastapi.testclient import TestClient
 from loom.ai.engines.pydantic_ai._mcp import SharedMcpToolsets
 from loom.ai.errors import AgentCompilationError
 from loom.rest.fastapi.auto import create_app
+from tests.helpers.boundary import left_loom
 
 _APP_MODULE = "loom_mcp_timeout_wiring_fixture_app"
 _AGENT = "tool-user"
@@ -136,7 +137,7 @@ def test_startup_timeout_ms_reaches_the_toolset_as_seconds(
     # The grant's server is unreachable, so start-up still fails here exactly
     # as it does with no timeout override at all — what is under test is the
     # value recorded before that failure, not the failure itself.
-    with pytest.raises(AgentCompilationError), TestClient(app):
+    with left_loom(AgentCompilationError), TestClient(app):
         pass  # pragma: no cover - start-up never completes
 
     assert seen == [_STARTUP_TIMEOUT_MS / 1000]

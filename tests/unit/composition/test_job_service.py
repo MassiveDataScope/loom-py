@@ -29,8 +29,8 @@ from loom.core.errors import JobTimeoutError
 from loom.core.job.config import JobShutdown, ShutdownMode
 from loom.core.job.context import flush_pending_dispatches
 from loom.core.job.delivery import JobDelivery
+from loom.core.job.errors import JobPostponement
 from loom.core.job.job import Job
-from loom.core.job.outcome import JobPostponement
 from loom.core.job.service import JobService
 from loom.core.job.timer import JobDelayRefusedError, JobTimer
 from loom.core.resources import ResourceKind
@@ -252,7 +252,7 @@ class PostponingOnceJob(Job[str]):
         assert delivery is not None
         self._activity.record(f"run {delivery.postponements}")
         if delivery.postponements == 0:
-            raise JobPostponement("not yet", 0)
+            raise JobPostponement(reason="not yet", delay_s=0)
         return "done"
 
 

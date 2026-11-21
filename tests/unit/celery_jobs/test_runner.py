@@ -26,8 +26,8 @@ from loom.core.identity import Identity, current_identity
 from loom.core.job.callback import CallbackOutcome
 from loom.core.job.config import JobConfig, JobOptions, JobSettings, RetryConfig
 from loom.core.job.delivery import JobDelivery
+from loom.core.job.errors import JobAbandonment, JobPostponement
 from loom.core.job.job import Job
-from loom.core.job.outcome import JobAbandonment, JobPostponement
 from loom.core.job.policy import Backoff
 from loom.core.stores.catalog import DEFAULT_STORE
 from loom.core.stores.uow.coordinator import InvocationOutcome, Uncertain
@@ -124,12 +124,12 @@ class PostponingJob(Job[None]):
     __retry__ = BACKOFF
 
     def execute(self, delay: int) -> None:
-        raise JobPostponement("not yet", delay)
+        raise JobPostponement(reason="not yet", delay_s=delay)
 
 
 class AbandoningJob(Job[None]):
     def execute(self) -> None:
-        raise JobAbandonment("never")
+        raise JobAbandonment(reason="never")
 
 
 @pytest.fixture(autouse=True)
@@ -305,6 +305,7 @@ class TestRetry:
 
         (message,) = worker.published(JOB_TASKS)
         assert isinstance(raised.value.exc, JobPostponement)
+        assert raised.value.exc.reason == "not yet"
         assert (message.countdown, message.kwargs["postponements"]) == (7, 3)
         assert message.kwargs["payload"] == {"value": 1}
 
@@ -366,14 +367,14 @@ class TestFailureCallback:
             "exc_msg": "ValueError",
         }
 
-    def test_a_job_abandonment_names_its_own_class(self, worker: CeleryWorker) -> None:
+    def test_a_job_abandonment_sends_its_declared_message(self, worker: CeleryWorker) -> None:
         with left_loom(JobAbandonment):
             worker.run(AbandoningJob, failure_callback=self.CALLBACK)
 
         (message,) = worker.published(self.CALLBACK)
         assert (message.kwargs["exc_type"], message.kwargs["exc_msg"]) == (
             type_name(JobAbandonment),
-            type_name(JobAbandonment),
+            "abandoned: never",
         )
 
     def test_a_failure_that_is_retried_sends_nothing(self, worker: CeleryWorker) -> None:
@@ -435,7 +436,7 @@ class TestEvents:
     def test_a_post_commit_error_that_committed_is_abandoned_not_failed(
         self, worker: CeleryWorker
     ) -> None:
-        with pytest.raises(PostCommitError):
+        with left_loom(PostCommitError):
             worker.run(RaisingJob, params={"kind": "post-commit-committed"})
 
         assert EventKind.JOB_FAILED not in worker.execution_observer.kinds

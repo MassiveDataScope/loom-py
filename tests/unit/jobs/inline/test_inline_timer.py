@@ -18,8 +18,8 @@ from loom.core.job.callback import JobCallback
 from loom.core.job.config import JobShutdown, ShutdownMode
 from loom.core.job.context import clear_pending_dispatches, flush_pending_dispatches
 from loom.core.job.delivery import JobDelivery
+from loom.core.job.errors import JobPostponement
 from loom.core.job.job import Job
-from loom.core.job.outcome import JobPostponement
 from loom.core.job.policy import Backoff, Countdown
 from loom.core.job.timer import JobDelayRefusedError, Step
 from loom.core.use_case import Delivery
@@ -67,7 +67,7 @@ class FailingJob(Counted):
 class PostponingJob(Counted):
     def execute(self, delay: int, delivery: JobDelivery | None = Delivery()) -> str:
         self.count(delivery)
-        raise JobPostponement("warming up", delay)
+        raise JobPostponement(reason="warming up", delay_s=delay)
 
 
 class SpinningJob(Counted):
@@ -76,7 +76,7 @@ class SpinningJob(Counted):
     def execute(self, delivery: JobDelivery | None = Delivery()) -> str:
         spent = self.count(delivery).postponements
         if spent < SPINS:
-            raise JobPostponement("spin", 0)
+            raise JobPostponement(reason="spin", delay_s=0)
         return "done"
 
 

@@ -45,6 +45,7 @@ from starlette.responses import Response
 
 from loom.core.engine.executor import UseCaseExecutor
 from loom.core.errors import BODY_FIELD, BoundaryValidationError, Forbidden, LoomError
+from loom.core.errors.boundary import boundary
 from loom.core.errors.codes import ErrorCode
 from loom.core.errors.failure import Failure
 from loom.core.identity import Identity, current_identity
@@ -64,7 +65,11 @@ from loom.rest._body import MALFORMED_BODY_ERRORS, BodyTooLarge
 from loom.rest.compiler import CompiledRoute, names_query_spec
 from loom.rest.constants import LIMIT_DEFAULT, QueryParam
 from loom.rest.errors import HttpErrorMapper
-from loom.rest.fastapi._errors import internal_error_response, malformed_body_error
+from loom.rest.fastapi._errors import (
+    STARLETTE_PASS_THROUGH,
+    internal_error_response,
+    malformed_body_error,
+)
 from loom.rest.fastapi.openapi import (
     QUERY_SPEC_PARAMETER_NAMES,
     build_query_parameters_schema,
@@ -641,7 +646,7 @@ class _RouteHandler:
 
         endpoint.__signature__ = self._runtime.signature()  # type: ignore[attr-defined]
         endpoint.__name__ = f"handle_{self._runtime.use_case_type.__name__}"
-        return endpoint
+        return boundary(endpoint, pass_through=STARLETTE_PASS_THROUGH)
 
     async def __call__(self, request: Request, **path_kwargs: Any) -> Response:
         """Serve one request.
@@ -665,9 +670,8 @@ class _RouteHandler:
             )
             if refusal is not None:
                 raise _error_mapper.to_http(refusal) from exc
-            if not Failure(exc).is_stack_written:
-                _logger.log(
-                    Failure(exc).level,
+            if Failure(exc).should_report:
+                _logger.error(
                     RestLogEvent.REQUEST_FAILED,
                     exc_info=exc,
                     extra={LogField.HTTP_ROUTE: self._runtime.compiled_route.full_path},

@@ -15,11 +15,12 @@ from loom.core.errors import (
     RuleViolationsError,
 )
 from loom.core.errors.failure import Failure
-from loom.core.job.outcome import JobAbandonment
+from loom.core.job.errors import JobAbandonment
 from tests.helpers.boundary import type_name
 from tests.helpers.loggers import logged_events
 from tests.integration.celery_jobs.conftest import JSON, Workbench
 from tests.integration.celery_jobs.doubles import (
+    ABANDONMENT,
     FAILURE_CALLBACK,
     SOFT_LIMIT,
     AbandonedJob,
@@ -67,12 +68,14 @@ class TestFailureCallbackAcrossSerializers:
 
 @JSON
 class TestFailureCallbackFromTheWorker:
-    def test_a_job_abandonment_notifies_once_with_its_type(self, served: Workbench) -> None:
+    def test_a_job_abandonment_notifies_once_with_its_declared_message(
+        self, served: Workbench
+    ) -> None:
         task_id = served.send(served.tasks[AbandonedJob], failure_callback=FAILURE_CALLBACK)
         _, calls = served.settle(task_id, notified=1)
 
         assert [(call["exc_type"], call["exc_msg"]) for call in calls] == [
-            (type_name(JobAbandonment), type_name(JobAbandonment))
+            (type_name(JobAbandonment), f"abandoned: {ABANDONMENT}")
         ]
 
     def test_a_worker_that_could_not_open_its_application_notifies_once(

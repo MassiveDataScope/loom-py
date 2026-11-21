@@ -12,7 +12,7 @@ import pytest
 from loom.core.errors import NotFound
 from loom.core.errors.log_events import ErrorLogEvent, ErrorLogField
 from loom.core.logger import LogIdentity
-from loom.core.logger.install import install_record_factory
+from loom.core.logger.record import LoomRecordFactory
 from loom.serverless.aws.lambda_.boundary import LambdaBoundary, lambda_init
 from tests.helpers.boundary import left_loom
 
@@ -32,7 +32,7 @@ class _Raising:
 
 @pytest.fixture
 def boundary_log(caplog: pytest.LogCaptureFixture) -> pytest.LogCaptureFixture:
-    install_record_factory(LogIdentity(environment="test"))
+    LoomRecordFactory.install(LogIdentity(environment="test"))
     caplog.set_level(logging.DEBUG, logger="loom.core.errors.failure")
     return caplog
 

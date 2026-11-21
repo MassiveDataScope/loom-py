@@ -6,8 +6,8 @@ from typing import ClassVar
 
 from loom.core.errors import SystemError
 from loom.core.job.delivery import JobDelivery
+from loom.core.job.errors import JobAbandonment, JobPostponement
 from loom.core.job.job import Job
-from loom.core.job.outcome import JobAbandonment, JobPostponement
 from loom.core.job.policy import Backoff
 from loom.core.use_case import Delivery
 from tests.contract.jobs.conftest import Driver, Settlement
@@ -44,19 +44,19 @@ class RetryingJob(Job[None]):
     __retry__ = STEADY
 
     async def execute(self) -> None:
-        raise JobPostponement("tenant warming up", 30)
+        raise JobPostponement(reason="tenant warming up", delay_s=30)
 
 
 class StepRetryingJob(Job[None]):
     __retry__ = STEADY
 
     async def execute(self) -> None:
-        raise JobPostponement("tenant warming up")
+        raise JobPostponement(reason="tenant warming up")
 
 
 class AbandoningJob(Job[None]):
     async def execute(self) -> None:
-        raise JobAbandonment("tenant deleted")
+        raise JobAbandonment(reason="tenant deleted")
 
 
 class RecordingJob(Job[None]):

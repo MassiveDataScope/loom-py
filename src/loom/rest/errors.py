@@ -11,7 +11,6 @@ from typing import Any, ClassVar
 from fastapi import HTTPException
 
 from loom.core.errors import (
-    BoundaryValidationError,
     Forbidden,
     InsufficientAuthentication,
     LoomError,
@@ -19,16 +18,13 @@ from loom.core.errors import (
     PostCommitError,
     RateLimited,
     RuleViolationError,
-    RuleViolationsError,
 )
 from loom.core.errors.codes import ErrorCode
-from loom.core.errors.failure import Failure
+from loom.core.errors.failure import INTERNAL_ERROR_MESSAGE, Failure
 from loom.core.tracing import get_trace_id
 from loom.rest.constants import BEARER_CHALLENGE, RETRY_AFTER_HEADER, WWW_AUTHENTICATE_HEADER
 
 _DESCRIPTION_MAX_LENGTH = 256
-_INTERNAL_ERROR_MESSAGE = "An unexpected error occurred"
-_UNAVAILABLE_MESSAGE = "The service is temporarily unavailable"
 _logger = logging.getLogger(__name__)
 
 
@@ -196,9 +192,10 @@ class _Misdeclared(Exception):
 
 def _convert(mapper: HttpErrorMapper, error: LoomError) -> HTTPException:
     status = mapper._status_for(error)
+    failure = Failure(error)
     detail: dict[str, Any] = {
         ErrorField.CODE: error.code,
-        ErrorField.MESSAGE: _message_of(error, status),
+        ErrorField.MESSAGE: failure.public_message(status),
         ErrorField.TRACE_ID: get_trace_id(),
     }
 
@@ -215,19 +212,13 @@ def _convert(mapper: HttpErrorMapper, error: LoomError) -> HTTPException:
     if isinstance(error, RuleViolationError):
         detail[ErrorField.FIELD] = error.field
 
-    if isinstance(error, RuleViolationsError):
-        detail[ErrorField.VIOLATIONS] = _rule_violation_fields(error.violations)
-
-    if isinstance(error, BoundaryValidationError):
-        detail[ErrorField.VIOLATIONS] = _boundary_violation_fields(error.violations)
-
     if isinstance(error, PostCommitError):
         detail[ErrorField.COMMITTED] = error.committed
 
-    if error.client_detail:
+    if failure.client_detail:
         detail[ErrorField.VIOLATIONS] = [
             {ErrorField.FIELD: v.field, ErrorField.CODE: v.code, ErrorField.MESSAGE: v.text}
-            for v in error.client_detail
+            for v in failure.client_detail
         ]
 
     _add_public_detail(detail, error)
@@ -240,7 +231,7 @@ def _internal_fallback(error: LoomError) -> HTTPException:
         status_code=HTTPStatus.INTERNAL_SERVER_ERROR,
         detail={
             ErrorField.CODE: error.code,
-            ErrorField.MESSAGE: _INTERNAL_ERROR_MESSAGE,
+            ErrorField.MESSAGE: INTERNAL_ERROR_MESSAGE,
             ErrorField.TRACE_ID: get_trace_id(),
         },
     )
@@ -259,17 +250,6 @@ def _coerce_status(declared: object) -> HTTPStatus:
         except ValueError:
             pass
     raise _Misdeclared("http_status is not a registered 4xx or 5xx status")
-
-
-def _rule_violation_fields(violations: tuple[RuleViolationError, ...]) -> list[dict[str, Any]]:
-    return [
-        {ErrorField.FIELD: violation.field, ErrorField.MESSAGE: violation.message}
-        for violation in violations
-    ]
-
-
-def _boundary_violation_fields(violations: tuple[tuple[str, str], ...]) -> list[dict[str, Any]]:
-    return [{ErrorField.FIELD: field, ErrorField.MESSAGE: message} for field, message in violations]
 
 
 def _add_public_detail(detail: dict[str, Any], error: LoomError) -> None:
@@ -295,26 +275,6 @@ def _add_public_detail(detail: dict[str, Any], error: LoomError) -> None:
 def _owned_overlap(detail: Mapping[str, Any], extra: Mapping[str, Any]) -> set[str]:
     """Keys *extra* would replace. Compared as text, so enum keys match."""
     return set(detail) & set(extra)
-
-
-def _message_of(error: LoomError, status: HTTPStatus) -> str:
-    """The message of *error*'s body: what it declares a client reads, else its code.
-
-    A ``5xx`` that declares nothing answers with the fixed text.
-    """
-    message = Failure(error).client_message
-    if message is not None:
-        return message
-    return _public_message(status, str(error.code))
-
-
-def _public_message(status: int, message: str) -> str:
-    """Return *message*, or the fixed one a ``5xx`` answers with instead."""
-    if status < HTTPStatus.INTERNAL_SERVER_ERROR:
-        return message
-    if status == HTTPStatus.SERVICE_UNAVAILABLE:
-        return _UNAVAILABLE_MESSAGE
-    return _INTERNAL_ERROR_MESSAGE
 
 
 def _headers(error: LoomError, status: HTTPStatus) -> dict[str, str] | None:

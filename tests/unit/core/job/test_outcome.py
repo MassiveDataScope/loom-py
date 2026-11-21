@@ -3,15 +3,8 @@ from __future__ import annotations
 import pytest
 
 from loom.core.engine.events import AbandonReason
-from loom.core.job.outcome import (
-    Abandoned,
-    Failed,
-    JobAbandonment,
-    JobOutcome,
-    JobPostponement,
-    Postponed,
-    Succeeded,
-)
+from loom.core.job.errors import JobAbandonment, JobPostponement
+from loom.core.job.outcome import Abandoned, Failed, JobOutcome, Postponed, Succeeded
 from loom.core.job.policy import Countdown
 
 
@@ -27,17 +20,17 @@ class TestOutcomeAsException:
     def test_an_abandonment_without_an_error_is_a_job_abandonment_with_its_reason(self) -> None:
         failure = Abandoned(AbandonReason.JOB_ASKED).as_exception()
         assert isinstance(failure, JobAbandonment)
-        assert str(failure) == "job_asked"
+        assert failure.reason == "job_asked"
 
     @pytest.mark.parametrize(
         ("abandoned", "statement"),
         [
             (
-                Abandoned(AbandonReason.JOB_ASKED, JobAbandonment("tenant deleted")),
+                Abandoned(AbandonReason.JOB_ASKED, JobAbandonment(reason="tenant deleted")),
                 "tenant deleted",
             ),
             (
-                Abandoned(AbandonReason.CANNOT_WAIT, JobPostponement("warming up")),
+                Abandoned(AbandonReason.CANNOT_WAIT, JobPostponement(reason="warming up")),
                 "cannot wait: warming up",
             ),
             (Abandoned(AbandonReason.ATTEMPTS_EXHAUSTED, ValueError("boom")), "ValueError"),
@@ -61,4 +54,4 @@ class TestOutcomeAsException:
 class TestJobPostponement:
     def test_a_delay_above_the_countdown_bound_is_refused(self) -> None:
         with pytest.raises(ValueError, match="0 to 900"):
-            JobPostponement("later", 901)
+            JobPostponement(reason="later", delay_s=901)

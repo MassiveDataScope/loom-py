@@ -10,8 +10,8 @@ from billiard.exceptions import SoftTimeLimitExceeded  # type: ignore[import-unt
 from loom.celery.constants import callback_task_name
 from loom.celery.runner import _CeleryProcessBridge
 from loom.core.job.callback import CallbackOutcome, JobCallback
+from loom.core.job.errors import JobAbandonment
 from loom.core.job.job import Job
-from loom.core.job.outcome import JobAbandonment
 from loom.core.job.policy import Backoff
 
 QUEUE = "jobs"
@@ -32,7 +32,7 @@ class AbandonedJob(Job[None]):
 
     async def execute(self) -> None:
         self.runs.append("ran")
-        raise JobAbandonment(ABANDONMENT)
+        raise JobAbandonment(reason=ABANDONMENT)
 
 
 class SucceedingJob(Job[str]):

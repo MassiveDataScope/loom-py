@@ -8,7 +8,7 @@ from __future__ import annotations
 import logging
 from collections.abc import Callable, Iterable, Sequence
 from dataclasses import dataclass
-from typing import TYPE_CHECKING, Any, NoReturn, cast
+from typing import TYPE_CHECKING, Any, cast
 
 import msgspec
 
@@ -24,8 +24,7 @@ from loom.core.job.policy import Redelivery, RetryPolicy
 from loom.core.job.run import EnvelopeInvocation
 from loom.core.job.runner import JobRunner
 from loom.core.job.settlement import JobSettlement
-from loom.core.logger import NO_ATTRIBUTES, LogRuntime, SpanAttributes
-from loom.core.observability.event import Scope
+from loom.core.logger import LogRuntime
 from loom.core.stores import LAMBDA_PROFILE
 from loom.jobs.aws.queue import AbandonedMessage, SQSRecord
 from loom.jobs.aws.settlement import SQSJobSettlement
@@ -213,19 +212,3 @@ def job_runner(application: Application, redelivery: Redelivery) -> JobRunner:
         redelivery=redelivery,
         execution_observer=kernel.execution_observer,
     )
-
-
-def fail_in_span(
-    application: Application,
-    error: Exception,
-    name: str,
-    *,
-    id: str | None = None,
-    trace_id: str | None = None,
-    attributes: SpanAttributes = NO_ATTRIBUTES,
-) -> NoReturn:
-    """Raise *error* inside a failed job span, as a message or event that never ran its job."""
-    with application.observability.span(
-        Scope.JOB, name, id=id, trace_id=trace_id, attributes=attributes
-    ):
-        raise error

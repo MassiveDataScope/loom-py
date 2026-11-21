@@ -17,7 +17,7 @@ import logging
 import re
 from collections.abc import Callable, Mapping, MutableMapping
 from types import TracebackType
-from typing import Any, Final
+from typing import Any, Final, Self
 
 from loom.core.errors.failure import Failure
 from loom.core.logger.context import current_log_fields
@@ -120,6 +120,18 @@ class LoomRecordFactory:
         self._identity = identity
         self._identity_fields = identity.fields()
         self._trace_ids = trace_ids
+
+    @classmethod
+    def install(cls, identity: LogIdentity, trace_ids: TraceIds = loom_trace_ids) -> Self:
+        """Chain a factory for *identity* in front of the process's factory, and return it.
+
+        A second call replaces the first one's factory instead of stacking on it.
+        """
+        current = logging.getLogRecordFactory()
+        previous = current.previous if isinstance(current, LoomRecordFactory) else current
+        factory = cls(previous, identity, trace_ids)
+        logging.setLogRecordFactory(factory)
+        return factory
 
     @property
     def previous(self) -> Callable[..., logging.LogRecord]:

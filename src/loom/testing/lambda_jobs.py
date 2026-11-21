@@ -20,6 +20,7 @@ from typing import Any
 from loom.composition import Application, Project
 from loom.connections.aws import AwsClients
 from loom.core.config import ConfigError, ConfigKey
+from loom.core.errors.boundary import boundary
 from loom.core.identity import Identity
 from loom.core.job.envelope import encode_job_message
 from loom.core.job.job import Job
@@ -219,7 +220,7 @@ class LambdaWorker:
 
     def _guarded(self, sqs: Any) -> Any:
         """*sqs* with a ``before-send`` handler that refuses what moto did not answer."""
-        sqs.meta.events.register_last("before-send", partial(self._unanswered, sqs))
+        sqs.meta.events.register_last("before-send", boundary(partial(self._unanswered, sqs)))
         return sqs
 
     def _unanswered(self, sqs: Any, request: Any, **_: Any) -> Any:

@@ -14,7 +14,7 @@ from typing import TYPE_CHECKING, Final
 from loom.core.checks import CheckSet, Finding
 from loom.core.config.keys import INTERPOLATION
 from loom.core.logger.install import format_names
-from loom.core.logger.settings import THIRD_PARTY_FLOORS, is_log_level, lowers_floor
+from loom.core.logger.settings import THIRD_PARTY_FLOORS, LogSettings, is_log_level
 
 if TYPE_CHECKING:
     from loom.core.config.context import ConfigContext
@@ -82,7 +82,7 @@ def _kept_floors(config: ConfigContext) -> Finding | None:
     lowered = sorted(
         name
         for name, value in named.items()
-        if (level := _literal(value)) is not None and lowers_floor(name, level)
+        if (level := _literal(value)) is not None and LogSettings.lowers_floor(name, level)
     )
     if not lowered:
         return None

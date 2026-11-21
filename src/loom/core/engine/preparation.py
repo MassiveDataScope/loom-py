@@ -163,7 +163,9 @@ class ArgumentBinder:
         def resolve(call: _ExecuteArguments) -> None:
             if call.identity is None:
                 first = bindings[0]
-                raise MissingCaller(use_case, first.name, first.kind.spelling)
+                raise MissingCaller(
+                    use_case=use_case, parameter=first.name, marker=first.kind.spelling
+                )
             bound = call.bound
             for binding in bindings:
                 try:
@@ -285,7 +287,11 @@ def _caller(plan: ExecutionPlan) -> Bind | None:
 
     def bind(call: _ExecuteArguments) -> None:
         if call.identity is None:
-            raise MissingCaller(plan.use_case_type.__qualname__, binding.name, CALLER.spelling)
+            raise MissingCaller(
+                use_case=plan.use_case_type.__qualname__,
+                parameter=binding.name,
+                marker=CALLER.spelling,
+            )
         call.bound[binding.name] = call.identity
 
     return bind

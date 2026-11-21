@@ -22,3 +22,5 @@ class ErrorLogField(LogKey):
     MISDECLARATION = "loom.error.misdeclaration"
     VIOLATION_COUNT = "loom.error.violation_count"
     VIOLATION_CODES = "loom.error.violation_codes"
+    PARAMETER = "loom.error.parameter"
+    MARKER = "loom.error.marker"

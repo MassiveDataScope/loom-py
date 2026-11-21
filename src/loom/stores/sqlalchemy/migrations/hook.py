@@ -18,6 +18,7 @@ from typing import TYPE_CHECKING, Any
 
 from alembic.operations import ops
 
+from loom.core.errors.boundary import boundary
 from loom.core.model.introspection import declared_privileges, get_table_name, is_row_scoped
 from loom.core.model.privilege import Privilege
 from loom.core.model.scoped import ScopedTable
@@ -52,7 +53,7 @@ def scope_protection_hook(schema: StoreSchema) -> RevisionHook:
                     script.downgrade_ops.ops, downgrade=True
                 )
 
-    return hook
+    return boundary(hook)
 
 
 class _Rewriter:

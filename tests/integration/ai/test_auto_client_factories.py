@@ -15,16 +15,18 @@ be produced by a host that was handed no factory at all.
 
 from __future__ import annotations
 
+import asyncio
 from pathlib import Path
 from typing import Any
 
 import pytest
 import yaml
-from fastapi.testclient import TestClient
+from fastapi import FastAPI
 
 from loom.ai.errors import AgentCompilationError
+from loom.composition import Application, create_app
 from loom.core.plugins import entrypoints as entrypoints_module
-from loom.rest.fastapi.auto import create_app
+from loom.rest.fastapi.runtime import FastAPIRuntime
 from tests.integration.ai._entrypoints import fake_entry_points
 from tests.integration.ai.test_auto_gate import (
     _APP_MODULE,
@@ -110,11 +112,28 @@ def _write_project(tmp_path: Path, *, specs: dict[str, dict[str, Any]]) -> str:
     return str(config_path)
 
 
-def _start_failure(config_path: str) -> AgentCompilationError:
-    """Enter the app's lifespan and return the start-up failure it raises."""
-    app = create_app(config_path)
-    with pytest.raises(AgentCompilationError) as failure, TestClient(app):
+class _KeptRuntime(FastAPIRuntime):
+    """The FastAPI runtime, keeping the application it mounts so a test opens it itself."""
+
+    application: Application | None = None
+
+    def mount(self, application: Application) -> FastAPI:
+        self.application = application
+        return super().mount(application)
+
+
+async def _open(application: Application) -> None:
+    async with application.running():
         pass  # pragma: no cover - start-up never completes
+
+
+def _start_failure(config_path: str) -> AgentCompilationError:
+    """Open the composed application inside loom and return the start-up failure it raises."""
+    runtime = _KeptRuntime()
+    create_app(config_path, runtime=runtime)
+    assert runtime.application is not None
+    with pytest.raises(AgentCompilationError) as failure:
+        asyncio.run(_open(runtime.application))
     return failure.value
 
 

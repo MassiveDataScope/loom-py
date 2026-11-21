@@ -9,14 +9,8 @@ import pytest
 
 from loom.connections.aws import AwsClients
 from loom.core.engine.events import AbandonReason
-from loom.core.job.outcome import (
-    Abandoned,
-    Failed,
-    JobAbandonment,
-    JobOutcome,
-    Postponed,
-    Succeeded,
-)
+from loom.core.job.errors import JobAbandonment
+from loom.core.job.outcome import Abandoned, Failed, JobOutcome, Postponed, Succeeded
 from loom.core.job.policy import Countdown
 from loom.jobs.aws.queue import (
     ABANDONMENT_REASON_ATTRIBUTE,
@@ -104,7 +98,7 @@ def _ids(records: list[SQSRecord]) -> list[str]:
 
 
 def _abandoned(reason: str = "tenant deleted") -> Abandoned:
-    return Abandoned(AbandonReason.JOB_ASKED, JobAbandonment(reason))
+    return Abandoned(AbandonReason.JOB_ASKED, JobAbandonment(reason=reason))
 
 
 class TestSQSJobSettlement:

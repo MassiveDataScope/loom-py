@@ -18,7 +18,9 @@ from fastapi import FastAPI
 from fastapi.responses import JSONResponse
 from fastapi.routing import APIRoute
 
+from loom.core.errors.boundary import boundary
 from loom.rest.compiler import InterfaceCompilationError
+from loom.rest.fastapi._errors import STARLETTE_PASS_THROUGH
 
 HEALTH_PATH = "/health"
 """Path of the readiness route every auto-bootstrapped application serves."""
@@ -82,7 +84,12 @@ def mount_health(app: FastAPI, probes: Mapping[str, ReadinessProbe]) -> None:
     async def _health() -> JSONResponse:
         return _health_response({key: await probe() for key, probe in cached.items()})
 
-    route = APIRoute(HEALTH_PATH, _health, methods=["GET"], include_in_schema=False)
+    route = APIRoute(
+        HEALTH_PATH,
+        boundary(_health, pass_through=STARLETTE_PASS_THROUGH),
+        methods=["GET"],
+        include_in_schema=False,
+    )
     app.router.routes.insert(0, route)
 
 

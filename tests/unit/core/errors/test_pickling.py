@@ -55,7 +55,10 @@ class TestErrorPickling:
                 RuleViolationsError([RuleViolationError("name", "required")]), id="violations"
             ),
             pytest.param(UnsupportedQuery("no joins", backend="dynamo"), id="unsupported-query"),
-            pytest.param(MissingCaller("Report", "caller", "Caller"), id="missing-caller"),
+            pytest.param(
+                MissingCaller(use_case="Report", parameter="caller", marker="Caller"),
+                id="missing-caller",
+            ),
             pytest.param(Forbidden(reason="no", missing=["a"]), id="forbidden"),
             pytest.param(InsufficientAuthentication(max_age=60), id="insufficient-auth"),
             pytest.param(UnknownJob("Acme"), id="unknown-job"),

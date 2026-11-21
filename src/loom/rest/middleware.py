@@ -10,8 +10,8 @@ No FastAPI or Starlette types are imported here.
 from __future__ import annotations
 
 import re
-from collections.abc import Awaitable, Callable
-from typing import Any
+from collections.abc import Awaitable, Callable, Sequence
+from typing import Any, Protocol
 
 from loom.core.errors.boundary import NO_PASS_THROUGH, PassThrough, boundary
 from loom.core.tracing import generate_trace_id, reset_trace_id, set_trace_id
@@ -20,6 +20,21 @@ _Scope = dict[str, Any]
 _Receive = Callable[[], Awaitable[dict[str, Any]]]
 _Send = Callable[[dict[str, Any]], Awaitable[None]]
 _ASGIApp = Callable[[_Scope, _Receive, _Send], Awaitable[None]]
+
+
+class _Middleware(Protocol):
+    @property
+    def cls(self) -> Any: ...
+
+
+class _Mountable(Protocol):
+    """An application middleware is added to: Starlette's, by its two members."""
+
+    @property
+    def user_middleware(self) -> Sequence[_Middleware]: ...
+
+    def add_middleware(self, middleware_class: Any, *args: Any, **kwargs: Any) -> None: ...
+
 
 _TRACE_ID_RE = re.compile(r"^[\w.-]{1,128}$", re.ASCII)
 
@@ -40,6 +55,16 @@ class BoundaryMiddleware:
     def __init__(self, app: _ASGIApp, pass_through: PassThrough = NO_PASS_THROUGH) -> None:
         self._app = app
         self._call = boundary(self._forward, pass_through=pass_through)
+
+    @classmethod
+    def mount_on(cls, app: _Mountable, pass_through: PassThrough = NO_PASS_THROUGH) -> None:
+        """Mount the boundary on *app* as its outermost middleware, unless it is there already.
+
+        A function that mounts loom's routes on an application loom did not
+        build calls it, so what those routes raise still reaches the server clean.
+        """
+        if not any(middleware.cls is cls for middleware in app.user_middleware):
+            app.add_middleware(cls, pass_through=pass_through)
 
     async def __call__(self, scope: _Scope, receive: _Receive, send: _Send) -> None:
         """Serve one ASGI call through the boundary."""

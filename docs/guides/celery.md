@@ -374,8 +374,8 @@ jobs:
 A job is attempted at most `max_attempts` times (3 by default). After a failed
 attempt it waits `Backoff(first_s, factor, max_s, jitter)`: `first_s * factor ** (attempt - 1)`
 seconds, capped at `max_s` (never above 900) and, with `jitter` (the default), drawn
-uniformly from zero to that value. A job may raise `JobPostponement(reason, delay_s=None)`
-to run again later without using an attempt, or `JobAbandonment(reason)` to give up at
+uniformly from zero to that value. A job may raise `JobPostponement(reason=..., delay_s=None)`
+to run again later without using an attempt, or `JobAbandonment(reason=...)` to give up at
 once; a loom error whose `is_retryable` is `False` is abandoned at its first attempt, and any other exception is retried.
 
 The most specific layer wins, and a section that sets only some fields inherits the

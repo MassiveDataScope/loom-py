@@ -20,7 +20,7 @@ from loom.core.engine.events import EventKind, ExecutionEvent, Phase, Status
 from loom.core.engine.execution_observer import ExecutionObserver, NullExecutionObserver
 from loom.core.engine.log_events import EngineLogEvent, EngineLogField
 from loom.core.errors import PostCommitError, RuleViolationsError
-from loom.core.job.outcome import JobSignal
+from loom.core.job.errors import JobSignal
 from loom.core.logger import LogField
 from loom.core.stores.uow.coordinator import InvocationOutcome
 from loom.core.stores.uow.scope import InvocationScope

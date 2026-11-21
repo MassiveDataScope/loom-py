@@ -8,8 +8,8 @@ import pytest
 
 from loom.core.errors import JobFailedError
 from loom.core.job.delivery import JobDelivery
+from loom.core.job.errors import JobAbandonment, JobPostponement
 from loom.core.job.job import Job
-from loom.core.job.outcome import JobAbandonment, JobPostponement
 from loom.core.use_case import Delivery
 from tests.contract.jobs.conftest import Inline
 from tests.contract.jobs.test_job_outcome_contract import (
@@ -41,7 +41,7 @@ class SeenRetryingJob(Job[None]):
     async def execute(self, delivery: JobDelivery | None = Delivery()) -> None:
         assert delivery is not None
         self.seen.append((delivery.attempt, delivery.postponements))
-        raise JobPostponement("tenant warming up")
+        raise JobPostponement(reason="tenant warming up")
 
 
 class SeenOwnDelayJob(Job[None]):
@@ -51,7 +51,7 @@ class SeenOwnDelayJob(Job[None]):
     async def execute(self, delivery: JobDelivery | None = Delivery()) -> None:
         assert delivery is not None
         self.seen.append((delivery.attempt, delivery.postponements))
-        raise JobPostponement("tenant warming up", 30)
+        raise JobPostponement(reason="tenant warming up", delay_s=30)
 
 
 class PostponingThenFailingJob(Job[None]):
@@ -62,7 +62,7 @@ class PostponingThenFailingJob(Job[None]):
         assert delivery is not None
         self.seen.append((delivery.attempt, delivery.postponements))
         if delivery.postponements < 9:
-            raise JobPostponement("tenant warming up", 1)
+            raise JobPostponement(reason="tenant warming up", delay_s=1)
         raise AcmeError("boom")
 
 
@@ -75,7 +75,7 @@ class FailingThenRetryingJob(Job[None]):
         self.seen.append((delivery.attempt, delivery.postponements))
         if delivery.attempt < 3:
             raise AcmeError("boom")
-        raise JobPostponement("tenant warming up", 5)
+        raise JobPostponement(reason="tenant warming up", delay_s=5)
 
 
 @pytest.fixture(autouse=True)

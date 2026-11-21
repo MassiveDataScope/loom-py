@@ -18,3 +18,4 @@ class JobLogField(LogKey):
     PAYLOAD_SIZE = "loom.job.payload_size"
     POSTPONEMENTS = "loom.job.postponements"
     RETRY_DELAY_S = "loom.job.retry_delay_s"
+    POSTPONE_DELAY_S = "loom.job.postpone_delay_s"

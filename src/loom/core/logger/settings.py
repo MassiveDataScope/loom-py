@@ -38,15 +38,6 @@ def is_log_level(name: str) -> bool:
     return name.upper() in logging.getLevelNamesMapping()
 
 
-def lowers_floor(logger: str, level: str) -> bool:
-    """Whether setting *logger* to *level* goes below its :data:`THIRD_PARTY_FLOORS` entry."""
-    floor = THIRD_PARTY_FLOORS.get(logger)
-    if floor is None or not is_log_level(level):
-        return False
-    levels = logging.getLevelNamesMapping()
-    return levels[level.upper()] < levels[floor]
-
-
 class LogSettings(LoomFrozenStruct, frozen=True, kw_only=True, forbid_unknown_fields=True):
     """How the process writes its log records.
 
@@ -70,6 +61,15 @@ class LogSettings(LoomFrozenStruct, frozen=True, kw_only=True, forbid_unknown_fi
         for name in (self.level, *self.named_levels.values()):
             if not is_log_level(name):
                 raise ValueError(f"unsupported log level {name!r}")
+
+    @staticmethod
+    def lowers_floor(logger: str, level: str) -> bool:
+        """Whether setting *logger* to *level* goes below its :data:`THIRD_PARTY_FLOORS` entry."""
+        floor = THIRD_PARTY_FLOORS.get(logger)
+        if floor is None or not is_log_level(level):
+            return False
+        levels = logging.getLevelNamesMapping()
+        return levels[level.upper()] < levels[floor]
 
     def logger_levels(self) -> dict[str, str]:
         """The level of each named logger: the third-party floors, then ``named_levels``."""

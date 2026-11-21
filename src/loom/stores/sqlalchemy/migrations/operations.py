@@ -19,6 +19,7 @@ from sqlalchemy import text
 from sqlalchemy.exc import DBAPIError
 
 from loom.core.config import ConfigError
+from loom.core.errors.boundary import boundary
 from loom.core.model.partition import Interval, as_date, range_partitions, validate_interval
 from loom.stores.sqlalchemy.rls.guard_manifest import PARTITION_GUARD_REVISION
 from loom.stores.sqlalchemy.rls.integrity import require_guard_revision_sync
@@ -344,35 +345,41 @@ _PARTITION_OPS: Final = (EnsureRangePartitionsOp, DetachRangePartitionsOp, DropP
 @Operations.implementation_for(ProtectScopedTableOp)
 @Operations.implementation_for(UnprotectScopedTableOp)
 @Operations.implementation_for(GrantTableOp)
+@boundary
 def _guard_operation(operations: Operations, op: MigrateOperation) -> None:
     run_guard_operation(operations, op)
 
 
 @renderers.dispatch_for(OpenHatchOp)
+@boundary
 def _render_open_hatch(context: AutogenContext, _op: OpenHatchOp) -> str:
     context.imports.add(_IMPORT)
     return "op.open_hatch()"
 
 
 @renderers.dispatch_for(ProtectScopedTableOp)
+@boundary
 def _render_protect(context: AutogenContext, op: ProtectScopedTableOp) -> str:
     context.imports.add(_IMPORT)
     return f"op.protect_scoped_table({op.table!r}, {op.scopes!r}, {op.privileges!r})"
 
 
 @renderers.dispatch_for(UnprotectScopedTableOp)
+@boundary
 def _render_unprotect(context: AutogenContext, op: UnprotectScopedTableOp) -> str:
     context.imports.add(_IMPORT)
     return f"op.unprotect_scoped_table({op.table!r})"
 
 
 @renderers.dispatch_for(GrantTableOp)
+@boundary
 def _render_grant(context: AutogenContext, op: GrantTableOp) -> str:
     context.imports.add(_IMPORT)
     return f"op.grant_table({op.table!r}, {op.readers!r}, {op.writers!r})"
 
 
 @renderers.dispatch_for(EnsureRangePartitionsOp)
+@boundary
 def _render_ensure_partitions(context: AutogenContext, op: EnsureRangePartitionsOp) -> str:
     context.imports.add(_IMPORT)
     return (
@@ -382,6 +389,7 @@ def _render_ensure_partitions(context: AutogenContext, op: EnsureRangePartitions
 
 
 @renderers.dispatch_for(DetachRangePartitionsOp)
+@boundary
 def _render_detach_partitions(context: AutogenContext, op: DetachRangePartitionsOp) -> str:
     context.imports.add(_IMPORT)
     return (
@@ -391,11 +399,13 @@ def _render_detach_partitions(context: AutogenContext, op: DetachRangePartitions
 
 
 @renderers.dispatch_for(DropPartitionsOp)
+@boundary
 def _render_drop_partitions(context: AutogenContext, op: DropPartitionsOp) -> str:
     context.imports.add(_IMPORT)
     return f"op.drop_partitions({op.table!r})"
 
 
 @renderers.dispatch_for(HandWrittenProtectOp)
+@boundary
 def _render_hand_written_protect(_context: AutogenContext, op: HandWrittenProtectOp) -> str:
     return f"raise {NotImplementedError.__name__}({op.message()!r})"

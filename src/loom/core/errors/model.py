@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from loom.core.errors.base import DomainError, SystemError
+from loom.core.errors.base import ClientViolation, DomainError, SystemError
 from loom.core.errors.codes import ErrorCode
 
 
@@ -35,7 +35,11 @@ class BoundaryValidationError(DomainError, ValueError):
         *,
         code: ErrorCode = ErrorCode.BOUNDARY_VALIDATION,
     ) -> None:
-        super().__init__(message, code=code)
+        super().__init__(
+            message,
+            code=code,
+            client_detail=[ClientViolation(field, str(code), text) for field, text in violations],
+        )
         self.violations = violations
 
 

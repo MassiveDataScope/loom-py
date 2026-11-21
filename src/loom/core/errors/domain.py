@@ -6,7 +6,7 @@ import math
 from collections.abc import Sequence
 from typing import Any
 
-from loom.core.errors.base import DomainError
+from loom.core.errors.base import ClientViolation, DomainError
 from loom.core.errors.codes import ErrorCode
 
 
@@ -104,7 +104,11 @@ class RuleViolationsError(DomainError):
     def __init__(self, violations: Sequence[RuleViolationError]) -> None:
         self.violations: tuple[RuleViolationError, ...] = tuple(violations)
         messages = "; ".join(str(v) for v in self.violations)
-        super().__init__(messages, code=ErrorCode.RULE_VIOLATIONS)
+        super().__init__(
+            messages,
+            code=ErrorCode.RULE_VIOLATIONS,
+            client_detail=[ClientViolation(v.field, str(v.code), v.message) for v in violations],
+        )
 
 
 class UnsupportedQuery(DomainError):

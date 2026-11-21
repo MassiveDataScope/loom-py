@@ -30,7 +30,8 @@ from enum import StrEnum, unique
 from types import MappingProxyType
 from typing import TYPE_CHECKING, Final, TypeAlias
 
-from loom.core.errors import Forbidden, Unauthenticated
+from loom.ai.log_events import AiLogField
+from loom.core.errors import DomainError, Forbidden, Unauthenticated
 from loom.core.errors.codes import CompileIssue, IssueCode, Template
 from loom.core.execution import live_execution_identity
 from loom.core.stores.sql.abc import RoleNotAllowedError, RolesNotBoundError
@@ -921,6 +922,18 @@ class AgentRunError(Exception):
         if caller.is_authenticated:
             return Forbidden(DENIED_MESSAGE)
         return Unauthenticated()
+
+
+class OutputRejected(DomainError):
+    """The plan's output check refused an answer: its text is the correction the model reads.
+
+    Declared, so the correction is rendered once as any field value is (a long
+    text cut, a ``Secret`` masked) before it reaches the engine.
+    """
+
+    code = AgentRunErrorCode.OUTPUT_SCHEMA_VIOLATION
+    template = "{correction}"
+    attributes = MappingProxyType({"correction": AiLogField.OUTPUT_CORRECTION})
 
 
 _RUN_ERROR_CLASSES: Mapping[AgentRunErrorCode, AgentRunErrorClass] = MappingProxyType(

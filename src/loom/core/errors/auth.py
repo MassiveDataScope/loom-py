@@ -3,10 +3,13 @@
 from __future__ import annotations
 
 from collections.abc import Iterable
+from types import MappingProxyType
 from typing import ClassVar
 
-from loom.core.errors.base import DomainError, SystemError
+from loom.core.errors.base import DomainError, LoomError, SystemError
 from loom.core.errors.codes import ErrorCode
+from loom.core.errors.log_events import ErrorLogField
+from loom.core.vocabulary import LogField
 
 
 class Unauthenticated(DomainError):
@@ -101,23 +104,26 @@ class DelegationExpired(Unauthenticated):
     fixes it by sending a new request; long background work runs as a system
     identity instead.
 
-    Args:
-        message: Description of the refusal, with the supported paths.
+    Declared, so it crosses the loom boundary as itself: a SQLAlchemy
+    listener raises it, and the loom code around the session reads it back.
     """
 
-    default_message: ClassVar[str] = (
+    code = ErrorCode.UNAUTHENTICATED
+    template = (
         "Authentication required: the delegation of this caller has expired. Work a request "
         "causes acts as its caller for at most identity.max_delegation_seconds after the "
         "request started; run later work as a system identity, switching explicitly with "
         "executor.run(UseCase, identity=...)."
     )
 
-    def __init__(self, message: str = default_message) -> None:
-        super().__init__(message)
+    def __init__(self, *rebuilt: object) -> None:
+        LoomError.__init__(self, *rebuilt)
 
 
 class MissingCaller(Unauthenticated):
     """Raised when an execution declaring a caller-bound parameter carried no identity.
+
+    Built as ``MissingCaller(use_case=..., parameter=..., marker=...)``.
 
     Args:
         use_case: Qualified name of the use case.
@@ -125,15 +131,46 @@ class MissingCaller(Unauthenticated):
         marker: The marker it declares, as written (``Caller()``, ``Agent()``, ``Mcp()``).
     """
 
-    def __init__(self, use_case: str, parameter: str, marker: str) -> None:
-        super().__init__(
-            f"{use_case}.execute declares '{parameter} = {marker}' but this execution carried "
-            "no identity. The transport must pass identity=... to the executor (pass "
-            "ANONYMOUS explicitly to run without a caller)."
-        )
-        self.use_case = use_case
-        self.parameter = parameter
-        self.marker = marker
+    code = ErrorCode.UNAUTHENTICATED
+    template = (
+        "{use_case}.execute declares '{parameter} = {marker}' but this execution carried "
+        "no identity. The transport must pass identity=... to the executor (pass "
+        "ANONYMOUS explicitly to run without a caller)."
+    )
+    attributes = MappingProxyType(
+        {
+            "use_case": LogField.USE_CASE,
+            "parameter": ErrorLogField.PARAMETER,
+            "marker": ErrorLogField.MARKER,
+        }
+    )
+
+    def __init__(
+        self,
+        *rebuilt: object,
+        use_case: str | None = None,
+        parameter: str | None = None,
+        marker: str | None = None,
+    ) -> None:
+        LoomError.__init__(self, *rebuilt, use_case=use_case, parameter=parameter, marker=marker)
+
+    @property
+    def use_case(self) -> str | None:
+        """The qualified name of the use case, or ``None`` once rebuilt."""
+        value = self.log_fields().get(LogField.USE_CASE)
+        return None if value is None else str(value)
+
+    @property
+    def parameter(self) -> str | None:
+        """The declaring parameter of ``execute``, or ``None`` once rebuilt."""
+        value = self.log_fields().get(ErrorLogField.PARAMETER)
+        return None if value is None else str(value)
+
+    @property
+    def marker(self) -> str | None:
+        """The marker the parameter declares, or ``None`` once rebuilt."""
+        value = self.log_fields().get(ErrorLogField.MARKER)
+        return None if value is None else str(value)
 
 
 class Forbidden(DomainError):

@@ -14,6 +14,8 @@ from contextvars import ContextVar
 from datetime import UTC, datetime
 from typing import Any
 
+from loom.core.errors.boundary import boundary
+
 _current_task_run_id: ContextVar[uuid.UUID | None] = ContextVar(
     "loom_prefect_task_run_id",
     default=None,
@@ -83,7 +85,7 @@ class PrefectLogBridgeHandler(logging.Handler):
         if self._worker is not None:
             return
         self._worker = threading.Thread(
-            target=self._drain_loop,
+            target=boundary(self._drain_loop),
             name="loom-prefect-log-bridge",
             daemon=True,
         )

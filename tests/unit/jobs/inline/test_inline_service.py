@@ -10,9 +10,9 @@ from loom.core.errors import JobFailedError, JobTimeoutError, SystemError
 from loom.core.job.callback import JobCallback
 from loom.core.job.context import flush_pending_dispatches
 from loom.core.job.delivery import JobDelivery
+from loom.core.job.errors import JobAbandonment
 from loom.core.job.handle import JobGroup, JobHandle
 from loom.core.job.job import Job
-from loom.core.job.outcome import JobAbandonment
 from loom.core.use_case import Delivery
 from tests.helpers.boundary import type_name
 from tests.helpers.jobs import InlineServiceFixture, JobKernel
@@ -47,7 +47,7 @@ class FinalFailureJob(Job[None]):
 
 class AbandoningJob(Job[None]):
     def execute(self) -> None:
-        raise JobAbandonment("no tenant")
+        raise JobAbandonment(reason="no tenant")
 
 
 class DeliveryJob(Job[None]):

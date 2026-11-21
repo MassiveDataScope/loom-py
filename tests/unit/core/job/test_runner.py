@@ -10,17 +10,10 @@ from loom.core.engine.events import AbandonReason, EventKind, ExecutionEvent, St
 from loom.core.errors import SystemError
 from loom.core.errors.log_events import ErrorLogField
 from loom.core.job.delivery import JobDelivery
+from loom.core.job.errors import JobAbandonment, JobPostponement
 from loom.core.job.job import Job
 from loom.core.job.log_events import JobLogEvent, JobLogField
-from loom.core.job.outcome import (
-    Abandoned,
-    Failed,
-    JobAbandonment,
-    JobOutcome,
-    JobPostponement,
-    Postponed,
-    Succeeded,
-)
+from loom.core.job.outcome import Abandoned, Failed, JobOutcome, Postponed, Succeeded
 from loom.core.job.policy import Backoff, Redelivery, RetryPolicy
 from loom.core.job.runner import JobRunner
 from loom.core.logger import LogField
@@ -99,7 +92,7 @@ class TestJobRunnerOutcome:
         )
 
     async def test_a_job_postponement_postpones_with_its_delay(self) -> None:
-        outcome = await _runner(_raising(JobPostponement("later", 30))).run(
+        outcome = await _runner(_raising(JobPostponement(reason="later", delay_s=30))).run(
             _DATA.delivery(attempt=3)
         )
         assert outcome == Postponed(outcome.delay, "later")
@@ -109,14 +102,14 @@ class TestJobRunnerOutcome:
     async def test_a_job_postponement_without_a_delay_takes_the_next_backoff_step(
         self,
     ) -> None:
-        outcome = await _runner(_raising(JobPostponement("later"))).run(
+        outcome = await _runner(_raising(JobPostponement(reason="later"))).run(
             _DATA.delivery(postponements=2)
         )
         assert isinstance(outcome, Postponed)
         assert outcome.delay.seconds == 16
 
     async def test_a_job_postponement_never_exhausts_the_attempts(self) -> None:
-        outcome = await _runner(_raising(JobPostponement("later", 1))).run(
+        outcome = await _runner(_raising(JobPostponement(reason="later", delay_s=1))).run(
             _DATA.delivery(attempt=3, postponements=9)
         )
         assert isinstance(outcome, Postponed)
@@ -128,7 +121,7 @@ class TestJobRunnerOutcome:
         assert isinstance(outcome, Failed)
 
     async def test_a_job_abandonment_abandons_with_its_reason(self) -> None:
-        signal = JobAbandonment("no such tenant")
+        signal = JobAbandonment(reason="no such tenant")
         assert await _runner(_raising(signal)).run(_DATA.delivery()) == Abandoned(
             AbandonReason.JOB_ASKED, signal
         )
@@ -197,7 +190,7 @@ class TestJobRunnerDecisionLog:
 
     @pytest.mark.parametrize(
         "behaviour",
-        [_returning(1), _raising(JobPostponement("later", 1))],
+        [_returning(1), _raising(JobPostponement(reason="later", delay_s=1))],
         ids=["succeeded", "postponed"],
     )
     async def test_a_run_that_did_not_fail_logs_no_decision(
@@ -254,9 +247,13 @@ class TestJobRunnerEvents:
         ("behaviour", "kind", "status"),
         [
             (_returning(1), EventKind.JOB_SUCCEEDED, Status.SUCCESS),
-            (_raising(JobPostponement("later", 1)), EventKind.JOB_POSTPONED, Status.POSTPONED),
+            (
+                _raising(JobPostponement(reason="later", delay_s=1)),
+                EventKind.JOB_POSTPONED,
+                Status.POSTPONED,
+            ),
             (_raising(ValueError("boom")), EventKind.JOB_FAILED, Status.FAILURE),
-            (_raising(JobAbandonment("no")), EventKind.JOB_ABANDONED, Status.ABANDONED),
+            (_raising(JobAbandonment(reason="no")), EventKind.JOB_ABANDONED, Status.ABANDONED),
         ],
         ids=["succeeded", "postponed", "failed", "abandoned"],
     )
@@ -276,9 +273,9 @@ class TestJobRunnerEvents:
     @pytest.mark.parametrize(
         ("behaviour", "reason"),
         [
-            (_raising(JobAbandonment("no")), AbandonReason.JOB_ASKED),
+            (_raising(JobAbandonment(reason="no")), AbandonReason.JOB_ASKED),
             (_raising(UnretryableError("never")), AbandonReason.NOT_RETRYABLE),
-            (_raising(JobPostponement("later")), AbandonReason.CANNOT_WAIT),
+            (_raising(JobPostponement(reason="later")), AbandonReason.CANNOT_WAIT),
         ],
         ids=["job asked", "not retryable", "cannot wait"],
     )
@@ -305,7 +302,7 @@ class TestJobRunnerRedelivery:
     async def test_a_transport_that_cannot_wait_abandons_a_job_postponement_naming_why(
         self,
     ) -> None:
-        signal = JobPostponement("later", 30)
+        signal = JobPostponement(reason="later", delay_s=30)
         for redelivery in (Redelivery.NONE, Redelivery.SAME):
             outcome = await _runner(_raising(signal), redelivery=redelivery).run(_DATA.delivery())
             assert outcome == Abandoned(AbandonReason.CANNOT_WAIT, signal)
@@ -336,7 +333,7 @@ class TestJobRunnerRedelivery:
     async def test_a_job_abandonment_abandons_whatever_the_transport_redelivers(
         self, redelivery: Redelivery
     ) -> None:
-        signal = JobAbandonment("no such tenant")
+        signal = JobAbandonment(reason="no such tenant")
         outcome = await _runner(_raising(signal), redelivery=redelivery).run(_DATA.delivery())
         assert outcome == Abandoned(AbandonReason.JOB_ASKED, signal)
 
@@ -345,7 +342,9 @@ class TestJobRunnerRedelivery:
     ) -> None:
         observer = RecordingExecutionObserver()
         await _runner(
-            _raising(JobPostponement("later", 30)), observer, redelivery=Redelivery.NONE
+            _raising(JobPostponement(reason="later", delay_s=30)),
+            observer,
+            redelivery=Redelivery.NONE,
         ).run(_DATA.delivery())
 
         assert [event.kind for event in observer.events] == [

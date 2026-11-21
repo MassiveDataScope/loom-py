@@ -249,11 +249,9 @@ class TestLambdaAiRefusals:
             tmp_path, jobs_manifest, {**_AI, "mcp_servers": {"x": server}}
         ).compose(adapter)
 
-        with left_loom(LambdaUnservedConfigError) as raised:
+        with left_loom(LambdaUnservedConfigError):
             adapter.mount(application)
 
-        assert raised.value.key == "ai.mcp_servers.x.transport"
-        assert "stdio" in str(raised.value)
         assert lifetime == []
 
     @pytest.mark.parametrize(

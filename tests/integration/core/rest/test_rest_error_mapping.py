@@ -173,7 +173,9 @@ class TestBoundaryValidation:
             "boundary_validation",
             _NOT_AN_OBJECT_MESSAGE,
         )
-        assert detail["violations"] == [{"field": "body", "message": _NOT_AN_OBJECT_MESSAGE}]
+        assert detail["violations"] == [
+            {"field": "body", "code": "boundary_validation", "message": _NOT_AN_OBJECT_MESSAGE}
+        ]
 
     def test_non_object_body_is_not_echoed(self, client_with_empty_repo: TestClient) -> None:
         resp = client_with_empty_repo.patch("/products/1", json=["echo-marker"])

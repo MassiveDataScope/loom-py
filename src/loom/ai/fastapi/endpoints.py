@@ -58,6 +58,8 @@ from loom.ai.fastapi.streaming import encode_sse_event, stream_sse
 from loom.ai.log_events import AiLogField
 from loom.core.config.errors import ConfigError
 from loom.core.errors import BoundaryValidationError
+from loom.core.errors.boundary import boundary
+from loom.core.errors.failure import INTERNAL_ERROR_MESSAGE, Failure
 from loom.core.identity import Identity, current_identity
 from loom.core.logger import LogField
 from loom.core.model import LoomFrozenStruct
@@ -66,7 +68,8 @@ from loom.core.observability.observability import Observability
 from loom.core.observability.span import LoomSpan
 from loom.core.tracing import get_trace_id
 from loom.rest.auth.abc import Authenticator
-from loom.rest.errors import _INTERNAL_ERROR_MESSAGE, _public_message
+from loom.rest.fastapi._errors import STARLETTE_PASS_THROUGH
+from loom.rest.middleware import BoundaryMiddleware
 
 _logger = logging.getLogger(__name__)
 
@@ -135,7 +138,7 @@ def _run_error_response(error: AgentRunError) -> Response:
     return error_response(
         status,
         str(error.code),
-        _public_message(status, RUN_ERROR_DETAILS[error.code]),
+        Failure.fixed_message(status) or RUN_ERROR_DETAILS[error.code],
         interaction_id=error.interaction_id,
     )
 
@@ -336,9 +339,9 @@ def _make_run_handler(
             return _run_error_response(exc)
         except Exception:
             _logger.exception("Unhandled error in the run endpoint of agent %r", name)
-            return error_response(500, "INTERNAL_ERROR", _INTERNAL_ERROR_MESSAGE)
+            return error_response(500, "INTERNAL_ERROR", INTERNAL_ERROR_MESSAGE)
 
-    return run_agent
+    return boundary(run_agent, pass_through=STARLETTE_PASS_THROUGH)
 
 
 async def _annotating_usage(
@@ -460,7 +463,7 @@ def _make_stream_handler(
             media_type=_MEDIA_TYPE_SSE,
         )
 
-    return stream_agent
+    return boundary(stream_agent, pass_through=STARLETTE_PASS_THROUGH)
 
 
 def _make_health_handler(
@@ -483,7 +486,7 @@ def _make_health_handler(
         status_code = 503 if health.status == HealthState.UNAVAILABLE else 200
         return AgentJSONResponse(content=payload, status_code=status_code)
 
-    return agent_health
+    return boundary(agent_health, pass_through=STARLETTE_PASS_THROUGH)
 
 
 def _exposed_agents(
@@ -631,6 +634,7 @@ def mount_agent_endpoints(
         return
     if observability is None:
         observability = Observability.noop()
+    BoundaryMiddleware.mount_on(app, STARLETTE_PASS_THROUGH)
     run_path = f"{prefix}/{{name}}/run"
     app.add_api_route(
         run_path,

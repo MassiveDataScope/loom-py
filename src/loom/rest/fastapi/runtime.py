@@ -8,14 +8,13 @@ import logging
 import warnings
 from collections.abc import AsyncIterator, Callable, Collection, Mapping
 from contextlib import AbstractAsyncContextManager, asynccontextmanager
-from typing import Any, Final
+from typing import Any
 
 import msgspec
 import prometheus_client
 from fastapi import FastAPI
 from prometheus_client import CollectorRegistry
 from starlette.applications import Starlette
-from starlette.exceptions import HTTPException as StarletteHTTPException
 from starlette.middleware.cors import CORSMiddleware
 from starlette.responses import Response
 
@@ -36,7 +35,7 @@ from loom.core.config.errors import ConfigError
 from loom.core.config.loader import convert_section
 from loom.core.discovery._utils import infer_model_from_use_case
 from loom.core.discovery.base import DiscoveryResult
-from loom.core.errors.boundary import PassThrough, ProcessHooks, boundary
+from loom.core.errors.boundary import ProcessHooks, boundary
 from loom.core.introspection import (
     INTROSPECTION_STATE_ATTR,
     AppIntrospection,
@@ -85,6 +84,7 @@ from loom.rest.fastapi._auto_auth import (
     _resolve_authentication,
 )
 from loom.rest.fastapi._auto_sql import _check_sql_section, _warn_sql_endpoints
+from loom.rest.fastapi._errors import STARLETTE_PASS_THROUGH
 from loom.rest.fastapi._exclusions import verify_exclusion_paths
 from loom.rest.fastapi.app import create_fastapi_app
 from loom.rest.fastapi.health import HEALTH_PATH, mount_health, reject_health_collision
@@ -354,10 +354,6 @@ def _build_pool_metrics(
     return PrometheusPoolMetrics(registry, application=application, entrypoint=SERVER_PROFILE.name)
 
 
-STARLETTE_PASS_THROUGH: Final[PassThrough] = (StarletteHTTPException,)
-"""Starlette's control flow, an ``HTTPException``: it crosses the ASGI boundary as it is."""
-
-
 def _metrics_path(cfg: PrometheusObservabilityConfig) -> str:
     """Return the REST metrics path declared in the Prometheus config."""
     return cfg.config.path if cfg.config is not None else "/metrics"
@@ -392,7 +388,7 @@ def mount_request_stack(
     if mount_metrics is not None:
         mount_metrics()
     _mount_cors(app, declared.rest.cors)
-    app.add_middleware(BoundaryMiddleware, pass_through=STARLETTE_PASS_THROUGH)
+    BoundaryMiddleware.mount_on(app, STARLETTE_PASS_THROUGH)
 
 
 def _mount_request_guards(app: Starlette, rest_cfg: _RestConfig) -> None:
@@ -448,8 +444,18 @@ def _mount_metrics(
     def _scrape_trailing_slash() -> Response:
         return Response(status_code=404)
 
-    app.add_api_route(path, _scrape, methods=["GET"], include_in_schema=False)
-    app.add_api_route(f"{path}/", _scrape_trailing_slash, methods=["GET"], include_in_schema=False)
+    app.add_api_route(
+        path,
+        boundary(_scrape, pass_through=STARLETTE_PASS_THROUGH),
+        methods=["GET"],
+        include_in_schema=False,
+    )
+    app.add_api_route(
+        f"{path}/",
+        boundary(_scrape_trailing_slash, pass_through=STARLETTE_PASS_THROUGH),
+        methods=["GET"],
+        include_in_schema=False,
+    )
 
 
 def _section_rest_config(ctx: ConfigContext) -> _RestConfig:
@@ -683,7 +689,7 @@ def application_lifespan(
             try:
                 yield
             except BaseException as thrown:
-                await running.__aexit__(type(thrown), thrown, thrown.__traceback__)
+                await boundary(running.__aexit__)(type(thrown), thrown, thrown.__traceback__)
                 raise
             await boundary(running.__aexit__)(None, None, None)
 

@@ -17,7 +17,7 @@ import pytest
 from loom.core.logger import LogIdentity
 from loom.core.logger.filter import LogFilter
 from loom.core.logger.formats import TextFormatter
-from loom.core.logger.install import install_record_factory
+from loom.core.logger.record import LoomRecordFactory
 from loom.testing.log_calls import (
     LogCallOffence,
     exception_text_offences,
@@ -64,7 +64,6 @@ EXCEPTION_TEXT_EXITS: Final[dict[str, tuple[int, str]]] = {
     "loom.core.model._loom_type": (3, _VALIDATION_TEXT),
     "loom.core.model.keys": (2, _VALIDATION_TEXT),
     "loom.rest.fastapi.sql": (1, _VALIDATION_TEXT),
-    "loom.core.job.outcome": (2, "a job signal's statement, the words the job declares"),
     "loom.streaming.mongo._bytewax_source": (
         1,
         "reads the message to classify it; formats nothing",
@@ -173,11 +172,13 @@ UNMIGRATED_CONSTRUCTIONS: Final[tuple[str, ...]] = (
     "loom.core.environment",
     "loom.core.errors",
     "loom.core.execution",
+    "loom.core.expr",
     "loom.core.identity",
     "loom.core.introspection",
     "loom.core.job",
     "loom.core.logger",
     "loom.core.model",
+    "loom.core.observability",
     "loom.core.projection",
     "loom.core.routing",
     "loom.core.schema_names",
@@ -187,6 +188,7 @@ UNMIGRATED_CONSTRUCTIONS: Final[tuple[str, ...]] = (
     "loom.etl",
     "loom.jobs",
     "loom.prefect",
+    "loom.prometheus",
     "loom.rest",
     "loom.serverless",
     "loom.stores",
@@ -225,7 +227,7 @@ def caplog_shows_fields(request: pytest.FixtureRequest) -> None:
     so a record's stamp and failure fields are its attributes.
     """
     if "caplog" in request.fixturenames:
-        install_record_factory(LogIdentity(environment="test"))
+        LoomRecordFactory.install(LogIdentity(environment="test"))
         handler = request.getfixturevalue("caplog").handler
         handler.setFormatter(TextFormatter())
         handler.addFilter(LogFilter())

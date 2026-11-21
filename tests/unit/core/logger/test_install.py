@@ -14,13 +14,12 @@ from loom.core.environment import Environment
 from loom.core.errors.log_events import ErrorLogField
 from loom.core.logger import LogField, LogRuntime
 from loom.core.logger.filter import LogFilter
-from loom.core.logger.formats import JsonFormatter
+from loom.core.logger.formats import JsonFormatter, ProcessHandlers
 from loom.core.logger.install import (
     HANDLER_NAME,
     UnfilteredHandlersWarning,
     configure_logging,
     resolve_format,
-    unfiltered_handlers,
 )
 from loom.core.logger.log_events import LoggerLogEvent
 from loom.core.logger.settings import THIRD_PARTY_FLOORS, LogSettings
@@ -150,7 +149,7 @@ class TestEveryHandlerSeesTheSafeRecord:
             _fail(logging.getLogger("acme_library"))
             warn_once()
             warn_once()
-            unfiltered = unfiltered_handlers()
+            unfiltered = ProcessHandlers().unfiltered()
         finally:
             child.removeHandler(child_handler)
 

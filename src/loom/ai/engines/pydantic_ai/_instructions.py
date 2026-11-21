@@ -21,7 +21,9 @@ from pydantic_ai.messages import InstructionPart
 
 from loom.ai.abc import StateShape
 from loom.ai.compiler import AgentPlan, CompiledInstruction
+from loom.ai.engines.pydantic_ai._failures import PYDANTIC_AI_PASS_THROUGH
 from loom.ai.errors import AgentCompilationError, AgentErrorCode
+from loom.core.errors.boundary import boundary
 from loom.core.plugins.optional import MissingExtraError, import_optional
 
 TEMPLATING_EXTRA: Final[str] = "ai-templates"
@@ -222,7 +224,7 @@ def _handlebars_instruction(
     async def render(ctx: RunContext[Any]) -> str:
         return rendered(ctx.deps.state)
 
-    return render
+    return boundary(render, pass_through=PYDANTIC_AI_PASS_THROUGH)
 
 
 _BLOCK_BUILDERS: Final[Mapping[str | None, BlockBuilder]] = MappingProxyType(

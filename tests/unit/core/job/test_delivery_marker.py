@@ -10,8 +10,8 @@ from loom.core.engine.compiler import CompilationError, UseCaseCompiler
 from loom.core.engine.events import EventKind, ExecutionEvent, Status
 from loom.core.engine.executor import UseCaseExecutor
 from loom.core.job.delivery import JobDelivery
+from loom.core.job.errors import JobAbandonment, JobPostponement
 from loom.core.job.job import Job
-from loom.core.job.outcome import JobAbandonment, JobPostponement
 from loom.core.stores.repository.registration import classify_key
 from loom.core.use_case import Delivery
 from loom.core.use_case.factory import UseCaseFactory, main_repository
@@ -46,12 +46,12 @@ class OuterJob(Job[None]):
 
 class RetryingJob(Job[None]):
     async def execute(self) -> None:
-        raise JobPostponement("later", 5)
+        raise JobPostponement(reason="later", delay_s=5)
 
 
 class AbandoningJob(Job[None]):
     async def execute(self) -> None:
-        raise JobAbandonment("never")
+        raise JobAbandonment(reason="never")
 
 
 class TwoDeliveriesJob(Job[None]):

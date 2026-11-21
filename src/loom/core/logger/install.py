@@ -13,9 +13,9 @@ from loom.core.environment import Environment, resolve_environment
 from loom.core.errors.boundary import ProcessHooks
 from loom.core.logger.filter import LogFilter
 from loom.core.logger.formats import (
+    ProcessHandlers,
     json_format,
     lambda_format,
-    lambda_runtime_handlers,
     text_format,
 )
 from loom.core.logger.log_events import LoggerLogEvent, LoggerLogField
@@ -110,7 +110,7 @@ def install_entry_point() -> ProcessHooks:
     Returns:
         The installed hooks, which the entry point restores when it ends.
     """
-    install_record_factory(LogIdentity(environment=_environment_name()))
+    LoomRecordFactory.install(LogIdentity(environment=_environment_name()))
     return ProcessHooks().install()
 
 
@@ -119,20 +119,6 @@ def _environment_name() -> str:
         return resolve_environment().value
     except ConfigError:
         return Environment.PRODUCTION.value
-
-
-def install_record_factory(
-    identity: LogIdentity, trace_ids: TraceIds = loom_trace_ids
-) -> LoomRecordFactory:
-    """Chain a :class:`LoomRecordFactory` for *identity* in front of the process's factory.
-
-    A second call replaces the first one's factory instead of stacking on it.
-    """
-    current = logging.getLogRecordFactory()
-    previous = current.previous if isinstance(current, LoomRecordFactory) else current
-    factory = LoomRecordFactory(previous, identity, trace_ids)
-    logging.setLogRecordFactory(factory)
-    return factory
 
 
 def configure_logging(
@@ -173,7 +159,7 @@ def configure_logging(
         ConfigError: When the format is not registered.
     """
     logging.raiseExceptions = False
-    factory = install_record_factory(
+    factory = LoomRecordFactory.install(
         LogIdentity(
             environment=environment.value,
             service_name=service_name,
@@ -195,31 +181,13 @@ def configure_logging(
             root.addHandler(target)
     for name, level in settings.logger_levels().items():
         logging.getLogger(name).setLevel(level.upper())
-    for target in (*owned, *lambda_runtime_handlers()):
+    for target in (*owned, *ProcessHandlers().lambda_runtime()):
         target.filters = [f for f in target.filters if not isinstance(f, LogFilter)]
         target.addFilter(_LOG_FILTER)
     return LogInstallation(factory)
 
 
 _LOG_FILTER: Final = LogFilter()
-
-
-def _every_handler() -> list[logging.Handler]:
-    loggers = [logging.getLogger()] + [
-        logger
-        for logger in logging.Logger.manager.loggerDict.values()
-        if isinstance(logger, logging.Logger)
-    ]
-    return [handler for logger in loggers for handler in logger.handlers]
-
-
-def unfiltered_handlers() -> tuple[logging.Handler, ...]:
-    """The handlers, on the root logger or any other, that do not render values."""
-    return tuple(
-        handler
-        for handler in _every_handler()
-        if not any(isinstance(f, LogFilter) for f in handler.filters)
-    )
 
 
 class UnfilteredHandlersWarning:
@@ -231,7 +199,7 @@ class UnfilteredHandlersWarning:
     def __call__(self) -> None:
         if self._warned:
             return
-        unfiltered = unfiltered_handlers()
+        unfiltered = ProcessHandlers().unfiltered()
         if not unfiltered:
             return
         self._warned = True

@@ -1017,7 +1017,11 @@ class TestMountInterfacesBoundaryValidation:
         detail = response.json()["detail"]
         assert detail["code"] == "boundary_validation"
         assert detail["violations"] == [
-            {"field": "fullName", "message": "Expected `str`, got `int`"}
+            {
+                "field": "fullName",
+                "code": "boundary_validation",
+                "message": "Expected `str`, got `int`",
+            }
         ]
 
     def test_mount_interfaces_missing_body_field_reports_that_field(

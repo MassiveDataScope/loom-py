@@ -8,6 +8,7 @@ from typing import Any
 
 import polars as pl
 
+from loom.core.errors.boundary import boundary
 from loom.etl.declarative.source._from_mongo import FromMongo, SourceRef
 from loom.etl.declarative.source._specs import ExtraFieldsMode, MongoSourceSpec
 from loom.etl.engines.polars._dtype import loom_type_to_polars
@@ -94,7 +95,7 @@ class MongoSourceReader:
             )
 
         return register_io_source(
-            _io_source,
+            boundary(_io_source),
             schema=registered_schema,
             validate_schema=False,
             is_pure=False,

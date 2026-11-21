@@ -8,7 +8,7 @@ from collections.abc import Coroutine
 from typing import TYPE_CHECKING, Any, TypeVar
 
 from loom.composition.errors import CompositionErrorCode, CompositionStateError
-from loom.core.errors.boundary import ProcessHooks
+from loom.core.errors.boundary import ProcessHooks, boundary
 
 if TYPE_CHECKING:
     from loom.composition.application import Application
@@ -68,7 +68,7 @@ class ApplicationHost:
         self._started = True
         opened: asyncio.Future[None] = asyncio.get_running_loop().create_future()
         owner = asyncio.create_task(self._own(opened))
-        owner.add_done_callback(self._record_close_failure)
+        owner.add_done_callback(boundary(self._record_close_failure))
         self._owner = owner
         try:
             await asyncio.shield(opened)
@@ -100,7 +100,7 @@ class ApplicationHost:
             await asyncio.wait({owner})
         except asyncio.CancelledError:
             if first:
-                owner.add_done_callback(lambda _: self._log_failure())
+                owner.add_done_callback(boundary(lambda _: self._log_failure()))
             raise
         if not first:
             return

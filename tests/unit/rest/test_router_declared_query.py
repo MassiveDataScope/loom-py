@@ -335,7 +335,11 @@ class TestDeclaredQueryParameters:
         detail = response.json()["detail"]
         assert (response.status_code, detail["code"]) == (400, "query_validation")
         assert detail["violations"] == [
-            {"field": "profile", "message": "Not a profile this route allows."}
+            {
+                "field": "profile",
+                "code": "query_validation",
+                "message": "Not a profile this route allows.",
+            }
         ]
         assert "secret-input-value" not in response.text
 

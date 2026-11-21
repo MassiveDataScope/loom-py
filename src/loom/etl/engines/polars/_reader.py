@@ -15,6 +15,7 @@ if TYPE_CHECKING:
 
 import polars as pl
 
+from loom.core.errors.boundary import boundary
 from loom.etl.declarative._format import Format
 from loom.etl.declarative._read_options import CsvReadOptions, ExcelReadOptions, JsonReadOptions
 from loom.etl.declarative.source import FileSourceSpec, SourceSpec, TableSourceSpec
@@ -153,7 +154,7 @@ def decode_json_columns(frame: FrameT, json_columns: Iterable[JsonColumnSpec]) -
     exprs = [
         pl.col(jc.column)
         .map_elements(
-            functools.partial(_normalize_json_string, loom_type=jc.loom_type),
+            boundary(functools.partial(_normalize_json_string, loom_type=jc.loom_type)),
             return_dtype=pl.String,
         )
         .str.json_decode(loom_type_to_polars(jc.loom_type))

@@ -1,11 +1,12 @@
 from __future__ import annotations
 
 from datetime import datetime
-from typing import Any
+from typing import Any, Final
 
 from sqlalchemy import DateTime, Integer, String, func
 from sqlalchemy.orm import DeclarativeBase, Mapped, mapped_column
 
+from loom.core.errors.boundary import boundary
 from loom.core.identity import current_identity
 from loom.stores.sqlalchemy.profile_loader import ProfileLoader
 
@@ -46,6 +47,10 @@ def current_actor() -> str | None:
     return identity.subject if identity.is_authenticated else None
 
 
+_CURRENT_ACTOR: Final = boundary(current_actor)
+"""The default SQLAlchemy calls on a flush, through the boundary."""
+
+
 class AuditActorMixin:
     """Who created and who last changed the row, filled from the caller.
 
@@ -56,10 +61,10 @@ class AuditActorMixin:
     """
 
     created_by: Mapped[str | None] = mapped_column(
-        String(255), nullable=True, default=current_actor
+        String(255), nullable=True, default=_CURRENT_ACTOR
     )
     updated_by: Mapped[str | None] = mapped_column(
-        String(255), nullable=True, default=current_actor, onupdate=current_actor
+        String(255), nullable=True, default=_CURRENT_ACTOR, onupdate=_CURRENT_ACTOR
     )
 
 

@@ -30,6 +30,7 @@ from loom.ai.engines.pydantic_ai._capabilities import (
     build_toolsets,
 )
 from loom.ai.engines.pydantic_ai._engine import PydanticAIEngine
+from loom.ai.engines.pydantic_ai._failures import PYDANTIC_AI_PASS_THROUGH
 from loom.ai.engines.pydantic_ai._instructions import (
     build_instructions,
     ensure_templating_available,
@@ -44,9 +45,11 @@ from loom.ai.engines.pydantic_ai._mcp import SharedMcpToolsets
 from loom.ai.engines.pydantic_ai._models import ModelResolver, resolve_model
 from loom.ai.engines.pydantic_ai._native import supported_native_tools
 from loom.ai.engines.pydantic_ai._spec import build_agent_spec, build_output_type
-from loom.ai.errors import AgentCompilationError, AgentErrorCode
+from loom.ai.errors import AgentCompilationError, AgentErrorCode, OutputRejected
 from loom.ai.inference import InferenceTarget
 from loom.core.di import LoomContainer
+from loom.core.errors.boundary import boundary
+from loom.core.errors.failure import Failure
 from loom.core.model import LoomType
 
 if TYPE_CHECKING:
@@ -268,7 +271,8 @@ def _register_output_check(agent: Agent[Any, Any], loom_type: LoomType, check: O
     """Register *check* on *agent* as a pydantic-ai output validator.
 
     A rejection is a :class:`~pydantic_ai.ModelRetry` carrying the text
-    *check* returned, which the engine reads back as the correction the
+    *check* returned, rendered once by :class:`~loom.ai.errors.OutputRejected`
+    (a long text cut, a ``Secret`` masked), which the engine reads back as the correction the
     model must act on (see :data:`~loom.ai.abc.OutputCheck`). The validator
     receives *check*'s own contract, a ``Mapping``: for a ``msgspec.Struct``
     output the mapping pydantic-ai parsed is passed straight through; for a
@@ -290,10 +294,11 @@ def _register_output_check(agent: Agent[Any, Any], loom_type: LoomType, check: O
     """
     is_pydantic = loom_type.library == "pydantic"
 
-    @agent.output_validator
     def _validate(output: Any) -> Any:
         payload = loom_type.to_builtins(output) if is_pydantic else output
         rejection = check(payload)
         if rejection is not None:
-            raise ModelRetry(rejection)
+            raise ModelRetry(Failure(OutputRejected(correction=rejection)).text)
         return output
+
+    agent.output_validator(boundary(_validate, pass_through=PYDANTIC_AI_PASS_THROUGH))

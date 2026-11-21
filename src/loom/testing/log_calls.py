@@ -40,6 +40,7 @@ Example::
 from __future__ import annotations
 
 import ast
+import builtins
 from collections.abc import Callable, Iterable, Iterator
 from pathlib import Path
 from typing import Final, NamedTuple
@@ -92,29 +93,6 @@ def log_call_offences(
     return offences
 
 
-def _name_of(node: ast.expr) -> str | None:
-    """The last name of a dotted reference: ``logger`` for ``self.logger``."""
-    if isinstance(node, ast.Name):
-        return node.id
-    if isinstance(node, ast.Attribute):
-        return node.attr
-    return None
-
-
-def _is_logger(node: ast.expr) -> bool:
-    name = _name_of(node)
-    return name is not None and name.lower().endswith(("log", "logger"))
-
-
-def _is_member_of(node: ast.expr | None, suffix: str) -> bool:
-    """Whether *node* is ``SomethingSuffix.MEMBER``: an attribute of a vocabulary class."""
-    return (
-        isinstance(node, ast.Attribute)
-        and isinstance(node.value, ast.Name)
-        and node.value.id.endswith(suffix)
-    )
-
-
 class _Checker(ast.NodeVisitor):
     """A visitor of one file that collects the offences it finds."""
 
@@ -125,12 +103,34 @@ class _Checker(ast.NodeVisitor):
     def _offend(self, node: ast.AST, rule: str) -> None:
         self.offences.append(LogCallOffence(self.path, getattr(node, "lineno", 0), rule))
 
+    @staticmethod
+    def _name_of(node: ast.expr) -> str | None:
+        """The last name of a dotted reference: ``logger`` for ``self.logger``."""
+        if isinstance(node, ast.Name):
+            return node.id
+        if isinstance(node, ast.Attribute):
+            return node.attr
+        return None
+
+    @staticmethod
+    def _is_member_of(node: ast.expr | None, suffix: str) -> bool:
+        """Whether *node* is ``SomethingSuffix.MEMBER``: an attribute of a vocabulary class."""
+        return (
+            isinstance(node, ast.Attribute)
+            and isinstance(node.value, ast.Name)
+            and node.value.id.endswith(suffix)
+        )
+
 
 class _CallSiteChecker(_Checker):
     def __init__(self, path: str, allowed_spreads: frozenset[str]) -> None:
         super().__init__(path)
         self.allowed_spreads = allowed_spreads
         self._bound: list[str] = []
+
+    def _is_logger(self, node: ast.expr) -> bool:
+        name = self._name_of(node)
+        return name is not None and name.lower().endswith(("log", "logger"))
 
     def visit_ExceptHandler(self, node: ast.ExceptHandler) -> None:
         if node.name is None:
@@ -147,21 +147,21 @@ class _CallSiteChecker(_Checker):
 
     def _checks_of(self, node: ast.Call) -> Iterator[_Check]:
         func = node.func
-        if isinstance(func, ast.Attribute) and _is_logger(func.value):
+        if isinstance(func, ast.Attribute) and self._is_logger(func.value):
             if func.attr in LOGGING_METHODS:
                 yield self._check_message_at(0)
                 yield self._check_extra
             elif func.attr == "log":
                 yield self._check_message_at(1)
                 yield self._check_extra
-        if _name_of(func) == "log_context":
+        if self._name_of(func) == "log_context":
             yield self._check_log_context
-        if _name_of(func) in ATTRIBUTE_CALLS:
+        if self._name_of(func) in ATTRIBUTE_CALLS:
             yield self._check_attributes
 
     def _check_message_at(self, index: int) -> _Check:
         def check(node: ast.Call) -> None:
-            if len(node.args) <= index or not _is_member_of(node.args[index], "LogEvent"):
+            if len(node.args) <= index or not self._is_member_of(node.args[index], "LogEvent"):
                 self._offend(node, "the message is not a LogEvent member")
             if len(node.args) > index + 1:
                 self._offend(node, "positional arguments after the event")
@@ -195,13 +195,13 @@ class _CallSiteChecker(_Checker):
                 if not (typed or self._is_allowed_spread(item)):
                     self._offend(item, f"{where} spreads a mapping outside the allowed list")
                 continue
-            if not _is_member_of(key, "LogField"):
+            if not self._is_member_of(key, "LogField"):
                 self._offend(key, f"{where} key is not a LogKey member")
             self._check_value(item, where)
 
     def _is_allowed_spread(self, item: ast.expr) -> bool:
         source = item.func if isinstance(item, ast.Call) else item
-        return _name_of(source) in self.allowed_spreads
+        return self._name_of(source) in self.allowed_spreads
 
     def _check_value(self, value: ast.expr, where: str) -> None:
         for node in ast.walk(value):
@@ -215,8 +215,8 @@ class _CallSiteChecker(_Checker):
             return "an f-string"
         if isinstance(node, ast.BinOp) and isinstance(node.op, ast.Mod):
             return "a % format"
-        if isinstance(node, ast.Call) and _name_of(node.func) in _TEXT_BUILDERS:
-            return f"{_name_of(node.func)}(...)"
+        if isinstance(node, ast.Call) and self._name_of(node.func) in _TEXT_BUILDERS:
+            return f"{self._name_of(node.func)}(...)"
         if isinstance(node, ast.Name) and node.id in self._bound:
             return f"the except-bound name {node.id!r}"
         return None
@@ -290,7 +290,7 @@ class _ExceptionTextChecker(_Checker):
                 isinstance(statement, ast.AnnAssign)
                 and isinstance(statement.target, ast.Name)
                 and statement.value is not None
-                and _name_of(statement.annotation) == "TypeAlias"
+                and self._name_of(statement.annotation) == "TypeAlias"
             ):
                 self._aliases[statement.target.id] = statement.value
         self.generic_visit(node)
@@ -305,14 +305,14 @@ class _ExceptionTextChecker(_Checker):
         if annotation is None:
             return False
         return any(
-            (name := _name_of(node)) is not None and name.endswith(_EXCEPTION_SUFFIXES)
+            (name := self._name_of(node)) is not None and name.endswith(_EXCEPTION_SUFFIXES)
             for node in ast.walk(self._resolved(annotation))
             if isinstance(node, ast.Name | ast.Attribute) and not isinstance(node.ctx, ast.Store)
         ) and not self._is_container(annotation)
 
     def _is_container(self, annotation: ast.expr) -> bool:
         resolved = self._resolved(annotation)
-        return isinstance(resolved, ast.Subscript) and _name_of(resolved.value) in _CONTAINERS
+        return isinstance(resolved, ast.Subscript) and self._name_of(resolved.value) in _CONTAINERS
 
     def _element_of(self, annotation: ast.expr) -> ast.expr | None:
         """The type a ``for`` loop over a value of *annotation* yields, if it is a container."""
@@ -400,7 +400,7 @@ class _ExceptionTextChecker(_Checker):
             scope.discard(node.name)
 
     def visit_Call(self, node: ast.Call) -> None:
-        name = _name_of(node.func)
+        name = self._name_of(node.func)
         if name in _TRACEBACK_TEXT:
             self._offend(node, f"traceback.{name}(...)")
         elif isinstance(node.func, ast.Name) and name in {"str", "repr", "ascii", "format"}:
@@ -444,11 +444,14 @@ class _ExceptionTextChecker(_Checker):
 
 
 def free_text_offences(paths: Iterable[Path]) -> list[LogCallOffence]:
-    """Every exception in *paths* raised with text built from values, in file and line order.
+    """Every exception in *paths* raised with free text, in file and line order.
 
     A ``LoomError`` is built from its declared attributes, ``Cls(**attributes)``, which
     it renders itself; text an f-string, a ``%`` or ``.format()`` builds is
-    free text, whatever it holds. A fixed literal is not.
+    free text, whatever it holds. A fixed literal is not. An exception of a
+    class outside the package (a builtin, a library's) takes a literal or the
+    text of a failure loom describes, ``Failure(error).text``, and nothing else:
+    any other value it carries out is free text.
 
     Args:
         paths: The Python files to read.
@@ -458,28 +461,92 @@ def free_text_offences(paths: Iterable[Path]) -> list[LogCallOffence]:
     """
     offences: list[LogCallOffence] = []
     for path in sorted(paths):
-        checker = _FreeTextChecker(str(path))
-        checker.visit(ast.parse(path.read_text(encoding="utf-8"), str(path)))
+        tree = ast.parse(path.read_text(encoding="utf-8"), str(path))
+        checker = _FreeTextChecker(str(path), tree)
+        checker.visit(tree)
         offences.extend(checker.offences)
     return offences
 
 
+_FAILURE_TEXT: Final = frozenset({"text", "public_message"})
+"""What ``Failure`` says about an exception that a foreign exception may carry."""
+
+
 class _FreeTextChecker(_Checker):
+    """Find each raise built from free text, knowing which classes come from outside the package.
+
+    Args:
+        path: The file, for the report.
+        tree: Its AST, read for the classes it imports and defines.
+    """
+
+    def __init__(self, path: str, tree: ast.Module) -> None:
+        super().__init__(path)
+        self._package = path.replace("\\", "/").split("/src/", 1)[-1].split("/", 1)[0]
+        self._foreign = self._foreign_names(tree)
+
     def visit_Raise(self, node: ast.Raise) -> None:
         raised = node.exc
-        if isinstance(raised, ast.Call) and any(map(_is_built_text, raised.args)):
-            self._offend(node, f"free text passed to {_name_of(raised.func)}(...)")
+        if isinstance(raised, ast.Call):
+            arguments = [*raised.args, *(keyword.value for keyword in raised.keywords)]
+            if any(map(self._is_built_text, raised.args)):
+                self._offend(node, f"free text passed to {self._name_of(raised.func)}(...)")
+            elif self._is_foreign(raised.func) and not all(map(self._is_safe, arguments)):
+                callee = self._name_of(raised.func)
+                self._offend(node, f"a value passed to the foreign {callee}(...)")
         self.generic_visit(node)
 
+    def _is_foreign(self, func: ast.expr) -> bool:
+        root = func
+        while isinstance(root, ast.Attribute):
+            root = root.value
+        return isinstance(root, ast.Name) and root.id in self._foreign
 
-def _is_built_text(node: ast.expr) -> bool:
-    """Whether *node* is text built from values: a valued f-string, a ``%`` or ``.format()``."""
-    if isinstance(node, ast.JoinedStr):
-        return any(isinstance(part, ast.FormattedValue) for part in node.values)
-    if isinstance(node, ast.BinOp):
-        return isinstance(node.op, ast.Mod) and isinstance(node.left, ast.Constant | ast.JoinedStr)
-    return (
-        isinstance(node, ast.Call)
-        and isinstance(node.func, ast.Attribute)
-        and (node.func.attr == "format" and isinstance(node.func.value, ast.Constant))
-    )
+    def _foreign_names(self, tree: ast.Module) -> set[str]:
+        """The exception names this file takes from outside its package: imports and builtins."""
+        names = {
+            name
+            for name, value in vars(builtins).items()
+            if isinstance(value, type) and issubclass(value, BaseException)
+        }
+        for node in tree.body:
+            if isinstance(node, ast.ImportFrom) and node.level == 0 and node.module is not None:
+                if node.module.split(".", 1)[0] != self._package:
+                    names.update(alias.asname or alias.name for alias in node.names)
+            elif isinstance(node, ast.Import):
+                names.update(
+                    alias.asname or alias.name.split(".", 1)[0]
+                    for alias in node.names
+                    if alias.name.split(".", 1)[0] != self._package
+                )
+            elif isinstance(node, ast.ClassDef):
+                names.discard(node.name)
+        return names
+
+    @classmethod
+    def _is_safe(cls, node: ast.expr) -> bool:
+        """Whether *node* is a literal, or what ``Failure(...)`` says may describe a failure."""
+        if isinstance(node, ast.Constant):
+            return True
+        target = node.func if isinstance(node, ast.Call) else node
+        return (
+            isinstance(target, ast.Attribute)
+            and target.attr in _FAILURE_TEXT
+            and isinstance(target.value, ast.Call)
+            and cls._name_of(target.value.func) == "Failure"
+        )
+
+    @staticmethod
+    def _is_built_text(node: ast.expr) -> bool:
+        """Whether *node* is text built from values: a valued f-string, a ``%`` or ``.format()``."""
+        if isinstance(node, ast.JoinedStr):
+            return any(isinstance(part, ast.FormattedValue) for part in node.values)
+        if isinstance(node, ast.BinOp):
+            return isinstance(node.op, ast.Mod) and isinstance(
+                node.left, ast.Constant | ast.JoinedStr
+            )
+        return (
+            isinstance(node, ast.Call)
+            and isinstance(node.func, ast.Attribute)
+            and (node.func.attr == "format" and isinstance(node.func.value, ast.Constant))
+        )

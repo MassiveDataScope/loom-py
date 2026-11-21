@@ -39,6 +39,7 @@ from loom.celery.runner import _CeleryProcessBridge
 from loom.celery.runtime import CeleryRuntime, _connect_lifecycle_signals, _WorkerLifecycle
 from loom.composition import AppConfig, Application, ApplicationHost
 from loom.core.config import ConfigContext, ConfigError
+from loom.core.errors import UnexpectedError
 from loom.core.job.job import Job
 from tests.helpers import acme_callbacks
 from tests.helpers.acme_callbacks import AcmeSyncCallback
@@ -310,7 +311,8 @@ class TestFailedChildOpen:
             failures = [task.apply().result for _ in range(2)]
 
         for failure in failures:
-            assert isinstance(failure, WorkerNotOpenError)
+            assert isinstance(failure, UnexpectedError)
+            assert failure.original_type == type_name(WorkerNotOpenError)
             assert "clickhouse" not in repr(failure.args) + str(failure)
         assert exception_types(caplog).count("RuntimeError") == 1
 
@@ -332,7 +334,8 @@ class TestFailedChildOpen:
         worker_process_init.send(sender=None)
         failure = task.apply(**kwargs, kwargs={"job_id": "job-1", "context": {}}).result
 
-        assert isinstance(failure, WorkerNotOpenError)
+        assert isinstance(failure, UnexpectedError)
+        assert failure.original_type == type_name(WorkerNotOpenError)
         assert AcmeSyncCallback.calls == []
 
 

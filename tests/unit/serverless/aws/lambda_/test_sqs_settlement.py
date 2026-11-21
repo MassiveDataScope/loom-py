@@ -11,8 +11,8 @@ import pytest
 from loom.composition import AppConfig
 from loom.core.config import ConfigContext
 from loom.core.job.delivery import JobDelivery
+from loom.core.job.errors import JobAbandonment, JobPostponement
 from loom.core.job.job import Job
-from loom.core.job.outcome import JobAbandonment, JobPostponement
 from loom.core.job.policy import Backoff
 from loom.core.use_case import Delivery
 from loom.jobs.aws.queue import ABANDONMENT_REASON_ATTRIBUTE, POSTPONEMENTS_ATTRIBUTE
@@ -46,12 +46,12 @@ class AcmeSyncJob(Job[None]):
 
 class AcmeWaitingJob(Job[None]):
     async def execute(self, marker: str = "") -> None:
-        raise JobPostponement("tenant warming up", 30)
+        raise JobPostponement(reason="tenant warming up", delay_s=30)
 
 
 class AcmeAbandoningJob(Job[None]):
     async def execute(self, marker: str = "") -> None:
-        raise JobAbandonment("tenant deleted")
+        raise JobAbandonment(reason="tenant deleted")
 
 
 class AcmeFailingJob(Job[None]):

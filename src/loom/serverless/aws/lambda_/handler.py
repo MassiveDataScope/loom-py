@@ -23,11 +23,11 @@ from loom.core.job.envelope import JobEnvelope
 from loom.core.job.outcome import Abandoned, Failed
 from loom.core.job.policy import Redelivery
 from loom.core.job.runner import JobRunner
+from loom.core.observability.event import Scope
 from loom.serverless.aws.lambda_._jobs import (
     JobConsumer,
     QueueConsumer,
     Read,
-    fail_in_span,
     job_runner,
     jobs_recipe,
     open_host,
@@ -364,4 +364,4 @@ class _DirectEvents:
         try:
             return self._read(event)
         except MalformedJobMessage as exc:
-            fail_in_span(self._application, exc, self._label)
+            self._application.observability.fail_in_span(Scope.JOB, exc, self._label)

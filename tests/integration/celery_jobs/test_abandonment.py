@@ -9,8 +9,8 @@ from celery import signals  # type: ignore[import-untyped]
 from celery.worker.request import Request  # type: ignore[import-untyped]
 
 from loom.core.job.envelope import wire_job_name
+from loom.core.job.errors import JobAbandonment
 from loom.core.job.job import Job
-from loom.core.job.outcome import JobAbandonment
 from tests.helpers.boundary import type_name
 from tests.helpers.celery import CeleryBroker
 from tests.integration.celery_jobs.conftest import JSON, Workbench
