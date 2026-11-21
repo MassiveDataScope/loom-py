@@ -32,6 +32,7 @@ from loom.ai.config import AiConfig
 from loom.ai.errors import AgentRunError, AgentRunErrorCode
 from loom.ai.execution import AgentHost
 from loom.ai.execution._handle import AgentMarkerResolver, _AgentHandle
+from loom.ai.log_events import AiLogField
 from loom.core.command import Command
 from loom.core.di import LoomContainer
 from loom.core.execution import ExecutionScope
@@ -384,8 +385,8 @@ class TestTheHandlesSpan:
         spans = exporter.get_finished_spans()
         assert [span.name for span in spans] == ["agent:agent_run"]
         assert spans[0].attributes is not None
-        assert spans[0].attributes["subject"] == "ada"
-        assert spans[0].attributes["interaction_id"] == answer.interaction_id
+        assert "subject" not in spans[0].attributes, "identity lands as user.hash in L2c"
+        assert spans[0].attributes[AiLogField.INTERACTION_ID] == answer.interaction_id
 
     async def test_no_span_exists_without_observability(
         self, deps: StubDepsFactory, container: LoomContainer

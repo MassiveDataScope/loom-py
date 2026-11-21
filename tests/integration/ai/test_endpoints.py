@@ -49,10 +49,12 @@ from loom.ai.errors import (
 )
 from loom.ai.execution import AgentHost
 from loom.ai.fastapi.endpoints import mount_agent_endpoints
+from loom.ai.log_events import AiLogField
 from loom.core.config.errors import ConfigError
 from loom.core.di import LoomContainer
 from loom.core.errors import Forbidden
 from loom.core.identity import ANONYMOUS, Identity, reset_identity, set_identity
+from loom.core.logger import LogField
 from loom.core.model import loom_type, msgspec_type
 from loom.core.model.redaction import Dsn
 from loom.core.observability.event import EventKind, LifecycleEvent, Scope
@@ -1159,8 +1161,8 @@ class TestErrorMapping:
         assert len(body.pop("interaction_id")) == _INTERACTION_ID_LENGTH
         assert (response.status_code, body) == (status, {"code": str(code), "message": message})
         [record] = [r for r in caplog.records if r.levelname == "ERROR"]
-        assert record.exc_info is not None
-        assert str(record.exc_info[1]) == leaky
+        assert LogField.EXCEPTION_TYPE in record.__dict__
+        assert leaky not in caplog.text
 
 
 class TestStream:
@@ -1410,7 +1412,7 @@ class TestStreamTracing:
     async def test_attributes_the_subject_when_serving_a_stream(
         self, deps: StubDepsFactory, container: LoomContainer, identity: Identity
     ) -> None:
-        """The span carries who ran what, over which route: an audit needs all of it."""
+        """The span carries what ran, how its caller authenticated and over which route."""
         events = await self._stream_with_recorder(deps=deps, container=container, identity=identity)
 
         start = next(
@@ -1418,11 +1420,11 @@ class TestStreamTracing:
             for event in events
             if event.scope is Scope.AGENT and event.kind is EventKind.START
         )
-        assert start.meta["subject"] == identity.subject
-        assert start.meta["agent"] == _AGENT
-        assert start.meta["mechanism"] == identity.mechanism
-        assert start.meta["route"] == f"{_PREFIX}/{{name}}/stream"
-        assert start.meta["method"] == "POST"
+        assert "subject" not in start.attributes, "identity lands as user.hash in L2c"
+        assert start.attributes[AiLogField.AGENT] == _AGENT
+        assert start.attributes[LogField.AUTH_MECHANISM] == identity.mechanism
+        assert start.attributes[LogField.HTTP_ROUTE] == f"{_PREFIX}/{{name}}/stream"
+        assert start.attributes[LogField.HTTP_REQUEST_METHOD] == "POST"
 
 
 class TestUsageOnTheAgentSpan:
@@ -1459,7 +1461,9 @@ class TestUsageOnTheAgentSpan:
     def _closing_usage(events: Sequence[LifecycleEvent]) -> Mapping[str, object]:
         """Return the usage attributes of the single closing event."""
         end = next(event for event in events if event.kind is EventKind.END)
-        return {key: value for key, value in end.meta.items() if key.startswith("gen_ai.usage.")}
+        return {
+            key: value for key, value in end.attributes.items() if key.startswith("gen_ai.usage.")
+        }
 
     async def test_publishes_every_counter_when_a_run_completes(
         self, deps: StubDepsFactory, container: LoomContainer, identity: Identity
@@ -1476,7 +1480,6 @@ class TestUsageOnTheAgentSpan:
             "gen_ai.usage.tool_calls": DEFAULT_USAGE.tool_calls,
             "gen_ai.usage.cost": pytest.approx(0.0021),
             "gen_ai.usage.cost_known": True,
-            "gen_ai.usage.details.reasoning_tokens": 5,
         }
 
     async def test_keeps_the_usage_off_the_opening_attributes(
@@ -1486,7 +1489,7 @@ class TestUsageOnTheAgentSpan:
         events = await self._agent_events("run", deps=deps, container=container, identity=identity)
 
         start = next(event for event in events if event.kind is EventKind.START)
-        assert not [key for key in start.meta if key.startswith("gen_ai.usage.")]
+        assert not [key for key in start.attributes if key.startswith("gen_ai.usage.")]
 
     async def test_publishes_no_cost_when_the_model_has_no_price(
         self, deps: StubDepsFactory, container: LoomContainer, identity: Identity
@@ -1538,8 +1541,8 @@ class TestUsageOnTheAgentSpan:
             for event in recorder.events
             if event.scope is Scope.AGENT and event.kind is not EventKind.START
         )
-        assert closing.meta["gen_ai.usage.requests"] == DEFAULT_USAGE.requests
-        assert closing.meta["gen_ai.usage.cost"] == pytest.approx(0.0021)
+        assert closing.attributes[AiLogField.USAGE_REQUESTS] == DEFAULT_USAGE.requests
+        assert closing.attributes[AiLogField.USAGE_COST] == pytest.approx(0.0021)
 
     async def test_publishes_the_same_counters_when_it_streams(
         self, deps: StubDepsFactory, container: LoomContainer, identity: Identity

@@ -25,7 +25,6 @@ from loom.core.identity import (
     reset_identity,
     set_identity,
 )
-from loom.core.observability.observability import Observability
 from loom.core.transport.dispatcher import ExecutionRequest
 from loom.core.use_case.factory import UseCaseFactory
 from loom.rest.auth import AuthenticationMiddleware
@@ -45,7 +44,7 @@ def client(factory: UseCaseFactory, compiler: UseCaseCompiler) -> Callable[..., 
     def serve(caller: Identity | None) -> TestClient:
         app = FastAPI()
         routes = RestInterfaceCompiler(compiler).compile(AcmeRoutes)
-        mount_interfaces(app, routes, factory, UseCaseExecutor(compiler), Observability.noop())
+        mount_interfaces(app, routes, factory, UseCaseExecutor(compiler))
         return TestClient(as_caller(app, caller))  # type: ignore[arg-type]
 
     return serve

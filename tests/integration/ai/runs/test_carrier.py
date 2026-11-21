@@ -18,7 +18,7 @@ from loom.core.di import LoomContainer
 from loom.core.errors import Unauthenticated
 from loom.core.execution import ExecutionScope
 from loom.core.identity import Identity
-from loom.core.observability.event import EventKind, Scope
+from loom.core.observability.event import Scope
 from loom.core.observability.observability import Observability
 from loom.core.stores.repository.registration import classify_key
 from loom.core.stores.sql.service import SqlQueryService
@@ -99,12 +99,8 @@ def _drive(native: NativeAgent) -> Any:
     return native.agent.run("hello", deps=native.deps)
 
 
-def _tool_subjects(recorder: RecordingObserver) -> list[str]:
-    return [
-        event.meta["subject"]
-        for event in recorder.events
-        if event.scope is Scope.TOOL and event.kind is EventKind.START
-    ]
+def _tool_subjects(recorder: RecordingObserver) -> list[str | None]:
+    return recorder.started_as(Scope.TOOL)
 
 
 def _leaf(error: BaseException) -> BaseException:

@@ -21,12 +21,15 @@ from loom.ai._filters import admits
 from loom.ai.abc import McpHandle, McpSession, McpToolInfo, SqlGrantHandle
 from loom.ai.compiler import CompiledMcpCapability, CompiledSqlCapability
 from loom.ai.errors import AgentRunError, AgentRunErrorCode, require_authenticated
+from loom.ai.log_events import AiLogField
 from loom.core.errors import BoundaryValidationError, UnsupportedBoundaryType
 from loom.core.identity import Identity
+from loom.core.logger import LogField, LogKey, Scalar
 from loom.core.model import loom_type_of
 from loom.core.observability.event import Scope
 from loom.core.observability.observability import Observability
 from loom.core.stores.sql.abc import SqlQueryResult
+from loom.core.stores.sql.caller_bound import audited_sql_span
 from loom.core.stores.sql.service import SqlQueryService
 
 _T = TypeVar("_T")
@@ -106,7 +109,7 @@ class McpGrantView:
     def __init__(
         self,
         *,
-        span_attributes: Mapping[str, str],
+        span_attributes: Mapping[LogKey, Scalar],
         capability: CompiledMcpCapability,
         include: tuple[str, ...],
         exclude: tuple[str, ...],
@@ -243,7 +246,7 @@ class McpGrantView:
     @asynccontextmanager
     async def _guard(self, tool: str, caller: Identity) -> AsyncIterator[None]:
         """Bound one call by this view's own tool timeout, inside its own span."""
-        with self._span(tool, caller):
+        with self._span(tool):
             try:
                 async with asyncio.timeout(self._timeout_s):
                     yield
@@ -254,15 +257,11 @@ class McpGrantView:
                     f"the {self._timeout_s:.3f}s tool timeout",
                 ) from exc
 
-    def _span(self, tool: str, caller: Identity) -> AbstractContextManager[None]:
+    def _span(self, tool: str) -> AbstractContextManager[None]:
         if self._observability is None:
             return nullcontext()
         return self._observability.span(
-            Scope.TOOL,
-            tool,
-            **self._span_attributes,
-            capability="mcp",
-            subject=caller.subject,
+            Scope.TOOL, tool, attributes={**self._span_attributes, AiLogField.CAPABILITY: "mcp"}
         )
 
 
@@ -323,13 +322,17 @@ class SqlGrantView:
     def _span(self, roles: tuple[str, ...], caller: Identity) -> AbstractContextManager[None]:
         if self._observability is None:
             return nullcontext()
-        return self._observability.span(
-            Scope.READ,
-            f"sql:{self._capability.connection}",
-            agent=self._agent,
-            connection=self._capability.connection,
-            roles=",".join(roles),
-            subject=caller.subject,
+        return audited_sql_span(
+            self._observability.span(
+                Scope.READ,
+                f"sql:{self._capability.connection}",
+                attributes={
+                    AiLogField.AGENT: self._agent,
+                    LogField.SQL_CONNECTION: self._capability.connection,
+                },
+            ),
+            ",".join(roles),
+            caller,
         )
 
 

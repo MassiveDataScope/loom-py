@@ -21,6 +21,7 @@ import pytest
 from celery.concurrency.prefork import TaskPool as PreforkPool
 from celery.exceptions import WorkerTerminate
 from celery.signals import (
+    setup_logging,
     worker_init,
     worker_process_init,
     worker_process_shutdown,
@@ -43,9 +44,15 @@ from tests.helpers import acme_callbacks
 from tests.helpers.acme_callbacks import AcmeSyncCallback
 from tests.helpers.celery import WorkerDouble, isolated_signals
 from tests.helpers.composition import TaskAffine, application_of, composition_project
-from tests.helpers.loggers import exception_text
+from tests.helpers.loggers import exception_types
 
-_SIGNALS = (worker_init, worker_process_init, worker_process_shutdown, worker_shutdown)
+_SIGNALS = (
+    setup_logging,
+    worker_init,
+    worker_process_init,
+    worker_process_shutdown,
+    worker_shutdown,
+)
 
 
 isolated_celery_signals = isolated_signals(*_SIGNALS, clear=True)
@@ -350,7 +357,7 @@ class TestClosing:
         with caplog.at_level(logging.WARNING, logger="loom.celery.runtime"):
             worker_process_shutdown.send(sender=None)
 
-        assert "pool gone" in exception_text(caplog)
+        assert exception_types(caplog) == ["RuntimeError"]
         assert bridge._bridge is None
 
     def test_a_bridge_that_cannot_run_the_close_still_shuts_down(self) -> None:
@@ -442,3 +449,16 @@ class TestConnecting:
 
         assert first.events == []
         assert second.events == ["check"]
+
+    def test_celery_leaves_the_root_logger_to_loom(self) -> None:
+        """Celery configures logging only when ``setup_logging`` has no receiver."""
+        root = logging.getLogger()
+        handlers = list(root.handlers)
+        _connect(_ApplicationSpy())
+
+        setup_logging.send(
+            sender=None, loglevel=logging.INFO, logfile=None, format="", colorize=False
+        )
+
+        assert setup_logging.receivers
+        assert root.handlers == handlers

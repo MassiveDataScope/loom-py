@@ -114,12 +114,10 @@ class TestRequestObservabilityStack:
         def _fake_create_fastapi_app(
             result: Any,
             routes: Any,
-            *,
-            observability: Observability | None = None,
             **kwargs: Any,
         ) -> FastAPI:
-            del result, routes, kwargs
-            captured["runtime"] = observability
+            del routes, kwargs
+            captured["kernel"] = result
             return FastAPI()
 
         monkeypatch.setattr("loom.composition.project.load_application_config", _fake_load)
@@ -146,7 +144,7 @@ class TestRequestObservabilityStack:
 
         assert captured["observability_config"].log.enabled is False
         assert captured["environment"] is Environment.DEVELOPMENT
-        assert captured["runtime"] is runtime
+        assert captured["kernel"].container.resolve(Observability) is runtime
         classes: list[Any] = [m.cls for m in app.user_middleware]
         assert TraceIdMiddleware in classes
         assert PrometheusMiddleware not in classes

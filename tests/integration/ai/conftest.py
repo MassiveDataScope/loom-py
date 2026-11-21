@@ -55,10 +55,10 @@ from loom.core.di import LoomContainer
 from loom.core.engine.compilable import Compilable
 from loom.core.engine.compiler import UseCaseCompiler
 from loom.core.engine.executor import UseCaseExecutor
-from loom.core.identity import Identity
+from loom.core.identity import Identity, current_caller
 from loom.core.model import loom_type, msgspec_type
 from loom.core.model.redaction import Dsn
-from loom.core.observability.event import LifecycleEvent
+from loom.core.observability.event import EventKind, LifecycleEvent, Scope
 from loom.core.stores.catalog import DEFAULT_STORE
 from loom.core.stores.repository.registration import classify_key
 from loom.core.stores.sql.config import SqlConfig, SqlConnectionConfig
@@ -88,10 +88,24 @@ class RecordingObserver:
 
     def __init__(self) -> None:
         self.events: list[LifecycleEvent] = []
+        self.callers: list[str | None] = []
 
     def on_event(self, event: LifecycleEvent) -> None:
-        """Record one lifecycle event."""
+        """Record one lifecycle event and the subject acting when it arrived."""
         self.events.append(event)
+        caller = current_caller()
+        self.callers.append(None if caller is None else caller.subject)
+
+    def started_as(self, scope: Scope) -> list[str | None]:
+        """The subject acting when each span of *scope* started, in order.
+
+        Spans carry no subject, so the observer reads who acts in the span's context.
+        """
+        return [
+            caller
+            for event, caller in zip(self.events, self.callers, strict=True)
+            if event.scope is scope and event.kind is EventKind.START
+        ]
 
 
 # ---------------------------------------------------------------------------

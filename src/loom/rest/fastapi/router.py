@@ -47,9 +47,9 @@ from loom.core.engine.executor import UseCaseExecutor
 from loom.core.errors import BODY_FIELD, BoundaryValidationError, Forbidden, LoomError
 from loom.core.errors.codes import ErrorCode
 from loom.core.identity import Identity, current_identity
+from loom.core.logger import LogField
+from loom.core.logger.record import is_logged
 from loom.core.model import LoomType, loom_type, msgspec_type
-from loom.core.observability.event import Scope
-from loom.core.observability.observability import Observability
 from loom.core.stores.repository.query import (
     FilterGroup,
     FilterOp,
@@ -58,7 +58,6 @@ from loom.core.stores.repository.query import (
     QuerySpec,
     SortSpec,
 )
-from loom.core.tracing import get_trace_id
 from loom.core.use_case.factory import UseCaseFactory
 from loom.core.use_case.outcome import Created
 from loom.rest._body import MALFORMED_BODY_ERRORS, BodyTooLarge
@@ -74,6 +73,7 @@ from loom.rest.fastapi.openapi import (
     has_profile_parameter,
 )
 from loom.rest.fastapi.response import MsgspecJSONResponse, created_response
+from loom.rest.log_events import RestLogEvent
 
 _logger = logging.getLogger(__name__)
 _error_mapper = HttpErrorMapper()
@@ -614,8 +614,8 @@ class _RouteHandler:
     Args:
         runtime: Request-time facts of the route.
         factory: Factory used to construct the use-case instance per request.
-        executor: Executor that drives the use-case pipeline.
-        observability: Runtime that opens one span per request.
+        executor: Executor that drives the use-case pipeline, in a
+            ``use_case`` scope that carries the route.
     """
 
     def __init__(
@@ -623,12 +623,10 @@ class _RouteHandler:
         runtime: _ResolvedRoute,
         factory: UseCaseFactory,
         executor: UseCaseExecutor,
-        observability: Observability,
     ) -> None:
         self._runtime = runtime
         self._factory = factory
         self._executor = executor
-        self._observability = observability
 
     def endpoint(self) -> Callable[..., Awaitable[Response]]:
         """Coroutine function serving this route, named and typed for FastAPI.
@@ -667,13 +665,12 @@ class _RouteHandler:
             )
             if refusal is not None:
                 raise _error_mapper.to_http(refusal) from exc
-            trace_id = get_trace_id() or ""
-            _logger.exception(
-                "Unhandled error in %s (route=%s trace_id=%s)",
-                self._runtime.use_case_type.__name__,
-                self._runtime.compiled_route.full_path,
-                trace_id,
-            )
+            if not is_logged(exc):
+                _logger.error(
+                    RestLogEvent.REQUEST_FAILED,
+                    exc_info=exc,
+                    extra={LogField.HTTP_ROUTE: self._runtime.compiled_route.full_path},
+                )
             return internal_error_response()
 
     async def _execute(self, request: Request, path_kwargs: Mapping[str, Any]) -> Response:
@@ -681,28 +678,25 @@ class _RouteHandler:
         compiled_route = runtime.compiled_route
         status_code = compiled_route.route.status_code
         identity = current_identity()
-        with self._observability.span(
-            Scope.USE_CASE,
-            runtime.use_case_type.__name__,
-            trace_id=get_trace_id(),
-            route=compiled_route.full_path,
-            method=compiled_route.route.method.upper(),
-            status_code=status_code,
+        _authorize_route(
+            identity, compiled_route.effective_requires_roles, compiled_route.full_path
+        )
+        params = runtime.params(request, path_kwargs)
+        payload = await runtime.payload(request)
+        result = await self._executor.run(
+            runtime.use_case_type,
+            factory=self._factory,
+            params=params,
+            payload=payload,
             read_only=compiled_route.read_only,
-        ):
-            _authorize_route(
-                identity, compiled_route.effective_requires_roles, compiled_route.full_path
-            )
-            params = runtime.params(request, path_kwargs)
-            payload = await runtime.payload(request)
-            result = await self._executor.run(
-                runtime.use_case_type,
-                factory=self._factory,
-                params=params,
-                payload=payload,
-                read_only=compiled_route.read_only,
-                identity=identity,
-            )
+            identity=identity,
+            attributes={
+                LogField.HTTP_ROUTE: compiled_route.full_path,
+                LogField.HTTP_REQUEST_METHOD: compiled_route.route.method.upper(),
+                LogField.HTTP_RESPONSE_STATUS_CODE: status_code,
+                LogField.READ_ONLY: compiled_route.read_only,
+            },
+        )
         if isinstance(result, Created):
             return created_response(result)
         return MsgspecJSONResponse(content=result, status_code=status_code)
@@ -713,7 +707,6 @@ def mount_interfaces(
     compiled_routes: Sequence[CompiledRoute],
     factory: UseCaseFactory,
     executor: UseCaseExecutor,
-    observability: Observability,
 ) -> dict[str, Any]:
     """Register compiled routes on a FastAPI application.
 
@@ -731,9 +724,8 @@ def mount_interfaces(
         compiled_routes: Ordered list of fully resolved routes produced by
             :class:`~loom.rest.compiler.RestInterfaceCompiler`.
         factory: Use-case factory for constructing instances per request.
-        executor: Runtime executor that drives the use-case pipeline.
-        observability: Shared runtime used to emit request lifecycle
-            events around each handler execution.
+        executor: Runtime executor that drives the use-case pipeline; its
+            observability opens each request's ``use_case`` scope.
 
     Returns:
         Mapping of schema name → JSON Schema fragment for all collected
@@ -743,20 +735,12 @@ def mount_interfaces(
 
         compiler = RestInterfaceCompiler(use_case_compiler)
         routes = compiler.compile(UserRestInterface)
-        component_schemas = mount_interfaces(
-            app,
-            routes,
-            factory,
-            executor,
-            observability=Observability.noop(),
-        )
+        component_schemas = mount_interfaces(app, routes, factory, executor)
     """
     component_registry: dict[str, Any] = {}
 
     for cr in compiled_routes:
-        handler = _RouteHandler(
-            _ResolvedRoute.from_compiled_route(cr), factory, executor, observability
-        )
+        handler = _RouteHandler(_ResolvedRoute.from_compiled_route(cr), factory, executor)
         summary, description = _route_docs(cr)
         request_body = build_request_body_schema(cr, component_registry)
         responses = build_success_responses(cr, component_registry)

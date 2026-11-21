@@ -28,6 +28,7 @@ from loom.ai.declarative import PolicySpec
 from loom.ai.errors import AgentRunError, AgentRunErrorCode
 from loom.ai.execution import AgentHost
 from loom.ai.execution._handle import AgentMarkerResolver
+from loom.ai.log_events import AiLogField
 from loom.core.di import LoomContainer
 from loom.core.engine.compiler import UseCaseCompiler
 from loom.core.engine.executor import UseCaseExecutor
@@ -359,11 +360,11 @@ class TestAgentPathIncludeIsWiredToo:
             with ExecutionScope(_ALICE):
                 await handle.mcp(_MCP_SERVER).call_untyped("read_orders", {})
 
-        tool_spans = [e.meta or {} for e in observer.events if e.scope is Scope.TOOL]
+        tool_spans = [e.attributes for e in observer.events if e.scope is Scope.TOOL]
         assert tool_spans
-        for meta in tool_spans:
-            assert meta.get("agent") == MARKER_AGENT_NAME, meta
-            assert "mcp_server" not in meta
+        for attributes in tool_spans:
+            assert attributes.get(AiLogField.AGENT) == MARKER_AGENT_NAME, attributes
+            assert AiLogField.MCP_SERVER not in attributes
 
     async def test_the_agent_deadline_is_the_plans_own_not_the_servers(
         self, deps: StubDepsFactory, container: LoomContainer

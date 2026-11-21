@@ -55,9 +55,11 @@ from loom.ai.errors import AgentRunError, AgentRunErrorCode
 from loom.ai.execution import AgentHost
 from loom.ai.fastapi.response import AgentJSONResponse, error_response, result_payload
 from loom.ai.fastapi.streaming import encode_sse_event, stream_sse
+from loom.ai.log_events import AiLogField
 from loom.core.config.errors import ConfigError
 from loom.core.errors import BoundaryValidationError
 from loom.core.identity import Identity, current_identity
+from loom.core.logger import LogField
 from loom.core.model import LoomFrozenStruct
 from loom.core.observability.event import Scope
 from loom.core.observability.observability import Observability
@@ -316,12 +318,13 @@ def _make_run_handler(
                 Scope.AGENT,
                 "agent_run",
                 trace_id=get_trace_id(),
-                route=path,
-                method="POST",
-                status_code=200,
-                agent=name,
-                subject=identity.subject,
-                mechanism=identity.mechanism,
+                attributes={
+                    LogField.HTTP_ROUTE: path,
+                    LogField.HTTP_REQUEST_METHOD: "POST",
+                    LogField.HTTP_RESPONSE_STATUS_CODE: 200,
+                    AiLogField.AGENT: name,
+                    LogField.AUTH_MECHANISM: identity.mechanism,
+                },
             )
             with always_closed(span), span.as_current():
                 result = await _annotated_run(host, span, name, body, identity, state)
@@ -392,11 +395,12 @@ def _stream_frames(
             Scope.AGENT,
             "agent_run",
             trace_id=get_trace_id(),
-            route=path,
-            method="POST",
-            agent=name,
-            subject=identity.subject,
-            mechanism=identity.mechanism,
+            attributes={
+                LogField.HTTP_ROUTE: path,
+                LogField.HTTP_REQUEST_METHOD: "POST",
+                AiLogField.AGENT: name,
+                LogField.AUTH_MECHANISM: identity.mechanism,
+            },
         )
         with always_closed(span):
             try:

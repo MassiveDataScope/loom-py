@@ -21,7 +21,6 @@ which composes the kernel from configuration. Directly::
     app = create_fastapi_app(
         kernel,
         RouteSources(python=[OrderRestInterface]),
-        observability=Observability.noop(),
         title="Orders API",
         version="1.0.0",
     )
@@ -37,7 +36,6 @@ from fastapi import FastAPI
 
 from loom.core.bootstrap.kernel import Kernel
 from loom.core.engine.executor import UseCaseExecutor
-from loom.core.observability.observability import Observability
 from loom.core.stores.repository import CursorCodec
 from loom.core.stores.repository.cursor import CURSORS_SECTION
 from loom.core.stores.repository.query import PaginationMode
@@ -122,7 +120,6 @@ def create_fastapi_app(
     kernel: Kernel,
     routes: RouteSources,
     *,
-    observability: Observability | None = None,
     middleware: Sequence[_MiddlewareClass] = (),
     defaults: RestApiDefaults | None = None,
     **fastapi_kwargs: Any,
@@ -150,8 +147,6 @@ def create_fastapi_app(
             route can be redeclared in ``routes.config`` without colliding
             with itself; an entry matching no Python-declared route aborts
             startup instead of doing nothing.
-        observability: Shared runtime used to emit lifecycle events
-            around each request.
         middleware: ASGI middleware classes to register on the application.
             Added in declaration order (first = outermost wrapper).
             Accepts any class compatible with ``FastAPI.add_middleware``.
@@ -163,7 +158,6 @@ def create_fastapi_app(
                 app = create_fastapi_app(
                     kernel,
                     RouteSources(python=[...]),
-                    observability=Observability.noop(),
                     middleware=[TraceIdMiddleware, PrometheusMiddleware],
                 )
         defaults: Global REST API defaults (pagination mode, profile policy).
@@ -186,26 +180,18 @@ def create_fastapi_app(
             kernel,
             RouteSources(python=[UserRestInterface, OrderRestInterface]),
             defaults=RestApiDefaults(pagination_mode=PaginationMode.CURSOR),
-            observability=Observability.noop(),
             title="My API",
             version="2.0.0",
         )
     """
     api = compile_api(kernel, routes, defaults=defaults)
-    runtime = observability or Observability.noop()
     app = FastAPI(**fastapi_kwargs)
     register_error_handlers(app)
 
     for mw_class in middleware:
         app.add_middleware(mw_class)
 
-    component_registry = mount_interfaces(
-        app,
-        api.routes,
-        api.factory,
-        api.executor,
-        observability=runtime,
-    )
+    component_registry = mount_interfaces(app, api.routes, api.factory, api.executor)
     if component_registry:
         _register_openapi_components(app, component_registry)
 

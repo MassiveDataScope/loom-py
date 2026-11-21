@@ -46,7 +46,9 @@ from loom.ai.config import AiConfig
 from loom.ai.errors import AgentRunError
 from loom.ai.execution import AgentHost
 from loom.ai.fastapi.response import ENCODER, AgentJSONResponse
+from loom.ai.log_events import AiLogField
 from loom.core.identity import Identity
+from loom.core.logger import LogField
 from loom.core.observability.event import Scope
 from loom.core.observability.observability import Observability
 from loom.core.observability.span import LoomSpan
@@ -255,12 +257,13 @@ def _make_send_handler(
             Scope.AGENT,
             "agent_run",
             trace_id=get_trace_id(),
-            route=f"{prefix}/{name}",
-            method="POST",
-            status_code=200,
-            agent=name,
-            subject=call.identity.subject,
-            mechanism=call.identity.mechanism,
+            attributes={
+                LogField.HTTP_ROUTE: f"{prefix}/{name}",
+                LogField.HTTP_REQUEST_METHOD: "POST",
+                LogField.HTTP_RESPONSE_STATUS_CODE: 200,
+                AiLogField.AGENT: name,
+                LogField.AUTH_MECHANISM: call.identity.mechanism,
+            },
         )
         try:
             with always_closed(span), span.as_current():
@@ -335,11 +338,12 @@ def _make_stream_handler(
                     Scope.AGENT,
                     "agent_run",
                     trace_id=get_trace_id(),
-                    route=f"{prefix}/{name}",
-                    method="POST",
-                    agent=name,
-                    subject=call.identity.subject,
-                    mechanism=call.identity.mechanism,
+                    attributes={
+                        LogField.HTTP_ROUTE: f"{prefix}/{name}",
+                        LogField.HTTP_REQUEST_METHOD: "POST",
+                        AiLogField.AGENT: name,
+                        LogField.AUTH_MECHANISM: call.identity.mechanism,
+                    },
                 )
             ):
                 async for frame in _run_frames(

@@ -44,6 +44,7 @@ from celery.concurrency import get_implementation  # type: ignore[import-untyped
 from celery.concurrency.prefork import TaskPool as PreforkPool  # type: ignore[import-untyped]
 from celery.exceptions import WorkerTerminate  # type: ignore[import-untyped]
 from celery.signals import (  # type: ignore[import-untyped]
+    setup_logging,
     worker_init,
     worker_process_init,
     worker_process_shutdown,
@@ -92,6 +93,7 @@ _EX_FAILURE = 1
 """Exit status of a worker that cannot start."""
 
 _SIGNAL_UIDS = {
+    setup_logging: "loom.celery.setup_logging",
     worker_init: "loom.celery.worker.init",
     worker_process_init: "loom.celery.worker.process_init",
     worker_process_shutdown: "loom.celery.worker.process_shutdown",
@@ -251,8 +253,13 @@ def _connect_lifecycle_signals(lifecycle: _WorkerLifecycle) -> None:
     Each handler carries a ``dispatch_uid``, so composing a worker again (in
     integration tests, say) replaces the previous handlers instead of
     accumulating them: only the latest application is checked, opened and
-    closed.
+    closed. ``setup_logging`` has a receiver that does nothing, so Celery does
+    not take the root logger over: loom configured it, and the worker's records
+    go through loom's record factory and handlers.
     """
+
+    def _keep_loom_logging(**kwargs: Any) -> None:
+        del kwargs
 
     def _on_worker_init(sender: Any = None, **kwargs: Any) -> None:
         lifecycle.on_worker_init(sender)
@@ -264,6 +271,7 @@ def _connect_lifecycle_signals(lifecycle: _WorkerLifecycle) -> None:
         lifecycle.close()
 
     handlers = {
+        setup_logging: _keep_loom_logging,
         worker_init: _on_worker_init,
         worker_process_init: _on_process_init,
         worker_process_shutdown: _on_shutdown,

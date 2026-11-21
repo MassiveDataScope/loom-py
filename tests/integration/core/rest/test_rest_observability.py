@@ -50,8 +50,8 @@ class _RecordingObserver:
         self.events.append(event)
 
 
-def _product_kernel(harness: HttpTestHarness) -> Kernel:
-    """A kernel serving every product use case from *harness*'s repositories.
+def _product_kernel(harness: HttpTestHarness, runtime: Observability) -> Kernel:
+    """A kernel serving every product use case from *harness*'s repositories, in *runtime*'s scopes.
 
     ``ProductRepo`` is bound to a plain in-memory repository: the harness binds
     its fakes under the model, which an error-forcing proxy would not carry to the
@@ -70,6 +70,7 @@ def _product_kernel(harness: HttpTestHarness) -> Kernel:
         modules=[
             harness._build_module(),
             lambda container: container.register_instance(ProductRepo, InMemoryProductRepository()),
+            lambda container: container.register_instance(Observability, runtime),
         ],
     )
 
@@ -86,12 +87,10 @@ def _build_full_stack_client(
         method, exc = error_on
         harness.force_error(Product, method, exc)
 
-    result = _product_kernel(harness)
     runtime = Observability([observer]) if observer else Observability.noop()
     app = create_fastapi_app(
-        result,
+        _product_kernel(harness, runtime),
         RouteSources(python=[ProductRestInterface]),
-        observability=runtime,
         middleware=[TraceIdMiddleware],
     )
     return TestClient(app, raise_server_exceptions=False)
@@ -228,12 +227,9 @@ class TestSpanEventsFromRESTLayer:
 
         harness = HttpTestHarness()
         harness.inject_repo(Product, InMemoryProductRepository())
-        result = _product_kernel(harness)
-        runtime = Observability([_BrokenObserver()])
         app = create_fastapi_app(
-            result,
+            _product_kernel(harness, Observability([_BrokenObserver()])),
             RouteSources(python=[ProductRestInterface]),
-            observability=runtime,
             middleware=[TraceIdMiddleware],
         )
         client = TestClient(app, raise_server_exceptions=False)

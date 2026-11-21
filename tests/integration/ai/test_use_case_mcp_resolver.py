@@ -20,6 +20,7 @@ from loom.ai.errors import AgentRunError, AgentRunErrorCode
 from loom.ai.execution import AgentHost
 from loom.ai.execution._handle import McpMarkerResolver
 from loom.ai.execution._lifecycle import UseCaseMcpGrant
+from loom.ai.log_events import AiLogField
 from loom.core.di import LoomContainer
 from loom.core.execution import ExecutionScope
 from loom.core.identity import Identity
@@ -216,13 +217,11 @@ class TestTheSpanDistinguishesTheUseCasePath:
         tool_spans = [e for e in observer.events if e.scope is Scope.TOOL]
         assert tool_spans
         for event in tool_spans:
-            meta = event.meta or {}
-            assert meta.get("mcp_server") == "alpha-tools"
-            assert "agent" not in meta
-            # FR-09, and the only place the binding is observable: the span is
-            # where this path's identity surfaces, so without this the resolver
-            # could hand the view an anonymous identity and nothing would fail.
-            assert meta.get("subject") == identity.subject
+            assert event.attributes.get(AiLogField.MCP_SERVER) == "alpha-tools"
+            assert AiLogField.AGENT not in event.attributes
+        assert set(observer.started_as(Scope.TOOL)) == {identity.subject}, (
+            "FR-09: the identity the tool span runs as is the only place the binding shows"
+        )
 
 
 class TestTimeoutComesFromTheServersOwnDeadline:

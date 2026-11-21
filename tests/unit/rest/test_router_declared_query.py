@@ -17,7 +17,6 @@ from pydantic.alias_generators import to_camel
 from loom.core.di.container import LoomContainer
 from loom.core.engine.compiler import UseCaseCompiler
 from loom.core.engine.executor import UseCaseExecutor
-from loom.core.observability.observability import Observability
 from loom.core.stores.repository.registration import classify_key
 from loom.core.use_case import Query
 from loom.core.use_case.factory import UseCaseFactory, main_repository
@@ -149,7 +148,6 @@ def client(factory: _RecordingFactory) -> TestClient:
         RestInterfaceCompiler(compiler).compile(AcmeOrderQueryApi),
         factory,
         UseCaseExecutor(compiler),
-        Observability.noop(),
     )
     _register_openapi_components(app, registry)
     return TestClient(app)

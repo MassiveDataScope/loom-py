@@ -37,9 +37,11 @@ from loom.ai.execution._grants import (
     SqlGrantView,
 )
 from loom.ai.execution._lifecycle import AgentHost
+from loom.ai.log_events import AiLogField
 from loom.core.errors import IdentityFixed
 from loom.core.execution import ExecutionResolver, current_execution, execution_identity
 from loom.core.identity import Identity
+from loom.core.logger import LogField
 from loom.core.observability.event import Scope
 from loom.core.observability.observability import Observability
 from loom.core.observability.span import LoomSpan
@@ -196,7 +198,7 @@ class _AgentHandle:
         if grant is None:
             raise self._mcp_grant_unknown(server, grants)
         return McpGrantView(
-            span_attributes={"agent": self._name},
+            span_attributes={AiLogField.AGENT: self._name},
             capability=grant.capability,
             include=grant.capability.include,
             exclude=grant.capability.exclude,
@@ -273,9 +275,7 @@ class _AgentHandle:
         return self._observability.open_span(
             Scope.AGENT,
             "agent_run",
-            agent=self._name,
-            subject=caller.subject,
-            mechanism=caller.mechanism,
+            attributes={AiLogField.AGENT: self._name, LogField.AUTH_MECHANISM: caller.mechanism},
         )
 
     @staticmethod
@@ -283,7 +283,7 @@ class _AgentHandle:
         if span is None:
             return
         if interaction_id is not None:
-            span.annotate({"interaction_id": interaction_id})
+            span.annotate({AiLogField.INTERACTION_ID: interaction_id})
         span.end()
 
     @staticmethod
@@ -291,7 +291,7 @@ class _AgentHandle:
         if span is None:
             return
         if exc.interaction_id is not None:
-            span.annotate({"interaction_id": exc.interaction_id})
+            span.annotate({AiLogField.INTERACTION_ID: exc.interaction_id})
         span.fail(exc)
 
 
@@ -492,7 +492,7 @@ class _McpHandle:
             cached = self._view = (
                 grant,
                 McpGrantView(
-                    span_attributes={"mcp_server": self._server},
+                    span_attributes={AiLogField.MCP_SERVER: self._server},
                     capability=grant.capability,
                     include=self._include,
                     exclude=(),

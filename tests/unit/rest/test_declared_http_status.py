@@ -26,11 +26,13 @@ from loom.core.errors import (
     SystemError,
 )
 from loom.core.errors.codes import ErrorCode
+from loom.core.logger import LogField
+from loom.core.logger.formats import record_fields
 from loom.core.tracing import get_trace_id
 from loom.rest.errors import HttpErrorMapper
 from loom.rest.fastapi.runtime import FastAPIRuntime
 from loom.serverless.aws.lambda_ import LambdaRuntime
-from loom.serverless.aws.lambda_.triggers.http import LambdaHTTPHandler
+from loom.serverless.aws.lambda_.boundary import LambdaBoundary
 from loom.testing import LambdaTestClient
 
 _LEAKY = "postgresql://db.internal:5432/orders"
@@ -115,12 +117,10 @@ def _assert_misdeclaration_logged(
     assert len(records) == 1
     record = records[0]
     assert record.levelno == logging.ERROR
-    assert record.exc_info is not None
+    assert record.__dict__[LogField.EXCEPTION_TYPE]
     assert class_name in record.getMessage()
     assert problem in record.getMessage()
-    logged = record.getMessage()
-    if record.exc_info is not None:
-        logged = f"{logged} {record.exc_info[1]}"
+    logged = f"{record.getMessage()} {record_fields(record)}"
     for secret in hidden:
         assert secret not in logged
 
@@ -565,7 +565,7 @@ class TestDeclaredStatusAcrossRuntimes:
         fastapi_app = create_app(config, runtime=FastAPIRuntime(), environment="test")
         handler = create_app(config, runtime=LambdaRuntime(), environment="test")
         assert isinstance(fastapi_app, FastAPI)
-        assert isinstance(handler, LambdaHTTPHandler)
+        assert isinstance(handler, LambdaBoundary)
         expected = {
             "detail": {
                 "trace_id": _TRACE,
@@ -599,7 +599,7 @@ class TestDeclaredStatusAcrossRuntimes:
         fastapi_app = create_app(config, runtime=FastAPIRuntime(), environment="test")
         handler = create_app(config, runtime=LambdaRuntime(), environment="test")
         assert isinstance(fastapi_app, FastAPI)
-        assert isinstance(handler, LambdaHTTPHandler)
+        assert isinstance(handler, LambdaBoundary)
         expected = {
             "detail": {
                 "trace_id": _TRACE,

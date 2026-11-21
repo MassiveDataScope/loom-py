@@ -746,7 +746,7 @@ class TestUsageOnTheAgentSpan:
             for event in recorder.events
             if event.scope is Scope.AGENT and event.kind is not EventKind.START
         )
-        return closing.meta
+        return closing.attributes
 
     async def test_publishes_the_run_cost_when_it_sends_a_message(
         self, deps: StubDepsFactory, container: LoomContainer

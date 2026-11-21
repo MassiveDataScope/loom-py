@@ -34,6 +34,7 @@ from celery.exceptions import TaskPredicate  # type: ignore[import-untyped]
 
 from loom.celery.constants import callback_task_name
 from loom.celery.errors import WorkerNotOpenError
+from loom.celery.log_events import CeleryLogField
 from loom.celery.service import CallbackLink
 from loom.core.async_bridge import AsyncBridge
 from loom.core.execution import ExecutionScope
@@ -398,7 +399,13 @@ def _make_callback_task(
     ) -> None:
         with (
             job_context(trace_id, identity),
-            runtime.span(Scope.JOB, name, trace_id=trace_id, id=job_id, callback=outcome.value),
+            runtime.span(
+                Scope.JOB,
+                name,
+                trace_id=trace_id,
+                id=job_id,
+                attributes={CeleryLogField.CALLBACK: outcome.value},
+            ),
         ):
             await notify(
                 factory,
@@ -429,7 +436,13 @@ def _make_callback_task(
             return
         with (
             job_context(trace_id, identity),
-            runtime.span(Scope.JOB, name, trace_id=trace_id, id=job_id, callback=outcome.value),
+            runtime.span(
+                Scope.JOB,
+                name,
+                trace_id=trace_id,
+                id=job_id,
+                attributes={CeleryLogField.CALLBACK: outcome.value},
+            ),
         ):
             arguments = {
                 **context,

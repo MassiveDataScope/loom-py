@@ -9,7 +9,7 @@ from loom.ai.execution._handle import McpMarkerResolver
 from loom.core.engine.compiler import UseCaseCompiler
 from loom.core.engine.executor import UseCaseExecutor
 from loom.core.identity import Identity
-from loom.core.observability.event import EventKind, Scope
+from loom.core.observability.event import Scope
 from loom.core.observability.observability import Observability
 from loom.core.use_case import Caller, Mcp, UseCase
 from tests.integration.ai.conftest import RecordingMcpSession, RecordingObserver
@@ -43,11 +43,7 @@ class TestDuringAnAgentRun:
         async with host:
             await host.run(AGENT, "p", identity=ALICE)
 
-        subjects = {
-            event.meta["subject"]
-            for event in recorder.events
-            if event.scope is Scope.TOOL and event.kind is EventKind.START
-        }
+        subjects = set(recorder.started_as(Scope.TOOL))
         assert subjects == {ALICE.subject}
         assert len(session.calls) == 2
 

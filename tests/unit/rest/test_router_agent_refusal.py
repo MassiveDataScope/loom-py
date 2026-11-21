@@ -14,7 +14,6 @@ from loom.core.di.container import LoomContainer
 from loom.core.engine.compiler import UseCaseCompiler
 from loom.core.engine.executor import UseCaseExecutor
 from loom.core.identity import ANONYMOUS, Identity, reset_identity, set_identity
-from loom.core.observability.observability import Observability
 from loom.core.stores.repository.registration import classify_key
 from loom.core.use_case.factory import UseCaseFactory, main_repository
 from loom.core.use_case.use_case import UseCase
@@ -50,7 +49,6 @@ def _app(caller: Identity) -> FastAPI:
         RestInterfaceCompiler(compiler).compile(RefusedRunInterface),
         factory,
         UseCaseExecutor(compiler),
-        observability=Observability.noop(),
     )
 
     @app.middleware("http")

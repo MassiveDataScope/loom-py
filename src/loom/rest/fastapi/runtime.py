@@ -723,7 +723,6 @@ class FastAPIRuntime:
         app = create_fastapi_app(
             application.kernel,
             declared.routes,
-            observability=application.observability,
             title=rest_cfg.title,
             version=rest_cfg.version,
             docs_url=rest_cfg.docs_url,

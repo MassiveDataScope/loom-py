@@ -33,12 +33,14 @@ import msgspec
 from celery import Celery  # type: ignore[import-untyped]
 
 from loom.celery.constants import callback_task_name
+from loom.celery.log_events import CeleryLogField
 from loom.core.engine.events import EventKind, ExecutionEvent
 from loom.core.engine.execution_observer import NullExecutionObserver
 from loom.core.job.callback import CallbackOutcome
 from loom.core.job.context import add_pending_publish
 from loom.core.job.dispatch import JobDispatch
 from loom.core.job.handle import JobHandle
+from loom.core.logger import LogField
 from loom.core.observability.event import Scope
 from loom.core.observability.observability import Observability
 
@@ -76,9 +78,11 @@ class _PendingCeleryDispatch:
             self.task_name,
             trace_id=self.trace_id,
             id=self.task_id,
-            queue=self.queue,
-            countdown=self.countdown,
-            priority=self.priority,
+            attributes={
+                LogField.MESSAGING_DESTINATION_NAME: self.queue,
+                CeleryLogField.COUNTDOWN: self.countdown,
+                CeleryLogField.PRIORITY: self.priority,
+            },
         ):
             self.celery_app.send_task(
                 self.task_name,

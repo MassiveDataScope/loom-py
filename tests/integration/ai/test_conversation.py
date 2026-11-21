@@ -35,6 +35,7 @@ from loom.core.di import LoomContainer
 from loom.core.errors import Forbidden
 from loom.core.execution import ExecutionScope
 from loom.core.identity import Identity
+from loom.core.logger import LogField
 from loom.core.use_case import Caller, Input, UseCase
 from loom.core.use_case.invoker import ApplicationInvoker
 from loom.core.use_case.keys import use_case_key
@@ -641,9 +642,8 @@ class TestLoaderFailures:
             if record.name == "loom.ai.execution._turn" and record.levelno == logging.ERROR
         ]
         assert len(records) == 1
-        assert records[0].exc_text is not None
-        assert "2049" in records[0].exc_text
-        assert "2048" in records[0].exc_text
+        assert LogField.EXCEPTION_STACKTRACE in records[0].__dict__
+        assert "2049" not in caplog.text, "the sizes are in the message, which no record carries"
         assert "2049" not in str(error)
         assert "2048" not in str(error)
 

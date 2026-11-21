@@ -19,6 +19,7 @@ from opentelemetry.trace import StatusCode
 from loom.ai.engines.pydantic_ai._guards import BuildContext, capability_call
 from loom.ai.engines.pydantic_ai._mcp import SharedMcpToolsets
 from loom.ai.errors import AgentRunError, AgentRunErrorCode
+from loom.ai.log_events import AiLogField
 from loom.core.di import LoomContainer
 from loom.core.identity import Identity
 from loom.core.observability.event import Scope
@@ -57,7 +58,9 @@ class TestToolSpanNesting:
                 mcp=SharedMcpToolsets(),
                 mcp_grants=(),
             )
-            agent = host.open_span(Scope.AGENT, "agent_run", agent="analyst")
+            agent = host.open_span(
+                Scope.AGENT, "agent_run", attributes={AiLogField.AGENT: "analyst"}
+            )
             return exporter, context, agent
 
         return open_run
@@ -79,8 +82,8 @@ class TestToolSpanNesting:
         assert _parent_span_id(agent_span) is None
         assert tool_span.status.status_code is StatusCode.OK
         assert tool_span.attributes is not None
-        assert tool_span.attributes["capability"] == "usecase"
-        assert tool_span.attributes["subject"] == "tester"
+        assert tool_span.attributes[AiLogField.CAPABILITY] == "usecase"
+        assert "subject" not in tool_span.attributes
 
     @pytest.mark.asyncio
     async def test_a_timed_out_tool_closes_its_span_as_an_error_under_the_agent_span(

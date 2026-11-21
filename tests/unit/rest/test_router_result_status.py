@@ -12,7 +12,6 @@ from fastapi.testclient import TestClient
 from loom.core.di.container import LoomContainer
 from loom.core.engine.compiler import UseCaseCompiler
 from loom.core.engine.executor import UseCaseExecutor
-from loom.core.observability.observability import Observability
 from loom.core.stores.repository.registration import classify_key
 from loom.core.use_case import Created
 from loom.core.use_case.factory import UseCaseFactory, main_repository
@@ -84,11 +83,7 @@ def _client(interface: type[RestInterface[Any]]) -> TestClient:
     app = FastAPI()
     register_error_handlers(app)
     registry = mount_interfaces(
-        app,
-        RestInterfaceCompiler(compiler).compile(interface),
-        factory,
-        UseCaseExecutor(compiler),
-        Observability.noop(),
+        app, RestInterfaceCompiler(compiler).compile(interface), factory, UseCaseExecutor(compiler)
     )
     _register_openapi_components(app, registry)
     return TestClient(app)

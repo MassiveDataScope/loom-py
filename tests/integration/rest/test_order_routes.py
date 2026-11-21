@@ -15,7 +15,6 @@ from loom.core.bootstrap import create_kernel
 from loom.core.command import Command
 from loom.core.di.container import LoomContainer
 from loom.core.errors import NotFound, RateLimited
-from loom.core.observability.observability import Observability
 from loom.core.use_case import Created, Input, Query
 from loom.core.use_case.use_case import UseCase
 from loom.rest.compiler import RouteSources
@@ -172,11 +171,7 @@ def _client(tokens: int = 10) -> TestClient:
     result = create_kernel(
         config=_Config(), use_cases=[ListOrders, CreateOrder, CancelOrder], modules=modules
     )
-    app = create_fastapi_app(
-        result,
-        RouteSources(python=[OrdersInterface]),
-        observability=Observability.noop(),
-    )
+    app = create_fastapi_app(result, RouteSources(python=[OrdersInterface]))
     return TestClient(app)
 
 

@@ -19,7 +19,6 @@ from loom.core.command import Command
 from loom.core.di.container import LoomContainer
 from loom.core.engine.compiler import UseCaseCompiler
 from loom.core.engine.executor import UseCaseExecutor
-from loom.core.observability.observability import Observability
 from loom.core.stores.repository.registration import classify_key
 from loom.core.use_case.factory import UseCaseFactory, main_repository
 from loom.core.use_case.markers import Input
@@ -101,11 +100,7 @@ def _openapi() -> dict[str, Any]:
         factory.register(route.use_case)
     app = FastAPI()
     registry = mount_interfaces(
-        app,
-        RestInterfaceCompiler(compiler).compile(Payments),
-        factory,
-        UseCaseExecutor(compiler),
-        Observability.noop(),
+        app, RestInterfaceCompiler(compiler).compile(Payments), factory, UseCaseExecutor(compiler)
     )
     _register_openapi_components(app, registry)
     document: dict[str, Any] = TestClient(app).get("/openapi.json").json()

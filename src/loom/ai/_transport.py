@@ -30,7 +30,9 @@ from starlette.requests import Request
 from loom.ai.abc import AgentEvent, AgentResult, AgentUsage, ErrorEvent, FinalEvent
 from loom.ai.config import AgentEndpointConfig
 from loom.ai.errors import AgentRunError, AgentRunErrorCode
+from loom.ai.log_events import AiLogField
 from loom.core.identity import Identity, current_identity
+from loom.core.logger import LogKey, Scalar
 from loom.core.model import LoomType
 from loom.core.observability.span import LoomSpan
 
@@ -165,11 +167,7 @@ def require_caller(name: str, endpoint: AgentEndpointConfig | None) -> Identity:
     raise TransportError(401, "UNAUTHORIZED", f"agent {name!r} requires a verified caller")
 
 
-_USAGE_PREFIX: Final[str] = "gen_ai.usage."
-"""Prefix of the OpenTelemetry GenAI usage attributes both surfaces publish."""
-
-
-def usage_attributes(usage: AgentUsage) -> dict[str, object]:
+def usage_attributes(usage: AgentUsage) -> dict[LogKey, Scalar]:
     """Return the closing span attributes carrying one run's usage.
 
     Mapped from loom's own :class:`~loom.ai.abc.AgentUsage`, not from the
@@ -183,7 +181,8 @@ def usage_attributes(usage: AgentUsage) -> dict[str, object]:
     free run and win a cost comparison it never entered — but it always
     contributes ``cost_known``, so a dashboard summing the cost can tell a
     complete total from a lower bound instead of silently reporting one as the
-    other.
+    other. The engine's own usage details have no key in the vocabulary and are
+    not published.
 
     Args:
         usage: Accounting of the run that is about to close its span.
@@ -192,19 +191,17 @@ def usage_attributes(usage: AgentUsage) -> dict[str, object]:
         The attributes, ready for
         :meth:`~loom.core.observability.span.LoomSpan.annotate`.
     """
-    attributes: dict[str, object] = {
-        f"{_USAGE_PREFIX}input_tokens": usage.input_tokens,
-        f"{_USAGE_PREFIX}output_tokens": usage.output_tokens,
-        f"{_USAGE_PREFIX}cache_read.input_tokens": usage.cache_read_tokens,
-        f"{_USAGE_PREFIX}cache_creation.input_tokens": usage.cache_write_tokens,
-        f"{_USAGE_PREFIX}requests": usage.requests,
-        f"{_USAGE_PREFIX}tool_calls": usage.tool_calls,
-        f"{_USAGE_PREFIX}cost_known": usage.cost is not None,
+    attributes: dict[LogKey, Scalar] = {
+        AiLogField.USAGE_INPUT_TOKENS: usage.input_tokens,
+        AiLogField.USAGE_OUTPUT_TOKENS: usage.output_tokens,
+        AiLogField.USAGE_CACHE_READ_INPUT_TOKENS: usage.cache_read_tokens,
+        AiLogField.USAGE_CACHE_CREATION_INPUT_TOKENS: usage.cache_write_tokens,
+        AiLogField.USAGE_REQUESTS: usage.requests,
+        AiLogField.USAGE_TOOL_CALLS: usage.tool_calls,
+        AiLogField.USAGE_COST_KNOWN: usage.cost is not None,
     }
     if usage.cost is not None:
-        attributes[f"{_USAGE_PREFIX}cost"] = float(usage.cost)
-    for name, value in usage.details.items():
-        attributes[f"{_USAGE_PREFIX}details.{name}"] = value
+        attributes[AiLogField.USAGE_COST] = float(usage.cost)
     return attributes
 
 

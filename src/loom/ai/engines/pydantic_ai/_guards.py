@@ -36,6 +36,7 @@ from loom.ai.errors import (
     AgentRunErrorCode,
     require_authenticated,
 )
+from loom.ai.log_events import AiLogField
 from loom.core.di import LoomContainer
 from loom.core.identity import Identity
 from loom.core.observability.event import Scope
@@ -131,18 +132,14 @@ def bundle_container(run: RunContext[Any]) -> LoomContainer:
     return container
 
 
-def _span(
-    context: BuildContext, kind: str, tool: str, identity: Identity
-) -> AbstractContextManager[None]:
+def _span(context: BuildContext, kind: str, tool: str) -> AbstractContextManager[None]:
     """Open the ``Scope.TOOL`` span of one capability call, or a no-op."""
     if context.observability is None:
         return nullcontext()
     return context.observability.span(
         Scope.TOOL,
         tool,
-        agent=context.agent,
-        capability=kind,
-        subject=identity.subject,
+        attributes={AiLogField.AGENT: context.agent, AiLogField.CAPABILITY: kind},
     )
 
 
@@ -151,7 +148,7 @@ async def capability_call(
     context: BuildContext, kind: str, tool: str, identity: Identity
 ) -> AsyncIterator[None]:
     """Bound one capability call by the plan's tool timeout, inside its span."""
-    with _span(context, kind, tool, identity):
+    with _span(context, kind, tool):
         try:
             async with asyncio.timeout(context.timeout_s):
                 yield
