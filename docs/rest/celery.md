@@ -181,6 +181,34 @@ start-up: use Celery or SQS in production. A Lambda function composes no
 timer: its inline service refuses a countdown above zero with `JobDelayRefusedError`,
 abandons a `JobPostponement`, and abandons a failing job at its first attempt with its own error.
 
+### Shutdown of delayed jobs
+
+What stopping the application does with the delayed jobs the inline timer holds is
+configured, and `Application.running()` exiting is the only trigger: the application
+calls nothing.
+
+```yaml
+jobs:
+  shutdown:
+    mode: wait        # wait | cancel (default: cancel)
+    timeout_s: 600    # only with wait; optional, no limit when absent
+```
+
+| Mode | On exit |
+|------|---------|
+| `cancel` (default) | Cancels every pending step and logs one `WARNING`, `Delayed jobs lost at shutdown`, listing them as `Job:task_id`. |
+| `wait` | Waits until no step is pending, counting the steps scheduled meanwhile (retries, postponements, callbacks of running steps), for at most `timeout_s`. What is still pending then is cancelled and logged as in `cancel`. |
+
+A server keeps `cancel`: stopping must be quick, and a job delayed inline is not durable
+anyway. A CLI or a process that ends by itself uses `wait`, so the delayed jobs it
+started finish before it exits. A `timeout_s` with `cancel`, a timeout of zero or less
+and an unknown mode are a `ConfigError` at start-up and in `loom check`. Celery and SQS
+hold nothing pending in this process, so `jobs.shutdown` does not affect them.
+
+In tests, `ManualTimer(JobShutdown(mode=ShutdownMode.WAIT))` follows the same contract in
+fake time: `await timer.close()` runs the pending steps until idle or until `timeout_s`
+seconds of the fake clock, and `timer.lost` lists what was dropped.
+
 ---
 
 ## Callbacks
