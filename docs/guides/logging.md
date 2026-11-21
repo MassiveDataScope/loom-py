@@ -65,6 +65,62 @@ turns lifecycle records off.
 No exception message reaches any output loom emits: logs, span status and
 events, the Lambda error report.
 
+## Loom's log is the source of truth
+
+A failure's details live in one place, loom's log: its type, its code, the
+fields it declares and its frames-only stack, written once. Everything else
+gets the exception's **public form** or a **reference** to that record.
+
+- **An exception's message is never a payload.** HTTP error bodies, SSE error
+  events, a2a task status, Kafka error envelopes and DLQ headers, the `loom`
+  command's output and Prefect states and notifications carry
+  `public_form(exc)`: a `LoomError`'s code and declared fields, any other
+  exception's fully qualified type. A validation error answered as `4xx`
+  (422 included) keeps its text, which is about the data the client sent: a
+  custom validator must not put a secret in its message.
+- **A `LoomError` declares safe fields** with `log_fields()`, a mapping of
+  `LogKey` members to scalars, empty by default. They go into the record and
+  the public form through value rendering, so a `Secret` stays masked.
+
+  ```python
+  class InvoiceLocked(Conflict):
+      def __init__(self, invoice_id: int) -> None:
+          super().__init__(f"invoice {invoice_id} is locked")
+          self.invoice_id = invoice_id
+
+      def log_fields(self) -> Mapping[LogKey, Scalar]:
+          return {BillingLogField.INVOICE_ID: self.invoice_id}
+  ```
+
+  Its `409` body says `conflict billing.invoice_id=7`; the message stays in
+  the process for the developer.
+- **A handoff hands a reference.** Where a failure leaves the process to a
+  runtime, a broker or a result store, loom raises a `FailureReference`
+  instead: type, code, `trace_id`, `expected` and `retryable`, never the
+  original. The failure is logged first when no record wrote its stack. The
+  handoffs are the Lambda Init and every invocation, the ASGI lifespan
+  (startup and shutdown), the Celery result, retry, failure callback and
+  worker init, and a flow built by loom's Prefect factories. A test that sees
+  the reference reads the failure from its record:
+
+  ```python
+  from loom.testing.failures import logged_failure
+
+  with pytest.raises(FailureReference) as raised:
+      worker.run(InvoiceJob)
+  record = logged_failure(caplog.records, raised.value)
+  assert record.__dict__["exception.type"] == "billing.errors.InvoiceLocked"
+  ```
+
+  Celery stores the reference: `AsyncResult.get()` and an eager task raise it,
+  and loom's task base decides retries itself (`autoretry_for` is not
+  supported). A failure callback receives `exc_type`, the original's fully
+  qualified type, and `exc_msg`, the reference's text.
+- `loom.testing.log_calls.exception_text_offences(paths)` finds every place
+  your code formats an exception's text (`str`, `repr`, an f-string, `%`,
+  `.format()` of an except-bound or exception-typed name or its `.args`, or
+  `traceback` text). It cannot see text built through a helper.
+
 ## One fact, one record
 
 - A scope (use case, job, step, node) writes `observability.lifecycle_started`
@@ -100,11 +156,19 @@ A package adds a format under the `loom.logging.formats` entry-point group.
 
 ## Uncaught exceptions and Lambda
 
-`sys.excepthook`, `threading.excepthook` and the asyncio exception handler of a
-running application write one ERROR record through loom. On Lambda, an
-exception that leaves the handler, a trigger or the init is logged once, then
-replaced by a `LambdaInvocationError` naming only its type and code: the
-runtime's `errorMessage` carries no value. Query `exception.type` and
+A runtime entry point, not `configure_logging`, installs the process hooks:
+Lambda Init, the ASGI lifespan, Celery worker init and the `loom` command. So
+a test runner keeps its own. `sys.excepthook`, `threading.excepthook` and
+`sys.unraisablehook` write one record through loom, and warnings are captured
+as `py.warnings` records that carry their category only. `Application.running`
+sets the asyncio exception handler, which covers uvicorn's loop and every loop
+loom hosts. Lambda Init and the `loom` command install the record factory
+before they read any configuration.
+
+On Lambda, an exception that leaves the Init or an invocation is logged once,
+then replaced by a reference whose class is named after the original type, so
+`errorType` still names it for Step Functions; `errorMessage` is the
+reference's text: type, code and `trace_id`. Query `exception.type` and
 `loom.error.code` in the logged record.
 
 ## Third-party libraries
@@ -119,6 +183,23 @@ WARNING, `celery.app.trace` at ERROR; `loom.logger.W001` warns when
 - **Celery:** loom connects `setup_logging`, so Celery leaves the root logger alone.
 - **Prefect:** Prefect's own run loggers write through Prefect's handlers; loom
   stamps their records but cannot clean the messages Prefect builds.
+
+## Outside loom
+
+Loom's rules cover what loom emits and what passes through `logging`. These
+stay outside, each with its own limit:
+
+- OpenTelemetry auto-instrumentations, the Lambda OpenTelemetry layer and Sentry
+  write their own spans and events, with the messages they choose.
+- Text a library builds itself and logs as a plain string: the floors above
+  limit how much of it is written.
+- Celery's own failure log of a task's arguments, and text a library prints
+  straight to stderr.
+- A failure in your imports before loom loads.
+- A Prefect flow you decorate with `@flow` yourself: only flows built by loom's
+  factories hand Prefect a reference.
+- A marked exception raised again writes only its type: frames it gained after
+  its first report are not written.
 
 ## ETL: logging never computes
 
