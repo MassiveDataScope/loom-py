@@ -19,7 +19,7 @@ from loom.core.errors import MalformedJobMessage
 from loom.core.identity import ON_BEHALF_OF_ATTRIBUTE, Identity
 from loom.core.identity.wire import encode_identity
 from loom.core.job.envelope import JobEnvelope
-from loom.core.job.outcome import Abandoned, Failed, failure_log_fields
+from loom.core.job.outcome import Abandoned, Failed
 from loom.core.job.policy import Redelivery
 from loom.core.job.runner import JobRunner
 from loom.serverless.aws.lambda_._jobs import (
@@ -36,6 +36,7 @@ from loom.serverless.aws.lambda_._refusals import (
     check_resolved_ai,
     refuse_unserved_config,
 )
+from loom.serverless.aws.lambda_.boundary import LambdaBoundary
 from loom.serverless.aws.lambda_.functions import (
     EventTrigger,
     HttpTrigger,
@@ -160,8 +161,9 @@ class LambdaRuntime:
             CompositionStateError: When :meth:`recipe` has not run on this
                 instance, or it is already bound.
             ConfigError: When an authentication exclusion reaches a templated route.
-            LambdaUnservedConfigError: When an MCP server resolves to ``transport: stdio``.
-            Exception: The failure to open the application, as itself.
+            LambdaInvocationError: For the failure to open the application, or
+                an MCP server resolving to ``transport: stdio``: logged once, then
+                raised with its type and code only, so Init reports no value.
         """
         if self._bind is None:
             raise CompositionStateError(
@@ -171,8 +173,11 @@ class LambdaRuntime:
             raise CompositionStateError(
                 CompositionErrorCode.RUNTIME_ALREADY_COMPOSED.issue(component=COMPONENT)
             )
-        check_resolved_ai(application.ai.config)
-        self._handler = self._bind(application)
+        try:
+            check_resolved_ai(application.ai.config)
+            self._handler = LambdaBoundary(self._bind(application))
+        except Exception as exc:
+            raise LambdaBoundary.reported(exc) from None
         return self._handler
 
     def close(self) -> None:
@@ -247,7 +252,7 @@ def _bind_direct_events(
     read = _event_reader(name, trigger, _DIRECT, trusts_requester=True)
     host = open_host(application)
     runner = job_runner(application, Redelivery.SAME)
-    return _DirectEvents(application, runner, host, job_type, read, trigger.job, name)
+    return _DirectEvents(application, runner, host, job_type, read, trigger.job)
 
 
 def _event_reader(
@@ -318,7 +323,6 @@ class _DirectEvents:
         job_type: type[Job[Any]],
         read: Read,
         label: str,
-        function: str,
     ) -> None:
         self._application = application
         self._consumer = JobConsumer(application.job_settings, runner)
@@ -326,7 +330,6 @@ class _DirectEvents:
         self._job_type = job_type
         self._read = read
         self._label = label
-        self._function = function
 
     def __call__(self, event: dict[str, Any], context: Any) -> None:
         """Run the jobs of *event* in order; any failure fails the invocation.
@@ -336,31 +339,19 @@ class _DirectEvents:
                 as itself: Lambda retries the event, then sends it to the
                 on-failure destination.
         """
-        try:
-            for envelope, span_id in self._envelopes(event):
-                outcome = self._host.run(
-                    self._consumer.run_envelope(
-                        envelope,
-                        self._job_type,
-                        span_id,
-                        context,
-                        attempt=1,
-                        postponements=0,
-                    )
+        for envelope, span_id in self._envelopes(event):
+            outcome = self._host.run(
+                self._consumer.run_envelope(
+                    envelope,
+                    self._job_type,
+                    span_id,
+                    context,
+                    attempt=1,
+                    postponements=0,
                 )
-                if isinstance(outcome, Failed | Abandoned):
-                    raise outcome.as_exception()
-        except Exception as exc:
-            _log.exception(
-                "Lambda event job failed; the event is retried, then sent to its destination",
-                extra={
-                    "function": self._function,
-                    "job": self._label,
-                    "error_class": type(exc).__name__,
-                    **failure_log_fields(exc),
-                },
             )
-            raise
+            if isinstance(outcome, Failed | Abandoned):
+                raise outcome.as_exception()
 
     def close(self) -> None:
         """Close the application and its loop; a second call does nothing."""

@@ -14,16 +14,15 @@ import logging
 from collections.abc import Mapping, Sequence
 from contextlib import suppress
 from dataclasses import dataclass
-from typing import TYPE_CHECKING, Any, NoReturn
+from typing import TYPE_CHECKING, Any
 
 from loom.core.errors import MalformedJobMessage, UnknownJob
 from loom.core.job.envelope import JobEnvelope, decode_job_envelope
+from loom.core.job.log_events import JobLogField
 from loom.core.job.outcome import (
-    Failed,
     JobOutcome,
     Postponed,
     Succeeded,
-    failure_log_fields,
 )
 from loom.jobs.aws.queue import SQSRecord
 from loom.serverless.aws.lambda_._jobs import (
@@ -171,24 +170,25 @@ class SQSBatch:
         try:
             return self._source.read(record.body)
         except MalformedJobMessage as exc:
-            self._fail_in_span(exc, self._source.label or MALFORMED_JOB, record)
+            fail_in_span(
+                self._application,
+                exc,
+                self._source.label or MALFORMED_JOB,
+                id=record.message_id or None,
+            )
 
     def _job_type(self, envelope: JobEnvelope, record: SQSRecord) -> type[Job[Any]]:
         job_type = self._source.job or self._jobs.get(envelope.job_name)
         if job_type is None:
-            self._fail_in_span(
+            fail_in_span(
+                self._application,
                 UnknownJob(envelope.job_name),
                 envelope.job_name,
-                record,
+                id=record.message_id or None,
                 trace_id=envelope.trace_id,
-                payload_size=len(envelope.payload or {}),
+                attributes={JobLogField.PAYLOAD_SIZE: len(envelope.payload or {})},
             )
         return job_type
-
-    def _fail_in_span(
-        self, error: Exception, name: str, record: SQSRecord, **meta: Any
-    ) -> NoReturn:
-        fail_in_span(self._application, error, name, id=record.message_id or None, **meta)
 
     def _log_outcome(self, record: SQSRecord, outcome: JobOutcome) -> None:
         job = self._source.label or _job_label(record.body)
@@ -204,19 +204,6 @@ class SQSBatch:
                         "reason": reason,
                         "delay_s": delay.seconds,
                     },
-                )
-            case Failed():
-                error = outcome.as_exception()
-                _log.exception(
-                    "SQS job failed",
-                    extra={
-                        "job": job,
-                        "message_id": record.message_id,
-                        "attempt": record.receive_count,
-                        "error_class": type(error).__name__,
-                        **failure_log_fields(error),
-                    },
-                    exc_info=error,
                 )
 
 

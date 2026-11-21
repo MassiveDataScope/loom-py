@@ -11,7 +11,8 @@ from fastapi.testclient import TestClient
 
 from loom.composition import create_app
 from loom.serverless.aws.lambda_ import LambdaRuntime
-from loom.serverless.aws.lambda_.triggers.http import LambdaHTTPHandler
+from loom.serverless.aws.lambda_.boundary import LambdaBoundary
+from loom.serverless.aws.lambda_.handler import LambdaHandler
 from tests.helpers.composition import application_openings
 from tests.unit.serverless.aws.lambda_.http._clients import (
     Client,
@@ -58,7 +59,7 @@ def fastapi_served(contract_config: str) -> Iterator[Client]:
 @pytest.fixture(scope="module")
 def lambda_served(contract_config: str) -> Iterator[Client]:
     handler = _served_as("lambda", contract_config)
-    assert isinstance(handler, LambdaHTTPHandler)
+    assert isinstance(handler, LambdaBoundary)
     yield lambda_client(handler)
     handler.close()
 
@@ -72,7 +73,7 @@ def served(request: pytest.FixtureRequest) -> Client:
 @pytest.fixture
 def open_lambda(contract_project: Callable[..., str]) -> Iterator[Callable[..., LambdaProject]]:
     """Open contract projects on Lambda handlers of their own, closed after the test."""
-    opened: list[LambdaHTTPHandler] = []
+    opened: list[LambdaHandler] = []
 
     def open_project(**options: Any) -> LambdaProject:
         config = contract_project(**options)

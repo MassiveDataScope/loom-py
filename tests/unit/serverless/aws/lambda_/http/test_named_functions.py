@@ -18,8 +18,9 @@ from loom.rest.auth import RequestCredentials
 from loom.rest.compiler import InterfaceCompilationError
 from loom.rest.fastapi import FastAPIRuntime
 from loom.serverless.aws.lambda_ import LambdaRuntime
-from loom.serverless.aws.lambda_.triggers.http import LambdaHTTPHandler
+from loom.serverless.aws.lambda_.boundary import LambdaBoundary
 from tests.helpers.aws_island import FakeAwsIsland
+from tests.helpers.lambda_failures import lambda_failure
 from tests.helpers.lambda_jobs import jobs_queue, jobs_trigger
 from tests.unit.serverless.aws.lambda_.http._clients import lambda_client
 from tests.unit.serverless.aws.lambda_.http._contract_app import bearer
@@ -264,7 +265,7 @@ class TestNamedFunctions:
     ) -> None:
         path = project("public_api", _PUBLIC_AND_ADMIN, _disable("GET", "/ops/nowhere"))
 
-        with pytest.raises(InterfaceCompilationError, match="matches no route"):
+        with lambda_failure(InterfaceCompilationError, match="matches no route"):
             serve(path)
 
     def test_an_explicit_runtime_wins_over_the_entry(
@@ -274,9 +275,7 @@ class TestNamedFunctions:
 
         assert isinstance(serve(path, runtime=FastAPIRuntime()), FastAPI)
 
-    @pytest.mark.parametrize(
-        ("entry", "built"), [("fastapi", FastAPI), ("lambda", LambdaHTTPHandler)]
-    )
+    @pytest.mark.parametrize(("entry", "built"), [("fastapi", FastAPI), ("lambda", LambdaBoundary)])
     def test_a_built_in_http_entry_selects_its_runtime(
         self, project: Callable[..., str], serve: Callable[..., Any], entry: str, built: type
     ) -> None:

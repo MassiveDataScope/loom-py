@@ -24,7 +24,7 @@ from loom.core.job.policy import Redelivery, RetryPolicy
 from loom.core.job.run import EnvelopeInvocation
 from loom.core.job.runner import JobRunner
 from loom.core.job.settlement import JobSettlement
-from loom.core.logger import LogRuntime
+from loom.core.logger import NO_ATTRIBUTES, LogRuntime, SpanAttributes
 from loom.core.observability.event import Scope
 from loom.core.stores import LAMBDA_PROFILE
 from loom.jobs.aws.queue import AbandonedMessage, SQSRecord
@@ -215,7 +215,17 @@ def job_runner(application: Application, redelivery: Redelivery) -> JobRunner:
     )
 
 
-def fail_in_span(application: Application, error: Exception, name: str, **meta: Any) -> NoReturn:
+def fail_in_span(
+    application: Application,
+    error: Exception,
+    name: str,
+    *,
+    id: str | None = None,
+    trace_id: str | None = None,
+    attributes: SpanAttributes = NO_ATTRIBUTES,
+) -> NoReturn:
     """Raise *error* inside a failed job span, as a message or event that never ran its job."""
-    with application.observability.span(Scope.JOB, name, **meta):
+    with application.observability.span(
+        Scope.JOB, name, id=id, trace_id=trace_id, attributes=attributes
+    ):
         raise error

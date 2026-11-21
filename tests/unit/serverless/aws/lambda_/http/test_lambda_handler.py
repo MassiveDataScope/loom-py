@@ -17,10 +17,12 @@ from starlette.routing import Route
 from loom.composition import Application, Project
 from loom.core.job.job import Job
 from loom.serverless.aws.lambda_ import LambdaRuntime
+from loom.serverless.aws.lambda_.handler import LambdaHandler
 from loom.serverless.aws.lambda_.triggers.http import LambdaHTTPHandler
 from loom.testing import LambdaTestClient
 from tests.helpers.composition import application_of
 from tests.helpers.jobs import InlineServiceFixture, JobActivity, JobKernel
+from tests.helpers.lambda_failures import lambda_failure
 from tests.helpers.loops import RecordedLoops
 from tests.unit.serverless.aws.lambda_.http._clients import LambdaProject, Reply, lambda_client
 from tests.unit.serverless.aws.lambda_.http._contract_app import PUBLIC_PATH, bearer, seen_by
@@ -102,7 +104,7 @@ def three_callers(lambda_project: LambdaProject) -> list[Reply]:
     ]
 
 
-def _invoke_warm(handler: LambdaHTTPHandler, times: int) -> None:
+def _invoke_warm(handler: LambdaHandler, times: int) -> None:
     call = lambda_client(handler)
     for _ in range(times):
         call("POST", _WHOAMI, headers=bearer("alice"))
@@ -214,7 +216,7 @@ class TestLambdaHandler:
     ) -> None:
         adapter, application = unreachable
 
-        with pytest.raises(ConnectionError, match="database unreachable"):
+        with lambda_failure(ConnectionError, match="database unreachable"):
             adapter.mount(application)
 
     def test_a_failure_to_open_closes_its_loop(
@@ -222,7 +224,7 @@ class TestLambdaHandler:
     ) -> None:
         adapter, application = unreachable
 
-        with pytest.raises(ConnectionError):
+        with lambda_failure(ConnectionError):
             adapter.mount(application)
         assert event_loops.created[0].is_closed()
 
@@ -231,7 +233,7 @@ class TestLambdaHandler:
     ) -> None:
         adapter, application = unreachable
 
-        with pytest.raises(ConnectionError):
+        with lambda_failure(ConnectionError):
             adapter.mount(application)
         assert event_loops.made_current[-1] is None
 

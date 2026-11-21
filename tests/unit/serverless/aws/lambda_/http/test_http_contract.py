@@ -285,7 +285,7 @@ class TestHttpContract:
             status,
             {"detail": {"trace_id": TRACE_ID, "code": code, "message": message}},
         )
-        assert secret in caplog.text
+        assert secret not in caplog.text
 
     def test_a_cors_preflight_is_answered_without_a_token(self, served: Client) -> None:
         preflight = {"origin": ORIGIN, "access-control-request-method": "POST"}

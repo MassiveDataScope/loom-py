@@ -11,7 +11,7 @@ import pytest
 
 from loom.composition import create_app
 from loom.serverless.aws.lambda_ import LambdaRuntime
-from loom.serverless.aws.lambda_.triggers.http import LambdaHTTPHandler
+from loom.serverless.aws.lambda_.handler import LambdaHandler
 from loom.testing import LambdaTestClient
 from loom.testing.lambda_http import EventFormat
 from tests.unit.serverless.aws.lambda_.http._contract_app import bearer, write_contract_project
@@ -33,14 +33,14 @@ def config(tmp_path_factory: pytest.TempPathFactory) -> str:
 
 
 @pytest.fixture(scope="module")
-def handler(config: str) -> Iterator[LambdaHTTPHandler]:
+def handler(config: str) -> Iterator[LambdaHandler]:
     served = create_app(config, runtime=LambdaRuntime(), environment="test")
     yield served
     served.close()
 
 
 @pytest.fixture(params=["v2", "v1"])
-def client(request: pytest.FixtureRequest, handler: LambdaHTTPHandler) -> LambdaTestClient:
+def client(request: pytest.FixtureRequest, handler: LambdaHandler) -> LambdaTestClient:
     event_format: EventFormat = request.param
     return LambdaTestClient(handler, event_format=event_format)
 
@@ -53,7 +53,7 @@ def alice() -> dict[str, str]:
 class _Spy:
     """Passes each event on to the real handler, keeping it."""
 
-    def __init__(self, handler: LambdaHTTPHandler) -> None:
+    def __init__(self, handler: LambdaHandler) -> None:
         self.handler = handler
         self.events: list[dict[str, Any]] = []
 
@@ -99,7 +99,7 @@ class TestLambdaTestClient:
     )
     def test_the_event_carries_a_path_with_a_space_and_repeated_parameters(
         self,
-        handler: LambdaHTTPHandler,
+        handler: LambdaHandler,
         alice: dict[str, str],
         event_format: EventFormat,
         path: tuple[str, ...],
@@ -162,12 +162,12 @@ class TestLambdaTestClient:
 
         assert served == 200
 
-    def test_a_handler_takes_no_create_app_options(self, handler: LambdaHTTPHandler) -> None:
+    def test_a_handler_takes_no_create_app_options(self, handler: LambdaHandler) -> None:
         with pytest.raises(TypeError, match="need a configuration path"):
             LambdaTestClient(handler, function="items")
 
     def test_closing_a_client_leaves_a_handler_passed_in_open(
-        self, handler: LambdaHTTPHandler, alice: dict[str, str]
+        self, handler: LambdaHandler, alice: dict[str, str]
     ) -> None:
         LambdaTestClient(handler).close()
 

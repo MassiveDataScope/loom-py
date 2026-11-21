@@ -20,7 +20,9 @@ from loom.core.discovery.scanner import PackageScanner
 from loom.core.discovery.worker import DuplicateJobName
 from loom.core.identity import ANONYMOUS, current_identity
 from loom.core.job.job import Job
+from loom.core.job.log_events import JobLogEvent
 from loom.core.job.service import JobService
+from loom.core.logger import LogField
 from loom.core.model import BaseModel
 from loom.core.observability.event import EventKind, LifecycleEvent, Scope
 from loom.core.observability.observability import Observability
@@ -34,6 +36,7 @@ from loom.serverless.aws.lambda_ import (
 )
 from loom.testing import RecordingJobTransport
 from tests.helpers.composition import composition_project
+from tests.helpers.lambda_failures import lambda_failure
 from tests.helpers.loggers import rendered
 from tests.helpers.loops import RecordedLoops
 from tests.unit.serverless.aws.lambda_._probe import Probe
@@ -252,7 +255,7 @@ print([name for name in loaded if name in sys.modules])
     ) -> None:
         adapter, application, _ = built
         _add_broken_resource(application)
-        with pytest.raises(RuntimeError, match="open failed"):
+        with lambda_failure(RuntimeError, match="open failed"):
             adapter.mount(application)
 
     @pytest.mark.parametrize("fifo", [False, True])
@@ -414,7 +417,7 @@ print([name for name in loaded if name in sys.modules])
     ) -> None:
         adapter, application, _ = built
         _add_broken_resource(application)
-        with pytest.raises(RuntimeError, match="open failed"):
+        with lambda_failure(RuntimeError, match="open failed"):
             adapter.mount(application)
         assert event_loops.created[0].is_closed()
 
@@ -423,7 +426,7 @@ print([name for name in loaded if name in sys.modules])
     ) -> None:
         adapter, application, _ = built
         _add_broken_resource(application)
-        with pytest.raises(RuntimeError, match="open failed"):
+        with lambda_failure(RuntimeError, match="open failed"):
             adapter.mount(application)
         assert event_loops.made_current[-1] is None
 
@@ -643,11 +646,9 @@ print([name for name in loaded if name in sys.modules])
         caplog: pytest.LogCaptureFixture,
     ) -> None:
         handler({"Records": [record("42", "committed")]}, None)
-        final_logs = [message for message in _logged(caplog) if "Job abandoned" in message]
-        assert len(final_logs) == 1
-        assert "PostCommitError" in final_logs[0]
-        assert "'loom.task_id': '42'" in final_logs[0]
-        assert "'committed': True" in final_logs[0]
+        [final] = [r for r in caplog.records if r.getMessage() == JobLogEvent.DELIVERY_ABANDONED]
+        assert final.__dict__[LogField.EXCEPTION_TYPE].endswith("PostCommitError")
+        assert final.__dict__[LogField.TASK_ID] == "42"
 
     @pytest.mark.parametrize(
         ("sections", "key"),

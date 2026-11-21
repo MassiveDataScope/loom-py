@@ -9,7 +9,7 @@ from typing import Any, NamedTuple, Protocol
 
 from fastapi.testclient import TestClient
 
-from loom.serverless.aws.lambda_.triggers.http import LambdaHTTPHandler
+from loom.serverless.aws.lambda_.handler import LambdaHandler
 from loom.testing import LambdaTestClient
 
 TRACE_ID = "contract-trace-0001"
@@ -20,7 +20,7 @@ class LambdaProject(NamedTuple):
     """A contract project's configuration path and the Lambda handler serving it."""
 
     config: str
-    handler: LambdaHTTPHandler
+    handler: LambdaHandler
 
 
 @dataclass(frozen=True)
@@ -62,6 +62,6 @@ def driven_by(test_client: TestClient | LambdaTestClient) -> Client:
     return call
 
 
-def lambda_client(handler: LambdaHTTPHandler) -> Client:
+def lambda_client(handler: LambdaHandler) -> Client:
     """Drive a Lambda handler with API Gateway HTTP API events."""
     return driven_by(LambdaTestClient(handler))

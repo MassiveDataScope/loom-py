@@ -18,6 +18,7 @@ from loom.core.errors import BoundaryValidationError, LoomError, MalformedJobMes
 from loom.core.identity import Identity, current_identity
 from loom.core.job.job import Job
 from loom.core.job.outcome import JobPostponement
+from loom.core.logger import LogField
 from loom.core.observability.event import EventKind, LifecycleEvent, Scope
 from loom.core.observability.observability import Observability
 from loom.core.use_case import Input
@@ -30,6 +31,7 @@ from loom.testing.serverless import QueueableEvent
 from tests.helpers.aws import ACCOUNT
 from tests.helpers.aws_island import FakeAwsIsland
 from tests.helpers.composition import composition_project
+from tests.helpers.lambda_failures import lambda_failure
 from tests.helpers.sqs import FakeSqs, queue_url
 from tests.unit.serverless.aws.lambda_._records import consumed_queues
 
@@ -281,7 +283,7 @@ class TestDirectTrigger:
         handler = serve(_events())
         event = LambdaEvent.eventbridge(payload)
 
-        with pytest.raises(error):
+        with lambda_failure(error):
             handler(event, None)
 
     def test_a_job_postponement_is_abandoned_not_postponed_as_the_same_event_comes_back_undelayed(
@@ -290,7 +292,7 @@ class TestDirectTrigger:
         observer = _RecordingExecutionObserver()
         handler = serve(_events(), execution_observer=observer)
 
-        with pytest.raises(JobPostponement, match="warming up"):
+        with lambda_failure(JobPostponement, match="warming up"):
             handler(LambdaEvent.eventbridge({"number": "wait"}), None)
 
         assert observer.kinds == [RuntimeEventKind.JOB_STARTED, RuntimeEventKind.JOB_ABANDONED]
@@ -301,7 +303,7 @@ class TestDirectTrigger:
         observer = _RecordingExecutionObserver()
         handler = serve(_events(), execution_observer=observer)
 
-        with pytest.raises(ValueError, match="job failed"):
+        with lambda_failure(ValueError, match="job failed"):
             handler(LambdaEvent.eventbridge({"number": "fail"}), None)
 
         assert observer.kinds == [RuntimeEventKind.JOB_STARTED, RuntimeEventKind.JOB_FAILED]
@@ -310,7 +312,7 @@ class TestDirectTrigger:
         observer = _Observer()
         handler = serve(_events(), observer=observer)
 
-        with pytest.raises(MalformedJobMessage):
+        with lambda_failure(MalformedJobMessage):
             handler({"id": "1", "detail": "text"}, None)
         assert [(e.scope, e.kind) for e in observer.events] == [
             (Scope.JOB, EventKind.START),
@@ -332,11 +334,12 @@ class TestDirectTrigger:
         handler = serve(_events())
         event = LambdaEvent.eventbridge(payload)
 
-        with pytest.raises(ValueError):  # the validation error is a ValueError too
+        with lambda_failure(ValueError):  # the validation error is a ValueError too
             handler(event, None)
 
         captured = capsys.readouterr()
-        assert any("Lambda event job failed" in message for message in caplog.messages)
+        stacks = [r for r in caplog.records if LogField.EXCEPTION_STACKTRACE in r.__dict__]
+        assert len(stacks) == 1, "the stack is written once, by the runner or the boundary"
         assert _SENTINEL not in caplog.text + captured.out + captured.err
 
     def test_an_s3_event_stops_at_its_first_failed_object(
@@ -345,7 +348,7 @@ class TestDirectTrigger:
         handler = serve({"source": "s3", "job": "ImportObject"})
         event = LambdaEvent.s3(["ok/1.csv", "fail/2.csv", "ok/3.csv"])
 
-        with pytest.raises(ValueError, match="job failed"):
+        with lambda_failure(ValueError, match="job failed"):
             handler(event, None)
 
         assert [found.key for found, _ in ran] == ["ok/1.csv", "fail/2.csv"]
@@ -359,7 +362,7 @@ class TestDirectTrigger:
         event = LambdaEvent.s3(["in/a.csv"])
         del event["Records"][0][missing]
 
-        with pytest.raises(MalformedJobMessage, match=f"names no {missing}"):
+        with lambda_failure(MalformedJobMessage, match=f"names no {missing}"):
             handler(event, None)
         assert ran == []
         assert [(e.scope, e.kind) for e in observer.events] == [

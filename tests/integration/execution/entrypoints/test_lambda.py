@@ -42,9 +42,8 @@ class TestLambdaHttpRoute:
         subject: str,
     ) -> None:
         api = SimpleNamespace(factory=factory, executor=UseCaseExecutor(compiler))
-        noop = Observability.noop()
         [compiled] = RestInterfaceCompiler(compiler).compile(AcmeRoutes)
-        app = Starlette(routes=[_route(compiled, cast(Any, api), noop)])
+        app = Starlette(routes=[_route(compiled, cast(Any, api))])
 
         response = TestClient(as_caller(app, caller)).get("/acme/")  # type: ignore[arg-type]
 

@@ -25,9 +25,10 @@ from loom.core.discovery.scanner import PackageScanner
 from loom.core.job.job import Job
 from loom.rest.fastapi import FastAPIRuntime
 from loom.serverless.aws.lambda_ import LambdaRuntime, LambdaUnservedConfigError
-from loom.serverless.aws.lambda_.triggers.http import LambdaHTTPHandler
+from loom.serverless.aws.lambda_.boundary import LambdaBoundary
 from tests.helpers.ai import CountingEngineProvider
 from tests.helpers.composition import composition_project
+from tests.helpers.lambda_failures import lambda_failure
 from tests.unit.serverless.aws.lambda_._probe import Probe
 from tests.unit.serverless.aws.lambda_._records import WORKER, make_record, with_worker
 from tests.unit.serverless.aws.lambda_.http._clients import lambda_client
@@ -224,7 +225,7 @@ class TestLambdaAiRefusals:
         config = write_contract_project(tmp_path, agents=(_AGENTS_GLOB,), ai=_AI)
 
         handler = create_app(config, runtime=LambdaRuntime(), environment=_TEST)
-        assert isinstance(handler, LambdaHTTPHandler)
+        assert isinstance(handler, LambdaBoundary)
         assert lifetime == ["enter"]
         client = lambda_client(handler)
         statuses = [client("GET", "/items/1").status for _ in range(2)]
@@ -248,7 +249,7 @@ class TestLambdaAiRefusals:
             tmp_path, jobs_manifest, {**_AI, "mcp_servers": {"x": server}}
         ).compose(adapter)
 
-        with pytest.raises(LambdaUnservedConfigError) as raised:
+        with lambda_failure(LambdaUnservedConfigError) as raised:
             adapter.mount(application)
 
         assert raised.value.key == "ai.mcp_servers.x.transport"

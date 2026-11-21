@@ -29,7 +29,6 @@ from starlette.routing import Route
 from loom.composition import Application, LoopHost, Project, Recipe
 from loom.core.config import ConfigContext, ConfigKey
 from loom.core.logger import LogRuntime
-from loom.core.observability.observability import Observability
 from loom.core.stores import LAMBDA_PROFILE
 from loom.core.stores.sql import SqlConfig
 from loom.rest.auth import Authenticator
@@ -120,23 +119,21 @@ def _refuse_sql_endpoints(ctx: ConfigContext) -> None:
 def _starlette_app(application: Application, declared: RestDeclaration) -> Starlette:
     """Build the Starlette application of *declared*, as FastAPI would serve it."""
     api = compile_api(application.kernel, declared.routes)
-    app = Starlette(
-        routes=[_route(compiled, api, application.observability) for compiled in api.routes]
-    )
+    app = Starlette(routes=[_route(compiled, api) for compiled in api.routes])
     register_error_handlers(app)
     mount_request_stack(app, declared)
     verify_exclusion_paths(app, declared.auth.exclude_paths)
     return app
 
 
-def _route(compiled: CompiledRoute, api: CompiledApi, observability: Observability) -> Route:
+def _route(compiled: CompiledRoute, api: CompiledApi) -> Route:
     """One Starlette route running *compiled* through the router runtime.
 
     The path keeps bare ``{name}`` parameters: a Starlette convertor such as
     ``{id:int}`` would answer ``404`` where FastAPI answers ``422``.
     """
     method = compiled.route.method.upper()
-    endpoint = _RouteEndpoint(compiled, api, observability)
+    endpoint = _RouteEndpoint(compiled, api)
     route = Route(compiled.full_path, endpoint.handle, methods=[method])
     route.methods = {method}
     return route
@@ -145,11 +142,9 @@ def _route(compiled: CompiledRoute, api: CompiledApi, observability: Observabili
 class _RouteEndpoint:
     """Validates the path parameters of one route as FastAPI does, then runs it."""
 
-    def __init__(
-        self, compiled: CompiledRoute, api: CompiledApi, observability: Observability
-    ) -> None:
+    def __init__(self, compiled: CompiledRoute, api: CompiledApi) -> None:
         runtime = _ResolvedRoute.from_compiled_route(compiled)
-        self._handler = _RouteHandler(runtime, api.factory, api.executor, observability)
+        self._handler = _RouteHandler(runtime, api.factory, api.executor)
         param_types = dict(compiled.execute_param_types)
         self._coercers: dict[str, TypeAdapter[Any]] = {
             name: TypeAdapter(path_param_annotation(name, param_types))
