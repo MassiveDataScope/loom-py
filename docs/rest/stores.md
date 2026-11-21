@@ -657,6 +657,10 @@ stores:
   they refuse a `${...}` in it; boto3 reads `AWS_REGION` and
   `AWS_ENDPOINT_URL` itself. A resolver built with a region keeps it.
 - `aws:` alone enables no `storage.dynamodb` source.
+- A `ConfiguredInstaller`'s settings inherit it too: a field typed `AwsClientConfig`
+  (or a subclass), at any depth, takes the keys it does not set from `aws:`,
+  at start-up and in `loom check`. Write the field (`dynamodb: {}` suffices) to
+  inherit; an absent optional field stays absent.
 - The SNS notifier reads `aws:` from the flow's YAML; the topic's region wins.
 
 loom's own integration tests run these products (the `sqs` job transport and the

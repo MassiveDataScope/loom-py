@@ -196,7 +196,10 @@ class TestCheckDeploy:
 
         assert result.returncode == 0, result.stderr
         assert "loom.logger.W001" in result.stdout
-        assert "skipped: app.rest (left out by the process)" in result.stdout
+        assert (
+            "skipped: app.entry_points (not declared), app.rest (left out by the process)"
+            in result.stdout
+        )
 
     def test_an_undeclared_app_rest_is_skipped_and_never_imported(self, tmp_path: Path) -> None:
         config = _write(tmp_path / "worker.yaml", {"app": {"name": "acme"}})
@@ -204,7 +207,7 @@ class TestCheckDeploy:
         result = _run_cli("check", "--deploy", str(config), blocked=("fastapi",))
 
         assert result.returncode == 0, result.stderr
-        assert "skipped: app.rest (not declared)" in result.stdout
+        assert "skipped: app.entry_points (not declared), app.rest (not declared)" in result.stdout
 
     def test_a_skip_path_that_matches_nothing_is_a_usage_error(self, tmp_path: Path) -> None:
         config = _write(tmp_path / "app.yaml", {"app": _SAFE_APP})
@@ -221,9 +224,10 @@ class TestCheckDeploy:
         result = runner.invoke(app, ["check", "--deploy", str(config)])
 
         assert "checked: app.rest, observability.log" in result.output
-        assert "skipped: stores (not declared), stores.settings.cursors (not declared)" in (
-            result.output
-        )
+        assert (
+            "skipped: app.entry_points (not declared), stores (not declared), "
+            "stores.settings.cursors (not declared)"
+        ) in result.output
 
     @pytest.mark.parametrize(
         "options", [(), ("--skip", "app.rest")], ids=["plain", "skipping-rest"]
@@ -279,7 +283,10 @@ class TestCheckDeploy:
         result = runner.invoke(app, ["check", "--deploy", "--skip", "app.rest", str(config)])
 
         assert result.exit_code == 0, result.output
-        assert "skipped: app.rest (left out by the process)" in result.output
+        assert (
+            "skipped: app.entry_points (not declared), app.rest (left out by the process)"
+            in result.output
+        )
         assert "loom.rest.E001" not in result.output
 
     def test_a_secret_placeholder_in_the_logger_config_does_not_break_the_check(

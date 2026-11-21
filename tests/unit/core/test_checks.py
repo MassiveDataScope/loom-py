@@ -130,7 +130,13 @@ class TestInstalledChecks:
     def test_loom_registers_its_own_check_sets_by_path(self) -> None:
         names = {entry.name for entry in list_entry_points(DEPLOY_CHECKS_GROUP)}
 
-        assert {"observability.log", "stores", "stores.settings.cursors", "app.rest"} <= names
+        assert {
+            "observability.log",
+            "stores",
+            "stores.settings.cursors",
+            "app.rest",
+            "app.entry_points",
+        } <= names
 
     def test_a_missing_module_of_loom_propagates_unchanged(self) -> None:
         entry = _Entry("app.rest", _missing("loom.x"))

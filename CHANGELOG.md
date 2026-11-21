@@ -2,6 +2,24 @@
 
 ## 💥 Breaking
 
+- **discovery:** an `app.entry_points` group with no installed entry point is no
+  longer a `ConfigError`: it is a valid, empty state. The deploy checks at
+  start-up and `loom check` report the warning `loom.discovery.W001` (silence it in `checks.silenced`).
+  **Migration:** a consumer that built its own discovery to get past the error
+  declares the group in `app.entry_points` and `app.packages` instead, so
+  `loom check` finds its installers. `AppConfig.reject_misdeclared` no longer
+  reads the installed entry points.
+- **composition:** `AwsClients` is a reserved key with one owner: the recipe.
+  The stores, the job transports and the container's `AwsClients` binding are
+  one object, seeded before any installer runs, no longer registered after the
+  modules. An installer or an override binding `AwsClients` fails with
+  `ReservedBindingError` (`CompositionErrorCode.RESERVED_AWS_CLIENTS`).
+  **Migration:** drop the binding. A test supplies a recording or fake
+  `AwsClients` with the `aws=` parameter of `HttpTestHarness`,
+  `LambdaTestClient` or `OverrideRuntime` instead of
+  `Override.instance(AwsClients, double)` or a monkeypatch of
+  `AwsClients.client`. `phases.build_stores` and `phases.register` no longer
+  take `aws`: it is `Recipe.aws`.
 - **composition:** `loom.composition.resources` is `loom.core.resources`, so an
   `Installer` in the core can name `Resource`. **Migration:** import `Resource`,
   `ResourceKind` and `closing` from `loom.core.resources`.
@@ -1250,6 +1268,17 @@
 
 ### composition
 
+- **composition:** a `ConfiguredInstaller`'s settings inherit the top-level `aws:`
+  section as loom's own store plugins do: any field typed `AwsClientConfig` (or
+  a subclass), nested anywhere (structs, optional fields, lists, mappings),
+  takes the keys it does not set from `aws:`, and the field's own values win.
+  `loom check` judges the inherited values, with the `aws:` section as written.
+  `AwsInheritance` owns the walk, and `AwsClientConfig.inherit_from` the merge
+  that the store plugins' `AwsClientConfig.inherit` shares.
+- **composition:** `Recipe.aws` is the application's one `AwsClients`; the
+  testing harnesses (`HttpTestHarness`, `LambdaTestClient`, `OverrideRuntime`)
+  take `aws=` to supply a recording or fake one that the stores, the job
+  transports and the container all use. See `docs/rest/testing.md`.
 - **composition:** `Installer.resources(container)` lets an application declare
   what it opens and closes. The resources it returns (default none) are opened
   by `Application.running()` after the stores and before the job timer and get

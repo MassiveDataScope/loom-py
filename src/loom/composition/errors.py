@@ -24,6 +24,7 @@ from __future__ import annotations
 from collections.abc import Callable
 from enum import unique
 
+from loom.connections.aws import AwsClients
 from loom.core.bootstrap import BootstrapError
 from loom.core.config.errors import ConfigError
 from loom.core.di.container import BindingKey
@@ -40,6 +41,16 @@ class CompositionErrorCode(IssueCode):
             "DI module {component} binds {key}, which the framework registers itself. "
             "Remove the binding from the module; a module may override JobService and "
             "repositories (repository_for, DefaultRepositoryBuilder), not this key.",
+            field="{key}",
+        ),
+    )
+    RESERVED_AWS_CLIENTS = (
+        "RESERVED_AWS_CLIENTS",
+        Template(
+            "DI module {component} binds {key}, which composition owns once: the stores, "
+            "the job transports and the container share one object. Remove the binding; "
+            "a test supplies a recording or fake {key} through the testing harness "
+            "(the aws parameter of HttpTestHarness, LambdaTestClient or OverrideRuntime).",
             field="{key}",
         ),
     )
@@ -127,7 +138,12 @@ class ReservedBindingError(BootstrapError):
     def for_key(cls, module: Callable[..., object], key: BindingKey) -> ReservedBindingError:
         """Return the error for the caller's *module* binding *key*."""
         component = getattr(module, "__qualname__", None) or repr(module)
-        issue = CompositionErrorCode.RESERVED_BINDING.issue(component=component, key=key)
+        code = (
+            CompositionErrorCode.RESERVED_AWS_CLIENTS
+            if key is AwsClients
+            else CompositionErrorCode.RESERVED_BINDING
+        )
+        issue = code.issue(component=component, key=key)
         return cls(issue, key)
 
 

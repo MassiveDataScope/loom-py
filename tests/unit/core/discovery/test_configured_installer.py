@@ -13,7 +13,11 @@ from loom.composition.checked import CheckedProject
 from loom.composition.project import Project
 from loom.core.config import ConfigContext, ConfigError, ConfigResolver
 from loom.core.di.installer import ConfiguredInstaller
-from tests.helpers.acme_stores_settings import AcmeBucket, AcmeStoresSettings
+from tests.helpers.acme_stores_settings import (
+    AcmeBucket,
+    AcmeSessions,
+    AcmeStoresSettings,
+)
 from tests.helpers.package_writer import PackageWriter
 
 _PLAIN = """\
@@ -37,6 +41,21 @@ class AcmeStoresInstaller(ConfiguredInstaller[AcmeStoresSettings]):
     def install(self, container):
         container.register_instance(
             AcmeBucket, AcmeBucket(self.settings.bucket, self.settings.backend)
+        )
+"""
+_SESSIONS = """\
+from loom.core.di.installer import ConfiguredInstaller
+from tests.helpers.acme_stores_settings import AcmeSessions, AcmeSessionsSettings
+
+
+class AcmeSessionsInstaller(ConfiguredInstaller[AcmeSessionsSettings]):
+    section = "acme.sessions"
+    settings_type = AcmeSessionsSettings
+
+    def install(self, container):
+        dynamodb = self.settings.dynamodb
+        container.register_instance(
+            AcmeSessions, AcmeSessions(self.settings.table, dynamodb.region, dynamodb.url)
         )
 """
 _APP = "app:\n  name: acme\n  job_service: inline\n  packages: [acme_installers_pkg]\n"
@@ -324,3 +343,42 @@ class TestJobShutdownCheck:
         checked = CheckedProject.load(config, environment="test", excluded=("app.rest",))
 
         assert not checked.report.errors
+
+
+class TestInstallerInheritsAwsSection:
+    _SECTIONS = "acme:\n  sessions:\n    table: sessions\n    dynamodb:\n      region: us-east-2\n"
+
+    def test_a_dynamodb_field_inherits_the_aws_section_at_startup(
+        self, project_config: Callable[[str, str], str]
+    ) -> None:
+        config = project_config(
+            _SESSIONS,
+            "aws:\n  region: eu-west-1\n  url: http://localstack:4566\n"
+            "acme:\n  sessions:\n    table: sessions\n    dynamodb: {}\n",
+        )
+
+        application = Project.load(config, environment="test").compose(CeleryRuntime())
+
+        assert application.kernel.container.resolve(AcmeSessions) == AcmeSessions(
+            "sessions", "eu-west-1", "http://localstack:4566"
+        )
+
+    def test_the_field_own_region_wins_over_the_aws_section(
+        self, project_config: Callable[[str, str], str]
+    ) -> None:
+        config = project_config(_SESSIONS, f"aws:\n  region: eu-west-1\n{self._SECTIONS}")
+
+        application = Project.load(config, environment="test").compose(CeleryRuntime())
+
+        assert application.kernel.container.resolve(AcmeSessions).region == "us-east-2"
+
+    def test_check_refuses_what_the_field_inherits_when_it_is_invalid(
+        self, project_config: Callable[[str, str], str]
+    ) -> None:
+        config = project_config(
+            _SESSIONS,
+            "aws:\n  max_attempts: 0\nacme:\n  sessions:\n    table: sessions\n    dynamodb: {}\n",
+        )
+
+        with pytest.raises(ConfigError, match=r"AcmeSessionsInstaller.*max_attempts"):
+            CheckedProject.load(config, environment="test", excluded=("app.rest",))

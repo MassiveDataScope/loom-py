@@ -4,9 +4,10 @@ from __future__ import annotations
 
 import warnings
 from collections.abc import Callable
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from typing import TYPE_CHECKING, Protocol, TypeVar
 
+from loom.connections.aws import AwsClients
 from loom.core.bootstrap import BootstrapError
 from loom.core.checks import UNSCOPED, CheckScope
 from loom.core.di.graph import (
@@ -58,6 +59,11 @@ class Recipe:
         connection_only: Ask the backend for its connection only, no
             repository; for an entry point with no model (see
             :class:`~loom.core.stores.StorePluginContext`).
+        aws: The application's AWS clients: the one object the stores, the job
+            transports and the container's ``AwsClients`` binding share. The
+            key is reserved, so no installer or override can replace it; a
+            test supplies a recording or fake one here, through the testing
+            harness.
         overrides: DI modules run right after the discovered installers, under the
             same reserved-key check; a test double of a repository binds under
             the key its store would bind it. Test-only, set by the testing
@@ -80,6 +86,7 @@ class Recipe:
     metrics: MetricsRecorder | None = None
     pool_metrics: PoolMetricsSink | None = None
     connection_only: bool = False
+    aws: AwsClients = field(default_factory=AwsClients)
     overrides: tuple[Callable[[LoomContainer], None], ...] = ()
     lenient: bool = False
 

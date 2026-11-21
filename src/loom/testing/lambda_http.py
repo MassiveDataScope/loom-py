@@ -23,6 +23,7 @@ from typing import Any, cast
 import httpx
 
 from loom.composition import Application, Project
+from loom.connections.aws import AwsClients
 from loom.serverless.aws.lambda_.handler import LambdaHandler, LambdaRuntime
 from loom.testing.overrides import Override, OverrideRuntime
 from loom.testing.serverless import EventFormat, LambdaEvent
@@ -41,6 +42,8 @@ class LambdaTestClient(httpx.Client):
         function: The function of ``lambda.functions`` to serve; with a
             configuration path only.
         event_format: ``"v2"`` for HTTP API events, ``"v1"`` for REST API ones.
+        aws: Recording or fake AWS clients that the composition shares between its
+            stores, job transports and container; with a configuration path only.
         **options: Keyword arguments of ``create_app`` (``environment``,
             ``modules``, ...); with a configuration path only.
 
@@ -49,7 +52,7 @@ class LambdaTestClient(httpx.Client):
             reach its container; ``None`` for a handler built elsewhere.
 
     Raises:
-        TypeError: When *function* or *options* come with a handler.
+        TypeError: When *function*, *aws* or *options* come with a handler.
     """
 
     def __init__(
@@ -59,6 +62,7 @@ class LambdaTestClient(httpx.Client):
         function: str | None = None,
         event_format: EventFormat = "v2",
         overrides: Sequence[Override] = (),
+        aws: AwsClients | None = None,
         **options: Any,
     ) -> None:
         self.application: Application | None = None
@@ -67,12 +71,12 @@ class LambdaTestClient(httpx.Client):
             paths = () if app is None else (app,)
             runtime = LambdaRuntime(function=function)
             self.application = Project.load(*paths, **options).compose(
-                OverrideRuntime(runtime, tuple(overrides))
+                OverrideRuntime(runtime, tuple(overrides), aws=aws)
             )
             owned = runtime.mount(self.application)
             app = cast(HttpHandler, owned)
-        elif function is not None or options:
-            raise TypeError("function and create_app options need a configuration path")
+        elif function is not None or options or aws is not None:
+            raise TypeError("function, aws and create_app options need a configuration path")
         transport = _LambdaTransport(app, event_format, owned)
         super().__init__(transport=transport, base_url="http://testserver")
 

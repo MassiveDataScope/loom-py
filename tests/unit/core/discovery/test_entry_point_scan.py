@@ -8,12 +8,17 @@ import pytest
 import yaml
 
 from loom.composition.checked import CheckedProject
-from loom.composition.project import AppConfig
-from loom.core.config import ConfigContext, ConfigError
+from loom.composition.project import Project
+from loom.core.checks import CheckScope, enforce_deploy_checks
+from loom.core.config import ConfigContext
+from loom.core.discovery.checks import EMPTY_ENTRY_POINT_GROUP_CHECK
 from loom.core.discovery.scanner import PackageScanner
+from loom.core.environment import Environment
+from tests.helpers.loggers import CapturedLog
 from tests.helpers.package_writer import DistributionWriter, PackageWriter
 
 _GROUP = "acme.plugins"
+_CHECK = EMPTY_ENTRY_POINT_GROUP_CHECK
 _MODEL = (
     "from loom.core.model import BaseModel\n"
     "class {name}(BaseModel):\n"
@@ -74,39 +79,99 @@ class TestEntryPointScan:
             "acme_plugin_y.models",
         ]
 
-    def test_a_group_without_an_installed_entry_point_is_named(self) -> None:
-        with pytest.raises(ConfigError, match="'acme.unknown'.*no installed distribution"):
-            PackageScanner(entry_points=["acme.unknown"]).discover()
+    def test_a_group_without_an_installed_entry_point_scans_nothing(self) -> None:
+        result = PackageScanner(entry_points=["acme.unknown"]).discover()
+
+        assert result.models == ()
+
+    def test_a_group_without_an_installed_entry_point_is_listed_by_empty_groups(
+        self, write_package: PackageWriter, install_distribution: DistributionWriter
+    ) -> None:
+        write_package("acme_plugin_g", {})
+        install_distribution("acme-plugin-g", {_GROUP: ["acme_plugin_g"]})
+
+        scanner = PackageScanner(entry_points=["acme.unknown", _GROUP, "acme.other"])
+
+        assert scanner.empty_groups() == ["acme.unknown", "acme.other"]
 
 
-class TestUnknownGroupFailsAtStartupAndInCheck:
-    def test_startup_refuses_it(self) -> None:
-        ctx = ConfigContext.from_dict({"app": {"name": "acme", "entry_points": ["acme.unknown"]}})
+def _write_config(tmp_path: Path, entry_points: list[str]) -> str:
+    document = {"app": {"name": "acme", "entry_points": entry_points}}
+    config = tmp_path / "app.yaml"
+    config.write_text(yaml.safe_dump(document), encoding="utf-8")
+    return str(config)
 
-        with pytest.raises(ConfigError, match="'acme.unknown'.*no installed distribution"):
-            AppConfig.from_config(ctx)
 
-    def test_loom_check_refuses_it(self, tmp_path: Path) -> None:
-        document = {"app": {"name": "acme", "entry_points": ["acme.unknown"]}}
+def _empty_group_findings(checked: CheckedProject) -> list[str]:
+    return [result.message for result in checked.report.results if result.id == _CHECK]
+
+
+class TestEmptyGroupWarnsAtStartupAndInCheck:
+    def test_startup_accepts_the_group_and_logs_nothing_of_its_own(
+        self, tmp_path: Path, caplog: pytest.LogCaptureFixture
+    ) -> None:
+        project = Project.load(_write_config(tmp_path, ["acme.unknown"]), environment="test")
+
+        discovered = project.discovered
+
+        assert discovered.models == ()
+        assert CapturedLog(caplog, "loom.core.discovery.scanner").calls == []
+
+    def test_the_startup_deploy_checks_report_it(self) -> None:
+        raw = {"app": {"name": "acme", "entry_points": ["acme.unknown"]}}
+
+        report = enforce_deploy_checks(
+            ConfigContext.from_dict(raw), Environment.PRODUCTION, scope=CheckScope()
+        )
+
+        assert report is not None
+        assert [result.id for result in report.results] == [_CHECK]
+
+    def test_loom_check_warns_with_the_stable_id_naming_the_group(self, tmp_path: Path) -> None:
+        checked = CheckedProject.load(_write_config(tmp_path, ["acme.unknown"]), environment="test")
+
+        assert _empty_group_findings(checked) == [
+            "app.entry_points group 'acme.unknown' has no installed entry point."
+        ]
+
+    def test_loom_check_warning_is_not_an_error(self, tmp_path: Path) -> None:
+        checked = CheckedProject.load(_write_config(tmp_path, ["acme.unknown"]), environment="test")
+
+        assert _CHECK not in [result.id for result in checked.report.errors]
+
+    def test_the_warning_can_be_silenced_for_an_optional_group(self, tmp_path: Path) -> None:
+        document = {
+            "app": {"name": "acme", "entry_points": ["acme.unknown"]},
+            "checks": {"silenced": [_CHECK]},
+        }
         config = tmp_path / "app.yaml"
         config.write_text(yaml.safe_dump(document), encoding="utf-8")
 
-        with pytest.raises(ConfigError, match="'acme.unknown'.*no installed distribution"):
-            CheckedProject.load(str(config), environment="test")
+        checked = CheckedProject.load(str(config), environment="test")
+
+        assert _empty_group_findings(checked) == []
+
+    def test_a_placeholder_group_is_not_judged(self, tmp_path: Path) -> None:
+        checked = CheckedProject.load(
+            _write_config(tmp_path, ["${oc.env:ACME_GROUP,acme.unknown}"]), environment="test"
+        )
+
+        assert _empty_group_findings(checked) == []
 
     def test_an_installed_group_passes_both(
         self,
         tmp_path: Path,
         write_package: PackageWriter,
         install_distribution: DistributionWriter,
+        caplog: pytest.LogCaptureFixture,
     ) -> None:
         write_package("acme_plugin_f", {})
         install_distribution("acme-plugin-f", {_GROUP: ["acme_plugin_f"]})
-        document = {"app": {"name": "acme", "entry_points": [_GROUP]}}
-        config = tmp_path / "app.yaml"
-        config.write_text(yaml.safe_dump(document), encoding="utf-8")
+        config = _write_config(tmp_path, [_GROUP])
 
-        checked = CheckedProject.load(str(config), environment="test")
+        checked = CheckedProject.load(config, environment="test")
+        discovered = checked.discovered
 
-        assert checked.config.raw("app.entry_points") == [_GROUP]
-        assert AppConfig.from_config(ConfigContext.from_dict(document)).entry_points == [_GROUP]
+        assert _empty_group_findings(checked) == []
+        assert discovered.models == ()
+        assert CapturedLog(caplog, "loom.core.discovery.scanner").calls == []
