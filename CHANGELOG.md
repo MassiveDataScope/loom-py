@@ -1201,6 +1201,18 @@
 
 ## ✨ Features
 
+### jobs
+
+- **jobs:** `jobs.shutdown` sets what stopping the application does with the delayed
+  jobs the inline timer holds: `mode: cancel` (default, as before) drops them and logs
+  one warning; `mode: wait` runs every pending step, and the steps they schedule, until
+  none is left or `timeout_s` is over, then drops and logs the rest. A `timeout_s`
+  with `cancel`, a timeout of zero or less and an unknown mode are a `ConfigError` at
+  start-up and in `loom check`. `Application.running()` exit stays the only trigger;
+  Celery and SQS are unaffected. `ManualTimer(JobShutdown(...))` honours the same
+  contract in fake time (`lost`), and `JobTimer` gains `close()`: the application closes
+  a timer a test bound like the one it builds.
+
 ### model
 
 - **model:** business keys and derived keys. A model declares

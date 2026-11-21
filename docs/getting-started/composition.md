@@ -478,6 +478,10 @@ are judged at start-up, once resolved. To build an installer differently, overri
 `Recipe.overrides` is for test doubles only; production dependencies belong in
 an installer.
 
+One installer per area or config section, never one per class: constructor
+dependencies are resolved by the container, and use cases, jobs and callbacks
+need no installer.
+
 ## Resources your application owns
 
 An installer that registers something that must be opened and closed (a session

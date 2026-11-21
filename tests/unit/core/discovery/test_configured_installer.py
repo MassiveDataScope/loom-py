@@ -294,3 +294,33 @@ class TestInstallerSectionWithPlaceholders:
         checked = CheckedProject.load(config, environment="test", excluded=("app.rest",))
 
         assert not checked.report.errors
+
+
+class TestJobShutdownCheck:
+    @pytest.mark.parametrize(
+        "shutdown",
+        [
+            "mode: linger",
+            "mode: cancel\n    timeout_s: 5",
+            "mode: wait\n    timeout_s: -1",
+        ],
+        ids=["unknown mode", "timeout with cancel", "negative timeout"],
+    )
+    def test_check_refuses_an_invalid_shutdown_section(
+        self, project_config: Callable[[str, str], str], shutdown: str
+    ) -> None:
+        config = project_config(_PLAIN, f"jobs:\n  shutdown:\n    {shutdown}\n")
+
+        with pytest.raises(ConfigError, match="jobs.shutdown"):
+            CheckedProject.load(config, environment="test", excluded=("app.rest",))
+
+    def test_check_leaves_a_placeholder_to_start_up(
+        self, project_config: Callable[[str, str], str]
+    ) -> None:
+        config = project_config(
+            _PLAIN, "jobs:\n  shutdown:\n    mode: wait\n    timeout_s: ${secrets:/jobs/timeout}\n"
+        )
+
+        checked = CheckedProject.load(config, environment="test", excluded=("app.rest",))
+
+        assert not checked.report.errors

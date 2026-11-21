@@ -10,6 +10,8 @@ from typing import Any
 from msgspec import structs
 
 from loom.core.config import ConfigContext, ConfigError, ConfigKey
+from loom.core.config.keys import INTERPOLATION
+from loom.core.config.loader import config_strings, convert_section
 from loom.core.job.delivery import JobDelivery
 from loom.core.job.envelope import JobEnvelope
 from loom.core.job.job import Job
@@ -80,8 +82,64 @@ class JobConfig(LoomFrozenStruct, frozen=True, kw_only=True, forbid_unknown_fiel
     priority: int | None = None
 
 
+class ShutdownMode(StrEnum):
+    """What the inline job timer does with the steps still pending when the application stops."""
+
+    CANCEL = "cancel"
+    WAIT = "wait"
+
+
+class JobShutdown(LoomFrozenStruct, frozen=True, kw_only=True, forbid_unknown_fields=True):
+    """The ``jobs.shutdown`` section: what stopping the application does with delayed inline jobs.
+
+    ``cancel`` drops every pending step and logs the jobs lost. ``wait`` lets the
+    pending steps run, and the steps they schedule in turn, until none is pending
+    or *timeout_s* is over; what is still pending then is dropped and logged as
+    in ``cancel``. Celery and SQS hold nothing in this process, so neither reads it.
+
+    Attributes:
+        mode: What to do with pending steps; ``cancel`` by default.
+        timeout_s: Seconds ``wait`` lasts at most; ``None`` waits until idle.
+
+    Raises:
+        ValueError: When *timeout_s* is not above zero, or is set with ``cancel``.
+    """
+
+    mode: ShutdownMode = ShutdownMode.CANCEL
+    timeout_s: float | None = None
+
+    def __post_init__(self) -> None:
+        if self.timeout_s is None:
+            return
+        if self.mode is ShutdownMode.CANCEL:
+            raise ValueError("timeout_s only applies to mode 'wait'")
+        if self.timeout_s <= 0:
+            raise ValueError(f"timeout_s must be above zero, got {self.timeout_s}")
+
+    @classmethod
+    def check_written(cls, ctx: ConfigContext) -> None:
+        """Validate the ``jobs.shutdown`` section as written, as ``loom check`` does.
+
+        A section holding a placeholder is left to start-up, which resolves it.
+
+        Raises:
+            ConfigError: When the section is invalid as written.
+        """
+        key = f"{ConfigKey.JOBS}.shutdown"
+        written = ctx.raw(key)
+        if written is None or any(INTERPOLATION in text for _, text in config_strings(written)):
+            return
+        convert_section(written, key, cls)
+
+    @property
+    def is_waiting(self) -> bool:
+        """Whether pending steps get to run before the rest is dropped."""
+        return self.mode is ShutdownMode.WAIT
+
+
 _EMPTY = JobConfig()
 _NO_DEFAULTS = JobDefaults()
+CANCEL_AT_SHUTDOWN = JobShutdown()
 
 
 @dataclass(frozen=True)
@@ -232,10 +290,12 @@ class JobSettings:
 
     The composition builds one per application, so two applications in one
     process never see each other's sections and the ClassVars stay as
-    declared. A job it was not built with has its ClassVars.
+    declared. A job it was not built with has its ClassVars. ``shutdown`` is the
+    ``jobs.shutdown`` section.
     """
 
     jobs: Mapping[type[Job[Any]], JobOptions] = field(default_factory=dict)
+    shutdown: JobShutdown = CANCEL_AT_SHUTDOWN
 
     @classmethod
     def from_config(cls, ctx: ConfigContext, jobs: Iterable[type[Job[Any]]]) -> JobSettings:
@@ -243,7 +303,8 @@ class JobSettings:
 
         Raises:
             ConfigError: When a section is present but invalid, a retry layer
-                makes a job's backoff invalid, or a job's effective countdown is
+                makes a job's backoff invalid, ``jobs.shutdown`` is invalid, or a
+                job's effective countdown is
                 outside 0 to :attr:`~loom.core.job.policy.Countdown.MAX_SECONDS`
                 seconds.
         """
@@ -256,7 +317,10 @@ class JobSettings:
                 resolved[job_type] = JobOptions.resolve(job_type, config, defaults)
             except ValueError as exc:
                 raise ConfigError(f"{section}.retry: {exc}") from exc
-        return cls(resolved)
+        shutdown = ctx.section_or_default(
+            f"{ConfigKey.JOBS}.shutdown", JobShutdown, CANCEL_AT_SHUTDOWN
+        )
+        return cls(resolved, shutdown)
 
     def options_for(self, job_type: type[Job[Any]]) -> JobOptions:
         """The options of *job_type* in this application.

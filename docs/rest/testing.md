@@ -444,6 +444,11 @@ service that is already built.
 including the steps those steps schedule inside the move; `pending` counts
 the steps still waiting.
 
+The application closes a bound timer when `running()` exits, as it closes the one it builds, so
+a test never calls `close()`. The policy is the timer's own: `ManualTimer(JobShutdown(mode=ShutdownMode.WAIT))`
+runs what is pending in fake time on exit, and the default drops it into `timer.lost`;
+`jobs.shutdown` configures only the timer composition builds.
+
 ### Beyond the process
 
 `sam local invoke` runs the built function in the Lambda container, for what

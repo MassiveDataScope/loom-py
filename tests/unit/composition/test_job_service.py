@@ -12,7 +12,7 @@ import sys
 import warnings
 from dataclasses import replace
 from pathlib import Path
-from typing import Any
+from typing import Any, ClassVar
 from unittest.mock import patch
 
 import pytest
@@ -24,12 +24,16 @@ from loom.composition import Application, Project, Recipe
 from loom.core.di.container import LoomContainer
 from loom.core.di.scope import Scope
 from loom.core.errors import JobTimeoutError
+from loom.core.job.config import JobShutdown, ShutdownMode
 from loom.core.job.context import flush_pending_dispatches
+from loom.core.job.delivery import JobDelivery
 from loom.core.job.job import Job
+from loom.core.job.outcome import JobPostponement
 from loom.core.job.service import JobService
 from loom.core.job.timer import JobDelayRefusedError, JobTimer
 from loom.core.resources import ResourceKind
 from loom.core.stores.profile import LAMBDA_PROFILE
+from loom.core.use_case import Delivery
 from loom.jobs.inline import InlineJobTransport
 from loom.rest.fastapi.runtime import FastAPIRuntime
 from loom.testing import ManualTimer, Override
@@ -207,7 +211,7 @@ class TestInlineTimer:
         await flush_pending_dispatches()
 
         assert timer.pending == 1
-        assert all(resource.kind != ResourceKind.TIMER for resource in application.resources)
+        assert [resource.kind for resource in application.resources].count(ResourceKind.TIMER) == 1
         assert [event for event, _ in warnings_logged.calls] == ["Job retry policies"]
 
     async def test_lambda_composes_no_timer_and_refuses_a_delay(
@@ -227,6 +231,75 @@ class TestInlineTimer:
         application = job_project(tmp_path, _CELERY, "celery").compose(JobsAdapter(AcmePingJob))
 
         assert all(resource.kind != ResourceKind.TIMER for resource in application.resources)
+
+
+class PostponingOnceJob(Job[str]):
+    """Asks to run again at once the first time, and records each of its runs."""
+
+    runs: ClassVar[list[int]] = []
+
+    def execute(self, delivery: JobDelivery | None = Delivery()) -> str:
+        assert delivery is not None
+        self.runs.append(delivery.postponements)
+        if delivery.postponements == 0:
+            raise JobPostponement("not yet", 0)
+        return "done"
+
+
+class TestInlineShutdown:
+    """``Application.running()`` exit is the only trigger of ``jobs.shutdown``."""
+
+    @staticmethod
+    async def _stop_with_a_postponed_job(tmp_path: Path, shutdown: dict[str, Any]) -> list[int]:
+        PostponingOnceJob.runs.clear()
+        application = job_project(tmp_path, {"jobs": {"shutdown": shutdown}}, "inline").compose(
+            JobsAdapter(PostponingOnceJob)
+        )
+        async with application.running():
+            service = application.kernel.container.resolve(JobService)
+            await service.dispatch_now(PostponingOnceJob)
+            assert PostponingOnceJob.runs == [0]
+        return list(PostponingOnceJob.runs)
+
+    async def test_wait_runs_the_postponed_job_before_the_application_stops(
+        self, tmp_path: Path
+    ) -> None:
+        assert await self._stop_with_a_postponed_job(tmp_path, {"mode": "wait"}) == [0, 1]
+
+    async def test_a_bound_manual_timer_is_closed_on_exit_by_its_own_policy(
+        self, tmp_path: Path
+    ) -> None:
+        PostponingOnceJob.runs.clear()
+        timer = ManualTimer(JobShutdown(mode=ShutdownMode.WAIT))
+        application = self._compose_with(tmp_path, timer)
+        async with application.running():
+            service = application.kernel.container.resolve(JobService)
+            await service.dispatch_now(PostponingOnceJob)
+            assert (PostponingOnceJob.runs, timer.pending) == ([0], 1)
+
+        assert (PostponingOnceJob.runs, timer.pending, timer.lost) == ([0, 1], 0, [])
+
+    async def test_a_bound_manual_timer_in_cancel_mode_loses_the_job_on_exit(
+        self, tmp_path: Path
+    ) -> None:
+        PostponingOnceJob.runs.clear()
+        timer = ManualTimer()
+        application = self._compose_with(tmp_path, timer)
+        async with application.running():
+            await application.kernel.container.resolve(JobService).dispatch_now(PostponingOnceJob)
+
+        assert (PostponingOnceJob.runs, len(timer.lost)) == ([0], 1)
+
+    @staticmethod
+    def _compose_with(tmp_path: Path, timer: ManualTimer) -> Application:
+        return job_project(tmp_path, {}, "inline").compose(
+            WithOverrides(
+                JobsAdapter(PostponingOnceJob), Override.instance(JobTimer, timer).install
+            )
+        )
+
+    async def test_cancel_loses_the_postponed_job(self, tmp_path: Path) -> None:
+        assert await self._stop_with_a_postponed_job(tmp_path, {"mode": "cancel"}) == [0]
 
 
 class AcmeEmailJob(Job[int]):

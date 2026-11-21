@@ -19,7 +19,7 @@ from typing import TYPE_CHECKING, Any, TypeVar
 
 from loom.core.identity import Identity
 from loom.core.job.callback import ANY_CALLBACKS, DispatchableCallbacks
-from loom.core.job.config import JobSettings
+from loom.core.job.config import CANCEL_AT_SHUTDOWN, JobSettings, JobShutdown
 from loom.core.job.context import add_pending_publish
 from loom.core.job.delivery import JobDelivery
 from loom.core.job.dispatch import JobDispatch
@@ -155,12 +155,28 @@ class ManualTimer:
 
     Nothing waits: a scheduled step runs inside :meth:`advance`, once the
     clock reaches its time.
+
+    :meth:`close` rehearses the shutdown of the real timer on the same clock. Under
+    ``cancel`` it drops every pending step. Under ``wait`` it runs the pending
+    steps in order, moving the clock to each, and the steps they schedule, until
+    none is pending or the next one falls beyond ``timeout_s`` seconds from now
+    (no timeout runs until idle); the rest is dropped. :attr:`lost` lists what was
+    dropped, each as ``Job:task_id``. A timer bound in the container is closed by
+    ``Application.running()`` on exit like the built one, so a test does not call
+    :meth:`close` itself.
+
+    Args:
+        shutdown: What :meth:`close` does with the steps still pending. The test
+            states it here: ``jobs.shutdown`` configures the timer composition
+            builds, not one a test binds.
     """
 
-    def __init__(self) -> None:
-        self._now = 0
-        self._steps: list[tuple[int, int, Step]] = []
+    def __init__(self, shutdown: JobShutdown = CANCEL_AT_SHUTDOWN) -> None:
+        self._shutdown = shutdown
+        self._now = 0.0
+        self._steps: list[tuple[float, int, Step, str]] = []
         self._order = itertools.count()
+        self.lost: list[str] = []
 
     @property
     def pending(self) -> int:
@@ -173,11 +189,11 @@ class ManualTimer:
         Args:
             delay: How long the step waits.
             step: What runs afterwards.
-            job: Ignored.
-            task_id: Ignored.
+            job: The qualified name of the job, listed in :attr:`lost` if dropped.
+            task_id: The id of the dispatch, listed in :attr:`lost` if dropped.
         """
-        _ = (job, task_id)
-        heapq.heappush(self._steps, (self._now + delay.seconds, next(self._order), step))
+        entry = (self._now + delay.seconds, next(self._order), step, f"{job}:{task_id}")
+        heapq.heappush(self._steps, entry)
 
     async def advance(self, seconds: int) -> None:
         """Move the clock forward and run, in order, every step whose time has come.
@@ -189,11 +205,22 @@ class ManualTimer:
             seconds: How far the clock moves.
         """
         target = self._now + seconds
-        while self._steps and self._steps[0][0] <= target:
-            due, _, step = heapq.heappop(self._steps)
+        await self._run_until(target)
+        self._now = target
+
+    async def close(self) -> None:
+        """Run the pending steps when waiting, then drop the rest into :attr:`lost`."""
+        if self._shutdown.is_waiting:
+            timeout = self._shutdown.timeout_s
+            await self._run_until(None if timeout is None else self._now + timeout)
+        self.lost = [label for *_, label in sorted(self._steps)]
+        self._steps.clear()
+
+    async def _run_until(self, limit: float | None) -> None:
+        while self._steps and (limit is None or self._steps[0][0] <= limit):
+            due, _, step, _ = heapq.heappop(self._steps)
             self._now = due
             await step()
-        self._now = target
 
 
 class RecordingJobTransport:

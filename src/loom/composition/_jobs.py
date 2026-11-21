@@ -98,14 +98,17 @@ def _celery_transport(context: JobTransportContext, celery_cfg: CeleryConfig) ->
 
 def _inline(context: JobTransportContext) -> _Built:
     timer = context.timer
-    resources: tuple[Resource, ...] = ()
     if timer is None and context.can_wait_in_process:
-        timer = AsyncioJobTimer()
-        resources = (Resource(kind=ResourceKind.TIMER, name="jobs", manager=closing(timer.close)),)
+        timer = AsyncioJobTimer(context.settings.shutdown)
         _log.warning(
             "Inline jobs wait in process memory: a delayed job is lost when the process "
             "stops; use Celery or SQS in production"
         )
+    resources = (
+        ()
+        if timer is None
+        else (Resource(kind=ResourceKind.TIMER, name="jobs", manager=closing(timer.close)),)
+    )
     service = InlineJobTransport(
         context.factory,
         context.executor,
