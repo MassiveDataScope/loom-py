@@ -8,6 +8,26 @@ across services.
 
 ## Writing
 
+In your application a plain string is enough. Every record gets the service
+identity, the `trace_id`, the use case or job and the code location from loom's
+filter, whatever logger wrote it:
+
+```python
+import logging
+
+log = logging.getLogger(__name__)
+
+log.warning("scraper.page_failed", extra={"url.full": url, "http.response.status_code": 503})
+```
+
+Put values in `extra`, not in the message (`f"failed {url}"`): a field can be
+filtered and grouped by a collector, a value inside the message cannot.
+
+A `LogEvent` class is optional for applications. It pays off when the same event
+is written in several places (no typo can split it) or when you want a catalogue
+of your events. loom's own code always uses `LogEvent` members and `LogField`
+keys; the tests enforce both on `loom.*` loggers only:
+
 ```python
 import logging
 
@@ -23,10 +43,10 @@ class InvoiceEvent(LogEvent):
 log.info(InvoiceEvent.ISSUED, extra={LogField.JOB: "SendInvoice"})
 ```
 
-- The message is the **event**: a `LogEvent` member named
+- In loom's code, the message is the **event**: a `LogEvent` member named
   `<area>.<subject>_<fact>`, lowercase. It never holds a value: no f-string, no
   `%` format. Values go in the fields, where a collector can filter on them.
-- Field keys are `LogField` members: OpenTelemetry semantic conventions where one
+- loom's field keys are `LogField` members: OpenTelemetry semantic conventions where one
   exists (`service.name`, `code.function.name`, `exception.type`), `loom.*`
   otherwise. Event names and field keys are part of the public contract of a
   release.
