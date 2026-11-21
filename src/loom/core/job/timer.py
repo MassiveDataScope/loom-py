@@ -44,3 +44,11 @@ class JobTimer(Protocol):
             task_id: The id of the job's dispatch.
         """
         ...
+
+    async def close(self) -> None:
+        """Apply the timer's shutdown policy to the steps still pending.
+
+        The application calls it once, when it stops, for the timer its inline
+        service waits on, whether composition built it or a test bound it.
+        """
+        ...

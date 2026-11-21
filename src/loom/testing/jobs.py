@@ -161,11 +161,14 @@ class ManualTimer:
     steps in order, moving the clock to each, and the steps they schedule, until
     none is pending or the next one falls beyond ``timeout_s`` seconds from now
     (no timeout runs until idle); the rest is dropped. :attr:`lost` lists what was
-    dropped, each as ``Job:task_id``. Composition does not close a timer a test
-    bound: the test calls :meth:`close` itself.
+    dropped, each as ``Job:task_id``. A timer bound in the container is closed by
+    ``Application.running()`` on exit like the built one, so a test does not call
+    :meth:`close` itself.
 
     Args:
-        shutdown: What :meth:`close` does with the steps still pending.
+        shutdown: What :meth:`close` does with the steps still pending. The test
+            states it here: ``jobs.shutdown`` configures the timer composition
+            builds, not one a test binds.
     """
 
     def __init__(self, shutdown: JobShutdown = CANCEL_AT_SHUTDOWN) -> None:

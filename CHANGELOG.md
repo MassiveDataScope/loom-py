@@ -1210,7 +1210,8 @@
   with `cancel`, a timeout of zero or less and an unknown mode are a `ConfigError` at
   start-up and in `loom check`. `Application.running()` exit stays the only trigger;
   Celery and SQS are unaffected. `ManualTimer(JobShutdown(...))` honours the same
-  contract in fake time (`close()`, `lost`).
+  contract in fake time (`lost`), and `JobTimer` gains `close()`: the application closes
+  a timer a test bound like the one it builds.
 
 ### composition
 

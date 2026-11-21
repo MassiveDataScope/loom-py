@@ -205,8 +205,9 @@ started finish before it exits. A `timeout_s` with `cancel`, a timeout of zero o
 and an unknown mode are a `ConfigError` at start-up and in `loom check`. Celery and SQS
 hold nothing pending in this process, so `jobs.shutdown` does not affect them.
 
-In tests, `ManualTimer(JobShutdown(mode=ShutdownMode.WAIT))` follows the same contract in
-fake time: `await timer.close()` runs the pending steps until idle or until `timeout_s`
+In tests, `ManualTimer(JobShutdown(mode=ShutdownMode.WAIT))` bound with
+`Override.instance(JobTimer, ...)` follows the same contract in fake time, closed by
+`running()` exit like the built timer: on exit it runs the pending steps until idle or until `timeout_s`
 seconds of the fake clock, and `timer.lost` lists what was dropped.
 
 ---
