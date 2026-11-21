@@ -8,8 +8,8 @@ from dataclasses import dataclass, field
 from typing import TYPE_CHECKING
 
 from loom.composition.errors import ApplicationAlreadyOpenError
-from loom.composition.resources import Resource, ResourceKind, in_opening_order
 from loom.core.job.config import JobSettings
+from loom.core.resources import Resource, in_opening_order
 
 if TYPE_CHECKING:
     from pathlib import Path
@@ -28,7 +28,7 @@ class Application:
     """A compiled kernel and the resources it owns, independent of any transport.
 
     :meth:`running` opens the resources in the order of their
-    :class:`~loom.composition.resources.ResourceKind`, running each one's startup checks
+    :class:`~loom.core.resources.ResourceKind`, running each one's startup checks
     right before it opens, and closes them in reverse. A transport runtime
     enters :meth:`running` and never opens these resources itself.
 
@@ -67,16 +67,16 @@ class Application:
         return self._open
 
     def readiness_probes(self) -> dict[str, Callable[[], Awaitable[bool]]]:
-        """Return each store's readiness probe, by the key its readiness is reported under.
+        """Return the readiness probe of each store and application resource, by its reported key.
 
-        A store without a probe is left out. Each probe answers whether its
-        store can serve now and never raises; a transport bounds and caches
-        each one on its own, so one slow store does not hide the others.
+        A resource without a probe is left out. Each probe answers whether its
+        resource can serve now and never raises; a transport bounds and caches
+        each one on its own, so one slow resource does not hide the others.
         """
         return {
             resource.readiness_key: resource.readiness
             for resource in self.resources
-            if resource.kind is ResourceKind.STORE and resource.readiness is not None
+            if resource.readiness is not None and resource.answers_health_probe
         }
 
     async def check(self) -> None:

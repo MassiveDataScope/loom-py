@@ -11,7 +11,7 @@ from contextlib import asynccontextmanager
 import pytest
 
 from loom.composition import ApplicationHost, CompositionErrorCode, CompositionStateError
-from loom.composition.resources import Resource, ResourceKind, closing
+from loom.core.resources import Resource, ResourceKind, closing
 from tests.helpers.composition import TaskAffine, application_of
 
 

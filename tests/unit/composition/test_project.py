@@ -11,11 +11,11 @@ from typing import Any, assert_type
 import pytest
 
 from loom.composition import Application, Project, Recipe, create_app
-from loom.composition.resources import ResourceKind
 from loom.core.authz.elevation import ElevationSink
 from loom.core.command import Command
 from loom.core.config import ConfigContext, ConfigError
 from loom.core.model import BaseModel
+from loom.core.resources import ResourceKind
 from loom.core.stores import StoreWiring
 from loom.core.stores.profile import (
     SERVER_PROFILE,

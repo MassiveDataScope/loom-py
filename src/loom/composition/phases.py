@@ -10,7 +10,7 @@ container. Nothing registers after :func:`register`.
 from __future__ import annotations
 
 import time
-from collections.abc import Collection
+from collections.abc import Collection, Iterable
 from dataclasses import dataclass
 from typing import TYPE_CHECKING, TypeVar, cast
 
@@ -20,7 +20,6 @@ from loom.composition._reserved import reserved_keys
 from loom.composition._sql import SqlWiring, register_sql_collaborators, resolve_sql
 from loom.composition.errors import ReservedBindingError
 from loom.composition.recipe import Recipe, Runtime
-from loom.composition.resources import Resource, ResourceKind
 from loom.connections.aws import AwsClients
 from loom.core.authz.elevation import ElevationSink
 from loom.core.bootstrap import BootstrapError, Kernel
@@ -39,6 +38,7 @@ from loom.core.job.config import JobSettings
 from loom.core.logger import LoggerPort
 from loom.core.model import BaseModel
 from loom.core.observability.observability import Observability
+from loom.core.resources import Resource, ResourceKind
 from loom.core.stores import StorePluginContext, StoreWiring
 from loom.core.stores.catalog import (
     DEFAULT_STORE,
@@ -206,6 +206,7 @@ def register(
     recipe: Recipe,
     stores: Stores,
     aws: AwsClients,
+    installers: tuple[Installer, ...],
     *,
     logger: LoggerPort,
 ) -> tuple[Kernel, SqlWiring, tuple[Resource, ...]]:
@@ -227,6 +228,7 @@ def register(
         stores: The stores, whose repositories and units of work it registers.
         aws: The application's AWS clients, registered in the container and
             given to the job transports.
+        installers: The discovered installers, built by :func:`build_installers`.
         logger: Where the container and the compilation log.
 
     Returns:
@@ -268,13 +270,10 @@ def register(
         Observability: observability,
         StoreCatalog: catalog,
     }
-    installers = tuple(
-        installer.install for installer in build_installers(ctx, recipe.discovered.installers)
-    )
     with seeded_container(
         KernelRecipe.container(),
         seeds,
-        modules=(*installers, *recipe.overrides),
+        modules=(*(installer.install for installer in installers), *recipe.overrides),
         logger=logger,
         reserved=reserved_keys(catalog.specs),
         error=ReservedBindingError.for_key,
@@ -306,6 +305,41 @@ def register(
     sql = resolve_sql(ctx)
     register_sql_collaborators(kernel.container, sql, observability)
     return kernel, sql, job_resources
+
+
+class ResourceRoster:
+    """The resources of an application, each owner's, unique by label and by readiness key."""
+
+    def __init__(self) -> None:
+        self._resources: list[Resource] = []
+        self._label_owners: dict[str, str] = {}
+        self._readiness_owners: dict[str, str] = {}
+
+    @property
+    def resources(self) -> tuple[Resource, ...]:
+        """Every resource added, in the order added."""
+        return tuple(self._resources)
+
+    def add(self, owner: str, resources: Iterable[Resource]) -> None:
+        """Add *resources* as *owner*'s.
+
+        Raises:
+            ConfigError: When a resource has the label or the readiness key of
+                one already added; the message names both owners.
+        """
+        for resource in resources:
+            self._claim(self._label_owners, resource.label, owner, "resource")
+            if resource.answers_health_probe:
+                self._claim(self._readiness_owners, resource.readiness_key, owner, "readiness key")
+            self._resources.append(resource)
+
+    @staticmethod
+    def _claim(owners: dict[str, str], name: str, owner: str, what: str) -> None:
+        if name in owners:
+            raise ConfigError(
+                f"{owner} declares the {what} {name!r}, which {owners[name]} already declares"
+            )
+        owners[name] = owner
 
 
 def build_installers(

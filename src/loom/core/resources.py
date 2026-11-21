@@ -1,4 +1,8 @@
-"""What an application opens and closes, and in which order."""
+"""What an application opens and closes, and in which order.
+
+Loom's own resources and the ones an :class:`~loom.core.di.installer.Installer`
+declares share this one lifecycle.
+"""
 
 from __future__ import annotations
 
@@ -22,8 +26,10 @@ class ResourceKind(StrEnum):
     and close last, the clients after everything that calls AWS;
     the Celery producer opens next and closes after the stores, agents and SQL;
     the SQL registry opens before the agent host, which may query it; the
-    stores open next, after their startup checks, and the job timer last, so it
-    closes first and no delayed job runs against a closed store.
+    stores open next, after their startup checks; the resources an application
+    declares open after the stores, so they close before them and may use them
+    while closing; the job timer opens last, so it closes first and no delayed
+    job runs against a closed store or a closed application resource.
     """
 
     AWS = "aws"
@@ -32,10 +38,12 @@ class ResourceKind(StrEnum):
     SQL = "sql"
     AGENTS = "agents"
     STORE = "store"
+    APPLICATION = "application"
     TIMER = "timer"
 
 
 _ORDER = {kind: position for position, kind in enumerate(ResourceKind)}
+_PROBED_KINDS = frozenset({ResourceKind.STORE, ResourceKind.APPLICATION})
 
 
 @dataclass(frozen=True, kw_only=True)
@@ -43,18 +51,20 @@ class Resource:
     """One thing an :class:`~loom.composition.Application` owns.
 
     Args:
-        kind: What it is; decides when it opens.
+        kind: What it is; decides when it opens. An application's own
+            resource is ``APPLICATION``, the default.
         name: Its name among resources of the same kind (a store's name).
         manager: Called on every open; returns the context manager that opens
             and closes it. Reopening works only if what it returns supports it.
         check: Startup checks, run right before it opens and by
             :meth:`~loom.composition.Application.check`; they leave no
             connection open.
-        readiness: Probe answering whether it can serve now.
+        readiness: Probe answering whether it can serve now; the health probe
+            asks it when the kind is ``STORE`` or ``APPLICATION``.
         readiness_key: Key its readiness is reported under; its name when empty.
     """
 
-    kind: ResourceKind
+    kind: ResourceKind = ResourceKind.APPLICATION
     name: str
     manager: Callable[[], AbstractAsyncContextManager[object]]
     check: Callable[[], Awaitable[None]] | None = None
@@ -64,6 +74,11 @@ class Resource:
     def __post_init__(self) -> None:
         if not self.readiness_key:
             object.__setattr__(self, "readiness_key", self.name)
+
+    @property
+    def answers_health_probe(self) -> bool:
+        """Whether the health probe asks it: a store or an application resource with a readiness."""
+        return self.kind in _PROBED_KINDS and self.readiness is not None
 
     @property
     def label(self) -> str:

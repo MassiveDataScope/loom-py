@@ -11,6 +11,7 @@ from loom.core.config import ConfigContext, ConfigError
 from loom.core.config.keys import INTERPOLATION
 from loom.core.config.loader import config_strings, convert_section
 from loom.core.di.container import LoomContainer
+from loom.core.resources import Resource
 
 SettingsT = TypeVar("SettingsT")
 
@@ -54,6 +55,27 @@ class Installer(ABC):
     @abstractmethod
     def install(self, container: LoomContainer) -> None:
         """Register the dependencies provided by this installer."""
+
+    def resources(self, container: LoomContainer) -> tuple[Resource, ...]:
+        """Declare what the dependencies this installer registered need opened and closed.
+
+        Composition calls it once, after the container is sealed, and the
+        application opens the resources after the stores and before the job
+        timer, closing them in reverse. They get the guarantees of loom's own:
+        a failure while opening closes what already opened, every one closes
+        even when another fails, ``check`` runs right before the resource
+        opens and in ``Application.check()``, and ``readiness`` answers the
+        health probe. The default declares none.
+
+        Args:
+            container: The sealed container, to resolve what this installer registered.
+
+        Returns:
+            The resources, each unique by ``kind:name`` and by readiness key
+            among all of the application's.
+        """
+        del container
+        return ()
 
 
 class ConfiguredInstaller(Installer, Generic[SettingsT]):

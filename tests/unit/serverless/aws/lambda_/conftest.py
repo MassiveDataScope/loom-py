@@ -9,11 +9,11 @@ from pathlib import Path
 import pytest
 
 from loom.composition import AppConfig, Application, Project
-from loom.composition.resources import Resource, ResourceKind
 from loom.core.config import ConfigContext
 from loom.core.errors import PostCommitError, StoresNotCommittedError
 from loom.core.identity import current_identity
 from loom.core.job.job import Job
+from loom.core.resources import Resource, ResourceKind
 from loom.core.stores.catalog import DEFAULT_STORE
 from loom.core.stores.uow.coordinator import InvocationOutcome, Uncertain
 from loom.core.stores.uow.scope import invocation_error

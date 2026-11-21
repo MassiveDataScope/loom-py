@@ -2,6 +2,9 @@
 
 ## 💥 Breaking
 
+- **composition:** `loom.composition.resources` is `loom.core.resources`, so an
+  `Installer` in the core can name `Resource`. **Migration:** import `Resource`,
+  `ResourceKind` and `closing` from `loom.core.resources`.
 - **names:** Runtime runs the application. Plugin is what an entry point registers. Store, Engine, Ops and IO name the role. `close` ends a session and `shutdown` ends the application. `from_<source>` builds from an origin. `is_` and `has_` name booleans. Exceptions end in `Error`.
   **Migration:**
   - **Modules:** `loom.ai.runtime` → `loom.ai.execution`; `loom.etl.runtime` → `loom.etl.ports`; `loom.rest.fastapi.adapter` → `loom.rest.fastapi.runtime`; `loom.celery.adapter` → `loom.celery.runtime`; `loom.prometheus.adapter` → `loom.prometheus.recorder`; `loom.core.transport.adapter` → `loom.core.transport.dispatcher`; `loom.core.command.adapter` → `loom.core.command.parser`; `loom.rest.adapter` → `loom.rest.parser`; `loom.rest.rest_adapter` → `loom.rest.dispatcher`; `loom.core.cache.abc.backend` → `loom.core.cache.abc.store`; `loom.core.stores.backend` → `loom.core.stores.plugin`; `loom.stores.sqlalchemy.backend` → `loom.stores.sqlalchemy.plugin`; `loom.stores.dynamodb.backend` → `loom.stores.dynamodb.plugin`; `loom.stores.mongo.backend` → `loom.stores.mongo.plugin`; `loom.ai.engines.pydantic_ai.provider` → `loom.ai.engines.pydantic_ai.plugin`; `loom.etl.backends.polars.provider` → `loom.etl.engines.polars.engine`; `loom.etl.backends.spark.provider` → `loom.etl.engines.spark.engine`; `loom.etl.runner._providers` → `loom.etl.runner._engines`; `loom.core.observability.runtime` → `loom.core.observability.observability`; `loom.core.projection.runtime` → `loom.core.projection.plan`; `loom.rest.fastapi.router_runtime` → `loom.rest.fastapi.router`; `loom.etl.backends` → `loom.etl.engines`; `loom.etl.checkpoint._backends` → `loom.etl.checkpoint._io`.
@@ -1200,6 +1203,17 @@
 
 ### composition
 
+- **composition:** `Installer.resources(container)` lets an application declare
+  what it opens and closes. The resources it returns (default none) are opened
+  by `Application.running()` after the stores and before the job timer and get
+  the guarantees of loom's own: a failure while opening closes what already
+  opened, every resource closes even when another fails, `check` runs right
+  before it opens and in `Application.check()`, and `readiness` answers the
+  health probe under its `readiness_key`. `Resource`, `ResourceKind` (new
+  member `APPLICATION`, the default kind) and `closing` now live in
+  `loom.core.resources` (they were `loom.composition.resources`). Two
+  resources with the same `kind:name` or readiness key are a `ConfigError`
+  naming both owners.
 - **composition:** `Installer.from_config(config)` is how composition builds
   every discovered installer; the base returns `cls()`. `ConfiguredInstaller[SettingsT]`
   declares `section` and `settings_type`, decodes that section once with
