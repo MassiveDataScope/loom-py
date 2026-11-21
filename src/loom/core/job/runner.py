@@ -11,7 +11,7 @@ from dataclasses import dataclass
 from typing import Any
 
 from loom.core.engine.events import AbandonReason, EventKind, ExecutionEvent, Status
-from loom.core.engine.metrics import MetricsRecorder, NoMetrics
+from loom.core.engine.execution_observer import ExecutionObserver, NullExecutionObserver
 from loom.core.errors import LoomError
 from loom.core.job.delivery import JobDelivery
 from loom.core.job.outcome import (
@@ -103,7 +103,7 @@ class JobRunner:
     Args:
         invocation: Runs the job of a delivery.
         redelivery: What the transport does with a job that must run again.
-        metrics: Receives the job events; none when omitted.
+        execution_observer: Receives the job events; none when omitted.
         rng: The source of the backoff jitter; a fresh one when omitted.
     """
 
@@ -112,13 +112,15 @@ class JobRunner:
         invocation: Invocation,
         *,
         redelivery: Redelivery,
-        metrics: MetricsRecorder | None = None,
+        execution_observer: ExecutionObserver | None = None,
         rng: random.Random | None = None,
     ) -> None:
         self._invocation = invocation
         self._rng = random.Random() if rng is None else rng
         self._redelivery = redelivery
-        self._metrics: MetricsRecorder = NoMetrics() if metrics is None else metrics
+        self._execution_observer: ExecutionObserver = (
+            NullExecutionObserver() if execution_observer is None else execution_observer
+        )
 
     async def run(self, delivery: JobDelivery) -> JobOutcome:
         """Run *delivery* once.
@@ -137,12 +139,14 @@ class JobRunner:
         """
         trace_id = delivery.envelope.trace_id
         name = delivery.job_type.__qualname__
-        self._metrics.on_event(ExecutionEvent(EventKind.JOB_STARTED, name, trace_id=trace_id))
+        self._execution_observer.on_event(
+            ExecutionEvent(EventKind.JOB_STARTED, name, trace_id=trace_id)
+        )
         started = time.monotonic()
         whereabouts = _Whereabouts.of_delivery(delivery)
         with log_context(whereabouts.run_fields()):
             outcome = await self._run_once(delivery)
-        self._metrics.on_event(
+        self._execution_observer.on_event(
             self._build_event(outcome, name, trace_id, (time.monotonic() - started) * 1000)
         )
         if isinstance(outcome, Abandoned):
@@ -181,7 +185,9 @@ class JobRunner:
             is emitted, named by the error's class.
         """
         outcome = self._decide(error, attempt, policy)
-        self._metrics.on_event(self._build_event(outcome, type(error).__qualname__, None, None))
+        self._execution_observer.on_event(
+            self._build_event(outcome, type(error).__qualname__, None, None)
+        )
         if isinstance(outcome, Abandoned):
             _Whereabouts.of_unrunnable(attempt, message_id).log_abandoned(outcome)
         return outcome

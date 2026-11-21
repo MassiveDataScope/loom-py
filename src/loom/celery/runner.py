@@ -57,8 +57,8 @@ from loom.core.observability.observability import Observability
 from loom.core.tracing import active_trace_id
 
 if TYPE_CHECKING:
+    from loom.core.engine.execution_observer import ExecutionObserver
     from loom.core.engine.executor import UseCaseExecutor
-    from loom.core.engine.metrics import MetricsRecorder
     from loom.core.job.job import Job
     from loom.core.use_case.factory import UseCaseFactory
 
@@ -171,7 +171,7 @@ def _make_job_task(
     factory: UseCaseFactory,
     executor: UseCaseExecutor,
     process_bridge: _CeleryProcessBridge,
-    metrics: MetricsRecorder | None = None,
+    execution_observer: ExecutionObserver | None = None,
     observability: Observability | None = None,
     *,
     settings: JobSettings,
@@ -212,7 +212,7 @@ def _make_job_task(
         job_type: Concrete :class:`~loom.core.job.job.Job` subclass.
         factory: Used to build the Job instance via DI.
         executor: UseCaseExecutor driving the compiled ExecutionPlan.
-        metrics: Optional metrics recorder.  Receives the job events the
+        execution_observer: Optional execution observer.  Receives the job events the
             runner emits (``JOB_STARTED``, ``JOB_SUCCEEDED``,
             ``JOB_POSTPONED``, ``JOB_FAILED`` and ``JOB_ABANDONED``).
         settings: The application's job settings, which give the task its
@@ -229,7 +229,7 @@ def _make_job_task(
     runner = JobRunner(
         EnvelopeInvocation(factory, executor, runtime),
         redelivery=REDELIVERY,
-        metrics=metrics,
+        execution_observer=execution_observer,
     )
 
     def _deliver(

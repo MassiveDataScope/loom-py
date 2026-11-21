@@ -1,4 +1,4 @@
-"""What the executor reports: runtime events, metrics and one structured log per run.
+"""What the executor reports: runtime events and one structured log per run.
 
 Every attempted run logs exactly one terminal line. A run whose use case was
 built starts a :class:`StartedExecution` (``EXEC_START`` event) and ends it
@@ -21,7 +21,7 @@ from types import MappingProxyType
 from typing import Any, NamedTuple, TypeVar
 
 from loom.core.engine.events import EventKind, ExecutionEvent, Phase, Status
-from loom.core.engine.metrics import MetricsRecorder, NoMetrics
+from loom.core.engine.execution_observer import ExecutionObserver, NullExecutionObserver
 from loom.core.errors import PostCommitError, RuleViolationError, RuleViolationsError
 from loom.core.job.outcome import JobSignal, failure_log_fields
 from loom.core.stores.uow.coordinator import InvocationOutcome
@@ -43,29 +43,31 @@ class BrokenRule(NamedTuple):
 
 
 class ExecutionReporter:
-    """Where one executor's events, metrics and logs go.
+    """Where one executor's events and logs go.
 
     Args:
-        metrics: Receives the runtime events, if given.
+        execution_observer: Receives the runtime events, if given.
         debug: Whether each execution's terminal log lists the steps it ran.
     """
 
-    __slots__ = ("_debug", "_metrics")
+    __slots__ = ("_debug", "_execution_observer")
 
-    def __init__(self, metrics: MetricsRecorder | None, debug: bool) -> None:
-        self._metrics: MetricsRecorder = NoMetrics() if metrics is None else metrics
+    def __init__(self, execution_observer: ExecutionObserver | None, debug: bool) -> None:
+        self._execution_observer: ExecutionObserver = (
+            NullExecutionObserver() if execution_observer is None else execution_observer
+        )
         self._debug = debug
 
     def start(self, use_case: str) -> StartedExecution:
         """Report *use_case*'s execution started, and return what reports its end.
 
         Raises:
-            Exception: What the metrics recorder raised, once logged as the
+            Exception: What the execution observer raised, once logged as the
                 execution failing to begin.
         """
         execution = self._execution(use_case)
         try:
-            self._metrics.on_event(
+            self._execution_observer.on_event(
                 ExecutionEvent(
                     kind=EventKind.EXEC_START, use_case_name=use_case, trace_id=execution.trace_id
                 )
@@ -82,7 +84,9 @@ class ExecutionReporter:
     def _execution(self, use_case: str) -> StartedExecution:
         trace_id = get_trace_id()
         steps: list[str] | None = [] if self._debug else None
-        return StartedExecution(self._metrics, use_case, trace_id, time.perf_counter(), steps)
+        return StartedExecution(
+            self._execution_observer, use_case, trace_id, time.perf_counter(), steps
+        )
 
 
 @dataclass(slots=True)
@@ -95,7 +99,7 @@ class StartedExecution:
     the steps run, in debug mode only; ``broken_rules`` the rules broken.
     """
 
-    metrics: MetricsRecorder
+    execution_observer: ExecutionObserver
     use_case_name: str
     trace_id: str | None
     start: float
@@ -149,7 +153,7 @@ class StartedExecution:
                 **ran,
             },
         )
-        self.metrics.on_event(
+        self.execution_observer.on_event(
             ExecutionEvent(
                 kind=EventKind.EXEC_DONE,
                 use_case_name=self.use_case_name,
@@ -167,7 +171,7 @@ class StartedExecution:
         error_kind = self._error_kind(error)
         status = self._status(error)
         self.log_failure(error, status, error_kind, duration_ms=elapsed_ms)
-        self.metrics.on_event(
+        self.execution_observer.on_event(
             ExecutionEvent(
                 kind=EventKind.EXEC_ERROR,
                 use_case_name=self.use_case_name,

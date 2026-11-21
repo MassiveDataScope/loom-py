@@ -22,8 +22,8 @@ from loom.core.di.container import BindingKey, LoomContainer
 from loom.core.di.errors import describe_key
 from loom.core.engine.compilable import Compilable
 from loom.core.engine.compiler import UseCaseCompiler
+from loom.core.engine.execution_observer import ExecutionObserver
 from loom.core.engine.executor import UseCaseExecutor
-from loom.core.engine.metrics import MetricsRecorder
 from loom.core.environment import Environment, resolve_environment
 from loom.core.execution import ExecutionResolver
 from loom.core.logger import LogEvent, LogField
@@ -70,7 +70,7 @@ class Kernel:
             it invokes acts as the identity acting where it is called;
             :meth:`~loom.core.use_case.invoker.AppInvoker.for_identity` binds a
             copy to one caller.
-        metrics: Optional metrics recorder the executor reports to.
+        execution_observer: Optional execution observer the executor reports to.
     """
 
     container: LoomContainer
@@ -79,7 +79,7 @@ class Kernel:
     executor: UseCaseExecutor
     registry: UseCaseRegistry
     invoker: AppInvoker
-    metrics: MetricsRecorder | None = None
+    execution_observer: ExecutionObserver | None = None
 
 
 def create_kernel(
@@ -87,7 +87,7 @@ def create_kernel(
     config: object,
     use_cases: Sequence[type[Compilable]],
     modules: Sequence[Callable[[LoomContainer], None]] = (),
-    metrics: MetricsRecorder | None = None,
+    execution_observer: ExecutionObserver | None = None,
     coordinator: Coordinator | None = None,
     repo_resolver: Callable[[type[Any]], Any] | None = None,
     environment: Environment | str | None = None,
@@ -108,7 +108,7 @@ def create_kernel(
             scope under its concrete type.
         use_cases: Compilable classes to compile at startup.
         modules: Container registration modules, run in order.
-        metrics: Optional metrics recorder.
+        execution_observer: Optional execution observer.
         coordinator: Coordinator of the application's stores, which runs
             each execution in their units of work; ``None`` runs without one.
         repo_resolver: Optional repository resolver used by marker-based loads.
@@ -141,7 +141,7 @@ def create_kernel(
     seeds = {type(config): config, Environment: resolve_environment(environment)}
     recipe = KernelRecipe(
         use_cases,
-        metrics=metrics,
+        execution_observer=execution_observer,
         coordinator=coordinator,
         repo_resolver=repo_resolver,
         agent_resolver=agent_resolver,
@@ -216,7 +216,7 @@ class KernelRecipe:
 
     Args:
         use_cases: Compilable classes to compile.
-        metrics: Optional metrics recorder.
+        execution_observer: Optional execution observer.
         coordinator: Coordinator of the application's stores; ``None`` runs without one.
         repo_resolver: Repository resolver of marker-based loads; defaults to
             the container's ``resolve_repo``.
@@ -225,7 +225,7 @@ class KernelRecipe:
     """
 
     use_cases: Sequence[type[Compilable]]
-    metrics: MetricsRecorder | None = None
+    execution_observer: ExecutionObserver | None = None
     coordinator: Coordinator | None = None
     repo_resolver: Callable[[type[Any]], Any] | None = None
     agent_resolver: ExecutionResolver | None = None
@@ -265,7 +265,7 @@ class KernelRecipe:
         executor = UseCaseExecutor(
             compiler,
             coordinator=self.coordinator,
-            metrics=self.metrics,
+            execution_observer=self.execution_observer,
             repo_resolver=self.repo_resolver or container.resolve_repo,
             resolvers=container.kinds,
             builder=factory.build,
@@ -285,7 +285,7 @@ class KernelRecipe:
             executor=executor,
             registry=registry,
             invoker=invoker,
-            metrics=self.metrics,
+            execution_observer=self.execution_observer,
         )
 
     def _install_use_cases(
@@ -299,7 +299,7 @@ class KernelRecipe:
         _log.info(
             BootEvent.USE_CASES_COMPILING, extra={LogField.USE_CASE_COUNT: len(self.use_cases)}
         )
-        compiler = UseCaseCompiler(metrics=self.metrics)
+        compiler = UseCaseCompiler(execution_observer=self.execution_observer)
         for use_case in self.use_cases:
             compiler.compile(use_case)
         factory = UseCaseFactory(container)

@@ -8,7 +8,7 @@ from typing import Any, Final, get_args, get_origin
 
 from loom.core.engine.compilable import Compilable
 from loom.core.engine.events import EventKind, ExecutionEvent
-from loom.core.engine.metrics import MetricsRecorder, NoMetrics
+from loom.core.engine.execution_observer import ExecutionObserver, NullExecutionObserver
 from loom.core.engine.plan import (
     CallerBinding,
     CommandStep,
@@ -100,21 +100,23 @@ class UseCaseCompiler:
     execution via ``UseCaseExecutor``.
 
     Args:
-        metrics: Optional metrics recorder. When provided, receives
+        execution_observer: Optional execution observer. When provided, receives
             ``COMPILE_START`` and ``COMPILE_DONE`` events.
 
     Example::
 
-        compiler = UseCaseCompiler(metrics=my_adapter)
+        compiler = UseCaseCompiler(execution_observer=my_adapter)
         plan = compiler.compile(UpdateUserUseCase)
     """
 
     def __init__(
         self,
-        metrics: MetricsRecorder | None = None,
+        execution_observer: ExecutionObserver | None = None,
     ) -> None:
         self._cache: dict[type[Any], ExecutionPlan] = {}
-        self._metrics: MetricsRecorder = NoMetrics() if metrics is None else metrics
+        self._execution_observer: ExecutionObserver = (
+            NullExecutionObserver() if execution_observer is None else execution_observer
+        )
 
     def compile(self, use_case_type: type[Compilable]) -> ExecutionPlan:
         """Return the ExecutionPlan for ``use_case_type``, compiling if needed.
@@ -152,7 +154,9 @@ class UseCaseCompiler:
 
     def _build_plan(self, use_case_type: type[Compilable]) -> ExecutionPlan:
         uc_name = use_case_type.__qualname__
-        self._metrics.on_event(ExecutionEvent(kind=EventKind.COMPILE_START, use_case_name=uc_name))
+        self._execution_observer.on_event(
+            ExecutionEvent(kind=EventKind.COMPILE_START, use_case_name=uc_name)
+        )
 
         bindings = self._inspect_execute(use_case_type)
         compute_steps = tuple(CommandStep.from_callable(fn) for fn in use_case_type.computes)
@@ -174,7 +178,9 @@ class UseCaseCompiler:
                 "steps": total,
             },
         )
-        self._metrics.on_event(ExecutionEvent(kind=EventKind.COMPILE_DONE, use_case_name=uc_name))
+        self._execution_observer.on_event(
+            ExecutionEvent(kind=EventKind.COMPILE_DONE, use_case_name=uc_name)
+        )
 
         primary = _primary_store(use_case_type)
         plan = ExecutionPlan(

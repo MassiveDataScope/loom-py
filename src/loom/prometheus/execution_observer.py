@@ -1,6 +1,6 @@
 """Prometheus metrics recorder for Loom use-case events.
 
-Implements the :class:`~loom.core.engine.metrics.MetricsRecorder` protocol
+Implements the :class:`~loom.core.engine.execution_observer.ExecutionObserver` protocol
 using ``prometheus_client`` instruments.  Install the optional dependency
 with::
 
@@ -8,15 +8,15 @@ with::
 
 Usage::
 
-    from loom.prometheus import PrometheusMetricsRecorder
+    from loom.prometheus import PrometheusExecutionObserver
 
-    recorder = PrometheusMetricsRecorder()
+    recorder = PrometheusExecutionObserver()
 
     kernel = create_kernel(
         config=cfg,
         use_cases=[CreateOrderUseCase],
         modules=[register_repositories],
-        metrics=recorder,
+        execution_observer=recorder,
     )
     app = create_fastapi_app(kernel, RouteSources(python=[OrderInterface]))
 
@@ -62,8 +62,8 @@ _JOB_EVENT_KINDS = frozenset(kind for kind in EventKind if kind.startswith("job_
 _INSTRUMENTS = (_REQUESTS_TOTAL, _DURATION_SECONDS, _ERRORS_TOTAL, _JOB_EVENTS_TOTAL)
 
 
-class PrometheusMetricsRecorder:
-    """Prometheus implementation of the ``MetricsRecorder`` protocol.
+class PrometheusExecutionObserver:
+    """Prometheus implementation of the ``ExecutionObserver`` protocol.
 
     Records the use-case instruments and one for jobs:
 
@@ -95,10 +95,10 @@ class PrometheusMetricsRecorder:
 
     Example::
 
-        from loom.prometheus import PrometheusMetricsRecorder
+        from loom.prometheus import PrometheusExecutionObserver
 
-        recorder = PrometheusMetricsRecorder()
-        kernel = create_kernel(config=cfg, use_cases=[...], metrics=recorder)
+        recorder = PrometheusExecutionObserver()
+        kernel = create_kernel(config=cfg, use_cases=[...], execution_observer=recorder)
     """
 
     def __init__(self, registry: CollectorRegistry | None = None) -> None:

@@ -30,8 +30,8 @@ class Log:
         return self.entries.index(entry)
 
 
-class Metrics:
-    """Metrics adapter recording every event, in order, on the shared log when given."""
+class RecordingExecutionObserver:
+    """Execution observer recording every event, in order, on the shared log when given."""
 
     def __init__(self, log: Log | None = None) -> None:
         self.events: list[ExecutionEvent] = []

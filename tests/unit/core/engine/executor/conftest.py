@@ -19,7 +19,7 @@ from loom.core.use_case.factory import UseCaseFactory
 from tests.helpers.loggers import CapturedLog
 
 from ...uow._coordinator_fakes import Ledger
-from .._lifecycle_doubles import Metrics
+from .._lifecycle_doubles import RecordingExecutionObserver
 from .doubles import (
     JOURNAL,
     AcmeStores,
@@ -45,7 +45,7 @@ def make_executor() -> MakeExecutor:
     """An executor reporting its events to ``JOURNAL`` and logging to a recorder, by default."""
 
     def make(**options: Any) -> UseCaseExecutor:
-        defaults: dict[str, Any] = {"metrics": JOURNAL}
+        defaults: dict[str, Any] = {"execution_observer": JOURNAL}
         return UseCaseExecutor(UseCaseCompiler(), **{**defaults, **options})
 
     return make
@@ -64,8 +64,8 @@ def logger(caplog: pytest.LogCaptureFixture) -> CapturedLog:
 
 
 @pytest.fixture
-def metrics() -> Metrics:
-    return Metrics()
+def observer() -> RecordingExecutionObserver:
+    return RecordingExecutionObserver()
 
 
 @pytest.fixture
@@ -85,10 +85,14 @@ def stores(ledger: Ledger) -> AcmeStores:
 
 
 @pytest.fixture
-def transactional_executor(stores: AcmeStores, metrics: Metrics) -> UseCaseExecutor:
+def transactional_executor(
+    stores: AcmeStores, observer: RecordingExecutionObserver
+) -> UseCaseExecutor:
     """An executor whose top-level writers open an invocation scope over ``stores``."""
     return UseCaseExecutor(
-        UseCaseCompiler(), coordinator=OrderedCommits({DEFAULT_STORE: stores}), metrics=metrics
+        UseCaseCompiler(),
+        coordinator=OrderedCommits({DEFAULT_STORE: stores}),
+        execution_observer=observer,
     )
 
 

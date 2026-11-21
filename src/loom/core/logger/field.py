@@ -32,6 +32,8 @@ class LogField(StrEnum):
     STATUS = "loom.status"
     ERROR_MESSAGE = "error.message"
     BOOTSTRAP_MODULE = "loom.bootstrap.module"
+    OBSERVER = "loom.observer"
+    EVENT_KIND = "loom.event_kind"
     USE_CASE_COUNT = "loom.use_case_count"
     EXCEPTION_TYPE = "exception.type"
     EXCEPTION_MESSAGE = "exception.message"

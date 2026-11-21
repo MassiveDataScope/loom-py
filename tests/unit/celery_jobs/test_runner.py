@@ -396,7 +396,7 @@ class TestEvents:
     ) -> None:
         worker.run(TraceJob)
 
-        started, succeeded = worker.metrics.events
+        started, succeeded = worker.execution_observer.events
         assert (started.kind, succeeded.kind) == (EventKind.JOB_STARTED, EventKind.JOB_SUCCEEDED)
         assert succeeded.duration_ms is not None
         assert succeeded.duration_ms >= 0
@@ -405,7 +405,7 @@ class TestEvents:
         worker.run(TraceJob, trace_id=WIRE_TRACE)
 
         assert TraceJob.seen == [WIRE_TRACE]
-        assert {event.trace_id for event in worker.metrics.events} == {WIRE_TRACE}
+        assert {event.trace_id for event in worker.execution_observer.events} == {WIRE_TRACE}
         assert get_trace_id() is None
 
     def test_a_trace_less_job_installs_no_context_and_emits_events_with_none(
@@ -414,8 +414,8 @@ class TestEvents:
         worker.run(TraceJob)
 
         assert TraceJob.seen == [None]
-        assert worker.metrics.kinds == [EventKind.JOB_STARTED, EventKind.JOB_SUCCEEDED]
-        assert {event.trace_id for event in worker.metrics.events} == {None}
+        assert worker.execution_observer.kinds == [EventKind.JOB_STARTED, EventKind.JOB_SUCCEEDED]
+        assert {event.trace_id for event in worker.execution_observer.events} == {None}
 
     @pytest.mark.parametrize(
         ("attempt", "raised", "kind"),
@@ -428,8 +428,8 @@ class TestEvents:
         with pytest.raises(raised):
             worker.run(FailingJob, attempt=attempt)
 
-        assert kind in worker.metrics.kinds
-        assert {event.trace_id for event in worker.metrics.events} == {None}
+        assert kind in worker.execution_observer.kinds
+        assert {event.trace_id for event in worker.execution_observer.events} == {None}
 
     def test_a_post_commit_error_that_committed_is_abandoned_not_failed(
         self, worker: CeleryWorker
@@ -437,8 +437,8 @@ class TestEvents:
         with pytest.raises(PostCommitError):
             worker.run(RaisingJob, params={"kind": "post-commit-committed"})
 
-        assert EventKind.JOB_FAILED not in worker.metrics.kinds
-        assert EventKind.JOB_ABANDONED in worker.metrics.kinds
+        assert EventKind.JOB_FAILED not in worker.execution_observer.kinds
+        assert EventKind.JOB_ABANDONED in worker.execution_observer.kinds
 
 
 class Hooks:

@@ -16,7 +16,7 @@ import msgspec
 from loom.core.config import ConfigKey
 from loom.core.connections.aws import AwsClientConfig, aws_error_code
 from loom.core.engine.events import EventKind, ExecutionEvent
-from loom.core.engine.metrics import NoMetrics
+from loom.core.engine.execution_observer import NullExecutionObserver
 from loom.core.engine.post_commit import log_never_ran
 from loom.core.job.config import JobSettings
 from loom.core.job.context import add_pending_publish, pending_publish_group
@@ -37,7 +37,7 @@ from loom.jobs.aws.queue import (
 if TYPE_CHECKING:
     from loom.composition import JobTransportContext
     from loom.core.config import ConfigContext
-    from loom.core.engine.metrics import MetricsRecorder
+    from loom.core.engine.execution_observer import ExecutionObserver
     from loom.core.job.callback import JobCallback
 
 ResultT = TypeVar("ResultT")
@@ -98,7 +98,7 @@ def build_transport(context: JobTransportContext) -> SQSJobTransport:
     config = SQSConfig.load(context.config)
     check_queues(config.queues, context.jobs, context.settings)
     client = context.aws.client("sqs", config)
-    return SQSJobTransport(client, config, metrics=context.metrics)
+    return SQSJobTransport(client, config, execution_observer=context.execution_observer)
 
 
 @dataclass(frozen=True)
@@ -234,12 +234,14 @@ class SQSJobTransport:
     """Send validated jobs to SQS, batching the post-commit channel when configured."""
 
     def __init__(
-        self, client: Any, config: SQSConfig, *, metrics: MetricsRecorder | None = None
+        self, client: Any, config: SQSConfig, *, execution_observer: ExecutionObserver | None = None
     ) -> None:
         self._config = config
         self._queues = SQSQueues(client, config.queues)
         self._new_batch = functools.partial(_PendingSQSBatch, config)
-        self._metrics = NoMetrics() if metrics is None else metrics
+        self._execution_observer = (
+            NullExecutionObserver() if execution_observer is None else execution_observer
+        )
 
     def send_after_commit(self, dispatch: JobDispatch) -> JobHandle[Any]:
         """Validate SQS placement now and publish after a successful commit."""
@@ -286,7 +288,7 @@ class SQSJobTransport:
             dispatch.job_type, envelope.payload or {}, task_id, dispatch.countdown, body.decode()
         )
         send = _PendingSQSSend(target, envelope.job, task_id, message)
-        self._metrics.on_event(
+        self._execution_observer.on_event(
             ExecutionEvent(
                 kind=EventKind.JOB_DISPATCHED,
                 use_case_name=dispatch.job_type.__qualname__,

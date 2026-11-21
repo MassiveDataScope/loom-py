@@ -15,8 +15,8 @@ from loom.core.di.container import LoomContainer
 from loom.core.discovery.base import DiscoveryResult
 from loom.core.engine.compiler import UseCaseCompiler
 from loom.core.engine.events import EventKind, ExecutionEvent
+from loom.core.engine.execution_observer import ExecutionObserver
 from loom.core.engine.executor import UseCaseExecutor
-from loom.core.engine.metrics import MetricsRecorder
 from loom.core.job.callback import ANY_CALLBACKS, CallbackOutcome, DispatchableCallbacks
 from loom.core.job.config import JobSettings
 from loom.core.job.delivery import JobDelivery
@@ -48,8 +48,8 @@ class EmailJob(Job[str]):
         return "email"
 
 
-class RecordingMetrics:
-    """A metrics adapter that keeps every runtime event it receives."""
+class RecordingExecutionObserver:
+    """An execution observer that keeps every runtime event it receives."""
 
     def __init__(self) -> None:
         self.events: list[ExecutionEvent] = []
@@ -164,10 +164,12 @@ class InlineServiceFixture(JobService):
         settings: JobSettings | None = None,
         callbacks: DispatchableCallbacks = ANY_CALLBACKS,
         timer: JobTimer | None = None,
-        metrics: MetricsRecorder | None = None,
+        execution_observer: ExecutionObserver | None = None,
     ) -> None:
         super().__init__(
-            InlineJobTransport(factory, executor, timer=timer, metrics=metrics),
+            InlineJobTransport(
+                factory, executor, timer=timer, execution_observer=execution_observer
+            ),
             factory=factory,
             executor=executor,
             settings=settings,
@@ -181,7 +183,7 @@ class CeleryServiceFixture(JobService):
     def __init__(
         self,
         app: Any,
-        metrics: MetricsRecorder | None = None,
+        execution_observer: ExecutionObserver | None = None,
         factory: Any = None,
         executor: Any = None,
         observability: Any = None,
@@ -190,7 +192,9 @@ class CeleryServiceFixture(JobService):
         callbacks: DispatchableCallbacks = ANY_CALLBACKS,
     ) -> None:
         super().__init__(
-            CeleryJobTransport(app, metrics=metrics, observability=observability),
+            CeleryJobTransport(
+                app, execution_observer=execution_observer, observability=observability
+            ),
             factory=factory,
             executor=executor,
             settings=settings,
@@ -208,11 +212,11 @@ class SQSServiceFixture(JobService):
         *,
         factory: Any,
         executor: Any,
-        metrics: MetricsRecorder | None = None,
+        execution_observer: ExecutionObserver | None = None,
         settings: JobSettings | None = None,
     ) -> None:
         super().__init__(
-            SQSJobTransport(client, config, metrics=metrics),
+            SQSJobTransport(client, config, execution_observer=execution_observer),
             factory=factory,
             executor=executor,
             settings=settings,
@@ -246,7 +250,7 @@ class CeleryWorker:
         broker: The broker every task of this worker publishes to.
         kernel: The factory and executor the tasks run jobs with.
         runtime: The per-process async runtime.
-        metrics: The events the job tasks emitted.
+        execution_observer: The events the job tasks emitted.
     """
 
     TASK_ID = "task-1"
@@ -255,7 +259,7 @@ class CeleryWorker:
         self.broker = CeleryBroker([DEFAULT_QUEUE])
         self.kernel = JobKernel()
         self.runtime = _CeleryProcessBridge()
-        self.metrics = RecordingMetrics()
+        self.execution_observer = RecordingExecutionObserver()
         self._settings = settings or JobSettings()
         if initialized:
             self.runtime.initialize()
@@ -280,7 +284,7 @@ class CeleryWorker:
             self.kernel.factory,
             self.kernel.executor,
             self.runtime,
-            self.metrics,
+            self.execution_observer,
             observability,
             settings=self._settings,
         )

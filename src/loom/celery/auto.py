@@ -11,7 +11,7 @@ from loom.celery.bootstrap import bootstrap_worker
 
 if TYPE_CHECKING:
     from loom.core.config import ConfigResolver
-    from loom.core.engine.metrics import MetricsRecorder
+    from loom.core.engine.execution_observer import ExecutionObserver
     from loom.core.environment import Environment
     from loom.core.job.job import Job
 
@@ -21,7 +21,7 @@ def create_app(
     config_dir: str | None = None,
     environment: Environment | str | None = None,
     jobs: Sequence[type[Job[Any]]] = (),
-    metrics: MetricsRecorder | None = None,
+    execution_observer: ExecutionObserver | None = None,
     resolvers: Sequence[ConfigResolver] = (),
 ) -> Celery:
     """Create a Celery app with all Loom job tasks registered.
@@ -37,7 +37,7 @@ def create_app(
             defaults to production when unset.
         jobs: Concrete ``Job`` subclasses to register as Celery tasks.
             Optional when ``app.packages`` is configured.
-        metrics: Optional metrics recorder.
+        execution_observer: Optional execution observer.
         resolvers: Resolvers for ``${name:key}`` placeholders, registered
             before the built-in ``secrets`` and ``ssm`` defaults.  A resolver
             named like a default replaces it.
@@ -50,7 +50,7 @@ def create_app(
         config_dir=config_dir,
         environment=environment,
         jobs=jobs,
-        metrics=metrics,
+        execution_observer=execution_observer,
         resolvers=resolvers,
     )
     return result.celery_app

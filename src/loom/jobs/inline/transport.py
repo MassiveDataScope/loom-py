@@ -18,8 +18,8 @@ from loom.core.job.runner import JobRunner
 from loom.core.job.timer import JobDelayRefusedError, JobTimer
 
 if TYPE_CHECKING:
+    from loom.core.engine.execution_observer import ExecutionObserver
     from loom.core.engine.executor import UseCaseExecutor
-    from loom.core.engine.metrics import MetricsRecorder
     from loom.core.use_case.factory import UseCaseFactory
 
 
@@ -40,7 +40,7 @@ class InlineJobTransport:
         executor: Runs compiled execution plans.
         timer: Schedules countdowns, postponements and retries; without it
             any initial delay is refused and later waiting is abandoned.
-        metrics: Receives the runner's job events.
+        execution_observer: Receives the runner's job events.
     """
 
     def __init__(
@@ -49,13 +49,15 @@ class InlineJobTransport:
         executor: UseCaseExecutor,
         *,
         timer: JobTimer | None = None,
-        metrics: MetricsRecorder | None = None,
+        execution_observer: ExecutionObserver | None = None,
     ) -> None:
         self._factory = factory
         self._executor = executor
         self._timer = timer
         self._redelivery = Redelivery.DELAYED if timer is not None else Redelivery.NONE
-        self._runner = JobRunner(self._invoke, redelivery=self._redelivery, metrics=metrics)
+        self._runner = JobRunner(
+            self._invoke, redelivery=self._redelivery, execution_observer=execution_observer
+        )
 
     @property
     def redelivery(self) -> Redelivery:

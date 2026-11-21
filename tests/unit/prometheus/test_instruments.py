@@ -14,8 +14,8 @@ from loom.core.engine.events import ExecutionEvent
 from loom.core.observability.event import EventKind, LifecycleEvent, Scope
 from loom.prometheus import (
     KafkaPrometheusMetrics,
+    PrometheusExecutionObserver,
     PrometheusLifecycleObserver,
-    PrometheusMetricsRecorder,
     PrometheusMiddleware,
 )
 from loom.prometheus._instruments import cached_instruments, counter_spec, histogram_spec
@@ -67,7 +67,7 @@ def _instrument_contract(registry: CollectorRegistry) -> set[tuple[str, str, str
 class TestMetricContract:
     def test_use_case_adapter_declares_its_instruments(self) -> None:
         registry = CollectorRegistry()
-        PrometheusMetricsRecorder(registry=registry)
+        PrometheusExecutionObserver(registry=registry)
         assert _instrument_contract(registry) == {
             (
                 "loom_usecase_requests",
@@ -165,7 +165,7 @@ class TestMetricContract:
 class TestDefaultRegistryCache:
     def test_two_use_case_adapters_share_default_instruments(self) -> None:
         use_case = "UseCaseCacheProbe"
-        for adapter in (PrometheusMetricsRecorder(), PrometheusMetricsRecorder()):
+        for adapter in (PrometheusExecutionObserver(), PrometheusExecutionObserver()):
             adapter.on_event(
                 ExecutionEvent(
                     kind=UseCaseEventKind.EXEC_DONE,
@@ -180,7 +180,10 @@ class TestDefaultRegistryCache:
 
     def test_the_default_registry_passed_explicitly_shares_its_instruments(self) -> None:
         use_case = "UseCaseAliasedRegistryProbe"
-        for adapter in (PrometheusMetricsRecorder(), PrometheusMetricsRecorder(registry=REGISTRY)):
+        for adapter in (
+            PrometheusExecutionObserver(),
+            PrometheusExecutionObserver(registry=REGISTRY),
+        ):
             adapter.on_event(
                 ExecutionEvent(
                     kind=UseCaseEventKind.EXEC_DONE,

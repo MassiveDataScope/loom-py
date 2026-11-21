@@ -201,7 +201,7 @@ shortcuts over the composition:
 | Shortcut | Equivalent to |
 |---|---|
 | `loom.rest.fastapi.create_app(..., metrics_registry=, authenticator=)` | `create_app(..., runtime=FastAPIRuntime(metrics_registry=, authenticator=))` |
-| `loom.celery.auto.create_app(..., jobs=, metrics=)` | `create_app(..., runtime=CeleryRuntime(jobs=, metrics=))` |
+| `loom.celery.auto.create_app(..., jobs=, execution_observer=)` | `create_app(..., runtime=CeleryRuntime(jobs=, execution_observer=))` |
 | `loom.celery.bootstrap.bootstrap_worker(...)` | the same composition; returns `WorkerBootstrapResult` |
 
 `FastAPIRuntime` lives in `loom.rest.fastapi.runtime` and `CeleryRuntime` in
@@ -257,7 +257,7 @@ A `Recipe` is a frozen dataclass:
 | `check_scope` | A `CheckScope`: configuration paths whose deploy checks the entry point requires or leaves out, such as `CheckScope.without_rest()` for a worker. |
 | `agents` | Whether the entry point hosts the agent host; without it an `ai` section is ignored. Default `False`. |
 | `agent_endpoints` | Whether the runtime mounts agent endpoints. `False` mounts none, so only the agents an `Agent()` marker names are compiled, as on Lambda. Matters only with `agents=True`. Default `True`. |
-| `metrics` | Use-case metrics, or `None`. |
+| `execution_observer` | The observer of use-case and job execution events, or `None`. |
 | `pool_metrics` | Connection-pool metrics, for an entry point that serves a scrape. |
 | `connection_only` | Ask the backend for its connection only, no repository (see [Workers without models](#workers-without-models)). |
 

@@ -62,7 +62,7 @@ class TestLambdaJobsEnvelope:
     ) -> None:
         built: list[AcmeProbeJob] = []
         kernel = SimpleNamespace(
-            factory=AcmeRecordingFactory(factory, built), executor=executor, metrics=None
+            factory=AcmeRecordingFactory(factory, built), executor=executor, execution_observer=None
         )
         application = SimpleNamespace(
             kernel=kernel, observability=Observability.noop(), job_settings=JobSettings()

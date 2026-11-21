@@ -87,6 +87,13 @@ class ObservabilityConfig(LoomFrozenStruct, frozen=True, kw_only=True):
         log: Log format, level and lifecycle records.
         otel: OpenTelemetry traces and logs backend settings.
         prometheus: Prometheus metrics backend settings.
+        execution_observers: ``module:Class`` references to the application's
+            own execution observers: classes with ``on_event(event)`` that
+            receive every ``ExecutionEvent``, including ``JOB_FAILED`` and
+            ``JOB_ABANDONED`` with its ``reason``. Each is built with no
+            arguments and runs after loom's own. A failing observer is logged
+            and never breaks the run. ``on_event`` may be called from any
+            thread.
 
     Example::
 
@@ -101,6 +108,7 @@ class ObservabilityConfig(LoomFrozenStruct, frozen=True, kw_only=True):
     prometheus: PrometheusObservabilityConfig = msgspec.field(
         default_factory=PrometheusObservabilityConfig
     )
+    execution_observers: tuple[str, ...] = ()
 
 
 __all__ = [
