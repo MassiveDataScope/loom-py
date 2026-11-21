@@ -5,12 +5,10 @@ from __future__ import annotations
 import logging
 
 import pytest
-from opentelemetry.sdk._logs.export import InMemoryLogRecordExporter
 from opentelemetry.sdk.trace import TracerProvider
 
 from loom.core.config.observability import OtelConfig
 from loom.core.observability.event import EventKind, LifecycleEvent, LifecycleStatus, Scope
-from loom.core.observability.observer import otel as _otel_module
 from loom.core.observability.observer.log import LogLifecycleObserver
 from loom.core.observability.observer.noop import NoopObserver
 from loom.core.observability.observer.otel import (
@@ -18,6 +16,7 @@ from loom.core.observability.observer.otel import (
     install_otel_log_export,
 )
 from tests.helpers.loggers import CapturedLog
+from tests.unit.core.observability.conftest import LogExport
 
 
 class TestNoopObserver:
@@ -63,46 +62,28 @@ class TestLifecycleEventHelpers:
 
 
 class TestOtelLogExport:
-    def test_installs_root_handler_and_exports_stdlib_logs(
-        self, monkeypatch: pytest.MonkeyPatch
+    def test_the_handler_is_built_without_touching_the_root_logger(
+        self, log_export: LogExport
+    ) -> None:
+        assert log_export.handler not in logging.getLogger().handlers
+
+    def test_the_handler_exports_the_stdlib_logs_it_is_attached_to(
+        self, log_export: LogExport
     ) -> None:
         root = logging.getLogger()
-        original_handlers = list(root.handlers)
-        original_level = root.level
-        exporter = InMemoryLogRecordExporter()
+        root.addHandler(log_export.handler)
 
-        monkeypatch.setattr(
-            "loom.core.observability.observer.otel.atexit.register",
-            lambda *_: None,
-        )
-        monkeypatch.setattr(
-            "loom.core.observability.observer.otel._LOG_EXPORT_STATE",
-            None,
-        )
+        root.info("loom otel log export works")
+        log_export.exported()
 
-        handler = install_otel_log_export(
-            OtelConfig(endpoint=None, service_name="loom-test", tracer_name="loom.test"),
-            exporter=exporter,
-        )
-        try:
-            assert handler is not None
-            assert handler in root.handlers
-            root.setLevel(logging.INFO)
-            root.info("loom otel log export works")
+        [finished] = log_export.exporter.get_finished_logs()
+        assert finished.log_record.body == "loom otel log export works"
+        assert finished.resource.attributes["service.name"] == "loom-test"
 
-            if _otel_module._LOG_EXPORT_STATE is not None:
-                _otel_module._LOG_EXPORT_STATE[0].force_flush()
-            finished = exporter.get_finished_logs()
-            assert len(finished) == 1
-            assert finished[0].log_record.body == "loom otel log export works"
-            assert finished[0].resource.attributes["service.name"] == "loom-test"
-        finally:
-            current_handlers = list(root.handlers)
-            for existing in current_handlers:
-                if existing not in original_handlers:
-                    root.removeHandler(existing)
-                    existing.close()
-            root.setLevel(original_level)
+    def test_the_handler_is_idempotent_for_the_process(self, log_export: LogExport) -> None:
+        again = install_otel_log_export(OtelConfig(endpoint=None, service_name="other"))
+
+        assert again is log_export.handler
 
 
 @pytest.fixture

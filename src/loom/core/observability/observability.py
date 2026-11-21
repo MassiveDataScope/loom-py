@@ -24,6 +24,7 @@ from typing import Self
 from opentelemetry.trace import Link, NoOpTracer, Span, Tracer
 from prometheus_client import start_http_server
 
+from loom.core.config.observability import OtelConfig
 from loom.core.environment import Environment, resolve_environment
 from loom.core.logger.install import LogInstallation, configure_logging
 from loom.core.logger.stamp import LogRuntime
@@ -74,30 +75,24 @@ def _configure_logging(
     environment: Environment,
     service_name: str | None,
     service_version: str | None,
+    export: OtelConfig | None,
 ) -> LogInstallation:
-    """Install the log format and, when exporting logs, the OTEL handler."""
-    exporting = config.otel.enabled and config.otel.export_logs
+    """Install the log format and, when *export* is given, the OTEL log export beside it."""
     filters: tuple[logging.Filter, ...] = ()
-    if exporting:
-        from loom.core.observability.observer.otel import OtelSpanFilter
+    extra_handlers: tuple[logging.Handler, ...] = ()
+    if export is not None:
+        from loom.core.observability.observer.otel import OtelSpanFilter, install_otel_log_export
 
         filters = (OtelSpanFilter(),)
-    installation = configure_logging(
+        extra_handlers = (install_otel_log_export(export),)
+    return configure_logging(
         config.log,
         environment=environment,
         service_name=service_name,
         service_version=service_version,
+        extra_handlers=extra_handlers,
         filters=filters,
     )
-    if exporting:
-        if config.otel.config is None:
-            raise ValueError(
-                "observability.otel.export_logs requires observability.otel.config to be provided."
-            )
-        from loom.core.observability.observer.otel import install_otel_log_export
-
-        install_otel_log_export(config.otel.config)
-    return installation
 
 
 def _resolve_tracer(config: OtelObservabilityConfig) -> tuple[Tracer, SpanFlusher | None]:
@@ -435,8 +430,15 @@ class Observability:
             )
 
         resolved = resolve_environment(environment)
+        exporting = config.otel.enabled and config.otel.export_logs
         installation = (
-            _configure_logging(config, resolved, service_name, service_version)
+            _configure_logging(
+                config,
+                resolved,
+                service_name,
+                service_version,
+                config.otel.config if exporting else None,
+            )
             if config.log.enabled
             else None
         )

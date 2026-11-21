@@ -10,7 +10,7 @@ import pytest
 from loom.core.config import ConfigError
 from loom.core.config.observability import OtelConfig
 from loom.core.environment import Environment
-from loom.core.logger import LogRuntime
+from loom.core.logger import ContextFilter, LogRuntime
 from loom.core.logger.install import HANDLER_NAME
 from loom.core.model.redaction import Dsn
 from loom.core.observability.config import (
@@ -23,6 +23,8 @@ from loom.core.observability.config import (
 from loom.core.observability.event import EventKind, LifecycleEvent, LifecycleStatus, Scope
 from loom.core.observability.observability import Observability
 from loom.core.observability.observer.otel import OtelSpanFilter
+from loom.core.tracing.context import active_trace_id
+from tests.unit.core.observability.conftest import LogExport
 
 
 class AcmeRuntimeRecordingObserver:
@@ -160,20 +162,34 @@ class TestFromConfig:
         with pytest.raises(ValueError, match="export_logs requires observability.log.enabled"):
             Observability.from_config(config)
 
-    def test_export_logs_installs_otel_log_export_and_the_span_filter(
-        self, monkeypatch: pytest.MonkeyPatch
+    def test_export_logs_attaches_the_export_handler_with_the_context_and_span_filters(
+        self, log_export: LogExport
     ) -> None:
-        installed: list[OtelConfig] = []
-        monkeypatch.setattr(
-            "loom.core.observability.observer.otel.install_otel_log_export",
-            lambda config: installed.append(config),
-        )
         config = ObservabilityConfig(log=LogObservabilityConfig(format="json"), otel=_OTEL)
 
-        Observability.from_config(config)
+        Observability.from_config(config, service_name="billing")
 
-        assert installed == [_OTEL.config]
-        assert any(isinstance(f, OtelSpanFilter) for f in _loom_handler().filters)
+        for owned in (_loom_handler(), log_export.handler):
+            assert any(isinstance(f, ContextFilter) for f in owned.filters)
+            assert any(isinstance(f, OtelSpanFilter) for f in owned.filters)
+        assert log_export.handler in logging.getLogger().handlers
+
+    def test_configuring_twice_keeps_the_context_on_the_exported_logs(
+        self, log_export: LogExport
+    ) -> None:
+        config = ObservabilityConfig(log=LogObservabilityConfig(format="json"), otel=_OTEL)
+
+        Observability.from_config(config, service_name="billing")
+        Observability.from_config(config, service_name="billing")
+        with active_trace_id("trace-42"):
+            logging.getLogger("tests.export").warning("billing.check_done")
+
+        attributes = log_export.exported()["billing.check_done"]
+        assert (attributes["service.name"], attributes["trace_id"]) == ("billing", "trace-42")
+        handlers = logging.getLogger().handlers
+        assert handlers.count(log_export.handler) == 1
+        assert len([h for h in handlers if h.get_name() == HANDLER_NAME]) == 1
+        assert [type(f) for f in log_export.handler.filters].count(ContextFilter) == 1
 
     def test_the_log_format_is_installed_with_the_service_identity(
         self, capsys: pytest.CaptureFixture[str]

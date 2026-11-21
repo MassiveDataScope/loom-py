@@ -215,11 +215,13 @@ def install_otel_log_export(
     config: OtelConfig,
     *,
     exporter: LogRecordExporter | None = None,
-) -> LoggingHandler | None:
-    """Install a stdlib log handler that exports OTEL logs.
+) -> LoggingHandler:
+    """Build the stdlib log handler that exports OTEL logs.
 
-    The helper is idempotent for the current process. Subsequent calls return
-    the already-installed handler.
+    The handler is not attached to the root logger: pass it to
+    :func:`~loom.core.logger.install.configure_logging`, which attaches it and
+    puts the context filter on it like on every handler loom owns. The helper is
+    idempotent for the current process: later calls return the same handler.
 
     Args:
         config: OTLP exporter configuration.
@@ -227,7 +229,7 @@ def install_otel_log_export(
             built from ``config``.
 
     Returns:
-        The installed logging handler.
+        The export handler.
 
     Raises:
         ImportError: If ``opentelemetry-sdk`` is not installed.
@@ -258,7 +260,6 @@ def install_otel_log_export(
     otel_logs.set_logger_provider(provider)
 
     handler = LoggingHandler(level=logging.NOTSET, logger_provider=provider)
-    logging.getLogger().addHandler(handler)
     atexit.register(provider.shutdown)
     _LOG_EXPORT_STATE = (provider, handler)
     return handler

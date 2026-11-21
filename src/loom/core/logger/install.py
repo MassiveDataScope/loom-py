@@ -93,21 +93,25 @@ def configure_logging(
     environment: Environment,
     service_name: str | None = None,
     service_version: str | None = None,
+    extra_handlers: Sequence[logging.Handler] = (),
     filters: Sequence[logging.Filter] = (),
 ) -> LogInstallation:
     """Install the format *settings* choose and stamp every record that reaches its handler.
 
     The handler of a format is named ``loom`` and replaces the one a previous
     call installed; a handler somebody else added stays. A format that installs
-    no handler, ``lambda``, leaves the runtime's, and the level too. The
-    context filter goes on the handler, whoever installed it.
+    no handler, ``lambda``, leaves the runtime's, and the level too. Every
+    handler loom owns gets the context filter through this one path: the one
+    of the format, each of *extra_handlers* (attached to the root logger when
+    they are not yet), and the runtime's. Calling it again leaves one filter on each.
 
     Args:
         settings: The ``observability.log`` settings.
         environment: The environment the process runs in.
         service_name: ``app.name``.
         service_version: ``app.version``.
-        filters: Further filters for the handler, beside the context filter.
+        extra_handlers: Handlers loom owns beside the format's, such as the OTEL log export.
+        filters: Further filters for every owned handler, beside the context filter.
 
     Returns:
         The installation, to name the runtime once it is known.
@@ -116,6 +120,9 @@ def configure_logging(
         ConfigError: When the format is not registered.
     """
     root = logging.getLogger()
+    for extra in extra_handlers:
+        if extra not in root.handlers:
+            root.addHandler(extra)
     handler = resolve_format(settings.format_for(environment))(settings)
     if handler is None:
         handlers = list(root.handlers)
@@ -125,7 +132,7 @@ def configure_logging(
             root.removeHandler(installed)
         root.addHandler(handler)
         root.setLevel(settings.level.upper())
-        handlers = [handler]
+        handlers = [handler, *extra_handlers]
     for name, level in settings.named_levels.items():
         logging.getLogger(name).setLevel(level.upper())
     identity = LogIdentity(

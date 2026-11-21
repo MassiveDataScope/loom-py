@@ -43,9 +43,10 @@ def _written(config: ConfigContext) -> dict[str, object]:
 @CHECKS.register(UNKNOWN_FORMAT_CHECK)
 def _registered_format(config: ConfigContext) -> Finding | None:
     name = _literal(_written(config).get("format"))
-    if name is None or name in format_names():
+    known_names = format_names()
+    if name is None or name in known_names:
         return None
-    known = ", ".join(format_names()) or "none"
+    known = ", ".join(known_names)
     return Finding(
         message=f"{_PATH}.format is {name!r}, which no log format registers.",
         hint=f"use one of the registered formats ({known}) or install the package that adds it.",
