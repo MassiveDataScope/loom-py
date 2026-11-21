@@ -5,12 +5,15 @@ from __future__ import annotations
 import asyncio
 from collections.abc import AsyncIterator, Callable, Iterator
 from contextlib import asynccontextmanager, suppress
+from typing import ClassVar
 
 import pytest
 
 from loom.composition import LoopHost
+from loom.core.job.job import Job
 from loom.core.resources import Resource, ResourceKind
 from tests.helpers.composition import application_of
+from tests.helpers.jobs import InlineServiceFixture, JobKernel
 from tests.helpers.loops import RecordedLoops
 
 
@@ -34,6 +37,16 @@ class _Store:
         self.events.append("close")
         if self._fail_close:
             raise RuntimeError("store failed to close")
+
+
+class _RecordedJob(Job[None]):
+    """Records each run in :attr:`ran`, after some I/O."""
+
+    ran: ClassVar[list[str]] = []
+
+    async def execute(self) -> None:
+        await asyncio.sleep(0.01)
+        self.ran.append("ran")
 
 
 class TestLoopHost:
@@ -92,6 +105,19 @@ class TestLoopHost:
 
         assert event_loops.made_current[-1] is event_loops.created[0]
         stray.close()
+
+    def test_run_returns_once_the_inline_jobs_the_coroutine_dispatched_have_run(self) -> None:
+        _RecordedJob.ran.clear()
+        kernel = JobKernel()
+        kernel.factory.register(_RecordedJob)
+        jobs = InlineServiceFixture(kernel.factory, kernel.executor)
+        host = LoopHost(application_of(jobs=jobs))
+        host.start()
+
+        host.run(jobs.dispatch_now(_RecordedJob))
+
+        assert _RecordedJob.ran == ["ran"]
+        host.close()
 
     def test_close_closes_the_application(self, host_of: Callable[[_Store], LoopHost]) -> None:
         store = _Store()

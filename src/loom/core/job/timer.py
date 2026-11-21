@@ -62,7 +62,7 @@ class JobDelayRefusedError(RuntimeError):
 
 
 class JobTimer(Protocol):
-    """Runs a step once a delay is over; the inline job service waits on it."""
+    """Runs a step once a delay is over; the inline job transport enqueues every run on it."""
 
     def schedule(self, delay: Countdown, step: Step, *, job: str, task_id: str) -> None:
         """Run *step* after *delay*; return at once.
@@ -73,6 +73,10 @@ class JobTimer(Protocol):
             job: The qualified name of the job the step runs.
             task_id: The id of the job's dispatch.
         """
+        ...
+
+    async def wait_until_idle(self) -> None:
+        """Return once no step is running or waiting, the steps that steps schedule included."""
         ...
 
     async def close(self) -> None:

@@ -202,6 +202,10 @@ class CeleryJobTransport:
         """Accept callbacks, whose discovery is checked by the service."""
         return None
 
+    async def wait_until_idle(self) -> None:
+        """Return at once: what this transport sends runs in another process."""
+        return None
+
     def _build_pending(
         self, dispatch: JobDispatch
     ) -> tuple[_PendingCeleryDispatch, JobHandle[Any]]:

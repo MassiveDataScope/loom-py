@@ -84,6 +84,7 @@ from loom.core.stores import WORKER_PROFILE
 if TYPE_CHECKING:
     from loom.core.engine.execution_observer import ExecutionObserver
     from loom.core.job.job import Job
+    from loom.core.job.service import JobService
 
 _log = logging.getLogger(__name__)
 
@@ -110,12 +111,15 @@ class _ProcessBridgeProtocol(Protocol):
     def shutdown(self) -> None: ...
 
 
-def _build_process_bridge(runtime_cfg: CeleryRuntimeConfig) -> _CeleryProcessBridge:
-    """Build the per-process bridge used by Celery worker tasks."""
+def _build_process_bridge(
+    runtime_cfg: CeleryRuntimeConfig, jobs: JobService
+) -> _CeleryProcessBridge:
+    """Build the per-process bridge used by Celery worker tasks, waiting eagerly on *jobs*."""
     return _CeleryProcessBridge(
         backend=runtime_cfg.backend,
         backend_options=build_backend_options(runtime_cfg.backend, runtime_cfg.use_uvloop),
         shutdown_timeout_ms=runtime_cfg.shutdown_timeout_ms,
+        jobs=jobs,
     )
 
 
@@ -413,7 +417,7 @@ class CeleryRuntime:
             )
         declared = self._declared
 
-        process_bridge = _build_process_bridge(declared.celery.runtime)
+        process_bridge = _build_process_bridge(declared.celery.runtime, application.jobs)
         celery_app = create_celery_app(declared.celery)
         _register_tasks(celery_app, declared, application, process_bridge)
         _connect_lifecycle_signals(_WorkerLifecycle(application, process_bridge))

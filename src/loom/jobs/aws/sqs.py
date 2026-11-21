@@ -265,6 +265,10 @@ class SQSJobTransport:
         if on_success is not None or on_failure is not None:
             raise SQSDispatchError("SQS jobs take no callbacks", code=SQSErrorCode.CALLBACKS)
 
+    async def wait_until_idle(self) -> None:
+        """Return at once: what this transport sends runs in another process."""
+        return None
+
     def _build_send(self, dispatch: JobDispatch) -> tuple[_PendingSQSSend, JobHandle[Any]]:
         self.check_callbacks(dispatch.on_success, dispatch.on_failure)
         if dispatch.priority != dispatch.options.priority:

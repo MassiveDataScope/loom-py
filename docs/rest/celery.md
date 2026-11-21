@@ -129,6 +129,11 @@ class DispatchRestockEmailUseCase(UseCase[Product, DispatchRestockEmailResponse]
 `dispatch_after_commit()` returns a `JobHandle` immediately — the broker call happens after the
 UoW commits. The HTTP response does not wait for the job to complete.
 
+`dispatch_now()` takes the same arguments and sends the job at once, before the caller's writes
+commit. On every transport, sending means enqueueing: the call returns once the job is on its queue
+(the broker, SQS, or the inline timer), never after running it, and the job runs whatever the
+caller does next, a raise or a rollback included.
+
 ### dispatch_after_commit() parameters
 
 | Parameter | Type | Description |
@@ -170,17 +175,47 @@ entirely — the job runs in the API process via the same DI container.
 
 Use `dispatch_after_commit()` for fire-and-forget work; use `run()` when you need the result now.
 
-### Delays inline
+### The inline transport
 
-`JobService with InlineJobTransport` honours `countdown`, `JobPostponement` and failure backoff: a
-delayed job waits in the memory of the process on a `JobTimer` and runs again
+`JobService with InlineJobTransport` follows the model of a queue, run in this process: every
+dispatch, `dispatch_now()`, a post-commit flush, with a countdown or with none, is handed to a
+`JobTimer` with its delay (zero included) and runs once the call that sent it has returned. A job
+that dispatches another enqueues it the same way, so a chain of jobs runs one job after another,
+never nested in its sender, and an outer job's timeout does not run while its children do.
+The transport needs a timer: composition builds an `AsyncioJobTimer` (or uses the `JobTimer` a test
+binds), and a hand-built transport takes one, `InlineJobTransport(factory, executor, timer=AsyncioJobTimer())`.
+
+The timer also honours `countdown`, `JobPostponement` and failure backoff: a
+delayed job waits in the memory of the process and runs again
 with its attempt and postponements carried. Exhausted attempts abandon the job and
 call `on_failure`. A job delayed this way is lost when the process stops (the
 timer reports each one to the execution observers as `JOB_ABANDONED` with reason
 `shutdown`, and logs it), so the service logs a warning at
-start-up: use Celery or SQS in production. A Lambda function composes no
-timer: its inline service refuses a countdown above zero with `JobDelayRefusedError`,
+start-up: use Celery or SQS in production. A Lambda function cannot hold a delay
+(`can_wait_in_process=False`): its inline service refuses a countdown above zero with `JobDelayRefusedError`,
 abandons a `JobPostponement`, and abandons a failing job at its first attempt with its own error.
+Its jobs with no delay still run on the timer, and each invocation returns once they have run:
+Lambda freezes the environment as soon as the handler returns.
+
+### Wait until the inline jobs are idle
+
+`await application.jobs.wait_until_idle()` returns once no inline job is running or waiting on
+the timer, including the jobs those jobs dispatch and those waiting for a countdown. Call it inside
+`application.running()`, while the resources the jobs use (a database pool, the AWS clients) are
+still open. `application.jobs` is the application's `JobService`. A transport whose jobs run in
+another process (Celery, SQS) holds nothing here, so for it `wait_until_idle()` returns at once.
+
+A CLI or runner that sends jobs and reports what they came to waits for them before it counts,
+as the `consume` example in "React to job outcomes in your application" does.
+
+Without the wait, `running()` exiting applies `jobs.shutdown` to whatever is still enqueued: under
+`cancel` those jobs are lost, before they ran, and reported with reason `shutdown`.
+
+In tests, `HttpTestHarness` waits after each request, and a Lambda handler (so `LambdaTestClient`)
+after each invocation: a test asserts a job's effects right after the call. A test that dispatches
+through the `JobService` itself awaits `wait_until_idle()`. A bound `ManualTimer` runs, on
+`wait_until_idle()`, every step already due, the jobs sent with no countdown and the ones they send,
+without moving its clock; a countdown runs when the test calls `await timer.advance(seconds)`.
 
 ### Shutdown of delayed jobs
 
@@ -368,13 +403,15 @@ class JobFailureRecorder:
 async def consume(application: Application) -> int:
     async with application.running():
         await drain_queue(application)
+        await application.jobs.wait_until_idle()
     for event in JobFailureRecorder.abandoned:
         print(f"abandoned {event.use_case_name}: {event.reason}", file=sys.stderr)
     return 1 if JobFailureRecorder.abandoned else 0
 ```
 
-This count includes the delayed inline jobs lost at shutdown (reason `shutdown`), so the
-CLI no longer exits 0 when work was dropped.
+`wait_until_idle()` lets the inline jobs finish before the count (see "Wait until the inline jobs
+are idle"). The count also includes the inline jobs lost at shutdown (reason `shutdown`), so the
+CLI does not exit 0 when work was dropped.
 
 ## Post-commit failures
 

@@ -38,13 +38,14 @@ def application(compose: Compose) -> Application:
 
 
 async def _dispatched_by(application: Application, caller: Identity | None) -> JobHandle[str]:
-    service = application.kernel.container.resolve(JobService)
+    """Dispatch the job as *caller* and return its handle once the job has run."""
     token = set_identity(caller)
     try:
-        handle = service.dispatch_after_commit(TrackShipmentJob, params=PARAMS)
+        handle = application.jobs.dispatch_after_commit(TrackShipmentJob, params=PARAMS)
     finally:
         reset_identity(token)
     await flush_pending_dispatches()
+    await application.jobs.wait_until_idle()
     return handle
 
 

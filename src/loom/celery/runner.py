@@ -60,6 +60,7 @@ if TYPE_CHECKING:
     from loom.core.engine.execution_observer import ExecutionObserver
     from loom.core.engine.executor import UseCaseExecutor
     from loom.core.job.job import Job
+    from loom.core.job.service import JobService
     from loom.core.use_case.factory import UseCaseFactory
 
 _log = logging.getLogger(__name__)
@@ -70,11 +71,17 @@ REDELIVERY = Redelivery.DELAYED
 
 @dataclass(slots=True)
 class _CeleryProcessBridge:
-    """Per-process async bridge for Celery worker coroutines."""
+    """Per-process async bridge for Celery worker coroutines.
+
+    Attributes:
+        jobs: The application's job service. An eager run ends its own loop, so
+            it waits until the inline jobs its task dispatched have run.
+    """
 
     backend: str = "asyncio"
     backend_options: dict[str, Any] = field(default_factory=dict)
     shutdown_timeout_ms: int | None = None
+    jobs: JobService | None = None
     _bridge: AsyncBridge | None = None
     _open_failure: Exception | None = None
 
@@ -125,19 +132,20 @@ class _CeleryProcessBridge:
             return self._bridge.run(coro, timeout=timeout)
 
         if eager_fallback:
-            if timeout is None:
-                return asyncio.run(coro)
-
-            async def _with_timeout() -> Any:
-                return await asyncio.wait_for(coro, timeout=timeout)
-
-            return asyncio.run(_with_timeout())
+            return asyncio.run(self._run_eagerly(coro, timeout))
 
         _close_unrun(coro)
         raise RuntimeError(
             "Celery async bridge is not initialized and eager fallback is disabled. "
             "Use a Celery worker process or enable task_always_eager."
         )
+
+    async def _run_eagerly(self, coro: Any, timeout: float | None) -> Any:
+        try:
+            return await asyncio.wait_for(coro, timeout=timeout)
+        finally:
+            if self.jobs is not None:
+                await self.jobs.wait_until_idle()
 
     def shutdown(self) -> None:
         """Close the worker bridge if it was initialized."""

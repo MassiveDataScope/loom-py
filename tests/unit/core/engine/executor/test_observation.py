@@ -226,6 +226,7 @@ class TestBuildFailure:
 
         service.dispatch_after_commit(AcmeBrokenJob, on_failure=on_failure)
         await flush_pending_dispatches()
+        await service.wait_until_idle()
 
         assert [event for event, _ in logger.errors] == ["[FAIL] AcmeBrokenJob"]
         assert AcmeOnFailure.calls == (

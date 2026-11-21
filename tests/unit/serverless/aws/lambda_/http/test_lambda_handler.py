@@ -6,13 +6,21 @@ import asyncio
 import dataclasses
 from collections.abc import AsyncIterator, Awaitable, Callable
 from contextlib import asynccontextmanager
-from typing import Any
+from typing import Any, ClassVar
 
 import pytest
+from starlette.applications import Starlette
+from starlette.requests import Request
+from starlette.responses import JSONResponse
+from starlette.routing import Route
 
 from loom.composition import Application, Project
+from loom.core.job.job import Job
 from loom.serverless.aws.lambda_ import LambdaRuntime
 from loom.serverless.aws.lambda_.triggers.http import LambdaHTTPHandler
+from loom.testing import LambdaTestClient
+from tests.helpers.composition import application_of
+from tests.helpers.jobs import InlineServiceFixture, JobKernel
 from tests.helpers.loops import RecordedLoops
 from tests.unit.serverless.aws.lambda_.http._clients import LambdaProject, Reply, lambda_client
 from tests.unit.serverless.aws.lambda_.http._contract_app import PUBLIC_PATH, bearer, seen_by
@@ -226,3 +234,34 @@ class TestLambdaHandler:
         with pytest.raises(ConnectionError):
             adapter.mount(application)
         assert event_loops.made_current[-1] is None
+
+
+class RestockedJob(Job[None]):
+    """Records each run in :attr:`ran`, after some I/O."""
+
+    ran: ClassVar[list[str]] = []
+
+    async def execute(self) -> None:
+        await asyncio.sleep(0.01)
+        self.ran.append("restocked")
+
+
+class TestInlineJobsOfAnInvocation:
+    def test_an_invocation_returns_once_the_inline_job_its_route_dispatched_ran(self) -> None:
+        RestockedJob.ran.clear()
+        kernel = JobKernel()
+        kernel.factory.register(RestockedJob)
+        jobs = InlineServiceFixture(kernel.factory, kernel.executor)
+
+        async def restock(request: Request) -> JSONResponse:
+            await jobs.dispatch_now(RestockedJob)
+            return JSONResponse({"ran": list(RestockedJob.ran)})
+
+        app = Starlette(routes=[Route("/restock", restock, methods=["POST"])])
+        handler = LambdaHTTPHandler(app, application_of(jobs=jobs))
+        client = LambdaTestClient(handler)
+
+        response = client.post("/restock")
+
+        assert (response.json(), RestockedJob.ran) == ({"ran": []}, ["restocked"])
+        handler.close()

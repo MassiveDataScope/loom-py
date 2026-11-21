@@ -445,11 +445,23 @@ data = JobTestData().with_job_type(ShipOrderJob)
 delivery = data.delivery(attempt=2)
 ```
 
-### Delayed inline jobs
+### Inline jobs
 
-The inline job transport waits on a `JobTimer`. A test replaces it with a
-`ManualTimer`, which never sleeps and runs a step only when the test moves its
-clock:
+The inline job transport enqueues every job on a `JobTimer`, as a queue would: a job runs
+after the call that sent it returns. `HttpTestHarness` waits after each request, and a Lambda
+handler after each invocation, until no inline job is running or waiting, those the jobs send
+included, so a test asserts a job's effects right after the call. A test that sends through the
+`JobService` itself waits explicitly:
+
+```python
+await application.jobs.dispatch_now(SendEmailJob, payload={"to": "ada@example.com"})
+await application.jobs.wait_until_idle()
+```
+
+A job with a countdown is waited for too, in real time. A test replaces the timer with a
+`ManualTimer`, which never sleeps: `wait_until_idle()` runs the steps already due (the jobs sent
+with no countdown, and those they send) without moving its clock, and a delayed step runs only
+when the test moves the clock:
 
 ```python
 from loom.core.job.timer import JobTimer
@@ -458,7 +470,8 @@ from loom.testing import ManualTimer, Override
 timer = ManualTimer()
 harness = HttpTestHarness(overrides=[Override.instance(JobTimer, timer)])
 
-# a dispatch with countdown=60, a JobPostponement or a failure backoff now waits
+# a request's jobs with no countdown have run when the call returns;
+# a dispatch with countdown=60, a JobPostponement or a failure backoff waits
 await timer.advance(59)  # nothing runs
 await timer.advance(1)  # the job runs, then any step it scheduled within the move
 ```

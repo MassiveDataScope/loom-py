@@ -16,7 +16,7 @@ from loom.core.job.service import JobService
 from loom.core.stores.catalog import DEFAULT_STORE
 from loom.core.stores.uow.coordinator import OrderedCommits
 from loom.core.use_case.use_case import UseCase
-from loom.jobs.inline import InlineJobTransport
+from loom.jobs.inline import AsyncioJobTimer, InlineJobTransport
 from loom.testing import RecordingJobTransport
 from tests.helpers.jobs import EmailJob, JobKernel
 from tests.unit.core.engine._lifecycle_doubles import Log, StubUnitOfWorkFactory
@@ -138,7 +138,7 @@ class TestRoutedInlineTransport:
     ) -> None:
         kernel = JobKernel()
         kernel.factory.register(_ReportJob)
-        inline = InlineJobTransport(kernel.factory, kernel.executor)
+        inline = InlineJobTransport(kernel.factory, kernel.executor, timer=AsyncioJobTimer())
         service = JobService(default, routes={"reports": inline})
         executor = UseCaseExecutor(
             UseCaseCompiler(),
@@ -147,6 +147,8 @@ class TestRoutedInlineTransport:
         use_case = _Report(service)
 
         await executor.execute(use_case)
+
+        await service.wait_until_idle()
 
         assert use_case.ran_before_commit is False
         assert use_case.handle is not None

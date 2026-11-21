@@ -447,7 +447,7 @@ someone else may override:
 
 ```python
 container.register(JobService, MyJobService, scope=Scope.APPLICATION)
-default_jobs = JobService(factory, executor, InlineJobTransport(factory, executor))
+default_jobs = JobService(factory, executor, InlineJobTransport(factory, executor, timer=AsyncioJobTimer()))
 container.register_default(JobService, lambda: default_jobs)
 ```
 

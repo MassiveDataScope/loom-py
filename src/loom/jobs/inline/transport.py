@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import functools
 from dataclasses import dataclass, replace
 from datetime import UTC, datetime
 from typing import TYPE_CHECKING, Any
@@ -33,13 +34,23 @@ class _PendingDispatch:
 
 
 class InlineJobTransport:
-    """Run dispatched jobs in process, optionally waiting on an injected timer.
+    """Enqueue dispatched jobs on a timer and run them in process, as a queue consumer would.
+
+    Every dispatch, sent now or after the commit, with a countdown or none, is
+    handed to the timer and runs once the sending call has returned, whatever
+    the sender then does. A job a running job dispatches is enqueued the same
+    way, so a chain of jobs never nests. :meth:`wait_until_idle` returns once
+    the timer holds nothing.
 
     Args:
         factory: Builds job and callback instances.
         executor: Runs compiled execution plans.
-        timer: Schedules countdowns, postponements and retries; without it
-            any initial delay is refused and later waiting is abandoned.
+        timer: The one owner of scheduling: every run, retry and postponement
+            waits on it.
+        can_wait_in_process: Whether a delay may wait in the memory of the
+            process. Without it a countdown is refused, a postponement is
+            abandoned and a failure is not retried; a job with no delay still
+            runs on the timer.
         execution_observer: Receives the runner's job events.
     """
 
@@ -48,13 +59,14 @@ class InlineJobTransport:
         factory: UseCaseFactory,
         executor: UseCaseExecutor,
         *,
-        timer: JobTimer | None = None,
+        timer: JobTimer,
+        can_wait_in_process: bool = True,
         execution_observer: ExecutionObserver | None = None,
     ) -> None:
         self._factory = factory
         self._executor = executor
         self._timer = timer
-        self._redelivery = Redelivery.DELAYED if timer is not None else Redelivery.NONE
+        self._redelivery = Redelivery.DELAYED if can_wait_in_process else Redelivery.NONE
         self._runner = JobRunner(
             self._invoke, redelivery=self._redelivery, execution_observer=execution_observer
         )
@@ -75,16 +87,20 @@ class InlineJobTransport:
         )
 
     def send_after_commit(self, dispatch: JobDispatch) -> JobHandle[Any]:
-        """Schedule the inline run on the post-commit channel."""
+        """Enqueue the run on the timer once the caller's unit of work commits."""
         pending, handle = self._build_pending(dispatch)
-        add_pending_dispatch(lambda: self._start(pending))
+        add_pending_dispatch(functools.partial(self._schedule, pending, dispatch.countdown))
         return handle
 
     async def send(self, dispatch: JobDispatch) -> JobHandle[Any]:
-        """Start the inline run before returning its handle."""
+        """Enqueue the run on the timer now; it starts after this call returns."""
         pending, handle = self._build_pending(dispatch)
-        await self._start(pending)
+        self._schedule(pending, dispatch.countdown)
         return handle
+
+    async def wait_until_idle(self) -> None:
+        """Return once no job of this transport is running or waiting on its timer."""
+        await self._timer.wait_until_idle()
 
     def check_callbacks(
         self, on_success: type[JobCallback] | None, on_failure: type[JobCallback] | None
@@ -93,7 +109,7 @@ class InlineJobTransport:
         return None
 
     def _build_pending(self, dispatch: JobDispatch) -> tuple[_PendingDispatch, JobHandle[Any]]:
-        if dispatch.countdown.seconds and self._timer is None:
+        if dispatch.countdown.seconds and not self._redelivery.can_postpone:
             raise JobDelayRefusedError(dispatch.countdown)
         outcome = InlineOutcome()
         pending = _PendingDispatch(
@@ -108,16 +124,7 @@ class InlineJobTransport:
             _inline_outcome=outcome,
         )
 
-    async def _start(self, pending: _PendingDispatch) -> None:
-        if pending.dispatch.countdown.seconds:
-            self._schedule(pending, pending.dispatch.countdown)
-            return
-        await self._run(pending)
-
     def _schedule(self, pending: _PendingDispatch, delay: Countdown) -> None:
-        if self._timer is None:
-            raise JobDelayRefusedError(delay)
-
         async def step() -> None:
             await self._run(pending)
 

@@ -159,6 +159,10 @@ class LoopHost:
     :class:`ApplicationHost`; every call then runs on that same loop, and
     :meth:`close` closes the application and disposes of the loop.
 
+    The loop runs only inside a call, and a Lambda environment is frozen
+    between invocations, so each call returns once the application's inline
+    jobs are idle: those its work dispatched have run.
+
     Args:
         application: The application to open.
     """
@@ -166,6 +170,7 @@ class LoopHost:
     def __init__(self, application: Application) -> None:
         self._loop = asyncio.new_event_loop()
         asyncio.set_event_loop(self._loop)
+        self._application = application
         self._host = ApplicationHost(application)
         self._closed = False
 
@@ -187,9 +192,16 @@ class LoopHost:
         asyncio.set_event_loop(self._loop)
 
     def run(self, coroutine: Coroutine[Any, Any, _T]) -> _T:
-        """Run *coroutine* to completion on the host's loop and return its result."""
+        """Run *coroutine* on the host's loop, then the jobs it dispatched; return its result."""
         self.make_current()
-        return self._loop.run_until_complete(coroutine)
+        result = self._loop.run_until_complete(coroutine)
+        self.wait_until_idle()
+        return result
+
+    def wait_until_idle(self) -> None:
+        """Run the host's loop until no inline job of the application is running or waiting."""
+        self.make_current()
+        self._loop.run_until_complete(self._application.jobs.wait_until_idle())
 
     def close(self) -> None:
         """Close the application, then dispose of the loop; a second call does nothing.

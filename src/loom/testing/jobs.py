@@ -156,7 +156,10 @@ class ManualTimer:
     """A :class:`~loom.core.job.timer.JobTimer` whose clock moves only when a test says so.
 
     Nothing waits: a scheduled step runs inside :meth:`advance`, once the
-    clock reaches its time.
+    clock reaches its time, or inside :meth:`wait_until_idle` when it is due
+    already. An inline dispatch with no countdown is due at once, so a test
+    drives it with ``await application.jobs.wait_until_idle()``, and one with a
+    countdown with ``await timer.advance(seconds)``.
 
     :meth:`close` rehearses the shutdown of the real timer on the same clock. Under
     ``cancel`` it drops every pending step. Under ``wait`` it runs the pending
@@ -220,6 +223,14 @@ class ManualTimer:
         await self._run_until(target)
         self._now = target
 
+    async def wait_until_idle(self) -> None:
+        """Run, in order, every step already due, and the due steps they schedule, until none is.
+
+        The clock does not move: a step waiting for a countdown stays pending
+        until :meth:`advance` reaches its time.
+        """
+        await self._run_until(self._now)
+
     async def close(self) -> None:
         """Run the pending steps when waiting, then drop the rest into :attr:`lost`."""
         if self._shutdown.is_waiting:
@@ -267,6 +278,10 @@ class RecordingJobTransport:
         self, on_success: type[JobCallback] | None, on_failure: type[JobCallback] | None
     ) -> None:
         """Accept callbacks as the recording transport has done."""
+        return None
+
+    async def wait_until_idle(self) -> None:
+        """Return at once: a recorded dispatch never runs."""
         return None
 
     def _record(self, dispatch: JobDispatch) -> tuple[DispatchedJob, JobHandle[Any]]:

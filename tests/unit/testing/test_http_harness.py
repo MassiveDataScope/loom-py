@@ -2,7 +2,8 @@
 
 from __future__ import annotations
 
-from typing import Any, Protocol, cast
+import asyncio
+from typing import Any, ClassVar, Protocol, cast
 from unittest.mock import patch
 
 import pytest
@@ -11,6 +12,8 @@ from loom.composition import Application, Project
 from loom.composition.recipe import Runtime
 from loom.core.command.base import Command
 from loom.core.errors import Conflict, NotFound
+from loom.core.job.job import Job
+from loom.core.job.service import JobService
 from loom.core.model import LoomStruct
 from loom.core.stores.repository import Readable
 from loom.core.use_case.markers import Input
@@ -440,3 +443,47 @@ class TestHarnessOverride:
 
         assert client.get("/products/1").json()["name"] == "baseline"
         assert len(calls) == 1
+
+
+class StockedJob(Job[None]):
+    """Records the product it was sent for after some I/O, and sends the next until two are."""
+
+    stocked: ClassVar[list[int]] = []
+
+    def __init__(self, jobs: JobService) -> None:
+        self._jobs = jobs
+
+    async def execute(self, product_id: int) -> None:
+        await asyncio.sleep(0.01)
+        self.stocked.append(product_id)
+        if product_id == 1:
+            await self._jobs.dispatch_now(StockedJob, params={"product_id": 2})
+
+
+class RestockProductUseCase(UseCase[Product, bool]):
+    def __init__(self, jobs: JobService) -> None:
+        super().__init__()
+        self._jobs = jobs
+
+    async def execute(self, product_id: int) -> bool:
+        self._jobs.dispatch_after_commit(StockedJob, params={"product_id": product_id})
+        return True
+
+
+class RestockInterface(RestInterface[Product]):
+    prefix = "/restocks"
+    routes = (RestRoute(use_case=RestockProductUseCase, method="POST", path="/{product_id}"),)
+
+
+class TestHarnessJobs:
+    def test_a_request_returns_once_the_jobs_it_dispatched_and_theirs_have_run(self) -> None:
+        StockedJob.stocked.clear()
+        harness = HttpTestHarness(
+            overrides=[Override.repository(Product, InMemoryRepository(Product))]
+        )
+        client = harness.build_app(interfaces=[RestockInterface])
+
+        response = client.post("/restocks/1")
+
+        assert (response.status_code, StockedJob.stocked) == (200, [1, 2])
+        client.close()

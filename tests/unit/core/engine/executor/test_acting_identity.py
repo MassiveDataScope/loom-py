@@ -337,6 +337,7 @@ class TestATaskOutlivingItsExecution:
         async def dispatch() -> Identity:
             handle = jobs.dispatch_after_commit(AcmeWhoJob)
             await flush_pending_dispatches()
+            await jobs.wait_until_idle()
             return cast(Identity, handle.wait())
 
         task = await outliving(dispatch)

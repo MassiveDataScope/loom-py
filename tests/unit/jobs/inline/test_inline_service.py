@@ -1,4 +1,4 @@
-"""The inline job service runs a dispatched job in process, after the commit."""
+"""The inline job service runs a dispatched job in process, after the commit, once it is idle."""
 
 from __future__ import annotations
 
@@ -117,6 +117,7 @@ class TestPostCommit:
     ) -> None:
         handle = service.dispatch_after_commit(DoubleJob, params={"value": 21})
         await flush_pending_dispatches()
+        await service.wait_until_idle()
 
         assert handle.wait() == 42
 
@@ -125,6 +126,7 @@ class TestPostCommit:
     ) -> None:
         handle = service.dispatch_after_commit(DeliveryJob)
         await flush_pending_dispatches()
+        await service.wait_until_idle()
 
         (delivery,) = DeliveryJob.seen
         assert delivery is not None
@@ -135,6 +137,7 @@ class TestPostCommit:
     ) -> None:
         handle = service.dispatch_after_commit(FinalFailureJob)
         await flush_pending_dispatches()
+        await service.wait_until_idle()
 
         with pytest.raises(JobFailedError) as caught:
             handle.wait()
@@ -147,6 +150,7 @@ class TestPostCommit:
     ) -> None:
         handle = service.dispatch_after_commit(AbandoningJob)
         await flush_pending_dispatches()
+        await service.wait_until_idle()
 
         with pytest.raises(JobFailedError) as caught:
             handle.wait()
@@ -161,6 +165,7 @@ class TestCallbacks:
             DoubleJob, params={"value": 1}, on_success=RecordingCallback
         )
         await flush_pending_dispatches()
+        await service.wait_until_idle()
 
         assert (handle.wait(), Hooks.calls) == (2, [("success", handle.job_id)])
 
@@ -169,6 +174,7 @@ class TestCallbacks:
     ) -> None:
         service.dispatch_after_commit(FinalFailureJob, on_failure=RecordingCallback)
         await flush_pending_dispatches()
+        await service.wait_until_idle()
 
         assert Hooks.calls == [("failure", "FinalError")]
 
@@ -179,6 +185,7 @@ class TestCallbacks:
             DoubleJob, params={"value": 3}, on_success=BrokenCallback
         )
         await flush_pending_dispatches()
+        await service.wait_until_idle()
 
         assert handle.wait() == 6
 
@@ -194,5 +201,6 @@ class TestParallel:
     ) -> None:
         group = service.dispatch_parallel([(SevenJob, {}), (UpperJob, {})])
         await flush_pending_dispatches()
+        await service.wait_until_idle()
 
         assert group.wait_all() == [7, "UP"]

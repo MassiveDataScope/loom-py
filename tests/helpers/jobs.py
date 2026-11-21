@@ -31,7 +31,7 @@ from loom.core.use_case.factory import UseCaseFactory, main_repository
 from loom.core.use_case.kinds import declare_kinds
 from loom.jobs.aws.queue import QueueConfig
 from loom.jobs.aws.sqs import SQSConfig, SQSJobTransport
-from loom.jobs.inline import InlineJobTransport
+from loom.jobs.inline import AsyncioJobTimer, InlineJobTransport
 from tests.helpers.celery import BrokerMessage, CeleryBroker
 from tests.helpers.composition import composition_project
 
@@ -154,7 +154,11 @@ def sqs_service(client: SQSClient, **knobs: Any) -> JobService:
 
 
 class InlineServiceFixture(JobService):
-    """A public job service using inline transport for direct tests."""
+    """A public job service using inline transport for direct tests.
+
+    Without *timer*, it runs as a process that cannot wait (a Lambda): its jobs run
+    on an :class:`AsyncioJobTimer` and every delay is refused.
+    """
 
     def __init__(
         self,
@@ -168,7 +172,11 @@ class InlineServiceFixture(JobService):
     ) -> None:
         super().__init__(
             InlineJobTransport(
-                factory, executor, timer=timer, execution_observer=execution_observer
+                factory,
+                executor,
+                timer=AsyncioJobTimer() if timer is None else timer,
+                can_wait_in_process=timer is not None,
+                execution_observer=execution_observer,
             ),
             factory=factory,
             executor=executor,
