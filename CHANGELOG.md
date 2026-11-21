@@ -2,14 +2,6 @@
 
 ## 💥 Breaking
 
-- **jobs:** `sqs.queues.<name>.dead_letter: redrive | discard` is `abandoned: dead_letter | discard`
-  (default `dead_letter`): the option names what becomes of an abandoned message, since in
-  AWS "redrive" also means moving messages back from a dead-letter queue. `DeadLetterPolicy`
-  (`REDRIVE`, `DISCARD`) is `AbandonedMessage` (`DEAD_LETTER`, `DISCARD`); `QueueConfig.dead_letter`
-  and `SQSQueue.dead_letter_policy` are `abandoned`; the deploy manifest `queues` entries carry
-  `abandoned`; `loom.testing._moto.declare_queue(redrive=)` is `with_dead_letter_queue=`. The old key
-  is refused at load. **Migration:** rename `dead_letter: redrive` to `abandoned: dead_letter` and
-  `dead_letter: discard` to `abandoned: discard`.
 - **composition:** `loom.composition.resources` is `loom.core.resources`, so an
   `Installer` in the core can name `Resource`. **Migration:** import `Resource`,
   `ResourceKind` and `closing` from `loom.core.resources`.
@@ -225,23 +217,24 @@
   outside that bound, including negatives, raises `ValueError` on SQS, Celery,
   inline and `dispatch_now`, not `SQSDispatchError`. `SQSErrorCode.DELAY_TOO_LONG`
   is removed.
-- **jobs:** each `sqs.queues.<name>` is a mapping `{url, dead_letter}`, not a
+- **jobs:** each `sqs.queues.<name>` is a mapping `{url, abandoned}`, not a
   URL string; a string entry, or a `sqs.queues` that is no mapping, is refused
-  at load, naming the mapping. `dead_letter` is `redrive` (default) or
-  `discard`. On a `redrive` queue the attempt limit is the `maxReceiveCount` of
+  at load, naming the mapping. `abandoned` is `dead_letter` (default) or
+  `discard`. On a `dead_letter` queue the attempt limit is the `maxReceiveCount` of
   the queue's `RedrivePolicy`, and a job it serves may not declare
   `jobs.<Job>.retry.max_attempts` (start-up fails naming the rule;
   `jobs.defaults.retry.max_attempts` gives way to `maxReceiveCount`); on a
   `discard` queue `max_attempts` decides (default 3). A Lambda function
   consuming a queue fails start-up when `sqs.queues` does not map it, or when
-  a `redrive` queue has no `RedrivePolicy`, and logs the effective policy of
+  an `abandoned: dead_letter` queue has no `RedrivePolicy`, and logs the effective policy of
   its jobs; an application that only dispatches makes no `GetQueueAttributes`
   or `GetQueueUrl` call. `SQSQueueConfigError` is no longer importable from
   `loom.jobs.aws.sqs`: import it from `loom.jobs.aws.errors`. The deploy
   manifest is `manifest_version: 3`, its `queues` mapping each name to
-  `{url, dead_letter}`. **Migration:** write
-  `<name>: {url: https://..., dead_letter: redrive}` for each queue, and give
-  every `redrive` queue a dead-letter queue.
+  `{url, abandoned}`. **Migration:** write
+  `<name>: {url: https://..., abandoned: dead_letter}` for each queue (`dead_letter`,
+  the default, sends an abandoned message to the queue's dead-letter queue; `discard`
+  deletes it), and give every `dead_letter` queue a dead-letter queue.
 - **jobs:** the role of a function consuming an SQS queue needs
   `sqs:SendMessage`, `sqs:ChangeMessageVisibility` and `sqs:GetQueueAttributes`
   on the queue, and `sqs:SendMessage` and `sqs:GetQueueUrl` on its dead-letter
@@ -287,7 +280,7 @@
   | Outcome | Action | In `batchItemFailures` |
   |---|---|---|
   | Succeeded | none | no |
-  | Rejected, `redrive` | sent to the dead-letter queue with the reason | only if its send failed |
+  | Rejected, `dead_letter` | sent to the dead-letter queue with the reason | only if its send failed |
   | Rejected, `discard` | none: an ERROR log with `outcome=discarded` | no |
   | Deferred, standard queue | sent again with `DelaySeconds` and one deferral more | only if its send failed |
   | `JobRetry`, FIFO queue | Rejected, reason `cannot wait: <reason>`: a FIFO queue takes no per-message delay | as Rejected |
@@ -308,7 +301,7 @@
   message (`MalformedJobMessage` is no longer retryable) is rejected at once,
   with the error class as reason; a message naming an unknown job stays
   retryable, for a deploy that rolls out, but is bounded by the queue's limit
-  (the `RedrivePolicy` `maxReceiveCount` on `redrive`, the default
+  (the `RedrivePolicy` `maxReceiveCount` on `dead_letter`, the default
   `max_attempts` on `discard`) and then rejected. The queue is read once, at
   Init: the settlement shares the consumer's queue, so settling a batch makes
   no metadata call. A function holds the retry policies its queue implies and
@@ -322,7 +315,7 @@
   matches. `loom.testing.LambdaWorker` composes and binds a jobs function over
   moto's AWS mock (the new `testing-aws` extra, `moto[sqs]`): it enters
   `mock_aws()` itself, creates the queue the function consumes where the
-  configuration says (the URL's region, account and name) and, for a `redrive`
+  configuration says (the URL's region, account and name) and, for a `dead_letter`
   queue, a dead-letter queue with a real `RedrivePolicy`, and exposes `sqs` (a
   boto3 client of the mock), `queue_url` and `dead_letter_url`. It sets no
   environment and creates the queue through the application's own `sqs` client:
