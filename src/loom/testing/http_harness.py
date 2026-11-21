@@ -29,6 +29,7 @@ from fastapi.testclient import TestClient
 from loom.composition.application import Application
 from loom.composition.project import AppConfig, Project
 from loom.composition.recipe import Recipe
+from loom.connections.aws import AwsClients
 from loom.core.config import ConfigContext
 from loom.core.di.container import LoomContainer
 from loom.core.environment import resolve_environment
@@ -51,6 +52,7 @@ class _HarnessRuntime:
     Args:
         routes: The interfaces to serve; their routes' use cases are composed.
         overrides: DI modules binding the fake repositories.
+        aws: The AWS clients the composition uses; a fresh set without it.
         **fastapi_kwargs: Forwarded to the ``FastAPI`` constructor.
     """
 
@@ -59,10 +61,12 @@ class _HarnessRuntime:
         routes: RouteSources,
         *,
         overrides: tuple[Callable[[LoomContainer], None], ...],
+        aws: AwsClients | None = None,
         **fastapi_kwargs: Any,
     ) -> None:
         self._routes = routes
         self._overrides = overrides
+        self._aws = AwsClients() if aws is None else aws
         self._fastapi_kwargs = fastapi_kwargs
 
     def project(self) -> Project:
@@ -91,6 +95,7 @@ class _HarnessRuntime:
         return Recipe(
             profile=SERVER_PROFILE,
             discovered=project.discovered.with_changes(models=(), use_cases=tuple(use_cases)),
+            aws=self._aws,
             overrides=self._overrides,
             lenient=True,
         )
@@ -114,7 +119,9 @@ class HttpTestHarness:
     the REST interfaces.
 
     Args:
-        None
+        overrides: Substitutions applied while the application is composed.
+        aws: Recording or fake AWS clients; the stores, the job transports and
+            the container's ``AwsClients`` all use this one object.
 
     Example::
 
@@ -127,10 +134,13 @@ class HttpTestHarness:
         assert resp.status_code == 404
     """
 
-    def __init__(self, *, overrides: Sequence[Override] = ()) -> None:
+    def __init__(
+        self, *, overrides: Sequence[Override] = (), aws: AwsClients | None = None
+    ) -> None:
         self._repos: dict[type[Any], Any] = {}
         self._error_overrides: dict[tuple[type[Any], str], Exception] = {}
         self._overrides = tuple(overrides)
+        self._aws = aws
         self.application: Application | None = None
 
     @contextmanager
@@ -266,6 +276,7 @@ class HttpTestHarness:
         runtime = _HarnessRuntime(
             RouteSources(python=interfaces, config=config_interfaces, disabled=disable_routes),
             overrides=(self._build_module(),),
+            aws=self._aws,
             **fastapi_kwargs,
         )
         self.application = runtime.project().compose(runtime)

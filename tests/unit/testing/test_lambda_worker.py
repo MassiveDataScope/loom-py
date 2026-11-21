@@ -90,7 +90,7 @@ def config(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Iterator[Config]:
     monkeypatch.syspath_prepend(str(tmp_path))
 
     def write(
-        dead_letter: str = "discard",
+        abandoned: str = "discard",
         *,
         url: str = TEST_QUEUE["url"],
         region: str | None = _QUEUE_REGION,
@@ -108,7 +108,7 @@ def config(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Iterator[Config]:
         document: dict[str, Any] = {
             "app": {"name": "acme-mail", "packages": ["acme_mail"], "job_service": job_service},
             "sqs": {
-                "queues": {"jobs" if mapped else "other": {"url": url, "dead_letter": dead_letter}}
+                "queues": {"jobs" if mapped else "other": {"url": url, "abandoned": abandoned}}
             },
             "lambda": {
                 "functions": {
@@ -195,10 +195,10 @@ class TestDelivery:
             assert [len(r["batchItemFailures"]) for r in results] == [1, 1, 0]
             assert _left(worker, worker.queue_url) == 0
 
-    def test_an_abandonment_on_a_redrive_queue_lands_in_the_dead_letter_queue(
+    def test_an_abandonment_on_a_dead_letter_queue_lands_in_the_dead_letter_queue(
         self, config: Config
     ) -> None:
-        with _open(config("redrive")) as worker:
+        with _open(config("dead_letter")) as worker:
             worker.deliver(_job("FlakyEmailJob"))
             worker.redeliver()
             worker.redeliver()
@@ -210,7 +210,7 @@ class TestDelivery:
     def test_a_message_that_cannot_be_read_is_abandoned_to_the_dead_letter_queue(
         self, config: Config
     ) -> None:
-        with _open(config("redrive")) as worker:
+        with _open(config("dead_letter")) as worker:
             worker.sqs.send_message(QueueUrl=worker.queue_url, MessageBody="{")
 
             result = worker.redeliver()
@@ -257,7 +257,7 @@ class TestRecords:
     def test_a_record_carries_the_group_id_of_a_fifo_message_to_its_dead_letter_queue(
         self, config: Config
     ) -> None:
-        with _open(config("redrive", url=_FIFO_URL)) as worker:
+        with _open(config("dead_letter", url=_FIFO_URL)) as worker:
             worker.deliver(_job("FlakyOrderJob"), {"customer": "c-7"})
             worker.redeliver()
             worker.redeliver()
@@ -269,7 +269,7 @@ class TestRecords:
         self, config: Config, body: Callable[..., str]
     ) -> None:
         trace = {"DataType": "String", "StringValue": "trace-9"}
-        with _open(config("redrive")) as worker:
+        with _open(config("dead_letter")) as worker:
             worker.sqs.send_message(
                 QueueUrl=worker.queue_url,
                 MessageBody=body("FlakyEmailJob"),
@@ -568,8 +568,8 @@ class TestApplication:
         ) as worker:
             assert worker.application.kernel.container.resolve(key) is marker
 
-    def test_the_dead_letter_policy_allows_three_receives(self, config: Config) -> None:
-        with _open(config("redrive")) as worker:
+    def test_the_dead_letter_queue_allows_three_receives(self, config: Config) -> None:
+        with _open(config("dead_letter")) as worker:
             got = worker.sqs.get_queue_attributes(
                 QueueUrl=worker.queue_url, AttributeNames=["RedrivePolicy"]
             )["Attributes"]["RedrivePolicy"]

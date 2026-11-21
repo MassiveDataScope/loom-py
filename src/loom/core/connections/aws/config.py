@@ -88,11 +88,36 @@ class AwsClientConfig(ConnectionSettings, frozen=True, kw_only=True, forbid_unkn
             ConfigError: When ``aws:`` or *own* holds a retired key, or ``aws:`` holds a key
                 no client takes.
         """
+        from loom.core.config.keys import ConfigKey
+
+        aws = ctx.section(ConfigKey.AWS, dict) if ctx.has(ConfigKey.AWS) else {}
+        return cls.inherit_from(aws, own, path)
+
+    @classmethod
+    def inherit_from(
+        cls, aws: Mapping[str, Any], own: Mapping[str, Any], path: str
+    ) -> dict[str, Any]:
+        """Return *own* with the keys it does not set taken from *aws*, the ``aws:`` section.
+
+        The one rule of the inheritance: :meth:`inherit` hands it the resolved
+        section, and ``loom check`` the section as written.
+
+        Args:
+            aws: The ``aws:`` section, empty when there is none.
+            own: The product section, overriding *aws* key by key.
+            path: Dotted path of *own*, for the messages.
+
+        Returns:
+            The merged mapping.
+
+        Raises:
+            ConfigError: When *aws* or *own* holds a retired key, or *aws* holds a key
+                no client takes.
+        """
         from loom.core.config.errors import ConfigError
         from loom.core.config.keys import ConfigKey
         from loom.core.config.retired import reject_retired_keys
 
-        aws = ctx.section(ConfigKey.AWS, dict) if ctx.has(ConfigKey.AWS) else {}
         reject_retired_keys(aws, ConfigKey.AWS, AwsClientConfig)
         reject_retired_keys(own, path, cls)
         unknown = sorted(set(aws) - set(AwsClientConfig.__struct_encode_fields__))

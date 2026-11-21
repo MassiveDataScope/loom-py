@@ -12,7 +12,6 @@ import pytest
 
 from loom.composition import AppConfig, Recipe
 from loom.composition.phases import build_stores
-from loom.connections.aws import AwsClients
 from loom.core.config import ConfigContext, ConfigError
 from loom.core.discovery.base import DiscoveryResult
 from loom.core.model import BaseModel, ColumnField
@@ -33,7 +32,7 @@ class AcmeCursorNote(BaseModel):
 
 def _build(raw: dict[str, Any], *, connection_only: bool = False) -> None:
     project = composition_project(ConfigContext.from_dict(raw), app=AppConfig(name="notes"))
-    build_stores(project, _recipe(connection_only=connection_only), AwsClients())
+    build_stores(project, _recipe(connection_only=connection_only))
 
 
 def _recipe(*, connection_only: bool = False) -> Recipe:

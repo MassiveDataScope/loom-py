@@ -24,7 +24,7 @@ class SQSErrorCode(StrEnum):
 
 
 class SQSQueueConfigError(ConfigError):
-    """A job's queue has no URL, its FIFO queue no ``__group_by__``, or a redrive queue no DLQ."""
+    """A job's queue has no URL, its FIFO queue no ``__group_by__``, or its DLQ is missing."""
 
 
 class SQSDispatchError(SystemError):

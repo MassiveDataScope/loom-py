@@ -15,7 +15,7 @@ from loom.jobs.aws.queue import (
     ABANDONMENT_REASON_ATTRIBUTE,
     POSTPONEMENTS_ATTRIBUTE,
     REASON_MAX_CHARS,
-    DeadLetterPolicy,
+    AbandonedMessage,
     OutgoingMessage,
     QueueConfig,
     SQSQueue,
@@ -59,15 +59,21 @@ def _records(count: int, **attributes: Any) -> list[SQSRecord]:
 
 
 def _queue(
-    client: FakeSqs, *, url: str = _SOURCE, policy: DeadLetterPolicy = DeadLetterPolicy.REDRIVE
+    client: FakeSqs,
+    *,
+    url: str = _SOURCE,
+    abandoned: AbandonedMessage = AbandonedMessage.DEAD_LETTER,
 ) -> SQSQueue:
-    return SQSQueue(client, "jobs", QueueConfig(url=url, dead_letter=policy))
+    return SQSQueue(client, "jobs", QueueConfig(url=url, abandoned=abandoned))
 
 
 def _primed(
-    client: FakeSqs, *, url: str = _SOURCE, policy: DeadLetterPolicy = DeadLetterPolicy.REDRIVE
+    client: FakeSqs,
+    *,
+    url: str = _SOURCE,
+    abandoned: AbandonedMessage = AbandonedMessage.DEAD_LETTER,
 ) -> SQSQueue:
-    queue = _queue(client, url=url, policy=policy)
+    queue = _queue(client, url=url, abandoned=abandoned)
     queue.read_dead_letter(client)
     return queue
 
@@ -202,7 +208,7 @@ class TestAbandon:
         assert client.calls["get_queue_url"] == 1
         assert queue.dead_letter().max_receive_count == 4
 
-    def test_a_redrive_queue_without_a_policy_names_the_queue_and_both_options(self) -> None:
+    def test_a_dead_letter_queue_without_a_policy_names_the_queue_and_both_options(self) -> None:
         queue = _queue(FakeSqs())
 
         with pytest.raises(SQSQueueConfigError) as raised:
@@ -211,7 +217,7 @@ class TestAbandon:
         message = str(raised.value)
         assert "'jobs'" in message
         assert "RedrivePolicy" in message
-        assert "dead_letter: discard" in message
+        assert "abandoned: discard" in message
 
     def test_a_dead_letter_queue_not_read_at_start_up_is_never_read_lazily(self) -> None:
         client = FakeSqs({_SOURCE: _POLICY})
@@ -224,8 +230,8 @@ class TestAbandon:
     def test_a_discard_queue_has_no_dead_letter_queue_to_abandon_to(self) -> None:
         client = FakeSqs({_SOURCE: _POLICY})
 
-        with pytest.raises(SQSQueueConfigError, match="dead_letter: discard"):
-            _queue(client, policy=DeadLetterPolicy.DISCARD).abandon_batch(
+        with pytest.raises(SQSQueueConfigError, match="abandoned: discard"):
+            _queue(client, abandoned=AbandonedMessage.DISCARD).abandon_batch(
                 [(SQSRecord("m1", "h1", "b"), "no")]
             )
 
@@ -342,14 +348,14 @@ class TestQueueArn:
 
 
 class TestConfig:
-    def test_a_queue_is_a_url_and_redrive_by_default(self) -> None:
+    def test_a_queue_is_a_url_and_dead_letter_by_default(self) -> None:
         config = SQSConfig.load(
             ConfigContext.from_dict(
                 {
                     "sqs": {
                         "queues": {
                             "jobs": {"url": _SOURCE},
-                            "mail": {"url": _DEAD, "dead_letter": "discard"},
+                            "mail": {"url": _DEAD, "abandoned": "discard"},
                         }
                     }
                 }
@@ -357,8 +363,8 @@ class TestConfig:
         )
 
         assert config.queues == {
-            "jobs": QueueConfig(url=_SOURCE, dead_letter=DeadLetterPolicy.REDRIVE),
-            "mail": QueueConfig(url=_DEAD, dead_letter=DeadLetterPolicy.DISCARD),
+            "jobs": QueueConfig(url=_SOURCE, abandoned=AbandonedMessage.DEAD_LETTER),
+            "mail": QueueConfig(url=_DEAD, abandoned=AbandonedMessage.DISCARD),
         }
 
     def test_a_queue_written_as_a_bare_url_is_refused_naming_the_mapping(self) -> None:
@@ -367,7 +373,7 @@ class TestConfig:
 
         assert str(raised.value) == (
             f"sqs.queues.jobs is a URL; write it as a mapping: "
-            f"{{url: {_SOURCE}, dead_letter: redrive|discard}}"
+            f"{{url: {_SOURCE}, abandoned: dead_letter|discard}}"
         )
 
     @pytest.mark.parametrize(
@@ -379,10 +385,10 @@ class TestConfig:
         with pytest.raises(ConfigError, match=r"sqs\.queues must be a mapping of queue name to"):
             SQSConfig.load(ConfigContext.from_dict({"sqs": {"queues": queues}}))
 
-    def test_an_unknown_dead_letter_policy_is_refused(self) -> None:
-        document = {"sqs": {"queues": {"jobs": {"url": _SOURCE, "dead_letter": "bin"}}}}
+    def test_an_unknown_abandoned_option_is_refused(self) -> None:
+        document = {"sqs": {"queues": {"jobs": {"url": _SOURCE, "abandoned": "bin"}}}}
 
-        with pytest.raises(ConfigError, match="dead_letter"):
+        with pytest.raises(ConfigError, match="abandoned"):
             SQSConfig.load(ConfigContext.from_dict(document))
 
 
@@ -393,7 +399,7 @@ class TestAttemptLimit:
             ConfigContext.from_dict({"jobs": jobs}), [EmailJob, ReportJob]
         )
 
-    def test_a_redrive_queue_limits_attempts_to_its_max_receive_count(self) -> None:
+    def test_a_dead_letter_queue_limits_attempts_to_its_max_receive_count(self) -> None:
         settings = self._settings()
         queue = _primed(FakeSqs({_SOURCE: _POLICY}))
 
@@ -402,7 +408,7 @@ class TestAttemptLimit:
         assert retries[EmailJob].policy.max_attempts == 4
         assert retries[EmailJob].sources["max_attempts"] is RetrySource.REDRIVE
 
-    def test_declaring_max_attempts_for_a_job_on_a_redrive_queue_is_refused(self) -> None:
+    def test_declaring_max_attempts_for_a_job_on_a_dead_letter_queue_is_refused(self) -> None:
         settings = self._settings(EmailJob={"retry": {"max_attempts": 5}})
         queue = _primed(FakeSqs({_SOURCE: _POLICY}))
 
@@ -412,9 +418,9 @@ class TestAttemptLimit:
         message = str(raised.value)
         assert "EmailJob declares jobs.<Job>.retry.max_attempts" in message
         assert "maxReceiveCount (4)" in message
-        assert "dead_letter: discard" in message
+        assert "abandoned: discard" in message
 
-    def test_the_defaults_layer_does_not_apply_to_a_redrive_queue(self) -> None:
+    def test_the_defaults_layer_does_not_apply_to_a_dead_letter_queue(self) -> None:
         settings = self._settings(defaults={"retry": {"max_attempts": 2}})
         queue = _primed(FakeSqs({_SOURCE: _POLICY}))
 
@@ -429,14 +435,14 @@ class TestAttemptLimit:
         retry = {} if declared is None else {"retry": {"max_attempts": declared}}
         settings = self._settings(EmailJob=retry)
         client = FakeSqs({_SOURCE: _POLICY})
-        queue = _queue(client, policy=DeadLetterPolicy.DISCARD)
+        queue = _queue(client, abandoned=AbandonedMessage.DISCARD)
 
         retries = queue.retries_for([EmailJob], lambda job: settings.options_for(job).retry)
 
         assert retries[EmailJob].policy.max_attempts == expected
         assert client.metadata_calls == 0
 
-    def test_a_redrive_queue_without_a_policy_is_refused(self) -> None:
+    def test_a_dead_letter_queue_without_a_policy_is_refused(self) -> None:
         settings = self._settings()
 
         with pytest.raises(SQSQueueConfigError, match="RedrivePolicy"):
@@ -533,11 +539,11 @@ class TestSQSRecordFromEvent:
 
 class TestUnknownJobPolicy:
     def test_a_discard_queue_gives_the_loom_default(self) -> None:
-        queue = _queue(FakeSqs(), policy=DeadLetterPolicy.DISCARD)
+        queue = _queue(FakeSqs(), abandoned=AbandonedMessage.DISCARD)
 
         assert queue.unknown_job_policy() == DEFAULT_RETRY
 
-    def test_a_redrive_queue_limits_attempts_as_its_policy_does(self) -> None:
+    def test_a_dead_letter_queue_limits_attempts_as_its_policy_does(self) -> None:
         queue = _primed(FakeSqs({_SOURCE: _POLICY}))
 
         assert queue.unknown_job_policy().max_attempts == 4

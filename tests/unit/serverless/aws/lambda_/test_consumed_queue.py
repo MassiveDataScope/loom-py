@@ -75,7 +75,7 @@ def _logged(caplog: pytest.LogCaptureFixture, event: str) -> list[dict[str, Any]
 
 
 class TestConsumedQueue:
-    def test_a_redrive_queue_with_a_policy_binds_after_one_read_of_it(
+    def test_a_dead_letter_queue_with_a_policy_binds_after_one_read_of_it(
         self, tmp_path: Path, probe: tuple[type[Job[None]], Probe], mount: Mount
     ) -> None:
         client = FakeSqs(_POLICY)
@@ -84,16 +84,16 @@ class TestConsumedQueue:
 
         assert client.calls["get_queue_attributes"] == 1
 
-    def test_a_redrive_queue_without_a_policy_fails_start_up_naming_the_queue(
+    def test_a_dead_letter_queue_without_a_policy_fails_start_up_naming_the_queue(
         self, tmp_path: Path, probe: tuple[type[Job[None]], Probe], mount: Mount
     ) -> None:
         with pytest.raises(SQSQueueConfigError) as raised:
             mount(tmp_path, probe, FakeSqs())
 
         assert "'jobs'" in str(raised.value)
-        assert "dead_letter: discard" in str(raised.value)
+        assert "abandoned: discard" in str(raised.value)
 
-    def test_max_attempts_on_a_job_of_a_redrive_queue_fails_start_up(
+    def test_max_attempts_on_a_job_of_a_dead_letter_queue_fails_start_up(
         self, tmp_path: Path, probe: tuple[type[Job[None]], Probe], mount: Mount
     ) -> None:
         jobs = {probe[0].__name__: {"queue": "jobs", "retry": {"max_attempts": 7}}}
@@ -116,7 +116,7 @@ class TestConsumedQueue:
         client = FakeSqs()
         jobs = {probe[0].__name__: {"queue": "jobs", "retry": {"max_attempts": 7}}}
 
-        mount(tmp_path, probe, client, queue={"dead_letter": "discard"}, jobs=jobs)
+        mount(tmp_path, probe, client, queue={"abandoned": "discard"}, jobs=jobs)
 
         assert client.metadata_calls == 0
 

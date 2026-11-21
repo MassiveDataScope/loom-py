@@ -2,7 +2,7 @@
 
 The ``jobs`` function runs ``TrackShipmentJob`` from an SQS record carrying
 the enqueuer's identity. A job refused for its caller is not retryable,
-so the function discards its record (the queue says ``dead_letter: discard``)
+so the function discards its record (the queue says ``abandoned: discard``)
 and logs it as abandoned: that log is where the refusal surfaces. An
 envelope that does not decode is abandoned the same way.
 """

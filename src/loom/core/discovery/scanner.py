@@ -24,7 +24,9 @@ class PackageScanner:
     Args:
         packages: The ``app.packages`` entries.
         entry_points: The ``app.entry_points`` groups; the module of every
-            installed entry point in them is scanned like a package entry.
+            installed entry point in them is scanned like a package entry. A
+            group with no installed entry point is a valid, empty state that
+            ``loom check`` and the deploy checks report (``loom.discovery.W001``).
     """
 
     def __init__(self, packages: Sequence[str] = (), *, entry_points: Sequence[str] = ()) -> None:
@@ -32,24 +34,23 @@ class PackageScanner:
         self._entry_points = entry_points
 
     def package_names(self) -> list[str]:
-        """Return the modules to scan: ``app.packages``, then the entry-point modules, sorted.
-
-        Raises:
-            ConfigError: When a declared entry-point group has no installed entry point.
-        """
+        """Return the modules to scan: ``app.packages``, then the entry-point modules, sorted."""
         return [*self._packages, *self._entry_point_modules()]
 
     def _entry_point_modules(self) -> list[str]:
         modules: set[str] = set()
         for group in self._entry_points:
             provided = importlib.metadata.entry_points(group=group)
-            if not provided:
-                raise ConfigError(
-                    f"app.entry_points group {group!r} has no entry point: no installed "
-                    "distribution provides it"
-                )
             modules.update(entry_point.module for entry_point in provided)
         return sorted(modules)
+
+    def empty_groups(self) -> list[str]:
+        """Return the declared groups with no installed entry point, in declared order."""
+        return [
+            group
+            for group in self._entry_points
+            if not importlib.metadata.entry_points(group=group)
+        ]
 
     def discover(self, *, agents: Sequence[str] = ()) -> DiscoveryResult:
         """Return the classes of the configured modules and packages, subpackages included.

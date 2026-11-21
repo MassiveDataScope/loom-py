@@ -17,6 +17,24 @@
   - The executor, the compiler and the kernel log `bootstrap.*`, `compiler.use_case_compiled` and the `loom.use_case` field in place of `[BOOT]` lines and the `usecase` field of compilation; the job runner's abandonment record carries `loom.job`, `loom.attempt` and `loom.task_id`. The other event names and fields change with the migration of each package.
   - Install `structlog` yourself if you still import it: loom no longer depends on it.
 
+- **discovery:** an `app.entry_points` group with no installed entry point is no
+  longer a `ConfigError`: it is a valid, empty state. The deploy checks at
+  start-up and `loom check` report the warning `loom.discovery.W001` (silence it in `checks.silenced`).
+  **Migration:** a consumer that built its own discovery to get past the error
+  declares the group in `app.entry_points` and `app.packages` instead, so
+  `loom check` finds its installers. `AppConfig.reject_misdeclared` no longer
+  reads the installed entry points.
+- **composition:** `AwsClients` is a reserved key with one owner: the recipe.
+  The stores, the job transports and the container's `AwsClients` binding are
+  one object, seeded before any installer runs, no longer registered after the
+  modules. An installer or an override binding `AwsClients` fails with
+  `ReservedBindingError` (`CompositionErrorCode.RESERVED_AWS_CLIENTS`).
+  **Migration:** drop the binding. A test supplies a recording or fake
+  `AwsClients` with the `aws=` parameter of `HttpTestHarness`,
+  `LambdaTestClient` or `OverrideRuntime` instead of
+  `Override.instance(AwsClients, double)` or a monkeypatch of
+  `AwsClients.client`. `phases.build_stores` and `phases.register` no longer
+  take `aws`: it is `Recipe.aws`.
 - **composition:** `loom.composition.resources` is `loom.core.resources`, so an
   `Installer` in the core can name `Resource`. **Migration:** import `Resource`,
   `ResourceKind` and `closing` from `loom.core.resources`.
@@ -232,23 +250,24 @@
   outside that bound, including negatives, raises `ValueError` on SQS, Celery,
   inline and `dispatch_now`, not `SQSDispatchError`. `SQSErrorCode.DELAY_TOO_LONG`
   is removed.
-- **jobs:** each `sqs.queues.<name>` is a mapping `{url, dead_letter}`, not a
+- **jobs:** each `sqs.queues.<name>` is a mapping `{url, abandoned}`, not a
   URL string; a string entry, or a `sqs.queues` that is no mapping, is refused
-  at load, naming the mapping. `dead_letter` is `redrive` (default) or
-  `discard`. On a `redrive` queue the attempt limit is the `maxReceiveCount` of
+  at load, naming the mapping. `abandoned` is `dead_letter` (default) or
+  `discard`. On a `dead_letter` queue the attempt limit is the `maxReceiveCount` of
   the queue's `RedrivePolicy`, and a job it serves may not declare
   `jobs.<Job>.retry.max_attempts` (start-up fails naming the rule;
   `jobs.defaults.retry.max_attempts` gives way to `maxReceiveCount`); on a
   `discard` queue `max_attempts` decides (default 3). A Lambda function
   consuming a queue fails start-up when `sqs.queues` does not map it, or when
-  a `redrive` queue has no `RedrivePolicy`, and logs the effective policy of
+  an `abandoned: dead_letter` queue has no `RedrivePolicy`, and logs the effective policy of
   its jobs; an application that only dispatches makes no `GetQueueAttributes`
   or `GetQueueUrl` call. `SQSQueueConfigError` is no longer importable from
   `loom.jobs.aws.sqs`: import it from `loom.jobs.aws.errors`. The deploy
   manifest is `manifest_version: 3`, its `queues` mapping each name to
-  `{url, dead_letter}`. **Migration:** write
-  `<name>: {url: https://..., dead_letter: redrive}` for each queue, and give
-  every `redrive` queue a dead-letter queue.
+  `{url, abandoned}`. **Migration:** write
+  `<name>: {url: https://..., abandoned: dead_letter}` for each queue (`dead_letter`,
+  the default, sends an abandoned message to the queue's dead-letter queue; `discard`
+  deletes it), and give every `dead_letter` queue a dead-letter queue.
 - **jobs:** the role of a function consuming an SQS queue needs
   `sqs:SendMessage`, `sqs:ChangeMessageVisibility` and `sqs:GetQueueAttributes`
   on the queue, and `sqs:SendMessage` and `sqs:GetQueueUrl` on its dead-letter
@@ -294,7 +313,7 @@
   | Outcome | Action | In `batchItemFailures` |
   |---|---|---|
   | Succeeded | none | no |
-  | Rejected, `redrive` | sent to the dead-letter queue with the reason | only if its send failed |
+  | Rejected, `dead_letter` | sent to the dead-letter queue with the reason | only if its send failed |
   | Rejected, `discard` | none: an ERROR log with `outcome=discarded` | no |
   | Deferred, standard queue | sent again with `DelaySeconds` and one deferral more | only if its send failed |
   | `JobRetry`, FIFO queue | Rejected, reason `cannot wait: <reason>`: a FIFO queue takes no per-message delay | as Rejected |
@@ -315,7 +334,7 @@
   message (`MalformedJobMessage` is no longer retryable) is rejected at once,
   with the error class as reason; a message naming an unknown job stays
   retryable, for a deploy that rolls out, but is bounded by the queue's limit
-  (the `RedrivePolicy` `maxReceiveCount` on `redrive`, the default
+  (the `RedrivePolicy` `maxReceiveCount` on `dead_letter`, the default
   `max_attempts` on `discard`) and then rejected. The queue is read once, at
   Init: the settlement shares the consumer's queue, so settling a batch makes
   no metadata call. A function holds the retry policies its queue implies and
@@ -329,7 +348,7 @@
   matches. `loom.testing.LambdaWorker` composes and binds a jobs function over
   moto's AWS mock (the new `testing-aws` extra, `moto[sqs]`): it enters
   `mock_aws()` itself, creates the queue the function consumes where the
-  configuration says (the URL's region, account and name) and, for a `redrive`
+  configuration says (the URL's region, account and name) and, for a `dead_letter`
   queue, a dead-letter queue with a real `RedrivePolicy`, and exposes `sqs` (a
   boto3 client of the mock), `queue_url` and `dead_letter_url`. It sets no
   environment and creates the queue through the application's own `sqs` client:
@@ -1264,6 +1283,17 @@
 
 ### composition
 
+- **composition:** a `ConfiguredInstaller`'s settings inherit the top-level `aws:`
+  section as loom's own store plugins do: any field typed `AwsClientConfig` (or
+  a subclass), nested anywhere (structs, optional fields, lists, mappings),
+  takes the keys it does not set from `aws:`, and the field's own values win.
+  `loom check` judges the inherited values, with the `aws:` section as written.
+  `AwsInheritance` owns the walk, and `AwsClientConfig.inherit_from` the merge
+  that the store plugins' `AwsClientConfig.inherit` shares.
+- **composition:** `Recipe.aws` is the application's one `AwsClients`; the
+  testing harnesses (`HttpTestHarness`, `LambdaTestClient`, `OverrideRuntime`)
+  take `aws=` to supply a recording or fake one that the stores, the job
+  transports and the container all use. See `docs/rest/testing.md`.
 - **composition:** `Installer.resources(container)` lets an application declare
   what it opens and closes. The resources it returns (default none) are opened
   by `Application.running()` after the stores and before the job timer and get

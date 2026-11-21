@@ -76,7 +76,10 @@ ambiguous names and warns about discovered interfaces assigned to none.
 A package is walked recursively; models, use cases, jobs, job callbacks (`JobCallback`
 subclasses), REST interfaces and `Installer` classes defined in it are found, in module then
 qualified-name order. Abstract classes, classes imported from elsewhere and
-models without their own `__tablename__` are skipped.
+models without their own `__tablename__` are skipped. `loom check` scans the
+same way, so declare in `app.packages` and `app.entry_points` every module that
+holds your installers: a hand-built discovery is invisible to it, and an
+installer it does not find has its section unchecked.
 
 - `app.entry_points` lists entry-point groups for code the YAML does not name:
   the module of every installed entry point in each group is scanned exactly
@@ -84,8 +87,10 @@ models without their own `__tablename__` are skipped.
   module, in a fixed order. A plugin distribution registers its package in a
   group (`[project.entry-points."acme.plugins"]`, `acme_billing = "acme_billing"`)
   and the application declares `entry_points: [acme.plugins]`. A group no
-  installed distribution provides is a `ConfigError` naming it, at startup and
-  in `loom check`.
+  installed distribution provides is valid, as for an optional plugin group
+  that is legitimately empty: the startup deploy checks and `loom check`
+  report the warning `loom.discovery.W001`, so a typo in a group name stays visible. Put
+  the id in `checks.silenced` to accept an optional group on purpose.
 - Every module in a listed package is imported at scan: keep script-like
   modules such as `__main__.py` out of it.
 - A directory inside a listed package that holds `.py` files but no
@@ -165,7 +170,7 @@ error, never the payload.
 A `queue:` block reads each message body as the source delivers it to the
 queue it names. A message whose job can still succeed is reported and
 retried; one that fails for good, or cannot be read, is rejected: sent to the
-queue's dead-letter queue on `redrive`, dropped with an ERROR log on `discard`,
+queue's dead-letter queue on `dead_letter`, dropped with an ERROR log on `discard`,
 and not reported. The block takes the keys of a `jobs` trigger's `queue`; the
 retry keys apply to a direct trigger only. A `jobs` function settles its
 messages the same way. An SNS subscription to that queue must not use raw

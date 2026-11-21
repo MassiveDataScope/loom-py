@@ -21,7 +21,7 @@ from loom.core.job.policy import Countdown
 from loom.jobs.aws.queue import (
     ABANDONMENT_REASON_ATTRIBUTE,
     POSTPONEMENTS_ATTRIBUTE,
-    DeadLetterPolicy,
+    AbandonedMessage,
     QueueConfig,
     SQSRecord,
 )
@@ -71,7 +71,7 @@ class Settling:
 @pytest.fixture
 def settling(monkeypatch: pytest.MonkeyPatch) -> Callable[..., Settling]:
     def build(
-        dead_letter: str = "redrive",
+        abandoned: str = "dead_letter",
         prime: bool = True,
         consumes: str = "jobs",
         **options: Any,
@@ -80,12 +80,12 @@ def settling(monkeypatch: pytest.MonkeyPatch) -> Callable[..., Settling]:
         island = FakeAwsIsland(client=client).install(monkeypatch)
         config = SQSConfig(
             queues={
-                "jobs": QueueConfig(url=_SOURCE, dead_letter=DeadLetterPolicy(dead_letter)),
-                "ordered": QueueConfig(url=f"{_SOURCE}.fifo", dead_letter=DeadLetterPolicy.DISCARD),
+                "jobs": QueueConfig(url=_SOURCE, abandoned=AbandonedMessage(abandoned)),
+                "ordered": QueueConfig(url=f"{_SOURCE}.fifo", abandoned=AbandonedMessage.DISCARD),
             }
         )
         settlement = SQSJobSettlement(AwsClients(), config, consumes)
-        if prime and settlement.queue.dead_letter_policy is DeadLetterPolicy.REDRIVE:
+        if prime and settlement.queue.abandoned is AbandonedMessage.DEAD_LETTER:
             settlement.queue.read_dead_letter(client)
         return Settling(client, settlement, island)
 
@@ -131,7 +131,7 @@ class TestSQSJobSettlement:
     def test_an_abandoned_message_of_a_discard_queue_is_dropped_with_an_error_log(
         self, settling: Callable[..., Settling], caplog: pytest.LogCaptureFixture
     ) -> None:
-        sqs = settling(dead_letter="discard")
+        sqs = settling(abandoned="discard")
 
         redelivered = sqs.settle_all([(_record("a"), _abandoned())])
 

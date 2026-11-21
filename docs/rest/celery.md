@@ -505,10 +505,10 @@ sqs:
   queues:
     default:
       url: https://sqs.eu-west-1.amazonaws.com/123456789012/shop
-      dead_letter: redrive
+      abandoned: dead_letter
     orders:
       url: https://sqs.eu-west-1.amazonaws.com/123456789012/orders.fifo
-      dead_letter: discard
+      abandoned: discard
 ```
 
 ```python
@@ -518,7 +518,7 @@ class ShipOrderJob(Job[None]):
 ```
 
 - `sqs:` takes the `aws:` client keys, overriding them, plus `queues`.
-- Each queue is a mapping: its `url` and its `dead_letter` policy, `redrive`
+- Each queue is a mapping: its `url` and `abandoned`, what becomes of an abandoned message: `dead_letter`
   (default) or `discard`. A queue written as a bare URL is refused at load,
   naming the mapping.
 - Only the jobs SQS serves need a URL: those on `celery.queues` go to Celery.
@@ -612,19 +612,19 @@ lambda:
 
 #### Dead letters and attempts
 
-`dead_letter` names the queue's dead-letter policy and who owns the attempt
+`abandoned` names what becomes of an abandoned message and who owns the attempt
 limit:
 
-| `dead_letter` | Dead-letter queue | The attempt limit |
+| `abandoned` | Dead-letter queue | The attempt limit |
 |---|---|---|
-| `redrive` (default) | the one in the queue's `RedrivePolicy` | the `maxReceiveCount` of that policy; a job consumed from the queue may not declare `max_attempts` in its own `jobs.<Job>.retry` |
+| `dead_letter` (default) | the one in the queue's `RedrivePolicy` | the `maxReceiveCount` of that policy; a job consumed from the queue may not declare `max_attempts` in its own `jobs.<Job>.retry` |
 | `discard` | none | `max_attempts` of the job (loom default 3) |
 
-- A function consuming a `redrive` queue reads the queue's `RedrivePolicy`
+- A function consuming a `dead_letter` queue reads the queue's `RedrivePolicy`
   once, at Init. Without one, startup fails naming the queue and both options:
-  attach a dead-letter queue, or set `dead_letter: discard`.
+  attach a dead-letter queue, or set `abandoned: discard`.
 - `jobs.defaults.retry.max_attempts` does not apply to jobs consumed from a
-  `redrive` queue: `maxReceiveCount` wins. Startup logs the effective policy of
+  `dead_letter` queue: `maxReceiveCount` wins. Startup logs the effective policy of
   the jobs of the consumed queue.
 - A function consuming a queue that `sqs.queues` does not map fails startup
   naming `sqs.queues.<name>`.
@@ -638,7 +638,7 @@ ten entries each.
 | Outcome | Action | In `batchItemFailures` |
 |---|---|---|
 | Succeeded | none | no |
-| Abandoned (`JobAbandonment`, an error that cannot succeed, or attempts exhausted), `redrive` | `SendMessageBatch` to the dead-letter queue, with the reason as the `loom.abandonment_reason` attribute | only if that send failed |
+| Abandoned (`JobAbandonment`, an error that cannot succeed, or attempts exhausted), `dead_letter` | `SendMessageBatch` to the dead-letter queue, with the reason as the `loom.abandonment_reason` attribute | only if that send failed |
 | Abandoned, `discard` | none: an ERROR log with `outcome=discarded` | no |
 | Postponed (`JobPostponement`), standard queue | `SendMessageBatch` to the same queue with `DelaySeconds` and `loom.postponements` plus one | only if that send failed |
 | Postponed, FIFO queue | refused, as a FIFO queue takes no per-message delay; settled as Failed | yes |
@@ -651,7 +651,7 @@ ten entries each.
   wait is never dead-lettered.
 - The attempt a job reads is the record's `ApproximateReceiveCount`, and its
   postponements are the `loom.postponements` attribute. A failure on the last attempt
-  is abandoned: a `redrive` queue receives it from loom instead of from SQS
+  is abandoned: a `dead_letter` queue receives it from loom instead of from SQS
   after one more delivery.
 - A call that fails for some entries lists only those messages; one that fails
   for all lists all of them, and the failure is logged in one line per call. A
@@ -680,7 +680,7 @@ ten entries each.
 - A malformed message is abandoned at once, with `MalformedJobMessage` as reason.
   A message naming a job the function does not serve is retried, as a deploy
   may still be rolling out, but only up to the queue's limit (`maxReceiveCount`
-  on `redrive`, the default `max_attempts` on `discard`); then it is abandoned.
+  on `dead_letter`, the default `max_attempts` on `discard`); then it is abandoned.
 
 **IAM.** The role of a function consuming a queue needs:
 

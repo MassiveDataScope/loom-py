@@ -14,7 +14,6 @@ import msgspec
 
 from loom.composition import phases
 from loom.composition.application import Application
-from loom.connections.aws import AwsClients
 from loom.connections.resolvers import with_built_in_resolvers
 from loom.core.cache.wiring import CacheGateways
 from loom.core.config import (
@@ -23,7 +22,6 @@ from loom.core.config import (
     ConfigKey,
     ConfigResolver,
 )
-from loom.core.config.keys import INTERPOLATION
 from loom.core.config.overrides import load_application_config
 from loom.core.discovery.scanner import PackageScanner
 from loom.core.environment import Environment, resolve_environment, select_config_paths
@@ -48,8 +46,13 @@ T = TypeVar("T")
 class AppConfig(msgspec.Struct, kw_only=True):
     """The keys of ``app`` every entry point reads; a transport reads its own.
 
-    ``entry_points`` lists entry-point groups: the module of every installed
-    entry point in each group is scanned like an ``app.packages`` entry.
+    ``packages`` and ``entry_points`` are what discovery scans, so what
+    ``loom check`` sees: declare there every module holding installers, models
+    and use cases. ``entry_points`` lists entry-point groups: the module of every
+    installed entry point in each group is scanned like an ``app.packages``
+    entry. A group no distribution provides is valid (an optional plugin
+    group): the deploy checks and ``loom check`` warn with
+    ``loom.discovery.W001``, so a typo in a group name stays visible.
     """
 
     name: str
@@ -70,8 +73,8 @@ class AppConfig(msgspec.Struct, kw_only=True):
 
         Raises:
             ConfigError: When ``app.name`` is missing (a ``${...}`` placeholder
-                counts as written, none is resolved), the removed ``app.discovery`` is
-                declared, or an ``app.entry_points`` group has no installed entry point.
+                counts as written, none is resolved) or the removed ``app.discovery`` is
+                declared.
         """
         if ctx.raw(f"{ConfigKey.APP}.name") is None:
             raise ConfigError(
@@ -80,10 +83,6 @@ class AppConfig(msgspec.Struct, kw_only=True):
             )
         if ctx.raw("app.discovery") is not None:
             raise ConfigError("app.discovery is removed; declare app.packages and app.agents")
-        declared = ctx.raw(f"{ConfigKey.APP}.entry_points", [])
-        if isinstance(declared, list):
-            literal_groups = [g for g in declared if isinstance(g, str) and INTERPOLATION not in g]
-            PackageScanner(entry_points=literal_groups).package_names()
 
     @classmethod
     def from_config(cls, ctx: ConfigContext) -> AppConfig:
@@ -290,11 +289,10 @@ class Project:
         clock.lap("scan", self.discovered)
         recipe = clock.lap("plan", phases.plan(self, runtime))
         self.observability.running_as(recipe.log_runtime)
-        aws = AwsClients()
-        stores = clock.lap("build_stores", phases.build_stores(self, recipe, aws))
+        stores = clock.lap("build_stores", phases.build_stores(self, recipe))
         installers = phases.build_installers(self.config, recipe.discovered.installers)
         kernel, sql, job_resources = clock.lap(
-            "register", phases.register(self, recipe, stores, aws, installers)
+            "register", phases.register(self, recipe, stores, installers)
         )
         analysis = clock.lap("analysed", recipe.analysed(kernel.factory.graph))
         ai = clock.lap("wire_ai", phases.wire_ai(self, recipe, kernel, analysis, sql))
@@ -310,7 +308,7 @@ class Project:
                 Resource(
                     kind=ResourceKind.AWS,
                     name="clients",
-                    manager=closing(lambda: asyncio.to_thread(aws.close)),
+                    manager=closing(lambda: asyncio.to_thread(recipe.aws.close)),
                 ),
                 *job_resources,
                 *(

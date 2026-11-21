@@ -61,10 +61,10 @@ class SQSArn:
         return cls(region, account_id, queue_name)
 
 
-class DeadLetterPolicy(StrEnum):
+class AbandonedMessage(StrEnum):
     """What becomes of a message whose job is abandoned for good."""
 
-    REDRIVE = "redrive"
+    DEAD_LETTER = "dead_letter"
     DISCARD = "discard"
 
 
@@ -73,13 +73,13 @@ class QueueConfig(msgspec.Struct, frozen=True, kw_only=True, forbid_unknown_fiel
 
     Attributes:
         url: The queue URL; ``.fifo`` at its end marks a FIFO queue.
-        dead_letter: ``redrive`` sends an abandoned message to the queue's
+        abandoned: ``dead_letter`` sends an abandoned message to the queue's
             dead-letter queue and leaves the attempt limit to its
             ``RedrivePolicy``; ``discard`` drops it and ``max_attempts`` decides.
     """
 
     url: str
-    dead_letter: DeadLetterPolicy = DeadLetterPolicy.REDRIVE
+    abandoned: AbandonedMessage = AbandonedMessage.DEAD_LETTER
 
     @property
     def is_fifo(self) -> bool:
@@ -115,14 +115,14 @@ class QueueConfig(msgspec.Struct, frozen=True, kw_only=True, forbid_unknown_fiel
         """
         if not isinstance(written, Mapping):
             raise ConfigError(
-                f"{path} must be a mapping of queue name to {{url, dead_letter: redrive|discard}}, "
-                f"not {type(written).__name__}"
+                f"{path} must be a mapping of queue name to "
+                f"{{url, abandoned: dead_letter|discard}}, not {type(written).__name__}"
             )
         for name, entry in written.items():
             if isinstance(entry, str):
                 raise ConfigError(
                     f"{path}.{name} is a URL; write it as a mapping: "
-                    f"{{url: {entry}, dead_letter: redrive|discard}}"
+                    f"{{url: {entry}, abandoned: dead_letter|discard}}"
                 )
 
 
@@ -355,7 +355,7 @@ class SQSQueue:
         self.name = name
         self.url = config.url
         self.is_fifo = config.is_fifo
-        self.dead_letter_policy = config.dead_letter
+        self.abandoned = config.abandoned
         self._dead_letter: DeadLetter | None = None
 
     @staticmethod
@@ -511,7 +511,7 @@ class SQSQueue:
         """The dead-letter queue :meth:`read_dead_letter` kept.
 
         Raises:
-            SQSQueueConfigError: When the queue is ``dead_letter: discard``, or its
+            SQSQueueConfigError: When the queue is ``abandoned: discard``, or its
                 dead-letter queue was not read at start-up.
         """
         self._refuse_discard()
@@ -523,8 +523,8 @@ class SQSQueue:
         return self._dead_letter
 
     @property
-    def redrive_limit(self) -> int:
-        """The source queue's receive limit from its checked redrive policy."""
+    def dead_letter_limit(self) -> int:
+        """The source queue's receive limit from its checked RedrivePolicy."""
         return self.dead_letter().max_receive_count
 
     def retries_for(
@@ -532,7 +532,7 @@ class SQSQueue:
     ) -> dict[type[Job[Any]], ResolvedRetry]:
         """The retry policy each of *jobs* has when consumed from this queue.
 
-        With ``discard`` it is the one resolved. With ``redrive`` its
+        With ``discard`` it is the one resolved. With ``dead_letter`` its
         ``max_attempts`` is the ``maxReceiveCount`` of the ``RedrivePolicy``.
 
         Args:
@@ -543,22 +543,22 @@ class SQSQueue:
             Each job's policy and where each of its fields came from.
 
         Raises:
-            ConfigError: When a job on a ``redrive`` queue has ``max_attempts`` in its own
+            ConfigError: When a job on a ``dead_letter`` queue has ``max_attempts`` in its own
                 ``jobs.<Job>.retry``.
-            SQSQueueConfigError: When a ``redrive`` queue has no ``RedrivePolicy``.
+            SQSQueueConfigError: When a ``dead_letter`` queue has no ``RedrivePolicy``.
         """
-        if self.dead_letter_policy is DeadLetterPolicy.DISCARD:
+        if self.abandoned is AbandonedMessage.DISCARD:
             return {job: resolved(job) for job in jobs}
-        limit = self.redrive_limit
+        limit = self.dead_letter_limit
         retries: dict[type[Job[Any]], ResolvedRetry] = {}
         for job in jobs:
             retry = resolved(job)
             if retry.sources["max_attempts"] is RetrySource.JOB_CONFIG:
                 raise ConfigError(
                     f"{job.__qualname__} declares jobs.<Job>.retry.max_attempts, but queue "
-                    f"{self.name!r} is dead_letter: redrive, where the attempt limit is the "
+                    f"{self.name!r} is abandoned: dead_letter, where the attempt limit is the "
                     f"RedrivePolicy maxReceiveCount ({limit}): remove max_attempts or set "
-                    "the queue to dead_letter: discard"
+                    "the queue to abandoned: discard"
                 )
             retries[job] = ResolvedRetry(
                 replace(retry.policy, max_attempts=limit),
@@ -569,20 +569,20 @@ class SQSQueue:
     def unknown_job_policy(self) -> RetryPolicy:
         """The policy of a message that names no job this consumer serves.
 
-        It is the loom default; on a ``redrive`` queue its ``max_attempts`` is the
+        It is the loom default; on a ``dead_letter`` queue its ``max_attempts`` is the
         ``maxReceiveCount`` of the ``RedrivePolicy``.
 
         Raises:
-            SQSQueueConfigError: When a ``redrive`` queue has no ``RedrivePolicy``.
+            SQSQueueConfigError: When a ``dead_letter`` queue has no ``RedrivePolicy``.
         """
-        if self.dead_letter_policy is DeadLetterPolicy.DISCARD:
+        if self.abandoned is AbandonedMessage.DISCARD:
             return DEFAULT_RETRY
-        return replace(DEFAULT_RETRY, max_attempts=self.redrive_limit)
+        return replace(DEFAULT_RETRY, max_attempts=self.dead_letter_limit)
 
     def _refuse_discard(self) -> None:
-        if self.dead_letter_policy is DeadLetterPolicy.DISCARD:
+        if self.abandoned is AbandonedMessage.DISCARD:
             raise SQSQueueConfigError(
-                f"queue {self.name!r} is dead_letter: discard: it has no dead-letter queue"
+                f"queue {self.name!r} is abandoned: discard: it has no dead-letter queue"
             )
 
     def read_dead_letter(self, client: Any) -> DeadLetter:
@@ -592,7 +592,7 @@ class SQSQueue:
             client: The boto3 ``sqs`` client that makes the metadata calls.
 
         Raises:
-            SQSQueueConfigError: When the queue is ``dead_letter: discard`` or its
+            SQSQueueConfigError: When the queue is ``abandoned: discard`` or its
                 ``RedrivePolicy`` is missing.
         """
         self._refuse_discard()
@@ -602,8 +602,8 @@ class SQSQueue:
         written = attributes.get("Attributes", {}).get("RedrivePolicy")
         if written is None:
             raise SQSQueueConfigError(
-                f"queue {self.name!r} is dead_letter: redrive but has no RedrivePolicy: attach "
-                "a dead-letter queue to it, or set dead_letter: discard (then max_attempts "
+                f"queue {self.name!r} is abandoned: dead_letter but has no RedrivePolicy: attach "
+                "a dead-letter queue to it, or set abandoned: discard (then max_attempts "
                 "decides when a job is abandoned)"
             )
         try:
@@ -621,7 +621,7 @@ class SQSQueue:
             "QueueUrl"
         ]
         target = SQSQueue(
-            self._client, arn.queue_name, QueueConfig(url=url, dead_letter=DeadLetterPolicy.DISCARD)
+            self._client, arn.queue_name, QueueConfig(url=url, abandoned=AbandonedMessage.DISCARD)
         )
         self._dead_letter = DeadLetter(target, limit)
         return self._dead_letter
@@ -678,7 +678,7 @@ class SQSQueues:
 __all__ = [
     "BatchResult",
     "DeadLetter",
-    "DeadLetterPolicy",
+    "AbandonedMessage",
     "OutgoingMessage",
     "QueueConfig",
     "SQSQueue",

@@ -25,7 +25,7 @@ from loom.core.job.envelope import encode_job_message
 from loom.core.job.job import Job
 from loom.core.job.policy import Countdown
 from loom.core.plugins.optional import import_optional
-from loom.jobs.aws.queue import DeadLetterPolicy, QueueConfig, SQSQueue
+from loom.jobs.aws.queue import AbandonedMessage, QueueConfig, SQSQueue
 from loom.jobs.aws.sqs import SQSConfig
 from loom.serverless.aws.lambda_.functions import JobsTrigger, served_trigger
 from loom.serverless.aws.lambda_.handler import LambdaRuntime
@@ -42,7 +42,7 @@ class LambdaWorker:
     """The handler of a Lambda ``jobs`` function, composed over a moto SQS.
 
     The harness enters moto's AWS mock and creates the queue the function consumes,
-    and for a ``redrive`` queue its dead-letter queue with a real ``RedrivePolicy``, before
+    and for a ``dead_letter`` queue its dead-letter queue with a real ``RedrivePolicy``, before
     the function binds, which reads the queue at Init. It does so with an ``sqs`` client
     of its own, built as the application's: botocore resolves the region as it does for
     the application (``aws.region``, a profile, ``AWS_DEFAULT_REGION``) and moto's account
@@ -244,7 +244,7 @@ class LambdaWorker:
             queue_url, dead_letter_url = self._island.declare_queue(
                 sqs,
                 entry.queue_name,
-                redrive=entry.dead_letter is DeadLetterPolicy.REDRIVE,
+                with_dead_letter_queue=entry.abandoned is AbandonedMessage.DEAD_LETTER,
                 max_receive_count=_MAX_RECEIVE_COUNT,
             )
         except sqs.exceptions.ClientError as exc:

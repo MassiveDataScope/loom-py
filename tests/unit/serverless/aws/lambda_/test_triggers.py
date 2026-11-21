@@ -122,14 +122,14 @@ def serve(tmp_path: Path, island: FakeAwsIsland) -> Iterator[Serve]:
         name: str = _FUNCTION,
         observer: _Observer | None = None,
         written: dict[str, Any] | None = None,
-        dead_letter: str = "discard",
+        abandoned: str = "discard",
         **options: Any,
     ) -> Any:
         if trigger.get("source") in _EVENT_SOURCES:
             trigger = {"identity": _SYSTEM, **trigger}
         function = {"trigger": trigger} if written is None else written
         document = consumed_queues("events") | {"lambda": {"functions": {name: function}}}
-        document["sqs"]["queues"]["events"]["dead_letter"] = dead_letter
+        document["sqs"]["queues"]["events"]["abandoned"] = abandoned
         project = composition_project(
             ConfigContext.from_dict(document),
             app=AppConfig(name="events", job_service="inline", entry=name),
@@ -446,7 +446,7 @@ class TestQueued:
         sqs: FakeSqs,
         queued: Callable[[QueueableEvent, str], LambdaEvent],
     ) -> None:
-        handler = serve(_events(queue=_QUEUE), dead_letter="redrive")
+        handler = serve(_events(queue=_QUEUE), abandoned="dead_letter")
         event = queued(LambdaEvent.eventbridge({"number": "final"}), "m1")
 
         result = handler(event, None)
@@ -479,17 +479,17 @@ class TestQueued:
             [Invoice(number="7")],
         )
 
-    @pytest.mark.parametrize(("dead_letter", "dead_lettered"), [("discard", 0), ("redrive", 1)])
+    @pytest.mark.parametrize(("abandoned", "dead_lettered"), [("discard", 0), ("dead_letter", 1)])
     def test_an_sns_message_delivered_raw_is_abandoned_not_reported(
         self,
         serve: Serve,
         ran: list[tuple[Any, Identity]],
         sqs: FakeSqs,
-        dead_letter: str,
+        abandoned: str,
         dead_lettered: int,
     ) -> None:
         handler = serve(
-            {"source": "sns", "queue": _QUEUE, "job": "ImportInvoice"}, dead_letter=dead_letter
+            {"source": "sns", "queue": _QUEUE, "job": "ImportInvoice"}, abandoned=abandoned
         )
 
         event = LambdaEvent.sqs_record('{"number": "7"}', message_id="r", queue_arn=_EVENTS_ARN)

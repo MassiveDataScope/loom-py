@@ -33,16 +33,17 @@ def start() -> Any:
 
 
 def declare_queue(
-    sqs: Any, name: str, *, redrive: bool, max_receive_count: int
+    sqs: Any, name: str, *, with_dead_letter_queue: bool, max_receive_count: int
 ) -> tuple[str, str | None]:
-    """Create the queue *name* in the mock, with its dead-letter queue when *redrive*.
+    """Create the queue *name* in the mock, with its dead-letter queue if asked.
 
     A name ending in ``.fifo`` makes a FIFO queue.
 
     Args:
         sqs: A boto3 ``sqs`` client served by the started mock.
         name: The queue's name in AWS.
-        redrive: Whether to create ``<name>-dlq`` and attach a ``RedrivePolicy`` to the queue.
+        with_dead_letter_queue: Whether to create ``<name>-dlq`` and attach a
+            ``RedrivePolicy`` to the queue.
         max_receive_count: The ``maxReceiveCount`` of that policy.
 
     Returns:
@@ -51,7 +52,7 @@ def declare_queue(
     fifo = {"FifoQueue": "true"} if name.endswith(".fifo") else {}
     dead_url: str | None = None
     attributes = dict(fifo)
-    if redrive:
+    if with_dead_letter_queue:
         stem = name.removesuffix(".fifo")
         dead_name = f"{stem}-dlq" + (".fifo" if fifo else "")
         dead_url = sqs.create_queue(QueueName=dead_name, Attributes=fifo)["QueueUrl"]

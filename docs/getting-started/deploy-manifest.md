@@ -40,7 +40,7 @@ sqs:
       url: https://sqs.eu-west-1.amazonaws.com/123456789012/shop-jobs
     alerts:
       url: https://sqs.eu-west-1.amazonaws.com/123456789012/shop-alerts
-      dead_letter: redrive
+      abandoned: dead_letter
 ```
 
 - `lambda.handler` is the Lambda handler that every function runs (the module
@@ -65,11 +65,11 @@ Python identifier, and an event trigger whose job startup would refuse.
   "queues": {
     "alerts": {
       "url": "https://sqs.eu-west-1.amazonaws.com/123456789012/shop-alerts",
-      "dead_letter": "redrive"
+      "abandoned": "dead_letter"
     },
     "jobs": {
       "url": "https://sqs.eu-west-1.amazonaws.com/123456789012/shop-jobs",
-      "dead_letter": "redrive"
+      "abandoned": "dead_letter"
     }
   },
   "functions": {
@@ -134,7 +134,7 @@ Python identifier, and an event trigger whose job startup would refuse.
 | `environment` | The environment the manifest was built for (`--env` or `LOOM_ENV`). |
 | `handler` | `lambda.handler`. |
 | `code_path` | `app.code_path` (`src` by default), relative to the configuration. |
-| `queues` | `sqs.queues` as written, each as `{url, dead_letter}` (`redrive` by default): the queues the application may send jobs to. A `redrive` queue needs a dead-letter queue, whose `RedrivePolicy` a consuming function reads at Init. |
+| `queues` | `sqs.queues` as written, each as `{url, abandoned}` (`dead_letter` by default): the queues the application may send jobs to. A `dead_letter` queue needs a dead-letter queue, whose `RedrivePolicy` a consuming function reads at Init. |
 | `source`, `via` | The trigger's `source`, and `sqs` for an event trigger with a `queue:` block, else `null`. |
 | `event.routes` (http) | Each route of the function's interfaces, prefix included, as startup composes them: Python interfaces from `app.packages`, YAML ones from `app.rest.interfaces`, `app.rest.disable_routes` applied and the CRUD routes the store's backend cannot serve dropped. A `disable_routes` entry that matches no route is refused, as at startup. |
 | `event.auth` (http) | The trigger's `auth`, or else `app.rest.auth`, as written. |
