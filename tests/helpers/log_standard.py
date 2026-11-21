@@ -11,12 +11,12 @@ from __future__ import annotations
 
 import ast
 import logging
-from collections.abc import Iterator
+from collections.abc import Iterator, Mapping
 from typing import Final
 
 import pytest
 
-from loom.core.logger import LogField
+from loom.core.logger import LogEvent, LogField
 from loom.core.logger.formats import TextFormatter, record_fields
 from tests.helpers.source_tree import SRC, parsed, source_files
 
@@ -146,3 +146,38 @@ def modules_with_foreign_extra() -> tuple[str, ...]:
             if any(not _extra_is_standard(extra) for extra in extras):
                 found.add(".".join(path.relative_to(SRC.parent).with_suffix("").parts))
     return tuple(sorted(found))
+
+
+def assert_logged(
+    caplog: pytest.LogCaptureFixture,
+    event: LogEvent,
+    *,
+    level: int,
+    fields: Mapping[LogField, object] | None = None,
+) -> logging.LogRecord:
+    """Assert that exactly one record of *caplog* is *event* at *level* with the *fields*.
+
+    The record may carry more fields than the ones given (the filter stamps
+    several); each one given must be on it with that value.
+
+    Args:
+        caplog: The fixture that captured the records.
+        event: The ``LogEvent`` member the call must have written.
+        level: The numeric level, such as ``logging.WARNING``.
+        fields: The ``LogField`` keys and values the record must carry.
+
+    Returns:
+        The record, for a further assertion on its exception.
+    """
+    emitted = [record for record in caplog.records if record.getMessage() == event.value]
+    if len(emitted) != 1:
+        pytest.fail(f"expected one {event.value!r} record, got {len(emitted)}")
+    [record] = emitted
+    if record.levelno != level:
+        pytest.fail(f"{event.value!r} was logged at {record.levelname}")
+    carried = record_fields(record)
+    wanted = {key.value: value for key, value in (fields or {}).items()}
+    wrong = {key: carried.get(key) for key in wanted if carried.get(key) != wanted[key]}
+    if wrong:
+        pytest.fail(f"{event.value!r} carries {wrong}, expected {wanted}")
+    return record
