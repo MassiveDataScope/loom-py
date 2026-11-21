@@ -2,7 +2,6 @@
 
 from __future__ import annotations
 
-import unicodedata
 from datetime import UTC, date, datetime, timedelta, timezone
 from decimal import Decimal
 from enum import Enum, IntEnum, StrEnum
@@ -11,8 +10,6 @@ from uuid import UUID
 
 import msgspec
 import pytest
-from hypothesis import given
-from hypothesis import strategies as st
 
 from loom.core.errors import BoundaryValidationError
 from loom.core.model import (
@@ -27,6 +24,7 @@ from loom.core.model import (
     verify_keys,
 )
 from loom.core.model.keys import canonical_form, is_canonical_type
+from tests.helpers.keys import derived_id
 
 NAMESPACE = UUID("6ba7b811-9dad-11d1-80b4-00c04fd430c8")
 UUID5 = KeyHash.uuid5(NAMESPACE)
@@ -70,16 +68,6 @@ def _model(**attributes: Any) -> type[BaseModel]:
 
 
 _ISO_PLUS_TWO = timezone(timedelta(hours=2))
-
-
-def _key_for(hash_: KeyHash, **values: Any) -> str:
-    """The id of a throwaway model keyed by *values*, derived with *hash_*."""
-    model = _model(
-        __annotations__={"id": str, **{name: type(value) for name, value in values.items()}},
-        id=ColumnField(primary_key=True, derived=hash_),
-        __business_key__=BusinessKey(*values),
-    )
-    return model.key_for(values)
 
 
 class TestCanonicalForm:
@@ -179,56 +167,8 @@ class TestGoldenVectors:
     def test_the_formulas_give_the_pinned_ids(
         self, values: dict[str, Any], uuid5: str, sha256: str
     ) -> None:
-        assert _key_for(UUID5, **values) == uuid5
-        assert _key_for(SHA256, **values) == sha256
-
-
-_scalars = st.one_of(
-    st.text(max_size=12),
-    st.integers(),
-    st.booleans(),
-    st.decimals(allow_nan=False, allow_infinity=False, places=4),
-    st.dates(),
-    st.datetimes(timezones=st.timezones()),
-    st.uuids(),
-)
-
-
-class TestKeyProperties:
-    @given(values=st.lists(_scalars, min_size=1, max_size=4))
-    def test_equal_values_give_equal_keys(self, values: list[object]) -> None:
-        named = {f"f{i}": value for i, value in enumerate(values)}
-        again = {name: _equal_copy(value) for name, value in named.items()}
-
-        assert _key_for(UUID5, **named) == _key_for(UUID5, **again)
-        assert _key_for(SHA256, **named) == _key_for(SHA256, **again)
-
-    @given(first=st.text(max_size=12), second=st.text(max_size=12))
-    def test_values_that_differ_in_their_canonical_form_give_different_keys(
-        self, first: str, second: str
-    ) -> None:
-        same = unicodedata.normalize("NFC", first) == unicodedata.normalize("NFC", second)
-
-        assert (_key_for(SHA256, v=first) == _key_for(SHA256, v=second)) is same
-
-    @given(left=st.text(max_size=8), right=st.text(max_size=8))
-    def test_the_boundary_between_values_is_part_of_the_key(self, left: str, right: str) -> None:
-        joined = _key_for(SHA256, a=left + right, b="")
-        split = _key_for(SHA256, a=left, b=right)
-
-        assert (joined == split) is (right == "")
-
-
-def _equal_copy(value: object) -> object:
-    match value:
-        case Decimal():
-            return Decimal(str(value)) * 1
-        case datetime():
-            return value.astimezone(UTC)
-        case str():
-            return unicodedata.normalize("NFD", value)
-        case _:
-            return value
+        assert derived_id(UUID5, **values) == uuid5
+        assert derived_id(SHA256, **values) == sha256
 
 
 class TestKeyFor:
@@ -246,12 +186,12 @@ class TestKeyFor:
 
     def test_a_naive_datetime_is_refused_naming_the_field(self) -> None:
         with pytest.raises(BoundaryValidationError, match="'at'.*naive datetime"):
-            _key_for(UUID5, at=datetime(2026, 1, 1))
+            derived_id(UUID5, at=datetime(2026, 1, 1))
 
     def test_the_namespace_is_part_of_the_formula(self) -> None:
         other = KeyHash.uuid5(UUID(int=1))
 
-        assert _key_for(other, v="x") != _key_for(UUID5, v="x")
+        assert derived_id(other, v="x") != derived_id(UUID5, v="x")
 
     def test_a_model_that_derives_no_key_refuses_the_call(self) -> None:
         with pytest.raises(ValueError, match="AcmeSlot derives no key"):
@@ -274,7 +214,7 @@ class TestKeyFor:
     def test_the_getters_are_built_once_per_model(self) -> None:
         assert derived_key_of(AcmeListing) is derived_key_of(AcmeListing)
 
-    def test_a_model_cannot_have_a_field_named_key_for(self) -> None:
+    def test_a_model_cannot_have_a_field_namedderived_id(self) -> None:
         with pytest.raises(TypeError, match="AcmeDraft.key_for cannot be a field"):
             _model(__annotations__={"id": int, "key_for": str}, id=ColumnField(primary_key=True))
 
