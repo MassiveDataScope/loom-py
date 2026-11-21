@@ -1,148 +1,82 @@
-"""The logging standard, enforced across the whole suite.
+"""The logging standard of ``src/loom``: the static call-site guard and its shrinking allow-list.
 
-Every record a ``loom.*`` logger emits during a test may carry only
-:class:`~loom.core.logger.LogField` keys in its ``extra``. Modules not yet
-migrated are tolerated through :data:`UNMIGRATED_MODULES`, an explicit list that
-only shrinks: ``tests/unit/test_log_standard.py`` fails when a module on it
-already complies, or when one that does not is missing from it.
+Every logging call in ``src/loom`` follows :mod:`loom.testing.log_calls`,
+except in :data:`UNMIGRATED_PACKAGES`, a list of packages and modules that only
+shrinks: ``tests/unit/test_log_standard.py`` fails when an entry already
+complies, or when code that does not is missing from it.
 """
 
 from __future__ import annotations
 
-import ast
-import logging
-from collections.abc import Iterator
+from pathlib import Path
 from typing import Final
 
 import pytest
 
-from loom.core.logger import LogField
-from loom.core.logger.formats import TextFormatter, record_fields
-from tests.helpers.source_tree import SRC, parsed, source_files
+from loom.core.logger import LogIdentity
+from loom.core.logger.filter import LogFilter
+from loom.core.logger.formats import TextFormatter
+from loom.core.logger.install import install_record_factory
+from loom.testing.log_calls import LogCallOffence, log_call_offences
+from tests.helpers.source_tree import SRC, source_files
 
-_LOGGING_METHODS: Final = frozenset(
-    {"debug", "info", "warning", "error", "exception", "critical", "log"}
-)
-ALLOWED_KEYS: Final = frozenset(field.value for field in LogField)
-
-UNMIGRATED_MODULES: Final[tuple[str, ...]] = (
-    "loom.celery._discovery",
-    "loom.celery.runtime",
-    "loom.celery.service",
-    "loom.composition._jobs",
-    "loom.composition.project",
+UNMIGRATED_PACKAGES: Final[tuple[str, ...]] = (
+    "loom.ai",
+    "loom.celery",
+    "loom.composition",
     "loom.core.async_bridge",
-    "loom.core.cache.calls",
-    "loom.core.cache.repository",
-    "loom.core.cache.wiring",
+    "loom.core.authz",
+    "loom.core.cache",
+    "loom.core.checks",
+    "loom.core.config",
+    "loom.core.discovery",
     "loom.core.engine.compiler",
-    "loom.core.engine.observation",
+    "loom.core.engine.execution_observer",
     "loom.core.engine.post_commit",
-    "loom.core.execution.context",
-    "loom.core.identity.context",
-    "loom.core.job.runner",
-    "loom.core.observability.observability",
-    "loom.core.observability.observer.log",
-    "loom.core.observability.observer.otel",
-    "loom.core.observability.otel_ids",
-    "loom.core.stores.uow.coordinator",
-    "loom.etl.engines._write_policy",
-    "loom.etl.engines.polars._writer",
-    "loom.etl.io.sources._clickhouse",
-    "loom.etl.io.sources._dynamodb",
-    "loom.etl.io.sources._mongo",
-    "loom.etl.io.targets._clickhouse",
-    "loom.etl.maintenance._runner",
-    "loom.etl.maintenance.backends._delta_rs",
-    "loom.jobs.aws.settlement",
-    "loom.jobs.aws.sqs",
-    "loom.prefect.flow._hooks",
-    "loom.prefect.notify._slack",
-    "loom.prefect.notify._sns",
+    "loom.core.execution",
+    "loom.core.identity",
+    "loom.core.plugins",
+    "loom.core.runner",
+    "loom.core.stores",
+    "loom.etl",
+    "loom.jobs",
+    "loom.prefect",
+    "loom.rest",
     "loom.serverless.aws.lambda_._jobs",
     "loom.serverless.aws.lambda_._refusals",
-    "loom.serverless.aws.lambda_.handler",
-    "loom.serverless.aws.lambda_.triggers.sqs",
-    "loom.stores.mongo.repository",
-    "loom.stores.sqlalchemy.alembic",
-    "loom.stores.sqlalchemy.repository",
-    "loom.stores.sqlalchemy.session_manager",
-    "loom.stores.sqlalchemy.transactional",
-    "loom.streaming.bytewax._adapter",
-    "loom.streaming.bytewax._error_boundary",
-    "loom.streaming.bytewax.handlers.storage",
-    "loom.streaming.kafka._wire",
-    "loom.streaming.nodes._table._clickhouse",
-    "loom.streaming.nodes._table._delta",
-    "loom.streaming.nodes._table._sqlalchemy",
+    "loom.serverless.aws.lambda_.triggers",
+    "loom.stores",
+    "loom.streaming",
 )
-"""Modules whose ``extra`` still carries keys outside ``LogField``; shrinks until empty."""
+"""Packages and modules whose logging calls predate the standard; shrinks until empty."""
 
 
-class _Seen(logging.Handler):
-    def __init__(self) -> None:
-        super().__init__()
-        self.records: list[logging.LogRecord] = []
-
-    def emit(self, record: logging.LogRecord) -> None:
-        self.records.append(record)
+def module_of(offence: LogCallOffence) -> str:
+    """The dotted module an offence was found in."""
+    return ".".join(Path(offence.path).relative_to(SRC.parent).with_suffix("").parts)
 
 
-def foreign_keys(record: logging.LogRecord) -> set[str]:
-    """The ``extra`` keys of *record* that are not a ``LogField`` member."""
-    return set(record_fields(record)) - ALLOWED_KEYS
+def is_unmigrated(module: str) -> bool:
+    """Whether *module* is, or is inside, an entry of :data:`UNMIGRATED_PACKAGES`."""
+    return any(module == entry or module.startswith(f"{entry}.") for entry in UNMIGRATED_PACKAGES)
 
 
-@pytest.fixture(autouse=True)
-def loom_records_use_log_fields() -> Iterator[None]:
-    """Fail a test when a ``loom.*`` record carries a key outside ``LogField``."""
-    seen = _Seen()
-    loom_logger = logging.getLogger("loom")
-    loom_logger.addHandler(seen)
-    yield
-    loom_logger.removeHandler(seen)
-    offences = sorted(
-        {
-            f"{record.name}: {sorted(foreign_keys(record))}"
-            for record in seen.records
-            if foreign_keys(record) and record.name not in UNMIGRATED_MODULES
-        }
-    )
-    if offences:
-        pytest.fail("records outside the LogField standard:\n" + "\n".join(offences))
+def loom_offences() -> list[LogCallOffence]:
+    """Every logging call of ``src/loom`` that breaks the standard, unmigrated code included."""
+    return log_call_offences(source_files())
 
 
 @pytest.fixture(autouse=True)
 def caplog_shows_fields(request: pytest.FixtureRequest) -> None:
-    """Make ``caplog.text`` show each record with its fields, as the text format writes it."""
+    """Make ``caplog`` see each record as a loom handler does, and show it as the text format.
+
+    Records are made by loom's record factory, as ``configure_logging`` makes
+    them in production, and its handler gets the
+    :class:`~loom.core.logger.filter.LogFilter` loom puts on every root handler,
+    so a record's stamp and failure fields are its attributes.
+    """
     if "caplog" in request.fixturenames:
-        request.getfixturevalue("caplog").handler.setFormatter(TextFormatter())
-
-
-def _is_log_field(node: ast.expr | None) -> bool:
-    return (
-        isinstance(node, ast.Attribute)
-        and isinstance(node.value, ast.Name)
-        and node.value.id == "LogField"
-    )
-
-
-def _extra_is_standard(value: ast.expr) -> bool:
-    return isinstance(value, ast.Dict) and all(_is_log_field(key) for key in value.keys)
-
-
-def _is_logging_call(call: ast.Call) -> bool:
-    return isinstance(call.func, ast.Attribute) and call.func.attr in _LOGGING_METHODS
-
-
-def modules_with_foreign_extra() -> tuple[str, ...]:
-    """The modules of ``src/loom`` that pass an ``extra`` the standard does not allow."""
-    found: set[str] = set()
-    for path in source_files():
-        for node in ast.walk(parsed(path)):
-            if not (isinstance(node, ast.Call) and _is_logging_call(node)):
-                continue
-            extras = [keyword.value for keyword in node.keywords if keyword.arg == "extra"]
-            if any(not _extra_is_standard(extra) for extra in extras):
-                found.add(".".join(path.relative_to(SRC.parent).with_suffix("").parts))
-    return tuple(sorted(found))
+        install_record_factory(LogIdentity(environment="test"))
+        handler = request.getfixturevalue("caplog").handler
+        handler.setFormatter(TextFormatter())
+        handler.addFilter(LogFilter())
