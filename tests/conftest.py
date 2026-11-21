@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import json
+import logging
 import os
 from collections.abc import Iterator
 from functools import lru_cache
@@ -17,7 +18,6 @@ from omegaconf import OmegaConf
 from loom.connections.resolvers import built_in_resolvers
 from loom.core.engine.plan import ExecutionPlan
 from loom.core.environment import ENVIRONMENT_VARIABLE, Environment
-from loom.core.logger import configure_logging
 from loom.core.plugins.entrypoints import list_entry_points
 from loom.testing.golden import GoldenHarness, _serialize_result, serialize_plan
 from loom.testing.jobs import JobTestData
@@ -25,7 +25,7 @@ from tests.helpers.aws import ACCOUNT, FAKE_KEY, REGION, is_moto_answering, scru
 from tests.helpers.aws_island import FakeAwsIsland
 from tests.helpers.extras import BOTO3_ISLAND, without_extra
 
-pytest_plugins = ["tests.helpers.delegation"]
+pytest_plugins = ["tests.helpers.delegation", "tests.helpers.log_standard"]
 
 settings.register_profile("default", derandomize=True, max_examples=25, database=None)
 settings.register_profile("ci", derandomize=True, max_examples=100, database=None)
@@ -271,23 +271,15 @@ def _test_environment() -> Iterator[None]:
         yield
 
 
-@pytest.fixture(scope="session", autouse=True)
-def _configure_loom_logging(_test_environment: None) -> None:
-    """Configure logging once per session, as an application does at startup.
-
-    Without this the suite ran against structlog's *unconfigured* default,
-    which is a pipeline no application ever uses and which does not survive
-    pytest's default fd-level capture: ``structlog/_output.py`` binds
-    ``from sys import stdout`` at import time, so ``PrintLogger`` freezes
-    whatever ``sys.stdout`` was when structlog was first imported. Under
-    ``--capture=fd`` that is the temporary capture file of whichever test
-    happened to import it first; once that test finished and pytest closed the
-    descriptor, every later log call raised ``OSError: Bad file descriptor``.
-
-    The symptom was eight unrelated integration tests failing in a full run
-    while passing in isolation. Configuring logging installs
-    ``structlog.stdlib.LoggerFactory``, which routes through stdlib logging and
-    never touches that frozen stream — and makes the suite exercise the same
-    logging path production does.
-    """
-    configure_logging()
+@pytest.fixture(autouse=True)
+def restored_root_logger() -> Iterator[None]:
+    """Give every test an INFO root logger and leave it as found."""
+    root = logging.getLogger()
+    handlers, level = list(root.handlers), root.level
+    root.setLevel(logging.INFO)
+    filters = {handler: list(handler.filters) for handler in handlers}
+    yield
+    root.handlers[:] = handlers
+    root.setLevel(level)
+    for handler, kept in filters.items():
+        handler.filters[:] = kept

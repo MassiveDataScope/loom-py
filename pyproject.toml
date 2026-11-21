@@ -15,7 +15,6 @@ classifiers = [
 ]
 dependencies = [
     "msgspec>=0.18,<1.0",
-    "structlog>=24.4,<27.0",
     "omegaconf>=2.3,<2.5",
     "prometheus-client>=0.20",
     "aiocache>=0.12,<1.0",
@@ -390,8 +389,11 @@ extend-immutable-calls = [
 
 [tool.ruff.lint.flake8-tidy-imports.banned-api]
 "unittest.mock".msg = "Double a port of ours instead (clean-code testing.md §3); third-party clients are tested against moto, LocalStack or Redis."
+"structlog".msg = "Log with the standard library; structlog belongs to the adapter under loom/logging/."
+"aws_lambda_powertools.logging".msg = "Log with the standard library; Powertools logging belongs to the adapter under loom/logging/."
 
 [tool.ruff.lint.per-file-ignores]
+"src/loom/logging/**" = ["TID251"]
 "tests/helpers/aws_island.py" = ["TID251"]
 "tests/integration/core/repository/sqlalchemy/test_cache_integration.py" = ["TID251"]
 "tests/integration/streaming/test_into_table_integration.py" = ["TID251"]
