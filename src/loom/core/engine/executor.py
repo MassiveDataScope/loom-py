@@ -19,7 +19,7 @@ from loom.core.execution import (
     Kind,
 )
 from loom.core.identity import Identity, current_caller
-from loom.core.logger import LoggerPort, get_logger
+from loom.core.logger import LogField, log_context
 from loom.core.stores.uow.coordinator import Coordinator
 from loom.core.stores.uow.scope import current_scope, refuse_write_under_read_only
 from loom.core.use_case.kinds import AGENT, MCP
@@ -109,7 +109,6 @@ class UseCaseExecutor:
         *,
         coordinator: Coordinator | None = None,
         debug_execution: bool = False,
-        logger: LoggerPort | None = None,
         metrics: MetricsRecorder | None = None,
         repo_resolver: Callable[[type[Any]], Any] | None = None,
         resolvers: ExecutionKinds | None = None,
@@ -121,7 +120,7 @@ class UseCaseExecutor:
         self._compiler = compiler
         self._builder = builder
         self._kinds = ExecutionKinds() if resolvers is None else resolvers
-        self._reporter = ExecutionReporter(logger or get_logger(__name__), metrics, debug_execution)
+        self._reporter = ExecutionReporter(metrics, debug_execution)
         self._boundaries = Boundaries(coordinator, elevation_sink)
         self._binder = ArgumentBinder(self._kinds, repo_resolver)
         if agent_resolver is not None:
@@ -393,34 +392,35 @@ class UseCaseExecutor:
                     use_case_type, build, target, inputs, identity, read_only
                 )
         use_case = use_case_type.__qualname__
-        phase = Phase.BEGIN
-        execution = None
-        try:
-            plan = self._plan_for(use_case_type)
-            read_only = read_only or plan.read_only
-            if identity is None:
-                identity = current_caller()
-            execution = ExecutionContext.entered(identity, use_case)
-            if not read_only:
-                refuse_write_under_read_only(f"{use_case}, which writes,")
-            phase = Phase.BUILD
-            compilable = build(target)
-        except Exception as exc:
-            self._reporter.not_started(use_case, exc, phase)
-            if execution is not None:
+        with log_context({LogField.USE_CASE: use_case}):
+            phase = Phase.BEGIN
+            execution = None
+            try:
+                plan = self._plan_for(use_case_type)
+                read_only = read_only or plan.read_only
+                if identity is None:
+                    identity = current_caller()
+                execution = ExecutionContext.entered(identity, use_case)
+                if not read_only:
+                    refuse_write_under_read_only(f"{use_case}, which writes,")
+                phase = Phase.BUILD
+                compilable = build(target)
+            except Exception as exc:
+                self._reporter.not_started(use_case, exc, phase)
+                if execution is not None:
+                    execution.close()
+                raise
+            try:
+                started = self._reporter.start(use_case)
+                call = self._binder.call
+                return await self._boundaries.run(
+                    self._boundaries.boundary_for(scope, plan, read_only),
+                    plan,
+                    started,
+                    lambda: started.business(call(plan, compilable, inputs, identity, started)),
+                )
+            finally:
                 execution.close()
-            raise
-        try:
-            started = self._reporter.start(use_case)
-            call = self._binder.call
-            return await self._boundaries.run(
-                self._boundaries.boundary_for(scope, plan, read_only),
-                plan,
-                started,
-                lambda: started.business(call(plan, compilable, inputs, identity, started)),
-            )
-        finally:
-            execution.close()
 
     def _plan_for(self, uc_type: type[Compilable]) -> ExecutionPlan:
         """Return the plan compiled for exactly ``uc_type``, compiling on demand.

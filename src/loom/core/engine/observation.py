@@ -13,6 +13,7 @@ terminal line lists the steps run.
 from __future__ import annotations
 
 import asyncio
+import logging
 import time
 from collections.abc import Awaitable, Mapping
 from dataclasses import dataclass
@@ -23,7 +24,6 @@ from loom.core.engine.events import EventKind, ExecutionEvent, Phase, Status
 from loom.core.engine.metrics import MetricsRecorder, NoMetrics
 from loom.core.errors import PostCommitError, RuleViolationError, RuleViolationsError
 from loom.core.job.outcome import JobSignal, failure_log_fields
-from loom.core.logger import LoggerPort
 from loom.core.stores.uow.coordinator import InvocationOutcome
 from loom.core.stores.uow.scope import InvocationScope
 from loom.core.tracing import get_trace_id
@@ -31,6 +31,7 @@ from loom.core.tracing import get_trace_id
 ResultT = TypeVar("ResultT")
 
 _NO_FIELDS: Mapping[str, Any] = MappingProxyType({})
+_log = logging.getLogger(__name__)
 
 
 class BrokenRule(NamedTuple):
@@ -45,15 +46,13 @@ class ExecutionReporter:
     """Where one executor's events, metrics and logs go.
 
     Args:
-        logger: Receives the structured logs.
         metrics: Receives the runtime events, if given.
         debug: Whether each execution's terminal log lists the steps it ran.
     """
 
-    __slots__ = ("_debug", "_logger", "_metrics")
+    __slots__ = ("_debug", "_metrics")
 
-    def __init__(self, logger: LoggerPort, metrics: MetricsRecorder | None, debug: bool) -> None:
-        self._logger = logger
+    def __init__(self, metrics: MetricsRecorder | None, debug: bool) -> None:
         self._metrics: MetricsRecorder = NoMetrics() if metrics is None else metrics
         self._debug = debug
 
@@ -82,11 +81,8 @@ class ExecutionReporter:
 
     def _execution(self, use_case: str) -> StartedExecution:
         trace_id = get_trace_id()
-        logger = self._logger.bind(trace_id=trace_id) if trace_id else self._logger
         steps: list[str] | None = [] if self._debug else None
-        return StartedExecution(
-            self._metrics, use_case, trace_id, logger, time.perf_counter(), steps
-        )
+        return StartedExecution(self._metrics, use_case, trace_id, time.perf_counter(), steps)
 
 
 @dataclass(slots=True)
@@ -102,7 +98,6 @@ class StartedExecution:
     metrics: MetricsRecorder
     use_case_name: str
     trace_id: str | None
-    logger: LoggerPort
     start: float
     steps: list[str] | None
     phase: Phase = Phase.BEGIN
@@ -145,12 +140,14 @@ class StartedExecution:
         """Report the execution's success: ``[DONE]`` and ``EXEC_DONE``."""
         elapsed_ms = (time.perf_counter() - self.start) * 1000
         ran = _NO_FIELDS if self.steps is None else {"steps": self.steps}
-        self.logger.info(
+        _log.info(
             f"[DONE] {elapsed_ms:.1f}ms",
-            usecase=self.use_case_name,
-            duration_ms=elapsed_ms,
-            status=Status.SUCCESS,
-            **ran,
+            extra={
+                "usecase": self.use_case_name,
+                "duration_ms": elapsed_ms,
+                "status": Status.SUCCESS,
+                **ran,
+            },
         )
         self.metrics.on_event(
             ExecutionEvent(
@@ -189,13 +186,15 @@ class StartedExecution:
     ) -> None:
         """Log the terminal ``[FAIL]``: a broken rule is a warning, anything else an error."""
         if isinstance(error, JobSignal):
-            self.logger.info(
+            _log.info(
                 f"[SIGNAL] {self.use_case_name}",
-                usecase=self.use_case_name,
-                **timing,
-                status=status,
-                signal=type(error).__name__,
-                reason=str(error),
+                extra={
+                    "usecase": self.use_case_name,
+                    **timing,
+                    "status": status,
+                    "signal": type(error).__name__,
+                    "reason": str(error),
+                },
             )
             return
         message = f"[FAIL] {self.use_case_name}"
@@ -213,9 +212,9 @@ class StartedExecution:
                 for violation in error.violations
             )
             fields["broken_rules"] = [rule._asdict() for rule in broken]
-            self.logger.warning(message, **fields)
+            _log.warning(message, extra={**fields})
             return
-        self.logger.error(message, **fields, **failure_log_fields(error), error=str(error))
+        _log.error(message, extra={**fields, **failure_log_fields(error), "error": str(error)})
 
     @staticmethod
     def _status(error: BaseException) -> Status:

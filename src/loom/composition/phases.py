@@ -35,7 +35,6 @@ from loom.core.engine.compilable import Compilable
 from loom.core.environment import Environment
 from loom.core.identity import DEFAULT_MAX_DELEGATION_SECONDS, configure_delegation
 from loom.core.job.config import JobSettings
-from loom.core.logger import LoggerPort
 from loom.core.model import BaseModel
 from loom.core.observability.observability import Observability
 from loom.core.resources import Resource, ResourceKind
@@ -207,8 +206,6 @@ def register(
     stores: Stores,
     aws: AwsClients,
     installers: tuple[Installer, ...],
-    *,
-    logger: LoggerPort,
 ) -> tuple[Kernel, SqlWiring, tuple[Resource, ...]]:
     """Fill a container and build the kernel on it, then register the job service and SQL.
 
@@ -229,7 +226,6 @@ def register(
         aws: The application's AWS clients, registered in the container and
             given to the job transports.
         installers: The discovered installers, built by :func:`build_installers`.
-        logger: Where the container and the compilation log.
 
     Returns:
         The kernel, the SQL wiring and the job transports' resources.
@@ -274,7 +270,6 @@ def register(
         KernelRecipe.container(),
         seeds,
         modules=(*(installer.install for installer in installers), *recipe.overrides),
-        logger=logger,
         reserved=reserved_keys(catalog.specs),
         error=ReservedBindingError.for_key,
     ) as container:
@@ -287,7 +282,6 @@ def register(
             container.register_instance(ElevationSink, sink)
         kernel = KernelRecipe(
             recipe.discovered.use_cases,
-            logger,
             metrics=recipe.metrics,
             coordinator=coordinator,
         ).install(container)

@@ -14,7 +14,6 @@ from __future__ import annotations
 import atexit
 import logging
 import os
-from collections.abc import Callable, MutableMapping
 from typing import TYPE_CHECKING, Any, cast
 
 from opentelemetry import _logs as otel_logs
@@ -196,29 +195,17 @@ def _build_exporter(config: OtelConfig) -> Any:
     return exporter_cls(**kwargs)
 
 
-def build_log_correlation_processor() -> Callable[
-    [Any, str, MutableMapping[str, Any]],
-    MutableMapping[str, Any],
-]:
-    """Build a structlog processor that adds the active OTEL span IDs.
+class OtelSpanFilter(logging.Filter):
+    """Stamp each record with the ids of the active recording OTEL span."""
 
-    Returns:
-        A processor function compatible with ``structlog``.
-    """
-
-    def _processor(
-        logger: Any,
-        method: str,
-        event_dict: MutableMapping[str, Any],
-    ) -> MutableMapping[str, Any]:
+    def filter(self, record: logging.LogRecord) -> bool:
+        """Add ``otel_trace_id`` and ``otel_span_id`` to *record* and let it through."""
         span = trace.get_current_span()
         if span.is_recording():
             ctx = span.get_span_context()
-            event_dict.setdefault("otel_trace_id", format(ctx.trace_id, "032x"))
-            event_dict.setdefault("otel_span_id", format(ctx.span_id, "016x"))
-        return event_dict
-
-    return _processor
+            record.__dict__.setdefault("otel_trace_id", format(ctx.trace_id, "032x"))
+            record.__dict__.setdefault("otel_span_id", format(ctx.span_id, "016x"))
+        return True
 
 
 _LOG_EXPORT_STATE: tuple[Any, LoggingHandler] | None = None
@@ -316,7 +303,7 @@ def _resolve_log_protocol(config: OtelConfig) -> str:
 
 
 __all__ = [
-    "build_log_correlation_processor",
+    "OtelSpanFilter",
     "build_tracer",
     "install_otel_log_export",
 ]

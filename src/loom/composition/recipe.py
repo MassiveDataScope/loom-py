@@ -18,6 +18,7 @@ from loom.core.di.graph import (
     GraphAnalysis,
     refuse_unmapped_repository,
 )
+from loom.core.logger import LogRuntime
 from loom.core.stores.catalog import NONE_BACKEND
 from loom.core.stores.repository import CursorCodec
 
@@ -52,6 +53,8 @@ class Recipe:
             HTTP endpoints too, so it builds every declared agent. Without
             them, agents are reached only through ``Agent()`` and ``Mcp()``
             markers.
+        log_runtime: The kind of process the log records are stamped as
+            coming from.
         metrics: Use-case metrics, or ``None``.
         pool_metrics: Connection-pool metrics, only for an entry point that
             serves a scrape.
@@ -77,6 +80,7 @@ class Recipe:
     check_scope: CheckScope = UNSCOPED
     agents: bool = False
     agent_endpoints: bool = True
+    log_runtime: LogRuntime = LogRuntime.CLI
     metrics: MetricsRecorder | None = None
     pool_metrics: PoolMetricsSink | None = None
     connection_only: bool = False

@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import inspect
+import logging
 import typing
 from dataclasses import dataclass, field
 from typing import Any, Final, get_args, get_origin
@@ -22,7 +23,7 @@ from loom.core.engine.plan import (
 from loom.core.errors import UnsupportedBoundaryType
 from loom.core.execution import ExecutionBinding
 from loom.core.job.job import Job
-from loom.core.logger import LoggerPort, get_logger
+from loom.core.logger import LogEvent, LogField
 from loom.core.model import BaseModel, loom_type
 from loom.core.model.introspection import resolve_type_hints
 from loom.core.stores.catalog import StoreKey, store_of
@@ -52,6 +53,14 @@ from loom.core.use_case.markers import (
     _McpMarker,
     _QueryMarker,
 )
+
+_log = logging.getLogger(__name__)
+
+
+class CompilerEvent(LogEvent):
+    """What the compiler logs."""
+
+    USE_CASE_COMPILED = "compiler.use_case_compiled"
 
 
 class CompilationError(Exception):
@@ -91,7 +100,6 @@ class UseCaseCompiler:
     execution via ``UseCaseExecutor``.
 
     Args:
-        logger: Optional logger. Defaults to the framework logger.
         metrics: Optional metrics recorder. When provided, receives
             ``COMPILE_START`` and ``COMPILE_DONE`` events.
 
@@ -103,11 +111,9 @@ class UseCaseCompiler:
 
     def __init__(
         self,
-        logger: LoggerPort | None = None,
         metrics: MetricsRecorder | None = None,
     ) -> None:
         self._cache: dict[type[Any], ExecutionPlan] = {}
-        self._logger = logger or get_logger(__name__)
         self._metrics: MetricsRecorder = NoMetrics() if metrics is None else metrics
 
     def compile(self, use_case_type: type[Compilable]) -> ExecutionPlan:
@@ -158,13 +164,15 @@ class UseCaseCompiler:
             + len(compute_steps)
             + len(rule_steps)
         )
-        self._logger.info(
-            "[BOOT] Compiled UseCase",
-            usecase=uc_name,
-            detected=bindings.detected,
-            computes=len(compute_steps),
-            rules=len(rule_steps),
-            steps=total,
+        _log.info(
+            CompilerEvent.USE_CASE_COMPILED,
+            extra={
+                LogField.USE_CASE: uc_name,
+                "detected": bindings.detected,
+                "computes": len(compute_steps),
+                "rules": len(rule_steps),
+                "steps": total,
+            },
         )
         self._metrics.on_event(ExecutionEvent(kind=EventKind.COMPILE_DONE, use_case_name=uc_name))
 

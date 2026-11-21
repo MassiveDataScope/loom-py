@@ -31,6 +31,7 @@ leaves no connection open, so nothing the parent touched crosses the fork.
 from __future__ import annotations
 
 import asyncio
+import logging
 from collections.abc import Callable, Coroutine, Sequence
 from contextlib import AsyncExitStack
 from dataclasses import dataclass
@@ -76,7 +77,7 @@ from loom.core.discovery.worker import (
 )
 from loom.core.engine.compilable import Compilable
 from loom.core.job.callback import CallbackOutcome
-from loom.core.logger import get_logger
+from loom.core.logger import LogRuntime
 from loom.core.runner import shutdown_runner
 from loom.core.stores import WORKER_PROFILE
 
@@ -84,7 +85,7 @@ if TYPE_CHECKING:
     from loom.core.engine.metrics import MetricsRecorder
     from loom.core.job.job import Job
 
-_log = get_logger(__name__)
+_log = logging.getLogger(__name__)
 
 _EX_FAILURE = 1
 """Exit status of a worker that cannot start."""
@@ -282,8 +283,10 @@ def _register_tasks(
     if declared.jobs:
         _log.info(
             "Job retry policies",
-            transport="celery",
-            jobs=application.job_settings.describe_retries(REDELIVERY, declared.jobs),
+            extra={
+                "transport": "celery",
+                "jobs": application.job_settings.describe_retries(REDELIVERY, declared.jobs),
+            },
         )
     for job_type in declared.jobs:
         _make_job_task(
@@ -394,6 +397,7 @@ class CeleryRuntime:
             ),
             check_scope=CheckScope.without_rest(),
             agents=False,
+            log_runtime=LogRuntime.CELERY,
             metrics=self._metrics,
             connection_only=not resolved.models,
         )

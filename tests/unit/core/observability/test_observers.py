@@ -5,19 +5,19 @@ from __future__ import annotations
 import logging
 
 import pytest
-import structlog
 from opentelemetry.sdk._logs.export import InMemoryLogRecordExporter
+from opentelemetry.sdk.trace import TracerProvider
 
 from loom.core.config.observability import OtelConfig
-from loom.core.observability.event import EventKind, LifecycleEvent, Scope
+from loom.core.observability.event import EventKind, LifecycleEvent, LifecycleStatus, Scope
 from loom.core.observability.observer import otel as _otel_module
+from loom.core.observability.observer.log import LogLifecycleObserver
 from loom.core.observability.observer.noop import NoopObserver
 from loom.core.observability.observer.otel import (
-    build_log_correlation_processor,
+    OtelSpanFilter,
     install_otel_log_export,
 )
-from loom.core.observability.observer.structlog import StructlogLifecycleObserver
-from loom.core.observability.topology import ROOT_SCOPES
+from tests.helpers.loggers import CapturedLog
 
 
 class TestNoopObserver:
@@ -105,99 +105,94 @@ class TestOtelLogExport:
             root.setLevel(original_level)
 
 
-class TestStructlogLifecycleObserver:
-    def test_start_event_calls_debug(self, monkeypatch: pytest.MonkeyPatch) -> None:
-        calls: list[str] = []
+@pytest.fixture
+def lifecycle_log(caplog: pytest.LogCaptureFixture) -> CapturedLog:
+    caplog.set_level(logging.DEBUG, logger="loom.core.observability.observer.log")
+    return CapturedLog(caplog)
 
-        class _FakeLogger:
-            def bind(self, **_: object) -> _FakeLogger:
-                return self
 
-            def debug(self, event: str, **_: object) -> None:
-                calls.append(event)
+def _levels(caplog: pytest.LogCaptureFixture) -> list[str]:
+    return [record.levelname for record in caplog.records]
 
-            def info(self, event: str, **_: object) -> None:
-                calls.append(event)
 
-            def error(self, event: str, **_: object) -> None:
-                calls.append(event)
+class TestLogLifecycleObserver:
+    @pytest.mark.parametrize(
+        ("event", "level", "name"),
+        [
+            pytest.param(
+                LifecycleEvent(scope=Scope.NODE, name="x", kind=EventKind.START),
+                "DEBUG",
+                "observability.lifecycle_started",
+                id="node-start",
+            ),
+            pytest.param(
+                LifecycleEvent(scope=Scope.PIPELINE, name="x", kind=EventKind.START),
+                "INFO",
+                "observability.lifecycle_started",
+                id="pipeline-start",
+            ),
+            pytest.param(
+                LifecycleEvent(scope=Scope.USE_CASE, name="x", kind=EventKind.END, duration_ms=1),
+                "INFO",
+                "observability.lifecycle_ended",
+                id="end",
+            ),
+            pytest.param(
+                LifecycleEvent(scope=Scope.NODE, name="x", kind=EventKind.ERROR, error="boom"),
+                "ERROR",
+                "observability.lifecycle_failed",
+                id="error",
+            ),
+            pytest.param(
+                LifecycleEvent(scope=Scope.TRANSPORT, name="x", kind=EventKind.END),
+                "DEBUG",
+                "observability.lifecycle_ended",
+                id="transport-end",
+            ),
+            pytest.param(
+                LifecycleEvent(scope=Scope.TRANSPORT, name="x", kind=EventKind.ERROR, error="e"),
+                "WARNING",
+                "observability.lifecycle_failed",
+                id="transport-error",
+            ),
+        ],
+    )
+    def test_each_kind_and_scope_logs_one_record_at_its_level(
+        self,
+        event: LifecycleEvent,
+        level: str,
+        name: str,
+        caplog: pytest.LogCaptureFixture,
+        lifecycle_log: CapturedLog,
+    ) -> None:
+        LogLifecycleObserver().on_event(event)
 
-        monkeypatch.setattr(structlog, "get_logger", lambda *_: _FakeLogger())
-        observer = StructlogLifecycleObserver()
+        assert (_levels(caplog), lifecycle_log.messages) == ([level], [name])
 
-        observer.on_event(LifecycleEvent(scope=Scope.NODE, name="x", kind=EventKind.START))
-        assert calls == [EventKind.START.value]
-
-    def test_end_event_calls_info(self, monkeypatch: pytest.MonkeyPatch) -> None:
-        calls: list[str] = []
-
-        class _FakeLogger:
-            def bind(self, **_: object) -> _FakeLogger:
-                return self
-
-            def debug(self, event: str, **_: object) -> None:
-                calls.append(event)
-
-            def info(self, event: str, **_: object) -> None:
-                calls.append(event)
-
-            def error(self, event: str, **_: object) -> None:
-                calls.append(event)
-
-        monkeypatch.setattr(structlog, "get_logger", lambda *_: _FakeLogger())
-        observer = StructlogLifecycleObserver()
-
-        observer.on_event(
-            LifecycleEvent(scope=Scope.USE_CASE, name="x", kind=EventKind.END, duration_ms=12.5)
+    def test_a_record_carries_the_scope_the_name_and_the_trace(
+        self, lifecycle_log: CapturedLog
+    ) -> None:
+        LogLifecycleObserver().on_event(
+            LifecycleEvent(
+                scope=Scope.USE_CASE,
+                name="CreateOrder",
+                kind=EventKind.END,
+                duration_ms=12.5,
+                status=LifecycleStatus.SUCCESS,
+                trace_id="trace-1",
+            )
         )
-        assert calls == ["end"]
 
-    def test_error_event_calls_error(self, monkeypatch: pytest.MonkeyPatch) -> None:
-        calls: list[str] = []
-
-        class _FakeLogger:
-            def bind(self, **_: object) -> _FakeLogger:
-                return self
-
-            def debug(self, event: str, **_: object) -> None:
-                calls.append(event)
-
-            def info(self, event: str, **_: object) -> None:
-                calls.append(event)
-
-            def error(self, event: str, **_: object) -> None:
-                calls.append(event)
-
-        monkeypatch.setattr(structlog, "get_logger", lambda *_: _FakeLogger())
-        observer = StructlogLifecycleObserver()
-
-        observer.on_event(
-            LifecycleEvent(scope=Scope.NODE, name="x", kind=EventKind.ERROR, error="boom")
+        [fields] = lifecycle_log.named("observability.lifecycle_ended")
+        assert (fields["loom.scope"], fields["loom.name"], fields["trace_id"]) == (
+            "use_case",
+            "CreateOrder",
+            "trace-1",
         )
-        assert calls == [EventKind.ERROR.value]
+        assert (fields["loom.duration_ms"], fields["loom.status"]) == (12.5, "success")
 
-    def test_meta_forwarded_on_start(self, monkeypatch: pytest.MonkeyPatch) -> None:
-        captured: dict[str, object] = {}
-
-        class _FakeLogger:
-            def bind(self, **_: object) -> _FakeLogger:
-                return self
-
-            def debug(self, event: str, **kwargs: object) -> None:
-                captured.update(kwargs)
-
-            def info(self, event: str, **_: object) -> None:
-                # Intentional no-op: this branch is not exercised here.
-                return None
-
-            def error(self, event: str, **_: object) -> None:
-                # Intentional no-op: this branch is not exercised here.
-                return None
-
-        monkeypatch.setattr(structlog, "get_logger", lambda *_: _FakeLogger())
-        observer = StructlogLifecycleObserver()
-
-        observer.on_event(
+    def test_meta_is_forwarded_under_its_own_prefix(self, lifecycle_log: CapturedLog) -> None:
+        LogLifecycleObserver().on_event(
             LifecycleEvent(
                 scope=Scope.NODE,
                 name="x",
@@ -205,39 +200,21 @@ class TestStructlogLifecycleObserver:
                 meta={"flow": "my_flow", "node_idx": 0},
             )
         )
-        assert captured["flow"] == "my_flow"
-        assert captured["node_idx"] == 0
 
-    def test_meta_forwarded_on_end(self, monkeypatch: pytest.MonkeyPatch) -> None:
-        captured: dict[str, object] = {}
+        [fields] = lifecycle_log.named("observability.lifecycle_started")
+        assert (fields["loom.meta.flow"], fields["loom.meta.node_idx"]) == ("my_flow", 0)
 
-        class _FakeLogger:
-            def bind(self, **_: object) -> _FakeLogger:
-                return self
-
-            def debug(self, event: str, **kwargs: object) -> None:
-                captured.update(kwargs)
-
-            def info(self, event: str, **_: object) -> None:
-                return None
-
-            def error(self, event: str, **_: object) -> None:
-                return None
-
-        monkeypatch.setattr(structlog, "get_logger", lambda *_: _FakeLogger())
-        observer = StructlogLifecycleObserver()
-
-        observer.on_event(
+    def test_a_meta_key_that_is_a_record_attribute_does_not_break_logging(
+        self, lifecycle_log: CapturedLog
+    ) -> None:
+        LogLifecycleObserver().on_event(
             LifecycleEvent(
-                scope=Scope.FLOW,
-                name="ingest",
-                kind=EventKind.END,
-                duration_ms=100.0,
-                meta={"flow": "ingest", "node_count": 3},
+                scope=Scope.FLOW, name="ingest", kind=EventKind.END, meta={"name": "orders"}
             )
         )
-        assert captured["flow"] == "ingest"
-        assert captured["node_count"] == 3
+
+        [fields] = lifecycle_log.named("observability.lifecycle_ended")
+        assert fields["loom.meta.name"] == "orders"
 
 
 class TestPrometheusLifecycleObserver:
@@ -288,49 +265,20 @@ class TestPrometheusLifecycleObserver:
         adapter.on_event(LifecycleEvent(scope=Scope.NODE, name="x", kind=EventKind.START))
 
 
-class TestOtelLogCorrelationProcessor:
-    def test_adds_trace_and_span_ids_when_span_is_recording(
-        self, monkeypatch: pytest.MonkeyPatch
-    ) -> None:
-        processor = build_log_correlation_processor()
+class TestOtelSpanFilter:
+    def test_adds_trace_and_span_ids_when_span_is_recording(self) -> None:
+        tracer = TracerProvider().get_tracer("tests")
+        record = logging.makeLogRecord({})
 
-        class _SpanContext:
-            trace_id = 0x123
-            span_id = 0x456
+        with tracer.start_as_current_span("work") as span:
+            OtelSpanFilter().filter(record)
+            context = span.get_span_context()
 
-        class _Span:
-            def is_recording(self) -> bool:
-                return True
+        assert record.__dict__["otel_trace_id"] == format(context.trace_id, "032x")
+        assert record.__dict__["otel_span_id"] == format(context.span_id, "016x")
 
-            def get_span_context(self) -> _SpanContext:
-                return _SpanContext()
+    def test_ignores_a_record_outside_any_span(self) -> None:
+        record = logging.makeLogRecord({})
 
-        monkeypatch.setattr(
-            "loom.core.observability.observer.otel.trace.get_current_span", lambda: _Span()
-        )
-
-        result = processor(object(), "info", {})
-
-        assert result["otel_trace_id"] == "00000000000000000000000000000123"
-        assert result["otel_span_id"] == "0000000000000456"
-
-    def test_ignores_non_recording_span(self, monkeypatch: pytest.MonkeyPatch) -> None:
-        processor = build_log_correlation_processor()
-
-        class _Span:
-            def is_recording(self) -> bool:
-                return False
-
-        monkeypatch.setattr(
-            "loom.core.observability.observer.otel.trace.get_current_span", lambda: _Span()
-        )
-
-        result = processor(object(), "info", {"x": "1"})
-
-        assert result == {"x": "1"}
-
-
-class TestObservabilityTopology:
-    def test_root_scopes_are_declared_explicitly(self) -> None:
-        assert Scope.USE_CASE in ROOT_SCOPES
-        assert Scope.NODE not in ROOT_SCOPES
+        assert OtelSpanFilter().filter(record) is True
+        assert "otel_trace_id" not in record.__dict__

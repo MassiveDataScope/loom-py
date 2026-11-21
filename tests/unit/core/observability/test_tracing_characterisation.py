@@ -603,7 +603,7 @@ class TestHostProviderCoexistence:
 
 
 class TestEventStreamIsUnchanged:
-    """The structlog and Prometheus observers see exactly what they saw before.
+    """The log and Prometheus observers see exactly what they saw before.
 
     Tracing moved; the lifecycle event stream did not. These are the sequences
     the fan-out produced before spans were opened by the runtime.

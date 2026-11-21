@@ -25,15 +25,16 @@ from opentelemetry.trace import Link, NoOpTracer, Span, Tracer
 from prometheus_client import start_http_server
 
 from loom.core.environment import Environment, resolve_environment
-from loom.core.logger.config import configure_logging_from_values
+from loom.core.logger.install import LogInstallation, configure_logging
+from loom.core.logger.stamp import LogRuntime
 from loom.core.observability.config import (
     ObservabilityConfig,
     OtelObservabilityConfig,
     PrometheusObservabilityConfig,
 )
 from loom.core.observability.event import LifecycleEvent, Scope
+from loom.core.observability.observer.log import LogLifecycleObserver
 from loom.core.observability.observer.noop import NoopObserver
-from loom.core.observability.observer.structlog import StructlogLifecycleObserver
 from loom.core.observability.protocol import LifecycleObserver, SpanFlusher
 from loom.core.observability.span import (
     LoomSpan,
@@ -68,28 +69,27 @@ def _resolve_scrape_addr(cfg: PrometheusObservabilityConfig) -> str:
     return cfg.config.bind_address
 
 
-def _configure_structlog_logging(config: ObservabilityConfig, environment: Environment) -> None:
-    """Configure structlog when the observability config owns logging setup."""
-    logger_config = config.log.config
-    if logger_config is None:
-        return
-    extra_processors: tuple[object, ...] = ()
-    if config.otel.enabled and config.otel.export_logs:
-        from loom.core.observability.observer.otel import build_log_correlation_processor
+def _configure_logging(
+    config: ObservabilityConfig,
+    environment: Environment,
+    service_name: str | None,
+    service_version: str | None,
+) -> LogInstallation:
+    """Install the log format and, when exporting logs, the OTEL handler."""
+    exporting = config.otel.enabled and config.otel.export_logs
+    filters: tuple[logging.Filter, ...] = ()
+    if exporting:
+        from loom.core.observability.observer.otel import OtelSpanFilter
 
-        extra_processors = (build_log_correlation_processor(),)
-    configure_logging_from_values(
-        name=logger_config.name,
+        filters = (OtelSpanFilter(),)
+    installation = configure_logging(
+        config.log,
         environment=environment,
-        renderer=logger_config.renderer,
-        colors=logger_config.colors,
-        level=logger_config.level,
-        named_levels=logger_config.named_levels,
-        handlers=logger_config.handlers,
-        fields=logger_config.fields,
-        extra_processors=extra_processors,
+        service_name=service_name,
+        service_version=service_version,
+        filters=filters,
     )
-    if config.otel.enabled and config.otel.export_logs:
+    if exporting:
         if config.otel.config is None:
             raise ValueError(
                 "observability.otel.export_logs requires observability.otel.config to be provided."
@@ -97,6 +97,7 @@ def _configure_structlog_logging(config: ObservabilityConfig, environment: Envir
         from loom.core.observability.observer.otel import install_otel_log_export
 
         install_otel_log_export(config.otel.config)
+    return installation
 
 
 def _resolve_tracer(config: OtelObservabilityConfig) -> tuple[Tracer, SpanFlusher | None]:
@@ -114,14 +115,11 @@ def _resolve_tracer(config: OtelObservabilityConfig) -> tuple[Tracer, SpanFlushe
     return build_tracer(config.config)
 
 
-def _build_observers(
-    config: ObservabilityConfig, environment: Environment
-) -> list[LifecycleObserver]:
+def _build_observers(config: ObservabilityConfig) -> list[LifecycleObserver]:
     """Build the observer chain declared by the observability config."""
     observers: list[LifecycleObserver] = []
     if config.log.enabled:
-        _configure_structlog_logging(config, environment)
-        observers.append(StructlogLifecycleObserver())
+        observers.append(LogLifecycleObserver())
     if config.prometheus.enabled:
         observers.append(
             PrometheusLifecycleObserver(
@@ -165,8 +163,10 @@ class Observability:
         _scrape_addr: str = "127.0.0.1",
         _span_flusher: SpanFlusher | None = None,
         _max_span_links: int = 128,
+        _logging: LogInstallation | None = None,
     ) -> None:
         self._observers = tuple(observers)
+        self._logging = _logging
         self._tracer: Tracer = tracer if tracer is not None else NoOpTracer()
         self._scrape_port = _scrape_port
         self._scrape_addr = _scrape_addr
@@ -174,6 +174,11 @@ class Observability:
         self._span_flusher = _span_flusher
         self._max_span_links = _max_span_links
         self._log = logging.getLogger(__name__)
+
+    def running_as(self, runtime: LogRuntime) -> None:
+        """Stamp the log records of this process as emitted by *runtime*."""
+        if self._logging is not None:
+            self._logging.running_as(runtime)
 
     @property
     def observers(self) -> tuple[LifecycleObserver, ...]:
@@ -387,10 +392,12 @@ class Observability:
         config: ObservabilityConfig,
         *,
         environment: Environment | str | None = None,
+        service_name: str | None = None,
+        service_version: str | None = None,
     ) -> Self:
         """Build an ``Observability`` from an ``ObservabilityConfig``.
 
-        Observers are instantiated in order: structlog → Prometheus. When no
+        Observers are instantiated in order: log → Prometheus. When no
         backend is enabled, a
         :class:`~loom.core.observability.observer.noop.NoopObserver` is used so
         the runtime is always safe to call.
@@ -399,38 +406,41 @@ class Observability:
         Loom's own provider when an endpoint is configured, and the host's
         provider when the endpoint is empty.
 
-        Calling ``configure_logging_from_values`` from inside this method
-        guarantees that the structlog pipeline is configured before any
-        observer emits its first event.
+        When ``log`` is enabled, the log format is installed from inside this
+        method, so it is in place before any observer emits its first event.
 
         Args:
             config: Unified observability configuration.
-            environment: Environment of the process; drives the logger's
-                renderer and colour defaults. Resolved like
+            environment: Environment of the process; picks the default log
+                format and is stamped on every record. Resolved like
                 :func:`~loom.core.environment.resolve_environment` when ``None``.
+            service_name: ``app.name``, stamped on every log record.
+            service_version: ``app.version``, stamped on every log record.
 
         Returns:
             Configured ``Observability`` ready for use.
 
         Raises:
             ValueError: If OTEL config is invalid (wrong protocol, missing exporter).
-            ValueError: If OTEL log export is enabled without a logger config.
+            ValueError: If OTEL log export is enabled while the log backend is not.
+            ConfigError: If ``observability.log.format`` is not registered.
         """
-        if (
-            config.otel.enabled
-            and config.otel.export_logs
-            and (not config.log.enabled or config.log.config is None)
-        ):
+        if config.otel.enabled and config.otel.export_logs and not config.log.enabled:
             raise ValueError(
-                "observability.otel.export_logs requires observability.log.enabled=True "
-                "and observability.log.config to be provided."
+                "observability.otel.export_logs requires observability.log.enabled=True."
             )
         if config.otel.enabled and config.otel.export_logs and config.otel.config is None:
             raise ValueError(
                 "observability.otel.export_logs requires observability.otel.config to be provided."
             )
 
-        observers = _build_observers(config, resolve_environment(environment))
+        resolved = resolve_environment(environment)
+        installation = (
+            _configure_logging(config, resolved, service_name, service_version)
+            if config.log.enabled
+            else None
+        )
+        observers = _build_observers(config)
         tracer, flusher = _resolve_tracer(config.otel)
         scrape_port = _resolve_scrape_port(config.prometheus)
         scrape_addr = _resolve_scrape_addr(config.prometheus)
@@ -443,6 +453,7 @@ class Observability:
             _max_span_links=(
                 config.otel.config.max_span_links if config.otel.config is not None else 128
             ),
+            _logging=installation,
         )
 
     @classmethod

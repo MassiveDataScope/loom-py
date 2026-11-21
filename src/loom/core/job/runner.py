@@ -3,10 +3,11 @@
 from __future__ import annotations
 
 import asyncio
+import logging
 import random
 import time
 from collections.abc import Awaitable, Callable
-from dataclasses import asdict, dataclass
+from dataclasses import dataclass
 from typing import Any
 
 from loom.core.engine.events import AbandonReason, EventKind, ExecutionEvent, Status
@@ -24,9 +25,9 @@ from loom.core.job.outcome import (
     failure_log_fields,
 )
 from loom.core.job.policy import Redelivery, RetryPolicy
-from loom.core.logger import get_logger
+from loom.core.logger import LogField, log_context
 
-_log = get_logger(__name__)
+_log = logging.getLogger(__name__)
 
 Invocation = Callable[[JobDelivery], Awaitable[Any]]
 """Runs the job of a delivery and returns its result, or raises what it raised."""
@@ -56,16 +57,35 @@ class _Whereabouts:
     def of_unrunnable(cls, attempt: int, message_id: str | None) -> _Whereabouts:
         return cls(job=None, queue=None, attempt=attempt, postponements=0, task_id=message_id)
 
+    def run_fields(self) -> dict[str, object]:
+        """The fields every record of the run carries, leaving out what is not known."""
+        known = {
+            LogField.JOB: self.job,
+            LogField.TASK_ID: self.task_id,
+            LogField.ATTEMPT: self.attempt,
+        }
+        return {key: value for key, value in known.items() if value is not None}
+
+    def log_fields(self) -> dict[str, object]:
+        """The fields of the abandonment record."""
+        known = {"queue": self.queue, "postponements": self.postponements}
+        return {
+            **self.run_fields(),
+            **{key: value for key, value in known.items() if value is not None},
+        }
+
     def log_abandoned(self, outcome: Abandoned) -> None:
         """Write the one WARNING that says why *outcome* ended this message."""
         error = outcome.as_exception()
         _log.warning(
             "Job abandoned",
-            reason=outcome.reason.value,
-            error_type=type(error).__qualname__,
-            error_message=str(error),
-            **asdict(self),
-            **failure_log_fields(error),
+            extra={
+                "reason": outcome.reason.value,
+                "error_type": type(error).__qualname__,
+                "error_message": str(error),
+                **self.log_fields(),
+                **failure_log_fields(error),
+            },
         )
 
 
@@ -119,12 +139,14 @@ class JobRunner:
         name = delivery.job_type.__qualname__
         self._metrics.on_event(ExecutionEvent(EventKind.JOB_STARTED, name, trace_id=trace_id))
         started = time.monotonic()
-        outcome = await self._run_once(delivery)
+        whereabouts = _Whereabouts.of_delivery(delivery)
+        with log_context(whereabouts.run_fields()):
+            outcome = await self._run_once(delivery)
         self._metrics.on_event(
             self._build_event(outcome, name, trace_id, (time.monotonic() - started) * 1000)
         )
         if isinstance(outcome, Abandoned):
-            _Whereabouts.of_delivery(delivery).log_abandoned(outcome)
+            whereabouts.log_abandoned(outcome)
         return outcome
 
     async def _run_once(self, delivery: JobDelivery) -> JobOutcome:

@@ -5,6 +5,7 @@ Shared by the ``jobs`` function, the queued event triggers and the direct ones.
 
 from __future__ import annotations
 
+import logging
 from collections.abc import Callable, Iterable, Sequence
 from dataclasses import dataclass
 from typing import TYPE_CHECKING, Any, NoReturn, cast
@@ -24,7 +25,7 @@ from loom.core.job.run import EnvelopeInvocation
 from loom.core.job.runner import JobRunner
 from loom.core.job.service import JobService
 from loom.core.job.settlement import JobSettlement
-from loom.core.logger import get_logger
+from loom.core.logger import LogRuntime
 from loom.core.observability.event import Scope
 from loom.core.stores import LAMBDA_PROFILE
 from loom.jobs.aws.queue import DeadLetterPolicy, SQSRecord
@@ -37,7 +38,7 @@ if TYPE_CHECKING:
     from loom.core.engine.metrics import MetricsRecorder
     from loom.core.job.job import Job
 
-_log = get_logger(__name__)
+_log = logging.getLogger(__name__)
 TIMEOUT_SAFETY_MARGIN_MS = 1000
 """Stop starting jobs when fewer than one second remains in the invocation."""
 
@@ -60,7 +61,7 @@ def jobs_recipe(
     if resolved.models:
         _log.warning(
             "Lambda ignores AutoCRUD use cases for discovered models",
-            models=len(resolved.models),
+            extra={"models": len(resolved.models)},
         )
     recipe = Recipe(
         profile=LAMBDA_PROFILE,
@@ -72,6 +73,7 @@ def jobs_recipe(
         check_scope=CheckScope.without_rest(),
         agents=True,
         agent_endpoints=False,
+        log_runtime=LogRuntime.LAMBDA,
         metrics=metrics,
         connection_only=not resolved.models,
     )
@@ -89,7 +91,7 @@ def open_host(application: Application) -> LoopHost:
     host.start()
     _log.info(
         "Lambda dispatched jobs go through the configured job transport",
-        job_transport=type(service.default_transport).__qualname__,
+        extra={"job_transport": type(service.default_transport).__qualname__},
     )
     return host
 
@@ -173,9 +175,11 @@ class QueueConsumer(JobConsumer):
         if served:
             _log.info(
                 "Job retry policies",
-                transport="sqs",
-                queue=queue_name,
-                jobs=settings.describe_retries(redelivery, served),
+                extra={
+                    "transport": "sqs",
+                    "queue": queue_name,
+                    "jobs": settings.describe_retries(redelivery, served),
+                },
             )
         return cls(
             settings,

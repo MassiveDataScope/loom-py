@@ -3,8 +3,8 @@
 Precedence, lowest first: defaults in code, ``base.yaml`` (or the first
 explicit file), the overlay of the environment (or each later file), then
 the ``LOOM__*`` variables. A double underscore separates the levels, as in
-ASP.NET Core and pydantic-settings: ``LOOM__OBSERVABILITY__LOG__CONFIG__LEVEL``
-sets ``observability.log.config.level``.
+ASP.NET Core and pydantic-settings: ``LOOM__OBSERVABILITY__LOG__LEVEL``
+sets ``observability.log.level``.
 
 Each level is letters, digits and underscores, and matches the key the
 configuration already declares at that place, whatever its case; a level the
@@ -110,8 +110,8 @@ per-deploy variable may change them."""
 OVERRIDABLE: Final = (
     "app.entry",
     "app.job_service",
-    "observability.log.config.level",
-    "observability.log.config.named_levels.*",
+    "observability.log.level",
+    "observability.log.named_levels.*",
     "celery.worker_concurrency",
     "celery.worker_max_tasks_per_child",
     "celery.worker_prefetch_multiplier",

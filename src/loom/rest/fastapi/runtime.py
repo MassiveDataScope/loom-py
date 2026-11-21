@@ -40,6 +40,7 @@ from loom.core.introspection import (
     AppIntrospection,
     ContributorRef,
 )
+from loom.core.logger import LogRuntime
 from loom.core.observability.config import PrometheusObservabilityConfig
 from loom.core.stores import (
     SERVER_PROFILE,
@@ -647,6 +648,7 @@ def compose_rest(
         default_store_plugin=SQLALCHEMY_BACKEND,
         check_scope=CheckScope(required=frozenset({ConfigKey.APP_REST})),
         agents=True,
+        log_runtime=LogRuntime.FASTAPI,
         metrics=_build_metrics_adapter(metrics_cfg, metrics_registry),
         pool_metrics=_build_pool_metrics(metrics_cfg, metrics_registry, project.app.name),
     )
