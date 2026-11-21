@@ -437,18 +437,18 @@ def silenced_checks(config: ConfigContext) -> tuple[str, ...]:
 
 def enforce_deploy_checks(
     config: ConfigContext,
-    environment: Environment,
     *,
     scope: CheckScope = UNSCOPED,
     application: CheckSet = DEPLOY_CHECKS,
 ) -> DeployReport | None:
-    """Run the deploy checks at startup when *environment* is deployed.
+    """Run the deploy checks at startup when the environment of *config* is deployed.
 
     Logs the silenced ids and every warning, then fails on the errors.
 
     Args:
-        config: Loaded configuration the checks read.
-        environment: Resolved environment; only production and staging run checks.
+        config: Loaded configuration the checks read; its
+            :attr:`~loom.core.config.ConfigContext.environment` is the one that
+            counts, and only production and staging run checks.
         scope: See :func:`run_deploy_checks`.
         application: See :func:`run_deploy_checks`.
 
@@ -463,6 +463,7 @@ def enforce_deploy_checks(
             ``checks.modules`` fails at import; or when a used set needs a
             third-party module that is not installed.
     """
+    environment = config.environment
     if not environment.is_deployed:
         _logger.warning(
             "deploy checks skipped: the environment is %r (%s); they run in production and staging",

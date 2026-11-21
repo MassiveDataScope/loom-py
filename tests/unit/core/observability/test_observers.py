@@ -9,7 +9,7 @@ from opentelemetry.sdk.trace import TracerProvider
 
 from loom.core.config.observability import OtelConfig
 from loom.core.observability.event import EventKind, LifecycleEvent, LifecycleStatus, Scope
-from loom.core.observability.observer.log import LogLifecycleObserver
+from loom.core.observability.observer.log import LIFECYCLE_META, LogLifecycleObserver
 from loom.core.observability.observer.noop import NoopObserver
 from loom.core.observability.observer.otel import (
     OtelSpanFilter,
@@ -185,17 +185,42 @@ class TestLogLifecycleObserver:
         [fields] = lifecycle_log.named("observability.lifecycle_started")
         assert (fields["loom.meta.flow"], fields["loom.meta.node_idx"]) == ("my_flow", 0)
 
-    def test_a_meta_key_that_is_a_record_attribute_does_not_break_logging(
+    def test_a_meta_key_outside_the_scope_allowlist_is_dropped(
         self, lifecycle_log: CapturedLog
     ) -> None:
         LogLifecycleObserver().on_event(
             LifecycleEvent(
-                scope=Scope.FLOW, name="ingest", kind=EventKind.END, meta={"name": "orders"}
+                scope=Scope.FLOW,
+                name="ingest",
+                kind=EventKind.END,
+                meta={"node_count": 3, "name": "orders", "subject": "u-1"},
             )
         )
 
         [fields] = lifecycle_log.named("observability.lifecycle_ended")
-        assert fields["loom.meta.name"] == "orders"
+        assert {key: value for key, value in fields.items() if key.startswith("loom.meta.")} == {
+            "loom.meta.node_count": 3
+        }
+
+    def test_a_failure_keeps_its_error_type_whatever_the_scope(
+        self, lifecycle_log: CapturedLog
+    ) -> None:
+        LogLifecycleObserver().on_event(
+            LifecycleEvent(
+                scope=Scope.MAINTENANCE,
+                name="vacuum",
+                kind=EventKind.ERROR,
+                error="boom",
+                meta={"error_type": "ValueError", "table": "orders"},
+            )
+        )
+
+        [fields] = lifecycle_log.named("observability.lifecycle_failed")
+        assert fields["loom.meta.error_type"] == "ValueError"
+        assert "loom.meta.table" not in fields
+
+    def test_every_scope_declares_the_meta_keys_it_allows(self) -> None:
+        assert set(LIFECYCLE_META) == set(Scope)
 
 
 class TestPrometheusLifecycleObserver:

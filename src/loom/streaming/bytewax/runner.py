@@ -217,7 +217,9 @@ class StreamingRunner:
         obs = observability or Observability.from_config(
             observability_cfg, environment=resolved_environment
         )
-        enforce_deploy_checks(config, resolved_environment, scope=CheckScope.without_rest())
+        enforce_deploy_checks(
+            config.with_environment(resolved_environment), scope=CheckScope.without_rest()
+        )
         plan = compile_flow(flow, config=config)
         runtime = config.section_or_default(
             ConfigKey.STREAMING_RUNTIME,

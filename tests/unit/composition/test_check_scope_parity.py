@@ -46,7 +46,7 @@ class TestStartUpAndCheckParity:
 
         checked = CheckedProject.load(str(path), environment="test")
         started = enforce_deploy_checks(
-            ConfigContext.from_dict(_DOCUMENT), Environment.PRODUCTION, scope=scope
+            ConfigContext.from_dict(_DOCUMENT, environment=Environment.PRODUCTION), scope=scope
         )
 
         assert started is not None
@@ -118,9 +118,7 @@ class TestRecipeScopes:
         )
         recipe = CeleryRuntime(jobs=[]).recipe(project)
 
-        report = enforce_deploy_checks(
-            project.config, project.environment, scope=recipe.check_scope
-        )
+        report = enforce_deploy_checks(project.config, scope=recipe.check_scope)
 
         assert report is not None
         assert "app.rest (left out by the process)" in [s.describe() for s in report.skipped]

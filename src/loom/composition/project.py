@@ -109,14 +109,18 @@ class LoadedConfig:
     """The configuration of an application as the files and the environment give it.
 
     Args:
-        config: Loaded configuration, overrides applied.
-        environment: Environment resolved once for the whole application.
+        config: Loaded configuration, overrides applied, carrying the environment
+            resolved once for the whole application.
         config_root: Directory of the first configuration file.
     """
 
     config: ConfigContext
-    environment: Environment
     config_root: Path
+
+    @property
+    def environment(self) -> Environment:
+        """The environment resolved once for the whole application."""
+        return self.config.environment
 
     @classmethod
     def from_paths(
@@ -141,7 +145,6 @@ class LoadedConfig:
                 resolvers=with_built_in_resolvers(resolvers),
                 environment=resolved_environment,
             ),
-            environment=resolved_environment,
             config_root=Path(paths[0]).resolve().parent,
         )
 
@@ -151,8 +154,8 @@ class Project:
     """What an application declares: configuration, environment and code, not yet composed.
 
     Args:
-        config: Loaded configuration, overrides applied.
-        environment: Environment resolved once for the whole application.
+        config: Loaded configuration, overrides applied, carrying the environment
+            resolved once for the whole application.
         code_path: Application code directory, already on ``sys.path``.
         config_root: Directory of the first configuration file.
         app: The ``app`` keys every entry point reads.
@@ -163,12 +166,16 @@ class Project:
     """
 
     config: ConfigContext
-    environment: Environment
     code_path: Path
     config_root: Path
     app: AppConfig
     observability: Observability
     observability_config: ObservabilityConfig
+
+    @property
+    def environment(self) -> Environment:
+        """The environment resolved once for the whole application."""
+        return self.config.environment
 
     @classmethod
     def load(
@@ -216,7 +223,6 @@ class Project:
         )
         return cls(
             config=loaded.config,
-            environment=loaded.environment,
             code_path=add_code_path(
                 code_path if code_path is not None else app_cfg.code_path, loaded.config_root
             ),
@@ -326,7 +332,6 @@ class Project:
         application = Application(
             kernel=kernel,
             config=self.config,
-            environment=self.environment,
             code_path=self.code_path,
             discovered=discovered,
             observability=self.observability,

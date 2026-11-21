@@ -28,6 +28,7 @@ from loom.core.config.observability import OtelConfig
 from loom.core.environment import Environment, resolve_environment
 from loom.core.logger.install import LogInstallation, configure_logging
 from loom.core.logger.stamp import LogRuntime
+from loom.core.logger.user_identity import UserIdentityPolicy
 from loom.core.observability.config import (
     ObservabilityConfig,
     OtelObservabilityConfig,
@@ -159,9 +160,11 @@ class Observability:
         _span_flusher: SpanFlusher | None = None,
         _max_span_links: int = 128,
         _logging: LogInstallation | None = None,
+        _user_identity: UserIdentityPolicy | None = None,
     ) -> None:
         self._observers = tuple(observers)
         self._logging = _logging
+        self._user_identity = _user_identity or UserIdentityPolicy()
         self._tracer: Tracer = tracer if tracer is not None else NoOpTracer()
         self._scrape_port = _scrape_port
         self._scrape_addr = _scrape_addr
@@ -174,6 +177,11 @@ class Observability:
         """Stamp the log records of this process as emitted by *runtime*."""
         if self._logging is not None:
             self._logging.running_as(runtime)
+
+    @property
+    def user_identity(self) -> UserIdentityPolicy:
+        """The policy a security event asks for the identity fields of its subject."""
+        return self._user_identity
 
     @property
     def observers(self) -> tuple[LifecycleObserver, ...]:
@@ -456,6 +464,7 @@ class Observability:
                 config.otel.config.max_span_links if config.otel.config is not None else 128
             ),
             _logging=installation,
+            _user_identity=UserIdentityPolicy.from_settings(config.log),
         )
 
     @classmethod

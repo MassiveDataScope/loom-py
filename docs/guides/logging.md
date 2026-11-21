@@ -36,24 +36,43 @@ from loom.core.logger import LogEvent, LogField
 log = logging.getLogger(__name__)
 
 
-class InvoiceEvent(LogEvent):
+class InvoiceLogEvent(LogEvent, prefix="billing"):
     ISSUED = "billing.invoice_issued"
 
 
-log.info(InvoiceEvent.ISSUED, extra={LogField.JOB: "SendInvoice"})
+log.info(InvoiceLogEvent.ISSUED, extra={LogField.JOB: "SendInvoice"})
 ```
 
 - In loom's code, the message is the **event**: a `LogEvent` member named
   `<area>.<subject>_<fact>`, lowercase. It never holds a value: no f-string, no
   `%` format. Values go in the fields, where a collector can filter on them.
+- An event class declares the prefix of its area once, as a class keyword, and every
+  member value starts with it and a dot: `class JobLogEvent(LogEvent, prefix="job")`
+  holds `job.delivery_abandoned`. The prefix is a public name: moving the package that
+  owns the events does not rename them. Loom keeps the classes of a package in its
+  `log_events.py` (`<Area>LogEvent`); the modules that sit directly in `loom.core` share
+  `core`. Architecture tests check that each class lives in a `log_events.py`, that
+  each value matches `^[a-z][a-z0-9_]*(\.[a-z][a-z0-9_]*)+$` after its prefix, and that no
+  value repeats across loom. An application is free to follow the same layout.
 - loom's field keys are `LogField` members: OpenTelemetry semantic conventions where one
   exists (`service.name`, `code.function.name`, `exception.type`), `loom.*`
-  otherwise. Event names and field keys are part of the public contract of a
-  release.
-- A field value is a scalar (`str`, `int`, `float`, `bool`, `None`) or a short list
-  of them. The formatters write any other object as its type name, never its
-  `repr`; a `Secret` is masked; a value longer than 2048 characters is cut with a
-  marker. Keep secrets and personal data out of fields anyway.
+  otherwise. The OpenTelemetry names follow **semantic conventions specification 1.45.0**, the
+  release that renamed `messaging.system` to `messaging.system.name` (value `aws.sqs` for
+  SQS) and `messaging.kafka.*` to `kafka.*` (`kafka.offset`). loom follows the
+  specification, not the version of the `opentelemetry-semantic-conventions` Python
+  package, which may be older. The GenAI keys (`gen_ai.*`) follow the separate GenAI
+  conventions. Event names and field keys are part of the public contract of
+  a release.
+- A field value is a scalar (`str`, `int`, `float`, `bool`, `None`) or a short list of
+  scalars. The formatters write any other object as its type name, never its `repr`; a
+  `Secret` is masked; a value longer than 2048 characters is cut with a marker. Keep
+  secrets and personal data out of fields anyway.
+- What an emitter puts in a field: a count plus bounded scalars, never a list of
+  dicts. A loop over items writes one record with `loom.count` and, for failures,
+  `loom.failed_count` and `error.type`, not one entry per item with its detail.
+- The user is not an operational field. `user.id` and `user.hash` appear only on
+  security events, written as `observability.log.user_identity` says (see "Who a
+  security event concerns"); roles, claims, client addresses and tokens are never logged.
 - Exceptions: the message of a driver or of application code often carries row
   values, so the `json` and `text` formats write **`exception.type` only** below
   ERROR. From ERROR up they write `exception.type`, `exception.message` and
@@ -94,6 +113,12 @@ it, whoever emitted it (loom, your code, a library):
 A field you pass as `extra` is kept as you gave it. Following one `trace_id` shows
 the lines of loom and of your application together.
 
+Lifecycle records (`observability.lifecycle_started`, `_ended`, `_failed`) also carry the
+`meta` of the span as `loom.meta.<key>`, but each scope has a closed list of the keys it may
+write (`LIFECYCLE_META` in `loom.core.observability.observer.log`); any other key is
+dropped, so a span cannot put an open-ended value in the log. A failed record also
+carries `error_type`. The subject and the roles of the caller are not on the list.
+
 Add fields of your own to a block with `log_context`; they follow the current thread
 or asyncio task and never reach a concurrent request:
 
@@ -126,11 +151,44 @@ observability:
 
 The settings are validated at startup and by `loom check` as written
 (`loom.logger.E001` for an unregistered format, `loom.logger.E002` for an unknown
-level; a value that holds a placeholder is not judged).
+level, `loom.logger.E003` for an unknown `user_identity`, `loom.logger.E004` for
+`hash` without a `user_hash_key`, and `loom.logger.W001`, below; a value that holds a
+placeholder is not judged).
 
 An extra or an application adds a format by registering a callable from the
 settings to the handler (or `None`) under the `loom.logging.formats` entry-point
 group.
+
+### Who a security event concerns
+
+Operational events carry no identity: follow them by `trace_id`. A security event
+(a denied access, a rejected token, an identity switch) says whom it concerns in the form
+the deployment chooses:
+
+```yaml
+observability:
+  log:
+    user_identity: hash                 # hash | id | none (default)
+    user_hash_key: ${oc.env:LOG_USER_HASH_KEY}
+```
+
+| Mode | Fields written |
+|---|---|
+| `none` | no user field |
+| `id` | `user.id`: the subject as it is, for subjects that are already opaque ids |
+| `hash` | `user.hash`: HMAC-SHA256 of the subject under `user_hash_key`, in hex; the key is a `Secret` and is required |
+
+`UserIdentityPolicy.fields_for(subject)` (`loom.core.logger.user_identity`) is the one
+place that answers; the code that emits a security event asks it and spreads the result
+into `extra`. It is built once from this section and reached through
+`Observability.user_identity`; an `Observability` built without configuration
+(`Observability.noop()`) writes no user. Applications that want a user on operational
+records add it with `log_context`, under their own responsibility.
+
+`loom check` warns with `loom.logger.W001` when the mode is `none` and the environment
+is production, as the configuration was loaded for: `--env production`, or `LOOM_ENV` when the flag is absent (unset meaning production). It cannot know statically whether
+the application emits security events, so it warns whenever production writes no user;
+silence it in `checks.silenced` when none is wanted.
 
 ### AWS Lambda
 

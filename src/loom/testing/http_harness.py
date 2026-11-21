@@ -78,9 +78,9 @@ class _HarnessRuntime:
         app = AppConfig(name="test-harness", job_service="inline")
         return Project(
             config=ConfigContext.from_dict(
-                {"app": {"name": app.name, "job_service": app.job_service}}
+                {"app": {"name": app.name, "job_service": app.job_service}},
+                environment=resolve_environment(),
             ),
-            environment=resolve_environment(),
             code_path=Path.cwd(),
             config_root=Path.cwd(),
             app=app,

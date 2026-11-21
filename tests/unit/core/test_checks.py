@@ -56,8 +56,8 @@ def _registry(*, error: bool = True, warning: bool = True) -> CheckSet:
     return registry
 
 
-def _config(**raw: Any) -> ConfigContext:
-    return ConfigContext.from_dict(raw)
+def _config(environment: Environment = Environment.TEST, **raw: Any) -> ConfigContext:
+    return ConfigContext.from_dict(raw, environment=environment)
 
 
 class TestRegistry:
@@ -280,7 +280,7 @@ class TestInstalledSetsRun:
     ) -> None:
         reads = _install(monkeypatch)
 
-        enforce_deploy_checks(_config(billing={}), environment, application=CheckSet())
+        enforce_deploy_checks(_config(environment, billing={}), application=CheckSet())
 
         assert reads == []
 
@@ -322,7 +322,7 @@ class TestEnforceDeployChecks:
         self, environment: Environment, caplog: pytest.LogCaptureFixture
     ) -> None:
         with caplog.at_level(logging.WARNING, logger=_LOGGER):
-            report = enforce_deploy_checks(_config(), environment, application=_registry())
+            report = enforce_deploy_checks(_config(environment), application=_registry())
 
         skipped = [r.getMessage() for r in caplog.records if "skipped" in r.getMessage()]
         assert report is None
@@ -334,11 +334,11 @@ class TestEnforceDeployChecks:
     def test_an_error_fails_startup_in_a_deployed_environment(
         self, environment: Environment
     ) -> None:
-        config = _config()
+        config = _config(environment)
         registry = _registry()
 
         with pytest.raises(DeployCheckError) as caught:
-            enforce_deploy_checks(config, environment, application=registry)
+            enforce_deploy_checks(config, application=registry)
 
         message = str(caught.value)
         assert [r.id for r in caught.value.results] == [_ERROR_ID]
@@ -353,7 +353,7 @@ class TestEnforceDeployChecks:
     ) -> None:
         with caplog.at_level(logging.WARNING, logger=_LOGGER):
             report = enforce_deploy_checks(
-                _config(sample={"safe": True}), Environment.PRODUCTION, application=_registry()
+                _config(Environment.PRODUCTION, sample={"safe": True}), application=_registry()
             )
 
         assert report is not None
@@ -365,10 +365,10 @@ class TestEnforceDeployChecks:
     def test_the_silenced_ids_are_logged_as_a_warning(
         self, caplog: pytest.LogCaptureFixture
     ) -> None:
-        config = _config(checks={"silenced": [_ERROR_ID]})
+        config = _config(Environment.STAGING, checks={"silenced": [_ERROR_ID]})
 
         with caplog.at_level(logging.WARNING, logger=_LOGGER):
-            enforce_deploy_checks(config, Environment.STAGING, application=_registry())
+            enforce_deploy_checks(config, application=_registry())
 
         silenced = [r for r in caplog.records if "silenced" in r.getMessage()]
         assert len(silenced) == 1

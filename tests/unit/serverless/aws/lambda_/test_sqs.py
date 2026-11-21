@@ -205,8 +205,9 @@ class Probe(Job[None]):
         pass
 trigger = {"source": "jobs", "queue": {"name": "q"}}
 project = Project(
-    config=ConfigContext.from_dict({"lambda": {"functions": {"worker": {"trigger": trigger}}}}),
-    environment=Environment.TEST,
+    config=ConfigContext.from_dict(
+        {"lambda": {"functions": {"worker": {"trigger": trigger}}}}, environment=Environment.TEST
+    ),
     code_path=Path.cwd(),
     config_root=Path.cwd(),
     app=AppConfig(name="lambda-sqs", entry="worker"),

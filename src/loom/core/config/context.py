@@ -19,6 +19,7 @@ if TYPE_CHECKING:
     from omegaconf import DictConfig
 
     from loom.core.config.resolver import ConfigResolver
+    from loom.core.environment import Environment
 
 T = TypeVar("T")
 
@@ -41,6 +42,9 @@ class ConfigContext:
         config: Resolved OmegaConf DictConfig.
         binder: Optional :class:`StructBinder`. Defaults to a non-strict binder.
             Pass ``StructBinder(strict=True)`` to disallow implicit coercion.
+        environment: The environment the configuration was loaded for. Left out,
+            :attr:`environment` resolves it like
+            :func:`~loom.core.environment.resolve_environment`.
 
     Example::
 
@@ -50,11 +54,31 @@ class ConfigContext:
         dep   = ctx.resolve(MyDep.from_config("services.dep", label="prod"))
     """
 
-    __slots__ = ("_binder", "_config")
+    __slots__ = ("_binder", "_config", "_environment")
 
-    def __init__(self, config: DictConfig, *, binder: StructBinder | None = None) -> None:
+    def __init__(
+        self,
+        config: DictConfig,
+        *,
+        binder: StructBinder | None = None,
+        environment: Environment | None = None,
+    ) -> None:
         self._config = config
         self._binder = binder or StructBinder()
+        self._environment = environment
+
+    def with_environment(self, environment: Environment) -> ConfigContext:
+        """This configuration read for *environment*, for a caller that resolved its own."""
+        return ConfigContext(self._config, binder=self._binder, environment=environment)
+
+    @property
+    def environment(self) -> Environment:
+        """The environment this configuration was loaded for, which the deploy checks read."""
+        if self._environment is not None:
+            return self._environment
+        from loom.core.environment import resolve_environment
+
+        return resolve_environment()
 
     @classmethod
     def from_yaml(
@@ -93,6 +117,7 @@ class ConfigContext:
         raw: Mapping[str, Any],
         *,
         binder: StructBinder | None = None,
+        environment: Environment | None = None,
     ) -> ConfigContext:
         """Build a :class:`ConfigContext` from a plain Python mapping.
 
@@ -102,6 +127,7 @@ class ConfigContext:
         Args:
             raw: Plain Python mapping of config keys to values.
             binder: Optional :class:`StructBinder` override.
+            environment: The environment the configuration is read for.
 
         Returns:
             A ready-to-use :class:`ConfigContext`.
@@ -114,7 +140,7 @@ class ConfigContext:
         cfg = OmegaConf.create(dict(raw))
         if not isinstance(cfg, DictConfig):
             raise TypeError(f"Config must be a mapping, got {type(cfg).__name__}")
-        return cls(cfg, binder=binder)
+        return cls(cfg, binder=binder, environment=environment)
 
     def has(self, key: str | ConfigKey) -> bool:
         """Return ``True`` if the dot-separated *key* exists in the config.

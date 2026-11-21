@@ -46,8 +46,7 @@ def composition_project(
     directory.
     """
     return Project(
-        config=ctx,
-        environment=environment,
+        config=ctx.with_environment(environment),
         code_path=code_path if code_path is not None else Path.cwd(),
         config_root=config_root if config_root is not None else Path.cwd(),
         app=app if app is not None else ctx.section(ConfigKey.APP, AppConfig),
@@ -182,7 +181,6 @@ def application_of(*resources: Resource) -> Application:
     return Application(
         kernel=unused,
         config=unused,
-        environment=unused,
         code_path=unused,
         discovered=unused,
         observability=unused,
