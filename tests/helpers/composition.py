@@ -181,7 +181,6 @@ def application_of(*resources: Resource) -> Application:
     return Application(
         kernel=unused,
         config=unused,
-        environment=unused,
         code_path=unused,
         discovered=unused,
         observability=unused,

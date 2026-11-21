@@ -332,7 +332,6 @@ class Project:
         application = Application(
             kernel=kernel,
             config=self.config,
-            environment=self.environment,
             code_path=self.code_path,
             discovered=discovered,
             observability=self.observability,

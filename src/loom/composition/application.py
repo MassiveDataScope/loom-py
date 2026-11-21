@@ -34,8 +34,7 @@ class Application:
 
     Args:
         kernel: Compiled kernel.
-        config: Loaded configuration.
-        environment: Environment the application runs in.
+        config: Loaded configuration, carrying the environment the application runs in.
         code_path: Application code directory.
         discovered: What discovery found, as the runtime's recipe left it.
         observability: Logging, tracing and metrics runtime.
@@ -48,7 +47,6 @@ class Application:
 
     kernel: Kernel
     config: ConfigContext
-    environment: Environment
     code_path: Path
     discovered: DiscoveryResult
     observability: Observability
@@ -60,6 +58,11 @@ class Application:
 
     def __post_init__(self) -> None:
         self.resources = in_opening_order(self.resources)
+
+    @property
+    def environment(self) -> Environment:
+        """The environment the application runs in."""
+        return self.config.environment
 
     @property
     def is_open(self) -> bool:
