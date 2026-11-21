@@ -7,6 +7,7 @@ from typing import Generic, TypeVar
 
 import msgspec
 
+from loom.core.logger.failure import Handoff
 from loom.core.model import LoomFrozenStruct, LoomStruct
 from loom.streaming.core._message import Message
 
@@ -68,6 +69,17 @@ class ErrorMessage(LoomFrozenStruct, Generic[PayloadT], frozen=True, kw_only=Tru
 
     payload: PayloadT
     meta: ErrorMessageMeta
+
+
+class StreamingHandoff(Handoff):
+    """Where a streaming flow hands a failure to a topic: error envelope, DLQ header, wire error.
+
+    Each carries the failure's public form, never its text.
+    """
+
+    ERROR_ENVELOPE = "streaming.error_envelope"
+    WIRE_ERROR = "streaming.wire_error"
+    DLQ_HEADER = "streaming.dlq_header"
 
 
 class ErrorEnvelope(LoomFrozenStruct, Generic[PayloadT], frozen=True):

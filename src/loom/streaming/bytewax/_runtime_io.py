@@ -15,6 +15,7 @@ from confluent_kafka import OFFSET_BEGINNING, OFFSET_END, KafkaError
 from confluent_kafka.admin import AdminClient
 
 from loom.core.logger import NO_ATTRIBUTES, SpanAttributes
+from loom.core.logger.failure import public_form
 from loom.core.observability.event import Scope, TerminalReason
 from loom.core.observability.observability import Observability
 from loom.core.observability.span import LoomSpan
@@ -123,7 +124,7 @@ def _write_kafka_batch(
     except KafkaDeliveryError as exc:
         if sink.dlq_topic is None:
             raise
-        dlq_error = str(exc).encode("utf-8")
+        dlq_error = public_form(exc).encode("utf-8")
         try:
             for item in items:
                 request = item_to_send(item)

@@ -618,7 +618,7 @@ class CachedRepository(
         return codecs
 
     def _log_abandoned_load(self, key: str, error: BaseException) -> None:
-        self._log.warning("CacheLoadAbandoned", extra={"key": key, "error": repr(error)})
+        self._log.warning("CacheLoadAbandoned", exc_info=error, extra={"key": key})
 
     async def _publish_invalidation(self, event: MutationEvent) -> None:
         """Defer the bump past the commit of the model's store, or bump right away.
@@ -823,7 +823,8 @@ class CachedRepository(
         except BoundaryValidationError as error:
             self._log.warning(
                 "CacheCustomPayloadMismatch",
-                extra={"key": key, "method": method_name, "error": repr(error)},
+                exc_info=error,
+                extra={"key": key, "method": method_name},
             )
             return _UNDECODABLE
 

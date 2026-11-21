@@ -1,4 +1,8 @@
-"""The static guard of logging call sites: loom runs it on itself, an application on its code.
+"""The static guards of logging: loom runs them on itself, an application on its code.
+
+:func:`log_call_offences` checks logging call sites; :func:`exception_text_offences`
+finds every place an exception's text is formatted, which no field, payload
+or new error may carry.
 
 A logging call follows the record definition *(event, level, fields)*:
 
@@ -20,10 +24,13 @@ Example::
 
     from pathlib import Path
 
-    from loom.testing.log_calls import log_call_offences
+    from loom.testing.log_calls import exception_text_offences, log_call_offences
 
     def test_logging_calls_follow_the_standard() -> None:
         assert log_call_offences(Path("src/billing").rglob("*.py")) == []
+
+    def test_no_exception_text_leaves() -> None:
+        assert exception_text_offences(Path("src/billing").rglob("*.py")) == []
 """
 
 from __future__ import annotations
@@ -202,3 +209,127 @@ class _CallSiteChecker(ast.NodeVisitor):
         if isinstance(node, ast.Name) and node.id in self._bound:
             return f"the except-bound name {node.id!r}"
         return None
+
+
+_EXCEPTION_SUFFIXES: Final = ("Error", "Exception", "ExceptionGroup")
+"""Annotation names read as an exception type: ``ValueError``, ``BaseException``, ``LoomError``."""
+
+_TRACEBACK_TEXT: Final = frozenset({"format_exc", "format_exception", "format_exception_only"})
+"""``traceback`` functions whose text carries every message of the chain."""
+
+
+def exception_text_offences(paths: Iterable[Path]) -> list[LogCallOffence]:
+    """Every place in *paths* that formats an exception's text, in file and line order.
+
+    An exception's message is never a payload: a field, an answer, a broker
+    message or a new error renders its public form instead
+    (:func:`loom.core.logger.failure.public_form`). An exception is a name an
+    ``except`` clause bound, or a name annotated with an exception type
+    (a parameter or an annotated assignment); its text is ``str``, ``repr``,
+    ``ascii`` or ``format`` of it or of its ``.args``, an f-string or a ``%``
+    or ``.format()`` that holds them, or the text ``traceback`` formats.
+
+    It cannot see aliasing through helpers or text built in user code; a
+    behavioural canary covers those.
+
+    Args:
+        paths: The Python files to read.
+
+    Returns:
+        The offences; empty when nothing formats an exception.
+    """
+    offences: list[LogCallOffence] = []
+    for path in sorted(paths):
+        checker = _ExceptionTextChecker(str(path))
+        checker.visit(ast.parse(path.read_text(encoding="utf-8"), str(path)))
+        offences.extend(checker.offences)
+    return offences
+
+
+def _is_exception_annotation(annotation: ast.expr | None) -> bool:
+    if annotation is None:
+        return False
+    return any(
+        (name := _name_of(node)) is not None and name.endswith(_EXCEPTION_SUFFIXES)
+        for node in ast.walk(annotation)
+        if isinstance(node, ast.Name | ast.Attribute)
+    )
+
+
+class _ExceptionTextChecker(ast.NodeVisitor):
+    def __init__(self, path: str) -> None:
+        self.path = path
+        self.offences: list[LogCallOffence] = []
+        self._scopes: list[set[str]] = [set()]
+
+    def _visit_function(self, node: ast.FunctionDef | ast.AsyncFunctionDef) -> None:
+        arguments = [*node.args.posonlyargs, *node.args.args, *node.args.kwonlyargs]
+        typed = {arg.arg for arg in arguments if _is_exception_annotation(arg.annotation)}
+        self._scopes.append(typed)
+        self.generic_visit(node)
+        self._scopes.pop()
+
+    visit_FunctionDef = _visit_function
+    visit_AsyncFunctionDef = _visit_function
+
+    def visit_AnnAssign(self, node: ast.AnnAssign) -> None:
+        if isinstance(node.target, ast.Name) and _is_exception_annotation(node.annotation):
+            self._scopes[-1].add(node.target.id)
+        self.generic_visit(node)
+
+    def visit_ExceptHandler(self, node: ast.ExceptHandler) -> None:
+        if node.name is None:
+            self.generic_visit(node)
+            return
+        scope = self._scopes[-1]
+        bound_before = node.name in scope
+        scope.add(node.name)
+        self.generic_visit(node)
+        if not bound_before:
+            scope.discard(node.name)
+
+    def visit_Call(self, node: ast.Call) -> None:
+        name = _name_of(node.func)
+        if name in _TRACEBACK_TEXT:
+            self._offend(node, f"traceback.{name}(...)")
+        elif isinstance(node.func, ast.Name) and name in {"str", "repr", "ascii", "format"}:
+            self._offend_on(node.args[:1], node, f"{name}(...)")
+        elif name == "format" and isinstance(node.func, ast.Attribute):
+            values = [*node.args, *(keyword.value for keyword in node.keywords)]
+            self._offend_on(values, node, ".format(...)")
+        self.generic_visit(node)
+
+    def visit_FormattedValue(self, node: ast.FormattedValue) -> None:
+        self._offend_on([node.value], node, "an f-string")
+        self.generic_visit(node)
+
+    def visit_BinOp(self, node: ast.BinOp) -> None:
+        if isinstance(node.op, ast.Mod) and isinstance(node.left, ast.Constant | ast.JoinedStr):
+            right = node.right
+            values = list(right.elts) if isinstance(right, ast.Tuple) else [right]
+            self._offend_on(values, node, "a % format")
+        self.generic_visit(node)
+
+    def _offend_on(self, values: Iterable[ast.expr], node: ast.AST, how: str) -> None:
+        for value in values:
+            exception = self._exception_in(value)
+            if exception is not None:
+                self._offend(node, f"{how} of the exception {exception!r}")
+                return
+
+    def _exception_in(self, value: ast.expr) -> str | None:
+        """The exception name *value* is, or whose ``.args`` it reads, if any."""
+        if isinstance(value, ast.Starred):
+            value = value.value
+        if isinstance(value, ast.Subscript):
+            value = value.value
+            if not (isinstance(value, ast.Attribute) and value.attr == "args"):
+                return None
+        if isinstance(value, ast.Attribute) and value.attr == "args":
+            value = value.value
+        if isinstance(value, ast.Name) and any(value.id in scope for scope in self._scopes):
+            return value.id
+        return None
+
+    def _offend(self, node: ast.AST, rule: str) -> None:
+        self.offences.append(LogCallOffence(self.path, getattr(node, "lineno", 0), rule))

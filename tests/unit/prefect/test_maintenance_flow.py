@@ -15,6 +15,7 @@ from loom.core.observability.event import Scope
 from loom.etl.maintenance._protocol import TableMaintenanceResult
 from loom.etl.maintenance._runner import MaintenanceError, MaintenanceReport
 from loom.prefect.flow import _maintenance
+from tests.helpers.handoffs import prefect_failure
 from tests.unit.prefect.doubles import AcmeMaintenance, AcmeMaintenanceParams
 
 
@@ -115,7 +116,7 @@ class TestMaintenanceFlow:
         monkeypatch.setattr(_maintenance.MaintenanceRunner, "from_config", lambda config: runner)
 
         flow = _build_flow(tmp_path)
-        with pytest.raises(MaintenanceError, match="raw.events"):
+        with prefect_failure(MaintenanceError, match="raw.events"):
             flow.fn(dry_run=False)  # type: ignore[attr-defined]
 
         assert span_events == ["error"]

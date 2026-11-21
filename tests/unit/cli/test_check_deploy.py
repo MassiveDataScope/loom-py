@@ -19,7 +19,10 @@ import yaml
 from typer.testing import CliRunner
 
 from loom.cli.app import app
+from loom.core.config import ConfigError
+from loom.core.logger.failure import exception_type
 from tests.helpers.deploy_checks import write_failing_check_module
+from tests.helpers.handoffs import EchoedFailures
 
 runner = CliRunner()
 SRC = Path(__file__).resolve().parents[3] / "src"
@@ -57,13 +60,29 @@ def _project(tmp_path: Path) -> Path:
     return tmp_path
 
 
+_ECHO_MESSAGES = (
+    "import loom.cli.check as check\n"
+    "rendered = check.public_form\n"
+    "def spy(exc):\n"
+    "    print(exc)\n"
+    "    return rendered(exc)\n"
+    "check.public_form = spy\n"
+)
+"""Print, on stdout, the message of each failure the command prints the public form of."""
+
+
 def _run_cli(*args: str, blocked: tuple[str, ...] = ()) -> subprocess.CompletedProcess[str]:
-    """Run ``loom`` in a clean interpreter, with *blocked* modules made unimportable."""
+    """Run ``loom`` in a clean interpreter, with *blocked* modules made unimportable.
+
+    The failure the command reports goes to stderr as its public form; its
+    message goes to stdout, so a test can still match it.
+    """
     script = (
         "import sys\n"
         f"for name in {blocked!r}:\n"
         "    sys.modules[name] = None\n"
         f"sys.argv = ['loom', *{args!r}]\n"
+        f"{_ECHO_MESSAGES}"
         "from loom.cli import main\n"
         "main()\n"
     )
@@ -137,11 +156,13 @@ class TestCheckDeploy:
         assert result.exit_code == 0, result.output
         assert "silenced: loom.rest.E001" in result.output
 
-    def test_an_unknown_environment_fails_naming_the_valid_ones(self, tmp_path: Path) -> None:
+    def test_an_unknown_environment_fails_naming_the_valid_ones(
+        self, tmp_path: Path, echoed: EchoedFailures
+    ) -> None:
         result = runner.invoke(app, ["check", "--deploy", "--env", "prod", str(_project(tmp_path))])
 
         assert result.exit_code == 1
-        assert "production, staging, development, test" in result.output
+        assert "production, staging, development, test" in echoed.messages
 
     def test_without_deploy_the_command_says_what_it_needs(self, tmp_path: Path) -> None:
         result = runner.invoke(app, ["check", str(_project(tmp_path))])
@@ -174,13 +195,15 @@ class TestCheckDeploy:
 
         result = _run_cli("check", "--deploy", str(config), blocked=("fastapi",))
 
-        assert result.returncode == 1
-        assert "app.rest" in result.stderr
-        assert "'fastapi'" in result.stderr
-        assert "loom-kernel[rest]" in result.stderr
-        assert "loom-kernel[lambda]" in result.stderr
-        assert "--skip app.rest" in result.stderr
-        assert "loom.rest.E001" not in result.stdout
+        assert (result.returncode, result.stderr) == (1, f"{exception_type(ConfigError)}\n")
+        for named in (
+            "app.rest",
+            "'fastapi'",
+            "loom-kernel[rest]",
+            "loom-kernel[lambda]",
+            "--skip app.rest",
+        ):
+            assert named in result.stdout
 
     def test_skipping_app_rest_runs_the_rest_of_the_checks_without_fastapi(
         self, tmp_path: Path
@@ -233,7 +256,7 @@ class TestCheckDeploy:
         "options", [(), ("--skip", "app.rest")], ids=["plain", "skipping-rest"]
     )
     def test_an_event_trigger_naming_no_job_fails_whatever_is_skipped(
-        self, tmp_path: Path, options: tuple[str, ...]
+        self, tmp_path: Path, options: tuple[str, ...], echoed: EchoedFailures
     ) -> None:
         trigger = {"source": "eventbridge", "job": "Missing", "identity": {"subject": "svc:x"}}
         document = {"app": _SAFE_APP, "lambda": {"functions": {"events": {"trigger": trigger}}}}
@@ -242,7 +265,7 @@ class TestCheckDeploy:
         result = runner.invoke(app, ["check", "--deploy", *options, str(config)])
 
         assert result.exit_code == 1
-        assert "'Missing', which is no discovered Job" in result.output
+        assert "'Missing', which is no discovered Job" in echoed.messages
 
     def test_a_missing_server_package_does_not_hide_the_rest_checks(self, tmp_path: Path) -> None:
         config = _write(tmp_path / "app.yaml", {"app": _UNAUTHENTICATED_APP})
@@ -304,11 +327,11 @@ class TestCheckDeploy:
 
     @pytest.mark.parametrize("code_path", ["${oc.env:CODE_DIR}", 5, ["src"]])
     def test_a_code_path_that_is_not_a_literal_path_fails(
-        self, tmp_path: Path, code_path: object
+        self, tmp_path: Path, code_path: object, echoed: EchoedFailures
     ) -> None:
         config = _write(tmp_path / "app.yaml", {"app": {**_SAFE_APP, "code_path": code_path}})
 
         result = runner.invoke(app, ["check", "--deploy", str(config)])
 
         assert result.exit_code == 1
-        assert "app.code_path" in result.output
+        assert "app.code_path" in echoed.messages

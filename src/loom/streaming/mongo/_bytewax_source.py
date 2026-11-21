@@ -86,10 +86,10 @@ class MongoCDCPartition(StatefulSourcePartition[Message[MongoCDCEvent], dict[str
                 change = self._restart_from_now()
             except Exception as exc:
                 _logger.warning(
-                    "mongo_cdc_event_skipped resume_token=%s error_type=%s reason=%s",
+                    "mongo_cdc_event_skipped resume_token=%s error_type=%s",
                     self._resume_token,
                     type(exc).__name__,
-                    str(exc),
+                    exc_info=exc,
                 )
                 self._skip_count += 1
                 break
@@ -101,10 +101,10 @@ class MongoCDCPartition(StatefulSourcePartition[Message[MongoCDCEvent], dict[str
                 message = build_mongo_cdc_message(change)
             except Exception as exc:
                 _logger.warning(
-                    "mongo_cdc_message_build_skipped resume_token=%s error_type=%s reason=%s",
+                    "mongo_cdc_message_build_skipped resume_token=%s error_type=%s",
                     self._resume_token,
                     type(exc).__name__,
-                    str(exc),
+                    exc_info=exc,
                 )
                 self._skip_count += 1
                 continue

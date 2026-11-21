@@ -36,6 +36,7 @@ from loom.core.cache.decorators import _CallPolicy, declares_cache_call
 from loom.core.cache.keys import call_key
 from loom.core.cache.result_codec import ResultCodec, build_call_codec
 from loom.core.di.container import LoomContainer
+from loom.core.logger.failure import public_form
 from loom.core.model.introspection import resolve_type_hints
 
 AsyncCallable = Callable[..., Awaitable[Any]]
@@ -324,7 +325,7 @@ def _log_abandoned_call(key: str, error: BaseException) -> None:
     single flight can hand to nobody would otherwise disappear entirely.
     """
     logging.getLogger(__name__).warning(
-        "CacheCallLoadAbandoned", extra={"key": key, "error": repr(error)}
+        "CacheCallLoadAbandoned", exc_info=error, extra={"key": key}
     )
 
 
@@ -485,7 +486,7 @@ class _ConfiguredCalls:
         try:
             key = spec.key(args, kwargs)
         except _Unrenderable as error:
-            self._warn_once("CacheCallKeyUnrenderable", spec.func, error=str(error))
+            self._warn_once("CacheCallKeyUnrenderable", spec.func, error=public_form(error))
             return await spec.func(*args, **kwargs)
 
         payload = await self._read(spec, key)
@@ -559,7 +560,7 @@ class _ConfiguredCalls:
                 spec.func,
                 key=key,
                 value_type=type(result).__name__,
-                error=repr(error),
+                error=public_form(error),
             )
         return encoded.value
 

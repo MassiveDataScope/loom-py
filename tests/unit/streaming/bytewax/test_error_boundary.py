@@ -12,6 +12,7 @@ from tests.helpers.version_limited_extras import require_bytewax
 require_bytewax()
 
 from loom.core.errors import BoundaryValidationError, RuleViolationError  # noqa: E402
+from loom.core.logger.failure import public_form  # noqa: E402
 from loom.core.observability.observability import Observability  # noqa: E402
 from loom.streaming.bytewax import _error_boundary  # noqa: E402
 from loom.streaming.core._errors import ErrorEnvelope, ErrorKind  # noqa: E402
@@ -36,8 +37,8 @@ class _LoggerProbe:
     def warning(self, event: str, **fields: object) -> None:
         self.calls.append(("warning", event))
 
-    def exception(self, event: str, **fields: object) -> None:
-        self.calls.append(("exception", event))
+    def error(self, event: str, **fields: object) -> None:
+        self.calls.append(("error", event))
 
 
 def _message(value: str = "v") -> Message[AcmePayload]:
@@ -85,7 +86,7 @@ class TestExecuteInBoundary:
 
         assert isinstance(result, ErrorEnvelope)
         assert result.kind is ErrorKind.BUSINESS
-        assert result.reason == "field: boom"
+        assert result.reason == public_form(RuleViolationError("field", "boom"))
         assert result.payload_type == AcmePayload.loom_message_type()
         original = result.original_message
         assert original is not None
@@ -119,7 +120,7 @@ class TestExecuteInBoundary:
             _boundary(),
         )
 
-        assert ("exception", "unhandled_boundary_error") in logger.calls
+        assert ("error", "unhandled_boundary_error") in logger.calls
 
 
 class TestExecuteBatchInBoundary:

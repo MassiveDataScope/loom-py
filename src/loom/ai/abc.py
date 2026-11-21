@@ -41,6 +41,7 @@ from loom.ai.inference import InferenceTarget
 from loom.core.di import LoomContainer
 from loom.core.errors.model import BoundaryValidationError
 from loom.core.identity import Identity
+from loom.core.logger.failure import Handoff, public_form
 from loom.core.model import LoomFrozenStruct, LoomType
 
 CONVERSATION_ID_MAX_LENGTH: Final[int] = 128
@@ -709,6 +710,18 @@ class ToolResultEvent(
     summary: str
 
 
+class AiHandoff(Handoff):
+    """Where an agent run hands its failure to the caller: an SSE event, an HTTP body, an a2a task.
+
+    Each carries the failure's code and public form, never its text. Loom is
+    only an MCP client: an MCP tool's failure ends the run as one of these.
+    """
+
+    SSE_ERROR_EVENT = "ai.sse_error_event"
+    HTTP_ERROR_BODY = "ai.http_error_body"
+    A2A_TASK_STATUS = "ai.a2a_task_status"
+
+
 class ErrorEvent(LoomFrozenStruct, frozen=True, kw_only=True, tag="error", tag_field="type"):
     """The run failed mid-stream.
 
@@ -730,6 +743,32 @@ class ErrorEvent(LoomFrozenStruct, frozen=True, kw_only=True, tag="error", tag_f
     message: str
     interaction_id: str | None = None
     usage: AgentUsage | None = None
+
+    @classmethod
+    def of_failure(
+        cls,
+        error: AgentRunError,
+        *,
+        interaction_id: str | None = None,
+        usage: AgentUsage | None = None,
+    ) -> ErrorEvent:
+        """The event that ends a run *error* failed: its code and public form, never its text.
+
+        The event reaches the caller over SSE, HTTP and a2a, so its message is
+        :func:`~loom.core.logger.failure.public_form`; the failure's details
+        are in loom's log.
+
+        Args:
+            error: The failure that ended the run.
+            interaction_id: The run, in place of the one *error* names.
+            usage: What the run spent, in place of what *error* carries.
+        """
+        return cls(
+            code=error.code,
+            message=public_form(error),
+            interaction_id=interaction_id or error.interaction_id,
+            usage=usage or error.usage,
+        )
 
 
 class FinalEvent(LoomFrozenStruct, frozen=True, kw_only=True, tag="final", tag_field="type"):

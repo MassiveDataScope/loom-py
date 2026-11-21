@@ -10,6 +10,7 @@ from typing import Any, Protocol, TypeAlias, TypeVar
 from bytewax.operators import branch, flat_map
 
 from loom.core.errors import DomainError
+from loom.core.logger.failure import public_form
 from loom.core.observability.event import TerminalReason
 from loom.core.observability.observability import Observability
 from loom.streaming.core._errors import ErrorEnvelope, ErrorKind, snapshot_message
@@ -59,11 +60,14 @@ class ErrorBoundary:
 
 def _build_error_envelope(
     kind: ErrorKind,
-    reason: str,
+    failure: BaseException,
     original: Message[StreamPayload],
     boundary: ErrorBoundary,
 ) -> ErrorEnvelope[StreamPayload]:
     """Wrap a failed message as an error envelope and close its trace.
+
+    The envelope leaves the process, to an error topic or a dead-letter
+    queue: its reason is the failure's public form, never its text.
 
     This is where the *original* message dies: what continues downstream is the
     envelope, whose onward journey is the envelope's own life, correlated by
@@ -83,7 +87,7 @@ def _build_error_envelope(
     payload_type = original.payload.__class__.loom_message_type()
     return ErrorEnvelope(
         kind=kind,
-        reason=reason,
+        reason=public_form(failure),
         payload_type=payload_type,
         original_message=snapshot,
     )
@@ -101,7 +105,7 @@ def _execute_in_boundary(
     except Exception as exc:
         kind = classify(exc)
         _log_boundary_error(kind, exc, original)
-        return _build_error_envelope(kind, str(exc), original, boundary)
+        return _build_error_envelope(kind, exc, original, boundary)
 
 
 def _execute_batch_in_boundary(
@@ -117,7 +121,7 @@ def _execute_batch_in_boundary(
         kind = classify(exc)
         if originals:
             _log_boundary_error(kind, exc, originals[0], batch_size=len(originals))
-        return [_build_error_envelope(kind, str(exc), message, boundary) for message in originals]
+        return [_build_error_envelope(kind, exc, message, boundary) for message in originals]
 
 
 def _split_node_result(
@@ -181,6 +185,6 @@ def _log_boundary_error(
         "batch_size": batch_size,
     }
     if isinstance(exc, DomainError):
-        logger.warning("managed_boundary_error", extra={**context, "reason": str(exc)})
+        logger.warning("managed_boundary_error", exc_info=exc, extra=context)
         return
-    logger.exception("unhandled_boundary_error", extra={**context, "reason": str(exc)})
+    logger.error("unhandled_boundary_error", exc_info=exc, extra=context)

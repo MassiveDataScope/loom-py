@@ -4,12 +4,27 @@ from __future__ import annotations
 
 import sys
 
+from loom.core.logger.failure import Handoff
+from loom.core.logger.install import install_entry_point
+
+
+class CliHandoff(Handoff):
+    """Where the ``loom`` command hands a failure to its user: the error it prints."""
+
+    ERROR_OUTPUT = "cli.error_output"
+
+
 CLI_DEPENDENCIES = frozenset({"typer", "yaml"})
 INSTALL_HINT = 'the loom command needs the cli extra: pip install "loom-kernel[cli]"'
 
 
 def main() -> None:
-    """Entry point of the ``loom`` script; without the ``cli`` extra it prints how to install it."""
+    """Entry point of the ``loom`` script; without the ``cli`` extra it prints how to install it.
+
+    It is a runtime entry point: loom's record factory and process hooks go in
+    before any configuration is read.
+    """
+    install_entry_point()
     try:
         from loom.cli.app import app
     except ModuleNotFoundError as exc:

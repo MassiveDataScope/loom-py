@@ -196,7 +196,7 @@ class MaintenanceRunner:
             return self._locator.locate(TableRef(table_ref))
         except Exception as exc:
             if self._missing_table_policy == "skip":
-                _log.warning("maintenance skip", extra={"table": table_ref, "reason": repr(exc)})
+                _log.warning("maintenance skip", exc_info=exc, extra={"table": table_ref})
                 return None
             raise
 

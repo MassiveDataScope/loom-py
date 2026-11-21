@@ -15,12 +15,8 @@ from collections.abc import Callable
 from functools import lru_cache
 from typing import TYPE_CHECKING, Any, TypeVar
 
-from loom.core.config.errors import ConfigError
-from loom.core.environment import Environment, resolve_environment
-from loom.core.logger import LogIdentity
 from loom.core.logger.failure import FailureReference, Handoff, reference
-from loom.core.logger.install import install_record_factory
-from loom.core.logger.uncaught import install_process_hooks
+from loom.core.logger.install import install_entry_point
 
 if TYPE_CHECKING:
     from loom.serverless.aws.lambda_.handler import LambdaHandler
@@ -60,21 +56,12 @@ def lambda_init(build: Callable[[], _T]) -> _T:
     Raises:
         FailureReference: In place of any exception *build* raised.
     """
-    install_record_factory(LogIdentity(environment=_environment_name()))
-    install_process_hooks()
+    install_entry_point()
     try:
         return build()
     except Exception as exc:
         failure = lambda_reference(exc)
     raise failure
-
-
-def _environment_name() -> str:
-    """The environment Init runs in; production when ``LOOM_ENV`` is unreadable."""
-    try:
-        return resolve_environment().value
-    except ConfigError:
-        return Environment.PRODUCTION.value
 
 
 class LambdaBoundary:

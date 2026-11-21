@@ -181,11 +181,8 @@ class TurnCallbacks:
             error = self.failure(
                 exc, hook, code=AgentRunErrorCode.HOOK_FAILED, message=HOOK_FAILED_MESSAGE
             )
-            return ErrorEvent(
-                code=error.code,
-                message=str(error),
-                interaction_id=self.interaction_id,
-                usage=final.usage,
+            return ErrorEvent.of_failure(
+                error, interaction_id=self.interaction_id, usage=final.usage
             )
         return msgspec.structs.replace(
             final, interaction_id=self.interaction_id, hook_result=result

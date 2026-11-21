@@ -19,6 +19,7 @@ from loom.core.environment import (
     VERIFY_URL_VARIABLE,
     loom_variable,
 )
+from loom.core.logger.failure import public_form
 from loom.core.schema_names import SchemaNames
 from loom.core.stores.catalog import BACKEND_KEY, DEFAULT_STORE, SQLALCHEMY_BACKEND
 
@@ -72,7 +73,7 @@ def init(
             return
         _write(config, block)
     except (ValueError, yaml.YAMLError) as exc:
-        typer.echo(str(exc), err=True)
+        typer.echo(public_form(exc), err=True)
         raise typer.Exit(1) from exc
 
 
@@ -245,5 +246,5 @@ def _env(name: str) -> str:
 
 
 def _fail(exc: Exception) -> NoReturn:
-    typer.echo(str(exc), err=True)
+    typer.echo(public_form(exc), err=True)
     raise typer.Exit(1) from exc

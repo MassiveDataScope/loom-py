@@ -60,6 +60,7 @@ from loom.core.config.errors import ConfigError
 from loom.core.errors import BoundaryValidationError
 from loom.core.identity import Identity, current_identity
 from loom.core.logger import LogField
+from loom.core.logger.failure import public_form
 from loom.core.model import LoomFrozenStruct
 from loom.core.observability.event import Scope
 from loom.core.observability.observability import Observability
@@ -135,7 +136,7 @@ def _run_error_response(error: AgentRunError) -> Response:
     return error_response(
         status,
         str(error.code),
-        _public_message(status, str(error)),
+        _public_message(status, public_form(error)),
         interaction_id=error.interaction_id,
     )
 
@@ -419,9 +420,7 @@ def _stream_frames(
                         yield frame
             except AgentRunError as exc:
                 annotate_usage(span, exc.usage)
-                yield encode_sse_event(
-                    ErrorEvent(code=exc.code, message=str(exc), interaction_id=exc.interaction_id)
-                )
+                yield encode_sse_event(ErrorEvent.of_failure(exc))
 
     return _frames()
 

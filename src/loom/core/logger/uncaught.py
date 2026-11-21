@@ -51,10 +51,10 @@ def log_asyncio_exception(loop: AbstractEventLoop, context: Mapping[str, Any]) -
     """An asyncio exception handler: log the exception, never the context's message text."""
     del loop
     exc = context.get("exception")
-    _log.error(
-        LoggerLogEvent.UNCAUGHT_EXCEPTION,
-        exc_info=exc if isinstance(exc, BaseException) else None,
-    )
+    if not isinstance(exc, BaseException):
+        _log.error(LoggerLogEvent.UNCAUGHT_EXCEPTION)
+        return
+    _log.log(failure_level(exc), LoggerLogEvent.UNCAUGHT_EXCEPTION, exc_info=exc)
 
 
 def log_unraisable_exception(args: Any) -> None:

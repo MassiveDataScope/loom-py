@@ -17,7 +17,7 @@ from loom.core.logger import LogIdentity
 from loom.core.logger.filter import LogFilter
 from loom.core.logger.formats import TextFormatter
 from loom.core.logger.install import install_record_factory
-from loom.testing.log_calls import LogCallOffence, log_call_offences
+from loom.testing.log_calls import LogCallOffence, exception_text_offences, log_call_offences
 from tests.helpers.source_tree import SRC, source_files
 
 UNMIGRATED_PACKAGES: Final[tuple[str, ...]] = (
@@ -50,6 +50,101 @@ UNMIGRATED_PACKAGES: Final[tuple[str, ...]] = (
 )
 """Packages and modules whose logging calls predate the standard; shrinks until empty."""
 
+_VALIDATION_TEXT = "validation text about the data the client sent, answered to that client"
+
+EXCEPTION_TEXT_EXITS: Final[dict[str, tuple[int, str]]] = {
+    "loom.ai.a2a._rpc": (1, _VALIDATION_TEXT),
+    "loom.ai.fastapi.endpoints": (2, _VALIDATION_TEXT),
+    "loom.core.model._loom_type": (3, _VALIDATION_TEXT),
+    "loom.core.model.keys": (2, _VALIDATION_TEXT),
+    "loom.rest.fastapi.sql": (1, _VALIDATION_TEXT),
+    "loom.core.logger.failure": (1, "the text of a FailureReference is its public form"),
+    "loom.core.job.outcome": (2, "a job signal's statement, the words the job declares"),
+    "loom.streaming.mongo._bytewax_source": (
+        1,
+        "reads the message to classify it; formats nothing",
+    ),
+    "loom.stores.clickhouse.registry": (1, "reads the message to classify it; formats nothing"),
+    "loom.stores.sqlalchemy.rls.bootstrap": (
+        1,
+        "reads the message to classify it; formats nothing",
+    ),
+    "loom.testing.agents": (1, "a test helper's assertion, read by the developer running it"),
+}
+"""Modules that format an exception's text where it may: how many places, and why. Permanent."""
+
+UNMIGRATED_EXCEPTION_TEXT: Final[dict[str, int]] = {
+    "loom.ai.compiler.phases._capabilities": 2,
+    "loom.ai.compiler.phases._output": 2,
+    "loom.ai.compiler.phases._state": 2,
+    "loom.ai.declarative.__init__": 1,
+    "loom.ai.declarative._envelope": 4,
+    "loom.ai.engines.pydantic_ai._errors": 1,
+    "loom.ai.engines.pydantic_ai._instructions": 1,
+    "loom.ai.engines.pydantic_ai._output": 1,
+    "loom.ai.etl._validation": 1,
+    "loom.ai.execution._grants": 1,
+    "loom.ai.execution._lifecycle": 2,
+    "loom.ai.execution._turn": 1,
+    "loom.ai.remote_auth": 2,
+    "loom.composition._jobs": 1,
+    "loom.composition.phases": 1,
+    "loom.composition.recipe": 1,
+    "loom.core.bootstrap.kernel": 1,
+    "loom.core.cache.calls": 5,
+    "loom.core.checks": 2,
+    "loom.core.config._includes": 1,
+    "loom.core.config.binder": 1,
+    "loom.core.config.convert": 1,
+    "loom.core.config.loader": 5,
+    "loom.core.di.compiler": 1,
+    "loom.core.di.container": 2,
+    "loom.core.di.installer": 4,
+    "loom.core.discovery.scanner": 1,
+    "loom.core.engine.declared_observers": 2,
+    "loom.core.errors.jobs": 1,
+    "loom.core.job.config": 1,
+    "loom.core.job.envelope": 1,
+    "loom.core.model._loom_type": 2,
+    "loom.core.model.introspection": 1,
+    "loom.core.stores.uow.coordinator": 1,
+    "loom.etl.compiler._validators_config": 1,
+    "loom.etl.runner.config_loader": 1,
+    "loom.etl.schema._contract": 1,
+    "loom.etl.storage._config": 2,
+    "loom.etl.testing._runners": 1,
+    "loom.jobs.aws.queue": 1,
+    "loom.prefect._flow_yaml": 1,
+    "loom.prefect.deploy._discovery": 1,
+    "loom.prefect.deploy._yaml_etls": 2,
+    "loom.prefect.flow._backfill_body": 1,
+    "loom.prefect.notify._slack": 1,
+    "loom.rest.compiler": 2,
+    "loom.rest.config": 1,
+    "loom.rest.fastapi.response": 1,
+    "loom.serverless.aws.lambda_._jobs": 1,
+    "loom.serverless.aws.lambda_.manifest": 2,
+    "loom.stores.clickhouse.executor": 1,
+    "loom.stores.clickhouse.registry": 2,
+    "loom.stores.mongo.query_compiler": 1,
+    "loom.stores.sqlalchemy.alembic": 2,
+    "loom.stores.sqlalchemy.migrations.runners": 2,
+    "loom.stores.sqlalchemy.rls.bootstrap": 2,
+    "loom.stores.sqlalchemy.rls.partitions": 1,
+    "loom.stores.sqlalchemy.rls.schema": 1,
+    "loom.stores.sqlalchemy.schema": 2,
+    "loom.streaming.bytewax._runtime_io": 1,
+    "loom.streaming.kafka.client._consumer": 5,
+    "loom.streaming.kafka.client._producer": 2,
+    "loom.streaming.kafka.message._consumer": 1,
+}
+"""Modules that put an exception's text into a new error's message: how many places.
+
+Rule 1 of spec 019: the message of an exception is never a payload. These
+messages leave nothing today (every exit renders the public form), but they
+carry foreign text a later exit could copy; L2c rewrites them. Shrinks until
+empty."""
+
 
 def module_of(offence: LogCallOffence) -> str:
     """The dotted module an offence was found in."""
@@ -80,3 +175,12 @@ def caplog_shows_fields(request: pytest.FixtureRequest) -> None:
         handler = request.getfixturevalue("caplog").handler
         handler.setFormatter(TextFormatter())
         handler.addFilter(LogFilter())
+
+
+def exception_text_sites() -> dict[str, int]:
+    """How many places each module of ``src/loom`` formats an exception's text."""
+    sites: dict[str, int] = {}
+    for offence in exception_text_offences(source_files()):
+        module = module_of(offence)
+        sites[module] = sites.get(module, 0) + 1
+    return sites

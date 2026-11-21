@@ -26,6 +26,7 @@ from loom.core.execution import current_execution
 from loom.core.identity import ANONYMOUS, current_identity
 from loom.core.job.context import flush_pending_dispatches
 from loom.core.logger import LogField
+from loom.core.logger.failure import exception_type
 from loom.core.observability.log_events import ObservabilityLogEvent
 from loom.core.tracing import reset_trace_id, set_trace_id
 from loom.core.use_case.factory import UseCaseFactory
@@ -48,6 +49,7 @@ from .doubles import (
     AcmeOnFailure,
     AcmeSlowStart,
     AcmeTracedUseCase,
+    AcmeUnrecoverableError,
     AcmeUser,
     AcmeWithLoadUseCase,
     fake_repo,
@@ -206,7 +208,7 @@ class TestBuildFailure:
 
         assert _failed_scopes(logger, "AcmeBrokenJob") == 1
         assert AcmeOnFailure.calls == (
-            [] if on_failure is None else ["acme job constructor failed"]
+            [] if on_failure is None else [exception_type(AcmeUnrecoverableError)]
         )
 
 

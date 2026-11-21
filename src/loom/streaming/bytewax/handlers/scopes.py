@@ -143,8 +143,7 @@ def _apply_with_async_process(
                 observer, flow_name, idx, node_type, batch, BatchWindow.since(started_ns), exc
             )
             return [
-                _build_error_envelope(ErrorKind.TASK, str(exc), message, boundary)
-                for message in batch
+                _build_error_envelope(ErrorKind.TASK, exc, message, boundary) for message in batch
             ]
         _emit_node_batch_spans(
             observer, flow_name, idx, node_type, batch, BatchWindow.since(started_ns), None
@@ -217,7 +216,7 @@ async def _execute_with_async_message(
         )
         return current
     except Exception as exc:
-        return _build_error_envelope(_classify_task(exc), str(exc), message, boundary)
+        return _build_error_envelope(_classify_task(exc), exc, message, boundary)
 
 
 async def _execute_with_async_batch(

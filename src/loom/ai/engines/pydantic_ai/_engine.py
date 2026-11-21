@@ -542,7 +542,7 @@ class PydanticAIEngine:
         try:
             decoded = decode_conversation(conversation)
         except AgentRunError as rejected:
-            yield ErrorEvent(code=rejected.code, message=str(rejected))
+            yield ErrorEvent.of_failure(rejected)
             return
         deps = self._build_deps(identity, state)
         spend = RunUsage()
@@ -560,9 +560,7 @@ class PydanticAIEngine:
                 if retry:
                     await _backoff(attempt)
                     continue
-                yield ErrorEvent(
-                    code=error.code, message=str(error), usage=self._usage(spend, started)
-                )
+                yield ErrorEvent.of_failure(error, usage=self._usage(spend, started))
                 return
             if not outcome:
                 raise AssertionError(
@@ -573,9 +571,7 @@ class PydanticAIEngine:
                 final = self._conclude(outcome[0], spend, started, output_type)
             except Exception as exc:
                 error, _ = self._record_attempt_failure(exc, attempt, emitted=True)
-                yield ErrorEvent(
-                    code=error.code, message=str(error), usage=self._usage(spend, started)
-                )
+                yield ErrorEvent.of_failure(error, usage=self._usage(spend, started))
                 return
             self._record(None)
             yield final

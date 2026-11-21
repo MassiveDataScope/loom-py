@@ -26,6 +26,7 @@ from tests.helpers.execution_observers import (
     JobOutcomeRecorder,
     PostponeForLongJob,
 )
+from tests.helpers.handoffs import echoed_failures
 from tests.helpers.jobs import JobsAdapter, job_project
 
 runner = CliRunner()
@@ -154,10 +155,11 @@ class TestLoomCheck:
     def test_a_bad_entry_fails_the_check_naming_it(self, tmp_path: Path) -> None:
         config = self._config(tmp_path, RECORDING, "acme.missing:Observer")
 
-        result = runner.invoke(app, ["check", "--deploy", str(config), "--skip", "app.rest"])
+        with echoed_failures() as echoed:
+            result = runner.invoke(app, ["check", "--deploy", str(config), "--skip", "app.rest"])
 
         assert result.exit_code == 1
-        assert "'acme.missing:Observer'" in result.output
+        assert "'acme.missing:Observer'" in echoed.messages
 
     def test_a_good_list_passes_the_check(self, tmp_path: Path) -> None:
         config = self._config(tmp_path, RECORDING)

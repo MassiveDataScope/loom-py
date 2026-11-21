@@ -18,6 +18,7 @@ from loom.connections.aws.secrets import SecretsManagerResolver
 from loom.connections.aws.ssm import SsmResolver
 from loom.core.discovery.base import DiscoveryResult
 from loom.core.discovery.scanner import PackageScanner
+from tests.helpers.handoffs import EchoedFailures
 
 pytestmark = [
     pytest.mark.timeout(30),
@@ -451,22 +452,29 @@ class TestDeployManifest:
         ],
     )
     def test_a_manifest_that_cannot_be_complete_is_refused(
-        self, project: Project, edit: Edit, options: tuple[str, ...], message: str
+        self,
+        project: Project,
+        edit: Edit,
+        options: tuple[str, ...],
+        message: str,
+        echoed: EchoedFailures,
     ) -> None:
         result = _manifest(project(edit), *options)
 
         assert result.exit_code == 1
         assert result.stdout == ""
-        assert message in result.stderr
+        assert message in echoed.messages
 
-    def test_no_skip_hides_an_event_trigger_naming_no_job(self, project: Project) -> None:
+    def test_no_skip_hides_an_event_trigger_naming_no_job(
+        self, project: Project, echoed: EchoedFailures
+    ) -> None:
         missing = _set("lambda.functions.invoices_in.trigger.job", "MissingJob")
 
         result = _manifest(project(missing), "--skip", "app.rest")
 
         assert result.exit_code == 1
         assert result.stdout == ""
-        assert "'MissingJob', which is no discovered Job" in result.stderr
+        assert "'MissingJob', which is no discovered Job" in echoed.messages
 
     @pytest.mark.parametrize(
         ("written", "named"),

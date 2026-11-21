@@ -27,6 +27,7 @@ import typer
 
 from loom.composition.checked import CheckedProject
 from loom.core.config.errors import ConfigError
+from loom.core.logger.failure import public_form
 from loom.serverless.aws.lambda_.trigger_jobs import check_triggers
 
 ConfigArgument = Annotated[
@@ -62,7 +63,7 @@ def check(
         print_report(checked, err=False)
         check_triggers(checked)
     except ConfigError as exc:
-        typer.echo(str(exc), err=True)
+        typer.echo(public_form(exc), err=True)
         raise typer.Exit(1) from exc
     if checked.report.errors:
         raise typer.Exit(1)

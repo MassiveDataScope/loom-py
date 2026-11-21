@@ -14,6 +14,7 @@ import typer
 
 from loom.cli.check import ConfigArgument, check_config, print_report
 from loom.core.config.errors import ConfigError
+from loom.core.logger.failure import public_form
 from loom.serverless.aws.lambda_.manifest import build_manifest
 
 deploy_app = typer.Typer(no_args_is_help=True, help="Describe what a deployment needs.")
@@ -46,7 +47,7 @@ def manifest(
             raise typer.Exit(1)
         document = build_manifest(checked.project, function)
     except ConfigError as exc:
-        typer.echo(str(exc), err=True)
+        typer.echo(public_form(exc), err=True)
         raise typer.Exit(1) from exc
     encoded = msgspec.json.encode(document, order="sorted")
     typer.echo(msgspec.json.format(encoded, indent=2).decode())

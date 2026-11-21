@@ -6,6 +6,8 @@ import logging
 import threading
 from dataclasses import dataclass, field
 
+from loom.core.logger.failure import public_form
+
 _log = logging.getLogger(__name__)
 
 _FAILURE_WARNINGS_LIMIT = 10
@@ -20,7 +22,7 @@ class SerializationStats:
     def record(self, exc: BaseException) -> int:
         with self._lock:
             self.failures += 1
-            self.last_error = f"{type(exc).__name__}: {exc}"
+            self.last_error = public_form(exc)
             return self.failures
 
 

@@ -9,7 +9,7 @@ from types import MappingProxyType
 from typing import Final, cast
 
 from loom.core.config.errors import ConfigError
-from loom.core.environment import Environment
+from loom.core.environment import Environment, resolve_environment
 from loom.core.logger.filter import LogFilter
 from loom.core.logger.formats import (
     json_format,
@@ -21,6 +21,7 @@ from loom.core.logger.log_events import LoggerLogEvent, LoggerLogField
 from loom.core.logger.record import LoomRecordFactory, TraceIds, loom_trace_ids
 from loom.core.logger.settings import LogSettings
 from loom.core.logger.stamp import LogIdentity, LogRuntime
+from loom.core.logger.uncaught import install_process_hooks
 from loom.core.logger.values import MAX_LIST_ITEMS
 from loom.core.logger.vocabulary import LogField
 from loom.core.plugins.entrypoints import (
@@ -96,6 +97,26 @@ class LogInstallation:
     def running_as(self, runtime: LogRuntime) -> None:
         """Stamp the following records as emitted by *runtime*."""
         self.factory.running_as(runtime)
+
+
+def install_entry_point() -> None:
+    """Make a runtime entry point safe before it reads any configuration.
+
+    Lambda Init and the ``loom`` command run before logging is configured: the
+    record factory goes in first, so a failure to read the configuration is
+    logged with no message, and the process hooks (uncaught exceptions,
+    threads, unraisable exceptions, warnings) report through loom. The
+    environment is the process's, or production when ``LOOM_ENV`` is unreadable.
+    """
+    install_record_factory(LogIdentity(environment=_environment_name()))
+    install_process_hooks()
+
+
+def _environment_name() -> str:
+    try:
+        return resolve_environment().value
+    except ConfigError:
+        return Environment.PRODUCTION.value
 
 
 def install_record_factory(

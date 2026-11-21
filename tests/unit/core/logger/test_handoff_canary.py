@@ -11,27 +11,51 @@ from __future__ import annotations
 
 import ast
 import asyncio
+import inspect
 import traceback
 from collections.abc import AsyncIterator, Callable, MutableMapping
 from contextlib import asynccontextmanager, suppress
+from types import SimpleNamespace
 from typing import Any
 
+import msgspec
 import pytest
 from celery.exceptions import Retry
+from prefect.states import exception_to_failed_state
 from starlette.applications import Starlette
+from typer.testing import CliRunner
 
+from loom.ai._transport import failure_event
+from loom.ai.a2a.events import A2AEventProjector
+from loom.ai.abc import AiHandoff
+from loom.ai.errors import AgentRunError, AgentRunErrorCode
+from loom.ai.fastapi.endpoints import _run_error_response
+from loom.ai.fastapi.streaming import encode_sse_event
 from loom.celery.runner import CeleryHandoff, _CeleryProcessBridge
 from loom.celery.runtime import _WorkerLifecycle
+from loom.cli import CliHandoff
+from loom.cli.app import app as cli_app
 from loom.core.errors import Conflict
 from loom.core.job.job import Job
 from loom.core.job.policy import Backoff
 from loom.core.logger.failure import FailureReference, Handoff
+from loom.core.observability.observability import Observability
+from loom.prefect._config import flow_config_from_mapping
+from loom.prefect.flow._assemble import FlowSettings, PrefectHandoff, assemble_flow
+from loom.prefect.flow._hooks import _event_from_run
+from loom.prefect.notify._slack import SlackNotifier
+from loom.prefect.notify._sns import _render_message as _render_sns_message
 from loom.rest.errors import HttpErrorMapper
 from loom.rest.fastapi.runtime import RestHandoff, application_lifespan
 from loom.serverless.aws.lambda_.boundary import LambdaBoundary, LambdaHandoff, lambda_init
+from loom.streaming.core._errors import StreamingHandoff
+from loom.streaming.core._message import Message, MessageMeta
+from loom.streaming.kafka._record import KafkaRecord
+from loom.streaming.kafka._wire import try_decode_record
 from tests.helpers.canary import CANARY, raise_canary_failure
 from tests.helpers.jobs import CeleryWorker
 from tests.helpers.source_tree import parsed, source_files
+from tests.unit.streaming.doubles import AcmePayload
 
 
 def _raised_text(call: Callable[[], object]) -> str:
@@ -147,6 +171,124 @@ def _celery_worker_init() -> str:
     return refused + terminated
 
 
+class _CanaryParams(msgspec.Struct):
+    pass
+
+
+def _prefect_failed_state() -> Any:
+    """The ``Failed`` state Prefect builds from what a loom-built flow raised."""
+    settings = FlowSettings(
+        correlation_field=None,
+        schedule=None,
+        raw_params={},
+        pool_config={},
+        tags=(),
+        notifiers=(),
+        retry_policy=flow_config_from_mapping(None),
+    )
+    flow = assemble_flow(
+        name="canary",
+        body=raise_canary_failure,
+        signature=inspect.Signature(),
+        params_type=_CanaryParams,
+        settings=settings,
+        config_path=__file__,
+        source_file=__file__,
+    )
+    try:
+        flow.fn()
+    except BaseException as caught:  # noqa: BLE001 - Prefect turns whatever the body raised
+        return asyncio.run(exception_to_failed_state(caught))
+    pytest.fail("the flow raised nothing")
+
+
+def _prefect_flow_state() -> str:
+    state = _prefect_failed_state()
+    return f"{state.message}{state.data!r}"
+
+
+def _prefect_notification() -> str:
+    state = _prefect_failed_state()
+    run = SimpleNamespace(name="run", parameters={}, id=None, total_run_time=None)
+    event = _event_from_run("canary", run, state, "Failed")
+    slack = SlackNotifier(webhook_url="https://hooks.example/x")._render(event)
+    return repr(slack) + _render_sns_message(event)
+
+
+def _streaming_error_envelope() -> str:
+    pytest.importorskip("bytewax")
+    from loom.streaming.bytewax import _error_boundary  # noqa: PLC0415 - needs bytewax
+
+    envelope = _error_boundary._execute_in_boundary(
+        _error_boundary._classify_task,
+        Message(payload=AcmePayload(value="v"), meta=MessageMeta(message_id="m-1")),
+        raise_canary_failure,
+        _error_boundary.ErrorBoundary(observer=Observability.noop(), flow="orders"),
+    )
+    return repr(envelope)
+
+
+class _RaisingCodec:
+    def decode(self, data: bytes, payload_type: type[Any]) -> Any:
+        raise_canary_failure()
+
+
+def _streaming_wire_error() -> str:
+    record = KafkaRecord(topic="orders", key=b"k", value=b"x", partition=0, offset=1)
+    return repr(try_decode_record(record, AcmePayload, _RaisingCodec()))  # type: ignore[arg-type]
+
+
+def _streaming_dlq_header() -> str:
+    pytest.importorskip("bytewax")
+    from loom.streaming.bytewax import _runtime_io  # noqa: PLC0415 - needs bytewax
+    from loom.streaming.kafka._errors import KafkaDeliveryError  # noqa: PLC0415
+    from tests.unit.streaming.bytewax.cases import AcmeOrder, build_compiled_sink  # noqa: PLC0415
+    from tests.unit.streaming.kafka.doubles import RawProducerStub  # noqa: PLC0415
+
+    raw = RawProducerStub()
+    raw.flush_errors = [KafkaDeliveryError(CANARY)]
+    original = _runtime_io.KafkaProducerClient
+    _runtime_io.KafkaProducerClient = lambda settings: raw  # type: ignore[assignment,misc]
+    try:
+        sink = _runtime_io._KafkaMessageSinkPartition(build_compiled_sink(dlq_topic="orders.dlq"))
+        sink.write_batch(
+            [Message(payload=AcmeOrder(order_id="a"), meta=MessageMeta(message_id="m"))]
+        )  # type: ignore[list-item]
+    finally:
+        _runtime_io.KafkaProducerClient = original  # type: ignore[misc]
+    return repr([record.headers for record in raw.sent if record.topic == "orders.dlq"])
+
+
+def _run_error(code: AgentRunErrorCode) -> AgentRunError:
+    return AgentRunError(code, CANARY, interaction_id="i-1")
+
+
+def _ai_sse_error_event() -> str:
+    return encode_sse_event(failure_event(_run_error(AgentRunErrorCode.RUN_TIMEOUT))).decode()
+
+
+def _ai_http_error_body() -> str:
+    bodies = [
+        _run_error_response(_run_error(code)).body
+        for code in (
+            AgentRunErrorCode.MAX_ITERATIONS_EXCEEDED,
+            AgentRunErrorCode.PROVIDER_UNAVAILABLE,
+        )
+    ]
+    return repr(bodies)
+
+
+def _ai_a2a_task_status() -> str:
+    projector = A2AEventProjector(task_id="t-1", context_id="c-1", max_steps=3)
+    return repr(projector.project(failure_event(_run_error(AgentRunErrorCode.RUN_TIMEOUT))))
+
+
+def _cli_error_output() -> str:
+    result = CliRunner().invoke(cli_app, ["schema", "init", f"Bad-{CANARY}"])
+    assert result.exit_code == 1, result.output
+    return result.output
+
+
 DRIVERS: dict[Handoff, Callable[[], str]] = {
     LambdaHandoff.INIT: _lambda_init,
     LambdaHandoff.INVOKE: _lambda_invoke,
@@ -157,6 +299,15 @@ DRIVERS: dict[Handoff, Callable[[], str]] = {
     CeleryHandoff.RETRY: lambda: _celery(_celery_retry),
     CeleryHandoff.FAILURE_CALLBACK: lambda: _celery(_celery_failure_callback),
     CeleryHandoff.WORKER_INIT: _celery_worker_init,
+    PrefectHandoff.FLOW_STATE: _prefect_flow_state,
+    PrefectHandoff.NOTIFICATION: _prefect_notification,
+    StreamingHandoff.ERROR_ENVELOPE: _streaming_error_envelope,
+    StreamingHandoff.WIRE_ERROR: _streaming_wire_error,
+    StreamingHandoff.DLQ_HEADER: _streaming_dlq_header,
+    AiHandoff.SSE_ERROR_EVENT: _ai_sse_error_event,
+    AiHandoff.HTTP_ERROR_BODY: _ai_http_error_body,
+    AiHandoff.A2A_TASK_STATUS: _ai_a2a_task_status,
+    CliHandoff.ERROR_OUTPUT: _cli_error_output,
 }
 
 

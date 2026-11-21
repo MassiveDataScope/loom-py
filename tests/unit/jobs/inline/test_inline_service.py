@@ -13,6 +13,7 @@ from loom.core.job.delivery import JobDelivery
 from loom.core.job.handle import JobGroup, JobHandle
 from loom.core.job.job import Job
 from loom.core.job.outcome import JobAbandonment
+from loom.core.logger.failure import exception_type
 from loom.core.use_case import Delivery
 from tests.helpers.jobs import InlineServiceFixture, JobKernel
 
@@ -176,7 +177,7 @@ class TestCallbacks:
         await flush_pending_dispatches()
         await service.wait_until_idle()
 
-        assert Hooks.calls == [("failure", "FinalError")]
+        assert Hooks.calls == [("failure", exception_type(FinalError))]
 
     async def test_a_failing_success_callback_keeps_the_job_result(
         self, service: InlineServiceFixture

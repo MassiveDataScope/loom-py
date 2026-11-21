@@ -325,12 +325,7 @@ def failure_event(exc: BaseException) -> ErrorEvent:
         event = failure_event(AgentRunError(AgentRunErrorCode.RUN_TIMEOUT, "late"))
     """
     if isinstance(exc, AgentRunError):
-        return ErrorEvent(
-            code=exc.code,
-            message=str(exc),
-            interaction_id=exc.interaction_id,
-            usage=exc.usage,
-        )
+        return ErrorEvent.of_failure(exc)
     return ErrorEvent(code=AgentRunErrorCode.PROVIDER_UNAVAILABLE, message=_UNEXPECTED_FAILURE)
 
 

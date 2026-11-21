@@ -13,6 +13,7 @@ from prefect import Flow
 from loom.etl import ETLPipeline, ETLProcess, ETLStep, FromTable, IntoTable
 from loom.prefect import BackfillChunk, backfill_flow
 from loom.prefect.flow import _backfill_body
+from tests.helpers.handoffs import prefect_failure
 from tests.unit.prefect.doubles import AcmeSampleParams, AcmeWindowStagingProcess
 
 _CHUNK_PROCESS = "AcmeWindowStagingProcess"
@@ -383,7 +384,7 @@ class TestBackfillFlow:
         self, match: str, start_from: str, tmp_path: Path, runner: MagicMock
     ) -> None:
         flow = _build_flow(tmp_path)
-        with pytest.raises(ValueError, match=match):
+        with prefect_failure(ValueError, match=match):
             flow.fn(
                 updated_at_from=datetime(2024, 1, 1, tzinfo=UTC),
                 updated_at_to=datetime(2024, 1, 3, tzinfo=UTC),

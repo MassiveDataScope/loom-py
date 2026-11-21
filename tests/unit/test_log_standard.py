@@ -1,4 +1,4 @@
-"""The static call-site guard: what it refuses, and the allow-list of code still outside it."""
+"""The static guards, logging calls and exception text, and the code still outside them."""
 
 from __future__ import annotations
 
@@ -6,9 +6,12 @@ from pathlib import Path
 
 import pytest
 
-from loom.testing.log_calls import log_call_offences
+from loom.testing.log_calls import exception_text_offences, log_call_offences
 from tests.helpers.log_standard import (
+    EXCEPTION_TEXT_EXITS,
+    UNMIGRATED_EXCEPTION_TEXT,
     UNMIGRATED_PACKAGES,
+    exception_text_sites,
     is_unmigrated,
     loom_offences,
     module_of,
@@ -110,3 +113,59 @@ class TestLoomCallSites:
         ]
 
         assert stale == []
+
+
+def _text_rules(tmp_path: Path, body: str) -> list[str]:
+    source = tmp_path / "sample.py"
+    source.write_text(body)
+    return [offence.rule for offence in exception_text_offences([source])]
+
+
+_EXCEPT = "try:\n    run()\nexcept Exception as exc:\n"
+
+
+class TestExceptionText:
+    @pytest.mark.parametrize(
+        ("line", "rule"),
+        [
+            ("    raise ConfigError(f'bad: {exc}')\n", "an f-string of the exception 'exc'"),
+            ("    payload = {'reason': str(exc)}\n", "str(...) of the exception 'exc'"),
+            ("    body = repr(exc.args)\n", "repr(...) of the exception 'exc'"),
+            ("    text = 'failed: %s' % (exc,)\n", "a % format of the exception 'exc'"),
+            ("    text = 'failed: {}'.format(exc)\n", ".format(...) of the exception 'exc'"),
+            ("    text = str(exc.args[0])\n", "str(...) of the exception 'exc'"),
+            ("    text = traceback.format_exc()\n", "traceback.format_exc(...)"),
+        ],
+    )
+    def test_the_text_of_an_except_bound_name_is_refused(
+        self, tmp_path: Path, line: str, rule: str
+    ) -> None:
+        assert _text_rules(tmp_path, _EXCEPT + line) == [rule]
+
+    def test_the_text_of_a_parameter_typed_as_an_exception_is_refused(self, tmp_path: Path) -> None:
+        body = "def answer(error: LoomError | None) -> str:\n    return f'{error}'\n"
+
+        assert _text_rules(tmp_path, body) == ["an f-string of the exception 'error'"]
+
+    @pytest.mark.parametrize(
+        "body",
+        [
+            _EXCEPT + "    reason = public_form(exc)\n",
+            _EXCEPT + "    name = type(exc).__name__\n",
+            _EXCEPT + "    code = f'{exc.code}'\n",
+            "def mapping(error: JSONRPCError) -> str:\n    return str(error['message'])\n",
+            _EXCEPT + "    pass\ntext = str(exc)\n",
+        ],
+        ids=["public-form", "type-name", "attribute", "subscript-of-a-mapping", "out-of-scope"],
+    )
+    def test_what_is_not_the_exception_text_passes(self, tmp_path: Path, body: str) -> None:
+        assert _text_rules(tmp_path, body) == []
+
+
+class TestLoomExceptionText:
+    def test_every_module_formats_exception_text_only_where_it_is_listed(self) -> None:
+        listed = {module: count for module, (count, _) in EXCEPTION_TEXT_EXITS.items()}
+        for module, count in UNMIGRATED_EXCEPTION_TEXT.items():
+            listed[module] = listed.get(module, 0) + count
+
+        assert exception_text_sites() == listed

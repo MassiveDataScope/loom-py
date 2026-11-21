@@ -10,6 +10,7 @@ from tests.helpers.version_limited_extras import require_bytewax
 
 require_bytewax()
 
+from loom.core.logger.failure import public_form  # noqa: E402
 from loom.streaming.bytewax import _runtime_io  # noqa: E402
 from loom.streaming.core._errors import (  # noqa: E402
     ErrorEnvelope,
@@ -31,6 +32,9 @@ from tests.unit.streaming.bytewax.cases import AcmeOrder, build_compiled_sink  #
 from tests.unit.streaming.kafka.doubles import RawProducerStub  # noqa: E402
 
 pytestmark = pytest.mark.bytewax
+
+
+_DLQ_ERROR = public_form(KafkaDeliveryError("broker down")).encode()
 
 
 def _failing_sink_producer(monkeypatch: pytest.MonkeyPatch) -> RawProducerStub:
@@ -90,7 +94,7 @@ class TestMessageDlqRecords:
         assert second.headers[HEADER_TRACE_ID] == b"trace-old-2"
         assert first.headers[HEADER_PARENT_TRACE_ID] == b"grandparent-1"
         assert second.headers[HEADER_PARENT_TRACE_ID] == b"grandparent-2"
-        assert first.headers["x-dlq-error"] == b"broker down"
+        assert first.headers["x-dlq-error"] == _DLQ_ERROR
 
     def test_message_dlq_record_keeps_the_message_key(
         self, monkeypatch: pytest.MonkeyPatch
@@ -170,7 +174,7 @@ class TestErrorEnvelopeDlqRecords:
         assert first.key == b"tenant-a"
         assert first.headers["x-error-kind"] == b"task"
         assert first.headers["x-error-reason"] == b"boom"
-        assert first.headers["x-dlq-error"] == b"broker down"
+        assert first.headers["x-dlq-error"] == _DLQ_ERROR
         assert HEADER_PARENT_TRACE_ID not in second.headers
         assert HEADER_CORRELATION_ID not in second.headers
         assert second.key is None
@@ -211,4 +215,4 @@ class TestDecodeErrorDlqRecords:
         assert record.headers[HEADER_CAUSATION_ID] == b"cause-1"
         assert record.headers["x-error-kind"] == b"wire"
         assert record.headers["x-error-reason"] == b"bad wire"
-        assert record.headers["x-dlq-error"] == b"broker down"
+        assert record.headers["x-dlq-error"] == _DLQ_ERROR
