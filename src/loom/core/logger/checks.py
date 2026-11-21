@@ -4,7 +4,8 @@
 ``loom.logger.E002``: ``level`` or a ``named_levels`` value is not a log level.
 ``loom.logger.E003``: ``user_identity`` is not ``hash``, ``id`` or ``none``.
 ``loom.logger.E004``: ``user_identity`` is ``hash`` and ``user_hash_key`` is missing.
-``loom.logger.W001``: ``user_identity`` is ``none`` in production.
+``loom.logger.W001``: ``user_identity`` is ``none`` in production, as the
+configuration was loaded for (``loom check --env`` included).
 
 Neither resolves a placeholder; a value that holds one is not judged.
 """
@@ -15,7 +16,7 @@ from typing import TYPE_CHECKING, Final
 
 from loom.core.checks import CheckSet, Finding
 from loom.core.config.keys import INTERPOLATION
-from loom.core.environment import Environment, resolve_environment
+from loom.core.environment import Environment
 from loom.core.logger.install import format_names
 from loom.core.logger.settings import UserIdentityMode, is_log_level
 
@@ -108,7 +109,7 @@ def _hash_key_present(config: ConfigContext) -> Finding | None:
 
 @CHECKS.register(NO_USER_IDENTITY_CHECK)
 def _user_identity_in_production(config: ConfigContext) -> Finding | None:
-    if resolve_environment() is not Environment.PRODUCTION:
+    if config.environment is not Environment.PRODUCTION:
         return None
     mode = _written(config).get("user_identity", UserIdentityMode.NONE)
     if mode != UserIdentityMode.NONE:

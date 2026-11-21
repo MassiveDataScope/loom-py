@@ -174,7 +174,9 @@ def load_application_config(
     """
     config = load_config(*paths, resolvers=resolvers, keyed=keyed)
     resolved = resolve_environment(environment)
-    context = ConfigContext(_apply_overrides(config, override_variables(), resolved))
+    context = ConfigContext(
+        _apply_overrides(config, override_variables(), resolved), environment=resolved
+    )
     reject_retired_sections(context)
     return context
 
