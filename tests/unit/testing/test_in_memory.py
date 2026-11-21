@@ -362,10 +362,25 @@ async def _create_in_batch(repo: InMemoryRepository[_Stamped], row: _Stamped) ->
     return created
 
 
+def _note_creator(cmd: _NoteCmd, next_id: int) -> _Stamped:
+    return _Stamped(key=f"k{next_id}", note=str(cmd.note))
+
+
 class TestServerStamps:
     @pytest.fixture
     def repo(self) -> InMemoryRepository[_Stamped]:
         return InMemoryRepository(_Stamped)
+
+    async def test_a_creator_entity_is_stamped_like_a_command_one(self) -> None:
+        repo = InMemoryRepository(_Stamped, creator=_note_creator)
+        before = datetime.now(UTC)
+
+        created = await repo.create(_NoteCmd(note="new"))
+
+        assert created.key == "k1"
+        assert isinstance(created.created_at, datetime)
+        assert before <= created.created_at <= datetime.now(UTC)
+        assert created.updated_at == created.created_at
 
     @pytest.fixture(params=[_create_one, _create_in_batch], ids=["create", "create_many"])
     def create(self, request: pytest.FixtureRequest) -> _Create:

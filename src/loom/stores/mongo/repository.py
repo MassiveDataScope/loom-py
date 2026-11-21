@@ -471,7 +471,7 @@ class MongoRepository(
             if value is not None and name != self._id_attr
         }
         refuse_key_change(self._model, changes)
-        changes.update(_stamp(self._stamps.on_update))
+        changes = self._stamps.with_update_stamps(changes, to_storage_datetime(_utc_now()))
         if changes:
             document = await self._collection.find_one_and_update(
                 key, {"$set": changes}, return_document=ReturnDocument.AFTER, session=session
@@ -629,7 +629,10 @@ class MongoRepository(
         values = self._creation_columns(data)
         supplied = values.pop(self._id_attr, None)
         key = self._ids.generate() if supplied is None else self._ids.to_storage(supplied)
-        return {_ID: key, **values, **_stamp(self._stamps.missing_in(values))}
+        return {
+            _ID: key,
+            **self._stamps.with_create_stamps(values, to_storage_datetime(_utc_now())),
+        }
 
     def _creation_columns(self, data: msgspec.Struct) -> Document:
         """Return the column fields to store for *data*, keyed by internal name.
@@ -686,14 +689,6 @@ def _equality_group(filter_params: FilterParams | None) -> FilterGroup:
 
 def _utc_now() -> datetime:
     return datetime.now(UTC)
-
-
-def _stamp(fields: frozenset[str]) -> Document:
-    """Return ``fields`` mapped to one shared current UTC timestamp."""
-    if not fields:
-        return {}
-    now = to_storage_datetime(_utc_now())
-    return dict.fromkeys(fields, now)
 
 
 __all__ = ["MongoCollection", "MongoFindCursor", "MongoRepository", "SessionProvider"]
