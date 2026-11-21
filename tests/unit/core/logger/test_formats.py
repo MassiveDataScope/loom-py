@@ -78,14 +78,38 @@ class TestJsonFormatter:
         assert entry["exception.message"] == "amount below zero"
         assert "ValueError: amount below zero" in entry["exception.stacktrace"]
 
-    def test_below_error_the_exception_has_no_stacktrace(self) -> None:
+    def test_below_error_the_exception_is_its_type_only(self) -> None:
         entry = json.loads(JsonFormatter().format(_failure(logging.WARNING)))
 
-        assert (entry["exception.type"], entry["exception.message"]) == (
-            "ValueError",
-            "amount below zero",
-        )
+        assert entry["exception.type"] == "ValueError"
+        assert "exception.message" not in entry
         assert "exception.stacktrace" not in entry
+
+    def test_a_call_can_declare_the_message_safe_below_error(self) -> None:
+        record = _failure(logging.WARNING)
+        record.__dict__[LogField.EXCEPTION_MESSAGE_SAFE.value] = True
+
+        entry = json.loads(JsonFormatter().format(record))
+
+        assert entry["exception.message"] == "amount below zero"
+        assert "exception.stacktrace" not in entry
+        assert LogField.EXCEPTION_MESSAGE_SAFE.value not in entry
+
+    def test_only_true_declares_the_message_safe(self) -> None:
+        record = _failure(logging.WARNING)
+        record.__dict__[LogField.EXCEPTION_MESSAGE_SAFE.value] = "yes"
+
+        assert "exception.message" not in json.loads(JsonFormatter().format(record))
+
+    def test_extra_cannot_forge_the_exception_fields(self) -> None:
+        record = _failure(logging.WARNING)
+        record.__dict__["exception.message"] = "forged"
+        record.__dict__["exception.type"] = "Forged"
+
+        entry = json.loads(JsonFormatter().format(record))
+
+        assert entry["exception.type"] == "ValueError"
+        assert "exception.message" not in entry
 
 
 class TestTextFormatter:
@@ -126,7 +150,53 @@ class TestTextFormatter:
 
         assert "Traceback" not in line
         assert "exception.type=ValueError" in line
+        assert "amount below zero" not in line
+
+    def test_a_call_can_declare_the_message_safe_below_error_in_text_too(self) -> None:
+        record = _failure(logging.WARNING)
+        record.__dict__[LogField.EXCEPTION_MESSAGE_SAFE.value] = True
+
+        line = TextFormatter().format(record)
+
         assert "exception.message=amount below zero" in line
+        assert "Traceback" not in line
+
+
+def _colliding_record(extra: dict[str, str]) -> logging.LogRecord:
+    record = _record()
+    record.__dict__.update(extra)
+    return record
+
+
+class TestReservedKeys:
+    COLLIDING = {
+        "level": "FATAL",
+        "timestamp": "never",
+        "logger": "forged.logger",
+    }
+
+    def test_json_keeps_the_metadata_of_the_record_and_moves_the_colliding_keys(self) -> None:
+        entry = json.loads(JsonFormatter().format(_colliding_record(self.COLLIDING)))
+
+        assert (entry["level"], entry["logger"], entry["message"]) == (
+            "INFO",
+            "billing.invoices",
+            "billing.invoice_issued",
+        )
+        assert entry["timestamp"].endswith("+00:00")
+        assert {key: entry[f"loom.extra.{key}"] for key in self.COLLIDING} == self.COLLIDING
+
+    def test_text_moves_the_colliding_keys_the_same_way(self) -> None:
+        line = TextFormatter().format(_colliding_record(self.COLLIDING))
+
+        assert "loom.extra.level=FATAL" in line
+        assert "loom.extra.logger=forged.logger" in line
+        assert line.count(" level=") == 0
+
+    def test_a_key_that_does_not_collide_is_written_as_given(self) -> None:
+        entry = json.loads(JsonFormatter().format(_record(levels="x")))
+
+        assert entry["levels"] == "x"
 
 
 class _Invoice:

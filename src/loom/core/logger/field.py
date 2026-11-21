@@ -38,3 +38,4 @@ class LogField(StrEnum):
     EXCEPTION_TYPE = "exception.type"
     EXCEPTION_MESSAGE = "exception.message"
     EXCEPTION_STACKTRACE = "exception.stacktrace"
+    EXCEPTION_MESSAGE_SAFE = "loom.exception_message_safe"

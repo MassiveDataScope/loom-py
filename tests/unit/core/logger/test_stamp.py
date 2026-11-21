@@ -106,6 +106,37 @@ class TestContextFilter:
         assert record[LogField.CODE_LINE] == Greeter.greet.__code__.co_firstlineno + 1
         assert record[LogField.CODE_FILE] == __file__
 
+    def test_a_record_with_an_exception_gets_its_type_for_formats_loom_does_not_render(
+        self, stamped: CapturingHandler
+    ) -> None:
+        try:
+            raise ValueError("secret row value")
+        except ValueError:
+            logging.getLogger("tests.stamp").warning("billing.invoice_failed", exc_info=True)
+
+        record = _only(stamped).__dict__
+        assert record[LogField.EXCEPTION_TYPE] == "ValueError"
+        assert LogField.EXCEPTION_MESSAGE.value not in record
+
+    def test_a_record_without_an_exception_gets_no_exception_type(
+        self, stamped: CapturingHandler
+    ) -> None:
+        logging.getLogger("tests.stamp").info("billing.invoice_issued")
+
+        assert LogField.EXCEPTION_TYPE.value not in _only(stamped).__dict__
+
+    def test_the_trace_wins_over_the_context_and_the_context_over_the_identity(
+        self, stamped: CapturingHandler
+    ) -> None:
+        shadowing = {LogField.TRACE_ID: "from-context", LogField.SERVICE_NAME: "from-context"}
+
+        with active_trace_id("from-trace"), log_context(shadowing):
+            logging.getLogger("tests.stamp").info("billing.invoice_issued")
+
+        record = _only(stamped).__dict__
+        assert record[LogField.TRACE_ID] == "from-trace"
+        assert record[LogField.SERVICE_NAME] == "from-context"
+
     def test_the_runtime_is_changed_after_the_filter_was_built(
         self, handler: CapturingHandler
     ) -> None:

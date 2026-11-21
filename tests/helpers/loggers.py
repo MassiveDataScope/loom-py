@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import logging
+import traceback
 from typing import Any
 
 import pytest
@@ -81,6 +82,15 @@ def logged_text(caplog: pytest.LogCaptureFixture) -> str:
     return "\n".join(rendered(record) for record in caplog.records)
 
 
+def exception_text(caplog: pytest.LogCaptureFixture) -> str:
+    """The traceback of every record of *caplog* that carries an exception, one after another."""
+    return "".join(
+        "".join(traceback.format_exception(*record.exc_info))
+        for record in caplog.records
+        if record.exc_info is not None and record.exc_info[0] is not None
+    )
+
+
 def logged_events(caplog: pytest.LogCaptureFixture) -> list[dict[str, Any]]:
     """Each record of *caplog* as ``{"event": message, **fields, "level": ...}``, in order."""
     return [
@@ -89,4 +99,11 @@ def logged_events(caplog: pytest.LogCaptureFixture) -> list[dict[str, Any]]:
     ]
 
 
-__all__ = ["CapturedLog", "CapturingHandler", "logged_events", "logged_text", "rendered"]
+__all__ = [
+    "CapturedLog",
+    "CapturingHandler",
+    "exception_text",
+    "logged_events",
+    "logged_text",
+    "rendered",
+]
