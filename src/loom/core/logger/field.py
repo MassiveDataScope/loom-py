@@ -2,9 +2,10 @@
 
 A key is an OpenTelemetry semantic convention when one exists
 (``service.name``, ``code.function.name``) and ``loom.*`` otherwise. The names
-come from semantic conventions 1.44.0; ``messaging.system.name`` and ``kafka.offset``
-are the names loom chose for what 1.44.0 calls ``messaging.system`` and
-``messaging.kafka.offset``. A key is public: members are never renamed after a release.
+come from the OpenTelemetry semantic conventions specification 1.45.0, which
+renamed ``messaging.system`` to ``messaging.system.name`` and ``messaging.kafka.*`` to
+``kafka.*``. loom follows the specification, not the version of the bundled Python
+package, which is older. A key is public: members are never renamed after a release.
 """
 
 from __future__ import annotations

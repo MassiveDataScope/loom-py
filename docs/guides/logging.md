@@ -56,10 +56,12 @@ log.info(InvoiceLogEvent.ISSUED, extra={LogField.JOB: "SendInvoice"})
   value repeats across loom. An application is free to follow the same layout.
 - loom's field keys are `LogField` members: OpenTelemetry semantic conventions where one
   exists (`service.name`, `code.function.name`, `exception.type`), `loom.*`
-  otherwise. The OpenTelemetry names come from **semantic conventions 1.44.0**; the
-  GenAI keys (`gen_ai.*`) follow the separate GenAI conventions. Two names are loom's
-  choice for what 1.44.0 spells otherwise: `messaging.system.name` (value `aws.sqs` for
-  SQS) and `kafka.offset`. Event names and field keys are part of the public contract of
+  otherwise. The OpenTelemetry names follow **semantic conventions specification 1.45.0**, the
+  release that renamed `messaging.system` to `messaging.system.name` (value `aws.sqs` for
+  SQS) and `messaging.kafka.*` to `kafka.*` (`kafka.offset`). loom follows the
+  specification, not the version of the `opentelemetry-semantic-conventions` Python
+  package, which may be older. The GenAI keys (`gen_ai.*`) follow the separate GenAI
+  conventions. Event names and field keys are part of the public contract of
   a release.
 - A field value is a scalar (`str`, `int`, `float`, `bool`, `None`) or a short list of
   scalars. The formatters write any other object as its type name, never its `repr`; a
@@ -184,7 +186,7 @@ into `extra`. It is built once from this section and reached through
 records add it with `log_context`, under their own responsibility.
 
 `loom check` warns with `loom.logger.W001` when the mode is `none` and the environment
-is production (`LOOM_ENV`, unset meaning production). It cannot know statically whether
+is production, as the configuration was loaded for: `--env production`, or `LOOM_ENV` when the flag is absent (unset meaning production). It cannot know statically whether
 the application emits security events, so it warns whenever production writes no user;
 silence it in `checks.silenced` when none is wanted.
 
