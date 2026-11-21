@@ -8,6 +8,9 @@ scan or a secondary index, so the class declares none of ``FieldReadable``,
 ``Listable`` or ``Countable``: the auto-CRUD gate mounts no list route over it
 and the DI container binds no such capability.
 
+A ``ServerDefault.NOW`` field left empty on create and a ``ServerOnUpdate.NOW``
+field on every update receive the current UTC time, as in the Mongo repository.
+
 Model-to-table mapping is intentionally simple: every model is stored in the
 single table configured under ``stores.<name>.table``. The item primary
 key attribute is the model's ``primary_key`` field, resolved via
@@ -18,6 +21,7 @@ from __future__ import annotations
 
 from collections.abc import Callable, Sequence
 from concurrent.futures import Executor
+from datetime import UTC, datetime
 from decimal import Decimal
 from typing import Any, ClassVar, Generic, cast
 
@@ -47,6 +51,7 @@ from loom.core.stores.repository import (
     Updatable,
 )
 from loom.core.stores.repository.record import (
+    ServerStamps,
     creation_values,
     refuse_key_change,
     single_id_attribute,
@@ -115,6 +120,7 @@ class DynamoDBRepository(
             model, why_single="the repository keys each item by one partition key"
         )
         self._column_fields = frozenset(get_column_fields(model).keys())
+        self._stamps = ServerStamps.of(model)
         self._serializer = TypeSerializer()
         self._deserializer = TypeDeserializer()
         self._client_error = ClientError
@@ -221,6 +227,7 @@ class DynamoDBRepository(
         changes = self._to_internal(data)
         changes.pop(self._id_attr, None)
         refuse_key_change(self._model, changes)
+        changes.update(msgspec.to_builtins(_stamp(self._stamps.on_update)))
         merged = {**self._decode_item(existing), **changes}
         try:
             await self._write(
@@ -343,12 +350,12 @@ class DynamoDBRepository(
     def _creation_item(self, data: msgspec.Struct) -> dict[str, Any]:
         """Return the item to store for *data*, keyed by internal field name.
 
-        Every field that is not ``msgspec.UNSET`` is included, defaults too.
+        Every field that is not ``msgspec.UNSET`` is included, defaults too, and
+        a ``ServerDefault.NOW`` field left empty holds the current UTC time.
         """
-        return cast(
-            dict[str, Any],
-            msgspec.to_builtins(creation_values(self._model, data)),
-        )
+        values = creation_values(self._model, data)
+        values.update(_stamp(self._stamps.missing_in(values)))
+        return cast(dict[str, Any], msgspec.to_builtins(values))
 
     def _to_internal(self, data: msgspec.Struct) -> dict[str, Any]:
         """Serialize a struct to a dict keyed by internal (snake_case) field names."""
@@ -417,6 +424,12 @@ def refuse_business_key_without_hash(model: type) -> None:
             "its primary key; derive the key with ColumnField(primary_key=True, "
             "derived=KeyHash...)"
         )
+
+
+def _stamp(fields: frozenset[str]) -> dict[str, datetime]:
+    """Return *fields* mapped to one shared current UTC time."""
+    now = datetime.now(UTC)
+    return dict.fromkeys(fields, now)
 
 
 def _floats_to_decimal(value: Any) -> Any:

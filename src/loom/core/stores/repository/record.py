@@ -3,12 +3,14 @@
 from __future__ import annotations
 
 from collections.abc import Iterable
+from dataclasses import dataclass
 from typing import Any, ClassVar
 
 import msgspec
 
 from loom.core.config import ConfigError
-from loom.core.model.introspection import derived_key_of, get_id_attributes
+from loom.core.model.enums import ServerDefault, ServerOnUpdate
+from loom.core.model.introspection import derived_key_of, get_column_fields, get_id_attributes
 
 
 class RecordLayout:
@@ -95,6 +97,40 @@ def refuse_key_change(model: type, written: Iterable[str]) -> None:
     derived = derived_key_of(model)
     if derived is not None:
         derived.refuse_change(written)
+
+
+@dataclass(frozen=True, slots=True)
+class ServerStamps:
+    """The timestamp fields a store without server defaults stamps itself.
+
+    Attributes:
+        on_create: Fields stamped with the current UTC time when a create leaves them empty.
+        on_update: Fields stamped with the current UTC time on every update.
+    """
+
+    on_create: frozenset[str]
+    on_update: frozenset[str]
+
+    @classmethod
+    def of(cls, model: type) -> ServerStamps:
+        """Read the stamped fields from the model's ``NOW`` server defaults and updates."""
+        fields = get_column_fields(model)
+        return cls(
+            on_create=frozenset(
+                name
+                for name, info in fields.items()
+                if info.field.server_default is ServerDefault.NOW
+            ),
+            on_update=frozenset(
+                name
+                for name, info in fields.items()
+                if ServerOnUpdate.is_now(info.field.server_onupdate)
+            ),
+        )
+
+    def missing_in(self, values: dict[str, Any]) -> frozenset[str]:
+        """The ``on_create`` fields *values* leaves empty."""
+        return frozenset(name for name in self.on_create if values.get(name) is None)
 
 
 def single_id_attribute(model: type, *, why_single: str) -> str:

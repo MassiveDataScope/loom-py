@@ -108,6 +108,16 @@ def ColumnField(
     )
 
 
+def CreatedAtField() -> Any:
+    """Declare the column the store stamps with the time of the row's insertion."""
+    return ColumnField(server_default=ServerDefault.NOW)
+
+
+def UpdatedAtField() -> Any:
+    """Declare the column the store stamps with the time of the row's insertion and every update."""
+    return ColumnField(server_default=ServerDefault.NOW, server_onupdate=ServerOnUpdate.NOW)
+
+
 def ScopedField(
     column_type: ColumnType | None = None,
     *,

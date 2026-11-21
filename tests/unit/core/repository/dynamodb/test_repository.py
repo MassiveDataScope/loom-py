@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+from datetime import UTC, datetime
 from typing import Any
 from uuid import UUID
 
@@ -7,7 +8,7 @@ import msgspec
 import pytest
 
 from loom.core.errors import Conflict
-from loom.core.model import BaseModel, ColumnField
+from loom.core.model import BaseModel, ColumnField, CreatedAtField, UpdatedAtField
 from loom.core.stores.repository import OnConflict
 from loom.stores.dynamodb.repository import DynamoDBRepository
 from tests.helpers.aws import moto_client
@@ -20,6 +21,33 @@ pytestmark = pytest.mark.asyncio
 
 def _repo(client: Any) -> DynamoDBRepository[Product, int]:
     return DynamoDBRepository(client=client, table_name="products", model=Product)
+
+
+class AcmeStamped(BaseModel):
+    __tablename__ = "products"
+
+    id: int = ColumnField(primary_key=True)
+    name: str = ColumnField(default="")
+    created_at: datetime | None = CreatedAtField()
+    updated_at: datetime | None = UpdatedAtField()
+
+
+class AcmeCreatedOnly(BaseModel):
+    __tablename__ = "products"
+
+    id: int = ColumnField(primary_key=True)
+    name: str = ColumnField(default="")
+    created_at: datetime | None = CreatedAtField()
+
+
+class StampedCreate(msgspec.Struct, omit_defaults=True):
+    id: int
+    name: str = ""
+    created_at: datetime | None = None
+
+
+class StampedUpdate(msgspec.Struct, omit_defaults=True):
+    name: str = ""
 
 
 class PlainProductCreate(msgspec.Struct, omit_defaults=True):
@@ -221,3 +249,58 @@ class TestDynamoDBCreateMany:
 
         assert len(created) == 150
         assert transactions == []
+
+
+class TestDynamoDBTimestamps:
+    async def test_create_stamps_the_fields_it_leaves_empty(
+        self, products_table: MotoTable
+    ) -> None:
+        repo = DynamoDBRepository(
+            client=products_table.client, table_name="products", model=AcmeStamped
+        )
+
+        created = await repo.create(StampedCreate(id=1))
+
+        assert created.created_at is not None
+        assert created.created_at == created.updated_at
+        assert created.created_at.tzinfo is not None
+
+    async def test_create_keeps_a_creation_time_the_caller_sent(
+        self, products_table: MotoTable
+    ) -> None:
+        repo = DynamoDBRepository(
+            client=products_table.client, table_name="products", model=AcmeStamped
+        )
+        sent = datetime(2020, 1, 2, 3, 4, 5, tzinfo=UTC)
+
+        created = await repo.create(StampedCreate(id=1, created_at=sent))
+
+        assert created.created_at == sent
+
+    async def test_update_stamps_the_update_time_and_keeps_the_creation_time(
+        self, products_table: MotoTable
+    ) -> None:
+        repo = DynamoDBRepository(
+            client=products_table.client, table_name="products", model=AcmeStamped
+        )
+        created = await repo.create(StampedCreate(id=1))
+
+        updated = await repo.update(1, StampedUpdate(name="renamed"))
+
+        assert updated is not None
+        assert updated.created_at == created.created_at
+        assert updated.updated_at is not None and updated.updated_at > created.updated_at
+
+    async def test_a_model_with_only_a_creation_time_is_never_stamped_on_update(
+        self, products_table: MotoTable
+    ) -> None:
+        repo = DynamoDBRepository(
+            client=products_table.client, table_name="products", model=AcmeCreatedOnly
+        )
+        created = await repo.create(StampedCreate(id=1))
+
+        updated = await repo.update(1, StampedUpdate(name="renamed"))
+
+        assert created.created_at is not None
+        assert updated is not None and updated.created_at == created.created_at
+        assert "updated_at" not in products_table.items_by_id()["1"]

@@ -12,8 +12,10 @@ from loom.core.model.enums import Cardinality, OnDelete, OnUpdate, ServerDefault
 from loom.core.model.field import (
     ColumnField,
     ColumnType,
+    CreatedAtField,
     Field,
     ScopedField,
+    UpdatedAtField,
 )
 from loom.core.model.introspection import (
     ColumnFieldInfo,
@@ -70,6 +72,8 @@ __all__ = [
     "AuditedTable",
     "BaseModel",
     "BusinessKey",
+    "CreatedAtField",
+    "UpdatedAtField",
     "DerivedKey",
     "KeyHash",
     "KeyMismatch",
