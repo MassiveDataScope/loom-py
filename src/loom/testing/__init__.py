@@ -13,6 +13,7 @@ from loom.testing.jobs import (
     RecordingJobTransport,
 )
 from loom.testing.overrides import Override
+from loom.testing.recording_repository import RecordingRepository, RepositoryCall
 from loom.testing.runner import (
     AgentHandleDouble,
     McpHandleDouble,
@@ -53,6 +54,8 @@ __all__ = [
     "NoopJob",
     "Override",
     "RecordingJobTransport",
+    "RecordingRepository",
+    "RepositoryCall",
     "RepositoryIntegrationHarness",
     "ScenarioDict",
     "SqlGrantHandleDouble",

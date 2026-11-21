@@ -16,9 +16,11 @@ from loom.testing.in_memory import InMemoryRepository
 # ---------------------------------------------------------------------------
 
 
-class Widget(msgspec.Struct):
-    id: int
-    name: str
+class Widget(BaseModel):
+    __tablename__ = "in_memory_widgets"
+
+    id: int = ColumnField(primary_key=True, autoincrement=True)
+    name: str = ColumnField(length=64)
 
 
 class CreateWidgetCmd(msgspec.Struct):
@@ -59,6 +61,33 @@ class _Attempt(BaseModel):
     key: str = ColumnField(primary_key=True, length=32)
     attempt: int = ColumnField(primary_key=True)
     outcome: str = ColumnField(length=16)
+
+
+class _Ticket(BaseModel):
+    __tablename__ = "in_memory_tickets"
+
+    number: int = ColumnField(primary_key=True, autoincrement=True)
+    title: str = ColumnField(length=64)
+
+
+class _CreateTicketCmd(msgspec.Struct):
+    title: str
+
+
+class TestDeclaredPrimaryKey:
+    @pytest.mark.asyncio
+    async def test_a_single_key_not_named_id_keys_the_store(self) -> None:
+        repo: InMemoryRepository[_Ticket] = InMemoryRepository(_Ticket)
+        repo.seed(_Ticket(number=7, title="seeded"))
+
+        created = await repo.create(_CreateTicketCmd(title="created"))
+
+        assert created == _Ticket(number=8, title="created")
+        assert await repo.get_by_id(7) == _Ticket(number=7, title="seeded")
+
+    def test_a_model_without_a_declared_primary_key_is_refused(self) -> None:
+        with pytest.raises(ValueError, match="No primary key field found on _Review"):
+            InMemoryRepository(_Review)
 
 
 class TestCompositePrimaryKey:
