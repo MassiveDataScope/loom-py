@@ -20,7 +20,7 @@ from loom.serverless.aws.lambda_ import LambdaRuntime
 from loom.serverless.aws.lambda_.triggers.http import LambdaHTTPHandler
 from loom.testing import LambdaTestClient
 from tests.helpers.composition import application_of
-from tests.helpers.jobs import InlineServiceFixture, JobKernel, Trail
+from tests.helpers.jobs import InlineServiceFixture, JobActivity, JobKernel
 from tests.helpers.loops import RecordedLoops
 from tests.unit.serverless.aws.lambda_.http._clients import LambdaProject, Reply, lambda_client
 from tests.unit.serverless.aws.lambda_.http._contract_app import PUBLIC_PATH, bearer, seen_by
@@ -237,28 +237,30 @@ class TestLambdaHandler:
 
 
 class RestockedJob(Job[None]):
-    """Records each run in the trail, after some I/O."""
+    """Records each run in the activity, after some I/O."""
 
-    def __init__(self, trail: Trail) -> None:
-        self._trail = trail
+    def __init__(self, activity: JobActivity) -> None:
+        self._activity = activity
 
     async def execute(self) -> None:
         await asyncio.sleep(0.01)
-        self._trail.record("restocked")
+        self._activity.record("restocked")
 
 
 class TestInlineJobsOfAnInvocation:
     @pytest.fixture
-    def inline_jobs(self, trail: Trail) -> InlineServiceFixture:
+    def inline_jobs(self, activity: JobActivity) -> InlineServiceFixture:
         kernel = JobKernel()
-        kernel.container.register_instance(Trail, trail)
+        kernel.container.register_instance(JobActivity, activity)
         return kernel.serve_inline(RestockedJob)
 
     @pytest.fixture
-    def client(self, inline_jobs: InlineServiceFixture, trail: Trail) -> Iterator[LambdaTestClient]:
+    def client(
+        self, inline_jobs: InlineServiceFixture, activity: JobActivity
+    ) -> Iterator[LambdaTestClient]:
         async def restock(request: Request) -> JSONResponse:
             await inline_jobs.dispatch_now(RestockedJob)
-            return JSONResponse({"ran": list(trail.entries)})
+            return JSONResponse({"ran": list(activity.entries)})
 
         app = Starlette(routes=[Route("/restock", restock, methods=["POST"])])
         handler = LambdaHTTPHandler(app, application_of(jobs=inline_jobs))
@@ -266,8 +268,8 @@ class TestInlineJobsOfAnInvocation:
         handler.close()
 
     def test_an_invocation_returns_once_the_inline_job_its_route_dispatched_ran(
-        self, client: LambdaTestClient, trail: Trail
+        self, client: LambdaTestClient, activity: JobActivity
     ) -> None:
         response = client.post("/restock")
 
-        assert (response.json(), trail.entries) == ({"ran": []}, ["restocked"])
+        assert (response.json(), activity.entries) == ({"ran": []}, ["restocked"])

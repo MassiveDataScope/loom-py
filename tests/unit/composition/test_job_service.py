@@ -40,7 +40,7 @@ from loom.jobs.inline import InlineJobTransport
 from loom.rest.fastapi.runtime import FastAPIRuntime
 from loom.testing import ManualTimer, Override
 from tests.helpers.composition import ProjectFactory, WithOverrides
-from tests.helpers.jobs import BROKER, InlineServiceFixture, JobsAdapter, Trail, job_project
+from tests.helpers.jobs import BROKER, InlineServiceFixture, JobActivity, JobsAdapter, job_project
 from tests.helpers.loggers import CapturedLog
 from tests.unit.composition.doubles import AcmePingJob
 
@@ -245,14 +245,14 @@ class TestInlineTimer:
 
 
 class PostponingOnceJob(Job[str]):
-    """Asks to run again at once the first time, and records each of its runs in the trail."""
+    """Asks to run again at once the first time, and records each of its runs in the activity."""
 
-    def __init__(self, trail: Trail) -> None:
-        self._trail = trail
+    def __init__(self, activity: JobActivity) -> None:
+        self._activity = activity
 
     def execute(self, delivery: JobDelivery | None = Delivery()) -> str:
         assert delivery is not None
-        self._trail.record(f"run {delivery.postponements}")
+        self._activity.record(f"run {delivery.postponements}")
         if delivery.postponements == 0:
             raise JobPostponement("not yet", 0)
         return "done"
@@ -265,12 +265,12 @@ class TestInlineShutdown:
     """
 
     @pytest.fixture
-    def compose_over(self, tmp_path: Path, trail: Trail) -> Callable[..., Application]:
+    def compose_over(self, tmp_path: Path, activity: JobActivity) -> Callable[..., Application]:
         def compose(*overrides: Override) -> Application:
             return job_project(tmp_path, {}, "inline").compose(
                 WithOverrides(
                     JobsAdapter(PostponingOnceJob),
-                    Override.instance(Trail, trail).install,
+                    Override.instance(JobActivity, activity).install,
                     *(override.install for override in overrides),
                 )
             )
@@ -289,21 +289,23 @@ class TestInlineShutdown:
     async def test_the_shutdown_mode_decides_what_runs_before_the_application_stops(
         self,
         tmp_path: Path,
-        trail: Trail,
+        activity: JobActivity,
         shutdown: dict[str, Any],
         runs_before_stopping: list[str],
     ) -> None:
         application = job_project(tmp_path, {"jobs": {"shutdown": shutdown}}, "inline").compose(
-            WithOverrides(JobsAdapter(PostponingOnceJob), Override.instance(Trail, trail).install)
+            WithOverrides(
+                JobsAdapter(PostponingOnceJob), Override.instance(JobActivity, activity).install
+            )
         )
 
         async with application.running():
             await application.jobs.dispatch_now(PostponingOnceJob)
 
-        assert trail.entries == runs_before_stopping
+        assert activity.entries == runs_before_stopping
 
     async def test_a_job_sent_now_waits_on_the_timer_while_the_application_runs(
-        self, compose_over: Callable[..., Application], trail: Trail
+        self, compose_over: Callable[..., Application], activity: JobActivity
     ) -> None:
         timer = ManualTimer()
         application = compose_over(Override.instance(JobTimer, timer))
@@ -311,27 +313,27 @@ class TestInlineShutdown:
         async with application.running():
             await application.jobs.dispatch_now(PostponingOnceJob)
 
-            assert (trail.entries, timer.pending) == ([], 1)
+            assert (activity.entries, timer.pending) == ([], 1)
 
     async def test_a_bound_manual_timer_is_closed_on_exit_by_its_own_policy(
-        self, compose_over: Callable[..., Application], trail: Trail
+        self, compose_over: Callable[..., Application], activity: JobActivity
     ) -> None:
         timer = ManualTimer(JobShutdown(mode=ShutdownMode.WAIT))
         application = compose_over(Override.instance(JobTimer, timer))
         async with application.running():
             await application.jobs.dispatch_now(PostponingOnceJob)
 
-        assert (trail.entries, timer.pending, timer.lost) == (["run 0", "run 1"], 0, [])
+        assert (activity.entries, timer.pending, timer.lost) == (["run 0", "run 1"], 0, [])
 
     async def test_a_bound_manual_timer_in_cancel_mode_loses_the_job_on_exit(
-        self, compose_over: Callable[..., Application], trail: Trail
+        self, compose_over: Callable[..., Application], activity: JobActivity
     ) -> None:
         timer = ManualTimer()
         application = compose_over(Override.instance(JobTimer, timer))
         async with application.running():
             await application.jobs.dispatch_now(PostponingOnceJob)
 
-        assert (trail.entries, len(timer.lost)) == ([], 1)
+        assert (activity.entries, len(timer.lost)) == ([], 1)
 
 
 class OpenWatch:

@@ -231,7 +231,7 @@ class SQSServiceFixture(JobService):
         )
 
 
-class Trail:
+class JobActivity:
     """Records what the jobs of a test did; inject it into a job's constructor.
 
     Attributes:

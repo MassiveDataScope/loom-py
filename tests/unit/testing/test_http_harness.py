@@ -24,7 +24,7 @@ from loom.rest.model import RestInterface, RestRoute
 from loom.testing.http_harness import HttpTestHarness
 from loom.testing.in_memory import InMemoryRepository
 from loom.testing.overrides import Override
-from tests.helpers.jobs import Trail
+from tests.helpers.jobs import JobActivity
 
 # ---------------------------------------------------------------------------
 # Domain fixtures
@@ -451,13 +451,13 @@ class TestHarnessOverride:
 class StockedJob(Job[None]):
     """Records the product it was sent for after some I/O, and sends the next until two are."""
 
-    def __init__(self, jobs: JobService, trail: Trail) -> None:
+    def __init__(self, jobs: JobService, activity: JobActivity) -> None:
         self._jobs = jobs
-        self._trail = trail
+        self._activity = activity
 
     async def execute(self, product_id: int) -> None:
         await asyncio.sleep(0.01)
-        self._trail.record(f"stocked {product_id}")
+        self._activity.record(f"stocked {product_id}")
         if product_id == 1:
             await self._jobs.dispatch_now(StockedJob, params={"product_id": 2})
 
@@ -479,11 +479,11 @@ class RestockInterface(RestInterface[Product]):
 
 class TestHarnessJobs:
     @pytest.fixture
-    def client(self, trail: Trail) -> Iterator[TestClient]:
+    def client(self, activity: JobActivity) -> Iterator[TestClient]:
         harness = HttpTestHarness(
             overrides=[
                 Override.repository(Product, InMemoryRepository(Product)),
-                Override.instance(Trail, trail),
+                Override.instance(JobActivity, activity),
             ]
         )
         client = harness.build_app(interfaces=[RestockInterface])
@@ -491,8 +491,8 @@ class TestHarnessJobs:
         client.close()
 
     def test_a_request_returns_once_the_jobs_it_dispatched_and_theirs_have_run(
-        self, client: TestClient, trail: Trail
+        self, client: TestClient, activity: JobActivity
     ) -> None:
         response = client.post("/restocks/1")
 
-        assert (response.status_code, trail.entries) == (200, ["stocked 1", "stocked 2"])
+        assert (response.status_code, activity.entries) == (200, ["stocked 1", "stocked 2"])

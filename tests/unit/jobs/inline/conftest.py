@@ -10,7 +10,12 @@ import pytest
 from loom.core.job.policy import Countdown
 from loom.core.job.timer import JobTimer
 from loom.jobs.inline import AsyncioJobTimer
-from tests.helpers.jobs import InlineServiceFixture, JobKernel, RecordingExecutionObserver, Trail
+from tests.helpers.jobs import (
+    InlineServiceFixture,
+    JobActivity,
+    JobKernel,
+    RecordingExecutionObserver,
+)
 from tests.unit.core.job.conftest import _reset_pending_dispatches as _reset_pending_dispatches
 from tests.unit.jobs.inline._jobs import AcmeError, ChainedJob, RecordedJob
 
@@ -18,14 +23,14 @@ InlineServiceBuilder = Callable[..., InlineServiceFixture]
 
 
 @pytest.fixture
-def inline_service_on(trail: Trail) -> InlineServiceBuilder:
+def inline_service_on(activity: JobActivity) -> InlineServiceBuilder:
     """Build an inline service running the recorded and chained jobs, on a timer and observer."""
 
     def build(
         timer: JobTimer | None = None, observer: RecordingExecutionObserver | None = None
     ) -> InlineServiceFixture:
         kernel = JobKernel()
-        kernel.container.register_instance(Trail, trail)
+        kernel.container.register_instance(JobActivity, activity)
         return kernel.serve_inline(
             RecordedJob,
             ChainedJob,
