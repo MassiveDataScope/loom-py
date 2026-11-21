@@ -23,7 +23,7 @@ from typing import Any, cast
 import pytest
 import yaml
 
-from loom.composition import Project
+from loom.composition import Application, Project
 from loom.core.errors import NestedElevation, NestedIdentityMismatch, UndeclaredStoreWrite
 from loom.core.identity import Identity, reset_identity, set_identity
 from loom.core.use_case.invoker import AppInvoker
@@ -64,16 +64,22 @@ def _config(tmp_path: Path, schema: str) -> str:
 
 
 @pytest.fixture
-async def app(scoped_database: BootstrapFactory, tmp_path: Path) -> AsyncIterator[AppInvoker]:
-    """The composed application's invoker, running against a fresh seeded schema."""
+async def composed(scoped_database: BootstrapFactory, tmp_path: Path) -> AsyncIterator[Application]:
+    """The composed application, running against a fresh seeded schema."""
     schema = f"notes_ident_{secrets.token_hex(3)}"
     database = await scoped_database(schema)
     application = application_for(notes, database, tmp_path, schema=schema)
     await create_schema(database.migrator, application)
     await seed_notes(database.bypass)
-    composed = Project.load(_config(tmp_path, schema), environment="test").compose(FastAPIRuntime())
-    async with composed.running():
-        yield cast(AppInvoker, composed.kernel.invoker)
+    running = Project.load(_config(tmp_path, schema), environment="test").compose(FastAPIRuntime())
+    async with running.running():
+        yield running
+
+
+@pytest.fixture
+def app(composed: Application) -> AppInvoker:
+    """The running application's invoker."""
+    return cast(AppInvoker, composed.kernel.invoker)
 
 
 @pytest.fixture
@@ -128,10 +134,11 @@ class TestNestedIdentity:
     @pytest.mark.parametrize("ambient", [U1], indirect=True)
     @pytest.mark.usefixtures("ambient")
     async def test_h1_a_job_dispatched_after_an_elevation_runs_without_the_flag(
-        self,
-        app: AppInvoker,
+        self, app: AppInvoker, composed: Application
     ) -> None:
         handle = await app.invoke(ElevateThenDispatch)
+
+        await composed.jobs.wait_until_idle()
 
         seen: Seen = handle.wait()
         assert (seen.editor_any, seen.bob_rows_writable, seen.owner_setting) == ("", 0, U1)
@@ -178,8 +185,10 @@ class TestNestedIdentity:
 
     @pytest.mark.parametrize("dispatch", [False, True], ids=["run", "dispatch"])
     async def test_h3_an_inline_job_runs_as_the_invokers_identity(
-        self, app: AppInvoker, dispatch: bool
+        self, app: AppInvoker, composed: Application, dispatch: bool
     ) -> None:
         result = await app.for_identity(ANA).invoke(RunOrDispatchJob, params={"dispatch": dispatch})
+
+        await composed.jobs.wait_until_idle()
 
         assert (result.wait() if dispatch else result) == U1
