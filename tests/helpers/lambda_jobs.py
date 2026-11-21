@@ -16,5 +16,5 @@ def jobs_queue() -> dict[str, Any]:
     """The ``aws`` and ``sqs`` sections mapping the queue ``jobs``, which discards."""
     return {
         "aws": {"region": "eu-west-1"},
-        "sqs": {"queues": {"jobs": {"url": JOBS_URL, "dead_letter": "discard"}}},
+        "sqs": {"queues": {"jobs": {"url": JOBS_URL, "abandoned": "discard"}}},
     }

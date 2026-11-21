@@ -94,7 +94,7 @@ def sqs(request: pytest.FixtureRequest) -> FakeSqs:
 def serve(tmp_path: Path, sqs: FakeSqs, monkeypatch: pytest.MonkeyPatch) -> Iterator[Serve]:
     adapters: list[LambdaRuntime] = []
 
-    def build(dead_letter: str = "redrive", *, fifo: bool = False) -> LambdaHandler:
+    def build(abandoned: str = "dead_letter", *, fifo: bool = False) -> LambdaHandler:
         document = with_worker(
             {
                 "app": {"name": "lambda-sqs"},
@@ -103,7 +103,7 @@ def serve(tmp_path: Path, sqs: FakeSqs, monkeypatch: pytest.MonkeyPatch) -> Iter
             batch_size=5,
         )
         queue = document["sqs"]["queues"]["jobs"]
-        queue["dead_letter"] = "discard" if fifo else dead_letter
+        queue["abandoned"] = "discard" if fifo else abandoned
         if fifo:
             queue["url"] = f"{_JOBS}.fifo"
         project = composition_project(
@@ -202,7 +202,7 @@ class TestSettlementThroughTheHandler:
     @pytest.mark.parametrize(
         ("receive_count", "failed", "dead_lettered"), [(3, ["1"], 0), (4, [], 1)]
     )
-    def test_the_consumer_policy_is_the_redrive_limit_of_its_queue(
+    def test_the_consumer_policy_is_the_dead_letter_limit_of_its_queue(
         self, serve: Serve, sqs: FakeSqs, receive_count: int, failed: list[str], dead_lettered: int
     ) -> None:
         record = _record("1", AcmeFailingJob, receive_count=receive_count)
@@ -240,7 +240,7 @@ class TestSettlementThroughTheHandler:
     def test_an_abandonment_on_a_discard_queue_lists_nothing_and_sends_nothing(
         self, serve: Serve, sqs: FakeSqs
     ) -> None:
-        result = serve(dead_letter="discard")({"Records": [_record("1", AcmeAbandoningJob)]}, None)
+        result = serve(abandoned="discard")({"Records": [_record("1", AcmeAbandoningJob)]}, None)
 
         assert (_failed(result), sqs.batches) == ([], [])
 
@@ -316,7 +316,7 @@ class TestSettlementThroughTheHandler:
     ) -> None:
         record = make_record("1", "x", job_name="MissingJob", receive_count=receive_count)
 
-        result = serve(dead_letter="discard")({"Records": [record]}, None)
+        result = serve(abandoned="discard")({"Records": [record]}, None)
 
         assert _failed(result) == failed
 
@@ -364,7 +364,7 @@ class TestSettlementThroughTheHandler:
     ) -> None:
         record = make_record("1", "x", body="{", receive_count=1)
 
-        result = serve(dead_letter="discard")({"Records": [record]}, None)
+        result = serve(abandoned="discard")({"Records": [record]}, None)
 
         assert (_failed(result), sqs.batches) == ([], [])
 

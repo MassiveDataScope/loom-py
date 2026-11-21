@@ -125,8 +125,8 @@ def config_path(write_config: ConfigWriter, queues: _Queues) -> Path:
             "app": {"name": "loom-it-sqs", "job_service": "sqs"},
             "sqs": {
                 "queues": {
-                    "emails": {"url": queues.standard.url, "dead_letter": "discard"},
-                    "orders": {"url": queues.fifo.url, "dead_letter": "discard"},
+                    "emails": {"url": queues.standard.url, "abandoned": "discard"},
+                    "orders": {"url": queues.fifo.url, "abandoned": "discard"},
                 }
             },
             "lambda": {

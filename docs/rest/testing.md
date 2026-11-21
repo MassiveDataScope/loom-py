@@ -270,7 +270,7 @@ pythonpath = ["src"]
 app: {name: acme-mail, job_service: sqs, packages: [acme_mail]}
 sqs:
   queues:
-    jobs: {url: "https://sqs.eu-west-1.amazonaws.com/111122223333/jobs", dead_letter: discard}
+    jobs: {url: "https://sqs.eu-west-1.amazonaws.com/111122223333/jobs", abandoned: discard}
 lambda:
   functions:
     worker: {trigger: {source: jobs, queue: {name: jobs}}}
@@ -323,7 +323,7 @@ def test_a_failed_email_is_reported_and_comes_back(worker, mail):
 A `jobs` function declares the queue it consumes (`trigger.queue`), and it
 settles each record by what its job came to. `LambdaWorker` needs the
 `testing-aws` extra (moto). It enters moto's `mock_aws()` itself, creates that
-queue and, for `dead_letter: redrive`, its dead-letter queue with a real
+queue and, for `abandoned: dead_letter`, its dead-letter queue with a real
 `RedrivePolicy`, through the application's own `sqs` client, and binds the
 function over it. It sets no environment: botocore resolves the region as it
 does for the application (`aws.region`, a profile of `~/.aws/config`,

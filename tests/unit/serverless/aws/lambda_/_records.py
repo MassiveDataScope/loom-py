@@ -21,7 +21,7 @@ def consumed_queues(*names: str) -> dict[str, Any]:
     queues = {
         name: {
             "url": f"https://sqs.eu-west-1.amazonaws.com/123456789012/{name}",
-            "dead_letter": "discard",
+            "abandoned": "discard",
         }
         for name in names
     }

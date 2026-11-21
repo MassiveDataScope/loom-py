@@ -165,7 +165,7 @@ error, never the payload.
 A `queue:` block reads each message body as the source delivers it to the
 queue it names. A message whose job can still succeed is reported and
 retried; one that fails for good, or cannot be read, is rejected: sent to the
-queue's dead-letter queue on `redrive`, dropped with an ERROR log on `discard`,
+queue's dead-letter queue on `dead_letter`, dropped with an ERROR log on `discard`,
 and not reported. The block takes the keys of a `jobs` trigger's `queue`; the
 retry keys apply to a direct trigger only. A `jobs` function settles its
 messages the same way. An SNS subscription to that queue must not use raw

@@ -33,7 +33,7 @@ _TIME: Final = "2026-01-01T00:00:00Z"
 
 TEST_QUEUE: Final = {
     "url": f"https://sqs.{_REGION}.amazonaws.com/123456789012/loom-jobs",
-    "dead_letter": "discard",
+    "abandoned": "discard",
 }
 """The ``sqs.queues`` entry the default queue ARN of a :class:`LambdaEvent` record names.
 

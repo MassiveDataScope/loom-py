@@ -172,8 +172,8 @@ def _expected() -> dict[str, Any]:
         "handler": "entry.handler",
         "code_path": "src",
         "queues": {
-            "alerts": {"url": _ALERTS_URL, "dead_letter": "redrive"},
-            "jobs": {"url": _QUEUE_URL, "dead_letter": "redrive"},
+            "alerts": {"url": _ALERTS_URL, "abandoned": "dead_letter"},
+            "jobs": {"url": _QUEUE_URL, "abandoned": "dead_letter"},
         },
         "functions": {
             "admin": {

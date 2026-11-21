@@ -2,6 +2,14 @@
 
 ## 💥 Breaking
 
+- **jobs:** `sqs.queues.<name>.dead_letter: redrive | discard` is `abandoned: dead_letter | discard`
+  (default `dead_letter`): the option names what becomes of an abandoned message, since in
+  AWS "redrive" also means moving messages back from a dead-letter queue. `DeadLetterPolicy`
+  (`REDRIVE`, `DISCARD`) is `AbandonedMessage` (`DEAD_LETTER`, `DISCARD`); `QueueConfig.dead_letter`
+  and `SQSQueue.dead_letter_policy` are `abandoned`; the deploy manifest `queues` entries carry
+  `abandoned`; `loom.testing._moto.declare_queue(redrive=)` is `with_dead_letter_queue=`. The old key
+  is refused at load. **Migration:** rename `dead_letter: redrive` to `abandoned: dead_letter` and
+  `dead_letter: discard` to `abandoned: discard`.
 - **composition:** `loom.composition.resources` is `loom.core.resources`, so an
   `Installer` in the core can name `Resource`. **Migration:** import `Resource`,
   `ResourceKind` and `closing` from `loom.core.resources`.

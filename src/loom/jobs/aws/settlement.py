@@ -13,7 +13,7 @@ from loom.core.connections.aws import aws_error_code
 from loom.core.job.outcome import Abandoned, Failed, JobOutcome, Postponed, Succeeded
 from loom.core.job.policy import Countdown
 from loom.core.logger import get_logger
-from loom.jobs.aws.queue import BatchResult, DeadLetterPolicy, SQSQueue, SQSRecord
+from loom.jobs.aws.queue import AbandonedMessage, BatchResult, SQSQueue, SQSRecord
 
 if TYPE_CHECKING:
     from loom.jobs.aws.sqs import SQSConfig
@@ -44,7 +44,7 @@ class _Plan:
             match outcome:
                 case Succeeded():
                     continue
-                case Abandoned() if queue.dead_letter_policy is DeadLetterPolicy.REDRIVE:
+                case Abandoned() if queue.abandoned is AbandonedMessage.DEAD_LETTER:
                     plan.abandonments.append((record, outcome.statement))
                 case Abandoned():
                     plan.discards.append((record, outcome.statement))

@@ -215,7 +215,7 @@ def acme_config() -> dict[str, Any]:
             "queues": {
                 "jobs": {
                     "url": "https://sqs.us-east-1.amazonaws.com/123456789012/loom-jobs",
-                    "dead_letter": "discard",
+                    "abandoned": "discard",
                 }
             }
         },

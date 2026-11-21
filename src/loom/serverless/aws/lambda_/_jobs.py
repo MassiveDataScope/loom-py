@@ -27,7 +27,7 @@ from loom.core.job.settlement import JobSettlement
 from loom.core.logger import get_logger
 from loom.core.observability.event import Scope
 from loom.core.stores import LAMBDA_PROFILE
-from loom.jobs.aws.queue import DeadLetterPolicy, SQSRecord
+from loom.jobs.aws.queue import AbandonedMessage, SQSRecord
 from loom.jobs.aws.settlement import SQSJobSettlement
 from loom.jobs.aws.sqs import SQSConfig
 
@@ -146,9 +146,9 @@ class QueueConsumer(JobConsumer):
 
         Raises:
             ConfigError: When ``sqs.queues`` maps no URL for *queue_name*, a job on a
-                ``redrive`` queue has ``max_attempts`` in its own ``jobs.<Job>.retry``,
+                ``dead_letter`` queue has ``max_attempts`` in its own ``jobs.<Job>.retry``,
                 or the SDK fails to read the queue, naming it.
-            SQSQueueConfigError: When a ``redrive`` queue has no readable ``RedrivePolicy``.
+            SQSQueueConfigError: When a ``dead_letter`` queue has no readable ``RedrivePolicy``.
         """
         config = SQSConfig.load(application.config)
         if queue_name not in config.queues:
@@ -156,7 +156,7 @@ class QueueConsumer(JobConsumer):
         clients = application.kernel.container.resolve(AwsClients)
         settlement = SQSJobSettlement(clients, config, queue_name)
         queue = settlement.queue
-        if queue.dead_letter_policy is DeadLetterPolicy.REDRIVE:
+        if queue.abandoned is AbandonedMessage.DEAD_LETTER:
             try:
                 queue.read_dead_letter(clients.client("sqs", config))
             except aws_island().sdk_errors() as exc:
