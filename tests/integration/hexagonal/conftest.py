@@ -21,17 +21,17 @@ import pytest
 
 from loom.ai.abc import AgentAnswer, AgentUsage
 from loom.ai.errors import require_authenticated
-from loom.celery.adapter import CeleryAdapter
-from loom.composition import Adapter, Application, CompositionSource, Recipe, compose_application
+from loom.celery.runtime import CeleryRuntime
+from loom.composition import Application, Project, Recipe, Runtime
 from loom.core.config import ConfigContext
 from loom.core.di.container import LoomContainer
 from loom.core.identity import ANONYMOUS, Delegation, Identity
 from loom.core.job.envelope import encode_job_message
 from loom.core.use_case.kinds import AGENT, MCP
 from loom.rest.auth import RequestCredentials
-from loom.rest.fastapi import FastAPIAdapter
-from loom.serverless.aws.lambda_ import LambdaAdapter
-from tests.helpers.composition import Serving, composition_source
+from loom.rest.fastapi import FastAPIRuntime
+from loom.serverless.aws.lambda_ import LambdaRuntime
+from tests.helpers.composition import Serving, WithOverrides, composition_project
 from tests.integration.hexagonal.adapters import gateway_root
 from tests.integration.hexagonal.shipping import TrackShipment, TrackShipmentJob
 
@@ -166,26 +166,30 @@ class Stubs:
     agent: StubResolver
     mcp: StubResolver
 
-    def bind(self, container: LoomContainer) -> None:
-        container.kinds.bind(AGENT, self.agent)
-        container.kinds.bind(MCP, self.mcp)
+    def register(self, container: LoomContainer) -> None:
+        container.kinds.register(AGENT, self.agent)
+        container.kinds.register(MCP, self.mcp)
 
 
 class Stubbed:
     """*transport*'s own adapter, composing in testing mode with the stub resolvers bound."""
 
-    def __init__(self, transport: Adapter[Any], stubs: Stubs) -> None:
+    def __init__(self, transport: Runtime[Any], stubs: Stubs, root: Module) -> None:
         self._transport = transport
         self._stubs = stubs
+        self._root = root
 
-    def recipe(self, source: CompositionSource) -> Recipe:
-        recipe = self._transport.recipe(source)
+    def recipe(self, project: Project) -> Recipe:
+        recipe = self._transport.recipe(project)
         return dataclasses.replace(
-            recipe, agents=False, lenient=True, overrides=(*recipe.overrides, self._stubs.bind)
+            recipe,
+            agents=False,
+            lenient=True,
+            overrides=(*recipe.overrides, self._root, self._stubs.register),
         )
 
-    def bind(self, application: Application) -> Any:
-        return self._transport.bind(application)
+    def mount(self, application: Application) -> Any:
+        return self._transport.mount(application)
 
 
 def acme_config() -> dict[str, Any]:
@@ -196,7 +200,7 @@ def acme_config() -> dict[str, Any]:
         "app": {
             "name": "acme-shipping",
             "job_service": "inline",
-            "discovery": {"mode": "modules", "modules": {"include": [SHIPPING]}},
+            "packages": [SHIPPING],
             "rest": {
                 "docs_url": None,
                 "redoc_url": None,
@@ -206,10 +210,19 @@ def acme_config() -> dict[str, Any]:
             },
         },
         "stores": {"default": {"backend": "none"}},
+        "aws": {"region": "us-east-1"},
+        "sqs": {
+            "queues": {
+                "jobs": {
+                    "url": "https://sqs.us-east-1.amazonaws.com/123456789012/loom-jobs",
+                    "abandoned": "discard",
+                }
+            }
+        },
         "lambda": {
             "functions": {
                 API_FUNCTION: {"trigger": api},
-                WORKER_FUNCTION: {"trigger": {"source": "jobs"}},
+                WORKER_FUNCTION: {"trigger": {"source": "jobs", "queue": {"name": "jobs"}}},
             }
         },
         "celery": {
@@ -220,20 +233,20 @@ def acme_config() -> dict[str, Any]:
     }
 
 
-TRANSPORTS: dict[str, Callable[[], Adapter[Any]]] = {
-    "fastapi": lambda: FastAPIAdapter(authenticator=AcmeKeys()),
-    "lambda-http": lambda: LambdaAdapter(function=API_FUNCTION, authenticator=AcmeKeys()),
-    "lambda-jobs": lambda: LambdaAdapter(function=WORKER_FUNCTION, jobs=(TrackShipmentJob,)),
-    "celery": lambda: CeleryAdapter(jobs=(TrackShipmentJob,), use_cases=(TrackShipment,)),
+TRANSPORTS: dict[str, Callable[[], Runtime[Any]]] = {
+    "fastapi": lambda: FastAPIRuntime(authenticator=AcmeKeys()),
+    "lambda-http": lambda: LambdaRuntime(function=API_FUNCTION, authenticator=AcmeKeys()),
+    "lambda-jobs": lambda: LambdaRuntime(function=WORKER_FUNCTION, jobs=(TrackShipmentJob,)),
+    "celery": lambda: CeleryRuntime(jobs=(TrackShipmentJob,), use_cases=(TrackShipment,)),
     "inline-jobs": lambda: Serving(use_cases=(TrackShipment,), jobs=(TrackShipmentJob,)),
 }
 """Each entry point's own adapter, as acme builds it; ``inline-jobs`` mounts no transport."""
 
 
 @pytest.fixture
-def source() -> CompositionSource:
+def project() -> Project:
     """Acme shipping's configuration, held in memory."""
-    return composition_source(ConfigContext.from_dict(acme_config()))
+    return composition_project(ConfigContext.from_dict(acme_config()))
 
 
 @pytest.fixture
@@ -252,20 +265,20 @@ Compose = Callable[..., tuple[Application, Any]]
 
 
 @pytest.fixture
-def compose(source: CompositionSource, stubs: Stubs) -> Iterator[Compose]:
+def compose(project: Project, stubs: Stubs) -> Iterator[Compose]:
     """Compose acme shipping on *transport* with *root*; return the application and its entry.
 
     A Lambda function's handler is closed when the test ends.
     """
-    opened: list[LambdaAdapter] = []
+    opened: list[LambdaRuntime] = []
 
     def build(transport: str, root: Module = gateway_root) -> tuple[Application, Any]:
         adapter = TRANSPORTS[transport]()
-        if isinstance(adapter, LambdaAdapter):
+        if isinstance(adapter, LambdaRuntime):
             opened.append(adapter)
-        stubbed = Stubbed(adapter, stubs)
-        application = compose_application(source, stubbed, modules=(root,))
-        return application, stubbed.bind(application)
+        stubbed = Stubbed(adapter, stubs, root)
+        application = project.compose(stubbed)
+        return application, stubbed.mount(application)
 
     yield build
     for adapter in opened:
@@ -273,10 +286,10 @@ def compose(source: CompositionSource, stubs: Stubs) -> Iterator[Compose]:
 
 
 @pytest.fixture
-def compose_strictly(source: CompositionSource) -> Callable[..., Application]:
+def compose_strictly(project: Project) -> Callable[..., Application]:
     """Compose acme shipping on *transport* with *root* as production does, with no stub."""
 
     def build(transport: str, root: Module = gateway_root) -> Application:
-        return compose_application(source, TRANSPORTS[transport](), modules=(root,))
+        return project.compose(WithOverrides(TRANSPORTS[transport](), root))
 
     return build

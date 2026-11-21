@@ -1,8 +1,0 @@
-includes:
-  - conf.yaml
-
-app:
-  discovery:
-    mode: manifest
-    manifest:
-      module: tests.integration.fake_repo.manifest

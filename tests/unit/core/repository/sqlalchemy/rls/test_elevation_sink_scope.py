@@ -17,16 +17,16 @@ import pytest
 
 from loom.core.authz import Decision, Grant, Permission, Role, RoleCatalog, Scope
 from loom.core.authz.elevation import elevate_scope, elevation_scope
-from loom.core.persistence.stores import DEFAULT_STORE
-from loom.core.repository.sqlalchemy.session_manager import SessionManager
-from loom.core.uow.abc import UnitOfWork
-from loom.core.uow.coordinator import OrderedCommits, PhysicalStore
-from loom.core.uow.scope import Frame, invocation
+from loom.core.stores.catalog import DEFAULT_STORE
+from loom.core.stores.uow.abc import UnitOfWork
+from loom.core.stores.uow.coordinator import OrderedCommits, PhysicalStore
+from loom.core.stores.uow.scope import Frame, invocation
+from loom.stores.sqlalchemy.session_manager import SessionManager
 from tests.helpers.elevation import sink_for
 
 WRITE = Permission("rows.write")
 CATALOG = RoleCatalog((WRITE,), (Role("editor", (WRITE,)),))
-BOUNDARY = Scope.of("b1")
+BOUNDARY = Scope.from_segments("b1")
 ON = {"loom.scope.editor.any": "on"}
 CLEARED = {"loom.scope.editor.any": ""}
 
@@ -67,8 +67,8 @@ class _RecordingSession:
 class _PhasedUnitOfWork:
     """A phased unit of work of ``owner`` whose session is ``session``."""
 
-    transactional: ClassVar[bool] = True
-    phased: ClassVar[bool] = True
+    is_transactional: ClassVar[bool] = True
+    is_phased: ClassVar[bool] = True
 
     def __init__(self, owner: SessionManager, session: _RecordingSession) -> None:
         self.owner = owner
@@ -118,7 +118,7 @@ async def manager() -> AsyncIterator[SessionManager]:
     try:
         yield built
     finally:
-        await built.dispose()
+        await built.close()
 
 
 def _decision() -> Decision:

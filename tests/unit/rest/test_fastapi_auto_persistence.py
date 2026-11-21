@@ -1,6 +1,6 @@
 """Persistence resolution in the auto-bootstrap REST app.
 
-Backends are reached by name through the ``loom.persistence.backends`` entry
+Backends are reached by name through the ``loom.stores.plugins`` entry
 point group; these tests exercise the three loom registers, an injected one,
 and the bootstrap steps around them.
 """
@@ -15,23 +15,24 @@ from typing import Any, ClassVar, cast
 import pytest
 
 import loom.core.plugins.entrypoints as entrypoints_module
-import loom.core.repository.mongo.backend as mongo_backend_module
-import loom.core.repository.sqlalchemy.backend as sqlalchemy_backend_module
+import loom.stores.mongo.plugin as mongo_backend_module
+import loom.stores.sqlalchemy.plugin as sqlalchemy_backend_module
 from loom.composition import AiWiring, AppConfig
 from loom.core.config import ConfigContext
 from loom.core.config.errors import ConfigError
 from loom.core.discovery.base import DiscoveryResult
 from loom.core.model import BaseModel, ColumnField
-from loom.core.persistence import NoneBackend, PersistenceWiring
-from loom.core.persistence.profile import SERVER_PROFILE, BackendRuntime
-from loom.core.repository.dynamodb.uow import DynamoUnitOfWorkFactory
-from loom.core.repository.mongo.uow import MongoUnitOfWorkFactory
-from loom.core.repository.sqlalchemy.uow import SQLAlchemyUnitOfWorkFactory
+from loom.core.stores import NullStorePlugin, StoreWiring
+from loom.core.stores.catalog import MODELS_ONLY, StoreCapabilities, StoreSpec
+from loom.core.stores.profile import SERVER_PROFILE, StorePluginContext
 from loom.core.use_case.use_case import UseCase
-from loom.rest.fastapi.adapter import _discover_components
 from loom.rest.fastapi.auto import create_app
+from loom.rest.fastapi.runtime import _discover_components
 from loom.rest.model import RestInterface, RestRoute
-from tests.helpers.composition import composition_source
+from loom.stores.dynamodb.uow import DynamoDBUnitOfWorkFactory
+from loom.stores.mongo.uow import MongoUnitOfWorkFactory
+from loom.stores.sqlalchemy.uow import SQLAlchemyUnitOfWorkFactory
+from tests.helpers.composition import composition_project
 from tests.unit.core.repository.mongo._fake import FakeMongoClient
 from tests.unit.rest._composition import SQLITE_STORE, dynamodb_store
 from tests.unit.rest._composition import build_bootstrap as _build_bootstrap
@@ -56,11 +57,11 @@ class PersistenceNoneRecord(BaseModel):
 
 
 def _no_models() -> DiscoveryResult:
-    return DiscoveryResult(models=(), use_cases=(), interfaces=())
+    return DiscoveryResult(models=(), use_cases=())
 
 
 def _agents_only() -> DiscoveryResult:
-    return DiscoveryResult(models=(), use_cases=(), interfaces=(), agent_specs=("agents/*.yaml",))
+    return DiscoveryResult(models=(), use_cases=(), agent_specs=("agents/*.yaml",))
 
 
 @pytest.fixture
@@ -75,7 +76,9 @@ def fake_mongo_client(monkeypatch: pytest.MonkeyPatch) -> FakeMongoClient:
 
 @pytest.fixture
 def agents_only_discovery(monkeypatch: pytest.MonkeyPatch) -> None:
-    monkeypatch.setattr("loom.composition.source.discover", lambda _cfg: _agents_only())
+    monkeypatch.setattr(
+        "loom.composition.project.PackageScanner.discover", lambda self, agents=None: _agents_only()
+    )
     monkeypatch.setattr(AiWiring, "build", classmethod(lambda cls, *args, **kwargs: cls.ABSENT))
 
 
@@ -94,14 +97,12 @@ class TestBackendSelection:
 
         assert isinstance(factory, SQLAlchemyUnitOfWorkFactory)
 
-    def test_selects_dynamodb_backend(
-        self, agents_only_discovery: None, aws_test_credentials: None
-    ) -> None:
+    def test_selects_dynamodb_backend(self, agents_only_discovery: None) -> None:
         _runtime, factory, _discovered, _python_interfaces = _build_bootstrap(
             AppConfig(name="demo"), _ctx(store=_DYNAMODB_STORE)
         )
 
-        assert isinstance(factory, DynamoUnitOfWorkFactory)
+        assert isinstance(factory, DynamoDBUnitOfWorkFactory)
 
     def test_selects_mongo_backend(
         self, agents_only_discovery: None, fake_mongo_client: FakeMongoClient
@@ -124,7 +125,7 @@ class TestBackendSelection:
             tmp_path, store={"backend": "mongodb", "url": "sqlite+aiosqlite:///"}
         )
 
-        with pytest.raises(ConfigError, match="Unknown persistence backend 'mongodb'") as exc_info:
+        with pytest.raises(ConfigError, match="Unknown store plugin 'mongodb'") as exc_info:
             create_app(config_path)
 
         message = str(exc_info.value)
@@ -197,15 +198,19 @@ class _RecordingBackend:
     name: ClassVar[str] = "recording"
     repository_type: ClassVar[type[Any] | None] = None
     events: ClassVar[list[tuple[str, tuple[type[BaseModel], ...]]]] = []
-    runtimes: ClassVar[list[BackendRuntime]] = []
+    contexts: ClassVar[list[StorePluginContext]] = []
+
+    def capabilities(self, spec: StoreSpec) -> StoreCapabilities:
+        del spec
+        return MODELS_ONLY
 
     def build(
-        self, ctx: ConfigContext, models: Sequence[type[BaseModel]], runtime: BackendRuntime
-    ) -> PersistenceWiring:
+        self, ctx: ConfigContext, models: Sequence[type[BaseModel]], context: StorePluginContext
+    ) -> StoreWiring:
         self.events.append(("build", tuple(models)))
-        self.runtimes.append(runtime)
-        wiring = NoneBackend().build(ctx, models, runtime)
-        return PersistenceWiring(
+        self.contexts.append(context)
+        wiring = NullStorePlugin().build(ctx, models, context)
+        return StoreWiring(
             uow_factory=wiring.uow_factory,
             repo_registration_module=wiring.repo_registration_module,
             lifespan_init=wiring.lifespan_init,
@@ -218,7 +223,7 @@ class _RecordingBackend:
 
 class _RecordingEntryPoint:
     name = _RecordingBackend.name
-    group = "loom.persistence.backends"
+    group = "loom.stores.plugins"
 
     def load(self) -> type[_RecordingBackend]:
         return _RecordingBackend
@@ -229,7 +234,7 @@ class _RecordingEntryPoints:
         return (_RecordingEntryPoint(),) if group == _RecordingEntryPoint.group else ()
 
 
-class TestInjectedPersistenceBackend:
+class TestInjectedStorePlugin:
     def test_injected_backend_boots_and_prepares_models_after_build(
         self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
     ) -> None:
@@ -251,36 +256,39 @@ class TestInjectedPersistenceBackend:
     ) -> None:
         monkeypatch.setattr(entrypoints_module, "entry_points", lambda: _RecordingEntryPoints())
         monkeypatch.setattr(_RecordingBackend, "events", [])
-        monkeypatch.setattr(_RecordingBackend, "runtimes", [])
+        monkeypatch.setattr(_RecordingBackend, "contexts", [])
         config_path = write_project(tmp_path, store={"backend": "recording"})
 
         create_app(config_path)
 
-        assert [runtime.profile for runtime in _RecordingBackend.runtimes] == [SERVER_PROFILE]
-        assert _RecordingBackend.runtimes[0].pool_metrics is None
+        assert [context.profile for context in _RecordingBackend.contexts] == [SERVER_PROFILE]
+        assert _RecordingBackend.contexts[0].pool_metrics is None
 
 
 class TestDiscoverComponents:
     def test_discover_components_accepts_agents_only_result(
         self, agents_only_discovery: None
     ) -> None:
-        source = composition_source(ConfigContext.from_dict({"app": {"name": "demo"}}))
-        discovered = _discover_components(source)
+        project = composition_project(ConfigContext.from_dict({"app": {"name": "demo"}}))
+        discovered = _discover_components(project)
 
         assert discovered.agent_specs == ("agents/*.yaml",)
 
     def test_discover_components_rejects_empty_result(
         self, monkeypatch: pytest.MonkeyPatch
     ) -> None:
-        monkeypatch.setattr("loom.composition.source.discover", lambda _cfg: _no_models())
-        source = composition_source(ConfigContext.from_dict({"app": {"name": "demo"}}))
+        monkeypatch.setattr(
+            "loom.composition.project.PackageScanner.discover",
+            lambda self, agents=None: _no_models(),
+        )
+        project = composition_project(ConfigContext.from_dict({"app": {"name": "demo"}}))
 
         with pytest.raises(RuntimeError, match="Nothing discovered") as exc_info:
-            _discover_components(source)
+            _discover_components(project)
 
         message = str(exc_info.value)
-        assert "discovery.mode: manifest" in message
-        assert "AGENTS" in message
+        assert "app.packages" in message
+        assert "app.agents" in message
 
 
 class TestBuildBootstrapModelRules:
@@ -314,7 +322,6 @@ class TestBuildBootstrapModelRules:
         self,
         store: dict[str, object] | None,
         monkeypatch: pytest.MonkeyPatch,
-        aws_test_credentials: None,
     ) -> None:
         """The coherence of an interface with its model does not depend on the backend."""
 
@@ -323,9 +330,9 @@ class TestBuildBootstrapModelRules:
             auto = True
 
         monkeypatch.setattr(
-            "loom.composition.source.discover",
-            lambda _cfg: DiscoveryResult(
-                models=(), use_cases=(), interfaces=_interfaces(OrphanOnAnyBackend), agent_specs=()
+            "loom.composition.project.PackageScanner.discover",
+            lambda self, agents=None: DiscoveryResult(
+                models=(), use_cases=(), classes=(OrphanOnAnyBackend,), agent_specs=()
             ),
         )
         ctx = _ctx(store=store)
@@ -335,7 +342,7 @@ class TestBuildBootstrapModelRules:
             _build_bootstrap(app_config, ctx)
 
         assert "PersistenceNoneRecord" in str(exc_info.value)
-        assert "app.discovery" in str(exc_info.value)
+        assert "app.packages" in str(exc_info.value)
 
     def test_build_bootstrap_accepts_auto_true_with_hand_declared_routes(
         self,
@@ -343,7 +350,7 @@ class TestBuildBootstrapModelRules:
     ) -> None:
         """An interface that declares its own routes generates no CRUD, so it is left alone."""
 
-        class _ListRecords(UseCase[PersistenceNoneRecord, None]):
+        class _ListRecords(UseCase[Any, None]):
             async def execute(self) -> None:  # pragma: no cover - never invoked
                 return None
 
@@ -353,11 +360,11 @@ class TestBuildBootstrapModelRules:
             routes = (RestRoute(use_case=_ListRecords, method="GET", path=""),)
 
         monkeypatch.setattr(
-            "loom.composition.source.discover",
-            lambda _cfg: DiscoveryResult(
+            "loom.composition.project.PackageScanner.discover",
+            lambda self, agents=None: DiscoveryResult(
                 models=(),
                 use_cases=(),
-                interfaces=_interfaces(HandWrittenInterface),
+                classes=(HandWrittenInterface,),
                 agent_specs=(),
             ),
         )

@@ -150,7 +150,7 @@ by the caller's own entitlements. It has no `roles` parameter in any form:
 
 ```python
 from loom.core.identity import Identity
-from loom.core.sql import CallerBoundSql
+from loom.core.stores.sql import CallerBoundSql
 from loom.core.use_case.markers import Caller
 from loom.core.use_case.use_case import UseCase
 
@@ -357,7 +357,7 @@ comma-joined value is read as a single role name and rejected with code 511.
 `clickhouse-connect` 0.15.1 (and upstream `main`) builds the request URL with
 `urlencode(params)` without `doseq=True`, so a sequence value would be sent as its
 Python repr. The driver boundary
-(`loom.core.sql.clickhouse._client`) rebinds that encoder to the `doseq=True` variant:
+(`loom.stores.clickhouse._client`) rebinds that encoder to the `doseq=True` variant:
 output is byte-identical for the scalar settings the driver builds today and only
 sequences change — and their current encoding is invalid anyway. A startup check
 (`ConfigError`) and a unit test pinning the patch point make sure the workaround can

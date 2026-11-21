@@ -1,16 +1,18 @@
 from __future__ import annotations
 
 import inspect
+import logging
 import typing
 from dataclasses import dataclass, field
 from typing import Any, Final, get_args, get_origin
 
 from loom.core.engine.compilable import Compilable
-from loom.core.engine.events import EventKind, RuntimeEvent
-from loom.core.engine.metrics import MetricsAdapter, NoMetrics
+from loom.core.engine.events import EventKind, ExecutionEvent
+from loom.core.engine.execution_observer import ExecutionObserver, NullExecutionObserver
 from loom.core.engine.plan import (
     CallerBinding,
     CommandStep,
+    DeliveryBinding,
     ExecutionPlan,
     ExistsStep,
     InputBinding,
@@ -21,15 +23,16 @@ from loom.core.engine.plan import (
 from loom.core.errors import UnsupportedBoundaryType
 from loom.core.execution import ExecutionBinding
 from loom.core.job.job import Job
-from loom.core.logger import LoggerPort, get_logger
+from loom.core.logger import LogEvent, LogField
 from loom.core.model import BaseModel, loom_type
 from loom.core.model.introspection import resolve_type_hints
-from loom.core.persistence.stores import StoreKey, store_of
-from loom.core.repository.abc.repo_for import (
+from loom.core.stores.catalog import StoreKey, store_of
+from loom.core.stores.repository.capabilities import (
     BulkCreatable,
     Countable,
     Creatable,
     Deletable,
+    FieldReadable,
     Listable,
     Readable,
     RepoFor,
@@ -42,6 +45,7 @@ from loom.core.use_case.markers import (
     SourceKind,
     _AgentMarker,
     _CallerMarker,
+    _DeliveryMarker,
     _ExistsMarker,
     _InputMarker,
     _LoadByIdMarker,
@@ -49,6 +53,14 @@ from loom.core.use_case.markers import (
     _McpMarker,
     _QueryMarker,
 )
+
+_log = logging.getLogger(__name__)
+
+
+class CompilerEvent(LogEvent):
+    """What the compiler logs."""
+
+    USE_CASE_COMPILED = "compiler.use_case_compiled"
 
 
 class CompilationError(Exception):
@@ -73,6 +85,7 @@ class _SignatureBindings:
     execution_bindings: list[ExecutionBinding] = field(default_factory=list)
     input_binding: InputBinding | None = None
     caller_binding: CallerBinding | None = None
+    delivery_binding: DeliveryBinding | None = None
     query_binding: QueryBinding | None = None
     detected: list[str] = field(default_factory=list)
 
@@ -84,27 +97,26 @@ class UseCaseCompiler:
     structural constraints, and caches the resulting plan.
 
     No reflection occurs after compilation — the plan drives all runtime
-    execution via ``RuntimeExecutor``.
+    execution via ``UseCaseExecutor``.
 
     Args:
-        logger: Optional logger. Defaults to the framework logger.
-        metrics: Optional metrics adapter. When provided, receives
+        execution_observer: Optional execution observer. When provided, receives
             ``COMPILE_START`` and ``COMPILE_DONE`` events.
 
     Example::
 
-        compiler = UseCaseCompiler(metrics=my_adapter)
+        compiler = UseCaseCompiler(execution_observer=my_adapter)
         plan = compiler.compile(UpdateUserUseCase)
     """
 
     def __init__(
         self,
-        logger: LoggerPort | None = None,
-        metrics: MetricsAdapter | None = None,
+        execution_observer: ExecutionObserver | None = None,
     ) -> None:
         self._cache: dict[type[Any], ExecutionPlan] = {}
-        self._logger = logger or get_logger(__name__)
-        self._metrics: MetricsAdapter = NoMetrics() if metrics is None else metrics
+        self._execution_observer: ExecutionObserver = (
+            NullExecutionObserver() if execution_observer is None else execution_observer
+        )
 
     def compile(self, use_case_type: type[Compilable]) -> ExecutionPlan:
         """Return the ExecutionPlan for ``use_case_type``, compiling if needed.
@@ -142,11 +154,13 @@ class UseCaseCompiler:
 
     def _build_plan(self, use_case_type: type[Compilable]) -> ExecutionPlan:
         uc_name = use_case_type.__qualname__
-        self._metrics.on_event(RuntimeEvent(kind=EventKind.COMPILE_START, use_case_name=uc_name))
+        self._execution_observer.on_event(
+            ExecutionEvent(kind=EventKind.COMPILE_START, use_case_name=uc_name)
+        )
 
         bindings = self._inspect_execute(use_case_type)
-        compute_steps = tuple(CommandStep.of(fn) for fn in use_case_type.computes)
-        rule_steps = tuple(CommandStep.of(fn) for fn in use_case_type.rules)
+        compute_steps = tuple(CommandStep.from_callable(fn) for fn in use_case_type.computes)
+        rule_steps = tuple(CommandStep.from_callable(fn) for fn in use_case_type.rules)
 
         total = (
             len(bindings.load_steps)
@@ -154,15 +168,19 @@ class UseCaseCompiler:
             + len(compute_steps)
             + len(rule_steps)
         )
-        self._logger.info(
-            "[BOOT] Compiled UseCase",
-            usecase=uc_name,
-            detected=bindings.detected,
-            computes=len(compute_steps),
-            rules=len(rule_steps),
-            steps=total,
+        _log.info(
+            CompilerEvent.USE_CASE_COMPILED,
+            extra={
+                LogField.USE_CASE: uc_name,
+                "detected": bindings.detected,
+                "computes": len(compute_steps),
+                "rules": len(rule_steps),
+                "steps": total,
+            },
         )
-        self._metrics.on_event(RuntimeEvent(kind=EventKind.COMPILE_DONE, use_case_name=uc_name))
+        self._execution_observer.on_event(
+            ExecutionEvent(kind=EventKind.COMPILE_DONE, use_case_name=uc_name)
+        )
 
         primary = _primary_store(use_case_type)
         plan = ExecutionPlan(
@@ -175,6 +193,7 @@ class UseCaseCompiler:
             rule_steps=rule_steps,
             read_only=bool(getattr(use_case_type, "read_only", False)),
             caller_binding=bindings.caller_binding,
+            delivery_binding=bindings.delivery_binding,
             execution_bindings=tuple(bindings.execution_bindings),
             query_binding=bindings.query_binding,
             primary=primary,
@@ -228,6 +247,10 @@ class UseCaseCompiler:
 
         if isinstance(marker, _CallerMarker):
             self._collect_caller(use_case_type, name, bindings)
+            return
+
+        if isinstance(marker, _DeliveryMarker):
+            self._collect_delivery(use_case_type, name, bindings)
             return
 
         if isinstance(marker, _QueryMarker):
@@ -302,6 +325,19 @@ class UseCaseCompiler:
             )
         bindings.caller_binding = CallerBinding(name=name)
         bindings.detected.append(f"Caller: {name}")
+
+    def _collect_delivery(
+        self,
+        use_case_type: type[Compilable],
+        name: str,
+        bindings: _SignatureBindings,
+    ) -> None:
+        if bindings.delivery_binding is not None:
+            raise CompilationError(
+                f"{use_case_type.__qualname__}.execute: only one Delivery() parameter is allowed"
+            )
+        bindings.delivery_binding = DeliveryBinding(name=name)
+        bindings.detected.append(f"Delivery: {name}")
 
     def _collect_query(
         self,
@@ -418,7 +454,17 @@ def _primary_store(use_case_type: type[Compilable]) -> StoreKey:
 
 
 _REPOSITORY_CONTRACTS: Final = frozenset(
-    {Readable, Creatable, BulkCreatable, Updatable, Deletable, Listable, Countable, RepoFor}
+    {
+        Readable,
+        FieldReadable,
+        Creatable,
+        BulkCreatable,
+        Updatable,
+        Deletable,
+        Listable,
+        Countable,
+        RepoFor,
+    }
 )
 
 

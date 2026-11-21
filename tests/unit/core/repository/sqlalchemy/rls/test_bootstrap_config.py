@@ -6,7 +6,7 @@ import dataclasses
 import pytest
 
 from loom.core.config import ConfigError
-from loom.core.repository.sqlalchemy.rls import (
+from loom.stores.sqlalchemy.rls import (
     MIN_SERVER_VERSION_NUM,
     BootstrapConfig,
     DatabaseRoles,
@@ -14,12 +14,12 @@ from loom.core.repository.sqlalchemy.rls import (
     SchemaNames,
     apply_bootstrap,
 )
-from loom.core.repository.sqlalchemy.rls.bootstrap import (
+from loom.stores.sqlalchemy.rls.bootstrap import (
     CONFIGURE,
     SET_PASSWORD,
     scram_sha256_verifier,
 )
-from loom.core.repository.sqlalchemy.rls.guard_manifest import (
+from loom.stores.sqlalchemy.rls.guard_manifest import (
     GUARD_REVISIONS,
     pending_revisions,
 )

@@ -3,7 +3,7 @@ from loom.core.projection.loaders import (
     ExistsLoader,
     JoinFieldsLoader,
 )
-from loom.core.projection.runtime import (
+from loom.core.projection.plan import (
     ProjectionPlan,
     ProjectionStep,
     build_projection_plan,

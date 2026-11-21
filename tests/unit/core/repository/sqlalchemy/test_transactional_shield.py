@@ -14,7 +14,7 @@ from typing import Any
 import pytest
 
 from loom.core.engine.post_commit import PostCommitChannel, active_channel
-from loom.core.repository.sqlalchemy.transactional import transactional
+from loom.stores.sqlalchemy.transactional import transactional
 
 from .conftest import MockSessionManager
 

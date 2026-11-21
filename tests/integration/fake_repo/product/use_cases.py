@@ -2,7 +2,7 @@ from __future__ import annotations
 
 from typing import cast
 
-from loom.core.repository.abc.query import CursorResult, PageResult, QuerySpec
+from loom.core.stores.repository.query import CursorResult, PageResult, QuerySpec
 from loom.core.use_case import Compute, F, Input, Rule
 from loom.core.use_case.use_case import UseCase
 from tests.integration.fake_repo.product.model import Product

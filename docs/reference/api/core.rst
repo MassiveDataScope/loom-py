@@ -52,13 +52,21 @@ Authorization
    loom.core.authz.elevation
    loom.core.authz.product
 
-Application locator
--------------------
+Code path
+---------
 
 .. autosummary::
    :toctree: generated
 
    loom.core.locator
+
+Async helpers
+-------------
+
+.. autosummary::
+   :toctree: generated
+
+   loom.core.concurrency
 
 Logging
 -------
@@ -91,7 +99,7 @@ SQL
 .. autosummary::
    :toctree: generated
 
-   loom.core.sql
-   loom.core.sql.abc
-   loom.core.sql.config
-   loom.core.sql.clickhouse
+   loom.core.stores.sql
+   loom.core.stores.sql.abc
+   loom.core.stores.sql.config
+   loom.stores.clickhouse

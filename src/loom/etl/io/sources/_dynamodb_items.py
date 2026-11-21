@@ -43,8 +43,7 @@ def normalize_dynamo_item(item: dict[str, Any]) -> dict[str, Any]:
     """
     if _DESERIALIZER is None:
         raise RuntimeError(
-            "normalize_dynamo_item requires boto3. "
-            "Install it with: pip install 'loom-kernel[dynamodb]'"
+            "normalize_dynamo_item requires boto3. Install it with: pip install 'loom-kernel[aws]'"
         )
     return {str(k): _normalize(_DESERIALIZER.deserialize(v)) for k, v in item.items()}
 

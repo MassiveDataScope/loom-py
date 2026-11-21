@@ -19,20 +19,21 @@ from sqlalchemy import event, select, text
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.pool import QueuePool
 
-from loom.core.backend.sqlalchemy import compile_all, get_compiled
 from loom.core.command import Command
 from loom.core.errors import ForeignSessionError, ScopeOwnershipError, UndeclaredStoreWrite
 from loom.core.model import BaseModel, ColumnField
-from loom.core.persistence.elevation import ScopedElevationSink
-from loom.core.persistence.stores import DEFAULT_STORE, StoreKey
-from loom.core.repository.abc import CursorCodec, PageParams
-from loom.core.repository.sqlalchemy.repository import RepositorySQLAlchemy, with_session_scope
-from loom.core.repository.sqlalchemy.rls import SQLAlchemyStoreElevation
-from loom.core.repository.sqlalchemy.session_manager import SessionManager
-from loom.core.repository.sqlalchemy.transactional import transactional
-from loom.core.repository.sqlalchemy.uow import SQLAlchemyUnitOfWorkFactory
-from loom.core.uow.coordinator import ROLLBACK_TIMEOUT_S, OrderedCommits
-from loom.core.uow.scope import Frame, InvocationScope, invocation
+from loom.core.stores.catalog import DEFAULT_STORE, StoreKey
+from loom.core.stores.elevation import ScopedElevationSink
+from loom.core.stores.repository import CursorCodec, PageParams
+from loom.core.stores.uow.coordinator import ROLLBACK_TIMEOUT_S, OrderedCommits
+from loom.core.stores.uow.scope import Frame, InvocationScope, invocation
+from loom.stores.sqlalchemy.repository import SQLAlchemyRepository, with_session_scope
+from loom.stores.sqlalchemy.rls import SQLAlchemyStoreElevation
+from loom.stores.sqlalchemy.schema import compile_all, get_compiled
+from loom.stores.sqlalchemy.session_manager import SessionManager
+from loom.stores.sqlalchemy.transactional import transactional
+from loom.stores.sqlalchemy.uow import SQLAlchemyUnitOfWorkFactory
+from loom.testing import make
 from tests.helpers.elevation import declaring
 from tests.unit.core.conftest import SessionManagerFactory
 
@@ -73,8 +74,8 @@ async def stores() -> AsyncIterator[_Stores]:
     try:
         yield pair
     finally:
-        await pair.default.dispose()
-        await pair.audit.dispose()
+        await pair.default.close()
+        await pair.audit.close()
 
 
 def _handle(scope: InvocationScope, key: StoreKey) -> object:
@@ -152,7 +153,7 @@ class TestTransactional:
                 with pytest.raises(UndeclaredStoreWrite) as raised:
                     await service.record()
         finally:
-            await manager.dispose()
+            await manager.close()
 
         assert "hunter2" not in str(raised.value)
 
@@ -258,15 +259,15 @@ class _RowUpdate(Command, frozen=True):
 
 
 @pytest.fixture
-async def rows(sqlite_manager_for: SessionManagerFactory) -> RepositorySQLAlchemy[_Row, int]:
+async def rows(sqlite_manager_for: SessionManagerFactory) -> SQLAlchemyRepository[_Row, int]:
     manager = await sqlite_manager_for(_Row)
-    return RepositorySQLAlchemy(manager, _Row, cursor_codec=CursorCodec(signing="ephemeral"))
+    return SQLAlchemyRepository(manager, _Row, cursor_codec=CursorCodec(signing="ephemeral"))
 
 
 _OPERATIONS = {
     "get_by_id": lambda repo: repo.get_by_id(1),
     "count": lambda repo: repo.count(),
-    "list_paginated": lambda repo: repo.list_paginated(PageParams(page=1, limit=5)),
+    "list_paginated": lambda repo: repo.list_paginated(make(PageParams, page=1, limit=5)),
     "create": lambda repo: repo.create(_NewRow(name="b")),
     "create_many": lambda repo: repo.create_many([_NewRow(name="b")]),
     "update": lambda repo: repo.update(1, _RowUpdate(name="c")),
@@ -288,7 +289,7 @@ class TestRepositoryWriteIntent:
         ],
     )
     async def test_only_a_write_marks_the_participant(
-        self, rows: RepositorySQLAlchemy[_Row, int], operation: str, writes: bool
+        self, rows: SQLAlchemyRepository[_Row, int], operation: str, writes: bool
     ) -> None:
         await rows.create(_NewRow(name="a"))
         coordinator = OrderedCommits(
@@ -306,7 +307,7 @@ _INSERT = text("INSERT INTO store_session_rows (name) VALUES (:name)")
 _COUNT = text("SELECT count(*) FROM store_session_rows")
 
 
-class _AuditRows(RepositorySQLAlchemy[_Row, int]):
+class _AuditRows(SQLAlchemyRepository[_Row, int]):
     @with_session_scope(write=True)
     async def insert_raw(self, session: AsyncSession, name: str) -> None:
         await session.execute(_INSERT, {"name": name})
@@ -513,7 +514,7 @@ class TestOperationSession:
 
             assert (checked_out, await rows.count()) == (0, 0)
         finally:
-            await manager.dispose()
+            await manager.close()
 
 
 class TestHandedInSession:
@@ -541,7 +542,7 @@ class TestHandedInSession:
                 with pytest.raises(ForeignSessionError, match="another engine") as raised:
                     await audit_rows.insert_raw("foreign", session=foreign)
         finally:
-            await manager.dispose()
+            await manager.close()
 
         message = str(raised.value)
         assert "s3cret" not in message

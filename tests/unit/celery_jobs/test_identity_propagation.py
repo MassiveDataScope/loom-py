@@ -2,182 +2,127 @@
 
 A context variable does not cross a process boundary, so the identity travels
 inside the job envelope. These tests pin both ends of that wire contract: what
-``dispatch`` puts in, what the worker takes out, and what happens to an envelope
+a dispatch puts in, what the worker takes out, and what happens to an envelope
 minted before the contract existed.
 """
 
 from __future__ import annotations
 
-import asyncio
-from typing import Any
-from unittest.mock import MagicMock
+from collections.abc import Awaitable, Callable, Iterator
+from typing import Any, ClassVar
 
 import pytest
 
-from loom.celery.runner import _make_job_task
-from loom.celery.service import CeleryJobService
-from loom.core.engine.compiler import UseCaseCompiler
-from loom.core.engine.executor import RuntimeExecutor
+from loom.celery.service import CeleryJobTransport
 from loom.core.errors import Unauthenticated
 from loom.core.identity import ANONYMOUS, Identity, current_identity, reset_identity, set_identity
-from loom.core.job.config import JobSettings
-from loom.core.job.context import clear_pending_dispatches, flush_pending_dispatches
+from loom.core.job.context import flush_pending_dispatches
 from loom.core.job.job import Job
+from loom.core.job.service import JobService
 from loom.core.use_case.markers import Caller
-
-_SUBJECT = "user-1"
-_ROLES = ("role_a",)
-_ATTRIBUTES = {"email": "ada@example.com"}
-_MECHANISM = "jwt"
-_IDENTITY_KEY = "identity"
+from tests.helpers.celery import CeleryBroker
+from tests.helpers.jobs import CeleryWorker
 
 CALLER = Identity(
-    subject=_SUBJECT,
-    roles=_ROLES,
-    attributes=_ATTRIBUTES,
-    mechanism=_MECHANISM,
+    subject="user-1", roles=("role_a",), attributes={"email": "ada@example.com"}, mechanism="jwt"
 )
 
 
-class _ReportJob(Job[str]):
-    __queue__ = "default"
-    __retries__ = 0
-    __countdown__ = 0
-    __timeout__ = None
-    __priority__ = 0
-
+class ReportJob(Job[str]):
     def execute(self, caller: Identity = Caller()) -> str:
         return caller.subject
 
 
+class ObservedJob(Job[None]):
+    seen: ClassVar[list[Identity]] = []
+
+    def execute(self) -> None:
+        self.seen.append(current_identity())
+
+
 @pytest.fixture(autouse=True)
-def _clean_pending() -> Any:
-    """Isolate the pending-dispatch context variable for every test."""
-    clear_pending_dispatches()
-    yield
-    clear_pending_dispatches()
+def _forget_who_was_seen() -> None:
+    ObservedJob.seen.clear()
 
 
-def _mock_celery_app() -> MagicMock:
-    app = MagicMock()
-    app.task = MagicMock(side_effect=lambda **kw: lambda fn: fn)
-    app.conf.task_always_eager = False
-    return app
+@pytest.fixture
+def worker() -> Iterator[CeleryWorker]:
+    worker = CeleryWorker()
+    yield worker
+    worker.close()
 
 
-async def _dispatch_kwargs(identity: Identity | None) -> dict[str, Any]:
-    """Dispatch one job under *identity* and return the ``send_task`` kwargs."""
-    app = MagicMock()
-    service = CeleryJobService(app)
-    token = set_identity(identity) if identity is not None else None
-    try:
-        service.dispatch(_ReportJob, payload={})
-        await flush_pending_dispatches()
-    finally:
-        if token is not None:
-            reset_identity(token)
-    return dict(app.send_task.call_args.kwargs["kwargs"])
+@pytest.fixture
+def dispatched_identity() -> Callable[[Identity | None], Awaitable[dict[str, Any] | None]]:
+    """Dispatch a job as an identity; return the identity its envelope carries."""
+
+    async def dispatch(identity: Identity | None) -> dict[str, Any] | None:
+        broker = CeleryBroker([ReportJob.__queue__])
+        token = set_identity(identity) if identity is not None else None
+        try:
+            JobService(CeleryJobTransport(broker.app)).dispatch_after_commit(ReportJob)
+            await flush_pending_dispatches()
+        finally:
+            if token is not None:
+                reset_identity(token)
+        (message,) = broker.sent()
+        carried: dict[str, Any] | None = message.kwargs["identity"]
+        return carried
+
+    return dispatch
 
 
-# ---------------------------------------------------------------------------
-# Dispatch side
-# ---------------------------------------------------------------------------
+class TestDispatchSide:
+    async def test_dispatch_puts_the_caller_in_the_envelope_with_the_deadline_of_its_delegation(
+        self, dispatched_identity: Callable[[Identity | None], Awaitable[dict[str, Any] | None]]
+    ) -> None:
+        carried = await dispatched_identity(CALLER)
 
-
-class _RecordingExecutor:
-    """Captures what the worker hands to the executor, plus the live context."""
-
-    def __init__(self) -> None:
-        self.identity: Identity | None = None
-        self.context_identity: Identity | None = None
-
-    async def run(self, job_type: Any, **kwargs: Any) -> str:
-        self.identity = kwargs.get("identity")
-        self.context_identity = current_identity()
-        return "done"
-
-
-def _run_task(envelope_identity: dict[str, Any] | None) -> _RecordingExecutor:
-    executor = _RecordingExecutor()
-    factory = MagicMock()
-    factory.build = MagicMock(return_value=_ReportJob())
-    runtime = MagicMock()
-    runtime.run = MagicMock(side_effect=lambda coro, **kw: _drain(coro))
-    task = _make_job_task(
-        _mock_celery_app(),
-        _ReportJob,
-        factory,
-        executor,  # type: ignore[arg-type]
-        runtime,
-        settings=JobSettings(),
-    )
-    task(MagicMock(), payload={}, identity=envelope_identity)
-    return executor
-
-
-def _drain(coro: Any) -> Any:
-    """Run a coroutine to completion on a private event loop."""
-    return asyncio.run(coro)
-
-
-class TestIdentityPropagation:
-    async def test_dispatch_puts_the_caller_in_the_envelope(self) -> None:
-        """The identity is captured at dispatch, with the deadline of the caller's delegation."""
-        envelope = await _dispatch_kwargs(CALLER)
-        identity = dict(envelope[_IDENTITY_KEY])
-        assert isinstance(identity.pop("until"), float)
-        assert identity == {
-            "subject": _SUBJECT,
-            "roles": list(_ROLES),
-            "attributes": dict(_ATTRIBUTES),
-            "mechanism": _MECHANISM,
+        assert carried is not None
+        assert isinstance(carried.pop("until"), float)
+        assert carried == {
+            "subject": "user-1",
+            "roles": ["role_a"],
+            "attributes": {"email": "ada@example.com"},
+            "mechanism": "jwt",
         }
 
-    async def test_dispatch_without_a_caller_sends_no_identity(self) -> None:
-        """An unauthenticated dispatch must not invent a caller for the worker."""
-        envelope = await _dispatch_kwargs(None)
-        assert envelope[_IDENTITY_KEY] is None
+    @pytest.mark.parametrize("identity", [None, ANONYMOUS], ids=["no caller", "anonymous"])
+    async def test_a_dispatch_without_an_authenticated_caller_sends_no_identity(
+        self,
+        dispatched_identity: Callable[[Identity | None], Awaitable[dict[str, Any] | None]],
+        identity: Identity | None,
+    ) -> None:
+        assert await dispatched_identity(identity) is None
 
-    async def test_an_anonymous_caller_sends_no_identity(self) -> None:
-        """Anonymity is the absence of a caller, encoded as such."""
-        envelope = await _dispatch_kwargs(ANONYMOUS)
-        assert envelope[_IDENTITY_KEY] is None
 
-    # ---------------------------------------------------------------------------
-    # Worker side
-    # ---------------------------------------------------------------------------
+class TestWorkerSide:
+    def test_the_job_runs_as_the_caller_of_the_envelope(self, worker: CeleryWorker) -> None:
+        assert worker.run(ReportJob, identity={"subject": "user-1"}) == "user-1"
 
-    def test_the_worker_hands_the_envelope_caller_to_the_executor(self) -> None:
-        """Round trip: the identity dispatched is the identity the job executes with."""
-        executor = _run_task({"subject": _SUBJECT, "roles": list(_ROLES), "mechanism": _MECHANISM})
-        assert executor.identity == Identity(subject=_SUBJECT, roles=_ROLES, mechanism=_MECHANISM)
+    def test_the_worker_publishes_the_caller_in_the_context_for_further_dispatches(
+        self, worker: CeleryWorker
+    ) -> None:
+        worker.run(ObservedJob, identity={"subject": "user-1"})
 
-    def test_the_worker_publishes_the_caller_in_the_context(self) -> None:
-        """Jobs dispatching further jobs must propagate the same caller onward."""
-        executor = _run_task({"subject": _SUBJECT})
-        assert executor.context_identity is not None
-        assert executor.context_identity.subject == _SUBJECT
+        assert [caller.subject for caller in ObservedJob.seen] == ["user-1"]
 
-    def test_the_worker_restores_the_previous_context_afterwards(self) -> None:
-        """Worker processes reuse threads: a leaked identity would cross tasks."""
-        _run_task({"subject": _SUBJECT})
+    def test_the_worker_restores_the_previous_context_afterwards(
+        self, worker: CeleryWorker
+    ) -> None:
+        worker.run(ObservedJob, identity={"subject": "user-1"})
+
         assert current_identity() is ANONYMOUS
 
-    def test_an_envelope_without_identity_delivers_none_to_the_executor(self) -> None:
-        """An envelope predating the contract carries no caller, and does not fake one."""
-        executor = _run_task(None)
-        assert executor.identity is None
+    def test_an_envelope_without_identity_runs_the_job_as_no_one(
+        self, worker: CeleryWorker
+    ) -> None:
+        worker.run(ObservedJob)
 
-    # ---------------------------------------------------------------------------
-    # Fail-closed on the legacy envelope
-    # ---------------------------------------------------------------------------
+        assert [caller.is_authenticated for caller in ObservedJob.seen] == [False]
 
-    async def test_a_job_declaring_a_caller_fails_closed_on_a_legacy_envelope(self) -> None:
-        """The job refuses to run rather than execute as an unknown caller."""
-        compiler = UseCaseCompiler()
-        compiler.compile(_ReportJob)
-        executor = RuntimeExecutor(compiler)
-        job = _ReportJob()
-
-        with pytest.raises(Unauthenticated, match="_ReportJob"):
-            await executor.execute(job)
+    def test_a_job_declaring_a_caller_fails_closed_on_an_envelope_without_identity(
+        self, worker: CeleryWorker
+    ) -> None:
+        with pytest.raises(Unauthenticated, match="ReportJob"):
+            worker.run(ReportJob, attempt=3)

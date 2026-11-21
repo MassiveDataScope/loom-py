@@ -93,7 +93,7 @@ def _run(recorder: SpanRecorder, messages: list[Message[_Item]]) -> list[object]
     captured: list[object] = []
     built = build_dataflow_with_shutdown(
         plan,
-        observability_runtime=recorder.runtime,
+        observability=recorder.runtime,
         source=TestingSource(list(messages)),
         sink=TestingSink(captured),
     )

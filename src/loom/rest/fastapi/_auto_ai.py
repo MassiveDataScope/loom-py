@@ -7,7 +7,7 @@ from typing import TYPE_CHECKING
 from fastapi import FastAPI
 
 from loom.composition import AiWiring
-from loom.core.observability.runtime import ObservabilityRuntime
+from loom.core.observability.observability import Observability
 from loom.rest.fastapi._auto_auth import _AuthWiring
 
 if TYPE_CHECKING:
@@ -21,7 +21,7 @@ def _bind_agent_surfaces(
     app: FastAPI,
     ai: AiWiring,
     auth: _AuthWiring,
-    observability_runtime: ObservabilityRuntime,
+    observability: Observability,
 ) -> None:
     """Mount the HTTP surface of every opted-in agent and the A2A surface of every exposed one.
 
@@ -32,32 +32,32 @@ def _bind_agent_surfaces(
         ConfigError: When an agent opts in without a usable authenticator, or
             when its callers are verified by a JWT without a validated ``aud``.
     """
-    config, runtime = ai.config, ai.runtime
-    if config is None or runtime is None:
+    config, agent_host = ai.config, ai.agent_host
+    if config is None or agent_host is None:
         return
     _validate_agent_endpoint_auth(config, auth)
-    from loom.ai.fastapi.endpoints import bind_agent_endpoints
+    from loom.ai.fastapi.endpoints import mount_agent_endpoints
 
-    bind_agent_endpoints(
+    mount_agent_endpoints(
         app,
-        runtime=runtime,
+        host=agent_host,
         config=config,
         authenticator=auth.authenticator,
-        observability_runtime=observability_runtime,
+        observability=observability,
         prefix=_AGENTS_PREFIX,
     )
     if config.a2a is None:
         return
-    from loom.ai.a2a.server import bind_a2a_endpoints
+    from loom.ai.a2a.server import mount_a2a_endpoints
 
-    bind_a2a_endpoints(
+    mount_a2a_endpoints(
         app,
-        runtime=runtime,
+        host=agent_host,
         config=config,
         plans=ai.plans,
         authenticator=auth.authenticator,
         exclude_paths=auth.exclude_paths,
-        observability_runtime=observability_runtime,
+        observability=observability,
         agents_prefix=_AGENTS_PREFIX,
     )
 

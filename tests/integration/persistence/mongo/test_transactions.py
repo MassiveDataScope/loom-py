@@ -17,7 +17,7 @@ class TestTransactions:
         self, case: BackendCase, repository: Any
     ) -> None:
         with pytest.raises(Conflict):
-            async with case.unit_of_work(repository):
+            async with case.open_unit_of_work(repository):
                 await repository.create(SEED[0])
                 await repository.create(SEED[0])
 
@@ -27,7 +27,7 @@ class TestTransactions:
     async def test_writes_of_a_committed_unit_of_work_are_visible_outside_it(
         self, case: BackendCase, repository: Any
     ) -> None:
-        async with case.unit_of_work(repository):
+        async with case.open_unit_of_work(repository):
             await repository.create(SEED[0])
             await repository.create(SEED[1])
 

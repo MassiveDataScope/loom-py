@@ -7,8 +7,7 @@ from collections.abc import Collection, Iterable, Iterator, Mapping
 from dataclasses import dataclass
 from typing import TYPE_CHECKING, Any, ClassVar, get_args
 
-from loom.composition.resources import Resource, ResourceKind
-from loom.core.bootstrap import KernelRuntime
+from loom.core.bootstrap import Kernel
 from loom.core.config import ConfigContext, ConfigKey
 from loom.core.config.errors import ConfigError
 from loom.core.di.container import LoomContainer
@@ -16,8 +15,9 @@ from loom.core.di.graph import ClassNode, DependencyGraph, DependencyPath, Graph
 from loom.core.engine.compiler import UseCaseCompiler
 from loom.core.execution import ExecutionBinding, Kind
 from loom.core.identity import Identity
-from loom.core.observability.runtime import ObservabilityRuntime
-from loom.core.sql import SqlConfig, SqlQueryService
+from loom.core.observability.observability import Observability
+from loom.core.resources import Resource, ResourceKind
+from loom.core.stores.sql import SqlConfig, SqlQueryService
 from loom.core.use_case.invoker import AppInvoker
 from loom.core.use_case.kinds import AGENT, MCP
 from loom.core.use_case.registry import UseCaseRegistry
@@ -28,7 +28,7 @@ if TYPE_CHECKING:
     from loom.ai.compiler import AgentPlan
     from loom.ai.config import AiConfig, McpServerConfig
     from loom.ai.errors import AgentCompilationIssue
-    from loom.ai.runtime import AgentRuntime, UseCaseMcpGrant
+    from loom.ai.execution import AgentHost, UseCaseMcpGrant
 
 
 @dataclass(frozen=True)
@@ -87,52 +87,52 @@ class AgentDepsFactory:
 
 @dataclass(frozen=True)
 class AiWiring:
-    """The agent runtime of a composed application and the ``ai:`` section it was built from.
+    """The agent host of a composed application and the ``ai:`` section it was built from.
 
     Args:
         config: Parsed ``ai:`` section, or ``None`` when absent.
-        runtime: Agent runtime entered by the app lifespan alongside the SQL
+        agent_host: Agent host entered by the app lifespan alongside the SQL
             registry, or ``None`` when no section is configured.
-        plans: Compiled agent plans, the runtime's own; empty when there is no
-            runtime.
+        plans: Compiled agent plans, the agent host's own; empty when there is no
+            agent host.
     """
 
     ABSENT: ClassVar[AiWiring]
 
     config: AiConfig | None
-    runtime: AgentRuntime | None
+    agent_host: AgentHost | None
     plans: tuple[AgentPlan, ...] = ()
 
     @classmethod
-    def hosted(cls, config: AiConfig, runtime: AgentRuntime) -> AiWiring:
-        """The wiring of *runtime*, built from *config*, with the runtime's own plans."""
-        return cls(config=config, runtime=runtime, plans=runtime.plans)
+    def hosted(cls, config: AiConfig, agent_host: AgentHost) -> AiWiring:
+        """The wiring of *agent_host*, built from *config*, with the agent host's own plans."""
+        return cls(config=config, agent_host=agent_host, plans=agent_host.plans)
 
     @classmethod
     def build(
         cls,
         ctx: ConfigContext,
         *,
-        kernel: KernelRuntime,
+        kernel: Kernel,
         sql_cfg: SqlConfig | None,
         code_path: pathlib.Path,
-        manifest_agent_specs: tuple[str, ...],
+        agent_specs: tuple[str, ...],
         declared: MarkerDeclarations,
         names: Collection[str] | None = None,
     ) -> AiWiring:
-        """Build the agent runtime the ``ai:`` section configures, without opening a connection.
+        """Build the agent host the ``ai:`` section configures, without opening a connection.
 
         Without the section the AI pillar is never imported. With it, every
         ``Mcp()`` declaration is checked against ``ai.mcp_servers`` and
         granted, the engine is resolved and the artifacts are compiled
-        offline; the runtime's live clients open with the application.
+        offline; the agent host's live clients open with the application.
 
         Args:
             ctx: The application's configuration.
-            kernel: The kernel the runtime serves.
+            kernel: The kernel the agent host serves.
             sql_cfg: The ``sql`` section, or ``None``.
             code_path: Root the artifact globs are relative to.
-            manifest_agent_specs: Glob patterns of the manifest ``AGENTS`` attribute.
+            agent_specs: Glob patterns from ``app.agents``.
             declared: Every ``Agent()`` and ``Mcp()`` declaration reached.
             names: The agents to compile, those an ``Agent()`` declaration
                 names; ``None`` compiles every declared artifact. An agent left
@@ -142,41 +142,41 @@ class AiWiring:
             The wiring; :attr:`ABSENT` without the section.
 
         Raises:
-            ConfigError: When the manifest declares ``AGENTS`` and there is no
+            ConfigError: When ``app.agents`` declares artifacts and there is no
                 ``ai:`` section.
             AgentCompilationError: When an ``Mcp()`` declaration names an
                 unknown server, the artifact sources conflict or are missing,
                 or an artifact does not compile.
         """
         if not ctx.has(ConfigKey.AI):
-            if manifest_agent_specs:
+            if agent_specs:
                 raise ConfigError(
-                    "The manifest declares AGENTS but the configuration has no 'ai:' section: "
+                    "app.agents declares artifacts but the configuration has no 'ai:' section: "
                     "agent artifacts need an engine and its model bindings to compile. Add the "
-                    "'ai:' section, or remove AGENTS from the manifest."
+                    "'ai:' section, or remove app.agents."
                 )
             declared.mcp_grants({})
             return cls.ABSENT
-        from loom.ai.bootstrap import build_agent_runtime
+        from loom.ai.bootstrap import build_agent_host
         from loom.ai.config import AiConfig
-        from loom.ai.registry import resolve_engine_provider
+        from loom.ai.registry import resolve_engine_plugin
 
         ai_cfg = ctx.section(ConfigKey.AI, AiConfig)
         grants = declared.mcp_grants(ai_cfg.mcp_servers)
-        provider = resolve_engine_provider(ai_cfg.engine)
-        runtime = build_agent_runtime(
+        provider = resolve_engine_plugin(ai_cfg.engine)
+        agent_host = build_agent_host(
             ai_cfg,
             root=code_path,
             names=names,
-            specs=ai_cfg.artifact_specs(manifest_agent_specs, mcp_declared=bool(declared.mcp)),
-            engine_provider=provider,
+            specs=ai_cfg.artifact_specs(agent_specs, mcp_declared=bool(declared.mcp)),
+            engine_plugin=provider,
             registry=kernel.registry,
             container=kernel.container,
-            deps=AgentDepsFactory(kernel.app),
+            deps=AgentDepsFactory(kernel.invoker),
             sql=sql_cfg,
             use_case_mcp=grants,
         )
-        return cls.hosted(ai_cfg, runtime)
+        return cls.hosted(ai_cfg, agent_host)
 
     @property
     def mcp_servers(self) -> Mapping[str, McpServerConfig]:
@@ -185,39 +185,39 @@ class AiWiring:
 
     @property
     def resource(self) -> Resource | None:
-        """The agent runtime as the application's resource; ``None`` without a runtime."""
-        runtime = self.runtime
-        if runtime is None:
+        """The agent host as the application's resource; ``None`` without an agent host."""
+        agent_host = self.agent_host
+        if agent_host is None:
             return None
-        return Resource(kind=ResourceKind.AGENTS, name="agents", manager=lambda: runtime)
+        return Resource(kind=ResourceKind.AGENTS, name="agents", manager=lambda: agent_host)
 
-    def bind_resolvers(self, kernel: KernelRuntime) -> None:
-        """Bind the executor's ``Agent()`` and ``Mcp()`` resolvers over :attr:`runtime`, if any.
+    def bind_resolvers(self, kernel: Kernel) -> None:
+        """Bind the executor's ``Agent()`` and ``Mcp()`` resolvers over :attr:`agent_host`, if any.
 
         Args:
             kernel: The kernel whose executor resolves the markers; its
                 container serves ``SqlQueryService`` and, optionally,
-                ``ObservabilityRuntime``.
+                ``Observability``.
         """
-        if self.runtime is None:
+        if self.agent_host is None:
             return
-        from loom.ai.runtime._handle import AgentMarkerResolver, McpMarkerResolver
+        from loom.ai.execution._handle import AgentMarkerResolver, McpMarkerResolver
 
         container = kernel.container
-        observability = container.resolve_or_none(ObservabilityRuntime)
+        observability = container.resolve_or_none(Observability)
         kernel.executor.bind_agent_resolver(
             AgentMarkerResolver(
-                self.runtime,
+                self.agent_host,
                 sql_query_service=container.resolve(SqlQueryService),
                 observability=observability,
             )
         )
         kernel.executor.bind_mcp_resolver(
-            McpMarkerResolver(self.runtime, observability=observability)
+            McpMarkerResolver(self.agent_host, observability=observability)
         )
 
 
-AiWiring.ABSENT = AiWiring(config=None, runtime=None)
+AiWiring.ABSENT = AiWiring(config=None, agent_host=None)
 
 
 @dataclass(frozen=True, slots=True)
@@ -314,7 +314,7 @@ class MarkerDeclarations:
     mcp: tuple[tuple[str, ReachedDeclaration], ...]
 
     @classmethod
-    def of(
+    def from_analysis(
         cls, analysis: GraphAnalysis, compiler: UseCaseCompiler, registry: UseCaseRegistry
     ) -> MarkerDeclarations:
         """Walk each root of *analysis* once and keep what it reaches of the two AI markers.
@@ -344,7 +344,7 @@ class MarkerDeclarations:
         """Refuse every ``Agent()`` declaration start-up cannot satisfy.
 
         Args:
-            plans: Every compiled agent plan, by name; empty when no runtime
+            plans: Every compiled agent plan, by name; empty when no agent host
                 is built, which reports every declared agent as unknown.
 
         Raises:
@@ -360,7 +360,7 @@ class MarkerDeclarations:
             raise AgentCompilationError(issues)
 
     def mcp_grants(self, servers: Mapping[str, McpServerConfig]) -> tuple[UseCaseMcpGrant, ...]:
-        """Compile every ``Mcp()`` declaration into the runtime's own grants.
+        """Compile every ``Mcp()`` declaration into the agent host's own grants.
 
         Args:
             servers: Every configured MCP server, by name; empty when no
@@ -379,7 +379,7 @@ class MarkerDeclarations:
             return ()
         from loom.ai.compiler.phases import compile_mcp_capability
         from loom.ai.errors import AgentCompilationError, AgentErrorCode
-        from loom.ai.runtime import UseCaseMcpGrant
+        from loom.ai.execution import UseCaseMcpGrant
 
         available = tuple(servers)
         issues: list[AgentCompilationIssue] = []

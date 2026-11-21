@@ -20,11 +20,10 @@ import pytest
 
 from loom.composition import Application, phases
 from loom.composition.errors import ReservedBindingError
-from loom.composition.source import CompositionSource
+from loom.composition.project import Project
 from loom.core.bootstrap import BootstrapError
 from loom.core.di import ContainerSealed
 from loom.core.di.container import ResolutionError
-from loom.core.logger import get_logger
 from tests.helpers.composition import Serving
 from tests.unit.composition.phases.components import (
     AcmeJob,
@@ -52,9 +51,9 @@ _WRAPPED = {
 
 _RAW = {
     "reserved-binding": "ReservedBindingError",
-    "job-backend": "JobBackendError",
-    "job-backend-celery-extra": "JobBackendError",
-    "job-backend-celery-section": "JobBackendError",
+    "job-transport": "JobTransportError",
+    "job-transport-celery-extra": "JobTransportError",
+    "job-transport-celery-section": "JobTransportError",
     "sqs-queue": "SQSQueueConfigError",
     "sql-invalid-section": "ConfigError",
     "sql-retired-key": "ConfigError",
@@ -157,18 +156,17 @@ class TestStartupErrors:
         assert type(caught.value) is BootstrapError
         assert isinstance(caught.value.__cause__, RuntimeError)
 
-    def test_seal_validates_the_container_it_seals(self, source: CompositionSource) -> None:
+    def test_seal_validates_the_container_it_seals(self, project: Project) -> None:
         adapter = Serving(AcmeRecord, use_cases=(AcmePing,), jobs=(AcmeJob,))
-        recipe = phases.plan(source, adapter)
-        stores = phases.build_stores(source, recipe)
-        kernel, _sql, _jobs = phases.register(
-            source, recipe, stores, modules=(binds_unbuildable,), logger=get_logger("tests.acme")
-        )
+        recipe = replace(phases.plan(project, adapter), overrides=(binds_unbuildable,))
+        stores = phases.build_stores(project, recipe)
+        installers = phases.build_installers(project.config, recipe.discovered.installers)
+        kernel, _sql, _jobs = phases.register(project, recipe, stores, installers)
         analysis = recipe.analysed(kernel.factory.graph)
 
         with pytest.raises(BootstrapError, match="AcmeUnbuildable") as caught:
             phases.seal(
-                kernel, analysis, recipe, catalog=source.catalog, factories=stores.factories
+                kernel, analysis, recipe, catalog=project.catalog, factories=stores.factories
             )
 
         assert isinstance(caught.value.__cause__, ResolutionError)

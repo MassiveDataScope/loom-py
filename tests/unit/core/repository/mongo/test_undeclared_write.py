@@ -15,12 +15,12 @@ from pymongo import AsyncMongoClient
 
 from loom.core.command import Command
 from loom.core.errors import UndeclaredStoreWrite
-from loom.core.persistence.stores import DEFAULT_STORE, StoreKey
-from loom.core.repository.abc import CursorCodec
-from loom.core.repository.mongo.repository import MongoCollection, RepositoryMongo
-from loom.core.repository.mongo.uow import MongoSessions, MongoUnitOfWorkFactory
-from loom.core.uow.coordinator import OrderedCommits
-from loom.core.uow.scope import Frame, invocation
+from loom.core.stores.catalog import DEFAULT_STORE, StoreKey
+from loom.core.stores.repository import CursorCodec
+from loom.core.stores.uow.coordinator import OrderedCommits
+from loom.core.stores.uow.scope import Frame, invocation
+from loom.stores.mongo.repository import MongoCollection, MongoRepository
+from loom.stores.mongo.uow import MongoSessions, MongoUnitOfWorkFactory
 
 from ._fake import FakeCollection, FakeMongoClient
 from .conftest import Article
@@ -57,7 +57,7 @@ class _ArticleViews(Command, frozen=True):
     views: int
 
 
-ArticleWrite = Callable[[RepositoryMongo[Article, str]], Awaitable[object]]
+ArticleWrite = Callable[[MongoRepository[Article, str]], Awaitable[object]]
 
 _WRITES: dict[str, ArticleWrite] = {
     "create": lambda repo: repo.create(_NewArticle(slug="b", title="B", views=0)),
@@ -81,7 +81,7 @@ class AcmeUndeclaredWriteStores:
         inner = self.audit.collection("articles")
         inner.documents["a"] = {"_id": "a", "title": "A", "views": 1, "published_at": None}
         self.collection = _RecordedCollection(inner)
-        self.articles = RepositoryMongo(
+        self.articles = MongoRepository(
             Article,
             cast(MongoCollection, self.collection),
             session_provider=MongoSessions(_client(self.audit), AUDIT),

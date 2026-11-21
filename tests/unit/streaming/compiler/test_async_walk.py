@@ -8,9 +8,8 @@ from omegaconf import DictConfig, OmegaConf
 
 from loom.core.config import ConfigContext
 from loom.core.model.redaction import Dsn
-from loom.core.persistence.database import DatabaseConfig, PoolConfig
+from loom.core.stores.database import DatabaseConfig, PoolConfig
 from loom.streaming import (
-    Backend,
     Fork,
     ForkRoute,
     FromTopic,
@@ -21,6 +20,7 @@ from loom.streaming import (
     Router,
     SqlAlchemySinkConfig,
     StreamFlow,
+    TableEngine,
     WithAsync,
     msg,
 )
@@ -32,7 +32,7 @@ def _flow_with_sqlalchemy_into_table_inside_router() -> StreamFlow[Order, Result
     into_table: Any = IntoTable(
         payload=Result,
         table="results",
-        backend=Backend.SQLALCHEMY,
+        engine=TableEngine.SQLALCHEMY,
         name="results_sink",
     )
     return StreamFlow(
@@ -58,7 +58,7 @@ def _flow_with_sqlalchemy_into_table() -> StreamFlow[Order, Result]:
     into_table = IntoTable(
         payload=Result,
         table="results",
-        backend=Backend.SQLALCHEMY,
+        engine=TableEngine.SQLALCHEMY,
         name="results_sink",
     )
     return StreamFlow(

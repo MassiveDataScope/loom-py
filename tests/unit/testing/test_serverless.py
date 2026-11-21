@@ -53,3 +53,11 @@ class TestLambdaEvent:
             "text/x",
             "application/json",
         )
+
+    def test_only_the_sqs_queue_of_a_record_is_in_the_account_moto_answers_for(self) -> None:
+        (record,) = LambdaEvent.sqs_record("{}")["Records"]
+        sns_arn = LambdaEvent.sns()["Records"][0]["Sns"]["TopicArn"]
+
+        assert record["eventSourceARN"] == "arn:aws:sqs:us-east-1:123456789012:loom-jobs"
+        assert sns_arn == "arn:aws:sns:us-east-1:000000000000:loom-topic"
+        assert LambdaEvent.eventbridge()["account"] == "000000000000"

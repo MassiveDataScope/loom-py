@@ -30,8 +30,8 @@ class Scope:
 
     loom gives the segments no meaning: the product decides what each level
     is.  A scope covers itself and everything below it, so a grant on
-    ``Scope.of("acme")`` reaches ``Scope.of("acme", "sales", "orders")`` but
-    never ``Scope.of("globex")`` nor the root.
+    ``Scope.from_segments("acme")`` reaches ``Scope.from_segments("acme", "sales", "orders")`` but
+    never ``Scope.from_segments("globex")`` nor the root.
 
     ``str(scope)`` and :meth:`parse` are inverse and stable, so the text form
     is safe to store.
@@ -41,7 +41,7 @@ class Scope:
 
     Example::
 
-        workspace = Scope.of("acme")
+        workspace = Scope.from_segments("acme")
         table = workspace.child("sales", "orders")
         assert workspace.covers(table)
         assert Scope.parse(str(table)) == table
@@ -71,7 +71,7 @@ class Scope:
         return cls(())
 
     @classmethod
-    def of(cls, *segments: str) -> Scope:
+    def from_segments(cls, *segments: str) -> Scope:
         """Build the scope at *segments* below the root.
 
         Args:
@@ -86,7 +86,7 @@ class Scope:
         """
         if not segments:
             raise ValueError(
-                "Scope.of() needs at least one segment; use Scope.root() for the root."
+                "Scope.from_segments() needs at least one segment; use Scope.root() for the root."
             )
         return cls(segments)
 

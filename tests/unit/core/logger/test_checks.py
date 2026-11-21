@@ -1,9 +1,4 @@
-"""``loom.logger.W001``: console log lines in a deployed environment.
-
-A deployed environment renders JSON by default, so console lines there come
-only from an explicit renderer, top-level or on a handler; log collectors
-parse JSON, not console lines.
-"""
+"""``loom.logger.E001`` and ``E002``: ``observability.log`` as it is written."""
 
 from __future__ import annotations
 
@@ -13,45 +8,38 @@ import pytest
 
 from loom.core.checks import run_deploy_checks
 from loom.core.config import ConfigContext
-from loom.core.logger.checks import CONSOLE_RENDERER_CHECK
+from loom.core.logger.checks import UNKNOWN_FORMAT_CHECK, UNKNOWN_LEVEL_CHECK
 
-_LOG = "log"
+_LOGGER_CHECKS = {UNKNOWN_FORMAT_CHECK, UNKNOWN_LEVEL_CHECK}
 
 
-def _ids(observability: dict[str, Any] | None) -> list[str]:
-    raw: dict[str, Any] = {} if observability is None else {"observability": observability}
+def _ids(log: dict[str, Any] | None) -> list[str]:
+    raw: dict[str, Any] = {} if log is None else {"observability": {"log": log}}
     report = run_deploy_checks(ConfigContext.from_dict(raw))
-    return [result.id for result in report.results if result.id == CONSOLE_RENDERER_CHECK]
+    return [result.id for result in report.results if result.id in _LOGGER_CHECKS]
 
 
-class TestLoggerDeployChecks:
+class TestLogFormatCheck:
+    @pytest.mark.parametrize("log", [None, {}, {"format": "json"}, {"format": "lambda"}])
+    def test_a_registered_or_absent_format_passes(self, log: dict[str, Any] | None) -> None:
+        assert _ids(log) == []
+
+    def test_an_unregistered_format_fails(self) -> None:
+        assert _ids({"format": "xml"}) == [UNKNOWN_FORMAT_CHECK]
+
+    def test_a_format_from_a_placeholder_is_not_judged(self) -> None:
+        assert _ids({"format": "${oc.env:LOG_FORMAT}"}) == []
+
+
+class TestLogLevelCheck:
     @pytest.mark.parametrize(
-        "observability",
-        [
-            None,
-            {_LOG: {"config": {"level": "INFO"}}},
-            {_LOG: {"config": {"renderer": "json"}}},
-            {_LOG: {"enabled": False, "config": {"renderer": "console"}}},
-        ],
+        "log", [{"level": "debug"}, {"named_levels": {"botocore": "WARNING"}}, {"level": "${x}"}]
     )
-    def test_json_or_default_rendering_passes(self, observability: dict[str, Any] | None) -> None:
-        assert _ids(observability) == []
+    def test_known_or_unresolved_levels_pass(self, log: dict[str, Any]) -> None:
+        assert _ids(log) == []
 
     @pytest.mark.parametrize(
-        "logger_config",
-        [
-            {"renderer": "console"},
-            {"renderer": "CONSOLE"},
-            {"handlers": [{"type": "stream", "renderer": "console"}]},
-        ],
+        "log", [{"level": "LOUD"}, {"named_levels": {"botocore": "LOUD"}}], ids=["root", "named"]
     )
-    def test_an_explicit_console_renderer_warns(self, logger_config: dict[str, Any]) -> None:
-        assert _ids({_LOG: {"config": logger_config}}) == [CONSOLE_RENDERER_CHECK]
-
-    def test_a_placeholder_elsewhere_in_the_logger_config_is_not_resolved(self) -> None:
-        logger_config = {"renderer": "console", "level": "${secrets:/logging/level}"}
-
-        assert _ids({_LOG: {"config": logger_config}}) == [CONSOLE_RENDERER_CHECK]
-
-    def test_a_renderer_from_a_placeholder_is_not_resolved_nor_flagged(self) -> None:
-        assert _ids({_LOG: {"config": {"renderer": "${oc.env:UNSET_LOG_RENDERER}"}}}) == []
+    def test_an_unknown_level_fails(self, log: dict[str, Any]) -> None:
+        assert _ids(log) == [UNKNOWN_LEVEL_CHECK]

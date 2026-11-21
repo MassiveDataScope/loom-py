@@ -2,8 +2,8 @@
 
 The DynamoDB repository (a ``dynamodb`` store), the ETL DynamoDB sources
 (``storage.dynamodb``), the ``secrets`` and ``ssm`` resolvers and the SNS
-notifier build their clients from :class:`AwsClientConfig` through the one
-builder of :mod:`loom.core.connections.aws.client`.
+notifier build their clients from :class:`AwsClientConfig` through
+:class:`~loom.connections.aws.clients.AwsClients`.
 
 Every bound is finite by default: botocore waits 60 s for a read, longer than
 a typical serverless invocation, so a hung call would consume the whole
@@ -12,15 +12,18 @@ invocation instead of failing with an error.
 
 from __future__ import annotations
 
-from collections.abc import Mapping
+from collections.abc import Hashable, Mapping
 from types import MappingProxyType
-from typing import Any, ClassVar, Literal
+from typing import TYPE_CHECKING, Any, ClassVar, Literal, Self
 
 import msgspec
 
 from loom.core.connections._base import ConnectionPool, ConnectionSettings, omit_none
 from loom.core.model.redaction import Dsn
 from loom.core.model.types import PositiveInt
+
+if TYPE_CHECKING:
+    from loom.core.config.context import ConfigContext
 
 RetryMode = Literal["standard", "adaptive"]
 """botocore retry strategies loom accepts; ``legacy`` retries five times by default."""
@@ -68,6 +71,99 @@ class AwsClientConfig(ConnectionSettings, frozen=True, kw_only=True, forbid_unkn
     read_timeout: PositiveInt = 5
     max_attempts: PositiveInt = 3
     retry_mode: RetryMode = "standard"
+
+    @classmethod
+    def inherit(cls, ctx: ConfigContext, own: Mapping[str, Any], path: str) -> dict[str, Any]:
+        """Return *own* with the keys it does not set taken from the ``aws:`` section of *ctx*.
+
+        Args:
+            ctx: Configuration holding the optional top-level ``aws:`` section.
+            own: The product section, overriding ``aws:`` key by key.
+            path: Dotted path of *own*, for the messages.
+
+        Returns:
+            The merged mapping.
+
+        Raises:
+            ConfigError: When ``aws:`` or *own* holds a retired key, or ``aws:`` holds a key
+                no client takes.
+        """
+        from loom.core.config.keys import ConfigKey
+
+        aws = ctx.section(ConfigKey.AWS, dict) if ctx.has(ConfigKey.AWS) else {}
+        return cls.inherit_from(aws, own, path)
+
+    @classmethod
+    def inherit_from(
+        cls, aws: Mapping[str, Any], own: Mapping[str, Any], path: str
+    ) -> dict[str, Any]:
+        """Return *own* with the keys it does not set taken from *aws*, the ``aws:`` section.
+
+        The one rule of the inheritance: :meth:`inherit` hands it the resolved
+        section, and ``loom check`` the section as written.
+
+        Args:
+            aws: The ``aws:`` section, empty when there is none.
+            own: The product section, overriding *aws* key by key.
+            path: Dotted path of *own*, for the messages.
+
+        Returns:
+            The merged mapping.
+
+        Raises:
+            ConfigError: When *aws* or *own* holds a retired key, or *aws* holds a key
+                no client takes.
+        """
+        from loom.core.config.errors import ConfigError
+        from loom.core.config.keys import ConfigKey
+        from loom.core.config.retired import reject_retired_keys
+
+        reject_retired_keys(aws, ConfigKey.AWS, AwsClientConfig)
+        reject_retired_keys(own, path, cls)
+        unknown = sorted(set(aws) - set(AwsClientConfig.__struct_encode_fields__))
+        if unknown:
+            raise ConfigError(f"Config section {ConfigKey.AWS.value!r} takes no key {unknown[0]!r}")
+        return {**aws, **own}
+
+    @classmethod
+    def from_config(
+        cls,
+        ctx: ConfigContext,
+        path: str,
+        *,
+        own: Mapping[str, Any] | None = None,
+        **over: Any,
+    ) -> Self:
+        """Decode the settings of the product section at *path*, inheriting ``aws:``.
+
+        Args:
+            ctx: Configuration holding the optional top-level ``aws:`` section.
+            path: Dotted path of the product section, for the messages.
+            own: The product section; ``None`` is an empty one.
+            **over: Settings that win over both sections.
+
+        Returns:
+            The decoded settings.
+
+        Raises:
+            ConfigError: When a section holds a retired or unknown key, or a value is invalid.
+        """
+        from loom.core.config.loader import convert_section
+
+        return convert_section(cls.inherit(ctx, own or {}, path) | over, path, cls)
+
+    def client_key(self) -> tuple[Hashable, ...]:
+        """Return the settings that change the client built from these, as a hashable key."""
+        return (
+            self.region,
+            self.url,
+            self.profile,
+            self.pool.size,
+            self.connect_timeout,
+            self.read_timeout,
+            self.max_attempts,
+            self.retry_mode,
+        )
 
     def client_options(self) -> dict[str, Any]:
         """Return the ``Session.client`` options, ``config`` as ``botocore.Config`` keywords.

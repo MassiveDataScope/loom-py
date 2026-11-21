@@ -22,14 +22,14 @@ from loom.core.errors import (
     NotFound,
     PostCommitError,
     RateLimited,
-    RuleViolation,
+    RuleViolationError,
     SystemError,
 )
 from loom.core.errors.codes import ErrorCode
 from loom.core.tracing import get_trace_id
 from loom.rest.errors import HttpErrorMapper
-from loom.rest.fastapi.adapter import FastAPIAdapter
-from loom.serverless.aws.lambda_ import LambdaAdapter
+from loom.rest.fastapi.runtime import FastAPIRuntime
+from loom.serverless.aws.lambda_ import LambdaRuntime
 from loom.serverless.aws.lambda_.triggers.http import LambdaHTTPHandler
 from loom.testing import LambdaTestClient
 
@@ -194,18 +194,19 @@ def _write_project(
     directory: Path, *, source: str = _APP_SOURCE, slug: str = "declared_http"
 ) -> tuple[str, str]:
     module = f"loom_{slug}_{_NON_IDENTIFIER.sub('_', directory.name)}"
-    (directory / f"{module}.py").write_text(source, encoding="utf-8")
+    package = directory / module
+    package.mkdir()
+    (package / "__init__.py").write_text(source, encoding="utf-8")
     config: dict[str, Any] = {
         "app": {
             "name": "declared-http",
             "code_path": ".",
-            "discovery": {
-                "mode": "interfaces",
-                "interfaces": {"modules": [module], "warn_recommended": False},
-            },
+            "packages": [module],
         },
-        "stores": {"default": {"backend": "sqlalchemy", "url": "sqlite+aiosqlite:///"}},
-        "persistence": {"cursors": {"signing": "ephemeral"}},
+        "stores": {
+            "default": {"backend": "sqlalchemy", "url": "sqlite+aiosqlite:///"},
+            "settings": {"cursors": {"signing": "ephemeral"}},
+        },
     }
     path = directory / "app.yaml"
     path.write_text(yaml.safe_dump(config), encoding="utf-8")
@@ -498,7 +499,7 @@ class TestDeclaredStatusAcceptance:
                 None,
             ),
             (
-                RuleViolation("email", "invalid"),
+                RuleViolationError("email", "invalid"),
                 422,
                 "invalid",
                 {"field": "email"},
@@ -561,8 +562,8 @@ class TestDeclaredStatusAcrossRuntimes:
         """Both transports serve the use case through the same mapper."""
         config, module = _write_project(tmp_path)
         monkeypatch.syspath_prepend(str(tmp_path.resolve()))
-        fastapi_app = create_app(config, adapter=FastAPIAdapter(), environment="test")
-        handler = create_app(config, adapter=LambdaAdapter(), environment="test")
+        fastapi_app = create_app(config, runtime=FastAPIRuntime(), environment="test")
+        handler = create_app(config, runtime=LambdaRuntime(), environment="test")
         assert isinstance(fastapi_app, FastAPI)
         assert isinstance(handler, LambdaHTTPHandler)
         expected = {
@@ -595,8 +596,8 @@ class TestDeclaredStatusAcrossRuntimes:
             tmp_path, source=_MISDECLARED_APP_SOURCE, slug="misdeclared_http"
         )
         monkeypatch.syspath_prepend(str(tmp_path.resolve()))
-        fastapi_app = create_app(config, adapter=FastAPIAdapter(), environment="test")
-        handler = create_app(config, adapter=LambdaAdapter(), environment="test")
+        fastapi_app = create_app(config, runtime=FastAPIRuntime(), environment="test")
+        handler = create_app(config, runtime=LambdaRuntime(), environment="test")
         assert isinstance(fastapi_app, FastAPI)
         assert isinstance(handler, LambdaHTTPHandler)
         expected = {

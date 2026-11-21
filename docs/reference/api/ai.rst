@@ -19,7 +19,7 @@ Pillar surface
    loom.ai.config
    loom.ai.inference
    loom.ai.errors
-   loom.ai.runtime
+   loom.ai.execution
 
 Authored artifacts
 ------------------

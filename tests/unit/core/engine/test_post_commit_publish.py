@@ -10,18 +10,19 @@ from unittest.mock import MagicMock
 
 import pytest
 
-from loom.celery.service import CeleryJobService
-from loom.core import _async
+from loom.core import concurrency
 from loom.core.engine import post_commit
 from loom.core.engine.compiler import UseCaseCompiler
-from loom.core.engine.executor import RuntimeExecutor
+from loom.core.engine.executor import UseCaseExecutor
 from loom.core.engine.post_commit import PostCommitChannel, active_channel
 from loom.core.errors import PostCommitError
 from loom.core.job.context import add_pending_dispatch, flush_pending_dispatches
 from loom.core.job.job import Job
-from loom.core.persistence.stores import DEFAULT_STORE
-from loom.core.uow.coordinator import OrderedCommits
+from loom.core.stores.catalog import DEFAULT_STORE
+from loom.core.stores.uow.coordinator import OrderedCommits
 from loom.core.use_case.use_case import UseCase
+from tests.helpers.jobs import CeleryServiceFixture
+from tests.helpers.loggers import logged_events
 
 from ._lifecycle_doubles import Log, StubUnitOfWorkFactory
 
@@ -98,11 +99,7 @@ def logged() -> Iterator[Callable[[str], asyncio.Event]]:
 
 def _event(caplog: pytest.LogCaptureFixture, name: str) -> dict[str, Any]:
     """The structured fields of the one post-commit log record named *name*."""
-    (fields,) = [
-        record.msg
-        for record in caplog.records
-        if isinstance(record.msg, dict) and record.msg.get("event") == name
-    ]
+    (fields,) = [entry for entry in logged_events(caplog) if entry["event"] == name]
     return fields
 
 
@@ -113,7 +110,7 @@ async def _cancelled(task: asyncio.Task[Any]) -> None:
 
 
 class _DispatchAfterCommit(UseCase[Any, None]):
-    def __init__(self, service: CeleryJobService, bump: _Gate) -> None:
+    def __init__(self, service: CeleryServiceFixture, bump: _Gate) -> None:
         self.service = service
         self.bump = bump
 
@@ -121,7 +118,7 @@ class _DispatchAfterCommit(UseCase[Any, None]):
         channel = active_channel()
         assert channel is not None
         channel.enqueue_priority(self.bump)
-        self.service.dispatch(_EmailJob)
+        self.service.dispatch_after_commit(_EmailJob)
 
 
 class _InlineAfterCommit(UseCase[Any, None]):
@@ -161,12 +158,12 @@ class TestPostCommitPublish:
         app.send_task.side_effect = lambda *_, **__: sent.set()
         bump = _Gate()
         log = Log()
-        executor = RuntimeExecutor(
+        executor = UseCaseExecutor(
             UseCaseCompiler(),
             coordinator=OrderedCommits({DEFAULT_STORE: StubUnitOfWorkFactory(log)}),
         )
         task = asyncio.create_task(
-            executor.execute(_DispatchAfterCommit(CeleryJobService(app), bump))
+            executor.execute(_DispatchAfterCommit(CeleryServiceFixture(app), bump))
         )
         await bump.started.wait()
         assert _COMMITTED in log.entries
@@ -222,7 +219,7 @@ class TestPostCommitPublish:
         hang = _Hang()
         calls: list[str] = []
         log = Log()
-        executor = RuntimeExecutor(
+        executor = UseCaseExecutor(
             UseCaseCompiler(),
             coordinator=OrderedCommits({DEFAULT_STORE: StubUnitOfWorkFactory(log)}),
         )
@@ -292,7 +289,7 @@ class TestPostCommitPublish:
         await hang.started.wait()
         await _cancelled(task)
 
-        for shielded in list(_async._held):  # what closing the loop does
+        for shielded in list(concurrency._held):  # what closing the loop does
             shielded.cancel()
         await never_ran.wait()
 

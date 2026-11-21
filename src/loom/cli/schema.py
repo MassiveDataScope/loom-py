@@ -19,15 +19,14 @@ from loom.core.environment import (
     VERIFY_URL_VARIABLE,
     loom_variable,
 )
-from loom.core.locator import load_application
-from loom.core.persistence.stores import BACKEND_KEY, DEFAULT_STORE, SQLALCHEMY_BACKEND
 from loom.core.schema_names import SchemaNames
+from loom.core.stores.catalog import BACKEND_KEY, DEFAULT_STORE, SQLALCHEMY_BACKEND
 
 if TYPE_CHECKING:
     from sqlalchemy.ext.asyncio import AsyncConnection
 
-    from loom.core.repository.sqlalchemy.rls import BootstrapConfig
-    from loom.core.repository.sqlalchemy.rls.verify import Report
+    from loom.stores.sqlalchemy.rls import BootstrapConfig
+    from loom.stores.sqlalchemy.rls.verify import Report
 
 
 _T = TypeVar("_T")
@@ -39,7 +38,13 @@ schema_app = typer.Typer(no_args_is_help=True, help="Prepare a row-scoped schema
 audit_app = typer.Typer(no_args_is_help=True, help="Operate the store's audit log.")
 schema_app.add_typer(audit_app, name="audit")
 
-_CONFIG_OPTION = typer.Option("--config", help="A config directory or file, as the app loads it.")
+_ConfigOption = Annotated[
+    Path | None,
+    typer.Option(
+        "--config",
+        help="A config directory or file; defaults to LOOM_CONFIG_DIR, else ./config.",
+    ),
+]
 
 
 @schema_app.command("init")
@@ -132,13 +137,13 @@ def _merge(target: dict[str, Any], values: dict[str, Any], path: str) -> list[st
 
 
 @schema_app.command("bootstrap")
-def bootstrap(config: Annotated[Path, _CONFIG_OPTION]) -> None:
+def bootstrap(config: _ConfigOption = None) -> None:
     """Install or upgrade the guard and configure roles, as the superuser; idempotent.
 
     The superuser URL comes from ``LOOM_SUPERUSER_URL`` and the password of the
     migrator and of each database user with a login from ``LOOM_DB_PASSWORD_<USER>``.
     """
-    from loom.core.repository.sqlalchemy.rls import apply_bootstrap
+    from loom.stores.sqlalchemy.rls import apply_bootstrap
 
     try:
         settings = _bootstrap_config(config)
@@ -149,23 +154,24 @@ def bootstrap(config: Annotated[Path, _CONFIG_OPTION]) -> None:
         asyncio.run(apply_bootstrap(_env(SUPERUSER_URL_VARIABLE), settings, passwords))
     except ConfigError as exc:
         _fail(exc)
-    typer.echo(f"guard of {config} is installed and configured")
+    typer.echo("guard is installed and configured")
 
 
 @schema_app.command("verify")
-def verify_schema(config: Annotated[Path, _CONFIG_OPTION]) -> None:
+def verify_schema(config: _ConfigOption = None) -> None:
     """Compare the database with the application; exit 1 on any drift.
 
     The URL comes from ``LOOM_VERIFY_URL``, else ``LOOM_SUPERUSER_URL``: the
     guard's configuration row needs a privileged reader. Audit partitions past
     the retention are listed, not counted as drift.
     """
-    from loom.core.repository.sqlalchemy.rls import verify
+    from loom.stores.sqlalchemy.alembic import load_store_schema
+    from loom.stores.sqlalchemy.rls import verify
 
     try:
-        application = load_application(str(config))
+        schema = load_store_schema(None if config is None else str(config))
         url = loom_variable(VERIFY_URL_VARIABLE) or _env(SUPERUSER_URL_VARIABLE)
-        report = asyncio.run(verify(url, application))
+        report = asyncio.run(verify(url, schema))
     except ConfigError as exc:
         _fail(exc)
     _print_report(report)
@@ -185,7 +191,7 @@ def _print_report(report: Report) -> None:
 @audit_app.command("drop-expired")
 def drop_expired() -> None:
     """Drop the oldest audit partition past the retention, as the migrator; one per run."""
-    from loom.core.repository.sqlalchemy.rls.audit import drop_expired_audit_partition
+    from loom.stores.sqlalchemy.rls.audit import drop_expired_audit_partition
 
     try:
         dropped = asyncio.run(_as_migrator(drop_expired_audit_partition))
@@ -200,7 +206,7 @@ def ensure_partitions() -> None:
 
     Idempotent; meant for a scheduler between deploys (monthly is enough).
     """
-    from loom.core.repository.sqlalchemy.rls.audit import ensure_audit_partitions
+    from loom.stores.sqlalchemy.rls.audit import ensure_audit_partitions
 
     try:
         created = asyncio.run(_as_migrator(ensure_audit_partitions))
@@ -222,10 +228,12 @@ async def _as_migrator(action: Callable[[AsyncConnection], Awaitable[_T]]) -> _T
         await engine.dispose()
 
 
-def _bootstrap_config(config: Path) -> BootstrapConfig:
-    settings = load_application(str(config)).bootstrap
+def _bootstrap_config(config: Path | None) -> BootstrapConfig:
+    from loom.stores.sqlalchemy.alembic import load_store_schema
+
+    settings = load_store_schema(None if config is None else str(config)).bootstrap
     if settings is None:
-        raise ConfigError(f"{config} declares no row-scoped schema to bootstrap")
+        raise ConfigError("the configuration declares no row-scoped schema to bootstrap")
     return settings
 
 

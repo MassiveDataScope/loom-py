@@ -15,15 +15,18 @@ from __future__ import annotations
 import inspect
 from collections.abc import Awaitable, Callable
 from dataclasses import dataclass, field
-from typing import Any, TypeAlias, cast
+from typing import TYPE_CHECKING, Any, TypeAlias, cast
 
 from loom.core.engine.compilable import Compilable
 from loom.core.engine.observation import StartedExecution
 from loom.core.engine.plan import ExecutionPlan, ExistsStep, LoadStep, ParameterBindingError
-from loom.core.errors import MissingCaller, RuleViolation, RuleViolations
+from loom.core.errors import MissingCaller, RuleViolationError, RuleViolationsError
 from loom.core.execution import ExecutionKinds, UnboundKind
 from loom.core.identity import Identity
 from loom.core.use_case.kinds import CALLER
+
+if TYPE_CHECKING:
+    from loom.core.job.delivery import JobDelivery
 
 
 @dataclass(frozen=True, slots=True)
@@ -34,6 +37,7 @@ class ExecutionInputs:
     payload: dict[str, Any] | None = None
     dependencies: dict[type[Any], Any] | None = None
     load_overrides: dict[type[Any], Any] | None = None
+    delivery: JobDelivery | None = None
 
 
 @dataclass(slots=True)
@@ -119,6 +123,7 @@ class ArgumentBinder:
             _query(plan),
             _params(plan),
             _caller(plan),
+            _delivery(plan),
             self._executions(plan),
             _command(plan),
         )
@@ -169,7 +174,7 @@ class ArgumentBinder:
                     raise RuntimeError(
                         f"{use_case}.execute declares an {binding.kind.spelling} parameter but "
                         f"no {binding.kind.name!r} resolver is bound on this executor. Call "
-                        f"RuntimeExecutor.bind_{binding.kind.name}_resolver() once the AI "
+                        f"UseCaseExecutor.bind_{binding.kind.name}_resolver() once the AI "
                         "runtime exists."
                     ) from None
 
@@ -286,6 +291,18 @@ def _caller(plan: ExecutionPlan) -> Bind | None:
     return bind
 
 
+def _delivery(plan: ExecutionPlan) -> Bind | None:
+    """Inject the delivery the execution was started with, or ``None`` when it had none."""
+    binding = plan.delivery_binding
+    if binding is None:
+        return None
+
+    def bind(call: _ExecuteArguments) -> None:
+        call.bound[binding.name] = call.inputs.delivery
+
+    return bind
+
+
 def _command(plan: ExecutionPlan) -> Bind | None:
     binding = plan.input_binding
     if binding is None:
@@ -337,7 +354,7 @@ def _rules(plan: ExecutionPlan) -> Bind | None:
 
     def check(call: _ExecuteArguments) -> None:
         command = call.bound[binding.name]
-        violations: list[RuleViolation] = []
+        violations: list[RuleViolationError] = []
         for fn, accepts_context, label, step_label in rules:
             try:
                 if accepts_context:
@@ -345,10 +362,10 @@ def _rules(plan: ExecutionPlan) -> Bind | None:
                 else:
                     fn(command, call.fields_set)
                 call.started.step(step_label)
-            except RuleViolation as exc:
+            except RuleViolationError as exc:
                 violations.append(exc)
                 call.started.rule_failed(label, exc)
         if violations:
-            raise RuleViolations(violations)
+            raise RuleViolationsError(violations)
 
     return check

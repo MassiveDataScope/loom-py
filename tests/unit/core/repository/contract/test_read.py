@@ -3,7 +3,7 @@ from __future__ import annotations
 from datetime import datetime
 from typing import Any
 
-from loom.core.repository.abc import Countable, Readable
+from loom.core.stores.repository import Countable, FieldReadable, Readable
 
 from .conftest import SEED, BackendCase, OrderStatus, require
 
@@ -37,7 +37,7 @@ class TestContractRead:
     async def test_get_by_key_returns_the_persisted_row(
         self, case: BackendCase, seeded: Any
     ) -> None:
-        require(case, Readable)
+        require(case, FieldReadable)
 
         found = await seeded.get_by("id", _FIRST.id)
 
@@ -45,7 +45,7 @@ class TestContractRead:
         assert found.customer == _FIRST.customer
 
     async def test_get_by_key_miss_returns_none(self, case: BackendCase, seeded: Any) -> None:
-        require(case, Readable)
+        require(case, FieldReadable)
 
         assert await seeded.get_by("id", 404) is None
 

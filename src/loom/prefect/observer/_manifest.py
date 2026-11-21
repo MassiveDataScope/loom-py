@@ -32,7 +32,7 @@ class ManifestObserver:
         self._manifest = initial
 
     def on_event(self, event: Any) -> None:
-        """Handle one lifecycle event from the ``ObservabilityRuntime``.
+        """Handle one lifecycle event from the ``Observability``.
 
         Only ``Scope.STEP`` ``END`` / ``ERROR`` events update the manifest.
 

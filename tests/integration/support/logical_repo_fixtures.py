@@ -3,8 +3,8 @@ from __future__ import annotations
 import asyncio
 from typing import Protocol
 
-from loom.core.repository import repository_for
 from loom.core.response import Response
+from loom.core.stores.repository import repository_for
 from loom.core.use_case.use_case import UseCase
 
 

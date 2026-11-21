@@ -24,13 +24,14 @@ import pytest
 from loom.ai.abc import AgentResult
 from loom.ai.compiler._plan import AgentPlan, CompiledInstruction
 from loom.ai.declarative import PolicySpec
-from loom.ai.engines.pydantic_ai import PydanticAIEngineProvider
+from loom.ai.engines.pydantic_ai import PydanticAIEnginePlugin
 from loom.ai.inference import InferenceTarget
 from loom.core.di import LoomContainer
 from loom.core.identity import Identity
 from tests.helpers.pydantic_ai_engine import NullDeps, compiled_output
 
 pytestmark = pytest.mark.live
+
 
 _SCHEMA: Mapping[str, Any] = {
     "type": "object",
@@ -81,7 +82,7 @@ def live_result() -> AgentResult:
     target = _live_target()
     if target is None:
         pytest.skip("no provider credentials in the environment")
-    provider = PydanticAIEngineProvider()
+    provider = PydanticAIEnginePlugin()
     engine = provider.create_engine(_plan(target), deps=NullDeps(), container=LoomContainer())
     return asyncio.run(engine.run(_PROMPT, identity=Identity(subject="live-suite")))
 

@@ -15,9 +15,9 @@ from collections.abc import Callable, Mapping
 from dataclasses import dataclass, field
 from typing import ClassVar
 
-from loom.core.persistence.stores import StoreKey
-from loom.core.uow.abc import UnitOfWork
-from loom.core.uow.coordinator import (
+from loom.core.stores.catalog import StoreKey
+from loom.core.stores.uow.abc import UnitOfWork
+from loom.core.stores.uow.coordinator import (
     CommitUncertain,
     InvocationOutcome,
     Participant,
@@ -77,7 +77,7 @@ TERMINAL_CALLS = frozenset({"close", "exit-commit", "exit-rollback"})
 class _RecordingStore:
     """Shared behaviour: record calls, stage writes, apply the fault."""
 
-    transactional: ClassVar[bool] = True
+    is_transactional: ClassVar[bool] = True
 
     def __init__(self, key: StoreKey, ledger: Ledger, fault: Fault | None = None) -> None:
         self.key = key
@@ -86,7 +86,7 @@ class _RecordingStore:
         self.staged: list[str] = []
 
     def write(self, row: str) -> None:
-        if self.transactional:
+        if self.is_transactional:
             self.staged.append(row)
         else:
             self.ledger.persisted[self.key].append(row)
@@ -122,7 +122,7 @@ class _RecordingStore:
 class PhasedStore(_RecordingStore):
     """A loom-owned transactional unit of work with separate phases."""
 
-    phased: ClassVar[bool] = True
+    is_phased: ClassVar[bool] = True
 
     def __init__(self, key: StoreKey, ledger: Ledger, fault: Fault | None = None) -> None:
         super().__init__(key, ledger, fault)
@@ -160,7 +160,7 @@ class PhasedStore(_RecordingStore):
 class NonTransactionalStore(PhasedStore):
     """A loom-owned unit of work whose writes autocommit (no-op commit and rollback)."""
 
-    transactional: ClassVar[bool] = False
+    is_transactional: ClassVar[bool] = False
 
 
 class ThirdPartyStore(_RecordingStore):
@@ -197,11 +197,11 @@ class ThirdPartyStore(_RecordingStore):
 class AutocommitStore(ThirdPartyStore):
     """A third-party unit of work whose writes autocommit, like ``NoOpMongoUnitOfWork``.
 
-    It declares no ``phased`` marker, so the coordinator drives it in a single
+    It declares no ``is_phased`` marker, so the coordinator drives it in a single
     phase and its participant has no owner.
     """
 
-    transactional: ClassVar[bool] = False
+    is_transactional: ClassVar[bool] = False
 
 
 StoreFactory = Callable[[StoreKey, Ledger, Fault | None], _RecordingStore]
@@ -219,7 +219,7 @@ class Kind(enum.Enum):
         return _STORES[self]
 
     @property
-    def phased(self) -> bool:
+    def is_phased(self) -> bool:
         return self is not Kind.THIRD_PARTY
 
 

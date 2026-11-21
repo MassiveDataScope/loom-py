@@ -49,7 +49,7 @@ compiler.compile(AcmeUnmarkedMcpUseCase)
 registry = UseCaseRegistry.build([AcmeUnmarkedMcpUseCase])
 
 analysis = LoomContainer().graph.analyse([ClassNode(AcmeUnmarkedMcpUseCase)], ())
-declared = MarkerDeclarations.of(analysis, compiler, registry)
+declared = MarkerDeclarations.from_analysis(analysis, compiler, registry)
 declared.verify({})
 declared.mcp_grants({})
 

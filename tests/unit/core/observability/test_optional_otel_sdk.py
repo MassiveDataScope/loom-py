@@ -68,7 +68,7 @@ def _run_without_sdk(body: str) -> subprocess.CompletedProcess[str]:
 def _marked_lines(result: subprocess.CompletedProcess[str], key: str) -> list[str]:
     """Return the values the subprocess printed under ``key``.
 
-    The structlog observer writes to stdout too, so results are tagged rather
+    The log observer writes to stdout too, so results are tagged rather
     than read positionally.
     """
     assert result.returncode == 0, (
@@ -86,7 +86,7 @@ class TestImportsWithoutOtelSdk:
             """
 import loom.core.observability as obs
 
-runtime = obs.ObservabilityRuntime.from_config(obs.ObservabilityConfig())
+runtime = obs.Observability.from_config(obs.ObservabilityConfig())
 with runtime.span(obs.Scope.JOB, "sdk-less"):
     pass
 
@@ -95,9 +95,9 @@ print("OBSERVERS:" + str([type(o).__name__ for o in runtime.observers]))
 """
         )
 
-        # The default config builds exactly the structlog observer: no OTEL
+        # The default config builds exactly the log observer: no OTEL
         # observer, and nothing that needs the SDK.
-        assert _marked_lines(result, "OBSERVERS") == ["['StructlogLifecycleObserver']"]
+        assert _marked_lines(result, "OBSERVERS") == ["['LogLifecycleObserver']"]
 
     def test_otel_with_shared_global_provider_works_without_the_sdk(self) -> None:
         """An absent endpoint shares whatever provider the process already has.
@@ -109,13 +109,13 @@ print("OBSERVERS:" + str([type(o).__name__ for o in runtime.observers]))
         result = _run_without_sdk(
             """
 from loom.core.config.observability import OtelConfig
-from loom.core.observability import ObservabilityConfig, ObservabilityRuntime, Scope
+from loom.core.observability import ObservabilityConfig, Observability, Scope
 from loom.core.observability.config import OtelObservabilityConfig
 
 config = ObservabilityConfig(
     otel=OtelObservabilityConfig(enabled=True, config=OtelConfig())
 )
-runtime = ObservabilityRuntime.from_config(config)
+runtime = Observability.from_config(config)
 with runtime.span(Scope.JOB, "sdk-less"):
     pass
 
@@ -125,7 +125,7 @@ print("TRACER:" + type(runtime.tracer).__name__)
 """
         )
 
-        assert _marked_lines(result, "OBSERVERS") == ["['StructlogLifecycleObserver']"]
+        assert _marked_lines(result, "OBSERVERS") == ["['LogLifecycleObserver']"]
         # The API's proxy, not the API's no-op: it resolves to the host's
         # provider whenever one is installed, without importing the SDK here.
         assert _marked_lines(result, "TRACER") == ["ProxyTracer"]
@@ -146,7 +146,7 @@ class TestOtelRequestedWithoutTheSdk:
             """
 from loom.core.config.observability import OtelConfig
 from loom.core.model.redaction import Dsn
-from loom.core.observability import ObservabilityConfig, ObservabilityRuntime
+from loom.core.observability import ObservabilityConfig, Observability
 from loom.core.observability.config import OtelObservabilityConfig
 
 config = ObservabilityConfig(
@@ -156,7 +156,7 @@ config = ObservabilityConfig(
     )
 )
 try:
-    ObservabilityRuntime.from_config(config)
+    Observability.from_config(config)
 except Exception as exc:
     print("ERROR_TYPE:" + type(exc).__name__)
     print("ERROR_MSG:" + str(exc))
@@ -175,18 +175,17 @@ else:
         result = _run_without_sdk(
             """
 from loom.core.config.observability import OtelConfig
-from loom.core.logger.config import LoggerConfig
-from loom.core.observability import ObservabilityConfig, ObservabilityRuntime
+from loom.core.observability import ObservabilityConfig, Observability
 from loom.core.observability.config import LogObservabilityConfig, OtelObservabilityConfig
 
 config = ObservabilityConfig(
-    log=LogObservabilityConfig(enabled=True, config=LoggerConfig()),
+    log=LogObservabilityConfig(enabled=True, format="json"),
     otel=OtelObservabilityConfig(
         enabled=True, export_logs=True, config=OtelConfig()
     ),
 )
 try:
-    ObservabilityRuntime.from_config(config)
+    Observability.from_config(config)
 except Exception as exc:
     print("ERROR_TYPE:" + type(exc).__name__)
     print("ERROR_MSG:" + str(exc))

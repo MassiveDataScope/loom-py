@@ -1,913 +1,576 @@
-"""Unit tests for Celery runner factories (Piece 7)."""
+"""What the Celery task of a job and of a callback do on the worker, over the in-memory broker."""
 
 from __future__ import annotations
 
 import asyncio
 import warnings
-from collections.abc import Coroutine, Generator
-from contextlib import contextmanager
-from typing import Any
-from unittest.mock import AsyncMock, MagicMock, patch
+from collections.abc import Callable, Coroutine, Iterator
+from typing import Any, ClassVar
 
 import pytest
 from celery import Celery
+from celery.exceptions import Retry
 
 from loom.celery.constants import TASK_JOB_PREFIX, callback_task_name
-from loom.celery.runner import (
-    _CeleryAsyncRuntime,
-    _make_callback_task,
-    _make_job_task,
-    _resolve_error_info,
-)
+from loom.celery.errors import WorkerNotOpenError
+from loom.celery.runner import _CeleryProcessBridge, _make_callback_task
 from loom.core.engine.events import EventKind
 from loom.core.errors import (
     PostCommitError,
     ScopeOwnershipError,
-    StoresNotCommitted,
+    StoresNotCommittedError,
     UnitOfWorkInsideScope,
 )
+from loom.core.identity import Identity, current_identity
 from loom.core.job.callback import CallbackOutcome
-from loom.core.job.config import JobSettings
-from loom.core.job.envelope import job_context
+from loom.core.job.config import JobConfig, JobOptions, JobSettings, RetryConfig
+from loom.core.job.delivery import JobDelivery
 from loom.core.job.job import Job
-from loom.core.observability.event import Scope
-from loom.core.persistence.stores import DEFAULT_STORE
+from loom.core.job.outcome import JobAbandonment, JobPostponement
+from loom.core.job.policy import Backoff
+from loom.core.stores.catalog import DEFAULT_STORE
+from loom.core.stores.uow.coordinator import InvocationOutcome, Uncertain
+from loom.core.stores.uow.scope import invocation_error
 from loom.core.tracing import get_trace_id
-from loom.core.uow.coordinator import InvocationOutcome, Uncertain
-from loom.core.uow.scope import invocation_error
+from loom.core.use_case import Delivery
+from loom.core.use_case.markers import Caller
+from tests.helpers.jobs import CeleryWorker
 from tests.helpers.spans import build_recorder, hex_trace
 
-_SETTINGS = JobSettings()
-
-_WIRE_TRACE = "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa1"
-
-# ---------------------------------------------------------------------------
-# Test fixtures / helpers
-# ---------------------------------------------------------------------------
+WIRE_TRACE = "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa1"
+BACKOFF = Backoff(first_s=3, factor=3, max_s=300, jitter=False)
+JOB_TASKS = f"{TASK_JOB_PREFIX}."
 
 
-class _SyncJob(Job[int]):
-    __queue__ = "default"
-    __retries__ = 2
-    __countdown__ = 0
-    __timeout__ = None
-    __priority__ = 0
+class DoubleJob(Job[int]):
+    __retry__ = BACKOFF
 
-    def execute(self, value: int = 0) -> int:
+    def execute(self, value: int) -> int:
         return value * 2
 
 
-class _AsyncJob(Job[str]):
+class UpperJob(Job[str]):
     __queue__ = "heavy"
-    __retries__ = 1
-    __countdown__ = 0
     __timeout__ = 300
-    __priority__ = 0
 
-    async def execute(self, msg: str = "") -> str:
+    async def execute(self, msg: str) -> str:
         return msg.upper()
 
 
-class _SyncCallback:
-    def on_success(self, job_id: str, result: object, **ctx: object) -> None:
-        pass  # intentional no-op stub
+class DeliveryJob(Job[None]):
+    __retry__ = BACKOFF
+    __timeout__ = 300
+    seen: ClassVar[list[JobDelivery | None]] = []
 
-    def on_failure(self, job_id: str, exc_type: str, exc_msg: str, **ctx: object) -> None:
-        pass  # intentional no-op stub
-
-
-class _AsyncCallback:
-    async def on_success(self, job_id: str, result: object, **ctx: object) -> None:
-        pass  # intentional no-op stub
-
-    async def on_failure(self, job_id: str, exc_type: str, exc_msg: str, **ctx: object) -> None:
-        pass  # intentional no-op stub
+    def execute(self, delivery: JobDelivery | None = Delivery()) -> None:
+        self.seen.append(delivery)
 
 
-class _RetryError(Exception):
-    """Stands in for Celery's ``Retry`` raised by the mocked bound task."""
+class TraceJob(Job[None]):
+    seen: ClassVar[list[str | None]] = []
+
+    def execute(self) -> None:
+        self.seen.append(get_trace_id())
 
 
-def _mock_celery_app() -> MagicMock:
-    app = MagicMock()
-    app.task = MagicMock(side_effect=lambda **kw: lambda fn: fn)
-    app.conf.task_always_eager = False
-    return app
+class CallerJob(Job[str]):
+    def execute(self, caller: Identity = Caller()) -> str:
+        return caller.subject
 
 
-def _mock_factory(instance: object) -> MagicMock:
-    factory = MagicMock()
-    factory.build = MagicMock(return_value=instance)
-    return factory
+class ContextJob(Job[str | None]):
+    def execute(self) -> str | None:
+        caller = current_identity()
+        return caller.subject if caller.is_authenticated else None
 
 
-def _factory_recording_trace(instance: object, sink: list[str | None]) -> MagicMock:
-    """Factory whose ``build`` records the trace context visible inside the job."""
-    factory = MagicMock()
+ERRORS: dict[str, Callable[[], Exception]] = {
+    "post-commit-committed": lambda: PostCommitError(
+        committed=True, failures=(ConnectionError("broker down"),)
+    ),
+    "post-commit-uncommitted": lambda: PostCommitError(
+        committed=False, failures=(ConnectionError("broker down"),)
+    ),
+    "stores-not-committed": lambda: StoresNotCommittedError("audit=Committed, default=RolledBack"),
+    "scope-ownership": lambda: ScopeOwnershipError("the invocation scope is already closed"),
+    "uow-inside-scope": lambda: UnitOfWorkInsideScope.entering(object()),
+    "one-store-uncertain": lambda: invocation_error(
+        InvocationOutcome((Uncertain(DEFAULT_STORE, OSError("ack")),)), None
+    ),
+}
+"""Each error a job can raise, by the name a test gives the job to raise it."""
 
-    def _build(job_type: object) -> object:
-        del job_type
-        sink.append(get_trace_id())
-        return instance
-
-    factory.build = MagicMock(side_effect=_build)
-    return factory
-
-
-def _building_executor() -> MagicMock:
-    """Executor whose ``run`` builds the job through the factory it is given, then returns 0."""
-
-    async def run(job_type: object, *, factory: MagicMock, **_: object) -> int:
-        factory.build(job_type)
-        return 0
-
-    return MagicMock(run=run)
+NOT_RETRIED = ["post-commit-committed", "stores-not-committed", "scope-ownership"]
+NOT_RETRIED += ["uow-inside-scope", "one-store-uncertain"]
 
 
-def _mock_runtime(return_value: object = None, error: Exception | None = None) -> MagicMock:
-    runtime = MagicMock()
+class RaisingJob(Job[None]):
+    __retry__ = BACKOFF
 
-    def _run(coro: object, *, timeout: float | None = None, eager_fallback: bool) -> object:
-        del timeout, eager_fallback
-        close = getattr(coro, "close", None)
-        if callable(close):
-            close()
-        if error is not None:
-            raise error
-        return return_value
-
-    runtime.run = MagicMock(side_effect=_run)
-    runtime.initialize = MagicMock()
-    runtime.shutdown = MagicMock()
-    return runtime
+    def execute(self, kind: str) -> None:
+        raise ERRORS[kind]()
 
 
-def _executing_runtime() -> MagicMock:
-    runtime = MagicMock()
-    runtime.run = MagicMock(side_effect=lambda coro, **_: asyncio.run(coro))
-    runtime.ensure_open = MagicMock()
-    return runtime
+class FailingJob(Job[None]):
+    __retry__ = BACKOFF
+
+    def execute(self) -> None:
+        raise ValueError("err")
 
 
-def _mock_observability_runtime() -> tuple[
-    MagicMock, list[tuple[tuple[object, ...], dict[str, object]]]
-]:
-    runtime = MagicMock()
-    span_calls: list[tuple[tuple[object, ...], dict[str, object]]] = []
+class PostponingJob(Job[None]):
+    __retry__ = BACKOFF
 
-    @contextmanager
-    def _span(*args: object, **kwargs: object) -> Generator[None, None, None]:
-        span_calls.append((args, kwargs))
-        yield
-
-    runtime.span = MagicMock(side_effect=_span)
-    return runtime, span_calls
+    def execute(self, delay: int) -> None:
+        raise JobPostponement("not yet", delay)
 
 
-# ---------------------------------------------------------------------------
-# Trace ID lifecycle
-# ---------------------------------------------------------------------------
+class AbandoningJob(Job[None]):
+    def execute(self) -> None:
+        raise JobAbandonment("never")
 
 
-class TestTraceLifecycle:
-    def test_absent_trace_preserves_current_context(self) -> None:
-        before = get_trace_id()
-        with job_context(None, None):
-            assert get_trace_id() == before
-
-    def test_trace_is_visible_during_job_context(self) -> None:
-        with job_context("abc123", None):
-            assert get_trace_id() == "abc123"
-
-    def test_trace_is_restored_after_job_context(self) -> None:
-        before = get_trace_id()
-        with job_context("abc123", None):
-            pass
-        assert get_trace_id() == before
+@pytest.fixture(autouse=True)
+def _forget_what_jobs_saw() -> None:
+    DeliveryJob.seen.clear()
+    TraceJob.seen.clear()
 
 
-# ---------------------------------------------------------------------------
-# _make_job_task — task registration
-# ---------------------------------------------------------------------------
+@pytest.fixture
+def worker() -> Iterator[CeleryWorker]:
+    worker = CeleryWorker()
+    yield worker
+    worker.close()
 
 
-class TestMakeJobTaskRegistration:
-    def test_task_registered_with_correct_name_sync(self) -> None:
-        app = MagicMock()
-        registered_kwargs: dict[str, object] = {}
-        app.task = MagicMock(
-            side_effect=lambda **kw: registered_kwargs.update(kw) or (lambda fn: fn)
-        )
-        _make_job_task(app, _SyncJob, MagicMock(), MagicMock(), _mock_runtime(), settings=_SETTINGS)
-        assert registered_kwargs["name"] == f"{TASK_JOB_PREFIX}.{_SyncJob.__qualname__}"
-
-    def test_task_registered_with_correct_name_async(self) -> None:
-        app = MagicMock()
-        registered_kwargs: dict[str, object] = {}
-        app.task = MagicMock(
-            side_effect=lambda **kw: registered_kwargs.update(kw) or (lambda fn: fn)
-        )
-        _make_job_task(
-            app, _AsyncJob, MagicMock(), MagicMock(), _mock_runtime(), settings=_SETTINGS
-        )
-        assert registered_kwargs["name"] == f"{TASK_JOB_PREFIX}.{_AsyncJob.__qualname__}"
+class TestRegistration:
+    def test_the_task_is_named_after_the_job(self, worker: CeleryWorker) -> None:
+        assert worker.task(DoubleJob).name == f"{TASK_JOB_PREFIX}.{DoubleJob.__qualname__}"
 
     @pytest.mark.parametrize(
-        "option",
+        ("option", "expected"),
         [
-            pytest.param("acks_late", id="acks_late_is_true"),
-            pytest.param("reject_on_worker_lost", id="reject_on_worker_lost_is_true"),
+            ("acks_late", True),
+            ("acks_on_failure_or_timeout", True),
+            ("reject_on_worker_lost", True),
+            ("max_retries", None),
         ],
+        ids=["acks late", "acks on failure", "rejects on worker lost", "no attempt limit"],
     )
-    def test_task_option_is_true(self, option: str) -> None:
-        app = MagicMock()
-        registered_kwargs: dict[str, object] = {}
-        app.task = MagicMock(
-            side_effect=lambda **kw: registered_kwargs.update(kw) or (lambda fn: fn)
+    def test_the_task_option(self, worker: CeleryWorker, option: str, expected: object) -> None:
+        assert getattr(worker.task(DoubleJob), option) is expected
+
+    @pytest.mark.parametrize(("job", "expected"), [(UpperJob, 300), (DoubleJob, None)])
+    def test_the_soft_time_limit_is_the_timeout_of_the_job(
+        self, worker: CeleryWorker, job: type[Job[Any]], expected: int | None
+    ) -> None:
+        assert worker.task(job).soft_time_limit == expected
+
+
+class TestExecution:
+    def test_a_sync_job_returns_its_result(self, worker: CeleryWorker) -> None:
+        assert worker.run(DoubleJob, params={"value": 4}) == 8
+
+    def test_an_async_job_returns_its_result(self, worker: CeleryWorker) -> None:
+        assert worker.run(UpperJob, params={"msg": "hello"}) == "HELLO"
+
+    def test_the_job_reads_its_delivery_with_the_attempt_and_the_policy(
+        self, worker: CeleryWorker
+    ) -> None:
+        worker.run(DeliveryJob, attempt=2)
+
+        (delivery,) = DeliveryJob.seen
+        assert delivery is not None
+        assert (delivery.task_id, delivery.attempt, delivery.postponements) == ("task-1", 2, 0)
+        assert delivery.policy.backoff == BACKOFF
+
+    def test_the_run_timeout_is_the_soft_time_limit(self, worker: CeleryWorker) -> None:
+        worker.run(DeliveryJob)
+
+        (delivery,) = DeliveryJob.seen
+        assert delivery is not None
+        assert delivery.timeout_s == pytest.approx(300.0)
+
+    def test_the_job_acts_as_the_caller_of_the_envelope(self, worker: CeleryWorker) -> None:
+        assert worker.run(CallerJob, identity={"subject": "user-1"}) == "user-1"
+
+    def test_the_worker_publishes_the_caller_and_restores_the_context_afterwards(
+        self, worker: CeleryWorker
+    ) -> None:
+        assert worker.run(ContextJob, identity={"subject": "user-1"}) == "user-1"
+        assert not current_identity().is_authenticated
+
+    def test_a_job_span_lands_in_the_trace_the_dispatcher_sent(self, worker: CeleryWorker) -> None:
+        recorder = build_recorder()
+
+        worker.run(TraceJob, trace_id=WIRE_TRACE, observability=recorder.runtime)
+
+        span = recorder.one("job:TraceJob")
+        assert hex_trace(span) == WIRE_TRACE
+        assert span.parent is None
+
+    def test_a_job_without_a_trace_id_gets_a_span_on_a_random_trace(
+        self, worker: CeleryWorker
+    ) -> None:
+        recorder = build_recorder()
+
+        worker.run(TraceJob, observability=recorder.runtime)
+
+        assert hex_trace(recorder.one("job:TraceJob")) != WIRE_TRACE
+
+
+class TestEagerRequest:
+    def test_an_eager_request_runs_without_the_worker_bridge(self) -> None:
+        worker = CeleryWorker(initialized=False)
+
+        assert worker.run(DoubleJob, eager=True, params={"value": 3}) == 6
+
+    def test_an_eager_request_of_a_job_with_a_time_limit_runs_within_it(self) -> None:
+        worker = CeleryWorker(initialized=False)
+
+        assert worker.run(UpperJob, eager=True, params={"msg": "ok"}) == "OK"
+
+    def test_a_request_without_the_bridge_that_is_not_eager_is_refused(self) -> None:
+        worker = CeleryWorker(initialized=False)
+
+        with pytest.raises(RuntimeError, match="async bridge is not initialized"):
+            worker.run(DoubleJob, params={"value": 1})
+
+    @pytest.mark.parametrize(("always_eager", "runs"), [(True, True), (False, False)])
+    def test_a_request_that_does_not_say_follows_the_eager_setting_of_the_application(
+        self, always_eager: bool, runs: bool
+    ) -> None:
+        worker = CeleryWorker(initialized=False)
+        worker.broker.app.conf.task_always_eager = always_eager
+
+        if runs:
+            assert worker.run(DoubleJob, eager=None, params={"value": 2}) == 4
+        else:
+            with pytest.raises(RuntimeError, match="async bridge is not initialized"):
+                worker.run(DoubleJob, eager=None, params={"value": 2})
+
+
+class TestWorkerThatDidNotOpen:
+    def test_every_task_of_the_process_fails_without_running_the_job(
+        self, worker: CeleryWorker
+    ) -> None:
+        worker.runtime.refuse(RuntimeError("clickhouse unreachable"))
+
+        with pytest.raises(WorkerNotOpenError) as refused:
+            worker.run(TraceJob)
+
+        assert isinstance(refused.value.__cause__, RuntimeError)
+        assert TraceJob.seen == []
+
+
+class TestRetry:
+    def test_a_failure_with_attempts_left_publishes_the_message_again_after_the_backoff(
+        self, worker: CeleryWorker
+    ) -> None:
+        with pytest.raises(Retry):
+            worker.run(FailingJob, payload={"value": 1})
+
+        (message,) = worker.published(JOB_TASKS)
+        assert (message.task_id, message.countdown, message.kwargs["payload"]) == (
+            "task-1",
+            3,
+            {"value": 1},
         )
-        _make_job_task(app, _SyncJob, MagicMock(), MagicMock(), _mock_runtime(), settings=_SETTINGS)
-        assert registered_kwargs[option] is True
 
-    def test_max_retries_uses_job_classvar(self) -> None:
-        app = MagicMock()
-        registered_kwargs: dict[str, object] = {}
-        app.task = MagicMock(
-            side_effect=lambda **kw: registered_kwargs.update(kw) or (lambda fn: fn)
+    def test_the_delay_grows_with_the_attempt(self) -> None:
+        config = JobConfig(retry=RetryConfig(max_attempts=5))
+        settings = JobSettings({FailingJob: JobOptions.resolve(FailingJob, config)})
+        worker = CeleryWorker(settings=settings)
+
+        with pytest.raises(Retry):
+            worker.run(FailingJob, attempt=3)
+
+        assert [message.countdown for message in worker.published(JOB_TASKS)] == [27]
+        worker.close()
+
+    def test_the_last_attempt_raises_the_error_and_publishes_nothing(
+        self, worker: CeleryWorker
+    ) -> None:
+        with pytest.raises(ValueError, match="err"):
+            worker.run(FailingJob, attempt=3)
+
+        assert worker.published(JOB_TASKS) == []
+
+    def test_a_postponement_publishes_again_after_its_delay_counting_one_more(
+        self, worker: CeleryWorker
+    ) -> None:
+        with pytest.raises(Retry) as raised:
+            worker.run(PostponingJob, postponements=2, params={"delay": 7}, payload={"value": 1})
+
+        (message,) = worker.published(JOB_TASKS)
+        assert isinstance(raised.value.exc, JobPostponement)
+        assert (message.countdown, message.kwargs["postponements"]) == (7, 3)
+        assert message.kwargs["payload"] == {"value": 1}
+
+    def test_a_postponement_of_a_request_without_kwargs_carries_only_its_postponements(
+        self, worker: CeleryWorker
+    ) -> None:
+        with pytest.raises(Retry):
+            worker.run(PostponingJob, params={"delay": 7})
+
+        (message,) = worker.published(JOB_TASKS)
+        assert message.kwargs["postponements"] == 1
+
+    def test_postponements_do_not_use_up_the_attempts(self, worker: CeleryWorker) -> None:
+        with pytest.raises(Retry):
+            worker.run(FailingJob, postponements=5)
+
+    def test_a_job_abandonment_raises_without_publishing_again(self, worker: CeleryWorker) -> None:
+        with pytest.raises(JobAbandonment, match="never"):
+            worker.run(AbandoningJob)
+
+        assert worker.published(JOB_TASKS) == []
+
+    @pytest.mark.parametrize("kind", NOT_RETRIED)
+    def test_an_error_a_retry_cannot_help_is_raised_without_publishing_again(
+        self, worker: CeleryWorker, kind: str
+    ) -> None:
+        with pytest.raises(type(ERRORS[kind]())):
+            worker.run(RaisingJob, params={"kind": kind})
+
+        assert worker.published(JOB_TASKS) == []
+
+    def test_a_post_commit_error_without_a_commit_is_retried(self, worker: CeleryWorker) -> None:
+        with pytest.raises(Retry):
+            worker.run(RaisingJob, params={"kind": "post-commit-uncommitted"})
+
+
+class TestFailureCallback:
+    CALLBACK = "loom.callback_error.AcmeCallback"
+
+    def test_an_abandoned_job_sends_the_callback_once_with_the_error_class_and_message(
+        self, worker: CeleryWorker
+    ) -> None:
+        with pytest.raises(ValueError):
+            worker.run(
+                FailingJob,
+                attempt=3,
+                payload={"value": 1},
+                trace_id="acme-trace",
+                failure_callback=self.CALLBACK,
+            )
+
+        (message,) = worker.published(self.CALLBACK)
+        assert message.kwargs == {
+            "job_id": "task-1",
+            "context": {"value": 1},
+            "trace_id": "acme-trace",
+            "identity": None,
+            "exc_type": "ValueError",
+            "exc_msg": "err",
+        }
+
+    def test_a_job_abandonment_names_its_own_class_and_reason(self, worker: CeleryWorker) -> None:
+        with pytest.raises(JobAbandonment):
+            worker.run(AbandoningJob, failure_callback=self.CALLBACK)
+
+        (message,) = worker.published(self.CALLBACK)
+        assert (message.kwargs["exc_type"], message.kwargs["exc_msg"]) == (
+            "JobAbandonment",
+            "never",
         )
-        _make_job_task(app, _SyncJob, MagicMock(), MagicMock(), _mock_runtime(), settings=_SETTINGS)
-        assert registered_kwargs["max_retries"] == _SyncJob.__retries__
 
-    def test_soft_time_limit_uses_job_classvar(self) -> None:
-        app = MagicMock()
-        registered_kwargs: dict[str, object] = {}
-        app.task = MagicMock(
-            side_effect=lambda **kw: registered_kwargs.update(kw) or (lambda fn: fn)
-        )
-        _make_job_task(
-            app, _AsyncJob, MagicMock(), MagicMock(), _mock_runtime(), settings=_SETTINGS
-        )
-        assert registered_kwargs["soft_time_limit"] == _AsyncJob.__timeout__
+    def test_a_failure_that_is_retried_sends_nothing(self, worker: CeleryWorker) -> None:
+        with pytest.raises(Retry):
+            worker.run(FailingJob, failure_callback=self.CALLBACK)
 
+        assert worker.published(self.CALLBACK) == []
 
-# ---------------------------------------------------------------------------
-# _make_job_task — execution paths
-# ---------------------------------------------------------------------------
+    def test_an_abandoned_job_without_a_failure_callback_sends_nothing(
+        self, worker: CeleryWorker
+    ) -> None:
+        with pytest.raises(ValueError):
+            worker.run(FailingJob, attempt=3)
+
+        assert worker.published(self.CALLBACK) == []
 
 
-def _mock_self(retries: int = 0, max_retries: int = 0) -> MagicMock:
-    """Return a mock representing Celery's bound task self."""
-    ms = MagicMock()
-    ms.request.retries = retries
-    ms.request.is_eager = False
-    ms.max_retries = max_retries
-    ms.app.conf.task_always_eager = False
-    return ms
+class TestEvents:
+    def test_a_successful_run_emits_started_then_succeeded_with_a_duration(
+        self, worker: CeleryWorker
+    ) -> None:
+        worker.run(TraceJob)
 
-
-class TestMakeJobTaskExecution:
-    def test_job_task_calls_async_runtime_run(self) -> None:
-        """Every job (sync or async) is submitted to the async runtime."""
-        instance = _SyncJob()
-        factory = _mock_factory(instance)
-        runtime = _mock_runtime(return_value=10)
-        task_fn = _make_job_task(
-            _mock_celery_app(), _SyncJob, factory, MagicMock(), runtime, settings=_SETTINGS
-        )
-        task_fn(_mock_self(), payload={"value": 5})
-        runtime.run.assert_called_once()
-        _, kwargs = runtime.run.call_args
-        assert kwargs["timeout"] is None
-
-    def test_job_task_hands_the_executor_every_input_of_the_envelope(self) -> None:
-        """A8: the task hands the job type and its factory to the executor, which builds it."""
-        factory = _mock_factory(_SyncJob())
-        executor = MagicMock()
-        executor.run = AsyncMock(return_value=7)
-        submitted: list[Coroutine[Any, Any, Any]] = []
-        runtime = MagicMock()
-        runtime.run = MagicMock(side_effect=lambda coro, **_: submitted.append(coro) or 7)
-        task_fn = _make_job_task(
-            _mock_celery_app(), _SyncJob, factory, executor, runtime, settings=_SETTINGS
-        )
-
-        assert task_fn(_mock_self(), payload={"value": 5}, params={"p": 2}) == 7
-
-        assert asyncio.run(submitted[0]) == 7
-        executor.run.assert_awaited_once_with(
-            _SyncJob, factory=factory, params={"p": 2}, payload={"value": 5}, identity=None
-        )
-
-    def test_job_task_emits_observability_span(self) -> None:
-        instance = _SyncJob()
-        factory = _mock_factory(instance)
-        runtime = _executing_runtime()
-        observability_runtime, span_calls = _mock_observability_runtime()
-        task_fn = _make_job_task(
-            _mock_celery_app(),
-            _SyncJob,
-            factory,
-            MagicMock(run=AsyncMock(return_value=10)),
-            runtime,
-            observability_runtime=observability_runtime,
-            settings=_SETTINGS,
-        )
-        task_fn(_mock_self(), payload={"value": 5})
-
-        observability_runtime.span.assert_called_once()
-        args, kwargs = observability_runtime.span.call_args
-        assert args[0] is Scope.JOB
-        assert args[1] == _SyncJob.__qualname__
-        assert kwargs["trace_id"] is None
-        assert span_calls
-
-    def test_async_job_also_calls_async_runtime_run(self) -> None:
-        instance = MagicMock()
-        factory = _mock_factory(instance)
-        executor = MagicMock()
-        runtime = _mock_runtime(return_value="ok")
-        task_fn = _make_job_task(
-            _mock_celery_app(), _AsyncJob, factory, executor, runtime, settings=_SETTINGS
-        )
-        task_fn(_mock_self(), payload={"msg": "hello"})
-        runtime.run.assert_called_once()
-        _, kwargs = runtime.run.call_args
-        assert kwargs["timeout"] == pytest.approx(300.0)
-
-    def test_task_returns_async_runtime_result(self) -> None:
-        instance = _SyncJob()
-        factory = _mock_factory(instance)
-        runtime = _mock_runtime(return_value=42)
-        task_fn = _make_job_task(
-            _mock_celery_app(), _SyncJob, factory, MagicMock(), runtime, settings=_SETTINGS
-        )
-        result = task_fn(_mock_self(), payload={"value": 4})
-        assert result == 42
-
-    def test_job_task_marks_eager_fallback_for_eager_requests(self) -> None:
-        instance = _SyncJob()
-        factory = _mock_factory(instance)
-        runtime = _mock_runtime(return_value=10)
-        task_fn = _make_job_task(
-            _mock_celery_app(), _SyncJob, factory, MagicMock(), runtime, settings=_SETTINGS
-        )
-        task_self = _mock_self()
-        task_self.request.is_eager = True
-
-        result = task_fn(task_self, payload={"value": 5})
-        assert result == 10
-        runtime.run.assert_called_once()
-        _, kwargs = runtime.run.call_args
-        assert kwargs["eager_fallback"] is True
-
-
-# ---------------------------------------------------------------------------
-# _make_job_task — retry logic
-# ---------------------------------------------------------------------------
-
-
-class TestMakeJobTaskRetry:
-    def test_retries_when_below_max(self) -> None:
-        instance = MagicMock()
-        factory = _mock_factory(instance)
-
-        mock_self = MagicMock()
-        mock_self.request.retries = 0
-        mock_self.max_retries = 2
-
-        class RetryError(Exception):
-            pass
-
-        mock_self.retry = MagicMock(side_effect=RetryError)
-
-        runtime = _mock_runtime(error=ValueError("err"))
-        task_fn = _make_job_task(
-            _mock_celery_app(), _SyncJob, factory, MagicMock(), runtime, settings=_SETTINGS
-        )
-        raw_fn = task_fn if callable(task_fn) else task_fn.__func__
-        with pytest.raises(RetryError):
-            raw_fn(mock_self, payload={"value": 1})
-        mock_self.retry.assert_called_once()
-
-    def test_post_commit_error_is_not_retried(self) -> None:
-        """US1 s3: the transaction committed, so a retry would run the job twice."""
-        instance = MagicMock()
-        factory = _mock_factory(instance)
-        metrics = MagicMock()
-        mock_self = _mock_self(retries=0, max_retries=2)
-        error = PostCommitError(committed=True, failures=(ConnectionError("broker down"),))
-
-        runtime = _mock_runtime(error=error)
-        task_fn = _make_job_task(
-            _mock_celery_app(), _SyncJob, factory, MagicMock(), runtime, metrics, settings=_SETTINGS
-        )
-        with pytest.raises(PostCommitError):
-            task_fn(mock_self, payload={"value": 1})
-
-        mock_self.retry.assert_not_called()
-        kinds = [c.args[0].kind for c in metrics.on_event.call_args_list]
-        assert EventKind.JOB_RETRYING not in kinds
-        assert EventKind.JOB_EXHAUSTED in kinds
-
-    def test_post_commit_error_without_a_commit_is_retried(self) -> None:
-        """A1: nothing committed, so re-running the job cannot duplicate a write."""
-        factory = _mock_factory(MagicMock())
-        mock_self = _mock_self(retries=0, max_retries=2)
-
-        class RetryError(Exception):
-            pass
-
-        mock_self.retry = MagicMock(side_effect=RetryError)
-        error = PostCommitError(committed=False, failures=(ConnectionError("broker down"),))
-
-        runtime = _mock_runtime(error=error)
-        task_fn = _make_job_task(
-            _mock_celery_app(), _SyncJob, factory, MagicMock(), runtime, settings=_SETTINGS
-        )
-        with pytest.raises(RetryError):
-            task_fn(mock_self, payload={"value": 1})
-
-        mock_self.retry.assert_called_once()
-
-    @pytest.mark.parametrize(
-        "error",
-        [
-            StoresNotCommitted("audit=Committed, default=RolledBack"),
-            ScopeOwnershipError("the invocation scope is already closed"),
-            UnitOfWorkInsideScope.entering(object()),
-            invocation_error(InvocationOutcome((Uncertain(DEFAULT_STORE, OSError("ack")),)), None),
-        ],
-        ids=["stores-not-committed", "scope-ownership", "uow-inside-scope", "one-store-uncertain"],
-    )
-    def test_a_non_retryable_invocation_error_is_not_retried(self, error: Exception) -> None:
-        """A store already committed, or the job has a programming error: a retry cannot help."""
-        mock_self = _mock_self(retries=0, max_retries=2)
-        task_fn = _make_job_task(
-            _mock_celery_app(),
-            _SyncJob,
-            _mock_factory(MagicMock()),
-            MagicMock(),
-            _mock_runtime(error=error),
-            settings=_SETTINGS,
-        )
-        with pytest.raises(type(error)):
-            task_fn(mock_self, payload={"value": 1})
-
-        mock_self.retry.assert_not_called()
-
-    def test_retry_countdown_uses_exponential_backoff(self) -> None:
-        instance = MagicMock()
-        factory = _mock_factory(instance)
-
-        mock_self = MagicMock()
-        mock_self.request.retries = 2  # third attempt → backoff^2
-        mock_self.max_retries = 5
-
-        class RetryError(Exception):
-            pass
-
-        mock_self.retry = MagicMock(side_effect=RetryError)
-
-        runtime = _mock_runtime(error=ValueError("err"))
-        task_fn = _make_job_task(
-            _mock_celery_app(),
-            _SyncJob,
-            factory,
-            MagicMock(),
-            runtime,
-            backoff=3,
-            settings=_SETTINGS,
-        )
-        raw_fn = task_fn if callable(task_fn) else task_fn.__func__
-        with pytest.raises(RetryError):
-            raw_fn(mock_self, payload={"value": 1})
-        _, kwargs = mock_self.retry.call_args
-        # backoff=3, retries=2 → countdown = 3**2 = 9
-        assert kwargs["countdown"] == 9
-
-    def test_job_started_event_emitted_before_execution(self) -> None:
-        """JOB_STARTED must arrive before the async runtime is called."""
-        instance = _SyncJob()
-        factory = _mock_factory(instance)
-        metrics = MagicMock()
-        runtime = _mock_runtime(return_value=0)
-        task_fn = _make_job_task(
-            _mock_celery_app(), _SyncJob, factory, MagicMock(), runtime, metrics, settings=_SETTINGS
-        )
-        task_fn(_mock_self())
-        first_event = metrics.on_event.call_args_list[0].args[0]
-        assert first_event.kind == EventKind.JOB_STARTED
-        runtime.run.assert_called_once()
-
-    def test_job_succeeded_event_emitted_on_success(self) -> None:
-        instance = _SyncJob()
-        factory = _mock_factory(instance)
-        metrics = MagicMock()
-        runtime = _mock_runtime(return_value=0)
-        task_fn = _make_job_task(
-            _mock_celery_app(), _SyncJob, factory, MagicMock(), runtime, metrics, settings=_SETTINGS
-        )
-        task_fn(_mock_self())
-        kinds = [c.args[0].kind for c in metrics.on_event.call_args_list]
-        assert EventKind.JOB_SUCCEEDED in kinds
-
-    def test_job_succeeded_event_has_duration_ms(self) -> None:
-        instance = _SyncJob()
-        factory = _mock_factory(instance)
-        metrics = MagicMock()
-        runtime = _mock_runtime(return_value=0)
-        task_fn = _make_job_task(
-            _mock_celery_app(), _SyncJob, factory, MagicMock(), runtime, metrics, settings=_SETTINGS
-        )
-        task_fn(_mock_self())
-        succeeded = next(
-            c.args[0]
-            for c in metrics.on_event.call_args_list
-            if c.args[0].kind == EventKind.JOB_SUCCEEDED
-        )
+        started, succeeded = worker.execution_observer.events
+        assert (started.kind, succeeded.kind) == (EventKind.JOB_STARTED, EventKind.JOB_SUCCEEDED)
         assert succeeded.duration_ms is not None
         assert succeeded.duration_ms >= 0
 
-    def test_job_started_event_carries_trace_id(self) -> None:
-        instance = _SyncJob()
-        factory = _mock_factory(instance)
-        metrics = MagicMock()
-        runtime = _mock_runtime(return_value=0)
-        task_fn = _make_job_task(
-            _mock_celery_app(), _SyncJob, factory, MagicMock(), runtime, metrics, settings=_SETTINGS
-        )
-        task_fn(_mock_self(), trace_id="tid-999")
-        started = next(
-            c.args[0]
-            for c in metrics.on_event.call_args_list
-            if c.args[0].kind == EventKind.JOB_STARTED
-        )
-        assert started.trace_id == "tid-999"
+    def test_every_event_carries_the_trace_the_job_runs_in(self, worker: CeleryWorker) -> None:
+        worker.run(TraceJob, trace_id=WIRE_TRACE)
 
-    def test_the_worker_job_span_lands_in_the_trace_the_dispatcher_sent(self) -> None:
-        """Criterion: a job dispatched with a trace id is traced under it.
+        assert TraceJob.seen == [WIRE_TRACE]
+        assert {event.trace_id for event in worker.execution_observer.events} == {WIRE_TRACE}
+        assert get_trace_id() is None
 
-        No payload-format change is involved — ``trace_id`` already crosses the
-        broker as a task kwarg. The worker installs it in the contextvar, and
-        the id generator turns it into the OTEL trace id of the root JOB span.
-        """
-        recorder = build_recorder()
-        task_fn = _make_job_task(
-            _mock_celery_app(),
-            _SyncJob,
-            _mock_factory(_SyncJob()),
-            MagicMock(run=AsyncMock(return_value=0)),
-            _executing_runtime(),
-            None,
-            recorder.runtime,
-            settings=_SETTINGS,
-        )
+    def test_a_trace_less_job_installs_no_context_and_emits_events_with_none(
+        self, worker: CeleryWorker
+    ) -> None:
+        worker.run(TraceJob)
 
-        task_fn(_mock_self(), trace_id=_WIRE_TRACE)
-
-        span = recorder.one("job:_SyncJob")
-        assert hex_trace(span) == _WIRE_TRACE
-        assert span.parent is None, (
-            "no remote parent span id crosses the broker, so the worker span "
-            "shares the trace but has no parent edge"
-        )
-
-    def test_a_job_without_a_trace_id_still_gets_a_span_on_a_random_trace(self) -> None:
-        recorder = build_recorder()
-        task_fn = _make_job_task(
-            _mock_celery_app(),
-            _SyncJob,
-            _mock_factory(_SyncJob()),
-            MagicMock(run=AsyncMock(return_value=0)),
-            _executing_runtime(),
-            None,
-            recorder.runtime,
-            settings=_SETTINGS,
-        )
-
-        task_fn(_mock_self())
-
-        assert hex_trace(recorder.one("job:_SyncJob")) != _WIRE_TRACE
-
-    def test_a_trace_less_job_installs_no_context_and_emits_events_with_none(self) -> None:
-        """A task dispatched outside a request must not mint a trace id here.
-
-        ``trace_id`` reaches the worker only when the job came from an API
-        request.  Without one, nothing is installed in the context and every
-        event carries ``trace_id=None``: the span still gets its own id
-        downstream, but that id must never leak back into the events.
-        """
-        seen: list[str | None] = []
-        metrics = MagicMock()
-        task_fn = _make_job_task(
-            _mock_celery_app(),
-            _SyncJob,
-            _factory_recording_trace(_SyncJob(), seen),
-            _building_executor(),
-            _executing_runtime(),
-            metrics,
-            settings=_SETTINGS,
-        )
-
-        task_fn(_mock_self())
-
-        assert seen == [None], "no trace context may be installed for a trace-less job"
-        events = [c.args[0] for c in metrics.on_event.call_args_list]
-        assert [e.kind for e in events] == [EventKind.JOB_STARTED, EventKind.JOB_SUCCEEDED]
-        assert all(e.trace_id is None for e in events)
+        assert TraceJob.seen == [None]
+        assert worker.execution_observer.kinds == [EventKind.JOB_STARTED, EventKind.JOB_SUCCEEDED]
+        assert {event.trace_id for event in worker.execution_observer.events} == {None}
 
     @pytest.mark.parametrize(
-        ("retries", "expected_error", "expected_kind"),
-        [
-            (0, _RetryError, EventKind.JOB_RETRYING),
-            (2, ValueError, EventKind.JOB_EXHAUSTED),
-        ],
+        ("attempt", "raised", "kind"),
+        [(1, Retry, EventKind.JOB_FAILED), (3, ValueError, EventKind.JOB_ABANDONED)],
+        ids=["attempt left", "last attempt"],
     )
-    def test_failure_events_of_a_trace_less_job_also_carry_none(
-        self, retries: int, expected_error: type[Exception], expected_kind: EventKind
+    def test_a_failure_emits_failed_or_abandoned_without_a_trace(
+        self, worker: CeleryWorker, attempt: int, raised: type[Exception], kind: EventKind
     ) -> None:
-        metrics = MagicMock()
-        mock_self = _mock_self(retries=retries, max_retries=2)
-        mock_self.retry = MagicMock(side_effect=_RetryError)
-        task_fn = _make_job_task(
-            _mock_celery_app(),
-            _SyncJob,
-            _mock_factory(_SyncJob()),
-            MagicMock(),
-            _mock_runtime(error=ValueError("err")),
-            metrics,
-            settings=_SETTINGS,
-        )
+        with pytest.raises(raised):
+            worker.run(FailingJob, attempt=attempt)
 
-        with pytest.raises(expected_error):
-            task_fn(mock_self, payload={"value": 1})
+        assert kind in worker.execution_observer.kinds
+        assert {event.trace_id for event in worker.execution_observer.events} == {None}
 
-        events = [c.args[0] for c in metrics.on_event.call_args_list]
-        assert expected_kind in [e.kind for e in events]
-        assert all(e.trace_id is None for e in events)
+    def test_a_post_commit_error_that_committed_is_abandoned_not_failed(
+        self, worker: CeleryWorker
+    ) -> None:
+        with pytest.raises(PostCommitError):
+            worker.run(RaisingJob, params={"kind": "post-commit-committed"})
 
-    def test_a_job_with_a_trace_id_installs_it_and_stamps_every_event(self) -> None:
-        seen: list[str | None] = []
-        metrics = MagicMock()
-        task_fn = _make_job_task(
-            _mock_celery_app(),
-            _SyncJob,
-            _factory_recording_trace(_SyncJob(), seen),
-            _building_executor(),
-            _executing_runtime(),
-            metrics,
-            settings=_SETTINGS,
-        )
-
-        task_fn(_mock_self(), trace_id=_WIRE_TRACE)
-
-        assert seen == [_WIRE_TRACE]
-        events = [c.args[0] for c in metrics.on_event.call_args_list]
-        assert all(e.trace_id == _WIRE_TRACE for e in events)
-        assert get_trace_id() is None, "the trace context is restored when the task returns"
-
-    def test_no_metrics_does_not_raise(self) -> None:
-        instance = _SyncJob()
-        factory = _mock_factory(instance)
-        runtime = _mock_runtime(return_value=0)
-        task_fn = _make_job_task(
-            _mock_celery_app(),
-            _SyncJob,
-            factory,
-            MagicMock(),
-            runtime,
-            metrics=None,
-            settings=_SETTINGS,
-        )
-        task_fn(_mock_self())  # must not raise
-
-    def test_raises_original_exc_when_retries_exhausted(self) -> None:
-        instance = MagicMock()
-        factory = _mock_factory(instance)
-
-        mock_self = MagicMock()
-        mock_self.request.retries = 2
-        mock_self.max_retries = 2
-
-        runtime = _mock_runtime(error=ValueError("final"))
-        task_fn = _make_job_task(
-            _mock_celery_app(), _SyncJob, factory, MagicMock(), runtime, settings=_SETTINGS
-        )
-        raw_fn = task_fn if callable(task_fn) else task_fn.__func__
-        with pytest.raises(ValueError, match="final"):
-            raw_fn(mock_self, payload={"value": 1})
-        mock_self.retry.assert_not_called()
-
-    def test_job_retrying_event_emitted_on_retry(self) -> None:
-        instance = MagicMock()
-        factory = _mock_factory(instance)
-        metrics = MagicMock()
-        mock_self = MagicMock()
-        mock_self.request.retries = 0
-        mock_self.request.is_eager = False
-        mock_self.max_retries = 2
-        mock_self.app.conf.task_always_eager = False
-
-        class _RetryError(Exception):
-            pass
-
-        mock_self.retry = MagicMock(side_effect=_RetryError)
-        runtime = _mock_runtime(error=ValueError("boom"))
-        task_fn = _make_job_task(
-            _mock_celery_app(), _SyncJob, factory, MagicMock(), runtime, metrics, settings=_SETTINGS
-        )
-        with pytest.raises(_RetryError):
-            task_fn(mock_self)
-        kinds = [c.args[0].kind for c in metrics.on_event.call_args_list]
-        assert EventKind.JOB_RETRYING in kinds
-
-    def test_job_exhausted_event_emitted_when_retries_exhausted(self) -> None:
-        instance = MagicMock()
-        factory = _mock_factory(instance)
-        metrics = MagicMock()
-        mock_self = MagicMock()
-        mock_self.request.retries = 2
-        mock_self.max_retries = 2
-        mock_self.request.is_eager = False
-        mock_self.app.conf.task_always_eager = False
-        runtime = _mock_runtime(error=ValueError("final"))
-        task_fn = _make_job_task(
-            _mock_celery_app(), _SyncJob, factory, MagicMock(), runtime, metrics, settings=_SETTINGS
-        )
-        with pytest.raises(ValueError):
-            task_fn(mock_self)
-        kinds = [c.args[0].kind for c in metrics.on_event.call_args_list]
-        assert EventKind.JOB_EXHAUSTED in kinds
+        assert EventKind.JOB_FAILED not in worker.execution_observer.kinds
+        assert EventKind.JOB_ABANDONED in worker.execution_observer.kinds
 
 
-# ---------------------------------------------------------------------------
-# _resolve_error_info
-# ---------------------------------------------------------------------------
+class Hooks:
+    """A callback recording what each hook received."""
+
+    seen: ClassVar[list[tuple[str, dict[str, Any]]]] = []
+
+    def on_success(self, job_id: str, result: object, **context: object) -> None:
+        self.seen.append((job_id, {"result": result, **context}))
+
+    def on_failure(self, job_id: str, exc_type: str, exc_msg: str, **context: object) -> None:
+        self.seen.append((job_id, {"exc_type": exc_type, "exc_msg": exc_msg, **context}))
 
 
-class TestResolveErrorInfo:
-    def test_looks_up_result_on_the_worker_app(self) -> None:
-        app = Celery("worker", set_as_current=False)
-        mock_result = MagicMock()
-        mock_result.result = ValueError("bad")
-        with patch("loom.celery.runner.AsyncResult", return_value=mock_result) as result:
-            assert _resolve_error_info("some-task-id", app) == {
-                "exc_type": "ValueError",
-                "exc_msg": "bad",
-            }
-        result.assert_called_once_with("some-task-id", app=app)
+class AsyncHooks(Hooks):
+    async def on_success(self, job_id: str, result: object, **context: object) -> None:  # type: ignore[override]
+        super().on_success(job_id, result, **context)
 
-    def test_returns_unknown_when_result_is_not_exception(self) -> None:
-        mock_result = MagicMock()
-        mock_result.result = None
-        with patch("loom.celery.runner.AsyncResult", return_value=mock_result):
-            details = _resolve_error_info("some-task-id", Celery(set_as_current=False))
-        assert details == {"exc_type": "Unknown", "exc_msg": ""}
+    async def on_failure(  # type: ignore[override]
+        self, job_id: str, exc_type: str, exc_msg: str, **context: object
+    ) -> None:
+        super().on_failure(job_id, exc_type, exc_msg, **context)
 
 
-# ---------------------------------------------------------------------------
-# _make_callback_task
-# ---------------------------------------------------------------------------
-
-_BACKEND_ERROR = {"exc_type": "ValueError", "exc_msg": "bad input"}
-
-OUTCOMES = pytest.mark.parametrize(
-    ("outcome", "job_result", "details"),
-    [
-        (CallbackOutcome.SUCCESS, ("acme",), {"result": "acme"}),
-        (CallbackOutcome.FAILURE, (), _BACKEND_ERROR),
-    ],
-    ids=["success", "failure"],
-)
-"""Each outcome: what Celery passes positionally, and the hook's details."""
-
-
-@pytest.fixture
-def backend_error() -> Generator[None]:
-    """The result backend holds the failed job's exception."""
-    with patch("loom.celery.runner._resolve_error_info", return_value=_BACKEND_ERROR):
-        yield
-
-
-@pytest.fixture
-def celery_app() -> Celery:
-    return Celery("acme", set_as_current=False)
-
-
-class _CoroutineFromDef:
+class CoroutineFromDef(Hooks):
     """A callback whose plain ``def`` hooks return a coroutine."""
 
-    def on_success(self, job_id: str, result: object, **ctx: object) -> Coroutine[Any, Any, None]:
+    def on_success(  # type: ignore[override]
+        self, job_id: str, result: object, **context: object
+    ) -> Coroutine[Any, Any, None]:
         return asyncio.sleep(0)
 
-    def on_failure(
-        self, job_id: str, exc_type: str, exc_msg: str, **ctx: object
+    def on_failure(  # type: ignore[override]
+        self, job_id: str, exc_type: str, exc_msg: str, **context: object
     ) -> Coroutine[Any, Any, None]:
         return asyncio.sleep(0)
 
 
-@pytest.mark.usefixtures("backend_error")
+OUTCOMES = pytest.mark.parametrize(
+    ("outcome", "job_result", "arrived", "details"),
+    [
+        (CallbackOutcome.SUCCESS, ("acme",), {}, {"result": "acme"}),
+        (
+            CallbackOutcome.FAILURE,
+            (),
+            {"exc_type": "ValueError", "exc_msg": "bad input"},
+            {"exc_type": "ValueError", "exc_msg": "bad input"},
+        ),
+    ],
+    ids=["success", "failure"],
+)
+"""Each outcome: what Celery passes positionally, the keyword arguments a failure is sent with,
+and the details the hook receives."""
+
+
+@pytest.fixture(autouse=True)
+def _forget_what_hooks_saw() -> None:
+    Hooks.seen.clear()
+
+
 @OUTCOMES
-class TestMakeCallbackTask:
-    def test_task_registered_under_its_callback_task_name(
-        self, outcome: CallbackOutcome, job_result: tuple[Any, ...], details: Any
-    ) -> None:
-        app = MagicMock()
-        registered_name: list[str] = []
-
-        def _register(**kw: object) -> object:
-            registered_name.append(str(kw["name"]))
-            return lambda fn: fn
-
-        app.task = MagicMock(side_effect=_register)
-        _make_callback_task(app, _SyncCallback, outcome, MagicMock(), _mock_runtime())
-        assert registered_name == [callback_task_name(_SyncCallback, outcome)]
-
-    def test_sync_hook_called_with_job_id_details_and_context(
+class TestCallbackTask:
+    def test_the_task_is_named_after_its_callback_and_outcome(
         self,
-        celery_app: Celery,
+        worker: CeleryWorker,
         outcome: CallbackOutcome,
         job_result: tuple[Any, ...],
-        details: Any,
+        arrived: dict[str, Any],
+        details: dict[str, Any],
     ) -> None:
-        cb = MagicMock(spec=_SyncCallback)
-        outcome.hook(cb).return_value = None
-        task = _make_callback_task(
-            celery_app, _SyncCallback, outcome, _mock_factory(cb), _mock_runtime()
-        )
-        task.apply(args=job_result, kwargs={"job_id": "uuid-1", "context": {"order_id": 99}}).get()
-        outcome.hook(cb).assert_called_once_with(job_id="uuid-1", **details, order_id=99)
+        task = worker.callback_task(Hooks, outcome)
+
+        assert task.name == callback_task_name(Hooks, outcome)
+
+    @pytest.mark.parametrize("hooks", [Hooks, AsyncHooks], ids=["sync", "async"])
+    def test_the_hook_receives_the_job_id_the_details_and_the_context(
+        self,
+        worker: CeleryWorker,
+        outcome: CallbackOutcome,
+        job_result: tuple[Any, ...],
+        arrived: dict[str, Any],
+        details: dict[str, Any],
+        hooks: type[Hooks],
+    ) -> None:
+        task = worker.callback_task(hooks, outcome)
+
+        task.apply(
+            args=job_result,
+            kwargs={"job_id": "uuid-1", "context": {"order_id": 99}, **arrived},
+        ).get()
+
+        assert Hooks.seen == [("uuid-1", {**details, "order_id": 99})]
 
     def test_a_plain_def_hook_returning_an_awaitable_is_refused_and_closed(
         self,
-        celery_app: Celery,
+        worker: CeleryWorker,
         outcome: CallbackOutcome,
         job_result: tuple[Any, ...],
-        details: Any,
+        arrived: dict[str, Any],
+        details: dict[str, Any],
     ) -> None:
-        task = _make_callback_task(
-            celery_app,
-            _CoroutineFromDef,
-            outcome,
-            _mock_factory(_CoroutineFromDef()),
-            _mock_runtime(),
-        )
+        task = worker.callback_task(CoroutineFromDef, outcome)
 
         with warnings.catch_warnings():
             warnings.simplefilter("error", RuntimeWarning)
-            result = task.apply(args=job_result, kwargs={"job_id": "j", "context": {}})
+            result = task.apply(args=job_result, kwargs={"job_id": "j", "context": {}, **arrived})
             with pytest.raises(TypeError, match="async def"):
                 result.get()
 
-    @pytest.mark.parametrize("eager", [False, True], ids=["worker", "eager"])
-    def test_async_hook_runs_on_the_runtime_eagerly_only_for_an_eager_request(
+    def test_an_async_hook_needs_the_bridge_unless_the_request_is_eager(
         self,
-        celery_app: Celery,
         outcome: CallbackOutcome,
         job_result: tuple[Any, ...],
-        details: Any,
-        eager: bool,
+        arrived: dict[str, Any],
+        details: dict[str, Any],
     ) -> None:
-        cb = MagicMock()
-        setattr(cb, f"on_{outcome}", AsyncMock())
-        runtime = _mock_runtime()
-        task = _make_callback_task(celery_app, _AsyncCallback, outcome, _mock_factory(cb), runtime)
-        kwargs = {"job_id": "x", "context": {}}
-        if eager:
-            task.apply(args=job_result, kwargs=kwargs).get()
-        else:
+        worker = CeleryWorker(initialized=False)
+        task = worker.callback_task(AsyncHooks, outcome)
+        kwargs = {"job_id": "x", "context": {}, **arrived}
+
+        with pytest.raises(RuntimeError, match="async bridge is not initialized"):
             task(*job_result, **kwargs)
-        runtime.run.assert_called_once()
-        assert runtime.run.call_args.kwargs["eager_fallback"] is eager
+        task.apply(args=job_result, kwargs=kwargs).get()
+
+        assert [job_id for job_id, _ in Hooks.seen] == ["x"]
 
 
-# ---------------------------------------------------------------------------
-# Two Celery applications in one process
-# ---------------------------------------------------------------------------
-
-
-class _TwinJob(Job[int]):
+class TwinJob(Job[int]):
     """Registered on two applications under the same task name."""
-
-    __retries__ = 0
 
     def execute(self) -> int:
         return 0
-
-
-class _TwinCallback:
-    def on_success(self, job_id: str, result: object, **ctx: object) -> None:
-        pass  # intentional no-op stub
-
-    def on_failure(self, job_id: str, exc_type: str, exc_msg: str, **ctx: object) -> None:
-        pass  # intentional no-op stub
-
-
-def _two_apps() -> tuple[Celery, Celery]:
-    """Two applications, neither finalized: both register before either reads its tasks."""
-    return (
-        Celery("first", set_as_current=False),
-        Celery("second", set_as_current=False),
-    )
 
 
 class TestTwoApplicationsInOneProcess:
@@ -920,44 +583,32 @@ class TestTwoApplicationsInOneProcess:
     always lands on the wrong application for one of them.
     """
 
-    def test_each_job_task_runs_against_its_own_runtime(self) -> None:
-        first, second = _two_apps()
-        for app, answer in ((first, 1), (second, 2)):
-            _make_job_task(
-                app,
-                _TwinJob,
-                _mock_factory(_TwinJob()),
-                MagicMock(),
-                _mock_runtime(return_value=answer),
-                settings=_SETTINGS,
-            )
-        name = f"{TASK_JOB_PREFIX}.{_TwinJob.__qualname__}"
+    def test_each_job_task_belongs_to_its_own_application(self) -> None:
+        first, second = CeleryWorker(initialized=False), CeleryWorker(initialized=False)
+        name = f"{TASK_JOB_PREFIX}.{TwinJob.__qualname__}"
+        tasks = [worker.task(TwinJob) for worker in (first, second)]
 
-        assert first.tasks[name] is not second.tasks[name]
-        assert first.tasks[name].apply().get() == 1
-        assert second.tasks[name].apply().get() == 2
-
-    @pytest.mark.usefixtures("backend_error")
-    @OUTCOMES
-    def test_each_callback_builds_from_its_own_factory(
-        self, outcome: CallbackOutcome, job_result: tuple[Any, ...], details: Any
-    ) -> None:
-        first, second = _two_apps()
-        factories = (_mock_factory(MagicMock()), _mock_factory(MagicMock()))
-        tasks = [
-            _make_callback_task(app, _TwinCallback, outcome, factory, _mock_runtime())
-            for app, factory in zip((first, second), factories, strict=True)
-        ]
-
+        assert [first.broker.app.tasks[name], second.broker.app.tasks[name]] == tasks
         assert tasks[0] is not tasks[1]
-        for task, factory in zip(tasks, factories, strict=True):
-            task.apply(args=job_result, kwargs={"job_id": "j", "context": {}}).get()
 
-            factory.build.assert_called_once_with(_TwinCallback)
+    @OUTCOMES
+    def test_each_callback_task_belongs_to_its_own_application(
+        self,
+        outcome: CallbackOutcome,
+        job_result: tuple[Any, ...],
+        arrived: dict[str, Any],
+        details: dict[str, Any],
+    ) -> None:
+        workers = (CeleryWorker(initialized=False), CeleryWorker(initialized=False))
+        tasks = [worker.callback_task(Hooks, outcome) for worker in workers]
+        name = callback_task_name(Hooks, outcome)
+
+        assert [worker.broker.app.tasks[name] for worker in workers] == tasks
+        assert tasks[0] is not tasks[1]
 
 
-class _SyncSeen:
-    seen: list[tuple[str, object]] = []
+class SyncSeen:
+    seen: ClassVar[list[tuple[str, object]]] = []
 
     def on_success(self, job_id: str, result: object, **context: object) -> None:
         self.seen.append((job_id, result))
@@ -966,26 +617,30 @@ class _SyncSeen:
         raise AssertionError
 
 
-class _AsyncSeen(_SyncSeen):
+class AsyncSeen(SyncSeen):
     async def on_success(self, job_id: str, result: object, **context: object) -> None:  # type: ignore[override]
         self.seen.append((job_id, result))
 
 
-class _Builds:
+class Builds:
     def build(self, callback_type: type[Any]) -> Any:
         return callback_type()
 
 
 class TestLinkContextOnTheWorker:
-    @pytest.mark.parametrize("callback", [_SyncSeen, _AsyncSeen], ids=["sync", "async"])
+    @pytest.mark.parametrize("callback", [SyncSeen, AsyncSeen], ids=["sync", "async"])
     def test_a_link_context_cannot_replace_the_reserved_arguments(
-        self, callback: type[_SyncSeen]
+        self, callback: type[SyncSeen]
     ) -> None:
         app = Celery("acme")
         app.conf.task_always_eager = True
         callback.seen = []
         task = _make_callback_task(
-            app, callback, CallbackOutcome.SUCCESS, _Builds(), _CeleryAsyncRuntime()
+            app,
+            callback,
+            CallbackOutcome.SUCCESS,
+            Builds(),
+            _CeleryProcessBridge(),  # type: ignore[arg-type]
         )
 
         task.apply(

@@ -3,20 +3,22 @@
 from __future__ import annotations
 
 from typing import Any, Protocol, cast
+from unittest.mock import patch
 
 import pytest
 
-from loom.composition import Application
+from loom.composition import Application, Project
+from loom.composition.recipe import Runtime
 from loom.core.command.base import Command
 from loom.core.errors import Conflict, NotFound
 from loom.core.model import LoomStruct
-from loom.core.repository.abc import Readable
+from loom.core.stores.repository import Readable
 from loom.core.use_case.markers import Input
 from loom.core.use_case.use_case import UseCase
 from loom.rest.model import RestInterface, RestRoute
-from loom.testing import http_harness
 from loom.testing.http_harness import HttpTestHarness
 from loom.testing.in_memory import InMemoryRepository
+from loom.testing.overrides import Override
 
 # ---------------------------------------------------------------------------
 # Domain fixtures
@@ -375,13 +377,13 @@ class TestCapabilityKeys:
         self, monkeypatch: pytest.MonkeyPatch
     ) -> None:
         composed: list[Application] = []
-        compose = http_harness.compose_application
+        compose = Project.compose
 
-        def captured(*args: Any, **kwargs: Any) -> Application:
-            composed.append(compose(*args, **kwargs))
+        def captured(self: Project, adapter: Runtime[object], **kwargs: Any) -> Application:
+            composed.append(compose(self, adapter, **kwargs))
             return composed[-1]
 
-        monkeypatch.setattr(http_harness, "compose_application", captured)
+        monkeypatch.setattr(Project, "compose", captured)
         fake = AcmeItemFake()
         harness = HttpTestHarness()
         harness.inject_repo(AcmeItem, fake)
@@ -390,3 +392,51 @@ class TestCapabilityKeys:
         container = composed[0].kernel.container
         assert container.resolve(Readable[AcmeItem]) is fake
         assert container.resolve(AcmeItemLookup) is fake
+
+
+@pytest.fixture(scope="module")
+def shared_override_harness() -> tuple[HttpTestHarness, Any, list[int]]:
+    baseline = InMemoryRepository(Product)
+    baseline.seed(Product(id=1, name="baseline"))
+    calls: list[int] = []
+    compose = Project.compose
+
+    def counted(project: Project, adapter: Runtime[object]) -> Application:
+        calls.append(1)
+        return compose(project, adapter)
+
+    harness = HttpTestHarness(overrides=[Override.repository(Product, baseline)])
+    with patch.object(Project, "compose", counted):
+        client = harness.build_app(interfaces=[ProductInterface])
+    yield harness, client, calls
+    client.close()
+
+
+class TestHarnessOverride:
+    def test_instance_override_restores_the_previous_value(self) -> None:
+        repository = InMemoryRepository(Product)
+        harness = HttpTestHarness(
+            overrides=[Override.repository(Product, repository), Override.instance(str, "baseline")]
+        )
+        client = harness.build_app(interfaces=[ProductInterface])
+        container = harness.application.kernel.container
+
+        assert container.resolve(str) == "baseline"
+        with harness.overriding(Override.instance(str, "temporary")):
+            assert container.resolve(str) == "temporary"
+        assert container.resolve(str) == "baseline"
+        client.close()
+
+    @pytest.mark.parametrize("name", ["first", "second", "third"])
+    def test_each_double_uses_one_composition_and_restores(
+        self, shared_override_harness: tuple[HttpTestHarness, Any, list[int]], name: str
+    ) -> None:
+        harness, client, calls = shared_override_harness
+        double = InMemoryRepository(Product)
+        double.seed(Product(id=1, name=name))
+
+        with harness.overriding(Override.repository(Product, double)):
+            assert client.get("/products/1").json()["name"] == name
+
+        assert client.get("/products/1").json()["name"] == "baseline"
+        assert len(calls) == 1

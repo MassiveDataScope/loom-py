@@ -14,7 +14,7 @@ loom deploy manifest config/ --env production --function worker
 The command loads the configuration the same way `loom check --deploy` does:
 a config directory (`base.yaml` plus the overlay of `--env`) or explicit
 files, `LOOM__` overrides included. It runs the same deploy checks, and
-`--skip` works the same way. Their findings go to stderr. When a check fails,
+`--skip` works the same way and takes configuration paths (`app.rest`). The manifest reuses the scan of `app.packages` the checks already ran. Their findings go to stderr. When a check fails,
 the command prints no manifest and exits `1`. stdout holds only the manifest.
 
 ## What the configuration declares
@@ -36,8 +36,11 @@ lambda:
       trigger: {source: sns, queue: {name: alerts}, job: ImportInvoice, identity: {subject: svc:alerts}}
 sqs:
   queues:
-    jobs: https://sqs.eu-west-1.amazonaws.com/123456789012/shop-jobs
-    alerts: https://sqs.eu-west-1.amazonaws.com/123456789012/shop-alerts
+    jobs:
+      url: https://sqs.eu-west-1.amazonaws.com/123456789012/shop-jobs
+    alerts:
+      url: https://sqs.eu-west-1.amazonaws.com/123456789012/shop-alerts
+      abandoned: dead_letter
 ```
 
 - `lambda.handler` is the Lambda handler that every function runs (the module
@@ -51,17 +54,23 @@ The manifest refuses a configuration that does not declare these keys, a
 handler or queue URL given by a placeholder, a function whose key is not a
 Python identifier, and an event trigger whose job startup would refuse.
 
-## Schema (`manifest_version: 2`)
+## Schema (`manifest_version: 3`)
 
 ```json
 {
-  "manifest_version": 2,
+  "manifest_version": 3,
   "environment": "production",
   "handler": "entry.handler",
   "code_path": "src",
   "queues": {
-    "alerts": "https://sqs.eu-west-1.amazonaws.com/123456789012/shop-alerts",
-    "jobs": "https://sqs.eu-west-1.amazonaws.com/123456789012/shop-jobs"
+    "alerts": {
+      "url": "https://sqs.eu-west-1.amazonaws.com/123456789012/shop-alerts",
+      "abandoned": "dead_letter"
+    },
+    "jobs": {
+      "url": "https://sqs.eu-west-1.amazonaws.com/123456789012/shop-jobs",
+      "abandoned": "dead_letter"
+    }
   },
   "functions": {
     "alerts": {
@@ -125,11 +134,11 @@ Python identifier, and an event trigger whose job startup would refuse.
 | `environment` | The environment the manifest was built for (`--env` or `LOOM_ENV`). |
 | `handler` | `lambda.handler`. |
 | `code_path` | `app.code_path` (`src` by default), relative to the configuration. |
-| `queues` | `sqs.queues` as written: the queues the application may send jobs to. |
+| `queues` | `sqs.queues` as written, each as `{url, abandoned}` (`dead_letter` by default): the queues the application may send jobs to. A `dead_letter` queue needs a dead-letter queue, whose `RedrivePolicy` a consuming function reads at Init. |
 | `source`, `via` | The trigger's `source`, and `sqs` for an event trigger with a `queue:` block, else `null`. |
-| `event.routes` (http) | Each route of the function's interfaces, prefix included, as startup composes them: Python interfaces from `app.discovery`, YAML ones from `app.rest.interfaces`, `app.rest.disable_routes` applied and the CRUD routes the store's backend cannot serve dropped. A `disable_routes` entry that matches no route is refused, as at startup. |
+| `event.routes` (http) | Each route of the function's interfaces, prefix included, as startup composes them: Python interfaces from `app.packages`, YAML ones from `app.rest.interfaces`, `app.rest.disable_routes` applied and the CRUD routes the store's backend cannot serve dropped. A `disable_routes` entry that matches no route is refused, as at startup. |
 | `event.auth` (http) | The trigger's `auth`, or else `app.rest.auth`, as written. |
-| `event` (jobs, queued) | `queue` (the block's `name`) and the event source mapping settings of the trigger's `queue:` block. `report_batch_item_failures` is `true` unless the trigger sets it to `false`. `dead_letter_required: true`: the queue needs a dead-letter queue, where messages that keep failing end. The discovery mode must be one a worker scans. An event trigger adds its `job` and `identity`; an sns one `raw_message_delivery: false`, which its subscription must keep. |
+| `event` (jobs, queued) | `queue` (the block's `name`) and the event source mapping settings of the trigger's `queue:` block. `report_batch_item_failures` is always `true`: the mapping must enable `ReportBatchItemFailures`. `dead_letter_required: true`: the queue needs a dead-letter queue, where messages that keep failing end. `app.packages` must list the package that holds the job. An event trigger adds its `job` and `identity`; an sns one `raw_message_delivery: false`, which its subscription must keep. |
 | `event` (direct) | The `job`, the system `identity` it runs as (required) and `on_failure`: the asynchronous invocation's `maximum_retry_attempts` and `maximum_event_age_s`, defaults applied. Its presence means the deployment must configure an on-failure destination, where a failed event goes. |
 | `secrets`, `ssm_parameters` | The secret and parameter names the function resolves: those of every `${secrets:...}` and `${ssm:...}` placeholder of the configuration, except the other functions' sections. A dotted JSON tail is dropped, so `/shop/jwt.path` lists the secret `/shop/jwt`. `%VAR%` tokens stay as written. A function running jobs lists those of `app.rest.auth` too: it resolves the whole `app` section. |
 
@@ -166,7 +175,7 @@ construct that takes one manifest entry:
 - who may invoke the function and write to its queue: whoever can runs the
   declared job as the declared identity, so restrict `lambda:InvokeFunction`
   and the queue policy, and pin an identity-bearing function in code with
-  `LambdaAdapter(function=...)`;
+  `LambdaRuntime(function=...)`;
 - an IAM role that reads only the listed secrets and parameters and sends to
   the listed queues.
 

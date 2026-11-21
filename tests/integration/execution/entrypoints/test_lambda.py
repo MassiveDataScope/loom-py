@@ -14,18 +14,20 @@ from starlette.applications import Starlette
 from starlette.testclient import TestClient
 
 from loom.core.engine.compiler import UseCaseCompiler
-from loom.core.engine.executor import RuntimeExecutor
+from loom.core.engine.executor import UseCaseExecutor
 from loom.core.identity import Identity
 from loom.core.identity.wire import encode_identity
 from loom.core.job.config import JobSettings
 from loom.core.job.envelope import JobEnvelope
-from loom.core.observability.runtime import ObservabilityRuntime
+from loom.core.job.policy import Redelivery
+from loom.core.observability.observability import Observability
 from loom.core.use_case.factory import UseCaseFactory
 from loom.rest.compiler import RestInterfaceCompiler
-from loom.serverless.aws.lambda_._jobs import run_envelope
+from loom.serverless.aws.lambda_._jobs import JobConsumer, job_runner
 from loom.serverless.aws.lambda_.triggers.http import (
     _route,  # pyright: ignore[reportPrivateUsage]
 )
+from loom.testing import make
 
 from .doubles import ALICE, CALLERS, AcmeProbeJob, AcmeRecordingFactory, AcmeRoutes, as_caller
 
@@ -39,8 +41,8 @@ class TestLambdaHttpRoute:
         caller: Identity | None,
         subject: str,
     ) -> None:
-        api = SimpleNamespace(factory=factory, executor=RuntimeExecutor(compiler))
-        noop = ObservabilityRuntime.noop()
+        api = SimpleNamespace(factory=factory, executor=UseCaseExecutor(compiler))
+        noop = Observability.noop()
         [compiled] = RestInterfaceCompiler(compiler).compile(AcmeRoutes)
         app = Starlette(routes=[_route(compiled, cast(Any, api), noop)])
 
@@ -56,16 +58,27 @@ class TestLambdaHttpRoute:
 
 class TestLambdaJobsEnvelope:
     async def test_builds_inside_an_execution_as_the_envelope_caller(
-        self, factory: UseCaseFactory, executor: RuntimeExecutor
+        self, factory: UseCaseFactory, executor: UseCaseExecutor
     ) -> None:
         built: list[AcmeProbeJob] = []
-        kernel = SimpleNamespace(factory=AcmeRecordingFactory(factory, built), executor=executor)
-        application = SimpleNamespace(
-            kernel=kernel, observability=ObservabilityRuntime.noop(), job_settings=JobSettings()
+        kernel = SimpleNamespace(
+            factory=AcmeRecordingFactory(factory, built), executor=executor, execution_observer=None
         )
-        envelope = JobEnvelope(job="AcmeProbeJob", identity=encode_identity(ALICE))
+        application = SimpleNamespace(
+            kernel=kernel, observability=Observability.noop(), job_settings=JobSettings()
+        )
+        envelope = make(JobEnvelope, job="AcmeProbeJob", identity=encode_identity(ALICE))
 
-        await run_envelope(cast(Any, application), envelope, AcmeProbeJob, None, None)
+        await JobConsumer(
+            application.job_settings, job_runner(cast(Any, application), Redelivery.SAME)
+        ).run_envelope(
+            envelope,
+            AcmeProbeJob,
+            None,
+            None,
+            attempt=1,
+            postponements=0,
+        )
 
         [job] = built
         assert job.session.caller == ALICE

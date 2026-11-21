@@ -4,14 +4,15 @@ A context using an engine declares the engine's type here or a subclass
 adding only its own keys, so the same keys validate the same way wherever
 the engine is configured. Each engine has a package of its own
 (:mod:`~loom.core.connections.aws`, :mod:`~loom.core.connections.mongo`,
-:mod:`~loom.core.connections.clickhouse`): its connection type, the typed
-loader of its island and, in ``client``, the island that builds the driver
-client. Importing this package or an engine package loads no driver.
+:mod:`~loom.core.connections.clickhouse`): its connection type and, for AWS,
+the port that serves the clients. The driver clients are built by the adapters
+of :mod:`loom.connections`. Importing this package or an engine package loads
+no driver.
 
-The relational type is not re-exported here: it lives with the persistence
-layer (:mod:`loom.core.connections.relational` names it), and importing it
-from this package would make every reader of a connection type, the config
-resolvers among them, load the persistence layer.
+The relational type is not re-exported here: it lives in
+:mod:`loom.core.stores.database`, and importing it from this package would
+make every reader of a connection type, the config resolvers among them, load
+the store ports.
 """
 
 from __future__ import annotations

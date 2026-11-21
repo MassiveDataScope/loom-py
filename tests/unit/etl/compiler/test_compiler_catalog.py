@@ -8,7 +8,7 @@ import pytest
 
 from loom.etl import ETLStep, Format, FromFile, FromTable, IntoFile, IntoTable
 from loom.etl.compiler import ETLCompilationError, ETLCompiler
-from loom.etl.testing import StubCatalog
+from loom.etl.testing import InMemoryCatalog
 from tests.unit.etl.doubles import RunDateETLParams
 
 
@@ -51,12 +51,12 @@ class TestCompilerCatalog:
         assert plan.step_type is OrdersStep
 
     def test_compile_with_valid_catalog_succeeds(self) -> None:
-        catalog = StubCatalog({"raw.orders": ("id",), "staging.orders": ()})
+        catalog = InMemoryCatalog({"raw.orders": ("id",), "staging.orders": ()})
         plan = ETLCompiler(catalog=catalog).compile_step(OrdersStep)
         assert plan.step_type is OrdersStep
 
     def test_compile_multi_source_all_registered(self) -> None:
-        catalog = StubCatalog(
+        catalog = InMemoryCatalog(
             {
                 "raw.orders": ("id",),
                 "raw.customers": ("id",),
@@ -68,30 +68,30 @@ class TestCompilerCatalog:
 
     def test_file_source_not_validated_against_catalog(self) -> None:
         # Catalog has the target but NOT the file path — files are physical, not catalogued.
-        catalog = StubCatalog({"staging.report": ()})
+        catalog = InMemoryCatalog({"staging.report": ()})
         plan = ETLCompiler(catalog=catalog).compile_step(FileSourceStep)
         assert plan.step_type is FileSourceStep
 
     def test_file_target_not_validated_against_catalog(self) -> None:
         # Catalog has the TABLE source but not the file target — file targets have no TableRef.
-        catalog = StubCatalog({"raw.orders": ("id",)})
+        catalog = InMemoryCatalog({"raw.orders": ("id",)})
         plan = ETLCompiler(catalog=catalog).compile_step(FileTargetStep)
         assert plan.step_type is FileTargetStep
 
     def test_missing_source_table_raises(self) -> None:
-        catalog = StubCatalog({"staging.orders": ()})  # raw.orders missing
+        catalog = InMemoryCatalog({"staging.orders": ()})  # raw.orders missing
         compiler = ETLCompiler(catalog=catalog)
         with pytest.raises(ETLCompilationError, match="unknown table 'raw.orders'"):
             compiler.compile_step(OrdersStep)
 
     def test_missing_target_table_raises(self) -> None:
-        catalog = StubCatalog({"raw.orders": ("id",)})  # staging.orders missing
+        catalog = InMemoryCatalog({"raw.orders": ("id",)})  # staging.orders missing
         compiler = ETLCompiler(catalog=catalog)
         with pytest.raises(ETLCompilationError, match="unknown table 'staging.orders'"):
             compiler.compile_step(OrdersStep)
 
     def test_missing_one_of_multiple_sources_raises(self) -> None:
-        catalog = StubCatalog(
+        catalog = InMemoryCatalog(
             {
                 "raw.orders": ("id",),
                 # raw.customers intentionally missing
@@ -103,13 +103,13 @@ class TestCompilerCatalog:
             compiler.compile_step(MultiSourceStep)
 
     def test_error_message_includes_step_name(self) -> None:
-        catalog = StubCatalog({"staging.orders": ()})
+        catalog = InMemoryCatalog({"staging.orders": ()})
         compiler = ETLCompiler(catalog=catalog)
         with pytest.raises(ETLCompilationError, match="OrdersStep"):
             compiler.compile_step(OrdersStep)
 
     def test_compiler_reuses_catalog_across_compile_calls(self) -> None:
-        catalog = StubCatalog(
+        catalog = InMemoryCatalog(
             {
                 "raw.orders": ("id",),
                 "staging.orders": (),

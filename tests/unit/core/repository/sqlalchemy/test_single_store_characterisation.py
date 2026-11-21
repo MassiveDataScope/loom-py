@@ -24,27 +24,28 @@ from typing import Any
 import pytest
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from loom.composition import Application, CompositionSource, Recipe, build_application
+from loom.composition import Application, Project, Recipe
 from loom.core.authz import Decision, Grant, Permission, Role, RoleCatalog, Scope
 from loom.core.authz.elevation import elevate_scope, elevated_scopes, elevation_scope
-from loom.core.backend.sqlalchemy import compile_all, get_compiled
 from loom.core.command import Command
 from loom.core.discovery.base import DiscoveryResult
 from loom.core.engine.post_commit import active_channel
 from loom.core.model import BaseModel, ColumnField
-from loom.core.persistence.profile import SERVER_PROFILE
-from loom.core.persistence.stores import DEFAULT_STORE
-from loom.core.repository.abc import CursorCodec, PageParams, RepoFor
-from loom.core.repository.sqlalchemy.repository import RepositorySQLAlchemy
-from loom.core.repository.sqlalchemy.session_manager import SessionManager
-from loom.core.repository.sqlalchemy.transactional import ForeignSessionError, transactional
-from loom.core.repository.sqlalchemy.uow import (
+from loom.core.stores.catalog import DEFAULT_STORE
+from loom.core.stores.profile import SERVER_PROFILE
+from loom.core.stores.repository import CursorCodec, PageParams, RepoFor
+from loom.core.stores.uow.scope import current_scope
+from loom.core.use_case import Input, UseCase
+from loom.core.use_case.invoker import ApplicationInvoker
+from loom.stores.sqlalchemy.repository import SQLAlchemyRepository
+from loom.stores.sqlalchemy.schema import compile_all, get_compiled
+from loom.stores.sqlalchemy.session_manager import SessionManager
+from loom.stores.sqlalchemy.transactional import ForeignSessionError, transactional
+from loom.stores.sqlalchemy.uow import (
     SQLAlchemyUnitOfWork,
     SQLAlchemyUnitOfWorkFactory,
 )
-from loom.core.uow.scope import current_scope
-from loom.core.use_case import Input, UseCase
-from loom.core.use_case.invoker import ApplicationInvoker
+from loom.testing import make
 from tests.helpers.composition import ProjectFactory, fixture_project, uow_factory
 from tests.helpers.elevation import sink_for
 
@@ -81,8 +82,8 @@ class _SingleStoreAdapter:
         self._build_use_cases = build_use_cases
         self.use_cases: tuple[type, ...] = ()
 
-    def recipe(self, source: CompositionSource) -> Recipe:
-        discovered = source.discover()
+    def recipe(self, project: Project) -> Recipe:
+        discovered = project.discovered
         model = _config_record(discovered)
         self.use_cases = self._build_use_cases(model)
         return Recipe(
@@ -92,7 +93,7 @@ class _SingleStoreAdapter:
             ),
         )
 
-    def bind(self, application: Application) -> Application:
+    def mount(self, application: Application) -> Application:
         return application
 
 
@@ -119,7 +120,7 @@ def _compose(
     config_path: str, build_use_cases: _UseCases
 ) -> tuple[Application, tuple[type, ...], type[BaseModel]]:
     adapter = _SingleStoreAdapter(build_use_cases)
-    application = build_application(config_path, adapter=adapter, environment="test")
+    application = Project.load(config_path, environment="test").compose(adapter)
     assert isinstance(uow_factory(application), SQLAlchemyUnitOfWorkFactory)
     return application, adapter.use_cases, _config_record(application.discovered)
 
@@ -258,12 +259,12 @@ async def two_stores(
         await _create_schema(second)
         yield first, second, first_path, second_path
     finally:
-        await first.dispose()
-        await second.dispose()
+        await first.close()
+        await second.close()
 
 
-def _note_repo(manager: SessionManager) -> RepositorySQLAlchemy[_Note, int]:
-    return RepositorySQLAlchemy(
+def _note_repo(manager: SessionManager) -> SQLAlchemyRepository[_Note, int]:
+    return SQLAlchemyRepository(
         session_manager=manager,
         model=_Note,
         cursor_codec=CursorCodec(signing="ephemeral"),
@@ -284,7 +285,7 @@ class _NoteService:
 
 _WRITE = Permission("rows.write")
 _CATALOG = RoleCatalog((_WRITE,), (Role("editor", (_WRITE,)),))
-_BOUNDARY = Scope.of("b1")
+_BOUNDARY = Scope.from_segments("b1")
 
 
 class TestSingleStoreCharacterisation:
@@ -297,7 +298,7 @@ class TestSingleStoreCharacterisation:
         )
 
         async with application.running():
-            await application.kernel.app.invoke(use_case, payload={"name": "kept"})
+            await application.kernel.invoker.invoke(use_case, payload={"name": "kept"})
 
         assert _count_rows(db_path, _RECORD) == 1
 
@@ -311,7 +312,7 @@ class TestSingleStoreCharacterisation:
 
         async def invoke_failing() -> None:
             async with application.running():
-                await application.kernel.app.invoke(use_case, payload={"name": "lost"})
+                await application.kernel.invoker.invoke(use_case, payload={"name": "lost"})
 
         with pytest.raises(RuntimeError, match=_EXECUTE_FAILED):
             await invoke_failing()
@@ -329,7 +330,7 @@ class TestSingleStoreCharacterisation:
         opened = _spy_units(monkeypatch, application)
 
         async with application.running():
-            await application.kernel.app.invoke(outer, payload={"name": "outer"})
+            await application.kernel.invoker.invoke(outer, payload={"name": "outer"})
 
         assert len(opened) == 1
         assert len(commits) == 1
@@ -345,7 +346,7 @@ class TestSingleStoreCharacterisation:
 
         async def invoke_failing() -> None:
             async with application.running():
-                await application.kernel.app.invoke(outer, payload={"name": "outer"})
+                await application.kernel.invoker.invoke(outer, payload={"name": "outer"})
 
         with pytest.raises(RuntimeError, match=_OUTER_FAILED):
             await invoke_failing()
@@ -361,11 +362,11 @@ class TestSingleStoreCharacterisation:
         )
 
         async with application.running():
-            created_id = await application.kernel.app.invoke(use_case, payload={"name": "kept"})
+            created_id = await application.kernel.invoker.invoke(use_case, payload={"name": "kept"})
             assert current_scope() is None
             repository = application.kernel.container.resolve_repo(model)
             found = await repository.get_by_id(created_id)
-            page = await repository.list_paginated(PageParams(page=1, limit=10))
+            page = await repository.list_paginated(make(PageParams, page=1, limit=10))
 
         assert found is not None
         assert found.name == "kept"
@@ -386,7 +387,7 @@ class TestSingleStoreCharacterisation:
         )
 
         async with application.running():
-            await application.kernel.app.invoke(use_case, payload={"name": "kept"})
+            await application.kernel.invoker.invoke(use_case, payload={"name": "kept"})
 
         assert seen == [1]
 
@@ -402,7 +403,7 @@ class TestSingleStoreCharacterisation:
 
         async def invoke_failing() -> None:
             async with application.running():
-                await application.kernel.app.invoke(use_case, payload={"name": "lost"})
+                await application.kernel.invoker.invoke(use_case, payload={"name": "lost"})
 
         with pytest.raises(RuntimeError, match=_EXECUTE_FAILED):
             await invoke_failing()
@@ -490,7 +491,7 @@ class TestSingleStoreCharacterisation:
         # Inside SQLAlchemyUnitOfWork on the first engine a repository of the
         # second engine refuses the active session (fault A fails closed), so the
         # literal shape of fault B never writes. The own-session path is
-        # RepositorySQLAlchemy._session_scope -> session_manager.session() ->
+        # SQLAlchemyRepository._session_scope -> session_manager.session() ->
         # commit(), and it runs only when no active session is bound. A task
         # started with a fresh contextvars.Context() is that path: it stands in
         # for a store with its own context variable ("one context variable per

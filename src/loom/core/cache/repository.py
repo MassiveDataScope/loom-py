@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import asyncio
 import inspect
+import logging
 import random
 from collections.abc import Awaitable, Callable, Mapping, Sequence
 from dataclasses import dataclass
@@ -13,9 +14,9 @@ import msgspec
 
 from loom.core.cache._batching import REFILL_BATCH_SIZE, batched
 from loom.core.cache._single_flight import SingleFlight
-from loom.core.cache.abc.backend import CacheBackend
 from loom.core.cache.abc.config import CacheConfig
 from loom.core.cache.abc.dependency import BatchFingerprintResolver, DependencyResolver
+from loom.core.cache.abc.store import CacheStore
 from loom.core.cache.decorators import declares_cache_policy
 from loom.core.cache.keys import (
     custom_query_key,
@@ -31,7 +32,6 @@ from loom.core.cache.result_codec import (
 )
 from loom.core.engine.post_commit import store_channel
 from loom.core.errors import BoundaryValidationError
-from loom.core.logger import get_logger
 from loom.core.model import LoomType, is_pydantic_model, loom_type_of
 from loom.core.model.convert import to_struct
 from loom.core.model.enums import Cardinality
@@ -44,10 +44,17 @@ from loom.core.model.introspection import (
 )
 from loom.core.model.projection import Projection
 from loom.core.model.relation import Relation
-from loom.core.persistence.stores import store_of
 from loom.core.projection.loaders import resolve_model_reference
-from loom.core.repository import FilterParams, MutationEvent, PageParams, PageResult, Repository
-from loom.core.repository.abc.query import (
+from loom.core.stores.catalog import store_of
+from loom.core.stores.repository import (
+    FilterParams,
+    MutationEvent,
+    PageParams,
+    PageResult,
+    Repository,
+)
+from loom.core.stores.repository.capabilities import BulkCreatable, OnConflict
+from loom.core.stores.repository.query import (
     CursorResult,
     FilterGroup,
     FilterOp,
@@ -55,9 +62,8 @@ from loom.core.repository.abc.query import (
     PaginationMode,
     QuerySpec,
 )
-from loom.core.repository.abc.repo_for import BulkCreatable
-from loom.core.repository.abc.repository import CreateT, IdT, OutputT, UpdateT
-from loom.core.repository.abc.session_scope import (
+from loom.core.stores.repository.repository import CreateT, IdT, OutputT, UpdateT
+from loom.core.stores.repository.session_scope import (
     SupportsCacheScope,
     SupportsCallerScopedSession,
 )
@@ -181,7 +187,7 @@ class CachedRepository(
 
     The cached list path reloads the entities missing from a warm index with a
     single ``<primary key> IN (...)`` query, so the wrapped repository should
-    support :attr:`~loom.core.repository.abc.query.FilterOp.IN` on the primary
+    support :attr:`~loom.core.stores.repository.query.FilterOp.IN` on the primary
     key; a repository whose ``allowed_filter_fields`` excludes the primary key
     is detected and served with per-id reads instead, and so is a model with a
     composite primary key, which a filter on one field cannot match.  The key
@@ -222,7 +228,7 @@ class CachedRepository(
     the backend, so two write calls do not choose the same expiry.  The spread
     is per write call: a batch write (a cached page, an index refill) carries
     one TTL for the whole batch because
-    :class:`~loom.core.cache.abc.backend.CacheBackend` takes one TTL per call,
+    :class:`~loom.core.cache.abc.store.CacheStore` takes one TTL per call,
     so the rows of a single page still expire together.
     """
 
@@ -231,7 +237,7 @@ class CachedRepository(
         repository: Repository[OutputT, CreateT, UpdateT, IdT],
         *,
         config: CacheConfig,
-        cache: CacheBackend,
+        cache: CacheStore,
         dependency_resolver: DependencyResolver,
     ) -> None:
         _require_full_repository(repository)
@@ -253,7 +259,7 @@ class CachedRepository(
         self._primary_key = _resolve_primary_key(model)
         self._single_flight = SingleFlight(self._log_abandoned_load)
         self._rng = random.Random()
-        self._log = get_logger(__name__).bind(repository=repository.__class__.__name__)
+        self._log = logging.getLogger(__name__)
         self._cached_method_wrappers: dict[str, Callable[..., Awaitable[Any]]] = {}
         self._result_codecs = self._build_result_codecs(repository)
         self._pydantic_output_type: LoomType | None = self._resolve_pydantic_output_type(repository)
@@ -277,7 +283,7 @@ class CachedRepository(
         """The caller's scope every cache key carries; ``""`` when unscoped.
 
         Forwards the wrapped repository's
-        :class:`~loom.core.repository.abc.session_scope.SupportsCacheScope`,
+        :class:`~loom.core.stores.repository.session_scope.SupportsCacheScope`,
         so a wrapper around this one keys its entries by the same scope.  Read
         once per cache operation, and every key of that operation is built
         from the value read.  The scope stays out of the dependency tags: a
@@ -296,7 +302,7 @@ class CachedRepository(
         """Whether the wrapped repository reports a session owned by the caller.
 
         Implements
-        :class:`~loom.core.repository.abc.session_scope.SupportsCallerScopedSession`
+        :class:`~loom.core.stores.repository.session_scope.SupportsCallerScopedSession`
         by forwarding it, so a wrapper around this one stays out of the
         caller's transaction too.  A repository that does not declare the
         capability is taken to own the scope of its own reads.
@@ -317,10 +323,10 @@ class CachedRepository(
 
         cached_payload = await self._cache.get_value(key)
         if cached_payload is not None:
-            self._log.debug("CacheHitEntity", key=key)
+            self._log.debug("CacheHitEntity", extra={"key": key})
             return self._to_output_from_cache(cached_payload)
 
-        self._log.debug("CacheMissEntity", key=key)
+        self._log.debug("CacheMissEntity", extra={"key": key})
         return await self._single_flight.run(
             key,
             lambda: self._load_and_store_entity(key, obj_id, profile, scope),
@@ -389,7 +395,7 @@ class CachedRepository(
             total_count = cached_index.total_count
             items = await self._load_items_from_index(entity_ids, profile=profile, scope=scope)
             if len(items) == len(entity_ids):
-                self._log.debug("CacheHitList", key=index_key)
+                self._log.debug("CacheHitList", extra={"key": index_key})
                 return PageResult(
                     items=tuple(items),
                     total_count=total_count,
@@ -398,7 +404,7 @@ class CachedRepository(
                     has_next=(page_params.offset + len(items)) < total_count,
                 )
 
-        self._log.debug("CacheMissList", key=index_key)
+        self._log.debug("CacheMissList", extra={"key": index_key})
         page = await self._repository.list_paginated(
             page_params,
             filter_params=filter_params,
@@ -444,7 +450,7 @@ class CachedRepository(
         if cached_index is not None and entity_ids is not None:
             items = await self._load_items_from_index(entity_ids, profile=profile, scope=scope)
             if len(items) == len(entity_ids):
-                self._log.debug("CacheHitQuery", key=query_key)
+                self._log.debug("CacheHitQuery", extra={"key": query_key})
                 if is_cursor:
                     return CursorResult(
                         items=tuple(items),
@@ -459,7 +465,7 @@ class CachedRepository(
                     has_next=cached_index.has_next,
                 )
 
-        self._log.debug("CacheMissQuery", key=query_key)
+        self._log.debug("CacheMissQuery", extra={"key": query_key})
         loaded = await self._repository.list_with_query(query, profile=profile)
         await self._store_query_page(query_key, loaded, profile, scope)
         return loaded
@@ -612,7 +618,7 @@ class CachedRepository(
         return codecs
 
     def _log_abandoned_load(self, key: str, error: BaseException) -> None:
-        self._log.warning("CacheLoadAbandoned", key=key, error=repr(error))
+        self._log.warning("CacheLoadAbandoned", extra={"key": key, "error": repr(error)})
 
     async def _publish_invalidation(self, event: MutationEvent) -> None:
         """Defer the bump past the commit of the model's store, or bump right away.
@@ -647,8 +653,7 @@ class CachedRepository(
         except Exception:
             self._log.exception(
                 "CachePostCommitBumpFailed",
-                entity=self.entity_name,
-                ids=tuple(event.ids for event in events),
+                extra={"entity": self.entity_name, "ids": tuple(event.ids for event in events)},
             )
             raise
 
@@ -700,11 +705,15 @@ class CachedRepository(
             return None
         return values[0] if len(values) == 1 else values
 
-    async def _create_many(self, data: Sequence[msgspec.Struct]) -> tuple[OutputT, ...]:
+    async def _create_many(
+        self, data: Sequence[msgspec.Struct], *, on_conflict: OnConflict = OnConflict.ERROR
+    ) -> tuple[OutputT, ...]:
         if not data:
             return ()
         bulk = cast(BulkCreatable[OutputT], self._repository)
-        created = await bulk.create_many(data)
+        created = await bulk.create_many(data, on_conflict=on_conflict)
+        if not created:
+            return created
         ids = tuple(
             entity_id
             for item in created
@@ -766,10 +775,12 @@ class CachedRepository(
             if cached_payload is not None:
                 decoded = self._decode_cached_result(codec, method_name, key, cached_payload)
                 if decoded is not _UNDECODABLE:
-                    self._log.debug("CacheHitCustomMethod", key=key, method=method_name)
+                    self._log.debug(
+                        "CacheHitCustomMethod", extra={"key": key, "method": method_name}
+                    )
                     return decoded
 
-            self._log.debug("CacheMissCustomMethod", key=key, method=method_name)
+            self._log.debug("CacheMissCustomMethod", extra={"key": key, "method": method_name})
 
             async def load() -> Any:
                 result = await method(*args, **kwargs)
@@ -812,9 +823,7 @@ class CachedRepository(
         except BoundaryValidationError as error:
             self._log.warning(
                 "CacheCustomPayloadMismatch",
-                key=key,
-                method=method_name,
-                error=repr(error),
+                extra={"key": key, "method": method_name, "error": repr(error)},
             )
             return _UNDECODABLE
 
@@ -1068,7 +1077,7 @@ class CachedRepository(
         try:
             return [cast(IdT, msgspec.convert(value, id_type)) for value in raw_ids]
         except msgspec.ValidationError:
-            self._log.debug("CacheIndexIdTypeMismatch", entity=self.entity_name)
+            self._log.debug("CacheIndexIdTypeMismatch", extra={"entity": self.entity_name})
             return None
 
     def _list_dependency_tags(self) -> list[str]:
@@ -1144,7 +1153,7 @@ class CachedRepository(
         """
         if self.cache_scope() == scope:
             return True
-        self._log.warning("CacheScopeChangedWriteSkipped", entity=self.entity_name)
+        self._log.warning("CacheScopeChangedWriteSkipped", extra={"entity": self.entity_name})
         return False
 
     def _serialize_query(self, query: QuerySpec) -> dict[str, Any]:
@@ -1220,7 +1229,7 @@ def _require_full_repository(repository: object) -> None:
 
     Only a class that declared itself cacheable is held to the whole protocol:
     a partial repository that never asked for the wrapper —
-    :class:`~loom.core.repository.dynamodb.repository.RepositoryDynamoDB`, which
+    :class:`~loom.stores.dynamodb.repository.DynamoDBRepository`, which
     serves no list and no count — may still be wrapped by hand for the reads it
     does support.
 
@@ -1278,7 +1287,7 @@ def _require_reported_scope(repository: object) -> None:
     """Refuse a repository whose sessions carry settings but which reports no cache scope.
 
     Every cache key carries the scope the wrapped repository reports through
-    :class:`~loom.core.repository.abc.session_scope.SupportsCacheScope`; a
+    :class:`~loom.core.stores.repository.session_scope.SupportsCacheScope`; a
     repository whose ``session_manager`` applies session settings but reports
     none would key every caller under ``""``, so it is refused.  A wrapper
     exposing neither ``cache_scope`` nor ``session_manager`` is not detected.
@@ -1306,7 +1315,7 @@ def _passes_a_session(signature: inspect.Signature, args: tuple[Any, ...], kwarg
 
     *signature* is the method's own, not the one ``functools.wraps`` exposes,
     so a method decorated with
-    :func:`~loom.core.repository.sqlalchemy.repository.with_session_scope`
+    :func:`~loom.stores.sqlalchemy.repository.with_session_scope`
     is read as it is called: its ``session`` is a keyword-only parameter.
     A method whose outermost wrapper takes ``(*args, **kwargs)`` exposes no
     positional ``session``, so only a ``session=`` keyword is seen there.

@@ -22,7 +22,7 @@ bootstrap there "until they move into it". Two problems kept them apart:
   pools, schema checks and clients on every invocation.
 - **The worker had a duplicate composition, without row-level security.**
   `bootstrap_worker` wired SQLAlchemy by hand from `database`, outside the
-  `loom.persistence.backends` contract. It applied no row-level-security
+  `loom.stores.backends` contract. It applied no row-level-security
   session settings, no pool reset and no `schema.mode: external` checks,
   served SQLAlchemy only, and never closed its cache gateways. Two
   compositions also meant two places to change for every new service.
@@ -36,10 +36,10 @@ process.
 ### One composition root, in `loom.composition`
 
 `loom.composition.create_app(*config_paths, adapter=..., ...)` is the only
-place that composes an application. `build_application` takes the same
-arguments and returns the composed, closed `Application` without mounting a
-transport; `compose_application(source, adapter, modules=...)` does the same
-from an already loaded `CompositionSource`. The steps run in a fixed order:
+place that composes an application in one call. `Project.load(...)` loads
+the configuration, and `project.compose(adapter)` returns the
+composed, closed `Application` without mounting a transport;
+`project.serve(adapter)` mounts the adapter's transport on it. The steps run in a fixed order:
 configuration and environment, observability, code path, the adapter's
 recipe (discovery runs here), deploy checks, backend `build` and
 `prepare_models`, kernel (caller modules, then repositories, then cache),
@@ -59,7 +59,7 @@ The transport factories stay as shortcuts with their signatures:
 
 An adapter implements the `Adapter` protocol:
 
-- `recipe(source) -> Recipe` is synchronous, declarative and opens nothing.
+- `recipe(project) -> Recipe` is synchronous, declarative and opens nothing.
   The `Recipe` names the pool profile, the final `DiscoveryResult`, the
   backend, the deploy-check areas to skip, whether agents are hosted, the
   use-case and pool metrics, and `connection_only` for an entry point with no
@@ -69,7 +69,7 @@ An adapter implements the `Adapter` protocol:
 
 One hook to declare and one to mount, rather than several contribution hooks
 with an implicit order. The repository type moved to
-`PersistenceBackend.repository_type` (a class variable) so the REST recipe
+`StoreBackend.repository_type` (a class variable) so the REST recipe
 can prune CRUD routes before anything is built.
 
 ### `Application` owns the lifecycle
@@ -89,7 +89,7 @@ connection open.
   `__context__`, so the stack's exits are wrapped to collect them.
 - A closed application reopens.
 
-Checking is separate from opening. `PersistenceWiring.startup_checks` holds
+Checking is separate from opening. `StoreWiring.startup_checks` holds
 the schema, role, guard and time-zone checks; `lifespan_init` only opens and
 releases. `prepare_models` binds the row-level-security settings and
 validates elevations in every process, and resets the compiled registry
@@ -150,8 +150,8 @@ Incompatible changes, listed in the PR description without `!` or
 
 | Before | After |
 |---|---|
-| `PersistenceWiring.default_repository_type` | `PersistenceBackend.repository_type` (class variable) |
-| `PersistenceWiring.lifespan_init` checked and opened | `startup_checks` checks; `lifespan_init` only opens and releases |
+| `StoreWiring.default_repository_type` | `StoreBackend.repository_type` (class variable) |
+| `StoreWiring.lifespan_init` checked and opened | `startup_checks` checks; `lifespan_init` only opens and releases |
 | Closing SQLAlchemy reset the model registry | it does not; `prepare_models` resets it before compiling |
 | Worker: SQLAlchemy only, from `database`, without row-level security | backend from `persistence.backend` (else `sqlalchemy` when `database` holds a key of its own contract, such as `url`, else `none`), with row-level security |
 | A caller module could bind any key; the framework's registration replaced it silently | `JobService` and repositories stay overridable; the framework-owned keys are reserved and binding one fails startup |
@@ -167,7 +167,7 @@ Also observable:
   with the store's, rather than when the registry opens.
 - `loom.celery` is imported lazily: an API whose configuration has a `celery`
   section, to dispatch jobs, does not load the worker.
-- The worker resolves its backend through `resolve_backend`, so a missing
+- The worker resolves its backend through `resolve_store_backend`, so a missing
   `sqlalchemy` extra is a `ConfigError` naming `loom-kernel[sqlalchemy]`
   instead of an `ImportError`.
 - A `LoadById`, `Load` or `Exists` over a model no repository serves fails at
@@ -244,3 +244,5 @@ instance fails, and `bind` before `recipe` fails. FastAPI and Celery repeat
 that state machine, and the planned Lambda adapters would repeat it again.
 Moving it into the composition (for instance, `recipe` returning the state
 `bind` receives) is a candidate for a later change; it is left as is here.
+
+> Renamed in 12.0.0: Adapter → Runtime, FastAPIAdapter → FastAPIRuntime, CeleryAdapter → CeleryRuntime, Adapter.bind → Runtime.mount, StoreBackend → StorePlugin, ObservabilityRuntime → Observability, RuntimeExecutor → UseCaseExecutor, adapter= → runtime=, resolve_store_backend → resolve_store_plugin.

@@ -9,7 +9,7 @@ Entrypoints and Runtime Contracts
 
    loom.etl.runner
    loom.etl.compiler
-   loom.etl.runtime
+   loom.etl.ports
 
 Declarative Authoring
 ---------------------
@@ -38,9 +38,9 @@ Backends
 .. autosummary::
    :toctree: generated
 
-   loom.etl.backends._historify
-   loom.etl.backends.polars
-   loom.etl.backends.spark
+   loom.etl.engines._historify
+   loom.etl.engines.polars
+   loom.etl.engines.spark
 
 Testing
 -------

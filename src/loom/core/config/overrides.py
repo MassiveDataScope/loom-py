@@ -3,8 +3,8 @@
 Precedence, lowest first: defaults in code, ``base.yaml`` (or the first
 explicit file), the overlay of the environment (or each later file), then
 the ``LOOM__*`` variables. A double underscore separates the levels, as in
-ASP.NET Core and pydantic-settings: ``LOOM__OBSERVABILITY__LOG__CONFIG__LEVEL``
-sets ``observability.log.config.level``.
+ASP.NET Core and pydantic-settings: ``LOOM__OBSERVABILITY__LOG__LEVEL``
+sets ``observability.log.level``.
 
 Each level is letters, digits and underscores, and matches the key the
 configuration already declares at that place, whatever its case; a level the
@@ -88,27 +88,30 @@ _ALLOWLIST_KEY: Final = f"{_ALLOWLIST_SECTION}.{_ALLOWLIST_FIELD}"
 _PROTECTED: Final = (
     (_ALLOWLIST_SECTION,),
     ("checks",),
-    ("persistence", "cursors"),
+    ("stores", "settings", "cursors"),
     ("aws",),
     ("sqs", "queues"),
     ("lambda", "functions", "*", "trigger"),
     ("lambda", "handler"),
-    ("app", "discovery"),
+    ("app", "packages"),
+    ("app", "entry_points"),
+    ("app", "agents"),
 )
 """Keys no ``config.overridable`` entry may open, with everything below them; ``*`` is any level.
 
 ``config`` and ``checks`` are read as written, so the files cannot route them to
-the environment any other way. ``persistence.cursors`` decides whether, and with
+the environment any other way. ``stores.settings.cursors`` decides whether, and with
 which key, cursor tokens are signed, ``aws`` and ``sqs.queues`` where AWS calls
 and jobs go, a Lambda function's ``trigger`` what invokes it, which job runs
 and as whom, ``lambda.handler`` the code every function runs and
-``app.discovery`` the code it loads: no per-deploy variable may change them."""
+``app.packages``, ``app.entry_points`` and ``app.agents`` the code it loads: no
+per-deploy variable may change them."""
 
 OVERRIDABLE: Final = (
     "app.entry",
     "app.job_service",
-    "observability.log.config.level",
-    "observability.log.config.named_levels.*",
+    "observability.log.level",
+    "observability.log.named_levels.*",
     "celery.worker_concurrency",
     "celery.worker_max_tasks_per_child",
     "celery.worker_prefetch_multiplier",
@@ -133,6 +136,7 @@ OVERRIDABLE: Final = (
     "storage.dynamodb.max_attempts",
 )
 """Keys a ``LOOM__`` variable may set in production and staging; ``*`` is one level."""
+_SHARED_STORE_SETTINGS: Final = tuple(ConfigKey.STORES_SETTINGS.split("."))
 _KNOWN_SECTIONS: Final = frozenset(str(key).split(".", 1)[0] for key in ConfigKey)
 
 
@@ -165,7 +169,7 @@ def load_application_config(
             reaches inside an interpolated key, holds ``${``, or does not
             parse or merge. The error names the variable, never the value.
             Also when the result declares a retired persistence key
-            (``database``, ``persistence.backend``, ...), naming its
+            (``database``, ``persistence``, ...), naming its
             ``stores`` replacement.
     """
     config = load_config(*paths, resolvers=resolvers, keyed=keyed)
@@ -338,8 +342,8 @@ def _refuse_protected(entry: str) -> None:
     if levels[0] == "*" or opens_protected:
         raise ConfigError(
             f"{_ALLOWLIST_KEY} entry {entry!r} opens a key no override may set: '*' as the "
-            "first level, checks, config, persistence.cursors, aws, sqs.queues, "
-            "lambda.functions.*.trigger, lambda.handler or app.discovery"
+            "first level, checks, config, stores.settings.cursors, aws, sqs.queues, "
+            "lambda.functions.*.trigger, lambda.handler or app.packages"
         )
 
 
@@ -347,16 +351,25 @@ def _require_allowlisted(
     name: str, key: str, allowlist: Sequence[str], environment: Environment
 ) -> None:
     levels = key.casefold().split(".")
+    shared = levels[: len(_SHARED_STORE_SETTINGS)] == list(_SHARED_STORE_SETTINGS)
     for entry in allowlist:
         parts = entry.casefold().split(".")
         if len(parts) == len(levels) and all(
             part in ("*", level) for part, level in zip(parts, levels, strict=True)
         ):
+            if shared and parts[1] == "*":
+                continue
             return
+    reason = (
+        f"; {ConfigKey.STORES_SETTINGS} holds the settings every store shares and is no "
+        "store, so no 'stores.*' entry opens it"
+        if shared
+        else ""
+    )
     raise ConfigError(
         f"{name} sets {key!r}, which is not overridable in {str(environment)!r}: loom "
         f"allows its operational keys and those listed under {_ALLOWLIST_KEY} in the "
-        "reviewed configuration files"
+        f"reviewed configuration files{reason}"
     )
 
 

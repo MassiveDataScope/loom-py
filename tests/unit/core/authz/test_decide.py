@@ -13,8 +13,8 @@ from loom.core.authz import (
     Role,
     RoleCatalog,
     Scope,
-    UnknownPermission,
-    UnknownRole,
+    UnknownPermissionError,
+    UnknownRoleError,
     can_grant,
     can_revoke,
     evaluate,
@@ -37,8 +37,8 @@ CATALOG = RoleCatalog(
 )
 
 ROOT = Scope.root()
-T = Scope.of("T")
-U = Scope.of("U")
+T = Scope.from_segments("T")
+U = Scope.from_segments("U")
 R = T.child("sales", "orders")
 R_SIBLING = T.child("sales", "customers")
 
@@ -109,7 +109,7 @@ class TestEvaluate:
     def test_undeclared_permission_is_a_programming_error(self) -> None:
         grants = _grants("admin", ROOT)
 
-        with pytest.raises(UnknownPermission, match="billing.pay"):
+        with pytest.raises(UnknownPermissionError, match="billing.pay"):
             evaluate(CATALOG, grants, UNDECLARED, T)
 
     def test_accepts_a_one_shot_iterable(self) -> None:
@@ -191,7 +191,7 @@ class TestScopesWith:
         assert scopes_with(CATALOG, _grants("viewer", T), MANAGE) == frozenset()
 
     def test_undeclared_permission_is_a_programming_error(self) -> None:
-        with pytest.raises(UnknownPermission):
+        with pytest.raises(UnknownPermissionError):
             scopes_with(CATALOG, [], UNDECLARED)
 
     def test_ignores_expired_grants(self) -> None:
@@ -246,7 +246,7 @@ class TestCanGrant:
     def test_unknown_role_is_a_programming_error(self) -> None:
         grants = _grants("admin", ROOT)
 
-        with pytest.raises(UnknownRole, match="ghost"):
+        with pytest.raises(UnknownRoleError, match="ghost"):
             can_grant(CATALOG, grants, "ghost", T, delegate=MANAGE)
 
     def test_expired_delegate_grant_grants_nothing(self) -> None:

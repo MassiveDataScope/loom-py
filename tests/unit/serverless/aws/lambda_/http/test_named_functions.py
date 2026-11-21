@@ -16,9 +16,11 @@ from loom.core.config import ConfigError
 from loom.core.identity import Identity
 from loom.rest.auth import RequestCredentials
 from loom.rest.compiler import InterfaceCompilationError
-from loom.rest.fastapi import FastAPIAdapter
-from loom.serverless.aws.lambda_ import LambdaAdapter
+from loom.rest.fastapi import FastAPIRuntime
+from loom.serverless.aws.lambda_ import LambdaRuntime
 from loom.serverless.aws.lambda_.triggers.http import LambdaHTTPHandler
+from tests.helpers.aws_island import FakeAwsIsland
+from tests.helpers.lambda_jobs import jobs_queue, jobs_trigger
 from tests.unit.serverless.aws.lambda_.http._clients import lambda_client
 from tests.unit.serverless.aws.lambda_.http._contract_app import bearer
 
@@ -70,8 +72,12 @@ def serve() -> Iterator[Callable[..., Any]]:
         close()
 
 
+def _jobs_queue(config: dict[str, Any], _root: Path) -> None:
+    config.update(jobs_queue())
+
+
 def _module_of(config: dict[str, Any]) -> str:
-    return str(config["app"]["discovery"]["interfaces"]["modules"][0])
+    return str(config["app"]["packages"][0])
 
 
 def _yaml_catalog(config: dict[str, Any], _root: Path) -> None:
@@ -102,23 +108,27 @@ def _disable(method: str, route: str) -> Edit:
 
 
 def _manifest_discovery(config: dict[str, Any], root: Path) -> None:
-    root.joinpath("lambda_manifest.py").write_text(
+    package = root / "lambda_manifest"
+    package.mkdir()
+    package.joinpath("__init__.py").write_text(
         f"from {_module_of(config)} import Item, ItemInterface\n"
         "MODELS = [Item]\nINTERFACES = [ItemInterface]\nJOBS = []\n",
         encoding="utf-8",
     )
-    config["app"]["discovery"] = {"mode": "manifest", "manifest": {"module": "lambda_manifest"}}
+    config["app"]["packages"].append("lambda_manifest")
 
 
 def _second_item_interface(config: dict[str, Any], root: Path) -> None:
-    root.joinpath("other_contract.py").write_text(
+    package = root / "other_contract"
+    package.mkdir()
+    package.joinpath("__init__.py").write_text(
         "from loom.rest.model import RestInterface\n"
         "class ItemInterface(RestInterface[object]):\n"
         "    prefix = '/other'\n"
         "    routes = ()\n",
         encoding="utf-8",
     )
-    config["app"]["discovery"]["interfaces"]["modules"].append("other_contract")
+    config["app"]["packages"].append("other_contract")
 
 
 _ITEM_ONLY = {"public_api": _http("ItemInterface")}
@@ -215,13 +225,13 @@ class TestNamedFunctions:
         function = _http("ItemInterface") if auth is None else _http("ItemInterface", auth=auth)
         path = project("public_api", {"public_api": function})
         authenticator = _HeaderAuthenticator() if in_code else None
-        adapter = LambdaAdapter(function="public_api", authenticator=authenticator)
+        adapter = LambdaRuntime(function="public_api", authenticator=authenticator)
 
-        reply = lambda_client(serve(path, adapter=adapter))("GET", "/items/12", headers=headers)
+        reply = lambda_client(serve(path, runtime=adapter))("GET", "/items/12", headers=headers)
 
         assert reply.status == status
 
-    def test_the_entry_selects_the_function_of_an_adapter_built_in_code(
+    def test_the_entry_selects_the_function_of_a_runtime_built_in_code(
         self,
         project: Callable[..., str],
         serve: Callable[..., Any],
@@ -233,9 +243,9 @@ class TestNamedFunctions:
         }
         path = project("admin_api", functions)
         monkeypatch.setenv("LOOM__APP__ENTRY", "public_api")
-        adapter = LambdaAdapter(authenticator=_HeaderAuthenticator())
+        adapter = LambdaRuntime(authenticator=_HeaderAuthenticator())
 
-        call = lambda_client(serve(path, adapter=adapter))
+        call = lambda_client(serve(path, runtime=adapter))
 
         assert call("GET", "/items/12", headers=_OK).status == 200
         assert call("GET", "/ops/admin", headers=_OK).status == 404
@@ -257,26 +267,28 @@ class TestNamedFunctions:
         with pytest.raises(InterfaceCompilationError, match="matches no route"):
             serve(path)
 
-    def test_an_explicit_adapter_wins_over_the_entry(
+    def test_an_explicit_runtime_wins_over_the_entry(
         self, project: Callable[..., str], serve: Callable[..., Any]
     ) -> None:
         path = project("no_such_function", {})
 
-        assert isinstance(serve(path, adapter=FastAPIAdapter()), FastAPI)
+        assert isinstance(serve(path, runtime=FastAPIRuntime()), FastAPI)
 
     @pytest.mark.parametrize(
         ("entry", "built"), [("fastapi", FastAPI), ("lambda", LambdaHTTPHandler)]
     )
-    def test_a_built_in_http_entry_selects_its_adapter(
+    def test_a_built_in_http_entry_selects_its_runtime(
         self, project: Callable[..., str], serve: Callable[..., Any], entry: str, built: type
     ) -> None:
         assert isinstance(serve(project(entry, {})), built)
 
     def test_an_sqs_entry_serves_the_jobs(
-        self, project: Callable[..., str], serve: Callable[..., Any]
+        self, project: Callable[..., str], serve: Callable[..., Any], island: FakeAwsIsland
     ) -> None:
-        worker = {"trigger": {"source": "jobs"}}
-        handler = serve(project("worker", {"worker": worker}, _manifest_discovery))
+        worker = {"trigger": jobs_trigger()}
+        path = project("worker", {"worker": worker}, _manifest_discovery, _jobs_queue)
+
+        handler = serve(path)
 
         assert handler({"Records": []}, None) == {"batchItemFailures": []}
 
@@ -368,17 +380,17 @@ class TestNamedFunctions:
         message: str,
     ) -> None:
         path = project(entry, functions, *edits)
-        options = {} if function is None else {"adapter": LambdaAdapter(function=function)}
+        options = {} if function is None else {"runtime": LambdaRuntime(function=function)}
 
         with pytest.raises(ConfigError, match=message):
             serve(path, **options)
 
-    def test_without_an_entry_create_app_needs_an_adapter(
+    def test_without_an_entry_create_app_needs_a_runtime(
         self, contract_project: Callable[..., str], serve: Callable[..., Any]
     ) -> None:
         path = contract_project()
 
-        with pytest.raises(ConfigError, match="adapter= or app.entry"):
+        with pytest.raises(ConfigError, match="runtime= or app.entry"):
             serve(path)
 
     @pytest.mark.parametrize(

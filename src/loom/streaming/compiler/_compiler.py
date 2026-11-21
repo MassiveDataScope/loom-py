@@ -6,7 +6,7 @@ from collections.abc import Mapping
 from typing import Any
 
 from loom.core.config import ConfigContext
-from loom.core.persistence.stores import load_catalog
+from loom.core.stores.catalog import load_catalog
 from loom.streaming.compiler._bindings import resolve_flow_bindings
 from loom.streaming.compiler._errors import CompilationIssue
 from loom.streaming.compiler._plan import CompilationError, CompiledPlan

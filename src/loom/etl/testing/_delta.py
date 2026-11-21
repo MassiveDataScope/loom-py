@@ -7,12 +7,12 @@ from typing import Any
 
 import polars as pl
 
-from loom.etl.backends.polars import PolarsSourceReader, PolarsTargetWriter
-from loom.etl.backends.polars._writer import _last_commit, _open_delta_table
 from loom.etl.declarative.expr._refs import TableRef
 from loom.etl.declarative.source import TableSourceSpec
 from loom.etl.declarative.target import SchemaMode, TargetSpec
 from loom.etl.declarative.target._table import ReplaceSpec, UpdateSpec, UpsertSpec
+from loom.etl.engines.polars import PolarsSourceReader, PolarsTargetWriter
+from loom.etl.engines.polars._writer import _last_commit, _open_delta_table
 from loom.etl.storage import MissingTablePolicy, PrefixLocator
 from loom.etl.testing._result import MergeMetrics
 

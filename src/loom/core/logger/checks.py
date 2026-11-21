@@ -1,46 +1,70 @@
-"""Deploy check of the logger: console lines where log collectors expect JSON.
+"""Deploy checks of ``observability.log``, read as written.
 
-A deployed environment renders JSON by default, so console lines there come
-only from a ``renderer: console`` written in the configuration, top-level or
-on a handler. The check reads the keys as written and resolves no
-placeholder; a renderer given by a placeholder is not judged.
+``loom.logger.E001``: ``format`` names no registered format.
+``loom.logger.E002``: ``level`` or a ``named_levels`` value is not a log level.
+
+Neither resolves a placeholder; a value that holds one is not judged.
 """
 
 from __future__ import annotations
 
 from typing import TYPE_CHECKING, Final
 
-from loom.core.checks import Finding, deploy_check
-from loom.core.logger.config import Renderer
+from loom.core.checks import CheckSet, Finding
+from loom.core.config.keys import INTERPOLATION
+from loom.core.logger.install import format_names
+from loom.core.logger.settings import is_log_level
 
 if TYPE_CHECKING:
     from loom.core.config.context import ConfigContext
 
-CONSOLE_RENDERER_CHECK: Final = "loom.logger.W001"
-"""Id of the check warning about console log lines in a deployed environment."""
+UNKNOWN_FORMAT_CHECK: Final = "loom.logger.E001"
+"""Id of the check refusing a log format nobody registered."""
 
-_LOGGER_CONFIG = "observability.log.config"
+UNKNOWN_LEVEL_CHECK: Final = "loom.logger.E002"
+"""Id of the check refusing a level the standard library does not know."""
+
+CHECKS: Final = CheckSet()
+"""Checks of ``observability.log``, run when the process uses that path."""
+
+_PATH = "observability.log"
 
 
-@deploy_check(CONSOLE_RENDERER_CHECK)
-def _console_renderer(config: ConfigContext) -> Finding | None:
-    log = config.raw("observability.log", {})
-    enabled = isinstance(log, dict) and log.get("enabled") is not False
-    logger = log.get("config") if enabled else None
-    if not isinstance(logger, dict):
+def _literal(value: object) -> str | None:
+    """*value* when it is a string with no placeholder in it."""
+    return value if isinstance(value, str) and INTERPOLATION not in value else None
+
+
+def _written(config: ConfigContext) -> dict[str, object]:
+    log = config.raw(_PATH, {})
+    return log if isinstance(log, dict) else {}
+
+
+@CHECKS.register(UNKNOWN_FORMAT_CHECK)
+def _registered_format(config: ConfigContext) -> Finding | None:
+    name = _literal(_written(config).get("format"))
+    known_names = format_names()
+    if name is None or name in known_names:
         return None
-    handlers = [h for h in logger.get("handlers") or () if isinstance(h, dict)]
-    declared = [logger.get("renderer"), *(handler.get("renderer") for handler in handlers)]
-    if not any(_is_console(raw) for raw in declared):
-        return None
+    known = ", ".join(known_names)
     return Finding(
-        message=f"{_LOGGER_CONFIG} renders console lines, which log collectors do not parse.",
-        hint=(
-            "drop 'renderer: console' from the deployed configuration (a deployed "
-            "environment renders JSON by default) or set 'renderer: json'."
-        ),
+        message=f"{_PATH}.format is {name!r}, which no log format registers.",
+        hint=f"use one of the registered formats ({known}) or install the package that adds it.",
     )
 
 
-def _is_console(raw: object) -> bool:
-    return isinstance(raw, str) and raw.strip().lower() == Renderer.CONSOLE.value
+@CHECKS.register(UNKNOWN_LEVEL_CHECK)
+def _known_levels(config: ConfigContext) -> Finding | None:
+    log = _written(config)
+    named = log.get("named_levels")
+    declared = {f"{_PATH}.level": log.get("level")}
+    if isinstance(named, dict):
+        declared |= {f"{_PATH}.named_levels.{key}": value for key, value in named.items()}
+    for key, value in declared.items():
+        level = _literal(value)
+        if level is not None and not is_log_level(level):
+            return Finding(
+                message=f"{key} is {level!r}, which is not a log level.",
+                hint="use DEBUG, INFO, WARNING, ERROR or CRITICAL.",
+            )
+    return None

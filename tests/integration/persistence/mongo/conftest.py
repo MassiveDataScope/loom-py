@@ -28,11 +28,12 @@ import pytest
 from pymongo import AsyncMongoClient, MongoClient
 from pymongo.errors import PyMongoError
 
-from loom.core.persistence.stores import DEFAULT_STORE
-from loom.core.repository.abc import CursorCodec
-from loom.core.repository.mongo.repository import RepositoryMongo
-from loom.core.repository.mongo.uow import MongoSessions, MongoUnitOfWork
-from loom.core.repository.registration import capabilities_of
+from loom.core.model import BaseModel, get_table_name
+from loom.core.stores.catalog import DEFAULT_STORE
+from loom.core.stores.repository import CursorCodec
+from loom.core.stores.repository.registration import capabilities_of
+from loom.stores.mongo.repository import MongoRepository
+from loom.stores.mongo.uow import MongoSessions, MongoUnitOfWork
 from tests.unit.core.repository.contract import conftest as contract
 from tests.unit.core.repository.contract.conftest import AcmeContractOrder, BackendCase
 
@@ -40,6 +41,7 @@ URI_ENV_VAR = "LOOM_MONGO_IT_URI"
 DEFAULT_URI = "mongodb://localhost:27017/?replicaSet=rs0"
 _SERVER_SELECTION_TIMEOUT_MS = 2_000
 
+open_repository = contract.open_repository
 repository = contract.repository
 seeded = contract.seeded
 
@@ -99,14 +101,13 @@ async def mongo_client(mongo_database: _SessionDatabase) -> AsyncIterator[AsyncM
 
 @pytest.fixture
 def case(mongo_client: AsyncMongoClient[Any], mongo_database: _SessionDatabase) -> BackendCase:
-    collection = mongo_client[mongo_database.name][
-        f"{AcmeContractOrder.__tablename__}_{uuid4().hex}"
-    ]
-
     @asynccontextmanager
-    async def open_repository() -> AsyncIterator[RepositoryMongo[AcmeContractOrder, int]]:
-        yield RepositoryMongo(
-            AcmeContractOrder,
+    async def open_repository(
+        model: type[BaseModel] = AcmeContractOrder,
+    ) -> AsyncIterator[MongoRepository[Any, Any]]:
+        collection = mongo_client[mongo_database.name][f"{get_table_name(model)}_{uuid4().hex}"]
+        yield MongoRepository(
+            model,
             collection,
             session_provider=MongoSessions(mongo_client, store=DEFAULT_STORE),
             cursor_codec=CursorCodec(signing="ephemeral"),
@@ -116,7 +117,7 @@ def case(mongo_client: AsyncMongoClient[Any], mongo_database: _SessionDatabase) 
         name="mongo",
         repository_factory=open_repository,
         model=AcmeContractOrder,
-        capabilities=frozenset(capabilities_of(RepositoryMongo)),
+        capabilities=frozenset(capabilities_of(MongoRepository)),
         transactions=True,
         unit_of_work=lambda _repository: MongoUnitOfWork(mongo_client, store=DEFAULT_STORE),
     )

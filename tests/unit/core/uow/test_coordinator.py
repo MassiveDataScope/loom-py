@@ -10,22 +10,20 @@ import asyncio
 import logging
 from collections.abc import Callable, Coroutine
 from dataclasses import dataclass
-from typing import Any
-from unittest.mock import MagicMock
+from types import SimpleNamespace
+from typing import Any, cast
 
 import anyio
 import pytest
 from sqlalchemy.engine import make_url
 
-from loom.core._async import run_to_completion
+from loom.core.concurrency import run_to_completion
 from loom.core.errors import UncomposedStore
 from loom.core.errors.codes import ErrorCode
-from loom.core.persistence.stores import DEFAULT_STORE, StoreKey
-from loom.core.repository.mongo.uow import MongoUnitOfWork
-from loom.core.repository.sqlalchemy.uow import SQLAlchemyUnitOfWork
-from loom.core.uow import coordinator as coordinator_module
-from loom.core.uow.abc import UnitOfWork, UowEvent
-from loom.core.uow.coordinator import (
+from loom.core.stores.catalog import DEFAULT_STORE, StoreKey
+from loom.core.stores.uow import coordinator as coordinator_module
+from loom.core.stores.uow.abc import UnitOfWork, UowEvent
+from loom.core.stores.uow.coordinator import (
     UNKNOWN_PHYSICAL,
     Committed,
     CommitUncertain,
@@ -38,7 +36,12 @@ from loom.core.uow.coordinator import (
     StoreOutcome,
     Uncertain,
 )
+from loom.stores.mongo.uow import MongoUnitOfWork
+from loom.stores.sqlalchemy.uow import SQLAlchemyUnitOfWork
+from tests.helpers.loggers import rendered
 
+from ..conftest import RecordingSessionManager, make_session
+from ..repository.mongo._fake import FakeMongoClient
 from ._coordinator_fakes import (
     Boom,
     Effect,
@@ -149,7 +152,7 @@ class TestEnlist:
             await coordinator.enlist(scope, S0)
 
         assert "UoWCloseFailed" in caplog.text
-        assert "'store': 's0'" in caplog.text
+        assert "store=s0" in caplog.text
 
     async def test_a_store_without_a_factory_is_refused_naming_it_and_the_composed_ones(
         self,
@@ -160,10 +163,10 @@ class TestEnlist:
         with pytest.raises(UncomposedStore, match=r"store 's0' .* are \['s1'\]") as caught:
             await coordinator.enlist(scope, S0)
 
-        assert (caught.value.code, caught.value.retryable) == (ErrorCode.UNCOMPOSED_STORE, False)
+        assert (caught.value.code, caught.value.is_retryable) == (ErrorCode.UNCOMPOSED_STORE, False)
 
     @pytest.mark.parametrize("store_type", [_FlushOnly, _CloseOnly], ids=["flush", "close"])
-    async def test_a_unit_of_work_without_the_phased_marker_runs_in_a_single_phase(
+    async def test_a_unit_of_work_without_the_is_phased_marker_runs_in_a_single_phase(
         self, store_type: type[ThirdPartyStore]
     ) -> None:
         ledger = Ledger()
@@ -172,7 +175,7 @@ class TestEnlist:
         participant = await coordinator.enlist(scope, S0)
         outcome = await coordinator.finish(scope, None)
 
-        assert participant.phased is False
+        assert participant.is_phased is False
         assert outcome.stores == (Committed(S0),)
         assert ledger.calls_of(S0) == ["begin", "exit-commit", "commit"]
 
@@ -191,7 +194,7 @@ class TestEnlist:
 
         participant = await coordinator.enlist(Scope(), S0)
 
-        assert participant.phased is phased
+        assert participant.is_phased is phased
         assert participant.physical == physical
 
     async def test_a_phased_participant_accepts_the_owner_of_its_unit_of_work(self) -> None:
@@ -226,10 +229,8 @@ class TestEnlist:
         assert participant.handle is None
 
 
-def _session_manager() -> MagicMock:
-    manager = MagicMock()
-    manager.engine.url = make_url("sqlite+aiosqlite:///loom.db")
-    return manager
+def _session_manager() -> RecordingSessionManager:
+    return RecordingSessionManager(make_session(), url=make_url("sqlite+aiosqlite:///loom.db"))
 
 
 class TestLoomTransactionalUnitsOfWork:
@@ -237,12 +238,12 @@ class TestLoomTransactionalUnitsOfWork:
         "uow",
         [
             SQLAlchemyUnitOfWork(_session_manager()),
-            MongoUnitOfWork(MagicMock(), store=DEFAULT_STORE),
+            MongoUnitOfWork(cast(Any, FakeMongoClient()), store=DEFAULT_STORE),
         ],
         ids=["sqlalchemy", "mongo"],
     )
     def test_loom_transactional_units_of_work_are_phased(self, uow: UnitOfWork) -> None:
-        assert Participant(S0, uow).phased
+        assert Participant(S0, uow).is_phased
 
 
 class TestCommitOrder:
@@ -409,12 +410,12 @@ class TestOutcome:
         ],
         ids=["committed", "non-transactional", "rolled-back", "uncertain"],
     )
-    def test_succeeded_only_when_every_store_committed_or_is_non_transactional(
+    def test_has_succeeded_only_when_every_store_committed_or_is_non_transactional(
         self, store: StoreOutcome, succeeded: bool
     ) -> None:
         outcome = InvocationOutcome(stores=(Committed(S1), store))
 
-        assert outcome.succeeded is succeeded
+        assert outcome.has_succeeded is succeeded
 
     def test_commit_uncertain_carries_the_driver_error(self) -> None:
         cause = ConnectionError("ack lost")
@@ -564,6 +565,104 @@ class TestHungRollback:
         assert budgets == [pytest.approx(0.1), pytest.approx(0.0, abs=0.05)]
         assert outcome.stores == (RolledBack(S0, error), RolledBack(S1, error))
         assert ledger.calls_of(S0)[-1] == "close"
+
+
+class _FakeClock:
+    """The running loop's clock, advanced by the test and counting its readings."""
+
+    def __init__(self) -> None:
+        self.now = 1000.0
+        self.readings = 0
+
+    def time(self) -> float:
+        self.readings += 1
+        return self.now
+
+    def get_running_loop(self) -> _FakeClock:
+        return self
+
+
+_ROLLBACK_SECONDS = 4.0
+
+
+class TestRollbackBudget:
+    """One budget, ``rollback_timeout`` seconds from the first rollback, serves every store."""
+
+    @pytest.fixture
+    def clock(self, monkeypatch: pytest.MonkeyPatch) -> _FakeClock:
+        clock = _FakeClock()
+        monkeypatch.setattr(
+            coordinator_module, "asyncio", SimpleNamespace(get_running_loop=clock.get_running_loop)
+        )
+        return clock
+
+    @pytest.fixture
+    def budgets(self, monkeypatch: pytest.MonkeyPatch, clock: _FakeClock) -> list[float]:
+        """The budget each rollback is given; each one takes ``_ROLLBACK_SECONDS`` of fake time."""
+        given: list[float] = []
+
+        async def _spending(step: Coroutine[Any, Any, None], *, timeout: float) -> None:
+            given.append(timeout)
+            clock.now += _ROLLBACK_SECONDS
+            await step
+
+        monkeypatch.setattr(coordinator_module, "run_to_completion", _spending)
+        return given
+
+    @pytest.mark.parametrize(
+        ("keys", "timeout", "expected"),
+        [
+            ((S0,), 10.0, [10.0]),
+            ((S0, S1), 10.0, [10.0, 6.0]),
+            ((S0, S1, S2), 10.0, [10.0, 6.0, 2.0]),
+            ((S0, S1, S2), 5.0, [5.0, 1.0, 0.0]),
+        ],
+        ids=["one-store", "two-stores", "three-stores", "exhausted-budget-is-zero"],
+    )
+    async def test_every_enlisted_store_rolls_back_within_the_one_budget(
+        self,
+        budgets: list[float],
+        keys: tuple[StoreKey, ...],
+        timeout: float,
+        expected: list[float],
+    ) -> None:
+        ledger = Ledger()
+        coordinator = _coordinator(
+            *(PhasedStore(key, ledger) for key in keys), rollback_timeout=timeout
+        )
+        scope = Scope()
+        await _enlist_all(coordinator, scope, *keys)
+
+        await coordinator.finish(scope, Boom("business"))
+
+        assert budgets == expected
+
+    @pytest.mark.parametrize("keys", [(S0,), (S0, S1), (S0, S1, S2)], ids=["1", "2", "3"])
+    async def test_a_failed_invocation_reads_the_clock_once_per_rollback(
+        self, clock: _FakeClock, budgets: list[float], keys: tuple[StoreKey, ...]
+    ) -> None:
+        ledger = Ledger()
+        coordinator = _coordinator(*(PhasedStore(key, ledger) for key in keys))
+        scope = Scope()
+        await _enlist_all(coordinator, scope, *keys)
+
+        await coordinator.finish(scope, Boom("business"))
+
+        assert clock.readings == len(keys)
+        assert len(budgets) == len(keys)
+
+    async def test_a_successful_invocation_never_reads_the_clock(
+        self, clock: _FakeClock, budgets: list[float]
+    ) -> None:
+        ledger = Ledger()
+        coordinator = _coordinator(*(PhasedStore(key, ledger) for key in (S0, S1)))
+        scope = Scope()
+        await _enlist_all(coordinator, scope, S0, S1)
+
+        await coordinator.finish(scope, None)
+
+        assert clock.readings == 0
+        assert budgets == []
 
 
 async def _finish_within_a_second(
@@ -741,7 +840,7 @@ class TestOutcomeLog:
 
         records = [r for r in caplog.records if "InvocationOutcome" in r.getMessage()]
         assert [record.levelno for record in records] == [logging.WARNING]
-        assert "fake" in records[0].getMessage()
+        assert "fake" in rendered(records[0])
 
     async def test_a_successful_invocation_logs_no_warning(
         self, caplog: pytest.LogCaptureFixture

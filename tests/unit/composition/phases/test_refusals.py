@@ -20,7 +20,7 @@ import pytest
 import yaml
 
 from loom.ai.errors import AgentCompilationError
-from loom.composition import JobBackendError, build_application
+from loom.composition import JobTransportError, Project
 from loom.composition.errors import ReservedBindingError
 from loom.core.bootstrap import BootstrapError
 from loom.core.checks import DeployCheckError
@@ -31,7 +31,7 @@ from loom.core.engine.compiler import CompilationError
 from loom.core.environment import Environment
 from loom.core.use_case import UnservedModelError
 from loom.core.use_case.errors import JoinedAutocommitStore, UncomposedWriteStore
-from loom.jobs.aws.sqs import SQSQueueConfigError
+from loom.jobs.aws.errors import SQSQueueConfigError
 from tests.helpers.jobs import BROKER
 from tests.unit.composition.phases import paths
 from tests.unit.composition.phases.components import (
@@ -104,13 +104,13 @@ _NEEDS_SERVICE = paths.Composition(
 
 REFUSALS: dict[str, _Refusal] = {  # test_precedence pins families of these too
     "reserved-binding": _Refusal(
-        paths.Composition(modules=(binds_sql_service,)), ReservedBindingError
+        paths.Composition(overrides=(binds_sql_service,)), ReservedBindingError
     ),
     "failing-module": _Refusal(
-        paths.Composition(modules=(raises_at_registration,)), RuntimeError, _EVERY
+        paths.Composition(overrides=(raises_at_registration,)), RuntimeError, _EVERY
     ),
     "failing-application-provider": _Refusal(
-        paths.Composition(modules=(binds_unbuildable,)), ResolutionError, _EVERY
+        paths.Composition(overrides=(binds_unbuildable,)), ResolutionError, _EVERY
     ),
     "use-case-compilation": _Refusal(
         paths.Composition(use_cases=(AcmePing, AcmeUncompilable)), CompilationError, _EVERY
@@ -159,39 +159,39 @@ REFUSALS: dict[str, _Refusal] = {  # test_precedence pins families of these too
         # The HTTP paths also report the REST deploy check.
         variants={"http": paths.HTTP},
     ),
-    "job-backend": _Refusal(
-        paths.Composition(config={"app": {"job_service": "rabbit"}}), JobBackendError
+    "job-transport": _Refusal(
+        paths.Composition(config={"app": {"job_service": "rabbit"}}), JobTransportError
     ),
-    "job-backend-celery-extra": _Refusal(
+    "job-transport-celery-extra": _Refusal(
         paths.Composition(config={"app": {"job_service": "celery"}, "celery": BROKER}),
-        JobBackendError,
+        JobTransportError,
         # The worker adapter module itself imports loom.celery.config, so the worker path cannot
         # run without the extra; stubbing the module only yields a test-side NameError.
         tuple(path for path in _COMPOSED if path != "celery"),
         prepare=_without_celery_extra,
     ),
-    "job-backend-celery-section": _Refusal(
+    "job-transport-celery-section": _Refusal(
         paths.Composition(
             config={
                 "app": {"job_service": "inline"},
                 "celery": {**BROKER, "queues": ["emails"]},
             }
         ),
-        JobBackendError,
+        JobTransportError,
     ),
     "unbound-dependency": _Refusal(_NEEDS_SERVICE, ResolutionError),
     "dependency-cycle": _Refusal(
-        paths.Composition(use_cases=(AcmePing, AcmeNeedsCycle), modules=(binds_cycle,)),
+        paths.Composition(use_cases=(AcmePing, AcmeNeedsCycle), overrides=(binds_cycle,)),
         DependencyGraphError,
     ),
     "captive-dependency": _Refusal(
-        paths.Composition(use_cases=(AcmePing, AcmeNeedsLedger), modules=(binds_captive,)),
+        paths.Composition(use_cases=(AcmePing, AcmeNeedsLedger), overrides=(binds_captive,)),
         DependencyGraphError,
         _ANALYSED,
     ),
     "caller-in-singleton": _Refusal(
         paths.Composition(
-            use_cases=(AcmePing, AcmeNeedsCallerCache), modules=(binds_caller_cache,)
+            use_cases=(AcmePing, AcmeNeedsCallerCache), overrides=(binds_caller_cache,)
         ),
         DependencyGraphError,
         _ANALYSED,
@@ -271,13 +271,12 @@ class TestStartupRefusals:
         }
         matches_path_snapshots(f"refusals/{refusal}", recorded, spec.variants)
 
-    @pytest.mark.parametrize("path", ["harness", "bootstrap_app"])
-    def test_an_unbound_dependency_is_accepted_by_paths_without_verification(
-        self, path: str, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    def test_an_unbound_dependency_is_accepted_by_the_harness_without_verification(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
     ) -> None:
-        container = paths.UNCOMPOSED[path](_NEEDS_SERVICE, tmp_path, monkeypatch)
+        container = paths.harness(_NEEDS_SERVICE, tmp_path, monkeypatch)
 
-        matches_snapshot(f"accepted/unbound-dependency/{path}", describe_container(container))
+        matches_snapshot("accepted/unbound-dependency/harness", describe_container(container))
 
     def test_standalone_kernel_refuses_an_unserved_model_at_start_up(
         self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
@@ -289,19 +288,18 @@ class TestStartupRefusals:
         self, fixture_project: Callable[..., str], tmp_path: Path
     ) -> None:
         pytest.importorskip("fastapi")
-        from loom.rest.fastapi.adapter import FastAPIAdapter
+        from loom.rest.fastapi.runtime import FastAPIRuntime
 
         config_path = Path(fixture_project("pipeline_modules_job"))
         config: dict[str, Any] = yaml.safe_load(config_path.read_text(encoding="utf-8"))
-        module = config["app"]["discovery"]["interfaces"]["modules"][0]
-        with (config_path.parent / f"{module}.py").open("a", encoding="utf-8") as written:
+        package = config["app"]["packages"][0]
+        with (config_path.parent / package / "__init__.py").open("a", encoding="utf-8") as written:
             written.write(_UNCOMPILABLE_JOB)
-        config["app"]["discovery"] = {"mode": "modules", "modules": {"include": [module]}}
         config["app"]["job_service"] = "inline"
         config_path.write_text(yaml.safe_dump(config), encoding="utf-8")
 
         with pytest.raises(CompilationError) as caught:
-            build_application(str(config_path), adapter=FastAPIAdapter(), environment="test")
+            Project.load(str(config_path), environment="test").compose(FastAPIRuntime())
 
         recorded = describe_refusal(caught.value, tmp_path=tmp_path)
         matches_snapshot("refusals/job-compilation.http", recorded)

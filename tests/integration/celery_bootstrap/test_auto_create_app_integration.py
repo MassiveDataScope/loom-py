@@ -6,25 +6,34 @@ from typing import Any, cast
 
 import pytest
 
-from loom.celery.auto import create_app
-from loom.core.backend.sqlalchemy import compile_all, get_metadata, reset_registry
+from loom.celery.runtime import CeleryRuntime
+from loom.composition import Project
 from loom.core.command import Command, CommandField
 from loom.core.di.container import LoomContainer
 from loom.core.di.scope import Scope
-from loom.core.engine.executor import RuntimeExecutor
-from loom.core.job import InlineJobService, JobService
+from loom.core.engine.executor import UseCaseExecutor
+from loom.core.job import JobService
 from loom.core.job.callback import JobCallback
 from loom.core.job.job import Job
 from loom.core.model import BaseModel, ColumnField
-from loom.core.persistence.stores import DEFAULT_STORE
-from loom.core.repository.abc import CursorCodec
-from loom.core.repository.sqlalchemy.repository import RepositorySQLAlchemy
-from loom.core.repository.sqlalchemy.session_manager import SessionManager
+from loom.core.stores.catalog import DEFAULT_STORE
+from loom.core.stores.repository import CursorCodec
 from loom.core.use_case import Input
 from loom.core.use_case.factory import UseCaseFactory
 from loom.core.use_case.invoker import ApplicationInvoker
 from loom.core.use_case.markers import Exists, Load, LoadById, OnMissing
 from loom.core.use_case.use_case import UseCase
+from loom.stores.sqlalchemy.repository import SQLAlchemyRepository
+from loom.stores.sqlalchemy.schema import compile_all, get_metadata, reset_registry
+from loom.stores.sqlalchemy.session_manager import SessionManager
+from tests.helpers import acme_recording_callbacks
+from tests.helpers.acme_recording_callbacks import (
+    AcmeCallbackSink,
+    AcmeRecordFailureCallback,
+    AcmeRecordSuccessCallback,
+)
+from tests.helpers.composition import WithOverrides, scanning
+from tests.helpers.jobs import InlineServiceFixture
 
 
 class _Record(BaseModel):
@@ -105,7 +114,6 @@ class _ExistsRecordByNameUseCase(UseCase[_Record, bool]):
 
 class _CreateRecordViaUseCaseJob(Job[int]):
     __queue__ = "default"
-    __retries__ = 0
     __countdown__ = 0
     __timeout__ = None
     __priority__ = 0
@@ -120,7 +128,6 @@ class _CreateRecordViaUseCaseJob(Job[int]):
 
 class _GetRecordViaLoadByIdJob(Job[str]):
     __queue__ = "default"
-    __retries__ = 0
     __countdown__ = 0
     __timeout__ = None
     __priority__ = 0
@@ -135,7 +142,6 @@ class _GetRecordViaLoadByIdJob(Job[str]):
 
 class _RenameRecordViaLoadByIdJob(Job[str]):
     __queue__ = "default"
-    __retries__ = 0
     __countdown__ = 0
     __timeout__ = None
     __priority__ = 0
@@ -154,7 +160,6 @@ class _RenameRecordViaLoadByIdJob(Job[str]):
 
 class _LoadRecordByNameJob(Job[int]):
     __queue__ = "default"
-    __retries__ = 0
     __countdown__ = 0
     __timeout__ = None
     __priority__ = 0
@@ -169,7 +174,6 @@ class _LoadRecordByNameJob(Job[int]):
 
 class _ExistsRecordByNameJob(Job[bool]):
     __queue__ = "default"
-    __retries__ = 0
     __countdown__ = 0
     __timeout__ = None
     __priority__ = 0
@@ -184,7 +188,6 @@ class _ExistsRecordByNameJob(Job[bool]):
 
 class _CreateRecordInlineJob(Job[int]):
     __queue__ = "default"
-    __retries__ = 0
     __countdown__ = 0
     __timeout__ = None
     __priority__ = 0
@@ -199,41 +202,12 @@ class _CreateRecordInlineJob(Job[int]):
 
 class _AlwaysFailJob(Job[None]):
     __queue__ = "default"
-    __retries__ = 0
     __countdown__ = 0
     __timeout__ = None
     __priority__ = 0
 
     def execute(self) -> None:
         raise RuntimeError("forced job failure")
-
-
-class _CallbackSink:
-    def __init__(self) -> None:
-        self.successes: list[str] = []
-        self.failures: list[str] = []
-
-
-class _RecordSuccessCallback(JobCallback):
-    def __init__(self, sink: _CallbackSink) -> None:
-        self._sink = sink
-
-    def on_success(self, job_id: str, result: Any, **context: Any) -> None:
-        self._sink.successes.append(f"{job_id}:{result}:{context.get('name', '')}")
-
-    def on_failure(self, job_id: str, exc_type: str, exc_msg: str, **context: Any) -> None:
-        del job_id, exc_type, exc_msg, context
-
-
-class _RecordFailureCallback(JobCallback):
-    def __init__(self, sink: _CallbackSink) -> None:
-        self._sink = sink
-
-    def on_success(self, job_id: str, result: Any, **context: Any) -> None:
-        del job_id, result, context
-
-    def on_failure(self, job_id: str, exc_type: str, exc_msg: str, **context: Any) -> None:
-        self._sink.failures.append(f"{job_id}:{exc_type}:{context.get('name', '')}:{exc_msg}")
 
 
 class _DispatchChildJobUseCase(UseCase[_Record, bool]):
@@ -248,12 +222,12 @@ class _DispatchChildJobUseCase(UseCase[_Record, bool]):
 
         if cmd.should_fail:
             job_type = _AlwaysFailJob
-            on_failure = _RecordFailureCallback
+            on_failure = AcmeRecordFailureCallback
         else:
             job_type = _CreateRecordInlineJob
-            on_success = _RecordSuccessCallback
+            on_success = AcmeRecordSuccessCallback
 
-        self._jobs.dispatch(
+        self._jobs.dispatch_after_commit(
             job_type,
             payload={"name": cmd.name},
             on_success=on_success,
@@ -264,7 +238,6 @@ class _DispatchChildJobUseCase(UseCase[_Record, bool]):
 
 class _DispatchChildJobOrchestratorJob(Job[bool]):
     __queue__ = "default"
-    __retries__ = 0
     __countdown__ = 0
     __timeout__ = None
     __priority__ = 0
@@ -281,7 +254,7 @@ class _DispatchChildJobOrchestratorJob(Job[bool]):
         )
 
 
-class _RecordRepository(RepositorySQLAlchemy[_Record, int]):
+class _RecordRepository(SQLAlchemyRepository[_Record, int]):
     pass
 
 
@@ -291,7 +264,7 @@ async def _create_schema(db_url: str) -> None:
         async with manager.engine.begin() as conn:
             await conn.run_sync(get_metadata().create_all)
     finally:
-        await manager.dispose()
+        await manager.close()
 
 
 async def _drop_schema(db_url: str) -> None:
@@ -300,7 +273,7 @@ async def _drop_schema(db_url: str) -> None:
         async with manager.engine.begin() as conn:
             await conn.run_sync(get_metadata().drop_all)
     finally:
-        await manager.dispose()
+        await manager.close()
 
 
 @pytest.fixture
@@ -316,7 +289,7 @@ def celery_files(tmp_path: Path, monkeypatch: Any) -> Any:
 
     asyncio.run(_create_schema(db_url))
 
-    callback_sink = _CallbackSink()
+    callback_sink = AcmeCallbackSink()
 
     def _module(container: LoomContainer) -> None:
         # SessionManager is the backend's: the composition refuses a module binding it.
@@ -330,12 +303,12 @@ def celery_files(tmp_path: Path, monkeypatch: Any) -> Any:
             scope=Scope.REQUEST,
         )
         container.register_repo(_Record, _RecordRepository)
-        container.register(_CallbackSink, lambda: callback_sink, scope=Scope.APPLICATION)
+        container.register(AcmeCallbackSink, lambda: callback_sink, scope=Scope.APPLICATION)
         container.register(
             JobService,
-            lambda: InlineJobService(
+            lambda: InlineServiceFixture(
                 container.resolve(UseCaseFactory),
-                container.resolve(RuntimeExecutor),
+                container.resolve(UseCaseExecutor),
             ),
             scope=Scope.APPLICATION,
         )
@@ -356,8 +329,7 @@ class TestAutoCreateAppIntegration:
     ) -> None:
         config_path, _db_path, module, callback_sink = celery_files
 
-        celery_app = create_app(
-            config_path,
+        adapter = CeleryRuntime(
             jobs=[
                 _CreateRecordViaUseCaseJob,
                 _GetRecordViaLoadByIdJob,
@@ -368,9 +340,12 @@ class TestAutoCreateAppIntegration:
                 _AlwaysFailJob,
                 _DispatchChildJobOrchestratorJob,
             ],
-            modules=[module],
-            callbacks=[_RecordSuccessCallback, _RecordFailureCallback],
         )
+        project = scanning(
+            Project.load(config_path, code_path=None, caller="test"),
+            acme_recording_callbacks.MODULE,
+        )
+        celery_app = adapter.mount(project.compose(WithOverrides(adapter, module)))
 
         create_task = celery_app.tasks[f"loom.job.{_CreateRecordViaUseCaseJob.__qualname__}"]
         get_task = celery_app.tasks[f"loom.job.{_GetRecordViaLoadByIdJob.__qualname__}"]

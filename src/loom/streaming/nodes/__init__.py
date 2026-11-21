@@ -37,15 +37,15 @@ from loom.streaming.nodes._step import (
     StepContext,
 )
 from loom.streaming.nodes._table import (
-    Backend,
     DeltaSinkConfig,
     IntoTable,
     SqlAlchemySinkConfig,
+    TableEngine,
 )
 from loom.streaming.nodes._with import (
     AsyncContextDependency,
     ContextDependency,
-    ContextFactory,
+    ContextSupplier,
     ResourceScope,
     SyncContextDependency,
     With,
@@ -56,12 +56,12 @@ from loom.streaming.nodes.refs import payload as payload
 
 __all__ = [
     "AsyncContextDependency",
-    "Backend",
+    "TableEngine",
     "BatchExpandStep",
     "BatchStep",
     "CollectBatch",
     "ContextDependency",
-    "ContextFactory",
+    "ContextSupplier",
     "DeltaSinkConfig",
     "ExpandRoutes",
     "Explode",

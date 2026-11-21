@@ -5,25 +5,29 @@ from __future__ import annotations
 import sys
 from collections.abc import Iterable
 
+from loom.connections.aws import AwsClients
 from loom.core.authz.elevation import ElevationSink
 from loom.core.bootstrap.kernel import KERNEL_KEYS
 from loom.core.di.container import BindingKey
-from loom.core.observability.runtime import ObservabilityRuntime
-from loom.core.persistence.stores import DEFAULT_STORE, StoreCatalog, StoreKey, store_binding
-from loom.core.sql import CallerBoundSql, SqlQueryService
+from loom.core.observability.observability import Observability
+from loom.core.stores.catalog import DEFAULT_STORE, StoreCatalog, StoreKey, store_binding
+from loom.core.stores.repository import RepositoryCatalog
+from loom.core.stores.sql import CallerBoundSql, SqlQueryService
 
 _RESERVED: tuple[BindingKey, ...] = (
     SqlQueryService,
     CallerBoundSql,
-    ObservabilityRuntime,
+    Observability,
     StoreCatalog,
+    RepositoryCatalog,
     ElevationSink,
+    AwsClients,
     *KERNEL_KEYS,
 )
 
 _STORE_SESSIONS = (
-    ("loom.core.repository.sqlalchemy.session_manager", "SessionManager"),
-    ("loom.core.repository.mongo.uow", "MongoSessions"),
+    ("loom.stores.sqlalchemy.session_manager", "SessionManager"),
+    ("loom.stores.mongo.uow", "MongoSessions"),
 )
 
 

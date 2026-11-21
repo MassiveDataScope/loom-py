@@ -5,6 +5,7 @@ from loom.core.use_case.joined import Joined
 from loom.core.use_case.markers import (
     Agent,
     Caller,
+    Delivery,
     Exists,
     Input,
     Load,
@@ -24,6 +25,7 @@ __all__ = [
     "Compute",
     "ComputeFn",
     "Created",
+    "Delivery",
     "F",
     "FieldRef",
     "Input",

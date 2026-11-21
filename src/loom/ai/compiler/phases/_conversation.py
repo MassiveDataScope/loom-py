@@ -1,6 +1,6 @@
 """Conversation phase: resolve ``conversation.usecase`` and prove its Input is feedable.
 
-The runtime offers the loader a fixed set of run-context names
+The host offers the loader a fixed set of run-context names
 (:data:`~loom.ai.compiler._plan.CONVERSATION_CONTEXT_FIELDS`) and the proof
 is the one shared with the output hook
 (:mod:`loom.ai.compiler.phases._feedable`), plus one rule of its own: the

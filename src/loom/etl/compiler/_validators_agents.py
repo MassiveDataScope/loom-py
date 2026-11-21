@@ -17,7 +17,7 @@ from loom.etl.compiler._plan import (
     iter_all_steps,
     iter_steps_in_process,
 )
-from loom.etl.runtime.contracts import AgentBatchRunner, AgentIssueKind
+from loom.etl.ports.contracts import AgentBatchRunner, AgentIssueKind
 
 _CODES: Final[Mapping[AgentIssueKind, ETLErrorCode]] = MappingProxyType(
     {

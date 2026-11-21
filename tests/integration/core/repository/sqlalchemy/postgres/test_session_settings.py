@@ -11,9 +11,9 @@ from sqlalchemy import event, text
 from sqlalchemy.exc import DBAPIError, PendingRollbackError
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from loom.core.persistence.stores import DEFAULT_STORE
-from loom.core.repository.sqlalchemy.session_manager import SessionManager
-from loom.core.repository.sqlalchemy.session_settings import SessionSettings
+from loom.core.stores.catalog import DEFAULT_STORE
+from loom.stores.sqlalchemy.session_manager import SessionManager
+from loom.stores.sqlalchemy.session_settings import SessionSettings
 
 from .conftest import ROWS_TABLE, TENANT_SETTING
 
@@ -81,7 +81,7 @@ async def app_sessions(pg_app_uri: str) -> AsyncIterator[SessionManager]:
     try:
         yield manager
     finally:
-        await manager.dispose()
+        await manager.close()
 
 
 @pytest.fixture
@@ -90,7 +90,7 @@ async def platform_sessions(pg_platform_uri: str) -> AsyncIterator[SessionManage
     try:
         yield manager
     finally:
-        await manager.dispose()
+        await manager.close()
 
 
 class TestSessionSettings:
@@ -178,7 +178,7 @@ class TestSessionSettings:
             async with manager.session() as session:
                 assert _is_unset((await session.execute(text(_CURRENT))).scalar_one_or_none())
         finally:
-            await manager.dispose()
+            await manager.close()
 
     async def test_a_savepoint_does_not_rerun_the_provider(self, pg_app_uri: str) -> None:
         calls = 0
@@ -198,7 +198,7 @@ class TestSessionSettings:
                 await session.execute(text(_ROWS))
                 await session.commit()
         finally:
-            await manager.dispose()
+            await manager.close()
         assert calls == 1
         assert len(set_config_statements) == 1
 
@@ -221,7 +221,7 @@ class TestSessionSettings:
                 with pytest.raises(error):
                     await session.execute(rows)
         finally:
-            await manager.dispose()
+            await manager.close()
         assert statements == []
 
     async def test_after_a_provider_failure_the_session_is_unusable_until_rolled_back(
@@ -250,7 +250,7 @@ class TestSessionSettings:
                 await session.rollback()
                 payloads = list((await session.execute(rows)).scalars())
         finally:
-            await manager.dispose()
+            await manager.close()
         assert attempts == 2
         assert payloads == ["a1", "a2"]
         assert len(product_statements) == 1

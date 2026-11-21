@@ -4,7 +4,7 @@ from __future__ import annotations
 
 from typing import Any
 
-from loom.core.repository.abc.query import CursorResult, PageResult, QuerySpec
+from loom.core.stores.repository.query import CursorResult, PageResult, QuerySpec
 from loom.testing.in_memory import InMemoryRepository
 from tests.integration.fake_repo.product.model import Product
 from tests.integration.fake_repo.product.repository_contract import ProductRepo

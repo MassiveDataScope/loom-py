@@ -68,12 +68,23 @@ runner.run(DailyPipeline, DailyParams(run_date=date(2026, 3, 30)))
 
 ```python
 import polars as pl
-from loom.etl import ETLStep, ETLProcess, ETLPipeline, FromFile, FromTable, IntoFile, IntoTable, Format
+from loom.etl import (
+    ETLStep,
+    ETLProcess,
+    ETLPipeline,
+    FromFile,
+    FromTable,
+    IntoFile,
+    IntoTable,
+    Format,
+)
+
 
 class Payload:
     store: str
     amount: float
     items: int
+
 
 class LoadEvents(ETLStep[DailyParams]):
     events = FromFile("/data/raw/events.csv", format=Format.CSV).parse_json("payload", Payload)
@@ -86,6 +97,7 @@ class LoadEvents(ETLStep[DailyParams]):
             pl.col("payload").struct.field("items").alias("items"),
         )
 
+
 class BuildReport(ETLStep[DailyParams]):
     events = FromTable("staging.events")
     target = IntoFile("/data/exports/daily_report.csv", format=Format.CSV)
@@ -96,8 +108,10 @@ class BuildReport(ETLStep[DailyParams]):
             pl.col("items").sum().alias("item_count"),
         )
 
+
 class ReportProcess(ETLProcess[DailyParams]):
     steps = [LoadEvents, BuildReport]
+
 
 class ReportPipeline(ETLPipeline[DailyParams]):
     processes = [ReportProcess]
@@ -130,6 +144,7 @@ Reference them in pipelines using the alias API:
 ```python
 from loom.etl import ETLStep, FromFile, IntoFile, Format
 
+
 class LoadEvents(ETLStep[DailyParams]):
     events = FromFile.alias("events_raw", format=Format.CSV)
     target = IntoFile.alias("exports_daily", format=Format.PARQUET)
@@ -145,6 +160,7 @@ You can also implement `FileLocator` directly for custom routing strategies:
 
 ```python
 from loom.etl.storage import FileLocator, FileLocation
+
 
 class MyFileLocator:
     def locate(self, name: str) -> FileLocation:
@@ -278,8 +294,8 @@ MERGE on key columns. Inserts new rows and updates existing ones.
 target = IntoTable("events.orders").upsert(
     keys=("order_id",),
     partition_cols=("year", "month"),  # strongly recommended for large tables
-    exclude=("created_at",),           # columns excluded from UPDATE SET
-    delete_flag="_deleted",            # optional boolean column; omit to keep update+insert
+    exclude=("created_at",),  # columns excluded from UPDATE SET
+    delete_flag="_deleted",  # optional boolean column; omit to keep update+insert
 )
 ```
 
@@ -329,7 +345,7 @@ already exist: a missing table is a write error, not a create.
 target = IntoTable("events.orders").update(
     keys=("order_id",),
     partition_cols=("year", "month"),  # strongly recommended for large tables
-    include=("status",),               # only these columns are updated
+    include=("status",),  # only these columns are updated
 )
 ```
 
@@ -640,8 +656,7 @@ class Checkpointed:
 
     def resolve(self, config: StorageConfig) -> list[MaintenanceSpec]:
         return [
-            replace(spec, ops=(*spec.ops, CheckpointSpec()))
-            for spec in self._inner.resolve(config)
+            replace(spec, ops=(*spec.ops, CheckpointSpec())) for spec in self._inner.resolve(config)
         ]
 
 
@@ -692,6 +707,7 @@ Reference them in pipelines:
 ```python
 from loom.etl import ETLStep, FromFile, IntoFile, Format
 
+
 class LoadEvents(ETLStep[DailyParams]):
     events = FromFile.alias("events_raw", format=Format.CSV)
     target = IntoFile.alias("exports_daily", format=Format.PARQUET)
@@ -707,6 +723,7 @@ You can also implement the `FileLocator` protocol directly for custom routing:
 
 ```python
 from loom.etl.storage import FileLocator, FileLocation
+
 
 class MyFileLocator:
     def locate(self, name: str) -> FileLocation:
@@ -1006,7 +1023,7 @@ environment, an instance or task role, `~/.aws/config`). Nothing talks to AWS
 until a placeholder actually resolves: a YAML without `${secrets:...}` or
 `${ssm:...}` never creates a client and boots without boto3 installed. When a
 placeholder does resolve and boto3 is missing, the error names the extra to
-install, `loom-kernel[config-ssm]`.
+install, `loom-kernel[aws]`.
 
 Resolvers run at job startup — secret rotation takes effect on the next run
 without redeployment. Values are fetched once per loaded config object
@@ -1021,6 +1038,7 @@ A resolver is any object with a `name` and a `resolve(key) -> object`:
 ```python
 from loom.etl import ETLRunner
 
+
 class VaultResolver:
     name = "vault"
 
@@ -1029,6 +1047,7 @@ class VaultResolver:
 
     def resolve(self, key: str) -> str:
         return read_vault_secret(self._url, key)
+
 
 runner = ETLRunner.from_yaml(
     "config/etl.yaml",
@@ -1049,7 +1068,7 @@ Precedence is by name:
   the one used. Pin a region that way instead of relying on the default chain:
 
   ```python
-  from loom.core.config.ssm import SsmResolver
+  from loom.connections.aws.ssm import SsmResolver
 
   runner = ETLRunner.from_yaml("config/etl.yaml", resolvers=[SsmResolver(region="eu-west-1")])
   ```
@@ -1061,12 +1080,14 @@ Precedence is by name:
   earlier registration of the same name.
 
 `load_config` itself registers no defaults. When you load YAML by hand, pass
-the resolvers you need; `default_resolvers()` returns loom's built-ins:
+the resolvers you need; `built_in_resolvers()` returns loom's built-ins (`secrets`, `ssm`
+and `file`):
 
 ```python
-from loom.core.config import default_resolvers, load_config
+from loom.connections.resolvers import built_in_resolvers
+from loom.core.config import load_config
 
-cfg = load_config("config/etl.yaml", resolvers=default_resolvers())
+cfg = load_config("config/etl.yaml", resolvers=built_in_resolvers())
 ```
 
 The same `resolvers=` parameter, with the same defaults and precedence, is on
@@ -1095,8 +1116,8 @@ from loom.prefect.deploy import discover_and_deploy_etls
 
 deployment_ids = discover_and_deploy_etls(
     config="config/etls/*.yaml",
-    work_pool="loom-fargate",   # default; "loom-docker" for local dev
-    env="production",           # picks environments.<env>; default: LOOM_ENV, else production
+    work_pool="loom-fargate",  # default; "loom-docker" for local dev
+    env="production",  # picks environments.<env>; default: LOOM_ENV, else production
 )
 ```
 
@@ -1128,8 +1149,8 @@ from loom.prefect import deploy_flow
 
 deployment_id = deploy_flow(
     daily_orders,
-    env="production",           # keyword only; default: LOOM_ENV, else production
-    work_pool="loom-fargate",   # used when the YAML sets no work_pool for env
+    env="production",  # keyword only; default: LOOM_ENV, else production
+    work_pool="loom-fargate",  # used when the YAML sets no work_pool for env
 )
 ```
 
@@ -1457,5 +1478,5 @@ The ETL API reference is generated from public docstrings:
 
 - [ETL API reference](../reference/api/etl)
 - Schema types: `loom.etl.schema.annotation_to_loom_type(ann)` returns the `LoomType` a
-  contract field annotation declares, and `loom.etl.backends.polars` converts it with
+  contract field annotation declares, and `loom.etl.engines.polars` converts it with
   `loom_type_to_polars` and back with `polars_to_loom_type`.

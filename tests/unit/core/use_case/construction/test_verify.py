@@ -11,8 +11,8 @@ from loom.core.di.container import LoomContainer
 from loom.core.di.graph import DependencyGraphError
 from loom.core.di.scope import Scope
 from loom.core.model import LoomStruct
-from loom.core.repository.abc import Listable
-from loom.core.repository.registration import classify_key
+from loom.core.stores.repository import Listable
+from loom.core.stores.repository.registration import classify_key
 from loom.core.use_case.errors import UnservedModelError
 from loom.core.use_case.factory import UseCaseFactory, main_repository
 from loom.core.use_case.use_case import UseCase

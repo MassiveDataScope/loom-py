@@ -5,11 +5,11 @@ from __future__ import annotations
 import sqlite3
 from collections.abc import Callable
 from pathlib import Path
-from typing import Any, cast
+from typing import Any
 
 import pytest
 
-from loom.composition import AppConfig, Application, CompositionSource, compose_application
+from loom.composition import AppConfig, Application, Project
 from loom.core.bootstrap.bootstrap import BootstrapError
 from loom.core.command import Command
 from loom.core.config import ConfigContext, ConfigError
@@ -19,17 +19,16 @@ from loom.core.discovery.base import DiscoveryResult
 from loom.core.errors import UndeclaredStoreWrite
 from loom.core.job.job import Job
 from loom.core.model import BaseModel, ColumnField
-from loom.core.persistence.stores import StoreKey
-from loom.core.repository import DefaultRepositoryBuilder, RepositoryBuildContext
-from loom.core.repository.abc import RepoFor
-from loom.core.repository.sqlalchemy.backend import SQLAlchemyBackend
-from loom.core.repository.sqlalchemy.session_manager import SessionManager
-from loom.core.repository.sqlalchemy.transactional import transactional
+from loom.core.stores.catalog import StoreKey
+from loom.core.stores.repository import DefaultRepositoryBuilder, RepoFor, RepositoryBuildContext
 from loom.core.use_case import Input, UseCase
 from loom.core.use_case.errors import UncomposedWriteStore
-from loom.rest.fastapi.adapter import FastAPIAdapter
+from loom.rest.fastapi.runtime import FastAPIRuntime
 from loom.rest.model import RestInterface
-from tests.helpers.composition import Serving, composition_source
+from loom.stores.sqlalchemy.plugin import SQLAlchemyStorePlugin
+from loom.stores.sqlalchemy.session_manager import SessionManager
+from loom.stores.sqlalchemy.transactional import transactional
+from tests.helpers.composition import Serving, composition_project
 
 pytestmark = pytest.mark.timeout(30)
 
@@ -114,24 +113,31 @@ class _ViaDefaultService(UseCase[AcmeLedgerStoreEntry, bool]):
         return await self.service.joined()
 
 
-def _source(databases: tuple[Path, Path], second: str = _LEDGER) -> CompositionSource:
+def _project(databases: tuple[Path, Path], second: str = _LEDGER) -> Project:
     default, other = databases
     stores = {
         "default": {"backend": "sqlalchemy", "url": f"sqlite+aiosqlite:///{default}"},
         second: {"backend": "sqlalchemy", "url": f"sqlite+aiosqlite:///{other}"},
     }
     ctx = ConfigContext.from_dict(
-        {"stores": stores, "persistence": {"cursors": {"signing": "ephemeral"}}}
+        {
+            "stores": {**stores, "settings": {"cursors": {"signing": "ephemeral"}}},
+        }
     )
-    return composition_source(ctx, app=AppConfig(name="ledger"))
+    return composition_project(ctx, app=AppConfig(name="ledger"))
 
 
 def _compose(
     databases: tuple[Path, Path], modules: tuple[Callable[[LoomContainer], None], ...] = ()
 ) -> Application:
     use_cases = (_RecordEntry, _ViaLedgerService, _ViaDefaultService)
-    adapter = Serving(_Account, AcmeLedgerStoreEntry, use_cases=use_cases)
-    return compose_application(_source(databases), adapter, modules=(_services, *modules))
+    adapter = Serving(
+        _Account,
+        AcmeLedgerStoreEntry,
+        use_cases=use_cases,
+        overrides=(_services, *modules),
+    )
+    return _project(databases).compose(adapter)
 
 
 def _rows(database: Path) -> dict[str, int]:
@@ -164,15 +170,17 @@ class _Entries(RestInterface[AcmeLedgerStoreEntry]):
 _SQLITE_LEDGER = {"backend": "sqlalchemy", "url": "sqlite+aiosqlite:///:memory:"}
 
 
-def _rest_source(stores: dict[str, Any], monkeypatch: pytest.MonkeyPatch) -> CompositionSource:
-    discovered = DiscoveryResult(
-        models=(AcmeLedgerStoreEntry,), use_cases=(), interfaces=cast(Any, (_Entries,))
+def _rest_project(stores: dict[str, Any], monkeypatch: pytest.MonkeyPatch) -> Project:
+    discovered = DiscoveryResult(models=(AcmeLedgerStoreEntry,), use_cases=(), classes=(_Entries,))
+    monkeypatch.setattr(
+        "loom.composition.project.PackageScanner.discover", lambda self, agents=None: discovered
     )
-    monkeypatch.setattr("loom.composition.source.discover", lambda config: discovered)
     ctx = ConfigContext.from_dict(
-        {"stores": stores, "persistence": {"cursors": {"signing": "ephemeral"}}}
+        {
+            "stores": {**stores, "settings": {"cursors": {"signing": "ephemeral"}}},
+        }
     )
-    return composition_source(ctx, app=AppConfig(name="ledger"))
+    return composition_project(ctx, app=AppConfig(name="ledger"))
 
 
 class _AuditRow(BaseModel):
@@ -226,14 +234,14 @@ def _compose_audit(tmp_path: Path, component: type[object]) -> Application:
         "ledger": {"backend": "sqlalchemy", "url": f"sqlite+aiosqlite:///{tmp_path / 'ledger.db'}"},
     }
     ctx = ConfigContext.from_dict(
-        {"stores": stores, "persistence": {"cursors": {"signing": "ephemeral"}}}
+        {
+            "stores": {**stores, "settings": {"cursors": {"signing": "ephemeral"}}},
+        }
     )
-    source = composition_source(ctx, app=AppConfig(name="audit"))
+    project = composition_project(ctx, app=AppConfig(name="audit"))
     jobs = (component,) if issubclass(component, Job) else ()
     use_cases = () if jobs else (component,)
-    return compose_application(
-        source, Serving(_AuditRow, AcmeLedgerStoreEntry, use_cases=use_cases, jobs=jobs)
-    )
+    return project.compose(Serving(_AuditRow, AcmeLedgerStoreEntry, use_cases=use_cases, jobs=jobs))
 
 
 class TestPerStoreWiring:
@@ -272,7 +280,7 @@ class TestPerStoreWiring:
         self, application: Application, databases: tuple[Path, Path]
     ) -> None:
         async with application.running():
-            await application.kernel.app.invoke(_RecordEntry, payload={"name": "e"})
+            await application.kernel.invoker.invoke(_RecordEntry, payload={"name": "e"})
 
         assert [_rows(database) for database in databases] == [
             {"per_store_accounts": 0},
@@ -284,7 +292,7 @@ class TestPerStoreWiring:
         application: Application,
     ) -> None:
         async with application.running():
-            joined = await application.kernel.app.invoke(_ViaLedgerService)
+            joined = await application.kernel.invoker.invoke(_ViaLedgerService)
 
         assert joined is True
 
@@ -294,7 +302,7 @@ class TestPerStoreWiring:
     ) -> None:
         async with application.running():
             with pytest.raises(UndeclaredStoreWrite, match="default"):
-                await application.kernel.app.invoke(_ViaDefaultService)
+                await application.kernel.invoker.invoke(_ViaDefaultService)
 
     @pytest.mark.parametrize(
         ("key", "served"),
@@ -333,21 +341,21 @@ class TestPerStoreWiring:
         def build(*args: object) -> None:
             raise AssertionError("a store was built")
 
-        monkeypatch.setattr(SQLAlchemyBackend, "build", build)
-        source, adapter = _source(databases, second="sqlalchemy"), Serving(AcmeBackendNamedAudit)
+        monkeypatch.setattr(SQLAlchemyStorePlugin, "build", build)
+        source, adapter = _project(databases, second="sqlalchemy"), Serving(AcmeBackendNamedAudit)
 
         with pytest.raises(ConfigError, match=r"stores\.sqlalchemy would report its readiness"):
-            compose_application(source, adapter)
+            source.compose(adapter)
 
     def test_autocrud_routes_of_a_model_follow_the_backend_of_its_store(
         self,
         monkeypatch: pytest.MonkeyPatch,
     ) -> None:
-        source = _rest_source(
+        project = _rest_project(
             {"default": {"backend": "none"}, "ledger": _SQLITE_LEDGER}, monkeypatch
         )
 
-        application = compose_application(source, FastAPIAdapter())
+        application = project.compose(FastAPIRuntime())
 
         assert {route.path for route in _Entries.routes} >= {"/", "/{id}"}
         assert application.kernel.container.resolve_repo(AcmeLedgerStoreEntry) is not None
@@ -357,11 +365,11 @@ class TestPerStoreWiring:
         monkeypatch: pytest.MonkeyPatch,
     ) -> None:
         stores = {"default": _SQLITE_LEDGER, "ledger": {"backend": "none"}}
-        source = _rest_source(stores, monkeypatch)
-        adapter = FastAPIAdapter()
+        project = _rest_project(stores, monkeypatch)
+        adapter = FastAPIRuntime()
 
         with pytest.raises(RuntimeError, match=r"stores\.ledger\.backend 'none' serves no"):
-            compose_application(source, adapter)
+            project.compose(adapter)
 
     async def test_a_job_without_a_main_model_writes_to_the_store_it_declares(
         self, tmp_path: Path

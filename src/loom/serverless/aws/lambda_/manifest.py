@@ -9,18 +9,16 @@ from __future__ import annotations
 
 import re
 from collections.abc import Iterator, Mapping
-from pathlib import Path
-from typing import TYPE_CHECKING, Any, Final
+from typing import Any, Final
 
 import msgspec
 
-from loom.composition.source import AppConfig, CompositionSource
-from loom.core.config import ConfigContext, ConfigError, ConfigKey
+from loom.composition.project import Project
+from loom.core.config import ConfigError
 from loom.core.config.keys import INTERPOLATION
 from loom.core.config.loader import config_strings, convert_section
 from loom.core.config.resolver import fetched_name, referenced
-from loom.core.observability.config import ObservabilityConfig
-from loom.core.observability.runtime import ObservabilityRuntime
+from loom.jobs.aws.queue import QueueConfig
 from loom.serverless.aws.lambda_.functions import (
     DEFAULT_MAXIMUM_EVENT_AGE_S,
     DEFAULT_MAXIMUM_RETRY_ATTEMPTS,
@@ -34,11 +32,9 @@ from loom.serverless.aws.lambda_.functions import (
     source_of,
 )
 from loom.serverless.aws.lambda_.interfaces import http_function
+from loom.serverless.aws.lambda_.trigger_jobs import check_triggers
 
-if TYPE_CHECKING:
-    from loom.core.environment import Environment
-
-MANIFEST_VERSION: Final = 2
+MANIFEST_VERSION: Final = 3
 """Version of the manifest's schema; a change a consumer must handle bumps it."""
 
 _HANDLER: Final = re.compile(r"[A-Za-z_][\w.]*\.\w+", re.ASCII)
@@ -64,58 +60,51 @@ class DeployManifest(msgspec.Struct, frozen=True, kw_only=True):
     environment: str
     handler: str
     code_path: str
-    queues: dict[str, str]
+    queues: dict[str, QueueConfig]
     functions: dict[str, FunctionManifest]
 
 
-def build_manifest(
-    ctx: ConfigContext,
-    environment: Environment,
-    function: str | None = None,
-    *,
-    config_root: Path,
-    code_path: Path,
-) -> DeployManifest:
+def build_manifest(project: Project, function: str | None = None) -> DeployManifest:
     """The manifest of every function of ``lambda.functions``, or of *function* alone.
 
     HTTP functions discover the application's code and list their routes as
     startup composes them.
 
+    Args:
+        project: The configuration as written, from ``CheckedProject.project``;
+            its scan of ``app.packages`` is the only one.
+        function: The one function to describe; every function by default.
+
     Raises:
         ConfigError: When ``lambda.handler`` is missing or malformed, no
             function is declared, a function or a placeholder cannot be
-            named, a section the functions read is misdeclared, or an HTTP
-            function would not compose at startup.
+            named, a section the functions read is misdeclared, an event
+            trigger names a job startup would refuse, or an HTTP function
+            would not compose at startup.
     """
+    ctx = project.config
     declared = declared_lambda(ctx)
     handler = _literal("lambda.handler", declared.handler)
     if not _HANDLER.fullmatch(handler):
         raise ConfigError(f"lambda.handler {handler!r} must be 'module.attribute'")
     if not declared.functions:
         raise ConfigError("lambda.functions declares no function to deploy")
-    queues = convert_section(ctx.raw("sqs.queues", {}), "sqs.queues", dict[str, str])
-    for queue, url in queues.items():
-        _literal(f"sqs.queues.{queue}", url)
-    app = convert_section(ctx.raw(ConfigKey.APP), ConfigKey.APP, AppConfig)
-    source = CompositionSource(
-        config=ctx,
-        environment=environment,
-        code_path=code_path,
-        config_root=config_root,
-        app=app,
-        observability=ObservabilityRuntime.noop(),
-        observability_config=ObservabilityConfig(),
-    )
+    written = ctx.raw("sqs.queues", {})
+    QueueConfig.check_written_shape(written, "sqs.queues")
+    queues = convert_section(written, "sqs.queues", dict[str, QueueConfig])
+    for queue, config in queues.items():
+        _literal(f"sqs.queues.{queue}.url", config.url)
+    check_triggers(project)
     document = ctx.document()
     names = sorted(declared.functions) if function is None else [function]
     return DeployManifest(
         manifest_version=MANIFEST_VERSION,
-        environment=str(environment),
+        environment=str(project.environment),
         handler=handler,
-        code_path=app.code_path,
+        code_path=project.app.code_path,
         queues=queues,
         functions={
-            name: _function(source, document, declared.functions, name, queues) for name in names
+            name: _function(project, document, declared.functions, name, queues) for name in names
         },
     )
 
@@ -129,11 +118,11 @@ def _literal(key: str, value: str | None) -> str:
 
 
 def _function(
-    source: CompositionSource,
+    project: Project,
     document: dict[str, Any],
     functions: Mapping[str, LambdaFunction],
     name: str,
-    queues: Mapping[str, str],
+    queues: Mapping[str, QueueConfig],
 ) -> FunctionManifest:
     function = named_function(functions, name)
     if not _FUNCTION.fullmatch(name):
@@ -141,8 +130,8 @@ def _function(
     trigger = function.trigger
     event: dict[str, Any]
     if isinstance(trigger, HttpTrigger):
-        event = _http_event(source, functions, name)
-    elif isinstance(trigger, EventTrigger) and not trigger.queued:
+        event = _http_event(project, functions, name)
+    elif isinstance(trigger, EventTrigger) and not trigger.is_queued:
         event = _direct_event(trigger)
     else:
         event = _queue_event(name, trigger, queues)
@@ -157,7 +146,7 @@ def _function(
 
 
 def _queue_event(
-    name: str, trigger: JobsTrigger | EventTrigger, queues: Mapping[str, str]
+    name: str, trigger: JobsTrigger | EventTrigger, queues: Mapping[str, QueueConfig]
 ) -> dict[str, Any]:
     """The key of ``sqs.queues`` the function consumes and its event source mapping.
 
@@ -166,7 +155,8 @@ def _queue_event(
     ``raw_message_delivery: false``, which its subscription must keep.
     """
     queue = trigger.queue
-    if queue is None or queue.name not in queues:
+    assert queue is not None
+    if queue.name not in queues:
         declared = ", ".join(sorted(queues)) or "none"
         raise ConfigError(
             f"lambda.functions.{name}.trigger.queue.name must name the queue it consumes, a key "
@@ -174,7 +164,7 @@ def _queue_event(
         )
     event: dict[str, Any] = {"queue": queue.name}
     event.update({key: getattr(queue, key) for key in _MAPPING_KEYS})
-    event["report_batch_item_failures"] = queue.reports_batch_item_failures
+    event["report_batch_item_failures"] = True
     event["dead_letter_required"] = True
     if isinstance(trigger, EventTrigger):
         written = msgspec.to_builtins(trigger)
@@ -206,22 +196,22 @@ def _direct_event(trigger: EventTrigger) -> dict[str, Any]:
 
 
 def _http_event(
-    source: CompositionSource, functions: Mapping[str, LambdaFunction], name: str
+    project: Project, functions: Mapping[str, LambdaFunction], name: str
 ) -> dict[str, Any]:
     """The routes of the function's interfaces, as published, and the authentication it verifies."""
     from loom.rest.compiler import InterfaceCompilationError, published_routes
-    from loom.rest.fastapi.adapter import served_routes
+    from loom.rest.fastapi.runtime import served_routes
 
-    served = http_function(source.config, name, functions)
+    served = http_function(project.config, name, functions)
     try:
-        _, sources = served_routes(source, served.select)
+        _, sources = served_routes(project, served.select)
         published = published_routes(sources)
     except (InterfaceCompilationError, RuntimeError) as exc:
         raise ConfigError(f"lambda.functions.{name} cannot be composed: {exc}") from exc
     routes = sorted(published, key=lambda route: (route[1], route[0]))
     return {
         "routes": [{"method": method, "path": path} for method, path in routes],
-        "auth": source.config.raw(served.auth_section or "app.rest.auth"),
+        "auth": project.config.raw(served.auth_section or "app.rest.auth"),
     }
 
 

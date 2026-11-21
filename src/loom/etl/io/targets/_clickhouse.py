@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import logging
 import threading
 from collections.abc import Callable
 from dataclasses import dataclass
@@ -10,12 +11,11 @@ from typing import Any, Literal
 import polars as pl
 
 from loom.core.connections import ClickHouseConnection
-from loom.core.logger import get_logger
 from loom.etl.declarative.target import TargetSpec
 from loom.etl.declarative.target._client import ClientSpec
 from loom.etl.io._clickhouse_connection import open_client, resolve_connection
 
-_log = get_logger(__name__)
+_log = logging.getLogger(__name__)
 
 
 @dataclass(frozen=True)
@@ -151,22 +151,20 @@ class ClickHouseTargetWriter:
             frame.collect(engine=engine) if isinstance(frame, pl.LazyFrame) else frame
         )
         if df.is_empty():
-            _log.warning("write_produced_no_rows", target=spec.table)
+            _log.warning("write_produced_no_rows", extra={"target": spec.table})
             return
 
         qualified = f"{spec.database}.{spec.table}" if spec.database else spec.table
 
         if spec.write_mode == "replace":
-            _log.debug("clickhouse_truncate_table", table=qualified)
+            _log.debug("clickhouse_truncate_table", extra={"table": qualified})
             self._client.command(f"TRUNCATE TABLE IF EXISTS {qualified}")
 
         column_names = df.columns
         data = [df[col].to_list() for col in column_names]
         _log.debug(
             "clickhouse_insert",
-            rows=len(df),
-            cols=len(column_names),
-            table=qualified,
+            extra={"rows": len(df), "cols": len(column_names), "table": qualified},
         )
         self._client.insert(
             qualified,
@@ -179,7 +177,7 @@ class ClickHouseTargetWriter:
 class ClickHouseClientExecutor:
     """Provides a ClickHouse client to :class:`~loom.etl.ClientStep` instances.
 
-    Implements :class:`~loom.etl.runtime.contracts.ClientCommandExecutor`.
+    Implements :class:`~loom.etl.ports.contracts.ClientCommandExecutor`.
     Inject into :class:`~loom.etl.executor.ETLExecutor` (or
     :class:`~loom.etl.ETLRunner`) to enable ``ClientStep`` execution against
     ClickHouse.

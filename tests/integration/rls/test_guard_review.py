@@ -17,9 +17,10 @@ from sqlalchemy.ext.asyncio import create_async_engine
 from sqlalchemy.pool import NullPool
 
 from loom.core.config import ConfigError
-from loom.core.locator import Application
-from loom.core.repository.sqlalchemy.migrations.runners import LOCK, UNLOCK
-from loom.core.repository.sqlalchemy.rls import (
+from loom.core.schema_names import SchemaNames
+from loom.stores.sqlalchemy.alembic import StoreSchema
+from loom.stores.sqlalchemy.migrations.runners import LOCK, UNLOCK
+from loom.stores.sqlalchemy.rls import (
     BootstrapConfig,
     DatabaseRoles,
     DatabaseUser,
@@ -28,9 +29,8 @@ from loom.core.repository.sqlalchemy.rls import (
     integrity,
     verify,
 )
-from loom.core.repository.sqlalchemy.rls.bootstrap import QUIET_LOGS
-from loom.core.repository.sqlalchemy.rls.guard_manifest import GUARD_REVISIONS
-from loom.core.schema_names import SchemaNames
+from loom.stores.sqlalchemy.rls.bootstrap import QUIET_LOGS
+from loom.stores.sqlalchemy.rls.guard_manifest import GUARD_REVISIONS
 from tests.integration.agnosticism import notes
 from tests.integration.rls.conftest import (
     BootstrapFactory,
@@ -125,7 +125,7 @@ async def _guarded_table(scoped_database: BootstrapFactory) -> ScopedDatabase:
 
 async def _installed(
     scoped_database: BootstrapFactory, tmp_path: Path
-) -> tuple[ScopedDatabase, Application]:
+) -> tuple[ScopedDatabase, StoreSchema]:
     schema = _name()
     database = await scoped_database(schema)
     application = application_for(notes, database, tmp_path, schema=schema)
@@ -133,22 +133,22 @@ async def _installed(
     return database, application
 
 
-async def _startup_checks(url: str, application: Application) -> set[str]:
-    bootstrap = application.bootstrap
+async def _startup_checks(url: str, schema: StoreSchema) -> set[str]:
+    bootstrap = schema.bootstrap
     assert bootstrap is not None
     engine = create_async_engine(url, poolclass=NullPool)
     try:
         async with engine.connect() as connection:
             problems = await integrity.startup_problems(
-                connection, bootstrap.names.guard, application.scoped
+                connection, bootstrap.names.guard, schema.scoped
             )
     finally:
         await engine.dispose()
     return {problem.check for problem in problems}
 
 
-async def _verify_checks(url: str, application: Application) -> set[str]:
-    report = await verify(url, application)
+async def _verify_checks(url: str, schema: StoreSchema) -> set[str]:
+    report = await verify(url, schema)
     return {finding.check for finding in report.findings}
 
 

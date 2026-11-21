@@ -7,7 +7,7 @@ from typing import TYPE_CHECKING, Any, ClassVar, Generic, TypeVar, get_args, get
 from typing_extensions import TypeVar as TypeVarExt
 
 from loom.core.model import LoomStruct
-from loom.core.repository.abc import RepoFor
+from loom.core.stores.repository import RepoFor
 from loom.core.use_case.compute import ComputeFn
 from loom.core.use_case.rule import RuleFn
 

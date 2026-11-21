@@ -15,9 +15,9 @@
       "resolved": "Environment",
       "scope": "APPLICATION"
     },
-    "RuntimeExecutor": {
+    "UseCaseExecutor": {
       "provider": "LoomContainer.register_instance.<locals>.<lambda>",
-      "resolved": "RuntimeExecutor",
+      "resolved": "UseCaseExecutor",
       "scope": "APPLICATION"
     },
     "UseCaseFactory": {

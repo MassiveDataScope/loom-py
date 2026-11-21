@@ -37,8 +37,8 @@ ENVIRONMENT_VARIABLE: Final = "LOOM_ENV"
 OVERRIDE_PREFIX: Final = "LOOM__"
 """Prefix of the variables overriding configuration keys."""
 
-CONFIG_VARIABLE: Final = "LOOM_CONFIG"
-"""Configuration file or directory the migration locator loads."""
+CONFIG_DIR_VARIABLE: Final = "LOOM_CONFIG_DIR"
+"""Directory every entry point loads its configuration from when no path is given."""
 
 STORAGE_CONFIG_VARIABLE: Final = "LOOM_STORAGE_CONFIG_PATH"
 """Storage configuration file or directory a Prefect flow run loads."""
@@ -68,6 +68,8 @@ DB_PASSWORD_PREFIX: Final = "LOOM_DB_PASSWORD_"
 """Prefix of the variables holding a database login's password, by upper-case login."""
 
 _BASE_CONFIG_FILE: Final = "base.yaml"
+
+_DEFAULT_CONFIG_DIR: Final = Path("config")
 
 
 class Environment(StrEnum):
@@ -268,6 +270,32 @@ def config_source_paths(
     return (str(source),)
 
 
+def resolve_config_dir() -> Path:
+    """Return the directory an entry point loads when no path is given.
+
+    ``LOOM_CONFIG_DIR`` when set, else ``./config``.
+
+    Returns:
+        The existing configuration directory.
+
+    Raises:
+        ConfigError: When that directory does not exist; the message names the
+            path tried, and both sources when the variable is unset.
+    """
+    configured = loom_variable(CONFIG_DIR_VARIABLE)
+    directory = Path(configured or _DEFAULT_CONFIG_DIR)
+    if directory.is_dir():
+        return directory
+    if configured:
+        raise ConfigError(
+            f"{CONFIG_DIR_VARIABLE} names {str(directory)!r}, which is not a directory"
+        )
+    raise ConfigError(
+        f"config directory {str(directory)!r} not found: "
+        f"{CONFIG_DIR_VARIABLE} is not set and ./config does not exist"
+    )
+
+
 def select_config_paths(
     config_paths: Sequence[str],
     config_dir: str | os.PathLike[str] | None,
@@ -276,6 +304,8 @@ def select_config_paths(
     caller: str,
 ) -> tuple[str, ...]:
     """Return the files an application factory loads: explicit files or a directory.
+
+    With neither, the directory comes from :func:`resolve_config_dir`.
 
     Args:
         config_paths: Explicit files, merged left to right as given.
@@ -287,20 +317,20 @@ def select_config_paths(
         The paths to load, in merge order.
 
     Raises:
-        ConfigError: When both or neither of *config_paths* and *config_dir*
-            are given, or *config_dir* has no ``base.yaml``.
+        ConfigError: When both *config_paths* and *config_dir* are given, the
+            default directory is missing, or the directory has no ``base.yaml``.
     """
     if config_paths and config_dir is not None:
         raise ConfigError(f"{caller} takes config files or config_dir, not both.")
-    if config_dir is not None:
-        return environment_config_paths(config_dir, environment)
-    if not config_paths:
-        raise ConfigError(f"{caller} requires config files or a config_dir.")
-    return tuple(config_paths)
+    if config_paths:
+        return tuple(config_paths)
+    return environment_config_paths(
+        resolve_config_dir() if config_dir is None else config_dir, environment
+    )
 
 
 __all__ = [
-    "CONFIG_VARIABLE",
+    "CONFIG_DIR_VARIABLE",
     "DB_PASSWORD_PREFIX",
     "ENVIRONMENT_VARIABLE",
     "ETL_CONFIG_VARIABLE",
@@ -320,6 +350,7 @@ __all__ = [
     "loom_variable",
     "override_variables",
     "parse_environment",
+    "resolve_config_dir",
     "resolve_environment",
     "scoped_loom_variable",
     "select_config_paths",

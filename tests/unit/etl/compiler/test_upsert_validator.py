@@ -10,7 +10,7 @@ from loom.etl import ETLStep, IntoTable
 from loom.etl.compiler import ETLCompilationError
 from loom.etl.compiler._errors import ETLErrorCode
 from loom.etl.compiler._validators import validate_upsert_spec
-from tests.unit.etl.backends.doubles import NoParams
+from tests.unit.etl.engines.doubles import NoParams
 
 
 def _spec(step_type: type[ETLStep[Any]]):  # type: ignore[return]

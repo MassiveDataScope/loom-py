@@ -19,7 +19,7 @@ import pytest
 from loom.ai.compiler import AgentCompiler, AgentPlan
 from loom.ai.config import AiConfig, McpServerConfig
 from loom.ai.declarative import AgentSpecV1, JsonSchemaOutput, McpCapability
-from loom.ai.engines.pydantic_ai import PydanticAIEngineProvider
+from loom.ai.engines.pydantic_ai import PydanticAIEnginePlugin
 from loom.ai.errors import AgentCompilationError, AgentErrorCode
 from loom.ai.inference import InferenceTarget
 from loom.core.di import LoomContainer
@@ -82,20 +82,20 @@ def _compile(config: AiConfig, capability: McpCapability) -> AgentPlan:
     compiler = AgentCompiler(
         config=config,
         registry=UseCaseRegistry.build([]),
-        supported_kinds=PydanticAIEngineProvider().supported_capability_kinds(),
+        supported_kinds=PydanticAIEnginePlugin().supported_capability_kinds(),
     )
     return compiler.compile(spec, source_path=f"ai/agents/{_AGENT}/agent.yaml")
 
 
-def _runtime(config: AiConfig, plan: AgentPlan, model: ScriptedToolModel) -> Any:
-    """Build the runtime the composition root builds, with the real MCP factory."""
-    from loom.ai.runtime import AgentRuntime
+def _host(config: AiConfig, plan: AgentPlan, model: ScriptedToolModel) -> Any:
+    """Build the host the composition root builds, with the real MCP factory."""
+    from loom.ai.execution import AgentHost
 
-    provider = PydanticAIEngineProvider(model_resolver=lambda target: model.as_model())
-    return AgentRuntime(
+    provider = PydanticAIEnginePlugin(model_resolver=lambda target: model.as_model())
+    return AgentHost(
         plans=[plan],
         config=config,
-        engine_provider=provider,
+        engine_plugin=provider,
         deps=CapabilityDepsFactory(),  # type: ignore[arg-type]
         container=LoomContainer(),
         # Read off the provider, as ``create_app`` does: the start-up session
@@ -127,8 +127,8 @@ class TestStdioServer:
         model = ScriptedToolModel(calls=(("read_orders", {"customer": "acme"}),))
         plan = _compile(config, McpCapability(server=_SERVER, include=("read_*",)))
 
-        async with _runtime(config, plan, model) as runtime:
-            await runtime.run(_AGENT, _PROMPT, identity=caller)
+        async with _host(config, plan, model) as host:
+            await host.run(_AGENT, _PROMPT, identity=caller)
 
         assert model.offered_tools == ("read_orders",)
         assert any(CANARY in returned for returned in model.tool_returns)
@@ -136,14 +136,14 @@ class TestStdioServer:
     async def test_the_subprocess_dies_when_the_runtime_exits(
         self, tmp_path: Path, caller: Identity
     ) -> None:
-        """No server outlives the runtime that spawned it."""
+        """No server outlives the host that spawned it."""
         pid_file = tmp_path / "pid"
         config = _config(pid_file)
         model = ScriptedToolModel(calls=(("read_orders", {"customer": "acme"}),))
         plan = _compile(config, McpCapability(server=_SERVER))
 
-        async with _runtime(config, plan, model) as runtime:
-            await runtime.run(_AGENT, _PROMPT, identity=caller)
+        async with _host(config, plan, model) as host:
+            await host.run(_AGENT, _PROMPT, identity=caller)
             pid = int(pid_file.read_text(encoding="utf-8"))
 
         assert _wait_until_gone(pid)
@@ -162,8 +162,8 @@ class TestStdioServer:
         )
         plan = _compile(config, McpCapability(server=_SERVER))
 
-        async with _runtime(config, plan, model) as runtime:
-            await runtime.run(_AGENT, _PROMPT, identity=caller)
+        async with _host(config, plan, model) as host:
+            await host.run(_AGENT, _PROMPT, identity=caller)
 
         assert "hola" in model.tool_returns
         assert "must-not-leak" not in model.tool_returns
@@ -180,9 +180,9 @@ class TestStartupTolerance:
         model = ScriptedToolModel()
         plan = _compile(config, McpCapability(server=_SERVER))
 
-        async with _runtime(config, plan, model) as runtime:
-            await _until(lambda: runtime._health.get(_AGENT) is not None)  # noqa: SLF001
-            health = await runtime.health(_AGENT)
+        async with _host(config, plan, model) as host:
+            await _until(lambda: host._health.get(_AGENT) is not None)  # noqa: SLF001
+            health = await host.health(_AGENT)
 
         assert health.checks[f"mcp:{_SERVER}"] == "unavailable"
 
@@ -193,7 +193,7 @@ class TestStartupTolerance:
         plan = _compile(config, McpCapability(server=_SERVER))
 
         with pytest.raises(AgentCompilationError) as failure:
-            async with _runtime(config, plan, model):
+            async with _host(config, plan, model):
                 pass
 
         issues = failure.value.issues

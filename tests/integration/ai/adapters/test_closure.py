@@ -26,11 +26,11 @@ class TestAdapterOnlyServer:
         sessions: CountingMcpClientFactory,
         session: RecordingMcpSession,
     ) -> None:
-        runtime = compose(advice=AcmeFakeAdvice()).ai.runtime
-        assert runtime is not None
+        host = compose(advice=AcmeFakeAdvice()).ai.agent_host
+        assert host is not None
 
-        async with runtime:
-            granted = runtime.use_case_mcp_grant(SERVER)
+        async with host:
+            granted = host.use_case_mcp_grant(SERVER)
 
         assert sessions.calls == [SERVER]
         assert session.listed == 1

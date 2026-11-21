@@ -29,21 +29,21 @@ from loom.core.di.container import LoomContainer
 from loom.core.errors import UndeclaredStoreWrite
 from loom.core.identity import Identity, current_identity, reset_identity, set_identity
 from loom.core.identity.identity import ANONYMOUS
-from loom.core.persistence import PersistenceWiring
-from loom.core.persistence.elevation import (
+from loom.core.stores import StoreWiring
+from loom.core.stores.catalog import DEFAULT_STORE, StoreKey, store_binding
+from loom.core.stores.elevation import (
     ElevableScopeInSeveralStores,
     ScopedElevationSink,
     StoreElevation,
 )
-from loom.core.persistence.stores import DEFAULT_STORE, StoreKey, store_binding
-from loom.core.repository.abc import CursorCodec
-from loom.core.repository.sqlalchemy.backend import SQLAlchemyBackend
-from loom.core.repository.sqlalchemy.repository import RepositorySQLAlchemy
-from loom.core.repository.sqlalchemy.rls import elevate
-from loom.core.repository.sqlalchemy.session_manager import SessionManager
-from loom.core.uow.abc import UnitOfWork
-from loom.core.uow.coordinator import OrderedCommits
-from loom.core.uow.scope import Frame, current_scope, invocation
+from loom.core.stores.repository import CursorCodec
+from loom.core.stores.uow.abc import UnitOfWork
+from loom.core.stores.uow.coordinator import OrderedCommits
+from loom.core.stores.uow.scope import Frame, current_scope, invocation
+from loom.stores.sqlalchemy.plugin import SQLAlchemyStorePlugin
+from loom.stores.sqlalchemy.repository import SQLAlchemyRepository
+from loom.stores.sqlalchemy.rls import elevate
+from loom.stores.sqlalchemy.session_manager import SessionManager
 from tests.helpers.persistence import build_backend
 from tests.integration.agnosticism import notes
 from tests.integration.rls.conftest import (
@@ -100,10 +100,12 @@ class TwoServers:
             {
                 "app": {"name": "two_stores"},
                 "stores": {
-                    key: _section(database, urls.get(key), external=key not in unscoped)
-                    for key, database in self.databases.items()
+                    **{
+                        key: _section(database, urls.get(key), external=key not in unscoped)
+                        for key, database in self.databases.items()
+                    },
+                    "settings": {"cursors": {"signing": "ephemeral"}},
                 },
-                "persistence": {"cursors": {"signing": "ephemeral"}},
             }
         )
 
@@ -145,9 +147,9 @@ class Store:
     """One store as its backend wires it: the wiring, its session manager and a repository."""
 
     key: StoreKey
-    wiring: PersistenceWiring
+    wiring: StoreWiring
     manager: SessionManager
-    notes: RepositorySQLAlchemy
+    notes: SQLAlchemyRepository
     elevation: StoreElevation | None
 
     def unit_of_work(self) -> UnitOfWork:
@@ -171,12 +173,12 @@ class Store:
 
 
 def _build(ctx: ConfigContext, key: StoreKey) -> Store:
-    wiring = build_backend(SQLAlchemyBackend(), ctx, notes.MODELS, store=key)
+    wiring = build_backend(SQLAlchemyStorePlugin(), ctx, notes.MODELS, store=key)
     wiring.prepare_models(notes.MODELS)
     container = LoomContainer()
     wiring.repo_registration_module(container)
     manager = container.resolve(store_binding(SessionManager, key))
-    repository = RepositorySQLAlchemy(
+    repository = SQLAlchemyRepository(
         manager, notes.Note, cursor_codec=container.resolve(CursorCodec)
     )
     return Store(
@@ -196,7 +198,7 @@ async def _wired(ctx: ConfigContext) -> AsyncIterator[dict[StoreKey, Store]]:
         yield stores
     finally:
         for store in stores.values():
-            await store.manager.dispose()
+            await store.manager.close()
 
 
 @asynccontextmanager
@@ -310,7 +312,7 @@ async def _flags_after_elevating(stores: Mapping[StoreKey, Store], elevated: Sto
         for store in stores.values():
             await _active(store).execute(OWNER)
         async with elevation_scope(owns_transaction=True, sink=stores[elevated].sink):
-            await elevate("editor", DECISION, at=Scope.of(U1))
+            await elevate("editor", DECISION, at=Scope.from_segments(U1))
             return {
                 key: (await _active(store).execute(EDITOR_FLAG)).scalar_one()
                 for key, store in stores.items()
@@ -330,7 +332,7 @@ async def _provider_flag_after_elevating(
         scope.frame(Frame(elevated)),
         elevation_scope(owns_transaction=True, sink=stores[elevated].sink),
     ):
-        await elevate("editor", DECISION, at=Scope.of(U1))
+        await elevate("editor", DECISION, at=Scope.from_segments(U1))
         return str((await _active(stores[elevated]).execute(EDITOR_FLAG)).scalar_one())
 
 

@@ -44,8 +44,8 @@ from loom.core.engine.post_commit import (
     reset_channel,
 )
 from loom.core.errors import NestedElevation
-from loom.core.uow.coordinator import Coordinator, OrderedCommits
-from loom.core.uow.scope import (
+from loom.core.stores.uow.coordinator import Coordinator, OrderedCommits
+from loom.core.stores.uow.scope import (
     Frame,
     InvocationScope,
     invocation,
@@ -184,13 +184,15 @@ class Boundaries:
         self._hiding_reads = ReadsOnItsOwn(reads_over, hides_scope=True)
         self._sink = elevation_sink
 
-    def of(self, scope: InvocationScope | None, plan: ExecutionPlan, read_only: bool) -> Boundary:
+    def boundary_for(
+        self, scope: InvocationScope | None, plan: ExecutionPlan, read_only: bool
+    ) -> Boundary:
         """The boundary of a run of *plan* finding *scope* published, writing unless *read_only*."""
         if scope is None:
             return self._reads if read_only else self._top_level
         if not read_only:
             return JoinsScope(scope, plan.frame, False)
-        if scope.owned_here():
+        if scope.is_owned_here():
             return JoinsScope(scope, _READ_ONLY, True)
         return self._hiding_reads
 

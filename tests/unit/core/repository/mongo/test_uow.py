@@ -11,12 +11,10 @@ import pytest
 from pymongo import AsyncMongoClient
 from pymongo.errors import ConnectionFailure, OperationFailure, PyMongoError
 
-import loom.core.repository.mongo.uow as uow_module
-from loom.core.persistence.stores import DEFAULT_STORE, StoreKey
-from loom.core.repository.abc import CursorCodec
-from loom.core.repository.mongo.repository import RepositoryMongo
-from loom.core.repository.mongo.uow import MongoSessions, MongoUnitOfWorkFactory
-from loom.core.uow.coordinator import (
+import loom.stores.mongo.uow as uow_module
+from loom.core.stores.catalog import DEFAULT_STORE, StoreKey
+from loom.core.stores.repository import CursorCodec
+from loom.core.stores.uow.coordinator import (
     InvocationOutcome,
     OrderedCommits,
     Participant,
@@ -24,7 +22,9 @@ from loom.core.uow.coordinator import (
     RolledBack,
     Uncertain,
 )
-from loom.core.uow.scope import current_scope
+from loom.core.stores.uow.scope import current_scope
+from loom.stores.mongo.repository import MongoRepository
+from loom.stores.mongo.uow import MongoSessions, MongoUnitOfWorkFactory
 
 from ._fake import FakeMongoClient
 from .conftest import Article
@@ -50,8 +50,8 @@ def _sessions(client: FakeMongoClient) -> MongoSessions:
     return MongoSessions(cast(AsyncMongoClient[Any], client), store=DEFAULT_STORE)
 
 
-def _repository(client: FakeMongoClient) -> RepositoryMongo[Article, str]:
-    return RepositoryMongo(
+def _repository(client: FakeMongoClient) -> MongoRepository[Article, str]:
+    return MongoRepository(
         Article,
         client.collection("articles"),
         session_provider=_sessions(client),
@@ -318,7 +318,7 @@ class TestCallerScopedSessionProbe:
 
     async def test_a_repository_with_the_default_provider_never_reports_one(self) -> None:
         client = FakeMongoClient()
-        repository = RepositoryMongo(
+        repository = MongoRepository(
             Article, client.collection("articles"), cursor_codec=CursorCodec(signing="ephemeral")
         )
         factory = _transactional(client)

@@ -11,7 +11,6 @@ from typing import Any, Protocol, cast
 import msgspec
 
 from loom.core.model import LoomFrozenStruct
-from loom.etl.backends._path_template import extract_template_fields
 from loom.etl.compiler._errors import ETLCompilationError, ETLErrorCode
 from loom.etl.compiler._plan import (
     AgentBinding,
@@ -25,6 +24,7 @@ from loom.etl.declarative.source import FileSourceSpec
 from loom.etl.declarative.target import TargetSpec
 from loom.etl.declarative.target._file import FileSpec
 from loom.etl.declarative.target._table import UpdateSpec, UpsertSpec, upsert_delete_flag_conflict
+from loom.etl.engines._path_template import extract_template_fields
 from loom.etl.pipeline._step_client import ClientStep
 from loom.etl.pipeline._step_sql import StepSQL
 

@@ -12,22 +12,29 @@ from sqlalchemy.engine import make_url
 from sqlalchemy.ext.asyncio import create_async_engine
 from sqlalchemy.pool import NullPool
 
-from loom.core.backend.sqlalchemy import compile_all, get_metadata, reset_registry
 from loom.core.cache import (
-    CacheBackend,
     CacheConfig,
     CachedRepository,
     CacheGateway,
+    CacheStore,
     GenerationalDependencyResolver,
 )
 from loom.core.cache.decorators import cache_query
 from loom.core.model import BaseModel, ColumnField
-from loom.core.persistence.stores import DEFAULT_STORE
-from loom.core.repository import PageParams, Repository
-from loom.core.repository.abc import CursorCodec, PaginationMode, QuerySpec, SortSpec
-from loom.core.repository.sqlalchemy.repository import RepositorySQLAlchemy
-from loom.core.repository.sqlalchemy.session_manager import SessionManager
-from loom.core.repository.sqlalchemy.uow import SQLAlchemyUnitOfWork
+from loom.core.stores.catalog import DEFAULT_STORE
+from loom.core.stores.repository import (
+    CursorCodec,
+    PageParams,
+    PaginationMode,
+    QuerySpec,
+    Repository,
+    SortSpec,
+)
+from loom.stores.sqlalchemy.repository import SQLAlchemyRepository
+from loom.stores.sqlalchemy.schema import compile_all, get_metadata, reset_registry
+from loom.stores.sqlalchemy.session_manager import SessionManager
+from loom.stores.sqlalchemy.uow import SQLAlchemyUnitOfWork
+from loom.testing import make
 
 pytestmark = pytest.mark.integration
 
@@ -47,7 +54,7 @@ class Note(BaseModel):
     body: str = ColumnField()
 
 
-class NoteRepository(RepositorySQLAlchemy[Note, int]):
+class NoteRepository(SQLAlchemyRepository[Note, int]):
     """Adds the two kinds of custom cached read on top of the stock repository."""
 
     @cache_query(scope="list")
@@ -136,7 +143,7 @@ async def repository(pg_admin_uri: str) -> AsyncIterator[NoteRepository]:
             session_manager=manager, model=Note, cursor_codec=CursorCodec(signing="ephemeral")
         )
     finally:
-        await manager.dispose()
+        await manager.close()
         await _run_as_admin(pg_admin_uri, _TEARDOWN_STATEMENTS)
         reset_registry()
 
@@ -172,8 +179,8 @@ async def cached(
         yield CachedRepository(
             repository=cast(Repository[Note, Any, Any, int], repository),
             config=config,
-            cache=cast(CacheBackend, data),
-            dependency_resolver=GenerationalDependencyResolver(cast(CacheBackend, counters)),
+            cache=cast(CacheStore, data),
+            dependency_resolver=GenerationalDependencyResolver(cast(CacheStore, counters)),
         )
     finally:
         await data.clear()
@@ -213,7 +220,7 @@ class TestCacheScope:
         cached: CachedRepository[Note, Any, Any, int],
     ) -> None:
         a_page = await _as_tenant(
-            "a", lambda: repository.list_paginated(PageParams(page=1, limit=10))
+            "a", lambda: repository.list_paginated(make(PageParams, page=1, limit=10))
         )
         a_id = a_page.items[0].id
         assert await _as_tenant("b", lambda: repository.get_by_id(a_id)) is None
@@ -229,7 +236,7 @@ class TestCacheScope:
         self,
         cached: CachedRepository[Note, Any, Any, int],
     ) -> None:
-        page = PageParams(page=1, limit=10)
+        page = make(PageParams, page=1, limit=10)
 
         seen_by_a = await _as_tenant("a", lambda: cached.list_paginated(page))
         seen_by_b = await _as_tenant("b", lambda: cached.list_paginated(page))
@@ -254,7 +261,7 @@ class TestCacheScope:
         cached: CachedRepository[Note, Any, Any, int],
     ) -> None:
         a_page = await _as_tenant(
-            "a", lambda: repository.list_paginated(PageParams(page=1, limit=10))
+            "a", lambda: repository.list_paginated(make(PageParams, page=1, limit=10))
         )
         a_id = a_page.items[0].id
 
@@ -268,7 +275,9 @@ class TestCacheScope:
         self,
         cached: CachedRepository[Note, Any, Any, int],
     ) -> None:
-        query = QuerySpec(sort=(SortSpec(field="id"),), pagination=PaginationMode.OFFSET, limit=10)
+        query = make(
+            QuerySpec, sort=(SortSpec(field="id"),), pagination=PaginationMode.OFFSET, limit=10
+        )
 
         seen_by_a = await _as_tenant("a", lambda: cached.list_with_query(query))
         seen_by_b = await _as_tenant("b", lambda: cached.list_with_query(query))
@@ -281,7 +290,7 @@ class TestCacheScope:
         cached: CachedRepository[Note, Any, Any, int],
     ) -> None:
         """A policy may read a setting outside loom.scope.*; the cache keeps it apart too."""
-        page = PageParams(page=1, limit=10)
+        page = make(PageParams, page=1, limit=10)
 
         seen_by_a = await _as({_APP_TENANT_SETTING: "a"}, lambda: cached.list_paginated(page))
         seen_by_b = await _as({_APP_TENANT_SETTING: "b"}, lambda: cached.list_paginated(page))
@@ -293,7 +302,7 @@ class TestCacheScope:
         self,
         cached: CachedRepository[Note, Any, Any, int],
     ) -> None:
-        page = PageParams(page=1, limit=10)
+        page = make(PageParams, page=1, limit=10)
         elevated = {_TENANT_SETTING: "a", _ELEVATED_SETTING: "on"}
         plain = {_TENANT_SETTING: "a", _ELEVATED_SETTING: ""}
 
@@ -314,7 +323,7 @@ class TestCacheScope:
         custom read that opens its own session runs under the live provider
         (tenant b), so no single scope describes both; neither is stored.
         """
-        page = PageParams(page=1, limit=10)
+        page = make(PageParams, page=1, limit=10)
         settings = _settings.set(_tenant("a"))
         try:
             async with SQLAlchemyUnitOfWork(repository.session_manager):

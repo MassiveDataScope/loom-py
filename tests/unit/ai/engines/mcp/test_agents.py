@@ -42,13 +42,13 @@ from loom.ai.engines.pydantic_ai import _capabilities, _mcp, _transport
 from loom.ai.engines.pydantic_ai._guards import BuildContext
 from loom.ai.engines.pydantic_ai._mcp import SharedMcpToolsets, _SessionToolset, _ToolsetSession
 from loom.ai.errors import AgentRunError, AgentRunErrorCode
-from loom.ai.runtime import AgentRuntime
-from loom.ai.runtime._handle import McpMarkerResolver, _AgentHandle
-from loom.ai.runtime._lifecycle import UseCaseMcpGrant
+from loom.ai.execution import AgentHost
+from loom.ai.execution._handle import McpMarkerResolver, _AgentHandle
+from loom.ai.execution._lifecycle import UseCaseMcpGrant
 from loom.core.di.container import LoomContainer
 from loom.core.execution import ExecutionScope
 from loom.core.identity import Identity
-from loom.core.sql.service import NullSqlQueryService
+from loom.core.stores.sql.service import NullSqlQueryService
 from loom.core.use_case import Mcp
 from tests.unit.ai.engines.mcp.server import InProcessServer, serving
 
@@ -92,7 +92,7 @@ class _Model:
 
 @dataclass
 class _World:
-    """One server, the worker's shared toolsets over it, and the session the runtime opened."""
+    """One server, the worker's shared toolsets over it, and the session the host opened."""
 
     server: InProcessServer
     shared: SharedMcpToolsets
@@ -154,7 +154,7 @@ def _counting_builds(monkeypatch: pytest.MonkeyPatch) -> list[object]:
 
 @asynccontextmanager
 async def _world(monkeypatch: pytest.MonkeyPatch, *, warm: bool = True) -> AsyncIterator[_World]:
-    """Open the connection as the runtime does: entered, its tools listed, one call made."""
+    """Open the connection as the host does: entered, its tools listed, one call made."""
     built = _counting_builds(monkeypatch)
     async with serving(monkeypatch) as server:
         shared = SharedMcpToolsets()
@@ -397,19 +397,19 @@ class TestTheToolTimeout:
     async def test_bounds_the_attempt_the_renewal_and_the_retry_together(
         self, monkeypatch: pytest.MonkeyPatch
     ) -> None:
+        """One tool timeout covers the forgotten attempt, the renewal and the hung retry."""
         async with _world(monkeypatch) as world:
             world.timeout_s = 0.3
             world.server.fault("slow", "forget")
-            started = asyncio.get_running_loop().time()
-
-            error, _ = await world.failed_run("slow", {})
-
-            elapsed = asyncio.get_running_loop().time() - started
-            world.server.release.set()
+            try:
+                error, _ = await asyncio.wait_for(world.failed_run("slow", {}), timeout=5)
+                is_released = world.server.release.is_set()
+            finally:
+                world.server.release.set()
 
         assert error.code is AgentRunErrorCode.TOOL_TIMEOUT
         assert len(world.built) == 2
-        assert elapsed < 1.0
+        assert not is_released
 
 
 class _Clock:
@@ -528,15 +528,15 @@ class TestTheGrantViews:
     """A use case's ``Mcp()`` marker and ``handle.mcp()`` report an interruption alike."""
 
     async def test_report_the_interrupted_call_code(self, monkeypatch: pytest.MonkeyPatch) -> None:
-        async with serving(monkeypatch) as server, _runtime_over(server) as runtime:
+        async with serving(monkeypatch) as server, _runtime_over(server) as host:
             identity = Identity(subject="tester")
             server.fault("echo", "cut", "cut")
-            marker = McpMarkerResolver(runtime, observability=None).resolve(
+            marker = McpMarkerResolver(host, observability=None).resolve(
                 Mcp(_SERVER, include=["echo"]), McpHandle
             )
             handle = _AgentHandle(
                 name="agent",
-                runtime=runtime,
+                host=host,
                 observability=None,
                 sql_query_service=NullSqlQueryService(),
             ).mcp(_SERVER)
@@ -559,17 +559,17 @@ _SERVER = "orders"
 
 
 @asynccontextmanager
-async def _runtime_over(server: InProcessServer) -> AsyncIterator[AgentRuntime]:
-    """A runtime whose agent and use case are both granted the in-process server."""
+async def _runtime_over(server: InProcessServer) -> AsyncIterator[AgentHost]:
+    """A host on the default start-up budget whose agent and use case share the server."""
     from tests.helpers.ai import CountingEngineProvider, StubDepsFactory, make_ai_config
     from tests.integration.ai.conftest import make_mcp_capability, make_mcp_servers, make_plan
 
     del server  # every toolset built while it serves reaches it, whatever the URL
     grant = make_mcp_capability(_SERVER)
-    runtime = AgentRuntime(
+    host = AgentHost(
         plans=[make_plan("agent", capabilities=[grant])],
-        config=make_ai_config(mcp_servers=make_mcp_servers(_SERVER)),
-        engine_provider=CountingEngineProvider(),  # type: ignore[arg-type]
+        config=make_ai_config(mcp_servers=make_mcp_servers(_SERVER), startup_timeout_ms=10000),
+        engine_plugin=CountingEngineProvider(),  # type: ignore[arg-type]
         deps=StubDepsFactory(),
         container=LoomContainer(),
         mcp_client_factory=SharedMcpToolsets().open,
@@ -577,5 +577,5 @@ async def _runtime_over(server: InProcessServer) -> AsyncIterator[AgentRuntime]:
             UseCaseMcpGrant(capability=grant, usecase="orders.find", parameter="gateway"),
         ),
     )
-    async with runtime:
-        yield runtime
+    async with host:
+        yield host

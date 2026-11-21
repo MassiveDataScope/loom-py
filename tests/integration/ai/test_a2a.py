@@ -1,6 +1,6 @@
 """Inbound A2A surface: card, JSON-RPC methods and streaming parity (T135, T136).
 
-Drives ``bind_a2a_endpoints`` over a live :class:`AgentRuntime` backed by
+Drives ``mount_a2a_endpoints`` over a live :class:`AgentHost` backed by
 scripted engines, asserting ``specs/001-ai-agent-layer/contracts/a2a.md``:
 the published card validates against the A2A SDK, the streamed events are the
 same union the HTTP surface projects (FR-039a), the capability wiring never
@@ -9,7 +9,7 @@ and only the card is anonymous (FR-041b).
 
 The application is wired with the real
 :class:`~loom.rest.auth.middleware.AuthenticationMiddleware`, so the exclusion
-``bind_a2a_endpoints`` registers is exercised end to end instead of simulated.
+``mount_a2a_endpoints`` registers is exercised end to end instead of simulated.
 Nothing here touches the network: engines replay a script and every request
 goes through an in-process ASGI transport.
 """
@@ -29,7 +29,7 @@ from a2a.compat.v0_3.types import AgentCard
 from fastapi import FastAPI
 
 from loom.ai.a2a.card import card_path
-from loom.ai.a2a.server import bind_a2a_endpoints
+from loom.ai.a2a.server import mount_a2a_endpoints
 from loom.ai.abc import (
     AgentEvent,
     Conversation,
@@ -43,15 +43,15 @@ from loom.ai.abc import (
 from loom.ai.compiler._plan import AgentPlan
 from loom.ai.config import A2AConfig, AgentEndpointConfig
 from loom.ai.errors import AgentCompilationError, AgentErrorCode, AgentRunErrorCode
-from loom.ai.fastapi.endpoints import bind_agent_endpoints
-from loom.ai.runtime import AgentRuntime
+from loom.ai.execution import AgentHost
+from loom.ai.fastapi.endpoints import mount_agent_endpoints
 from loom.core.config.errors import ConfigError
 from loom.core.di import LoomContainer
 from loom.core.identity import Identity
 from loom.core.model import loom_type
 from loom.core.model.redaction import Dsn
 from loom.core.observability.event import EventKind, Scope
-from loom.core.observability.runtime import ObservabilityRuntime
+from loom.core.observability.observability import Observability
 from loom.rest.auth.abc import RequestCredentials
 from loom.rest.auth.middleware import AuthenticationMiddleware
 from tests.integration.ai.conftest import (
@@ -122,7 +122,7 @@ class ExplodingEngine:
         conversation: Conversation | None = None,
         state: object | None = None,
     ) -> object:
-        """Fail the same way the stream does; the runtime drives the stream."""
+        """Fail the same way the stream does; the host drives the stream."""
         del prompt, identity, conversation, state
         raise RuntimeError(_CATCH_ALL_CANARY)
 
@@ -177,13 +177,13 @@ async def _serving(
     declared_exclusions: Sequence[str] = (),
     max_prompt_bytes: int = 65536,
     with_http_endpoints: bool = False,
-    observability_runtime: ObservabilityRuntime | None = None,
+    observability: Observability | None = None,
 ) -> AsyncIterator[tuple[FastAPI, httpx.AsyncClient]]:
     """Serve an entered runtime behind the real authentication middleware.
 
     ``mounted_exclusions`` are the exclusions the deployment really mounts on
     the middleware; ``declared_exclusions`` are the ones the caller repeats in
-    the ``exclude_paths`` argument of ``bind_a2a_endpoints``. They are separate
+    the ``exclude_paths`` argument of ``mount_a2a_endpoints``. They are separate
     on purpose: the guard must fail on the mounted list alone.
     """
     plans = list(plans if plans is not None else (make_plan(_AGENT),))
@@ -192,15 +192,15 @@ async def _serving(
         a2a=a2a if a2a is not None else A2AConfig(base_url=Dsn(_BASE_URL), expose=(_AGENT,)),
         max_prompt_bytes=max_prompt_bytes,
     )
-    runtime = AgentRuntime(
+    host = AgentHost(
         plans=plans,
         config=config,
-        engine_provider=CountingEngineProvider(engines=engines),  # type: ignore[arg-type]
+        engine_plugin=CountingEngineProvider(engines=engines),  # type: ignore[arg-type]
         deps=deps,
         container=container,
     )
     authenticator = HeaderAuthenticator()
-    async with runtime:
+    async with host:
         app = FastAPI()
         app.add_middleware(
             AuthenticationMiddleware,
@@ -208,21 +208,21 @@ async def _serving(
             exclude_paths=tuple(mounted_exclusions),
         )
         if with_http_endpoints:
-            bind_agent_endpoints(
+            mount_agent_endpoints(
                 app,
-                runtime=runtime,
+                host=host,
                 config=config,
                 authenticator=authenticator,  # type: ignore[arg-type]
                 prefix=_AGENTS_PREFIX,
             )
-        bind_a2a_endpoints(
+        mount_a2a_endpoints(
             app,
-            runtime=runtime,
+            host=host,
             config=config,
             plans=plans,
             authenticator=authenticator,  # type: ignore[arg-type]
             exclude_paths=tuple(declared_exclusions),
-            observability_runtime=observability_runtime,
+            observability=observability,
             prefix=_PREFIX,
         )
         transport = httpx.ASGITransport(app=app)
@@ -230,18 +230,18 @@ async def _serving(
             yield app, client
 
 
-def _runtime(
+def _host(
     *,
     deps: DepsFactory,
     container: LoomContainer,
     config: Any,
     plans: Sequence[AgentPlan],
-) -> AgentRuntime:
+) -> AgentHost:
     """Build a runtime over scripted engines for one configuration."""
-    return AgentRuntime(
+    return AgentHost(
         plans=list(plans),
         config=config,
-        engine_provider=CountingEngineProvider(),  # type: ignore[arg-type]
+        engine_plugin=CountingEngineProvider(),  # type: ignore[arg-type]
         deps=deps,
         container=container,
     )
@@ -261,17 +261,17 @@ async def _bind_a2a(
     )
     plans = [make_plan(_AGENT)]
     authenticator = HeaderAuthenticator()
-    runtime = _runtime(deps=deps, container=container, config=config, plans=plans)
-    async with runtime:
+    host = _host(deps=deps, container=container, config=config, plans=plans)
+    async with host:
         app = FastAPI()
         app.add_middleware(
             AuthenticationMiddleware,
             authenticator=authenticator,  # type: ignore[arg-type]
             exclude_paths=tuple(mounted_exclusions),
         )
-        bind_a2a_endpoints(
+        mount_a2a_endpoints(
             app,
-            runtime=runtime,
+            host=host,
             config=config,
             plans=plans,
             authenticator=authenticator,  # type: ignore[arg-type]
@@ -298,10 +298,10 @@ async def _serving_anonymously(
         a2a=A2AConfig(base_url=Dsn(_BASE_URL), expose=(_AGENT,)),
     )
     plans = [make_plan(_AGENT)]
-    runtime = _runtime(deps=deps, container=container, config=config, plans=plans)
-    async with runtime:
+    host = _host(deps=deps, container=container, config=config, plans=plans)
+    async with host:
         app = FastAPI()
-        bind_a2a_endpoints(app, runtime=runtime, config=config, plans=plans, prefix=_PREFIX)
+        mount_a2a_endpoints(app, host=host, config=config, plans=plans, prefix=_PREFIX)
         transport = httpx.ASGITransport(app=app)
         async with httpx.AsyncClient(transport=transport, base_url="http://agents.test") as client:
             yield client
@@ -415,17 +415,17 @@ class TestOptionality:
         """No section means no card route and no invocation route."""
         config = make_ai_config(endpoints={_AGENT: make_endpoint()})
         plans = [make_plan(_AGENT)]
-        runtime = AgentRuntime(
+        host = AgentHost(
             plans=plans,
             config=config,
-            engine_provider=CountingEngineProvider(),  # type: ignore[arg-type]
+            engine_plugin=CountingEngineProvider(),  # type: ignore[arg-type]
             deps=deps,
             container=container,
         )
 
-        async with runtime:
+        async with host:
             app = FastAPI()
-            bind_a2a_endpoints(app, runtime=runtime, config=config, plans=plans)
+            mount_a2a_endpoints(app, host=host, config=config, plans=plans)
 
         assert not [path for path in _route_paths(app) if path.startswith(_PREFIX)]
 
@@ -735,7 +735,7 @@ class TestUsageOnTheAgentSpan:
         async with _serving(
             deps=deps,
             container=container,
-            observability_runtime=ObservabilityRuntime([recorder]),
+            observability=Observability([recorder]),
         ) as (_app, client):
             response = await client.post(
                 f"{_PREFIX}/{_AGENT}", json=_rpc("message/send"), headers=_auth()
@@ -937,7 +937,7 @@ class TestConversations:
             container=container,
             plans=(conversational_plan(_AGENT),),
             engines={_AGENT: engine},
-            observability_runtime=ObservabilityRuntime([observer]),
+            observability=Observability([observer]),
         ) as (_app, client):
             response = await client.post(
                 f"{_PREFIX}/{_AGENT}", json=_rpc(method, context_id=context_id), headers=_auth()
@@ -967,7 +967,7 @@ class TestConversations:
             container=container,
             plans=(conversational_plan(_AGENT),),
             engines={_AGENT: engine},
-            observability_runtime=ObservabilityRuntime([observer]),
+            observability=Observability([observer]),
         ) as (_app, client):
             response = await client.post(
                 f"{_PREFIX}/{_AGENT}", json=_rpc(method, task_id="t-1"), headers=_auth()

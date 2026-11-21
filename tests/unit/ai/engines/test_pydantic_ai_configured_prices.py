@@ -14,7 +14,7 @@ from pydantic_ai.usage import RequestUsage
 
 from loom.ai.abc import AgentEngine, AgentEvent, ErrorEvent, FinalEvent, OutputCheck
 from loom.ai.declarative import PolicySpec
-from loom.ai.engines.pydantic_ai.provider import PydanticAIEngineProvider
+from loom.ai.engines.pydantic_ai.plugin import PydanticAIEnginePlugin
 from loom.ai.errors import AgentRunError, AgentRunErrorCode
 from loom.ai.inference import InferenceTarget
 from loom.ai.pricing import ModelPrice
@@ -193,12 +193,12 @@ class TestStartUpNotice:
 
 class TestPricingOracle:
     def test_a_model_genai_prices_knows_is_priced(self) -> None:
-        provider = PydanticAIEngineProvider(model_resolver=_openai_chat)
+        provider = PydanticAIEnginePlugin(model_resolver=_openai_chat)
 
         assert engine_prices_model(provider, InferenceTarget(provider="openai", model="gpt-4o"))
 
     def test_a_model_genai_prices_does_not_know_is_not_priced(self) -> None:
-        provider = PydanticAIEngineProvider(model_resolver=_openai_chat)
+        provider = PydanticAIEnginePlugin(model_resolver=_openai_chat)
         target = InferenceTarget(provider="openai", model="unknown-model")
 
         assert not engine_prices_model(provider, target)

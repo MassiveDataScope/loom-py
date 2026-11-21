@@ -16,7 +16,7 @@ from __future__ import annotations
 
 import functools
 from enum import Enum
-from typing import Final
+from typing import Final, cast
 
 from pydantic_ai.exceptions import ModelRetry, ToolFailed
 
@@ -46,7 +46,7 @@ def _mcp_error() -> type[Exception] | None:
         from mcp import MCPError
     except ImportError:
         return None
-    return MCPError
+    return cast(type[Exception], MCPError)
 
 
 class Outcome(Enum):
@@ -60,7 +60,7 @@ class Outcome(Enum):
     """The server answered with an error; it passes through unchanged."""
 
     @classmethod
-    def of(cls, exc: BaseException) -> Outcome:
+    def from_exception(cls, exc: BaseException) -> Outcome:
         """Return what a call's failure proves about the server.
 
         On the agent path pydantic-ai's ``MCPToolset`` raises its own ``ModelRetry``
@@ -77,7 +77,7 @@ class Outcome(Enum):
         """
         if isinstance(exc, ModelRetry | ToolFailed):
             cause = exc.__cause__
-            return cls.COMPLETED if cause is None else cls.of(cause)
+            return cls.COMPLETED if cause is None else cls.from_exception(cause)
         mcp_error = _mcp_error()
         if mcp_error is None or not isinstance(exc, mcp_error):
             return cls.UNSAFE

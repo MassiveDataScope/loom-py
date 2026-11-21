@@ -5,7 +5,7 @@ from __future__ import annotations
 import msgspec
 
 from loom.core.config.observability import OtelConfig
-from loom.core.logger.config import LoggerConfig
+from loom.core.logger.settings import LogSettings
 from loom.core.model import LoomFrozenStruct
 from loom.core.model.redaction import Dsn
 
@@ -29,20 +29,15 @@ class PrometheusConfig(LoomFrozenStruct, frozen=True, kw_only=True, forbid_unkno
     bind_address: str = "127.0.0.1"
 
 
-class LogObservabilityConfig(
-    LoomFrozenStruct, frozen=True, kw_only=True, forbid_unknown_fields=True
-):
-    """Structured-log observability backend configuration.
+class LogObservabilityConfig(LogSettings, frozen=True, kw_only=True, forbid_unknown_fields=True):
+    """Log backend configuration: the format and level, and whether lifecycle events are logged.
 
     Args:
-        enabled: Enable the structlog observer. Defaults to ``True``.
-        config: Optional full logger configuration. When ``None``, logging
-            must have been configured externally before
-            ``ObservabilityRuntime.from_config`` is called.
+        enabled: Configure logging and write lifecycle events as log records.
+            Defaults to ``True``.
     """
 
     enabled: bool = True
-    config: LoggerConfig | None = None
 
 
 class OtelObservabilityConfig(
@@ -52,7 +47,7 @@ class OtelObservabilityConfig(
 
     Args:
         enabled: Enable the OTEL observer. Defaults to ``False``.
-        export_logs: Bridge structlog entries to the OTEL Logs SDK so logs
+        export_logs: Bridge log records to the OTEL Logs SDK so logs
             reach the same collector as traces. Requires the OTEL SDK to be
             installed. Defaults to ``False``.
         config: OTLP exporter configuration. Required when ``enabled`` is
@@ -89,9 +84,16 @@ class ObservabilityConfig(LoomFrozenStruct, frozen=True, kw_only=True):
     field to get unified log + OTEL + Prometheus support from YAML.
 
     Args:
-        log: Structured-log backend settings.
+        log: Log format, level and lifecycle records.
         otel: OpenTelemetry traces and logs backend settings.
         prometheus: Prometheus metrics backend settings.
+        execution_observers: ``module:Class`` references to the application's
+            own execution observers: classes with ``on_event(event)`` that
+            receive every ``ExecutionEvent``, including ``JOB_FAILED`` and
+            ``JOB_ABANDONED`` with its ``reason``. Each is built with no
+            arguments and runs after loom's own. A failing observer is logged
+            and never breaks the run. ``on_event`` may be called from any
+            thread.
 
     Example::
 
@@ -106,6 +108,7 @@ class ObservabilityConfig(LoomFrozenStruct, frozen=True, kw_only=True):
     prometheus: PrometheusObservabilityConfig = msgspec.field(
         default_factory=PrometheusObservabilityConfig
     )
+    execution_observers: tuple[str, ...] = ()
 
 
 __all__ = [

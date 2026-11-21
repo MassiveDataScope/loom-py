@@ -61,6 +61,14 @@ class _RichModel(BaseModel):
     )
 
 
+class _FactoryModel(BaseModel):
+    __tablename__ = "test_factory_model_autocrud"
+
+    id: int = ColumnField(primary_key=True, autoincrement=True)
+    name: str = ColumnField(length=100)
+    tags: list[str] = []
+
+
 class _CompositeModel(BaseModel):
     __tablename__ = "test_composite_model_autocrud"
 
@@ -293,6 +301,11 @@ class TestDeriveCreateStruct:
         create_input = _derive_create_struct(_RichModel)
         field_names = {f.name for f in msgspec.structs.fields(create_input)}
         assert "name" in field_names
+
+    def test_a_default_factory_field_is_optional(self) -> None:
+        create_input = _derive_create_struct(_FactoryModel)
+
+        assert create_input(name="a").tags == []
 
     def test_create_input_is_command(self) -> None:
         create_input = _derive_create_struct(_RichModel)

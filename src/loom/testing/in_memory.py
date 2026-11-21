@@ -21,51 +21,76 @@ Usage::
 
 from __future__ import annotations
 
-from collections.abc import Callable
+from collections.abc import Callable, Sequence
 from dataclasses import replace
 from typing import Any, Generic, TypeVar
 
 import msgspec
 
-from loom.core.config import ConfigError
+from loom.core.errors import Conflict
 from loom.core.model import BaseModel
-from loom.core.model.introspection import get_id_attributes, get_projections
+from loom.core.model.convert import to_struct
+from loom.core.model.introspection import business_key_of, get_id_attributes, get_projections
 from loom.core.projection.loaders import (
+    build_memory_loader,
     find_relation_name_for_loader,
     is_projection_descriptor,
-    make_memory_loader,
 )
-from loom.core.projection.runtime import (
+from loom.core.projection.plan import (
     ProjectionPlan,
     build_projection_plan,
     execute_projection_plan,
+)
+from loom.core.stores.repository import (
+    BulkCreatable,
+    Creatable,
+    Deletable,
+    OnConflict,
+    Readable,
+    Updatable,
+)
+from loom.core.stores.repository.record import (
+    PrimaryKey,
+    refuse_key_change,
+    with_derived_key,
 )
 
 T = TypeVar("T", bound=msgspec.Struct)
 
 
-class InMemoryRepository(Generic[T]):
+class InMemoryRepository(
+    Readable[T], Creatable[T], BulkCreatable[T], Updatable[T], Deletable[T], Generic[T]
+):
     """Generic in-memory repository for testing any ``msgspec.Struct`` model.
 
-    Stores entities in a plain dict keyed by their id field value.  Provides
+    Stores entities in a plain dict keyed by their primary-key values.  Provides
     the standard repository surface (``get_by_id``, ``create``, ``update``,
     ``delete``, ``list_paginated``) without any database dependency.
 
     The ``create`` method derives entity fields from the command automatically
     when no ``creator`` callable is provided: fields present on the command
-    are copied to the entity, and the id field is assigned from an internal
-    auto-increment counter.
+    are copied to the entity, and the id field is the one the model derives from
+    its business key, else the command's when it carries one, else an internal
+    auto-increment counter's; a ``creator`` fills the id itself. Creating a primary
+    key or a business key the store already holds raises ``Conflict``, as every real
+    repository does, and neither ``create`` nor ``create_many`` overwrites a row.
+    ``create_many`` follows the port and the SQLAlchemy adapter: with ``ERROR`` a
+    repeated or existing key raises ``Conflict`` and nothing is stored; with ``IGNORE``
+    a row is skipped only when its business key (its primary key when the model
+    declares none) is already stored or came earlier in the batch, and any other
+    collision, a primary key included, still raises ``Conflict`` and stores nothing.
+    A composite primary key is an id tuple in key order, as in the SQLAlchemy adapter.
+    It declares the key capabilities (``Readable``, ``Creatable``, ``BulkCreatable``,
+    ``Updatable``, ``Deletable``); ``list_paginated`` is a convenience that
+    returns every entity, not the ``Listable`` contract.
 
     Args:
         entity_type: The ``msgspec.Struct`` subclass this repository stores.
         id_field: Name of the identity field on the entity.  Defaults to
-            ``"id"``.
+            ``"id"``; a model with a composite primary key uses its own key fields.
         creator: Optional ``(cmd, next_id) -> T`` callable used by
             :meth:`create`.  When provided, the automatic field-mapping is
             bypassed entirely.
-
-    Raises:
-        ConfigError: If ``entity_type`` is a model with a composite primary key.
 
     Example::
 
@@ -84,11 +109,14 @@ class InMemoryRepository(Generic[T]):
         id_field: str = "id",
         creator: Callable[[Any, int], T] | None = None,
     ) -> None:
-        _refuse_composite_key(entity_type)
         self._entity_type = entity_type
         self._id_field = id_field
+        self._key = PrimaryKey(entity_type.__name__, _key_names(entity_type, id_field))
+        business_key = business_key_of(entity_type)
+        self._business_key_fields = () if business_key is None else business_key.fields
         self._creator = creator
-        self._store: dict[Any, T] = {}
+        self._store: dict[tuple[Any, ...], T] = {}
+        self._key_by_business_key: dict[tuple[Any, ...], tuple[Any, ...]] = {}
         self._next_id: int = 1
         self._projection_plans: dict[str, ProjectionPlan | None] = {}
 
@@ -106,8 +134,8 @@ class InMemoryRepository(Generic[T]):
             repo.seed(Product(id=1, name="A"), Product(id=2, name="B"))
         """
         for entity in entities:
-            id_val = getattr(entity, self._id_field)
-            self._store[id_val] = entity
+            self._put(entity)
+            id_val = getattr(entity, self._id_field, None)
             if isinstance(id_val, int) and id_val >= self._next_id:
                 self._next_id = id_val + 1
 
@@ -115,83 +143,113 @@ class InMemoryRepository(Generic[T]):
         """Return the entity with ``obj_id``, or ``None`` if not found.
 
         Args:
-            obj_id: The identity value to look up.
+            obj_id: The identity value to look up; a tuple of every key value, in
+                key order, when the primary key is composite.
             profile: Ignored; present for repository interface compatibility.
 
         Returns:
             Entity instance, or ``None`` if no entity has that id.
         """
-        entity = self._store.get(obj_id)
+        entity = self._store.get(self._key.values_of(obj_id))
         if entity is None:
             return None
         return await self._with_projections(entity, profile=profile)
 
-    async def create(self, cmd: Any) -> T:
-        """Create and store a new entity from ``cmd``.
+    async def create(self, data: Any) -> T:
+        """Create and store a new entity from ``data``.
 
         If a ``creator`` callable was provided at construction it is called as
-        ``creator(cmd, next_id)``.  Otherwise, command attributes whose names
+        ``creator(data, next_id)``.  Otherwise, command attributes whose names
         match entity fields are copied automatically, and the id field is set
         from the internal auto-increment counter.
 
         Args:
-            cmd: Command or payload object carrying the new entity's data.
+            data: Command or payload object carrying the new entity's data.
 
         Returns:
             The created and stored entity.
+
+        Raises:
+            Conflict: When the entity's primary key or business key is already stored.
         """
-        if self._creator is not None:
-            entity = self._creator(cmd, self._next_id)
-            self._next_id += 1
-        else:
-            entity = self._auto_create(cmd)
-        id_val = getattr(entity, self._id_field)
-        self._store[id_val] = entity
+        entity = self._build_entity(data)
+        self._refuse_collisions([entity])
+        self._put(entity)
         return entity
+
+    async def create_many(
+        self, data: Sequence[Any], *, on_conflict: OnConflict = OnConflict.ERROR
+    ) -> tuple[T, ...]:
+        """Create and store the entities of *data* in one step.
+
+        Args:
+            data: Command or payload objects, as :meth:`create` takes.
+            on_conflict: ``ERROR`` raises on a key that is stored or repeated;
+                ``IGNORE`` skips the rows whose business key (primary key when
+                the model declares none) is stored or came earlier in *data*.
+
+        Returns:
+            The stored entities in input order: every one with ``ERROR``, only
+            the inserted ones with ``IGNORE``.
+
+        Raises:
+            Conflict: When a primary key or business key collides outside the
+                rows ``IGNORE`` skips; nothing is stored.
+        """
+        entities = [self._build_entity(item) for item in data]
+        if on_conflict is OnConflict.IGNORE:
+            entities = self._without_known_targets(entities)
+        self._refuse_collisions(entities)
+        for entity in entities:
+            self._put(entity)
+        return tuple(entities)
 
     async def update(self, obj_id: Any, data: Any) -> T | None:
         """Update the entity at ``obj_id`` with fields from ``data``.
 
         Only non-``None`` fields present on both ``data`` and the entity are
-        overwritten; the id field is never changed.
+        overwritten, and a field a command leaves at its default is not sent;
+        the id field is never changed.
 
         Args:
-            obj_id: Identity value of the entity to update.
+            obj_id: Identity value of the entity to update, as in :meth:`get_by_id`.
             data: Object or dict with updated field values.
 
         Returns:
             The updated entity, or ``None`` if no entity has that id.
         """
-        entity = self._store.get(obj_id)
+        store_key = self._key.values_of(obj_id)
+        entity = self._store.get(store_key)
         if entity is None:
             return None
         current = msgspec.structs.asdict(entity)
-        updates: dict[str, Any] = (
-            data
-            if isinstance(data, dict)
-            else {f.name: getattr(data, f.name) for f in msgspec.structs.fields(type(data))}
-        )
-        for k, v in updates.items():
-            if v is not None and k in current and k != self._id_field:
-                current[k] = v
-        updated = msgspec.convert(current, self._entity_type)
-        self._store[obj_id] = updated
+        updates = data if isinstance(data, dict) else _sent_values(data)
+        changes = {
+            k: v
+            for k, v in updates.items()
+            if v is not None and k in current and k not in self._key.names
+        }
+        refuse_key_change(self._entity_type, changes)
+        current.update(changes)
+        updated = to_struct(self._entity_type, current)
+        self._put(updated)
         return updated
 
     async def delete(self, obj_id: Any) -> bool:
         """Delete the entity at ``obj_id``.
 
         Args:
-            obj_id: Identity value to delete.
+            obj_id: Identity value to delete, as in :meth:`get_by_id`.
 
         Returns:
             ``True`` if the entity existed and was removed, ``False`` if not
             found.
         """
-        if obj_id in self._store:
-            del self._store[obj_id]
-            return True
-        return False
+        removed = self._store.pop(self._key.values_of(obj_id), None)
+        if removed is None:
+            return False
+        self._key_by_business_key.pop(self._business_key_of(removed), None)
+        return True
 
     async def list_paginated(self, *args: Any, **kwargs: Any) -> list[T]:
         """Return all stored entities.
@@ -223,17 +281,87 @@ class InMemoryRepository(Generic[T]):
             for i, entity in enumerate(entities)
         ]
 
+    def _build_entity(self, data: Any) -> T:
+        if self._creator is None:
+            return self._auto_create(data)
+        entity = self._creator(data, self._next_id)
+        self._next_id += 1
+        return entity
+
+    def _business_key_of(self, entity: T) -> tuple[Any, ...]:
+        return tuple(getattr(entity, name) for name in self._business_key_fields)
+
+    def _ignore_target_of(self, entity: T) -> tuple[Any, ...]:
+        """Return what ``IGNORE`` compares: the business key, else the primary key."""
+        if self._business_key_fields:
+            return self._business_key_of(entity)
+        return self._key.values_in(entity)
+
+    def _is_stored_target(self, target: tuple[Any, ...]) -> bool:
+        if self._business_key_fields:
+            return target in self._key_by_business_key
+        return target in self._store
+
+    def _put(self, entity: T) -> None:
+        """Store *entity* under its primary key and index its business key."""
+        key = self._key.values_in(entity)
+        if not self._business_key_fields:
+            self._store[key] = entity
+            return
+        previous = self._store.get(key)
+        if previous is not None:
+            del self._key_by_business_key[self._business_key_of(previous)]
+        self._store[key] = entity
+        self._key_by_business_key[self._business_key_of(entity)] = key
+
+    def _without_known_targets(self, entities: list[T]) -> list[T]:
+        seen: set[tuple[Any, ...]] = set()
+        fresh = []
+        for entity in entities:
+            target = self._ignore_target_of(entity)
+            if target not in seen and not self._is_stored_target(target):
+                seen.add(target)
+                fresh.append(entity)
+        return fresh
+
+    def _refuse_collisions(self, entities: list[T]) -> None:
+        """Refuse *entities* that repeat a primary key or business key, or hold a stored one.
+
+        Raises:
+            Conflict: On the first collision; nothing has been stored.
+        """
+        keys: set[tuple[Any, ...]] = set()
+        business_keys: set[tuple[Any, ...]] = set()
+        for entity in entities:
+            key = self._key.values_in(entity)
+            if key in keys or key in self._store:
+                raise Conflict(
+                    f"{self._entity_type.__name__} with "
+                    f"{', '.join(self._key.names)}={key!r} already exists."
+                )
+            keys.add(key)
+            if not self._business_key_fields:
+                continue
+            business_key = self._business_key_of(entity)
+            if business_key in business_keys or business_key in self._key_by_business_key:
+                raise Conflict(
+                    f"{self._entity_type.__name__} with "
+                    f"{', '.join(self._business_key_fields)}={business_key!r} already exists."
+                )
+            business_keys.add(business_key)
+
     def _auto_create(self, cmd: Any) -> T:
         """Derive entity from command attributes and auto-increment id."""
         entity_fields = {f.name for f in msgspec.structs.fields(self._entity_type)}
         data: dict[str, Any] = {}
         for f_name in entity_fields:
-            if f_name == self._id_field:
-                data[f_name] = self._next_id
-            elif hasattr(cmd, f_name):
+            if hasattr(cmd, f_name):
                 data[f_name] = getattr(cmd, f_name)
+        data = with_derived_key(self._entity_type, data)
+        if self._id_field in entity_fields and data.get(self._id_field) is None:
+            data[self._id_field] = self._next_id
         self._next_id += 1
-        return msgspec.convert(data, self._entity_type)
+        return to_struct(self._entity_type, data)
 
     def _projection_plan_for_profile(self, profile: str) -> ProjectionPlan | None:
         if profile in self._projection_plans:
@@ -267,7 +395,7 @@ class InMemoryRepository(Generic[T]):
                         f"({type(loader).__name__}(model={loader.model.__name__})). "
                         "Provide 'via' on the loader or annotate the relation with the target type."
                     )
-                result[name] = replace(proj, loader=make_memory_loader(loader, rel_name))
+                result[name] = replace(proj, loader=build_memory_loader(loader, rel_name))
             else:
                 result[name] = proj
         return result
@@ -293,16 +421,32 @@ class InMemoryRepository(Generic[T]):
         return self._entity_type(**data)
 
 
-def _refuse_composite_key(entity_type: type) -> None:
-    if not issubclass(entity_type, BaseModel):
-        return
-    try:
-        key = get_id_attributes(entity_type)
-    except ValueError:
-        return
-    if len(key) > 1:
-        raise ConfigError(
-            f"{entity_type.__qualname__} has the composite primary key ({', '.join(key)}); "
-            "the in-memory repository keys each entity by one id field, so declare a "
-            "single primary key"
-        )
+def _key_names(entity_type: type, id_field: str) -> tuple[str, ...]:
+    """The primary-key fields: a model's own when composite, else the single *id_field*."""
+    if issubclass(entity_type, BaseModel):
+        try:
+            names = get_id_attributes(entity_type)
+        except ValueError:
+            return (id_field,)
+        if len(names) > 1:
+            return names
+    return (id_field,)
+
+
+def _sent_values(data: msgspec.Struct) -> dict[str, Any]:
+    """The fields of *data* by name, leaving out those a command at its default omits."""
+    omits_defaults = type(data).__struct_config__.omit_defaults
+    sent: dict[str, Any] = {}
+    for field in msgspec.structs.fields(type(data)):
+        value = getattr(data, field.name)
+        if omits_defaults and value == _default_of(field):
+            continue
+        sent[field.name] = value
+    return sent
+
+
+def _default_of(field: msgspec.structs.FieldInfo) -> Any:
+    """The default of *field*, or ``NODEFAULT`` when it has none."""
+    if field.default_factory is not msgspec.NODEFAULT:
+        return field.default_factory()
+    return field.default

@@ -5,9 +5,9 @@ Covers point 7 of the standing integration requirement in
 complete example use case from ``markers.md`` — a query through the granted
 ``sql`` view, a tool call through the granted ``mcp`` view, a model run, and a
 branch on the decoded answer — compiled by a real ``UseCaseCompiler`` and run
-by a real ``RuntimeExecutor``, with the ``Agent()`` marker resolved to an
+by a real ``UseCaseExecutor``, with the ``Agent()`` marker resolved to an
 :class:`~loom.testing.runner.AgentHandleDouble` instead of a real
-``AgentRuntime``. Nothing here imports ``loom.ai.runtime``, opens a socket, or
+``AgentHost``. Nothing here imports ``loom.ai.execution``, opens a socket, or
 touches a database — the double is the entire "engine" this test exercises.
 
 This is also the example ``docs/rest/use-case-dsl.md`` (section "Agent marker

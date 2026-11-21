@@ -21,11 +21,11 @@ def require_name(kind: str, name: str) -> None:
         raise ValueError(f"A {kind} name must be non-empty and contain no whitespace: {name!r}.")
 
 
-class UnknownRole(LookupError):
+class UnknownRoleError(LookupError):
     """Raised when a role name is not declared in the catalog."""
 
 
-class UnknownPermission(LookupError):
+class UnknownPermissionError(LookupError):
     """Raised when a permission is not declared in the catalog."""
 
 
@@ -331,12 +331,12 @@ class RoleCatalog:
             The declared role.
 
         Raises:
-            UnknownRole: When no role has that name.
+            UnknownRoleError: When no role has that name.
         """
         try:
             return self._roles[name]
         except KeyError:
-            raise UnknownRole(f"Role {name!r} is not declared in the catalog.") from None
+            raise UnknownRoleError(f"Role {name!r} is not declared in the catalog.") from None
 
     def permissions_of(self, name: str) -> frozenset[Permission] | None:
         """Return the permissions of role *name*, or ``None`` when undeclared.
@@ -361,12 +361,12 @@ class RoleCatalog:
             The role names; empty when no role includes it.
 
         Raises:
-            UnknownPermission: When *permission* is not declared.
+            UnknownPermissionError: When *permission* is not declared.
         """
         try:
             return self._holders[permission]
         except KeyError:
-            raise UnknownPermission(
+            raise UnknownPermissionError(
                 f"Permission {permission.name!r} is not declared in the catalog."
             ) from None
 
@@ -377,9 +377,9 @@ class RoleCatalog:
             permission: The permission about to be checked.
 
         Raises:
-            UnknownPermission: When *permission* is not declared.
+            UnknownPermissionError: When *permission* is not declared.
         """
         if permission not in self._permissions:
-            raise UnknownPermission(
+            raise UnknownPermissionError(
                 f"Permission {permission.name!r} is not declared in the catalog."
             )

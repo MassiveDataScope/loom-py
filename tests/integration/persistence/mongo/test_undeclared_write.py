@@ -22,12 +22,17 @@ from pymongo.monitoring import (
 )
 
 from loom.core.errors import ForeignSessionError, UndeclaredStoreWrite
-from loom.core.persistence.stores import DEFAULT_STORE, StoreKey
-from loom.core.repository.abc import CursorCodec
-from loom.core.repository.mongo.repository import RepositoryMongo
-from loom.core.repository.mongo.uow import MongoSessions, MongoUnitOfWorkFactory
-from loom.core.uow.coordinator import InvocationOutcome, OrderedCommits, RolledBack, StoreOutcome
-from loom.core.uow.scope import Frame, invocation
+from loom.core.stores.catalog import DEFAULT_STORE, StoreKey
+from loom.core.stores.repository import CursorCodec
+from loom.core.stores.uow.coordinator import (
+    InvocationOutcome,
+    OrderedCommits,
+    RolledBack,
+    StoreOutcome,
+)
+from loom.core.stores.uow.scope import Frame, invocation
+from loom.stores.mongo.repository import MongoRepository
+from loom.stores.mongo.uow import MongoSessions, MongoUnitOfWorkFactory
 from tests.unit.core.repository.contract.conftest import AcmeContractOrder, CreateOrder, OrderStatus
 
 pytestmark = [pytest.mark.integration, pytest.mark.mongo, pytest.mark.timeout(60)]
@@ -55,7 +60,7 @@ class _Commands(CommandListener):
 class _Audit:
     client: AsyncMongoClient[Any]
     commands: _Commands
-    orders: RepositoryMongo[AcmeContractOrder, int]
+    orders: MongoRepository[AcmeContractOrder, int]
 
 
 @pytest.fixture
@@ -72,7 +77,7 @@ async def audit(mongo_database: Any) -> AsyncIterator[_Audit]:
     collection = client[mongo_database.name][f"audit_{uuid4().hex}"]
     # A transaction cannot create the collection implicitly on 4.2.
     await collection.database.create_collection(collection.name)
-    orders = RepositoryMongo(
+    orders = MongoRepository(
         AcmeContractOrder,
         collection,
         session_provider=MongoSessions(client, AUDIT),

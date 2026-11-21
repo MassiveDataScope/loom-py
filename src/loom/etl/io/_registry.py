@@ -6,7 +6,7 @@ from collections.abc import Mapping
 from typing import TYPE_CHECKING, Any
 
 from loom.etl.declarative.target import TargetSpec
-from loom.etl.runtime.contracts import TargetWriter
+from loom.etl.ports.contracts import TargetWriter
 
 if TYPE_CHECKING:
     from loom.etl.lineage._records import WriteContext

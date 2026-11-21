@@ -3,7 +3,7 @@
 Every engine built here talks to a ``FunctionModel``: no network, no
 credentials, no tokens. The plan is a real compiled plan and the engine is the
 real adapter — only the model object is scripted, which is the seam
-:class:`~loom.ai.engines.pydantic_ai.PydanticAIEngineProvider` exposes for
+:class:`~loom.ai.engines.pydantic_ai.PydanticAIEnginePlugin` exposes for
 exactly this purpose.
 """
 
@@ -35,7 +35,7 @@ from loom.ai.compiler._plan import AgentPlan, CompiledInstruction, CompiledOutpu
 from loom.ai.compiler.phases._instructions import compile_instructions
 from loom.ai.compiler.phases._output import compile_output
 from loom.ai.declarative import JsonSchemaOutput, PolicySpec, TypeRefOutput
-from loom.ai.engines.pydantic_ai import PydanticAIEngineProvider
+from loom.ai.engines.pydantic_ai import PydanticAIEnginePlugin
 from loom.ai.inference import InferenceTarget
 from loom.core.di import LoomContainer
 from loom.core.identity import Identity
@@ -428,7 +428,7 @@ def build_engine(plan: AgentPlan, model: Model, *, deps: DepsFactory | None = No
             to :class:`NullDeps` — no service, no state — matching every
             caller that does not care what the bundle carries.
     """
-    provider = PydanticAIEngineProvider(model_resolver=lambda target: model)
+    provider = PydanticAIEnginePlugin(model_resolver=lambda target: model)
     return provider.create_engine(
         plan, deps=deps if deps is not None else NullDeps(), container=LoomContainer()
     )

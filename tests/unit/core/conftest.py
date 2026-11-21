@@ -14,28 +14,78 @@ from __future__ import annotations
 from collections.abc import AsyncIterator, Awaitable, Callable
 from types import SimpleNamespace
 from typing import TYPE_CHECKING, Any
-from unittest.mock import AsyncMock, MagicMock
 
 import pytest
 
-from loom.core.persistence.stores import DEFAULT_STORE
+from loom.core.stores.catalog import DEFAULT_STORE
 
 if TYPE_CHECKING:
-    from loom.core.repository.sqlalchemy.session_manager import SessionManager
+    from loom.stores.sqlalchemy.session_manager import SessionManager
 
 SessionManagerFactory = Callable[[type], Awaitable["SessionManager"]]
 
 
-def make_session() -> MagicMock:
+class RecordingSession:
+    """A session double that records its transaction steps and fails or waits when scripted.
+
+    Args:
+        in_transaction: What ``in_transaction()`` answers.
+        bind: What ``get_bind()`` answers, for the code that reads the engine of a session.
+    """
+
+    def __init__(self, *, in_transaction: bool = False, bind: Any = None) -> None:
+        self.calls: list[str] = []
+        self.is_in_transaction = in_transaction
+        self._bind = bind
+        self._scripted: dict[str, Callable[[], Awaitable[None]]] = {}
+
+    def count(self, step: str) -> int:
+        """How many times *step* ran."""
+        return self.calls.count(step)
+
+    def fail_on(self, step: str, error: BaseException) -> None:
+        """Make *step* raise *error* every time it runs."""
+
+        async def raise_error() -> None:
+            raise error
+
+        self._scripted[step] = raise_error
+
+    def run_on(self, step: str, action: Callable[[], Awaitable[None]]) -> None:
+        """Replace the body of *step* with *action*, which a test can make wait or fail."""
+        self._scripted[step] = action
+
+    def in_transaction(self) -> bool:
+        return self.is_in_transaction
+
+    def get_bind(self) -> Any:
+        return self._bind
+
+    async def flush(self) -> None:
+        await self._run("flush")
+
+    async def commit(self) -> None:
+        await self._run("commit")
+
+    async def rollback(self) -> None:
+        await self._run("rollback")
+
+    async def invalidate(self) -> None:
+        await self._run("invalidate")
+
+    async def close(self) -> None:
+        await self._run("close")
+
+    async def _run(self, step: str) -> None:
+        self.calls.append(step)
+        action = self._scripted.get(step)
+        if action is not None:
+            await action()
+
+
+def make_session() -> RecordingSession:
     """Return a session double whose transaction methods are awaitable."""
-    session = MagicMock()
-    session.flush = AsyncMock()
-    session.commit = AsyncMock()
-    session.rollback = AsyncMock()
-    session.invalidate = AsyncMock()
-    session.close = AsyncMock()
-    session.in_transaction = MagicMock(return_value=False)
-    return session
+    return RecordingSession()
 
 
 class RecordingSessionManager:
@@ -49,9 +99,6 @@ class RecordingSessionManager:
     """
 
     store = "default"
-    engine = SimpleNamespace(
-        url=SimpleNamespace(drivername="sqlite+aiosqlite", host=None, port=None, database=None)
-    )
 
     def __init__(
         self,
@@ -59,7 +106,12 @@ class RecordingSessionManager:
         *,
         exit_error: Exception | None = None,
         log: list[str] | None = None,
+        url: Any = None,
     ) -> None:
+        self.engine = SimpleNamespace(
+            url=url
+            or SimpleNamespace(drivername="sqlite+aiosqlite", host=None, port=None, database=None)
+        )
         self._session = session
         self._exit_error = exit_error
         self._log = log
@@ -80,8 +132,8 @@ class RecordingSessionManager:
 
 
 @pytest.fixture
-def session_double() -> MagicMock:
-    """A fresh session double with awaitable ``commit``/``rollback``/``close``."""
+def session_double() -> RecordingSession:
+    """A fresh session double that records ``commit``, ``rollback`` and the other steps."""
     return make_session()
 
 
@@ -91,8 +143,8 @@ async def sqlite_manager_for() -> AsyncIterator[SessionManagerFactory]:
 
     Every manager the factory opened is disposed when the test ends.
     """
-    from loom.core.backend.sqlalchemy import compile_all, get_compiled
-    from loom.core.repository.sqlalchemy.session_manager import SessionManager
+    from loom.stores.sqlalchemy.schema import compile_all, get_compiled
+    from loom.stores.sqlalchemy.session_manager import SessionManager
 
     managers: list[SessionManager] = []
 
@@ -116,4 +168,4 @@ async def sqlite_manager_for() -> AsyncIterator[SessionManagerFactory]:
 
     yield open_for
     for manager in managers:
-        await manager.dispose()
+        await manager.close()

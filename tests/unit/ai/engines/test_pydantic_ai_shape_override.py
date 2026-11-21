@@ -17,7 +17,7 @@ from pydantic_ai.messages import ModelMessage, ModelResponse, TextPart
 from pydantic_ai.models import Model
 from pydantic_ai.models.function import AgentInfo, FunctionModel
 
-from loom.ai.engines.pydantic_ai import PydanticAIEngineProvider
+from loom.ai.engines.pydantic_ai import PydanticAIEnginePlugin
 from loom.ai.engines.pydantic_ai._engine import PydanticAIEngine
 from loom.ai.errors import AgentRunError, AgentRunErrorCode
 from loom.core.di import LoomContainer
@@ -49,7 +49,7 @@ def _prose_model() -> Model:
 
 def _engine(model: Model) -> PydanticAIEngine:
     plan = make_plan(schema=STRICT_SCHEMA)
-    provider = PydanticAIEngineProvider(model_resolver=lambda target: model)
+    provider = PydanticAIEnginePlugin(model_resolver=lambda target: model)
     engine = provider.create_engine(plan, deps=NullDeps(), container=LoomContainer())
     assert isinstance(engine, PydanticAIEngine)
     return engine

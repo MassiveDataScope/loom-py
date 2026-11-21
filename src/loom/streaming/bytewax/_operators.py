@@ -15,7 +15,7 @@ from typing import Any, Protocol, TypeVar, overload
 from loom.core.async_bridge import AsyncBridge
 from loom.core.model import LoomFrozenStruct, LoomStruct
 from loom.streaming.nodes._with import (
-    ContextFactory,
+    ContextSupplier,
     ResourceScope,
     With,
     WithAsync,
@@ -75,7 +75,7 @@ class SyncResourceLifecycle:
     """
 
     __slots__ = (
-        "_context_factories",
+        "_context_suppliers",
         "_contexts",
         "_entered",
         "_plain_deps",
@@ -89,12 +89,12 @@ class SyncResourceLifecycle:
         *,
         scope: ResourceScope,
         contexts: Mapping[str, AbstractContextManager[object]],
-        context_factories: Mapping[str, ContextFactory],
+        context_suppliers: Mapping[str, ContextSupplier],
         plain_deps: Mapping[str, object],
     ) -> None:
         self._scope = scope
         self._contexts = dict(contexts)
-        self._context_factories = dict(context_factories)
+        self._context_suppliers = dict(context_suppliers)
         self._plain_deps = dict(plain_deps)
         self._stack: ExitStack | None = None
         self._entered: list[tuple[str, AbstractContextManager[object]]] = []
@@ -127,7 +127,7 @@ class SyncResourceLifecycle:
     def _resolve_all_contexts(self) -> dict[str, AbstractContextManager[object]]:
         """Return direct CMs merged with freshly-created factory CMs."""
         resolved = dict(self._contexts)
-        for name, factory in self._context_factories.items():
+        for name, factory in self._context_suppliers.items():
             resolved[name] = factory.create()  # type: ignore[assignment]
         return resolved
 
@@ -177,7 +177,7 @@ class AsyncResourceLifecycle:
 
     __slots__ = (
         "_bridge",
-        "_context_factories",
+        "_context_suppliers",
         "_contexts",
         "_entered",
         "_plain_deps",
@@ -191,13 +191,13 @@ class AsyncResourceLifecycle:
         *,
         scope: ResourceScope,
         contexts: Mapping[str, AbstractAsyncContextManager[object]],
-        context_factories: Mapping[str, ContextFactory],
+        context_suppliers: Mapping[str, ContextSupplier],
         plain_deps: Mapping[str, object],
         bridge: AsyncBridge,
     ) -> None:
         self._scope = scope
         self._contexts = dict(contexts)
-        self._context_factories = dict(context_factories)
+        self._context_suppliers = dict(context_suppliers)
         self._plain_deps = dict(plain_deps)
         self._bridge = bridge
         self._stack: AsyncExitStack | None = None
@@ -231,7 +231,7 @@ class AsyncResourceLifecycle:
     def _resolve_all_contexts(self) -> dict[str, AbstractAsyncContextManager[object]]:
         """Return direct CMs merged with freshly-created factory CMs."""
         resolved = dict(self._contexts)
-        for name, factory in self._context_factories.items():
+        for name, factory in self._context_suppliers.items():
             resolved[name] = factory.create()  # type: ignore[assignment]
         return resolved
 
@@ -320,26 +320,21 @@ def lifecycle_for(
         return AsyncResourceLifecycle(
             scope=node.scope,
             contexts=node.async_contexts,
-            context_factories=node.context_factories,
+            context_suppliers=node.context_suppliers,
             plain_deps=node.plain_deps,
             bridge=bridge,
         )
     return SyncResourceLifecycle(
         scope=node.scope,
         contexts=node.sync_contexts,
-        context_factories=node.context_factories,
+        context_suppliers=node.context_suppliers,
         plain_deps=node.plain_deps,
     )
 
 
-resource_manager_for = lifecycle_for
-ResourceManager = ResourceLifecycle
-
 __all__ = [
     "AsyncResourceLifecycle",
     "ResourceLifecycle",
-    "ResourceManager",
     "SyncResourceLifecycle",
     "lifecycle_for",
-    "resource_manager_for",
 ]

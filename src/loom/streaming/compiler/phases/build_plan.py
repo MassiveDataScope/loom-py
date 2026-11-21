@@ -9,7 +9,7 @@ from typing import Any, Literal, get_args, get_origin
 from loom.core.config import ConfigContext
 from loom.core.config.keys import ConfigKey
 from loom.core.model.redaction import RedactedMap
-from loom.core.persistence.stores import StoreCatalog
+from loom.core.stores.catalog import StoreCatalog
 from loom.streaming.compiler._errors import StreamingErrorCode
 from loom.streaming.compiler._plan import (
     CompilationError,
@@ -26,17 +26,18 @@ from loom.streaming.compiler.phases.validate import (
     node_output_shape,
     walk_process_nodes,
 )
+from loom.streaming.core import DispatchTable
 from loom.streaming.core._errors import ErrorEnvelope
 from loom.streaming.graph._flow import StreamFlow
 from loom.streaming.kafka._config import KafkaSettings
-from loom.streaming.kafka._wire import DecodeError, DispatchTable
+from loom.streaming.kafka._wire import DecodeError
 from loom.streaming.mongo._config import load_mongo_config
 from loom.streaming.nodes._boundary import FromMultiTypeTopic, FromTopic, IntoTopic
 from loom.streaming.nodes._branches import is_branching_node, iter_branches
 from loom.streaming.nodes._mongo import FromMongoCDC
 from loom.streaming.nodes._shape import CollectBatch, StreamShape
 from loom.streaming.nodes._sink import IntoSink
-from loom.streaming.nodes._table import Backend, IntoTable
+from loom.streaming.nodes._table import IntoTable, TableEngine
 from loom.streaming.nodes._table.config import (
     resolve_clickhouse_table_config,
     resolve_delta_table_config,
@@ -80,7 +81,7 @@ def build_plan(
 
 def _node_needs_async_bridge(node: object) -> bool:
     return isinstance(node, WithAsync) or (
-        isinstance(node, IntoTable) and node.backend is Backend.SQLALCHEMY
+        isinstance(node, IntoTable) and node.engine is TableEngine.SQLALCHEMY
     )
 
 
@@ -269,21 +270,21 @@ def _build_storage_sink(
     node: IntoSink[Any], ctx: ConfigContext, catalog: StoreCatalog
 ) -> CompiledStorageSink:
     if isinstance(node, IntoTable):
-        if node.backend is Backend.SQLALCHEMY:
+        if node.engine is TableEngine.SQLALCHEMY:
             sql_resolved = resolve_sqlalchemy_table_config(node, ctx, catalog)
             return CompiledStorageSink(
                 node=node,
                 config=sql_resolved.sink,
                 database_config=sql_resolved.database,
             )
-        if node.backend is Backend.DELTA:
+        if node.engine is TableEngine.DELTA:
             delta_resolved = resolve_delta_table_config(node, ctx)
             return CompiledStorageSink(
                 node=node,
                 config=delta_resolved.sink,
                 database_config=None,
             )
-        if node.backend is Backend.CLICKHOUSE:
+        if node.engine is TableEngine.CLICKHOUSE:
             ch_resolved = resolve_clickhouse_table_config(node, ctx, catalog)
             return CompiledStorageSink(
                 node=node,

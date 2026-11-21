@@ -3,7 +3,6 @@
 from __future__ import annotations
 
 import sys
-from collections.abc import Iterator
 from pathlib import Path
 from typing import Any
 
@@ -20,17 +19,6 @@ def _write_tree(root: Path, files: dict[str, str]) -> None:
         target = root / name
         target.parent.mkdir(parents=True, exist_ok=True)
         target.write_text(content)
-
-
-@pytest.fixture
-def memfs() -> Iterator[Any]:
-    fsspec = pytest.importorskip("fsspec")
-    fs = fsspec.filesystem("memory")
-    fs.store.clear()
-    fs.pseudo_dirs[:] = [""]
-    yield fs
-    fs.store.clear()
-    fs.pseudo_dirs[:] = [""]
 
 
 def _pipe_tree(fs: Any, root: str, files: dict[str, str]) -> None:

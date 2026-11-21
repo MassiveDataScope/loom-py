@@ -6,8 +6,8 @@ import warnings
 
 from loom.core.config import ConfigContext, ConfigKey
 from loom.core.config.errors import ConfigError
-from loom.core.sql import SqlConfig
-from loom.core.sql.config import reject_retired_sql_keys, roles_need_identity_binding
+from loom.core.stores.sql import SqlConfig
+from loom.core.stores.sql.config import reject_retired_sql_keys, roles_need_identity_binding
 from loom.rest.auth import Authenticator
 from loom.rest.fastapi._auto_auth import _AuthWiring
 from loom.rest.fastapi.sql import _connection_mechanism, _role_exposure_notice, _roles_mechanism
@@ -25,7 +25,7 @@ def _validate_sql_endpoint_auth(sql_cfg: SqlConfig, auth: _AuthWiring) -> None:
     """Enforce the startup gates of every mounted identity-bound endpoint."""
     for name, connection in sql_cfg.connections.items():
         endpoint = connection.sql_endpoint
-        if not endpoint.enabled or not endpoint.binds_identity:
+        if not endpoint.enabled or not endpoint.is_identity_bound:
             continue
         subject = f"SQL connection {name!r}"
         authenticator = auth.require_authenticator(subject)

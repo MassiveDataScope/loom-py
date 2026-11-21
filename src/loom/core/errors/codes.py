@@ -62,7 +62,6 @@ class ErrorCode(StrEnum):
     UNKNOWN_JOB = "unknown_job"
     JOB_TIMEOUT = "job_timeout"
     JOB_FAILED = "job_failed"
-    JOB_BACKENDS_MIXED = "job_backends_mixed"
     BOUNDARY_TYPE_UNSUPPORTED = "boundary_type_unsupported"
 
 

@@ -13,15 +13,15 @@ from typing import Any
 import pytest
 from botocore.client import BaseClient  # type: ignore[import-untyped]
 
-from loom.composition import Application, build_application
+from loom.composition import Application, Project
 from loom.core.job.envelope import decode_job_envelope
 from loom.core.job.job import Job
 from loom.core.job.service import JobService
 from loom.core.use_case.use_case import UseCase
-from loom.serverless.aws.lambda_ import LambdaAdapter
+from loom.serverless.aws.lambda_ import LambdaRuntime
 from loom.testing import LambdaEvent
 from tests.helpers.jobs import JobsAdapter
-from tests.integration.aws.conftest import AwsClientFactory, ConfigWriter, unique
+from tests.integration.aws.conftest import ConfigWriter, unique
 
 pytestmark = [pytest.mark.integration, pytest.mark.timeout(60)]
 
@@ -55,7 +55,7 @@ class Dispatch(UseCase[Any, str]):
 
     async def execute(self, job: str, marker: str, customer: str, fail: bool) -> str:
         job_type = WelcomeJob if job == "WelcomeJob" else OrderJob
-        handle = self._jobs.dispatch(
+        handle = self._jobs.dispatch_after_commit(
             job_type, params={"marker": marker}, payload={"customer": customer}
         )
         if fail:
@@ -72,7 +72,7 @@ class DispatchMany(UseCase[Any, list[str]]):
     async def execute(self, job: str, count: int) -> list[str]:
         job_type = WelcomeJob if job == "WelcomeJob" else OrderJob
         return [
-            self._jobs.dispatch(
+            self._jobs.dispatch_after_commit(
                 job_type, params={"marker": str(n)}, payload={"customer": "c-7"}
             ).job_id
             for n in range(count)
@@ -90,7 +90,7 @@ class _Queues:
     standard: _Queue
     fifo: _Queue
 
-    def of(self, job_type: type[Job[Any]]) -> _Queue:
+    def queue_for(self, job_type: type[Job[Any]]) -> _Queue:
         return self.fifo if job_type is OrderJob else self.standard
 
 
@@ -99,11 +99,6 @@ def _forget_runs() -> Iterator[None]:
     _runs.clear()
     yield
     _runs.clear()
-
-
-@pytest.fixture
-def sqs(aws: AwsClientFactory) -> Any:
-    return aws("sqs")
 
 
 @pytest.fixture
@@ -128,19 +123,26 @@ def config_path(write_config: ConfigWriter, queues: _Queues) -> Path:
     return write_config(
         {
             "app": {"name": "loom-it-sqs", "job_service": "sqs"},
-            "sqs": {"queues": {"emails": queues.standard.url, "orders": queues.fifo.url}},
-            "lambda": {"functions": {"worker": {"trigger": {"source": "jobs"}}}},
+            "sqs": {
+                "queues": {
+                    "emails": {"url": queues.standard.url, "abandoned": "discard"},
+                    "orders": {"url": queues.fifo.url, "abandoned": "discard"},
+                }
+            },
+            "lambda": {
+                "functions": {
+                    "worker": {"trigger": {"source": "jobs", "queue": {"name": "emails"}}},
+                    "fifo_worker": {"trigger": {"source": "jobs", "queue": {"name": "orders"}}},
+                }
+            },
         }
     )
 
 
 @pytest.fixture
 def producer(config_path: Path, tmp_path: Path) -> Application:
-    return build_application(
-        str(config_path),
-        adapter=JobsAdapter(WelcomeJob, OrderJob),
-        environment="test",
-        code_path=str(tmp_path),
+    return Project.load(str(config_path), environment="test", code_path=str(tmp_path)).compose(
+        JobsAdapter(WelcomeJob, OrderJob)
     )
 
 
@@ -188,14 +190,14 @@ def _drain(sqs: Any, queue: _Queue, count: int) -> list[str]:
     return markers
 
 
-class TestSqsJobs:
+class TestSQSJobs:
     @pytest.mark.parametrize("job_type", [WelcomeJob, OrderJob], ids=["standard", "fifo"])
     def test_a_committed_dispatch_reaches_the_queue_as_a_job_envelope(
         self, producer: Application, sqs: Any, queues: _Queues, job_type: type[Job[Any]]
     ) -> None:
         job_id = _dispatch(producer, job_type)
 
-        (message,) = _receive(sqs, queues.of(job_type))
+        (message,) = _receive(sqs, queues.queue_for(job_type))
         envelope = decode_job_envelope(message["Body"])
         assert (envelope.job_name, envelope.params, envelope.payload) == (
             job_type.__qualname__,
@@ -214,7 +216,7 @@ class TestSqsJobs:
         with pytest.raises(_Rollback):
             _dispatch(producer, job_type, fail=True)
 
-        assert _receive(sqs, queues.of(job_type), wait=1) == []
+        assert _receive(sqs, queues.queue_for(job_type), wait=1) == []
 
     @pytest.mark.parametrize("job_type", [WelcomeJob, OrderJob], ids=["standard", "fifo"])
     def test_the_lambda_sqs_adapter_runs_the_received_message(
@@ -227,16 +229,17 @@ class TestSqsJobs:
         job_type: type[Job[Any]],
     ) -> None:
         _dispatch(producer, job_type)
-        queue = queues.of(job_type)
+        queue = queues.queue_for(job_type)
         (message,) = _receive(sqs, queue)
         event = LambdaEvent.sqs_record(
             message["Body"], message_id=message["MessageId"], queue_arn=queue.arn
         )
-        adapter = LambdaAdapter(function="worker", jobs=[WelcomeJob, OrderJob])
-        consumer = build_application(
-            str(config_path), adapter=adapter, environment="test", code_path=str(tmp_path)
-        )
-        handler = adapter.bind(consumer)
+        function = "fifo_worker" if job_type is OrderJob else "worker"
+        adapter = LambdaRuntime(function=function, jobs=[WelcomeJob, OrderJob])
+        consumer = Project.load(
+            str(config_path), environment="test", code_path=str(tmp_path)
+        ).compose(adapter)
+        handler = adapter.mount(consumer)
         try:
             result = handler(event, None)
         finally:
@@ -259,6 +262,6 @@ class TestSqsJobs:
         asyncio.run(producer.kernel.executor.execute(use_case, params=params))
 
         assert sqs_calls == ["SendMessageBatch"] * 3
-        markers = _drain(sqs, queues.of(job_type), 25)
+        markers = _drain(sqs, queues.queue_for(job_type), 25)
         arrived = markers if job_type is OrderJob else sorted(markers, key=int)
         assert arrived == [str(n) for n in range(25)]

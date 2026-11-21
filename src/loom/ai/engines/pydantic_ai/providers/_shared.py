@@ -1,4 +1,4 @@
-"""What every provider island shares: its contract, and the two readers of a binding."""
+"""What every model builder shares: its contract, and the two readers of a binding."""
 
 from __future__ import annotations
 
@@ -13,11 +13,11 @@ from loom.core.environment import configured_variable
 
 
 @runtime_checkable
-class ProviderIsland(Protocol):
-    """The two names a provider island publishes.
+class ModelBuilder(Protocol):
+    """The two names a model builder publishes.
 
     Attributes:
-        MODEL_CLASS: The pydantic-ai model class the island builds, for the
+        MODEL_CLASS: The pydantic-ai model class the model builder builds, for the
             questions a compiled plan asks about a binding with no client
             built — which provider-run tools it admits.
     """

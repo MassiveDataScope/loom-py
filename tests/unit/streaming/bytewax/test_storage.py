@@ -13,11 +13,11 @@ require_bytewax()
 
 from loom.core.async_bridge import AsyncBridge  # noqa: E402
 from loom.core.model.redaction import Dsn  # noqa: E402
-from loom.core.observability.runtime import ObservabilityRuntime  # noqa: E402
-from loom.core.persistence.database import DatabaseConfig, PoolConfig  # noqa: E402
+from loom.core.observability.observability import Observability  # noqa: E402
+from loom.core.stores.database import DatabaseConfig, PoolConfig  # noqa: E402
 from loom.streaming.bytewax.handlers import storage as _storage  # noqa: E402
 from loom.streaming.compiler import CompiledStorageSink  # noqa: E402
-from loom.streaming.nodes._table import Backend, IntoTable  # noqa: E402
+from loom.streaming.nodes._table import IntoTable, TableEngine  # noqa: E402
 from loom.streaming.nodes._table.common import SqlAlchemySinkConfig  # noqa: E402
 from tests.unit.streaming.compiler.cases import Result  # noqa: E402
 
@@ -36,7 +36,7 @@ class _FakeCtx:
     def __init__(self, *, bridge: AsyncBridge | None) -> None:
         self.plan = type("_Plan", (), {"name": "test_flow"})()
         self.bridge = bridge
-        self.flow_runtime = ObservabilityRuntime.noop()
+        self.flow_runtime = Observability.noop()
         self.flow_run_id = "run-1"
         self.commit_tracker = None
         self._session_manager = object()
@@ -75,7 +75,7 @@ class TestStorageDynamicSink:
         node = IntoTable(
             payload=Result,
             table="results",
-            backend=Backend.SQLALCHEMY,
+            engine=TableEngine.SQLALCHEMY,
             name="results_sink",
         )
         compiled = CompiledStorageSink(
@@ -127,7 +127,7 @@ class TestStorageDynamicSink:
         node = IntoTable(
             payload=Result,
             table="results",
-            backend=Backend.SQLALCHEMY,
+            engine=TableEngine.SQLALCHEMY,
             name="results_sink",
         )
         compiled = CompiledStorageSink(

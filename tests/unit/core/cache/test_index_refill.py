@@ -18,14 +18,15 @@ import pytest
 from loom.core.cache import CacheConfig, CachedRepository, GenerationalDependencyResolver
 from loom.core.cache._batching import COUNTER_BATCH_SIZE, REFILL_BATCH_SIZE
 from loom.core.cache.keys import entity_key, stable_hash
-from loom.core.repository import PageParams, PageResult
-from loom.core.repository.abc.query import FilterOp, PaginationMode, QuerySpec
-from loom.core.repository.mutation import MutationEvent
+from loom.core.stores.repository import PageParams, PageResult
+from loom.core.stores.repository.mutation import MutationEvent
+from loom.core.stores.repository.query import FilterOp, PaginationMode, QuerySpec
+from loom.testing import make
 
 from ._doubles import (
     AcmeCacheWidget,
     CodeWidget,
-    CountingCacheBackend,
+    CountingCacheStore,
     CountingRepository,
     DateWidget,
     RestrictedFilterRepository,
@@ -43,7 +44,7 @@ UUID_NAMESPACE = UUID("11111111-1111-1111-1111-111111111111")
 
 class AcmeIndexEnv(NamedTuple, Generic[RowT]):
     repository: CountingRepository[RowT]
-    backend: CountingCacheBackend
+    backend: CountingCacheStore
     resolver: GenerationalDependencyResolver
     wrapper: CachedRepository[RowT, WidgetCreate, WidgetUpdate, object]
 
@@ -55,7 +56,7 @@ def _make_env(
     repository: CountingRepository[RowT] | None = None,
 ) -> AcmeIndexEnv[RowT]:
     inner = repository if repository is not None else CountingRepository(rows, row_type)
-    backend = CountingCacheBackend()
+    backend = CountingCacheStore()
     resolver = GenerationalDependencyResolver(backend)
     wrapper: CachedRepository[RowT, WidgetCreate, WidgetUpdate, object] = CachedRepository(
         inner,
@@ -67,7 +68,7 @@ def _make_env(
 
 
 def _cursor_query(limit: int) -> QuerySpec:
-    return QuerySpec(pagination=PaginationMode.CURSOR, limit=limit)
+    return make(QuerySpec, pagination=PaginationMode.CURSOR, limit=limit)
 
 
 def _widgets(count: int) -> list[AcmeCacheWidget]:
@@ -105,7 +106,7 @@ async def _entity_cache_key(env: AcmeIndexEnv[RowT], obj_id: object) -> str:
 
 
 async def _warm_index(env: AcmeIndexEnv[RowT], limit: int = ROW_COUNT) -> None:
-    await env.wrapper.list_paginated(PageParams(page=1, limit=limit))
+    await env.wrapper.list_paginated(make(PageParams, page=1, limit=limit))
     env.repository.reset_counters()
     env.backend.reset_counters()
 
@@ -117,7 +118,7 @@ async def _evict_entities(env: AcmeIndexEnv[RowT], ids: Sequence[object]) -> Non
 
 
 async def _list_all(env: AcmeIndexEnv[RowT], limit: int = ROW_COUNT) -> PageResult[RowT]:
-    page = await env.wrapper.list_paginated(PageParams(page=1, limit=limit))
+    page = await env.wrapper.list_paginated(make(PageParams, page=1, limit=limit))
     assert isinstance(page, PageResult)
     return page
 
@@ -446,7 +447,7 @@ class TestResolverWithoutBatchSupport:
     ) -> None:
         rows = _widgets(ROW_COUNT)
         repository = CountingRepository(rows, AcmeCacheWidget)
-        backend = CountingCacheBackend()
+        backend = CountingCacheStore()
         batching = GenerationalDependencyResolver(backend)
         resolver = _PerGroupResolver(batching)
         wrapper: CachedRepository[AcmeCacheWidget, WidgetCreate, WidgetUpdate, object] = (
@@ -478,7 +479,7 @@ class TestBatchFingerprint:
 
     @pytest.mark.asyncio
     async def test_matches_the_per_call_fingerprint(self) -> None:
-        backend = CountingCacheBackend()
+        backend = CountingCacheStore()
         resolver = GenerationalDependencyResolver(backend)
         await backend.incr("tag:widget", delta=2)
         await backend.incr("tag:widget:id:1", delta=3)
@@ -502,7 +503,7 @@ class TestBatchFingerprint:
 
     @pytest.mark.asyncio
     async def test_reads_every_group_in_one_round_trip(self) -> None:
-        backend = CountingCacheBackend()
+        backend = CountingCacheStore()
         resolver = GenerationalDependencyResolver(backend)
 
         await resolver.fingerprint_many([["widget", f"widget:id:{index}"] for index in range(10)])
@@ -511,7 +512,7 @@ class TestBatchFingerprint:
 
     @pytest.mark.asyncio
     async def test_splits_a_wide_tag_set_into_batches(self) -> None:
-        backend = CountingCacheBackend()
+        backend = CountingCacheStore()
         resolver = GenerationalDependencyResolver(backend)
         groups = [[f"widget:id:{index}"] for index in range(COUNTER_BATCH_SIZE + 1)]
 

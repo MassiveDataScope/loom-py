@@ -21,13 +21,20 @@ from loom.core.cache import (
 from loom.core.cache.keys import entity_key
 from loom.core.command import Command
 from loom.core.model import BaseModel, ColumnField
-from loom.core.repository import PageParams, PageResult
-from loom.core.repository.abc import CursorCodec, CursorResult, PaginationMode, QuerySpec
-from loom.core.repository.sqlalchemy.repository import RepositorySQLAlchemy
-from loom.core.repository.sqlalchemy.session_manager import SessionManager
+from loom.core.stores.repository import (
+    CursorCodec,
+    CursorResult,
+    PageParams,
+    PageResult,
+    PaginationMode,
+    QuerySpec,
+)
+from loom.stores.sqlalchemy.repository import SQLAlchemyRepository
+from loom.stores.sqlalchemy.session_manager import SessionManager
+from loom.testing import make
 from tests.unit.core.conftest import SessionManagerFactory
 
-from ._doubles import CountingCacheBackend
+from ._doubles import CountingCacheStore
 
 _Key = tuple[int, int]
 _PROFILE = "default"
@@ -53,7 +60,7 @@ class AcmePatchEntry(Command, frozen=True):
     rank: int
 
 
-class _EntryRepository(RepositorySQLAlchemy[AcmeCachedEntry, _Key]):
+class _EntryRepository(SQLAlchemyRepository[AcmeCachedEntry, _Key]):
     @cache_query(scope="entity")
     async def rank_of(self, key: _Key) -> int:
         entry = await self.get_by_id(key)
@@ -66,19 +73,19 @@ _Read = Callable[[_Cached], Awaitable[PageResult[AcmeCachedEntry] | CursorResult
 
 class AcmeCompositeCacheEnv(NamedTuple):
     wrapper: _Cached
-    backend: CountingCacheBackend
+    backend: CountingCacheStore
     resolver: GenerationalDependencyResolver
     statements: list[str]
 
 
 def _read_paginated(wrapper: _Cached) -> Awaitable[PageResult[AcmeCachedEntry]]:
-    return wrapper.list_paginated(PageParams(page=1, limit=10))
+    return wrapper.list_paginated(make(PageParams, page=1, limit=10))
 
 
 def _read_cursor(
     wrapper: _Cached,
 ) -> Awaitable[PageResult[AcmeCachedEntry] | CursorResult[AcmeCachedEntry]]:
-    return wrapper.list_with_query(QuerySpec(pagination=PaginationMode.CURSOR, limit=10))
+    return wrapper.list_with_query(make(QuerySpec, pagination=PaginationMode.CURSOR, limit=10))
 
 
 _READS = pytest.mark.parametrize(
@@ -103,7 +110,7 @@ async def env(
     await repository.create_many(
         [AcmeCreateEntry(account_id=account, id=ident, rank=ident) for account, ident in _KEYS]
     )
-    backend = CountingCacheBackend()
+    backend = CountingCacheStore()
     resolver = GenerationalDependencyResolver(backend)
     wrapper: _Cached = CachedRepository(
         repository, config=cache_config, cache=backend, dependency_resolver=resolver

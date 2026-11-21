@@ -6,13 +6,13 @@ from collections.abc import AsyncIterator
 
 import pytest
 
-from loom.core.backend.sqlalchemy import compile_all, get_compiled
 from loom.core.command import Command
 from loom.core.model import BaseModel, ColumnField
-from loom.core.persistence.stores import DEFAULT_STORE
-from loom.core.repository.abc import CursorCodec
-from loom.core.repository.sqlalchemy.repository import RepositorySQLAlchemy
-from loom.core.repository.sqlalchemy.session_manager import SessionManager
+from loom.core.stores.catalog import DEFAULT_STORE
+from loom.core.stores.repository import CursorCodec
+from loom.stores.sqlalchemy.repository import SQLAlchemyRepository
+from loom.stores.sqlalchemy.schema import compile_all, get_compiled
+from loom.stores.sqlalchemy.session_manager import SessionManager
 
 
 class _Gauge(BaseModel):
@@ -45,7 +45,7 @@ async def session_manager() -> AsyncIterator[SessionManager]:
     async with manager.engine.begin() as connection:
         await connection.run_sync(compiled.metadata.create_all)
     yield manager
-    await manager.dispose()
+    await manager.close()
 
 
 class TestNullableColumns:
@@ -53,7 +53,7 @@ class TestNullableColumns:
         self,
         session_manager: SessionManager,
     ) -> None:
-        repo: RepositorySQLAlchemy[_Gauge, int] = RepositorySQLAlchemy(
+        repo: SQLAlchemyRepository[_Gauge, int] = SQLAlchemyRepository(
             session_manager=session_manager,
             model=_Gauge,
             cursor_codec=CursorCodec(signing="ephemeral"),

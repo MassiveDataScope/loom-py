@@ -23,18 +23,18 @@ from typing import cast
 
 import pytest
 
-from loom.core.backend.sqlalchemy import compile_all, get_metadata, reset_registry
 from loom.core.bootstrap.kernel import create_kernel
 from loom.core.errors import NotFound
-from loom.core.persistence.stores import DEFAULT_STORE
-from loom.core.repository.abc import CursorCodec
-from loom.core.repository.sqlalchemy import build_sqlalchemy_repository_registration_module
-from loom.core.repository.sqlalchemy.session_manager import SessionManager
-from loom.core.repository.sqlalchemy.uow import SQLAlchemyUnitOfWorkFactory
-from loom.core.uow.coordinator import OrderedCommits
+from loom.core.stores.catalog import DEFAULT_STORE
+from loom.core.stores.repository import CursorCodec
+from loom.core.stores.uow.coordinator import OrderedCommits
 from loom.core.use_case import Input
 from loom.core.use_case.markers import LoadById
 from loom.core.use_case.use_case import UseCase
+from loom.stores.sqlalchemy import build_sqlalchemy_repository_registration_module
+from loom.stores.sqlalchemy.schema import compile_all, get_metadata, reset_registry
+from loom.stores.sqlalchemy.session_manager import SessionManager
+from loom.stores.sqlalchemy.uow import SQLAlchemyUnitOfWorkFactory
 from tests.integration.fake_repo.product.model import Product
 from tests.integration.fake_repo.product.schemas import CreateProduct
 
@@ -99,7 +99,7 @@ async def sa_env(tmp_path: Path):  # type: ignore[no-untyped-def]
     finally:
         async with manager.engine.begin() as conn:
             await conn.run_sync(get_metadata().drop_all)
-        await manager.dispose()
+        await manager.close()
         reset_registry()
         if db_path.exists():
             db_path.unlink()
@@ -122,9 +122,9 @@ class TestTransactionCommit:
             coordinator=OrderedCommits({DEFAULT_STORE: uow_factory}),
         )
 
-        await runtime.app.invoke(_CreateProductUC, payload={"name": "keyboard", "price": 120.0})
+        await runtime.invoker.invoke(_CreateProductUC, payload={"name": "keyboard", "price": 120.0})
 
-        found = await runtime.app.invoke(_GetProductUC, params={"product_id": 1})
+        found = await runtime.invoker.invoke(_GetProductUC, params={"product_id": 1})
         assert found is not None
         assert found.name == "keyboard"
 
@@ -139,10 +139,10 @@ class TestTransactionCommit:
             coordinator=OrderedCommits({DEFAULT_STORE: uow_factory}),
         )
 
-        await runtime.app.invoke(_CreateProductUC, payload={"name": "mouse", "price": 25.0})
-        await runtime.app.invoke(_CreateProductUC, payload={"name": "monitor", "price": 300.0})
+        await runtime.invoker.invoke(_CreateProductUC, payload={"name": "mouse", "price": 25.0})
+        await runtime.invoker.invoke(_CreateProductUC, payload={"name": "monitor", "price": 300.0})
 
-        found = await runtime.app.invoke(_GetProductUC, params={"product_id": 2})
+        found = await runtime.invoker.invoke(_GetProductUC, params={"product_id": 2})
         assert found is not None
         assert found.name == "monitor"
 
@@ -165,13 +165,13 @@ class TestTransactionRollback:
         )
 
         with pytest.raises(RuntimeError, match="simulated failure after write"):
-            await runtime.app.invoke(
+            await runtime.invoker.invoke(
                 _FailAfterCreateUC,
                 payload={"name": "ghost", "price": 1.0},
             )
 
         # Entity must NOT be visible — the transaction was rolled back.
-        found = await runtime.app.invoke(_GetProductUC, params={"product_id": 1})
+        found = await runtime.invoker.invoke(_GetProductUC, params={"product_id": 1})
         assert found is None
 
     @pytest.mark.asyncio
@@ -186,22 +186,22 @@ class TestTransactionRollback:
         )
 
         # Commit one product successfully.
-        await runtime.app.invoke(_CreateProductUC, payload={"name": "safe", "price": 10.0})
+        await runtime.invoker.invoke(_CreateProductUC, payload={"name": "safe", "price": 10.0})
 
         # Roll back a second write.
         with pytest.raises(RuntimeError):
-            await runtime.app.invoke(
+            await runtime.invoker.invoke(
                 _FailAfterCreateUC,
                 payload={"name": "ghost", "price": 99.0},
             )
 
         # The committed product is still there.
-        first = await runtime.app.invoke(_GetProductUC, params={"product_id": 1})
+        first = await runtime.invoker.invoke(_GetProductUC, params={"product_id": 1})
         assert first is not None
         assert first.name == "safe"
 
         # The rolled-back product is absent.
-        second = await runtime.app.invoke(_GetProductUC, params={"product_id": 2})
+        second = await runtime.invoker.invoke(_GetProductUC, params={"product_id": 2})
         assert second is None
 
 
@@ -223,7 +223,7 @@ class TestLoadByIdMarker:
         )
 
         with pytest.raises(NotFound) as exc_info:
-            await runtime.app.invoke(_LoadByIdUC, params={"product_id": 99})
+            await runtime.invoker.invoke(_LoadByIdUC, params={"product_id": 99})
 
         assert exc_info.value.entity == "Product"
         assert exc_info.value.id == 99
@@ -239,7 +239,7 @@ class TestLoadByIdMarker:
             coordinator=OrderedCommits({DEFAULT_STORE: uow_factory}),
         )
 
-        await runtime.app.invoke(_CreateProductUC, payload={"name": "desk", "price": 200.0})
+        await runtime.invoker.invoke(_CreateProductUC, payload={"name": "desk", "price": 200.0})
 
-        name = await runtime.app.invoke(_LoadByIdUC, params={"product_id": 1})
+        name = await runtime.invoker.invoke(_LoadByIdUC, params={"product_id": 1})
         assert name == "desk"

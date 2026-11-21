@@ -2,17 +2,16 @@
 
 from __future__ import annotations
 
-from collections.abc import Callable, Sequence
+from collections.abc import Sequence
 from typing import TYPE_CHECKING, Any
 
 from celery import Celery  # type: ignore[import-untyped]
 
 from loom.celery.bootstrap import bootstrap_worker
-from loom.core.di.container import LoomContainer
 
 if TYPE_CHECKING:
     from loom.core.config import ConfigResolver
-    from loom.core.engine.metrics import MetricsAdapter
+    from loom.core.engine.execution_observer import ExecutionObserver
     from loom.core.environment import Environment
     from loom.core.job.job import Job
 
@@ -22,9 +21,7 @@ def create_app(
     config_dir: str | None = None,
     environment: Environment | str | None = None,
     jobs: Sequence[type[Job[Any]]] = (),
-    callbacks: Sequence[type[Any]] = (),
-    modules: Sequence[Callable[[LoomContainer], None]] = (),
-    metrics: MetricsAdapter | None = None,
+    execution_observer: ExecutionObserver | None = None,
     resolvers: Sequence[ConfigResolver] = (),
 ) -> Celery:
     """Create a Celery app with all Loom job tasks registered.
@@ -34,15 +31,13 @@ def create_app(
             exclusive with *config_dir*.
         config_dir: Directory holding ``base.yaml`` and the per-environment
             overlays; ``<environment>.yaml`` loads after the base when present.
+            With no *config_paths* and no *config_dir*, ``LOOM_CONFIG_DIR`` or
+            ``./config``.
         environment: Environment of the worker; overrides ``LOOM_ENV``, which
             defaults to production when unset.
         jobs: Concrete ``Job`` subclasses to register as Celery tasks.
-            Optional when ``app.discovery`` (modules/manifest) is configured.
-        callbacks: Optional callback classes for success/failure hooks.
-        modules: Optional DI registration modules; a module binding a
-            framework-owned key fails with
-            :class:`~loom.composition.errors.ReservedBindingError`.
-        metrics: Optional metrics adapter.
+            Optional when ``app.packages`` is configured.
+        execution_observer: Optional execution observer.
         resolvers: Resolvers for ``${name:key}`` placeholders, registered
             before the built-in ``secrets`` and ``ssm`` defaults.  A resolver
             named like a default replaces it.
@@ -55,9 +50,7 @@ def create_app(
         config_dir=config_dir,
         environment=environment,
         jobs=jobs,
-        callbacks=callbacks,
-        modules=modules,
-        metrics=metrics,
+        execution_observer=execution_observer,
         resolvers=resolvers,
     )
     return result.celery_app

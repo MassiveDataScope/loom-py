@@ -1,0 +1,134 @@
+"""Create an application's schema as the migrator, protected table by table."""
+
+from __future__ import annotations
+
+from typing import TYPE_CHECKING, Final
+
+from sqlalchemy import text
+from sqlalchemy.ext.asyncio import AsyncConnection
+
+from loom.core.config import ConfigError
+from loom.stores.sqlalchemy.rls.audit import reconcile_audited
+from loom.stores.sqlalchemy.rls.config import BootstrapConfig
+from loom.stores.sqlalchemy.rls.guard_manifest import required_guard_revision
+from loom.stores.sqlalchemy.rls.integrity import require_guard_revision
+from loom.stores.sqlalchemy.scoped_ddl import (
+    ASSERT_SCHEMA,
+    GUARD_FIRST,
+    GUARD_PATH,
+    LOCK_TIMEOUT,
+    MISSING_EVENT_TRIGGERS,
+    SCHEMA_LOCK,
+    check_dialect,
+    validate_timeout,
+)
+from loom.stores.sqlalchemy.session_manager import SessionManager
+
+if TYPE_CHECKING:
+    from loom.stores.sqlalchemy.alembic import StoreSchema
+
+PROTECT_SIGNATURE: Final = "protect_scoped_table(regclass,jsonb,text[])"
+CURRENT_SCHEMA: Final = "SELECT current_schema()"
+GUARD_FUNCTION: Final = (
+    "SELECT n.nspname FROM pg_proc p JOIN pg_namespace n ON n.oid = p.pronamespace "
+    "WHERE p.oid = to_regprocedure(:signature)"
+)
+_CURRENT_SCHEMA: Final = text(CURRENT_SCHEMA)
+_GUARD_FUNCTION: Final = text(GUARD_FUNCTION)
+_ASSERT_SCHEMA: Final = text(ASSERT_SCHEMA)
+_GUARD_FIRST: Final = text(GUARD_FIRST)
+_LOCK_TIMEOUT: Final = text(LOCK_TIMEOUT)
+_SCHEMA_LOCK: Final = text(SCHEMA_LOCK)
+_MISSING_EVENT_TRIGGERS: Final = text(MISSING_EVENT_TRIGGERS)
+
+
+async def create_schema(
+    migrator_url: str, schema: StoreSchema, *, lock_timeout: str = "5s"
+) -> None:
+    """Run ``create_all`` on the application's metadata through the migrator.
+
+    The schema's advisory lock is taken first, the guard's revision is checked
+    before any guard call, and the listeners registered at compile time open
+    the hatch and call the guard, guard first, for every scoped table, so each
+    table is protected in the transaction that creates it. Audited tables are
+    then reconciled with the guard (``reconcile_audited``); the guard's
+    assertion closes the transaction.
+
+    Raises:
+        ConfigError: When scoped tables exist on a non-Postgres dialect without
+            the opt-out, when the guard of the application schema is missing,
+            unknown or below the minimum compatible revision, or when the
+            migrator does not land in the application schema.
+    """
+    try:
+        validate_timeout(lock_timeout)
+    except ValueError as exc:
+        raise ConfigError(f"create_schema: {exc}") from exc
+    manager = SessionManager(migrator_url, store=schema.store)
+    try:
+        check_dialect(
+            manager.engine.dialect.name,
+            schema.scoped,
+            allow_unprotected=schema.database.schema.allow_unprotected_dialect,
+            path=schema.path,
+        )
+        bootstrap = schema.bootstrap if schema.is_guarded else None
+        async with manager.engine.begin() as connection:
+            if bootstrap is None:
+                await connection.run_sync(schema.metadata.create_all)
+            else:
+                await _create_protected(connection, schema, bootstrap, lock_timeout)
+    finally:
+        await manager.close()
+
+
+async def _create_protected(
+    connection: AsyncConnection,
+    schema: StoreSchema,
+    bootstrap: BootstrapConfig,
+    lock_timeout: str,
+) -> None:
+    schema_name, guard = bootstrap.schema, bootstrap.names.guard
+    await connection.execute(_LOCK_TIMEOUT, {"lock": lock_timeout})
+    await connection.execute(_SCHEMA_LOCK, {"schema": schema_name})
+    await _require_guard(connection, schema_name, guard)
+    minimum = required_guard_revision(bool(schema.audited))
+    await require_guard_revision(connection, guard, minimum=minimum)
+    path = {"schema": schema_name, "guard": guard}
+    info = (await connection.get_raw_connection()).info
+    info[GUARD_PATH] = path
+    try:
+        await connection.run_sync(schema.metadata.create_all)
+    finally:
+        info.pop(GUARD_PATH, None)
+    await connection.execute(_GUARD_FIRST, path)
+    await connection.run_sync(
+        lambda sync: reconcile_audited(
+            sync, schema=schema_name, guard=guard, declared=schema.recording_audit_tables
+        )
+    )
+    await connection.execute(_ASSERT_SCHEMA)
+
+
+async def _require_guard(connection: AsyncConnection, schema: str, guard: str) -> None:
+    current = (await connection.execute(_CURRENT_SCHEMA)).scalar()
+    if current != schema:
+        raise ConfigError(
+            f"the migrator lands in schema {current!r}, not {schema!r}: run apply_bootstrap "
+            "so its search_path points at the application schema"
+        )
+    resolved = (
+        await connection.execute(_GUARD_FUNCTION, {"signature": PROTECT_SIGNATURE})
+    ).scalar()
+    if resolved != guard:
+        raise ConfigError(
+            f"protect_scoped_table resolves to schema {resolved!r}, not to the guard {guard!r}: "
+            "run apply_bootstrap first"
+        )
+    result = await connection.execute(_MISSING_EVENT_TRIGGERS, {"guard": guard})
+    names = sorted(str(row[0]) for row in result)
+    if names:
+        raise ConfigError(
+            f"the guard of schema {schema!r} has missing or disabled event triggers {names}: "
+            "run apply_bootstrap again"
+        )

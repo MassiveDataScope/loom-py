@@ -4,7 +4,7 @@ Every test here drives the real pipeline a deployment runs: an
 :class:`~loom.ai.declarative.AgentSpecV1` decodes and compiles through
 :class:`~loom.ai.compiler.AgentCompiler` into an
 :class:`~loom.ai.compiler.AgentPlan`, and
-:class:`~loom.ai.engines.pydantic_ai.PydanticAIEngineProvider` builds the real
+:class:`~loom.ai.engines.pydantic_ai.PydanticAIEnginePlugin` builds the real
 ``pydantic_ai.Agent`` that plan binds to. Only the model is a scripted
 ``FunctionModel`` (:func:`tests.helpers.pydantic_ai_engine.recording_model`) —
 the one seam every engine test in this tree substitutes — so every assertion
@@ -41,7 +41,7 @@ from pydantic_ai.models.instrumented import InstrumentationSettings
 from loom.ai.compiler import AgentCompiler, AgentPlan
 from loom.ai.config import AiConfig
 from loom.ai.declarative import AgentSpecV1, InstructionBlock, JsonSchemaOutput
-from loom.ai.engines.pydantic_ai import PydanticAIEngineProvider
+from loom.ai.engines.pydantic_ai import PydanticAIEnginePlugin
 from loom.ai.engines.pydantic_ai._guards import bundle_container
 from loom.ai.errors import AgentCompilationError, AgentErrorCode, AgentRunError, AgentRunErrorCode
 from loom.ai.inference import InferenceTarget
@@ -121,7 +121,7 @@ def _compile(spec: AgentSpecV1) -> AgentPlan:
             models={"default": InferenceTarget(provider="openai", model="gpt-5.2")},
         ),
         registry=UseCaseRegistry({}, {}),
-        supported_kinds=PydanticAIEngineProvider().supported_capability_kinds(),
+        supported_kinds=PydanticAIEnginePlugin().supported_capability_kinds(),
     )
     return compiler.compile(spec, source_path=f"agents/{spec.name}.agent.yaml")
 
@@ -130,7 +130,7 @@ def _engine_and_recorder(plan: AgentPlan) -> tuple[Any, list[list[Any]]]:
     """Build the real engine over a scripted model that records every request."""
     seen: list[list[Any]] = []
     model = recording_model(_ANSWER_PAYLOAD, seen)
-    provider = PydanticAIEngineProvider(model_resolver=lambda target: model)
+    provider = PydanticAIEnginePlugin(model_resolver=lambda target: model)
     engine = provider.create_engine(plan, deps=_RecordingDepsFactory(), container=LoomContainer())
     return engine, seen
 

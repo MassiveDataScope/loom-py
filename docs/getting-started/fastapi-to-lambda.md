@@ -11,9 +11,9 @@ of code.
 pip install "loom-kernel[lambda]"
 ```
 
-## 2. Switch the adapter
+## 2. Switch the runtime
 
-Write one entry module and let the configuration pick the adapter:
+Write one entry module and let the configuration pick the runtime:
 
 ```python
 # src/entry.py
@@ -33,22 +33,22 @@ To run it on Lambda, set `entry: lambda`, or keep the YAML and set
 is allowed in every environment. The code does not change. Uvicorn serves
 `entry:app` and Lambda runs `entry.app` as its handler.
 
-If you prefer to pass the adapter in code, the change is two lines, the import
+If you prefer to pass the runtime in code, the change is two lines, the import
 and the call:
 
 ```python
 from loom.composition import create_app
-from loom.serverless.aws.lambda_ import LambdaAdapter
+from loom.serverless.aws.lambda_ import LambdaRuntime
 
-app = create_app("config/app.yaml", adapter=LambdaAdapter())
+app = create_app("config/app.yaml", runtime=LambdaRuntime())
 ```
 
-An explicit `adapter=` wins over `app.entry`. Keep the call at module level:
+An explicit `runtime=` wins over `app.entry`. Keep the call at module level:
 Lambda runs it once during Init, opens the application there and keeps it
 open across warm invocations. If the application fails to open, Init fails.
 
 Routes, authentication, the error envelope, status codes and headers are the
-same on both adapters. A contract suite runs the same requests against both
+same on both runtimes. A contract suite runs the same requests against both
 and requires identical replies. Some features have no Lambda equivalent:
 
 | On FastAPI | On Lambda |
@@ -56,7 +56,7 @@ and requires identical replies. Some features have no Lambda equivalent:
 | Health, OpenAPI and docs routes | Not served. With no `exclude_paths`, no route is public, so a route at `/health` needs a token |
 | `observability.prometheus.enabled` | Refused at startup |
 | SQL endpoints (`app.rest.sql`) | Refused at startup |
-| Agents (an `ai` section, manifest `AGENTS`) | Hosted for the use cases: only the agents an `Agent()` marker names are built, and no agent HTTP or A2A endpoint is served. See [Agents and MCP on Lambda](#agents-and-mcp-on-lambda) |
+| Agents (an `ai` section, `app.agents`) | Hosted for the use cases: only the agents an `Agent()` marker names are built, and no agent HTTP or A2A endpoint is served. See [Agents and MCP on Lambda](#agents-and-mcp-on-lambda) |
 | MCP servers over `transport: stdio` | Refused at startup |
 | CORS (`app.rest.cors`) | Applied by the application, as on FastAPI. Do not configure it in API Gateway as well |
 

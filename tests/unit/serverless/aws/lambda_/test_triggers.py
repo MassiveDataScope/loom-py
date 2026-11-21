@@ -9,20 +9,29 @@ from typing import Any
 
 import pytest
 
-from loom.composition import AppConfig, compose_application
+from loom.composition import AppConfig
 from loom.core.command import Command
 from loom.core.config import ConfigContext, ConfigError
+from loom.core.engine.events import EventKind as RuntimeEventKind
+from loom.core.engine.events import ExecutionEvent
 from loom.core.errors import BoundaryValidationError, LoomError, MalformedJobMessage
 from loom.core.identity import Identity, current_identity
 from loom.core.job.job import Job
+from loom.core.job.outcome import JobPostponement
 from loom.core.observability.event import EventKind, LifecycleEvent, Scope
-from loom.core.observability.runtime import ObservabilityRuntime
+from loom.core.observability.observability import Observability
 from loom.core.use_case import Input
+from loom.jobs.aws.queue import ABANDONMENT_REASON_ATTRIBUTE
 from loom.rest.auth import RequestCredentials
-from loom.serverless.aws.lambda_ import LambdaAdapter, S3Object
+from loom.serverless.aws.lambda_ import LambdaRuntime, S3Object
 from loom.serverless.aws.lambda_.triggers import eventbridge, s3, schedule, sns
 from loom.testing import LambdaEvent
-from tests.helpers.composition import composition_source
+from loom.testing.serverless import QueueableEvent
+from tests.helpers.aws import ACCOUNT
+from tests.helpers.aws_island import FakeAwsIsland
+from tests.helpers.composition import composition_project
+from tests.helpers.sqs import FakeSqs, queue_url
+from tests.unit.serverless.aws.lambda_._records import consumed_queues
 
 pytestmark = pytest.mark.timeout(30)
 
@@ -38,26 +47,24 @@ class Invoice(Command, frozen=True, kw_only=True):
 
 
 class _Final(LoomError):
-    retryable = False
+    is_retryable = False
 
 
 _RAN: list[tuple[Any, Identity]] = []
 
 
 class ImportInvoice(Job[None]):
-    __retries__ = 0
-
     def execute(self, invoice: Invoice = Input()) -> None:
         _RAN.append((invoice, current_identity()))
         if invoice.number == "fail":
             raise ValueError("job failed")
+        if invoice.number == "wait":
+            raise JobPostponement("tenant warming up", 30)
         if invoice.number == "final":
             raise _Final("job failed finally", code="final")
 
 
 class ImportObject(Job[None]):
-    __retries__ = 0
-
     def execute(self, found: S3Object = Input()) -> None:
         _RAN.append((found, current_identity()))
         if found.key.startswith("fail"):
@@ -69,6 +76,15 @@ def ran() -> Iterator[list[tuple[Any, Identity]]]:
     _RAN.clear()
     yield _RAN
     _RAN.clear()
+
+
+class _RecordingExecutionObserver:
+    def __init__(self) -> None:
+        self.kinds: list[RuntimeEventKind] = []
+
+    def on_event(self, event: ExecutionEvent) -> None:
+        if event.kind.name.startswith("JOB_"):
+            self.kinds.append(event.kind)
 
 
 class _Observer:
@@ -87,9 +103,18 @@ _SYSTEM = {"subject": "svc:importer"}
 
 
 @pytest.fixture
-def serve(tmp_path: Path) -> Iterator[Serve]:
+def sqs() -> FakeSqs:
+    policy = {
+        "deadLetterTargetArn": f"arn:aws:sqs:eu-west-1:{ACCOUNT}:events-dlq",
+        "maxReceiveCount": 4,
+    }
+    return FakeSqs({queue_url("events"): policy})
+
+
+@pytest.fixture
+def serve(tmp_path: Path, island: FakeAwsIsland) -> Iterator[Serve]:
     """Compose the function *name* of the given *trigger* and bind its handler."""
-    adapters: list[LambdaAdapter] = []
+    adapters: list[LambdaRuntime] = []
 
     def compose(
         trigger: dict[str, Any],
@@ -97,24 +122,26 @@ def serve(tmp_path: Path) -> Iterator[Serve]:
         name: str = _FUNCTION,
         observer: _Observer | None = None,
         written: dict[str, Any] | None = None,
+        abandoned: str = "discard",
         **options: Any,
     ) -> Any:
         if trigger.get("source") in _EVENT_SOURCES:
             trigger = {"identity": _SYSTEM, **trigger}
         function = {"trigger": trigger} if written is None else written
-        document = {"lambda": {"functions": {name: function}}}
-        source = composition_source(
+        document = consumed_queues("events") | {"lambda": {"functions": {name: function}}}
+        document["sqs"]["queues"]["events"]["abandoned"] = abandoned
+        project = composition_project(
             ConfigContext.from_dict(document),
             app=AppConfig(name="events", job_service="inline", entry=name),
             code_path=tmp_path,
             config_root=tmp_path,
         )
-        adapter = LambdaAdapter(jobs=[ImportInvoice, ImportObject], **options)
-        application = compose_application(source, adapter)
+        adapter = LambdaRuntime(jobs=[ImportInvoice, ImportObject], **options)
+        application = project.compose(adapter)
         if observer is not None:
-            application.observability = ObservabilityRuntime([observer])
+            application.observability = Observability([observer])
         adapters.append(adapter)
-        return adapter.bind(application)
+        return adapter.mount(application)
 
     yield compose
     for adapter in adapters:
@@ -257,6 +284,28 @@ class TestDirectTrigger:
         with pytest.raises(error):
             handler(event, None)
 
+    def test_a_job_postponement_is_abandoned_not_postponed_as_the_same_event_comes_back_undelayed(
+        self, serve: Serve
+    ) -> None:
+        observer = _RecordingExecutionObserver()
+        handler = serve(_events(), execution_observer=observer)
+
+        with pytest.raises(JobPostponement, match="warming up"):
+            handler(LambdaEvent.eventbridge({"number": "wait"}), None)
+
+        assert observer.kinds == [RuntimeEventKind.JOB_STARTED, RuntimeEventKind.JOB_ABANDONED]
+
+    def test_a_failure_is_reported_as_failed_for_lambda_to_retry_the_event(
+        self, serve: Serve
+    ) -> None:
+        observer = _RecordingExecutionObserver()
+        handler = serve(_events(), execution_observer=observer)
+
+        with pytest.raises(ValueError, match="job failed"):
+            handler(LambdaEvent.eventbridge({"number": "fail"}), None)
+
+        assert observer.kinds == [RuntimeEventKind.JOB_STARTED, RuntimeEventKind.JOB_FAILED]
+
     def test_a_malformed_event_fails_the_invocation_in_a_failed_span(self, serve: Serve) -> None:
         observer = _Observer()
         handler = serve(_events(), observer=observer)
@@ -357,14 +406,31 @@ class TestDirectTrigger:
         assert [invoice for invoice, _ in ran] == [Invoice(number="7")]
 
 
+_EVENTS_ARN = f"arn:aws:sqs:eu-west-1:{ACCOUNT}:events"
+_DEAD = queue_url("events-dlq")
+
+
+@pytest.fixture
+def queued() -> Callable[[QueueableEvent, str], LambdaEvent]:
+    """Delivers an event as the one SQS record of the ``events`` queue its function consumes."""
+
+    def deliver(event: QueueableEvent, message_id: str) -> LambdaEvent:
+        return event.via_sqs(message_id=message_id, queue_arn=_EVENTS_ARN)
+
+    return deliver
+
+
 class TestQueued:
     def test_a_failed_message_is_reported_alone(
-        self, serve: Serve, ran: list[tuple[Any, Identity]]
+        self,
+        serve: Serve,
+        ran: list[tuple[Any, Identity]],
+        queued: Callable[[QueueableEvent, str], LambdaEvent],
     ) -> None:
         handler = serve(_events(queue=_QUEUE, identity=_IDENTITY))
         records = [
-            *LambdaEvent.eventbridge({"number": "1"}).via_sqs(message_id="m1")["Records"],
-            *LambdaEvent.eventbridge({"number": "fail"}).via_sqs(message_id="m2")["Records"],
+            *queued(LambdaEvent.eventbridge({"number": "1"}), "m1")["Records"],
+            *queued(LambdaEvent.eventbridge({"number": "fail"}), "m2")["Records"],
         ]
 
         result = handler({"Records": records}, None)
@@ -373,39 +439,65 @@ class TestQueued:
         assert [invoice.number for invoice, _ in ran] == ["1", "fail"]
         assert {caller.mechanism for _, caller in ran} == {f"lambda:{_FUNCTION}:eventbridge"}
 
-    def test_a_final_failure_is_reported_too_so_it_is_dead_lettered(
-        self, serve: Serve, ran: list[tuple[Any, Identity]]
+    def test_a_final_failure_is_abandoned_to_the_dead_letter_queue_not_reported(
+        self,
+        serve: Serve,
+        ran: list[tuple[Any, Identity]],
+        sqs: FakeSqs,
+        queued: Callable[[QueueableEvent, str], LambdaEvent],
     ) -> None:
-        handler = serve(_events(queue=_QUEUE))
-        event = LambdaEvent.eventbridge({"number": "final"}).via_sqs(message_id="m1")
+        handler = serve(_events(queue=_QUEUE), abandoned="dead_letter")
+        event = queued(LambdaEvent.eventbridge({"number": "final"}), "m1")
 
         result = handler(event, None)
 
-        assert result == {"batchItemFailures": [{"itemIdentifier": "m1"}]}
+        (abandoned,) = sqs.entries("send_message_batch", _DEAD)
+        reason = abandoned["MessageAttributes"][ABANDONMENT_REASON_ATTRIBUTE]["StringValue"]
+        assert (result, reason) == ({"batchItemFailures": []}, "_Final")
         assert [invoice.number for invoice, _ in ran] == ["final"]
 
+    def test_a_final_failure_on_a_discard_queue_is_dropped_not_reported(
+        self, serve: Serve, sqs: FakeSqs, queued: Callable[[QueueableEvent, str], LambdaEvent]
+    ) -> None:
+        handler = serve(_events(queue=_QUEUE))
+        event = queued(LambdaEvent.eventbridge({"number": "final"}), "m1")
+
+        assert (handler(event, None), sqs.batches) == ({"batchItemFailures": []}, [])
+
     def test_an_sns_message_runs_from_its_envelope(
-        self, serve: Serve, ran: list[tuple[Any, Identity]]
+        self,
+        serve: Serve,
+        ran: list[tuple[Any, Identity]],
+        queued: Callable[[QueueableEvent, str], LambdaEvent],
     ) -> None:
         handler = serve({"source": "sns", "queue": _QUEUE, "job": "ImportInvoice"})
 
-        result = handler(LambdaEvent.sns({"number": "7"}).via_sqs(), None)
+        result = handler(queued(LambdaEvent.sns({"number": "7"}), "m1"), None)
 
         assert (result, [invoice for invoice, _ in ran]) == (
             {"batchItemFailures": []},
             [Invoice(number="7")],
         )
 
-    def test_an_sns_message_delivered_raw_is_malformed(
-        self, serve: Serve, ran: list[tuple[Any, Identity]]
+    @pytest.mark.parametrize(("abandoned", "dead_lettered"), [("discard", 0), ("dead_letter", 1)])
+    def test_an_sns_message_delivered_raw_is_abandoned_not_reported(
+        self,
+        serve: Serve,
+        ran: list[tuple[Any, Identity]],
+        sqs: FakeSqs,
+        abandoned: str,
+        dead_lettered: int,
     ) -> None:
-        handler = serve({"source": "sns", "queue": _QUEUE, "job": "ImportInvoice"})
+        handler = serve(
+            {"source": "sns", "queue": _QUEUE, "job": "ImportInvoice"}, abandoned=abandoned
+        )
 
-        event = LambdaEvent.sqs_record('{"number": "7"}', message_id="r")
+        event = LambdaEvent.sqs_record('{"number": "7"}', message_id="r", queue_arn=_EVENTS_ARN)
 
         result = handler(event, None)
 
-        assert (result, ran) == ({"batchItemFailures": [{"itemIdentifier": "r"}]}, [])
+        assert (result, ran) == ({"batchItemFailures": []}, [])
+        assert len(sqs.entries("send_message_batch", _DEAD)) == dead_lettered
 
 
 class _Authenticator:
@@ -422,7 +514,9 @@ class TestTriggerBoundaries:
     ) -> None:
         payload = {"number": "7", "note": "parity"}
 
-        serve({"source": "jobs"}, name="worker")(LambdaEvent.jobs(ImportInvoice, payload), None)
+        serve({"source": "jobs", "queue": _QUEUE}, name="worker")(
+            LambdaEvent.jobs(ImportInvoice, payload), None
+        )
         serve(_events())(LambdaEvent.eventbridge(payload), None)
 
         (from_queue, _), (from_event, _) = ran

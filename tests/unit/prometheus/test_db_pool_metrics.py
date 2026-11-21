@@ -12,12 +12,12 @@ from sqlalchemy.pool import AsyncAdaptedQueuePool
 
 from loom.core.environment import Environment
 from loom.core.model.redaction import Dsn
-from loom.core.persistence.database import DatabaseConfig, PoolConfig
-from loom.core.persistence.profile import SERVER_PROFILE
-from loom.core.persistence.stores import DEFAULT_STORE
-from loom.core.repository.sqlalchemy.session_manager import SessionManager, build_session_manager
+from loom.core.stores.catalog import DEFAULT_STORE
+from loom.core.stores.database import DatabaseConfig, PoolConfig
+from loom.core.stores.profile import SERVER_PROFILE
 from loom.prometheus.db_pool import PrometheusPoolMetrics
 from loom.rest.fastapi.auto import create_app
+from loom.stores.sqlalchemy.session_manager import SessionManager, build_session_manager
 from tests.unit.rest._fixture_app import write_project
 
 _LABELS = {"application": "shop", "entrypoint": "server", "database": "default"}
@@ -53,7 +53,7 @@ class TestDbPoolMetrics:
                 assert _sample(registry, "loom_db_pool_size") == 2
                 assert _sample(registry, "loom_db_pool_overflow") == 0
         finally:
-            await manager.dispose()
+            await manager.close()
 
     async def test_each_checkout_is_timed(self, tmp_path: Path) -> None:
         registry = CollectorRegistry()
@@ -63,7 +63,7 @@ class TestDbPoolMetrics:
                 async with manager.engine.connect():
                     pass
         finally:
-            await manager.dispose()
+            await manager.close()
 
         assert _sample(registry, "loom_db_pool_checkout_seconds_count") == 3
 
@@ -76,7 +76,7 @@ class TestDbPoolMetrics:
                     async with manager.engine.connect():
                         pass
         finally:
-            await manager.dispose()
+            await manager.close()
 
         assert _sample(registry, "loom_db_pool_checkout_timeouts_total") == 1
 
@@ -86,7 +86,7 @@ class TestDbPoolMetrics:
         try:
             assert type(manager.engine.sync_engine.pool) is AsyncAdaptedQueuePool
         finally:
-            await manager.dispose()
+            await manager.close()
 
         assert not [m for m in registry.collect() if m.name.startswith("loom_db_pool")]
 
@@ -99,7 +99,7 @@ class TestDbPoolMetrics:
     async def test_a_collected_engine_stops_being_reported(self, tmp_path: Path) -> None:
         registry = CollectorRegistry()
         manager = _manager(tmp_path, registry)
-        await manager.dispose()
+        await manager.close()
         del manager
         gc.collect()
 
@@ -144,5 +144,5 @@ class TestDbPoolMetrics:
             ]
             assert sizes == [3]
         finally:
-            await first.dispose()
-            await second.dispose()
+            await first.close()
+            await second.close()

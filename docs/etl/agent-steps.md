@@ -286,21 +286,21 @@ name shared with a source or `client` (`CONFIG_ALIAS_CONFLICT`), and no
 ## Without `from_yaml`
 
 `ETLRunner`, `ETLRunner.from_config`, `ETLCompiler` and `ETLExecutor` take
-`agents=`, any implementation of `loom.etl.runtime.AgentBatchRunner`.
+`agents=`, any implementation of `loom.etl.ports.AgentBatchRunner`.
 `loom.ai.etl.PolarsAgentRunner(ai_config, root=...)` is the one loom ships;
-its `engine_provider=` lets a test serve the agent from a pydantic-ai
+its `engine_plugin=` lets a test serve the agent from a pydantic-ai
 `TestModel` or `FunctionModel`:
 
 ```python
 from pydantic_ai.models.test import TestModel
 
-from loom.ai.engines.pydantic_ai import PydanticAIEngineProvider
+from loom.ai.engines.pydantic_ai import PydanticAIEnginePlugin
 from loom.ai.etl import PolarsAgentRunner
 
 agents = PolarsAgentRunner(
     ai_config,
     root=repo_root,
-    engine_provider=lambda: PydanticAIEngineProvider(model_resolver=lambda _: TestModel()),
+    engine_plugin=lambda: PydanticAIEnginePlugin(model_resolver=lambda _: TestModel()),
 )
 runner = ETLRunner.from_config(storage_config, agents=agents)
 ```

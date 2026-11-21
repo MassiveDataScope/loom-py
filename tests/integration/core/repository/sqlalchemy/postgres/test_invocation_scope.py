@@ -18,13 +18,13 @@ from sqlalchemy.ext.asyncio import AsyncEngine, AsyncSession, create_async_engin
 from sqlalchemy.pool import NullPool
 
 from loom.core.engine.compiler import UseCaseCompiler
-from loom.core.engine.executor import RuntimeExecutor
+from loom.core.engine.executor import UseCaseExecutor
 from loom.core.errors import ScopeOwnershipError
-from loom.core.persistence.stores import DEFAULT_STORE
-from loom.core.repository.sqlalchemy.session_manager import SessionManager
-from loom.core.repository.sqlalchemy.uow import SQLAlchemyUnitOfWorkFactory
-from loom.core.uow.coordinator import OrderedCommits, Uncertain
-from loom.core.uow.scope import Frame, current_scope, invocation
+from loom.core.stores.catalog import DEFAULT_STORE
+from loom.core.stores.uow.coordinator import OrderedCommits, Uncertain
+from loom.core.stores.uow.scope import Frame, current_scope, invocation
+from loom.stores.sqlalchemy.session_manager import SessionManager
+from loom.stores.sqlalchemy.uow import SQLAlchemyUnitOfWorkFactory
 from tests.integration.support.scope_doubles import BusinessError, Run
 
 
@@ -60,7 +60,7 @@ async def manager(pg_admin_uri: str) -> AsyncIterator[SessionManager]:
     try:
         yield session_manager
     finally:
-        await session_manager.dispose()
+        await session_manager.close()
 
 
 @pytest.fixture
@@ -73,8 +73,8 @@ async def observer(pg_admin_uri: str) -> AsyncIterator[AsyncEngine]:
         await engine.dispose()
 
 
-def _executor(manager: SessionManager) -> RuntimeExecutor:
-    return RuntimeExecutor(
+def _executor(manager: SessionManager) -> UseCaseExecutor:
+    return UseCaseExecutor(
         UseCaseCompiler(),
         coordinator=OrderedCommits({DEFAULT_STORE: SQLAlchemyUnitOfWorkFactory(manager)}),
     )

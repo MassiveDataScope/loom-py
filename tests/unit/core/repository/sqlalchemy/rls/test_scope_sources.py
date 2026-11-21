@@ -6,20 +6,20 @@ from collections.abc import Iterator
 import pytest
 from sqlalchemy import MetaData
 
-from loom.core.backend.sqlalchemy import compile_all, scoped_tables
 from loom.core.config import ConfigError
 from loom.core.identity import Identity, reset_identity, set_identity
-from loom.core.locator import Application
 from loom.core.model import BaseModel, ColumnField, RowScoped, ScopedField
 from loom.core.model.redaction import Dsn
 from loom.core.model.types import Integer, String, Text
-from loom.core.persistence.database import DatabaseConfig, SchemaConfig
-from loom.core.repository.sqlalchemy.rls import (
+from loom.core.stores.database import DatabaseConfig, SchemaConfig
+from loom.stores.sqlalchemy.alembic import StoreSchema
+from loom.stores.sqlalchemy.rls import (
     register_scope_source,
     rls_session_settings,
 )
-from loom.core.repository.sqlalchemy.rls.sources import bind_sources, clear_scope_sources
-from loom.core.repository.sqlalchemy.session_settings import SET_SETTINGS, settings_statement
+from loom.stores.sqlalchemy.rls.sources import bind_sources, clear_scope_sources
+from loom.stores.sqlalchemy.schema import compile_all, scoped_tables
+from loom.stores.sqlalchemy.session_settings import SET_SETTINGS, settings_statement
 
 
 class Note(BaseModel, RowScoped):
@@ -37,10 +37,10 @@ def _clean_sources() -> Iterator[None]:
     clear_scope_sources()
 
 
-def _application(**sources: str) -> Application:
+def _application(**sources: str) -> StoreSchema:
     metadata = MetaData()
     compile_all(Note, metadata=metadata)
-    return Application(
+    return StoreSchema(
         models=(Note,),
         metadata=metadata,
         database=DatabaseConfig(
@@ -133,7 +133,7 @@ class TestScopeSources:
         self,
         monkeypatch: pytest.MonkeyPatch,
     ) -> None:
-        from loom.core.repository.sqlalchemy.rls import provider as provider_module
+        from loom.stores.sqlalchemy.rls import provider as provider_module
 
         monkeypatch.setattr(provider_module, "elevated_scopes", lambda: frozenset({"editor"}))
         register_scope_source("editor", lambda: "ana")

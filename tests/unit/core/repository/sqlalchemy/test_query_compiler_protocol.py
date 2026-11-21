@@ -4,12 +4,12 @@ from typing import Any
 
 import pytest
 
-from loom.core.backend.sqlalchemy import compile_all, get_compiled
 from loom.core.model import BaseModel, ColumnField
-from loom.core.repository.abc import CursorCodec, FilterGroup, FilterOp, FilterSpec
-from loom.core.repository.abc.query_compiler import QueryCompiler
-from loom.core.repository.sqlalchemy.query_compiler.compiler import QuerySpecCompiler
-from loom.core.repository.sqlalchemy.query_compiler.errors import UnsafeFilterError
+from loom.core.stores.repository import CursorCodec, FilterGroup, FilterOp, FilterSpec
+from loom.core.stores.repository.query_compiler import QueryCompiler
+from loom.stores.sqlalchemy.query_compiler.compiler import QuerySpecCompiler
+from loom.stores.sqlalchemy.query_compiler.errors import UnsafeFilterError
+from loom.stores.sqlalchemy.schema import compile_all, get_compiled
 
 
 class _Row(BaseModel):

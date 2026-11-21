@@ -7,16 +7,15 @@ from typing import Any, Protocol, cast
 
 import pytest
 
-from loom.core.bootstrap.bootstrap import bootstrap_app
+from loom.core.bootstrap import create_kernel
 from loom.core.di.container import LoomContainer
 from loom.core.di.scope import Scope
 from loom.core.engine.compilable import Compilable
-from loom.core.engine.executor import RuntimeExecutor
-from loom.core.repository import RepositoryBuildContext, repository_for
-from loom.core.repository.abc import CursorCodec
-from loom.core.repository.sqlalchemy import build_sqlalchemy_repository_registration_module
+from loom.core.engine.executor import UseCaseExecutor
 from loom.core.response import Response
+from loom.core.stores.repository import CursorCodec, RepositoryBuildContext, repository_for
 from loom.core.use_case.use_case import UseCase
+from loom.stores.sqlalchemy import build_sqlalchemy_repository_registration_module
 from loom.testing import RepositoryIntegrationHarness
 from tests.integration.fake_repo.product.jobs import GetProductIdByNameJob
 from tests.integration.fake_repo.product.model import Product
@@ -138,12 +137,12 @@ class TestCustomRepositoryIntegration:
         self,
         integration_context: RepositoryIntegrationHarness,
     ) -> None:
-        result = bootstrap_app(
+        result = create_kernel(
             config=_Cfg(),
             use_cases=_use_cases(CreateProductUseCase),
             modules=[_repo_module(integration_context)],
         )
-        executor = RuntimeExecutor(result.compiler)
+        executor = UseCaseExecutor(result.compiler)
 
         use_case = result.factory.build(CreateProductUseCase)
 
@@ -161,12 +160,12 @@ class TestCustomRepositoryIntegration:
         self,
         integration_context: RepositoryIntegrationHarness,
     ) -> None:
-        result = bootstrap_app(
+        result = create_kernel(
             config=_Cfg(),
             use_cases=_use_cases(CreateProductUseCase, FindProductByNameUseCase),
             modules=[_repo_module(integration_context)],
         )
-        executor = RuntimeExecutor(result.compiler)
+        executor = UseCaseExecutor(result.compiler)
 
         await executor.execute(
             result.factory.build(CreateProductUseCase),
@@ -185,12 +184,12 @@ class TestCustomRepositoryIntegration:
         self,
         integration_context: RepositoryIntegrationHarness,
     ) -> None:
-        result = bootstrap_app(
+        result = create_kernel(
             config=_Cfg(),
             use_cases=_use_cases(CreateProductUseCase, GetProductIdByNameJob),
             modules=[_repo_module(integration_context)],
         )
-        executor = RuntimeExecutor(result.compiler)
+        executor = UseCaseExecutor(result.compiler)
 
         await executor.execute(
             result.factory.build(CreateProductUseCase),
@@ -208,12 +207,12 @@ class TestCustomRepositoryIntegration:
         self,
         integration_context: RepositoryIntegrationHarness,
     ) -> None:
-        result = bootstrap_app(
+        result = create_kernel(
             config=_Cfg(),
             use_cases=[GetTaskViewUseCase],
             modules=[_logical_repo_module(integration_context)],
         )
-        executor = RuntimeExecutor(result.compiler)
+        executor = UseCaseExecutor(result.compiler)
 
         use_case = result.factory.build(GetTaskViewUseCase)
         found = await executor.execute(use_case, params={"task_id": "t-1"})
@@ -227,12 +226,12 @@ class TestCustomRepositoryIntegration:
         self,
         integration_context: RepositoryIntegrationHarness,
     ) -> None:
-        result = bootstrap_app(
+        result = create_kernel(
             config=_Cfg(),
             use_cases=[GetBuilderTaskViewUseCase],
             modules=[_builder_logical_repo_module(integration_context)],
         )
-        executor = RuntimeExecutor(result.compiler)
+        executor = UseCaseExecutor(result.compiler)
 
         use_case = result.factory.build(GetBuilderTaskViewUseCase)
         found = await executor.execute(use_case, params={"task_id": "t-2"})

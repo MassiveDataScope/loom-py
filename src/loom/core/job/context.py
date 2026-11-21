@@ -23,7 +23,7 @@ from typing import Any
 
 from loom.core.engine.post_commit import ActionT, PostCommitChannel, active_channel, store_channel
 from loom.core.execution import execution_ended
-from loom.core.uow.scope import current_scope
+from loom.core.stores.uow.scope import current_scope
 
 _fallback: ContextVar[PostCommitChannel | None] = ContextVar(
     "_loom_pending_dispatches", default=None
@@ -83,7 +83,7 @@ async def flush_pending_dispatches() -> None:
     if active_channel() is not None and not execution_ended():
         raise RuntimeError(
             "flush_pending_dispatches() cannot run inside an execution: "
-            "RuntimeExecutor owns the post-commit channel and drains it "
+            "UseCaseExecutor owns the post-commit channel and drains it "
             "after the unit of work closes."
         )
     channel = _fallback.get()

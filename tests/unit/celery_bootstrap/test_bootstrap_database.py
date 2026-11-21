@@ -8,12 +8,12 @@ import pytest
 
 pytest.importorskip("celery")
 
-from loom.celery.adapter import CeleryAdapter  # noqa: E402
-from loom.composition import AppConfig, compose_application  # noqa: E402
+from loom.celery.runtime import CeleryRuntime  # noqa: E402
+from loom.composition import AppConfig  # noqa: E402
 from loom.core.config import ConfigContext, ConfigError  # noqa: E402
 from loom.core.job.job import Job  # noqa: E402
-from loom.core.uow.abc import UnitOfWorkFactory  # noqa: E402
-from tests.helpers.composition import composition_source, uow_factory  # noqa: E402
+from loom.core.stores.uow.abc import UnitOfWorkFactory  # noqa: E402
+from tests.helpers.composition import composition_project, uow_factory  # noqa: E402
 
 _POSTGRES = "postgresql+asyncpg://app:secret@db.invalid/app"
 
@@ -25,13 +25,13 @@ class _PingJob(Job[int]):
 
 def _resolve_uow_factory(config: dict[str, Any]) -> UnitOfWorkFactory | None:
     """Compose a worker from *config* and return the unit-of-work factory it runs jobs with."""
-    source = composition_source(
+    project = composition_project(
         ConfigContext.from_dict(
             {"celery": {"broker_url": "memory://", "result_backend": "cache+memory://"}, **config}
         ),
         app=AppConfig(name="worker"),
     )
-    return uow_factory(compose_application(source, CeleryAdapter(jobs=[_PingJob])))
+    return uow_factory(project.compose(CeleryRuntime(jobs=[_PingJob])))
 
 
 def _pool(config: dict[str, Any]) -> Any:

@@ -13,7 +13,7 @@ Documented decisions taken while writing these tests:
   at compile and the plan carries exact names. These tests therefore write real
   ``SKILL.md`` packages on disk rather than mocking a listing.
 * ``SQL_CONNECTION_ROLES_UNBOUND`` — semantics anchored on
-  ``loom.core.sql.config.roles_need_identity_binding``: a connection whose
+  ``loom.core.stores.sql.config.roles_need_identity_binding``: a connection whose
   ``allowed_roles`` is non-empty needs a verified caller identity to bind a
   subset of the allowlist. An agent whose endpoint opts into
   ``allow_anonymous`` carries no such identity, so granting it that

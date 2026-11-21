@@ -94,4 +94,4 @@ class TestEngineBuildIssueCodes:
 
         code, message = _only_issue(failure)
         assert code is AgentErrorCode.MCP_CONNECTION_NOT_OPENED
-        assert message.startswith("searcher: the runtime never opened mcp server 'orders'")
+        assert message.startswith("searcher: the host never opened mcp server 'orders'")

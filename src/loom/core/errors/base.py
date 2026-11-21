@@ -41,7 +41,7 @@ class LoomError(Exception):
         code: The catalogue member that discriminates the error.
 
     Attributes:
-        retryable: Whether running the work again could still succeed; a
+        is_retryable: Whether running the work again could still succeed; a
             subclass a retry would repeat or make worse sets it ``False``.
         http_status: A 4xx or 5xx status (an ``HTTPStatus`` or its int), or
             ``None`` to keep the code table.
@@ -52,7 +52,7 @@ class LoomError(Exception):
         raise NotFound("User", id=42)
     """
 
-    retryable: bool = True
+    is_retryable: bool = True
     http_status: int | None = None
     public_message: bool = False
 
@@ -60,6 +60,24 @@ class LoomError(Exception):
         self.message = message
         self.code: StrEnum = code
         super().__init__(message)
+
+    def __reduce__(self) -> tuple[Any, ...]:
+        """Pickle the error without calling ``__init__``, so a subclass may take any arguments.
+
+        Returns:
+            The class and arguments to rebuild the error and the state to restore.
+        """
+        return (type(self).__new__, (type(self), *self.args), self.__getstate__())
+
+    def __setstate__(self, state: Any) -> None:
+        """Restore the attributes :meth:`__reduce__` saved, those in ``__dict__`` and in slots.
+
+        Args:
+            state: The attribute mapping, or that mapping and the slot mapping.
+        """
+        attributes, slots = state if isinstance(state, tuple) else (state, {})
+        for name, value in {**attributes, **slots}.items():
+            setattr(self, name, value)
 
     def public_detail(self) -> Mapping[str, Any]:
         """Return fields an HTTP error detail may add. Empty unless overridden."""
@@ -75,7 +93,7 @@ class DomainError(LoomError):
     one: a job raising it is consumed, not requeued.
     """
 
-    retryable: bool = False
+    is_retryable: bool = False
 
 
 class SystemError(LoomError):

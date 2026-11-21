@@ -13,7 +13,7 @@ from typing import Any
 import pytest
 
 from loom.core.engine.compiler import UseCaseCompiler
-from loom.core.engine.executor import RuntimeExecutor
+from loom.core.engine.executor import UseCaseExecutor
 from loom.core.errors import Unauthenticated
 from loom.core.execution import execution_identity
 from loom.core.identity import ANONYMOUS, Identity
@@ -111,7 +111,7 @@ class TestAgentMarker:
         calls: list[tuple[str, Identity]] = []
         compiler = UseCaseCompiler()
         compiler.compile(TriageUseCase)
-        executor = RuntimeExecutor(compiler)
+        executor = UseCaseExecutor(compiler)
         executor.bind_agent_resolver(_resolver(calls))
 
         subject, agent_name = await executor.execute(TriageUseCase(), identity=_ALICE)
@@ -129,7 +129,7 @@ class TestAgentMarker:
         calls: list[tuple[str, Identity]] = []
         compiler = UseCaseCompiler()
         compiler.compile(TriageUseCase)
-        executor = RuntimeExecutor(compiler)
+        executor = UseCaseExecutor(compiler)
         executor.bind_agent_resolver(_resolver(calls))
 
         subject, _ = await executor.execute(TriageUseCase(), identity=ANONYMOUS)
@@ -141,7 +141,7 @@ class TestAgentMarker:
         """Fail-closed, exactly like ``Caller()``: no identity is a transport bug."""
         compiler = UseCaseCompiler()
         compiler.compile(TriageUseCase)
-        executor = RuntimeExecutor(compiler)
+        executor = UseCaseExecutor(compiler)
         executor.bind_agent_resolver(_resolver([]))
         use_case = TriageUseCase()
 
@@ -152,14 +152,14 @@ class TestAgentMarker:
         """A use case declaring Agent() before the AI runtime is wired fails loudly."""
         compiler = UseCaseCompiler()
         compiler.compile(TriageUseCase)
-        executor = RuntimeExecutor(compiler)
+        executor = UseCaseExecutor(compiler)
         use_case = TriageUseCase()
 
         with pytest.raises(RuntimeError, match="no 'agent' resolver is bound"):
             await executor.execute(use_case, identity=_ALICE)
 
     async def test_binding_a_resolver_twice_is_refused(self) -> None:
-        executor = RuntimeExecutor(UseCaseCompiler())
+        executor = UseCaseExecutor(UseCaseCompiler())
         executor.bind_agent_resolver(_resolver([]))
         second_resolver = _resolver([])
 
@@ -170,7 +170,7 @@ class TestAgentMarker:
         calls: list[tuple[str, Identity]] = []
         compiler = UseCaseCompiler()
         compiler.compile(NoAgentUseCase)
-        executor = RuntimeExecutor(compiler)
+        executor = UseCaseExecutor(compiler)
         executor.bind_agent_resolver(_resolver(calls))
 
         result = await executor.execute(NoAgentUseCase(), identity=_ALICE)

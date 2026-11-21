@@ -21,6 +21,7 @@ Swagger UI is available at `http://localhost:8000/docs`.
 ```python
 from loom.core.model import ColumnField, TimestampedModel
 
+
 class User(TimestampedModel):
     __tablename__ = "users"
 
@@ -35,6 +36,7 @@ class User(TimestampedModel):
 
 ```python
 from loom.core.model import BaseModel, ColumnField, OnDelete
+
 
 class Address(BaseModel):
     __tablename__ = "addresses"
@@ -74,12 +76,14 @@ Commands are immutable `msgspec.Struct` instances that carry request data.
 ```python
 from loom.core.command import Command, Patch
 
+
 class CreateUserAddress(Command, frozen=True):
     label: str
     street: str
     city: str
     country: str
     zip_code: str
+
 
 class UpdateAddress(Command, frozen=True):
     label: Patch[str] = None
@@ -102,12 +106,15 @@ class UpdateAddress(Command, frozen=True):
 from loom.core.use_case import Exists, Input, OnMissing
 from loom.core.use_case.use_case import UseCase
 
+
 class CreateAddressUseCase(UseCase[Address, Address]):
     async def execute(
         self,
         user_id: int,
         cmd: CreateUserAddress = Input(),
-        _user_exists: bool = Exists(User, from_param="user_id", against="id", on_missing=OnMissing.RAISE),
+        _user_exists: bool = Exists(
+            User, from_param="user_id", against="id", on_missing=OnMissing.RAISE
+        ),
     ) -> Address:
         payload = CreateAddressRecord(user_id=user_id, **cmd.__dict__)
         return await self.main_repo.create(payload)
@@ -144,9 +151,7 @@ class ListAddressesUseCase(UseCase[Address, PageResult[Address] | CursorResult[A
 class ListLowStockProductsUseCase(UseCase[Product, PageResult[Product]]):
     async def execute(self, profile: str = "default") -> PageResult[Product]:
         query = QuerySpec(
-            filters=FilterGroup(
-                filters=(FilterSpec(field="stock", op=FilterOp.LTE, value=5),)
-            ),
+            filters=FilterGroup(filters=(FilterSpec(field="stock", op=FilterOp.LTE, value=5),)),
             sort=(
                 SortSpec(field="stock", direction="ASC"),
                 SortSpec(field="id", direction="ASC"),
@@ -171,18 +176,17 @@ from typing import Protocol
 
 import msgspec
 
-from loom.core.repository import repository_for
-from loom.core.repository.abc import RepoFor
-from loom.core.repository.sqlalchemy import RepositorySQLAlchemy
+from loom.core.stores.repository import repository_for
+from loom.core.stores.repository import RepoFor
+from loom.stores.sqlalchemy import SQLAlchemyRepository
 
 
 class ProductRepo(RepoFor[Product], Protocol):
-    async def get_by_slug(self, slug: str) -> Product | None:
-        ...
+    async def get_by_slug(self, slug: str) -> Product | None: ...
 
 
 @repository_for(Product)
-class ProductRepository(RepositorySQLAlchemy[Product, int], ProductRepo):
+class ProductRepository(SQLAlchemyRepository[Product, int], ProductRepo):
     async def create(self, data: msgspec.Struct) -> Product:
         payload = msgspec.to_builtins(data)
         payload["name"] = str(payload["name"]).strip()
@@ -204,7 +208,7 @@ want the usual REST `camelCase` output.
 ```python
 from typing import Protocol
 
-from loom.core.repository import repository_for
+from loom.core.stores.repository import repository_for
 from loom.core.response import Response
 from loom.core.use_case.use_case import UseCase
 
@@ -215,8 +219,7 @@ class TaskView(Response):
 
 
 class TaskViewRepo(Protocol):
-    async def get_by_id(self, obj_id: str, profile: str = "default") -> TaskView | None:
-        ...
+    async def get_by_id(self, obj_id: str, profile: str = "default") -> TaskView | None: ...
 
 
 @repository_for(TaskView)
@@ -254,10 +257,10 @@ Conceptually, the current SQLAlchemy fallback is:
 ```python
 from dataclasses import dataclass
 
-from loom.core.repository import DefaultRepositoryBuilder, RepositoryBuildContext
-from loom.core.repository.abc import CursorCodec
-from loom.core.repository.sqlalchemy import RepositorySQLAlchemy
-from loom.core.repository.sqlalchemy.session_manager import SessionManager
+from loom.core.stores.repository import DefaultRepositoryBuilder, RepositoryBuildContext
+from loom.core.stores.repository import CursorCodec
+from loom.stores.sqlalchemy import SQLAlchemyRepository
+from loom.stores.sqlalchemy.session_manager import SessionManager
 
 
 @dataclass(frozen=True)
@@ -266,17 +269,17 @@ class SQLAlchemyDefaultRepositoryBuilder:
     cursor_codec: CursorCodec
 
     def __call__(self, context: RepositoryBuildContext) -> object:
-        return RepositorySQLAlchemy(
+        return SQLAlchemyRepository(
             session_manager=self.session_manager,
             model=context.model,
             cursor_codec=self.cursor_codec,
         )
 ```
 
-A builder that constructs a `RepositorySQLAlchemy` or a `RepositoryMongo`
+A builder that constructs a `SQLAlchemyRepository` or a `MongoRepository`
 itself passes the shared `CursorCodec`: resolve it from
 `context.container`, where the backend registers the one it built from
-`persistence.cursors`.
+`stores.settings.cursors`.
 
 An application that wants a different project-wide base repository can
 register another `DefaultRepositoryBuilder` implementation in the container.
@@ -288,7 +291,7 @@ repository while keeping `UseCase[Model, Result]` unchanged:
 ```python
 from dataclasses import dataclass
 
-from loom.core.repository import DefaultRepositoryBuilder, RepositoryBuildContext
+from loom.core.stores.repository import DefaultRepositoryBuilder, RepositoryBuildContext
 
 
 @dataclass(frozen=True)
@@ -318,7 +321,7 @@ For per-model overrides that need extra dependencies, use `builder=` on
 from dataclasses import dataclass
 
 from loom.core.di.scope import Scope
-from loom.core.repository import RepositoryBuildContext, repository_for
+from loom.core.stores.repository import RepositoryBuildContext, repository_for
 from loom.core.response import Response
 
 
@@ -328,8 +331,7 @@ class TaskSnapshot(Response):
 
 
 class TaskSnapshotRepo(Protocol):
-    async def get_by_id(self, obj_id: str, profile: str = "default") -> TaskSnapshot | None:
-        ...
+    async def get_by_id(self, obj_id: str, profile: str = "default") -> TaskSnapshot | None: ...
 
 
 @dataclass(frozen=True)
@@ -380,6 +382,7 @@ Jobs run in a Celery queue. `LoadById` fetches the entity automatically:
 from loom.core.job.job import Job
 from loom.core.use_case import Input, LoadById
 
+
 class SendRestockEmailJob(Job[bool]):
     __queue__ = "notifications"
 
@@ -416,6 +419,7 @@ class BuildProductSummaryJob(Job[str]):
 ```python
 from loom.core.job.service import JobService
 
+
 class DispatchRestockEmailUseCase(UseCase[Product, DispatchRestockEmailResponse]):
     def __init__(self, job_service: JobService) -> None:
         self._jobs = job_service
@@ -425,7 +429,7 @@ class DispatchRestockEmailUseCase(UseCase[Product, DispatchRestockEmailResponse]
         product_id: str,
         cmd: DispatchRestockEmailCommand = Input(),
     ) -> DispatchRestockEmailResponse:
-        handle = self._jobs.dispatch(
+        handle = self._jobs.dispatch_after_commit(
             SendRestockEmailJob,
             params={"product_id": int(product_id)},
             payload={
@@ -447,9 +451,11 @@ Callbacks receive the job result and a context dict. They can call back into the
 application via `ApplicationInvoker` without tight coupling:
 
 ```python
+from loom.core.job.callback import JobCallback
 from loom.core.use_case.invoker import ApplicationInvoker
 
-class RestockEmailSuccessCallback:
+
+class RestockEmailSuccessCallback(JobCallback):
     def __init__(self, app: ApplicationInvoker) -> None:
         self._app = app
 
@@ -488,7 +494,7 @@ class RestockWorkflowUseCase(UseCase[Product, RestockWorkflowResponse]):
             BuildProductSummaryUseCase,
             params={"product_id": int(product_id)},
         )
-        handle = self._jobs.dispatch(
+        handle = self._jobs.dispatch_after_commit(
             SendRestockEmailJob,
             params={"product_id": int(product_id)},
             payload={"product_id": int(product_id), "recipient_email": cmd.recipient_email},
@@ -511,6 +517,7 @@ Mix auto-CRUD with explicit custom routes in a single declaration:
 ```python
 from loom.rest.autocrud import build_auto_routes
 from loom.rest.model import PaginationMode, RestInterface, RestRoute
+
 
 class ProductRestInterface(RestInterface[Product]):
     prefix = "/products"
@@ -537,7 +544,7 @@ class ProductRestInterface(RestInterface[Product]):
             summary="Run restock workflow",
             status_code=202,
         ),
-        *build_auto_routes(Product, ()),   # GET, GET/:id, POST, PATCH/:id, DELETE/:id
+        *build_auto_routes(Product, ()),  # GET, GET/:id, POST, PATCH/:id, DELETE/:id
     )
 ```
 
@@ -548,11 +555,22 @@ class AddressRestInterface(RestInterface[Address]):
     prefix = "/users"
     tags = ("UserAddresses",)
     routes = (
-        RestRoute(use_case=CreateAddressUseCase,  method="POST",   path="/{user_id}/addresses/",            status_code=201),
-        RestRoute(use_case=ListAddressesUseCase,  method="GET",    path="/{user_id}/addresses/"),
-        RestRoute(use_case=GetAddressUseCase,     method="GET",    path="/{user_id}/addresses/{address_id}"),
-        RestRoute(use_case=UpdateAddressUseCase,  method="PATCH",  path="/{user_id}/addresses/{address_id}"),
-        RestRoute(use_case=DeleteAddressUseCase,  method="DELETE", path="/{user_id}/addresses/{address_id}"),
+        RestRoute(
+            use_case=CreateAddressUseCase,
+            method="POST",
+            path="/{user_id}/addresses/",
+            status_code=201,
+        ),
+        RestRoute(use_case=ListAddressesUseCase, method="GET", path="/{user_id}/addresses/"),
+        RestRoute(
+            use_case=GetAddressUseCase, method="GET", path="/{user_id}/addresses/{address_id}"
+        ),
+        RestRoute(
+            use_case=UpdateAddressUseCase, method="PATCH", path="/{user_id}/addresses/{address_id}"
+        ),
+        RestRoute(
+            use_case=DeleteAddressUseCase, method="DELETE", path="/{user_id}/addresses/{address_id}"
+        ),
     )
 ```
 
@@ -568,16 +586,7 @@ In `config/api.yaml`:
 app:
   name: dummy_store
   code_path: src
-  discovery:
-    mode: modules
-    modules:
-      include:
-        - app.user.model
-        - app.user.interface
-        - app.product.model
-        - app.product.jobs
-        - app.product.use_cases
-        - app.product.interface
+  packages: [app]
   rest:
     backend: fastapi
     title: Dummy Store API
@@ -600,32 +609,18 @@ observability:
       path: /metrics
 ```
 
-### Manifest mode (explicit registry)
+### Package discovery
 
-Larger projects list every component explicitly in a manifest module:
-
-```python
-# app/manifest.py
-from app.product.model import Product
-from app.product.jobs import SendRestockEmailJob, BuildProductSummaryJob
-from app.product.use_cases import DispatchRestockEmailUseCase, ListLowStockProductsUseCase
-from app.product.interface import ProductRestInterface
-
-MODELS = [Product, ...]
-USE_CASES = [DispatchRestockEmailUseCase, ListLowStockProductsUseCase, ...]
-JOBS = [SendRestockEmailJob, BuildProductSummaryJob]
-INTERFACES = [ProductRestInterface, ...]
-```
-
-In `config/api.yaml`:
+List each application package in `config/api.yaml`:
 
 ```yaml
 app:
-  discovery:
-    mode: manifest
-    manifest:
-      module: app.manifest
+  packages: [acme]
 ```
+
+The scanner imports every subpackage and discovers models, use cases, jobs,
+REST interfaces, and installers declared there. Re-exported classes are
+collected from their defining module once.
 
 ### Entry point
 
@@ -658,5 +653,5 @@ All examples above map directly to files in
 | `product/jobs.py` | `SendRestockEmailJob`, `BuildProductSummaryJob`, `SyncProductToErpJob` |
 | `product/callbacks.py` | `RestockEmailSuccessCallback` + `RestockEmailFailureCallback` |
 | `product/interface.py` | Mixed auto-CRUD + custom routes |
-| `manifest.py` | Full manifest for all models, use cases, jobs, interfaces |
+| `acme/` | Package containing models, use cases, jobs, interfaces, and installers |
 | `main.py` | `create_app()` bootstrap |

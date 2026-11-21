@@ -11,7 +11,7 @@ import pytest
 from loom.ai.config import A2AAgentConfig, AgentEndpointConfig, AiConfig, McpServerConfig
 from loom.ai.inference import InferenceTarget
 from loom.core.model.redaction import Dsn, RedactedMap, Secret
-from loom.core.sql.config import SqlConfig, SqlConnectionConfig
+from loom.core.stores.sql.config import SqlConfig, SqlConnectionConfig
 from loom.core.use_case.registry import UseCaseRegistry
 
 

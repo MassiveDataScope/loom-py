@@ -2,18 +2,18 @@
 
 from __future__ import annotations
 
-from loom.core.persistence.none import NoneBackend
-from loom.core.repository.dynamodb.backend import DynamoDBBackend
-from loom.core.repository.dynamodb.repository import RepositoryDynamoDB
-from loom.core.repository.mongo.backend import MongoBackend
-from loom.core.repository.mongo.repository import RepositoryMongo
-from loom.core.repository.sqlalchemy.backend import SQLAlchemyBackend
-from loom.core.repository.sqlalchemy.repository import RepositorySQLAlchemy
+from loom.core.stores.none import NullStorePlugin
+from loom.stores.dynamodb.plugin import DynamoDBStorePlugin
+from loom.stores.dynamodb.repository import DynamoDBRepository
+from loom.stores.mongo.plugin import MongoStorePlugin
+from loom.stores.mongo.repository import MongoRepository
+from loom.stores.sqlalchemy.plugin import SQLAlchemyStorePlugin
+from loom.stores.sqlalchemy.repository import SQLAlchemyRepository
 
 
 class TestRepositoryType:
     def test_each_backend_names_the_repository_it_serves(self) -> None:
-        assert SQLAlchemyBackend.repository_type is RepositorySQLAlchemy
-        assert DynamoDBBackend.repository_type is RepositoryDynamoDB
-        assert MongoBackend.repository_type is RepositoryMongo
-        assert NoneBackend.repository_type is None
+        assert SQLAlchemyStorePlugin.repository_type is SQLAlchemyRepository
+        assert DynamoDBStorePlugin.repository_type is DynamoDBRepository
+        assert MongoStorePlugin.repository_type is MongoRepository
+        assert NullStorePlugin.repository_type is None

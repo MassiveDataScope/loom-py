@@ -28,10 +28,16 @@ import msgspec
 from loom.core.command import Command
 from loom.core.errors import NotFound
 from loom.core.model.introspection import get_column_fields, get_id_attributes
-from loom.core.repository.abc.query import CursorResult, PageResult, QuerySpec
-from loom.core.repository.abc.repo_for import Creatable, Deletable, Listable, Readable, Updatable
-from loom.core.repository.registration import capabilities_of
-from loom.core.repository.registry import get_repository_registration
+from loom.core.stores.repository.capabilities import (
+    Creatable,
+    Deletable,
+    Listable,
+    Readable,
+    Updatable,
+)
+from loom.core.stores.repository.query import CursorResult, PageResult, QuerySpec
+from loom.core.stores.repository.registration import capabilities_of
+from loom.core.stores.repository.registry import get_repository_registration
 from loom.core.use_case.constants import KEY_SEPARATOR, CrudOp
 from loom.core.use_case.keys import get_use_case_key, set_use_case_key
 from loom.core.use_case.markers import Input
@@ -143,10 +149,10 @@ def _field_tuple(
         ``(name, type, default)``, where the default is ``msgspec.NODEFAULT`` for
         required fields and a ``msgspec.field(...)`` wrapper for default factories.
     """
-    if sf.default is msgspec.NODEFAULT or sf.default is msgspec.UNSET:
-        return (name, typ, msgspec.NODEFAULT)
     if sf.default_factory is not msgspec.NODEFAULT:
         return (name, typ, msgspec.field(default_factory=sf.default_factory))
+    if sf.default is msgspec.NODEFAULT or sf.default is msgspec.UNSET:
+        return (name, typ, msgspec.NODEFAULT)
     return (name, typ, sf.default)
 
 
@@ -439,7 +445,7 @@ def _supported_ops(model: type[Any]) -> tuple[CrudOp, ...]:
 
     Delegates to :func:`supported_crud_ops` for the class an explicit
     ``repository_for`` registration names.  Without a registration the model
-    is served by the default repository the persistence backend builds later,
+    is served by the default repository the store backend builds later,
     so every operation is mounted.  A model with a composite primary key gets
     no ``/{id}`` operation, since one path segment cannot carry its key.
 

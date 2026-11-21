@@ -2,51 +2,70 @@
 
 from __future__ import annotations
 
+from collections.abc import Callable
 from pathlib import Path
 from typing import Any
 from unittest.mock import MagicMock
 
 import pytest
 
-from loom.core.config import ConfigContext, ConfigError, SsmResolver, load_config
-from loom.core.config.aws import inherit_aws
+from loom.connections.aws import SsmResolver
+from loom.core.config import ConfigContext, ConfigError, load_config
 from loom.core.connections.aws import AwsClientConfig
-from loom.core.persistence.profile import SERVER_PROFILE
-from loom.core.repository.dynamodb.backend import DynamoDBBackend
+from loom.core.model.redaction import reveal_for_driver
+from loom.core.stores.profile import SERVER_PROFILE
 from loom.etl.runner.config_loader import _parse_sections
 from loom.prefect.notify._sns import SnsNotifier
-from tests.helpers.extras import AwsClientFactory, patched_aws_clients
+from loom.stores.dynamodb.plugin import DynamoDBStorePlugin
+from tests.helpers.aws import ACCOUNT, OTHER_REGION, REGION
+from tests.helpers.aws_island import FakeAwsIsland
 from tests.helpers.persistence import build_backend
 
 pytestmark = pytest.mark.timeout(10)
 
 _AWS = {"region": "eu-west-3", "url": "http://localhost:4566", "read_timeout": 9}
-_TOPIC = "arn:aws:sns:us-east-1:123456789012:alerts"
+_TOPIC = f"arn:aws:sns:{REGION}:{ACCOUNT}:alerts"
 
 
-def _store(config: dict[str, Any]) -> AwsClientFactory:
-    ctx = ConfigContext.from_dict(config)
-    with patched_aws_clients() as clients:
-        build_backend(DynamoDBBackend(), ctx, (), SERVER_PROFILE)
-    return clients
-
-
-def _ssm_client() -> MagicMock:
-    client = MagicMock()
+def _answer_with_a_parameter(client: MagicMock) -> None:
     client.get_parameter.return_value = {"Parameter": {"Value": "v"}}
-    return client
 
 
-def _ssm(tmp_path: Path, yaml: str, resolver: SsmResolver) -> AwsClientFactory:
+class _Built:
+    """What loom asked the AWS island for: the service, region and client options of each build."""
+
+    def __init__(self, island: FakeAwsIsland) -> None:
+        self.calls = island.regions_built
+        self.options = [reveal_for_driver(config.client_options()) for _, config in island.built]
+
+
+Store = Callable[[dict[str, Any]], _Built]
+
+
+@pytest.fixture
+def store(island: FakeAwsIsland) -> Store:
+    """Build the dynamodb store of a configuration and report what it asked the island for."""
+
+    def build(config: dict[str, Any]) -> _Built:
+        build_backend(DynamoDBStorePlugin(), ConfigContext.from_dict(config), (), SERVER_PROFILE)
+        return _Built(island)
+
+    return build
+
+
+def _ssm(
+    tmp_path: Path, yaml: str, resolver: SsmResolver, monkeypatch: pytest.MonkeyPatch
+) -> _Built:
+    island = FakeAwsIsland(setup=_answer_with_a_parameter).install(monkeypatch)
     path = tmp_path / "config.yaml"
     path.write_text(yaml + "app:\n  token: ${ssm:/app/token}\n", encoding="utf-8")
-    with patched_aws_clients(_ssm_client()) as clients:
-        ConfigContext(load_config(str(path), resolvers=[resolver])).section("app", dict)
-    return clients
+    ConfigContext(load_config(str(path), resolvers=[resolver])).section("app", dict)
+    return _Built(island)
 
 
-def _inherit(aws: object) -> dict[str, Any]:
-    return inherit_aws(aws, {"read_timeout": 3}, "storage.dynamodb", AwsClientConfig)
+def _inherit(aws: dict[str, Any] | None) -> dict[str, Any]:
+    ctx = ConfigContext.from_dict({} if aws is None else {"aws": aws})
+    return AwsClientConfig.inherit(ctx, {"read_timeout": 3}, "storage.dynamodb")
 
 
 class TestAwsSection:
@@ -58,7 +77,7 @@ class TestAwsSection:
     )
     def test_aws_refuses_credentials_and_product_keys(self, key: str) -> None:
         with pytest.raises(ConfigError, match=f"'aws' takes no key '{key}'"):
-            _inherit({"region": "eu-west-1", key: "x"})
+            _inherit({"region": OTHER_REGION, key: "x"})
 
     def test_aws_names_the_replacement_of_a_retired_key(self) -> None:
         written = {"endpoint_url": "http://localhost:4566"}
@@ -67,28 +86,26 @@ class TestAwsSection:
 
 
 class TestDynamoDbAwsInheritance:
-    def test_a_dynamodb_store_inherits_aws(self) -> None:
-        clients = _store(
-            {"aws": _AWS, "stores": {"default": {"backend": "dynamodb", "table": "t"}}}
-        )
+    def test_a_dynamodb_store_inherits_aws(self, store: Store) -> None:
+        clients = store({"aws": _AWS, "stores": {"default": {"backend": "dynamodb", "table": "t"}}})
 
         assert clients.calls == [("dynamodb", "eu-west-3")]
         assert clients.options[0]["endpoint_url"] == "http://localhost:4566"
-        assert clients.options[0]["config"].read_timeout == 9
+        assert clients.options[0]["config"]["read_timeout"] == 9
 
-    def test_a_dynamodb_store_overrides_aws_key_by_key(self) -> None:
-        store = {"backend": "dynamodb", "table": "t", "region": "eu-west-1", "read_timeout": 3}
-        clients = _store({"aws": _AWS, "stores": {"default": store}})
+    def test_a_dynamodb_store_overrides_aws_key_by_key(self, store: Store) -> None:
+        own = {"backend": "dynamodb", "table": "t", "region": OTHER_REGION, "read_timeout": 3}
+        clients = store({"aws": _AWS, "stores": {"default": own}})
 
-        assert clients.calls == [("dynamodb", "eu-west-1")]
+        assert clients.calls == [("dynamodb", OTHER_REGION)]
         assert clients.options[0]["endpoint_url"] == "http://localhost:4566"
-        assert clients.options[0]["config"].read_timeout == 3
+        assert clients.options[0]["config"]["read_timeout"] == 3
 
     def test_a_dynamodb_store_without_aws_still_needs_its_region(self) -> None:
         ctx = ConfigContext.from_dict(
             {"stores": {"default": {"backend": "dynamodb", "table": "t"}}}
         )
-        backend = DynamoDBBackend()
+        backend = DynamoDBStorePlugin()
         with pytest.raises(ConfigError, match="region is required"):
             build_backend(backend, ctx, (), SERVER_PROFILE)
 
@@ -111,64 +128,77 @@ class TestDynamoDbAwsInheritance:
 
 
 class TestResolversReadAws:
-    def test_the_ssm_resolver_reads_aws_as_written(self, tmp_path: Path) -> None:
+    def test_the_ssm_resolver_reads_aws_as_written(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
         yaml = "aws:\n  region: eu-west-3\n  url: http://localhost:4566\n"
 
-        clients = _ssm(tmp_path, yaml, SsmResolver())
+        clients = _ssm(tmp_path, yaml, SsmResolver(), monkeypatch)
 
         assert clients.calls == [("ssm", "eu-west-3")]
         assert clients.options[0]["endpoint_url"] == "http://localhost:4566"
 
-    def test_the_resolver_region_overrides_aws(self, tmp_path: Path) -> None:
-        clients = _ssm(tmp_path, "aws:\n  region: eu-west-3\n", SsmResolver("eu-west-1"))
+    def test_the_resolver_region_overrides_aws(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        clients = _ssm(
+            tmp_path, "aws:\n  region: eu-west-3\n", SsmResolver(OTHER_REGION), monkeypatch
+        )
 
-        assert clients.calls == [("ssm", "eu-west-1")]
+        assert clients.calls == [("ssm", OTHER_REGION)]
 
-    def test_without_aws_the_resolver_lets_boto3_pick_the_region(self, tmp_path: Path) -> None:
-        clients = _ssm(tmp_path, "", SsmResolver())
+    def test_without_aws_the_resolver_lets_boto3_pick_the_region(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        clients = _ssm(tmp_path, "", SsmResolver(), monkeypatch)
 
         assert clients.calls == [("ssm", None)]
         assert "endpoint_url" not in clients.options[0]
 
     @pytest.mark.parametrize("key", ["region", "read_timeout"])
-    def test_the_resolver_refuses_a_placeholder_in_aws(self, tmp_path: Path, key: str) -> None:
+    def test_the_resolver_refuses_a_placeholder_in_aws(
+        self, tmp_path: Path, key: str, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
         yaml = f"aws:\n  {key}: ${{oc.env:AWS_X}}\n"
         resolver = SsmResolver()
         with pytest.raises(ConfigError, match=rf"aws\.{key} is a placeholder"):
-            _ssm(tmp_path, yaml, resolver)
+            _ssm(tmp_path, yaml, resolver, monkeypatch)
 
-    def test_the_resolver_fetches_a_key_once_per_configuration(self, tmp_path: Path) -> None:
+    def test_the_resolver_fetches_a_key_once_per_configuration(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        island = FakeAwsIsland(setup=_answer_with_a_parameter).install(monkeypatch)
         path = tmp_path / "config.yaml"
         path.write_text("a: ${ssm:/k}\nb: ${ssm:/k}\n", encoding="utf-8")
-        client = _ssm_client()
         ctx = ConfigContext(load_config(str(path), resolvers=[SsmResolver()]))
-        with patched_aws_clients(client):
-            ctx.section("a", str)
-            ctx.section("b", str)
+        ctx.section("a", str)
+        ctx.section("b", str)
 
-        client.get_parameter.assert_called_once()
+        island.created[0].get_parameter.assert_called_once()
 
-    def test_the_sns_topic_region_overrides_aws(self) -> None:
-        with patched_aws_clients() as clients:
-            SnsNotifier(topic_arn=_TOPIC, aws=_AWS)
+    def test_the_sns_topic_region_overrides_aws(self, island: FakeAwsIsland) -> None:
+        SnsNotifier(topic_arn=_TOPIC, aws=_AWS)
+        clients = _Built(island)
 
-        assert clients.calls == [("sns", "us-east-1")]
+        assert clients.calls == [("sns", REGION)]
         assert clients.options[0]["endpoint_url"] == "http://localhost:4566"
 
-    def test_one_resolver_builds_a_client_per_configuration(self, tmp_path: Path) -> None:
+    def test_one_resolver_builds_a_client_per_configuration(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
         resolver = SsmResolver()
         first = tmp_path / "first.yaml"
         second = tmp_path / "second.yaml"
-        first.write_text("aws:\n  region: eu-west-1\na: ${ssm:/k}\n", encoding="utf-8")
+        first.write_text(f"aws:\n  region: {OTHER_REGION}\na: ${{ssm:/k}}\n", encoding="utf-8")
         second.write_text(
-            "aws:\n  region: us-east-1\n  url: http://localhost:4566\na: ${ssm:/k}\n",
+            f"aws:\n  region: {REGION}\n  url: http://localhost:4566\na: ${{ssm:/k}}\n",
             encoding="utf-8",
         )
-        client = _ssm_client()
-        with patched_aws_clients(client) as clients:
-            for path in (first, second):
-                ConfigContext(load_config(str(path), resolvers=[resolver])).section("a", str)
+        island = FakeAwsIsland(setup=_answer_with_a_parameter).install(monkeypatch)
+        for path in (first, second):
+            ConfigContext(load_config(str(path), resolvers=[resolver])).section("a", str)
+        clients = _Built(island)
 
-        assert clients.calls == [("ssm", "eu-west-1"), ("ssm", "us-east-1")]
+        assert clients.calls == [("ssm", OTHER_REGION), ("ssm", REGION)]
         assert "endpoint_url" not in clients.options[0]
         assert clients.options[1]["endpoint_url"] == "http://localhost:4566"

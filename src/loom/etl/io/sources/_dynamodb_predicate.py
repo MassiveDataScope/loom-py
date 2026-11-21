@@ -115,7 +115,7 @@ class _ExpressionBuilder:
         if _ddb_types is None:
             raise RuntimeError(
                 "predicate_to_dynamo requires boto3. "
-                "Install it with: pip install 'loom-kernel[dynamodb]'"
+                "Install it with: pip install 'loom-kernel[aws]'"
             )
         self.names: dict[str, str] = {}
         self.values: dict[str, dict[str, Any]] = {}

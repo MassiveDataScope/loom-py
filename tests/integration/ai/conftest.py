@@ -2,7 +2,7 @@
 
 Nothing here touches the network, a credential or a token: every live client
 is a local stub and every engine replays a fixed script.  The module
-deliberately imports no symbol from ``loom.ai.runtime`` or
+deliberately imports no symbol from ``loom.ai.execution`` or
 ``loom.ai.fastapi``: a ``conftest`` import error aborts the whole session,
 while the red state of the phase must come from each test module's own
 import.
@@ -54,15 +54,15 @@ from loom.core.command import Command
 from loom.core.di import LoomContainer
 from loom.core.engine.compilable import Compilable
 from loom.core.engine.compiler import UseCaseCompiler
-from loom.core.engine.executor import RuntimeExecutor
+from loom.core.engine.executor import UseCaseExecutor
 from loom.core.identity import Identity
 from loom.core.model import loom_type, msgspec_type
 from loom.core.model.redaction import Dsn
 from loom.core.observability.event import LifecycleEvent
-from loom.core.persistence.stores import DEFAULT_STORE
-from loom.core.repository.registration import classify_key
-from loom.core.sql.config import SqlConfig, SqlConnectionConfig
-from loom.core.uow.coordinator import OrderedCommits
+from loom.core.stores.catalog import DEFAULT_STORE
+from loom.core.stores.repository.registration import classify_key
+from loom.core.stores.sql.config import SqlConfig, SqlConnectionConfig
+from loom.core.stores.uow.coordinator import OrderedCommits
 from loom.core.use_case import Agent, Caller, Input, UseCase
 from loom.core.use_case.factory import UseCaseFactory, main_repository
 from loom.core.use_case.invoker import AppInvoker, ApplicationInvoker
@@ -200,7 +200,7 @@ class StubMcpClient:
 
     Args:
         label: Name recorded in ``log`` on open and on close.
-        session: Session handed to the runtime once connected.
+        session: Session handed to the host once connected.
         log: Shared lifecycle log receiving ``open:<label>``/``close:<label>``.
         connect_delay_ms: Delay before the connection is considered open.
         never_connects: When true the connection never completes, standing in
@@ -256,7 +256,7 @@ def mcp_client_factory(
         clients: Stub client per ``CompiledMcpCapability.server``.
 
     Returns:
-        The factory the runtime calls once per MCP capability.
+        The factory the host calls once per MCP capability.
     """
 
     def _factory(capability: CompiledMcpCapability) -> StubMcpClient:
@@ -303,7 +303,7 @@ class FakeUow:
         log: Shared sequence receiving ``begin``/``commit``/``rollback``.
     """
 
-    transactional: ClassVar[bool] = True
+    is_transactional: ClassVar[bool] = True
 
     def __init__(self, log: list[str]) -> None:
         self._log = log
@@ -358,7 +358,7 @@ class RecordingDepsFactory:
     """Deps factory running real use cases through a real executor, no database.
 
     Built the way the composition root builds it: the use cases are compiled
-    by a :class:`UseCaseCompiler`, executed by a :class:`RuntimeExecutor` over
+    by a :class:`UseCaseCompiler`, executed by a :class:`UseCaseExecutor` over
     a recording unit of work, resolved through a :class:`UseCaseRegistry`, and
     each bundle is the composition root's :class:`AgentDepsFactory` bundle.
 
@@ -377,7 +377,7 @@ class RecordingDepsFactory:
         for use_case in self.use_cases:
             compiler.compile(use_case)
         self._registry = UseCaseRegistry.build(list(self.use_cases))
-        self._executor = RuntimeExecutor(
+        self._executor = UseCaseExecutor(
             compiler, coordinator=OrderedCommits({DEFAULT_STORE: self.uow})
         )
 
@@ -538,7 +538,7 @@ def make_sql_capability(
 
 
 def make_sql_config(connection: str = "reporting", *, readonly: bool = True) -> SqlConfig:
-    """Build the live SQL configuration the runtime re-verifies against."""
+    """Build the live SQL configuration the host re-verifies against."""
     return SqlConfig(connections={connection: make_sql_connection(readonly=readonly)})
 
 
@@ -634,7 +634,7 @@ class ScriptedToolModel:
     def as_model(self) -> Model:
         """Return the ``FunctionModel`` the engine will drive.
 
-        Both modes are scripted: the runtime always drives the engine through
+        Both modes are scripted: the host always drives the engine through
         ``run_stream``, so a response-only ``FunctionModel`` would fail the run
         before the MCP toolset was ever consulted.
         """
@@ -700,7 +700,7 @@ async def _until(predicate: Callable[[], bool], *, timeout: float = 2.0) -> None
         if predicate():
             return
         await asyncio.sleep(0.005)
-    raise AssertionError("the runtime never reached the expected state")
+    raise AssertionError("the host never reached the expected state")
 
 
 # ---------------------------------------------------------------------------
@@ -845,12 +845,12 @@ def conversation_deps(container: LoomContainer) -> RecordingDepsFactory:
 # ---------------------------------------------------------------------------
 # Agent() marker doubles (spec 014, PR2)
 #
-# 'AgentRuntime' and the marker resolver it feeds
-# ('loom.ai.runtime._handle.agent_marker_resolver') are deliberately absent
+# 'AgentHost' and the marker resolver it feeds
+# ('loom.ai.execution._handle.agent_marker_resolver') are deliberately absent
 # from this module, for the reason the module docstring states: importing
-# 'loom.ai.runtime' here would abort collection of every test in this
+# 'loom.ai.execution' here would abort collection of every test in this
 # package on one bad import, hiding which module actually regressed. Each
-# marker test module builds its own 'AgentRuntime' and resolver, over the
+# marker test module builds its own 'AgentHost' and resolver, over the
 # plan and use-case doubles this section provides.
 # ---------------------------------------------------------------------------
 
@@ -864,7 +864,7 @@ class RecordingScriptedEngine(ScriptedEngine):
     out of the caller-facing parameters. Recording it here, at the one seam
     between the handle and the "model", is what lets a test assert on it.
     ``states`` is the corresponding record for T303's own channel: what the
-    runtime resolved *this* run's ``state`` to, after FR-010's check and
+    host resolved *this* run's ``state`` to, after FR-010's check and
     FR-009's defaults.
     """
 
@@ -994,7 +994,7 @@ class InnerMarkerUseCase(UseCase[object, dict[str, object]]):
 
 def marker_use_case_executor(
     *use_cases: type[Compilable],
-) -> tuple[UseCaseCompiler, RuntimeExecutor]:
+) -> tuple[UseCaseCompiler, UseCaseExecutor]:
     """Compile *use_cases* and build the real executor a marker test drives.
 
     Args:
@@ -1004,12 +1004,12 @@ def marker_use_case_executor(
     Returns:
         The compiler (for plan inspection) and the executor, not yet bound
         to any agent resolver — the test module binds one once its own
-        ``AgentRuntime`` exists.
+        ``AgentHost`` exists.
     """
     compiler = UseCaseCompiler()
     for use_case in use_cases:
         compiler.compile(use_case)
-    return compiler, RuntimeExecutor(compiler)
+    return compiler, UseCaseExecutor(compiler)
 
 
 # The AI test modules import the shared fakes from this conftest.

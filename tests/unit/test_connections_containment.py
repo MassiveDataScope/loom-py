@@ -26,6 +26,32 @@ _SRC = Path(__file__).resolve().parents[2] / "src"
 
 _SDKS = ("boto3", "botocore", "clickhouse_connect", "pymongo")
 
+_CORE_DRIVERS = ("sqlalchemy", *_SDKS, "motor")
+
+_CORE_CLIENT_ISLANDS = frozenset(
+    {
+        "loom.connections.aws.client",
+        "loom.connections.mongo.client",
+        "loom.connections.clickhouse.client",
+    }
+)
+
+_CORE_WEIGHT_SCRIPT = """
+import importlib
+import json
+import sys
+
+drivers = tuple(sys.argv[1].split(","))
+first_loaded = {}
+for name in sys.argv[2:]:
+    importlib.import_module(name)
+    for loaded in sys.modules:
+        root = loaded.split(".")[0]
+        if root in drivers:
+            first_loaded.setdefault(root, name)
+print(json.dumps(first_loaded))
+"""
+
 _SCRIPT = """
 import json
 import sys
@@ -33,13 +59,13 @@ import sys
 import loom.core.connections
 import loom.core.connections.aws
 import loom.core.connections.aws.config
-import loom.core.connections.aws.loader
+import loom.connections.aws.loader
 import loom.core.connections.clickhouse
 import loom.core.connections.clickhouse.config
-import loom.core.connections.clickhouse.loader
+import loom.connections.clickhouse.loader
 import loom.core.connections.mongo
 import loom.core.connections.mongo.config
-import loom.core.connections.mongo.loader
+import loom.connections.mongo.loader
 
 sdks = {sdks!r}
 print(json.dumps(sorted(
@@ -54,35 +80,80 @@ print(json.dumps(sorted(
 _ISLANDS: dict[str, frozenset[str]] = {
     "boto3": frozenset(
         {
-            "core/connections/aws/client.py",
-            "core/repository/dynamodb/repository.py",  # item serializers, conditions
+            "connections/aws/client.py",
+            "stores/dynamodb/repository.py",  # item serializers, conditions
             "etl/io/sources/_dynamodb_items.py",  # item deserializers
             "etl/io/sources/_dynamodb_predicate.py",  # condition builders
         }
     ),
     "botocore": frozenset(
         {
-            "core/connections/aws/client.py",
-            "core/repository/dynamodb/repository.py",  # error types
+            "connections/aws/client.py",
+            "stores/dynamodb/repository.py",  # error types
             "prefect/notify/_sns.py",  # error types
+            "testing/_moto.py",  # the response of a request nobody answered
         }
     ),
     "clickhouse_connect": frozenset(
         {
-            "core/connections/clickhouse/client.py",
-            "core/sql/clickhouse/_client.py",  # error types, multi-role transport
+            "connections/clickhouse/client.py",
+            "stores/clickhouse/_client.py",  # error types, multi-role transport
         }
     ),
     "pymongo": frozenset(
         {
-            "core/connections/mongo/client.py",
-            "core/repository/mongo/backend.py",  # client type of the backend
-            "core/repository/mongo/repository.py",  # results, errors
-            "core/repository/mongo/uow.py",  # sessions
+            "connections/mongo/client.py",
+            "stores/mongo/plugin.py",  # client type of the backend
+            "stores/mongo/repository.py",  # results, errors
+            "stores/mongo/uow.py",  # sessions
             "streaming/mongo/_bytewax_source.py",  # change-stream errors
         }
     ),
 }
+
+
+def _core_module_names() -> list[str]:
+    core = _SRC / "loom" / "core"
+    names = []
+    for path in sorted(core.rglob("*.py")):
+        parts = list(path.relative_to(_SRC).with_suffix("").parts)
+        if parts[-1] == "__init__":
+            parts.pop()
+        names.append(".".join(parts))
+    return names
+
+
+class TestCoreImportWeight:
+    def test_importing_every_core_module_loads_no_driver(self) -> None:
+        """Each driver maps to the first ``loom.core`` module that loaded it."""
+        result = subprocess.run(
+            [
+                sys.executable,
+                "-I",
+                "-c",
+                _CORE_WEIGHT_SCRIPT,
+                ",".join(_CORE_DRIVERS),
+                *_core_module_names(),
+            ],
+            capture_output=True,
+            text=True,
+            check=False,
+        )
+
+        assert result.returncode == 0, result.stderr
+        assert json.loads(result.stdout.splitlines()[-1]) == {}
+
+
+class TestCoreImportsNoDriver:
+    def test_no_core_module_imports_a_driver(self) -> None:
+        """A driver is an adapter's: nothing under ``loom.core`` imports one, even lazily."""
+        offenders = [
+            f"{path.relative_to(_SRC).as_posix()} imports {driver}"
+            for path in sorted((_SRC / "loom" / "core").rglob("*.py"))
+            for driver in sorted(imported_roots(parsed(path)) & set(_CORE_DRIVERS))
+        ]
+
+        assert offenders == []
 
 
 class TestConnectionsContainment:
@@ -131,7 +202,7 @@ class TestConnectionsContainment:
             "import json, sys\n"
             "import loom.core.config\n"
             "print(json.dumps(sorted(m for m in sys.modules if m.startswith("
-            "('loom.core.persistence', 'loom.core.uow', 'loom.core.di')))))\n"
+            "('loom.core.stores', 'loom.core.stores.uow', 'loom.core.di')))))\n"
         )
         result = subprocess.run(
             [sys.executable, "-s", "-c", script],

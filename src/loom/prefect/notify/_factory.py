@@ -5,6 +5,7 @@ from __future__ import annotations
 from collections.abc import Callable, Iterable, Mapping
 from typing import Any
 
+from loom.connections.aws import AwsClients
 from loom.core.model.redaction import Dsn
 from loom.prefect.notify._port import Notifier
 from loom.prefect.notify._slack import SlackNotifier
@@ -23,7 +24,9 @@ def _build_slack(cfg: dict[str, Any]) -> Notifier | None:
     )
 
 
-def _build_sns(cfg: dict[str, Any], aws: Mapping[str, Any] | None = None) -> Notifier | None:
+def _build_sns(
+    cfg: dict[str, Any], aws: Mapping[str, Any] | None = None, clients: AwsClients | None = None
+) -> Notifier | None:
     topic_arn = (cfg.get("topic_arn") or "").strip()
     if not topic_arn:
         return None
@@ -32,6 +35,7 @@ def _build_sns(cfg: dict[str, Any], aws: Mapping[str, Any] | None = None) -> Not
         on_failure=bool(cfg.get("on_failure", True)),
         on_completion=bool(cfg.get("on_completion", False)),
         aws=aws,
+        clients=clients,
     )
 
 
@@ -42,7 +46,10 @@ _BUILDERS: dict[str, Callable[[dict[str, Any]], Notifier | None]] = {
 
 
 def build_notifiers(
-    block: Iterable[dict[str, Any]] | None, *, aws: Mapping[str, Any] | None = None
+    block: Iterable[dict[str, Any]] | None,
+    *,
+    aws: Mapping[str, Any] | None = None,
+    clients: AwsClients | None = None,
 ) -> tuple[Notifier, ...]:
     """Parse the YAML ``notifications:`` list into Notifier instances.
 
@@ -50,6 +57,8 @@ def build_notifiers(
         block: List of dicts from the YAML. ``None`` or empty returns ``()``.
         aws: The ``aws:`` section of the YAML, which the built-in ``sns``
             notifier's client inherits.
+        clients: The AWS clients every ``sns`` notifier takes its client from;
+            one set is shared by the notifiers of the block when none is given.
 
     Returns:
         Tuple of constructed notifiers.
@@ -60,6 +69,7 @@ def build_notifiers(
     """
     if not block:
         return ()
+    clients = clients or AwsClients()
     out: list[Notifier] = []
     for entry in block:
         kind = entry.get("kind")
@@ -70,7 +80,7 @@ def build_notifiers(
             raise ValueError(
                 f"notifications: unknown notifier kind {kind!r}. Available: {sorted(_BUILDERS)}"
             )
-        instance = _build_sns(entry, aws) if builder is _build_sns else builder(entry)
+        instance = _build_sns(entry, aws, clients) if builder is _build_sns else builder(entry)
         if instance is not None:
             out.append(instance)
     return tuple(out)

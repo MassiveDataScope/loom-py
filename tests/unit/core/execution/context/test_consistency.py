@@ -1,7 +1,7 @@
 """Every execution acts as its effective identity, restored after each child (plan 6, T09a).
 
 A seeded generator plays a few hundred random trees of executions, each run
-by a real :class:`~loom.core.engine.executor.RuntimeExecutor` (no stores), so
+by a real :class:`~loom.core.engine.executor.UseCaseExecutor` (no stores), so
 the property holds for the lifecycle loom ships, not for a copy of it. Trees
 mix nesting, ``gather`` across tasks, raising bodies and cancelled bodies, with
 explicit identities and none. At every step the test checks:
@@ -32,7 +32,7 @@ from dataclasses import dataclass, field
 from typing import Any
 
 from loom.core.engine.compiler import UseCaseCompiler
-from loom.core.engine.executor import RuntimeExecutor
+from loom.core.engine.executor import UseCaseExecutor
 from loom.core.execution import current_execution
 from loom.core.identity import (
     ANONYMOUS,
@@ -89,7 +89,7 @@ class _Body(UseCase[Any, None]):
         await self._body()
 
 
-_EXECUTOR = RuntimeExecutor(UseCaseCompiler())
+_EXECUTOR = UseCaseExecutor(UseCaseCompiler())
 
 
 async def _execute(run: _Run) -> None:

@@ -19,14 +19,15 @@ from __future__ import annotations
 import logging
 from collections.abc import Mapping
 from datetime import timedelta
-from typing import Any
+from typing import Any, Protocol, cast
 
 import bytewax.testing as bytewax_testing
+from bytewax.dataflow import Dataflow
 from bytewax.outputs import Sink
 
 from loom.core.config import ConfigContext
 from loom.core.observability.event import Scope
-from loom.core.observability.runtime import ObservabilityRuntime
+from loom.core.observability.observability import Observability
 from loom.core.tracing import generate_trace_id
 from loom.streaming import Message, MessageMeta
 from loom.streaming.bytewax.runner import _prepare_run
@@ -36,6 +37,17 @@ from loom.streaming.core._errors import ErrorKind
 from loom.streaming.graph._flow import StreamFlow
 
 logger = logging.getLogger(__name__)
+
+
+class _RunMain(Protocol):
+    """``bytewax.testing.run_main``; its stub leaves the parameters untyped."""
+
+    def __call__(
+        self,
+        flow: Dataflow,
+        *,
+        epoch_interval: timedelta | None = ...,
+    ) -> None: ...
 
 
 class StreamingTestRunner:
@@ -54,10 +66,10 @@ class StreamingTestRunner:
     def __init__(
         self,
         plan: CompiledPlan,
-        observability_runtime: ObservabilityRuntime | None = None,
+        observability: Observability | None = None,
     ) -> None:
         self._plan = plan
-        self._observability_runtime = observability_runtime or ObservabilityRuntime.noop()
+        self._observability = observability or Observability.noop()
         self._input: list[Any] = []
         self._output: list[Any] = []
         self._errors: dict[ErrorKind, list[Any]] = {}
@@ -68,11 +80,11 @@ class StreamingTestRunner:
         flow: StreamFlow[Any, Any],
         *,
         config: ConfigContext | Mapping[str, Any],
-        observability_runtime: ObservabilityRuntime | None = None,
+        observability: Observability | None = None,
     ) -> StreamingTestRunner:
         """Compile a flow and build a test runner from resolved config."""
         plan = compile_flow(flow, config=_ensure_config_context(config))
-        return cls(plan, observability_runtime=observability_runtime)
+        return cls(plan, observability=observability)
 
     @classmethod
     def from_yaml(
@@ -80,13 +92,13 @@ class StreamingTestRunner:
         flow: StreamFlow[Any, Any],
         path: str,
         *,
-        observability_runtime: ObservabilityRuntime | None = None,
+        observability: Observability | None = None,
     ) -> StreamingTestRunner:
         """Load YAML config, compile the flow, and build a test runner."""
         return cls.from_flow(
             flow,
             config=ConfigContext.from_yaml(path),
-            observability_runtime=observability_runtime,
+            observability=observability,
         )
 
     @classmethod
@@ -95,13 +107,13 @@ class StreamingTestRunner:
         flow: StreamFlow[Any, Any],
         config: dict[str, Any],
         *,
-        observability_runtime: ObservabilityRuntime | None = None,
+        observability: Observability | None = None,
     ) -> StreamingTestRunner:
         """Build a test runner from a plain Python config mapping."""
         return cls.from_flow(
             flow,
             config=ConfigContext.from_dict(config),
-            observability_runtime=observability_runtime,
+            observability=observability,
         )
 
     def with_payloads(self, items: list[Any]) -> StreamingTestRunner:
@@ -155,7 +167,7 @@ class StreamingTestRunner:
         }
         prepared = _prepare_run(
             plan=self._plan,
-            observability_runtime=self._observability_runtime,
+            observability=self._observability,
             source=bytewax_testing.TestingSource(list(self._input)),
             sink=(
                 bytewax_testing.TestingSink(self._output)
@@ -166,16 +178,16 @@ class StreamingTestRunner:
             error_sinks=error_sinks,
         )
         try:
-            with self._observability_runtime.span(
+            with self._observability.span(
                 Scope.POLL_CYCLE,
                 self._plan.name,
                 id=generate_trace_id(),
                 node_count=len(self._plan.nodes),
             ):
-                bytewax_testing.run_main(
+                cast(_RunMain, bytewax_testing.run_main)(
                     prepared.dataflow,
                     epoch_interval=timedelta(milliseconds=1),
-                )  # type: ignore[no-untyped-call]
+                )
         finally:
             logger.debug("shutting_down_test_runner")
             prepared.shutdown()

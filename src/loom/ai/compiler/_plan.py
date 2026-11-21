@@ -34,9 +34,9 @@ from loom.core.engine.compilable import Compilable
 from loom.core.identity import Identity
 from loom.core.model import LoomFrozenStruct, LoomType
 from loom.core.model.redaction import Secret
-from loom.core.sql.abc import RoleNotAllowedError, RolesNotBoundError
-from loom.core.sql.config import SqlConnectionConfig
-from loom.core.sql.roles import resolve_query_roles
+from loom.core.stores.sql.abc import RoleNotAllowedError, RolesNotBoundError
+from loom.core.stores.sql.config import SqlConnectionConfig
+from loom.core.stores.sql.roles import resolve_query_roles
 
 
 class CompiledOutput(LoomFrozenStruct, frozen=True, kw_only=True):
@@ -400,7 +400,7 @@ class CompiledOutputHook(CompiledUseCaseCall, frozen=True, kw_only=True):
 
     The compiler proves that every required, user-supplied name of the use
     case's Input is one of :data:`HOOK_OUTPUT_FIELD` or
-    :data:`HOOK_CONTEXT_FIELDS`, so the runtime never discovers a missing
+    :data:`HOOK_CONTEXT_FIELDS`, so the host never discovers a missing
     field at the end of a run.
     """
 

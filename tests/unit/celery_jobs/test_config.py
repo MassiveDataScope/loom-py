@@ -2,8 +2,6 @@
 
 from __future__ import annotations
 
-from unittest.mock import MagicMock, patch
-
 import msgspec
 import pytest
 
@@ -13,7 +11,7 @@ from loom.celery.config import (
     create_celery_app,
 )
 from loom.core.config.convert import convert_config
-from loom.core.job.config import JobConfig
+from loom.core.job.config import JobConfig, RetryConfig
 from loom.core.model.redaction import Dsn
 
 # ---------------------------------------------------------------------------
@@ -87,24 +85,24 @@ class TestCeleryRuntimeConfig:
 
 
 class TestJobConfig:
-    def test_all_fields_default_to_none(self) -> None:
+    def test_all_fields_default_to_unset(self) -> None:
         cfg = JobConfig()
         assert cfg.queue is None
-        assert cfg.retries is None
+        assert cfg.retry == RetryConfig()
         assert cfg.countdown is None
         assert cfg.timeout is None
         assert cfg.priority is None
 
     def test_partial_config(self) -> None:
-        cfg = JobConfig(queue="heavy", retries=5)
+        cfg = JobConfig(queue="heavy", retry=RetryConfig(max_attempts=5))
         assert cfg.queue == "heavy"
-        assert cfg.retries == 5
+        assert cfg.retry.max_attempts == 5
         assert cfg.timeout is None
 
     def test_msgspec_convert_partial(self) -> None:
         cfg = msgspec.convert({"queue": "prices"}, JobConfig, strict=False)
         assert cfg.queue == "prices"
-        assert cfg.retries is None
+        assert cfg.retry == RetryConfig()
 
 
 # ---------------------------------------------------------------------------
@@ -113,26 +111,19 @@ class TestJobConfig:
 
 
 class TestCreateCeleryApp:
-    def test_sets_broker_url(self) -> None:
+    def test_the_application_takes_the_broker_and_the_result_backend(self) -> None:
         cfg = CeleryConfig(
             broker_url=Dsn("redis://b:6379/0"), result_backend=Dsn("redis://r:6379/1")
         )
-        mock_celery_cls = MagicMock()
-        mock_app = MagicMock()
-        mock_celery_cls.return_value = mock_app
 
-        with patch("loom.celery.config.Celery", mock_celery_cls):
-            result = create_celery_app(cfg)
+        app = create_celery_app(cfg)
 
-        mock_app.conf.update.assert_called_once()
-        call_kwargs = mock_app.conf.update.call_args.kwargs
-        assert isinstance(call_kwargs["broker_url"], str)
-        assert isinstance(call_kwargs["result_backend"], str)
-        assert call_kwargs["broker_url"] == "redis://b:6379/0"
-        assert call_kwargs["result_backend"] == "redis://r:6379/1"
-        assert result is mock_app
+        assert (app.conf.broker_url, app.conf.result_backend) == (
+            "redis://b:6379/0",
+            "redis://r:6379/1",
+        )
 
-    def test_forwards_all_config_fields(self) -> None:
+    def test_the_application_takes_every_other_field_of_the_config(self) -> None:
         cfg = CeleryConfig(
             broker_url=Dsn("redis://b/0"),
             result_backend=Dsn("redis://r/1"),
@@ -140,46 +131,40 @@ class TestCreateCeleryApp:
             task_always_eager=True,
             timezone="Europe/Madrid",
         )
-        mock_celery_cls = MagicMock()
-        mock_app = MagicMock()
-        mock_celery_cls.return_value = mock_app
 
-        with patch("loom.celery.config.Celery", mock_celery_cls):
-            create_celery_app(cfg)
+        app = create_celery_app(cfg)
 
-        kwargs = mock_app.conf.update.call_args.kwargs
-        assert kwargs["worker_concurrency"] == 8
-        assert kwargs["task_always_eager"] is True
-        assert kwargs["timezone"] == "Europe/Madrid"
+        assert (app.conf.worker_concurrency, app.conf.task_always_eager, app.conf.timezone) == (
+            8,
+            True,
+            "Europe/Madrid",
+        )
 
-    def test_queues_empty_does_not_set_task_queues(self) -> None:
+    def test_without_queues_celery_creates_them_on_demand(self) -> None:
         cfg = CeleryConfig(broker_url=Dsn("redis://b/0"), result_backend=Dsn("redis://r/1"))
-        mock_celery_cls = MagicMock()
-        mock_app = MagicMock()
-        mock_celery_cls.return_value = mock_app
 
-        with patch("loom.celery.config.Celery", mock_celery_cls):
-            create_celery_app(cfg)
+        app = create_celery_app(cfg)
 
-        # task_queues must not be set when queues list is empty
-        assert not hasattr(mock_app.conf, "task_queues") or mock_app.conf.task_queues != []
+        assert app.conf.task_queues is None
 
-    def test_queues_non_empty_sets_task_queues(self) -> None:
+    def test_the_queues_of_the_config_are_declared(self) -> None:
         cfg = CeleryConfig(
             broker_url=Dsn("redis://b/0"),
             result_backend=Dsn("redis://r/1"),
             queues=["default", "heavy"],
         )
-        mock_celery_cls = MagicMock()
-        mock_app = MagicMock()
-        mock_celery_cls.return_value = mock_app
 
-        with (
-            patch("loom.celery.config.Celery", mock_celery_cls),
-            patch("loom.celery.config.Queue") as mock_queue_cls,
-        ):
+        app = create_celery_app(cfg)
+
+        assert [queue.name for queue in app.conf.task_queues] == ["default", "heavy"]
+
+    def test_a_default_queue_that_is_not_declared_is_refused(self) -> None:
+        cfg = CeleryConfig(
+            broker_url=Dsn("redis://b/0"),
+            result_backend=Dsn("redis://r/1"),
+            queues=["heavy"],
+            task_default_queue="default",
+        )
+
+        with pytest.raises(ValueError, match="task_default_queue='default' is not declared"):
             create_celery_app(cfg)
-
-        assert mock_queue_cls.call_count == 2
-        mock_queue_cls.assert_any_call("default")
-        mock_queue_cls.assert_any_call("heavy")

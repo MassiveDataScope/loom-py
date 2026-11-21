@@ -1,4 +1,4 @@
-"""The background health probe fails open (:meth:`AgentRuntime.health`).
+"""The background health probe fails open (:meth:`AgentHost.health`).
 
 ``AgentEngine.health`` is a public protocol a third party implements, so it may
 raise anything. Before this the probe had no guard: the first failure ended the
@@ -12,7 +12,7 @@ from __future__ import annotations
 import pytest
 
 from loom.ai.abc import HealthStatus
-from loom.ai.runtime import AgentRuntime
+from loom.ai.execution import AgentHost
 from loom.core.di import LoomContainer
 from tests.integration.ai.conftest import (
     CountingEngineProvider,
@@ -57,12 +57,12 @@ def container() -> LoomContainer:
     return LoomContainer()
 
 
-def _runtime(engines: dict[str, ScriptedEngine], container: LoomContainer) -> AgentRuntime:
+def _host(engines: dict[str, ScriptedEngine], container: LoomContainer) -> AgentHost:
     """Build a runtime over two agents and no live client."""
-    return AgentRuntime(
+    return AgentHost(
         plans=[make_plan(name) for name in engines],
         config=make_ai_config(health_cache_ttl_ms=5),
-        engine_provider=CountingEngineProvider(engines),  # type: ignore[arg-type]
+        engine_plugin=CountingEngineProvider(engines),  # type: ignore[arg-type]
         deps=StubDepsFactory(),  # type: ignore[arg-type]
         container=container,
     )
@@ -77,9 +77,9 @@ class TestFailureResistantProbe:
         """A raising ``health`` becomes a health state, not a dead task."""
         engines: dict[str, ScriptedEngine] = {_FAILING: ProbeFailingEngine(failures=1000)}
 
-        async with _runtime(engines, container) as runtime:
-            await _until(lambda: runtime._health.get(_FAILING) is not None)
-            health = await runtime.health(_FAILING)
+        async with _host(engines, container) as host:
+            await _until(lambda: host._health.get(_FAILING) is not None)
+            health = await host.health(_FAILING)
 
         assert health.status == "unavailable"
 
@@ -89,9 +89,9 @@ class TestFailureResistantProbe:
         """The probe reaches a provider: its failure text never reaches a scrape."""
         engines: dict[str, ScriptedEngine] = {_FAILING: ProbeFailingEngine(failures=1000)}
 
-        async with _runtime(engines, container) as runtime:
-            await _until(lambda: runtime._health.get(_FAILING) is not None)
-            health = await runtime.health(_FAILING)
+        async with _host(engines, container) as host:
+            await _until(lambda: host._health.get(_FAILING) is not None)
+            health = await host.health(_FAILING)
 
         assert "vendor.internal" not in (health.detail or "")
 
@@ -104,9 +104,9 @@ class TestFailureResistantProbe:
             _HEALTHY: ScriptedEngine(),
         }
 
-        async with _runtime(engines, container) as runtime:
-            await _until(lambda: runtime._health.get(_HEALTHY) is not None)
-            health = await runtime.health(_HEALTHY)
+        async with _host(engines, container) as host:
+            await _until(lambda: host._health.get(_HEALTHY) is not None)
+            health = await host.health(_HEALTHY)
 
         assert health.status == "ok"
 
@@ -115,10 +115,10 @@ class TestFailureResistantProbe:
         engine = ProbeFailingEngine(failures=1)
         engines: dict[str, ScriptedEngine] = {_FAILING: engine}
 
-        async with _runtime(engines, container) as runtime:
-            await _until(lambda: runtime._health.get(_FAILING) is not None)
+        async with _host(engines, container) as host:
+            await _until(lambda: host._health.get(_FAILING) is not None)
             await _until(lambda: engine.probes >= 2)
-            await _until(lambda: (runtime._health[_FAILING]).status == "ok")
-            health = await runtime.health(_FAILING)
+            await _until(lambda: (host._health[_FAILING]).status == "ok")
+            health = await host.health(_FAILING)
 
         assert health.status == "ok"

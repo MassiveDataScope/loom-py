@@ -11,15 +11,17 @@ from typing import Any
 
 import pytest
 
-import loom.core.repository.dynamodb.backend as backend_module
+import loom.stores.dynamodb.plugin as backend_module
 from loom.core.config import ConfigContext
-from loom.core.persistence import PersistenceWiring
-from loom.core.persistence.profile import SERVER_PROFILE
-from loom.core.repository.dynamodb.backend import DynamoDBBackend
-from loom.core.repository.dynamodb.repository import RepositoryDynamoDB
+from loom.core.stores import StoreWiring
+from loom.core.stores.profile import SERVER_PROFILE
+from loom.stores.dynamodb.plugin import DynamoDBStorePlugin
+from loom.stores.dynamodb.repository import DynamoDBRepository
+from tests.helpers.aws import REGION
+from tests.helpers.dynamodb import MotoTable
 from tests.helpers.persistence import build_backend
 
-from .conftest import FakeClient, Product
+from .conftest import Product
 
 _BLOCK_SECONDS = 0.2
 _REQUEST: contextvars.ContextVar[str] = contextvars.ContextVar("request", default="")
@@ -42,13 +44,13 @@ def slow_client() -> _SlowClient:
     return _SlowClient()
 
 
-class TestDynamoExecutorParallelism:
+class TestDynamoDBExecutorParallelism:
     async def test_sixteen_calls_progress_in_parallel_on_a_sixteen_thread_executor(
         self,
         slow_client: _SlowClient,
     ) -> None:
         with ThreadPoolExecutor(max_workers=16) as executor:
-            repository: RepositoryDynamoDB[Any, Any] = RepositoryDynamoDB(
+            repository: DynamoDBRepository[Any, Any] = DynamoDBRepository(
                 slow_client, "products", Product, executor=executor
             )
 
@@ -63,7 +65,7 @@ class TestDynamoExecutorParallelism:
         slow_client: _SlowClient,
     ) -> None:
         with ThreadPoolExecutor(max_workers=2) as executor:
-            repository: RepositoryDynamoDB[Any, Any] = RepositoryDynamoDB(
+            repository: DynamoDBRepository[Any, Any] = DynamoDBRepository(
                 slow_client, "products", Product, executor=executor
             )
             _REQUEST.set("req-42")
@@ -73,21 +75,20 @@ class TestDynamoExecutorParallelism:
         assert slow_client.seen_requests == ["req-42"]
 
 
-def _wiring(monkeypatch: pytest.MonkeyPatch, client: FakeClient) -> PersistenceWiring:
-    monkeypatch.setattr(backend_module, "build_aws_client", lambda _service, _cfg: client)
+def _wiring() -> StoreWiring:
     ctx = ConfigContext.from_dict(
         {
             "stores": {
                 "default": {
                     "backend": "dynamodb",
-                    "region": "eu-west-1",
+                    "region": REGION,
                     "table": "products",
                     "pool": {"size": 16},
                 }
             }
         }
     )
-    return build_backend(DynamoDBBackend(), ctx, (), SERVER_PROFILE)
+    return build_backend(DynamoDBStorePlugin(), ctx, (), SERVER_PROFILE)
 
 
 @pytest.fixture
@@ -104,11 +105,11 @@ def created(monkeypatch: pytest.MonkeyPatch) -> list[int]:
     return sizes
 
 
-class TestDynamoExecutorLifespan:
+class TestDynamoDBExecutorLifespan:
     async def test_each_lifespan_runs_on_a_new_pool_sized_by_the_pool_size(
-        self, monkeypatch: pytest.MonkeyPatch, fake_client: FakeClient, created: list[int]
+        self, created: list[int], products_table: MotoTable
     ) -> None:
-        wiring = _wiring(monkeypatch, fake_client)
+        wiring = _wiring()
         assert wiring.readiness is not None
         answers: list[bool] = []
 
@@ -121,16 +122,16 @@ class TestDynamoExecutorLifespan:
 
     async def test_a_closed_pool_refuses_work_until_the_next_lifespan(
         self,
-        monkeypatch: pytest.MonkeyPatch,
-        fake_client: FakeClient,
         created: list[int],
         caplog: pytest.LogCaptureFixture,
+        products_table: MotoTable,
     ) -> None:
-        wiring = _wiring(monkeypatch, fake_client)
+        wiring = _wiring()
         assert wiring.readiness is not None
         async with wiring.lifespan_init():
             pass
 
+        caplog.clear()
         with caplog.at_level(logging.WARNING, logger=backend_module.__name__):
             ready = await wiring.readiness()
 

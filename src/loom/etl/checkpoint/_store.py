@@ -12,13 +12,13 @@ parameter:
 * **Polars** :class:`polars.LazyFrame` — Arrow IPC written via ``sink_ipc()``
   (streaming, no in-memory collect) and read back via ``scan_ipc()`` (lazy,
   memory-mapped, predicate pushdown).
-  Backend: :class:`~loom.etl.checkpoint._backends._polars._PolarsCheckpointBackend`.
+  Backend: :class:`~loom.etl.checkpoint._io._polars._PolarsCheckpointIO`.
 
 * **Spark** ``pyspark.sql.DataFrame`` — Parquet directory written via
   ``df.write.parquet()`` and read via ``spark.read.parquet()``.  Cuts the
   lineage DAG; Photon-optimised.  Avoids competing with the shuffle memory
   pool that ``df.cache()`` would enter.
-  Backend: :class:`~loom.etl.checkpoint._backends._spark._SparkCheckpointBackend`.
+  Backend: :class:`~loom.etl.checkpoint._io._spark._SparkCheckpointIO`.
 
 Path structure
 --------------
@@ -47,8 +47,8 @@ from __future__ import annotations
 import logging
 from typing import Any, Protocol, runtime_checkable
 
-from loom.etl.checkpoint._backends._polars import _PolarsCheckpointBackend
 from loom.etl.checkpoint._cleaners import FsspecTempCleaner, TempCleaner
+from loom.etl.checkpoint._io._polars import _PolarsCheckpointIO
 from loom.etl.checkpoint._paths import correlation_scope_base, run_scope_base, scope_base
 from loom.etl.checkpoint._scope import CheckpointScope
 
@@ -56,12 +56,12 @@ _log = logging.getLogger(__name__)
 
 
 @runtime_checkable
-class _CheckpointBackend(Protocol):
+class _CheckpointIO(Protocol):
     """Physical I/O contract for one DataFrame backend.
 
-    Both :class:`~loom.etl.checkpoint._backends._polars._PolarsCheckpointBackend` and
-    :class:`~loom.etl.checkpoint._backends._spark._SparkCheckpointBackend` satisfy this
-    protocol.  ``CheckpointStore`` holds a single ``_CheckpointBackend`` chosen
+    Both :class:`~loom.etl.checkpoint._io._polars._PolarsCheckpointIO` and
+    :class:`~loom.etl.checkpoint._io._spark._SparkCheckpointIO` satisfy this
+    protocol.  ``CheckpointStore`` holds a single ``_CheckpointIO`` chosen
     at construction time, keeping ``put`` / ``get`` free of backend branches.
     """
 
@@ -95,7 +95,7 @@ class CheckpointStore:
 
         store = CheckpointStore(
             root="s3://my-bucket/loom-checkpoints",
-            backend=_PolarsCheckpointBackend(
+            backend=_PolarsCheckpointIO(
                 storage_options={
                     "aws_server_side_encryption": "aws:kms",
                     "aws_sse_kms_key_id": "alias/loom-temp",
@@ -110,12 +110,12 @@ class CheckpointStore:
     def __init__(
         self,
         root: str,
-        backend: _CheckpointBackend | None = None,
+        backend: _CheckpointIO | None = None,
         cleaner: TempCleaner | None = None,
     ) -> None:
         self._root = root.rstrip("/")
         self._cleaner = cleaner if cleaner is not None else FsspecTempCleaner()
-        self._backend = backend if backend is not None else _PolarsCheckpointBackend({})
+        self._backend = backend if backend is not None else _PolarsCheckpointIO({})
 
     def put(
         self,

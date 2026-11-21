@@ -32,6 +32,7 @@ from pydantic_ai.toolsets import FunctionToolset  # noqa: E402
 from loom.core.cache import CacheConfig, CachedCalls, cached_calls  # noqa: E402
 from loom.core.cache.wiring import cache_module  # noqa: E402
 from loom.core.di.container import LoomContainer  # noqa: E402
+from tests.helpers.loggers import rendered
 
 from ._doubles import SERIALIZED_BACKEND  # noqa: E402
 from ._toolset_module import AcmeToolsetDoc, CursorTools, SearchTools  # noqa: E402
@@ -55,7 +56,7 @@ def _parameters(toolset: FunctionToolset[Any], name: str) -> dict[str, Any]:
 
 class TestBindingIntoAToolset:
     def test_the_toolset_builds_and_keeps_the_declared_parameters(self, calls: CachedCalls) -> None:
-        toolset = FunctionToolset(calls.bind(SearchTools()))
+        toolset = FunctionToolset(calls.wrap_methods(SearchTools()))
 
         assert set(toolset.tools) == {"search", "describe"}
         properties = _parameters(toolset, "search")["properties"]
@@ -66,7 +67,7 @@ class TestBindingIntoAToolset:
 
     def test_an_annotated_parameter_keeps_its_description(self, calls: CachedCalls) -> None:
         """``include_extras=True`` is the difference between this and the docstring's text."""
-        toolset = FunctionToolset(calls.bind(SearchTools()))
+        toolset = FunctionToolset(calls.wrap_methods(SearchTools()))
 
         limit = _parameters(toolset, "search")["properties"]["limit"]
 
@@ -82,7 +83,9 @@ class TestBindingIntoAToolset:
         to resolve for them too. Everything that reads ``__annotations__``
         straight sees only what is here.
         """
-        search = next(method for method in calls.bind(SearchTools()) if method.__name__ == "search")
+        search = next(
+            method for method in calls.wrap_methods(SearchTools()) if method.__name__ == "search"
+        )
 
         hints = search.__annotations__
 
@@ -97,7 +100,7 @@ class TestAnUnresolvableAnnotation:
         self, calls: CachedCalls, caplog: pytest.LogCaptureFixture
     ) -> None:
         with caplog.at_level(logging.WARNING, logger="loom.core.cache.calls"):
-            bound = {method.__name__: method for method in calls.bind(CursorTools())}
+            bound = {method.__name__: method for method in calls.wrap_methods(CursorTools())}
 
         assert bound["resume"].__func__ is CursorTools.resume  # type: ignore[attr-defined]
         assert not getattr(bound["resume"], "__cache_call_wrapped__", False)
@@ -106,10 +109,12 @@ class TestAnUnresolvableAnnotation:
             record for record in caplog.records if "CacheCallNotCacheable" in record.getMessage()
         ]
         assert len(warnings) == 1
-        assert "CursorTools.resume" in warnings[0].getMessage()
+        assert "CursorTools.resume" in rendered(warnings[0])
 
     def test_the_cacheable_sibling_still_builds_a_toolset(self, calls: CachedCalls) -> None:
-        latest = next(method for method in calls.bind(CursorTools()) if method.__name__ == "latest")
+        latest = next(
+            method for method in calls.wrap_methods(CursorTools()) if method.__name__ == "latest"
+        )
 
         toolset = FunctionToolset([latest])
 
@@ -126,7 +131,7 @@ class TestAnUnresolvableAnnotation:
         wrapper cannot carry the declaring module's ``__globals__``.
         """
         tools = CursorTools()
-        resume = next(method for method in calls.bind(tools) if method.__name__ == "resume")
+        resume = next(method for method in calls.wrap_methods(tools) if method.__name__ == "resume")
 
         with pytest.raises(NameError, match="Cursor"):
             FunctionToolset([resume])

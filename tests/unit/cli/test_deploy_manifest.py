@@ -14,8 +14,10 @@ import yaml
 from typer.testing import CliRunner
 
 from loom.cli.app import app
-from loom.core.config.secrets import SecretsManagerResolver
-from loom.core.config.ssm import SsmResolver
+from loom.connections.aws.secrets import SecretsManagerResolver
+from loom.connections.aws.ssm import SsmResolver
+from loom.core.discovery.base import DiscoveryResult
+from loom.core.discovery.scanner import PackageScanner
 
 pytestmark = [
     pytest.mark.timeout(30),
@@ -91,7 +93,7 @@ def _config(package: str) -> dict[str, Any]:
     return {
         "app": {
             "name": "shop",
-            "discovery": {"mode": "modules", "modules": {"include": [f"{package}.api"]}},
+            "packages": [package],
             "rest": {
                 "docs_url": None,
                 "redoc_url": None,
@@ -117,8 +119,9 @@ def _config(package: str) -> dict[str, Any]:
         "stores": {
             "default": {"backend": "sqlalchemy", "url": "${ ssm : '/shop/db-url' }"},
             "reports": {"backend": "none"},
+            "settings": {"cursors": {"signing": "unsigned"}},
         },
-        "sqs": {"queues": {"jobs": _QUEUE_URL, "alerts": _ALERTS_URL}},
+        "sqs": {"queues": {"jobs": {"url": _QUEUE_URL}, "alerts": {"url": _ALERTS_URL}}},
         "checks": {"silenced": ["loom.cursors.E001"]},
         "lambda": {
             "handler": "entry.handler",
@@ -164,11 +167,14 @@ def _expected() -> dict[str, Any]:
         }
     }
     return {
-        "manifest_version": 2,
+        "manifest_version": 3,
         "environment": "production",
         "handler": "entry.handler",
         "code_path": "src",
-        "queues": {"alerts": _ALERTS_URL, "jobs": _QUEUE_URL},
+        "queues": {
+            "alerts": {"url": _ALERTS_URL, "abandoned": "dead_letter"},
+            "jobs": {"url": _QUEUE_URL, "abandoned": "dead_letter"},
+        },
         "functions": {
             "admin": {
                 "source": "http",
@@ -363,12 +369,21 @@ class TestDeployManifest:
             (_set("lambda.handler", _DELETE), (), "lambda.handler is missing"),
             (_set("lambda.handler", "${oc.env:HANDLER}"), (), "lambda.handler must be written"),
             (_set("lambda.handler", "entry"), (), "must be 'module.attribute'"),
-            (_set("sqs.queues.jobs", "${ssm:/shop/url}"), (), "sqs.queues.jobs must be written"),
+            (
+                _set("sqs.queues.jobs.url", "${ssm:/shop/url}"),
+                (),
+                "sqs.queues.jobs.url must be written",
+            ),
+            (
+                _set("sqs.queues.jobs", _QUEUE_URL),
+                (),
+                "sqs.queues.jobs is a URL; write it as a mapping: {url: ",
+            ),
             (_set("lambda.functions", {}), (), "declares no function to deploy"),
             (
                 _set("lambda.functions.worker.trigger.queue", _DELETE),
                 (),
-                "worker.trigger.queue.name must name the queue",
+                "worker.trigger: a jobs function must declare trigger.queue",
             ),
             (
                 _set("lambda.functions.worker.trigger.queue.name", "unknown"),
@@ -412,11 +427,6 @@ class TestDeployManifest:
                 (),
                 "matches no route declared by a Python interface",
             ),
-            (
-                _set("app.discovery.mode", "interfaces"),
-                _WORKER_ONLY,
-                "'interfaces' is not one a worker scans",
-            ),
             (lambda config: config, ("--function", "billing"), "declares no function 'billing'"),
         ],
         ids=[
@@ -424,6 +434,7 @@ class TestDeployManifest:
             "handler-placeholder",
             "handler-malformed",
             "queue-placeholder",
+            "queue-as-bare-url",
             "no-function",
             "no-queue",
             "unknown-queue",
@@ -436,7 +447,6 @@ class TestDeployManifest:
             "wildcard-secret",
             "wildcard-parameter",
             "unmatched-disabled-route",
-            "non-worker-discovery",
             "unknown-function",
         ],
     )
@@ -448,6 +458,15 @@ class TestDeployManifest:
         assert result.exit_code == 1
         assert result.stdout == ""
         assert message in result.stderr
+
+    def test_no_skip_hides_an_event_trigger_naming_no_job(self, project: Project) -> None:
+        missing = _set("lambda.functions.invoices_in.trigger.job", "MissingJob")
+
+        result = _manifest(project(missing), "--skip", "app.rest")
+
+        assert result.exit_code == 1
+        assert result.stdout == ""
+        assert "'MissingJob', which is no discovered Job" in result.stderr
 
     @pytest.mark.parametrize(
         ("written", "named"),
@@ -481,7 +500,47 @@ class TestDeployManifest:
         result = _manifest(project(_set("app.rest.docs_url", "/docs")))
 
         assert result.exit_code == 0, result.stderr
-        assert json.loads(result.stdout)["manifest_version"] == 2
+        assert json.loads(result.stdout)["manifest_version"] == 3
         assert "environment: production" in result.stderr
         assert "silenced: loom.cursors.E001" in result.stderr
         assert "WARNING loom.rest.W001" in result.stderr
+
+    def test_the_manifest_scans_the_application_packages_once(
+        self, project: Project, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        calls: list[int] = []
+        scan = PackageScanner.discover
+
+        def counted(self: PackageScanner, **kwargs: Any) -> DiscoveryResult:
+            calls.append(1)
+            return scan(self, **kwargs)
+
+        monkeypatch.setattr(PackageScanner, "discover", counted)
+
+        result = _manifest(project())
+
+        assert result.exit_code == 0, result.stderr
+        assert len(calls) == 1
+
+
+class TestDefaultConfigDirectory:
+    def test_without_a_path_the_manifest_comes_from_the_default_directory(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        directory = tmp_path / "config"
+        directory.mkdir()
+        (directory / "base.yaml").write_text("app:\n  name: acme\n", encoding="utf-8")
+        monkeypatch.delenv("LOOM_CONFIG_DIR", raising=False)
+        monkeypatch.chdir(tmp_path)
+        roots: list[Path] = []
+
+        def build(project: Any, function: Any = None) -> dict[str, Any]:
+            roots.append(project.config_root)
+            return {}
+
+        monkeypatch.setattr("loom.cli.deploy.build_manifest", build)
+
+        result = runner.invoke(app, ["deploy", "manifest", "--skip", "app.rest"])
+
+        assert result.exit_code == 0, result.output
+        assert roots == [directory.resolve()]

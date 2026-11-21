@@ -13,7 +13,7 @@ from loom.core.observability.event import EventKind, LifecycleEvent, Scope
 class PrefectObserver:
     """``LifecycleObserver`` that forwards loom events to Prefect's run logger.
 
-    Coexists with ``LineageObserver`` in the same ``ObservabilityRuntime``:
+    Coexists with ``LineageObserver`` in the same ``Observability``:
     - ``PrefectObserver`` → Prefect UI logs and artifacts.
     - ``LineageObserver`` → loom lineage tables (permanent audit trail).
 
@@ -22,11 +22,11 @@ class PrefectObserver:
 
     Example::
 
-        runtime = ObservabilityRuntime([PrefectObserver(), LineageObserver(...)])
+        runtime = Observability([PrefectObserver(), LineageObserver(...)])
     """
 
     def on_event(self, event: LifecycleEvent) -> None:
-        """Handle one lifecycle event from the ``ObservabilityRuntime``.
+        """Handle one lifecycle event from the ``Observability``.
 
         Args:
             event: Immutable lifecycle event emitted by the runtime.

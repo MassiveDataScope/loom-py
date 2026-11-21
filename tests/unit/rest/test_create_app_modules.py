@@ -1,4 +1,4 @@
-"""``create_app(modules=...)`` registers caller DI bindings before verification.
+"""Discovered installers register DI bindings before verification.
 
 A use case whose constructor needs a port no repository provides (a clock, an
 identity verifier, a bridge between bounded contexts) starts only when a
@@ -9,7 +9,7 @@ from __future__ import annotations
 
 import re
 import sys
-from collections.abc import Callable, Iterator
+from collections.abc import Iterator
 from pathlib import Path
 from typing import Protocol
 
@@ -19,7 +19,9 @@ from fastapi.testclient import TestClient
 
 from loom.core.bootstrap import BootstrapError
 from loom.core.di.container import LoomContainer, ResolutionError
+from loom.core.di.installer import Installer
 from loom.core.di.scope import Scope
+from loom.core.discovery.scanner import PackageScanner
 from loom.rest.fastapi.auto import create_app
 
 _FIXED_NOW = "2026-01-01T00:00:00Z"
@@ -77,18 +79,19 @@ class NowInterface(RestInterface[str]):
 def config_path(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Iterator[str]:
     """Write the fixture project; undo its sys.path entry and imported module."""
     module = f"loom_modules_fixture_app_{_NON_IDENTIFIER.sub('_', tmp_path.name)}"
-    (tmp_path / f"{module}.py").write_text(_APP_SOURCE, encoding="utf-8")
+    package = tmp_path / module
+    package.mkdir()
+    (package / "__init__.py").write_text(_APP_SOURCE, encoding="utf-8")
     config = {
         "app": {
             "name": "modules-demo",
             "code_path": ".",
-            "discovery": {
-                "mode": "interfaces",
-                "interfaces": {"modules": [module], "warn_recommended": False},
-            },
+            "packages": [module],
         },
-        "stores": {"default": {"backend": "sqlalchemy", "url": "sqlite+aiosqlite:///"}},
-        "persistence": {"cursors": {"signing": "ephemeral"}},
+        "stores": {
+            "default": {"backend": "sqlalchemy", "url": "sqlite+aiosqlite:///"},
+            "settings": {"cursors": {"signing": "ephemeral"}},
+        },
     }
     config_file = tmp_path / "app.yaml"
     config_file.write_text(yaml.safe_dump(config), encoding="utf-8")
@@ -106,12 +109,24 @@ def _bind_clock_class(container: LoomContainer) -> None:
     container.register(Clock, FixedClock)
 
 
-class TestCreateAppModules:
-    @pytest.mark.parametrize("module", [_bind_clock_instance, _bind_clock_class])
-    def test_a_module_binding_reaches_the_use_case(
-        self, config_path: str, module: Callable[[LoomContainer], None]
+class TestCreateAppInstallers:
+    @pytest.mark.parametrize("binding", [_bind_clock_instance, _bind_clock_class])
+    def test_an_installer_binding_reaches_the_use_case(
+        self, config_path: str, binding, monkeypatch: pytest.MonkeyPatch
     ) -> None:
-        app = create_app(config_path, modules=[module])
+        class ClockInstaller(Installer):
+            def install(self, container: LoomContainer) -> None:
+                binding(container)
+
+        original = PackageScanner.discover
+        monkeypatch.setattr(
+            PackageScanner,
+            "discover",
+            lambda self, **kwargs: original(self, **kwargs).with_changes(
+                installers=(ClockInstaller,)
+            ),
+        )
+        app = create_app(config_path)
 
         with TestClient(app) as client:
             response = client.get("/now/")
@@ -119,21 +134,33 @@ class TestCreateAppModules:
         assert response.status_code == 200, response.text
         assert response.json() == _FIXED_NOW
 
-    def test_modules_run_in_the_given_order(self, config_path: str) -> None:
+    def test_installers_run_in_the_given_order(
+        self, config_path: str, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
         calls: list[str] = []
 
-        def first(container: LoomContainer) -> None:
-            calls.append("first")
-            _bind_clock_instance(container)
+        class First(Installer):
+            def install(self, container: LoomContainer) -> None:
+                calls.append("first")
+                _bind_clock_instance(container)
 
-        def second(_: LoomContainer) -> None:
-            calls.append("second")
+        class Second(Installer):
+            def install(self, container: LoomContainer) -> None:
+                calls.append("second")
 
-        create_app(config_path, modules=(first, second))
+        original = PackageScanner.discover
+        monkeypatch.setattr(
+            PackageScanner,
+            "discover",
+            lambda self, **kwargs: original(self, **kwargs).with_changes(
+                installers=(First, Second)
+            ),
+        )
+        create_app(config_path)
 
         assert calls == ["first", "second"]
 
-    def test_startup_fails_without_the_module(self, config_path: str) -> None:
+    def test_startup_fails_without_an_installer(self, config_path: str) -> None:
         with pytest.raises(BootstrapError, match=r"NowUseCase -> clock: .*Clock") as caught:
             create_app(config_path)
 

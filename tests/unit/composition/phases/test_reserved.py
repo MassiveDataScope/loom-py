@@ -16,10 +16,10 @@ from loom.composition.errors import ReservedBindingError
 from loom.core.bootstrap.kernel import seeded_container
 from loom.core.di.container import LoomContainer
 from loom.core.di.scope import Scope
-from loom.core.logger import get_logger
-from loom.core.observability.runtime import ObservabilityRuntime
-from loom.core.persistence.stores import DEFAULT_STORE
-from loom.core.sql import SqlQueryService
+from loom.core.observability.observability import Observability
+from loom.core.stores.catalog import DEFAULT_STORE
+from loom.core.stores.repository import RepositoryCatalog
+from loom.core.stores.sql import SqlQueryService
 from tests.unit.composition.phases.components import binds_sql_service
 
 Module = Callable[[LoomContainer], None]
@@ -34,7 +34,11 @@ def _leaves_everything(container: LoomContainer) -> None:
 
 
 def _binds_observability(container: LoomContainer) -> None:
-    container.register(ObservabilityRuntime, ObservabilityRuntime.noop, scope=Scope.APPLICATION)
+    container.register(Observability, Observability.noop, scope=Scope.APPLICATION)
+
+
+def _binds_repository_catalog(container: LoomContainer) -> None:
+    container.register(RepositoryCatalog, object, scope=Scope.APPLICATION)
 
 
 def _run(module: Module, container: LoomContainer) -> None:
@@ -42,7 +46,6 @@ def _run(module: Module, container: LoomContainer) -> None:
         container,
         {},
         modules=(module,),
-        logger=get_logger("acme"),
         reserved=reserved_keys((DEFAULT_STORE,)),
         error=ReservedBindingError.for_key,
     ):
@@ -63,6 +66,10 @@ class TestReservedBindings:
         assert str(caught.value) == str(
             ReservedBindingError.for_key(binds_sql_service, SqlQueryService)
         )
+
+    def test_a_module_binding_the_repository_catalog_is_refused(self) -> None:
+        with pytest.raises(ReservedBindingError, match="RepositoryCatalog"):
+            _run(_binds_repository_catalog, LoomContainer())
 
     def test_a_module_replacing_a_reserved_key_is_refused(self) -> None:
         container = _sql_bound()
@@ -99,5 +106,5 @@ class TestReservedBindings:
             overridden(modules=(_binds_observability,))
 
         assert str(caught.value) == str(
-            ReservedBindingError.for_key(_binds_observability, ObservabilityRuntime)
+            ReservedBindingError.for_key(_binds_observability, Observability)
         )

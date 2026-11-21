@@ -24,16 +24,16 @@ from fastapi import FastAPI
 from fastapi.testclient import TestClient
 
 from loom.core.identity import Identity, reset_identity, set_identity
-from loom.core.observability.runtime import ObservabilityRuntime
-from loom.core.sql.config import SqlEndpointConfig
-from loom.core.sql.service import SqlQueryService
+from loom.core.observability.observability import Observability
+from loom.core.stores.sql.config import SqlEndpointConfig
+from loom.core.stores.sql.service import SqlQueryService
 from loom.rest.auth import (
     AuthenticationMiddleware,
     JwtAuthConfig,
     JwtAuthenticator,
     RequestCredentials,
 )
-from loom.rest.fastapi.sql import bind_sql_endpoints
+from loom.rest.fastapi.sql import mount_sql_endpoints
 from tests.unit.core.sql._fakes import (
     FakeSqlExecutor,
     make_connection_config,
@@ -91,7 +91,7 @@ class AcmeFixedIdentityMiddleware:
 def _app(
     executor: FakeSqlExecutor,
     *,
-    runtime: ObservabilityRuntime | None = None,
+    runtime: Observability | None = None,
     **conn_overrides: Any,
 ) -> FastAPI:
     connection = make_connection_config(
@@ -100,12 +100,12 @@ def _app(
     )
     config = make_sql_config(analytics=connection)
     app = FastAPI()
-    bind_sql_endpoints(
+    mount_sql_endpoints(
         app,
         service=SqlQueryService(executors={"analytics": executor}, config=config),
         config=config,
         authenticator=_RoleAuthenticator(),
-        observability_runtime=runtime,
+        observability=runtime,
     )
     return app
 
@@ -114,7 +114,7 @@ def _client(
     executor: FakeSqlExecutor,
     *,
     identity: Identity | None,
-    runtime: ObservabilityRuntime | None = None,
+    runtime: Observability | None = None,
     **conn_overrides: Any,
 ) -> TestClient:
     app = _app(executor, runtime=runtime, **conn_overrides)
@@ -186,7 +186,7 @@ def _single_role_app(executor: FakeSqlExecutor) -> FastAPI:
     )
     config = make_sql_config(analytics=connection)
     app = FastAPI()
-    bind_sql_endpoints(
+    mount_sql_endpoints(
         app,
         service=SqlQueryService(executors={"analytics": executor}, config=config),
         config=config,
@@ -401,7 +401,7 @@ class TestNonJwtMechanismDerivesRoles:
         client = _client(
             FakeSqlExecutor(),
             identity=_identity((ROLE_A, ROLE_B), subject="user-42"),
-            runtime=ObservabilityRuntime([observer]),
+            runtime=Observability([observer]),
         )
 
         response = _post(client, roles=[ROLE_B])
@@ -456,12 +456,12 @@ class TestSingleRoleConnection:
         )
         config = make_sql_config(analytics=connection)
         app = FastAPI()
-        bind_sql_endpoints(
+        mount_sql_endpoints(
             app,
             service=SqlQueryService(executors={"analytics": executor}, config=config),
             config=config,
             authenticator=_RoleAuthenticator(),
-            observability_runtime=ObservabilityRuntime([observer]),
+            observability=Observability([observer]),
         )
         app.add_middleware(AcmeFixedIdentityMiddleware, identity=_identity((ROLE_B,)))
 

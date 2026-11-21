@@ -38,6 +38,7 @@ Lifetime:
 
 from __future__ import annotations
 
+import logging
 import threading
 from collections.abc import Callable, Hashable
 from contextvars import Token
@@ -48,9 +49,8 @@ from loom.core.errors import Unauthenticated
 from loom.core.execution.errors import ExecutionClosed, ExecutionRequired
 from loom.core.identity import Acting, Identity
 from loom.core.identity.context import _acting  # pyright: ignore[reportPrivateUsage]
-from loom.core.logger import get_logger
 
-_log = get_logger(__name__)
+_log = logging.getLogger(__name__)
 
 _acting_now = _acting.get
 
@@ -71,8 +71,9 @@ _LEFT_OPEN_MESSAGE = (
     "An execution was left open or misused inside NoExecution; the execution context was closed."
 )
 _BACKGROUND_WORK = (
-    "Run a use case (executor.run(UseCase)) or dispatch a job (JobService.dispatch) from "
-    "the task: they act as the same caller, in resources of their own."
+    "Run a use case (executor.run(UseCase)) or dispatch a job "
+    "(JobService.dispatch_after_commit) from the task: they act as the same caller, "
+    "in resources of their own."
 )
 _ENDED_MESSAGE = (
     "The execution this task or thread copied its context from has ended: its resources "
@@ -238,7 +239,7 @@ class _EndedCache(dict[Hashable, object]):
     def __contains__(self, key: object) -> bool:
         raise _closed(_PER_EXECUTION_VALUE)
 
-    def get(self, key: Hashable, default: object = None) -> object:  # type: ignore[override]
+    def get(self, key: Hashable, default: object = None) -> object:
         raise _closed(_PER_EXECUTION_VALUE)
 
     def __setitem__(self, key: Hashable, value: object) -> None:
@@ -250,7 +251,7 @@ _ENDED = _EndedCache()
 
 def _closed(read: str) -> ExecutionClosed:
     """Log the supported paths for background work and return the error to raise."""
-    _log.warning("execution_closed", read=read, guidance=_BACKGROUND_WORK)
+    _log.warning("execution_closed", extra={"read": read, "guidance": _BACKGROUND_WORK})
     return ExecutionClosed(_ENDED_MESSAGE)
 
 
@@ -279,8 +280,8 @@ def current_execution() -> ExecutionContext | None:
     Returns:
         The current :class:`ExecutionContext`, or ``None``.
     """
-    context: Any = _acting_now().work
-    if context is None or context is _NO_EXECUTION or context.ended:
+    context = _acting_now().work
+    if not isinstance(context, ExecutionContext) or context is _NO_EXECUTION or context.ended:
         return None
     return context
 
@@ -375,9 +376,9 @@ def execution_identity() -> Identity:
     """
     acting = _acting_now()
     identity, context = acting.caller, acting.work
-    if identity is None or context is None:
+    if identity is None or not isinstance(context, ExecutionContext):
         raise _no_identity(context)
-    if context.ended:  # pyright: ignore[reportAttributeAccessIssue]
+    if context.ended:
         acting.refuse_expired()
     return identity
 

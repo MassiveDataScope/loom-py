@@ -4,9 +4,9 @@ Mirrors ``test_agent_marker_test_double.py``: the exact use case
 ``docs/rest/use-case-dsl.md`` (section "Mcp marker — reaching an MCP server
 directly") and ``docs/ai/mcp.md`` ("Reach a server directly, with no agent in
 the middle") show verbatim, compiled by a real ``UseCaseCompiler`` and run by
-a real ``RuntimeExecutor``, with the ``Mcp()`` marker resolved to a
+a real ``UseCaseExecutor``, with the ``Mcp()`` marker resolved to a
 :class:`~loom.testing.runner.McpHandleDouble` instead of a real
-``AgentRuntime``. Editing either doc's example without this test is a gap
+``AgentHost``. Editing either doc's example without this test is a gap
 the next review will catch.
 """
 

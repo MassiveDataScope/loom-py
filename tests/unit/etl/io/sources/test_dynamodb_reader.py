@@ -1,4 +1,4 @@
-"""Tests for DynamoDbSourceReader using a hand-rolled fake boto3 client.
+"""Tests for DynamoDBSourceReader using a hand-rolled fake boto3 client.
 
 No live DynamoDB required. Filter correctness is tested in
 test_dynamodb_predicate.py. Here we verify that the reader passes the right
@@ -16,17 +16,18 @@ import polars as pl
 import pytest
 
 from loom.etl.declarative.expr import col
-from loom.etl.declarative.source._specs import DynamoDbSourceSpec
-from loom.etl.io.sources._dynamodb import DynamoDbSourceReader, _ParallelSegmentScanner
+from loom.etl.declarative.source._specs import DynamoDBSourceSpec
+from loom.etl.io.sources._dynamodb import DynamoDBSourceReader, _ParallelSegmentScanner
 from loom.etl.io.sources._dynamodb_items import normalize_dynamo_item
 from loom.etl.schema._schema import ColumnSchema, LoomDtype
+from tests.helpers.loggers import CapturedLog
 
 # ---------------------------------------------------------------------------
 # Fake boto3 dynamodb client
 # ---------------------------------------------------------------------------
 
 
-class _FakeDynamoClient:
+class _FakeDynamoDBClient:
     """Fake low-level client — returns canned AttributeValue pages.
 
     Honors ``Limit``, ``ExclusiveStartKey``, ``Segment``/``TotalSegments`` and
@@ -74,22 +75,6 @@ class _FailingSegmentClient:
         return response
 
 
-class _RecordingLog:
-    """Minimal structured-log double for asserting emitted events."""
-
-    def __init__(self) -> None:
-        self.events: list[tuple[str, dict[str, Any]]] = []
-
-    def warning(self, event: str, **fields: Any) -> None:
-        self.events.append((event, fields))
-
-    def info(self, event: str, **fields: Any) -> None:
-        self.events.append((event, fields))
-
-    def debug(self, event: str, **fields: Any) -> None:
-        self.events.append((event, fields))
-
-
 # ---------------------------------------------------------------------------
 # Helpers
 # ---------------------------------------------------------------------------
@@ -105,13 +90,13 @@ _ORDER_SCHEMA = (
 )
 
 
-def _reader(items: list[dict[str, Any]]) -> tuple[DynamoDbSourceReader, _FakeDynamoClient]:
-    client = _FakeDynamoClient(items)
-    return DynamoDbSourceReader(client), client
+def _reader(items: list[dict[str, Any]]) -> tuple[DynamoDBSourceReader, _FakeDynamoDBClient]:
+    client = _FakeDynamoDBClient(items)
+    return DynamoDBSourceReader(client), client
 
 
-def _spec(*, table: str = "orders", **kwargs: Any) -> DynamoDbSourceSpec:
-    return DynamoDbSourceSpec(alias=table, table=table, **kwargs)
+def _spec(*, table: str = "orders", **kwargs: Any) -> DynamoDBSourceSpec:
+    return DynamoDBSourceSpec(alias=table, table=table, **kwargs)
 
 
 def _numbered_items(n: int) -> list[dict[str, Any]]:
@@ -157,7 +142,7 @@ class TestHappyPath:
 
 class TestNoClient:
     def test_read_without_client_raises(self) -> None:
-        reader = DynamoDbSourceReader()
+        reader = DynamoDBSourceReader()
         spec = _spec()
         with pytest.raises(RuntimeError, match="no client configured"):
             reader.read(spec, None)
@@ -373,7 +358,7 @@ class TestSchemaPaths:
         frame = reader.read(_spec(schema=_ORDER_SCHEMA, extra_fields_mode="error"), None)
         with pytest.raises(
             (ValueError, pl.exceptions.ComputeError),
-            match=r"DynamoDbSourceReader.*extra_col",
+            match=r"DynamoDBSourceReader.*extra_col",
         ):
             frame.collect()
 
@@ -440,42 +425,32 @@ class TestParallelScanFailures:
 
     def test_segment_error_propagates_through_collect(self) -> None:
         client = _FailingSegmentClient(pages_per_segment=3)
-        reader = DynamoDbSourceReader(client)
+        reader = DynamoDBSourceReader(client)
         lf = reader.read(_spec(total_segments=2, schema=_page_schema()), None)
         with pytest.raises((RuntimeError, pl.exceptions.ComputeError), match="throttled"):
             lf.collect()
 
     def test_close_without_iteration_logs_segment_error_and_does_not_hang(
-        self, monkeypatch: pytest.MonkeyPatch
+        self, caplog: pytest.LogCaptureFixture
     ) -> None:
-        from loom.etl.io.sources import _dynamodb as dynamo_mod
-
-        recording = _RecordingLog()
-        monkeypatch.setattr(dynamo_mod, "_log", recording)
         client = _FailingSegmentClient(pages_per_segment=1)
         scanner = _ParallelSegmentScanner(client, {"TableName": "t", "Limit": 1}, 2)
         wait(scanner._futures, timeout=5)
 
         scanner.close()  # early stop (e.g. limit satisfied) — must not raise nor hang
 
-        failures = [e for e, _ in recording.events if e == "dynamodb segment failed"]
-        assert failures == ["dynamodb segment failed"]
-        failure_fields = next(f for e, f in recording.events if e == "dynamodb segment failed")
+        [failure_fields] = CapturedLog(caplog).named("dynamodb segment failed")
         assert failure_fields["segment"] == 0
         assert "throttled" in failure_fields["error"]
 
-    def test_error_not_double_logged_when_raised(self, monkeypatch: pytest.MonkeyPatch) -> None:
-        from loom.etl.io.sources import _dynamodb as dynamo_mod
-
-        recording = _RecordingLog()
-        monkeypatch.setattr(dynamo_mod, "_log", recording)
+    def test_error_not_double_logged_when_raised(self, caplog: pytest.LogCaptureFixture) -> None:
         client = _FailingSegmentClient(pages_per_segment=1)
         scanner = _ParallelSegmentScanner(client, {"TableName": "t", "Limit": 1}, 2)
         with pytest.raises(RuntimeError, match="throttled"):
             for _ in scanner:
                 pass
         scanner.close()
-        assert all(event != "dynamodb segment failed" for event, _ in recording.events)
+        assert CapturedLog(caplog).named("dynamodb segment failed") == []
 
 
 # ---------------------------------------------------------------------------

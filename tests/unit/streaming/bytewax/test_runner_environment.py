@@ -7,6 +7,8 @@ configuration.
 
 from __future__ import annotations
 
+import json
+import logging
 from pathlib import Path
 from types import SimpleNamespace
 from typing import Any
@@ -22,7 +24,7 @@ from bytewax.dataflow import Dataflow  # noqa: E402
 
 from loom.core.checks import DeployCheckError  # noqa: E402
 from loom.core.config import ConfigContext  # noqa: E402
-from loom.core.environment import ENVIRONMENT_VARIABLE, Environment  # noqa: E402
+from loom.core.environment import ENVIRONMENT_VARIABLE  # noqa: E402
 from loom.streaming.bytewax.runner import StreamingRunner  # noqa: E402
 from loom.streaming.graph._flow import StreamFlow  # noqa: E402
 from tests.helpers.deploy_checks import (  # noqa: E402
@@ -116,18 +118,16 @@ class TestRunnerLoggerEnvironment:
     def test_the_logger_takes_the_environment_of_the_runner(
         self,
         bytewax_stream_flow: StreamFlow[AcmeOrder, AcmeResult],
-        monkeypatch: pytest.MonkeyPatch,
+        capsys: pytest.CaptureFixture[str],
     ) -> None:
-        captured: dict[str, object] = {}
-        monkeypatch.setattr(
-            "loom.core.observability.runtime.configure_logging_from_values",
-            lambda **kwargs: captured.update(kwargs),
-        )
-        config = {"kafka": _KAFKA, "observability": {"log": {"config": {"level": "INFO"}}}}
+        config = {"kafka": _KAFKA, "observability": {"log": {"format": "json", "level": "INFO"}}}
 
         StreamingRunner.from_dict(bytewax_stream_flow, config, environment="test")
+        logging.getLogger("tests.streaming").warning("streaming.check_done")
 
-        assert captured["environment"] is Environment.TEST
+        records = [json.loads(line) for line in capsys.readouterr().out.splitlines()]
+        written = next(r for r in records if r["message"] == "streaming.check_done")
+        assert written["deployment.environment.name"] == "test"
 
 
 class TestRuntimeOverrideVariable:

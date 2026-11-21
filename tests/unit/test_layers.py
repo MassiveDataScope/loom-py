@@ -22,9 +22,20 @@ _SRC = Path(__file__).resolve().parents[2] / "src"
 
 # layer → (packages it must not import at run time, modules allowed inside them).
 _RULES: dict[str, tuple[tuple[str, ...], tuple[str, ...]]] = {
-    # The core composes nothing: the composition root and the transports sit outside it.
+    # The core composes nothing: the composition root, transports, store and connection adapters sit
+    # outside it.
     "loom.core": (
-        ("loom.composition", "loom.rest", "loom.celery", "loom.ai", "loom.serverless", "loom.jobs"),
+        (
+            "loom.composition",
+            "loom.rest",
+            "loom.celery",
+            "loom.ai",
+            "loom.serverless",
+            "loom.jobs",
+            "loom.stores",
+            "loom.connections",
+            "sqlalchemy",
+        ),
         (),
     ),
     # No transport but the JobService adapter and the ones app.entry selects, lazily.
@@ -33,7 +44,7 @@ _RULES: dict[str, tuple[tuple[str, ...], tuple[str, ...]]] = {
         (
             "loom.celery.service",
             "loom.celery.config",
-            "loom.rest.fastapi.adapter",
+            "loom.rest.fastapi.runtime",
             "loom.serverless.aws.lambda_.handler",
         ),
     ),
@@ -44,7 +55,7 @@ _RULES: dict[str, tuple[tuple[str, ...], tuple[str, ...]]] = {
             "loom.core.engine",
             "loom.core.di",
             "loom.core.use_case",
-            "loom.core.uow",
+            "loom.core.stores.uow",
             "opentelemetry",
         ),
         (),
@@ -55,10 +66,13 @@ _RULES: dict[str, tuple[tuple[str, ...], tuple[str, ...]]] = {
         (),
     ),
     # The container reads keys through an injected classifier, never the packages above it.
-    "loom.core.di": (("loom.core.repository", "loom.core.use_case", "loom.ai"), ()),
+    "loom.core.di": (
+        ("loom.core.stores", "loom.core.use_case", "loom.ai"),
+        (),
+    ),
     "loom.core.engine": (("loom.core.observability", "opentelemetry"), ()),
     "loom.rest": (("loom.serverless",), ()),
-    # A job backend raises its own errors; the composition root maps them.
+    # A job transport raises its own errors; the composition root maps them.
     "loom.jobs": (("loom.composition",), ()),
 }
 
@@ -100,7 +114,7 @@ def test_the_check_sees_function_local_and_relative_imports() -> None:
         "if TYPE_CHECKING:\n"
         "    from loom.rest.model import RestInterface\n"
         "def build():\n"
-        "    from loom.celery.service import CeleryJobService\n"
+        "    from loom.celery.service import CeleryJobTransport\n"
         "from ..rest import errors\n"
         "from . import sibling\n"
         "from loom import composition\n"
@@ -110,7 +124,7 @@ def test_the_check_sees_function_local_and_relative_imports() -> None:
         "typing",
         "typing.TYPE_CHECKING",
         "loom.celery.service",
-        "loom.celery.service.CeleryJobService",
+        "loom.celery.service.CeleryJobTransport",
         "loom.core.rest",
         "loom.core.rest.errors",
         "loom.core.engine",
@@ -118,6 +132,51 @@ def test_the_check_sees_function_local_and_relative_imports() -> None:
         "loom",
         "loom.composition",
     }
+
+
+_NAMED_TRANSPORTS = ("loom.rest", "loom.serverless")
+
+
+def _imported_by_name(tree: ast.AST) -> list[str]:
+    """The string literals *tree* passes to ``importlib.import_module`` or ``import_module``."""
+    names = []
+    for node in ast.walk(tree):
+        if not isinstance(node, ast.Call) or not node.args:
+            continue
+        function = node.func
+        called = (
+            function.attr if isinstance(function, ast.Attribute) else getattr(function, "id", "")
+        )
+        argument = node.args[0]
+        if (
+            called == "import_module"
+            and isinstance(argument, ast.Constant)
+            and isinstance(argument.value, str)
+        ):
+            names.append(argument.value)
+    return names
+
+
+def test_the_composition_names_no_transport_in_an_import_by_name() -> None:
+    offenders = [
+        f"{path.relative_to(_SRC)} imports {name} by name"
+        for path in sorted((_SRC / "loom" / "composition").rglob("*.py"))
+        for name in _imported_by_name(parsed(path))
+        if any(_within(name, transport) for transport in _NAMED_TRANSPORTS)
+    ]
+
+    assert offenders == []
+
+
+def test_the_import_by_name_check_sees_both_call_forms() -> None:
+    sample = ast.parse(
+        "import importlib\n"
+        "importlib.import_module('loom.rest')\n"
+        "import_module('loom.serverless.x')\n"
+        "importlib.import_module(name)\n"
+    )
+
+    assert _imported_by_name(sample) == ["loom.rest", "loom.serverless.x"]
 
 
 # Who may write the acting identity (spec 011, T09a): transports install it,
@@ -132,7 +191,7 @@ _WRITERS: dict[str, tuple[str, ...]] = {
         _IDENTITY_CONTEXT,
         "loom.rest.auth.middleware",
         "loom.core.job.envelope",
-        "loom.core.job.service",
+        "loom.jobs.inline.transport",
     ),
     "pinned_for": (_IDENTITY_CONTEXT, _EXECUTION),
     "enter": (
@@ -209,3 +268,45 @@ class TestIdentityWriters:
         assert "set_identity" not in _read_names(
             ast.parse("reset_identity(t)\nfrom x import reset_identity")
         )
+
+
+class TestCoreNamesNoStoreIsland:
+    @staticmethod
+    def _islands(tree: ast.AST) -> list[str]:
+        """Every string literal passed as the island of an ``import_optional`` call in *tree*."""
+        islands: list[str] = []
+        for node in ast.walk(tree):
+            if not isinstance(node, ast.Call) or not node.args:
+                continue
+            callee = node.func
+            name = callee.attr if isinstance(callee, ast.Attribute) else getattr(callee, "id", None)
+            island = node.args[0]
+            if name == "import_optional" and isinstance(island, ast.Constant):
+                islands.append(str(island.value))
+        return islands
+
+    def test_no_core_module_loads_a_store_adapter_by_name(self) -> None:
+        offenders = []
+        for path in sorted((_SRC / "loom" / "core").rglob("*.py")):
+            module, _ = _module_of(path)
+            offenders.extend(
+                f"{module} loads {island}"
+                for island in self._islands(parsed(path))
+                if _within(island, "loom.stores")
+            )
+
+        assert offenders == []
+
+    @pytest.mark.parametrize(
+        "source",
+        [
+            'import_optional("loom.stores.clickhouse", extra="clickhouse")',
+            'optional.import_optional("loom.stores.mongo", extra="mongo")',
+        ],
+        ids=["plain-call", "qualified-call"],
+    )
+    def test_the_check_sees_the_island_literal(self, source: str) -> None:
+        assert self._islands(ast.parse(source))[0].startswith("loom.stores.")
+
+    def test_the_check_ignores_a_computed_island(self) -> None:
+        assert self._islands(ast.parse('import_optional(name, extra="x")')) == []

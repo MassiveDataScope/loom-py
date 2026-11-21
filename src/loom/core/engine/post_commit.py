@@ -15,16 +15,16 @@ from __future__ import annotations
 import asyncio
 import collections
 import inspect
+import logging
 from collections.abc import Awaitable, Callable, Hashable, Iterable, Mapping
 from contextvars import ContextVar, Token
 from typing import Protocol, TypeVar, cast, runtime_checkable
 
-from loom.core._async import held_task
+from loom.core.concurrency import held_task
 from loom.core.errors import PostCommitError
 from loom.core.execution import execution_ended
-from loom.core.logger import get_logger
-from loom.core.persistence.stores import StoreKey
-from loom.core.uow.scope import current_scope, refuse_write_under_read_only
+from loom.core.stores.catalog import StoreKey
+from loom.core.stores.uow.scope import current_scope, refuse_write_under_read_only
 
 PostCommitAction = Callable[[], Awaitable[None] | None]
 """Zero-argument callable: sync (returning ``None`` or an awaitable) or async."""
@@ -41,7 +41,7 @@ class LoggedAction(Protocol):
 _channel: ContextVar[PostCommitChannel | None] = ContextVar(
     "_loom_post_commit_channel", default=None
 )
-_logger = get_logger(__name__)
+_logger = logging.getLogger(__name__)
 
 
 class PostCommitChannel:
@@ -202,7 +202,7 @@ class PostCommitChannel:
             return
         self._actions = []
         if remaining:
-            _logger.warning(_PLAIN_DROPPED, count=len(remaining))
+            _logger.warning(_PLAIN_DROPPED, extra={"count": len(remaining)})
 
 
 _Failure = tuple[PostCommitAction, Exception]
@@ -244,13 +244,13 @@ async def drain_after_failure(channel: PostCommitChannel) -> None:
 def log_never_ran(action: PostCommitAction) -> None:
     """Log a shielded action the interruption stopped, by job name and task id only."""
     for fields in _describe(action):
-        _logger.error(_SHIELDED_UNSENT, **fields)
+        _logger.error(_SHIELDED_UNSENT, extra={**fields})
 
 
 def _log_failures(failures: list[_Failure], event: str) -> None:
     for action, error in failures:
         for fields in _describe(action):
-            _logger.error(event, **fields, error=repr(error))
+            _logger.error(event, extra={**fields, "error": repr(error)})
 
 
 def _describe(action: PostCommitAction) -> Iterable[Mapping[str, object]]:
@@ -307,7 +307,7 @@ def store_channel(store: StoreKey | None = None) -> PostCommitChannel | None:
 
     In an invocation scope that settles its actions by store, owned by this
     task, that is the channel of the stores
-    :meth:`~loom.core.uow.scope.InvocationScope.owners_of` names. Anywhere
+    :meth:`~loom.core.stores.uow.scope.InvocationScope.owners_of` names. Anywhere
     else a job dispatch (``store`` omitted) is queued on
     :func:`active_channel`, and a cache invalidation gets ``None``: its write
     is already durable, so it runs now. A job dispatch from a task whose

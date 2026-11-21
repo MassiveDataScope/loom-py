@@ -9,12 +9,13 @@ from __future__ import annotations
 import pytest
 
 from loom.core.cache import CacheConfig
-from loom.core.repository.abc import SupportsCacheScope
-from loom.core.repository.abc.query import PaginationMode, QuerySpec
+from loom.core.stores.repository import SupportsCacheScope
+from loom.core.stores.repository.query import PaginationMode, QuerySpec
+from loom.testing import make
 
 from ._doubles import AcmeCacheWidget, CountingRepository, wrap_with_cache
 
-_QUERY = QuerySpec(pagination=PaginationMode.CURSOR, limit=2)
+_QUERY = make(QuerySpec, pagination=PaginationMode.CURSOR, limit=2)
 _ROWS = [AcmeCacheWidget(id=n, name=f"w{n}") for n in (1, 2, 3)]
 
 

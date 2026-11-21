@@ -39,7 +39,7 @@ from loom.core.engine.compilable import Compilable
 from loom.core.introspection import IntrospectionError
 from loom.core.model import LoomFrozenStruct, msgspec_type
 from loom.core.model.redaction import Dsn, Secret
-from loom.core.sql.config import SqlConnectionConfig
+from loom.core.stores.sql.config import SqlConnectionConfig
 
 _AGENT = "describable"
 _OUTPUT_SCHEMA: Mapping[str, Any] = {

@@ -20,8 +20,8 @@ from loom.core.checks import DeployCheckError
 from loom.core.environment import Environment
 from loom.core.job.job import Job
 from loom.core.observability.config import ObservabilityConfig
-from loom.core.observability.runtime import ObservabilityRuntime
-from loom.core.repository.abc import CURSOR_SIGNING_CHECK
+from loom.core.observability.observability import Observability
+from loom.core.stores.repository import CURSOR_SIGNING_CHECK
 from loom.core.use_case import Agent, Mcp
 from loom.core.use_case.use_case import UseCase
 
@@ -34,7 +34,6 @@ class _DoubleSyncJob(Job[int]):
     """Simple sync job with no infrastructure dependencies."""
 
     __queue__ = "default"
-    __retries__ = 0
     __countdown__ = 0
     __timeout__ = None
     __priority__ = 0
@@ -47,7 +46,6 @@ class _UpperJob(Job[str]):
     """Sync job that upper-cases a string — no dependencies."""
 
     __queue__ = "default"
-    __retries__ = 0
     __countdown__ = 0
     __timeout__ = None
     __priority__ = 0
@@ -153,32 +151,37 @@ class TestBootstrapWorkerResult:
                 "default": {
                     "backend": "sqlalchemy",
                     "url": f"sqlite+aiosqlite:///{tmp_path / 'test_worker.db'}",
-                }
+                },
+                "settings": {
+                    "cursors": {
+                        "current_key_id": "k1",
+                        "keys": {"k1": {"env": "CURSOR_KEY_WORKER"}},
+                    }
+                },
             },
             # A deployed worker with a database signs its cursors (loom.cursors.E001).
-            "persistence": {
-                "cursors": {"current_key_id": "k1", "keys": {"k1": {"env": "CURSOR_KEY_WORKER"}}}
-            },
         }
         monkeypatch.setenv("CURSOR_KEY_WORKER", base64.b64encode(secrets.token_bytes(32)).decode())
         config_file = tmp_path / "worker_observability.yaml"
         config_file.write_text(yaml.dump(cfg))
 
         captured: dict[str, Any] = {}
-        runtime = ObservabilityRuntime.noop()
+        runtime = Observability.noop()
 
         def _fake_from_config(
-            cls: type[ObservabilityRuntime],
+            cls: type[Observability],
             config: ObservabilityConfig,
             *,
             environment: Environment,
-        ) -> ObservabilityRuntime:
+            service_name: str | None = None,
+            service_version: str | None = None,
+        ) -> Observability:
             captured["config"] = config
             captured["environment"] = environment
             return runtime
 
         monkeypatch.setattr(
-            ObservabilityRuntime,
+            Observability,
             "from_config",
             classmethod(_fake_from_config),
         )
@@ -198,9 +201,9 @@ class TestBootstrapWorkerResult:
                 "default": {
                     "backend": "sqlalchemy",
                     "url": f"sqlite+aiosqlite:///{tmp_path / 'worker.db'}",
-                }
+                },
+                "settings": {"cursors": {"signing": "unsigned"}},
             },
-            "persistence": {"cursors": {"signing": "unsigned"}},
         }
         config_file = tmp_path / "worker_unsigned.yaml"
         config_file.write_text(yaml.dump(cfg))

@@ -19,7 +19,7 @@ FastAPI adapter
 
    loom.rest.fastapi
    loom.rest.fastapi.app
-   loom.rest.fastapi.router_runtime
+   loom.rest.fastapi.router
    loom.rest.fastapi.openapi
    loom.rest.fastapi.response
    loom.rest.fastapi.sql

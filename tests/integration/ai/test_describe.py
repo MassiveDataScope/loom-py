@@ -29,8 +29,8 @@ from fastapi import FastAPI
 
 from loom.ai.describe import AGENTS_CONTRIBUTOR, AGENTS_SECTION, describe_agents
 from loom.core.plugins import entrypoints as entrypoints_module
-from loom.rest.fastapi.adapter import _AGENTS_CONTRIBUTOR, _AGENTS_SECTION
 from loom.rest.fastapi.auto import create_app, describe_fastapi_app
+from loom.rest.fastapi.runtime import _AGENTS_CONTRIBUTOR, _AGENTS_SECTION
 from tests.integration.ai._entrypoints import fake_entry_points
 from tests.integration.ai.conftest import CountingEngineProvider
 
@@ -219,7 +219,8 @@ def fake_engine(monkeypatch: pytest.MonkeyPatch) -> None:
 
 def _write_app_module(tmp_path: Path) -> None:
     """Write the discoverable fixture application module."""
-    (tmp_path / f"{_APP_MODULE}.py").write_text(_APP_SOURCE, encoding="utf-8")
+    (tmp_path / _APP_MODULE).mkdir()
+    (tmp_path / _APP_MODULE / "__init__.py").write_text(_APP_SOURCE, encoding="utf-8")
 
 
 def _base_config(tmp_path: Path) -> dict[str, Any]:
@@ -228,14 +229,13 @@ def _base_config(tmp_path: Path) -> dict[str, Any]:
         "app": {
             "name": _APP_NAME,
             "code_path": str(tmp_path),
-            "discovery": {
-                "mode": "interfaces",
-                "interfaces": {"modules": [_APP_MODULE], "warn_recommended": False},
-            },
+            "packages": [_APP_MODULE],
             "rest": {"version": _APP_VERSION},
         },
-        "stores": {"default": {"backend": "sqlalchemy", "url": "sqlite+aiosqlite:///"}},
-        "persistence": {"cursors": {"signing": "ephemeral"}},
+        "stores": {
+            "default": {"backend": "sqlalchemy", "url": "sqlite+aiosqlite:///"},
+            "settings": {"cursors": {"signing": "ephemeral"}},
+        },
     }
 
 

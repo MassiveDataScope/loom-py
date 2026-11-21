@@ -1,135 +1,288 @@
-"""Observe the jobs an application dispatches.
+"""Observe the jobs an application dispatches, build valid job data, and move the inline clock.
 
-:class:`RecordingJobService` records each dispatch once the execution that
-made it commits; ``app.job_service: loom.testing:RecordingJobService``
-selects it.
+:class:`RecordingJobTransport` records each dispatch once the execution that
+made it commits; ``app.job_service: loom.testing:RecordingJobTransport``
+selects it, and ``JobService.default_transport`` returns it. :class:`JobTestData`
+builds valid envelopes, deliveries and dispatches. :class:`ManualTimer` replaces
+the timer of the inline transport: ``Override.instance(JobTimer, ManualTimer())``.
 """
 
 from __future__ import annotations
 
 import copy
 import functools
-import uuid
-from collections.abc import Sequence
-from dataclasses import dataclass
+import heapq
+import itertools
+from dataclasses import dataclass, replace
 from datetime import UTC, datetime
 from typing import TYPE_CHECKING, Any, TypeVar
 
-from loom.core.identity import Identity, captured_delegation
-from loom.core.job.callback import refuse_reserved_payload
-from loom.core.job.config import JobSettings
+from loom.core.engine.events import AbandonReason
+from loom.core.engine.execution_observer import ExecutionObserver, NullExecutionObserver
+from loom.core.identity import Identity
+from loom.core.job.callback import ANY_CALLBACKS, DispatchableCallbacks
+from loom.core.job.config import CANCEL_AT_SHUTDOWN, JobSettings, JobShutdown
 from loom.core.job.context import add_pending_publish
-from loom.core.job.handle import JobGroup, JobHandle
+from loom.core.job.delivery import JobDelivery
+from loom.core.job.dispatch import JobDispatch
+from loom.core.job.envelope import JobEnvelope, wire_job_name
+from loom.core.job.handle import JobHandle
 from loom.core.job.job import Job
-from loom.core.job.service import InlineJobService
+from loom.core.job.policy import DEFAULT_RETRY, Countdown, RetryPolicy
+from loom.core.job.timer import DelayedJob, Step
 
 if TYPE_CHECKING:
-    from loom.composition import JobBackendContext
+    from loom.composition import JobTransportContext
     from loom.core.job.callback import JobCallback
 
 ResultT = TypeVar("ResultT")
 
 
-@dataclass(frozen=True)
-class DispatchedJob:
-    """One dispatch :class:`RecordingJobService` saw committed, as it was at dispatch."""
+class NoopJob(Job[None]):
+    """A job that does nothing: the default job of :class:`JobTestData`."""
 
-    job_type: type[Job[Any]]
-    payload: dict[str, Any]
-    params: dict[str, Any] | None
-    queue: str
-    identity: Identity | None
-    """The authenticated caller acting at dispatch, ``None`` for none (as the real services)."""
+    def execute(self) -> None:
+        return None
 
 
-class RecordingJobService:
-    """A ``JobService`` recording what would be sent, for tests; nothing is sent.
-
-    A dispatch is recorded on the publish lane, where a real backend sends:
-    after the execution commits, never when it rolls back. Outside an
-    execution it is recorded by
-    :func:`~loom.core.job.context.flush_pending_dispatches`. :meth:`run`
-    executes in process, as ``InlineJobService`` does; callbacks are accepted
-    and never invoked.
-
-    Args:
-        context: Given when ``app.job_service`` selects this class; needed by
-            :meth:`run` only.
+@dataclass(frozen=True, slots=True)
+class JobTestData:
+    """Shared valid job data for tests of envelopes, deliveries and dispatches.
 
     Attributes:
-        dispatched: Every committed dispatch, in order; payload and params are
-            copied at dispatch, so a later mutation does not show.
+        job_type: The job every built object names.
+        policy: The retry policy of every built delivery.
+        trace_id: The trace every built envelope carries.
     """
 
-    def __init__(self, context: JobBackendContext | None = None) -> None:
-        self.dispatched: list[DispatchedJob] = []
-        self._settings = JobSettings() if context is None else context.settings
-        self._inline = (
-            None
-            if context is None
-            else InlineJobService(context.factory, context.executor, settings=self._settings)
+    job_type: type[Job[Any]] = NoopJob
+    policy: RetryPolicy = DEFAULT_RETRY
+    trace_id: str | None = None
+
+    def with_job_type(self, job_type: type[Job[Any]]) -> JobTestData:
+        """A copy whose envelope names *job_type*."""
+        return replace(self, job_type=job_type)
+
+    def with_policy(self, policy: RetryPolicy) -> JobTestData:
+        """A copy whose deliveries use *policy*."""
+        return replace(self, policy=policy)
+
+    def with_trace_id(self, trace_id: str | None) -> JobTestData:
+        """A copy whose envelopes carry *trace_id*."""
+        return replace(self, trace_id=trace_id)
+
+    def envelope(
+        self,
+        *,
+        payload: dict[str, Any] | None = None,
+        params: dict[str, Any] | None = None,
+        task_id: str | None = "task-1",
+        identity: dict[str, Any] | None = None,
+    ) -> JobEnvelope:
+        """Build one valid wire envelope using this test data's job and trace."""
+        from loom.testing import make
+
+        return make(
+            JobEnvelope,
+            job=wire_job_name(self.job_type.__qualname__),
+            payload=payload or {},
+            params=params,
+            task_id=task_id,
+            trace_id=self.trace_id,
+            identity=identity,
         )
 
-    async def run(
+    def delivery(
         self,
-        job_type: type[Job[ResultT]],
         *,
-        params: dict[str, Any] | None = None,
-        payload: dict[str, Any] | None = None,
-    ) -> ResultT:
-        """Execute *job_type* now, as ``InlineJobService.run`` does.
+        envelope: JobEnvelope | None = None,
+        attempt: int = 1,
+        postponements: int = 0,
+        timeout_s: float | None = None,
+    ) -> JobDelivery:
+        """Build one delivery of this test data's job under its policy."""
+        from loom.testing import make
 
-        Raises:
-            RuntimeError: When the service was built without a context.
-        """
-        if self._inline is None:
-            raise RuntimeError("RecordingJobService runs jobs only when built with a context")
-        return await self._inline.run(job_type, params=params, payload=payload)
+        return make(
+            JobDelivery,
+            job_type=self.job_type,
+            envelope=envelope or self.envelope(),
+            attempt=attempt,
+            postponements=postponements,
+            policy=self.policy,
+            timeout_s=timeout_s,
+        )
 
     def dispatch(
         self,
-        job_type: type[Job[ResultT]],
         *,
-        params: dict[str, Any] | None = None,
+        settings: JobSettings | None = None,
+        callbacks: DispatchableCallbacks = ANY_CALLBACKS,
         payload: dict[str, Any] | None = None,
-        on_success: type[JobCallback] | None = None,
-        on_failure: type[JobCallback] | None = None,
+        params: dict[str, Any] | None = None,
         queue: str | None = None,
         countdown: int | None = None,
         priority: int | None = None,
-        eta: datetime | None = None,
-    ) -> JobHandle[ResultT]:
-        """Record *job_type* once the current execution commits.
-
-        Raises:
-            ValueError: When a callback is attached and *payload* holds
-                ``job_id``, ``result``, ``exc_type`` or ``exc_msg``.
-        """
-        _ = (countdown, priority, eta)
-        payload = payload or {}
-        if on_success is not None or on_failure is not None:
-            refuse_reserved_payload(payload)
-        record = DispatchedJob(
-            job_type=job_type,
-            payload=copy.deepcopy(payload),
-            params=copy.deepcopy(params),
-            queue=queue or self._settings.of(job_type).queue,
-            identity=captured_delegation().caller,
-        )
-        add_pending_publish(functools.partial(self.dispatched.append, record))
-        return JobHandle(
-            job_id=str(uuid.uuid4()), queue=record.queue, dispatched_at=datetime.now(UTC)
+    ) -> JobDispatch:
+        """Build a validated dispatch for transport tests."""
+        return JobDispatch.build(
+            self.job_type,
+            options=(settings or JobSettings()).options_for(self.job_type),
+            callbacks=callbacks,
+            payload=payload,
+            params=params,
+            queue=queue,
+            countdown=countdown,
+            priority=priority,
         )
 
-    def dispatch_parallel(
+
+@dataclass(frozen=True)
+class DispatchedJob:
+    """One dispatch :class:`RecordingJobTransport` saw committed, as it was at dispatch."""
+
+    job_type: type[Job[Any]]
+    task_id: str
+    payload: dict[str, Any]
+    params: dict[str, Any] | None
+    queue: str
+    countdown: int
+    identity: Identity | None
+    """The authenticated caller acting at dispatch, ``None`` for none (as the real services)."""
+    trace_id: str | None = None
+
+
+class ManualTimer:
+    """A :class:`~loom.core.job.timer.JobTimer` whose clock moves only when a test says so.
+
+    Nothing waits: a scheduled step runs inside :meth:`advance`, once the
+    clock reaches its time.
+
+    :meth:`close` rehearses the shutdown of the real timer on the same clock. Under
+    ``cancel`` it drops every pending step. Under ``wait`` it runs the pending
+    steps in order, moving the clock to each, and the steps they schedule, until
+    none is pending or the next one falls beyond ``timeout_s`` seconds from now
+    (no timeout runs until idle); the rest is dropped. :attr:`lost` lists what was
+    dropped, each as ``Job:task_id``; each is also reported to *execution_observer*
+    as ``JOB_ABANDONED`` with reason ``shutdown``. A timer bound in the container is closed by
+    ``Application.running()`` on exit like the built one, so a test does not call
+    :meth:`close` itself.
+
+    Args:
+        shutdown: What :meth:`close` does with the steps still pending. The test
+            states it here: ``jobs.shutdown`` configures the timer composition
+            builds, not one a test binds.
+        execution_observer: Receives the abandonments; none when omitted.
+    """
+
+    def __init__(
         self,
-        jobs: Sequence[tuple[type[Job[Any]], dict[str, Any]]],
+        shutdown: JobShutdown = CANCEL_AT_SHUTDOWN,
         *,
-        on_all_success: type[JobCallback] | None = None,
-        on_any_failure: type[JobCallback] | None = None,
-    ) -> JobGroup:
-        """Record each job as :meth:`dispatch` does; callbacks are never invoked."""
-        _ = (on_all_success, on_any_failure)
-        return JobGroup(
-            handles=tuple(self.dispatch(job_type, payload=payload) for job_type, payload in jobs)
+        execution_observer: ExecutionObserver | None = None,
+    ) -> None:
+        self._shutdown = shutdown
+        self._execution_observer: ExecutionObserver = (
+            NullExecutionObserver() if execution_observer is None else execution_observer
         )
+        self._now = 0.0
+        self._steps: list[tuple[float, int, Step, DelayedJob]] = []
+        self._order = itertools.count()
+        self.lost: list[str] = []
+
+    @property
+    def pending(self) -> int:
+        """How many steps are waiting for the clock."""
+        return len(self._steps)
+
+    def schedule(self, delay: Countdown, step: Step, *, job: str, task_id: str) -> None:
+        """Hold *step* until the clock has moved *delay* seconds from now.
+
+        Args:
+            delay: How long the step waits.
+            step: What runs afterwards.
+            job: The qualified name of the job, listed in :attr:`lost` if dropped.
+            task_id: The id of the dispatch, listed in :attr:`lost` if dropped.
+        """
+        entry = (self._now + delay.seconds, next(self._order), step, DelayedJob(job, task_id))
+        heapq.heappush(self._steps, entry)
+
+    async def advance(self, seconds: int) -> None:
+        """Move the clock forward and run, in order, every step whose time has come.
+
+        A step another step schedules runs too, when its own time falls
+        within the move.
+
+        Args:
+            seconds: How far the clock moves.
+        """
+        target = self._now + seconds
+        await self._run_until(target)
+        self._now = target
+
+    async def close(self) -> None:
+        """Run the pending steps when waiting, then drop the rest into :attr:`lost`."""
+        if self._shutdown.is_waiting:
+            timeout = self._shutdown.timeout_s
+            await self._run_until(None if timeout is None else self._now + timeout)
+        dropped = [delayed for *_, delayed in sorted(self._steps)]
+        self._steps.clear()
+        self.lost = [delayed.label for delayed in dropped]
+        for delayed in dropped:
+            self._execution_observer.on_event(delayed.abandoned(AbandonReason.SHUTDOWN))
+
+    async def _run_until(self, limit: float | None) -> None:
+        while self._steps and (limit is None or self._steps[0][0] <= limit):
+            due, _, step, _ = heapq.heappop(self._steps)
+            self._now = due
+            await step()
+
+
+class RecordingJobTransport:
+    """Record validated dispatches at the same time a transport would send them.
+
+    Args:
+        context: The composition context, accepted for a custom transport.
+
+    Attributes:
+        dispatched: Committed dispatches in order, copied before publication.
+    """
+
+    def __init__(self, context: JobTransportContext | None = None) -> None:
+        self.dispatched: list[DispatchedJob] = []
+
+    def send_after_commit(self, dispatch: JobDispatch) -> JobHandle[Any]:
+        """Record a snapshot once the caller's unit of work commits."""
+        record, handle = self._record(dispatch)
+        add_pending_publish(functools.partial(self.dispatched.append, record))
+        return handle
+
+    async def send(self, dispatch: JobDispatch) -> JobHandle[Any]:
+        """Record a snapshot before returning the handle."""
+        record, handle = self._record(dispatch)
+        self.dispatched.append(record)
+        return handle
+
+    def check_callbacks(
+        self, on_success: type[JobCallback] | None, on_failure: type[JobCallback] | None
+    ) -> None:
+        """Accept callbacks as the recording transport has done."""
+        return None
+
+    def _record(self, dispatch: JobDispatch) -> tuple[DispatchedJob, JobHandle[Any]]:
+        record = DispatchedJob(
+            job_type=dispatch.job_type,
+            task_id=str(dispatch.envelope.task_id),
+            payload=copy.deepcopy(dispatch.envelope.payload or {}),
+            params=copy.deepcopy(dispatch.envelope.params),
+            queue=dispatch.queue,
+            countdown=dispatch.countdown.seconds,
+            identity=dispatch.delegation.caller,
+            trace_id=dispatch.envelope.trace_id,
+        )
+        handle: JobHandle[Any] = JobHandle(
+            job_id=str(dispatch.envelope.task_id),
+            queue=dispatch.queue,
+            dispatched_at=datetime.now(UTC),
+        )
+        return record, handle

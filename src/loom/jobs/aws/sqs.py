@@ -4,128 +4,124 @@ from __future__ import annotations
 
 import asyncio
 import functools
-import hashlib
-import math
+import logging
 import threading
-import uuid
-from collections.abc import Iterator, Mapping, Sequence
+from collections.abc import Mapping, Sequence
 from dataclasses import dataclass, field
 from datetime import UTC, datetime
 from typing import TYPE_CHECKING, Annotated, Any, TypeVar
 
 import msgspec
 
-from loom.core.config import ConfigError, ConfigKey
-from loom.core.config.aws import decode_aws, written_aws
-from loom.core.connections.aws import AwsClientConfig, aws_error_code, aws_island
-from loom.core.engine.events import EventKind, RuntimeEvent
-from loom.core.engine.metrics import NoMetrics
+from loom.core.config import ConfigKey
+from loom.core.connections.aws import AwsClientConfig, aws_error_code
+from loom.core.engine.events import EventKind, ExecutionEvent
+from loom.core.engine.execution_observer import NullExecutionObserver
 from loom.core.engine.post_commit import log_never_ran
-from loom.core.identity import captured_delegation
 from loom.core.job.config import JobSettings
 from loom.core.job.context import add_pending_publish, pending_publish_group
-from loom.core.job.envelope import encode_job_message, wire_job_name
-from loom.core.job.handle import JobGroup, JobHandle
+from loom.core.job.dispatch import JobDispatch
+from loom.core.job.handle import JobHandle
 from loom.core.job.job import Job
-from loom.core.job.service import InlineJobService
-from loom.core.logger import get_logger
 from loom.core.model.types import PositiveInt
-from loom.core.tracing import get_trace_id
-from loom.jobs.aws import FIFO_SUFFIX
-from loom.jobs.aws.errors import SQSDispatchError, SQSErrorCode
+from loom.jobs.aws.errors import SQSDispatchError, SQSErrorCode, SQSQueueConfigError
+from loom.jobs.aws.queue import (
+    MAX_BATCH_ENTRIES,
+    BatchResult,
+    OutgoingMessage,
+    QueueConfig,
+    SQSQueue,
+    SQSQueues,
+)
 
 if TYPE_CHECKING:
-    from loom.composition import JobBackendContext
-    from loom.core.engine.executor import RuntimeExecutor
-    from loom.core.engine.metrics import MetricsAdapter
+    from loom.composition import JobTransportContext
+    from loom.core.config import ConfigContext
+    from loom.core.engine.execution_observer import ExecutionObserver
     from loom.core.job.callback import JobCallback
-    from loom.core.use_case.factory import UseCaseFactory
 
 ResultT = TypeVar("ResultT")
 
-MAX_DELAY_SECONDS = 900
 MAX_MESSAGE_BYTES = 256 * 1024
-MAX_BATCH_ENTRIES = 10
-MAX_BATCH_BYTES = 1024 * 1024
-"""What one ``SendMessageBatch`` call carries at most, in entries and in body bytes."""
 _REFUSED_CHARACTERS = (b"\xef\xbf\xbe", b"\xef\xbf\xbf")
 
-_log = get_logger(__name__)
+_log = logging.getLogger(__name__)
 
 
 class SQSConfig(AwsClientConfig, frozen=True, kw_only=True):
-    """The ``sqs`` section: ``aws:`` client keys plus each logical queue's URL (``.fifo``: FIFO).
+    """The ``sqs`` section: ``aws:`` client keys plus each logical queue.
 
+    A queue is its URL (``.fifo``: FIFO) and its dead-letter policy.
     ``batch`` sends an execution's jobs in ``SendMessageBatch`` calls of at most
     ``batch_size`` entries, ``max_concurrent_sends`` queues at a time;
     ``batch: false`` sends each with its own ``SendMessage``.
     """
 
-    queues: dict[str, str] = {}
+    queues: dict[str, QueueConfig] = {}
     batch: bool = True
     batch_size: Annotated[int, msgspec.Meta(ge=1, le=MAX_BATCH_ENTRIES)] = MAX_BATCH_ENTRIES
     max_concurrent_sends: PositiveInt = 1
 
+    @classmethod
+    def load(cls, ctx: ConfigContext) -> SQSConfig:
+        """The ``sqs`` section of *ctx*, inheriting the ``aws`` one.
 
-class SQSQueueConfigError(ConfigError):
-    """A job's queue has no URL in ``sqs.queues``, or its FIFO queue no ``__group_by__``."""
+        Raises:
+            ConfigError: When the section is invalid, or a queue is written as a bare URL.
+        """
+        written = ctx.section(ConfigKey.SQS, dict) if ctx.has(ConfigKey.SQS) else {}
+        QueueConfig.check_written_shape(written.get("queues", {}), "sqs.queues")
+        return cls.from_config(ctx, ConfigKey.SQS, own=written)
 
 
 def check_queues(
-    queues: Mapping[str, str], jobs: Sequence[type[Job[Any]]], settings: JobSettings
+    queues: Mapping[str, QueueConfig], jobs: Sequence[type[Job[Any]]], settings: JobSettings
 ) -> None:
     """Fail at startup unless every job's queue has a URL and a FIFO job names its group."""
     for job_type in jobs:
-        queue = settings.of(job_type).queue
-        url = queues.get(queue)
-        if url is None:
+        queue = settings.options_for(job_type).queue
+        config = queues.get(queue)
+        if config is None:
             raise SQSQueueConfigError(
                 f"{job_type.__qualname__} uses queue {queue!r}, which "
                 f"sqs.queues does not map to a URL"
             )
-        if url.endswith(FIFO_SUFFIX) and job_type.__group_by__ is None:
+        if config.is_fifo and job_type.__group_by__ is None:
             raise SQSQueueConfigError(
                 f"{job_type.__qualname__} uses FIFO queue {queue!r} but "
                 "declares no __group_by__ payload field"
             )
 
 
-def build_backend(context: JobBackendContext) -> SQSJobService:
-    """``app.job_service: sqs``; ``MissingExtraError`` without the ``loom[sqs]`` extra."""
-    ctx = context.config
-    written = ctx.section(ConfigKey.SQS, dict) if ctx.has(ConfigKey.SQS) else {}
-    config = decode_aws(written_aws(ctx), written, ConfigKey.SQS, SQSConfig)
+def build_transport(context: JobTransportContext) -> SQSJobTransport:
+    """``app.job_service: sqs``; ``MissingExtraError`` without the ``loom[aws]`` extra."""
+    config = SQSConfig.load(context.config)
     check_queues(config.queues, context.jobs, context.settings)
-    client = aws_island(extra="sqs").build_aws_client("sqs", config)
-    return SQSJobService(
-        client,
-        config,
-        factory=context.factory,
-        executor=context.executor,
-        metrics=context.metrics,
-        settings=context.settings,
-    )
+    client = context.aws.client("sqs", config)
+    return SQSJobTransport(client, config, execution_observer=context.execution_observer)
 
 
 @dataclass(frozen=True)
 class _PendingSQSSend:
     """One ``SendMessage`` on the publish lane; ``task_name``/``task_id`` name it in logs."""
 
-    client: Any
+    queue: SQSQueue
     task_name: str
     task_id: str
-    queue: str
-    size: int
-    request: dict[str, Any] = field(repr=False)
+    message: OutgoingMessage = field(repr=False)
+
+    @property
+    def size(self) -> int:
+        return self.message.size
 
     async def __call__(self) -> None:
         try:
-            await asyncio.to_thread(self.client.send_message, **self.request)
+            await asyncio.to_thread(self.queue.send, self.message)
         except Exception as exc:
             code = aws_error_code(exc)
             self.log_failure(code)
             raise SQSDispatchError(
-                f"sending {self.task_name} to queue {self.queue!r} failed: {code}",
+                f"sending {self.task_name} to queue {self.queue.name!r} failed: {code}",
                 code=SQSErrorCode.SEND_FAILED,
             ) from None
 
@@ -135,16 +131,13 @@ class _PendingSQSSend:
     def log_failure(self, code: str) -> None:
         _log.error(
             "SQS send failed",
-            job=self.task_name,
-            task_id=self.task_id,
-            queue=self.queue,
-            error_code=code,
+            extra={
+                "job": self.task_name,
+                "task_id": self.task_id,
+                "queue": self.queue.name,
+                "error_code": code,
+            },
         )
-
-    def batch_entry(self) -> dict[str, Any]:
-        return {"Id": self.task_id} | {
-            key: value for key, value in self.request.items() if key != "QueueUrl"
-        }
 
 
 _Failure = tuple[_PendingSQSSend, str]
@@ -156,7 +149,6 @@ _NOT_SENT = "NotSent"
 class _PendingSQSBatch:
     """Every send of one post-commit drain, as ``SendMessageBatch`` calls per queue, in order."""
 
-    client: Any
     config: SQSConfig
     sends: list[_PendingSQSSend] = field(default_factory=list, repr=False)
     handed: set[str] = field(default_factory=set, repr=False)
@@ -166,11 +158,10 @@ class _PendingSQSBatch:
     async def __call__(self) -> None:
         by_queue: dict[str, list[_PendingSQSSend]] = {}
         for send in self.sends:
-            by_queue.setdefault(send.request["QueueUrl"], []).append(send)
+            by_queue.setdefault(send.queue.url, []).append(send)
         limit = asyncio.Semaphore(self.config.max_concurrent_sends)
         queues = [
-            asyncio.ensure_future(self._send_queue(url, sends, limit))
-            for url, sends in by_queue.items()
+            asyncio.ensure_future(self._send_queue(sends, limit)) for sends in by_queue.values()
         ]
         try:
             results = await asyncio.gather(*queues)
@@ -195,218 +186,118 @@ class _PendingSQSBatch:
         return [fields for send in self.sends for fields in send.log_fields()]
 
     async def _send_queue(
-        self, url: str, sends: list[_PendingSQSSend], limit: asyncio.Semaphore
+        self, sends: list[_PendingSQSSend], limit: asyncio.Semaphore
     ) -> list[_Failure]:
         """One chunk after the other, so a FIFO queue receives the jobs in dispatch order.
 
         A FIFO queue resends nothing and stops at its first failure: a later
         message would overtake the failed one.
         """
-        fifo = url.endswith(FIFO_SUFFIX)
+        queue = sends[0].queue
         failed: list[_Failure] = []
         async with limit:
-            for chunk in _chunks(sends, self.config.batch_size):
-                if fifo and failed:
+            for chunk in SQSQueue.chunks(
+                sends, self.config.batch_size, weight=lambda send: send.size
+            ):
+                if queue.is_fifo and failed:
                     failed += [(send, _NOT_SENT) for send in chunk]
                 else:
-                    failed += await self._send_chunk(url, chunk, retry=not fifo)
+                    failed += await self._send_chunk(queue, chunk, retry=not queue.is_fifo)
         return failed
 
     async def _send_chunk(
-        self, url: str, chunk: list[_PendingSQSSend], *, retry: bool
+        self, queue: SQSQueue, chunk: list[_PendingSQSSend], *, retry: bool
     ) -> list[_Failure]:
         """Send ``chunk``; the entries SQS refuses are sent once more when ``retry``."""
-        call = asyncio.ensure_future(asyncio.to_thread(self._call, url, chunk))
+        call = asyncio.ensure_future(asyncio.to_thread(self._call, queue, chunk))
         try:
-            response = await asyncio.shield(call)
+            result = await asyncio.shield(call)
         except asyncio.CancelledError:
             self.stopped.set()
             await asyncio.wait([call])
             raise
-        except Exception as exc:
-            code = aws_error_code(exc)
-            return [(send, code) for send in chunk]
         by_id = {send.task_id: send for send in chunk}
-        failed = [(by_id[entry["Id"]], entry["Code"]) for entry in response.get("Failed", [])]
-        if failed and retry:
-            return await self._send_chunk(url, [send for send, _ in failed], retry=False)
-        return failed
+        if result.refused and retry:
+            refused = [by_id[task_id] for task_id in result.refused]
+            return await self._send_chunk(queue, refused, retry=False)
+        return [(by_id[task_id], code) for task_id, code in result.failed.items()]
 
-    def _call(self, url: str, chunk: list[_PendingSQSSend]) -> dict[str, Any]:
+    def _call(self, queue: SQSQueue, chunk: list[_PendingSQSSend]) -> BatchResult:
         """In the thread: hand ``chunk`` to SQS, unless the batch stopped before it started."""
         if self.stopped.is_set():
             raise asyncio.CancelledError
         self.handed.update(send.task_id for send in chunk)
-        entries = [send.batch_entry() for send in chunk]
-        response: dict[str, Any] = self.client.send_message_batch(QueueUrl=url, Entries=entries)
-        return response
+        return queue.send_batch([send.message for send in chunk])
 
 
-def _chunks(sends: list[_PendingSQSSend], size: int) -> Iterator[list[_PendingSQSSend]]:
-    """``sends`` in order, at most ``size`` entries and ``MAX_BATCH_BYTES`` of bodies a chunk."""
-    chunk: list[_PendingSQSSend] = []
-    total = 0
-    for send in sends:
-        if chunk and (len(chunk) == size or total + send.size > MAX_BATCH_BYTES):
-            yield chunk
-            chunk, total = [], 0
-        chunk.append(send)
-        total += send.size
-    if chunk:
-        yield chunk
-
-
-class SQSJobService:
-    """``JobService`` sending each job to SQS after the commit; :meth:`run` is in-process.
-
-    *settings* give each job's queue, countdown and priority; the ClassVars
-    when omitted.
-    """
+class SQSJobTransport:
+    """Send validated jobs to SQS, batching the post-commit channel when configured."""
 
     def __init__(
-        self,
-        client: Any,
-        config: SQSConfig,
-        *,
-        factory: UseCaseFactory,
-        executor: RuntimeExecutor,
-        metrics: MetricsAdapter | None = None,
-        settings: JobSettings | None = None,
+        self, client: Any, config: SQSConfig, *, execution_observer: ExecutionObserver | None = None
     ) -> None:
-        self._client = client
         self._config = config
-        self._settings = settings or JobSettings()
-        self._new_batch = functools.partial(_PendingSQSBatch, client, config)
-        self._inline = InlineJobService(factory, executor, settings=self._settings)
-        self._metrics = NoMetrics() if metrics is None else metrics
-
-    async def run(
-        self,
-        job_type: type[Job[ResultT]],
-        *,
-        params: dict[str, Any] | None = None,
-        payload: dict[str, Any] | None = None,
-    ) -> ResultT:
-        return await self._inline.run(job_type, params=params, payload=payload)
-
-    def dispatch(
-        self,
-        job_type: type[Job[ResultT]],
-        *,
-        params: dict[str, Any] | None = None,
-        payload: dict[str, Any] | None = None,
-        on_success: type[JobCallback] | None = None,
-        on_failure: type[JobCallback] | None = None,
-        queue: str | None = None,
-        countdown: int | None = None,
-        priority: int | None = None,
-        eta: datetime | None = None,
-    ) -> JobHandle[ResultT]:
-        """Validate and encode now, so a refusal comes before the commit; send after it."""
-        if on_success is not None or on_failure is not None:
-            raise SQSDispatchError("SQS jobs take no callbacks", code=SQSErrorCode.CALLBACKS)
-        options = self._settings.of(job_type)
-        if priority is not None and priority != options.priority:
-            raise SQSDispatchError("SQS queues have no priority", code=SQSErrorCode.PRIORITY)
-        eff_queue = queue or options.queue
-        url = self._config.queues.get(eff_queue)
-        if url is None:
-            raise SQSDispatchError(
-                f"sqs.queues maps no URL for queue {eff_queue!r}", code=SQSErrorCode.QUEUE_UNKNOWN
-            )
-        task_id = str(uuid.uuid4())
-        trace_id = get_trace_id()
-        payload = payload or {}
-        body = encode_job_message(
-            job_type,
-            payload=payload,
-            params=params,
-            identity=captured_delegation(),
-            trace_id=trace_id,
+        self._queues = SQSQueues(client, config.queues)
+        self._new_batch = functools.partial(_PendingSQSBatch, config)
+        self._execution_observer = (
+            NullExecutionObserver() if execution_observer is None else execution_observer
         )
-        if any(refused in body for refused in _REFUSED_CHARACTERS):
-            raise SQSDispatchError(
-                f"{job_type.__qualname__} message holds a character SQS refuses",
-                code=SQSErrorCode.INVALID_CHARACTER,
-            )
-        if len(body) > MAX_MESSAGE_BYTES:
-            raise SQSDispatchError(
-                f"{job_type.__qualname__} message is {len(body)} bytes; SQS jobs take "
-                f"at most {MAX_MESSAGE_BYTES}",
-                code=SQSErrorCode.MESSAGE_TOO_LARGE,
-            )
-        delay = _delay(options.countdown if countdown is None else countdown, eta)
-        request = {"QueueUrl": url, "MessageBody": body.decode()}
-        request |= _placement(job_type, url, payload, task_id, delay)
-        task_name = wire_job_name(job_type.__qualname__)
-        send = _PendingSQSSend(self._client, task_name, task_id, eff_queue, len(body), request)
+
+    def send_after_commit(self, dispatch: JobDispatch) -> JobHandle[Any]:
+        """Validate SQS placement now and publish after a successful commit."""
+        send, handle = self._build_send(dispatch)
         if self._config.batch:
             pending_publish_group(self, self._new_batch).sends.append(send)
         else:
             add_pending_publish(send)
-        self._metrics.on_event(
-            RuntimeEvent(
+        return handle
+
+    async def send(self, dispatch: JobDispatch) -> JobHandle[Any]:
+        """Validate placement and publish the SQS message immediately."""
+        send, handle = self._build_send(dispatch)
+        await send()
+        return handle
+
+    def check_callbacks(
+        self, on_success: type[JobCallback] | None, on_failure: type[JobCallback] | None
+    ) -> None:
+        """Refuse callbacks before callback discovery or other dispatch checks."""
+        if on_success is not None or on_failure is not None:
+            raise SQSDispatchError("SQS jobs take no callbacks", code=SQSErrorCode.CALLBACKS)
+
+    def _build_send(self, dispatch: JobDispatch) -> tuple[_PendingSQSSend, JobHandle[Any]]:
+        self.check_callbacks(dispatch.on_success, dispatch.on_failure)
+        if dispatch.priority != dispatch.options.priority:
+            raise SQSDispatchError("SQS queues have no priority", code=SQSErrorCode.PRIORITY)
+        target = self._queues.named(dispatch.queue)
+        envelope = dispatch.envelope
+        body = msgspec.json.encode(envelope)
+        if any(refused in body for refused in _REFUSED_CHARACTERS):
+            raise SQSDispatchError(
+                f"{dispatch.job_type.__qualname__} message holds a character SQS refuses",
+                code=SQSErrorCode.INVALID_CHARACTER,
+            )
+        if len(body) > MAX_MESSAGE_BYTES:
+            raise SQSDispatchError(
+                f"{dispatch.job_type.__qualname__} message is {len(body)} bytes; SQS jobs take "
+                f"at most {MAX_MESSAGE_BYTES}",
+                code=SQSErrorCode.MESSAGE_TOO_LARGE,
+            )
+        task_id = str(envelope.task_id)
+        message = target.build_message(
+            dispatch.job_type, envelope.payload or {}, task_id, dispatch.countdown, body.decode()
+        )
+        send = _PendingSQSSend(target, envelope.job, task_id, message)
+        self._execution_observer.on_event(
+            ExecutionEvent(
                 kind=EventKind.JOB_DISPATCHED,
-                use_case_name=job_type.__qualname__,
-                trace_id=trace_id,
+                use_case_name=dispatch.job_type.__qualname__,
+                trace_id=envelope.trace_id,
             )
         )
-        return JobHandle(job_id=task_id, queue=eff_queue, dispatched_at=datetime.now(UTC))
-
-    def dispatch_parallel(
-        self,
-        jobs: Sequence[tuple[type[Job[Any]], dict[str, Any]]],
-        *,
-        on_all_success: type[JobCallback] | None = None,
-        on_any_failure: type[JobCallback] | None = None,
-    ) -> JobGroup:
-        if on_all_success is not None or on_any_failure is not None:
-            raise SQSDispatchError("SQS jobs take no callbacks", code=SQSErrorCode.CALLBACKS)
-        return JobGroup(
-            handles=tuple(self.dispatch(job_type, payload=body) for job_type, body in jobs)
+        return send, JobHandle(
+            job_id=task_id, queue=dispatch.queue, dispatched_at=datetime.now(UTC)
         )
 
 
-def _delay(countdown: int, eta: datetime | None) -> int:
-    if eta is not None:
-        seconds = math.ceil((eta.astimezone(UTC) - datetime.now(UTC)).total_seconds())
-    else:
-        seconds = countdown
-    if seconds > MAX_DELAY_SECONDS:
-        raise SQSDispatchError(
-            f"SQS delays a message at most {MAX_DELAY_SECONDS} s, not {seconds}",
-            code=SQSErrorCode.DELAY_TOO_LONG,
-        )
-    return max(seconds, 0)
-
-
-def _placement(
-    job_type: type[Job[Any]], url: str, payload: Mapping[str, Any], task_id: str, delay: int
-) -> dict[str, Any]:
-    """``DelaySeconds`` on a standard queue; hashed group and deduplication ids on a FIFO one."""
-    if not url.endswith(FIFO_SUFFIX):
-        return {"DelaySeconds": delay} if delay else {}
-    if delay:
-        raise SQSDispatchError(
-            "a FIFO queue takes no per-message delay", code=SQSErrorCode.FIFO_DELAY
-        )
-    group_by = job_type.__group_by__
-    group = None if group_by is None else payload.get(group_by)
-    if group is None:
-        raise SQSDispatchError(
-            f"{job_type.__qualname__} payload has no {group_by!r} value for its "
-            "FIFO MessageGroupId",
-            code=SQSErrorCode.GROUP_MISSING,
-        )
-    group_id = hashlib.sha256(str(group).encode()).hexdigest()
-    return {"MessageGroupId": group_id, "MessageDeduplicationId": task_id}
-
-
-__all__ = [
-    "SQSConfig",
-    "SQSDispatchError",
-    "SQSJobService",
-    "SQSQueueConfigError",
-    "build_backend",
-    "check_queues",
-]
+__all__ = ["SQSConfig", "SQSDispatchError", "SQSJobTransport", "build_transport", "check_queues"]

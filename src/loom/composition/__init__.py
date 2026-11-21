@@ -1,46 +1,43 @@
 """Transport-neutral composition: the application, its resources and their lifecycle.
 
-An adapter declares a :class:`Recipe`; :func:`create_app` composes the
-:class:`Application` it asks for and lets the adapter mount its transport.
+A runtime declares a :class:`Recipe`; :func:`create_app` composes the
+:class:`Application` it asks for and lets the runtime mount its transport.
 Nothing here imports an HTTP framework, the Celery worker or :mod:`loom.rest`,
-but for one sanctioned reach-out: :func:`create_app` without an adapter imports
+but for one sanctioned reach-out: :func:`create_app` without a runtime imports
 the one ``app.entry`` names, lazily, when it runs.
 """
 
 from loom.composition._ai import AiWiring
-from loom.composition._jobs import JobBackendContext
+from loom.composition._jobs import JobTransportContext
 from loom.composition._sql import SqlWiring
 from loom.composition.application import Application
-from loom.composition.build import build_application, compose_application, create_app, load_source
+from loom.composition.build import create_app
 from loom.composition.errors import (
     ApplicationAlreadyOpenError,
     CompositionErrorCode,
     CompositionStateError,
-    JobBackendError,
+    JobTransportError,
     ReservedBindingError,
 )
 from loom.composition.host import ApplicationHost, LoopHost
-from loom.composition.recipe import Adapter, Recipe
-from loom.composition.source import AppConfig, CompositionSource
+from loom.composition.project import AppConfig, Project
+from loom.composition.recipe import Recipe, Runtime
 
 __all__ = [
-    "Adapter",
+    "Runtime",
     "AiWiring",
     "AppConfig",
     "Application",
     "ApplicationAlreadyOpenError",
     "ApplicationHost",
     "CompositionErrorCode",
-    "CompositionSource",
     "CompositionStateError",
-    "JobBackendContext",
-    "JobBackendError",
+    "JobTransportContext",
+    "JobTransportError",
     "LoopHost",
+    "Project",
     "Recipe",
     "ReservedBindingError",
     "SqlWiring",
-    "build_application",
-    "compose_application",
     "create_app",
-    "load_source",
 ]

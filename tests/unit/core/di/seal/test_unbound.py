@@ -8,8 +8,7 @@ import pytest
 
 from loom.ai.abc import McpHandle
 from loom.ai.errors import AgentCompilationError, AgentErrorCode
-from loom.composition import compose_application
-from loom.composition.source import CompositionSource
+from loom.composition import Project
 from loom.core.config import ConfigContext
 from loom.core.di.container import LoomContainer, ResolutionError
 from loom.core.di.errors import ContainerSealed, DependencyWarning
@@ -21,7 +20,7 @@ from loom.core.di.graph import (
 from loom.core.di.scope import Scope
 from loom.core.execution import Kind
 from loom.core.use_case import Mcp, UseCase
-from tests.helpers.composition import Serving, composition_source
+from tests.helpers.composition import Serving, composition_project
 from tests.unit.composition.phases.components import AcmeMcpUser, AcmeRecord
 from tests.unit.composition.phases.paths import SQLITE
 from tests.unit.core.di.graph import acme
@@ -75,7 +74,7 @@ class TestUnboundKind:
 
     def test_a_bound_kind_is_not_refused(self) -> None:
         container = _bound(Scope.APPLICATION)
-        container.kinds.bind(ACME_CRM, acme_resolver())
+        container.kinds.register(ACME_CRM, acme_resolver())
 
         _refused(container)
 
@@ -94,7 +93,7 @@ class TestUnboundKind:
             container.resolve(AcmeCrmAdapter)
         resolver = acme_resolver()
         with pytest.raises(ContainerSealed, match="the container is sealed"):
-            container.kinds.bind(ACME_CRM, resolver)
+            container.kinds.register(ACME_CRM, resolver)
 
 
 class AcmeCrmPort:
@@ -119,13 +118,12 @@ def _binds_crm(container: LoomContainer) -> None:
     container.register(AcmeCrmPort, AcmeMcpCrm, scope=Scope.APPLICATION)
 
 
-def _source() -> CompositionSource:
-    return composition_source(
+def _project() -> Project:
+    return composition_project(
         ConfigContext.from_dict(
             {
                 "app": {"name": "acme", "job_service": "inline"},
-                "stores": {"default": SQLITE},
-                "persistence": {"cursors": {"signing": "ephemeral"}},
+                "stores": {"default": SQLITE, "settings": {"cursors": {"signing": "ephemeral"}}},
             }
         )
     )
@@ -136,21 +134,23 @@ class TestUnboundMcpAdapter:
         self,
     ) -> None:
         """No MCP resolver is ever bound without agents: the AI phase refuses first (T11)."""
-        adapter = Serving(AcmeRecord, use_cases=(AcmeUsesCrmPort,))
-        source = _source()
+        adapter = Serving(AcmeRecord, use_cases=(AcmeUsesCrmPort,), overrides=(_binds_crm,))
+        project = _project()
 
         with pytest.raises(AgentCompilationError) as caught:
-            compose_application(source, adapter, modules=(_binds_crm,))
+            project.compose(adapter)
 
         assert {issue.code for issue in caught.value.issues} == {AgentErrorCode.MCP_MARKER_UNKNOWN}
         assert "AcmeUsesCrmPort -> crm: AcmeCrmPort: crm" in str(caught.value)
 
     def test_a_lenient_composition_does_not_refuse_an_unbound_mcp_adapter(self) -> None:
-        adapter = Serving(AcmeRecord, use_cases=(AcmeUsesCrmPort,), lenient=True)
-        source = _source()
+        adapter = Serving(
+            AcmeRecord, use_cases=(AcmeUsesCrmPort,), lenient=True, overrides=(_binds_crm,)
+        )
+        project = _project()
 
         with pytest.warns(DependencyWarning, match="AcmeCrmPort is not built"):
-            application = compose_application(source, adapter, modules=(_binds_crm,))
+            application = project.compose(adapter)
 
         with pytest.raises(ResolutionError, match="no resolver is bound for 'mcp'"):
             application.kernel.container.resolve(AcmeCrmPort)
@@ -158,7 +158,7 @@ class TestUnboundMcpAdapter:
     def test_an_execute_marker_with_no_resolver_is_not_refused_at_seal(self) -> None:
         adapter = Serving(AcmeRecord, use_cases=(AcmeMcpUser,), lenient=True)
 
-        application = compose_application(_source(), adapter)
+        application = _project().compose(adapter)
 
         assert application.kernel.compiler.get_plan(AcmeMcpUser) is not None
 

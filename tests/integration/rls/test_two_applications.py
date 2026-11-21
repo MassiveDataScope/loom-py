@@ -12,22 +12,16 @@ from collections.abc import Iterator
 import pytest
 from sqlalchemy import text
 
-from loom.composition import (
-    AppConfig,
-    Application,
-    CompositionSource,
-    Recipe,
-    compose_application,
-)
+from loom.composition import AppConfig, Application, Project, Recipe
 from loom.core.config import ConfigContext
 from loom.core.discovery.base import DiscoveryResult
 from loom.core.model import BaseModel, ColumnField, RowScoped, ScopedField
 from loom.core.model.types import Integer, String
-from loom.core.persistence.profile import SERVER_PROFILE
-from loom.core.repository.sqlalchemy.rls import register_scope_source
-from loom.core.repository.sqlalchemy.rls.sources import clear_scope_sources
-from loom.core.repository.sqlalchemy.session_manager import SessionManager
-from tests.helpers.composition import composition_source
+from loom.core.stores.profile import SERVER_PROFILE
+from loom.stores.sqlalchemy.rls import register_scope_source
+from loom.stores.sqlalchemy.rls.sources import clear_scope_sources
+from loom.stores.sqlalchemy.session_manager import SessionManager
+from tests.helpers.composition import composition_project
 
 pytestmark = pytest.mark.integration
 
@@ -44,15 +38,15 @@ class _Ticket(BaseModel, RowScoped):
 class _Tickets:
     """Composes the ticket model on the SQLAlchemy backend."""
 
-    def recipe(self, source: CompositionSource) -> Recipe:
-        del source
+    def recipe(self, project: Project) -> Recipe:
+        del project
         return Recipe(
             profile=SERVER_PROFILE,
-            discovered=DiscoveryResult(models=(_Ticket,), use_cases=(), interfaces=()),
-            default_backend="sqlalchemy",
+            discovered=DiscoveryResult(models=(_Ticket,), use_cases=()),
+            default_store_plugin="sqlalchemy",
         )
 
-    def bind(self, application: Application) -> Application:
+    def mount(self, application: Application) -> Application:
         return application
 
 
@@ -71,12 +65,12 @@ def _compose(url: str, name: str) -> Application:
                     "backend": "sqlalchemy",
                     "url": url,
                     "schema": {"mode": "external", "scopes": {"desk": "request.desk"}},
-                }
+                },
+                "settings": {"cursors": {"signing": "ephemeral"}},
             },
-            "persistence": {"cursors": {"signing": "ephemeral"}},
         }
     )
-    return compose_application(composition_source(ctx, app=AppConfig(name=name)), _Tickets())
+    return composition_project(ctx, app=AppConfig(name=name)).compose(_Tickets())
 
 
 async def _desk(application: Application) -> str:
@@ -86,7 +80,7 @@ async def _desk(application: Application) -> str:
         async with manager.session() as session:
             return str(await session.scalar(DESK))
     finally:
-        await manager.dispose()
+        await manager.close()
 
 
 class TestTwoApplications:

@@ -5,11 +5,11 @@ from __future__ import annotations
 import pytest
 from sqlalchemy import MetaData
 
-from loom.core.backend.sqlalchemy import audited_tables, compile_all
 from loom.core.config import ConfigError
 from loom.core.model import Audited, BaseModel, ColumnField, RowScoped, ScopedField
 from loom.core.model.audited import AuditedTable
 from loom.core.model.types import Integer, Text
+from loom.stores.sqlalchemy.schema import audited_tables, compile_all
 from tests.unit.core.doubles import Note, Plain
 
 

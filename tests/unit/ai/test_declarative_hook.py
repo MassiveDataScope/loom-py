@@ -1,6 +1,6 @@
 """Authored ``on_output`` hook of spec version 1 (``loom.ai.declarative``).
 
-``on_output.usecase`` names the use case the runtime executes once per completed run
+``on_output.usecase`` names the use case the host executes once per completed run
 (002/D1). These tests pin the artifact half of AC1: the field decodes into
 :class:`OutputHookSpec`, stays ``None`` when absent, rejects unknown keys the same way
 every other struct does, and the published JSON Schema accepts the same document the

@@ -16,7 +16,7 @@ from loom.etl.compiler._plan import (
 )
 from loom.etl.declarative.expr._refs import TableRef
 from loom.etl.declarative.source._specs import TableSourceSpec, TempSourceSpec
-from loom.etl.runtime.contracts import TableDiscovery
+from loom.etl.ports.contracts import TableDiscovery
 
 
 class _TableTargetSpecLike(Protocol):

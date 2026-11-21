@@ -73,7 +73,7 @@ BODY_FIELD = "body"
 """Field a violation names when it concerns the request body as a whole."""
 
 
-class RuleViolation(DomainError):
+class RuleViolationError(DomainError):
     """Raised when a single business rule is violated.
 
     Args:
@@ -82,7 +82,7 @@ class RuleViolation(DomainError):
 
     Example::
 
-        raise RuleViolation("email", "Disposable emails not allowed")
+        raise RuleViolationError("email", "Disposable emails not allowed")
     """
 
     def __init__(self, field: str, message: str) -> None:
@@ -91,7 +91,7 @@ class RuleViolation(DomainError):
         self.message = message
 
 
-class RuleViolations(DomainError):
+class RuleViolationsError(DomainError):
     """Raised when one or more business rules are violated.
 
     Accumulates all violations from rule evaluation instead of failing
@@ -101,8 +101,8 @@ class RuleViolations(DomainError):
         violations: Sequence of individual rule violations.
     """
 
-    def __init__(self, violations: Sequence[RuleViolation]) -> None:
-        self.violations: tuple[RuleViolation, ...] = tuple(violations)
+    def __init__(self, violations: Sequence[RuleViolationError]) -> None:
+        self.violations: tuple[RuleViolationError, ...] = tuple(violations)
         messages = "; ".join(str(v) for v in self.violations)
         super().__init__(messages, code=ErrorCode.RULE_VIOLATIONS)
 
@@ -121,7 +121,7 @@ class UnsupportedQuery(DomainError):
 
     Args:
         reason: What cannot be done with the given arguments.
-        backend: Name of the persistence backend, when known where it is raised.
+        backend: Name of the store backend, when known where it is raised.
         model: Qualified name of the model being queried, when known.
     """
 

@@ -9,7 +9,8 @@ from __future__ import annotations
 
 from typing import Any
 
-from loom.core.connections.clickhouse import ClickHouseConnection, clickhouse_island
+from loom.connections.clickhouse import clickhouse_island
+from loom.core.connections.clickhouse import ClickHouseConnection
 from loom.core.model.redaction import Dsn
 
 

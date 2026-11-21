@@ -2,22 +2,22 @@
 
 from __future__ import annotations
 
+import logging
 from collections.abc import Mapping
 from typing import Any
 
 from botocore.exceptions import BotoCoreError, ClientError  # type: ignore[import-untyped]
 
-from loom.core.config.aws import decode_aws
+from loom.connections.aws import AwsClients
+from loom.core.config import ConfigContext
 from loom.core.config.keys import ConfigKey
 from loom.core.connections.aws import AwsClientConfig
-from loom.core.connections.aws.client import build_aws_client
-from loom.core.logger import get_logger
 from loom.prefect.notify._event import NotifyEvent
 from loom.prefect.notify._format import run_details, should_notify
 
 _ERROR_MAX_CHARS = 60_000
 
-_log = get_logger(__name__)
+_log = logging.getLogger(__name__)
 
 
 class SnsNotifier:
@@ -30,6 +30,8 @@ class SnsNotifier:
         client: boto3 ``sns`` client. Defaults to one for the topic's region.
         aws: The ``aws:`` section of the flow's YAML, whose keys the default
             client takes; the topic's region overrides ``aws.region``.
+        clients: The AWS clients the default client is taken from; the notifier
+            owns its own when none is given.
     """
 
     def __init__(
@@ -40,14 +42,16 @@ class SnsNotifier:
         on_completion: bool = False,
         client: Any = None,
         aws: Mapping[str, Any] | None = None,
+        clients: AwsClients | None = None,
     ) -> None:
         self._topic_arn = topic_arn
         self._on_failure = on_failure
         self._on_completion = on_completion
         if client is None:
             region = topic_arn.split(":")[3]
-            config = decode_aws(aws, {}, ConfigKey.AWS, AwsClientConfig, region=region)
-            client = build_aws_client("sns", config)
+            ctx = ConfigContext.from_dict({ConfigKey.AWS: aws})
+            config = AwsClientConfig.from_config(ctx, ConfigKey.AWS, region=region)
+            client = (clients or AwsClients()).client("sns", config)
         self._client = client
 
     def notify(self, event: NotifyEvent) -> None:
@@ -65,9 +69,7 @@ class SnsNotifier:
         except (BotoCoreError, ClientError):
             _log.warning(
                 "SNS publish failed",
-                flow=event.flow_name,
-                run=event.flow_run_name,
-                state=event.state,
+                extra={"flow": event.flow_name, "run": event.flow_run_name, "state": event.state},
                 exc_info=True,
             )
 

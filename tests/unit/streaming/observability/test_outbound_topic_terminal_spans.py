@@ -273,7 +273,7 @@ def _run_flow(
     error_sinks = build_runtime_error_sinks(plan.error_routes) if with_error_sinks else None
     built = build_dataflow_with_shutdown(
         plan,
-        observability_runtime=recorder.runtime,
+        observability=recorder.runtime,
         source=TestingSource(list(messages)),
         sink=build_runtime_sink(plan.output) if plan.output is not None else None,
         error_sinks=error_sinks,

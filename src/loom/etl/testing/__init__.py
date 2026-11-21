@@ -2,10 +2,10 @@
 
 Public API
 ----------
-* :class:`StubCatalog` — in-memory catalog for compile-time tests.
-* :class:`StubSourceReader` — in-memory reader, keyed by table reference.
-* :class:`StubTargetWriter` — in-memory writer that captures written frames.
-* :class:`StubRunObserver` — in-memory observer that records lifecycle events.
+* :class:`InMemoryCatalog` — in-memory catalog for compile-time tests.
+* :class:`InMemorySourceReader` — in-memory reader, keyed by table reference.
+* :class:`InMemoryTargetWriter` — in-memory writer that captures written frames.
+* :class:`RecordingRunObserver` — in-memory observer that records lifecycle events.
 * :class:`PolarsStepRunner` — Polars step harness, in memory or on a local
   Delta root (``delta_root=``).
 * :class:`StepResult` — unified assertion surface for step output.
@@ -42,17 +42,17 @@ from loom.etl.testing._result import MergeMetrics, StepResult
 from loom.etl.testing._runners import PolarsStepRunner
 from loom.etl.testing._scenario import ETLScenario, StepRunnerProto
 from loom.etl.testing._stubs import (
-    StubCatalog,
-    StubRunObserver,
-    StubSourceReader,
-    StubTargetWriter,
+    InMemoryCatalog,
+    InMemorySourceReader,
+    InMemoryTargetWriter,
+    RecordingRunObserver,
 )
 
 __all__ = [
-    "StubCatalog",
-    "StubSourceReader",
-    "StubTargetWriter",
-    "StubRunObserver",
+    "InMemoryCatalog",
+    "InMemorySourceReader",
+    "InMemoryTargetWriter",
+    "RecordingRunObserver",
     "PolarsStepRunner",
     "StepResult",
     "MergeMetrics",

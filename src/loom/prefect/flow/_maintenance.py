@@ -6,9 +6,9 @@ from typing import Any
 
 import msgspec
 
-from loom.core.checks import REST_CHECKS, enforce_deploy_checks
+from loom.core.checks import CheckScope, enforce_deploy_checks
 from loom.core.environment import STORAGE_CONFIG_VARIABLE, confirm_environment, loom_variable
-from loom.core.observability import ObservabilityRuntime, Scope
+from loom.core.observability import Observability, Scope
 from loom.etl.maintenance._runner import MaintenanceRunner
 from loom.etl.maintenance._step import MaintenanceStep
 from loom.etl.runner.config_loader import _load_context, _parse_sections
@@ -65,10 +65,8 @@ def maintenance_flow(
             actual_path = loom_variable(STORAGE_CONFIG_VARIABLE) or storage_config_path
             context = _load_context(actual_path, environment=environment)
             storage_config, observability_config = _parse_sections(context)
-            observability = ObservabilityRuntime.from_config(
-                observability_config, environment=environment
-            )
-            enforce_deploy_checks(context, environment, skip=(REST_CHECKS,))
+            observability = Observability.from_config(observability_config, environment=environment)
+            enforce_deploy_checks(context, environment, scope=CheckScope.without_rest())
             with observability.span(Scope.MAINTENANCE, step.__name__):
                 report = MaintenanceRunner.from_config(storage_config).run(step, params=params)
                 set_run_summary(_maintenance_summary(report, decoded))

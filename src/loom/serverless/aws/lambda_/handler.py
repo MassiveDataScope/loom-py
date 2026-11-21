@@ -2,13 +2,14 @@
 
 An event trigger's job and identity come from the configuration only. A
 direct trigger fails the invocation at the first job that fails, so Lambda
-retries the event, then sends it to the on-failure destination; via SQS every
-failed message is reported, so it is retried, then dead-lettered.
+retries the event, then sends it to the on-failure destination; via SQS each
+message is settled by what its job came to: a final failure is dead-lettered.
 """
 
 from __future__ import annotations
 
 import functools
+import logging
 from collections.abc import Callable, Mapping, Sequence
 from typing import TYPE_CHECKING, Any, Final, Protocol
 
@@ -18,21 +19,23 @@ from loom.core.errors import MalformedJobMessage
 from loom.core.identity import ON_BEHALF_OF_ATTRIBUTE, Identity
 from loom.core.identity.wire import encode_identity
 from loom.core.job.envelope import JobEnvelope
-from loom.core.job.outcome import failure_log_fields
-from loom.core.logger import get_logger
+from loom.core.job.outcome import Abandoned, Failed, failure_log_fields
+from loom.core.job.policy import Redelivery
+from loom.core.job.runner import JobRunner
 from loom.serverless.aws.lambda_._jobs import (
+    JobConsumer,
+    QueueConsumer,
     Read,
     fail_in_span,
+    job_runner,
     jobs_recipe,
     open_host,
-    run_envelope,
 )
 from loom.serverless.aws.lambda_._refusals import (
     COMPONENT,
     check_resolved_ai,
     refuse_unserved_config,
 )
-from loom.serverless.aws.lambda_.checks import trigger_job
 from loom.serverless.aws.lambda_.functions import (
     EventTrigger,
     HttpTrigger,
@@ -40,6 +43,7 @@ from loom.serverless.aws.lambda_.functions import (
     served_trigger,
     source_of,
 )
+from loom.serverless.aws.lambda_.trigger_jobs import trigger_job
 from loom.serverless.aws.lambda_.triggers import (
     Decoded,
     Decoder,
@@ -52,13 +56,13 @@ from loom.serverless.aws.lambda_.triggers import (
 from loom.serverless.aws.lambda_.triggers.sqs import QueueSource, SQSBatch
 
 if TYPE_CHECKING:
-    from loom.composition import Application, CompositionSource
+    from loom.composition import Application, Project
     from loom.core.engine.compilable import Compilable
-    from loom.core.engine.metrics import MetricsAdapter
+    from loom.core.engine.execution_observer import ExecutionObserver
     from loom.core.job.job import Job
     from loom.rest.auth import Authenticator
 
-_log = get_logger(__name__)
+_log = logging.getLogger(__name__)
 _DIRECT: Final[Mapping[str, Decoder]] = {
     "eventbridge": eventbridge.decode,
     "s3": s3.decode,
@@ -69,7 +73,7 @@ _VIA_SQS: Final[Mapping[str, Decoder]] = {**_DIRECT, "sns": sns.decode_message}
 
 
 class LambdaHandler(Protocol):
-    """The Lambda function handler :meth:`LambdaAdapter.bind` returns, owning its application."""
+    """The Lambda function handler :meth:`LambdaRuntime.mount` returns, owning its application."""
 
     def __call__(self, event: dict[str, Any], context: Any) -> Any:
         """Answer one invocation."""
@@ -83,14 +87,14 @@ class LambdaHandler(Protocol):
 _Bind = Callable[["Application"], LambdaHandler]
 
 
-class LambdaAdapter:
+class LambdaRuntime:
     """Serve a composed application from AWS Lambda, as the deployed function's trigger asks.
 
-    Swapping ``FastAPIAdapter()`` for ``LambdaAdapter()`` in ``create_app``
+    Swapping ``FastAPIRuntime()`` for ``LambdaRuntime()`` in ``create_app``
     serves the same routes, authentication and error bodies to API Gateway
     HTTP API (payload 2.0); without a declared function, every interface.
 
-    Unlike other adapters, :meth:`bind` opens the application: Lambda calls
+    Unlike other adapters, :meth:`mount` opens the application: Lambda calls
     ``create_app`` at Init, and the handler returned keeps it open across warm
     invocations. A failure to open propagates, so Init fails.
 
@@ -104,7 +108,7 @@ class LambdaAdapter:
             requires ``custom: true`` in the authentication in effect.
         jobs: Explicit job classes of a function running jobs.
         use_cases: Explicit use case classes of a function running jobs.
-        metrics: Receives the executor events of a function running jobs.
+        execution_observer: Receives the executor events of a function running jobs.
     """
 
     def __init__(
@@ -114,17 +118,17 @@ class LambdaAdapter:
         authenticator: Authenticator | None = None,
         jobs: Sequence[type[Job[Any]]] = (),
         use_cases: Sequence[type[Compilable]] = (),
-        metrics: MetricsAdapter | None = None,
+        execution_observer: ExecutionObserver | None = None,
     ) -> None:
         self._function = function
         self._authenticator = authenticator
         self._jobs = tuple(jobs)
         self._use_cases = tuple(use_cases)
-        self._metrics = metrics
+        self._execution_observer = execution_observer
         self._bind: _Bind | None = None
         self._handler: LambdaHandler | None = None
 
-    def recipe(self, source: CompositionSource) -> Recipe:
+    def recipe(self, project: Project) -> Recipe:
         """Compose what the function's trigger serves, with the Lambda pool profile.
 
         Raises:
@@ -138,18 +142,18 @@ class LambdaAdapter:
         """
         if self._bind is not None:
             raise CompositionStateError(
-                CompositionErrorCode.ADAPTER_ALREADY_COMPOSED.issue(component=COMPONENT)
+                CompositionErrorCode.RUNTIME_ALREADY_COMPOSED.issue(component=COMPONENT)
             )
-        refuse_unserved_config(source)
-        name, trigger = served_trigger(source.config, self._function, source.app.entry)
+        refuse_unserved_config(project)
+        name, trigger = served_trigger(project.config, self._function, project.app.entry)
         if trigger is None or isinstance(trigger, HttpTrigger):
-            recipe, self._bind = self._compose_http(source, name)
+            recipe, self._bind = self._compose_http(project, name)
         else:
             assert name is not None
-            recipe, self._bind = self._compose_jobs(source, name, trigger)
+            recipe, self._bind = self._compose_jobs(project, name, trigger)
         return recipe
 
-    def bind(self, application: Application) -> LambdaHandler:
+    def mount(self, application: Application) -> LambdaHandler:
         """Open *application* once, at Init, and return the warm invocation handler.
 
         Raises:
@@ -161,11 +165,11 @@ class LambdaAdapter:
         """
         if self._bind is None:
             raise CompositionStateError(
-                CompositionErrorCode.ADAPTER_RECIPE_MISSING.issue(component=COMPONENT)
+                CompositionErrorCode.RUNTIME_RECIPE_MISSING.issue(component=COMPONENT)
             )
         if self._handler is not None:
             raise CompositionStateError(
-                CompositionErrorCode.ADAPTER_ALREADY_COMPOSED.issue(component=COMPONENT)
+                CompositionErrorCode.RUNTIME_ALREADY_COMPOSED.issue(component=COMPONENT)
             )
         check_resolved_ai(application.ai.config)
         self._handler = self._bind(application)
@@ -176,33 +180,45 @@ class LambdaAdapter:
         if self._handler is not None:
             self._handler.close()
 
-    def _compose_http(self, source: CompositionSource, name: str | None) -> tuple[Recipe, _Bind]:
-        if self._jobs or self._use_cases or self._metrics is not None:
-            raise ConfigError(f"{COMPONENT} jobs=, use_cases= and metrics= run jobs, not http")
+    def _compose_http(self, project: Project, name: str | None) -> tuple[Recipe, _Bind]:
+        if self._jobs or self._use_cases or self._execution_observer is not None:
+            raise ConfigError(
+                f"{COMPONENT} jobs=, use_cases= and execution_observer= run jobs, not http"
+            )
         from loom.serverless.aws.lambda_.triggers.http import compose_http
 
-        return compose_http(source, name, self._authenticator)
+        return compose_http(project, name, self._authenticator)
 
     def _compose_jobs(
-        self, source: CompositionSource, name: str, trigger: JobsTrigger | EventTrigger
+        self, project: Project, name: str, trigger: JobsTrigger | EventTrigger
     ) -> tuple[Recipe, _Bind]:
         if self._authenticator is not None:
             raise ConfigError(f"{COMPONENT} authenticator= applies to an http function only")
-        recipe, declared = jobs_recipe(source, self._jobs, self._use_cases, self._metrics)
+        recipe, declared = jobs_recipe(
+            project, self._jobs, self._use_cases, self._execution_observer
+        )
         if not isinstance(trigger, EventTrigger):
-            failures = trigger.reports_batch_item_failures
-            return recipe, functools.partial(_bind_jobs, declared, failures)
+            assert trigger.queue is not None
+            return recipe, functools.partial(_bind_jobs, declared, trigger.queue.name)
         job_type = trigger_job(name, trigger, declared)
-        if trigger.queued:
+        if trigger.is_queued:
             return recipe, functools.partial(_bind_queued_events, name, trigger, job_type)
         return recipe, functools.partial(_bind_direct_events, name, trigger, job_type)
 
 
 def _bind_jobs(
-    declared: Mapping[str, type[Job[Any]]], report_failures: bool, application: Application
+    declared: Mapping[str, type[Job[Any]]],
+    queue_name: str,
+    application: Application,
 ) -> LambdaHandler:
-    """The SQS batch handler of a ``jobs`` function: a final failure is consumed."""
-    return SQSBatch(application, declared, open_host(application), report_failures=report_failures)
+    """The SQS batch handler of a ``jobs`` function: a final failure is abandoned."""
+    served = [
+        job
+        for job in declared.values()
+        if application.job_settings.options_for(job).queue == queue_name
+    ]
+    consumer = QueueConsumer.from_application(application, queue_name, served)
+    return SQSBatch(application, declared, open_host(application), consumer)
 
 
 def _bind_queued_events(
@@ -211,17 +227,17 @@ def _bind_queued_events(
     job_type: type[Job[Any]],
     application: Application,
 ) -> LambdaHandler:
-    """The SQS batch handler of a queued event trigger: every failure is reported, then DLQ'd."""
+    """The SQS batch handler of a queued event trigger: a final failure is abandoned."""
+    assert trigger.queue is not None
+    consumer = QueueConsumer.from_application(application, trigger.queue.name, [job_type])
     reader = _event_reader(name, trigger, _VIA_SQS, trusts_requester=False)
     source = QueueSource(
         read=lambda body: reader(parsed(body, "the SQS message body")),
         label=trigger.job,
-        retry_final=True,
         job=job_type,
     )
-    failures = trigger.reports_batch_item_failures
     host = open_host(application)
-    return SQSBatch(application, {}, host, report_failures=failures, source=source)
+    return SQSBatch(application, {}, host, consumer, source)
 
 
 def _bind_direct_events(
@@ -230,7 +246,8 @@ def _bind_direct_events(
     """The handler of a direct trigger: any failure fails the event, retried, then sent on."""
     read = _event_reader(name, trigger, _DIRECT, trusts_requester=True)
     host = open_host(application)
-    return _DirectEvents(application, host, job_type, read, trigger.job, name)
+    runner = job_runner(application, Redelivery.SAME)
+    return _DirectEvents(application, runner, host, job_type, read, trigger.job, name)
 
 
 def _event_reader(
@@ -286,11 +303,17 @@ def _identity(
 
 
 class _DirectEvents:
-    """The warm invocation handler of a direct trigger: fails the event at its first failed job."""
+    """The warm invocation handler of a direct trigger: fails the event at its first failed job.
+
+    Redelivery is ``Redelivery.SAME``: a ``JobPostponement`` is abandoned as one that cannot
+    wait, and any other failure fails the invocation. Every run is attempt 1, so
+    ``JOB_FAILED`` and ``JOB_ABANDONED`` are reported per invocation.
+    """
 
     def __init__(
         self,
         application: Application,
+        runner: JobRunner,
         host: LoopHost,
         job_type: type[Job[Any]],
         read: Read,
@@ -298,6 +321,7 @@ class _DirectEvents:
         function: str,
     ) -> None:
         self._application = application
+        self._consumer = JobConsumer(application.job_settings, runner)
         self._host = host
         self._job_type = job_type
         self._read = read
@@ -314,16 +338,27 @@ class _DirectEvents:
         """
         try:
             for envelope, span_id in self._envelopes(event):
-                self._host.run(
-                    run_envelope(self._application, envelope, self._job_type, span_id, context)
+                outcome = self._host.run(
+                    self._consumer.run_envelope(
+                        envelope,
+                        self._job_type,
+                        span_id,
+                        context,
+                        attempt=1,
+                        postponements=0,
+                    )
                 )
+                if isinstance(outcome, Failed | Abandoned):
+                    raise outcome.as_exception()
         except Exception as exc:
             _log.exception(
                 "Lambda event job failed; the event is retried, then sent to its destination",
-                function=self._function,
-                job=self._label,
-                error_class=type(exc).__name__,
-                **failure_log_fields(exc),
+                extra={
+                    "function": self._function,
+                    "job": self._label,
+                    "error_class": type(exc).__name__,
+                    **failure_log_fields(exc),
+                },
             )
             raise
 

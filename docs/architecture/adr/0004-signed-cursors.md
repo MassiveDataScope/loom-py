@@ -8,7 +8,7 @@ File and line references in Context are against loom-kernel 2.21.0.
 
 ## Context
 
-`loom/core/repository/abc/cursor.py` issued keyset-pagination tokens as the
+`loom/core/stores/repository/cursor.py` issued keyset-pagination tokens as the
 base64url form of a msgspec JSON record `{"b": backend, "k": keys, "id":
 tie_breaker}` (`encode_cursor`, `decode_cursor`). Two defects followed.
 
@@ -109,7 +109,7 @@ token are not served to another scope.
 
 ### Keys and rotation
 
-- `persistence.cursors` holds `current_key_id` and `keys`, a mapping of key
+- `stores.settings.cursors` holds `current_key_id` and `keys`, a mapping of key
   id to exactly one source: `path` (a file, the same contract as
   `JwtAuthConfig.secret_path`) or `env` (an environment variable, which is
   how ECS and Fargate inject secrets). Key material never appears in the
@@ -127,7 +127,7 @@ token are not served to another scope.
 
 ### Modes
 
-`persistence.cursors.signing` selects the mode, following Django's pattern:
+`stores.settings.cursors.signing` selects the mode, following Django's pattern:
 the code default is the secure one and every opt-out is written explicitly in
 the configuration file of the environment that needs it.
 
@@ -140,21 +140,21 @@ the configuration file of the environment that needs it.
 Both opt-outs log a WARNING at startup. Strict decoding applies in all three
 modes: it is correctness, not security.
 
-There is no environment logic in the codec. With `signing` absent the mode is
-`signed` in every environment, so a backend that serves repositories
-(`sqlalchemy`, `mongo`) and a Celery worker that registers repositories fail
-at startup without a key, with a `ConfigError` that names the
-`persistence.cursors.signing: ephemeral` opt-out for `development.yaml`.
+There is no environment logic in the codec. Configuring `stores.settings.cursors`
+turns cursor paging on; without the section no codec is built and a cursor page
+fails clearly. With the section and `signing` absent the mode is `signed` in
+every environment, so startup fails without a key, with a `ConfigError` that
+names the `stores.settings.cursors.signing: ephemeral` opt-out for
+`development.yaml`.
 
 A deploy check, `loom.cursors.E001`, registered with `@deploy_check` from
-the deploy-check registry of ADR 0005, refuses a deployment that serves
-repositories without signing its cursors with a configured key. It lives in
-`loom.core.repository.abc.checks`, which `loom.core.repository.abc` imports,
-and `loom check --deploy` imports that package. It applies when the
-configuration has a `database` section (SQLAlchemy, and the Celery worker)
-or a `persistence.mongo` section, and finds:
+the deploy-check registry of ADR 0005, refuses a deployment that configures
+`stores.settings.cursors` without signing its cursors with a configured key. It
+lives in `loom.core.stores.repository.checks`, which `loom.core.stores.repository`
+imports, and `loom check --deploy` imports that package. It checks nothing when
+the section is absent, and finds:
 
-- `persistence.cursors.signing` set to anything but the literal `signed`
+- `stores.settings.cursors.signing` set to anything but the literal `signed`
   (absent means `signed`): `ephemeral` and `unsigned` are for development
   and tests;
 - a `current_key_id` that is not a literal entry of `keys`. Startup fails on
@@ -163,12 +163,12 @@ or a `persistence.mongo` section, and finds:
 Like the other checks it reads the keys as written and resolves no
 placeholder, so it runs without the key material. At startup it runs only
 in production and staging (ADR 0005); `loom check --deploy` runs it in any
-environment. `persistence.cursors.*` is not on the
+environment. `stores.settings.cursors.*` is not on the
 `LOOM__*` override allowlist, so in production and staging
-`LOOM__PERSISTENCE__CURSORS__SIGNING=unsigned` fails at startup before any
-check runs. `persistence.cursors` is also protected like `config` and
+`LOOM__STORES__SETTINGS__CURSORS__SIGNING=unsigned` fails at startup before any
+check runs. `stores.settings.cursors` is also protected like `config` and
 `checks`: a `config.overridable` entry that could match a key under it
-(`persistence.cursors.signing`, `persistence.*.signing`) stops every load,
+(`stores.settings.cursors.signing`, `stores.settings.*.signing`) stops every load,
 so the files cannot reopen it either. A key's `env` source names the
 variable holding it; loom reads it through
 `loom.core.environment.configured_variable`, which refuses a `LOOM_*` name,
@@ -234,8 +234,8 @@ its values with the order of the rows, and reads them from the token
 
 - One `CursorCodec`, built once per process by the backend's `build()` (and
   by the Celery worker) with `CursorCodec.from_context(ctx)`, passed as a
-  required keyword-only `cursor_codec` to `RepositorySQLAlchemy`,
-  `RepositoryMongo`, `QuerySpecCompiler` and the default builders, and
+  required keyword-only `cursor_codec` to `SQLAlchemyRepository`,
+  `MongoRepository`, `QuerySpecCompiler` and the default builders, and
   registered in DI so a service paginating by hand resolves the codec the
   repositories use. `register_cursor_codec` registers it, and raises
   `ConfigError` when a different codec is already registered: two codecs
@@ -243,7 +243,10 @@ its values with the order of the rows, and reads them from the token
   built in code never meets `loom.cursors.E001`, so registering one applies
   its rule: in the deployed environment the container resolves, an
   `ephemeral` or `unsigned` codec is refused unless `CursorCodec.from_context`
-  built it from a configuration that silences the check.
+  built it from a configuration that silences the check. Without
+  `stores.settings.cursors` the codec is `CursorCodec.disabled()`: one shared
+  instance that registers like any other, reports `is_enabled` as `False`
+  and refuses every `encode` and `decode` with `UnsupportedQuery`.
 - An empty `cursor` is an invalid token on both backends (400), not a first
   page.
 - The public surface is `CursorCodec`, its configuration (`CursorConfig`,
@@ -295,7 +298,7 @@ new version byte if a consumer needs it.
 ## Consequences
 
 - Breaking: an application with a repository-serving backend needs
-  `persistence.cursors` keys or an explicit opt-out. Tokens issued before
+  `stores.settings.cursors` keys or an explicit opt-out. Tokens issued before
   this change are refused with 400; clients restart from the first page.
 - Breaking: the repository constructors, the default builders, the
   registration modules and `build_repository_harness` take `cursor_codec`;

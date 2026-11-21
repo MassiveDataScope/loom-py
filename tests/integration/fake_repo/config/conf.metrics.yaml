@@ -1,0 +1,8 @@
+includes:
+  - conf.packages.yaml
+
+observability:
+  prometheus:
+    enabled: true
+    config:
+      path: /metrics

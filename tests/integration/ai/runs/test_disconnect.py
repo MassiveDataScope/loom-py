@@ -34,8 +34,8 @@ class TestAConsumerLeavingEarly:
         engine = AcmeActingEngine(**_SLOW_SECOND)
         errors = _loop_errors()
 
-        async with make_runtime(engine) as runtime:
-            async with runtime.run_stream(AGENT, "p", identity=ALICE) as events:
+        async with make_runtime(engine) as host:
+            async with host.run_stream(AGENT, "p", identity=ALICE) as events:
                 async for _ in events:
                     break
             after = current_execution()
@@ -54,7 +54,7 @@ class TestAnHttpClientDisconnecting:
         engine = AcmeActingEngine(**_SLOW_SECOND)
         errors = _loop_errors()
 
-        async with make_runtime(engine) as runtime, serving(runtime) as app:
+        async with make_runtime(engine) as host, serving(host) as app:
             await abandon_stream_after_first_frame(app)
             after = current_execution()
         gc.collect(1)

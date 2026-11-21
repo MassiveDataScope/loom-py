@@ -154,8 +154,10 @@ class TestCheckDeploy:
             tmp_path / "app.yaml",
             {
                 "app": _UNAUTHENTICATED_APP,
-                "stores": {"default": {"backend": "sqlalchemy", "url": "${oc.env:DATABASE_URL}"}},
-                "persistence": {"cursors": {"signing": "unsigned"}},
+                "stores": {
+                    "default": {"backend": "sqlalchemy", "url": "${oc.env:DATABASE_URL}"},
+                    "settings": {"cursors": {"signing": "unsigned"}},
+                },
             },
         )
 
@@ -165,17 +167,90 @@ class TestCheckDeploy:
         assert "loom.rest.E001" in result.stdout
         assert "loom.cursors.E001" in result.stdout
 
-    def test_without_the_rest_extra_the_rest_checks_do_not_apply(self, tmp_path: Path) -> None:
-        observability = {"log": {"config": {"renderer": "console"}}}
+    def test_a_declared_app_rest_without_fastapi_fails_naming_path_module_and_extras(
+        self, tmp_path: Path
+    ) -> None:
+        config = _write(tmp_path / "app.yaml", {"app": _UNAUTHENTICATED_APP})
+
+        result = _run_cli("check", "--deploy", str(config), blocked=("fastapi",))
+
+        assert result.returncode == 1
+        assert "app.rest" in result.stderr
+        assert "'fastapi'" in result.stderr
+        assert "loom-kernel[rest]" in result.stderr
+        assert "loom-kernel[lambda]" in result.stderr
+        assert "--skip app.rest" in result.stderr
+        assert "loom.rest.E001" not in result.stdout
+
+    def test_skipping_app_rest_runs_the_rest_of_the_checks_without_fastapi(
+        self, tmp_path: Path
+    ) -> None:
+        observability = {"log": {"format": "xml"}}
         config = _write(
             tmp_path / "app.yaml", {"app": _UNAUTHENTICATED_APP, "observability": observability}
         )
 
+        result = _run_cli(
+            "check", "--deploy", "--skip", "app.rest", str(config), blocked=("fastapi",)
+        )
+
+        assert result.returncode == 1, result.stderr
+        assert "loom.logger.E001" in result.stdout
+        assert (
+            "skipped: app.entry_points (not declared), app.rest (left out by the process)"
+            in result.stdout
+        )
+
+    def test_an_undeclared_app_rest_is_skipped_and_never_imported(self, tmp_path: Path) -> None:
+        config = _write(tmp_path / "worker.yaml", {"app": {"name": "acme"}})
+
         result = _run_cli("check", "--deploy", str(config), blocked=("fastapi",))
 
         assert result.returncode == 0, result.stderr
-        assert "loom.logger.W001" in result.stdout
-        assert "loom.rest" not in result.stdout
+        assert "skipped: app.entry_points (not declared), app.rest (not declared)" in result.stdout
+
+    def test_a_skip_path_that_matches_nothing_is_a_usage_error(self, tmp_path: Path) -> None:
+        config = _write(tmp_path / "app.yaml", {"app": _SAFE_APP})
+
+        result = runner.invoke(app, ["check", "--deploy", "--skip", "loom.rest", str(config)])
+
+        assert result.exit_code == 2
+        assert "loom.rest matches no check set" in result.output
+
+    def test_the_report_lists_the_paths_it_checked(self, tmp_path: Path) -> None:
+        observability = {"log": {"format": "xml"}}
+        config = _write(tmp_path / "app.yaml", {"app": _SAFE_APP, "observability": observability})
+
+        result = runner.invoke(app, ["check", "--deploy", str(config)])
+
+        assert "checked: app.rest, observability.log" in result.output
+        assert (
+            "skipped: app.entry_points (not declared), stores (not declared), "
+            "stores.settings.cursors (not declared)"
+        ) in result.output
+
+    @pytest.mark.parametrize(
+        "options", [(), ("--skip", "app.rest")], ids=["plain", "skipping-rest"]
+    )
+    def test_an_event_trigger_naming_no_job_fails_whatever_is_skipped(
+        self, tmp_path: Path, options: tuple[str, ...]
+    ) -> None:
+        trigger = {"source": "eventbridge", "job": "Missing", "identity": {"subject": "svc:x"}}
+        document = {"app": _SAFE_APP, "lambda": {"functions": {"events": {"trigger": trigger}}}}
+        config = _write(tmp_path / "app.yaml", document)
+
+        result = runner.invoke(app, ["check", "--deploy", *options, str(config)])
+
+        assert result.exit_code == 1
+        assert "'Missing', which is no discovered Job" in result.output
+
+    def test_a_missing_server_package_does_not_hide_the_rest_checks(self, tmp_path: Path) -> None:
+        config = _write(tmp_path / "app.yaml", {"app": _UNAUTHENTICATED_APP})
+
+        result = _run_cli("check", "--deploy", str(config), blocked=("uvicorn", "httptools"))
+
+        assert result.returncode == 1, result.stderr
+        assert "loom.rest.E001" in result.stdout
 
     def test_the_application_check_modules_run_from_its_code_path(self, tmp_path: Path) -> None:
         check = write_failing_check_module(tmp_path / "src")
@@ -192,34 +267,40 @@ class TestCheckDeploy:
         self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
     ) -> None:
         config = _write(tmp_path / "app.yaml", {"app": _SAFE_APP})
-        monkeypatch.setenv("LOOM__OBSERVABILITY__LOG__CONFIG__RENDERER", "console")
+        monkeypatch.setenv("LOOM__OBSERVABILITY__LOG__LEVEL", "LOUD")
 
         result = runner.invoke(app, ["check", "--deploy", str(config)])
 
-        assert result.exit_code == 0, result.output
-        assert "loom.logger.W001" in result.output
+        assert result.exit_code == 1, result.output
+        assert "loom.logger.E002" in result.output
 
     def test_skip_leaves_out_an_area_for_a_process_serving_no_http(self, tmp_path: Path) -> None:
-        config = _write(tmp_path / "worker.yaml", {"celery": {"broker_url": "memory://"}})
+        config = _write(
+            tmp_path / "worker.yaml",
+            {"app": {"name": "acme"}, "celery": {"broker_url": "memory://"}},
+        )
 
-        result = runner.invoke(app, ["check", "--deploy", "--skip", "loom.rest", str(config)])
+        result = runner.invoke(app, ["check", "--deploy", "--skip", "app.rest", str(config)])
 
         assert result.exit_code == 0, result.output
-        assert "skipped: loom.rest" in result.output
+        assert (
+            "skipped: app.entry_points (not declared), app.rest (left out by the process)"
+            in result.output
+        )
         assert "loom.rest.E001" not in result.output
 
-    def test_a_secret_placeholder_in_the_logger_config_does_not_break_the_check(
+    def test_a_secret_placeholder_in_the_log_settings_does_not_break_the_check(
         self,
         tmp_path: Path,
     ) -> None:
-        logger_config = {"renderer": "console", "level": "${secrets:/logging/level}"}
-        document = {"app": _SAFE_APP, "observability": {"log": {"config": logger_config}}}
+        log_settings = {"format": "xml", "level": "${secrets:/logging/level}"}
+        document = {"app": _SAFE_APP, "observability": {"log": log_settings}}
         config = _write(tmp_path / "app.yaml", document)
 
         result = runner.invoke(app, ["check", "--deploy", str(config)])
 
-        assert result.exit_code == 0, result.output
-        assert "loom.logger.W001" in result.output
+        assert result.exit_code == 1, result.output
+        assert "loom.logger.E001" in result.output
 
     @pytest.mark.parametrize("code_path", ["${oc.env:CODE_DIR}", 5, ["src"]])
     def test_a_code_path_that_is_not_a_literal_path_fails(

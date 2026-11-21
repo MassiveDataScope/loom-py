@@ -9,7 +9,7 @@ import asyncpg
 import pytest
 from sqlalchemy.engine import make_url
 
-from loom.core.repository.sqlalchemy.rls import (
+from loom.stores.sqlalchemy.rls import (
     BootstrapConfig,
     DatabaseRoles,
     DatabaseUser,

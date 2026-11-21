@@ -74,7 +74,7 @@ Scenario = Callable[[InProcessServer, Any, Any], Awaitable[None]]
 
 
 async def _after_warm_call(monkeypatch: pytest.MonkeyPatch, test: Scenario) -> InProcessServer:
-    """Open the shared session as the runtime does, make one call, then run *test*, log cleared.
+    """Open the shared session as the host does, make one call, then run *test*, log cleared.
 
     *test* gets the server, the grant view's session and the raw toolset the
     model's own tool calls go through.
@@ -83,7 +83,7 @@ async def _after_warm_call(monkeypatch: pytest.MonkeyPatch, test: Scenario) -> I
         _logging_drops(monkeypatch, server)
         shared = SharedMcpToolsets()
         async with shared.open(server.capability) as session:
-            await session.list_tools()  # as the runtime does at start-up
+            await session.list_tools()  # as the host does at start-up
             await session.call_tool("echo", {"text": "warm"})
             server.log.clear()
             await test(server, session, shared.for_build(server.capability, "agent"))

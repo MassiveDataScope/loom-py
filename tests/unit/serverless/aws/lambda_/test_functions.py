@@ -10,7 +10,6 @@ from loom.core.config import ConfigContext, ConfigError
 from loom.core.job.job import Job
 from loom.core.use_case import Input
 from loom.serverless.aws.lambda_ import S3Object
-from loom.serverless.aws.lambda_.checks import trigger_job
 from loom.serverless.aws.lambda_.functions import (
     EventTrigger,
     JobsTrigger,
@@ -18,6 +17,7 @@ from loom.serverless.aws.lambda_.functions import (
     TriggerIdentity,
     declared_lambda,
 )
+from loom.serverless.aws.lambda_.trigger_jobs import trigger_job
 
 pytestmark = pytest.mark.timeout(5)
 
@@ -59,7 +59,6 @@ class TestFunctionDeclarations:
             "batch_size": 10000,
             "batching_window_s": 300,
             "max_concurrency": 1000,
-            "report_batch_item_failures": False,
         }
         function = _declared(_jobs(**knobs))
 
@@ -67,16 +66,19 @@ class TestFunctionDeclarations:
         assert function.trigger.queue is not None
         assert function.trigger.queue.name == "orders"
         assert {key: getattr(function.trigger.queue, key) for key in knobs} == knobs
-        assert function.trigger.reports_batch_item_failures is False
 
-    def test_a_jobs_function_without_a_queue_block_reports_batch_item_failures(self) -> None:
-        function = _declared({"source": "jobs"})
+    @pytest.mark.parametrize("value", [True, False])
+    def test_batch_item_failures_are_not_a_setting_of_the_mapping(self, value: bool) -> None:
+        document = _jobs(batching_window_s=1, report_batch_item_failures=value)
 
-        assert isinstance(function.trigger, JobsTrigger)
-        assert (function.trigger.queue, function.trigger.reports_batch_item_failures) == (
-            None,
-            True,
-        )
+        with pytest.raises(ConfigError, match="unknown field `report_batch_item_failures`"):
+            _declared(document)
+
+    def test_a_jobs_function_without_a_queue_block_is_refused_naming_the_function(self) -> None:
+        with pytest.raises(
+            ConfigError, match=r"lambda\.functions\.worker\.trigger: a jobs function must declare"
+        ):
+            _declared({"source": "jobs"})
 
     def test_a_queue_block_without_a_name_is_refused(self) -> None:
         with pytest.raises(
@@ -93,7 +95,6 @@ class TestFunctionDeclarations:
             ("batching_window_s", 301),
             ("max_concurrency", 1),
             ("max_concurrency", 1001),
-            ("report_batch_item_failures", "no"),
         ],
     )
     def test_an_out_of_range_setting_is_refused(self, knob: str, value: object) -> None:
@@ -109,7 +110,6 @@ class TestFunctionDeclarations:
             ("batch_size", 2),
             ("batching_window_s", 0),
             ("max_concurrency", 2),
-            ("report_batch_item_failures", True),
         ],
     )
     def test_an_http_function_takes_no_queue_or_batching_setting(
@@ -146,7 +146,7 @@ class TestFunctionDeclarations:
         ).trigger
 
         assert isinstance(trigger, EventTrigger)
-        assert (trigger.job, trigger.via, trigger.queued) == ("ImportInvoice", None, False)
+        assert (trigger.job, trigger.via, trigger.is_queued) == ("ImportInvoice", None, False)
         assert trigger.identity is not None
         assert (trigger.identity.subject, trigger.identity.roles) == ("svc:invoices", ("importer",))
         assert trigger.identity.attributes == {"tenant": "acme"}

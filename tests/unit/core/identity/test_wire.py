@@ -122,11 +122,13 @@ class TestDelegation:
         assert Delegation.decoded(payload) is NO_DELEGATION
 
     @pytest.mark.parametrize("caller", [None, ANONYMOUS], ids=["no-caller", "anonymous"])
-    def test_of_no_authenticated_caller_is_no_delegation(self, caller: Identity | None) -> None:
-        assert Delegation.of(caller, 1234.5) is NO_DELEGATION
+    def test_from_caller_no_authenticated_caller_is_no_delegation(
+        self, caller: Identity | None
+    ) -> None:
+        assert Delegation.from_caller(caller, 1234.5) is NO_DELEGATION
 
-    def test_of_an_authenticated_caller_keeps_its_deadline(self) -> None:
-        assert Delegation.of(_identity(), 1234.5) == Delegation(_identity(), 1234.5)
+    def test_from_caller_an_authenticated_caller_keeps_its_deadline(self) -> None:
+        assert Delegation.from_caller(_identity(), 1234.5) == Delegation(_identity(), 1234.5)
 
     @pytest.mark.parametrize(
         "until",

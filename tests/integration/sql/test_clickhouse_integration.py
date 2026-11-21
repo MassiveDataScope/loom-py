@@ -8,7 +8,7 @@ grants matrix from spec §2 (user ``loom_api`` with ``DEFAULT ROLE NONE``; roles
 Gating: only optional third-party pieces skip — a missing ``clickhouse-connect``
 extra (``pytest.importorskip``) or no reachable server (default
 ``http://localhost:18123``, override with ``LOOM_CLICKHOUSE_IT_URL``). The
-``loom.core.sql`` modules are first-party: a breakage there must FAIL, never skip.
+``loom.core.stores.sql`` modules are first-party: a breakage there must FAIL, never skip.
 
 Ground truth pinned from the real server (clickhouse/clickhouse-server:25.3,
 version 25.3.14.14, captured via raw HTTP):
@@ -39,10 +39,10 @@ pytest.importorskip("clickhouse_connect", reason="clickhouse-connect extra not i
 # which reads as approved without ever having executed.
 pytestmark = pytest.mark.integration
 
-# Imports after the importorskip guard: loom.core.sql.clickhouse imports the
+# Imports after the importorskip guard: loom.stores.clickhouse imports the
 # clickhouse-connect driver at module import time.
-from loom.core.sql.abc import SqlExecutionError, SqlExecutionOptions  # noqa: E402
-from loom.core.sql.clickhouse import ClickHouseConnectionRegistry  # noqa: E402
+from loom.core.stores.sql.abc import SqlExecutionError, SqlExecutionOptions  # noqa: E402
+from loom.stores.clickhouse import ClickHouseConnectionRegistry  # noqa: E402
 
 URL_ENV_VAR = "LOOM_CLICKHOUSE_IT_URL"
 DEFAULT_URL = "http://loom_api:loom_api_pw@localhost:18123"
@@ -163,7 +163,7 @@ class TestMultipleRolesPerQuery:
     ClickHouse activates one role per repeated parameter; a comma-joined value
     is read as a single role name and rejected with code 511. These tests are
     the end-to-end proof of the driver transport workaround in
-    ``loom.core.sql.clickhouse._client``.
+    ``loom.stores.clickhouse._client``.
     """
 
     async def test_both_roles_are_active_in_the_same_query(self, clickhouse_url: str) -> None:

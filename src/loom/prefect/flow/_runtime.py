@@ -52,10 +52,10 @@ def _maybe_build_prometheus_adapter() -> LifecycleObserver | None:
     if not pushgateway:
         return None
     try:
-        from loom.prometheus.lifecycle import PrometheusLifecycleAdapter  # noqa: PLC0415
+        from loom.prometheus.lifecycle import PrometheusLifecycleObserver  # noqa: PLC0415
     except ImportError:
         return None
-    return PrometheusLifecycleAdapter(pushgateway_url=pushgateway)
+    return PrometheusLifecycleObserver(pushgateway_url=pushgateway)
 
 
 __all__ = ["build_observers", "load_or_init_manifest", "maybe_delete_manifest"]

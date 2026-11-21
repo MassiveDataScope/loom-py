@@ -1,13 +1,14 @@
 """FastAPI application factory.
 
 :func:`create_fastapi_app` is the composition root that wires together the
-domain bootstrap result and REST interface declarations into a runnable
+kernel and REST interface declarations into a runnable
 ``FastAPI`` instance.
 
-It is intentionally kept thin — all validation happens during
-:class:`~loom.rest.compiler.RestInterfaceCompiler` compilation (fail-fast at
-startup) and all request handling is delegated to
-:func:`~loom.rest.fastapi.router_runtime.bind_interfaces`.
+It is intentionally kept thin — route validation happens during
+:class:`~loom.rest.compiler.RestInterfaceCompiler` compilation, the cursor-key
+check in :func:`compile_api` (both fail-fast at startup; a route that merely lets
+callers choose cursor pages is refused per request without a key), and all request
+handling is delegated to :func:`~loom.rest.fastapi.router.mount_interfaces`.
 
 An application normally gets it through :func:`~loom.composition.create_app`,
 which composes the kernel from configuration. Directly::
@@ -20,7 +21,7 @@ which composes the kernel from configuration. Directly::
     app = create_fastapi_app(
         kernel,
         RouteSources(python=[OrderRestInterface]),
-        observability_runtime=ObservabilityRuntime.noop(),
+        observability=Observability.noop(),
         title="Orders API",
         version="1.0.0",
     )
@@ -34,13 +35,21 @@ from typing import Any
 
 from fastapi import FastAPI
 
-from loom.core.bootstrap.bootstrap import BootstrapResult
-from loom.core.engine.executor import RuntimeExecutor
-from loom.core.observability.runtime import ObservabilityRuntime
+from loom.core.bootstrap.kernel import Kernel
+from loom.core.engine.executor import UseCaseExecutor
+from loom.core.observability.observability import Observability
+from loom.core.stores.repository import CursorCodec
+from loom.core.stores.repository.cursor import CURSORS_SECTION
+from loom.core.stores.repository.query import PaginationMode
 from loom.core.use_case.factory import UseCaseFactory
-from loom.rest.compiler import CompiledRoute, RestInterfaceCompiler, RouteSources
+from loom.rest.compiler import (
+    CompiledRoute,
+    InterfaceCompilationError,
+    RestInterfaceCompiler,
+    RouteSources,
+)
 from loom.rest.fastapi._errors import register_error_handlers
-from loom.rest.fastapi.router_runtime import bind_interfaces
+from loom.rest.fastapi.router import mount_interfaces
 from loom.rest.model import RestApiDefaults
 
 _MiddlewareClass = Any
@@ -76,45 +85,49 @@ class CompiledApi:
 
     routes: tuple[CompiledRoute, ...]
     factory: UseCaseFactory
-    executor: RuntimeExecutor
+    executor: UseCaseExecutor
 
 
 def compile_api(
-    result: BootstrapResult,
+    kernel: Kernel,
     routes: RouteSources,
     *,
     defaults: RestApiDefaults | None = None,
 ) -> CompiledApi:
-    """Compile *routes* against *result*, as every HTTP transport serves them.
+    """Compile *routes* against *kernel*, as every HTTP transport serves them.
 
     Raises:
         TypeError: If *routes* is not a ``RouteSources``.
-        RuntimeError: If no ``RuntimeExecutor`` is registered.
-        InterfaceCompilationError: If any interface fails structural validation.
+        InterfaceCompilationError: If any interface fails structural validation,
+            or a route declares ``pagination: cursor`` while no cursor key is
+            configured under ``stores.settings.cursors``.
     """
     resolved_routes = _require_route_sources(routes)
-    executor = result.container.resolve_or_none(RuntimeExecutor)
-    if executor is None:
-        raise RuntimeError(
-            "RuntimeExecutor is not registered in the container. "
-            "Use create_kernel(...) to build BootstrapResult."
-        )
-    compiled = RestInterfaceCompiler(result.compiler, defaults=defaults).compile_sources(
+    compiled = RestInterfaceCompiler(kernel.compiler, defaults=defaults).compile_sources(
         resolved_routes
     )
-    return CompiledApi(routes=tuple(compiled), factory=result.factory, executor=executor)
+    codec = kernel.container.resolve_or_none(CursorCodec) or CursorCodec.disabled()
+    if not codec.is_enabled:
+        for route in compiled:
+            if route.effective_pagination_mode is PaginationMode.CURSOR:
+                raise InterfaceCompilationError(
+                    f"{route.interface_name}: route ({route.route.method.upper()}, "
+                    f"{route.route.path!r}) declares pagination: cursor, but no cursor key is "
+                    f"configured: set keys under {CURSORS_SECTION}"
+                )
+    return CompiledApi(routes=tuple(compiled), factory=kernel.factory, executor=kernel.executor)
 
 
 def create_fastapi_app(
-    result: BootstrapResult,
+    kernel: Kernel,
     routes: RouteSources,
     *,
-    observability_runtime: ObservabilityRuntime | None = None,
+    observability: Observability | None = None,
     middleware: Sequence[_MiddlewareClass] = (),
     defaults: RestApiDefaults | None = None,
     **fastapi_kwargs: Any,
 ) -> FastAPI:
-    """Create a FastAPI application from a bootstrap result and REST interfaces.
+    """Create a FastAPI application from a kernel and REST interfaces.
 
     Compiles all ``RestInterface`` declarations via
     :class:`~loom.rest.compiler.RestInterfaceCompiler`, binds each compiled
@@ -126,8 +139,8 @@ def create_fastapi_app(
     starts accepting requests.
 
     Args:
-        result: Fully initialised :class:`~loom.core.bootstrap.bootstrap.BootstrapResult`
-            from :func:`~loom.core.bootstrap.kernel.create_kernel`.
+        kernel: The :class:`~loom.core.bootstrap.kernel.Kernel` built by
+            :func:`~loom.core.bootstrap.kernel.create_kernel`.
         routes: Which interfaces to mount and from which origin — see
             :class:`~loom.rest.compiler.RouteSources`. ``routes.config``
             compiles after ``routes.python``, deterministically; a
@@ -137,7 +150,7 @@ def create_fastapi_app(
             route can be redeclared in ``routes.config`` without colliding
             with itself; an entry matching no Python-declared route aborts
             startup instead of doing nothing.
-        observability_runtime: Shared runtime used to emit lifecycle events
+        observability: Shared runtime used to emit lifecycle events
             around each request.
         middleware: ASGI middleware classes to register on the application.
             Added in declaration order (first = outermost wrapper).
@@ -148,9 +161,9 @@ def create_fastapi_app(
                 from loom.prometheus import PrometheusMiddleware
 
                 app = create_fastapi_app(
-                    result,
+                    kernel,
                     RouteSources(python=[...]),
-                    observability_runtime=ObservabilityRuntime.noop(),
+                    observability=Observability.noop(),
                     middleware=[TraceIdMiddleware, PrometheusMiddleware],
                 )
         defaults: Global REST API defaults (pagination mode, profile policy).
@@ -170,28 +183,28 @@ def create_fastapi_app(
     Example::
 
         app = create_fastapi_app(
-            result,
+            kernel,
             RouteSources(python=[UserRestInterface, OrderRestInterface]),
             defaults=RestApiDefaults(pagination_mode=PaginationMode.CURSOR),
-            observability_runtime=ObservabilityRuntime.noop(),
+            observability=Observability.noop(),
             title="My API",
             version="2.0.0",
         )
     """
-    api = compile_api(result, routes, defaults=defaults)
-    runtime = observability_runtime or ObservabilityRuntime.noop()
+    api = compile_api(kernel, routes, defaults=defaults)
+    runtime = observability or Observability.noop()
     app = FastAPI(**fastapi_kwargs)
     register_error_handlers(app)
 
     for mw_class in middleware:
         app.add_middleware(mw_class)
 
-    component_registry = bind_interfaces(
+    component_registry = mount_interfaces(
         app,
         api.routes,
         api.factory,
         api.executor,
-        observability_runtime=runtime,
+        observability=runtime,
     )
     if component_registry:
         _register_openapi_components(app, component_registry)

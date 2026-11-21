@@ -5,14 +5,14 @@ from typing import Any, cast
 import msgspec
 from sqlalchemy import func, select
 
-from loom.core.repository import repository_for
-from loom.core.repository.sqlalchemy import RepositorySQLAlchemy, with_session_scope
+from loom.core.stores.repository import repository_for
+from loom.stores.sqlalchemy import SQLAlchemyRepository, with_session_scope
 from tests.integration.fake_repo.product.model import Product
 from tests.integration.fake_repo.product.repository_contract import ProductRepo
 
 
 @repository_for(Product)
-class ProductRepository(RepositorySQLAlchemy[Product, int], ProductRepo):
+class ProductRepository(SQLAlchemyRepository[Product, int], ProductRepo):
     """Custom Product repository used as the automatic main repository."""
 
     async def create(self, data: msgspec.Struct) -> Product:

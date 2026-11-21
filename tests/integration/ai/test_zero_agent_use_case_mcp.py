@@ -23,7 +23,7 @@ import pytest
 import yaml
 
 from loom.ai.errors import AgentCompilationError, AgentErrorCode
-from loom.core.engine.executor import RuntimeExecutor
+from loom.core.engine.executor import UseCaseExecutor
 from loom.core.plugins import entrypoints as entrypoints_module
 from loom.rest.fastapi.auto import create_app
 from tests.integration.ai._entrypoints import fake_entry_points
@@ -37,7 +37,20 @@ _SERVER = "knowledge"
 _APP_NAME = "zeroagentmcp-demo"
 
 _APP_SOURCE = '''\
-"""Minimal discoverable app: one use case declaring Mcp(), one that never does."""
+"""Minimal discoverable app: one use case that never declares Mcp()."""
+
+from __future__ import annotations
+
+from loom.core.use_case.use_case import UseCase
+
+
+class PlainUseCase(UseCase[object, str]):
+    async def execute(self) -> str:
+        return "plain"
+'''
+
+_KNOWLEDGE_SOURCE = '''\
+"""One use case declaring Mcp()."""
 
 from __future__ import annotations
 
@@ -49,24 +62,7 @@ from loom.core.use_case.use_case import UseCase
 class LookUpKnowledgeUseCase(UseCase[object, str]):
     async def execute(self, gateway: McpHandle = Mcp("{server}", include=["search_*"])) -> str:
         return "ok"
-
-
-class PlainUseCase(UseCase[object, str]):
-    """Keeps the manifest non-empty when the marker use case is left out."""
-
-    async def execute(self) -> str:
-        return "plain"
 '''
-
-_MANIFEST_SOURCE = """\
-\"\"\"Manifest declaring the fixture use cases, one of them conditionally.\"\"\"
-
-from __future__ import annotations
-
-from {app_module} import PlainUseCase, LookUpKnowledgeUseCase
-
-USE_CASES = [PlainUseCase{extra_use_case}]
-"""
 
 
 class _FakeDist:
@@ -89,13 +85,13 @@ class _FakeEntryPoint:
 
 
 @pytest.fixture(autouse=True)
-def fresh_manifest() -> Iterator[None]:
-    """Re-import the manifest per test: each writes a different ``USE_CASES``."""
-    sys.modules.pop(_MANIFEST_MODULE, None)
-    sys.modules.pop(_APP_MODULE, None)
+def fresh_app() -> Iterator[None]:
+    """Re-import the app per test: each writes a different package."""
+    for name in (_APP_MODULE, f"{_APP_MODULE}.knowledge"):
+        sys.modules.pop(name, None)
     yield
-    sys.modules.pop(_MANIFEST_MODULE, None)
-    sys.modules.pop(_APP_MODULE, None)
+    for name in (_APP_MODULE, f"{_APP_MODULE}.knowledge"):
+        sys.modules.pop(name, None)
 
 
 @pytest.fixture
@@ -107,31 +103,32 @@ def fake_engine(monkeypatch: pytest.MonkeyPatch) -> None:
 
 
 def _write_project(tmp_path: Path, *, declares_use_case: bool) -> str:
-    """Write the fixture app, its manifest and the config.
+    """Write the fixture app package and the config.
 
     Args:
         tmp_path: Directory the project is written to.
-        declares_use_case: Whether the manifest names the ``Mcp()`` use case.
+        declares_use_case: Whether the package holds the ``Mcp()`` use case.
 
     Returns:
         Path of the written configuration file.
     """
-    (tmp_path / f"{_APP_MODULE}.py").write_text(
-        _APP_SOURCE.format(server=_SERVER), encoding="utf-8"
-    )
-    extra_use_case = ", LookUpKnowledgeUseCase" if declares_use_case else ""
-    (tmp_path / f"{_MANIFEST_MODULE}.py").write_text(
-        _MANIFEST_SOURCE.format(app_module=_APP_MODULE, extra_use_case=extra_use_case),
-        encoding="utf-8",
-    )
+    package = tmp_path / _APP_MODULE
+    package.mkdir()
+    (package / "__init__.py").write_text(_APP_SOURCE, encoding="utf-8")
+    if declares_use_case:
+        (package / "knowledge.py").write_text(
+            _KNOWLEDGE_SOURCE.format(server=_SERVER), encoding="utf-8"
+        )
     config: dict[str, Any] = {
         "app": {
             "name": _APP_NAME,
             "code_path": str(tmp_path),
-            "discovery": {"mode": "manifest", "manifest": {"module": _MANIFEST_MODULE}},
+            "packages": [_APP_MODULE],
         },
-        "stores": {"default": {"backend": "sqlalchemy", "url": "sqlite+aiosqlite:///"}},
-        "persistence": {"cursors": {"signing": "ephemeral"}},
+        "stores": {
+            "default": {"backend": "sqlalchemy", "url": "sqlite+aiosqlite:///"},
+            "settings": {"cursors": {"signing": "ephemeral"}},
+        },
         "ai": {
             "engine": _ENGINE_NAME,
             "models": {"default": {"provider": "fake", "model": "fake-model"}},
@@ -199,15 +196,15 @@ class TestOnlyMcpWithNoAgentArtefacts:
         itself ever reaches it.
         """
         calls: list[Any] = []
-        original = RuntimeExecutor.bind_mcp_resolver
+        original = UseCaseExecutor.bind_mcp_resolver
 
-        def _recording_bind(self: RuntimeExecutor, resolver: Any) -> None:
+        def _recording_bind(self: UseCaseExecutor, resolver: Any) -> None:
             calls.append(resolver)
             original(self, resolver)
 
-        monkeypatch.setattr(RuntimeExecutor, "bind_mcp_resolver", _recording_bind)
+        monkeypatch.setattr(UseCaseExecutor, "bind_mcp_resolver", _recording_bind)
         config_path = _write_project(tmp_path, declares_use_case=True)
 
         create_app(config_path)
 
-        assert calls, "create_app never called RuntimeExecutor.bind_mcp_resolver"
+        assert calls, "create_app never called UseCaseExecutor.bind_mcp_resolver"

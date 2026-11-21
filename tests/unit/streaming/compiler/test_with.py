@@ -7,7 +7,7 @@ from omegaconf import DictConfig, OmegaConf
 
 from loom.streaming import (
     CollectBatch,
-    ContextFactory,
+    ContextSupplier,
     FromTopic,
     IntoTopic,
     Process,
@@ -46,14 +46,14 @@ class TestWithCompiler:
         )
 
         config = OmegaConf.create({})
-        with pytest.raises(CompilationError, match="ContextFactory"):
+        with pytest.raises(CompilationError, match="ContextSupplier"):
             compile_flow(flow, config=config)
 
-    def test_compile_succeeds_on_batch_scope_with_context_factory(
+    def test_compile_succeeds_on_batch_scope_with_context_supplier(
         self,
         streaming_kafka_config: DictConfig,
     ) -> None:
-        """BATCH scope with a ContextFactory is valid."""
+        """BATCH scope with a ContextSupplier is valid."""
 
         class _FakeSyncCM:
             def __enter__(self) -> _FakeSyncCM:
@@ -69,7 +69,7 @@ class TestWithCompiler:
                 With(
                     process=Process(FakeStep(), IntoTopic("out", payload=Result)),
                     scope=ResourceScope.BATCH,
-                    db=ContextFactory(lambda: _FakeSyncCM()),
+                    db=ContextSupplier(lambda: _FakeSyncCM()),
                 )
             ),
         )

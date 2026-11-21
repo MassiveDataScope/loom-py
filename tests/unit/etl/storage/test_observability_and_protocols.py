@@ -10,7 +10,7 @@ from loom.etl.declarative.expr._refs import TableRef
 from loom.etl.declarative.source import SourceSpec, TableSourceSpec
 from loom.etl.declarative.target._table import ReplaceSpec
 from loom.etl.lineage._config import ETLObservabilityConfig, LineageConfig
-from loom.etl.runtime.contracts import SourceReader, SQLExecutor, TableDiscovery, TargetWriter
+from loom.etl.ports.contracts import SourceReader, SQLExecutor, TableDiscovery, TargetWriter
 from loom.etl.schema._schema import ColumnSchema, LoomDtype
 
 

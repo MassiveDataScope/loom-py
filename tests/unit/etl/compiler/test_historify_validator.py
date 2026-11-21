@@ -447,24 +447,24 @@ class TestValidateStepIntegration:
 
     def test_player_dim_step_compiles(self) -> None:
         from loom.etl.compiler import ETLCompiler
-        from loom.etl.testing import StubCatalog
+        from loom.etl.testing import InMemoryCatalog
 
-        catalog = StubCatalog(tables={"warehouse.dim_players": ()})
+        catalog = InMemoryCatalog(tables={"warehouse.dim_players": ()})
         compiler = ETLCompiler(catalog=catalog)
         compiler.compile_step(_PlayerDimStep)
 
     def test_loan_step_compiles(self) -> None:
         from loom.etl.compiler import ETLCompiler
-        from loom.etl.testing import StubCatalog
+        from loom.etl.testing import InMemoryCatalog
 
-        catalog = StubCatalog(tables={"warehouse.dim_contracts": ()})
+        catalog = InMemoryCatalog(tables={"warehouse.dim_contracts": ()})
         compiler = ETLCompiler(catalog=catalog)
         compiler.compile_step(_LoanStep)
 
     def test_log_mode_step_compiles(self) -> None:
         from loom.etl.compiler import ETLCompiler
-        from loom.etl.testing import StubCatalog
+        from loom.etl.testing import InMemoryCatalog
 
-        catalog = StubCatalog(tables={"warehouse.dim_subscriptions": ()})
+        catalog = InMemoryCatalog(tables={"warehouse.dim_subscriptions": ()})
         compiler = ETLCompiler(catalog=catalog)
         compiler.compile_step(_LogModeStep)

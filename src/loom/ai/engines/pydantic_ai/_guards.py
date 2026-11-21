@@ -39,7 +39,7 @@ from loom.ai.errors import (
 from loom.core.di import LoomContainer
 from loom.core.identity import Identity
 from loom.core.observability.event import Scope
-from loom.core.observability.runtime import ObservabilityRuntime
+from loom.core.observability.observability import Observability
 
 _logger = logging.getLogger(__name__)
 
@@ -79,13 +79,15 @@ class BuildContext:
 
     agent: str
     container: LoomContainer
-    observability: ObservabilityRuntime | None
+    observability: Observability | None
     timeout_s: float
     mcp: SharedMcpToolsets
     mcp_grants: tuple[CompiledMcpCapability, ...]
 
     @classmethod
-    def of(cls, plan: AgentPlan, container: LoomContainer, mcp: SharedMcpToolsets) -> BuildContext:
+    def from_plan(
+        cls, plan: AgentPlan, container: LoomContainer, mcp: SharedMcpToolsets
+    ) -> BuildContext:
         """Derive the build context of one compiled plan.
 
         Args:
@@ -99,7 +101,7 @@ class BuildContext:
         return cls(
             agent=plan.name,
             container=container,
-            observability=container.resolve_or_none(ObservabilityRuntime),
+            observability=container.resolve_or_none(Observability),
             timeout_s=plan.policies.tool_timeout_ms / _MS_PER_SECOND,
             mcp=mcp,
             mcp_grants=tuple(

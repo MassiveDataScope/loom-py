@@ -9,12 +9,12 @@ import pytest
 
 from loom.core.config import ConfigContext, ConfigError
 from loom.core.connections import AwsClientConfig, ClickHouseConnection, MongoConnection
-from loom.core.persistence.database import DatabaseConfig
-from loom.core.persistence.profile import SERVER_PROFILE
-from loom.core.persistence.stores import StoreKey, load_catalog
-from loom.core.repository.dynamodb.backend import DynamoDBBackend
-from loom.core.sql.config import reject_retired_sql_keys
+from loom.core.stores.catalog import StoreKey, load_catalog
+from loom.core.stores.database import DatabaseConfig
+from loom.core.stores.profile import SERVER_PROFILE
+from loom.core.stores.sql.config import reject_retired_sql_keys
 from loom.etl.storage._config import normalise_storage_section
+from loom.stores.dynamodb.plugin import DynamoDBStorePlugin
 from loom.streaming.mongo._config import load_mongo_config
 from tests.helpers.persistence import build_backend
 
@@ -44,20 +44,20 @@ class TestRetiredConnectionKeys:
         ctx = ConfigContext.from_dict({"stores": {"default": {"backend": "dynamodb", **section}}})
 
         message = _names("stores.default", retired, replacement)
-        backend = DynamoDBBackend()
+        backend = DynamoDBStorePlugin()
         with pytest.raises(ConfigError, match=message):
             build_backend(backend, ctx, (), SERVER_PROFILE)
 
     @pytest.mark.parametrize(("retired", "value", "replacement"), _MONGO_RETIRED)
     def test_persistence_mongo(self, retired: str, value: Any, replacement: str) -> None:
         pytest.importorskip("pymongo")
-        from loom.core.repository.mongo.backend import MongoBackend
+        from loom.stores.mongo.plugin import MongoStorePlugin
 
         section = {"url": "mongodb://h", "database": "app", retired: value}
         ctx = ConfigContext.from_dict({"stores": {"default": {"backend": "mongo", **section}}})
 
         message = _names("stores.default", retired, replacement)
-        backend = MongoBackend()
+        backend = MongoStorePlugin()
         with pytest.raises(ConfigError, match=message):
             build_backend(backend, ctx, (), SERVER_PROFILE)
 
@@ -88,7 +88,7 @@ class TestRetiredConnectionKeys:
 
     def test_the_sql_registry_refuses_a_retired_key_before_decoding(self) -> None:
         pytest.importorskip("clickhouse_connect")
-        from loom.core.sql.clickhouse import ClickHouseConnectionRegistry
+        from loom.stores.clickhouse import ClickHouseConnectionRegistry
 
         raw = {"connections": {"a": {"backend": "clickhouse", "url": "http://h", "pool_size": 2}}}
 

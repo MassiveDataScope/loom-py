@@ -8,10 +8,9 @@ inside the pytest interpreter cannot mask a real dependency leak. Modules are
 enumerated from the file tree rather than ``pkgutil.walk_packages`` because
 ``loom.core`` is an implicit namespace package, invisible to ``pkgutil``.
 
-Only two packages are skipped because SQLAlchemy is their subject, not a leak:
-``loom.core.repository.sqlalchemy`` (the SQLAlchemy repository backend) and
-``loom.core.backend`` (the SQLAlchemy model compiler, re-exported eagerly from
-its ``__init__``). Every other module is walked, including the Mongo, DynamoDB,
+Only one package is skipped because SQLAlchemy is its subject, not a leak:
+``loom.stores.sqlalchemy`` (the SQLAlchemy store, its model compiler
+included). Every other module is walked, including the Mongo, DynamoDB,
 Prefect, Spark and ETL I/O adapters: an ``ImportError`` there that does not
 mention sqlalchemy is another missing extra and is ignored.
 
@@ -39,7 +38,7 @@ from pathlib import Path
 
 import loom
 
-SKIPPED_PREFIXES = ("loom.core.repository.sqlalchemy", "loom.core.backend")
+SKIPPED_PREFIXES = ("loom.stores.sqlalchemy",)
 
 
 class _BlockSqlAlchemy:

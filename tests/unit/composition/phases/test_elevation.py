@@ -10,7 +10,7 @@ from loom.composition import Application
 from loom.core.authz.elevation import ElevationSink
 from loom.core.di.container import LoomContainer
 from loom.core.di.scope import Scope
-from loom.core.persistence.elevation import ScopedElevationSink
+from loom.core.stores.elevation import ScopedElevationSink
 from tests.unit.core.authz._elevation_doubles import FakeSink, elevations_through
 
 
@@ -34,7 +34,7 @@ class TestElevationSink:
     def sink(self, monkeypatch: pytest.MonkeyPatch) -> FakeSink:
         """The sink the composition builds from its stores."""
         built = FakeSink()
-        monkeypatch.setattr(ScopedElevationSink, "of", lambda wirings: built)
+        monkeypatch.setattr(ScopedElevationSink, "from_wirings", lambda wirings: built)
         return built
 
     async def test_the_executors_sink_is_the_one_bound(

@@ -6,7 +6,7 @@ configs plus a minimal discoverable app package, mirroring the structure used by
 connection: the ClickHouse registry is only entered during the app lifespan,
 which these tests never start.
 
-The last test drives :func:`loom.rest.fastapi.sql.bind_sql_endpoints` directly:
+The last test drives :func:`loom.rest.fastapi.sql.mount_sql_endpoints` directly:
 the same invariant must hold for a hand-written composition root, where no YAML
 gate ever runs.
 """
@@ -24,11 +24,11 @@ from fastapi import FastAPI
 from loom.core.config.errors import ConfigError
 from loom.core.identity import Identity
 from loom.core.model.redaction import Dsn
-from loom.core.sql.config import SqlConfig, SqlConnectionConfig, SqlEndpointConfig
-from loom.core.sql.service import NullSqlQueryService
+from loom.core.stores.sql.config import SqlConfig, SqlConnectionConfig, SqlEndpointConfig
+from loom.core.stores.sql.service import NullSqlQueryService
 from loom.rest.auth import AuthenticationMiddleware, RequestCredentials
 from loom.rest.fastapi.auto import create_app
-from loom.rest.fastapi.sql import bind_sql_endpoints
+from loom.rest.fastapi.sql import mount_sql_endpoints
 from tests.unit.rest.doubles import route_paths
 
 _SECRET_PATH = str(Path(tempfile.mkdtemp()) / "hs.key")
@@ -108,18 +108,19 @@ def _write_project(
     custom_auth: bool = False,
 ) -> str:
     """Write the fixture app module plus a YAML config; return the config path."""
-    (tmp_path / f"{_APP_MODULE}.py").write_text(_APP_SOURCE, encoding="utf-8")
+    package = tmp_path / _APP_MODULE
+    package.mkdir()
+    (package / "__init__.py").write_text(_APP_SOURCE, encoding="utf-8")
     config: dict[str, Any] = {
         "app": {
             "name": "sqlgate-demo",
             "code_path": ".",
-            "discovery": {
-                "mode": "interfaces",
-                "interfaces": {"modules": [_APP_MODULE], "warn_recommended": False},
-            },
+            "packages": [_APP_MODULE],
         },
-        "stores": {"default": {"backend": "sqlalchemy", "url": "sqlite+aiosqlite:///"}},
-        "persistence": {"cursors": {"signing": "ephemeral"}},
+        "stores": {
+            "default": {"backend": "sqlalchemy", "url": "sqlite+aiosqlite:///"},
+            "settings": {"cursors": {"signing": "ephemeral"}},
+        },
     }
     auth: dict[str, Any] = {}
     if jwt_section is not None:
@@ -376,4 +377,4 @@ class TestBinderRefusesAMultiRoleEndpointWithoutIdentity:
         service = NullSqlQueryService()
 
         with pytest.raises(ConfigError, match="binds them to the caller identity"):
-            bind_sql_endpoints(app, service=service, config=config)
+            mount_sql_endpoints(app, service=service, config=config)

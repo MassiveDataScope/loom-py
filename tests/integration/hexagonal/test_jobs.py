@@ -17,6 +17,7 @@ from loom.core.identity import Identity, reset_identity, set_identity
 from loom.core.job import JobService
 from loom.core.job.context import flush_pending_dispatches
 from loom.core.job.handle import JobFailedError, JobHandle
+from tests.helpers.loggers import logged_events
 from tests.integration.hexagonal.conftest import (
     ANA,
     BO,
@@ -40,7 +41,7 @@ async def _dispatched_by(application: Application, caller: Identity | None) -> J
     service = application.kernel.container.resolve(JobService)
     token = set_identity(caller)
     try:
-        handle = service.dispatch(TrackShipmentJob, params=PARAMS)
+        handle = service.dispatch_after_commit(TrackShipmentJob, params=PARAMS)
     finally:
         reset_identity(token)
     await flush_pending_dispatches()
@@ -55,11 +56,9 @@ async def _run_as(application: Application, caller: Identity, shipment_id: str) 
 
 def _failed_jobs(caplog: pytest.LogCaptureFixture) -> list[str]:
     return [
-        str(record.msg["error"])
-        for record in caplog.records
-        if isinstance(record.msg, dict)
-        and record.msg.get("usecase") == TrackShipmentJob.__name__
-        and record.msg.get("status") == "failure"
+        str(entry["error"])
+        for entry in logged_events(caplog)
+        if entry.get("usecase") == TrackShipmentJob.__name__ and entry.get("status") == "failure"
     ]
 
 

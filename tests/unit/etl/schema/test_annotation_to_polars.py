@@ -9,8 +9,8 @@ import msgspec
 import polars as pl
 import pytest
 
-from loom.etl.backends.polars import loom_type_to_polars, polars_to_loom_type
-from loom.etl.backends.polars._dtype import loom_type_to_polars as private_loom_type_to_polars
+from loom.etl.engines.polars import loom_type_to_polars, polars_to_loom_type
+from loom.etl.engines.polars._dtype import loom_type_to_polars as private_loom_type_to_polars
 from loom.etl.schema import (
     ListType,
     LoomDtype,

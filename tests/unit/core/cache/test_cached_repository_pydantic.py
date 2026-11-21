@@ -22,9 +22,9 @@ import pytest
 
 from loom.core.cache import CacheConfig, CachedRepository, GenerationalDependencyResolver
 from loom.core.cache.result_codec import to_payload
-from loom.core.repository import FilterParams, PageParams, PageResult
+from loom.core.stores.repository import FilterParams, PageParams, PageResult
 
-from ._doubles import CountingCacheBackend
+from ._doubles import CountingCacheStore
 
 pydantic = pytest.importorskip("pydantic")
 
@@ -74,8 +74,8 @@ class PydanticRowRepository:
 
 def _wrap(
     repository: PydanticRowRepository,
-) -> tuple[CachedRepository[Any, Any, Any, Any], CountingCacheBackend]:
-    backend = CountingCacheBackend()
+) -> tuple[CachedRepository[Any, Any, Any, Any], CountingCacheStore]:
+    backend = CountingCacheStore()
     resolver = GenerationalDependencyResolver(backend)
     wrapper: CachedRepository[Any, Any, Any, Any] = CachedRepository(
         repository,

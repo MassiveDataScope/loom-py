@@ -40,7 +40,7 @@ parameter with a default that is not a marker is left to Python.
 :pyobject: EmailInvoiceNotifier
 ```
 
-A module binds the port to the adapter, and the adapter's own dependencies:
+An installer binds the port to the adapter, and the adapter's own dependencies:
 
 ```{literalinclude} ../../tests/docs/examples/invoicing.py
 :language: python
@@ -54,7 +54,7 @@ works like a class: `container.register(Gateway, gateway)` resolves the
 function's required parameters from the container.
 
 A composed application takes its modules through
-`create_app(..., modules=[...])` or `compose_application(..., modules=...)`. A
+a discovered `Installer` in `app.packages`. A
 standalone kernel takes them through `create_kernel`:
 
 ```{literalinclude} ../../tests/docs/examples/invoicing.py
@@ -103,7 +103,7 @@ port.
   when first used.
 - A standalone kernel takes the resolvers as
   `create_kernel(agent_resolver=..., mcp_resolver=...)`, or later through
-  `RuntimeExecutor.bind_agent_resolver` and `bind_mcp_resolver`. A resolver is
+  `UseCaseExecutor.bind_agent_resolver` and `bind_mcp_resolver`. A resolver is
   a `loom.core.execution.ExecutionResolver`: `resolve(declaration, annotation)`
   returns the handle, and the handle reads the identity at call time.
 
@@ -156,12 +156,12 @@ cycles therefore stop kernel creation:
 The framework owns some keys. A module that binds one fails right after it
 runs:
 
-- `create_kernel` reserves `UseCaseFactory`, `RuntimeExecutor`,
+- `create_kernel` reserves `UseCaseFactory`, `UseCaseExecutor`,
   `UseCaseRegistry` and `ApplicationInvoker`
   (`loom.core.bootstrap.kernel.KERNEL_KEYS`) and raises `BootstrapError`
   naming the module and the key.
 - A composed application also reserves `SqlQueryService`, `CallerBoundSql`,
-  `ObservabilityRuntime`, `StoreCatalog`, `ElevationSink` and each store's
+  `Observability`, `StoreCatalog`, `ElevationSink` and each store's
   `SessionManager` or `MongoSessions`, and raises
   `loom.composition.ReservedBindingError`.
 
@@ -181,26 +181,26 @@ A composed application's container is sealed once it has started:
 `register`, `register_default`, `register_instance` and `register_repo` on it
 raise `loom.core.di.ContainerSealed`, and so do declaring an execution kind on
 `container.kinds` and binding a resolver (`bind_agent_resolver`,
-`bind_mcp_resolver`). Bind every key in a module, and every resolver before the
+`bind_mcp_resolver`). Bind every key in an installer, and every resolver before the
 seal. The container `create_kernel` returns stays unsealed.
 
 ## The composition pipeline
 
-`compose_application(source, adapter, modules=...)` runs these phases in
-order; `create_app` and `build_application` load the source
-(`CompositionSource.load`) and call it. Nothing registers after `register`.
+`Project.compose(runtime)` runs these phases in
+order; `create_app` loads the project (`Project.load`) and calls
+`Project.serve`. Nothing registers after `register`.
 
-1. `plan`: the adapter returns its `Recipe`; failing deploy checks stop
+1. `plan`: the runtime returns its `Recipe`; failing deploy checks stop
    start-up in a deployed environment.
 2. `build_stores`: every store the discovered models use is built.
 3. `register`: the container is filled in this order: the seed keys
-   (`AppConfig`, `Environment`, `ObservabilityRuntime`, `StoreCatalog`), the
+   (`AppConfig`, `Environment`, `Observability`, `StoreCatalog`), the
    caller's modules, the overrides, each store's repositories, the cache
    module, the kernel (which compiles the use cases), the job service, the SQL
    collaborators.
 4. `analysed`: the dependency graph is analysed from the use cases, jobs and
    callbacks (the refusals above).
-5. `wire_ai`: the agent runtime is built when the entry point hosts agents,
+5. `wire_ai`: the agent host is built when the entry point hosts agents,
    every `Agent()` and `Mcp()` declaration is checked, and the resolvers are
    bound.
 6. `seal`: the container is sealed and its singletons built; each use case and
@@ -345,25 +345,23 @@ separately.
   it: `loom.core` imports none of `loom.composition`, `loom.rest`,
   `loom.celery` and `loom.ai`, and `loom.composition` imports no transport.
 - **loom keeps the coupling a framework accepts.** msgspec is its model
-  language (models, commands, configuration). structlog and OpenTelemetry sit
-  behind `loom.core.logger` and `loom.core.observability`. contextvars and
+  language (models, commands, configuration). The standard `logging` module and
+  OpenTelemetry sit behind `loom.core.logger` and `loom.core.observability`. contextvars and
   asyncio are the Python runtime.
 
 Known debt:
 
-- Infrastructure adapters live inside `loom.core`: `core/repository`
-  (SQLAlchemy, MongoDB, DynamoDB), `core/connections`, `core/backend` and
-  `locator.py` import their drivers. Moving them out is planned with the
-  persistence boundary, with re-exports so it is not breaking.
+- Island clients under `loom.connections` (`aws`, `mongo`, `clickhouse`)
+  still import their drivers. The store adapters live in `loom.stores`.
 - The logger does not fit AWS Lambda. Its redesign is planned next.
 
 ## Migrating ports, DI and identity
 
 | Change | Before | After |
 |---|---|---|
-| REST adapter builds the use case | `LoomRestAdapter(executor)`; `await adapter.handle(CreateUser(repo=users), AdapterRequest(params=p, dependencies={User: users}))` | `LoomRestAdapter(kernel.executor, factory=kernel.factory)`; `await adapter.handle(CreateUser, AdapterRequest(params=p))`, with `users` bound in the container. `AdapterRequest.dependencies` is removed. |
-| Sealed container | `application.kernel.container.register(...)` after start-up | Bind the key in a module: `create_app(..., modules=[...])` or `compose_application(..., modules=...)`. A sealed container raises `ContainerSealed`. |
-| Kernel keys | A module binding `UseCaseFactory`, `RuntimeExecutor`, `UseCaseRegistry` or `ApplicationInvoker` was silently replaced | Drop the binding; `create_kernel` raises `BootstrapError`, a composed application `ReservedBindingError`. |
+| REST adapter builds the use case | `RestUseCaseDispatcher(executor)`; `await adapter.handle(CreateUser(repo=users), ExecutionRequest(params=p, dependencies={User: users}))` | `RestUseCaseDispatcher(kernel.executor, factory=kernel.factory)`; `await adapter.handle(CreateUser, ExecutionRequest(params=p))`, with `users` bound in the container. `ExecutionRequest.dependencies` is removed. |
+| Sealed container | `application.kernel.container.register(...)` after start-up | Bind the key in a module: a discovered `Installer` in `app.packages`. A sealed container raises `ContainerSealed`. |
+| Kernel keys | A module binding `UseCaseFactory`, `UseCaseExecutor`, `UseCaseRegistry` or `ApplicationInvoker` was silently replaced | Drop the binding; `create_kernel` raises `BootstrapError`, a composed application `ReservedBindingError`. |
 | Acting as someone else | `set_identity(X)` then a call, inside a use case | `executor.run(UseCase, identity=X)` or `invoker.for_identity(X).invoke(...)`. `set_identity` inside work raises `IdentityFixed`. |
 | Long background work | Ran as the request's caller indefinitely | Runs as the caller for at most `identity.max_delegation_seconds`; switch to a system identity with `executor.run(UseCase, identity=...)`. |
 | Job wire | `encode_identity(identity)` only | `Delegation(caller, until).encoded()` and `Delegation.decoded(payload)` carry the deadline; `encode_job_message(..., identity=)` also takes a `Delegation`. Messages without `until` get a fresh window at the worker. |
@@ -372,8 +370,9 @@ Known debt:
 | Execution plan | `ExecutionPlan(agent_bindings=..., mcp_bindings=...)` | `ExecutionPlan(execution_bindings=...)` with `ExecutionBinding` entries; the two properties still read. |
 | `Scope.REQUEST` | A new instance per `resolve` | One instance per execution, shared by its tasks; a nested execution gets its own. |
 | Re-registering a key | Built instances kept | The key's built instance is dropped and every binding is recompiled at its next resolve. |
-| Deprecated bootstrap | `bootstrap_app(...)`; `UseCaseFactory(LoomContainer())` | `loom.composition.create_app(...)` or `create_kernel(...)`. Both old forms emit `DeprecationWarning`. |
-| Patch targets | `loom.composition.build.configure_job_service`, `.reject_manifest_agents_without_ai_section`, `.load_application_config`, `.add_code_path` | `loom.composition.phases.configure_job_service`, `loom.composition.source.load_application_config`, `loom.composition.source.add_code_path`. The manifest-agents check has no patch target: it runs inside the AI wiring and raises `ConfigError`. |
-| Runtime events | `RuntimeEvent(status="success")` | `RuntimeEvent(status=Status.SUCCESS)`, with `Phase` for `error_kind` (`loom.core.engine.events`). |
+| Kernel builder | `bootstrap_app(...)` returning `BootstrapResult`; `KernelRuntime`; `kernel.app` | `create_kernel(...)` returning `Kernel`, the only builder; the invoker is `kernel.invoker`. `loom.composition.create_app(...)` composes a whole application. |
+| Bare factory | `UseCaseFactory(LoomContainer())` | `loom.composition.create_app(...)` or `create_kernel(...)`; the bare form emits `DeprecationWarning`. |
+| Patch targets | `loom.composition.build.configure_job_service`, `.reject_manifest_agents_without_ai_section`, `.load_application_config`, `.add_code_path` | `loom.composition.phases.configure_job_service`, `loom.composition.project.load_application_config`, `loom.composition.project.add_code_path`. The manifest-agents check has no patch target: it runs inside the AI wiring and raises `ConfigError`. |
+| Runtime events | `ExecutionEvent(status="success")` | `ExecutionEvent(status=Status.SUCCESS)`, with `Phase` for `error_kind` (`loom.core.engine.events`). |
 | Compute and rule steps | Telling `ComputeStep` from `RuleStep` by type | Both are `CommandStep`; read the plan field holding them (`compute_steps`, `rule_steps`). |
 | Execution logs | `[EXEC] <use case>` start line; `[STEP]` lines; `[RULE]` warnings | One terminal `[DONE]` or `[FAIL]` line per execution; `steps` and `broken_rules` fields on it. |

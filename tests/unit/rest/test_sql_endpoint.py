@@ -11,11 +11,11 @@ from fastapi.testclient import TestClient
 
 from loom.core.errors import SystemError as LoomSystemError
 from loom.core.observability.event import EventKind, Scope
-from loom.core.observability.runtime import ObservabilityRuntime
-from loom.core.sql.abc import SqlExecutionError
-from loom.core.sql.config import SqlConfig, SqlConnectionConfig, SqlEndpointConfig
-from loom.core.sql.service import SqlQueryService
-from loom.rest.fastapi.sql import bind_sql_endpoints
+from loom.core.observability.observability import Observability
+from loom.core.stores.sql.abc import SqlExecutionError
+from loom.core.stores.sql.config import SqlConfig, SqlConnectionConfig, SqlEndpointConfig
+from loom.core.stores.sql.service import SqlQueryService
+from loom.rest.fastapi.sql import mount_sql_endpoints
 from tests.helpers.deep_json import assert_too_deep_for_msgspec, fixed_thread_stack, nested_array
 from tests.unit.core.sql._fakes import (
     FakeSqlExecutor,
@@ -46,7 +46,7 @@ def _endpoint_connection(**overrides: Any) -> SqlConnectionConfig:
 def _make_app(config: SqlConfig, executors: dict[str, FakeSqlExecutor]) -> FastAPI:
     app = FastAPI()
     service = SqlQueryService(executors=dict(executors), config=config)
-    bind_sql_endpoints(app, service=service, config=config)
+    mount_sql_endpoints(app, service=service, config=config)
     return app
 
 
@@ -445,11 +445,11 @@ class TestSqlEndpointSpan:
         config = make_sql_config(analytics=_endpoint_connection())
         app = FastAPI()
         service = SqlQueryService(executors={"analytics": FakeSqlExecutor()}, config=config)
-        bind_sql_endpoints(
+        mount_sql_endpoints(
             app,
             service=service,
             config=config,
-            observability_runtime=ObservabilityRuntime([observer]),
+            observability=Observability([observer]),
         )
         client = TestClient(app, raise_server_exceptions=False)
 

@@ -3,21 +3,16 @@
 from __future__ import annotations
 
 from pathlib import Path
-from unittest.mock import MagicMock
 
 import pytest
 
 from loom.core.config import ConfigError
 from loom.rest.fastapi.auto import create_app
-from tests.helpers.extras import with_boto3, without_boto3
+from tests.helpers.aws_island import FakeAwsIsland
 from tests.unit._resolver_stubs import MappingResolver
 from tests.unit.rest._fixture_app import write_project
 
 pytestmark = pytest.mark.usefixtures("clear_builtin_resolvers")
-
-
-def _without_boto3(monkeypatch: pytest.MonkeyPatch) -> None:
-    without_boto3(monkeypatch)
 
 
 class TestUserResolver:
@@ -31,9 +26,8 @@ class TestUserResolver:
         assert app.title == "Resolved API"
 
     def test_user_secrets_resolver_wins_over_the_default(
-        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+        self, tmp_path: Path, absent_boto3: None
     ) -> None:
-        _without_boto3(monkeypatch)
         config_path = write_project(tmp_path, rest={"title": "${secrets:/api/title}"})
 
         app = create_app(
@@ -45,20 +39,17 @@ class TestUserResolver:
 
 class TestSecretsPlaceholder:
     def test_secrets_placeholder_without_boto3_names_the_extra(
-        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+        self, tmp_path: Path, absent_boto3: None
     ) -> None:
-        _without_boto3(monkeypatch)
         config_path = write_project(tmp_path, rest={"title": "${secrets:/api/title}"})
 
-        with pytest.raises(ConfigError, match=r"loom-kernel\[config-ssm\]"):
+        with pytest.raises(ConfigError, match=r"loom-kernel\[aws\]"):
             create_app(config_path)
 
     def test_no_aws_client_without_placeholders(
-        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+        self, tmp_path: Path, island: FakeAwsIsland
     ) -> None:
-        boto3 = MagicMock()
-        with_boto3(monkeypatch, boto3)
         config_path = write_project(tmp_path)
 
         assert create_app(config_path) is not None
-        boto3.client.assert_not_called()
+        assert island.sessions == []

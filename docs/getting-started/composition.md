@@ -5,24 +5,24 @@ composes its application the same way. `loom.composition` loads the
 configuration, discovers the code, builds persistence, the kernel,
 observability, the job and SQL services and, when the entry point hosts them,
 the agents, and returns an `Application` that owns every resource it built. A
-transport adapter then mounts itself on that application. Nothing in
+runtime then mounts itself on that application. Nothing in
 `loom.composition` imports FastAPI, Starlette, the Celery worker or
 `loom.rest`.
 
 ```python
 from loom.composition import create_app
-from loom.rest.fastapi.adapter import FastAPIAdapter
+from loom.rest.fastapi.runtime import FastAPIRuntime
 
-app = create_app("config/api.yaml", adapter=FastAPIAdapter())
+app = create_app("config/api.yaml", runtime=FastAPIRuntime())
 ```
 
-When `app.entry` is set, `create_app("config/api.yaml")` selects the adapter
+When `app.entry` is set, `create_app("config/api.yaml")` selects the runtime
 from the loaded configuration. The built-in entries are `fastapi` and
 `lambda`; any other entry names a function of `lambda.functions`, served by
-`LambdaAdapter`. An explicit `adapter=` takes precedence. Without either
-`app.entry` or `adapter=`, startup raises `ConfigError`.
+`LambdaRuntime`. An explicit `runtime=` takes precedence. Without either
+`app.entry` or `runtime=`, startup raises `ConfigError`.
 
-`entry: lambda`, or `LambdaAdapter()` without a declared function, serves
+`entry: lambda`, or `LambdaRuntime()` without a declared function, serves
 every interface over HTTP. Several Lambda functions can share one YAML file:
 name each one under `lambda.functions`, declare what invokes it under its
 `trigger`, then set `app.entry` to the function to serve:
@@ -58,7 +58,7 @@ A `trigger` takes the keys of its `source` only:
 | `source` | Invoked by | Keys |
 |---|---|---|
 | `http` | API Gateway | `interfaces`, `auth` |
-| `jobs` | An SQS queue of loom `JobEnvelope` messages | `queue`: a block of `name`, `batch_size`, `batching_window_s`, `max_concurrency`, `report_batch_item_failures` |
+| `jobs` | An SQS queue of loom `JobEnvelope` messages | `queue` (required): a block of `name`, `batch_size`, `batching_window_s`, `max_concurrency` |
 | `eventbridge`, `s3`, `sns`, `schedule` | The service, directly or through a queue | `job`, `identity`; directly `maximum_retry_attempts` (2) and `maximum_event_age_s` (21600); through a queue the `queue` block of `jobs` |
 
 An HTTP function serves only the interfaces it lists, a Python `RestInterface`
@@ -69,6 +69,48 @@ there, as it does in `app.rest.auth`. In staging and production,
 `LOOM__APP__ENTRY=admin_api` can select a function without changing the YAML.
 An interface can belong to only one function. Startup refuses unknown or
 ambiguous names and warns about discovered interfaces assigned to none.
+
+## Finding the application's components
+
+`app.packages` lists the packages, or single modules, the composition scans.
+A package is walked recursively; models, use cases, jobs, job callbacks (`JobCallback`
+subclasses), REST interfaces and `Installer` classes defined in it are found, in module then
+qualified-name order. Abstract classes, classes imported from elsewhere and
+models without their own `__tablename__` are skipped. `loom check` scans the
+same way, so declare in `app.packages` and `app.entry_points` every module that
+holds your installers: a hand-built discovery is invisible to it, and an
+installer it does not find has its section unchecked.
+
+- `app.entry_points` lists entry-point groups for code the YAML does not name:
+  the module of every installed entry point in each group is scanned exactly
+  like an `app.packages` entry, and both lists together are scanned once per
+  module, in a fixed order. A plugin distribution registers its package in a
+  group (`[project.entry-points."acme.plugins"]`, `acme_billing = "acme_billing"`)
+  and the application declares `entry_points: [acme.plugins]`. A group no
+  installed distribution provides is valid: the startup deploy checks and `loom check`
+  report the warning `loom.discovery.W001`, so a typo in a group name stays visible.
+  Declare a group that is legitimately empty as optional, and only it stops warning:
+
+  ```yaml
+  app:
+    entry_points:
+      - acme.plugins                  # required: warns when empty
+      - group: acme.extras
+        optional: true                # no W001 when empty; still scanned when installed
+  ```
+
+  Each item is a string (required) or a mapping with `group` and `optional`; any other
+  key is a `ConfigError` naming it. Putting the id in `checks.silenced` still silences the
+  check for every group.
+- Every module in a listed package is imported at scan: keep script-like
+  modules such as `__main__.py` out of it.
+- A directory inside a listed package that holds `.py` files but no
+  `__init__.py` is refused with a `ConfigError` naming it, as `setuptools`'s
+  `find_packages` would skip it.
+- A job callback must be defined in a listed package: Celery registers a task
+  for each one found, and a dispatch naming another class is refused with a
+  `ValueError` by every job service the composition builds (inline, Celery,
+  recording, and custom backends using `context.callbacks`).
 
 ## Event triggers
 
@@ -103,7 +145,7 @@ the event. Startup and `loom check --deploy` refuse a job that is not
 discovered, that declares no `Input()` command or that requires another
 parameter, a `job` or `identity` given by a placeholder, two functions
 consuming the same queue, and a `config.overridable` entry reaching
-`lambda.functions.*.trigger`, `lambda.handler` or `app.discovery`.
+`lambda.functions.*.trigger`, `lambda.handler` or `app.packages`.
 
 The job runs as the declared `identity`, with
 `mechanism: lambda:<function>:<source>`, and never as anything the event
@@ -114,7 +156,7 @@ every change the job makes. The identity grants roles only: it implies no elevat
 and no `BYPASSRLS`. Whoever may invoke the function, or write to its queue,
 runs the declared job as the declared identity: restrict
 `lambda:InvokeFunction` and the queue policy, and pin such a function in code
-with `LambdaAdapter(function=...)`.
+with `LambdaRuntime(function=...)`.
 
 When AWS itself records who caused the event, the identity acts on their
 behalf: the audit log's `on_behalf_of` holds the `userIdentity.principalId` of
@@ -137,12 +179,13 @@ fetches its `SubscribeURL`. The failure log names the function, job and
 error, never the payload.
 
 A `queue:` block reads each message body as the source delivers it to the
-queue it names and reports each failed message, a failure that is not
-retryable included, so the queue retries it and then sends it to its
-dead-letter queue. The block takes the keys of a `jobs` trigger's `queue`; the
-retry keys apply to a direct trigger only. A `jobs` function consumes a
-message whose job fails for good, as before. An SNS subscription to that queue
-must not use raw message delivery.
+queue it names. A message whose job can still succeed is reported and
+retried; one that fails for good, or cannot be read, is rejected: sent to the
+queue's dead-letter queue on `dead_letter`, dropped with an ERROR log on `discard`,
+and not reported. The block takes the keys of a `jobs` trigger's `queue`; the
+retry keys apply to a direct trigger only. A `jobs` function settles its
+messages the same way. An SNS subscription to that queue must not use raw
+message delivery.
 
 The rule or pattern, bucket and prefix, topic or schedule expression that
 send the events are not loom configuration: the deployment creates them.
@@ -152,68 +195,71 @@ The design and its sources are recorded in ADR 0007
 
 ## Entry points
 
-| Function | Returns | Use it for |
+| Call | Returns | Use it for |
 |---|---|---|
-| `create_app(*config_paths, adapter=..., ...)` | what the adapter's `bind` returns: a `FastAPI` app, a `Celery` app, a handler | starting a process; `adapter=` may be omitted when `app.entry` is set |
-| `build_application(*config_paths, adapter=..., ...)` | the composed, closed `Application`; no transport mounted | tests, scripts, a host that drives the application itself |
-| `compose_application(source, adapter, modules=...)` | the composed, closed `Application` | a host that already holds a loaded `CompositionSource` |
+| `create_app(*config_paths, runtime=..., ...)` | what the runtime's `mount` returns: a `FastAPI` app, a `Celery` app, a handler | starting a process; `runtime=` may be omitted when `app.entry` is set |
+| `Project.load(*config_paths, ...)` | the `Project`: configuration, environment and code, not yet composed | tests, scripts, a host that holds its configuration in memory |
+| `project.compose(runtime)` | the composed, closed `Application`; no transport mounted | tests, scripts, a host that drives the application itself |
+| `project.serve(runtime)` | what the runtime's `mount` returns | `create_app` without the shortcut |
 
-`create_app` and `build_application` take the same arguments: the YAML
-`config_paths` or `config_dir`, `environment`, `code_path`, `resolvers` and
-`modules`, exactly as the REST `create_app` documented in
-[Environments](environments.md) and [Bootstrap with YAML](rest.md#bootstrap-with-yaml).
-`build_application` still needs `adapter=`: the adapter's recipe decides what
-is composed (pool profile, discovery, backend), even though no transport is
-mounted.
+`create_app` and `Project.load` take the same loading arguments: the YAML
+`config_paths` or `config_dir`, `environment`, `code_path` and `resolvers`,
+exactly as the REST `create_app` documented in
+[Environments](environments.md) and [Bootstrap with YAML](rest.md#bootstrap-with-yaml);
+DI bindings come from the `Installer` classes `app.packages` finds, not from a
+parameter.
+`compose` needs the runtime: its recipe decides what is composed (pool
+profile, discovery, backend), even though no transport is mounted.
 
 The transport-specific factories stay, with the same signatures, as
 shortcuts over the composition:
 
 | Shortcut | Equivalent to |
 |---|---|
-| `loom.rest.fastapi.create_app(..., metrics_registry=, authenticator=)` | `create_app(..., adapter=FastAPIAdapter(metrics_registry=, authenticator=))` |
-| `loom.celery.auto.create_app(..., jobs=, callbacks=, metrics=)` | `create_app(..., adapter=CeleryAdapter(jobs=, callbacks=, metrics=))` |
+| `loom.rest.fastapi.create_app(..., metrics_registry=, authenticator=)` | `create_app(..., runtime=FastAPIRuntime(metrics_registry=, authenticator=))` |
+| `loom.celery.auto.create_app(..., jobs=, execution_observer=)` | `create_app(..., runtime=CeleryRuntime(jobs=, execution_observer=))` |
 | `loom.celery.bootstrap.bootstrap_worker(...)` | the same composition; returns `WorkerBootstrapResult` |
 
-`FastAPIAdapter` lives in `loom.rest.fastapi.adapter` and `CeleryAdapter` in
-`loom.celery.adapter`.
+`FastAPIRuntime` lives in `loom.rest.fastapi.runtime` and `CeleryRuntime` in
+`loom.celery.runtime`.
 
 ## What `create_app` runs
 
-The order is fixed; no adapter reorders it:
+The order is fixed; no runtime reorders it:
 
 1. Resolve the environment, select and load the configuration (resolvers,
    `LOOM__*` overrides).
 2. Configure observability from `observability`.
 3. Put the code path on `sys.path`.
-4. Ask the adapter for its recipe: `adapter.recipe(source)`. Discovery runs
-   here, inside the adapter.
-5. Run the deploy checks, skipping the areas the recipe names
-   (`skip_checks`).
+4. Ask the runtime for its recipe: `runtime.recipe(project)`. Discovery runs
+   here, inside the runtime.
+5. Run the deploy checks of the configuration paths the process uses: the
+   ones the recipe requires, plus the ones the configuration declares, minus
+   the ones the recipe leaves out (`check_scope`).
 6. Build the backend with the recipe's profile, then `prepare_models` (compile
    the tables, bind the row-level-security settings).
-7. Build the kernel: your `modules` first, then the repositories, then the
-   cache module.
+7. Build the kernel: the discovered `Installer` classes first, then the
+   repositories, then the cache module.
 8. Register `JobService` (Celery when a `celery` section is present, inline
-   otherwise), `SqlQueryService`, `CallerBoundSql` and `ObservabilityRuntime`.
+   otherwise), `SqlQueryService`, `CallerBoundSql` and `Observability`.
    `loom.celery` is imported lazily: a `celery` section that only dispatches
    jobs does not load the worker.
 9. When the recipe hosts agents and an `ai` section exists, build the agent
    runtime and verify the `Agent()` and `Mcp()` markers.
 10. Verify every use case's dependencies (`UseCaseFactory.verify()`).
-11. Hand the application to the adapter: `adapter.bind(application)`.
+11. Hand the application to the runtime: `runtime.mount(application)`.
 
 No step talks to a database. Building a backend creates its engine or client,
 not a connection; only `Application.check()` and `Application.running()`
 reach the outside.
 
-## Recipes and adapters
+## Recipes and runtimes
 
-An adapter is any object with two methods, the `Adapter` protocol:
+A runtime is any object with two methods, the `Runtime` protocol:
 
-- `recipe(source) -> Recipe` declares what to compose. It is synchronous and
+- `recipe(project) -> Recipe` declares what to compose. It is synchronous and
   opens nothing.
-- `bind(application) -> T` mounts the transport and returns what the entry
+- `mount(application) -> T` mounts the transport and returns what the entry
   point serves. It opens nothing either: the application's lifecycle owns
   every resource.
 
@@ -222,42 +268,42 @@ A `Recipe` is a frozen dataclass:
 | Field | Meaning |
 |---|---|
 | `profile` | Pool defaults of the entry point: `SERVER_PROFILE`, `WORKER_PROFILE`, `STREAMING_PROFILE` or your own `RuntimeProfile`. A key in `stores.default.pool` still wins. |
-| `discovered` | The `DiscoveryResult` to compile: models, use cases, interfaces, agent specs, after whatever the adapter added or pruned. |
-| `default_backend` | Backend of the default store when `stores.default` is not declared. Default `none`. |
-| `skip_checks` | Deploy-check areas the entry point does not serve, such as `REST_CHECKS` for a worker. |
-| `agents` | Whether the entry point hosts the agent runtime; without it an `ai` section is ignored. Default `False`. |
-| `agent_endpoints` | Whether the adapter mounts agent endpoints. `False` mounts none, so only the agents an `Agent()` marker names are compiled, as on Lambda. Matters only with `agents=True`. Default `True`. |
-| `metrics` | Use-case metrics, or `None`. |
+| `discovered` | The `DiscoveryResult` to compile: models, use cases, interfaces, agent specs, after whatever the runtime added or pruned. |
+| `default_store_plugin` | Store plugin of the default store when `stores.default` is not declared. Default `none`. |
+| `check_scope` | A `CheckScope`: configuration paths whose deploy checks the entry point requires or leaves out, such as `CheckScope.without_rest()` for a worker. |
+| `agents` | Whether the entry point hosts the agent host; without it an `ai` section is ignored. Default `False`. |
+| `agent_endpoints` | Whether the runtime mounts agent endpoints. `False` mounts none, so only the agents an `Agent()` marker names are compiled, as on Lambda. Matters only with `agents=True`. Default `True`. |
+| `execution_observer` | The observer of use-case and job execution events, or `None`. |
 | `pool_metrics` | Connection-pool metrics, for an entry point that serves a scrape. |
 | `connection_only` | Ask the backend for its connection only, no repository (see [Workers without models](#workers-without-models)). |
 
-A complete adapter, for a script that runs use cases with no transport:
+A complete runtime, for a script that runs use cases with no transport:
 
 ```python
 # app/script.py
-from loom.composition import Application, CompositionSource, Recipe, create_app
-from loom.core.checks import REST_CHECKS
+from loom.composition import Application, Project, Recipe, create_app
+from loom.core.checks import CheckScope
 from loom.core.identity import Identity
-from loom.core.persistence import WORKER_PROFILE
+from loom.core.stores import WORKER_PROFILE
 
 
 class ScriptAdapter:
-    def recipe(self, source: CompositionSource) -> Recipe:
+    def recipe(self, project: Project) -> Recipe:
         return Recipe(
             profile=WORKER_PROFILE,
-            discovered=source.discover(),               # app.discovery
-            default_backend="sqlalchemy",               # without stores.default
-            skip_checks=frozenset({REST_CHECKS}),
+            discovered=project.discovered,  # app.packages
+            default_store_plugin="sqlalchemy",  # without stores.default
+            check_scope=CheckScope.without_rest(),
         )
 
-    def bind(self, application: Application) -> Application:
+    def mount(self, application: Application) -> Application:
         return application
 
 
-async def main(operator: Identity) -> None:   # Product: a model of your app
-    application = create_app("config/script.yaml", adapter=ScriptAdapter())
+async def main(operator: Identity) -> None:  # Product: a model of your app
+    application = create_app("config/script.yaml", runtime=ScriptAdapter())
     async with application.running():
-        invoker = application.kernel.app.for_identity(operator)
+        invoker = application.kernel.invoker.for_identity(operator)
         await invoker.entity(Product).get(params={"id": 1})
 ```
 
@@ -268,7 +314,7 @@ executor and the invoker; `application.config`, `environment`,
 ## Lifecycle
 
 An `Application` owns its resources: the cache gateways, the ClickHouse SQL
-registry, the agent runtime and the persistence store. They open in that
+registry, the agent host and the persistence store. They open in that
 order and close in reverse. Each resource's startup checks — for the store,
 schema creation or verification, the connecting role, the row-level-security
 guard and time-zone columns; for the ClickHouse SQL registry, its own
@@ -294,26 +340,26 @@ connection checks — run right before it opens, and all of them run in
 
 A transport that opens and closes in separate calls — the Celery signals,
 a Lambda's Init and shutdown — uses `ApplicationHost(application, check=True)`
-instead, since each call runs in a task of its own and an agent runtime or an
+instead, since each call runs in a task of its own and an agent host or an
 MCP client must be closed by the task that opened it:
 
 - `await host.start()` spawns one owner task that enters `running()` and
   returns once the application is open, or raises the failure to open as
   itself. A host starts once; a second `start()` raises `RuntimeError`.
-- `await host.stop()` closes in that owner task and waits for it; concurrent
+- `await host.shutdown()` closes in that owner task and waits for it; concurrent
   calls all wait, and only the first raises a failure to close. Without a
   start, or once closed, it does nothing.
-- A `stop()` during the opening makes `start()` raise `RuntimeError` once what
+- A `shutdown()` during the opening makes `start()` raise `RuntimeError` once what
   opened is closed; a cancelled `start()` closes what opened, and a failure to
-  close that no `stop()` raises is logged.
+  close that no `shutdown()` raises is logged.
 
 `check()` leaving no connection open is what makes a forking server safe:
 the parent checks, the children open, and nothing the parent touched crosses
 the fork.
 
-## Wiring per adapter
+## Wiring per runtime
 
-| Adapter | Checks | Opens | Closes |
+| Runtime | Checks | Opens | Closes |
 |---|---|---|---|
 | FastAPI | lifespan | lifespan | lifespan |
 | Celery, prefork pool | `worker_init`, in the parent | `worker_process_init`, in each child, with `check=False` | `worker_process_shutdown` and `worker_shutdown`, best effort |
@@ -356,15 +402,15 @@ request or task:
 - `ResolutionError` — any other constructor dependency of a use case that is
   not bound.
 - `ConfigError` — an incomplete or invalid configuration, an unknown
-  persistence backend, or a backend whose extra is not installed (the message
+  store plugin, or a backend whose extra is not installed (the message
   names `loom-kernel[<backend>]`).
 - `ReservedBindingError` (`loom.composition`, code
-  `CompositionErrorCode.RESERVED_BINDING`): one of your `modules` registered a
-  framework-owned key. `.key` is the key and `.issue` names the module (see
+  `CompositionErrorCode.RESERVED_BINDING`): an `Installer` of yours registered a
+  framework-owned key. `.key` is the key and `.issue` names the installer (see
   [Caller bindings and framework defaults](#caller-bindings-and-framework-defaults)).
   It is an entry of the `IssueCode` catalogue and carries a `CompileIssue`
   naming the binding.
-- `ElevableScopeInSeveralStores` (`loom.core.persistence.elevation`, code
+- `ElevableScopeInSeveralStores` (`loom.core.stores.elevation`, code
   `ElevationErrorCode.ELEVABLE_SCOPE_IN_SEVERAL_STORES`): a scope that is
   elevable, or named in `AuthzProduct.elevations`, is declared by two or more
   stores, so an elevation could not reach exactly one of them. It is a
@@ -379,15 +425,16 @@ request or task:
 
 ## Caller bindings and framework defaults
 
-Your `modules` run before loom registers its own services. What happens to a
-key you bind depends on who owns it:
+Your `Installer` classes run before loom registers its own services. What
+happens to a key you bind depends on who owns it:
 
-| Key | A binding in your `modules` |
+| Key | A binding in your `Installer` |
 |---|---|
 | `JobService` | kept: the framework's default (Celery or inline) is built and registered only when nothing is bound |
-| A repository, or a capability key such as `Listable[Order]` | kept; the usual way to replace one is `repository_for` or a custom `DefaultRepositoryBuilder` (keyed `(DefaultRepositoryBuilder, store)` for a store other than `default`) |
+| A model's repository, `RepositoryToken(Order)` | kept; the usual way to replace one is `repository_for` or a custom `DefaultRepositoryBuilder` (keyed `(DefaultRepositoryBuilder, store)` for a store other than `default`) |
+| A capability key such as `Listable[Order]`, on its own | refused: startup fails with a `ConfigError` naming `Override.repository`. Every capability key is an alias of the model's repository; to substitute a double use `loom.testing.Override.repository` |
 | `CachedCalls`, `RepositoryDecorator` | kept |
-| `SessionManager` and `MongoSessions`, also keyed `(…, store)` for any declared store, `SqlQueryService`, `CallerBoundSql`, `ObservabilityRuntime`, `ElevationSink`, `RuntimeExecutor`, `UseCaseRegistry`, `ApplicationInvoker` | reserved: startup fails with a typed reserved-binding error naming the key |
+| `SessionManager` and `MongoSessions`, also keyed `(…, store)` for any declared store, `SqlQueryService`, `CallerBoundSql`, `Observability`, `ElevationSink`, `UseCaseExecutor`, `UseCaseRegistry`, `ApplicationInvoker` | reserved: startup fails with a typed reserved-binding error naming the key |
 
 The reserved keys are the framework's own: `ElevationSink` sets and clears the
 row-level-security elevation inside the transaction, and the SQL and
@@ -395,22 +442,117 @@ observability services are wired into other consumers, so a replacement would
 either be ignored or weaken a guarantee. Failing at startup says so instead of
 silently using the framework's instance.
 
-`register_default` is public, for a module of your own that provides a default
+`register_default` is public, for an installer of your own that provides a default
 someone else may override:
 
 ```python
 container.register(JobService, MyJobService, scope=Scope.APPLICATION)
-container.register_default(JobService, InlineJobService)  # kept: MyJobService
+default_jobs = JobService(factory, executor, InlineJobTransport(factory, executor))
+container.register_default(JobService, lambda: default_jobs)
 ```
 
 The cache instances (`CacheConfig`, `CacheGateway`, `CacheGateways`,
 `GenerationalDependencyResolver`) are built by the cache module from the
 `cache` section; configure them there rather than binding them.
 
+## Installers with their own settings
+
+An `Installer` is built with no arguments. One that needs settings of its own
+extends `ConfiguredInstaller`, naming the section and the type it decodes into:
+
+```python
+class StoresSettings(msgspec.Struct):
+    bucket: str
+    backend: str = "s3"
+
+
+class StoresInstaller(ConfiguredInstaller[StoresSettings]):
+    section = "trachinus.stores"
+    settings_type = StoresSettings
+
+    def install(self, container: LoomContainer) -> None:
+        container.register_instance(Bucket, Bucket(self.settings.bucket, self.settings.backend))
+```
+
+```yaml
+trachinus:
+  stores:
+    bucket: trachinus-data
+```
+
+Composition builds every discovered installer through
+`Installer.from_config(project.config)`; a `ConfiguredInstaller` decodes its
+section once there and keeps it as `self.settings`. A missing section or a
+value of the wrong type is a `ConfigError` naming the section and the
+installer, and `loom check --deploy` raises the same error, so CI catches it
+before a deploy. `loom check` reads the section as written and resolves no
+placeholder, so it runs without the application's secrets: a section with no
+placeholder is decoded in full, with the start-up error; one holding
+`${secrets:...}` or `${ssm:...}` values is checked for its shape only (it
+exists, no key the settings forbid, no required field missing) and its values
+are judged at start-up, once resolved. To build an installer differently, override `from_config`.
+`Recipe.overrides` is for test doubles only; production dependencies belong in
+an installer.
+
+One installer per area or config section, never one per class: constructor
+dependencies are resolved by the container, and use cases, jobs and callbacks
+need no installer.
+
+## Resources your application owns
+
+An installer that registers something that must be opened and closed (a session
+pool, a client with a connection) declares it in `Installer.resources`, which
+composition calls once after the container is sealed:
+
+```python
+from loom.core.di.installer import ConfiguredInstaller
+from loom.core.resources import Resource
+
+
+class SessionPoolInstaller(ConfiguredInstaller[SessionPoolSettings]):
+    section = "acme.sessions"
+    settings_type = SessionPoolSettings
+
+    def install(self, container):
+        container.register_instance(SessionPool, SessionPool(self.settings))
+
+    def resources(self, container):
+        pool = container.resolve(SessionPool)
+        return (Resource(name="sessions", manager=pool.lifespan, readiness=pool.is_ready),)
+```
+
+`manager` is called on every open and returns an async context manager.
+`Resource`, `ResourceKind` and `closing` (for something that only needs a
+`close`) are public in `loom.core.resources`; a resource's `kind` is
+`ResourceKind.APPLICATION` unless you say otherwise.
+
+**Order.** `Application.running()` opens loom's AWS clients, caches, Celery
+producer, SQL registry and agent host first, then the stores, then the
+resources of your installers (in the order the installers are discovered), and
+the job timer last. It closes them in reverse, so your resource may use the
+stores while it closes and a delayed job may still use your resource.
+
+**Guarantees.** Your resources get the ones loom's own have:
+
+- A failure while opening closes everything already opened, loom's and yours,
+  and surfaces as the error of the open, with the failures to close as notes.
+- Every resource closes even when another fails to close; several failures are
+  raised together as a `BaseExceptionGroup`.
+- `check`, when given, runs right before the resource opens and in
+  `Application.check()`, which opens nothing.
+- `readiness`, when given, answers the health probe under `readiness_key` (the
+  `name` by default) beside the stores.
+
+Two resources with the same `kind:name`, or the same readiness key, are a
+`ConfigError` at composition naming both owners (`loom` or the installer class).
+
+`loom check` composes nothing and resolves no placeholder, so it does not run
+resource `check`s; they run at start-up and in `Application.check()`.
+
 ## Later deliveries
 
 The composition is the base of two later deliveries of the same
 specification, which add no promise to this page yet: several named stores
-in one application, each with its own unit of work, and AWS Lambda adapters
+in one application, each with its own unit of work, and AWS Lambda runtimes
 for HTTP and SQS. Until they land, an application serves one persistence
 backend, its `stores.default` store, selected by `stores.default.backend`.

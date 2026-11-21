@@ -4,25 +4,25 @@ from __future__ import annotations
 
 from collections.abc import Iterator, Mapping
 from dataclasses import dataclass
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, cast
 
-from loom.composition.resources import Resource, ResourceKind
 from loom.core.config import ConfigContext, ConfigKey
 from loom.core.di.container import LoomContainer
 from loom.core.di.scope import Scope
-from loom.core.observability.runtime import ObservabilityRuntime
-from loom.core.sql import (
+from loom.core.observability.observability import Observability
+from loom.core.plugins.optional import import_optional
+from loom.core.resources import Resource, ResourceKind
+from loom.core.stores.sql import (
     CallerBoundSql,
     NullSqlQueryService,
     SqlConfig,
     SqlExecutor,
     SqlQueryService,
 )
-from loom.core.sql.config import reject_retired_sql_keys
-from loom.core.sql.loader import sql_island
+from loom.core.stores.sql.config import reject_retired_sql_keys
 
 if TYPE_CHECKING:
-    from loom.core.sql.clickhouse import ClickHouseConnectionRegistry
+    from loom.stores.clickhouse import ClickHouseConnectionRegistry
 
 
 @dataclass(frozen=True)
@@ -102,12 +102,17 @@ def resolve_sql(ctx: ConfigContext) -> SqlWiring:
 
 
 def build_sql_registry(sql_cfg: SqlConfig) -> ClickHouseConnectionRegistry:
-    """Construct the ClickHouse registry — no connection is opened here."""
-    return sql_island().ClickHouseConnectionRegistry(config=sql_cfg)
+    """Construct the ClickHouse registry — no connection is opened here.
+
+    Raises:
+        MissingExtraError: When clickhouse-connect is not installed.
+    """
+    island = import_optional("loom.stores.clickhouse", extra="clickhouse")
+    return cast("ClickHouseConnectionRegistry", island.ClickHouseConnectionRegistry(config=sql_cfg))
 
 
 def register_sql_collaborators(
-    container: LoomContainer, sql: SqlWiring, observability: ObservabilityRuntime
+    container: LoomContainer, sql: SqlWiring, observability: Observability
 ) -> None:
     """Register both SQL collaborators (APPLICATION scope).
 

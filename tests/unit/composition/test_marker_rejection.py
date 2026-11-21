@@ -16,9 +16,9 @@ import pytest
 
 from loom.ai.abc import AgentHandle, McpHandle
 from loom.ai.errors import AgentCompilationError, AgentErrorCode
-from loom.composition import Application, CompositionSource, Recipe, build_application
+from loom.composition import Application, Project, Recipe
 from loom.composition._ai import MarkerDeclarations
-from loom.core.persistence.profile import SERVER_PROFILE
+from loom.core.stores.profile import SERVER_PROFILE
 from loom.core.use_case import Agent, Mcp
 from loom.core.use_case.use_case import UseCase
 from tests.helpers.ai import declared_markers
@@ -54,18 +54,18 @@ class AcmeAgentAndServer(UseCase[object, object]):
 class _WithoutAgents:
     """An entry point hosting no agents, compiling a use case that declares one."""
 
-    def recipe(self, source: CompositionSource) -> Recipe:
-        discovered = source.discover()
+    def recipe(self, project: Project) -> Recipe:
+        discovered = project.discovered
         return Recipe(
             profile=SERVER_PROFILE,
             discovered=dataclasses.replace(
                 discovered, use_cases=(*discovered.use_cases, AcmeNotifyIncident)
             ),
-            default_backend="sqlalchemy",
+            default_store_plugin="sqlalchemy",
             agents=False,
         )
 
-    def bind(self, application: Application) -> Application:
+    def mount(self, application: Application) -> Application:
         return application
 
 
@@ -130,4 +130,4 @@ class TestMarkerRejection:
         adapter = _WithoutAgents()
 
         with pytest.raises(AgentCompilationError, match="AcmeNotifyIncident"):
-            build_application(project, adapter=adapter, environment="test")
+            Project.load(project, environment="test").compose(adapter)

@@ -49,20 +49,14 @@ class QueueMapping(msgspec.Struct, frozen=True, kw_only=True, forbid_unknown_fie
     """The event source mapping of a trigger whose messages arrive through a queue.
 
     ``name`` is a key of ``sqs.queues`` and ``batch_size`` at most 10 on a FIFO
-    queue. loom applies only ``report_batch_item_failures``, which ``false``
-    turns into a failed invocation instead of a partial batch.
+    queue. The mapping always reports batch item failures: loom settles each
+    message and reports the ones the queue must deliver again.
     """
 
     name: str
     batch_size: Annotated[int, msgspec.Meta(ge=1, le=10000)] | None = None
     batching_window_s: Annotated[int, msgspec.Meta(ge=0, le=300)] | None = None
     max_concurrency: Annotated[int, msgspec.Meta(ge=2, le=1000)] | None = None
-    report_batch_item_failures: bool | None = None
-
-    @property
-    def reports_batch_item_failures(self) -> bool:
-        """Whether a failed message is reported alone; true by default."""
-        return self.report_batch_item_failures is not False
 
 
 class JobsTrigger(
@@ -73,14 +67,10 @@ class JobsTrigger(
     tag="jobs",
     tag_field="source",
 ):
-    """The ``JobEnvelope`` messages ``SQSJobService`` sends to a queue."""
+    """The ``JobEnvelope`` messages ``SQSJobTransport`` sends to a queue."""
 
     queue: QueueMapping | None = None
-
-    @property
-    def reports_batch_item_failures(self) -> bool:
-        """Whether a failed message is reported alone; true without a ``queue`` block."""
-        return self.queue is None or self.queue.reports_batch_item_failures
+    """The queue it consumes; ``None`` is refused when the configuration loads."""
 
 
 class TriggerIdentity(msgspec.Struct, frozen=True, kw_only=True, forbid_unknown_fields=True):
@@ -111,19 +101,14 @@ class EventTrigger(
     maximum_event_age_s: Annotated[int, msgspec.Meta(ge=60, le=21600)] | None = None
 
     @property
-    def queued(self) -> bool:
+    def is_queued(self) -> bool:
         """Whether the events arrive through a queue: a ``queue`` block is declared."""
         return self.queue is not None
 
     @property
     def via(self) -> str | None:
         """``"sqs"`` when the events arrive through a queue, else ``None``, for the manifest."""
-        return "sqs" if self.queued else None
-
-    @property
-    def reports_batch_item_failures(self) -> bool:
-        """Whether a failed message is reported alone; true without a ``queue`` block."""
-        return self.queue is None or self.queue.reports_batch_item_failures
+        return "sqs" if self.is_queued else None
 
     def written_values(self) -> Iterator[str]:
         """The job and every identity value, to refuse a placeholder among them."""
@@ -200,6 +185,10 @@ def _served(where: str, trigger: Trigger) -> list[str]:
         return [repr(interface) for interface in trigger.interfaces]
     if isinstance(trigger, EventTrigger):
         _check_event_trigger(where, trigger)
+    elif trigger.queue is None:
+        raise ConfigError(
+            f"{where}: a jobs function must declare trigger.queue, the sqs.queues entry it consumes"
+        )
     _check_batching(where, trigger.queue)
     return [] if trigger.queue is None else [f"queue {trigger.queue.name!r}"]
 
@@ -219,7 +208,7 @@ def _check_event_trigger(where: str, trigger: EventTrigger) -> None:
 
 def _refuse_retries_when_queued(where: str, trigger: EventTrigger) -> None:
     """Lambda's retry settings belong to a direct trigger; SQS retries a queued one."""
-    if not trigger.queued:
+    if not trigger.is_queued:
         return
     for key in _RETRIES:
         if getattr(trigger, key) is not None:

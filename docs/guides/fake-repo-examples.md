@@ -23,7 +23,7 @@ Useful files:
 Custom repository pattern:
 
 - Declare the custom contract as `RepoFor[Model]` plus only the extra methods.
-- Import `repository_for` from `loom.core.repository`, not from the SQLAlchemy package.
+- Import `repository_for` from `loom.core.stores.repository`, not from the SQLAlchemy package.
 - Register the SQLAlchemy implementation with `@repository_for(Model)` and make the
   repository class inherit the capability `Protocol` directly.
 - Keep CRUD-only use cases on `self.main_repo`; they automatically receive the custom implementation.

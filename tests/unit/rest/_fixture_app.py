@@ -77,9 +77,9 @@ class ConfigPingInterface(RestInterface[str]):
 _CACHED_MODEL_SOURCE = '''
 
 from loom.core.cache import cached
-from loom.core.repository import RepositoryBuildContext, repository_for
-from loom.core.repository.abc import CursorCodec
-from loom.core.repository.sqlalchemy import RepositorySQLAlchemy, SessionManager
+from loom.core.stores.repository import RepositoryBuildContext, repository_for
+from loom.core.stores.repository import CursorCodec
+from loom.stores.sqlalchemy import SQLAlchemyRepository, SessionManager
 from tests.unit.rest._fixture_app import CACHED_READS
 
 
@@ -101,7 +101,7 @@ def _build_cached_record_repository(context: RepositoryBuildContext) -> Any:
 
 @cached
 @repository_for(CachedRecord, builder=_build_cached_record_repository)
-class CachedRecordRepository(RepositorySQLAlchemy[CachedRecord, int]):
+class CachedRecordRepository(SQLAlchemyRepository[CachedRecord, int]):
     """Counts every read that reaches the database."""
 
     async def get_by_id(self, obj_id: int, profile: str = "default") -> CachedRecord | None:
@@ -121,7 +121,7 @@ def write_project(
     rest: dict[str, Any] | None = None,
     sql: dict[str, Any] | None = None,
     observability: dict[str, Any] | None = None,
-    persistence: dict[str, Any] | None = None,
+    settings: dict[str, Any] | None = None,
     store: dict[str, Any] | None = _DEFAULT_STORE,
     cache: dict[str, Any] | None = None,
     identity: dict[str, Any] | None = None,
@@ -137,7 +137,7 @@ def write_project(
         rest: Contents of the ``app.rest`` section.
         sql: Contents of the ``sql`` section.
         observability: Contents of the ``observability`` section.
-        persistence: Contents of the ``persistence`` section, on top of an
+        settings: Contents of the ``stores.settings`` section, on top of an
             explicit ``cursors.signing: ephemeral``.
         store: Contents of the ``stores.default`` section; ``None`` omits it.
         cache: Contents of the ``cache`` section; ``None`` omits it.
@@ -158,19 +158,19 @@ def write_project(
     source = _APP_SOURCE.format(prefix=prefix, route_path=route_path, id_field=id_field)
     if with_cached_model:
         source += _CACHED_MODEL_SOURCE.format(cached_prefix=CACHED_RECORDS_PREFIX)
-    (tmp_path / f"{module}.py").write_text(source, encoding="utf-8")
+    package = tmp_path / module
+    package.mkdir()
+    (package / "__init__.py").write_text(source, encoding="utf-8")
     config: dict[str, Any] = {
         "app": {
             "name": "config-demo",
             "code_path": ".",
-            "discovery": {
-                "mode": "interfaces",
-                "interfaces": {"modules": [module], "warn_recommended": False},
-            },
+            "packages": [module],
         },
     }
+    config["stores"] = {"settings": {"cursors": {"signing": "ephemeral"}, **(settings or {})}}
     if store is not None:
-        config["stores"] = {"default": dict(store)}
+        config["stores"]["default"] = dict(store)
     if cache is not None:
         config["cache"] = dict(cache)
     if identity is not None:
@@ -181,8 +181,6 @@ def write_project(
         config["sql"] = sql
     if observability is not None:
         config["observability"] = observability
-    # Every fixture app opts out of cursor signing keys explicitly.
-    config["persistence"] = {"cursors": {"signing": "ephemeral"}, **(persistence or {})}
     config_path = tmp_path / "app.yaml"
     config_path.write_text(yaml.safe_dump(config), encoding="utf-8")
     return str(config_path)

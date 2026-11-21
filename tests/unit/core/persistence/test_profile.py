@@ -7,15 +7,17 @@ import sys
 
 import pytest
 
-from loom.core.persistence.profile import (
+from loom.connections.aws import AwsClients
+from loom.core.stores.catalog import DEFAULT_STORE, StoreCatalog
+from loom.core.stores.profile import (
     SERVER_PROFILE,
     STREAMING_PROFILE,
     WORKER_PROFILE,
-    BackendRuntime,
     PoolDefaults,
     RuntimeProfile,
+    StorePluginContext,
 )
-from loom.core.persistence.stores import DEFAULT_STORE, StoreCatalog
+from loom.core.stores.repository import CursorCodec
 
 
 class TestServerProfile:
@@ -61,17 +63,21 @@ class TestServerProfile:
         assert SERVER_PROFILE.pool.size == 5
 
     def test_backend_runtime_carries_no_metrics_unless_given(self) -> None:
-        runtime = BackendRuntime(
-            SERVER_PROFILE, catalog=StoreCatalog(specs={}), store=DEFAULT_STORE
+        context = StorePluginContext(
+            SERVER_PROFILE,
+            catalog=StoreCatalog(specs={}),
+            store=DEFAULT_STORE,
+            cursor_codec=CursorCodec.disabled(),
+            aws=AwsClients(),
         )
 
-        assert runtime.pool_metrics is None
+        assert context.pool_metrics is None
 
     def test_the_profile_module_imports_without_sqlalchemy(self) -> None:
         script = (
             "import sys\n"
-            "import loom.core.persistence.profile\n"
-            "import loom.core.persistence.database\n"
+            "import loom.core.stores.profile\n"
+            "import loom.core.stores.database\n"
             "leaked = sorted(m for m in sys.modules if 'sqlalchemy' in m)\n"
             "assert not leaked, leaked\n"
         )

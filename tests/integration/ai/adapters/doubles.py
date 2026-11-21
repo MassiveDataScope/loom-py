@@ -11,6 +11,7 @@ from __future__ import annotations
 
 from typing import Any
 
+from loom.core.job.callback import JobCallback
 from loom.core.use_case import Agent, Mcp, UseCase
 
 SERVER = "pricing"
@@ -82,7 +83,7 @@ class AcmeHistory(UseCase[object, object]):
         return gateway.tools(), await gateway.call_untyped("history", {})
 
 
-class AcmeAuditCallback:
+class AcmeAuditCallback(JobCallback):
     """A job callback built with the quotes port: a root of its own, not a use case."""
 
     def __init__(self, quotes: AcmeQuotes) -> None:

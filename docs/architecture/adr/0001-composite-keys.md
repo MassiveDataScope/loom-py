@@ -38,13 +38,14 @@ correctly; loom reads the join columns from the `ForeignKeyConstraint` it
 already builds for scoped models.
 
 ```python
-class Ticket(BaseModel, RowScoped):                 # key (account_id, id)
+class Ticket(BaseModel, RowScoped):  # key (account_id, id)
     __tablename__ = "ticket"
     account_id: int = ScopedField(primary_key=True, scope="account")
     id: int = ColumnField(primary_key=True)
     customer_id: int = ColumnField(foreign_key="customer.id")
     customer: CustomerOut | None = RelationField(
-        foreign_key="customer.id", cardinality=Cardinality.MANY_TO_ONE, profiles=("detail",))
+        foreign_key="customer.id", cardinality=Cardinality.MANY_TO_ONE, profiles=("detail",)
+    )
 ```
 
 `LoadById` gains a tuple form, because loom cannot guess which execute
@@ -82,10 +83,10 @@ Rejected: one path segment holding an encoded key (untyped parts, custom codec,
 - `primary_key_of(obj, names)` in `core/model/introspection.py`, next to
   `get_id_attributes`: a scalar for one column, a tuple in declaration order for
   several. Consumers: repository mixins, projection runtime, auto-CRUD.
-- `core/backend/core_model.py`: relation steps carry tuples of column names and
+- `stores/sqlalchemy/core_model.py`: relation steps carry tuples of column names and
   group by tuple; row-value `tuple_(...).in_()` for several columns, `col.in_()`
   for one, so single-key SQL does not change.
-- `core/backend/sqlalchemy.py`: read join columns from the foreign-key
+- `stores/sqlalchemy/schema.py`: read join columns from the foreign-key
   constraint; `_inspect_secondary` walks `foreign_key_constraints`.
 - `rest/autocrud.py`: one typed path parameter per remaining key column; path
   parameters extracted from the full path.
@@ -102,7 +103,7 @@ which depends only on `core.identity`, into `loom.core`.
 Composite keys must keep the loading cost loom has today:
 
 - No lazy loading. ORM relationships stay `lazy="noload"`
-  (`core/backend/sqlalchemy.py`, `_relationship_kwargs`); reading a relation
+  (`stores/sqlalchemy/schema.py`, `_relationship_kwargs`); reading a relation
   attribute never issues a query.
 - One batched query per relation step for a whole page, whatever the number of
   rows: `WHERE (fk_1, fk_2) IN ((…), (…))` replaces `WHERE fk IN (…)`. A page of

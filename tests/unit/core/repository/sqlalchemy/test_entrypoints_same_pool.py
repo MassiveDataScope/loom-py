@@ -8,14 +8,14 @@ import pytest
 
 from loom.core.config import ConfigContext
 from loom.core.model import LoomStruct
-from loom.core.persistence.database import load_database_config
-from loom.core.persistence.profile import SERVER_PROFILE, STREAMING_PROFILE
-from loom.core.persistence.stores import DEFAULT_STORE, load_catalog
-from loom.core.repository.sqlalchemy.backend import SQLAlchemyBackend
-from loom.core.repository.sqlalchemy.session_manager import SessionManager, build_session_manager
+from loom.core.stores.catalog import DEFAULT_STORE, load_catalog
+from loom.core.stores.database import load_database_config
+from loom.core.stores.profile import SERVER_PROFILE, STREAMING_PROFILE
+from loom.stores.sqlalchemy.plugin import SQLAlchemyStorePlugin
+from loom.stores.sqlalchemy.session_manager import SessionManager, build_session_manager
 from loom.streaming.nodes._table import IntoTable
 from loom.streaming.nodes._table.config import resolve_sqlalchemy_table_config
-from tests.helpers.composition import composition_source, uow_factory
+from tests.helpers.composition import composition_project, uow_factory
 from tests.helpers.persistence import build_backend
 
 _POSTGRES = "postgresql+asyncpg://app:secret@db.invalid/app"
@@ -34,19 +34,21 @@ def _pool_settings(manager: SessionManager) -> tuple[Any, ...]:
 def _api_manager(database: dict[str, Any]) -> SessionManager:
     ctx = ConfigContext.from_dict(
         {
-            "stores": {"default": {"backend": "sqlalchemy", **database}},
-            "persistence": {"cursors": {"signing": "ephemeral"}},
+            "stores": {
+                "default": {"backend": "sqlalchemy", **database},
+                "settings": {"cursors": {"signing": "ephemeral"}},
+            },
         }
     )
-    wiring = build_backend(SQLAlchemyBackend(), ctx, (), SERVER_PROFILE)
+    wiring = build_backend(SQLAlchemyStorePlugin(), ctx, (), SERVER_PROFILE)
     factory: Any = wiring.uow_factory
     return factory._session_manager
 
 
 def _worker_manager(database: dict[str, Any]) -> SessionManager:
     pytest.importorskip("celery")
-    from loom.celery.adapter import CeleryAdapter
-    from loom.composition import AppConfig, compose_application
+    from loom.celery.runtime import CeleryRuntime
+    from loom.composition import AppConfig
     from loom.core.job.job import Job
 
     class _PingJob(Job[int]):
@@ -54,13 +56,13 @@ def _worker_manager(database: dict[str, Any]) -> SessionManager:
             return 1
 
     celery = {"broker_url": "memory://", "result_backend": "cache+memory://"}
-    source = composition_source(
+    project = composition_project(
         ConfigContext.from_dict(
             {"stores": {"default": {"backend": "sqlalchemy", **database}}, "celery": celery}
         ),
         app=AppConfig(name="worker"),
     )
-    factory: Any = uow_factory(compose_application(source, CeleryAdapter(jobs=[_PingJob])))
+    factory: Any = uow_factory(project.compose(CeleryRuntime(jobs=[_PingJob])))
     return factory._session_manager
 
 

@@ -1,7 +1,7 @@
 """The ``conversation`` loader at run time (006 T5: AC6-AC10).
 
-Every run goes through ``AgentRuntime`` over a ``ScriptedEngine``; the loader
-and hook use cases are real use cases executed by a real ``RuntimeExecutor``
+Every run goes through ``AgentHost`` over a ``ScriptedEngine``; the loader
+and hook use cases are real use cases executed by a real ``UseCaseExecutor``
 over a recording unit of work.  No network, no database, no model.
 """
 
@@ -28,8 +28,8 @@ from loom.ai.errors import (
     is_retriable,
     run_error_class,
 )
-from loom.ai.runtime import AgentRunError, AgentRuntime
-from loom.ai.runtime._turn import TurnCallbacks
+from loom.ai.execution import AgentHost, AgentRunError
+from loom.ai.execution._turn import TurnCallbacks
 from loom.core.command import Command
 from loom.core.di import LoomContainer
 from loom.core.errors import Forbidden
@@ -251,14 +251,14 @@ def _plan(
     return plan
 
 
-def _runtime(
+def _host(
     engine: ScriptedEngine, plan: AgentPlan, *, deps: object, container: LoomContainer
-) -> AgentRuntime:
+) -> AgentHost:
     """Build a runtime serving one scripted agent."""
-    return AgentRuntime(
+    return AgentHost(
         plans=[plan],
         config=make_ai_config(),
-        engine_provider=CountingEngineProvider(engines={_AGENT: engine}),  # type: ignore[arg-type]
+        engine_plugin=CountingEngineProvider(engines={_AGENT: engine}),  # type: ignore[arg-type]
         deps=deps,  # type: ignore[arg-type]
         container=container,
     )
@@ -330,10 +330,10 @@ class TestLoaderExecution:
         """The command carries the conversation and the run context; the engine gets the bytes."""
         engine = ScriptedEngine()
         plan = _plan()
-        runtime = _runtime(engine, plan, deps=conversation_deps, container=container)
+        host = _host(engine, plan, deps=conversation_deps, container=container)
 
-        async with runtime:
-            result = await runtime.run(_AGENT, "prompt", identity=identity, conversation_id="c-42")
+        async with host:
+            result = await host.run(_AGENT, "prompt", identity=identity, conversation_id="c-42")
 
         assert len(loader.calls) == 1
         command = loader.calls[0].command
@@ -380,10 +380,10 @@ class TestLoaderExecution:
         """A first turn has an id but no history."""
         loader.results = [None]
         engine = ScriptedEngine()
-        runtime = _runtime(engine, _plan(), deps=conversation_deps, container=container)
+        host = _host(engine, _plan(), deps=conversation_deps, container=container)
 
-        async with runtime:
-            await runtime.run(_AGENT, "prompt", identity=identity, conversation_id="c-42")
+        async with host:
+            await host.run(_AGENT, "prompt", identity=identity, conversation_id="c-42")
 
         assert engine.conversations == [Conversation(conversation_id="c-42", history=None)]
 
@@ -398,10 +398,10 @@ class TestLoaderExecution:
         loader.results = [None]
         engine = ScriptedEngine()
         plan = _plan(policies=make_policies(max_history_bytes=1024))
-        runtime = _runtime(engine, plan, deps=conversation_deps, container=container)
+        host = _host(engine, plan, deps=conversation_deps, container=container)
 
-        async with runtime:
-            await runtime.run(_AGENT, "prompt", identity=identity, conversation_id="c-42")
+        async with host:
+            await host.run(_AGENT, "prompt", identity=identity, conversation_id="c-42")
 
         assert engine.conversations == [Conversation(conversation_id="c-42", history=None)]
 
@@ -416,10 +416,10 @@ class TestLoaderExecution:
         loader.results = [b"x" * 2048]
         engine = ScriptedEngine()
         plan = _plan(policies=make_policies(max_history_bytes=2048))
-        runtime = _runtime(engine, plan, deps=conversation_deps, container=container)
+        host = _host(engine, plan, deps=conversation_deps, container=container)
 
-        async with runtime:
-            await runtime.run(_AGENT, "prompt", identity=identity, conversation_id="c-42")
+        async with host:
+            await host.run(_AGENT, "prompt", identity=identity, conversation_id="c-42")
 
         assert engine.conversations == [Conversation(conversation_id="c-42", history=b"x" * 2048)]
 
@@ -432,12 +432,10 @@ class TestLoaderExecution:
     ) -> None:
         """The offered context is filtered to the Input's names before decoding."""
         engine = ScriptedEngine()
-        runtime = _runtime(
-            engine, _plan(loader=LoadStrict), deps=conversation_deps, container=container
-        )
+        host = _host(engine, _plan(loader=LoadStrict), deps=conversation_deps, container=container)
 
-        async with runtime:
-            await runtime.run(_AGENT, "prompt", identity=identity, conversation_id="c-42")
+        async with host:
+            await host.run(_AGENT, "prompt", identity=identity, conversation_id="c-42")
 
         assert loader.calls[0].command == StrictLoadCommand(conversation_id="c-42")
         assert engine.conversations == [Conversation(conversation_id="c-42", history=_HISTORY)]
@@ -451,10 +449,10 @@ class TestLoaderExecution:
     ) -> None:
         """Without a conversation the run is single-shot: no loader, ``None`` to the engine."""
         engine = ScriptedEngine()
-        runtime = _runtime(engine, _plan(), deps=conversation_deps, container=container)
+        host = _host(engine, _plan(), deps=conversation_deps, container=container)
 
-        async with runtime:
-            await runtime.run(_AGENT, "prompt", identity=identity)
+        async with host:
+            await host.run(_AGENT, "prompt", identity=identity)
 
         assert loader.calls == []
         assert engine.conversations == [None]
@@ -469,10 +467,10 @@ class TestLoaderExecution:
     ) -> None:
         """A ``conversation_id`` on a plan without a loader reaches no use case and no engine."""
         engine = ScriptedEngine()
-        runtime = _runtime(engine, _plan(loader=None), deps=conversation_deps, container=container)
+        host = _host(engine, _plan(loader=None), deps=conversation_deps, container=container)
 
-        async with runtime:
-            await runtime.run(_AGENT, "prompt", identity=identity, conversation_id="c-42")
+        async with host:
+            await host.run(_AGENT, "prompt", identity=identity, conversation_id="c-42")
 
         assert loader.calls == []
         assert engine.conversations == [None]
@@ -497,11 +495,11 @@ class TestLoaderFailures:
         loader.failure = ValueError("secret detail")
         engine = ScriptedEngine()
         plan = _plan(hook=RecordTurn)
-        runtime = _runtime(engine, plan, deps=conversation_deps, container=container)
+        host = _host(engine, plan, deps=conversation_deps, container=container)
 
-        async with runtime:
+        async with host:
             with pytest.raises(AgentRunError) as failure:
-                await runtime.run(_AGENT, "prompt", identity=identity, conversation_id="c-42")
+                await host.run(_AGENT, "prompt", identity=identity, conversation_id="c-42")
 
         error = failure.value
         assert error.code is AgentRunErrorCode.CONVERSATION_LOAD_FAILED
@@ -525,11 +523,11 @@ class TestLoaderFailures:
         """A thread owned by another subject is a denial with the fixed text."""
         loader.failure = Forbidden("thread c-42 belongs to another subject")
         engine = ScriptedEngine()
-        runtime = _runtime(engine, _plan(), deps=conversation_deps, container=container)
+        host = _host(engine, _plan(), deps=conversation_deps, container=container)
 
-        async with runtime:
+        async with host:
             with pytest.raises(AgentRunError) as failure:
-                await runtime.run(_AGENT, "prompt", identity=identity, conversation_id="c-42")
+                await host.run(_AGENT, "prompt", identity=identity, conversation_id="c-42")
 
         assert failure.value.code is AgentRunErrorCode.UNAUTHORIZED
         assert str(failure.value) == _DENIED_MESSAGE
@@ -547,13 +545,13 @@ class TestLoaderFailures:
         loader.sleep_s = 5.0
         engine = ScriptedEngine()
         plan = _plan(policies=make_policies(tool_timeout_ms=50))
-        runtime = _runtime(engine, plan, deps=conversation_deps, container=container)
+        host = _host(engine, plan, deps=conversation_deps, container=container)
         loop = asyncio.get_running_loop()
 
-        async with runtime:
+        async with host:
             started = loop.time()
             with pytest.raises(AgentRunError) as failure:
-                await runtime.run(_AGENT, "prompt", identity=identity, conversation_id="c-42")
+                await host.run(_AGENT, "prompt", identity=identity, conversation_id="c-42")
             elapsed = loop.time() - started
 
         assert failure.value.code is AgentRunErrorCode.CONVERSATION_LOAD_TIMEOUT
@@ -576,11 +574,11 @@ class TestLoaderFailures:
         """A ``TimeoutError`` from the loader's own I/O gets the same code as a bound cut."""
         loader.failure = TimeoutError()
         engine = ScriptedEngine()
-        runtime = _runtime(engine, _plan(), deps=conversation_deps, container=container)
+        host = _host(engine, _plan(), deps=conversation_deps, container=container)
 
-        async with runtime:
+        async with host:
             with pytest.raises(AgentRunError) as failure:
-                await runtime.run(_AGENT, "prompt", identity=identity, conversation_id="c-42")
+                await host.run(_AGENT, "prompt", identity=identity, conversation_id="c-42")
 
         assert failure.value.code is AgentRunErrorCode.CONVERSATION_LOAD_TIMEOUT
         assert str(failure.value) == CONVERSATION_LOAD_TIMEOUT_MESSAGE
@@ -598,11 +596,11 @@ class TestLoaderFailures:
         """Only ``bytes`` or ``None`` cross the boundary; a ``str`` never reaches the engine."""
         loader.results = ["[]"]
         engine = ScriptedEngine()
-        runtime = _runtime(engine, _plan(), deps=conversation_deps, container=container)
+        host = _host(engine, _plan(), deps=conversation_deps, container=container)
 
-        async with runtime:
+        async with host:
             with pytest.raises(AgentRunError) as failure:
-                await runtime.run(_AGENT, "prompt", identity=identity, conversation_id="c-42")
+                await host.run(_AGENT, "prompt", identity=identity, conversation_id="c-42")
 
         assert failure.value.code is AgentRunErrorCode.CONVERSATION_LOAD_FAILED
         assert str(failure.value) == CONVERSATION_LOAD_FAILED_MESSAGE
@@ -622,14 +620,14 @@ class TestLoaderFailures:
         loader.results = [b"x" * 2049]
         engine = ScriptedEngine()
         plan = _plan(policies=make_policies(max_history_bytes=2048))
-        runtime = _runtime(engine, plan, deps=conversation_deps, container=container)
+        host = _host(engine, plan, deps=conversation_deps, container=container)
 
-        async with runtime:
+        async with host:
             with (
-                caplog.at_level(logging.ERROR, logger="loom.ai.runtime._turn"),
+                caplog.at_level(logging.ERROR, logger="loom.ai.execution._turn"),
                 pytest.raises(AgentRunError) as failure,
             ):
-                await runtime.run(_AGENT, "prompt", identity=identity, conversation_id="c-42")
+                await host.run(_AGENT, "prompt", identity=identity, conversation_id="c-42")
 
         error = failure.value
         assert error.code is AgentRunErrorCode.CONVERSATION_LOAD_FAILED
@@ -640,7 +638,7 @@ class TestLoaderFailures:
         records = [
             record
             for record in caplog.records
-            if record.name == "loom.ai.runtime._turn" and record.levelno == logging.ERROR
+            if record.name == "loom.ai.execution._turn" and record.levelno == logging.ERROR
         ]
         assert len(records) == 1
         assert records[0].exc_text is not None
@@ -659,11 +657,11 @@ class TestLoaderFailures:
         """``run_stream`` raises before any event, so no stream ever opens."""
         loader.failure = ValueError("secret detail")
         engine = ScriptedEngine()
-        runtime = _runtime(engine, _plan(), deps=conversation_deps, container=container)
+        host = _host(engine, _plan(), deps=conversation_deps, container=container)
 
-        async with runtime:
+        async with host:
             with pytest.raises(AgentRunError) as failure:
-                async with runtime.run_stream(
+                async with host.run_stream(
                     _AGENT, "prompt", identity=identity, conversation_id="c-42"
                 ):
                     pytest.fail("the stream opened despite the loader failure")
@@ -690,14 +688,14 @@ class TestNoCache:
         second = Identity(subject="user-2", roles=("analyst",), mechanism="test")
         loader.results = [b"[1]", b"[2]"]
         engine = ScriptedEngine()
-        runtime = _runtime(engine, _plan(), deps=conversation_deps, container=container)
+        host = _host(engine, _plan(), deps=conversation_deps, container=container)
 
-        async with runtime:
-            await runtime.run(_AGENT, "prompt", identity=first, conversation_id="c-42")
-            await runtime.run(_AGENT, "prompt", identity=second, conversation_id="c-42")
-            slots = vars(runtime)["_slots"]
+        async with host:
+            await host.run(_AGENT, "prompt", identity=first, conversation_id="c-42")
+            await host.run(_AGENT, "prompt", identity=second, conversation_id="c-42")
+            slots = vars(host)["_slots"]
             slot = slots[_AGENT]
-            retained = _holds_conversation(vars(runtime), excluded=engine, seen=set()) or any(
+            retained = _holds_conversation(vars(host), excluded=engine, seen=set()) or any(
                 _holds_conversation(getattr(slot, f.name), excluded=engine, seen=set())
                 for f in dataclasses.fields(slot)
             )
@@ -733,10 +731,10 @@ class TestMessagesInTheHook:
         """The hook command and the result carry the event's bytes verbatim."""
         engine = ScriptedEngine(script=_script(_NEW_MESSAGES))
         plan = _plan(loader=None, hook=RecordTurn)
-        runtime = _runtime(engine, plan, deps=conversation_deps, container=container)
+        host = _host(engine, plan, deps=conversation_deps, container=container)
 
-        async with runtime:
-            result = await runtime.run(_AGENT, "prompt", identity=identity, conversation_id="c-42")
+        async with host:
+            result = await host.run(_AGENT, "prompt", identity=identity, conversation_id="c-42")
 
         command = hooks.calls[0].command
         assert isinstance(command, TurnCommand)
@@ -755,10 +753,10 @@ class TestMessagesInTheHook:
         """A run whose engine reports no messages offers ``None``; the result carries ``None``."""
         engine = ScriptedEngine(script=default_script({"answer": "42"}))
         plan = _plan(loader=None, hook=RecordTurn)
-        runtime = _runtime(engine, plan, deps=conversation_deps, container=container)
+        host = _host(engine, plan, deps=conversation_deps, container=container)
 
-        async with runtime:
-            result = await runtime.run(_AGENT, "prompt", identity=identity)
+        async with host:
+            result = await host.run(_AGENT, "prompt", identity=identity)
 
         command = hooks.calls[0].command
         assert isinstance(command, TurnCommand)
@@ -775,10 +773,10 @@ class TestMessagesInTheHook:
         """``messages`` is filtered out before a strict Command decodes."""
         engine = ScriptedEngine(script=_script(_NEW_MESSAGES))
         plan = _plan(loader=None, hook=RecordStrictTurn)
-        runtime = _runtime(engine, plan, deps=conversation_deps, container=container)
+        host = _host(engine, plan, deps=conversation_deps, container=container)
 
-        async with runtime:
-            result = await runtime.run(_AGENT, "prompt", identity=identity, conversation_id="c-42")
+        async with host:
+            result = await host.run(_AGENT, "prompt", identity=identity, conversation_id="c-42")
 
         assert isinstance(hooks.calls[0].command, StrictTurnCommand)
         assert result.interaction_id is not None
@@ -803,17 +801,17 @@ class TestStartupProbe:
             "tools": StubMcpClient(label="tools", session=RecordingMcpSession(), log=lifecycle_log)
         }
         plan = _plan(capabilities=(make_mcp_capability("tools"),))
-        runtime = AgentRuntime(
+        host = AgentHost(
             plans=[plan],
             config=make_ai_config(mcp_servers=make_mcp_servers("tools")),
-            engine_provider=CountingEngineProvider(),  # type: ignore[arg-type]
+            engine_plugin=CountingEngineProvider(),  # type: ignore[arg-type]
             deps=deps,
             container=container,
             mcp_client_factory=mcp_client_factory(clients),  # type: ignore[arg-type]
         )
 
         with pytest.raises(AgentCompilationError) as failure:
-            async with runtime:
+            async with host:
                 pass
 
         issues = failure.value.issues
@@ -825,10 +823,10 @@ class TestStartupProbe:
         self, deps: StubDepsFactory, container: LoomContainer
     ) -> None:
         """A plan declaring both surfaces both issues in one start-up failure."""
-        runtime = _runtime(ScriptedEngine(), _plan(hook=RecordTurn), deps=deps, container=container)
+        host = _host(ScriptedEngine(), _plan(hook=RecordTurn), deps=deps, container=container)
 
         with pytest.raises(AgentCompilationError) as failure:
-            async with runtime:
+            async with host:
                 pass
 
         issues = failure.value.issues
@@ -847,10 +845,10 @@ class TestStartupProbe:
     ) -> None:
         """An invoker satisfies the probe for a conversational plan."""
         engine = ScriptedEngine()
-        runtime = _runtime(engine, _plan(), deps=conversation_deps, container=container)
+        host = _host(engine, _plan(), deps=conversation_deps, container=container)
 
-        async with runtime:
-            result = await runtime.run(_AGENT, "prompt", identity=identity)
+        async with host:
+            result = await host.run(_AGENT, "prompt", identity=identity)
 
         assert result.interaction_id is not None
         assert loader.calls == []

@@ -2,7 +2,7 @@ from __future__ import annotations
 
 from importlib.resources import files
 
-from loom.core.repository.sqlalchemy.rls.guard_manifest import (
+from loom.stores.sqlalchemy.rls.guard_manifest import (
     GUARD_REVISIONS,
     PREFLIGHT_FILE,
     PREFLIGHT_SHA256,
@@ -10,7 +10,7 @@ from loom.core.repository.sqlalchemy.rls.guard_manifest import (
     preflight_sql,
 )
 
-GUARD = files("loom.core.repository.sqlalchemy.rls") / "guard"
+GUARD = files("loom.stores.sqlalchemy.rls") / "guard"
 
 
 class TestGuardRelease:

@@ -3,7 +3,6 @@
 from __future__ import annotations
 
 from typing import Any
-from unittest.mock import MagicMock
 
 import pytest
 
@@ -14,9 +13,10 @@ from loom.core.engine.post_commit import (
     reset_channel,
 )
 from loom.core.errors import PostCommitError
-from loom.core.repository.mutation import MutationEvent
-from loom.core.uow.scope import current_scope
+from loom.core.stores.repository.mutation import MutationEvent
+from loom.core.stores.uow.scope import current_scope
 
+from ...conftest import RecordingSession
 from .conftest import OuterService, PostCommitService, ServiceWithMixedDependencies
 
 
@@ -42,12 +42,12 @@ class TestOwnedChannel:
         assert seen == [None]
 
     async def test_rollback_discards_hooks(
-        self, service: PostCommitService, recording_session: MagicMock, log: list[str]
+        self, service: PostCommitService, recording_session: RecordingSession, log: list[str]
     ) -> None:
         with pytest.raises(RuntimeError, match="boom"):
             await service.fail()
 
-        recording_session.rollback.assert_awaited_once()
+        assert recording_session.count("rollback") == 1
         assert log == ["session_closed"]
         assert active_channel() is None
 
@@ -69,11 +69,11 @@ class TestOwnedChannel:
         assert active_channel() is None
 
     async def test_nested_call_under_active_session_enqueues_nothing_extra(
-        self, outer_service: OuterService, recording_session: MagicMock, log: list[str]
+        self, outer_service: OuterService, recording_session: RecordingSession, log: list[str]
     ) -> None:
         await outer_service.execute()
 
-        recording_session.commit.assert_awaited_once()
+        assert recording_session.count("commit") == 1
         # The owner walk is one level deep: ``inner`` is a dependency of
         # ``outer`` and runs once; it did not bind a channel of its own.
         assert log == ["body", "commit", "session_closed", "outer", "owner"]

@@ -24,19 +24,26 @@ from loom.core.cache.decorators import cache_query, cached
 from loom.core.engine.post_commit import PostCommitChannel
 from loom.core.model import BaseModel, ColumnField, LoomStruct
 from loom.core.model.introspection import get_id_attribute
-from loom.core.persistence.stores import DEFAULT_STORE
-from loom.core.repository import FilterParams, PageParams, PageResult, Repository, repository_for
-from loom.core.repository.abc.query import (
+from loom.core.stores.catalog import DEFAULT_STORE
+from loom.core.stores.repository import (
+    FilterParams,
+    PageParams,
+    PageResult,
+    Repository,
+    repository_for,
+)
+from loom.core.stores.repository.capabilities import Listable, OnConflict, Readable
+from loom.core.stores.repository.query import (
     CursorResult,
     FilterOp,
     PaginationMode,
     QuerySpec,
     build_page_result,
 )
-from loom.core.repository.abc.repo_for import Listable, Readable
-from loom.core.repository.sqlalchemy.query_compiler import UnsafeFilterError
-from loom.core.uow.coordinator import OrderedCommits
-from loom.core.uow.scope import Frame, invocation
+from loom.core.stores.uow.coordinator import OrderedCommits
+from loom.core.stores.uow.scope import Frame, invocation
+from loom.stores.sqlalchemy.query_compiler import UnsafeFilterError
+from loom.testing import make
 from tests.unit.core.uow._coordinator_fakes import (
     Factory,
     Ledger,
@@ -109,7 +116,7 @@ class WidgetUpdate(msgspec.Struct, kw_only=True):
     name: str | msgspec.UnsetType = msgspec.UNSET
 
 
-class CountingCacheBackend:
+class CountingCacheStore:
     """In-memory cache backend that serializes values and counts its batches.
 
     Attributes:
@@ -302,7 +309,7 @@ class CountingRepository(Repository[RowT, WidgetCreate, WidgetUpdate, Any], Gene
         matched = self._matching_rows(query)
         if query.pagination is PaginationMode.CURSOR:
             return CursorResult(items=tuple(matched), next_cursor=None, has_next=False)
-        page_params = PageParams(page=query.page, limit=query.limit)
+        page_params = make(PageParams, page=query.page, limit=query.limit)
         return build_page_result(matched, len(matched), page_params)
 
     def _matching_rows(self, query: QuerySpec) -> list[RowT]:
@@ -353,8 +360,10 @@ class WritableRepository(CountingRepository[RowT], Generic[RowT]):
         self.storage[self.key_of(row)] = row
         return row
 
-    async def create_many(self, data: Sequence[msgspec.Struct]) -> tuple[RowT, ...]:
-        """Persist every payload in *data*, in order."""
+    async def create_many(
+        self, data: Sequence[msgspec.Struct], *, on_conflict: OnConflict = OnConflict.ERROR
+    ) -> tuple[RowT, ...]:
+        """Persist every payload in *data*, in order, whatever *on_conflict* says."""
         created = [
             await self.create(msgspec.convert(msgspec.to_builtins(item), WidgetCreate))
             for item in data
@@ -483,7 +492,7 @@ class CachedEnv(NamedTuple, Generic[RowT]):
     """A cached repository together with the doubles it was built on."""
 
     repository: CountingRepository[RowT]
-    backend: CountingCacheBackend
+    backend: CountingCacheStore
     resolver: GenerationalDependencyResolver
     wrapper: CachedRepository[RowT, WidgetCreate, WidgetUpdate, Any]
 
@@ -501,7 +510,7 @@ def wrap_with_cache(
     Returns:
         The wrapper and every double it talks to.
     """
-    backend = CountingCacheBackend()
+    backend = CountingCacheStore()
     resolver = GenerationalDependencyResolver(backend)
     wrapper: CachedRepository[RowT, WidgetCreate, WidgetUpdate, Any] = CachedRepository(
         repository,

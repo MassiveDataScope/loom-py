@@ -6,14 +6,14 @@ import pytest
 
 from loom.core.identity import ON_BEHALF_OF_ATTRIBUTE, Identity
 from loom.core.identity.context import reset_identity, set_identity
-from loom.core.repository.sqlalchemy.rls.provider import (
+from loom.core.tracing.context import active_trace_id
+from loom.stores.sqlalchemy.rls.provider import (
     ACTOR_MECHANISM,
     ACTOR_ON_BEHALF_OF,
     ACTOR_SUBJECT,
     TRACE_ID,
     scoped_session_settings,
 )
-from loom.core.tracing.context import active_trace_id
 
 _ACTOR_KEYS = (ACTOR_SUBJECT, ACTOR_MECHANISM, ACTOR_ON_BEHALF_OF, TRACE_ID)
 

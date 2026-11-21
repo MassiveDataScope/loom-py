@@ -2,18 +2,22 @@
 
 The ``jobs`` function runs ``TrackShipmentJob`` from an SQS record carrying
 the enqueuer's identity. A job refused for its caller is not retryable,
-so the function consumes its record and logs it as failed finally: that log
-is where the refusal surfaces. An envelope that does not decode is reported
-back to the queue instead.
+so the function discards its record (the queue says ``abandoned: discard``)
+and logs it as abandoned: that log is where the refusal surfaces. An
+envelope that does not decode is abandoned the same way.
 """
 
 from __future__ import annotations
+
+from collections.abc import Iterator
 
 import pytest
 
 from loom.core.identity import Identity, current_caller
 from loom.serverless.aws.lambda_ import LambdaHandler
 from loom.testing import LambdaEvent, LambdaTestClient
+from tests.helpers.aws_island import FakeAwsIsland
+from tests.helpers.loggers import logged_events
 from tests.integration.hexagonal.conftest import (
     ANA,
     BAD_IDENTITIES,
@@ -33,9 +37,9 @@ CONSUMED = {"batchItemFailures": []}
 
 
 @pytest.fixture
-def lambda_worker(compose: Compose) -> LambdaHandler:
-    """The ``acme-worker`` Lambda function, closed when the test ends."""
-    return compose("lambda-jobs")[1]
+def lambda_worker(compose: Compose, island: FakeAwsIsland) -> Iterator[LambdaHandler]:
+    """The ``acme-worker`` Lambda function, closed when the test ends, over a stand-in SQS."""
+    yield compose("lambda-jobs")[1]
 
 
 def _job(caller: Identity | None) -> LambdaEvent:
@@ -44,9 +48,9 @@ def _job(caller: Identity | None) -> LambdaEvent:
 
 def _failures(caplog: pytest.LogCaptureFixture) -> list[tuple[str, str]]:
     return [
-        (str(record.msg["event"]), str(record.msg["error_class"]))
-        for record in caplog.records
-        if isinstance(record.msg, dict) and "error_class" in record.msg
+        (str(entry["event"]), str(entry["error_type"]))
+        for entry in logged_events(caplog)
+        if "error_type" in entry
     ]
 
 
@@ -54,7 +58,7 @@ def _reported(event: LambdaEvent) -> dict[str, list[dict[str, str]]]:
     return {"batchItemFailures": [{"itemIdentifier": event["Records"][0]["messageId"]}]}
 
 
-FAILED_FINALLY = "SQS job failed finally"
+FAILED_FINALLY = "Job abandoned"
 
 
 class TestTheJobsFunction:
@@ -76,7 +80,7 @@ class TestTheJobsFunction:
         ("bad", "retried", "failure"),
         [
             ("empty-subject", False, (FAILED_FINALLY, "Unauthenticated")),
-            ("not-a-mapping", True, ("SQS job failed", "MalformedJobMessage")),
+            ("not-a-mapping", False, (FAILED_FINALLY, "MalformedJobMessage")),
             ("subject-not-a-string", False, (FAILED_FINALLY, "Unauthenticated")),
             ("expired", False, (FAILED_FINALLY, "DelegationExpired")),
             ("unreadable-until", False, (FAILED_FINALLY, "DelegationExpired")),

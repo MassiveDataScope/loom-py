@@ -9,7 +9,7 @@ from contextlib import asynccontextmanager, suppress
 import pytest
 
 from loom.composition import LoopHost
-from loom.composition.resources import Resource, ResourceKind
+from loom.core.resources import Resource, ResourceKind
 from tests.helpers.composition import application_of
 from tests.helpers.loops import RecordedLoops
 

@@ -13,11 +13,11 @@ import pytest
 import loom.core.connections.aws
 import loom.core.connections.clickhouse
 import loom.core.connections.mongo
-import loom.core.persistence.database
-import loom.core.repository.dynamodb.backend
-import loom.core.repository.mongo.backend
-import loom.core.sql.config
+import loom.core.stores.database
+import loom.core.stores.sql.config
 import loom.etl.storage._config
+import loom.stores.dynamodb.plugin
+import loom.stores.mongo.plugin
 import loom.streaming.mongo._config
 from loom.core.connections import ConnectionPool, ConnectionSettings
 
@@ -26,10 +26,10 @@ _DEFINING_MODULES = (
     loom.core.connections.aws,
     loom.core.connections.clickhouse,
     loom.core.connections.mongo,
-    loom.core.persistence.database,
-    loom.core.repository.dynamodb.backend,
-    loom.core.repository.mongo.backend,
-    loom.core.sql.config,
+    loom.core.stores.database,
+    loom.stores.dynamodb.plugin,
+    loom.stores.mongo.plugin,
+    loom.core.stores.sql.config,
     loom.etl.storage._config,
     loom.streaming.mongo._config,
 )

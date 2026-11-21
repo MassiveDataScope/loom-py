@@ -16,7 +16,7 @@ at an unreachable address and start-up still fails, exactly as
 Guards mutants a mocked-provider test cannot: ``ai.startup_timeout_ms /
 1000`` silently turned into ``* 1.0`` in ``auto.py``, or either
 ``configure_engine_mcp_connect_timeout`` (``registry.py``) or the provider's
-own ``configure_mcp_connect_timeout`` (``provider.py``) reduced to a no-op —
+own ``configure_mcp_connect_timeout`` (``plugin.py``) reduced to a no-op —
 every one of those leaves the rest of the suite green without this file.
 """
 
@@ -90,7 +90,8 @@ _AGENT_SPEC: dict[str, Any] = {
 
 def _write_project(tmp_path: Path) -> str:
     """Write the fixture app, one MCP-granting artifact and the YAML config."""
-    (tmp_path / f"{_APP_MODULE}.py").write_text(_APP_SOURCE, encoding="utf-8")
+    (tmp_path / _APP_MODULE).mkdir()
+    (tmp_path / _APP_MODULE / "__init__.py").write_text(_APP_SOURCE, encoding="utf-8")
     agent_dir = tmp_path / "ai" / "agents" / _AGENT
     agent_dir.mkdir(parents=True)
     (agent_dir / "agent.yaml").write_text(yaml.safe_dump(_AGENT_SPEC), encoding="utf-8")
@@ -98,13 +99,12 @@ def _write_project(tmp_path: Path) -> str:
         "app": {
             "name": "mcp-timeout-wiring-demo",
             "code_path": str(tmp_path),
-            "discovery": {
-                "mode": "interfaces",
-                "interfaces": {"modules": [_APP_MODULE], "warn_recommended": False},
-            },
+            "packages": [_APP_MODULE],
         },
-        "stores": {"default": {"backend": "sqlalchemy", "url": "sqlite+aiosqlite:///"}},
-        "persistence": {"cursors": {"signing": "ephemeral"}},
+        "stores": {
+            "default": {"backend": "sqlalchemy", "url": "sqlite+aiosqlite:///"},
+            "settings": {"cursors": {"signing": "ephemeral"}},
+        },
         "ai": {
             "engine": "pydantic-ai",
             "specs": ["ai/agents/*/agent.yaml"],

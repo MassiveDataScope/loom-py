@@ -15,16 +15,16 @@ import pytest
 from loom.core.config import ConfigContext, ConfigError
 from loom.core.config.convert import convert_config
 from loom.core.connections import AwsClientConfig, ClickHouseConnection, MongoConnection
-from loom.core.persistence.database import load_database_config
-from loom.core.persistence.stores import DEFAULT_STORE, StoreKey, load_catalog
-from loom.core.repository.dynamodb.backend import DynamoDBRepositoryConfig
-from loom.core.repository.mongo.backend import MongoRepositoryConfig
-from loom.core.sql.config import SqlConnectionConfig
+from loom.core.stores.catalog import DEFAULT_STORE, StoreKey, load_catalog
+from loom.core.stores.database import load_database_config
+from loom.core.stores.sql.config import SqlConnectionConfig
 from loom.etl.storage._config import (
     StorageConfig,
     convert_storage_config,
     normalise_storage_section,
 )
+from loom.stores.dynamodb.plugin import DynamoDBRepositoryConfig
+from loom.stores.mongo.plugin import MongoRepositoryConfig
 from loom.streaming.mongo import MongoSourceConfig
 
 _AWS = {"region": "eu-west-1", "url": "http://localhost:8000", "read_timeout": 9}

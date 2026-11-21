@@ -7,11 +7,11 @@ from dataclasses import dataclass, field
 from typing import Any, ClassVar, Literal
 
 from loom.core.model import LoomFrozenStruct, LoomStruct
-from loom.core.persistence.database import DatabaseConfig
+from loom.core.stores.database import DatabaseConfig
 from loom.streaming.compiler._errors import CompilationIssue
+from loom.streaming.core._dispatch import DispatchTable
 from loom.streaming.core._errors import ErrorKind
 from loom.streaming.kafka._config import ConsumerSettings, ProducerSettings
-from loom.streaming.kafka._wire import DispatchTable
 from loom.streaming.mongo import MongoSourceConfig
 from loom.streaming.nodes._boundary import PartitionPolicy
 from loom.streaming.nodes._shape import StreamShape

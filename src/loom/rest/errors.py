@@ -18,8 +18,8 @@ from loom.core.errors import (
     NotFound,
     PostCommitError,
     RateLimited,
-    RuleViolation,
-    RuleViolations,
+    RuleViolationError,
+    RuleViolationsError,
 )
 from loom.core.errors.codes import ErrorCode
 from loom.core.tracing import get_trace_id
@@ -72,8 +72,8 @@ class HttpErrorMapper:
     - :class:`~loom.core.errors.NotFound` → ``entity``, ``id``
     - :class:`~loom.core.errors.Forbidden` → ``reason`` and ``missing``, each only
       when the refusal carries it
-    - :class:`~loom.core.errors.RuleViolation` → ``field``
-    - :class:`~loom.core.errors.RuleViolations` → ``violations``
+    - :class:`~loom.core.errors.RuleViolationError` → ``field``
+    - :class:`~loom.core.errors.RuleViolationsError` → ``violations``
     - :class:`~loom.core.errors.BoundaryValidationError` → ``violations``
       (``422``; a schema failure, distinct from a rule failure; ``400`` under
       ``query_validation``, since RFC 9110 §15.5.21 defines ``422`` over
@@ -143,7 +143,6 @@ class HttpErrorMapper:
         ErrorCode.UNKNOWN_JOB: HTTPStatus.INTERNAL_SERVER_ERROR,
         ErrorCode.JOB_TIMEOUT: HTTPStatus.INTERNAL_SERVER_ERROR,
         ErrorCode.JOB_FAILED: HTTPStatus.INTERNAL_SERVER_ERROR,
-        ErrorCode.JOB_BACKENDS_MIXED: HTTPStatus.INTERNAL_SERVER_ERROR,
         ErrorCode.BOUNDARY_TYPE_UNSUPPORTED: HTTPStatus.INTERNAL_SERVER_ERROR,
     }
 
@@ -210,10 +209,10 @@ def _convert(mapper: HttpErrorMapper, error: LoomError) -> HTTPException:
         if error.missing:
             detail[ErrorField.MISSING] = list(error.missing)
 
-    if isinstance(error, RuleViolation):
+    if isinstance(error, RuleViolationError):
         detail[ErrorField.FIELD] = error.field
 
-    if isinstance(error, RuleViolations):
+    if isinstance(error, RuleViolationsError):
         detail[ErrorField.VIOLATIONS] = _rule_violation_fields(error.violations)
 
     if isinstance(error, BoundaryValidationError):
@@ -253,7 +252,7 @@ def _coerce_status(declared: object) -> HTTPStatus:
     raise _Misdeclared("http_status is not a registered 4xx or 5xx status")
 
 
-def _rule_violation_fields(violations: tuple[RuleViolation, ...]) -> list[dict[str, Any]]:
+def _rule_violation_fields(violations: tuple[RuleViolationError, ...]) -> list[dict[str, Any]]:
     return [
         {ErrorField.FIELD: violation.field, ErrorField.MESSAGE: violation.message}
         for violation in violations

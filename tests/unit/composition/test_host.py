@@ -11,8 +11,9 @@ from contextlib import asynccontextmanager
 import pytest
 
 from loom.composition import ApplicationHost, CompositionErrorCode, CompositionStateError
-from loom.composition.resources import Resource, ResourceKind, closing
+from loom.core.resources import Resource, ResourceKind, closing
 from tests.helpers.composition import TaskAffine, application_of
+from tests.helpers.loggers import exception_text
 
 
 def _failing_to_close(message: str) -> Resource:
@@ -81,7 +82,7 @@ class TestOpening:
         try:
             assert application.is_open
         finally:
-            await host.stop()
+            await host.shutdown()
 
         assert not application.is_open
 
@@ -99,7 +100,7 @@ class TestOpening:
 
         for host in (checked, unchecked):
             await host.start()
-            await host.stop()
+            await host.shutdown()
 
         assert checks == ["check"]
 
@@ -111,12 +112,12 @@ class TestOpening:
             await host.start()
 
         assert not application.is_open
-        await host.stop()
+        await host.shutdown()
 
     async def test_a_host_starts_once(self) -> None:
         host = ApplicationHost(application_of())
         await host.start()
-        await host.stop()
+        await host.shutdown()
 
         with pytest.raises(CompositionStateError, match="once") as raised:
             await host.start()
@@ -143,21 +144,21 @@ class TestOpening:
         assert affine.exited_in is affine.entered_in is not None
         assert not application.is_open
 
-    async def test_a_stop_while_opening_fails_the_start_once_closed(self) -> None:
+    async def test_a_shutdown_while_opening_fails_the_start_once_closed(self) -> None:
         gate = _Gate()
         application = application_of(gate.blocking_open())
         host = ApplicationHost(application)
         starting = asyncio.create_task(host.start())
         await gate.entering.wait()
 
-        stopping = asyncio.create_task(host.stop())
+        stopping = asyncio.create_task(host.shutdown())
         await asyncio.sleep(0)
         assert not stopping.done()
         gate.release.set()
 
-        with pytest.raises(CompositionStateError, match="stopped while opening") as raised:
+        with pytest.raises(CompositionStateError, match="shut down while opening") as raised:
             await starting
-        assert raised.value.issue.code is CompositionErrorCode.HOST_STOPPED_WHILE_OPENING
+        assert raised.value.issue.code is CompositionErrorCode.HOST_SHUT_DOWN_WHILE_OPENING
         assert gate.closed
         assert not application.is_open
         await stopping
@@ -184,7 +185,7 @@ class TestOpening:
             del starting
             gc.collect()
 
-        assert "pool gone" in caplog.text
+        assert "pool gone" in exception_text(caplog)
         # Nothing reached the loop's handler: no "exception was never retrieved".
         assert loop_errors == []
 
@@ -197,31 +198,31 @@ class TestTaskAffinity:
         # Separate tasks, as each call of a blocking portal or each Lambda
         # invocation runs in a task of its own.
         await asyncio.create_task(host.start())
-        await asyncio.create_task(host.stop())
+        await asyncio.create_task(host.shutdown())
 
         assert affine.entered_in is not None
         assert affine.exited_in is affine.entered_in
 
-    async def test_the_owner_task_is_neither_the_starter_nor_the_stopper(self) -> None:
+    async def test_the_owner_task_is_neither_the_starter_nor_the_caller_of_shutdown(self) -> None:
         affine = TaskAffine()
         host = ApplicationHost(application_of(affine.resource()))
 
         await host.start()
-        await host.stop()
+        await host.shutdown()
 
         assert affine.entered_in is not asyncio.current_task()
 
-    async def test_a_real_agent_runtime_closes_cleanly(self) -> None:
+    async def test_a_real_agent_host_closes_cleanly(self) -> None:
         # Local imports: the AI pillar is an optional extra.
-        pytest.importorskip("loom.ai.runtime")
-        from loom.ai.runtime import AgentRuntime
+        pytest.importorskip("loom.ai.execution")
+        from loom.ai.execution import AgentHost
         from loom.core.di import LoomContainer
         from tests.helpers.ai import CountingEngineProvider, StubDepsFactory, make_ai_config
 
-        runtime = AgentRuntime(
+        runtime = AgentHost(
             plans=[],
             config=make_ai_config(),
-            engine_provider=CountingEngineProvider(engines={}),  # type: ignore[arg-type]
+            engine_plugin=CountingEngineProvider(engines={}),  # type: ignore[arg-type]
             deps=StubDepsFactory(),
             container=LoomContainer(),
         )
@@ -229,41 +230,41 @@ class TestTaskAffinity:
         host = ApplicationHost(application_of(agents))
 
         await asyncio.create_task(host.start())
-        await asyncio.create_task(host.stop())
+        await asyncio.create_task(host.shutdown())
 
 
-class TestStopping:
-    async def test_stop_without_start_does_nothing(self) -> None:
-        await ApplicationHost(application_of()).stop()
+class TestShutdown:
+    async def test_shutdown_without_start_does_nothing(self) -> None:
+        await ApplicationHost(application_of()).shutdown()
 
-    async def test_stop_is_idempotent(self) -> None:
+    async def test_shutdown_is_idempotent(self) -> None:
         affine = TaskAffine()
         host = ApplicationHost(application_of(affine.resource()))
         await host.start()
 
-        await host.stop()
-        await host.stop()
+        await host.shutdown()
+        await host.shutdown()
 
         assert affine.exited_in is affine.entered_in
 
-    async def test_a_failure_to_close_is_raised_from_stop_once(self) -> None:
+    async def test_a_failure_to_close_is_raised_from_shutdown_once(self) -> None:
         application = application_of(_failing_to_close("pool gone"))
         host = ApplicationHost(application)
         await host.start()
 
         with pytest.raises(RuntimeError, match="pool gone"):
-            await host.stop()
+            await host.shutdown()
 
         assert not application.is_open
-        await host.stop()
+        await host.shutdown()
 
-    async def test_concurrent_stops_all_wait_for_the_close(self) -> None:
+    async def test_concurrent_shutdowns_all_wait_for_the_close(self) -> None:
         gate = _Gate()
         host = ApplicationHost(application_of(gate.blocking_close()))
         await host.start()
 
-        first = asyncio.create_task(host.stop())
-        second = asyncio.create_task(host.stop())
+        first = asyncio.create_task(host.shutdown())
+        second = asyncio.create_task(host.shutdown())
         await gate.closing.wait()
         await asyncio.sleep(0)
         assert not first.done()
@@ -273,13 +274,13 @@ class TestStopping:
 
         assert gate.closed
 
-    async def test_the_close_error_is_raised_to_the_first_stop_only(self) -> None:
+    async def test_the_close_error_is_raised_to_the_first_shutdown_only(self) -> None:
         gate = _Gate()
         host = ApplicationHost(application_of(gate.blocking_close(error="pool gone")))
         await host.start()
 
-        first = asyncio.create_task(host.stop())
-        second = asyncio.create_task(host.stop())
+        first = asyncio.create_task(host.shutdown())
+        second = asyncio.create_task(host.shutdown())
         await gate.closing.wait()
         gate.release.set()
         outcomes = await asyncio.gather(first, second, return_exceptions=True)
@@ -288,13 +289,13 @@ class TestStopping:
         assert str(outcomes[0]) == "pool gone"
         assert outcomes[1] is None
 
-    async def test_a_failure_to_close_after_a_cancelled_stop_is_logged(
+    async def test_a_failure_to_close_after_a_cancelled_shutdown_is_logged(
         self, caplog: pytest.LogCaptureFixture
     ) -> None:
         gate = _Gate()
         host = ApplicationHost(application_of(gate.blocking_close(error="pool gone")))
         await host.start()
-        stopping = asyncio.create_task(host.stop())
+        stopping = asyncio.create_task(host.shutdown())
         await gate.closing.wait()
 
         with caplog.at_level(logging.WARNING, logger="loom.composition.host"):
@@ -302,11 +303,11 @@ class TestStopping:
             with pytest.raises(asyncio.CancelledError):
                 await stopping
             gate.release.set()
-            await host.stop()
+            await host.shutdown()
             await asyncio.sleep(0)
 
         assert gate.closed
-        assert caplog.text.count("pool gone") == 1
+        assert exception_text(caplog).count("RuntimeError: pool gone") == 1
 
     def test_a_cancelled_owner_still_closes_in_its_own_task(self) -> None:
         affine = TaskAffine()

@@ -6,19 +6,19 @@ import pytest
 
 from loom.core.config import ConfigContext, ConfigError
 from loom.core.model.redaction import Dsn, RedactedMap
-from loom.core.persistence.database import (
+from loom.core.stores.catalog import DEFAULT_STORE
+from loom.core.stores.database import (
     DatabaseConfig,
     PoolConfig,
     decode_database_config,
     load_database_config,
 )
-from loom.core.persistence.profile import (
+from loom.core.stores.profile import (
     LAMBDA_PROFILE,
     SERVER_PROFILE,
     WORKER_PROFILE,
     PoolDefaults,
 )
-from loom.core.persistence.stores import DEFAULT_STORE
 
 _URL = "postgresql+asyncpg://app@db/app"
 

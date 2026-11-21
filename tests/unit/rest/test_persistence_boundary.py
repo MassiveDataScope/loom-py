@@ -1,4 +1,4 @@
-"""SC-001: ``create_app`` knows no persistence backend.
+"""SC-001: ``create_app`` knows no store backend.
 
 The source-level check reads ``auto.py`` as text so a backend import or a
 name comparison cannot slip back in; the boot check runs in a clean
@@ -58,9 +58,7 @@ class TestAutoImportsNoRepositoryBackend:
     def test_auto_imports_no_repository_backend(
         self,
     ) -> None:
-        leaked = {
-            m for m in _imported_modules(_AUTO_SOURCE) if m.startswith("loom.core.repository")
-        }
+        leaked = {m for m in _imported_modules(_AUTO_SOURCE) if m.startswith("loom.stores")}
 
         assert leaked == set()
 

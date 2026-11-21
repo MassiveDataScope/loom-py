@@ -6,11 +6,11 @@ import pytest
 
 from loom.core.model import LoomFrozenStruct
 from loom.streaming import ErrorKind
+from loom.streaming.core import DispatchTable
 from loom.streaming.core._errors import ErrorEnvelope, ErrorMessage, ErrorMessageMeta
 from loom.streaming.kafka import (
     DecodeError,
     DecodeOk,
-    DispatchTable,
     KafkaRecord,
     MessageDescriptor,
     MsgspecCodec,

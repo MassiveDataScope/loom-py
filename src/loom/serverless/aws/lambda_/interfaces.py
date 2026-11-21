@@ -18,7 +18,7 @@ from loom.serverless.aws.lambda_.functions import (
 )
 
 if TYPE_CHECKING:
-    from loom.rest.fastapi.adapter import InterfaceSelector
+    from loom.rest.fastapi.runtime import InterfaceSelector
     from loom.rest.model import RestInterface
 
 _SECTION = "lambda.functions"

@@ -1,7 +1,7 @@
 """An ``mcp`` grant against a **real** MCP server, compiler to tool result.
 
 Every other MCP test in the suite substitutes something: ``test_runtime.py``
-hands the runtime a recording session, and ``test_grant_wiring.py`` replaces the
+hands the host a recording session, and ``test_grant_wiring.py`` replaces the
 engine-side toolset (``_capabilities._mcp_server``) with an empty
 ``FunctionToolset``. Both therefore prove the *wiring* and none of them proves
 the *protocol*: nobody has ever checked that a real
@@ -57,7 +57,7 @@ from loom.ai.abc import AgentEvent, ToolResultEvent
 from loom.ai.compiler import AgentCompiler, AgentPlan
 from loom.ai.config import AiConfig, McpServerConfig
 from loom.ai.declarative import AgentSpecV1, JsonSchemaOutput, McpCapability
-from loom.ai.engines.pydantic_ai import PydanticAIEngineProvider
+from loom.ai.engines.pydantic_ai import PydanticAIEnginePlugin
 from loom.ai.engines.pydantic_ai._mcp import SharedMcpToolsets
 from loom.ai.errors import AgentCompilationError, AgentErrorCode
 from loom.ai.inference import InferenceTarget
@@ -230,20 +230,20 @@ def _compile(url: str, capability: McpCapability) -> AgentPlan:
     compiler = AgentCompiler(
         config=_config(url),
         registry=UseCaseRegistry.build([]),
-        supported_kinds=PydanticAIEngineProvider().supported_capability_kinds(),
+        supported_kinds=PydanticAIEnginePlugin().supported_capability_kinds(),
     )
     return compiler.compile(spec, source_path=f"ai/agents/{_AGENT}/agent.yaml")
 
 
-def _runtime(url: str, plan: AgentPlan, model: ScriptedToolModel) -> Any:
-    """Build the runtime the composition root builds, with the real MCP factory."""
-    from loom.ai.runtime import AgentRuntime
+def _host(url: str, plan: AgentPlan, model: ScriptedToolModel) -> Any:
+    """Build the host the composition root builds, with the real MCP factory."""
+    from loom.ai.execution import AgentHost
 
-    provider = PydanticAIEngineProvider(model_resolver=lambda target: model.as_model())
-    return AgentRuntime(
+    provider = PydanticAIEnginePlugin(model_resolver=lambda target: model.as_model())
+    return AgentHost(
         plans=[plan],
         config=_config(url),
-        engine_provider=provider,
+        engine_plugin=provider,
         deps=CapabilityDepsFactory(),  # type: ignore[arg-type]
         container=LoomContainer(),
         # Read off the provider, as ``create_app`` does: the start-up session
@@ -267,8 +267,8 @@ class TestFilterAgainstARealServer:
         model = ScriptedToolModel(calls=(("read_orders", {"customer": "acme"}),))
         plan = _compile(server_url, McpCapability(server=_SERVER, include=("read_*",)))
 
-        async with _runtime(server_url, plan, model) as runtime:
-            await runtime.run(_AGENT, _PROMPT, identity=caller)
+        async with _host(server_url, plan, model) as host:
+            await host.run(_AGENT, _PROMPT, identity=caller)
 
         assert model.offered_tools == ("read_orders",)
 
@@ -279,8 +279,8 @@ class TestFilterAgainstARealServer:
         model = ScriptedToolModel()
         plan = _compile(server_url, McpCapability(server=_SERVER))
 
-        async with _runtime(server_url, plan, model) as runtime:
-            await runtime.run(_AGENT, _PROMPT, identity=caller)
+        async with _host(server_url, plan, model) as host:
+            await host.run(_AGENT, _PROMPT, identity=caller)
 
         assert sorted(model.offered_tools) == ["read_orders", "write_orders"]
 
@@ -293,7 +293,7 @@ class TestFilterAgainstARealServer:
         plan = _compile(server_url, McpCapability(server=_SERVER, include=("purge_*",)))
 
         with pytest.raises(AgentCompilationError) as failure:
-            async with _runtime(server_url, plan, model):
+            async with _host(server_url, plan, model):
                 pass
 
         assert AgentErrorCode.TOOL_FILTER_MATCHES_NOTHING in {
@@ -313,8 +313,8 @@ class TestEndToEndCall:
         plan = _compile(server_url, McpCapability(server=_SERVER, include=("read_*",)))
         collected: list[AgentEvent] = []
         async with (
-            _runtime(server_url, plan, model) as runtime,
-            runtime.run_stream(_AGENT, _PROMPT, identity=caller) as stream,
+            _host(server_url, plan, model) as host,
+            host.run_stream(_AGENT, _PROMPT, identity=caller) as stream,
         ):
             async for event in stream:
                 collected.append(event)
@@ -399,5 +399,5 @@ class TestDeployedServer:
         """Start-up validates the grant against the deployment, not a stub."""
         plan = _compile(live_url, McpCapability(server=_SERVER))
 
-        async with _runtime(live_url, plan, ScriptedToolModel()) as runtime:
-            assert runtime.capability_kinds(_AGENT) == ("mcp",)
+        async with _host(live_url, plan, ScriptedToolModel()) as host:
+            assert host.capability_kinds(_AGENT) == ("mcp",)

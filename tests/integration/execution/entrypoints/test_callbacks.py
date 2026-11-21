@@ -12,14 +12,14 @@ import time
 
 import pytest
 
-from loom.core.engine.executor import RuntimeExecutor
+from loom.core.engine.executor import UseCaseExecutor
 from loom.core.errors import Unauthenticated
 from loom.core.execution import current_execution
 from loom.core.job.callback import CallbackOutcome, notify
 from loom.core.job.job import Job
-from loom.core.job.service import InlineJobService
 from loom.core.use_case.factory import UseCaseFactory
 from tests.helpers.delegation import acting_as
+from tests.helpers.jobs import InlineServiceFixture
 
 from .doubles import (
     ALICE,
@@ -31,6 +31,7 @@ from .doubles import (
     AcmeFailingJob,
     AcmeProbeJob,
     AcmeRun,
+    AcmeSuccessOnlyCallback,
     CallbackLog,
 )
 
@@ -49,29 +50,55 @@ class TestInlineCallbacks:
     async def test_act_as_their_dispatcher(
         self,
         factory: UseCaseFactory,
-        executor: RuntimeExecutor,
+        executor: UseCaseExecutor,
         callback_log: CallbackLog,
         callback: type[AcmeCallback],
         job: type[Job[object]],
         moment: str,
     ) -> None:
-        jobs = InlineJobService(factory, executor)
+        jobs = InlineServiceFixture(factory, executor)
 
         async def dispatch() -> None:
-            jobs.dispatch(job, on_success=callback, on_failure=callback)
+            jobs.dispatch_after_commit(job, on_success=callback, on_failure=callback)
 
         await executor.execute(AcmeRun(dispatch), identity=ALICE)
 
         assert callback_log == [("built", AS_ALICE), (moment, AS_ALICE)]
 
-    async def test_a_dispatch_with_no_caller_gives_the_job_and_them_none(
-        self, factory: UseCaseFactory, executor: RuntimeExecutor, callback_log: CallbackLog
+    @pytest.mark.parametrize(
+        ("job", "moments"),
+        [(AcmeProbeJob, ["built", "on_success"]), (AcmeFailingJob, ["built"])],
+        ids=["success-runs-the-override", "failure-runs-the-base-no-op"],
+    )
+    async def test_a_callback_overriding_one_hook_serves_both_outcomes(
+        self,
+        factory: UseCaseFactory,
+        executor: UseCaseExecutor,
+        callback_log: CallbackLog,
+        job: type[Job[object]],
+        moments: list[str],
     ) -> None:
-        """The job's constructor ``Caller()`` fails closed, and its failure callback has none."""
-        jobs = InlineJobService(factory, executor)
+        jobs = InlineServiceFixture(factory, executor)
 
         async def dispatch() -> None:
-            jobs.dispatch(AcmeProbeJob, on_success=AcmeCallback, on_failure=AcmeCallback)
+            jobs.dispatch_after_commit(
+                job, on_success=AcmeSuccessOnlyCallback, on_failure=AcmeSuccessOnlyCallback
+            )
+
+        await executor.execute(AcmeRun(dispatch), identity=ALICE)
+
+        assert [moment for moment, _ in callback_log] == moments
+
+    async def test_a_dispatch_with_no_caller_gives_the_job_and_them_none(
+        self, factory: UseCaseFactory, executor: UseCaseExecutor, callback_log: CallbackLog
+    ) -> None:
+        """The job's constructor ``Caller()`` fails closed, and its failure callback has none."""
+        jobs = InlineServiceFixture(factory, executor)
+
+        async def dispatch() -> None:
+            jobs.dispatch_after_commit(
+                AcmeProbeJob, on_success=AcmeCallback, on_failure=AcmeCallback
+            )
 
         await executor.execute(AcmeRun(dispatch))
 

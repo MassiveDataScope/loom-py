@@ -6,15 +6,15 @@ backend has its own private adapter.
 """
 
 from loom.streaming.nodes._table.common import (
-    Backend,
     ClickHouseSinkConfig,
     DeltaSinkConfig,
     IntoTable,
     SqlAlchemySinkConfig,
+    TableEngine,
 )
 
 __all__ = [
-    "Backend",
+    "TableEngine",
     "ClickHouseSinkConfig",
     "DeltaSinkConfig",
     "IntoTable",

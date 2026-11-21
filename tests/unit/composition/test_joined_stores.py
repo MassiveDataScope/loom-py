@@ -11,18 +11,18 @@ from typing import Any
 
 import pytest
 
-from loom.composition import AppConfig, Application, compose_application
+from loom.composition import AppConfig, Application
 from loom.core.config import ConfigContext, ConfigError
 from loom.core.job.job import Job
 from loom.core.model import BaseModel, ColumnField
-from loom.core.repository.abc import RepoFor
+from loom.core.stores.repository import RepoFor
 from loom.core.use_case import Joined, UseCase
 from loom.core.use_case.errors import (
     JoinedAutocommitStore,
     UncomposedWriteStore,
     UseCaseErrorCode,
 )
-from tests.helpers.composition import Serving, composition_source
+from tests.helpers.composition import Serving, composition_project
 
 pytestmark = pytest.mark.timeout(30)
 
@@ -71,17 +71,19 @@ def _compose(
     }
     if audit is not None:
         stores["audit"] = audit
-    source = composition_source(
+    project = composition_project(
         ConfigContext.from_dict(
-            {"stores": stores, "persistence": {"cursors": {"signing": "ephemeral"}}}
+            {
+                "stores": {**stores, "settings": {"cursors": {"signing": "ephemeral"}}},
+            }
         ),
         app=AppConfig(name="api"),
         code_path=tmp_path,
         config_root=tmp_path,
     )
     if issubclass(component, Job):
-        return compose_application(source, Serving(AcmeJoinedInvoice, jobs=(component,)))
-    return compose_application(source, Serving(AcmeJoinedInvoice, use_cases=(component,)))
+        return project.compose(Serving(AcmeJoinedInvoice, jobs=(component,)))
+    return project.compose(Serving(AcmeJoinedInvoice, use_cases=(component,)))
 
 
 class TestJoinedStores:

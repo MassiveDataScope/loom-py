@@ -6,8 +6,8 @@ import pytest
 
 from loom.core.config import ConfigContext, ConfigError
 from loom.core.model import LoomStruct
-from loom.core.persistence.database import PoolConfig
-from loom.core.persistence.stores import load_catalog
+from loom.core.stores.catalog import load_catalog
+from loom.core.stores.database import PoolConfig
 from loom.streaming.nodes._table import IntoTable, SqlAlchemySinkConfig
 from loom.streaming.nodes._table.config import (
     ResolvedSqlAlchemyTableConfig,

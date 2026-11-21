@@ -47,9 +47,9 @@ Those phrases differ by interpreter: 413 gives `request_entity_too_large` on
 `unprocessable_content`.
 
 **Subsystem errors outside their concept.** The `QueryCompiler` protocol says
-compilers raise `UnsupportedQuery` (`core/repository/abc/query_compiler.py:37`,
+compilers raise `UnsupportedQuery` (`core/stores/repository/query_compiler.py:37`,
 `:53`). The SQLAlchemy compiler raises `FilterPathError` and `UnsafeFilterError`
-as `ValueError` (`core/repository/sqlalchemy/query_compiler/errors.py:6`, `:22`),
+as `ValueError` (`stores/sqlalchemy/query_compiler/errors.py:6`, `:22`),
 and the router answers them with 500 (`rest/fastapi/router_runtime.py:486-499`;
 #352). One invalid query can therefore produce three codes:
 
@@ -157,9 +157,9 @@ Status: Proposed.
 - Compile and startup errors are not `LoomError`s.
 
 The seven classes rebase without changing any status (done 2026-11, with
-`DomainError.retryable = False`, so Celery and the SQS consumers stop retrying
-a business error; `SQSDispatchError` and `SQSBatchFailedError` are
-`SystemError`s; `UnsupportedQuery(reason, *, backend=None, model=None)` names
+`DomainError.is_retryable = False`, so Celery and the SQS consumers stop retrying
+a business error; `SQSDispatchError` is a
+`SystemError`; `UnsupportedQuery(reason, *, backend=None, model=None)` names
 the model and the reason, never the backend):
 
 - `BoundaryValidationError` → `DomainError`, keeping `ValueError`;
@@ -192,18 +192,17 @@ the catalogue and `__init__` re-exports every class.
 
 | Class | From | To | Why |
 |---|---|---|---|
-| `UnsupportedQuery` | `core/repository/abc/errors.py` | `core/errors` | Raised by the router, the cursor codec and every repository. `backend` and `model` are optional keywords and its message stops naming the backend |
+| `UnsupportedQuery` | `core/stores/repository/errors.py` | `core/errors` | Raised by the router, the cursor codec and every repository. `backend` and `model` are optional keywords and its message stops naming the backend |
 | `BoundaryValidationError` | `core/model/_loom_type.py` | `core/errors` | Mapped by REST and AI |
 | `UnsupportedBoundaryType` | `core/model/_loom_type.py` | `core/errors` | Raised at run time by AI grants (`ai/runtime/_grants.py:212`) |
 | `PostCommitError` | `core/engine/post_commit.py` | `core/errors` | Read by REST and Celery |
 | `JobTimeoutError`, `JobFailedError` | `core/job/handle.py` | `core/errors` | Any transport awaiting a job |
 | `SQSDispatchError` | `jobs/aws/sqs.py` | `jobs/aws/errors.py` | Raised by the SQS job service only; core keeps no AWS vocabulary |
-| `SQSBatchFailedError` | `serverless/aws/lambda_/sqs.py` | `serverless/aws/lambda_/errors.py` | Raised by the Lambda adapter only |
 | `AuthenticationUnavailable` | `rest/auth/abc.py` | `rest/auth/errors.py` | Raised by authenticators, which stay free of FastAPI; `rest/auth/abc.py` and `loom.rest.auth` re-export it |
 | `BodyTooLarge` (becomes a `DomainError` owning `PAYLOAD_TOO_LARGE`) | `rest/_body.py` | `rest/errors.py` | REST only |
 | `UnsupportedFormatError` | `etl/backends/_format_registry.py` | `etl/runner/errors.py` | ETL only; the ETL run-time errors module, new with this move. `_format_registry` and `loom.etl` keep re-exporting it |
 
-The `core/sql/abc/errors.py` module stays, for SQL subsystem errors.
+The `core/stores/sql/abc/errors.py` module stays, for SQL subsystem errors.
 Compile and startup errors do not move.
 
 **R4. One mapper per transport.**
@@ -212,7 +211,7 @@ Compile and startup errors do not move.
 |---|---|
 | REST | `HttpErrorMapper`, `rest/errors.py` |
 | AI | `_STATUS_BY_CODE`, `ai/fastapi/endpoints.py` |
-| Celery | `_is_retryable`, `celery/runner.py` |
+| Jobs | `JobRunner._decide`, `core/job/runner.py` |
 
 Nothing else builds an error status or an error body.
 
@@ -261,7 +260,7 @@ the mapper is what reads the declaration.
 
 **R5. Core never imports `http`, `fastapi` or `starlette`.** Core errors say
 what happened; the transport decides the status. The status numbers in the
-`core/sql/abc/errors.py:3-7` docstring are removed.
+`core/stores/sql/abc/errors.py:3-7` docstring are removed.
 
 ### Tests
 
@@ -331,8 +330,8 @@ code catalogues. `CompileIssue` is a plain `msgspec.Struct`. Using
 
 ```python
 class Template(NamedTuple):
-    text: str                       # str.format template; "{component}" allowed
-    field: str | None = None        # template too, e.g. "{alias}"
+    text: str  # str.format template; "{component}" allowed
+    field: str | None = None  # template too, e.g. "{alias}"
     component: str = "{component}"  # template; a constant such as "fork" also works
 
 
@@ -376,7 +375,9 @@ AI, a plain factory and one that computes:
 
 ```python
 # before (ai/errors.py, 2 of 89 factories, 25 lines)
-def spec_version_unsupported(component: str, found: int, supported: Sequence[int]) -> AgentCompilationIssue:
+def spec_version_unsupported(
+    component: str, found: int, supported: Sequence[int]
+) -> AgentCompilationIssue:
     known = ", ".join(str(version) for version in supported)
     return AgentCompilationIssue(
         code=AgentErrorCode.SPEC_VERSION_UNSUPPORTED,
@@ -384,6 +385,7 @@ def spec_version_unsupported(component: str, found: int, supported: Sequence[int
         component=component,
         field="spec_version",
     )
+
 
 def engine_not_found(name: str, available: Sequence[str]) -> AgentCompilationIssue:
     known = ", ".join(available) if available else "none"
@@ -394,13 +396,23 @@ def engine_not_found(name: str, available: Sequence[str]) -> AgentCompilationIss
         field=_FIELD_AI_ENGINE,
     )
 
+
 # after (in the enum, 6 lines)
-SPEC_VERSION_UNSUPPORTED = "SPEC_VERSION_UNSUPPORTED", Template(
-    "{component}: spec_version {found} is not supported; supported versions: {supported}",
-    field="spec_version")
-ENGINE_NOT_FOUND = "ENGINE_NOT_FOUND", Template(
-    "engine '{name}' is not installed; available engines: {available}",
-    component="{name}", field="ai.engine")
+SPEC_VERSION_UNSUPPORTED = (
+    "SPEC_VERSION_UNSUPPORTED",
+    Template(
+        "{component}: spec_version {found} is not supported; supported versions: {supported}",
+        field="spec_version",
+    ),
+)
+ENGINE_NOT_FOUND = (
+    "ENGINE_NOT_FOUND",
+    Template(
+        "engine '{name}' is not installed; available engines: {available}",
+        component="{name}",
+        field="ai.engine",
+    ),
+)
 
 # call site
 AgentErrorCode.SPEC_VERSION_UNSUPPORTED.issue(component=path, found=3, supported=(1, 2))
@@ -411,20 +423,31 @@ Streaming, a constant component and the one factory that computes:
 ```python
 # before
 def fork_not_last() -> CompilationIssue:
-    return CompilationIssue(code=StreamingErrorCode.FORK_NOT_LAST,
-                            message="fork must be the last node in a process", component="fork")
+    return CompilationIssue(
+        code=StreamingErrorCode.FORK_NOT_LAST,
+        message="fork must be the last node in a process",
+        component="fork",
+    )
+
 
 def explode_without_router(next_node: object | None) -> CompilationIssue:
     got = type(next_node).__name__ if next_node is not None else "nothing"
-    return CompilationIssue(code=StreamingErrorCode.EXPLODE_WITHOUT_ROUTER,
-                            message=f"Explode must be immediately followed by a Router; got {got}",
-                            component="Explode")
+    return CompilationIssue(
+        code=StreamingErrorCode.EXPLODE_WITHOUT_ROUTER,
+        message=f"Explode must be immediately followed by a Router; got {got}",
+        component="Explode",
+    )
+
 
 # after
-FORK_NOT_LAST = "FORK_NOT_LAST", Template(
-    "fork must be the last node in a process", component="fork")
-EXPLODE_WITHOUT_ROUTER = "EXPLODE_WITHOUT_ROUTER", Template(
-    "Explode must be immediately followed by a Router; got {got}", component="Explode")
+FORK_NOT_LAST = (
+    "FORK_NOT_LAST",
+    Template("fork must be the last node in a process", component="fork"),
+)
+EXPLODE_WITHOUT_ROUTER = (
+    "EXPLODE_WITHOUT_ROUTER",
+    Template("Explode must be immediately followed by a Router; got {got}", component="Explode"),
+)
 
 # call site: the one line that computed moves to the caller
 got = type(next_node).__name__ if next_node is not None else "nothing"
@@ -437,21 +460,36 @@ ETL, a field from a parameter and a set:
 # before
 @classmethod
 def unknown_source_table(cls, step: type, alias: str, table_ref: str) -> ETLCompilationError:
-    return cls(code=ETLErrorCode.UNKNOWN_SOURCE_TABLE, component=step.__qualname__,
-               message=f"{step.__qualname__}: source '{alias}' references unknown table '{table_ref}'",
-               field=alias)
+    return cls(
+        code=ETLErrorCode.UNKNOWN_SOURCE_TABLE,
+        component=step.__qualname__,
+        message=f"{step.__qualname__}: source '{alias}' references unknown table '{table_ref}'",
+        field=alias,
+    )
+
 
 # after
-UNKNOWN_SOURCE_TABLE = "UNKNOWN_SOURCE_TABLE", Template(
-    "{step}: source '{alias}' references unknown table '{table_ref}'",
-    field="{alias}", component="{step}")
-MISSING_SOURCE_PARAMS = "MISSING_SOURCE_PARAMS", Template(
-    "{step}.execute: source(s) {missing} declared in sources but missing as "
-    "keyword-only parameter(s) after '*'", component="{step}")
+UNKNOWN_SOURCE_TABLE = (
+    "UNKNOWN_SOURCE_TABLE",
+    Template(
+        "{step}: source '{alias}' references unknown table '{table_ref}'",
+        field="{alias}",
+        component="{step}",
+    ),
+)
+MISSING_SOURCE_PARAMS = (
+    "MISSING_SOURCE_PARAMS",
+    Template(
+        "{step}.execute: source(s) {missing} declared in sources but missing as "
+        "keyword-only parameter(s) after '*'",
+        component="{step}",
+    ),
+)
 
 # call site
 raise ETLCompilationError.from_issue(
-    ETLErrorCode.UNKNOWN_SOURCE_TABLE.issue(step=step_type, alias=alias, table_ref=ref))
+    ETLErrorCode.UNKNOWN_SOURCE_TABLE.issue(step=step_type, alias=alias, table_ref=ref)
+)
 ```
 
 These examples predate the rule the hotfix applied: where the component is a
@@ -680,3 +718,5 @@ What the hotfix did where this ADR left a choice, and what it found:
    dropped in a 2.x hotfix.
 4. **The ETL historify checks sharing `INVALID_TARGET_TYPE`.** Decided: each
    gets its own code in the 2.x hotfix.
+
+> Renamed in 12.0.0: modules rest/fastapi/router_runtime.py → rest/fastapi/router.py, ai/runtime/ → ai/execution/, etl/backends/ → etl/engines/.

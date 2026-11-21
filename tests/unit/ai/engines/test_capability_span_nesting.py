@@ -48,16 +48,16 @@ class TestToolSpanNesting:
     @pytest.fixture
     def traced_run(self) -> Callable[..., tuple[InMemorySpanExporter, BuildContext, LoomSpan]]:
         def open_run(*, timeout_s: float) -> tuple[InMemorySpanExporter, BuildContext, LoomSpan]:
-            runtime, exporter = tracing_runtime()
+            host, exporter = tracing_runtime()
             context = BuildContext(
                 agent="analyst",
                 container=LoomContainer(),
-                observability=runtime,
+                observability=host,
                 timeout_s=timeout_s,
                 mcp=SharedMcpToolsets(),
                 mcp_grants=(),
             )
-            agent = runtime.open_span(Scope.AGENT, "agent_run", agent="analyst")
+            agent = host.open_span(Scope.AGENT, "agent_run", agent="analyst")
             return exporter, context, agent
 
         return open_run
@@ -87,10 +87,15 @@ class TestToolSpanNesting:
         self, traced_run: Callable[..., tuple[InMemorySpanExporter, BuildContext, LoomSpan]]
     ) -> None:
         exporter, context, agent = traced_run(timeout_s=0.001)
+
+        async def overrun() -> None:
+            """Wait until the plan timeout cancels the tool body."""
+            async with capability_call(context, "usecase", "create_order", _IDENTITY):
+                await asyncio.Event().wait()
+
         with agent.as_current():  # noqa: SIM117 - separate blocks so only the call under test can raise
             with pytest.raises(AgentRunError) as raised:
-                async with capability_call(context, "usecase", "create_order", _IDENTITY):
-                    await asyncio.sleep(0.5)
+                await asyncio.wait_for(overrun(), timeout=5)
         agent.end()
 
         assert raised.value.code is AgentRunErrorCode.TOOL_TIMEOUT

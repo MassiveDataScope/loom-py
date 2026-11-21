@@ -6,7 +6,7 @@ from dataclasses import dataclass, replace
 from typing import Any, Protocol, runtime_checkable
 
 from loom.core.engine.compilable import Compilable
-from loom.core.engine.executor import RuntimeExecutor
+from loom.core.engine.executor import UseCaseExecutor
 from loom.core.identity import Identity
 from loom.core.use_case.factory import UseCaseFactory
 from loom.core.use_case.registry import UseCaseRegistry, model_entity_key
@@ -108,7 +108,7 @@ class AppInvoker:
     """
 
     factory: UseCaseFactory
-    executor: RuntimeExecutor
+    executor: UseCaseExecutor
     registry: UseCaseRegistry
     identity: Identity | None = None
 

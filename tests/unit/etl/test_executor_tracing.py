@@ -16,11 +16,11 @@ from opentelemetry.sdk.trace.export import SimpleSpanProcessor
 from opentelemetry.sdk.trace.export.in_memory_span_exporter import InMemorySpanExporter
 from opentelemetry.trace import StatusCode
 
-from loom.core.observability.runtime import ObservabilityRuntime
+from loom.core.observability.observability import Observability
 from loom.etl import ETLParams, ETLPipeline, ETLProcess, ETLStep, FromTable, IntoTable
 from loom.etl.compiler import ETLCompiler
 from loom.etl.executor import ETLExecutor
-from loom.etl.testing import StubSourceReader, StubTargetWriter
+from loom.etl.testing import InMemorySourceReader, InMemoryTargetWriter
 
 
 class TracingParams(ETLParams):  # type: ignore[misc]
@@ -80,9 +80,9 @@ def _executor() -> tuple[ETLExecutor, InMemorySpanExporter]:
     provider = TracerProvider()
     provider.add_span_processor(SimpleSpanProcessor(exporter))
     executor = ETLExecutor(
-        StubSourceReader({"orders": object()}),
-        StubTargetWriter(),
-        observability=ObservabilityRuntime([], tracer=provider.get_tracer("loom.etl")),
+        InMemorySourceReader({"orders": object()}),
+        InMemoryTargetWriter(),
+        observability=Observability([], tracer=provider.get_tracer("loom.etl")),
     )
     return executor, exporter
 

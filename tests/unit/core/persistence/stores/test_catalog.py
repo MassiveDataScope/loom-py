@@ -6,12 +6,13 @@ import pytest
 
 from loom.core.config import ConfigContext, ConfigError
 from loom.core.model import BaseModel, ColumnField, Integer
-from loom.core.persistence.stores import (
+from loom.core.stores.catalog import (
     DEFAULT_STORE,
     StoreKey,
     load_catalog,
     store_of,
 )
+from tests.helpers.store_test_data import StoreTestData
 
 
 class DefaultRecord(BaseModel):
@@ -27,6 +28,17 @@ class AuditRecord(BaseModel):
 
 class SecondDefaultRecord(BaseModel):
     __tablename__ = "second_default_records"
+    id: int = ColumnField(Integer, primary_key=True)
+
+
+class DefaultRecordCopy(BaseModel):
+    __tablename__ = "default_records"
+    id: int = ColumnField(Integer, primary_key=True)
+
+
+class AuditRecordOfDefaultTable(BaseModel):
+    __tablename__ = "default_records"
+    __store__ = "audit"
     id: int = ColumnField(Integer, primary_key=True)
 
 
@@ -49,7 +61,7 @@ class TestStoreCatalog:
         assert StoreKey("default") == DEFAULT_STORE
         assert spec.key == DEFAULT_STORE
         assert spec.backend == "sqlalchemy"
-        assert spec.settings() == {"url": "sqlite+aiosqlite:///:memory:"}
+        assert spec.section() == {"url": "sqlite+aiosqlite:///:memory:"}
         with pytest.raises(AttributeError):
             spec.backend = "mongo"
 
@@ -77,7 +89,7 @@ class TestStoreCatalog:
             StoreKey("sessions"): "dynamodb",
             StoreKey("legacy"): "mongo",
         }
-        assert catalog.specs[StoreKey("default")].settings() == {}
+        assert catalog.specs[StoreKey("default")].section() == {}
 
     def test_absent_stores_section_loads_an_empty_catalog(self) -> None:
         catalog = load_catalog(ConfigContext.from_dict({"service": {"name": "api"}}))
@@ -153,8 +165,10 @@ class TestStoreCatalog:
         assert "persistence.dynamodb" in str(error.value)
         assert "stores." in str(error.value)
 
-    def test_persistence_cursors_alone_does_not_require_stores(self) -> None:
-        ctx = ConfigContext.from_dict({"persistence": {"cursors": {"enabled": True}}})
+    def test_the_shared_settings_alone_declare_no_store(self) -> None:
+        ctx = ConfigContext.from_dict(
+            {"stores": {"settings": {"cursors": {"signing": "unsigned"}}}}
+        )
 
         assert load_catalog(ctx).specs == {}
 
@@ -164,19 +178,7 @@ class TestStoreCatalog:
             __database__ = "x"
             id: int = ColumnField(Integer, primary_key=True)
 
-        catalog = load_catalog(
-            ConfigContext.from_dict(
-                {
-                    "stores": {
-                        "default": {
-                            "backend": "mongo",
-                            "url": "mongodb://localhost",
-                            "database": "test",
-                        }
-                    }
-                }
-            )
-        )
+        catalog = StoreTestData().with_mongo_store("default").catalog()
 
         with pytest.raises(ConfigError) as error:
             catalog.models_by_store([LegacyRecord])
@@ -192,19 +194,8 @@ class TestStoreCatalog:
         assert store_of(AuditRecord) == StoreKey("audit")
 
     def test_models_by_store_groups_default_first_and_preserves_model_order(self) -> None:
-        catalog = load_catalog(
-            ConfigContext.from_dict(
-                {
-                    "stores": {
-                        "audit": {
-                            "backend": "mongo",
-                            "url": "mongodb://localhost",
-                            "database": "test",
-                        },
-                        "default": {"backend": "sqlalchemy"},
-                    }
-                }
-            )
+        catalog = (
+            StoreTestData().with_mongo_store("audit").with_store("default", "sqlalchemy").catalog()
         )
 
         groups = catalog.models_by_store([AuditRecord, DefaultRecord, SecondDefaultRecord])
@@ -218,31 +209,39 @@ class TestStoreCatalog:
     def test_models_by_store_keeps_an_undeclared_default_and_drops_a_store_without_models(
         self,
     ) -> None:
-        catalog = load_catalog(
-            ConfigContext.from_dict(
-                {"stores": {"audit": {"backend": "mongo", "url": "mongodb://localhost"}}}
-            )
-        )
+        catalog = StoreTestData().with_store("audit", "mongo", url="mongodb://localhost").catalog()
 
         assert catalog.models_by_store([DefaultRecord]) == {DEFAULT_STORE: (DefaultRecord,)}
 
     def test_model_declaring_an_unknown_store_names_model_and_store(self) -> None:
-        catalog = load_catalog(
-            ConfigContext.from_dict(
-                {
-                    "stores": {
-                        "default": {
-                            "backend": "mongo",
-                            "url": "mongodb://localhost",
-                            "database": "test",
-                        }
-                    }
-                }
-            )
-        )
+        catalog = StoreTestData().with_mongo_store("default").catalog()
 
         with pytest.raises(ConfigError) as error:
             catalog.models_by_store([AuditRecord])
 
         assert "AuditRecord" in str(error.value)
         assert "audit" in str(error.value)
+
+    def test_a_store_serving_one_table_from_two_models_is_refused(self) -> None:
+        catalog = StoreTestData().with_store("default", "sqlalchemy").catalog()
+
+        with pytest.raises(
+            ConfigError,
+            match=r"twice: .*DefaultRecord and .*DefaultRecordCopy",
+        ):
+            catalog.models_by_store([DefaultRecord, DefaultRecordCopy])
+
+    def test_two_stores_may_serve_one_table_name(self) -> None:
+        catalog = (
+            StoreTestData()
+            .with_store("default", "sqlalchemy")
+            .with_store("audit", "sqlalchemy")
+            .catalog()
+        )
+
+        groups = catalog.models_by_store([DefaultRecord, AuditRecordOfDefaultTable])
+
+        assert groups == {
+            DEFAULT_STORE: (DefaultRecord,),
+            StoreKey("audit"): (AuditRecordOfDefaultTable,),
+        }

@@ -7,6 +7,7 @@ from loom.core.identity import Identity
 from loom.core.use_case.markers import (
     _AgentMarker,
     _CallerMarker,
+    _DeliveryMarker,
     _ExistsMarker,
     _InputMarker,
     _LoadByIdMarker,
@@ -19,7 +20,14 @@ CALLER = Kind("caller", singleton_safe=False, spelling=_CallerMarker.spelling)
 AGENT = Kind("agent", spelling=_AgentMarker.spelling)
 MCP = Kind("mcp", spelling=_McpMarker.spelling)
 
-_INPUT_MARKERS = (_InputMarker, _QueryMarker, _LoadByIdMarker, _LoadMarker, _ExistsMarker)
+_INPUT_MARKERS = (
+    _InputMarker,
+    _QueryMarker,
+    _DeliveryMarker,
+    _LoadByIdMarker,
+    _LoadMarker,
+    _ExistsMarker,
+)
 
 
 class CallerResolver(ExecutionResolver):
@@ -33,7 +41,9 @@ class CallerResolver(ExecutionResolver):
 
 
 def declare_kinds(kinds: ExecutionKinds) -> None:
-    """Declare ``Caller()``, ``Agent()`` and ``Mcp()`` on *kinds*, bind ``Caller()``, refuse inputs.
+    """Declare ``Caller()``, ``Agent()`` and ``Mcp()`` on *kinds*.
+
+    Register ``Caller()`` and refuse inputs.
 
     ``Caller()`` is :data:`CALLER`, resolved by :class:`CallerResolver`;
     ``Agent()`` is :data:`AGENT` and ``Mcp()`` is :data:`MCP`, whose resolvers
@@ -50,4 +60,4 @@ def declare_kinds(kinds: ExecutionKinds) -> None:
     kinds.declare_type(_McpMarker, MCP)
     for marker in _INPUT_MARKERS:
         kinds.refuse(marker, f"{marker.spelling} declares an input of execute(), not a dependency")
-    kinds.bind(CALLER, CallerResolver())
+    kinds.register(CALLER, CallerResolver())

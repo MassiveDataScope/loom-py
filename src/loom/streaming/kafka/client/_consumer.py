@@ -11,7 +11,7 @@ from confluent_kafka import Message as _RawMessage
 from confluent_kafka import TopicPartition
 
 from loom.core.observability.event import Scope
-from loom.core.observability.runtime import ObservabilityRuntime
+from loom.core.observability.observability import Observability
 from loom.streaming.kafka._config import ConsumerSettings
 from loom.streaming.kafka._errors import KafkaCommitError, KafkaPollError
 from loom.streaming.kafka._message import HEADER_CORRELATION_ID, HEADER_TRACE_ID
@@ -42,7 +42,7 @@ class KafkaConsumerClient:
 
     Args:
         settings: Typed consumer settings.
-        obs: Optional observability runtime.
+        obs: Optional observability.
         retry_policy: Backoff schedule for transient group-coordinator errors
             on offset fetch and commit.
     """
@@ -50,7 +50,7 @@ class KafkaConsumerClient:
     def __init__(
         self,
         settings: ConsumerSettings,
-        obs: ObservabilityRuntime | None = None,
+        obs: Observability | None = None,
         *,
         retry_policy: CoordinatorRetryPolicy = DEFAULT_COORDINATOR_RETRY,
         _subscribe: bool = True,
@@ -67,7 +67,7 @@ class KafkaConsumerClient:
     def unassigned(
         cls,
         settings: ConsumerSettings,
-        observability: ObservabilityRuntime | None = None,
+        observability: Observability | None = None,
         *,
         retry_policy: CoordinatorRetryPolicy = DEFAULT_COORDINATOR_RETRY,
     ) -> KafkaConsumerClient:
@@ -79,7 +79,7 @@ class KafkaConsumerClient:
 
         Args:
             settings: Typed consumer settings.
-            observability: Optional observability runtime.
+            observability: Optional observability.
             retry_policy: Backoff schedule for transient group-coordinator
                 errors.
 

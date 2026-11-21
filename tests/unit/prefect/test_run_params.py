@@ -378,7 +378,7 @@ class TestMaintenanceRunParams:
         monkeypatch.setattr(
             _maintenance, "_parse_sections", lambda context: (MagicMock(), MagicMock())
         )
-        monkeypatch.setattr(_maintenance.ObservabilityRuntime, "from_config", MagicMock())
+        monkeypatch.setattr(_maintenance.Observability, "from_config", MagicMock())
         monkeypatch.setattr(_maintenance.MaintenanceRunner, "from_config", lambda config: runner)
         cfg = tmp_path / "maintenance.yaml"
         cfg.write_text("params: {}\n", encoding="utf-8")

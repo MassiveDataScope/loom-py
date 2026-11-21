@@ -17,9 +17,9 @@ import pytest
 from bson import ObjectId
 from bson.decimal128 import Decimal128
 
-from loom.etl.backends.polars._dtype import loom_type_to_polars
 from loom.etl.declarative.expr import col
 from loom.etl.declarative.source._specs import MongoSourceSpec
+from loom.etl.engines.polars._dtype import loom_type_to_polars
 from loom.etl.io.sources._mongo import MongoSourceReader
 from loom.etl.io.sources._mongo_batch import _build_schema_plan, _canonicalize_batch
 from loom.etl.io.sources._mongo_bson import normalize_bson_doc

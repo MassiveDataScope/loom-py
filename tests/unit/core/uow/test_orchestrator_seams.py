@@ -8,11 +8,11 @@ from typing import Any, get_args
 
 import pytest
 
-import loom.core.uow
+import loom.core.stores.uow
 from loom.core.bootstrap import create_kernel
-from loom.core.persistence.stores import DEFAULT_STORE, StoreKey
-from loom.core.uow.abc import UnitOfWork, UnitOfWorkFactory
-from loom.core.uow.coordinator import (
+from loom.core.stores.catalog import DEFAULT_STORE, StoreKey
+from loom.core.stores.uow.abc import UnitOfWork, UnitOfWorkFactory
+from loom.core.stores.uow.coordinator import (
     Committed,
     Coordinator,
     InvocationOutcome,
@@ -25,7 +25,7 @@ from loom.core.uow.coordinator import (
     StoreOutcome,
     Uncertain,
 )
-from loom.core.uow.scope import Frame, invocation
+from loom.core.stores.uow.scope import Frame, invocation
 from loom.core.use_case import UseCase
 
 from ._coordinator_fakes import Factory, Ledger, PhasedStore
@@ -89,7 +89,7 @@ class TestKernelCoordinator:
         )
         kernel = create_kernel(config=object(), use_cases=[_Noop], coordinator=external)
 
-        await kernel.app.invoke(_Noop)
+        await kernel.invoker.invoke(_Noop)
 
         phases = ("begin", "flush", "commit", "close")
         assert ledger.calls == [(DEFAULT_STORE, phase) for phase in phases]
@@ -141,7 +141,9 @@ class TestCoordinatorSeams:
     def test_the_unit_of_work_package_exports_only_the_errors_of_the_coordinator_or_the_scope(
         self,
     ) -> None:
-        symbols = [getattr(loom.core.uow, name) for name in loom.core.uow.__all__]
+        symbols = [getattr(loom.core.stores.uow, name) for name in loom.core.stores.uow.__all__]
         exported = {s.__module__ for s in symbols if not issubclass(s, BaseException)}
 
-        assert exported.isdisjoint({"loom.core.uow.coordinator", "loom.core.uow.scope"})
+        assert exported.isdisjoint(
+            {"loom.core.stores.uow.coordinator", "loom.core.stores.uow.scope"}
+        )

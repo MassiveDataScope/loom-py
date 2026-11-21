@@ -6,7 +6,6 @@ from abc import ABC
 from typing import Any, ClassVar, Generic, Protocol, TypeVar, runtime_checkable
 
 from loom.core.config import Configurable
-from loom.core.logger import LoggerPort, get_logger
 from loom.streaming.core._message import StreamPayload
 from loom.streaming.nodes._shape import StreamShape
 
@@ -50,22 +49,6 @@ class Step(Configurable, ABC, Generic[InT, OutT]):
     name: ClassVar[str] = ""
     input_shape: ClassVar[StreamShape]
     output_shape: ClassVar[StreamShape]
-    _log: LoggerPort | None = None
-
-    @property
-    def log(self) -> LoggerPort:
-        """Structured logger bound to this step class and module."""
-        logger = self._log
-        if logger is None:
-            cls = type(self)
-            logger = get_logger(cls.__qualname__).bind(
-                component="step",
-                class_name=cls.__qualname__,
-                module=cls.__module__,
-                step_name=cls.step_name(),
-            )
-            self._log = logger
-        return logger
 
     @classmethod
     def step_name(cls) -> str:

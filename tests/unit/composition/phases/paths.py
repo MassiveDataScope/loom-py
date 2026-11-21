@@ -8,24 +8,24 @@ fake repository; the standalone ones take the use cases and modules directly.
 
 from __future__ import annotations
 
-import sys
 from collections.abc import Callable, Mapping
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, replace
 from pathlib import Path
-from types import ModuleType
 from typing import Any, cast
 
 import pytest
 
-from loom.composition import AppConfig, Application, compose_application
-from loom.composition.recipe import Adapter
-from loom.core.bootstrap import bootstrap_app, create_kernel
+from loom.composition import AppConfig, Application, Project
+from loom.composition.recipe import Runtime
+from loom.core.bootstrap import create_kernel
 from loom.core.config import ConfigContext
 from loom.core.di.container import LoomContainer
+from loom.core.discovery.base import DiscoveryResult
 from loom.core.environment import Environment
 from loom.testing.in_memory import InMemoryRepository
-from tests.helpers.composition import composition_source
+from tests.helpers.composition import composition_project
 from tests.helpers.jobs import BROKER
+from tests.helpers.lambda_jobs import jobs_queue, jobs_trigger
 from tests.unit.composition.phases.components import (
     AcmeInterface,
     AcmeJob,
@@ -33,7 +33,6 @@ from tests.unit.composition.phases.components import (
     AcmeRecord,
 )
 
-MANIFEST = "acme_pipeline_manifest"
 SQLITE = {"backend": "sqlalchemy", "url": "sqlite+aiosqlite:///:memory:"}
 _WORKER = "worker"
 _EVENTS = "events"
@@ -60,7 +59,7 @@ class Composition:
     use_cases: tuple[type[Any], ...] = (AcmePing,)
     jobs: tuple[type[Any], ...] = (AcmeJob,)
     interfaces: tuple[type[Any], ...] = (AcmeInterface,)
-    modules: tuple[Module, ...] = ()
+    overrides: tuple[Module, ...] = ()
     config: Mapping[str, Any] = field(default_factory=dict)
     environment: Environment = Environment.TEST
 
@@ -72,47 +71,47 @@ def fastapi(
     composition: Composition, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> LoomContainer:
     pytest.importorskip("fastapi")
-    from loom.rest.fastapi.adapter import FastAPIAdapter
+    from loom.rest.fastapi.runtime import FastAPIRuntime
 
-    return _composed(composition, {}, None, FastAPIAdapter(), tmp_path, monkeypatch)
+    return _composed(composition, {}, None, FastAPIRuntime(), tmp_path, monkeypatch)
 
 
 def lambda_http(
     composition: Composition, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> LoomContainer:
     pytest.importorskip("mangum")
-    from loom.serverless.aws.lambda_ import LambdaAdapter
+    from loom.serverless.aws.lambda_ import LambdaRuntime
 
-    return _composed(composition, {}, None, LambdaAdapter(), tmp_path, monkeypatch)
+    return _composed(composition, {}, None, LambdaRuntime(), tmp_path, monkeypatch)
 
 
 def lambda_jobs(
     composition: Composition, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> LoomContainer:
-    from loom.serverless.aws.lambda_ import LambdaAdapter
+    from loom.serverless.aws.lambda_ import LambdaRuntime
 
-    document = {"lambda": {"functions": {_WORKER: {"trigger": {"source": "jobs"}}}}}
-    return _composed(composition, document, _WORKER, LambdaAdapter(), tmp_path, monkeypatch)
+    document = {**jobs_queue(), "lambda": {"functions": {_WORKER: {"trigger": jobs_trigger()}}}}
+    return _composed(composition, document, _WORKER, LambdaRuntime(), tmp_path, monkeypatch)
 
 
 def lambda_events(
     composition: Composition, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> LoomContainer:
-    from loom.serverless.aws.lambda_ import LambdaAdapter
+    from loom.serverless.aws.lambda_ import LambdaRuntime
 
     trigger = {"source": "eventbridge", "job": AcmeJob.__qualname__, "identity": _SYSTEM}
     document = {"lambda": {"functions": {_EVENTS: {"trigger": trigger}}}}
-    return _composed(composition, document, _EVENTS, LambdaAdapter(), tmp_path, monkeypatch)
+    return _composed(composition, document, _EVENTS, LambdaRuntime(), tmp_path, monkeypatch)
 
 
 def celery(
     composition: Composition, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> LoomContainer:
     pytest.importorskip("celery")
-    from loom.celery.adapter import CeleryAdapter
+    from loom.celery.runtime import CeleryRuntime
 
     document = {"app": {"job_service": "celery"}, "celery": BROKER}
-    return _composed(composition, document, None, CeleryAdapter(), tmp_path, monkeypatch)
+    return _composed(composition, document, None, CeleryRuntime(), tmp_path, monkeypatch)
 
 
 def harness(
@@ -128,12 +127,14 @@ def harness(
 
     applications: list[Application] = []
 
-    def captured(*args: Any, **kwargs: Any) -> Application:
-        application = compose_application(*args, **kwargs)
+    compose = Project.compose
+
+    def captured(self: Project, adapter: Runtime[object], **kwargs: Any) -> Application:
+        application = compose(self, adapter, **kwargs)
         applications.append(application)
         return application
 
-    monkeypatch.setattr(http_harness, "compose_application", captured)
+    monkeypatch.setattr(Project, "compose", captured)
     built = http_harness.HttpTestHarness()
     built.inject_repo(AcmeRecord, InMemoryRepository(AcmeRecord))
     built.build_app(interfaces=list(composition.interfaces))
@@ -148,23 +149,10 @@ def standalone_kernel(
     kernel = create_kernel(
         config=AppConfig(name="acme"),
         use_cases=composition.use_cases,
-        modules=composition.modules,
+        modules=composition.overrides,
         environment=composition.environment,
     )
     return kernel.container
-
-
-def standalone_bootstrap(
-    composition: Composition, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
-) -> LoomContainer:
-    del tmp_path, monkeypatch
-    result = bootstrap_app(
-        config=AppConfig(name="acme"),
-        use_cases=composition.use_cases,
-        modules=composition.modules,
-        environment=composition.environment,
-    )
-    return result.container
 
 
 def _composed(
@@ -175,34 +163,53 @@ def _composed(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
 ) -> LoomContainer:
-    manifest = ModuleType(MANIFEST)
-    manifest.MODELS = list(composition.models)  # type: ignore[attr-defined]
-    manifest.USE_CASES = list(composition.use_cases)  # type: ignore[attr-defined]
-    manifest.JOBS = list(composition.jobs)  # type: ignore[attr-defined]
-    manifest.INTERFACES = list(composition.interfaces)  # type: ignore[attr-defined]
-    monkeypatch.setitem(sys.modules, MANIFEST, manifest)
+    discovered = DiscoveryResult(
+        models=composition.models,
+        use_cases=composition.use_cases,
+        jobs=composition.jobs,
+        classes=composition.interfaces,
+    )
+    monkeypatch.setattr(
+        "loom.composition.project.PackageScanner.discover",
+        lambda self, agents=None: discovered,
+    )
     app = {
         "name": "acme",
         "entry": entry,
         "job_service": "inline",
-        "discovery": {"mode": "manifest", "manifest": {"module": MANIFEST}},
+        "packages": ["acme"],
     }
     base = {
         "app": app,
-        "stores": {"default": SQLITE},
-        "persistence": {"cursors": {"signing": "ephemeral"}},
+        "stores": {"default": SQLITE, "settings": {"cursors": {"signing": "ephemeral"}}},
     }
     written = _merged(_merged(base, document), composition.config)
-    source = composition_source(
+    project = composition_project(
         ConfigContext.from_dict(written),
         environment=composition.environment,
         code_path=tmp_path,
         config_root=tmp_path,
     )
-    application = compose_application(
-        source, cast(Adapter[object], adapter), modules=composition.modules
+    application = project.compose(
+        _OverridesAdapter(cast(Runtime[object], adapter), composition.overrides)
     )
     return application.kernel.container
+
+
+class _OverridesAdapter:
+    def __init__(self, adapter: Runtime[object], overrides: tuple[Module, ...]) -> None:
+        self._adapter = adapter
+        self._overrides = overrides
+
+    def recipe(self, project: Project) -> Any:
+        recipe = self._adapter.recipe(project)
+        return replace(
+            recipe,
+            overrides=(*recipe.overrides, *self._overrides),
+        )
+
+    def mount(self, application: Application) -> object:
+        return self._adapter.mount(application)
 
 
 def _merged(base: Mapping[str, Any], over: Mapping[str, Any]) -> dict[str, Any]:
@@ -223,16 +230,12 @@ COMPOSED: dict[str, StartupPath] = {
     "lambda_events": lambda_events,
     "celery": celery,
 }
-"""The paths through ``compose_application``, by name."""
+"""The paths through ``Project.compose``, by name."""
 
 STANDALONE: dict[str, StartupPath] = {
     "create_kernel": standalone_kernel,
-    "bootstrap_app": standalone_bootstrap,
 }
 """The paths calling the kernel directly, by name."""
-
-UNCOMPOSED: dict[str, StartupPath] = {"harness": harness, **STANDALONE}
-"""The paths that do not go through ``compose_application``, by name."""
 
 HTTP = ("fastapi", "lambda_http")
 """The paths serving HTTP, where some refusals read differently: see each variant."""

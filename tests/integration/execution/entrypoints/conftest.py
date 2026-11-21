@@ -7,7 +7,7 @@ from collections.abc import Iterator
 import pytest
 
 from loom.core.engine.compiler import UseCaseCompiler
-from loom.core.engine.executor import RuntimeExecutor
+from loom.core.engine.executor import UseCaseExecutor
 from loom.core.execution import current_execution
 from loom.core.identity import ANONYMOUS, Identity, current_identity, reset_identity, set_identity
 from loom.core.use_case.factory import UseCaseFactory
@@ -63,5 +63,5 @@ def compiler() -> UseCaseCompiler:
 
 
 @pytest.fixture
-def executor(compiler: UseCaseCompiler) -> RuntimeExecutor:
-    return RuntimeExecutor(compiler)
+def executor(compiler: UseCaseCompiler) -> UseCaseExecutor:
+    return UseCaseExecutor(compiler)

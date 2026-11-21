@@ -13,8 +13,9 @@ from collections.abc import Awaitable, Callable
 import pytest
 
 from loom.core.cache import CacheConfig
-from loom.core.repository import PageParams
-from loom.core.repository.abc.query import QuerySpec
+from loom.core.stores.repository import PageParams
+from loom.core.stores.repository.query import QuerySpec
+from loom.testing import make
 
 from ._doubles import (
     AcmeCacheWidget,
@@ -126,8 +127,8 @@ class TestListsAndDependentsDie:
     async def test_every_list_read_misses_after_a_write(
         self, env: CachedEnv[AcmeCacheWidget], write: Write
     ) -> None:
-        page = PageParams(page=1, limit=10)
-        query = QuerySpec(page=1, limit=10)
+        page = make(PageParams, page=1, limit=10)
+        query = make(QuerySpec, page=1, limit=10)
         for _ in range(2):
             await env.wrapper.list_paginated(page)
             await env.wrapper.list_with_query(query)

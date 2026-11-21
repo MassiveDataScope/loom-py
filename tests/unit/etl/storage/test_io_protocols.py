@@ -8,8 +8,8 @@ from loom.etl.declarative.expr._refs import TableRef
 from loom.etl.declarative.source import TableSourceSpec
 from loom.etl.declarative.target import TargetSpec
 from loom.etl.declarative.target._table import ReplaceSpec
-from loom.etl.runtime.contracts import SourceReader, SQLExecutor, TableDiscovery, TargetWriter
-from loom.etl.testing import StubCatalog, StubSourceReader, StubTargetWriter
+from loom.etl.ports.contracts import SourceReader, SQLExecutor, TableDiscovery, TargetWriter
+from loom.etl.testing import InMemoryCatalog, InMemorySourceReader, InMemoryTargetWriter
 
 _SENTINEL = object()
 
@@ -22,7 +22,7 @@ def _make_target_spec() -> TargetSpec:
     return ReplaceSpec(table_ref=TableRef("staging.out"))
 
 
-class TestStubCatalog:
+class TestInMemoryCatalog:
     @pytest.mark.parametrize(
         "tables,ref,expected",
         [
@@ -32,10 +32,10 @@ class TestStubCatalog:
         ],
     )
     def test_stub_catalog_exists(self, tables: dict, ref: str, expected: bool) -> None:
-        assert StubCatalog(tables).exists(TableRef(ref)) is expected
+        assert InMemoryCatalog(tables).exists(TableRef(ref)) is expected
 
     def test_stub_catalog_table_no_columns(self) -> None:
-        catalog = StubCatalog({"staging.out": ()})
+        catalog = InMemoryCatalog({"staging.out": ()})
         assert catalog.exists(TableRef("staging.out")) is True
         assert catalog.columns(TableRef("staging.out")) == ()
 
@@ -47,13 +47,13 @@ class TestStubCatalog:
         ],
     )
     def test_stub_catalog_columns(self, tables: dict, ref: str, expected: tuple) -> None:
-        assert StubCatalog(tables).columns(TableRef(ref)) == expected
+        assert InMemoryCatalog(tables).columns(TableRef(ref)) == expected
 
     def test_stub_catalog_satisfies_protocol(self) -> None:
-        assert isinstance(StubCatalog(), TableDiscovery)
+        assert isinstance(InMemoryCatalog(), TableDiscovery)
 
 
-class TestStubSourceReader:
+class TestInMemorySourceReader:
     @pytest.mark.parametrize(
         "seeds,alias,expected",
         [
@@ -63,18 +63,18 @@ class TestStubSourceReader:
         ],
     )
     def test_stub_source_reader_read(self, seeds: dict, alias: str, expected: object) -> None:
-        reader = StubSourceReader(seeds)
+        reader = InMemorySourceReader(seeds)
         result = reader.read(_make_source_spec(alias), None)
         assert result is expected
 
     def test_stub_source_reader_satisfies_protocol(self) -> None:
-        assert isinstance(StubSourceReader(), SourceReader)
+        assert isinstance(InMemorySourceReader(), SourceReader)
 
 
-class TestStubTargetWriter:
+class TestInMemoryTargetWriter:
     @pytest.mark.parametrize("n_writes", [0, 1, 3])
     def test_stub_target_writer_captures_writes_in_order(self, n_writes: int) -> None:
-        writer = StubTargetWriter()
+        writer = InMemoryTargetWriter()
         frames = [object() for _ in range(n_writes)]
         spec = _make_target_spec()
         for f in frames:
@@ -82,7 +82,7 @@ class TestStubTargetWriter:
         assert [w[0] for w in writer.written] == frames
 
     def test_stub_target_writer_satisfies_protocol(self) -> None:
-        assert isinstance(StubTargetWriter(), TargetWriter)
+        assert isinstance(InMemoryTargetWriter(), TargetWriter)
 
 
 class TestProtocolStubBodies:

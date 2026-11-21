@@ -11,15 +11,15 @@ from sqlalchemy.ext.asyncio import create_async_engine
 from sqlalchemy.pool import NullPool
 
 from loom.core.identity import Identity, reset_identity, set_identity
-from loom.core.persistence.stores import DEFAULT_STORE
-from loom.core.repository.sqlalchemy.rls import (
+from loom.core.stores.catalog import DEFAULT_STORE
+from loom.stores.sqlalchemy.rls import (
     create_schema,
     install_pool_reset,
     register_scope_source,
     rls_session_settings,
 )
-from loom.core.repository.sqlalchemy.rls.sources import clear_scope_sources
-from loom.core.repository.sqlalchemy.session_manager import SessionManager
+from loom.stores.sqlalchemy.rls.sources import clear_scope_sources
+from loom.stores.sqlalchemy.session_manager import SessionManager
 from tests.integration.agnosticism import notes
 from tests.integration.rls.conftest import BootstrapFactory, application_for
 
@@ -91,4 +91,4 @@ class TestPoolResidue:
                 assert (await raw.execute(text(owner))).scalar() == ""
         finally:
             reset_identity(token)
-            await manager.dispose()
+            await manager.close()

@@ -6,8 +6,8 @@ from typing import Any
 import pytest
 from sqlalchemy.exc import IntegrityError
 
-from loom.core.repository.abc import Creatable, Readable
-from loom.core.uow.scope import current_scope
+from loom.core.stores.repository import Creatable, Readable
+from loom.core.stores.uow.scope import current_scope
 
 from .conftest import SEED, BackendCase, mongo_client_of, require
 
@@ -20,7 +20,7 @@ class TestContractCommit:
     async def test_commit_makes_writes_visible(self, case: BackendCase, repository: Any) -> None:
         require(case, Creatable, Readable)
 
-        async with case.unit_of_work(repository):
+        async with case.open_unit_of_work(repository):
             created = await repository.create(SEED[0])
 
         assert await repository.get_by_id(created.id) == created
@@ -31,7 +31,7 @@ class TestContractCommit:
             pytest.skip(f"{case.name} does not roll back writes")
 
         async def _create_then_abort() -> None:
-            async with case.unit_of_work(repository):
+            async with case.open_unit_of_work(repository):
                 await repository.create(SEED[0])
                 raise _Abort
 
@@ -43,14 +43,14 @@ class TestContractCommit:
     async def test_unit_of_work_declares_transactional_as_the_case_does(
         self, case: BackendCase, repository: Any
     ) -> None:
-        assert type(case.unit_of_work(repository)).transactional is case.transactions
+        assert type(case.open_unit_of_work(repository)).is_transactional is case.transactions
 
     async def test_reads_inside_the_unit_of_work_see_its_uncommitted_writes(
         self, case: BackendCase, repository: Any
     ) -> None:
         require(case, Creatable, Readable)
 
-        async with case.unit_of_work(repository):
+        async with case.open_unit_of_work(repository):
             session_before = _active_session(repository)
             created = await repository.create(SEED[0])
             assert await repository.get_by_id(created.id) == created
@@ -65,7 +65,7 @@ def _active_session(repository: Any) -> object:
 
 
 async def _fail_the_commit(case: BackendCase, repository: Any) -> Any:
-    async with case.unit_of_work(repository):
+    async with case.open_unit_of_work(repository):
         created = await repository.create(SEED[0])
         assert case.fail_commit is not None
         await case.fail_commit(repository)
@@ -111,13 +111,14 @@ class TestContractFailedCommit:
         self, case: BackendCase, repository: Any
     ) -> None:
         require(case, Creatable, Readable)
+        case.require_unit_of_work()
         started = asyncio.Event()
         recorded: list[object] = []
         created: list[Any] = []
 
         async def _run() -> None:
             try:
-                async with case.unit_of_work(repository):
+                async with case.open_unit_of_work(repository):
                     created.append(await repository.create(SEED[0]))
                     started.set()
                     await asyncio.Event().wait()
@@ -147,7 +148,7 @@ class TestContractFailedCommit:
         recorded: list[object] = []
 
         try:
-            async with case.unit_of_work(repository):
+            async with case.open_unit_of_work(repository):
                 await repository.create(SEED[0])
                 raise _Abort
         except _Abort:
@@ -168,7 +169,7 @@ class TestContractFailedCommit:
 
         async def _create_then_abort() -> None:
             nonlocal created
-            async with case.unit_of_work(repository):
+            async with case.open_unit_of_work(repository):
                 created = await repository.create(SEED[0])
                 raise _Abort
 
@@ -185,7 +186,7 @@ class TestContractFailedCommit:
         if case.transactions:
             pytest.skip(f"{case.name} rolls back writes")
 
-        uow = case.unit_of_work(repository)
+        uow = case.open_unit_of_work(repository)
         assert await uow.__aenter__() is uow
         created = await repository.create(SEED[0])
         assert not await uow.__aexit__(_Abort, _Abort(), None)

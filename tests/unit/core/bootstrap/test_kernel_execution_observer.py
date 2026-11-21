@@ -1,0 +1,91 @@
+"""Tests for observer wiring through create_kernel → create_fastapi_app."""
+
+from __future__ import annotations
+
+from typing import Any
+from unittest.mock import MagicMock
+
+import pytest
+
+from loom.core.bootstrap import create_kernel
+from loom.core.engine.events import EventKind, ExecutionEvent
+from loom.core.engine.execution_observer import ExecutionObserver
+from loom.core.engine.executor import UseCaseExecutor
+from loom.core.model import LoomStruct
+from loom.core.use_case.use_case import UseCase
+
+
+class _Model(LoomStruct):
+    id: int
+
+
+class _SimpleUseCase(UseCase[Any, None]):
+    async def execute(self) -> None:
+        return None
+
+
+class TestKernelCarriesExecutionObserver:
+    def test_metrics_none_by_default(self) -> None:
+        result = create_kernel(config=object(), use_cases=[_SimpleUseCase])
+        assert result.execution_observer is None
+
+    def test_metrics_stored_when_provided(self) -> None:
+        adapter = MagicMock(spec=ExecutionObserver)
+        result = create_kernel(
+            config=object(),
+            use_cases=[_SimpleUseCase],
+            execution_observer=adapter,
+        )
+        assert result.execution_observer is adapter
+
+
+class TestCreateFastapiAppWiresExecutionObserver:
+    async def test_executor_receives_execution_observer(self) -> None:
+        """create_kernel must register UseCaseExecutor with the observer recorder."""
+        pytest.importorskip("fastapi")
+
+        from loom.rest.compiler import RouteSources
+        from loom.rest.fastapi.app import create_fastapi_app
+        from loom.rest.model import RestInterface, RestRoute
+
+        class _Adapter:
+            def __init__(self) -> None:
+                self.kinds: list[EventKind] = []
+
+            def on_event(self, event: ExecutionEvent) -> None:
+                self.kinds.append(event.kind)
+
+        adapter = _Adapter()
+        result = create_kernel(
+            config=object(),
+            use_cases=[_SimpleUseCase],
+            execution_observer=adapter,
+        )
+
+        class _Iface(RestInterface[_Model]):
+            prefix = "/test"
+            routes = (RestRoute(use_case=_SimpleUseCase, method="GET", path="/"),)
+
+        executor = result.container.resolve(UseCaseExecutor)
+        await executor.execute(_SimpleUseCase())
+        assert adapter.kinds[-2:] == [EventKind.EXEC_START, EventKind.EXEC_DONE]
+        app = create_fastapi_app(result, RouteSources(python=[_Iface]))
+        assert app is not None
+
+    def test_reuses_registered_executor_when_present(self) -> None:
+        pytest.importorskip("fastapi")
+
+        from loom.rest.compiler import RouteSources
+        from loom.rest.fastapi.app import create_fastapi_app
+        from loom.rest.model import RestInterface, RestRoute
+
+        result = create_kernel(config=object(), use_cases=[_SimpleUseCase])
+        shared_executor = result.container.resolve(UseCaseExecutor)
+
+        class _Iface(RestInterface[_Model]):
+            prefix = "/test"
+            routes = (RestRoute(use_case=_SimpleUseCase, method="GET", path="/"),)
+
+        app = create_fastapi_app(result, RouteSources(python=[_Iface]))
+        assert app is not None
+        assert result.container.resolve(UseCaseExecutor) is shared_executor

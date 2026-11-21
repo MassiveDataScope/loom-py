@@ -6,10 +6,10 @@ from dataclasses import dataclass
 
 import polars as pl
 
-from loom.etl.backends.polars._writer import _require_boolean_flag_column
 from loom.etl.declarative.target import TargetSpec
 from loom.etl.declarative.target._table import UpsertSpec
 from loom.etl.declarative.target._temp import TempFanInSpec, TempSpec
+from loom.etl.engines.polars._writer import _require_boolean_flag_column
 from loom.etl.schema._schema import LoomDtype
 
 
@@ -128,7 +128,7 @@ class StepResult:
         Raises:
             AssertionError: When a column is missing or has a different dtype.
         """
-        from loom.etl.backends.polars._dtype import loom_type_to_polars
+        from loom.etl.engines.polars._dtype import loom_type_to_polars
 
         for col_name, loom_dtype in expected.items():
             actual = self._frame.schema.get(col_name)

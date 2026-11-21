@@ -14,18 +14,18 @@ from loom.core.projection.loaders import (
     ExistsLoader,
     JoinFieldsLoader,
     _MemoryCountLoader,
+    build_memory_loader,
     is_projection_descriptor,
-    make_memory_loader,
     projection_descriptor,
     projection_descriptor_types,
     resolve_model_reference,
 )
-from loom.core.repository.sqlalchemy.loaders import (
+from loom.stores.sqlalchemy.loaders import (
     _SQL_LOADER_FACTORIES,
     _SqlCountLoader,
     _SqlExistsLoader,
     _SqlJoinFieldsLoader,
-    make_sql_loader,
+    build_sql_loader,
 )
 from tests.unit.core.doubles import AcmeNote
 
@@ -124,14 +124,14 @@ class TestIsProjectionDescriptor:
         assert is_projection_descriptor(_CustomLoader()) is False
 
 
-class TestMakeMemoryLoader:
+class TestBuildMemoryLoader:
     def test_delegates_to_the_descriptor(self) -> None:
-        loader = make_memory_loader(CountLoader(model=AcmeNote), "notes")
+        loader = build_memory_loader(CountLoader(model=AcmeNote), "notes")
 
         assert loader == _MemoryCountLoader(relation="notes")
 
     def test_join_fields_carries_its_value_columns(self) -> None:
-        loader = make_memory_loader(
+        loader = build_memory_loader(
             JoinFieldsLoader(model=AcmeNote, value_columns=("id", "title")), "notes"
         )
 
@@ -140,36 +140,36 @@ class TestMakeMemoryLoader:
     def test_returns_a_custom_loader_unchanged(self) -> None:
         custom = _CustomLoader()
 
-        assert make_memory_loader(custom, "notes") is custom
+        assert build_memory_loader(custom, "notes") is custom
 
 
-class TestMakeSqlLoader:
+class TestBuildSqlLoader:
     def test_count_descriptor_selects_the_count_loader(self) -> None:
-        loader = make_sql_loader(CountLoader(model=AcmeNote), _FakeRelationStep())
+        loader = build_sql_loader(CountLoader(model=AcmeNote), _FakeRelationStep())
 
         assert isinstance(loader, _SqlCountLoader)
 
     def test_exists_descriptor_selects_the_exists_loader(self) -> None:
-        loader = make_sql_loader(ExistsLoader(model=AcmeNote), _FakeRelationStep())
+        loader = build_sql_loader(ExistsLoader(model=AcmeNote), _FakeRelationStep())
 
         assert isinstance(loader, _SqlExistsLoader)
 
     def test_join_fields_descriptor_selects_the_join_fields_loader(self) -> None:
-        loader = make_sql_loader(
+        loader = build_sql_loader(
             JoinFieldsLoader(model=AcmeNote, value_columns=("id",)), _FakeRelationStep()
         )
 
         assert isinstance(loader, _SqlJoinFieldsLoader)
 
     def test_descriptor_subclass_reuses_the_base_factory(self) -> None:
-        loader = make_sql_loader(_CountSubclass(model=AcmeNote), _FakeRelationStep())
+        loader = build_sql_loader(_CountSubclass(model=AcmeNote), _FakeRelationStep())
 
         assert isinstance(loader, _SqlCountLoader)
 
     def test_returns_a_custom_loader_unchanged(self) -> None:
         custom = _CustomLoader()
 
-        assert make_sql_loader(custom, _FakeRelationStep()) is custom
+        assert build_sql_loader(custom, _FakeRelationStep()) is custom
 
 
 class TestResolveModelReference:
@@ -195,11 +195,11 @@ class TestUnbackedDescriptor:
 
         assert projection_descriptor_types().count(unbacked_descriptor) == 1
 
-    def test_make_sql_loader_raises_for_a_descriptor_without_a_factory(
+    def test_build_sql_loader_raises_for_a_descriptor_without_a_factory(
         self, unbacked_descriptor: type[Any]
     ) -> None:
         loader = unbacked_descriptor(model=AcmeNote)
         step = _FakeRelationStep()
 
         with pytest.raises(ValueError, match="no SQL-path loader factory"):
-            make_sql_loader(loader, step)
+            build_sql_loader(loader, step)

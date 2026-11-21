@@ -13,19 +13,19 @@ from loom.core.config import ConfigContext, ConfigKey
 from loom.core.plugins.optional import import_optional
 from loom.etl._uri import is_cloud_path
 from loom.etl.checkpoint import CheckpointStore, FsspecTempCleaner, TempCleaner
-from loom.etl.checkpoint._backends._polars import _PolarsCheckpointBackend
-from loom.etl.checkpoint._backends._spark import _SparkCheckpointBackend
+from loom.etl.checkpoint._io._polars import _PolarsCheckpointIO
+from loom.etl.checkpoint._io._spark import _SparkCheckpointIO
 from loom.etl.checkpoint._options import encryption_options
 from loom.etl.lineage._config import LineageConfig
 from loom.etl.lineage.sinks import LineageStore, LineageWriter, TableLineageStore
-from loom.etl.runner._agents import UnservedAgents
-from loom.etl.runner._providers import load_backend_provider
-from loom.etl.runtime.contracts import (
+from loom.etl.ports.contracts import (
     AgentBatchRunner,
     ClientCommandExecutor,
     SourceReader,
     TargetWriter,
 )
+from loom.etl.runner._agents import UnservedAgents
+from loom.etl.runner._engines import load_etl_engine
 from loom.etl.storage._config import StorageConfig, StorageEngine
 
 _log = logging.getLogger(__name__)
@@ -69,7 +69,7 @@ def make_backends(
             "Pass spark=<session> to ETLRunner.from_yaml() or ETLRunner.from_config()."
         )
     engine = _resolve_engine(config, spark)
-    provider = load_backend_provider(engine)
+    provider = load_etl_engine(engine)
     return provider.create_backends(config, spark)
 
 
@@ -107,7 +107,7 @@ def make_lineage_writer(
         return None
     lineage.validate()
     engine = _resolve_engine(storage, spark)
-    provider = load_backend_provider(engine)
+    provider = load_etl_engine(engine)
     return provider.create_lineage_writer(storage, lineage, spark)
 
 
@@ -121,7 +121,7 @@ def make_lineage_store(
         return None
     lineage.validate()
     engine = _resolve_engine(storage, spark)
-    provider = load_backend_provider(engine)
+    provider = load_etl_engine(engine)
     writer = provider.create_lineage_writer(storage, lineage, spark)
     if lineage.database:
         return TableLineageStore(writer, database=lineage.database)
@@ -143,7 +143,7 @@ def make_client_executor(
         or ``None`` when no client backend is configured.
     """
     engine = _resolve_engine(config, spark)
-    provider = load_backend_provider(engine)
+    provider = load_etl_engine(engine)
     return provider.create_client_executor(config, spark)
 
 
@@ -212,8 +212,8 @@ def _make_checkpoint_backend(spark: Any, storage_options: dict[str, str]) -> Any
                 "set fs.s3a.server-side-encryption-algorithm / -key on the Spark session",
                 sorted(encryption),
             )
-        return _SparkCheckpointBackend(spark)
-    return _PolarsCheckpointBackend(storage_options)
+        return _SparkCheckpointIO(spark)
+    return _PolarsCheckpointIO(storage_options)
 
 
 def _resolve_engine(config: StorageConfig, spark: Any) -> str:

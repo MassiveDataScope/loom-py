@@ -54,7 +54,6 @@ SENTINEL = "AGENTS_ONLY_APP_OK"
 _ENGINE_NAME = "agentsonly-fake"
 _AGENT = "minimal-agent"
 _GROUP = "loom.ai.engines"
-_MANIFEST_MODULE = "agentsonly.manifest"
 
 _AGENT_SPEC: dict[str, Any] = {
     "spec_version": 1,
@@ -77,7 +76,7 @@ class _UnbuiltEngine:
     """Placeholder engine.
 
     ``create_app`` compiles the plans but never enters the app lifespan, which
-    is where ``AgentRuntime`` builds engines, so nothing here is instantiated.
+    is where ``AgentHost`` builds engines, so nothing here is instantiated.
     """
 
     def __init__(self) -> None:
@@ -85,7 +84,7 @@ class _UnbuiltEngine:
 
 
 class _EngineProvider:
-    """Smallest provider ``resolve_engine_provider`` accepts."""
+    """Smallest provider ``resolve_engine_plugin`` accepts."""
 
     LOOM_AI_ENGINE_API = 2
 
@@ -115,7 +114,7 @@ class _FakeEntryPoint:
 class _FakeEntryPoints:
     """Fakes ``_GROUP`` only; every other group hits the real registrations.
 
-    ``create_app`` also resolves the persistence backend (``stores.default.backend:
+    ``create_app`` also resolves the store backend (``stores.default.backend:
     none``) through the same loader, so a fake that blinds every group would
     make that lookup fail too.
     """
@@ -131,7 +130,6 @@ def _write_project(root: Path) -> str:
     package = root / "agentsonly"
     package.mkdir()
     (package / "__init__.py").write_text("", encoding="utf-8")
-    (package / "manifest.py").write_text('AGENTS = ["agents/*.yaml"]\n', encoding="utf-8")
     agents = root / "agents"
     agents.mkdir()
     (agents / f"{_AGENT}.yaml").write_text(yaml.safe_dump(_AGENT_SPEC), encoding="utf-8")
@@ -139,10 +137,8 @@ def _write_project(root: Path) -> str:
         "app": {
             "name": "agentsonly-demo",
             "code_path": str(root),
-            "discovery": {
-                "mode": "manifest",
-                "manifest": {"module": _MANIFEST_MODULE},
-            },
+            "packages": ["agentsonly"],
+            "agents": ["agents/*.yaml"],
         },
         "stores": {"default": {"backend": "none"}},
         "ai": {
@@ -157,10 +153,10 @@ def _write_project(root: Path) -> str:
 
 def _assert_block_effective() -> None:
     try:
-        import loom.core.backend  # noqa: F401
+        import loom.stores.sqlalchemy.schema  # noqa: F401
     except ModuleNotFoundError:
         return
-    raise RuntimeError("loom.core.backend imported although sqlalchemy is blocked")
+    raise RuntimeError("the SQLAlchemy model compiler imported although sqlalchemy is blocked")
 
 
 def main() -> int:

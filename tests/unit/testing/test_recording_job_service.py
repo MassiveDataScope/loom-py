@@ -1,4 +1,4 @@
-"""``RecordingJobService`` records what would be sent once the execution commits."""
+"""``RecordingJobTransport`` records what would be sent once the execution commits."""
 
 from __future__ import annotations
 
@@ -8,18 +8,17 @@ from typing import Any
 
 import pytest
 
-from loom.composition import compose_application
 from loom.core.engine.compiler import UseCaseCompiler
-from loom.core.engine.executor import RuntimeExecutor
+from loom.core.engine.executor import UseCaseExecutor
 from loom.core.identity import ANONYMOUS, Identity
 from loom.core.job.context import clear_pending_dispatches, flush_pending_dispatches
 from loom.core.job.job import Job
 from loom.core.job.service import JobService
-from loom.core.persistence.stores import DEFAULT_STORE
-from loom.core.uow.coordinator import OrderedCommits
+from loom.core.stores.catalog import DEFAULT_STORE
+from loom.core.stores.uow.coordinator import OrderedCommits
 from loom.core.use_case.use_case import UseCase
-from loom.testing import DispatchedJob, RecordingJobService
-from tests.helpers.jobs import JobsAdapter, job_source
+from loom.testing import RecordingJobTransport
+from tests.helpers.jobs import JobsAdapter, job_project
 from tests.unit.core.engine._lifecycle_doubles import Log, StubUnitOfWorkFactory
 
 pytestmark = pytest.mark.timeout(10)
@@ -35,12 +34,12 @@ class ShipJob(Job[str]):
 
 
 class _Ship(UseCase[Any, None]):
-    def __init__(self, jobs: RecordingJobService, *, fail: bool) -> None:
+    def __init__(self, jobs: JobService, *, fail: bool) -> None:
         self.jobs = jobs
         self.fail = fail
 
     async def execute(self) -> None:
-        self.jobs.dispatch(ShipJob, params={"order": 7}, payload={"note": "fragile"})
+        self.jobs.dispatch_after_commit(ShipJob, params={"order": 7}, payload={"note": "fragile"})
         if self.fail:
             raise RuntimeError("rolled back")
 
@@ -52,114 +51,115 @@ def _no_leftover_dispatches() -> Iterator[None]:
 
 
 @pytest.fixture
-def jobs() -> RecordingJobService:
-    return RecordingJobService()
+def transport() -> RecordingJobTransport:
+    return RecordingJobTransport()
 
 
 @pytest.fixture
-def executor() -> RuntimeExecutor:
-    return RuntimeExecutor(
+def service(transport: RecordingJobTransport) -> JobService:
+    return JobService(transport)
+
+
+@pytest.fixture
+def executor() -> UseCaseExecutor:
+    return UseCaseExecutor(
         UseCaseCompiler(), coordinator=OrderedCommits({DEFAULT_STORE: StubUnitOfWorkFactory(Log())})
     )
 
 
-@pytest.fixture
-def composed(tmp_path: Path) -> tuple[RecordingJobService, type[Job[str]]]:
-    """``app.job_service`` selects the service; ``jobs.<Job>.queue`` moves a job defined here."""
-
-    class MovedJob(Job[str]):
-        def execute(self) -> str:
-            return "ran"
-
-    config = {"jobs": {"MovedJob": {"queue": "bulk"}}}
-    source = job_source(tmp_path, config, "loom.testing:RecordingJobService")
-    application = compose_application(source, JobsAdapter(MovedJob))
-    service = application.kernel.container.resolve(JobService)
-    assert isinstance(service, RecordingJobService)
-    return service, MovedJob
+def _composed_service(tmp_path: Path, config: dict[str, Any], *jobs: type[Job[Any]]) -> JobService:
+    """``app.job_service`` selects the recording transport; ``jobs.<Job>`` configures a job."""
+    project = job_project(tmp_path, config, "loom.testing:RecordingJobTransport")
+    application = project.compose(JobsAdapter(*jobs))
+    return application.kernel.container.resolve(JobService)
 
 
-class TestRecordingJobService:
+class TestRecordingJobTransport:
     async def test_a_committed_dispatch_is_recorded_with_its_caller(
-        self, jobs: RecordingJobService, executor: RuntimeExecutor
+        self, service: JobService, transport: RecordingJobTransport, executor: UseCaseExecutor
     ) -> None:
-        await executor.execute(_Ship(jobs, fail=False), identity=_ALICE)
+        await executor.execute(_Ship(service, fail=False), identity=_ALICE)
 
-        assert jobs.dispatched == [
-            DispatchedJob(
-                job_type=ShipJob,
-                payload={"note": "fragile"},
-                params={"order": 7},
-                queue="shipping",
-                identity=_ALICE,
-            )
-        ]
+        (recorded,) = transport.dispatched
+        assert (
+            recorded.job_type,
+            recorded.payload,
+            recorded.params,
+            recorded.queue,
+            recorded.countdown,
+            recorded.identity,
+        ) == (ShipJob, {"note": "fragile"}, {"order": 7}, "shipping", 0, _ALICE)
 
     async def test_an_anonymous_caller_is_recorded_as_no_caller(
-        self, jobs: RecordingJobService, executor: RuntimeExecutor
+        self, service: JobService, transport: RecordingJobTransport, executor: UseCaseExecutor
     ) -> None:
-        """The capture every backend makes: the job wire carries no anonymous caller."""
-        await executor.execute(_Ship(jobs, fail=False), identity=ANONYMOUS)
+        """The capture every transport makes: the job wire carries no anonymous caller."""
+        await executor.execute(_Ship(service, fail=False), identity=ANONYMOUS)
 
-        assert [record.identity for record in jobs.dispatched] == [None]
+        assert [record.identity for record in transport.dispatched] == [None]
 
     async def test_a_rolled_back_dispatch_is_not_recorded(
-        self, jobs: RecordingJobService, executor: RuntimeExecutor
+        self, service: JobService, transport: RecordingJobTransport, executor: UseCaseExecutor
     ) -> None:
-        failing = _Ship(jobs, fail=True)
+        failing = _Ship(service, fail=True)
 
         with pytest.raises(RuntimeError, match="rolled back"):
             await executor.execute(failing)
 
-        assert jobs.dispatched == []
-
-    async def test_a_dispatch_outside_an_execution_is_recorded_on_flush(
-        self,
-        jobs: RecordingJobService,
-    ) -> None:
-        jobs.dispatch_parallel([(ShipJob, {"a": 1}), (ShipJob, {"b": 2})])
-        assert jobs.dispatched == []
-
-        await flush_pending_dispatches()
-
-        assert [record.payload for record in jobs.dispatched] == [{"a": 1}, {"b": 2}]
-        assert jobs.dispatched[0].identity is None
+        assert transport.dispatched == []
 
     @pytest.mark.parametrize(("queue", "expected"), [(None, "bulk"), ("urgent", "urgent")])
     async def test_the_recorded_queue_is_the_effective_one(
-        self, composed: tuple[RecordingJobService, type[Job[str]]], queue: str | None, expected: str
+        self, tmp_path: Path, queue: str | None, expected: str
     ) -> None:
-        service, moved = composed
-        service.dispatch(moved, queue=queue)
+        class MovedJob(Job[str]):
+            def execute(self) -> str:
+                return "ran"
+
+        service = _composed_service(tmp_path, {"jobs": {"MovedJob": {"queue": "bulk"}}}, MovedJob)
+
+        service.dispatch_after_commit(MovedJob, queue=queue)
         await flush_pending_dispatches()
 
-        assert [(record.job_type, record.queue) for record in service.dispatched] == [
-            (moved, expected)
-        ]
+        recorded = service.default_transport.dispatched  # type: ignore[attr-defined]
+        assert [(record.job_type, record.queue) for record in recorded] == [(MovedJob, expected)]
 
-    async def test_a_composed_service_runs_a_job_in_process(
-        self,
-        composed: tuple[RecordingJobService, type[Job[str]]],
-    ) -> None:
-        service, moved = composed
+    async def test_a_composed_service_runs_a_job_in_process(self, tmp_path: Path) -> None:
+        class MovedJob(Job[str]):
+            def execute(self) -> str:
+                return "ran"
 
-        assert await service.run(moved) == "ran"
+        service = _composed_service(tmp_path, {}, MovedJob)
 
-    async def test_a_service_without_a_context_cannot_run(self, jobs: RecordingJobService) -> None:
-        with pytest.raises(RuntimeError, match="built with a context"):
-            await jobs.run(ShipJob)
+        assert await service.run(MovedJob) == "ran"
 
     async def test_a_payload_changed_after_dispatch_is_recorded_as_dispatched(
-        self,
-        jobs: RecordingJobService,
+        self, service: JobService, transport: RecordingJobTransport
     ) -> None:
         payload, params = {"note": "fragile"}, {"order": 7}
-        jobs.dispatch(ShipJob, payload=payload, params=params)
+        service.dispatch_after_commit(ShipJob, payload=payload, params=params)
         payload["note"], params["order"] = "sturdy", 8
 
         await flush_pending_dispatches()
 
-        assert (jobs.dispatched[0].payload, jobs.dispatched[0].params) == (
+        assert (transport.dispatched[0].payload, transport.dispatched[0].params) == (
             {"note": "fragile"},
             {"order": 7},
         )
+
+
+class TestRecordedCountdown:
+    async def test_a_configured_countdown_overrides_the_class(self, tmp_path: Path) -> None:
+        class TimedJob(Job[None]):
+            __countdown__ = 3
+
+            def execute(self) -> None:
+                return None
+
+        service = _composed_service(tmp_path, {"jobs": {"TimedJob": {"countdown": 7}}}, TimedJob)
+        service.dispatch_after_commit(TimedJob)
+        await flush_pending_dispatches()
+        await service.dispatch_now(TimedJob, countdown=2)
+
+        recorded = service.default_transport.dispatched  # type: ignore[attr-defined]
+        assert [record.countdown for record in recorded] == [7, 2]

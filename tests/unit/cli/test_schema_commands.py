@@ -11,8 +11,8 @@ from typer.testing import CliRunner
 
 from loom.cli import schema as schema_cli
 from loom.cli.app import app
-from loom.core.repository.sqlalchemy import rls
-from loom.core.repository.sqlalchemy.rls import DatabaseUser, Finding, Report
+from loom.stores.sqlalchemy import alembic, rls
+from loom.stores.sqlalchemy.rls import DatabaseUser, Finding, Report
 
 runner = CliRunner()
 
@@ -44,7 +44,7 @@ class TestSchemaCommands:
             "app_rw": DatabaseUser(login=True, access="write"),
             "app_nologin": DatabaseUser(login=False, access="read"),
         }
-        monkeypatch.setattr(schema_cli, "load_application", lambda path: _application(users))
+        monkeypatch.setattr(alembic, "load_store_schema", lambda path: _application(users))
         monkeypatch.setattr(rls, "apply_bootstrap", apply)
         monkeypatch.setenv("LOOM_SUPERUSER_URL", "postgresql+asyncpg://su@db/app")
         monkeypatch.setenv("LOOM_DB_PASSWORD_APP_RW", "s3cret")
@@ -61,7 +61,7 @@ class TestSchemaCommands:
         self, config: Path, monkeypatch: pytest.MonkeyPatch
     ) -> None:
         users = {"app_rw": DatabaseUser(login=True, access="write")}
-        monkeypatch.setattr(schema_cli, "load_application", lambda path: _application(users))
+        monkeypatch.setattr(alembic, "load_store_schema", lambda path: _application(users))
         monkeypatch.setenv("LOOM_SUPERUSER_URL", "postgresql+asyncpg://su@db/app")
         monkeypatch.setenv("LOOM_DB_PASSWORD_APP_MIGRATOR", "m1grator")
         monkeypatch.delenv("LOOM_DB_PASSWORD_APP_RW", raising=False)
@@ -74,7 +74,7 @@ class TestSchemaCommands:
     def test_bootstrap_without_the_superuser_url_fails(
         self, config: Path, monkeypatch: pytest.MonkeyPatch
     ) -> None:
-        monkeypatch.setattr(schema_cli, "load_application", lambda path: _application({}))
+        monkeypatch.setattr(alembic, "load_store_schema", lambda path: _application({}))
         monkeypatch.setenv("LOOM_DB_PASSWORD_APP_MIGRATOR", "m1grator")
         monkeypatch.delenv("LOOM_SUPERUSER_URL", raising=False)
 
@@ -96,7 +96,7 @@ class TestSchemaCommands:
             assert url == "postgresql+asyncpg://verifier@db/app"
             return report
 
-        monkeypatch.setattr(schema_cli, "load_application", lambda path: _application({}))
+        monkeypatch.setattr(alembic, "load_store_schema", lambda path: _application({}))
         monkeypatch.setattr(rls, "verify", check)
         monkeypatch.setenv("LOOM_VERIFY_URL", "postgresql+asyncpg://verifier@db/app")
 
@@ -110,7 +110,7 @@ class TestSchemaCommands:
         async def check(url: str, application: Any) -> Report:
             return Report(ok=True, findings=())
 
-        monkeypatch.setattr(schema_cli, "load_application", lambda path: _application({}))
+        monkeypatch.setattr(alembic, "load_store_schema", lambda path: _application({}))
         monkeypatch.setattr(rls, "verify", check)
         monkeypatch.delenv("LOOM_VERIFY_URL", raising=False)
         monkeypatch.setenv("LOOM_SUPERUSER_URL", "postgresql+asyncpg://su@db/app")
@@ -118,6 +118,30 @@ class TestSchemaCommands:
         result = runner.invoke(app, ["schema", "verify", "--config", str(config)])
 
         assert result.exit_code == 0, result.output
+
+    @pytest.mark.parametrize("command", ["bootstrap", "verify"])
+    def test_without_config_the_default_directory_is_left_to_the_loader(
+        self, command: str, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        paths: list[str | None] = []
+
+        def load(path: str | None) -> Any:
+            paths.append(path)
+            return _application({})
+
+        async def noop(*args: Any) -> Report:
+            return Report(ok=True, findings=())
+
+        monkeypatch.setattr(alembic, "load_store_schema", load)
+        monkeypatch.setattr(rls, "apply_bootstrap", noop)
+        monkeypatch.setattr(rls, "verify", noop)
+        monkeypatch.setenv("LOOM_SUPERUSER_URL", "postgresql+asyncpg://su@db/app")
+        monkeypatch.setenv("LOOM_DB_PASSWORD_APP_MIGRATOR", "m1grator")
+
+        result = runner.invoke(app, ["schema", command])
+
+        assert result.exit_code == 0, result.output
+        assert paths == [None]
 
     @pytest.mark.parametrize(
         ("dropped", "expected"),

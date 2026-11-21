@@ -9,11 +9,11 @@ from typing import Any
 import pytest
 from fastapi import FastAPI
 
-from loom.ai.fastapi.endpoints import bind_agent_endpoints
-from loom.ai.runtime import AgentRuntime
-from loom.ai.runtime._lifecycle import UseCaseMcpGrant
+from loom.ai.execution import AgentHost
+from loom.ai.execution._lifecycle import UseCaseMcpGrant
+from loom.ai.fastapi.endpoints import mount_agent_endpoints
 from loom.core.di import LoomContainer
-from loom.core.observability.runtime import ObservabilityRuntime
+from loom.core.observability.observability import Observability
 from tests.integration.ai.conftest import (
     CountingEngineProvider,
     RecordingMcpSession,
@@ -39,14 +39,14 @@ def session() -> RecordingMcpSession:
 def make_runtime(session: RecordingMcpSession) -> Any:
     """Build a runtime, not entered, serving *engine* as the one agent."""
 
-    def make(engine: object) -> AgentRuntime:
+    def make(engine: object) -> AgentHost:
         client = StubMcpClient(label="crm", session=session, log=[])
-        return AgentRuntime(
+        return AgentHost(
             plans=[make_plan(AGENT)],
             config=make_ai_config(
                 endpoints={AGENT: make_endpoint()}, mcp_servers=make_mcp_servers(SERVER)
             ),
-            engine_provider=CountingEngineProvider(engines={AGENT: engine}),  # type: ignore[dict-item]
+            engine_plugin=CountingEngineProvider(engines={AGENT: engine}),  # type: ignore[dict-item]
             deps=StubDepsFactory(),
             container=LoomContainer(),
             mcp_client_factory=mcp_client_factory({SERVER: client}),  # type: ignore[arg-type]
@@ -67,14 +67,14 @@ def serving() -> Any:
     """Serve an entered runtime's agent endpoints, acting as Alice for each request."""
 
     @asynccontextmanager
-    async def serve(runtime: AgentRuntime) -> AsyncIterator[FastAPI]:
+    async def serve(host: AgentHost) -> AsyncIterator[FastAPI]:
         app = FastAPI()
-        bind_agent_endpoints(
+        mount_agent_endpoints(
             app,
-            runtime=runtime,
+            host=host,
             config=make_ai_config(endpoints={AGENT: make_endpoint()}),
             authenticator=AcmeAuthenticator(),  # type: ignore[arg-type]
-            observability_runtime=ObservabilityRuntime([]),
+            observability=Observability([]),
             prefix=PREFIX,
         )
         app.add_middleware(AcmeIdentityMiddleware)

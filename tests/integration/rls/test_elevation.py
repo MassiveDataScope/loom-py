@@ -15,10 +15,10 @@ from sqlalchemy.pool import NullPool
 from loom.core.authz import Decision, Grant, Scope
 from loom.core.authz.elevation import elevation_scope
 from loom.core.identity import Identity, reset_identity, set_identity
-from loom.core.persistence.stores import DEFAULT_STORE
-from loom.core.repository.sqlalchemy.rls import create_schema, elevate, rls_session_settings
-from loom.core.repository.sqlalchemy.session_manager import SessionManager
-from loom.core.repository.sqlalchemy.uow import SQLAlchemyUnitOfWork
+from loom.core.stores.catalog import DEFAULT_STORE
+from loom.stores.sqlalchemy.rls import create_schema, elevate, rls_session_settings
+from loom.stores.sqlalchemy.session_manager import SessionManager
+from loom.stores.sqlalchemy.uow import SQLAlchemyUnitOfWork
 from tests.helpers.elevation import sink_for
 from tests.integration.agnosticism import notes
 from tests.integration.rls.conftest import (
@@ -44,7 +44,9 @@ class TestElevationFlag:
         manager = SessionManager(
             database.write, session_settings=rls_session_settings(application), store=DEFAULT_STORE
         )
-        decision = Decision(allowed=True, grant=Grant(subject=U1, role="admin", scope=Scope.of(U1)))
+        decision = Decision(
+            allowed=True, grant=Grant(subject=U1, role="admin", scope=Scope.from_segments(U1))
+        )
         identity = set_identity(Identity(subject=U1))
         try:
             async with SQLAlchemyUnitOfWork(manager):
@@ -54,7 +56,7 @@ class TestElevationFlag:
                     assert (await session.execute(text("SELECT count(*) FROM notes"))).scalar() == 2
                     assert (await session.execute(text(FLAG))).scalar() == ""
 
-                    await elevate("editor", decision, at=Scope.of(U1))
+                    await elevate("editor", decision, at=Scope.from_segments(U1))
 
                     assert (await session.execute(text(FLAG))).scalar() == "on"
                     update = text("UPDATE notes SET body = 'edited' WHERE editor = 'bob'")
@@ -67,7 +69,7 @@ class TestElevationFlag:
                 assert (await session.execute(edited)).scalar() == 1
         finally:
             reset_identity(identity)
-            await manager.dispose()
+            await manager.close()
 
     async def test_elevation_without_an_open_transaction_arrives_with_the_next_one(
         self, scoped_database: BootstrapFactory, tmp_path: Path
@@ -80,16 +82,18 @@ class TestElevationFlag:
         manager = SessionManager(
             database.write, session_settings=rls_session_settings(application), store=DEFAULT_STORE
         )
-        decision = Decision(allowed=True, grant=Grant(subject=U1, role="admin", scope=Scope.of(U1)))
+        decision = Decision(
+            allowed=True, grant=Grant(subject=U1, role="admin", scope=Scope.from_segments(U1))
+        )
         identity = set_identity(Identity(subject=U1))
         try:
             async with elevation_scope(owns_transaction=True, sink=sink_for(manager, "editor")):
-                await elevate("editor", decision, at=Scope.of(U1))
+                await elevate("editor", decision, at=Scope.from_segments(U1))
                 async with manager.session() as session:
                     assert (await session.execute(text(FLAG))).scalar() == "on"
         finally:
             reset_identity(identity)
-            await manager.dispose()
+            await manager.close()
 
 
 _PID = "SELECT pg_backend_pid()"
@@ -122,7 +126,7 @@ async def _nested_elevation(
         await session.execute(text(insert), {"body": "before nested"})
         pid_before = (await session.execute(text(_PID))).scalar_one()
         async with elevation_scope(owns_transaction=False, sink=sink):
-            await elevate("editor", decision, at=Scope.of(U1))
+            await elevate("editor", decision, at=Scope.from_segments(U1))
             flag_inside = (await session.execute(text(FLAG))).scalar_one()
         flag_after = (await session.execute(text(FLAG))).scalar_one()
         pid_after = (await session.execute(text(_PID))).scalar_one()
@@ -148,13 +152,15 @@ async def nested(scoped_database: BootstrapFactory, tmp_path: Path) -> _Nested:
     manager = SessionManager(
         database.write, session_settings=rls_session_settings(application), store=DEFAULT_STORE
     )
-    decision = Decision(allowed=True, grant=Grant(subject=U1, role="admin", scope=Scope.of(U1)))
+    decision = Decision(
+        allowed=True, grant=Grant(subject=U1, role="admin", scope=Scope.from_segments(U1))
+    )
     identity = set_identity(Identity(subject=U1))
     try:
         flag_inside, flag_after, pid_before, pid_after = await _nested_elevation(manager, decision)
     finally:
         reset_identity(identity)
-        await manager.dispose()
+        await manager.close()
     return _Nested(
         flag_inside=flag_inside,
         flag_after=flag_after,

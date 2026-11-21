@@ -6,8 +6,8 @@ from dataclasses import dataclass, field, replace
 from typing import TYPE_CHECKING, Any, Self, cast
 
 from loom.core.execution import ExecutionBinding
-from loom.core.persistence.stores import DEFAULT_STORE, StoreCapabilities, StoreCatalog, StoreKey
-from loom.core.uow.scope import Frame
+from loom.core.stores.catalog import DEFAULT_STORE, StoreCapabilities, StoreCatalog, StoreKey
+from loom.core.stores.uow.scope import Frame
 from loom.core.use_case.compute import ComputeFn
 from loom.core.use_case.errors import JoinedAutocommitStore, UncomposedWriteStore, UseCaseErrorCode
 from loom.core.use_case.factory import ModelRead
@@ -16,7 +16,7 @@ from loom.core.use_case.markers import LookupKind, OnMissing, SourceKind
 from loom.core.use_case.rule import RuleFn
 
 if TYPE_CHECKING:
-    from loom.core.uow.coordinator import Participant
+    from loom.core.stores.uow.coordinator import Participant
 
 
 class ParameterBindingError(ValueError):
@@ -97,6 +97,17 @@ class CallerBinding:
     The executor injects the identity the transport verified for this
     execution.  Unlike :class:`ParamBinding`, the value never comes from the
     request payload or the URL, so it cannot be forged by the caller.
+
+    Args:
+        name: Parameter name as declared in the signature.
+    """
+
+    name: str
+
+
+@dataclass(frozen=True)
+class DeliveryBinding:
+    """The job-delivery parameter marked with ``Delivery()``.
 
     Args:
         name: Parameter name as declared in the signature.
@@ -264,7 +275,7 @@ class CommandStep:
         object.__setattr__(self, "label", getattr(self.fn, "__name__", type(self.fn).__name__))
 
     @classmethod
-    def of(cls, fn: ComputeFn[Any] | RuleFn) -> CommandStep:
+    def from_callable(cls, fn: ComputeFn[Any] | RuleFn) -> CommandStep:
         """The step of *fn*, reading once whether it takes the bound arguments.
 
         A function taking three or more positional parameters, or ``*args``,
@@ -346,6 +357,7 @@ class ExecutionPlan:
     rule_steps: tuple[CommandStep, ...]
     read_only: bool = False
     caller_binding: CallerBinding | None = None
+    delivery_binding: DeliveryBinding | None = None
     execution_bindings: tuple[ExecutionBinding, ...] = ()
     query_binding: QueryBinding | None = None
     primary: StoreKey = DEFAULT_STORE
@@ -373,7 +385,7 @@ class ExecutionPlan:
             JoinedAutocommitStore: For the first joined store, by name, that cannot.
         """
         for key in self.frame.stores[1:]:
-            if not stores[key].transactional:
+            if not stores[key].is_transactional:
                 issue = UseCaseErrorCode.JOINED_AUTOCOMMIT_STORE.issue(
                     component=self.use_case_type, store=key
                 )

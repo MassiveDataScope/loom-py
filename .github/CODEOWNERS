@@ -1,4 +1,4 @@
 /.github/ @the-reacher-data
 /scripts/ci/ @the-reacher-data
-/src/loom/core/repository/sqlalchemy/rls/guard/ @the-reacher-data
-/src/loom/core/repository/sqlalchemy/rls/guard_manifest.py @the-reacher-data
+/src/loom/stores/sqlalchemy/rls/guard/ @the-reacher-data
+/src/loom/stores/sqlalchemy/rls/guard_manifest.py @the-reacher-data

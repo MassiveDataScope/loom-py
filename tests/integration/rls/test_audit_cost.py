@@ -21,7 +21,7 @@ from sqlalchemy import text
 from sqlalchemy.ext.asyncio import AsyncConnection, create_async_engine
 from sqlalchemy.pool import NullPool
 
-from loom.core.repository.sqlalchemy.rls import create_schema
+from loom.stores.sqlalchemy.rls import create_schema
 from tests.integration.agnosticism import bookkeeping
 from tests.integration.rls.conftest import BootstrapFactory, application_for
 

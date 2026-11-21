@@ -3,8 +3,12 @@
 from __future__ import annotations
 
 from enum import StrEnum
+from typing import Final
 
 INTERPOLATION = "${"
+
+FASTAPI_ENTRY: Final = "fastapi"
+"""Value of ``app.entry`` that serves the application over HTTP with FastAPI."""
 
 
 class ConfigKey(StrEnum):
@@ -19,11 +23,10 @@ class ConfigKey(StrEnum):
     """
 
     APP = "app"
+    APP_REST = "app.rest"
     AI = "ai"
     AWS = "aws"
     CACHE = "cache"
-    PERSISTENCE = "persistence"
-    PERSISTENCE_CURSORS = "persistence.cursors"
     CELERY = "celery"
     KAFKA = "kafka"
     MONGO = "mongo"
@@ -31,6 +34,7 @@ class ConfigKey(StrEnum):
     SQS = "sqs"
     STORAGE = "storage"
     STORES = "stores"
+    STORES_SETTINGS = "stores.settings"
     STREAMING = "streaming"
     STREAMING_RUNTIME = "streaming.runtime"
     STREAMING_SINKS = "streaming.sinks"

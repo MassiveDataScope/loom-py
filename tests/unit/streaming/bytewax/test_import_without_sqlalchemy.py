@@ -20,7 +20,7 @@ require_bytewax()
 
 from loom.core.async_bridge import AsyncBridge  # noqa: E402
 from loom.core.model.redaction import Dsn  # noqa: E402
-from loom.core.persistence.database import DatabaseConfig  # noqa: E402
+from loom.core.stores.database import DatabaseConfig  # noqa: E402
 from loom.streaming.bytewax._resource_manager import ResourceManager  # noqa: E402
 
 _SRC = Path(__file__).resolve().parents[4] / "src"
@@ -60,7 +60,7 @@ class TestSessionManagerWithoutSqlalchemy:
         monkeypatch: pytest.MonkeyPatch,
     ) -> None:
         """Building a SQLAlchemy session manager without the extra raises a hinting ImportError."""
-        monkeypatch.setitem(sys.modules, "loom.core.repository.sqlalchemy.session_manager", None)
+        monkeypatch.setitem(sys.modules, "loom.stores.sqlalchemy.session_manager", None)
         manager = ResourceManager(cast(AsyncBridge, object()))
 
         with pytest.raises(ImportError, match=r"loom-kernel\[sqlalchemy\]"):

@@ -21,10 +21,11 @@ import yaml
 from botocore.config import Config  # type: ignore[import-untyped]
 from botocore.exceptions import BotoCoreError, ClientError  # type: ignore[import-untyped]
 
+from tests.helpers.aws import FAKE_KEY, REGION, scrub_aws_environment
+
 URL_ENV_VAR = "LOOM_AWS_IT_URL"
 COMPOSE_COMMAND = "docker compose -f docker-compose.local.yaml up -d localstack"
-REGION = "us-east-1"
-_DUMMY_CREDENTIALS = {"aws_access_key_id": "test", "aws_secret_access_key": "test"}
+_CREDENTIALS = {"aws_access_key_id": FAKE_KEY, "aws_secret_access_key": FAKE_KEY}
 
 AwsClientFactory = Callable[[str], Any]
 ConfigWriter = Callable[[dict[str, Any]], Path]
@@ -41,7 +42,7 @@ def _client(url: str, service: str) -> Any:
         endpoint_url=url,
         region_name=REGION,
         config=Config(connect_timeout=2, read_timeout=10, retries={"total_max_attempts": 1}),
-        **_DUMMY_CREDENTIALS,
+        **_CREDENTIALS,
     )
 
 
@@ -54,7 +55,9 @@ def aws_url() -> str:
             "and export it"
         )
     try:
-        _client(url, "sqs").list_queues()
+        with pytest.MonkeyPatch.context() as patch:
+            scrub_aws_environment(patch)
+            _client(url, "sqs").list_queues()
     except (BotoCoreError, ClientError) as exc:
         pytest.skip(
             f"the AWS emulator at ${URL_ENV_VAR} is not reachable ({type(exc).__name__});"
@@ -63,27 +66,16 @@ def aws_url() -> str:
     return url
 
 
-@pytest.fixture(autouse=True)
-def _emulator_credentials(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
-    """Dummy keys for boto3's chain; region and endpoint can only come from ``aws:``."""
-    monkeypatch.setenv("AWS_ACCESS_KEY_ID", _DUMMY_CREDENTIALS["aws_access_key_id"])
-    monkeypatch.setenv("AWS_SECRET_ACCESS_KEY", _DUMMY_CREDENTIALS["aws_secret_access_key"])
-    monkeypatch.setenv("AWS_CONFIG_FILE", str(tmp_path / "no-aws-config"))
-    monkeypatch.setenv("AWS_SHARED_CREDENTIALS_FILE", str(tmp_path / "no-aws-credentials"))
-    for name in (
-        "AWS_PROFILE",
-        "AWS_SESSION_TOKEN",
-        "AWS_ENDPOINT_URL",
-        "AWS_REGION",
-        "AWS_DEFAULT_REGION",
-    ):
-        monkeypatch.delenv(name, raising=False)
-
-
 @pytest.fixture
 def aws(aws_url: str) -> AwsClientFactory:
     """Build a boto3 client on the emulator, to create and inspect what loom uses."""
     return lambda service: _client(aws_url, service)
+
+
+@pytest.fixture
+def sqs(aws: AwsClientFactory) -> Any:
+    """The SQS client of the emulator."""
+    return aws("sqs")
 
 
 @pytest.fixture

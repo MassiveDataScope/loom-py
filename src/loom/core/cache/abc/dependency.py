@@ -3,7 +3,7 @@ from __future__ import annotations
 from collections.abc import Sequence
 from typing import Protocol, runtime_checkable
 
-from loom.core.repository.mutation import MutationEvent
+from loom.core.stores.repository.mutation import MutationEvent
 
 
 class DependencyResolver(Protocol):

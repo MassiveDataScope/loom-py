@@ -1,10 +1,10 @@
-"""Single source of agent artifacts: manifest ``AGENTS`` or ``ai.specs`` (§4).
+"""Single source of agent artifacts: ``app.agents`` or ``ai.specs`` (§4).
 
 Drives :func:`loom.rest.fastapi.auto.create_app` over a temporary project
-discovered by manifest, mirroring ``tests/integration/ai/test_auto_gate.py``.
+discovered by package scan, mirroring ``tests/integration/ai/test_auto_gate.py``.
 The two declaration sites are mutually exclusive — an implicit precedence
 would silently ignore half of what an operator declared — so the four
-combinations are pinned here: only ``AGENTS``, both, neither, and ``AGENTS``
+combinations are pinned here: only ``app.agents``, both, neither, and ``app.agents``
 without an ``ai:`` section at all.
 
 The engine entry point is faked in-process and the app lifespan is never
@@ -29,7 +29,6 @@ from tests.integration.ai._entrypoints import fake_entry_points
 from tests.integration.ai.conftest import CountingEngineProvider
 
 _APP_MODULE = "loom_aispecs_fixture_app"
-_MANIFEST_MODULE = "loom_aispecs_fixture_manifest"
 _ENGINE_NAME = "aispecs-fake"
 _GROUP = "loom.ai.engines"
 
@@ -65,18 +64,6 @@ class AiSpecsPingInterface(RestInterface[str]):
     prefix = "/aispecs-ping"
     routes = (RestRoute(use_case=AiSpecsPingUseCase, method="GET", path="/"),)
 '''
-
-_MANIFEST_SOURCE = """\
-\"\"\"Manifest declaring the fixture interface and, optionally, its agents.\"\"\"
-
-from __future__ import annotations
-
-from {app_module} import AiSpecsPingInterface, AiSpecsRecord
-
-MODELS = [AiSpecsRecord]
-INTERFACES = [AiSpecsPingInterface]
-AGENTS = {agents!r}
-"""
 
 _AGENT_SPEC: dict[str, Any] = {
     "spec_version": 1,
@@ -116,11 +103,11 @@ class _FakeEntryPoint:
 
 
 @pytest.fixture(autouse=True)
-def fresh_manifest() -> Iterator[None]:
-    """Re-import the manifest per test: each writes a different ``AGENTS``."""
-    sys.modules.pop(_MANIFEST_MODULE, None)
+def fresh_app() -> Iterator[None]:
+    """Re-import the app package per test."""
+    sys.modules.pop(_APP_MODULE, None)
     yield
-    sys.modules.pop(_MANIFEST_MODULE, None)
+    sys.modules.pop(_APP_MODULE, None)
 
 
 @pytest.fixture
@@ -134,26 +121,23 @@ def fake_engine(monkeypatch: pytest.MonkeyPatch) -> None:
 def _write_project(
     tmp_path: Path,
     *,
-    manifest_agents: list[str],
+    app_agents: list[str],
     config_specs: list[str] | None,
     with_ai_section: bool = True,
 ) -> str:
-    """Write the fixture app, its manifest, one agent artifact and the config.
+    """Write the fixture app package, one agent artifact and the config.
 
     Args:
         tmp_path: Directory the project is written to.
-        manifest_agents: Value of the manifest ``AGENTS`` attribute.
+        app_agents: Value of ``app.agents``.
         config_specs: Value of ``ai.specs``, or ``None`` to omit the key.
         with_ai_section: Whether the configuration declares an ``ai:`` section.
 
     Returns:
         Path of the written configuration file.
     """
-    (tmp_path / f"{_APP_MODULE}.py").write_text(_APP_SOURCE, encoding="utf-8")
-    (tmp_path / f"{_MANIFEST_MODULE}.py").write_text(
-        _MANIFEST_SOURCE.format(app_module=_APP_MODULE, agents=manifest_agents),
-        encoding="utf-8",
-    )
+    (tmp_path / _APP_MODULE).mkdir()
+    (tmp_path / _APP_MODULE / "__init__.py").write_text(_APP_SOURCE, encoding="utf-8")
     agent_dir = tmp_path / "ai" / "agents" / _AGENT
     agent_dir.mkdir(parents=True)
     (agent_dir / "agent.yaml").write_text(yaml.safe_dump(_AGENT_SPEC), encoding="utf-8")
@@ -161,10 +145,13 @@ def _write_project(
         "app": {
             "name": _APP_NAME,
             "code_path": str(tmp_path),
-            "discovery": {"mode": "manifest", "manifest": {"module": _MANIFEST_MODULE}},
+            "packages": [_APP_MODULE],
+            "agents": app_agents,
         },
-        "stores": {"default": {"backend": "sqlalchemy", "url": "sqlite+aiosqlite:///"}},
-        "persistence": {"cursors": {"signing": "ephemeral"}},
+        "stores": {
+            "default": {"backend": "sqlalchemy", "url": "sqlite+aiosqlite:///"},
+            "settings": {"cursors": {"signing": "ephemeral"}},
+        },
     }
     if with_ai_section:
         ai_section: dict[str, Any] = {
@@ -184,13 +171,13 @@ def _codes(failure: AgentCompilationError) -> tuple[AgentErrorCode, ...]:
     return tuple(issue.code for issue in failure.issues)
 
 
-class TestManifestAsTheOnlySource:
-    """A manifest may be the only place the agents of an application are declared."""
+class TestAppAgentsAsTheOnlySource:
+    """``app.agents`` may be the only place the agents of an application are declared."""
 
     @pytest.mark.usefixtures("fake_engine")
-    def test_compiles_the_agents_when_only_the_manifest_declares_them(self, tmp_path: Path) -> None:
-        """``AGENTS`` alone compiles the artifacts it names."""
-        config_path = _write_project(tmp_path, manifest_agents=[_SPEC_GLOB], config_specs=[])
+    def test_compiles_the_agents_when_only_app_agents_declares_them(self, tmp_path: Path) -> None:
+        """``app.agents`` alone compiles the artifacts it names."""
+        config_path = _write_project(tmp_path, app_agents=[_SPEC_GLOB], config_specs=[])
 
         description = describe_fastapi_app(create_app(config_path))
 
@@ -201,13 +188,9 @@ class TestExclusiveSources:
     """Declaring the artifacts twice is an error, never a silent precedence."""
 
     @pytest.mark.usefixtures("fake_engine")
-    def test_fails_when_the_manifest_and_the_config_both_declare_agents(
-        self, tmp_path: Path
-    ) -> None:
+    def test_fails_when_app_agents_and_the_config_both_declare_agents(self, tmp_path: Path) -> None:
         """Two sources means half the declaration would be ignored."""
-        config_path = _write_project(
-            tmp_path, manifest_agents=[_SPEC_GLOB], config_specs=[_SPEC_GLOB]
-        )
+        config_path = _write_project(tmp_path, app_agents=[_SPEC_GLOB], config_specs=[_SPEC_GLOB])
 
         with pytest.raises(AgentCompilationError) as failure:
             create_app(config_path)
@@ -217,7 +200,7 @@ class TestExclusiveSources:
     @pytest.mark.usefixtures("fake_engine")
     def test_fails_when_no_source_declares_agents(self, tmp_path: Path) -> None:
         """An ``ai:`` section that names no artifact configures nothing."""
-        config_path = _write_project(tmp_path, manifest_agents=[], config_specs=None)
+        config_path = _write_project(tmp_path, app_agents=[], config_specs=None)
 
         with pytest.raises(AgentCompilationError) as failure:
             create_app(config_path)
@@ -225,16 +208,14 @@ class TestExclusiveSources:
         assert AgentErrorCode.AGENT_SPECS_MISSING in _codes(failure.value)
 
 
-class TestManifestWithNoAiSection:
+class TestAppAgentsWithNoAiSection:
     """Agents declared with no deployment to compile them against are refused."""
 
-    def test_fails_when_the_manifest_declares_agents_with_no_ai_section(
-        self, tmp_path: Path
-    ) -> None:
+    def test_fails_when_app_agents_declares_agents_with_no_ai_section(self, tmp_path: Path) -> None:
         """The operator is told which attribute and which section disagree."""
         config_path = _write_project(
             tmp_path,
-            manifest_agents=[_SPEC_GLOB],
+            app_agents=[_SPEC_GLOB],
             config_specs=None,
             with_ai_section=False,
         )
@@ -243,5 +224,5 @@ class TestManifestWithNoAiSection:
             create_app(config_path)
 
         message = str(failure.value)
-        assert "AGENTS" in message
+        assert "app.agents" in message
         assert "ai:" in message

@@ -1,102 +1,64 @@
+"""The public job API: in-process runs and dispatch through the transport of a queue."""
+
 from __future__ import annotations
 
-import uuid
-from collections.abc import Sequence
-from dataclasses import dataclass, field
-from datetime import UTC, datetime
-from typing import TYPE_CHECKING, Any, Protocol, TypeVar
+from collections.abc import Mapping, Sequence
+from typing import TYPE_CHECKING, Any, TypeVar
 
-from loom.core.identity import (
-    NO_DELEGATION,
-    Acting,
-    Delegation,
-    captured_delegation,
-    reset_identity,
-    set_identity,
-)
-from loom.core.job.callback import CallbackOutcome, JobCallback, notify, refuse_reserved_payload
+from loom.core.job.callback import ANY_CALLBACKS, DispatchableCallbacks, JobCallback
 from loom.core.job.config import JobSettings
-from loom.core.job.context import add_pending_dispatch
-from loom.core.job.handle import InlineOutcome, JobGroup, JobHandle
+from loom.core.job.dispatch import JobDispatch
+from loom.core.job.handle import JobGroup, JobHandle
 from loom.core.job.job import Job
-from loom.core.use_case.factory import UseCaseFactory
+from loom.core.job.transport import JobTransport
 
 if TYPE_CHECKING:
-    from loom.core.engine.executor import RuntimeExecutor
+    from loom.core.engine.executor import UseCaseExecutor
+    from loom.core.use_case.factory import UseCaseFactory
 
 ResultT = TypeVar("ResultT")
 
 
-@dataclass
-class _PendingDispatch:
-    """One inline dispatch, run by the post-commit channel once the unit of work has closed."""
+class JobService:
+    """Run jobs in process and dispatch them through the transport of their effective queue.
 
-    job_type: type[Job[Any]]
-    task_id: str
-    payload: dict[str, Any]
-    params: dict[str, Any] | None
-    on_success: type[Any] | None
-    on_failure: type[Any] | None
-    outcome: InlineOutcome
-    factory: UseCaseFactory
-    executor: RuntimeExecutor = field(repr=False)
-    captured: Delegation = NO_DELEGATION
-    """The dispatcher's caller and deadline (:func:`~loom.core.identity.captured_delegation`)."""
+    A dispatch is validated once, before its transport schedules any work.
+    Unrouted queues use the default transport.
 
-    async def run(self) -> None:
-        """Run the job, then its callback, as the dispatcher, within the captured delegation."""
-        resumed = Acting.current().resumed(self.captured)
-        token = None if resumed is None else set_identity(resumed.caller, until=resumed.until)
-        try:
-            result: Any = await self.executor.run(
-                self.job_type,
-                factory=self.factory,
-                params=self.params,
-                payload=self.payload,
-            )
-            self.outcome.succeed(result)
-            if self.on_success is not None:
-                await notify(
-                    self.factory,
-                    self.on_success,
-                    CallbackOutcome.SUCCESS,
-                    job_id=self.task_id,
-                    result=result,
-                    **self.payload,
-                )
-        except Exception as exc:
-            self.outcome.fail(exc)
-            if self.on_failure is not None:
-                await notify(
-                    self.factory,
-                    self.on_failure,
-                    CallbackOutcome.FAILURE,
-                    job_id=self.task_id,
-                    exc_type=type(exc).__qualname__,
-                    exc_msg=str(exc),
-                    **self.payload,
-                )
-        finally:
-            if token is not None:
-                reset_identity(token)
-
-
-class JobService(Protocol):
-    """Protocol for dispatching and running Jobs.
-
-    Injected into UseCases and application code as any other service.
-    The caller never knows whether it is talking to Celery or to an inline
-    runner — both implement this protocol.
-
-    Example::
-
-        class NotifyUsersUseCase(UseCase[User, None]):
-            def __init__(self, job_service: JobService) -> None:
-                self._jobs = job_service
-
-            async def execute(self, cmd: NotifyCmd = Input()) -> None:
-                self._jobs.dispatch(SendEmailJob, payload={"email": cmd.email})
+    Args:
+        default: Transport serving queues without an explicit route.
+        factory: Builds jobs for an in-process run.
+        executor: Runs an in-process job.
+        routes: Transport selected by each routed queue name.
+        settings: Resolved options of this application's jobs.
+        callbacks: Callback classes discovered for this application.
     """
+
+    def __init__(
+        self,
+        default: JobTransport,
+        *,
+        factory: UseCaseFactory | None = None,
+        executor: UseCaseExecutor | None = None,
+        routes: Mapping[str, JobTransport] | None = None,
+        settings: JobSettings | None = None,
+        callbacks: DispatchableCallbacks = ANY_CALLBACKS,
+    ) -> None:
+        self._default = default
+        self._factory = factory
+        self._executor = executor
+        self._routes = dict(routes or {})
+        self._settings = settings or JobSettings()
+        self._callbacks = callbacks
+
+    @property
+    def default_transport(self) -> JobTransport:
+        """The transport serving the queues without an explicit route."""
+        return self._default
+
+    def transport_for(self, queue: str) -> JobTransport:
+        """The transport that sends the jobs of *queue*."""
+        return self._routes.get(queue, self._default)
 
     async def run(
         self,
@@ -105,19 +67,22 @@ class JobService(Protocol):
         params: dict[str, Any] | None = None,
         payload: dict[str, Any] | None = None,
     ) -> ResultT:
-        """Execute a Job immediately and return its result.
+        """Execute a job immediately in process and return its result.
 
-        Args:
-            job_type: Concrete Job subclass to run.
-            params: Primitive params bound to the execute signature.
-            payload: Raw dict for ``Input()`` command construction.
-
-        Returns:
-            The value returned by ``Job.execute()``.
+        Raises:
+            NotImplementedError: The service was built without a factory and executor.
         """
-        ...
+        if self._factory is None or self._executor is None:
+            raise NotImplementedError(
+                "JobService.run() requires factory and executor. "
+                "Pass them at construction or dispatch the job."
+            )
+        result: ResultT = await self._executor.run(
+            job_type, factory=self._factory, params=params, payload=payload
+        )
+        return result
 
-    def dispatch(
+    def dispatch_after_commit(
         self,
         job_type: type[Job[ResultT]],
         *,
@@ -128,205 +93,117 @@ class JobService(Protocol):
         queue: str | None = None,
         countdown: int | None = None,
         priority: int | None = None,
-        eta: datetime | None = None,
     ) -> JobHandle[ResultT]:
-        """Register a Job for deferred execution after the current UoW commits.
+        """Register a job for execution after the current unit of work commits.
 
-        The job is NOT sent immediately.  It is queued in the current async
-        context and flushed by the executor after a successful commit.
+        The job is flushed after a successful commit, or at the end of an
+        execution without a unit of work. A rollback discards the dispatch.
 
         Args:
-            job_type: Concrete Job subclass to dispatch.
-            params: Primitive params for the execute signature.
-            payload: Raw dict for ``Input()`` command construction.
-            on_success: Callback type invoked on job success.
-            on_failure: Callback type invoked on job failure.
-            queue: Override the job's default ``__queue__``.
-            countdown: Delay in seconds before execution (Celery only).
-            priority: Task priority override (Celery only).
-            eta: Absolute datetime for first execution (Celery only).
+            job_type: Concrete job to dispatch.
+            params: Primitive arguments bound to the execute signature.
+            payload: Raw input command data and callback context.
+            on_success: Callback invoked when the job succeeds.
+            on_failure: Callback invoked when the job fails terminally.
+            queue: Override the job's resolved queue.
+            countdown: Delay in seconds, from zero through 900.
+            priority: Transport priority override.
 
         Returns:
-            A :class:`~loom.core.job.handle.JobHandle` for result retrieval.
+            A handle carrying the dispatch's task id.
 
         Raises:
-            ValueError: When a callback is attached and *payload* holds
-                ``job_id``, ``result``, ``exc_type`` or ``exc_msg``.
+            ValueError: A callback is unknown, its payload reserves a hook key,
+                or the countdown falls outside zero through 900 seconds.
         """
-        ...
-
-    def dispatch_parallel(
-        self,
-        jobs: Sequence[tuple[type[Job[Any]], dict[str, Any]]],
-        *,
-        on_all_success: type[JobCallback] | None = None,
-        on_any_failure: type[JobCallback] | None = None,
-    ) -> JobGroup:
-        """Dispatch multiple Jobs concurrently and return a group handle.
-
-        Args:
-            jobs: Sequence of ``(job_type, payload)`` pairs.
-            on_all_success: Callback invoked when all jobs succeed (Celery chord).
-            on_any_failure: Callback invoked when any job fails.
-
-        Returns:
-            A :class:`~loom.core.job.handle.JobGroup` for collective result retrieval.
-        """
-        ...
-
-
-class InlineJobService:
-    """Executes Jobs inline without a broker, for tests and local mode.
-
-    Satisfies the :class:`JobService` protocol structurally.  The
-    ``dispatch()`` method respects the post-commit semantics: the job is
-    enqueued on the execution's post-commit channel and runs when the
-    executor drains it, after the UoW has closed (or at the end of an
-    execution without one).  Outside an execution the fallback channel
-    holds it until :func:`~loom.core.job.context.flush_pending_dispatches`.
-
-    A dispatched job, and its callbacks, act as
-    :func:`~loom.core.identity.current_caller` at the time of the dispatch:
-    the authenticated caller acting there, else no caller, with the deadline
-    of its delegation (:func:`~loom.core.identity.captured_delegation`), exactly as
-    the Celery and SQS services capture it. :meth:`run` acts as the identity
-    acting, as any execution given none.
-
-    Args:
-        factory: Used to build Job and callback instances from the container.
-        executor: Used to drive the compiled ExecutionPlan.
-        settings: The application's job settings; the ClassVars when omitted.
-
-    Example::
-
-        service = InlineJobService(factory, executor)
-        handle = service.dispatch(SendEmailJob, payload={"email": "a@b.com"})
-        await flush_pending_dispatches()  # outside an execution only
-        result = handle.wait()
-    """
-
-    def __init__(
-        self,
-        factory: UseCaseFactory,
-        executor: RuntimeExecutor,
-        *,
-        settings: JobSettings | None = None,
-    ) -> None:
-        self._factory = factory
-        self._executor = executor
-        self._settings = settings or JobSettings()
-
-    async def run(
-        self,
-        job_type: type[Job[ResultT]],
-        *,
-        params: dict[str, Any] | None = None,
-        payload: dict[str, Any] | None = None,
-    ) -> ResultT:
-        """Execute the Job immediately and return its result.
-
-        Args:
-            job_type: Concrete Job subclass to run.
-            params: Primitive params bound to the execute signature.
-            payload: Raw dict for ``Input()`` command construction.
-
-        Returns:
-            The value returned by ``Job.execute()``.
-        """
-        result: ResultT = await self._executor.run(
+        dispatch = self._build_dispatch(
             job_type,
-            factory=self._factory,
             params=params,
             payload=payload,
+            on_success=on_success,
+            on_failure=on_failure,
+            queue=queue,
+            countdown=countdown,
+            priority=priority,
         )
-        return result
+        return self.transport_for(dispatch.queue).send_after_commit(dispatch)
 
-    def dispatch(
+    async def dispatch_now(
         self,
         job_type: type[Job[ResultT]],
         *,
         params: dict[str, Any] | None = None,
         payload: dict[str, Any] | None = None,
-        on_success: type[Any] | None = None,
-        on_failure: type[Any] | None = None,
+        on_success: type[JobCallback] | None = None,
+        on_failure: type[JobCallback] | None = None,
         queue: str | None = None,
         countdown: int | None = None,
         priority: int | None = None,
-        eta: datetime | None = None,
     ) -> JobHandle[ResultT]:
-        """Queue the Job for post-commit execution and return a handle.
-
-        ``countdown``, ``priority``, and ``eta`` are accepted but ignored —
-        inline execution is always immediate after flush.
+        """Send a job now, even before the caller's writes commit.
 
         Args:
-            job_type: Concrete Job subclass to dispatch.
-            params: Primitive params for the execute signature.
-            payload: Raw dict for ``Input()`` command construction.
-            on_success: Callback type invoked after successful execution.
-            on_failure: Callback type invoked after failed execution.
-            queue: Overrides the job's queue for the returned handle.
-            countdown: Ignored in inline mode.
-            priority: Ignored in inline mode.
-            eta: Ignored in inline mode.
+            job_type: Concrete job to dispatch.
+            params: Primitive arguments bound to the execute signature.
+            payload: Raw input command data and callback context.
+            on_success: Callback invoked when the job succeeds.
+            on_failure: Callback invoked when the job fails terminally.
+            queue: Override the job's resolved queue.
+            countdown: Delay in seconds, from zero through 900.
+            priority: Transport priority override.
 
         Returns:
-            A :class:`~loom.core.job.handle.JobHandle` whose ``wait()``
-            returns the result once the queue is flushed.
+            A handle carrying the dispatch's task id.
 
         Raises:
-            ValueError: When a callback is attached and *payload* holds
-                ``job_id``, ``result``, ``exc_type`` or ``exc_msg``.
+            ValueError: A callback is unknown, its payload reserves a hook key,
+                or the countdown falls outside zero through 900 seconds.
         """
-        _ = (countdown, priority, eta)
-        payload = payload or {}
-        if on_success is not None or on_failure is not None:
-            refuse_reserved_payload(payload)
-        task_id = str(uuid.uuid4())
-        outcome = InlineOutcome()
-        pending = _PendingDispatch(
-            job_type=job_type,
-            task_id=task_id,
-            payload=payload,
+        dispatch = self._build_dispatch(
+            job_type,
             params=params,
+            payload=payload,
             on_success=on_success,
             on_failure=on_failure,
-            outcome=outcome,
-            factory=self._factory,
-            executor=self._executor,
-            captured=captured_delegation(),
+            queue=queue,
+            countdown=countdown,
+            priority=priority,
         )
-        add_pending_dispatch(pending.run)
-        return JobHandle(
-            job_id=task_id,
-            queue=queue or self._settings.of(job_type).queue,
-            dispatched_at=datetime.now(UTC),
-            _inline_outcome=outcome,
+        return await self.transport_for(dispatch.queue).send(dispatch)
+
+    def dispatch_parallel(self, jobs: Sequence[tuple[type[Job[Any]], dict[str, Any]]]) -> JobGroup:
+        """Schedule each job after commit and return handles in input order."""
+        dispatches = [self._build_dispatch(job, payload=body) for job, body in jobs]
+        return JobGroup(
+            handles=tuple(
+                self.transport_for(dispatch.queue).send_after_commit(dispatch)
+                for dispatch in dispatches
+            )
         )
 
-    def dispatch_parallel(
+    def _build_dispatch(
         self,
-        jobs: Sequence[tuple[type[Job[Any]], dict[str, Any]]],
+        job_type: type[Job[Any]],
         *,
-        on_all_success: type[Any] | None = None,
-        on_any_failure: type[Any] | None = None,
-    ) -> JobGroup:
-        """Dispatch multiple Jobs and return a group handle.
-
-        ``on_all_success`` and ``on_any_failure`` are accepted but ignored —
-        chord semantics require a Celery-backed service.
-
-        Args:
-            jobs: Sequence of ``(job_type, payload)`` pairs.
-            on_all_success: Ignored in inline mode.
-            on_any_failure: Ignored in inline mode.
-
-        Returns:
-            A :class:`~loom.core.job.handle.JobGroup` with one handle per job.
-        """
-        _ = (
-            on_all_success,
-            on_any_failure,
+        params: dict[str, Any] | None = None,
+        payload: dict[str, Any] | None = None,
+        on_success: type[JobCallback] | None = None,
+        on_failure: type[JobCallback] | None = None,
+        queue: str | None = None,
+        countdown: int | None = None,
+        priority: int | None = None,
+    ) -> JobDispatch:
+        options = self._settings.options_for(job_type)
+        self.transport_for(queue or options.queue).check_callbacks(on_success, on_failure)
+        return JobDispatch.build(
+            job_type,
+            options=options,
+            callbacks=self._callbacks,
+            params=params,
+            payload=payload,
+            on_success=on_success,
+            on_failure=on_failure,
+            queue=queue,
+            countdown=countdown,
+            priority=priority,
         )
-        handles = tuple(self.dispatch(job_type, payload=payload) for job_type, payload in jobs)
-        return JobGroup(handles=handles)

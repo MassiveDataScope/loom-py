@@ -79,9 +79,9 @@ jobs:
           if [ "${PYTHON_VERSION}" = "${PRIMARY_PYTHON}" ]; then
             coverage_args=(--cov --cov-report=)
           fi
-          uv run --frozen --group mcp-tests --with "pytest-cov==7.1.0" --with "pytest-xdist==3.6.1" \
-            pytest -m "not integration and not slow" \
-            --ignore=tests/unit/etl/backends/test_spark \
+          uv run --frozen --group mcp-tests --with "pytest-cov==7.1.0" \
+            pytest -m "not integration and not slow and not live" \
+            --ignore=tests/unit/etl/engines/test_spark \
             -n 4 "${coverage_args[@]}" \
             --junitxml=junit-fast.xml -o junit_family=legacy
 
@@ -98,14 +98,16 @@ jobs:
             coverage_args=(--cov --cov-report=)
           fi
           uv run --frozen --group mcp-tests --with "pytest-cov==7.1.0" \
-            pytest -m "slow and not integration" \
-            --ignore=tests/unit/etl/backends/test_spark \
+            pytest -m "slow and not integration and not live" \
+            --ignore=tests/unit/etl/engines/test_spark \
             "${coverage_args[@]}" \
             --junitxml=junit-slow.xml -o junit_family=legacy
 
       # The model layer has a branch only Python 3.14 takes (annotationlib), so
       # its coverage comes from here, in an environment with nothing but the
       # 'testing' extra: the model must not lean on a development dependency.
+      # The suite-wide conftest and addopts load development plugins, so the
+      # lane stops conftest lookup at the model tests and clears addopts.
       - name: Run the model tests with coverage
         if: ${{ matrix.python == '3.14' }}
         shell: bash
@@ -115,7 +117,8 @@ jobs:
           set -euo pipefail
           UV_PROJECT_ENVIRONMENT="$RUNNER_TEMP/uv-ci-model" \
             uv run --frozen --no-default-groups --extra testing \
-            --with "pytest-cov==7.1.0" pytest tests/unit/core/model --cov --cov-report=
+            --with "pytest-cov==7.1.0" pytest tests/unit/core/model \
+            --confcutdir=tests/unit/core/model -o addopts="" --cov --cov-report=
 
       - name: Store fast lane results
         uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
@@ -172,7 +175,7 @@ jobs:
         run: |
           set -euo pipefail
           uv run --frozen --with "pytest-cov==7.1.0" \
-            pytest tests/unit/etl/backends/test_spark \
+            pytest tests/unit/etl/engines/test_spark \
             --cov --cov-report= \
             --junitxml=junit-spark.xml -o junit_family=legacy
 

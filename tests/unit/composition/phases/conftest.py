@@ -6,11 +6,10 @@ from collections.abc import Callable, Sequence
 
 import pytest
 
-from loom.composition import Application, compose_application
-from loom.composition.source import CompositionSource
+from loom.composition import Application, Project
 from loom.core.config import ConfigContext
 from loom.core.di.container import LoomContainer
-from tests.helpers.composition import Serving, composition_source, executors, fixture_project
+from tests.helpers.composition import Serving, composition_project, executors, fixture_project
 from tests.unit.composition.phases.components import AcmeJob, AcmePing, AcmeRecord
 from tests.unit.composition.phases.paths import SQLITE
 
@@ -20,25 +19,29 @@ Module = Callable[[LoomContainer], None]
 
 
 @pytest.fixture
-def source() -> CompositionSource:
+def project() -> Project:
     """An in-memory source: the ``acme`` application over SQLite, jobs inline."""
-    return composition_source(
+    return composition_project(
         ConfigContext.from_dict(
             {
                 "app": {"name": "acme", "job_service": "inline"},
-                "stores": {"default": SQLITE},
-                "persistence": {"cursors": {"signing": "ephemeral"}},
+                "stores": {"default": SQLITE, "settings": {"cursors": {"signing": "ephemeral"}}},
             }
         )
     )
 
 
 @pytest.fixture
-def overridden(source: CompositionSource) -> Callable[..., Application]:
+def overridden(project: Project) -> Callable[..., Application]:
     """Compose ``AcmeRecord``, ``AcmePing`` and ``AcmeJob`` over SQLite with these overrides."""
 
     def compose(*overrides: Module, modules: Sequence[Module] = ()) -> Application:
-        adapter = Serving(AcmeRecord, use_cases=(AcmePing,), jobs=(AcmeJob,), overrides=overrides)
-        return compose_application(source, adapter, modules=modules)
+        adapter = Serving(
+            AcmeRecord,
+            use_cases=(AcmePing,),
+            jobs=(AcmeJob,),
+            overrides=(*modules, *overrides),
+        )
+        return project.compose(adapter)
 
     return compose

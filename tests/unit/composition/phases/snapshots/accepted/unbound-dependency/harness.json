@@ -1,10 +1,5 @@
 {
   "bindings": {
-    "('repo', AcmeRecord)": {
-      "provider": "HttpTestHarness._build_module.<locals>._make_provider.<locals>._provider",
-      "resolved": "InMemoryRepository",
-      "scope": "APPLICATION"
-    },
     "AppConfig": {
       "provider": "LoomContainer.register_instance.<locals>.<lambda>",
       "resolved": "AppConfig",
@@ -13,6 +8,11 @@
     "ApplicationInvoker": {
       "provider": "LoomContainer.register_instance.<locals>.<lambda>",
       "resolved": "AppInvoker",
+      "scope": "APPLICATION"
+    },
+    "AwsClients": {
+      "provider": "LoomContainer.register_instance.<locals>.<lambda>",
+      "resolved": "AwsClients",
       "scope": "APPLICATION"
     },
     "CachedCalls": {
@@ -32,12 +32,17 @@
     },
     "JobService": {
       "provider": "configure_job_service.<locals>.<lambda>",
-      "resolved": "InlineJobService",
+      "resolved": "JobService",
       "scope": "APPLICATION"
     },
-    "ObservabilityRuntime": {
+    "Observability": {
       "provider": "LoomContainer.register_instance.<locals>.<lambda>",
-      "resolved": "ObservabilityRuntime",
+      "resolved": "Observability",
+      "scope": "APPLICATION"
+    },
+    "RepositoryCatalog": {
+      "provider": "LoomContainer.register_instance.<locals>.<lambda>",
+      "resolved": "RepositoryCatalog",
       "scope": "APPLICATION"
     },
     "RepositoryDecorator": {
@@ -45,9 +50,9 @@
       "resolved": "function",
       "scope": "APPLICATION"
     },
-    "RuntimeExecutor": {
-      "provider": "LoomContainer.register_instance.<locals>.<lambda>",
-      "resolved": "RuntimeExecutor",
+    "RepositoryToken(model=<class 'tests.unit.composition.phases.components.AcmeRecord'>)": {
+      "provider": "Override.install.<locals>.<lambda>",
+      "resolved": "InMemoryRepository",
       "scope": "APPLICATION"
     },
     "SqlQueryService": {
@@ -60,6 +65,11 @@
       "resolved": "StoreCatalog",
       "scope": "APPLICATION"
     },
+    "UseCaseExecutor": {
+      "provider": "LoomContainer.register_instance.<locals>.<lambda>",
+      "resolved": "UseCaseExecutor",
+      "scope": "APPLICATION"
+    },
     "UseCaseFactory": {
       "provider": "LoomContainer.register_instance.<locals>.<lambda>",
       "resolved": "UseCaseFactory",
@@ -69,9 +79,34 @@
       "provider": "LoomContainer.register_instance.<locals>.<lambda>",
       "resolved": "UseCaseRegistry",
       "scope": "APPLICATION"
+    },
+    "loom.core.stores.repository.capabilities.BulkCreatable[tests.unit.composition.phases.components.AcmeRecord]": {
+      "provider": "Override.install.<locals>.<lambda>",
+      "resolved": "InMemoryRepository",
+      "scope": "APPLICATION"
+    },
+    "loom.core.stores.repository.capabilities.Creatable[tests.unit.composition.phases.components.AcmeRecord]": {
+      "provider": "Override.install.<locals>.<lambda>",
+      "resolved": "InMemoryRepository",
+      "scope": "APPLICATION"
+    },
+    "loom.core.stores.repository.capabilities.Deletable[tests.unit.composition.phases.components.AcmeRecord]": {
+      "provider": "Override.install.<locals>.<lambda>",
+      "resolved": "InMemoryRepository",
+      "scope": "APPLICATION"
+    },
+    "loom.core.stores.repository.capabilities.Readable[tests.unit.composition.phases.components.AcmeRecord]": {
+      "provider": "Override.install.<locals>.<lambda>",
+      "resolved": "InMemoryRepository",
+      "scope": "APPLICATION"
+    },
+    "loom.core.stores.repository.capabilities.Updatable[tests.unit.composition.phases.components.AcmeRecord]": {
+      "provider": "Override.install.<locals>.<lambda>",
+      "resolved": "InMemoryRepository",
+      "scope": "APPLICATION"
     }
   },
   "repo_bindings": {
-    "AcmeRecord": "('repo', AcmeRecord)"
+    "AcmeRecord": "RepositoryToken(model=<class 'tests.unit.composition.phases.components.AcmeRecord'>)"
   }
 }

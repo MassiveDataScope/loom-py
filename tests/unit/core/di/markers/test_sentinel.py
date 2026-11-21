@@ -11,7 +11,7 @@ from loom.core.di.container import LoomContainer
 from loom.core.di.scope import Scope
 from loom.core.execution import ExecutionScope, MarkerNotResolved
 from loom.core.identity import ANONYMOUS
-from loom.core.repository.registration import classify_key
+from loom.core.stores.repository.registration import classify_key
 from loom.core.use_case.kinds import MCP, declare_kinds
 from loom.core.use_case.markers import Agent, Caller, Mcp
 
@@ -35,7 +35,7 @@ class GatewayResolver:
 def _container() -> LoomContainer:
     container = LoomContainer(classify_key=classify_key)
     declare_kinds(container.kinds)
-    container.kinds.bind(MCP, GatewayResolver())
+    container.kinds.register(MCP, GatewayResolver())
     return container
 
 

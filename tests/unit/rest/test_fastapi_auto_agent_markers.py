@@ -19,16 +19,16 @@ from loom.ai.declarative import PolicySpec
 from loom.ai.errors import AgentCompilationError, AgentErrorCode
 from loom.ai.inference import InferenceTarget
 from loom.composition._ai import AiWiring
-from loom.core.bootstrap import KernelRuntime
+from loom.core.bootstrap import Kernel
 from loom.core.di import LoomContainer
 from loom.core.engine.compiler import UseCaseCompiler
-from loom.core.engine.executor import RuntimeExecutor
+from loom.core.engine.executor import UseCaseExecutor
 from loom.core.execution import ExecutionScope, Kind
 from loom.core.identity import Identity
 from loom.core.model import msgspec_type
-from loom.core.observability.runtime import ObservabilityRuntime
-from loom.core.repository.registration import classify_key
-from loom.core.sql.service import NullSqlQueryService, SqlQueryService
+from loom.core.observability.observability import Observability
+from loom.core.stores.repository.registration import classify_key
+from loom.core.stores.sql.service import NullSqlQueryService, SqlQueryService
 from loom.core.use_case import Agent
 from loom.core.use_case.factory import UseCaseFactory, main_repository
 from loom.core.use_case.invoker import AppInvoker
@@ -152,8 +152,8 @@ class TestAgentMarkerProblemsAreReportedTogether:
         }
 
 
-def _kernel_runtime() -> KernelRuntime:
-    """Build a real, minimal ``KernelRuntime`` — every collaborator genuine, none stubbed.
+def _kernel_runtime() -> Kernel:
+    """Build a real, minimal ``Kernel`` — every collaborator genuine, none stubbed.
 
     ``SqlQueryService`` is registered the same way ``create_app`` always
     registers it, before ``AiWiring.bind_resolvers`` ever runs: that
@@ -165,31 +165,31 @@ def _kernel_runtime() -> KernelRuntime:
     container.register_instance(SqlQueryService, NullSqlQueryService())
     compiler = UseCaseCompiler()
     factory = UseCaseFactory(container)
-    executor = RuntimeExecutor(compiler, resolvers=container.kinds)
+    executor = UseCaseExecutor(compiler, resolvers=container.kinds)
     registry = UseCaseRegistry.build([])
-    app = AppInvoker(factory=factory, executor=executor, registry=registry)
-    return KernelRuntime(
+    invoker = AppInvoker(factory=factory, executor=executor, registry=registry)
+    return Kernel(
         container=container,
         compiler=compiler,
         factory=factory,
         executor=executor,
         registry=registry,
-        app=app,
+        invoker=invoker,
     )
 
 
-def _fake_agent_runtime() -> Any:
-    """An unentered ``AgentRuntime``: enough to close over, never called here.
+def _fake_agent_host() -> Any:
+    """An unentered ``AgentHost``: enough to close over, never called here.
 
     ``AiWiring.bind_resolvers`` only reads ``runtime is None`` and hands the
     value on to the marker resolvers, which store it and never call any of
     its methods until the handle they build actually runs.
-    So a real ``AgentRuntime`` never entered as a context manager is a
+    So a real ``AgentHost`` never entered as a context manager is a
     faithful double for this seam — no fake class needed.
     """
-    from loom.ai.runtime import AgentRuntime
+    from loom.ai.execution import AgentHost
 
-    return object.__new__(AgentRuntime)
+    return object.__new__(AgentHost)
 
 
 class TestResolversBindOnlyWithAnAiRuntime:
@@ -203,7 +203,7 @@ class TestResolversBindOnlyWithAnAiRuntime:
 
     def test_with_an_ai_runtime_both_resolvers_are_bound_once(self) -> None:
         result = _kernel_runtime()
-        ai = AiWiring(config=None, runtime=_fake_agent_runtime())
+        ai = AiWiring(config=None, agent_host=_fake_agent_host())
 
         ai.bind_resolvers(result)
 
@@ -221,15 +221,13 @@ class TestResolversBindOnlyWithAnAiRuntime:
             result.executor.bind_mcp_resolver(another)
 
     @pytest.mark.parametrize("registered", [True, False], ids=["registered", "unregistered"])
-    def test_the_handle_opens_spans_on_the_registered_observability_runtime(
-        self, registered: bool
-    ) -> None:
+    def test_the_handle_opens_spans_on_the_registered_observability(self, registered: bool) -> None:
         result = _kernel_runtime()
-        runtime = ObservabilityRuntime([])
+        runtime = Observability([])
         if registered:
-            result.container.register_instance(ObservabilityRuntime, runtime)
+            result.container.register_instance(Observability, runtime)
 
-        AiWiring(config=None, runtime=_fake_agent_runtime()).bind_resolvers(result)
+        AiWiring(config=None, agent_host=_fake_agent_host()).bind_resolvers(result)
 
         with ExecutionScope(Identity(subject="ada", mechanism="test")):
             handle: Any = result.container.kinds.resolve(AGENT, Agent("triage"), AgentHandle)

@@ -11,9 +11,10 @@ from unittest.mock import MagicMock
 
 import pytest
 
+from loom.connections.aws import AwsClients
 from loom.core.connections import AwsClientConfig, ClickHouseConnection
 from loom.core.model.redaction import Dsn, Secret
-from tests.helpers.extras import patched_aws_clients
+from tests.helpers.aws import OTHER_REGION
 
 _CONNECTION = ClickHouseConnection(
     url=Dsn("clickhouse://h:8123/db"), username="etl", password=Secret("pw"), read_timeout=600
@@ -119,11 +120,11 @@ class TestStreamingSinkClients:
 
 
 class TestEtlDynamoDbClientBounds:
-    def test_the_etl_dynamodb_client_takes_the_declared_bounds(self) -> None:
-        from loom.etl.backends.polars.provider import _build_dynamodb_client
+    def test_the_etl_dynamodb_client_takes_the_declared_bounds(self, mocked_aws: None) -> None:
+        client = AwsClients().client(
+            "dynamodb", AwsClientConfig(region=OTHER_REGION, read_timeout=9)
+        )
 
-        with patched_aws_clients() as clients:
-            _build_dynamodb_client(AwsClientConfig(region="eu-west-1", read_timeout=9))
-
-        assert clients.calls == [("dynamodb", "eu-west-1")]
-        assert clients.options[-1]["config"].read_timeout == 9
+        assert client.meta.service_model.service_name == "dynamodb"
+        assert client.meta.region_name == OTHER_REGION
+        assert client.meta.config.read_timeout == 9

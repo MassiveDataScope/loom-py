@@ -9,7 +9,7 @@ from collections.abc import Sequence
 from decimal import Decimal
 from typing import Any, NoReturn
 
-from loom.etl.runtime.contracts import AgentBatchRunner, AgentIssue, AgentIssueKind
+from loom.etl.ports.contracts import AgentBatchRunner, AgentIssue, AgentIssueKind
 
 
 class UnservedAgents(AgentBatchRunner):

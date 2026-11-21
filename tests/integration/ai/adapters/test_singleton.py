@@ -2,12 +2,13 @@
 
 from __future__ import annotations
 
-from loom.composition import CompositionSource, compose_application
+from loom.composition import Project
 from loom.core.di.container import LoomContainer
 from loom.core.di.scope import Scope
 from loom.core.identity import Identity
-from loom.serverless.aws.lambda_ import LambdaAdapter
+from loom.serverless.aws.lambda_ import LambdaRuntime
 from tests.helpers.ai import CountingEngineProvider
+from tests.helpers.composition import WithOverrides
 from tests.integration.ai.adapters.doubles import (
     AcmeAdvice,
     AcmeAnalystAdvice,
@@ -29,21 +30,19 @@ def _singletons(container: LoomContainer) -> None:
 class TestASingletonAdapterHoldingHandles:
     async def test_is_built_at_seal_and_serves_each_execution(
         self,
-        source: CompositionSource,
+        project: Project,
         engines: CountingEngineProvider,
         session: RecordingMcpSession,
     ) -> None:
         del engines
-        application = compose_application(
-            source,
-            LambdaAdapter(use_cases=(AcmeMarket,)),  # type: ignore[arg-type]
-            modules=(_singletons,),
+        application = project.compose(
+            WithOverrides(LambdaRuntime(use_cases=(AcmeMarket,)), _singletons)
         )
-        container, runtime = application.kernel.container, application.ai.runtime
+        container, host = application.kernel.container, application.ai.agent_host
         quotes = container.resolve(AcmeQuotes)
-        assert runtime is not None
+        assert host is not None
 
-        async with runtime:
+        async with host:
             for caller in (_ALICE, _BOB):
                 await application.kernel.executor.run(AcmeMarket, identity=caller)
 

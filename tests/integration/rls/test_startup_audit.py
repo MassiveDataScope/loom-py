@@ -8,8 +8,8 @@ import pytest
 from sqlalchemy.ext.asyncio import create_async_engine
 from sqlalchemy.pool import NullPool
 
-from loom.core.repository.sqlalchemy.rls import create_schema, guard_manifest
-from loom.core.repository.sqlalchemy.rls.integrity import startup_problems
+from loom.stores.sqlalchemy.rls import create_schema, guard_manifest
+from loom.stores.sqlalchemy.rls.integrity import startup_problems
 from tests.integration.agnosticism import bookkeeping
 from tests.integration.rls.conftest import BootstrapFactory, ScopedDatabase, application_for
 from tests.integration.rls.test_audit_verify import _drift

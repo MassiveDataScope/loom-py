@@ -7,9 +7,9 @@ from sqlalchemy import MetaData
 from sqlalchemy.dialects import postgresql
 from sqlalchemy.schema import CreateTable
 
-from loom.core.backend.sqlalchemy import compile_all, scoped_tables
 from loom.core.model import BaseModel, ColumnField, Privilege, RowScoped, ScopedField
 from loom.core.model.types import DateTime, Integer, String, Text
+from loom.stores.sqlalchemy.schema import compile_all, scoped_tables
 
 
 class Event(BaseModel, RowScoped):

@@ -9,21 +9,22 @@ from __future__ import annotations
 
 from pathlib import Path
 from typing import Any
+from unittest.mock import patch
 
 import yaml
 
 from loom.celery.bootstrap import bootstrap_worker
 from loom.core.cache import CachedRepository, cached
+from loom.core.discovery.base import DiscoveryResult
 from loom.core.job.job import Job
 from loom.core.model import BaseModel, ColumnField
-from loom.core.repository import repository_for
-from loom.core.repository.sqlalchemy import RepositorySQLAlchemy
+from loom.core.stores.repository import repository_for
+from loom.stores.sqlalchemy import SQLAlchemyRepository
 from tests.unit.core.cache._doubles import SERIALIZED_BACKEND
 
 
 class _NoopJob(Job[None]):
     __queue__ = "default"
-    __retries__ = 0
     __countdown__ = 0
     __timeout__ = None
     __priority__ = 0
@@ -41,7 +42,7 @@ class _CachedWorkerModel(BaseModel):
 
 @cached
 @repository_for(_CachedWorkerModel)
-class _CachedWorkerRepository(RepositorySQLAlchemy[_CachedWorkerModel, int]):
+class _CachedWorkerRepository(SQLAlchemyRepository[_CachedWorkerModel, int]):
     """Marked repository the worker must serve wrapped when ``cache:`` is present."""
 
 
@@ -56,19 +57,21 @@ def _bootstrap(tmp_path: Path, cache: dict[str, Any] | None) -> Any:
             "default": {
                 "backend": "sqlalchemy",
                 "url": f"sqlite+aiosqlite:///{tmp_path / 'worker.db'}",
-            }
+            },
+            "settings": {"cursors": {"signing": "ephemeral"}},
         },
-        "persistence": {"cursors": {"signing": "ephemeral"}},
         "app": {
             "name": "worker",
-            "discovery": {"mode": "modules", "modules": {"include": [__name__]}},
+            "packages": ["acme_worker_cache"],
         },
     }
     if cache is not None:
         cfg["cache"] = cache
     config_path = tmp_path / "worker.yaml"
     config_path.write_text(yaml.safe_dump(cfg), encoding="utf-8")
-    return bootstrap_worker(str(config_path))
+    discovered = DiscoveryResult(models=(_CachedWorkerModel,), use_cases=(), jobs=(_NoopJob,))
+    with patch("loom.core.discovery.scanner.PackageScanner.discover", return_value=discovered):
+        return bootstrap_worker(str(config_path))
 
 
 class TestBootstrapCache:

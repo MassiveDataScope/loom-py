@@ -14,15 +14,16 @@ from sqlalchemy import text
 from sqlalchemy.ext.asyncio import create_async_engine
 from sqlalchemy.pool import NullPool
 
-from loom.core.backend.sqlalchemy import compile_all, get_metadata, reset_registry
 from loom.core.command import Command
 from loom.core.errors import BoundaryValidationError
 from loom.core.model import BaseModel, ColumnField, ColumnType, Postgres, String
-from loom.core.persistence.stores import DEFAULT_STORE
-from loom.core.repository.abc import CursorCodec
-from loom.core.repository.abc.query import FilterGroup, FilterOp, FilterSpec, QuerySpec
-from loom.core.repository.sqlalchemy.repository import RepositorySQLAlchemy
-from loom.core.repository.sqlalchemy.session_manager import SessionManager
+from loom.core.stores.catalog import DEFAULT_STORE
+from loom.core.stores.repository import CursorCodec
+from loom.core.stores.repository.query import FilterGroup, FilterOp, FilterSpec, QuerySpec
+from loom.stores.sqlalchemy.repository import SQLAlchemyRepository
+from loom.stores.sqlalchemy.schema import compile_all, get_metadata, reset_registry
+from loom.stores.sqlalchemy.session_manager import SessionManager
+from loom.testing import make
 
 pytestmark = pytest.mark.integration
 
@@ -76,7 +77,7 @@ _SECOND = CreateSample(
 
 
 @pytest.fixture
-async def repo(pg_admin_uri: str) -> AsyncIterator[RepositorySQLAlchemy[Sample, int]]:
+async def repo(pg_admin_uri: str) -> AsyncIterator[SQLAlchemyRepository[Sample, int]]:
     reset_registry()
     compile_all(Sample)
     manager = SessionManager(
@@ -86,13 +87,13 @@ async def repo(pg_admin_uri: str) -> AsyncIterator[RepositorySQLAlchemy[Sample, 
         await conn.run_sync(get_metadata().drop_all)
         await conn.run_sync(get_metadata().create_all)
     try:
-        yield RepositorySQLAlchemy(
+        yield SQLAlchemyRepository(
             session_manager=manager, model=Sample, cursor_codec=CursorCodec(signing="ephemeral")
         )
     finally:
         async with manager.engine.begin() as conn:
             await conn.run_sync(get_metadata().drop_all)
-        await manager.dispose()
+        await manager.close()
         reset_registry()
 
 
@@ -110,20 +111,23 @@ class TestTypedFilters:
         ],
     )
     async def test_a_typed_filter_value_selects_the_row_written_with_it(
-        self, repo: RepositorySQLAlchemy[Sample, int], field: str, op: FilterOp, value: Any
+        self, repo: SQLAlchemyRepository[Sample, int], field: str, op: FilterOp, value: Any
     ) -> None:
         first = await repo.create(_FIRST)
         await repo.create(_SECOND)
 
         page = await repo.list_with_query(
-            QuerySpec(filters=FilterGroup(filters=(FilterSpec(field=field, op=op, value=value),)))
+            make(
+                QuerySpec,
+                filters=FilterGroup(filters=(FilterSpec(field=field, op=op, value=value),)),
+            )
         )
 
         assert [item.id for item in page.items] == [first.id]
 
     async def test_date_and_time_values_read_back_as_written(
         self,
-        repo: RepositorySQLAlchemy[Sample, int],
+        repo: SQLAlchemyRepository[Sample, int],
     ) -> None:
         created = await repo.create(_FIRST)
 
@@ -133,7 +137,7 @@ class TestTypedFilters:
         assert (stored.due_on, stored.opens_at) == (_FIRST.due_on, _FIRST.opens_at)
 
     async def test_an_undeclared_uuid_is_a_native_uuid_column_read_back_as_written(
-        self, repo: RepositorySQLAlchemy[Sample, int], pg_admin_uri: str
+        self, repo: SQLAlchemyRepository[Sample, int], pg_admin_uri: str
     ) -> None:
         created = await repo.create(_FIRST)
 
@@ -157,7 +161,7 @@ class TestTypedFilters:
 
     async def test_a_time_with_time_zone_column_keeps_the_offset(
         self,
-        repo: RepositorySQLAlchemy[Sample, int],
+        repo: SQLAlchemyRepository[Sample, int],
     ) -> None:
         created = await repo.create(_FIRST)
 
@@ -169,7 +173,7 @@ class TestTypedFilters:
 
     async def test_a_naive_time_for_a_time_with_time_zone_column_is_refused(
         self,
-        repo: RepositorySQLAlchemy[Sample, int],
+        repo: SQLAlchemyRepository[Sample, int],
     ) -> None:
         naive = msgspec.structs.replace(_FIRST, closes_at=time(18, 0))
 

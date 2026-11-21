@@ -5,7 +5,7 @@ exporters are extras-only, so every import that touches them is deferred to the
 call that needs them and guarded with an actionable error.
 
 Spans are not opened here: they are opened by
-:class:`~loom.core.observability.runtime.ObservabilityRuntime`, the only place
+:class:`~loom.core.observability.observability.Observability`, the only place
 that owns one lexical scope covering both ends of a unit of work.
 """
 
@@ -14,7 +14,6 @@ from __future__ import annotations
 import atexit
 import logging
 import os
-from collections.abc import Callable, MutableMapping
 from typing import TYPE_CHECKING, Any, cast
 
 from opentelemetry import _logs as otel_logs
@@ -196,29 +195,17 @@ def _build_exporter(config: OtelConfig) -> Any:
     return exporter_cls(**kwargs)
 
 
-def build_log_correlation_processor() -> Callable[
-    [Any, str, MutableMapping[str, Any]],
-    MutableMapping[str, Any],
-]:
-    """Build a structlog processor that adds the active OTEL span IDs.
+class OtelSpanFilter(logging.Filter):
+    """Stamp each record with the ids of the active recording OTEL span."""
 
-    Returns:
-        A processor function compatible with ``structlog``.
-    """
-
-    def _processor(
-        logger: Any,
-        method: str,
-        event_dict: MutableMapping[str, Any],
-    ) -> MutableMapping[str, Any]:
+    def filter(self, record: logging.LogRecord) -> bool:
+        """Add ``otel_trace_id`` and ``otel_span_id`` to *record* and let it through."""
         span = trace.get_current_span()
         if span.is_recording():
             ctx = span.get_span_context()
-            event_dict.setdefault("otel_trace_id", format(ctx.trace_id, "032x"))
-            event_dict.setdefault("otel_span_id", format(ctx.span_id, "016x"))
-        return event_dict
-
-    return _processor
+            record.__dict__.setdefault("otel_trace_id", format(ctx.trace_id, "032x"))
+            record.__dict__.setdefault("otel_span_id", format(ctx.span_id, "016x"))
+        return True
 
 
 _LOG_EXPORT_STATE: tuple[Any, LoggingHandler] | None = None
@@ -228,11 +215,13 @@ def install_otel_log_export(
     config: OtelConfig,
     *,
     exporter: LogRecordExporter | None = None,
-) -> LoggingHandler | None:
-    """Install a stdlib log handler that exports OTEL logs.
+) -> LoggingHandler:
+    """Build the stdlib log handler that exports OTEL logs.
 
-    The helper is idempotent for the current process. Subsequent calls return
-    the already-installed handler.
+    The handler is not attached to the root logger: pass it to
+    :func:`~loom.core.logger.install.configure_logging`, which attaches it and
+    puts the context filter on it like on every handler loom owns. The helper is
+    idempotent for the current process: later calls return the same handler.
 
     Args:
         config: OTLP exporter configuration.
@@ -240,7 +229,7 @@ def install_otel_log_export(
             built from ``config``.
 
     Returns:
-        The installed logging handler.
+        The export handler.
 
     Raises:
         ImportError: If ``opentelemetry-sdk`` is not installed.
@@ -271,7 +260,6 @@ def install_otel_log_export(
     otel_logs.set_logger_provider(provider)
 
     handler = LoggingHandler(level=logging.NOTSET, logger_provider=provider)
-    logging.getLogger().addHandler(handler)
     atexit.register(provider.shutdown)
     _LOG_EXPORT_STATE = (provider, handler)
     return handler
@@ -316,7 +304,7 @@ def _resolve_log_protocol(config: OtelConfig) -> str:
 
 
 __all__ = [
-    "build_log_correlation_processor",
+    "OtelSpanFilter",
     "build_tracer",
     "install_otel_log_export",
 ]
