@@ -22,6 +22,10 @@ class CapturingHandler(logging.Handler):
         self.records.append(record)
 
 
+class LambdaLoggerHandler(CapturingHandler):
+    """The Lambda runtime's handler as loom recognises it, by its class name, keeping records."""
+
+
 _STAMPED_ORIGIN = frozenset(
     {
         LogField.SERVICE_NAME,

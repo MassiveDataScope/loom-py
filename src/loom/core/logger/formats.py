@@ -17,11 +17,15 @@ import sys
 from datetime import UTC, datetime
 from typing import Final
 
-from loom.core.logger.filter import STANDARD_ATTRIBUTES, render_value
+from loom.core.logger.filter import STANDARD_ATTRIBUTES
 from loom.core.logger.settings import LogSettings
+from loom.core.logger.values import render_value
 from loom.core.logger.vocabulary import LogField
 
-"""Variable the Lambda runtime sets to ``JSON`` or ``Text``: how its handler writes records."""
+LAMBDA_RUNTIME_HANDLERS: Final = frozenset(
+    {"LambdaLoggerHandler", "LambdaLoggerHandlerWithFrameType"}
+)
+"""Class names of the handler the Lambda Python runtime puts on the root logger."""
 
 _STACKTRACE: Final = LogField.EXCEPTION_STACKTRACE.value
 _CONTINUATION: Final = "  | "
@@ -112,13 +116,23 @@ def text_format(settings: LogSettings) -> logging.Handler:
 def lambda_format(settings: LogSettings) -> None:
     """Keep the Lambda runtime's handler and level; give it loom's JSON layout when it needs one.
 
-    With ``AWS_LAMBDA_LOG_FORMAT=JSON`` the runtime writes each field at the top
-    level of its JSON line, so its formatter stays. With the default ``Text``
-    format it would write the message only and drop every field, so its handler
-    gets :class:`JsonFormatter`.
+    The runtime sets ``AWS_LAMBDA_LOG_FORMAT`` to ``JSON`` or ``Text``. With
+    ``JSON`` it writes each field at the top level of its JSON line, so its
+    formatter stays. With the default ``Text`` format it would write the message
+    only and drop every field, so its handler gets :class:`JsonFormatter`; no
+    other handler is touched.
     """
     del settings
     if os.environ.get("AWS_LAMBDA_LOG_FORMAT", "").upper() == "JSON":
         return
-    for handler in logging.getLogger().handlers:
+    for handler in lambda_runtime_handlers():
         handler.setFormatter(JsonFormatter())
+
+
+def lambda_runtime_handlers() -> tuple[logging.Handler, ...]:
+    """The Lambda runtime's handlers on the root logger; none outside Lambda."""
+    return tuple(
+        handler
+        for handler in logging.getLogger().handlers
+        if type(handler).__name__ in LAMBDA_RUNTIME_HANDLERS
+    )

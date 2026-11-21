@@ -13,7 +13,7 @@ from loom.core.logger import LogField, LogIdentity
 from loom.core.logger.install import install_record_factory
 from loom.core.logger.log_events import LoggerLogEvent
 from loom.core.logger.uncaught import (
-    install_uncaught_hooks,
+    install_process_hooks,
     log_asyncio_exception,
     log_uncaught_exception,
 )
@@ -39,7 +39,7 @@ def _the_one_record(caplog: pytest.LogCaptureFixture) -> logging.LogRecord:
 
 class TestUncaughtHooks:
     def test_installing_replaces_the_interpreter_and_thread_hooks(self) -> None:
-        install_uncaught_hooks()
+        install_process_hooks()
 
         assert sys.excepthook is log_uncaught_exception
         assert threading.excepthook is not threading.__excepthook__
@@ -56,7 +56,7 @@ class TestUncaughtHooks:
     def test_a_thread_failure_is_one_record_naming_the_thread(
         self, uncaught: pytest.LogCaptureFixture
     ) -> None:
-        install_uncaught_hooks()
+        install_process_hooks()
 
         def fail() -> None:
             raise ValueError(_SECRET)

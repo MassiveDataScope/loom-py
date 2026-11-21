@@ -320,14 +320,15 @@ class TestDirectTrigger:
         ]
 
     @pytest.mark.parametrize(
-        "payload",
-        [{"number": 5, "note": _SENTINEL}, {"number": "fail", "note": _SENTINEL}],
+        ("payload", "stacks_written"),
+        [({"number": 5, "note": _SENTINEL}, 0), ({"number": "fail", "note": _SENTINEL}, 1)],
         ids=["validation", "job-raises"],
     )
     def test_a_failure_never_logs_the_payload(
         self,
         serve: Serve,
         payload: dict[str, Any],
+        stacks_written: int,
         caplog: pytest.LogCaptureFixture,
         capsys: pytest.CaptureFixture[str],
     ) -> None:
@@ -339,7 +340,7 @@ class TestDirectTrigger:
 
         captured = capsys.readouterr()
         stacks = [r for r in caplog.records if LogField.EXCEPTION_STACKTRACE in r.__dict__]
-        assert len(stacks) == 1, "the stack is written once, by the runner or the boundary"
+        assert len(stacks) == stacks_written, "an unexpected failure's stack is written once"
         assert _SENTINEL not in caplog.text + captured.out + captured.err
 
     def test_an_s3_event_stops_at_its_first_failed_object(

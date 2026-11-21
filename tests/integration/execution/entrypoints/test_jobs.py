@@ -24,7 +24,7 @@ from loom.core.job.context import flush_pending_dispatches
 from loom.core.job.envelope import JobEnvelope, job_context
 from loom.core.job.handle import JobHandle
 from loom.core.job.run import EnvelopeInvocation
-from loom.core.logger.record import exception_type
+from loom.core.logger.failure import exception_type
 from loom.core.logger.vocabulary import LogField
 from loom.core.observability.observability import Observability
 from loom.core.use_case.factory import UseCaseFactory

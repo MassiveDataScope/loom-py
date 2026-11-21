@@ -7,6 +7,7 @@ from enum import StrEnum
 from typing import Any, Final
 
 from loom.core.errors.codes import ErrorCode
+from loom.core.logger.vocabulary import LogKey, Scalar
 
 EXPECTED_CODES: Final = frozenset(
     {
@@ -93,6 +94,15 @@ class LoomError(Exception):
         attributes, slots = state if isinstance(state, tuple) else (state, {})
         for name, value in {**attributes, **slots}.items():
             setattr(self, name, value)
+
+    def log_fields(self) -> Mapping[LogKey, Scalar]:
+        """The fields this error declares safe to log and to hand off, under vocabulary keys.
+
+        Empty unless overridden. They are written beside ``exception.type`` and
+        ``loom.error.code`` and form its public form; each value is rendered as
+        any field value is, so a ``Secret`` is masked.
+        """
+        return {}
 
     def public_detail(self) -> Mapping[str, Any]:
         """Return fields an HTTP error detail may add. Empty unless overridden."""

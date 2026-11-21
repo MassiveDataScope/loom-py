@@ -10,13 +10,18 @@ from typing import Final, cast
 
 from loom.core.config.errors import ConfigError
 from loom.core.environment import Environment
-from loom.core.logger.filter import MAX_LIST_ITEMS, LogFilter
-from loom.core.logger.formats import json_format, lambda_format, text_format
+from loom.core.logger.filter import LogFilter
+from loom.core.logger.formats import (
+    json_format,
+    lambda_format,
+    lambda_runtime_handlers,
+    text_format,
+)
 from loom.core.logger.log_events import LoggerLogEvent, LoggerLogField
 from loom.core.logger.record import LoomRecordFactory, TraceIds, loom_trace_ids
 from loom.core.logger.settings import LogSettings
 from loom.core.logger.stamp import LogIdentity, LogRuntime
-from loom.core.logger.uncaught import install_uncaught_hooks
+from loom.core.logger.values import MAX_LIST_ITEMS
 from loom.core.logger.vocabulary import LogField
 from loom.core.plugins.entrypoints import (
     EntryPointNotFoundError,
@@ -118,16 +123,17 @@ def configure_logging(
 ) -> LogInstallation:
     """Make every record of the process safe, and install the format *settings* choose.
 
-    The record factory turns each record's context and exception into fields,
-    and a :class:`~loom.core.logger.filter.LogFilter` on every root handler
-    renders its values; both are installed whatever the format. The handler of
-    a format is named ``loom`` and replaces the one a previous call installed; a
-    handler somebody else added stays and gets the filter. A format that
-    installs no handler, ``lambda``, keeps the runtime's, and its level too.
-    *extra_handlers* are attached to the root logger when they are not yet. The
-    third-party floors and ``named_levels`` are applied, and an uncaught
-    exception of the interpreter or a thread is logged as one record. Calling
-    it again leaves one filter on each handler.
+    The record factory turns each record's context and exception into fields;
+    it is installed whatever the format, so every handler, wherever attached,
+    sees the safe record. A :class:`~loom.core.logger.filter.LogFilter` renders
+    the values on the handlers loom owns: the format's, *extra_handlers* and
+    the Lambda runtime's; other handlers are left as they are. The handler of a
+    format is named ``loom`` and replaces the one a previous call installed. A
+    format that installs no handler, ``lambda``, keeps the runtime's, and its
+    level too. The third-party floors and ``named_levels`` are applied. Calling
+    it again leaves one filter on each handler. The hooks for uncaught
+    exceptions and warnings are a runtime entry point's to install
+    (:func:`~loom.core.logger.uncaught.install_process_hooks`).
 
     Args:
         settings: The ``observability.log`` settings.
@@ -153,41 +159,59 @@ def configure_logging(
         trace_ids,
     )
     root = logging.getLogger()
-    for extra in extra_handlers:
-        if extra not in root.handlers:
-            root.addHandler(extra)
+    owned = [*extra_handlers]
     handler = resolve_format(settings.format_for(environment))(settings)
     if handler is not None:
         handler.set_name(HANDLER_NAME)
         for installed in [h for h in root.handlers if h.get_name() == HANDLER_NAME]:
             root.removeHandler(installed)
-        root.addHandler(handler)
         root.setLevel(settings.level.upper())
+        owned.append(handler)
+    for target in owned:
+        if target not in root.handlers:
+            root.addHandler(target)
     for name, level in settings.logger_levels().items():
         logging.getLogger(name).setLevel(level.upper())
-    for target in root.handlers:
+    for target in (*owned, *lambda_runtime_handlers()):
         target.filters = [f for f in target.filters if not isinstance(f, LogFilter)]
         target.addFilter(_LOG_FILTER)
-    install_uncaught_hooks()
     return LogInstallation(factory)
 
 
 _LOG_FILTER: Final = LogFilter()
 
 
-def unfiltered_root_handlers() -> tuple[logging.Handler, ...]:
-    """The root handlers that do not render values: added after loom configured logging."""
+def _every_handler() -> list[logging.Handler]:
+    loggers = [logging.getLogger()] + [
+        logger
+        for logger in logging.Logger.manager.loggerDict.values()
+        if isinstance(logger, logging.Logger)
+    ]
+    return [handler for logger in loggers for handler in logger.handlers]
+
+
+def unfiltered_handlers() -> tuple[logging.Handler, ...]:
+    """The handlers, on the root logger or any other, that do not render values."""
     return tuple(
         handler
-        for handler in logging.getLogger().handlers
+        for handler in _every_handler()
         if not any(isinstance(f, LogFilter) for f in handler.filters)
     )
 
 
-def warn_unfiltered_handlers() -> None:
-    """Warn, in one record, about every root handler without the filter: its values are raw."""
-    unfiltered = unfiltered_root_handlers()
-    if unfiltered:
+class UnfilteredHandlersWarning:
+    """Warns once per process about the handlers that do not render values."""
+
+    def __init__(self) -> None:
+        self._warned = False
+
+    def __call__(self) -> None:
+        if self._warned:
+            return
+        unfiltered = unfiltered_handlers()
+        if not unfiltered:
+            return
+        self._warned = True
         _log.warning(
             LoggerLogEvent.HANDLERS_UNFILTERED,
             extra={
@@ -197,3 +221,11 @@ def warn_unfiltered_handlers() -> None:
                 ],
             },
         )
+
+
+warn_unfiltered_handlers: Final = UnfilteredHandlersWarning()
+"""Warn, once per process, about every handler without value rendering: its values are raw.
+
+Those handlers still get the record factory's safe record: no exception
+message, no stack info; only the values passed as ``extra`` are not rendered.
+"""

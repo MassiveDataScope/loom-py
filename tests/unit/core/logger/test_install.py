@@ -4,6 +4,7 @@ import io
 import json
 import logging
 import queue
+from collections.abc import Iterator
 from logging.handlers import QueueHandler, QueueListener
 
 import pytest
@@ -15,14 +16,14 @@ from loom.core.logger.filter import LogFilter
 from loom.core.logger.formats import JsonFormatter
 from loom.core.logger.install import (
     HANDLER_NAME,
+    UnfilteredHandlersWarning,
     configure_logging,
     resolve_format,
-    unfiltered_root_handlers,
-    warn_unfiltered_handlers,
+    unfiltered_handlers,
 )
 from loom.core.logger.log_events import LoggerLogEvent
 from loom.core.logger.settings import THIRD_PARTY_FLOORS, LogSettings
-from tests.helpers.loggers import CapturingHandler
+from tests.helpers.loggers import CapturingHandler, LambdaLoggerHandler
 
 _LAMBDA = "AWS_LAMBDA_FUNCTION_NAME"
 _SECRET = "card 4111-1111-1111-1111"
@@ -74,8 +75,8 @@ class TestJsonInstallation:
         for _ in range(2):
             configure_logging(LogSettings(format="json"), environment=Environment.PRODUCTION)
 
-        assert len(_installed(pristine_root_logger)) == 1
-        assert all(len(_filters(h)) == 1 for h in pristine_root_logger.handlers)
+        (installed,) = _installed(pristine_root_logger)
+        assert len(_filters(installed)) == 1
 
     def test_the_level_the_floors_and_the_named_levels_are_applied(
         self, pristine_root_logger: logging.Logger
@@ -98,6 +99,7 @@ class TestJsonInstallation:
         installation = configure_logging(
             LogSettings(format="json"), environment=Environment.PRODUCTION
         )
+        handler.addFilter(LogFilter())
 
         installation.running_as(LogRuntime.CELERY)
         logging.getLogger("tests.runtime").info("billing.invoice_issued")
@@ -107,12 +109,16 @@ class TestJsonInstallation:
 
 
 class TestEveryHandlerSeesTheSafeRecord:
-    def test_a_root_handler_added_before_the_configuration_gets_the_filter(
+    def test_a_handler_loom_does_not_own_is_left_alone_and_gets_no_exception(
         self, handler: CapturingHandler
     ) -> None:
         configure_logging(LogSettings(format="json"), environment=Environment.PRODUCTION)
 
-        assert len(_filters(handler)) == 1
+        _fail(logging.getLogger("acme_library"))
+
+        assert _filters(handler) == []
+        (record,) = handler.records
+        assert (record.exc_info, record.stack_info) == (None, None)
 
     def test_a_handler_on_a_child_logger_gets_no_exception_message(
         self, pristine_root_logger: logging.Logger
@@ -135,12 +141,21 @@ class TestEveryHandlerSeesTheSafeRecord:
         late, stream = _stream_handler(logging.Formatter("%(message)s"))
         pristine_root_logger.addHandler(late)
 
-        _fail(logging.getLogger("acme_library"))
-        warn_unfiltered_handlers()
+        child = logging.getLogger("acme_library.payments")
+        child_handler, _ = _stream_handler(logging.Formatter("%(message)s"))
+        child.addHandler(child_handler)
+        warn_once = UnfilteredHandlersWarning()
+        try:
+            _fail(logging.getLogger("acme_library"))
+            warn_once()
+            warn_once()
+            unfiltered = unfiltered_handlers()
+        finally:
+            child.removeHandler(child_handler)
 
         assert _SECRET not in stream.getvalue()
-        assert late in unfiltered_root_handlers()
-        assert LoggerLogEvent.HANDLERS_UNFILTERED in caplog.messages
+        assert {late, child_handler} <= set(unfiltered)
+        assert caplog.messages.count(LoggerLogEvent.HANDLERS_UNFILTERED) == 1
 
     def test_a_queue_handler_carries_the_fields_and_no_message_to_its_listener(
         self, pristine_root_logger: logging.Logger
@@ -151,6 +166,7 @@ class TestEveryHandlerSeesTheSafeRecord:
             LogSettings(format="json"), environment=Environment.PRODUCTION, service_name="billing"
         )
         sink, stream = _stream_handler(JsonFormatter())
+        sink.addFilter(LogFilter())
         listener = QueueListener(records, sink)
         listener.start()
         try:
@@ -169,13 +185,16 @@ class TestEveryHandlerSeesTheSafeRecord:
 class TestLambdaInstallation:
     @pytest.fixture
     def runtime_handler(
-        self, handler: CapturingHandler, monkeypatch: pytest.MonkeyPatch
-    ) -> CapturingHandler:
+        self, pristine_root_logger: logging.Logger, monkeypatch: pytest.MonkeyPatch
+    ) -> Iterator[LambdaLoggerHandler]:
         monkeypatch.setenv(_LAMBDA, "billing-handler")
-        return handler
+        runtime = LambdaLoggerHandler()
+        pristine_root_logger.addHandler(runtime)
+        yield runtime
+        pristine_root_logger.removeHandler(runtime)
 
     def test_no_handler_is_installed_and_the_level_is_left_alone(
-        self, runtime_handler: CapturingHandler, pristine_root_logger: logging.Logger
+        self, runtime_handler: LambdaLoggerHandler, pristine_root_logger: logging.Logger
     ) -> None:
         pristine_root_logger.setLevel(logging.ERROR)
         before = list(pristine_root_logger.handlers)
@@ -186,7 +205,7 @@ class TestLambdaInstallation:
         assert pristine_root_logger.level == logging.ERROR
 
     def test_the_text_format_of_the_runtime_gets_the_json_layout_so_no_field_is_lost(
-        self, runtime_handler: CapturingHandler, monkeypatch: pytest.MonkeyPatch
+        self, runtime_handler: LambdaLoggerHandler, monkeypatch: pytest.MonkeyPatch
     ) -> None:
         monkeypatch.setenv("AWS_LAMBDA_LOG_FORMAT", "Text")
         runtime_handler.setFormatter(logging.Formatter("%(message)s"))
@@ -199,7 +218,7 @@ class TestLambdaInstallation:
         assert entry[LogField.SERVICE_NAME] == "billing"
 
     def test_the_json_format_of_the_runtime_keeps_its_own_formatter(
-        self, runtime_handler: CapturingHandler, monkeypatch: pytest.MonkeyPatch
+        self, runtime_handler: LambdaLoggerHandler, monkeypatch: pytest.MonkeyPatch
     ) -> None:
         monkeypatch.setenv("AWS_LAMBDA_LOG_FORMAT", "JSON")
         own = logging.Formatter("%(message)s")
@@ -209,6 +228,21 @@ class TestLambdaInstallation:
 
         assert runtime_handler.formatter is own
         assert len(_filters(runtime_handler)) == 1
+
+    def test_only_the_runtime_handler_gets_the_json_layout(
+        self,
+        runtime_handler: LambdaLoggerHandler,
+        handler: CapturingHandler,
+        monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        monkeypatch.setenv("AWS_LAMBDA_LOG_FORMAT", "Text")
+        own = logging.Formatter("%(message)s")
+        handler.setFormatter(own)
+
+        configure_logging(LogSettings(), environment=Environment.PRODUCTION)
+
+        assert isinstance(runtime_handler.formatter, JsonFormatter)
+        assert handler.formatter is own
 
 
 class TestResolveFormat:

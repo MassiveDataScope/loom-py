@@ -30,7 +30,8 @@ def log_context(fields: Mapping[str, object] = _NO_FIELDS, /, **named: object) -
     def`` is the creation of the coroutine: use a ``with`` block inside it.
 
     A dotted key is not a keyword: pass the fields as a mapping,
-    ``log_context({LogField.JOB: name})``. Values are rendered like ``extra``.
+    ``log_context({LogField.JOB: name})``. Values are rendered like ``extra``,
+    once, when the block opens; a ``None`` value adds no field.
 
     Args:
         fields: Fields to attach under their key, ``LogKey`` members.
@@ -44,8 +45,15 @@ def log_context(fields: Mapping[str, object] = _NO_FIELDS, /, **named: object) -
         with log_context(invoice_id=invoice_id):
             log.info(InvoiceEvent.ISSUED)
     """
-    added = {str(key): value for key, value in fields.items()}
-    token = _fields.set({**_fields.get(), **added, **named})
+    # Imported here: loom.core.errors imports this package, and values imports the errors.
+    from loom.core.logger.values import render_value  # noqa: PLC0415
+
+    added = {
+        str(key): render_value(value)
+        for key, value in (*fields.items(), *named.items())
+        if value is not None
+    }
+    token = _fields.set({**_fields.get(), **added})
     try:
         yield
     finally:

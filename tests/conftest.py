@@ -7,6 +7,7 @@ import logging
 import os
 import sys
 import threading
+import warnings
 from collections.abc import Iterator
 from functools import lru_cache
 from pathlib import Path
@@ -284,16 +285,18 @@ def _test_environment() -> Iterator[None]:
 def restored_root_logger() -> Iterator[None]:
     """Give every test an INFO root logger and leave logging as found.
 
-    ``configure_logging`` installs a record factory, the uncaught-exception
-    hooks and ``logging.raiseExceptions = False`` for the whole process; a test
-    that composes an application must not leave them to the next one.
+    ``configure_logging`` installs a record factory, captures warnings and sets
+    ``logging.raiseExceptions = False`` for the whole process, and a runtime
+    entry point installs the uncaught-exception hooks; a test that composes or
+    starts an application must not leave them to the next one.
     """
     root = logging.getLogger()
     handlers, level = list(root.handlers), root.level
     root.setLevel(logging.INFO)
     filters = {handler: list(handler.filters) for handler in handlers}
     factory, raise_exceptions = logging.getLogRecordFactory(), logging.raiseExceptions
-    hooks = sys.excepthook, threading.excepthook
+    hooks = sys.excepthook, threading.excepthook, sys.unraisablehook
+    showwarning = warnings.showwarning
     yield
     root.handlers[:] = handlers
     root.setLevel(level)
@@ -301,4 +304,6 @@ def restored_root_logger() -> Iterator[None]:
         handler.filters[:] = kept
     logging.setLogRecordFactory(factory)
     logging.raiseExceptions = raise_exceptions
-    sys.excepthook, threading.excepthook = hooks
+    sys.excepthook, threading.excepthook, sys.unraisablehook = hooks
+    logging.captureWarnings(False)
+    warnings.showwarning = showwarning

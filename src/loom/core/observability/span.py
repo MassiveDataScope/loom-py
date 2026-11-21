@@ -22,7 +22,7 @@ from collections.abc import Callable, Mapping, Sequence
 from contextlib import AbstractContextManager
 from dataclasses import dataclass, replace
 from time import perf_counter
-from typing import Final, Self
+from typing import Final, Self, cast
 
 from opentelemetry.context import Context
 from opentelemetry.trace import (
@@ -36,7 +36,7 @@ from opentelemetry.trace import (
 )
 
 from loom.core.logger import LogField, LogKey, Scalar, SpanAttributes
-from loom.core.logger.record import exception_type, failure_fields
+from loom.core.logger.failure import failure_fields, is_expected
 from loom.core.observability.event import EventKind, LifecycleEvent, Scope
 
 EXCEPTION_EVENT: Final = "exception"
@@ -110,9 +110,11 @@ class SpanIdentity:
 def apply_terminal_state(span: Span, event: LifecycleEvent) -> None:
     """Copy the outcome carried by a closing lifecycle event onto its span.
 
-    A failure sets the status to ``ERROR`` described by the exception type and
-    adds an ``exception`` event with its type, code and frames: never its message.
-    Internal to the observability package.
+    A failure adds an ``exception`` event with its type, its code and the fields
+    it declares, never its message nor its stack (loom's log record holds the
+    stack), and sets the status to ``ERROR`` described by the exception type,
+    unless the failure is expected, which leaves the status unset. Internal to
+    the observability package.
 
     Args:
         span: Span being closed.
@@ -127,8 +129,10 @@ def apply_terminal_state(span: Span, event: LifecycleEvent) -> None:
     if failure is None:
         span.set_status(StatusCode.ERROR)
         return
-    span.set_status(StatusCode.ERROR, exception_type(type(failure)))
-    span.add_event(EXCEPTION_EVENT, failure_fields(failure, stacktrace=True))
+    fields = failure_fields(failure, stacktrace=False)
+    span.add_event(EXCEPTION_EVENT, cast("Mapping[str, Scalar]", fields))
+    if not is_expected(failure):
+        span.set_status(StatusCode.ERROR, str(fields[LogField.EXCEPTION_TYPE.value]))
 
 
 class LoomSpan:

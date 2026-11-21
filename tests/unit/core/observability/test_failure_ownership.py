@@ -73,7 +73,7 @@ class TestNestedScopes:
 
 
 class TestSpanOutputs:
-    def test_a_failed_span_carries_the_type_and_frames_and_no_message(self) -> None:
+    def test_a_failed_span_carries_the_type_and_no_message_nor_stack(self) -> None:
         recorder = build_recorder()
 
         with pytest.raises(RuntimeError), recorder.runtime.span(Scope.JOB, "SendInvoice"):
@@ -90,8 +90,18 @@ class TestSpanOutputs:
             "RuntimeError",
         )
         assert (event.name, attributes[LogField.EXCEPTION_TYPE]) == ("exception", "RuntimeError")
-        assert "KeyError" in str(attributes[LogField.EXCEPTION_STACKTRACE])
+        assert LogField.EXCEPTION_STACKTRACE not in attributes
         assert _SECRET not in repr(span.to_json())
+
+    def test_an_expected_failure_leaves_the_span_status_unset(self) -> None:
+        recorder = build_recorder()
+
+        with pytest.raises(NotFound), recorder.runtime.span(Scope.JOB, "SendInvoice"):
+            raise NotFound("Invoice", id=_SECRET)
+
+        span = recorder.one("job:SendInvoice")
+        assert span.status.status_code is StatusCode.UNSET
+        assert dict(span.events[0].attributes or {})[LogField.ERROR_CODE] == "not_found"
 
 
 class TestEngineScope:

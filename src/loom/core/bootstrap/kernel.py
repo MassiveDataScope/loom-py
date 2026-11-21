@@ -28,7 +28,7 @@ from loom.core.engine.executor import UseCaseExecutor
 from loom.core.environment import Environment, resolve_environment
 from loom.core.execution import ExecutionResolver
 from loom.core.logger import LogField
-from loom.core.logger.filter import MAX_LIST_ITEMS
+from loom.core.logger.values import MAX_LIST_ITEMS
 from loom.core.observability.observability import Observability
 from loom.core.stores.repository.registration import classify_key
 from loom.core.stores.uow.coordinator import Coordinator

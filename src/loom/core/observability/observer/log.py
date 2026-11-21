@@ -7,7 +7,7 @@ from collections.abc import Mapping
 from typing import Final, cast
 
 from loom.core.logger import LogField, Scalar
-from loom.core.logger.record import failure_level
+from loom.core.logger.failure import failure_level
 from loom.core.observability.event import EventKind, LifecycleEvent, LifecycleStatus, Scope
 from loom.core.observability.log_events import ObservabilityLogEvent
 

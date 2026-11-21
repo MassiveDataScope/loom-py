@@ -218,10 +218,8 @@ class TestFromConfig:
         runtime = Observability.from_config(config)
 
         assert isinstance(logging.getLogRecordFactory(), LoomRecordFactory)
-        assert all(
-            any(isinstance(f, LogFilter) for f in handler.filters)
-            for handler in logging.getLogger().handlers
-        )
+        (installed,) = [h for h in logging.getLogger().handlers if h.get_name() == "loom"]
+        assert any(isinstance(f, LogFilter) for f in installed.filters)
         assert not any(isinstance(o, LogLifecycleObserver) for o in runtime.observers)
 
     def test_an_unregistered_format_stops_the_start(self) -> None:

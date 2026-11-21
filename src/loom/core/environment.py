@@ -114,6 +114,11 @@ def resolve_environment(explicit: Environment | str | None = None) -> Environmen
     return parse_environment(raw, source=ENVIRONMENT_VARIABLE)
 
 
+def is_inside_lambda() -> bool:
+    """Whether the process runs as an AWS Lambda function."""
+    return os.environ.get("AWS_LAMBDA_FUNCTION_NAME") is not None
+
+
 def parse_environment(raw: str, *, source: str) -> Environment:
     """Parse *raw*, read from *source*, into an :class:`Environment`.
 

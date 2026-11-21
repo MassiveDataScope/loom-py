@@ -1,30 +1,84 @@
-"""The edge of a Lambda invocation: what reaches the runtime when the work raises.
+"""The edges of a Lambda function: what reaches the runtime when Init or an invocation raises.
 
 The Python runtime writes an uncaught exception itself, ``errorMessage``,
 ``errorType`` and ``stackTrace``, and returns it in the invoke response,
-without going through ``logging``. :class:`LambdaBoundary` stands in front of
-it: an exception no scope has logged is logged once through loom, under the
-record factory's policy, then replaced by a :class:`LambdaInvocationError`
-that names only its type and code, so the runtime reports no value.
+without going through ``logging``; Init errors behave the same way. Each edge
+hands the runtime a :class:`~loom.core.logger.failure.FailureReference`
+instead: the failure is logged once through loom, and the runtime reports its
+type, code and trace id. The reference's class is named after the original
+type, so ``errorType`` still names it for Step Functions.
 """
 
 from __future__ import annotations
 
-import logging
-from typing import TYPE_CHECKING, Any
+from collections.abc import Callable
+from functools import lru_cache
+from typing import TYPE_CHECKING, Any, TypeVar
 
-from loom.core.logger.record import failure_level, is_logged
-from loom.serverless.aws.lambda_.errors import LambdaInvocationError
-from loom.serverless.aws.lambda_.log_events import LambdaLogEvent
+from loom.core.config.errors import ConfigError
+from loom.core.environment import Environment, resolve_environment
+from loom.core.logger import LogIdentity
+from loom.core.logger.failure import FailureReference, Handoff, reference
+from loom.core.logger.install import install_record_factory
+from loom.core.logger.uncaught import install_process_hooks
 
 if TYPE_CHECKING:
     from loom.serverless.aws.lambda_.handler import LambdaHandler
 
-_log = logging.getLogger(__name__)
+_T = TypeVar("_T")
+
+_NAMED_REFERENCES = 128
+"""Reference classes kept, one per original type name; the oldest is dropped past it."""
+
+
+class LambdaHandoff(Handoff):
+    """Where a Lambda function hands a failure to the runtime."""
+
+    INIT = "lambda.init"
+    INVOKE = "lambda.invoke"
+
+
+@lru_cache(maxsize=_NAMED_REFERENCES)
+def _reference_named(exception_type: str) -> type[FailureReference]:
+    name = exception_type.rpartition(".")[2]
+    return type(name, (FailureReference,), {"__module__": __name__, "__qualname__": name})
+
+
+def lambda_reference(failure: BaseException) -> FailureReference:
+    """The reference the runtime gets for *failure*, its class named after the original type."""
+    handed_off = reference(failure)
+    return _reference_named(handed_off.exception_type)(*handed_off.args)
+
+
+def lambda_init(build: Callable[[], _T]) -> _T:
+    """Run a function's Init: read its configuration, compose and mount, under a reference.
+
+    The record factory is installed first, before any configuration is read, so
+    even a failure to read it is logged safely; the uncaught-exception hooks
+    are installed too, as Lambda Init is a runtime entry point.
+
+    Raises:
+        FailureReference: In place of any exception *build* raised.
+    """
+    install_record_factory(LogIdentity(environment=_environment_name()))
+    install_process_hooks()
+    try:
+        return build()
+    except Exception as exc:
+        failure = lambda_reference(exc)
+    raise failure
+
+
+def _environment_name() -> str:
+    """The environment Init runs in; production when ``LOOM_ENV`` is unreadable."""
+    try:
+        return resolve_environment().value
+    except ConfigError:
+        return Environment.PRODUCTION.value
 
 
 class LambdaBoundary:
-    """A Lambda handler whose failures reach the runtime with no message.
+    """A Lambda handler whose failures reach the runtime as a reference.
 
     Args:
         handler: The handler of the function's trigger.
@@ -37,19 +91,13 @@ class LambdaBoundary:
         """Answer one invocation.
 
         Raises:
-            LambdaInvocationError: For any exception the handler raised, from ``None``.
+            FailureReference: In place of any exception the handler raised.
         """
         try:
             return self._handler(event, context)
         except Exception as exc:
-            raise self.reported(exc) from None
-
-    @staticmethod
-    def reported(failure: BaseException) -> LambdaInvocationError:
-        """Log *failure* once, unless a scope already wrote it, and return what replaces it."""
-        if not is_logged(failure):
-            _log.log(failure_level(failure), LambdaLogEvent.INVOCATION_FAILED, exc_info=failure)
-        return LambdaInvocationError(failure)
+            failure = lambda_reference(exc)
+        raise failure
 
     def close(self) -> None:
         """Close the wrapped handler."""

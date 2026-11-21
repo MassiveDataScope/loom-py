@@ -8,7 +8,7 @@ import uuid
 from contextvars import Token
 from typing import Any
 
-from loom.core.logger.record import exception_type
+from loom.core.logger.failure import exception_type
 from loom.core.observability.event import EventKind, LifecycleEvent, Scope
 from loom.prefect._async import run_sync
 from loom.prefect.observer._logging_bridge import _current_task_run_id

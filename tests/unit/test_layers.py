@@ -46,6 +46,7 @@ _RULES: dict[str, tuple[tuple[str, ...], tuple[str, ...]]] = {
             "loom.celery.config",
             "loom.rest.fastapi.runtime",
             "loom.serverless.aws.lambda_.handler",
+            "loom.serverless.aws.lambda_.boundary",
         ),
     ),
     # The acting identity sits under everything that acts: it reads no execution (spec 011, T09a).
@@ -71,6 +72,8 @@ _RULES: dict[str, tuple[tuple[str, ...], tuple[str, ...]]] = {
         (),
     ),
     "loom.core.engine": (("loom.core.observability", "opentelemetry"), ()),
+    # The errors sit under the failure policy that reads them: only the log vocabulary is below.
+    "loom.core.errors": (("loom",), ("loom.core.errors", "loom.core.logger.vocabulary")),
     "loom.rest": (("loom.serverless",), ()),
     # A job transport raises its own errors; the composition root maps them.
     "loom.jobs": (("loom.composition",), ()),

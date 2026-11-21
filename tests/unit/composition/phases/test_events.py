@@ -9,6 +9,7 @@ import pytest
 
 from loom.composition import Application
 from loom.core.di.container import LoomContainer
+from loom.core.logger.install import UnfilteredHandlersWarning
 from loom.core.logger.log_events import LoggerLogEvent
 from tests.helpers.loggers import CapturedLog
 
@@ -46,8 +47,14 @@ class TestComposedEvent:
         }
 
     def test_a_root_handler_added_during_composition_is_reported_once_it_ends(
-        self, overridden: Callable[..., Application], caplog: pytest.LogCaptureFixture
+        self,
+        overridden: Callable[..., Application],
+        caplog: pytest.LogCaptureFixture,
+        monkeypatch: pytest.MonkeyPatch,
     ) -> None:
+        monkeypatch.setattr(
+            "loom.composition.project.warn_unfiltered_handlers", UnfilteredHandlersWarning()
+        )
         late = logging.NullHandler()
 
         def adds_a_handler(container: LoomContainer) -> None:

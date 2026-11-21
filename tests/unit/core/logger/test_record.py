@@ -7,17 +7,11 @@ from collections.abc import Iterator
 
 import pytest
 
-from loom.core.errors import NotFound, RuleViolationError
+from loom.core.errors import NotFound, SystemError
 from loom.core.logger import LogField, LogIdentity, LogRuntime, log_context
 from loom.core.logger.filter import LogFilter
 from loom.core.logger.install import install_record_factory
-from loom.core.logger.record import (
-    LoomRecordFactory,
-    exception_stacktrace,
-    failure_fields,
-    failure_level,
-    is_logged,
-)
+from loom.core.logger.record import LoomRecordFactory
 from loom.core.tracing.context import active_trace_id
 from tests.helpers.loggers import CapturingHandler
 
@@ -110,15 +104,22 @@ class TestExceptionPolicy:
     def test_an_error_carries_the_type_the_code_and_a_stack_and_no_exc_info(
         self, stamped: CapturingHandler
     ) -> None:
-        error = _raised(NotFound("Invoice", id=_SECRET))
+        error = _raised(SystemError(_SECRET))
 
         _log.error("billing.invoice_failed", exc_info=error)
 
         (record,) = stamped.records
         assert (record.exc_info, record.exc_text, record.stack_info) == (None, None, None)
-        assert record.__dict__[LogField.EXCEPTION_TYPE] == "loom.core.errors.domain.NotFound"
-        assert record.__dict__[LogField.ERROR_CODE] == "not_found"
+        assert record.__dict__[LogField.EXCEPTION_TYPE] == "loom.core.errors.base.SystemError"
+        assert record.__dict__[LogField.ERROR_CODE] == "system_error"
         assert "test_record.py" in record.__dict__[LogField.EXCEPTION_STACKTRACE]
+
+    def test_an_expected_failure_writes_no_stack_even_at_error(
+        self, stamped: CapturingHandler
+    ) -> None:
+        _log.error("billing.invoice_failed", exc_info=_raised(NotFound("Invoice", id=1)))
+
+        assert LogField.EXCEPTION_STACKTRACE not in stamped.records[0].__dict__
 
     def test_below_error_the_exception_is_its_type_only(self, stamped: CapturingHandler) -> None:
         _log.warning("billing.invoice_retried", exc_info=_raised(ValueError(_SECRET)))
@@ -142,63 +143,30 @@ class TestExceptionPolicy:
         assert stamped.records[0].__dict__[LogField.EXCEPTION_TYPE] == "ValueError"
 
 
-class TestStacktrace:
-    def test_every_link_of_the_chain_is_written_with_frames_and_types_only(self) -> None:
-        stack = exception_stacktrace(_chained())
-
-        assert _SECRET not in stack
-        assert stack.index("KeyError") < stack.index("ValueError") < stack.index("RuntimeError")
-        assert "direct cause" in stack
-        assert "During handling" in stack
-        assert stack.count("Traceback (most recent call last):") == 3
-
-    def test_an_exception_group_writes_no_member(self) -> None:
-        group = _raised(ExceptionGroup("batch", [ValueError(_SECRET)]))
-
-        stack = exception_stacktrace(group)
-
-        assert stack.endswith("ExceptionGroup")
-        assert "ValueError" not in stack
-
-    def test_spans_and_logs_describe_a_failure_with_the_same_fields(self) -> None:
-        error = _raised(RuleViolationError("amount", _SECRET))
-
-        fields = failure_fields(error, stacktrace=True)
-
-        assert fields[LogField.ERROR_CODE] == "rule_violation"
-        assert fields[LogField.EXCEPTION_STACKTRACE] == exception_stacktrace(error)
-
-
-class TestOnceStack:
-    def test_the_stack_of_one_exception_is_written_once(self, stamped: CapturingHandler) -> None:
-        error = _raised(ValueError(_SECRET))
-
-        _log.error("billing.invoice_failed", exc_info=error)
-        _log.error("billing.batch_failed", exc_info=error)
-
-        first, second = (r.__dict__ for r in stamped.records)
-        assert LogField.EXCEPTION_STACKTRACE in first
-        assert LogField.EXCEPTION_STACKTRACE not in second
-        assert second[LogField.EXCEPTION_TYPE] == "ValueError"
-        assert is_logged(error)
-
+class TestExceptionAsText:
     @pytest.mark.parametrize(
-        ("error", "level"),
+        ("message", "args"),
         [
-            (NotFound("Invoice", id=1), logging.INFO),
-            (RuleViolationError("amount", "negative"), logging.INFO),
-            (ValueError("x"), logging.ERROR),
+            (ValueError(_SECRET), ()),
+            ("billing.invoice_failed %r", (ValueError(_SECRET),)),
+            ("billing.invoice_failed %(error)s", ({"error": ValueError(_SECRET)},)),
         ],
     )
-    def test_the_level_of_a_failure_follows_what_the_exception_declares(
-        self, error: BaseException, level: int
+    def test_an_exception_in_the_message_or_the_arguments_is_its_public_form(
+        self, stamped: CapturingHandler, message: object, args: tuple[object, ...]
     ) -> None:
-        assert failure_level(error) == level
+        _log.error(message, *args)
 
-    def test_a_failure_whose_stack_is_written_is_reported_at_warning_after(
-        self, stamped: CapturingHandler
-    ) -> None:
-        error = _raised(ValueError("x"))
-        _log.error("billing.invoice_failed", exc_info=error)
+        text = stamped.records[0].getMessage()
+        assert _SECRET not in text
+        assert "ValueError" in text
 
-        assert failure_level(error) == logging.WARNING
+    def test_a_captured_warning_keeps_only_its_category(self, stamped: CapturingHandler) -> None:
+        logging.captureWarnings(True)
+
+        import warnings
+
+        warnings.warn(_SECRET, DeprecationWarning, stacklevel=1)
+
+        (record,) = [r for r in stamped.records if r.name == "py.warnings"]
+        assert record.getMessage() == "DeprecationWarning"

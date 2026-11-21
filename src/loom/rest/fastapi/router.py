@@ -48,7 +48,7 @@ from loom.core.errors import BODY_FIELD, BoundaryValidationError, Forbidden, Loo
 from loom.core.errors.codes import ErrorCode
 from loom.core.identity import Identity, current_identity
 from loom.core.logger import LogField
-from loom.core.logger.record import is_logged
+from loom.core.logger.failure import failure_level, is_stack_written
 from loom.core.model import LoomType, loom_type, msgspec_type
 from loom.core.stores.repository.query import (
     FilterGroup,
@@ -665,8 +665,9 @@ class _RouteHandler:
             )
             if refusal is not None:
                 raise _error_mapper.to_http(refusal) from exc
-            if not is_logged(exc):
-                _logger.error(
+            if not is_stack_written(exc):
+                _logger.log(
+                    failure_level(exc),
                     RestLogEvent.REQUEST_FAILED,
                     exc_info=exc,
                     extra={LogField.HTTP_ROUTE: self._runtime.compiled_route.full_path},

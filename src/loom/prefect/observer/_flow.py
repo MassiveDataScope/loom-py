@@ -7,7 +7,7 @@ import logging
 import prefect
 from prefect.exceptions import MissingContextError
 
-from loom.core.logger.record import exception_type
+from loom.core.logger.failure import exception_type
 from loom.core.observability.event import EventKind, LifecycleEvent, Scope
 
 

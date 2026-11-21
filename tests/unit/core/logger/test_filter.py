@@ -1,4 +1,4 @@
-"""Value rendering: the one owner of what a field value becomes."""
+"""Value rendering: what a field value becomes, and the filter that applies it on handlers."""
 
 from __future__ import annotations
 
@@ -8,16 +8,16 @@ import math
 import pytest
 
 from loom.core.environment import Environment
-from loom.core.logger import LogField, LogIdentity
-from loom.core.logger.filter import (
+from loom.core.logger import LogField, LogIdentity, current_log_fields, log_context
+from loom.core.logger.filter import LogFilter
+from loom.core.logger.install import configure_logging, install_record_factory
+from loom.core.logger.settings import LogSettings
+from loom.core.logger.values import (
     MAX_LIST_ITEMS,
     MAX_VALUE_LENGTH,
     TRUNCATION_MARKER,
-    LogFilter,
     render_value,
 )
-from loom.core.logger.install import configure_logging, install_record_factory
-from loom.core.logger.settings import LogSettings
 from loom.core.model.redaction import MASK, Dsn, RedactedMap, Secret
 
 
@@ -103,3 +103,11 @@ class TestLogFilter:
         configure_logging(LogSettings(format="json"), environment=Environment.PRODUCTION)
 
         assert logging.raiseExceptions is False
+
+
+class TestLogContextValues:
+    def test_a_context_value_is_rendered_once_when_the_block_opens(self) -> None:
+        with log_context({LogField.NAME: _Card(), LogField.REASON: None}):
+            fields = current_log_fields()
+
+        assert fields == {LogField.NAME.value: "_Card"}

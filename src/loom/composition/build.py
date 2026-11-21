@@ -8,7 +8,7 @@ from typing import TYPE_CHECKING, Final, TypeVar, overload
 from loom.composition.project import Project
 from loom.core.config import ConfigError, ConfigResolver
 from loom.core.config.keys import FASTAPI_ENTRY
-from loom.core.environment import Environment
+from loom.core.environment import Environment, is_inside_lambda
 
 if TYPE_CHECKING:
     from loom.composition.recipe import Runtime
@@ -63,21 +63,33 @@ def create_app(
     Returns:
         What *runtime* binds: an ASGI app, a Celery app, a handler.
 
+    Inside AWS Lambda this is the function's Init: any failure reaches the
+    runtime as a :class:`~loom.core.logger.failure.FailureReference`, after the
+    record factory was installed ahead of the configuration.
+
     Raises:
         ConfigError: When the configuration is incomplete or invalid.
         DeployCheckError: When a deploy check of level error fails in a
             deployed environment.
         ReservedBindingError: When an installer binds a framework-owned key.
     """
-    project = Project.load(
-        *config_paths,
-        config_dir=config_dir,
-        environment=environment,
-        code_path=code_path,
-        resolvers=resolvers,
-        caller="create_app",
-    )
-    return project.serve(runtime if runtime is not None else _runtime_from_entry(project))
+
+    def build() -> object:
+        project = Project.load(
+            *config_paths,
+            config_dir=config_dir,
+            environment=environment,
+            code_path=code_path,
+            resolvers=resolvers,
+            caller="create_app",
+        )
+        return project.serve(runtime if runtime is not None else _runtime_from_entry(project))
+
+    if not is_inside_lambda():
+        return build()
+    from loom.serverless.aws.lambda_.boundary import lambda_init
+
+    return lambda_init(build)
 
 
 def _fastapi() -> Runtime[object]:

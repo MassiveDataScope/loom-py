@@ -36,7 +36,7 @@ from loom.serverless.aws.lambda_._refusals import (
     check_resolved_ai,
     refuse_unserved_config,
 )
-from loom.serverless.aws.lambda_.boundary import LambdaBoundary
+from loom.serverless.aws.lambda_.boundary import LambdaBoundary, lambda_reference
 from loom.serverless.aws.lambda_.functions import (
     EventTrigger,
     HttpTrigger,
@@ -161,9 +161,9 @@ class LambdaRuntime:
             CompositionStateError: When :meth:`recipe` has not run on this
                 instance, or it is already bound.
             ConfigError: When an authentication exclusion reaches a templated route.
-            LambdaInvocationError: For the failure to open the application, or
-                an MCP server resolving to ``transport: stdio``: logged once, then
-                raised with its type and code only, so Init reports no value.
+            FailureReference: In place of the failure to open the application,
+                or of an MCP server resolving to ``transport: stdio``: logged
+                once, so Init reports its type, code and trace id only.
         """
         if self._bind is None:
             raise CompositionStateError(
@@ -177,8 +177,10 @@ class LambdaRuntime:
             check_resolved_ai(application.ai.config)
             self._handler = LambdaBoundary(self._bind(application))
         except Exception as exc:
-            raise LambdaBoundary.reported(exc) from None
-        return self._handler
+            failure = lambda_reference(exc)
+        else:
+            return self._handler
+        raise failure
 
     def close(self) -> None:
         """Close the bound handler, as :meth:`LambdaHandler.close` does."""

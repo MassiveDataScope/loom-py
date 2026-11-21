@@ -24,9 +24,10 @@ http.response.status_code
 http.route
 job.delivery_abandoned
 job.delivery_retried
-lambda.invocation_failed
+logger.failure_handed_off
 logger.handlers_unfiltered
 logger.uncaught_exception
+logger.unraisable_exception
 loom.ai.capability
 loom.ai.interaction_id
 loom.ai.mcp_server
