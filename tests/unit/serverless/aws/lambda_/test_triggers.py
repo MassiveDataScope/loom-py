@@ -31,7 +31,7 @@ from loom.testing.serverless import QueueableEvent
 from tests.helpers.aws import ACCOUNT
 from tests.helpers.aws_island import FakeAwsIsland
 from tests.helpers.composition import composition_project
-from tests.helpers.lambda_failures import lambda_failure
+from tests.helpers.handoffs import lambda_failure
 from tests.helpers.sqs import FakeSqs, queue_url
 from tests.unit.serverless.aws.lambda_._records import consumed_queues
 

@@ -53,6 +53,7 @@ from loom.core.job.outcome import (
 from loom.core.job.policy import Redelivery
 from loom.core.job.run import EnvelopeInvocation
 from loom.core.job.runner import JobRunner
+from loom.core.logger.failure import Handoff, reference
 from loom.core.observability.event import Scope
 from loom.core.observability.observability import Observability
 from loom.core.tracing import active_trace_id
@@ -154,6 +155,15 @@ class _CeleryProcessBridge:
             return
         self._bridge.shutdown()
         self._bridge = None
+
+
+class CeleryHandoff(Handoff):
+    """Where a Celery worker hands a failure to Celery, its result backend or a callback."""
+
+    RESULT = "celery.result"
+    RETRY = "celery.retry"
+    FAILURE_CALLBACK = "celery.failure_callback"
+    WORKER_INIT = "celery.worker_init"
 
 
 def _close_unrun(coro: Any) -> None:
@@ -283,24 +293,26 @@ def _make_job_task(
             The job's result when it succeeded.
 
         Raises:
-            Retry: When the job failed with attempts left or was postponed.
-            Exception: The error that ended an abandoned job, which the worker
-                stores as the task's failure before acknowledging the message.
+            Retry: When the job failed with attempts left or was postponed; its
+                ``exc`` is the failure's reference, which Celery stores.
+            FailureReference: In place of the error that ended an abandoned job,
+                which the worker stores as the task's failure before
+                acknowledging the message.
         """
         match outcome:
             case Succeeded(result=result):
                 return result
             case Failed(error=error, delay=delay):
-                raise task_self.retry(exc=error, countdown=delay.seconds) from error
+                raise task_self.retry(exc=reference(error), countdown=delay.seconds)
             case Postponed(delay=delay) as postponed:
                 kwargs = {**(task_self.request.kwargs or {}), "postponements": postponements + 1}
                 raise task_self.retry(
-                    exc=JobPostponement(postponed.reason, delay.seconds),
+                    exc=reference(JobPostponement(postponed.reason, delay.seconds)),
                     countdown=delay.seconds,
                     kwargs=kwargs,
                 )
             case Abandoned() as abandoned:
-                raise abandoned.as_exception()
+                raise reference(abandoned.as_exception())
 
     @celery_app.task(  # type: ignore[untyped-decorator]
         name=wire_job_name(job_type.__qualname__),
@@ -336,11 +348,12 @@ def _make_job_task(
         except TaskPredicate:
             raise
         except Exception as error:
-            if failure_callback is not None:
-                CallbackLink(self.request.id, payload or {}, trace_id, identity).send_failure(
-                    celery_app, failure_callback, error
-                )
-            raise
+            failure = reference(error)
+        if failure_callback is not None:
+            CallbackLink(self.request.id, payload or {}, trace_id, identity).send_failure(
+                celery_app, failure_callback, failure
+            )
+        raise failure
 
     return _job_task
 

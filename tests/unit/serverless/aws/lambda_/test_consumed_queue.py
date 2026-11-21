@@ -17,7 +17,7 @@ from loom.serverless.aws.lambda_ import LambdaRuntime
 from tests.helpers.aws import ACCOUNT, OTHER_REGION
 from tests.helpers.aws_island import FakeAwsIsland, FakeSdkError
 from tests.helpers.composition import composition_project
-from tests.helpers.lambda_failures import lambda_failure
+from tests.helpers.handoffs import lambda_failure
 from tests.helpers.loggers import logged_events
 from tests.helpers.sqs import FakeSqs, queue_url
 from tests.unit.serverless.aws.lambda_._probe import Probe

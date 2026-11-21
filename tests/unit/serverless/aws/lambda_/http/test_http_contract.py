@@ -121,7 +121,7 @@ class TestHttpContract:
                 "detail": {
                     "trace_id": TRACE_ID,
                     "code": "forbidden",
-                    "message": "You are not authorized to access this route.",
+                    "message": "forbidden",
                 }
             },
         )
@@ -233,7 +233,7 @@ class TestHttpContract:
                 "detail": {
                     "trace_id": TRACE_ID,
                     "code": "not_found",
-                    "message": "Item with id=404 not found",
+                    "message": "not_found",
                     "entity": "Item",
                     "id": 404,
                 }

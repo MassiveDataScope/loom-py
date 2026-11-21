@@ -1,7 +1,7 @@
-"""``WorkerNotOpenError`` names the failure to open without carrying its secrets.
+"""``WorkerNotOpenError`` names the failure to open by its public form, never its text.
 
-The error travels to the result backend and the caller; the full cause stays
-on ``__cause__`` (never pickled) and in the worker's own log.
+The error travels to the result backend and the caller; the cause's details
+stay in the worker's own log.
 """
 
 from __future__ import annotations
@@ -26,23 +26,14 @@ def _error() -> WorkerNotOpenError:
 
 
 class TestWorkerNotOpenError:
-    def test_the_message_names_the_cause_type_and_masks_its_password(self) -> None:
+    def test_the_message_names_the_cause_type_and_none_of_its_text(self) -> None:
+        message = str(_error())
+
+        assert "_ConnectFailed" in message
+        assert ("secret" in message, "host/db" in message) == (False, False)
+
+    def test_nothing_of_the_cause_text_is_kept_or_pickled(self) -> None:
         error = _error()
 
-        assert "secret" not in str(error)
-        assert "_ConnectFailed" in str(error)
-        assert "postgresql://u:***@host/db" in str(error)
-
-    def test_the_full_cause_stays_on_the_chain_only(self) -> None:
-        error = _error()
-
-        assert isinstance(error.__cause__, _ConnectFailed)
         assert "secret" not in repr(vars(error))
         assert b"secret" not in pickle.dumps(error)
-
-    def test_a_dsn_after_a_query_or_fragment_is_masked_too(self) -> None:
-        cause = _ConnectFailed(f"retry?attempt=2 then {_DSN} #3 redis://:pw@cache:6379/0")
-
-        message = str(WorkerNotOpenError(cause))
-
-        assert ("secret" in message, "pw@" in message) == (False, False)

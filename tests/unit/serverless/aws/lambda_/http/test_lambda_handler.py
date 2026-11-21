@@ -21,8 +21,8 @@ from loom.serverless.aws.lambda_.handler import LambdaHandler
 from loom.serverless.aws.lambda_.triggers.http import LambdaHTTPHandler
 from loom.testing import LambdaTestClient
 from tests.helpers.composition import application_of
+from tests.helpers.handoffs import lambda_failure
 from tests.helpers.jobs import InlineServiceFixture, JobActivity, JobKernel
-from tests.helpers.lambda_failures import lambda_failure
 from tests.helpers.loops import RecordedLoops
 from tests.unit.serverless.aws.lambda_.http._clients import LambdaProject, Reply, lambda_client
 from tests.unit.serverless.aws.lambda_.http._contract_app import PUBLIC_PATH, bearer, seen_by

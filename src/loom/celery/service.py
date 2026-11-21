@@ -41,6 +41,7 @@ from loom.core.job.context import add_pending_publish
 from loom.core.job.dispatch import JobDispatch
 from loom.core.job.handle import JobHandle
 from loom.core.logger import LogField
+from loom.core.logger.failure import FailureReference
 from loom.core.observability.event import Scope
 from loom.core.observability.observability import Observability
 
@@ -130,8 +131,8 @@ class CallbackLink(msgspec.Struct, frozen=True):
             kwargs=msgspec.structs.asdict(self),
         )
 
-    def send_failure(self, celery_app: Celery, task_name: str, error: Exception) -> None:
-        """Send the failure callback task *task_name* with this link and the error's class and text.
+    def send_failure(self, celery_app: Celery, task_name: str, error: FailureReference) -> None:
+        """Send the failure callback task *task_name* with this link and the failure's reference.
 
         The callback runs at least once: a worker that dies between this send
         and acknowledging the job's message sends it again. A send that fails
@@ -140,14 +141,16 @@ class CallbackLink(msgspec.Struct, frozen=True):
         Args:
             celery_app: The application the callback task belongs to.
             task_name: The name of the callback task (:func:`callback_task_name`).
-            error: The error that ended the job, as the worker raised it.
+            error: The reference of the error that ended the job: ``exc_type`` is
+                the original type, ``exc_msg`` its public text (type, code and
+                trace id), never the error's message.
         """
         try:
             celery_app.send_task(
                 task_name,
                 kwargs={
                     **msgspec.structs.asdict(self),
-                    "exc_type": type(error).__qualname__,
+                    "exc_type": error.exception_type,
                     "exc_msg": str(error),
                 },
             )

@@ -28,7 +28,7 @@ from loom.serverless.aws.lambda_ import LambdaRuntime, LambdaUnservedConfigError
 from loom.serverless.aws.lambda_.boundary import LambdaBoundary
 from tests.helpers.ai import CountingEngineProvider
 from tests.helpers.composition import composition_project
-from tests.helpers.lambda_failures import lambda_failure
+from tests.helpers.handoffs import lambda_failure
 from tests.unit.serverless.aws.lambda_._probe import Probe
 from tests.unit.serverless.aws.lambda_._records import WORKER, make_record, with_worker
 from tests.unit.serverless.aws.lambda_.http._clients import lambda_client

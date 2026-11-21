@@ -6,8 +6,8 @@ import dataclasses
 import functools
 import logging
 import warnings
-from collections.abc import AsyncIterator, Callable, Collection, Mapping
-from contextlib import asynccontextmanager
+from collections.abc import AsyncIterator, Awaitable, Callable, Collection, Mapping
+from contextlib import AbstractAsyncContextManager, asynccontextmanager
 from typing import Any
 
 import msgspec
@@ -41,6 +41,8 @@ from loom.core.introspection import (
     ContributorRef,
 )
 from loom.core.logger import LogRuntime
+from loom.core.logger.failure import Handoff, reference
+from loom.core.logger.uncaught import install_process_hooks
 from loom.core.observability.config import PrometheusObservabilityConfig
 from loom.core.stores import (
     SERVER_PROFILE,
@@ -655,6 +657,52 @@ def compose_rest(
     return recipe, declared
 
 
+class RestHandoff(Handoff):
+    """Where a REST application hands a failure to the ASGI server or to the client."""
+
+    LIFESPAN_STARTUP = "rest.lifespan_startup"
+    LIFESPAN_SHUTDOWN = "rest.lifespan_shutdown"
+    ERROR_BODY = "rest.error_body"
+
+
+async def _handed_off(step: Awaitable[object]) -> None:
+    """Await *step*; a failure reaches the ASGI server as a reference, with no context."""
+    try:
+        await step
+    except Exception as exc:
+        failure = reference(exc)
+    else:
+        return
+    raise failure
+
+
+def application_lifespan(
+    application: Application,
+) -> Callable[[object], AbstractAsyncContextManager[None]]:
+    """The ASGI lifespan that opens *application* at startup and closes it at shutdown.
+
+    The lifespan is the ASGI process's runtime entry point: it installs loom's
+    process hooks. A failure to open or to close reaches the server as a
+    :class:`~loom.core.logger.failure.FailureReference`: Starlette formats the
+    exception it receives into the text uvicorn logs, so that text names the
+    type, code and trace id only.
+    """
+
+    @asynccontextmanager
+    async def lifespan(_: object) -> AsyncIterator[None]:
+        install_process_hooks()
+        running = application.running()
+        await _handed_off(running.__aenter__())
+        try:
+            yield
+        except BaseException as thrown:
+            await running.__aexit__(type(thrown), thrown, thrown.__traceback__)
+            raise
+        await _handed_off(running.__aexit__(None, None, None))
+
+    return lifespan
+
+
 class FastAPIRuntime:
     """Serve a composed application over HTTP with FastAPI.
 
@@ -715,11 +763,6 @@ class FastAPIRuntime:
         declared = self._declared
         rest_cfg, auth = declared.rest, declared.auth
 
-        @asynccontextmanager
-        async def lifespan(_: FastAPI) -> AsyncIterator[None]:
-            async with application.running():
-                yield
-
         app = create_fastapi_app(
             application.kernel,
             declared.routes,
@@ -728,7 +771,7 @@ class FastAPIRuntime:
             docs_url=rest_cfg.docs_url,
             redoc_url=rest_cfg.redoc_url,
             openapi_url=rest_cfg.openapi_url,
-            lifespan=lifespan,
+            lifespan=application_lifespan(application),
         )
         mount_health(app, application.readiness_probes())
         mount_request_stack(app, declared, mount_metrics=self._metrics_mounter(app, declared))

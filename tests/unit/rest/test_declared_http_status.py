@@ -475,7 +475,7 @@ class TestDeclaredStatusAcceptance:
 
         assert exc.status_code is HTTPStatus.UNAUTHORIZED
         assert exc.headers == {"WWW-Authenticate": "Bearer"}
-        assert _detail(exc)["message"] == "sign in"
+        assert _detail(exc)["message"] == "system_error"
 
     @pytest.mark.parametrize("status", [400, 451, 511])
     def test_the_registered_4xx_and_5xx_bounds_are_accepted(self, status: int) -> None:
@@ -494,7 +494,7 @@ class TestDeclaredStatusAcceptance:
             (
                 NotFound("User", id=1),
                 404,
-                "User with id=1 not found",
+                "not_found",
                 {"entity": "User", "id": 1},
                 None,
             ),
@@ -505,7 +505,7 @@ class TestDeclaredStatusAcceptance:
                 {"field": "email"},
                 None,
             ),
-            (RateLimited(1), 429, "Too many requests.", {}, {"Retry-After": "1"}),
+            (RateLimited(1), 429, "rate_limited", {}, {"Retry-After": "1"}),
             (SystemError("secret-host"), 500, _FIXED_500, {}, None),
             (
                 SystemError("secret-host", code=ErrorCode.SERVICE_UNAVAILABLE),

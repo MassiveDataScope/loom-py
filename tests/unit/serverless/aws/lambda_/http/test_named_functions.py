@@ -20,7 +20,7 @@ from loom.rest.fastapi import FastAPIRuntime
 from loom.serverless.aws.lambda_ import LambdaRuntime
 from loom.serverless.aws.lambda_.boundary import LambdaBoundary
 from tests.helpers.aws_island import FakeAwsIsland
-from tests.helpers.lambda_failures import lambda_failure
+from tests.helpers.handoffs import lambda_failure
 from tests.helpers.lambda_jobs import jobs_queue, jobs_trigger
 from tests.unit.serverless.aws.lambda_.http._clients import lambda_client
 from tests.unit.serverless.aws.lambda_.http._contract_app import bearer

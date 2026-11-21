@@ -28,6 +28,7 @@ from loom.core.job.delivery import JobDelivery
 from loom.core.job.job import Job
 from loom.core.job.outcome import JobAbandonment, JobPostponement
 from loom.core.job.policy import Backoff
+from loom.core.logger.failure import FailureReference, exception_type
 from loom.core.stores.catalog import DEFAULT_STORE
 from loom.core.stores.uow.coordinator import InvocationOutcome, Uncertain
 from loom.core.stores.uow.scope import invocation_error
@@ -233,8 +234,10 @@ class TestEagerRequest:
     def test_a_request_without_the_bridge_that_is_not_eager_is_refused(self) -> None:
         worker = CeleryWorker(initialized=False)
 
-        with pytest.raises(RuntimeError, match="async bridge is not initialized"):
+        with pytest.raises(FailureReference) as refused:
             worker.run(DoubleJob, params={"value": 1})
+
+        assert refused.value.exception_type == "RuntimeError"
 
     @pytest.mark.parametrize(("always_eager", "runs"), [(True, True), (False, False)])
     def test_a_request_that_does_not_say_follows_the_eager_setting_of_the_application(
@@ -246,7 +249,7 @@ class TestEagerRequest:
         if runs:
             assert worker.run(DoubleJob, eager=None, params={"value": 2}) == 4
         else:
-            with pytest.raises(RuntimeError, match="async bridge is not initialized"):
+            with pytest.raises(FailureReference, match="RuntimeError"):
                 worker.run(DoubleJob, eager=None, params={"value": 2})
 
 
@@ -256,10 +259,11 @@ class TestWorkerThatDidNotOpen:
     ) -> None:
         worker.runtime.refuse(RuntimeError("clickhouse unreachable"))
 
-        with pytest.raises(WorkerNotOpenError) as refused:
+        with pytest.raises(FailureReference) as refused:
             worker.run(TraceJob)
 
-        assert isinstance(refused.value.__cause__, RuntimeError)
+        assert refused.value.exception_type == exception_type(WorkerNotOpenError)
+        assert refused.value.__context__ is None
         assert TraceJob.seen == []
 
 
@@ -291,9 +295,10 @@ class TestRetry:
     def test_the_last_attempt_raises_the_error_and_publishes_nothing(
         self, worker: CeleryWorker
     ) -> None:
-        with pytest.raises(ValueError, match="err"):
+        with pytest.raises(FailureReference) as raised:
             worker.run(FailingJob, attempt=3)
 
+        assert raised.value.exception_type == "ValueError"
         assert worker.published(JOB_TASKS) == []
 
     def test_a_postponement_publishes_again_after_its_delay_counting_one_more(
@@ -303,7 +308,7 @@ class TestRetry:
             worker.run(PostponingJob, postponements=2, params={"delay": 7}, payload={"value": 1})
 
         (message,) = worker.published(JOB_TASKS)
-        assert isinstance(raised.value.exc, JobPostponement)
+        assert raised.value.exc.exception_type == exception_type(JobPostponement)
         assert (message.countdown, message.kwargs["postponements"]) == (7, 3)
         assert message.kwargs["payload"] == {"value": 1}
 
@@ -321,18 +326,20 @@ class TestRetry:
             worker.run(FailingJob, postponements=5)
 
     def test_a_job_abandonment_raises_without_publishing_again(self, worker: CeleryWorker) -> None:
-        with pytest.raises(JobAbandonment, match="never"):
+        with pytest.raises(FailureReference) as raised:
             worker.run(AbandoningJob)
 
+        assert raised.value.exception_type == exception_type(JobAbandonment)
         assert worker.published(JOB_TASKS) == []
 
     @pytest.mark.parametrize("kind", NOT_RETRIED)
     def test_an_error_a_retry_cannot_help_is_raised_without_publishing_again(
         self, worker: CeleryWorker, kind: str
     ) -> None:
-        with pytest.raises(type(ERRORS[kind]())):
+        with pytest.raises(FailureReference) as raised:
             worker.run(RaisingJob, params={"kind": kind})
 
+        assert raised.value.exception_type == exception_type(type(ERRORS[kind]()))
         assert worker.published(JOB_TASKS) == []
 
     def test_a_post_commit_error_without_a_commit_is_retried(self, worker: CeleryWorker) -> None:
@@ -343,10 +350,10 @@ class TestRetry:
 class TestFailureCallback:
     CALLBACK = "loom.callback_error.AcmeCallback"
 
-    def test_an_abandoned_job_sends_the_callback_once_with_the_error_class_and_message(
+    def test_an_abandoned_job_sends_the_callback_once_with_the_failure_reference(
         self, worker: CeleryWorker
     ) -> None:
-        with pytest.raises(ValueError):
+        with pytest.raises(FailureReference):
             worker.run(
                 FailingJob,
                 attempt=3,
@@ -362,17 +369,19 @@ class TestFailureCallback:
             "trace_id": "acme-trace",
             "identity": None,
             "exc_type": "ValueError",
-            "exc_msg": "err",
+            "exc_msg": "ValueError trace_id=acme-trace",
         }
 
-    def test_a_job_abandonment_names_its_own_class_and_reason(self, worker: CeleryWorker) -> None:
-        with pytest.raises(JobAbandonment):
+    def test_a_job_abandonment_names_its_own_class_not_its_reason(
+        self, worker: CeleryWorker
+    ) -> None:
+        with pytest.raises(FailureReference):
             worker.run(AbandoningJob, failure_callback=self.CALLBACK)
 
         (message,) = worker.published(self.CALLBACK)
         assert (message.kwargs["exc_type"], message.kwargs["exc_msg"]) == (
-            "JobAbandonment",
-            "never",
+            exception_type(JobAbandonment),
+            exception_type(JobAbandonment),
         )
 
     def test_a_failure_that_is_retried_sends_nothing(self, worker: CeleryWorker) -> None:
@@ -384,7 +393,7 @@ class TestFailureCallback:
     def test_an_abandoned_job_without_a_failure_callback_sends_nothing(
         self, worker: CeleryWorker
     ) -> None:
-        with pytest.raises(ValueError):
+        with pytest.raises(FailureReference):
             worker.run(FailingJob, attempt=3)
 
         assert worker.published(self.CALLBACK) == []
@@ -419,7 +428,7 @@ class TestEvents:
 
     @pytest.mark.parametrize(
         ("attempt", "raised", "kind"),
-        [(1, Retry, EventKind.JOB_FAILED), (3, ValueError, EventKind.JOB_ABANDONED)],
+        [(1, Retry, EventKind.JOB_FAILED), (3, FailureReference, EventKind.JOB_ABANDONED)],
         ids=["attempt left", "last attempt"],
     )
     def test_a_failure_emits_failed_or_abandoned_without_a_trace(
@@ -434,7 +443,7 @@ class TestEvents:
     def test_a_post_commit_error_that_committed_is_abandoned_not_failed(
         self, worker: CeleryWorker
     ) -> None:
-        with pytest.raises(PostCommitError):
+        with pytest.raises(FailureReference):
             worker.run(RaisingJob, params={"kind": "post-commit-committed"})
 
         assert EventKind.JOB_FAILED not in worker.execution_observer.kinds

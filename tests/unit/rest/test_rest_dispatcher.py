@@ -384,10 +384,11 @@ class TestHttpErrorMapper:
         exc = self._mapper().to_http(err)
         assert exc.status_code == 500
 
-    def test_detail_contains_code_and_message(self) -> None:
+    def test_detail_contains_code_and_the_public_form_not_the_message(self) -> None:
         detail = _detail(self._mapper().to_http(NotFound("Order", id=42)))
         assert detail["code"] == ErrorCode.NOT_FOUND
-        assert "42" in detail["message"]
+        assert detail["message"] == "not_found"
+        assert detail["id"] == 42
 
 
 # ---------------------------------------------------------------------------

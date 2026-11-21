@@ -20,7 +20,7 @@ from loom.core.stores import LAMBDA_PROFILE
 from loom.rest.compiler import InterfaceCompilationError
 from loom.rest.fastapi import FastAPIRuntime
 from loom.serverless.aws.lambda_ import LambdaRuntime, LambdaUnservedConfigError
-from tests.helpers.lambda_failures import lambda_failure
+from tests.helpers.handoffs import lambda_failure
 from tests.unit.serverless.aws.lambda_.http._clients import LambdaProject, lambda_client
 
 pytestmark = [

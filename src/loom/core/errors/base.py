@@ -48,9 +48,11 @@ class LoomError(Exception):
     - ``public_detail``: extra fields the HTTP detail gains. The default
       returns an empty mapping. A key the mapper already set is a
       misdeclaration, answered the same way, and does not replace that key.
-    - ``public_message``: when ``True``, a 5xx response shows this error's
-      message. The default ``False`` keeps the fixed 5xx text, so a message
-      that names a host is not sent to the client.
+    - ``public_message``: when ``True``, the response shows this error's
+      message. By default an answer carries the error's public form, its
+      code and the fields :meth:`log_fields` declares (the fixed text for a
+      5xx), so a message that names a host or a value is not sent to the
+      client; a validation error carries its text, which the client's data caused.
 
     Args:
         message: Human-readable description of the error.
@@ -61,7 +63,7 @@ class LoomError(Exception):
             subclass a retry would repeat or make worse sets it ``False``.
         http_status: A 4xx or 5xx status (an ``HTTPStatus`` or its int), or
             ``None`` to keep the code table.
-        public_message: Whether a 5xx response may show :attr:`message`.
+        public_message: Whether a response may show :attr:`message`.
 
     Example::
 

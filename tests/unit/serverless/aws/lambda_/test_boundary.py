@@ -13,7 +13,7 @@ from loom.core.logger.failure import FailureReference
 from loom.core.logger.install import install_record_factory
 from loom.core.logger.log_events import LoggerLogEvent
 from loom.serverless.aws.lambda_.boundary import LambdaBoundary, lambda_init
-from tests.helpers.lambda_failures import lambda_failure
+from tests.helpers.handoffs import lambda_failure
 
 _SECRET = "patient 0042"
 

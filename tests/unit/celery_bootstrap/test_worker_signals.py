@@ -40,6 +40,7 @@ from loom.celery.runtime import CeleryRuntime, _connect_lifecycle_signals, _Work
 from loom.composition import AppConfig, Application, ApplicationHost
 from loom.core.config import ConfigContext, ConfigError
 from loom.core.job.job import Job
+from loom.core.logger.failure import FailureReference, exception_type
 from tests.helpers import acme_callbacks
 from tests.helpers.acme_callbacks import AcmeSyncCallback
 from tests.helpers.celery import WorkerDouble, isolated_signals
@@ -152,7 +153,10 @@ class TestPrefork:
 
     @pytest.mark.parametrize("start_method", ["spawn", "forkserver"])
     def test_a_prefork_worker_refuses_a_pool_that_does_not_fork(
-        self, start_method: str, start_methods: list[tuple[str, bool]]
+        self,
+        start_method: str,
+        start_methods: list[tuple[str, bool]],
+        caplog: pytest.LogCaptureFixture,
     ) -> None:
         application = _ApplicationSpy()
         _connect(application)
@@ -160,11 +164,8 @@ class TestPrefork:
         with pytest.raises(WorkerTerminate) as caught:
             worker_init.send(sender=WorkerDouble("prefork", start_method=start_method))
 
-        cause = caught.value.__cause__
-        assert isinstance(cause, ConfigError)
-        message = str(cause)
-        assert "loom registers tasks in the parent" in message
-        assert "worker_pool_start_method: fork" in message
+        assert (caught.value.__cause__, caught.value.__context__) == (None, None)
+        assert exception_types(caplog) == [exception_type(ConfigError)]
         assert start_methods == []
         assert application.events == []
 
@@ -210,7 +211,7 @@ class TestPrefork:
         assert application.events == ["open(check=False)", "close"]
         assert bridge._bridge is None
 
-    def test_a_failed_check_stops_the_worker(self) -> None:
+    def test_a_failed_check_stops_the_worker(self, caplog: pytest.LogCaptureFixture) -> None:
         application = _ApplicationSpy(check_error=RuntimeError("schema missing"))
         _connect(application)
 
@@ -218,7 +219,8 @@ class TestPrefork:
         with pytest.raises(WorkerTerminate) as caught:
             worker_init.send(sender=sender)
 
-        assert isinstance(caught.value.__cause__, RuntimeError)
+        assert caught.value.__context__ is None
+        assert exception_types(caplog) == ["RuntimeError"]
 
     def test_the_parent_closes_nothing_it_never_opened(self) -> None:
         application = _ApplicationSpy()
@@ -250,7 +252,7 @@ class TestSingleProcessPools:
         assert application.events == ["open(check=True)", "close"]
         assert bridge._bridge is None
 
-    def test_a_failed_open_stops_the_worker(self) -> None:
+    def test_a_failed_open_stops_the_worker(self, caplog: pytest.LogCaptureFixture) -> None:
         application = _ApplicationSpy(open_error=RuntimeError("schema missing"))
         bridge = _connect(application)
 
@@ -258,7 +260,8 @@ class TestSingleProcessPools:
         with pytest.raises(WorkerTerminate) as caught:
             worker_init.send(sender=sender)
 
-        assert isinstance(caught.value.__cause__, RuntimeError)
+        assert caught.value.__context__ is None
+        assert exception_types(caplog) == ["RuntimeError"]
         assert bridge._bridge is None
 
 
@@ -302,16 +305,15 @@ class TestFailedChildOpen:
     ) -> None:
         task = self._worker(tmp_path).tasks[f"{TASK_JOB_PREFIX}.{_PingJob.__qualname__}"]
 
-        with caplog.at_level(logging.ERROR, logger="loom.celery.runtime"):
+        with caplog.at_level(logging.ERROR):
             worker_process_init.send(sender=None)
             failures = [task.apply().result for _ in range(2)]
 
         for failure in failures:
-            assert isinstance(failure, WorkerNotOpenError)
-            assert isinstance(failure.__cause__, RuntimeError)
-            assert "RuntimeError: clickhouse unreachable" in str(failure)
-        opening = [r for r in caplog.records if "failed to open its application" in r.message]
-        assert len(opening) == 1
+            assert isinstance(failure, FailureReference)
+            assert failure.exception_type == exception_type(WorkerNotOpenError)
+            assert "clickhouse" not in repr(failure.args)
+        assert exception_types(caplog).count("RuntimeError") == 1
 
     @pytest.mark.parametrize(
         ("prefix", "kwargs"),

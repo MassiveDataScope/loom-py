@@ -36,7 +36,7 @@ from loom.serverless.aws.lambda_ import (
 )
 from loom.testing import RecordingJobTransport
 from tests.helpers.composition import composition_project
-from tests.helpers.lambda_failures import lambda_failure
+from tests.helpers.handoffs import lambda_failure
 from tests.helpers.loggers import rendered
 from tests.helpers.loops import RecordedLoops
 from tests.unit.serverless.aws.lambda_._probe import Probe

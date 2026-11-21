@@ -19,6 +19,7 @@ from loom.core.job.callback import DispatchableCallbacks, JobCallback
 from loom.core.job.context import flush_pending_dispatches
 from loom.core.job.job import Job
 from loom.core.job.service import JobService
+from loom.core.logger.failure import FailureReference
 from loom.core.tracing import reset_trace_id, set_trace_id
 from tests.helpers.celery import CeleryBroker
 from tests.helpers.jobs import RecordingExecutionObserver
@@ -177,13 +178,15 @@ class TestCallbacks:
 
 
 class TestFailureCallbackSend:
-    def test_the_worker_sends_the_callback_task_with_the_link_the_class_and_the_message(
+    def test_the_worker_sends_the_callback_task_with_the_link_and_the_failure_reference(
         self,
     ) -> None:
         broker = CeleryBroker([DEFAULT_QUEUE])
         link = CallbackLink("job-1", {"order_id": 99}, "acme-trace", None)
 
-        link.send_failure(broker.app, "loom.callback_error.Acme", ValueError("bad input"))
+        failure = FailureReference("ValueError", None, "acme-trace", expected=False, retryable=True)
+
+        link.send_failure(broker.app, "loom.callback_error.Acme", failure)
 
         (message,) = broker.sent()
         assert (message.task, message.kwargs) == (
@@ -194,7 +197,7 @@ class TestFailureCallbackSend:
                 "trace_id": "acme-trace",
                 "identity": None,
                 "exc_type": "ValueError",
-                "exc_msg": "bad input",
+                "exc_msg": "ValueError trace_id=acme-trace",
             },
         )
 

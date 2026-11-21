@@ -79,6 +79,8 @@ from loom.core.discovery.worker import (
 from loom.core.engine.compilable import Compilable
 from loom.core.job.callback import CallbackOutcome
 from loom.core.logger import LogRuntime
+from loom.core.logger.failure import reference
+from loom.core.logger.uncaught import install_process_hooks
 from loom.core.runner import shutdown_runner
 from loom.core.stores import WORKER_PROFILE
 
@@ -169,8 +171,10 @@ class _WorkerLifecycle:
         Raises:
             WorkerTerminate: When the checks or the opening fail, so the worker
                 does not start (Celery logs and swallows a plain exception
-                raised by a signal handler).
+                raised by a signal handler). The failure is logged once through
+                loom and not chained, so nothing Celery prints carries its text.
         """
+        install_process_hooks()
         try:
             if _is_prefork(worker):
                 self._fork_children(worker)
@@ -178,8 +182,10 @@ class _WorkerLifecycle:
             else:
                 self._open(check=True)
         except Exception as exc:
-            _log.exception("worker application failed to start")
-            raise WorkerTerminate(_EX_FAILURE) from exc
+            reference(exc)
+        else:
+            return
+        raise WorkerTerminate(_EX_FAILURE)
 
     @staticmethod
     def _fork_children(worker: Any) -> None:
@@ -201,16 +207,16 @@ class _WorkerLifecycle:
     def on_process_init(self) -> None:
         """Open in a prefork child; the parent already checked.
 
-        A failure is logged once and recorded on the bridge, so every task of
-        this child fails with :class:`~loom.celery.errors.WorkerNotOpenError`
-        chained to it. The child is not killed: the pool would respawn it into
-        the same failure.
+        A failure is logged once and its reference recorded on the bridge, so
+        every task of this child fails with
+        :class:`~loom.celery.errors.WorkerNotOpenError` chained to that
+        reference. The child is not killed: the pool would respawn it into the
+        same failure.
         """
         try:
             self._open(check=False)
         except Exception as exc:
-            _log.exception("worker process failed to open its application")
-            self._runtime.refuse(exc)
+            self._runtime.refuse(reference(exc))
 
     def close(self) -> None:
         """Close what this process opened, then stop its bridge."""
