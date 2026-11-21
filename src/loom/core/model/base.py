@@ -6,6 +6,7 @@ import msgspec
 from msgspec import UNSET, UnsetType
 
 from loom.core.model.field import ColumnFieldSpec
+from loom.core.model.introspection import derived_key_of
 from loom.core.model.projection import Projection
 from loom.core.model.relation import Relation
 from loom.core.model.struct import LoomStruct
@@ -19,6 +20,34 @@ if TYPE_CHECKING:
         pass
 else:
     _StructMeta = type(msgspec.Struct)
+
+
+_KEY_FOR = "key_for"
+_DERIVES_KEY = "__derives_key__"
+
+
+def _set_derived_id(model: Any) -> None:
+    """Fill the derived id of *model* when it is unset and every business-key field is present."""
+    derived = derived_key_of(type(model))
+    if derived is None or getattr(model, derived.field) is not UNSET:
+        return
+    if derived.has_every_field(model):
+        msgspec.structs.force_setattr(model, derived.field, derived.id_for(model))
+
+
+def _deriving_post_init(application_post_init: Any) -> Any:
+    """Build the ``__post_init__`` that derives the id, then runs the application's own."""
+
+    def __post_init__(self: Any) -> None:
+        _set_derived_id(self)
+        if application_post_init is not None:
+            application_post_init(self)
+
+    return __post_init__
+
+
+def _inherited_post_init(bases: tuple[type, ...]) -> Any:
+    return next((base.__post_init__ for base in bases if hasattr(base, "__post_init__")), None)
 
 
 def _resolve_annotation(annotation: Any, namespace: dict[str, Any]) -> Any:
@@ -102,6 +131,10 @@ class LoomStructMeta(_StructMeta):
         relations: dict[str, Relation] = {}
         projections: dict[str, Projection] = {}
         annotations = _take_class_body_annotations(namespace)
+        if _KEY_FOR in annotations:
+            raise TypeError(
+                f"{name}.{_KEY_FOR} cannot be a field: it is the method that derives the key"
+            )
 
         eval_ns = _build_eval_namespace(namespace)
 
@@ -122,12 +155,21 @@ class LoomStructMeta(_StructMeta):
             defaults[attr_name] = UNSET
             _mark_optional_unset(attr_name, annotations, eval_ns)
 
+        derives_here = any(spec.field.derived is not None for spec in columns.values())
+        derives_inherited = any(getattr(base, _DERIVES_KEY, False) for base in bases)
+        own_post_init = namespace.get("__post_init__")
+        if derives_here or (derives_inherited and own_post_init is not None):
+            namespace["__post_init__"] = _deriving_post_init(
+                own_post_init or _inherited_post_init(bases)
+            )
+
         namespace.update(defaults)
         namespace["__annotations__"] = annotations
         struct_cls: Any = super().__new__(cls, name, bases, namespace, **kwargs)
         struct_cls.__loom_columns__ = columns
         struct_cls.__loom_relations__ = relations
         struct_cls.__loom_projections__ = projections
+        setattr(struct_cls, _DERIVES_KEY, derives_here or derives_inherited)
         return struct_cls
 
 
@@ -142,3 +184,22 @@ class BaseModel(LoomStruct, metaclass=LoomStructMeta):  # type: ignore[metaclass
 
     __tablename__: ClassVar[str]
     __store__: ClassVar[str]
+
+    @classmethod
+    def key_for(cls, row: object) -> str:
+        """Return the id the model derives from the business key of *row*.
+
+        *row* is a model instance, any object with the business-key fields as
+        attributes (a command, a ``Struct``) or a mapping (an ETL row); the
+        model reads only its business-key fields, in the declared order, and
+        ignores the rest.
+
+        Raises:
+            ValueError: If the model derives no key.
+            BoundaryValidationError: If a business-key field is missing, has
+                no value or has no canonical form.
+        """
+        derived = derived_key_of(cls)
+        if derived is None:
+            raise ValueError(f"{cls.__name__} derives no key")
+        return derived.id_for(row)

@@ -2,10 +2,18 @@
 
 from __future__ import annotations
 
+from datetime import datetime
+
 import msgspec
 import pytest
 
-from loom.core.model import TimestampedModel, get_column_fields
+from loom.core.model import (
+    BaseModel,
+    CreatedAtField,
+    TimestampedModel,
+    UpdatedAtField,
+    get_column_fields,
+)
 from loom.core.model.enums import ServerDefault, ServerOnUpdate
 from loom.core.model.field import ColumnField
 
@@ -78,3 +86,43 @@ class TestTimestampedModelInheritance:
         field_names = {f.name for f in msgspec.structs.fields(Order)}
         assert "trace_id" not in field_names
         assert "created_trace_id" not in field_names
+
+
+class AcmeEvent(BaseModel):
+    __tablename__ = "acme_events"
+
+    id: int = ColumnField(primary_key=True, autoincrement=True)
+    created_at: datetime | None = CreatedAtField()
+
+
+class AcmeDraft(BaseModel):
+    __tablename__ = "acme_drafts"
+
+    id: int = ColumnField(primary_key=True, autoincrement=True)
+    updated_at: datetime | None = UpdatedAtField()
+
+
+class TestSeparableTimestamps:
+    def test_a_model_can_declare_only_the_creation_time(self) -> None:
+        fields = get_column_fields(AcmeEvent)
+
+        assert "updated_at" not in fields
+        assert fields["created_at"].field.server_default == ServerDefault.NOW
+        assert fields["created_at"].field.server_onupdate is None
+
+    def test_a_model_can_declare_only_the_update_time(self) -> None:
+        fields = get_column_fields(AcmeDraft)
+
+        assert "created_at" not in fields
+        assert fields["updated_at"].field.server_default == ServerDefault.NOW
+        assert fields["updated_at"].field.server_onupdate == ServerOnUpdate.NOW
+
+    def test_the_timestamped_model_declares_both_fields_the_same_way(self) -> None:
+        assert (
+            TimestampedModel.__loom_columns__["created_at"]
+            == AcmeEvent.__loom_columns__["created_at"]
+        )
+        assert (
+            TimestampedModel.__loom_columns__["updated_at"]
+            == AcmeDraft.__loom_columns__["updated_at"]
+        )

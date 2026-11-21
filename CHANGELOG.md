@@ -1213,6 +1213,40 @@
   contract in fake time (`lost`), and `JobTimer` gains `close()`: the application closes
   a timer a test bound like the one it builds.
 
+### model
+
+- **model:** business keys and derived keys. A model declares
+  `__business_key__ = BusinessKey("portal", "external_id")`, the fields that identify one
+  entity at its grain, unique over all of them; `ColumnField(primary_key=True,
+  derived=KeyHash.uuid5(namespace))` (or `KeyHash.sha256()`) makes the single `str` primary key
+  a pure function of that key. `Model.key_for(row)` returns the id for a model, a command or a
+  mapping, reading only the business-key fields in their declared order, and
+  `verify_keys(model, rows)` reports the rows whose id does not match. The model computes its
+  id when it is built (constructor, decode, convert) if the id is unset and every business-key
+  field is present, and never recomputes a supplied id, so reads do no hashing; an application
+  `__post_init__` keeps working without `super()`. The canonical form of each
+  value (NFC strings, normalised `Decimal`, UTC `datetime`, and so on) has one owner,
+  `loom.core.model.keys`, and golden vectors pin the formula. Startup refuses an unknown or
+  nullable key field, a derived field that is not the single `str` primary key, and a model
+  field named `key_for`. A business-key field of a derived model that the store sets after the
+  insert (`server_default`, `server_onupdate`, `autoincrement`) is refused with `ConfigError`:
+  use a business-time field such as `observed_at`, not `created_at`. See the business keys
+  guide for when to derive and how to migrate a changed definition.
+- **stores:** every repository (SQLAlchemy, Mongo, DynamoDB, `InMemoryRepository`) fills the
+  derived id through one choke point, `loom.core.stores.repository.record.creation_values`: it
+  completes an unset id, and refuses (`BoundaryValidationError`) a supplied id that does not
+  match `Model.key_for(row)`, a row missing a business-key field, and an update that writes a
+  business-key field. SQLAlchemy creates a `UNIQUE` over the business key and
+  `create_many(on_conflict=IGNORE)` skips the rows whose business key exists, so with a business
+  key the conflict target is the key, not the primary key. Mongo does not manage indexes: create
+  the unique index yourself. DynamoDB refuses a `BusinessKey` without a derived key at startup
+  (`ConfigError`). Writes that bypass the repository (ETL, streaming, raw SQL) do not derive keys
+  yet.
+- **model:** `CreatedAtField()` and `UpdatedAtField()` declare the timestamp columns one at a
+  time; `TimestampedModel` is defined with both and behaves as before. The DynamoDB repository
+  now stamps `ServerDefault.NOW` fields on create and `ServerOnUpdate.NOW` fields on update, as
+  the Mongo repository does.
+
 ### composition
 
 - **composition:** `Installer.resources(container)` lets an application declare

@@ -36,7 +36,6 @@ from pymongo.results import DeleteResult, InsertManyResult, InsertOneResult
 from loom.core.errors import Conflict
 from loom.core.logger import get_logger
 from loom.core.model.convert import to_struct
-from loom.core.model.enums import ServerDefault, ServerOnUpdate
 from loom.core.model.introspection import (
     column_annotations,
     get_column_fields,
@@ -69,7 +68,12 @@ from loom.core.stores.repository import (
     build_page_result,
 )
 from loom.core.stores.repository.cursor import require_cursor_sort
-from loom.core.stores.repository.record import RecordLayout, single_id_attribute
+from loom.core.stores.repository.record import (
+    ServerStamps,
+    creation_values,
+    refuse_key_change,
+    single_id_attribute,
+)
 from loom.stores.mongo.ids import IdPolicy, Uuid4IdPolicy
 from loom.stores.mongo.query_compiler import MongoFilter, MongoQueryCompiler, MongoSort
 from loom.stores.mongo.values import to_storage_datetime, to_storage_value
@@ -234,16 +238,7 @@ class MongoRepository(
             if info.column_type.type_name == "DateTime"
             and info.column_type.option("timezone") is False
         )
-        self._now_fields = frozenset(
-            name
-            for name, info in column_fields.items()
-            if info.field.server_default is ServerDefault.NOW
-        )
-        self._onupdate_fields = frozenset(
-            name
-            for name, info in column_fields.items()
-            if ServerOnUpdate.is_now(info.field.server_onupdate)
-        )
+        self._stamps = ServerStamps.of(model)
         self._compiler = MongoQueryCompiler(model, self._id_attr, self._ids.to_storage)
 
     def has_caller_scoped_session(self) -> bool:
@@ -475,7 +470,8 @@ class MongoRepository(
             for name, value in self._to_internal(data).items()
             if value is not None and name != self._id_attr
         }
-        changes.update(_stamp(self._onupdate_fields))
+        refuse_key_change(self._model, changes)
+        changes.update(_stamp(self._stamps.on_update))
         if changes:
             document = await self._collection.find_one_and_update(
                 key, {"$set": changes}, return_document=ReturnDocument.AFTER, session=session
@@ -633,8 +629,7 @@ class MongoRepository(
         values = self._creation_columns(data)
         supplied = values.pop(self._id_attr, None)
         key = self._ids.generate() if supplied is None else self._ids.to_storage(supplied)
-        missing = frozenset(name for name in self._now_fields if values.get(name) is None)
-        return {_ID: key, **values, **_stamp(missing)}
+        return {_ID: key, **values, **_stamp(self._stamps.missing_in(values))}
 
     def _creation_columns(self, data: msgspec.Struct) -> Document:
         """Return the column fields to store for *data*, keyed by internal name.
@@ -642,7 +637,7 @@ class MongoRepository(
         Every field that is not ``msgspec.UNSET`` is included, defaults too.
         """
         values = msgspec.to_builtins(
-            RecordLayout.from_struct(type(data)).to_values(data), builtin_types=_NATIVE_TYPES
+            creation_values(self._model, data), builtin_types=_NATIVE_TYPES
         )
         return self._stored_columns(cast(dict[str, Any], values))
 

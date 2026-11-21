@@ -15,6 +15,7 @@ from loom.core.errors import UnsupportedQuery
 from loom.core.errors.codes import ErrorCode
 from loom.core.model.convert import to_column_value, to_struct
 from loom.core.model.introspection import (
+    business_key_of,
     get_column_fields,
     get_id_attributes,
     get_relations,
@@ -35,7 +36,7 @@ from loom.core.stores.repository import (
     build_page_result,
 )
 from loom.core.stores.repository.mutation import MutationEvent
-from loom.core.stores.repository.record import RecordLayout
+from loom.core.stores.repository.record import creation_values, refuse_key_change
 from loom.stores.sqlalchemy.integrity import handle_integrity_errors
 from loom.stores.sqlalchemy.query_compiler.compiler import QuerySpecCompiler
 from loom.stores.sqlalchemy.rls.provider import SCOPE_PREFIX
@@ -196,9 +197,7 @@ class SQLAlchemyContextMixin(Generic[OutputT, IdT]):
         defaults included. A mapping is returned unchanged.
         """
         if isinstance(data, msgspec.Struct):
-            return self._checked_columns(
-                to_column_value(RecordLayout.from_struct(type(data)).to_values(data))
-            )
+            return self._checked_columns(to_column_value(creation_values(self.model, data)))
         return data
 
     def _checked_columns(self, values: dict[str, Any]) -> dict[str, Any]:
@@ -371,13 +370,14 @@ class SQLAlchemyBulkCreateMixin(SQLAlchemyContextMixin[OutputT, IdT], Generic[Ou
         relying on the database returning them in ``VALUES`` order (SQLite and
         PostgreSQL do); the others flush the rows and re-select them by
         primary key. With ``IGNORE`` the statement is ``INSERT ... ON CONFLICT
-        (<primary key>) DO NOTHING``, so any other constraint still raises.
+        (<business key, else primary key>) DO NOTHING``, so any other constraint still raises.
         An empty *data* returns ``()`` without touching the database.
 
         Args:
             data: Command structs to persist.
-            on_conflict: Whether a primary key that already exists raises
-                (``ERROR``) or skips its row (``IGNORE``).
+            on_conflict: Whether a business key (a primary key when the model
+                declares none) that already exists raises (``ERROR``) or
+                skips its row (``IGNORE``).
 
         Returns:
             The inserted output structs in input order: one per input with
@@ -482,8 +482,17 @@ class SQLAlchemyBulkCreateMixin(SQLAlchemyContextMixin[OutputT, IdT], Generic[Ou
                 ignoring = sqlite.insert(sa_model)
             case _:
                 return None
-        key = list(sa_model.__table__.primary_key.columns)
-        return ignoring.on_conflict_do_nothing(index_elements=key).returning(sa_model)
+        return ignoring.on_conflict_do_nothing(index_elements=self._conflict_target()).returning(
+            sa_model
+        )
+
+    def _conflict_target(self) -> list[Any]:
+        """Return the columns whose duplicates ``IGNORE`` skips: business key, else primary key."""
+        sa_model = self._effective_sa_model
+        key = business_key_of(self.model)
+        if key is None:
+            return list(sa_model.__table__.primary_key.columns)
+        return [getattr(sa_model, name) for name in key.fields]
 
     async def _insert_and_reselect(
         self, session: AsyncSession, rows: list[dict[str, Any]]
@@ -750,6 +759,7 @@ class SQLAlchemyUpdateMixin(SQLAlchemyContextMixin[OutputT, IdT], Generic[Output
                 every key value.
         """
         serialized = self._serialize_input(data)
+        refuse_key_change(self.model, serialized)
         id_attrs = self._effective_id_attributes
         values = {key: val for key, val in serialized.items() if key not in id_attrs}
         full_values = {**values, **(self._onupdate_columns or {})}
