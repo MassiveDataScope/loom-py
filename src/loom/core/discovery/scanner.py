@@ -14,11 +14,8 @@ from typing import TypeVar
 from loom.core.config import ConfigError
 from loom.core.discovery._utils import collect_from_modules
 from loom.core.discovery.base import DiscoveryResult
-from loom.core.logger import get_logger
 
 ClassT = TypeVar("ClassT", bound=type)
-
-_log = get_logger(__name__)
 
 
 class PackageScanner:
@@ -28,8 +25,8 @@ class PackageScanner:
         packages: The ``app.packages`` entries.
         entry_points: The ``app.entry_points`` groups; the module of every
             installed entry point in them is scanned like a package entry. A
-            group with no installed entry point is a valid, empty state: the
-            scan logs it once and ``loom check`` warns (``loom.discovery.W001``).
+            group with no installed entry point is a valid, empty state that
+            ``loom check`` and the deploy checks report (``loom.discovery.W001``).
     """
 
     def __init__(self, packages: Sequence[str] = (), *, entry_points: Sequence[str] = ()) -> None:
@@ -37,22 +34,14 @@ class PackageScanner:
         self._entry_points = entry_points
 
     def package_names(self) -> list[str]:
-        """Return the modules to scan: ``app.packages``, then the entry-point modules, sorted.
-
-        Logs the declared groups with no installed entry point, which add none.
-        """
+        """Return the modules to scan: ``app.packages``, then the entry-point modules, sorted."""
         return [*self._packages, *self._entry_point_modules()]
 
     def _entry_point_modules(self) -> list[str]:
         modules: set[str] = set()
-        empty: list[str] = []
         for group in self._entry_points:
             provided = importlib.metadata.entry_points(group=group)
-            if not provided:
-                empty.append(group)
             modules.update(entry_point.module for entry_point in provided)
-        if empty:
-            _log.warning("loom.discovery.entry_point_groups_empty", groups=empty)
         return sorted(modules)
 
     def empty_groups(self) -> list[str]:

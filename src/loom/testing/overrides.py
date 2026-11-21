@@ -8,6 +8,7 @@ from dataclasses import dataclass, replace
 from enum import StrEnum
 from typing import TYPE_CHECKING, Any, cast
 
+from loom.composition.errors import ReservedBindingError
 from loom.connections.aws import AwsClients
 from loom.core.di.container import LoomContainer, ResolutionError
 from loom.core.model import LoomStruct
@@ -71,7 +72,12 @@ class Override:
         Raises:
             ResolutionError: When nothing is bound to substitute, as
                 :meth:`~loom.core.di.container.LoomContainer.overriding` raises it.
+            ReservedBindingError: When the key is ``AwsClients``, which the stores and
+                the job transports hold already: supply it with the harness ``aws``
+                parameter.
         """
+        if self.binding_key is AwsClients:
+            raise ReservedBindingError.for_key(Override.apply, AwsClients)
         if self.kind is OverrideKind.REPOSITORY and not container.is_registered(self.binding_key):
             model = cast(type[LoomStruct], self.key)
             raise ResolutionError(f"No store serves a repository for {model.__qualname__}")

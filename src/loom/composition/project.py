@@ -49,7 +49,7 @@ class AppConfig(msgspec.Struct, kw_only=True):
     and use cases. ``entry_points`` lists entry-point groups: the module of every
     installed entry point in each group is scanned like an ``app.packages``
     entry. A group no distribution provides is valid (an optional plugin
-    group): start-up logs it once and ``loom check`` warns with
+    group): the deploy checks and ``loom check`` warn with
     ``loom.discovery.W001``, so a typo in a group name stays visible.
     """
 

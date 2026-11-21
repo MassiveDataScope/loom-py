@@ -144,3 +144,17 @@ class TestAwsClientsIsReserved:
             project.compose(CeleryRuntime(jobs=[_PingJob]))
 
         assert caught.value.issue.code is CompositionErrorCode.RESERVED_AWS_CLIENTS
+
+
+class TestAwsClientsCannotBeSwappedAfterComposition:
+    def test_overriding_it_in_a_composed_harness_is_refused_naming_the_parameter(self) -> None:
+        harness = HttpTestHarness(aws=RecordingAwsClients())
+        harness.build_app(interfaces=[])
+
+        with (
+            pytest.raises(ReservedBindingError, match="aws parameter") as caught,
+            harness.overriding(Override.instance(AwsClients, RecordingAwsClients())),
+        ):
+            pass
+
+        assert caught.value.issue.code is CompositionErrorCode.RESERVED_AWS_CLIENTS

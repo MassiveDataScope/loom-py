@@ -9,8 +9,11 @@ import yaml
 
 from loom.composition.checked import CheckedProject
 from loom.composition.project import Project
+from loom.core.checks import CheckScope, enforce_deploy_checks
+from loom.core.config import ConfigContext
 from loom.core.discovery.checks import EMPTY_ENTRY_POINT_GROUP_CHECK
 from loom.core.discovery.scanner import PackageScanner
+from loom.core.environment import Environment
 from tests.helpers.loggers import CapturedLog
 from tests.helpers.package_writer import DistributionWriter, PackageWriter
 
@@ -104,20 +107,25 @@ def _empty_group_findings(checked: CheckedProject) -> list[str]:
 
 
 class TestEmptyGroupWarnsAtStartupAndInCheck:
-    def test_startup_accepts_the_group_and_logs_it_once(
+    def test_startup_accepts_the_group_and_logs_nothing_of_its_own(
         self, tmp_path: Path, caplog: pytest.LogCaptureFixture
     ) -> None:
         project = Project.load(_write_config(tmp_path, ["acme.unknown"]), environment="test")
 
-        first = project.discovered
-        second = project.discovered
+        discovered = project.discovered
 
-        log = CapturedLog(caplog, "loom.core.discovery.scanner")
-        assert first is second
-        logged = [
-            fields["groups"] for fields in log.named("loom.discovery.entry_point_groups_empty")
-        ]
-        assert logged == [["acme.unknown"]]
+        assert discovered.models == ()
+        assert CapturedLog(caplog, "loom.core.discovery.scanner").calls == []
+
+    def test_the_startup_deploy_checks_report_it(self) -> None:
+        raw = {"app": {"name": "acme", "entry_points": ["acme.unknown"]}}
+
+        report = enforce_deploy_checks(
+            ConfigContext.from_dict(raw), Environment.PRODUCTION, scope=CheckScope()
+        )
+
+        assert report is not None
+        assert [result.id for result in report.results] == [_CHECK]
 
     def test_loom_check_warns_with_the_stable_id_naming_the_group(self, tmp_path: Path) -> None:
         checked = CheckedProject.load(_write_config(tmp_path, ["acme.unknown"]), environment="test")

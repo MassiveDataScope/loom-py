@@ -88,9 +88,8 @@ installer it does not find has its section unchecked.
   group (`[project.entry-points."acme.plugins"]`, `acme_billing = "acme_billing"`)
   and the application declares `entry_points: [acme.plugins]`. A group no
   installed distribution provides is valid, as for an optional plugin group
-  that is legitimately empty: startup logs it once
-  (`loom.discovery.entry_point_groups_empty`) and `loom check` reports the
-  warning `loom.discovery.W001`, so a typo in a group name stays visible. Put
+  that is legitimately empty: the startup deploy checks and `loom check`
+  report the warning `loom.discovery.W001`, so a typo in a group name stays visible. Put
   the id in `checks.silenced` to accept an optional group on purpose.
 - Every module in a listed package is imported at scan: keep script-like
   modules such as `__main__.py` out of it.
