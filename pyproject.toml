@@ -403,7 +403,6 @@ extend-immutable-calls = [
 "tests/unit/core/bootstrap/test_kernel_metrics.py" = ["TID251"]
 "tests/unit/core/cache/test_gateway_config.py" = ["TID251"]
 "tests/unit/core/config/test_aws_section.py" = ["TID251"]
-"tests/unit/core/config/test_config.py" = ["TID251"]
 "tests/unit/core/config/test_secrets.py" = ["TID251"]
 "tests/unit/core/config/test_ssm.py" = ["TID251"]
 "tests/unit/core/connections/test_context_clients.py" = ["TID251"]
