@@ -7,7 +7,6 @@ from typing import Any
 import msgspec
 import pytest
 
-from loom.core.config import ConfigError
 from loom.core.model import BaseModel, Cardinality, ColumnField, ProjectionField, RelationField
 from loom.core.projection.loaders import CountLoader
 from loom.testing.in_memory import InMemoryRepository
@@ -53,19 +52,32 @@ class _Product(BaseModel):
     )
 
 
-class _Line(BaseModel):
-    __tablename__ = "in_memory_lines"
+class _Attempt(BaseModel):
+    __tablename__ = "in_memory_attempts"
 
-    order_id: int = ColumnField(primary_key=True)
-    id: int = ColumnField(primary_key=True)
+    run_id: str = ColumnField(primary_key=True, length=32)
+    key: str = ColumnField(primary_key=True, length=32)
+    attempt: int = ColumnField(primary_key=True)
+    outcome: str = ColumnField(length=16)
 
 
 class TestCompositePrimaryKey:
-    def test_a_composite_primary_key_is_refused(self) -> None:
-        with pytest.raises(
-            ConfigError, match=r"_Line has the composite primary key \(order_id, id\)"
-        ):
-            InMemoryRepository(_Line)
+    @pytest.mark.asyncio
+    async def test_a_seeded_row_is_read_by_its_key_tuple(self) -> None:
+        repo: InMemoryRepository[_Attempt] = InMemoryRepository(_Attempt)
+        row = _Attempt(run_id="r", key="k", attempt=2, outcome="failed")
+        repo.seed(row)
+
+        assert await repo.get_by_id(("r", "k", 2)) == row
+        assert await repo.get_by_id(("r", "k", 1)) is None
+
+    @pytest.mark.asyncio
+    async def test_a_command_without_an_id_field_is_created(self) -> None:
+        repo: InMemoryRepository[_Attempt] = InMemoryRepository(_Attempt)
+
+        created = await repo.create(_Attempt(run_id="r", key="k", attempt=1, outcome="ok"))
+
+        assert await repo.get_by_id(("r", "k", 1)) == created
 
 
 # ---------------------------------------------------------------------------

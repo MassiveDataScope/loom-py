@@ -268,6 +268,59 @@ class TestContractUniqueBusinessKey:
 
         assert [row.slot for row in created] == [2]
 
+    async def test_ignore_conflicts_on_a_primary_key_outside_the_business_key(
+        self, case: BackendCase, open_repository: OpenRepository
+    ) -> None:
+        require(case, BulkCreatable, Readable)
+        _require_unique(case)
+
+        async with open_repository(AcmeContractSlot) as slots:
+            with pytest.raises(Conflict):
+                await slots.create_many(
+                    [
+                        CreateSlot(id="1", portal="idealista", slot=1),
+                        CreateSlot(id="1", portal="idealista", slot=2),
+                    ],
+                    on_conflict=OnConflict.IGNORE,
+                )
+
+            assert await slots.get_by_id("1") is None
+
+    async def test_ignore_conflicts_on_a_stored_primary_key_and_keeps_the_stored_row(
+        self, case: BackendCase, open_repository: OpenRepository
+    ) -> None:
+        require(case, BulkCreatable, Creatable, Readable)
+        _require_unique(case)
+
+        async with open_repository(AcmeContractSlot) as slots:
+            stored = await slots.create(CreateSlot(id="1", portal="idealista", slot=1))
+
+            with pytest.raises(Conflict):
+                await slots.create_many(
+                    [
+                        CreateSlot(id="2", portal="idealista", slot=2),
+                        CreateSlot(id="1", portal="idealista", slot=3),
+                    ],
+                    on_conflict=OnConflict.IGNORE,
+                )
+
+            assert await slots.get_by_id("1") == stored
+            assert await slots.get_by_id("2") is None
+
+    async def test_create_does_not_overwrite_a_stored_primary_key(
+        self, case: BackendCase, open_repository: OpenRepository
+    ) -> None:
+        require(case, Creatable, Readable)
+        _require_unique(case)
+
+        async with open_repository(AcmeContractSlot) as slots:
+            stored = await slots.create(CreateSlot(id="1", portal="idealista", slot=1))
+
+            with pytest.raises(Conflict):
+                await slots.create(CreateSlot(id="1", portal="idealista", slot=2))
+
+            assert await slots.get_by_id("1") == stored
+
     async def test_a_store_that_cannot_enforce_the_key_refuses_the_model(
         self, case: BackendCase, open_repository: OpenRepository
     ) -> None:

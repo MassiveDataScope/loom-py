@@ -36,7 +36,7 @@ from loom.core.stores.repository import (
     build_page_result,
 )
 from loom.core.stores.repository.mutation import MutationEvent
-from loom.core.stores.repository.record import creation_values, refuse_key_change
+from loom.core.stores.repository.record import PrimaryKey, creation_values, refuse_key_change
 from loom.stores.sqlalchemy.integrity import handle_integrity_errors
 from loom.stores.sqlalchemy.query_compiler.compiler import QuerySpecCompiler
 from loom.stores.sqlalchemy.rls.provider import SCOPE_PREFIX
@@ -144,25 +144,18 @@ class SQLAlchemyContextMixin(Generic[OutputT, IdT]):
         sa_model = self._effective_sa_model
         return tuple(getattr(sa_model, name) for name in self._effective_id_attributes)
 
+    @property
+    def _primary_key(self) -> PrimaryKey:
+        return PrimaryKey(self.model.__name__, self._effective_id_attributes)
+
     def _id_values(self, obj_id: Any) -> tuple[Any, ...]:
         """Return the primary-key values *obj_id* names, one per key column.
-
-        A single-column key takes the value itself; a composite key takes a
-        tuple holding every key value in key order.
 
         Raises:
             ValueError: If the key is composite and *obj_id* is not a tuple of
                 one value per key column.
         """
-        names = self._effective_id_attributes
-        if len(names) == 1:
-            return (obj_id,)
-        if isinstance(obj_id, tuple) and len(obj_id) == len(names):
-            return obj_id
-        raise ValueError(
-            f"{self.model.__name__} has the composite primary key ({', '.join(names)}); "
-            f"pass a tuple of {len(names)} values in that order, not {obj_id!r}"
-        )
+        return self._primary_key.values_of(obj_id)
 
     def _id_clause(self, obj_id: Any) -> Any:
         """Return the WHERE clause matching the row whose primary key is *obj_id*."""
@@ -171,8 +164,7 @@ class SQLAlchemyContextMixin(Generic[OutputT, IdT]):
 
     def _key_of(self, obj: Any) -> Any:
         """Return the primary key of *obj* in the form :meth:`_id_values` accepts."""
-        values = tuple(getattr(obj, name, None) for name in self._effective_id_attributes)
-        return values[0] if len(values) == 1 else values
+        return self._primary_key.id_of(obj)
 
     def _serialize_input(self, data: msgspec.Struct | dict[str, Any]) -> dict[str, Any]:
         """Return the column values *data* carries on the wire, keyed by internal field name.

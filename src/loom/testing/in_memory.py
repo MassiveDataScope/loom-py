@@ -30,7 +30,7 @@ import msgspec
 from loom.core.errors import Conflict
 from loom.core.model import BaseModel
 from loom.core.model.convert import to_struct
-from loom.core.model.introspection import business_key_of, get_projections
+from loom.core.model.introspection import business_key_of, get_id_attributes, get_projections
 from loom.core.projection.loaders import (
     build_memory_loader,
     find_relation_name_for_loader,
@@ -50,8 +50,8 @@ from loom.core.stores.repository import (
     Updatable,
 )
 from loom.core.stores.repository.record import (
+    PrimaryKey,
     refuse_key_change,
-    single_id_attribute,
     with_derived_key,
 )
 
@@ -63,7 +63,7 @@ class InMemoryRepository(
 ):
     """Generic in-memory repository for testing any ``msgspec.Struct`` model.
 
-    Stores entities in a plain dict keyed by their id field value.  Provides
+    Stores entities in a plain dict keyed by their primary-key values.  Provides
     the standard repository surface (``get_by_id``, ``create``, ``update``,
     ``delete``, ``list_paginated``) without any database dependency.
 
@@ -71,12 +71,15 @@ class InMemoryRepository(
     when no ``creator`` callable is provided: fields present on the command
     are copied to the entity, and the id field is the one the model derives from
     its business key, else the command's when it carries one, else an internal
-    auto-increment counter's; a ``creator`` fills the id itself. Creating an id the
-    store already holds raises ``Conflict``, as every real repository does.
+    auto-increment counter's; a ``creator`` fills the id itself. Creating a primary
+    key or a business key the store already holds raises ``Conflict``, as every real
+    repository does, and neither ``create`` nor ``create_many`` overwrites a row.
     ``create_many`` follows the port and the SQLAlchemy adapter: with ``ERROR`` a
-    repeated or existing id raises ``Conflict`` and nothing is stored; with ``IGNORE``
-    a row is skipped when its business key (its id when the model declares none)
-    is already stored or came earlier in the batch.
+    repeated or existing key raises ``Conflict`` and nothing is stored; with ``IGNORE``
+    a row is skipped only when its business key (its primary key when the model
+    declares none) is already stored or came earlier in the batch, and any other
+    collision, a primary key included, still raises ``Conflict`` and stores nothing.
+    A composite primary key is an id tuple in key order, as in the SQLAlchemy adapter.
     It declares the key capabilities (``Readable``, ``Creatable``, ``BulkCreatable``,
     ``Updatable``, ``Deletable``); ``list_paginated`` is a convenience that
     returns every entity, not the ``Listable`` contract.
@@ -84,13 +87,10 @@ class InMemoryRepository(
     Args:
         entity_type: The ``msgspec.Struct`` subclass this repository stores.
         id_field: Name of the identity field on the entity.  Defaults to
-            ``"id"``.
+            ``"id"``; a model with a composite primary key uses its own key fields.
         creator: Optional ``(cmd, next_id) -> T`` callable used by
             :meth:`create`.  When provided, the automatic field-mapping is
             bypassed entirely.
-
-    Raises:
-        ConfigError: If ``entity_type`` is a model with a composite primary key.
 
     Example::
 
@@ -109,9 +109,11 @@ class InMemoryRepository(
         id_field: str = "id",
         creator: Callable[[Any, int], T] | None = None,
     ) -> None:
-        _refuse_composite_key(entity_type)
         self._entity_type = entity_type
         self._id_field = id_field
+        self._key = PrimaryKey(entity_type.__name__, _key_names(entity_type, id_field))
+        business_key = business_key_of(entity_type)
+        self._business_key_fields = () if business_key is None else business_key.fields
         self._creator = creator
         self._store: dict[Any, T] = {}
         self._next_id: int = 1
@@ -131,8 +133,8 @@ class InMemoryRepository(
             repo.seed(Product(id=1, name="A"), Product(id=2, name="B"))
         """
         for entity in entities:
-            id_val = getattr(entity, self._id_field)
-            self._store[id_val] = entity
+            self._store[self._key.values_in(entity)] = entity
+            id_val = getattr(entity, self._id_field, None)
             if isinstance(id_val, int) and id_val >= self._next_id:
                 self._next_id = id_val + 1
 
@@ -140,13 +142,14 @@ class InMemoryRepository(
         """Return the entity with ``obj_id``, or ``None`` if not found.
 
         Args:
-            obj_id: The identity value to look up.
+            obj_id: The identity value to look up; a tuple of every key value, in
+                key order, when the primary key is composite.
             profile: Ignored; present for repository interface compatibility.
 
         Returns:
             Entity instance, or ``None`` if no entity has that id.
         """
-        entity = self._store.get(obj_id)
+        entity = self._store.get(self._key.values_of(obj_id))
         if entity is None:
             return None
         return await self._with_projections(entity, profile=profile)
@@ -166,15 +169,11 @@ class InMemoryRepository(
             The created and stored entity.
 
         Raises:
-            Conflict: When the entity's id is already stored.
+            Conflict: When the entity's primary key or business key is already stored.
         """
         entity = self._build_entity(data)
-        id_val = getattr(entity, self._id_field)
-        if id_val in self._store:
-            raise Conflict(
-                f"{self._entity_type.__name__} with {self._id_field}={id_val!r} already exists."
-            )
-        self._store[id_val] = entity
+        self._refuse_collisions([entity])
+        self._store[self._key.values_in(entity)] = entity
         return entity
 
     async def create_many(
@@ -184,28 +183,23 @@ class InMemoryRepository(
 
         Args:
             data: Command or payload objects, as :meth:`create` takes.
-            on_conflict: ``ERROR`` raises on an id that is stored or repeated;
-                ``IGNORE`` skips the rows whose business key (id when the
-                model declares none) is stored or came earlier in *data*.
+            on_conflict: ``ERROR`` raises on a key that is stored or repeated;
+                ``IGNORE`` skips the rows whose business key (primary key when
+                the model declares none) is stored or came earlier in *data*.
 
         Returns:
             The stored entities in input order: every one with ``ERROR``, only
             the inserted ones with ``IGNORE``.
 
         Raises:
-            Conflict: With ``ERROR``, when an id already exists; nothing is stored.
+            Conflict: When a primary key or business key collides outside the
+                rows ``IGNORE`` skips; nothing is stored.
         """
         entities = [self._build_entity(item) for item in data]
         if on_conflict is OnConflict.IGNORE:
-            entities = self._without_known_identities(entities)
-        ids = [getattr(entity, self._id_field) for entity in entities]
-        if on_conflict is OnConflict.ERROR and (
-            len(set(ids)) != len(ids) or any(id_val in self._store for id_val in ids)
-        ):
-            raise Conflict(
-                f"{self._entity_type.__name__} create_many hit an id that already exists."
-            )
-        self._store.update(zip(ids, entities, strict=True))
+            entities = self._without_known_targets(entities)
+        self._refuse_collisions(entities)
+        self._store.update((self._key.values_in(entity), entity) for entity in entities)
         return tuple(entities)
 
     async def update(self, obj_id: Any, data: Any) -> T | None:
@@ -216,13 +210,14 @@ class InMemoryRepository(
         the id field is never changed.
 
         Args:
-            obj_id: Identity value of the entity to update.
+            obj_id: Identity value of the entity to update, as in :meth:`get_by_id`.
             data: Object or dict with updated field values.
 
         Returns:
             The updated entity, or ``None`` if no entity has that id.
         """
-        entity = self._store.get(obj_id)
+        store_key = self._key.values_of(obj_id)
+        entity = self._store.get(store_key)
         if entity is None:
             return None
         current = msgspec.structs.asdict(entity)
@@ -230,28 +225,25 @@ class InMemoryRepository(
         changes = {
             k: v
             for k, v in updates.items()
-            if v is not None and k in current and k != self._id_field
+            if v is not None and k in current and k not in self._key.names
         }
         refuse_key_change(self._entity_type, changes)
         current.update(changes)
         updated = to_struct(self._entity_type, current)
-        self._store[obj_id] = updated
+        self._store[store_key] = updated
         return updated
 
     async def delete(self, obj_id: Any) -> bool:
         """Delete the entity at ``obj_id``.
 
         Args:
-            obj_id: Identity value to delete.
+            obj_id: Identity value to delete, as in :meth:`get_by_id`.
 
         Returns:
             ``True`` if the entity existed and was removed, ``False`` if not
             found.
         """
-        if obj_id in self._store:
-            del self._store[obj_id]
-            return True
-        return False
+        return self._store.pop(self._key.values_of(obj_id), None) is not None
 
     async def list_paginated(self, *args: Any, **kwargs: Any) -> list[T]:
         """Return all stored entities.
@@ -290,22 +282,50 @@ class InMemoryRepository(
         self._next_id += 1
         return entity
 
-    def _identity_of(self, entity: T) -> Any:
-        """Return what ``IGNORE`` compares: the business key, else the id."""
-        key = business_key_of(self._entity_type)
-        if key is None:
-            return getattr(entity, self._id_field)
-        return tuple(getattr(entity, name) for name in key.fields)
+    def _ignore_target_of(self, entity: T) -> tuple[Any, ...]:
+        """Return what ``IGNORE`` compares: the business key, else the primary key."""
+        if self._business_key_fields:
+            return self._business_key_of(entity)
+        return self._key.values_in(entity)
 
-    def _without_known_identities(self, entities: list[T]) -> list[T]:
-        known = {self._identity_of(stored) for stored in self._store.values()}
+    def _business_key_of(self, entity: T) -> tuple[Any, ...]:
+        return tuple(getattr(entity, name) for name in self._business_key_fields)
+
+    def _without_known_targets(self, entities: list[T]) -> list[T]:
+        known = {self._ignore_target_of(stored) for stored in self._store.values()}
         fresh = []
         for entity in entities:
-            identity = self._identity_of(entity)
-            if identity not in known:
-                known.add(identity)
+            target = self._ignore_target_of(entity)
+            if target not in known:
+                known.add(target)
                 fresh.append(entity)
         return fresh
+
+    def _refuse_collisions(self, entities: list[T]) -> None:
+        """Refuse *entities* that repeat a primary key or business key, or hold a stored one.
+
+        Raises:
+            Conflict: On the first collision; nothing has been stored.
+        """
+        keys = set(self._store)
+        business_keys = {self._business_key_of(stored) for stored in self._store.values()}
+        for entity in entities:
+            key = self._key.values_in(entity)
+            if key in keys:
+                raise Conflict(
+                    f"{self._entity_type.__name__} with "
+                    f"{', '.join(self._key.names)}={key!r} already exists."
+                )
+            keys.add(key)
+            if not self._business_key_fields:
+                continue
+            business_key = self._business_key_of(entity)
+            if business_key in business_keys:
+                raise Conflict(
+                    f"{self._entity_type.__name__} with "
+                    f"{', '.join(self._business_key_fields)}={business_key!r} already exists."
+                )
+            business_keys.add(business_key)
 
     def _auto_create(self, cmd: Any) -> T:
         """Derive entity from command attributes and auto-increment id."""
@@ -315,7 +335,7 @@ class InMemoryRepository(
             if hasattr(cmd, f_name):
                 data[f_name] = getattr(cmd, f_name)
         data = with_derived_key(self._entity_type, data)
-        if data.get(self._id_field) is None:
+        if self._id_field in entity_fields and data.get(self._id_field) is None:
             data[self._id_field] = self._next_id
         self._next_id += 1
         return to_struct(self._entity_type, data)
@@ -378,15 +398,16 @@ class InMemoryRepository(
         return self._entity_type(**data)
 
 
-def _refuse_composite_key(entity_type: type) -> None:
-    if not issubclass(entity_type, BaseModel):
-        return
-    try:
-        single_id_attribute(
-            entity_type, why_single="the in-memory repository keys each entity by one id field"
-        )
-    except ValueError:
-        return
+def _key_names(entity_type: type, id_field: str) -> tuple[str, ...]:
+    """The primary-key fields: a model's own when composite, else the single *id_field*."""
+    if issubclass(entity_type, BaseModel):
+        try:
+            names = get_id_attributes(entity_type)
+        except ValueError:
+            return (id_field,)
+        if len(names) > 1:
+            return names
+    return (id_field,)
 
 
 def _sent_values(data: msgspec.Struct) -> dict[str, Any]:

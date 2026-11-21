@@ -120,6 +120,26 @@ class AcmeContractSlot(BaseModel):
     slot: int = ColumnField()
 
 
+class AcmeContractLine(BaseModel):
+    """An order line keyed by the order and its line number together."""
+
+    __tablename__ = "contract_lines"
+
+    order_id: int = ColumnField(primary_key=True)
+    line_no: int = ColumnField(primary_key=True)
+    quantity: int = ColumnField()
+
+
+class CreateLine(Command, frozen=True):
+    order_id: int
+    line_no: int
+    quantity: int
+
+
+class UpdateLine(Command, frozen=True):
+    quantity: int
+
+
 class CreateListing(Command, frozen=True):
     portal: str
     external_id: str
@@ -259,6 +279,8 @@ class BackendCase:
             not derive its id, with a UNIQUE constraint.
         refuses_unhashed_business_key: Whether the store refuses such a model when its
             repository is built, because it could not enforce the key.
+        composite_keys: Whether the store holds a model whose primary key is composite,
+            under the tuple of its key values.
     """
 
     name: str
@@ -271,6 +293,7 @@ class BackendCase:
     fixtures: tuple[str, ...] = ()
     enforces_unique: bool = False
     refuses_unhashed_business_key: bool = False
+    composite_keys: bool = False
 
     def open_unit_of_work(self, repository: Any) -> UnitOfWork:
         """Return a unit of work bound to *repository*'s store, or skip the test without one."""
@@ -391,6 +414,8 @@ def _in_memory_case() -> BackendCase:
         model=AcmeContractOrder,
         capabilities=frozenset(capabilities_of(InMemoryRepository)),
         transactions=False,
+        enforces_unique=True,
+        composite_keys=True,
     )
 
 
@@ -404,6 +429,7 @@ def _sqlalchemy_case() -> BackendCase:
         unit_of_work=lambda repository: SQLAlchemyUnitOfWork(repository.session_manager),
         fail_commit=_fail_sqlalchemy_commit,
         enforces_unique=True,
+        composite_keys=True,
     )
 
 

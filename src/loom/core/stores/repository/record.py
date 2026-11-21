@@ -154,3 +154,44 @@ def single_id_attribute(model: type, *, why_single: str) -> str:
                 f"{model.__qualname__} has the composite primary key ({', '.join(names)}); "
                 f"{why_single}, so declare a single primary key"
             )
+
+
+@dataclass(frozen=True, slots=True)
+class PrimaryKey:
+    """The primary-key fields of one model and the id form a repository takes for them.
+
+    A single-column key is its value; a composite key is a tuple holding every
+    key value in key order.
+
+    Attributes:
+        model_name: The model the key belongs to, named in refusals.
+        names: The primary-key field names, in key order.
+    """
+
+    model_name: str
+    names: tuple[str, ...]
+
+    def values_of(self, obj_id: Any) -> tuple[Any, ...]:
+        """Return the key values *obj_id* names, one per key field.
+
+        Raises:
+            ValueError: If the key is composite and *obj_id* is not a tuple of
+                one value per key field.
+        """
+        if len(self.names) == 1:
+            return (obj_id,)
+        if isinstance(obj_id, tuple) and len(obj_id) == len(self.names):
+            return obj_id
+        raise ValueError(
+            f"{self.model_name} has the composite primary key ({', '.join(self.names)}); "
+            f"pass a tuple of {len(self.names)} values in that order, not {obj_id!r}"
+        )
+
+    def values_in(self, row: Any) -> tuple[Any, ...]:
+        """Return the key values *row* holds, ``None`` for a field it lacks."""
+        return tuple(getattr(row, name, None) for name in self.names)
+
+    def id_of(self, row: Any) -> Any:
+        """Return the id of *row* in the form :meth:`values_of` accepts."""
+        values = self.values_in(row)
+        return values[0] if len(values) == 1 else values
