@@ -1,11 +1,12 @@
 from __future__ import annotations
 
 import re
-from collections.abc import Callable, Mapping
+from collections.abc import Callable, Iterable, Mapping
 from dataclasses import dataclass, replace
 from datetime import date, datetime, time
 from decimal import Decimal
 from enum import Enum
+from functools import cache
 from types import UnionType
 from typing import (
     Annotated,
@@ -24,6 +25,12 @@ from uuid import UUID
 import msgspec
 
 from loom.core.model.field import ColumnFieldSpec, ColumnType, Field
+from loom.core.model.keys import (
+    BusinessKey,
+    DerivedKey,
+    KeyMismatch,
+    is_canonical_type,
+)
 from loom.core.model.partition import RangePartition
 from loom.core.model.privilege import Privilege
 from loom.core.model.projection import Projection
@@ -530,8 +537,86 @@ def scope_columns(cls: type) -> tuple[ScopeColumn, ...]:
 
 
 def declared_unique(cls: type) -> tuple[tuple[str, ...], ...]:
-    """Composite UNIQUE constraints declared with ``__unique__``."""
-    return _declared_column_tuples(cls, "__unique__")
+    """UNIQUE constraints declared with ``__unique__``, and the one a business key stands for."""
+    declared = _declared_column_tuples(cls, "__unique__")
+    key = business_key_of(cls)
+    if key is None or any(set(columns) == set(key.fields) for columns in declared):
+        return declared
+    return (*declared, key.fields)
+
+
+@cache
+def business_key_of(cls: type) -> BusinessKey | None:
+    """The business key declared with ``__business_key__``, checked against the columns.
+
+    Raises:
+        ValueError: If the declaration is not a ``BusinessKey``, or names an
+            unknown or nullable field, or one whose type has no canonical form.
+    """
+    key = getattr(cls, "__business_key__", None)
+    if key is None:
+        return None
+    prefix = f"{cls.__name__}: __business_key__"
+    if not isinstance(key, BusinessKey):
+        raise ValueError(f"{prefix} must be a BusinessKey, got {key!r}")
+    known = get_column_fields(cls)
+    for name in key.fields:
+        info = known.get(name)
+        if info is None:
+            raise ValueError(f"{prefix} names unknown column {name!r}")
+        if info.field.nullable:
+            raise ValueError(f"{prefix} field {name!r} is nullable; a business key never is")
+        if not is_canonical_type(info.python_type):
+            raise ValueError(
+                f"{prefix} field {name!r} is {info.python_type.__name__}, "
+                "which has no canonical form"
+            )
+    return key
+
+
+@cache
+def derived_key_of(cls: type) -> DerivedKey | None:
+    """The primary key a model derives from its business key, or ``None`` when it derives none.
+
+    Checks the declared business key too, as :func:`business_key_of` does.
+
+    Raises:
+        ValueError: If ``derived=`` is not on the single ``str`` primary-key
+            field, the model declares no ``__business_key__``, or the key
+            contains the derived field.
+    """
+    key = business_key_of(cls)
+    derived = {name: info for name, info in get_column_fields(cls).items() if info.field.derived}
+    if not derived:
+        return None
+    prefix = f"{cls.__name__}: derived key"
+    if len(derived) > 1:
+        raise ValueError(f"{prefix} is declared on {', '.join(derived)}; only one field derives")
+    ((name, info),) = derived.items()
+    if get_id_attributes(cls) != (name,):
+        raise ValueError(f"{prefix} {name!r} must be the model's single primary-key field")
+    if info.python_type is not str:
+        raise ValueError(f"{prefix} {name!r} must be annotated str")
+    if key is None:
+        raise ValueError(f"{prefix} {name!r} needs a __business_key__ to derive from")
+    if name in key.fields:
+        raise ValueError(f"{prefix} {name!r} cannot be part of its own business key")
+    return DerivedKey(cls.__name__, name, key, cast(Any, info.field.derived))
+
+
+def verify_keys(model: type, rows: Iterable[Mapping[str, Any]]) -> tuple[KeyMismatch, ...]:
+    """Report the *rows* whose id is not the one the model's business key derives.
+
+    Used to check data that was written outside the repository, or before a
+    business key was redefined.
+
+    Raises:
+        ValueError: If the model derives no key.
+    """
+    derived = derived_key_of(model)
+    if derived is None:
+        raise ValueError(f"{model.__name__} derives no key")
+    return derived.verify(rows)
 
 
 def declared_indexes(cls: type) -> tuple[tuple[str, ...], ...]:

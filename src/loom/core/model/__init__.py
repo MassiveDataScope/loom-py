@@ -9,16 +9,23 @@ from loom.core.model._loom_type import (
 from loom.core.model.audited import Audited, AuditedTable
 from loom.core.model.base import BaseModel, LoomStructMeta
 from loom.core.model.enums import Cardinality, OnDelete, OnUpdate, ServerDefault, ServerOnUpdate
-from loom.core.model.field import ColumnField, ColumnType, Field, ScopedField
+from loom.core.model.field import (
+    ColumnField,
+    ColumnType,
+    Field,
+    ScopedField,
+)
 from loom.core.model.introspection import (
     ColumnFieldInfo,
     PartialUnique,
+    business_key_of,
     declared_checks,
     declared_indexes,
     declared_partial_unique,
     declared_partition,
     declared_privileges,
     declared_unique,
+    derived_key_of,
     get_column_fields,
     get_id_attribute,
     get_id_attributes,
@@ -27,7 +34,9 @@ from loom.core.model.introspection import (
     get_table_name,
     is_row_scoped,
     scope_columns,
+    verify_keys,
 )
+from loom.core.model.keys import BusinessKey, DerivedKey, KeyHash, KeyMismatch
 from loom.core.model.partition import PartitionRange, RangePartition, range_partitions
 from loom.core.model.privilege import READ_WRITE, Privilege
 from loom.core.model.projection import (
@@ -60,6 +69,13 @@ __all__ = [
     "Audited",
     "AuditedTable",
     "BaseModel",
+    "BusinessKey",
+    "DerivedKey",
+    "KeyHash",
+    "KeyMismatch",
+    "business_key_of",
+    "derived_key_of",
+    "verify_keys",
     "READ_WRITE",
     "Privilege",
     "RowScoped",
