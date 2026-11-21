@@ -4,6 +4,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 from pathlib import Path
+from typing import Any
 
 import msgspec
 import pytest
@@ -308,63 +309,41 @@ class TestConfigIncludes:
 
 
 class TestLoadConfigCloudUris:
-    def test_load_config_from_cloud_uri(self) -> None:
-        from io import StringIO
-        from unittest.mock import MagicMock, patch
+    def test_load_config_from_cloud_uri(self, memfs: Any) -> None:
+        memfs.pipe(
+            "my-bucket/config/prod.yaml",
+            b"database:\n  url: postgresql://cloud-host/prod\n  pool_size: 10\n",
+        )
 
-        yaml_content = "database:\n  url: postgresql://cloud-host/prod\n  pool_size: 10\n"
-
-        mock_open = MagicMock()
-        mock_open.return_value.__enter__ = MagicMock(return_value=StringIO(yaml_content))
-        mock_open.return_value.__exit__ = MagicMock(return_value=False)
-
-        with patch("fsspec.open", mock_open):
-            cfg = load_config("s3://my-bucket/config/prod.yaml")
+        cfg = load_config("memory://my-bucket/config/prod.yaml")
 
         assert cfg.database.url == "postgresql://cloud-host/prod"
         assert cfg.database.pool_size == 10
-        mock_open.assert_called_once_with(
-            "s3://my-bucket/config/prod.yaml", mode="r", encoding="utf-8"
+
+    def test_load_config_cloud_uri_resolves_includes_relative_to_uri(self, memfs: Any) -> None:
+        memfs.pipe(
+            "my-bucket/config/prod.yaml",
+            b"includes:\n  - base.yaml\ndatabase:\n  url: sqlite:///dev.db\n",
+        )
+        memfs.pipe(
+            "my-bucket/config/base.yaml",
+            b"database:\n  url: ignored\n  pool_size: 4\n",
         )
 
-    def test_load_config_cloud_uri_resolves_includes_relative_to_uri(self) -> None:
-        from io import StringIO
-        from unittest.mock import MagicMock, patch
-
-        contents = {
-            "s3://my-bucket/config/prod.yaml": "includes:\n  - base.yaml\ndatabase:\n  url: sqlite:///dev.db\n",
-            "s3://my-bucket/config/base.yaml": "database:\n  url: ignored\n  pool_size: 4\n",
-        }
-
-        def fake_open(uri: str, **kwargs: object) -> MagicMock:
-            handle = MagicMock()
-            handle.__enter__ = MagicMock(return_value=StringIO(contents[uri]))
-            handle.__exit__ = MagicMock(return_value=False)
-            return handle
-
-        with patch("fsspec.open", side_effect=fake_open):
-            cfg = load_config("s3://my-bucket/config/prod.yaml")
+        cfg = load_config("memory://my-bucket/config/prod.yaml")
 
         assert cfg.database.url == "sqlite:///dev.db"
         assert cfg.database.pool_size == 4
 
-    def test_load_config_cloud_uri_merged_with_local(self, tmp_path: Path) -> None:
-        from io import StringIO
-        from unittest.mock import MagicMock, patch
-
+    def test_load_config_cloud_uri_merged_with_local(self, tmp_path: Path, memfs: Any) -> None:
         local = tmp_path / "base.yaml"
         local.write_text("database:\n  url: sqlite:///base.db\n  pool_size: 5\n")
+        memfs.pipe("bucket/prod.yaml", b"database:\n  url: postgresql://prod/mydb\n")
 
-        cloud_content = "database:\n  url: postgresql://prod/mydb\n"
-        mock_open = MagicMock()
-        mock_open.return_value.__enter__ = MagicMock(return_value=StringIO(cloud_content))
-        mock_open.return_value.__exit__ = MagicMock(return_value=False)
-
-        with patch("fsspec.open", mock_open):
-            cfg = load_config(str(local), "s3://bucket/prod.yaml")
+        cfg = load_config(str(local), "memory://bucket/prod.yaml")
 
         assert cfg.database.url == "postgresql://prod/mydb"
-        assert cfg.database.pool_size == 5  # from local base
+        assert cfg.database.pool_size == 5
 
 
 class TestLoadConfigCustomResolvers:

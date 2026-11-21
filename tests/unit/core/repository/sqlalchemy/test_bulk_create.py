@@ -64,13 +64,6 @@ def repository(session_manager: SessionManager) -> SQLAlchemyRepository[_Item, i
 
 
 @pytest.fixture
-def mutations(monkeypatch: pytest.MonkeyPatch) -> list[MutationEvent]:
-    events: list[MutationEvent] = []
-    monkeypatch.setattr("loom.stores.sqlalchemy.mixins.record_mutation", events.append)
-    return events
-
-
-@pytest.fixture
 def statements(session_manager: SessionManager) -> Iterator[list[str]]:
     captured: list[str] = []
 

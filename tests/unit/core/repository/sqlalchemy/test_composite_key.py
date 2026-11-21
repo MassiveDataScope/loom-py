@@ -67,13 +67,6 @@ async def repository(session_manager: SessionManager) -> SQLAlchemyRepository[_E
     return repo
 
 
-@pytest.fixture
-def mutations(monkeypatch: pytest.MonkeyPatch) -> list[MutationEvent]:
-    events: list[MutationEvent] = []
-    monkeypatch.setattr("loom.stores.sqlalchemy.mixins.record_mutation", events.append)
-    return events
-
-
 async def _walk(
     repository: SQLAlchemyRepository[_Entry, _Key], sort: tuple[SortSpec, ...]
 ) -> list[_Key]:

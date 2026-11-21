@@ -124,12 +124,6 @@ _REQUIRED_STATE = StateShape(
 
 
 @pytest.fixture
-def deps() -> StubDepsFactory:
-    """Per-invocation dependency factory carrying only the caller identity."""
-    return StubDepsFactory()
-
-
-@pytest.fixture
 def container() -> LoomContainer:
     """Empty application container; no test here resolves anything from it."""
     return LoomContainer(classify_key=classify_key, implicit=main_repository)

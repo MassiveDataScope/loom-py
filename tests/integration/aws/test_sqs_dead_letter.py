@@ -10,7 +10,7 @@ from typing import Any
 import pytest
 
 from loom.jobs.aws.queue import ABANDONMENT_REASON_ATTRIBUTE, QueueConfig, SQSQueue, SQSRecord
-from tests.integration.aws.conftest import AwsClientFactory, unique
+from tests.integration.aws.conftest import unique
 
 pytestmark = [pytest.mark.integration, pytest.mark.timeout(60)]
 
@@ -18,11 +18,6 @@ pytestmark = [pytest.mark.integration, pytest.mark.timeout(60)]
 def _arn(sqs: Any, url: str) -> str:
     attributes = sqs.get_queue_attributes(QueueUrl=url, AttributeNames=["QueueArn"])
     return str(attributes["Attributes"]["QueueArn"])
-
-
-@pytest.fixture
-def sqs(aws: AwsClientFactory) -> Any:
-    return aws("sqs")
 
 
 @pytest.fixture

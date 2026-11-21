@@ -17,14 +17,9 @@ from loom.core.job.policy import Countdown
 from loom.jobs.aws.queue import POSTPONEMENTS_ATTRIBUTE, SQSRecord
 from loom.jobs.aws.settlement import SQSJobSettlement
 from loom.jobs.aws.sqs import SQSConfig
-from tests.integration.aws.conftest import REGION, AwsClientFactory, unique
+from tests.integration.aws.conftest import REGION, unique
 
 pytestmark = [pytest.mark.integration, pytest.mark.timeout(60)]
-
-
-@pytest.fixture
-def sqs(aws: AwsClientFactory) -> Any:
-    return aws("sqs")
 
 
 @pytest.fixture
