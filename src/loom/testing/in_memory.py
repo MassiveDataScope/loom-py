@@ -24,6 +24,7 @@ from __future__ import annotations
 
 from collections.abc import Callable, Sequence
 from dataclasses import replace
+from datetime import UTC, datetime
 from typing import Any, Generic, TypeVar
 
 import msgspec
@@ -51,6 +52,7 @@ from loom.core.stores.repository import (
 )
 from loom.core.stores.repository.record import (
     PrimaryKey,
+    ServerStamps,
     refuse_key_change,
     with_derived_key,
 )
@@ -71,9 +73,12 @@ class InMemoryRepository(
     when no ``creator`` callable is provided: fields present on the command
     are copied to the entity, and the id field is the one the model derives from
     its business key, else the command's when it carries one, else an internal
-    auto-increment counter's; a ``creator`` fills the id itself. Creating a primary
-    key or a business key the store already holds raises ``Conflict``, as every real
-    repository does, and neither ``create`` nor ``create_many`` overwrites a row.
+    auto-increment counter's; a ``creator`` fills the id itself. As the SQL store's
+    server defaults do, a ``NOW`` field the command leaves unset or ``None`` holds
+    the current UTC time, and every update stamps the ``NOW`` on-update fields.
+    Creating a primary key or a business key the store already holds raises
+    ``Conflict``, as every real repository does, and neither ``create`` nor
+    ``create_many`` overwrites a row.
     ``create_many`` follows the port and the SQLAlchemy adapter: with ``ERROR`` a
     repeated or existing key raises ``Conflict`` and nothing is stored; with ``IGNORE``
     a row is skipped only when its business key (its primary key when the model
@@ -116,6 +121,7 @@ class InMemoryRepository(
         business_key = business_key_of(entity_type)
         self._business_key_fields = () if business_key is None else business_key.fields
         self._creator = creator
+        self._stamps = ServerStamps.of(entity_type)
         self._store: dict[tuple[Any, ...], T] = {}
         self._key_by_business_key: dict[tuple[Any, ...], tuple[Any, ...]] = {}
         self._next_id: int = 1
@@ -208,9 +214,10 @@ class InMemoryRepository(
     async def update(self, obj_id: Any, data: Any) -> T | None:
         """Update the entity at ``obj_id`` with fields from ``data``.
 
-        Only non-``None`` fields present on both ``data`` and the entity are
-        overwritten, and a field a command leaves at its default is not sent;
-        the id field is never changed.
+        Only non-``None``, non-``UNSET`` fields present on both ``data`` and the
+        entity are overwritten, and a field a command leaves at its default is not
+        sent; the id field is never changed. The ``NOW`` on-update fields hold the
+        current UTC time, whatever ``data`` sends for them.
 
         Args:
             obj_id: Identity value of the entity to update, as in :meth:`get_by_id`.
@@ -228,10 +235,14 @@ class InMemoryRepository(
         changes = {
             k: v
             for k, v in updates.items()
-            if v is not None and k in current and k not in self._key.names
+            if v is not None
+            and v is not msgspec.UNSET
+            and k in current
+            and k not in self._key.names
         }
         refuse_key_change(self._entity_type, changes)
         current.update(changes)
+        current.update(dict.fromkeys(self._stamps.on_update, datetime.now(UTC)))
         updated = to_struct(self._entity_type, current)
         self._put(updated)
         return updated
@@ -352,13 +363,15 @@ class InMemoryRepository(
             business_keys.add(business_key)
 
     def _auto_create(self, cmd: Any) -> T:
-        """Derive entity from command attributes and auto-increment id."""
+        """Derive entity from command attributes, server stamps and auto-increment id."""
         entity_fields = {f.name for f in msgspec.structs.fields(self._entity_type)}
         data: dict[str, Any] = {}
         for f_name in entity_fields:
-            if hasattr(cmd, f_name):
-                data[f_name] = getattr(cmd, f_name)
+            value = getattr(cmd, f_name, msgspec.UNSET)
+            if value is not msgspec.UNSET:
+                data[f_name] = value
         data = with_derived_key(self._entity_type, data)
+        data.update(dict.fromkeys(self._stamps.missing_in(data), datetime.now(UTC)))
         match self._key.names:
             case (name,) if data.get(name) is None:
                 data[name] = self._next_id
