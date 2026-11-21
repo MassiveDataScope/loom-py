@@ -14,12 +14,13 @@ import pytest
 
 from loom.core.errors import JobFailedError, JobTimeoutError
 from loom.core.job.callback import JobCallback
+from loom.core.job.config import JobShutdown, ShutdownMode
 from loom.core.job.context import clear_pending_dispatches, flush_pending_dispatches
 from loom.core.job.delivery import JobDelivery
 from loom.core.job.job import Job
 from loom.core.job.outcome import JobPostponement
 from loom.core.job.policy import Backoff, Countdown
-from loom.core.job.timer import JobDelayRefusedError
+from loom.core.job.timer import JobDelayRefusedError, Step
 from loom.core.use_case import Delivery
 from loom.jobs.inline import AsyncioJobTimer
 from loom.testing.jobs import ManualTimer
@@ -301,3 +302,93 @@ class TestAsyncioTimer:
         await second.close()
 
         assert ran == ["second"]
+
+
+def _lost_jobs(caplog: pytest.LogCaptureFixture) -> list[list[str]]:
+    return [
+        record.msg["jobs"]
+        for record in caplog.records
+        if isinstance(record.msg, dict) and record.msg["event"] == LOST
+    ]
+
+
+class TestAsyncioTimerShutdown:
+    async def test_cancel_is_the_default_and_drops_what_is_pending(
+        self, caplog: pytest.LogCaptureFixture
+    ) -> None:
+        timer = AsyncioJobTimer()
+        ran: list[str] = []
+
+        async def step() -> None:
+            ran.append("ran")
+
+        timer.schedule(Countdown(900), step, job="AcmeJob", task_id="t")
+        await timer.close()
+
+        assert (ran, _lost_jobs(caplog)) == ([], [["AcmeJob:t"]])
+
+    async def test_wait_runs_the_pending_steps_and_the_steps_they_schedule(
+        self, caplog: pytest.LogCaptureFixture
+    ) -> None:
+        timer = AsyncioJobTimer(JobShutdown(mode=ShutdownMode.WAIT))
+        ran: list[str] = []
+        started = asyncio.Event()
+
+        async def callback() -> None:
+            ran.append("callback")
+
+        async def retry() -> None:
+            ran.append("retry")
+            timer.schedule(Countdown(0), callback, job="AcmeJob", task_id="callback")
+
+        async def first() -> None:
+            started.set()
+            await asyncio.sleep(0.005)
+            ran.append("first")
+            timer.schedule(Countdown(0), retry, job="AcmeJob", task_id="retry")
+
+        timer.schedule(Countdown(0), first, job="AcmeJob", task_id="first")
+        await started.wait()
+        await timer.close()
+
+        assert ran == ["first", "retry", "callback"]
+        assert _lost_jobs(caplog) == []
+
+    async def test_wait_with_nothing_pending_returns_at_once(self) -> None:
+        await asyncio.wait_for(AsyncioJobTimer(JobShutdown(mode=ShutdownMode.WAIT)).close(), 1)
+
+    async def test_wait_cancels_and_logs_what_is_pending_when_the_timeout_expires(
+        self, caplog: pytest.LogCaptureFixture
+    ) -> None:
+        timer = AsyncioJobTimer(JobShutdown(mode=ShutdownMode.WAIT, timeout_s=0.01))
+        ran: list[str] = []
+
+        def step(name: str) -> Step:
+            async def run() -> None:
+                ran.append(name)
+
+            return run
+
+        timer.schedule(Countdown(0), step("soon"), job="AcmeJob", task_id="soon")
+        timer.schedule(Countdown(900), step("late"), job="AcmeJob", task_id="late")
+        await timer.close()
+
+        assert (ran, _lost_jobs(caplog)) == (["soon"], [["AcmeJob:late"]])
+
+    async def test_wait_without_a_timeout_waits_for_a_step_still_running(self) -> None:
+        timer = AsyncioJobTimer(JobShutdown(mode=ShutdownMode.WAIT))
+        release = asyncio.Event()
+        finished = asyncio.Event()
+
+        async def step() -> None:
+            await release.wait()
+            finished.set()
+
+        timer.schedule(Countdown(0), step, job="AcmeJob", task_id="t")
+        closing = asyncio.ensure_future(timer.close())
+        await asyncio.sleep(0.005)
+        assert not closing.done()
+        release.set()
+        await asyncio.wait_for(closing, 1)
+
+        assert finished.is_set()

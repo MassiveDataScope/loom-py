@@ -100,7 +100,7 @@ def _inline(context: JobTransportContext) -> _Built:
     timer = context.timer
     resources: tuple[Resource, ...] = ()
     if timer is None and context.can_wait_in_process:
-        timer = AsyncioJobTimer()
+        timer = AsyncioJobTimer(context.settings.shutdown)
         resources = (Resource(kind=ResourceKind.TIMER, name="jobs", manager=closing(timer.close)),)
         _log.warning(
             "Inline jobs wait in process memory: a delayed job is lost when the process "

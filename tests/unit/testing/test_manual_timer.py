@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import pytest
 
+from loom.core.job.config import JobShutdown, ShutdownMode
 from loom.core.job.policy import Countdown
 from loom.core.job.timer import Step
 from loom.testing import ManualTimer
@@ -77,3 +78,43 @@ class TestManualTimer:
         await timer.advance(1)
 
         assert ran == [1]
+
+
+class TestManualTimerClose:
+    @staticmethod
+    def _timed_steps(timer: ManualTimer, ran: list[str]) -> None:
+        async def second() -> None:
+            ran.append("second")
+
+        async def first() -> None:
+            ran.append("first")
+            timer.schedule(Countdown(30), second, job="J", task_id="second")
+
+        timer.schedule(Countdown(10), first, job="J", task_id="first")
+
+    async def test_cancel_drops_what_is_pending_and_lists_it(self) -> None:
+        timer = ManualTimer()
+        ran: list[str] = []
+        self._timed_steps(timer, ran)
+
+        await timer.close()
+
+        assert (ran, timer.pending, timer.lost) == ([], 0, ["J:first"])
+
+    async def test_wait_runs_until_idle_including_the_steps_scheduled_meanwhile(self) -> None:
+        timer = ManualTimer(JobShutdown(mode=ShutdownMode.WAIT))
+        ran: list[str] = []
+        self._timed_steps(timer, ran)
+
+        await timer.close()
+
+        assert (ran, timer.pending, timer.lost) == (["first", "second"], 0, [])
+
+    async def test_wait_drops_what_falls_beyond_the_timeout_in_fake_time(self) -> None:
+        timer = ManualTimer(JobShutdown(mode=ShutdownMode.WAIT, timeout_s=20))
+        ran: list[str] = []
+        self._timed_steps(timer, ran)
+
+        await timer.close()
+
+        assert (ran, timer.pending, timer.lost) == (["first"], 0, ["J:second"])
