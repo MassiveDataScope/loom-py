@@ -26,6 +26,7 @@ from bytewax.dataflow import Dataflow
 from bytewax.outputs import Sink
 
 from loom.core.config import ConfigContext
+from loom.core.logger import LogField
 from loom.core.observability.event import Scope
 from loom.core.observability.observability import Observability
 from loom.core.tracing import generate_trace_id
@@ -182,7 +183,7 @@ class StreamingTestRunner:
                 Scope.POLL_CYCLE,
                 self._plan.name,
                 id=generate_trace_id(),
-                node_count=len(self._plan.nodes),
+                attributes={LogField.COUNT: len(self._plan.nodes)},
             ):
                 cast(_RunMain, bytewax_testing.run_main)(
                     prepared.dataflow,

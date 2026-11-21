@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 import logging
-from collections.abc import Callable, Mapping
+from collections.abc import Callable
 from dataclasses import dataclass, replace
 from datetime import UTC, datetime, timedelta
 from time import monotonic, sleep, time_ns
@@ -14,6 +14,7 @@ from bytewax.outputs import DynamicSink, StatelessSinkPartition
 from confluent_kafka import OFFSET_BEGINNING, OFFSET_END, KafkaError
 from confluent_kafka.admin import AdminClient
 
+from loom.core.logger import NO_ATTRIBUTES, SpanAttributes
 from loom.core.observability.event import Scope, TerminalReason
 from loom.core.observability.observability import Observability
 from loom.core.observability.span import LoomSpan
@@ -47,6 +48,7 @@ from loom.streaming.kafka._wire import DecodeError
 from loom.streaming.kafka.client._consumer import KafkaConsumerClient
 from loom.streaming.kafka.client._producer import KafkaProducerClient
 from loom.streaming.kafka.message._producer import KafkaMessageProducer
+from loom.streaming.log_events import StreamingLogField
 from loom.streaming.nodes._boundary import PartitionPolicy
 
 if TYPE_CHECKING:
@@ -516,19 +518,18 @@ class _TerminalTracing:
     flow_run_id: str
 
 
-def _terminal_failure_attributes(dlq_topic: str | None) -> dict[str, object]:
+def _terminal_failure_attributes(dlq_topic: str | None) -> SpanAttributes:
     """Return the attributes stamped on terminal spans of a failed batch.
 
-    ``terminal.failure_scope`` is stamped on failure only. ``KafkaProducerClient``
+    ``loom.terminal.failure_scope`` is stamped on failure only. ``KafkaProducerClient``
     keeps one pending delivery error and ``flush()`` raises it for the whole
     batch, so one bad record fails all N spans and the attribute says so. On
     success ``flush()`` waited for every record and raised nothing, which makes
     success per-message truth that needs no qualification.
     """
-    attributes: dict[str, object] = {"terminal.failure_scope": "batch"}
-    if dlq_topic is not None:
-        attributes["terminal.dlq_topic"] = dlq_topic
-    return attributes
+    if dlq_topic is None:
+        return {StreamingLogField.FAILURE_SCOPE: "batch"}
+    return {StreamingLogField.FAILURE_SCOPE: "batch", StreamingLogField.DLQ_TOPIC: dlq_topic}
 
 
 class _TracedMessageSinkPartition(StatelessSinkPartition[Message[StreamPayload]]):
@@ -591,11 +592,11 @@ class _TracedMessageSinkPartition(StatelessSinkPartition[Message[StreamPayload]]
         dlq_topic: str | None,
     ) -> None:
         """Emit the per-message terminal spans and the batch write span."""
-        failure = _terminal_failure_attributes(dlq_topic) if error is not None else {}
+        failure = _terminal_failure_attributes(dlq_topic) if error is not None else NO_ATTRIBUTES
 
         def open_terminal(
             meta: MessageMeta,
-            batch_attributes: Mapping[str, object],
+            batch_attributes: SpanAttributes,
             started_ns: int,
         ) -> LoomSpan:
             return open_terminal_span(
@@ -604,8 +605,8 @@ class _TracedMessageSinkPartition(StatelessSinkPartition[Message[StreamPayload]]
                 TerminalReason.SINK_WRITE,
                 start_time_ns=started_ns,
                 attributes={
-                    "flow": self._tracing.flow,
-                    "sink": self._topic,
+                    StreamingLogField.FLOW: self._tracing.flow,
+                    StreamingLogField.SINK: self._topic,
                     **failure,
                     **batch_attributes,
                 },
@@ -618,10 +619,9 @@ class _TracedMessageSinkPartition(StatelessSinkPartition[Message[StreamPayload]]
                 scope=Scope.WRITE,
                 name=f"{self._tracing.flow}:{self._topic}",
                 attributes={
-                    "flow": self._tracing.flow,
-                    "sink": self._topic,
-                    "batch_size": len(items),
-                    "loom.flow_run_id": self._tracing.flow_run_id,
+                    StreamingLogField.FLOW: self._tracing.flow,
+                    StreamingLogField.SINK: self._topic,
+                    StreamingLogField.FLOW_RUN_ID: self._tracing.flow_run_id,
                 },
             ),
             open_participation=open_terminal,

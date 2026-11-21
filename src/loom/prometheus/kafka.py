@@ -20,6 +20,7 @@ from __future__ import annotations
 from enum import StrEnum
 from typing import TYPE_CHECKING
 
+from loom.core.logger import LogField
 from loom.core.observability.event import EventKind, LifecycleEvent, Scope
 from loom.prometheus._instruments import cached_instruments, counter_spec, histogram_spec
 
@@ -107,20 +108,22 @@ class KafkaPrometheusMetrics:
             return
         match event.name:
             case "kafka_produce":
-                topic = str(event.meta.get("topic", "unknown"))
+                topic = str(event.attributes.get(LogField.MESSAGING_DESTINATION_NAME, "unknown"))
                 status = "success" if event.kind is EventKind.END else "delivery_error"
                 self._produced_total.labels(topic=topic, status=status).inc()
             case "kafka_consume":
-                topic = str(event.meta.get("topic", "unknown"))
+                topic = str(event.attributes.get(LogField.MESSAGING_DESTINATION_NAME, "unknown"))
                 self._consumed_total.labels(topic=topic, status="success").inc()
             case "kafka_encode":
                 if event.duration_ms is not None:
-                    ct = str(event.meta.get("content_type", "unknown"))
+                    ct = str(event.attributes.get(LogField.CONTENT_TYPE, "unknown"))
                     self._encode_duration.labels(content_type=ct).observe(event.duration_ms / 1000)
             case "kafka_decode":
                 if event.kind is EventKind.ERROR:
-                    topic = str(event.meta.get("topic", "unknown"))
+                    topic = str(
+                        event.attributes.get(LogField.MESSAGING_DESTINATION_NAME, "unknown")
+                    )
                     self._consumed_total.labels(topic=topic, status="decode_error").inc()
                 elif event.duration_ms is not None:
-                    ct = str(event.meta.get("content_type", "unknown"))
+                    ct = str(event.attributes.get(LogField.CONTENT_TYPE, "unknown"))
                     self._decode_duration.labels(content_type=ct).observe(event.duration_ms / 1000)

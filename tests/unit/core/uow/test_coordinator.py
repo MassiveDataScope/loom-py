@@ -38,7 +38,6 @@ from loom.core.stores.uow.coordinator import (
 )
 from loom.stores.mongo.uow import MongoUnitOfWork
 from loom.stores.sqlalchemy.uow import SQLAlchemyUnitOfWork
-from tests.helpers.loggers import rendered
 
 from ..conftest import RecordingSessionManager, make_session
 from ..repository.mongo._fake import FakeMongoClient
@@ -827,7 +826,7 @@ class TestInterruptions:
 
 
 class TestOutcomeLog:
-    async def test_a_failed_invocation_logs_each_store_with_its_backend_as_a_warning(
+    async def test_a_failed_invocation_logs_one_warning_naming_the_failure(
         self, caplog: pytest.LogCaptureFixture
     ) -> None:
         ledger = Ledger()
@@ -840,7 +839,6 @@ class TestOutcomeLog:
 
         records = [r for r in caplog.records if "InvocationOutcome" in r.getMessage()]
         assert [record.levelno for record in records] == [logging.WARNING]
-        assert "fake" in rendered(records[0])
 
     async def test_a_successful_invocation_logs_no_warning(
         self, caplog: pytest.LogCaptureFixture

@@ -21,7 +21,10 @@ from opentelemetry import trace
 from opentelemetry.trace import Tracer
 
 from loom.core.config.observability import OtelConfig
+from loom.core.logger import LogField
+from loom.core.logger.record import loom_trace_ids
 from loom.core.model.redaction import reveal_for_driver
+from loom.core.observability.log_events import ObservabilityLogEvent, ObservabilityLogField
 from loom.core.observability.protocol import SpanFlusher
 
 if TYPE_CHECKING:
@@ -158,19 +161,16 @@ def _host_tracer(config: OtelConfig) -> Tracer:
     Without adoption the host's random trace ids stand, so a message cannot be
     followed end to end. That is a legitimate choice — Loom does not mutate
     another library's provider behind its owner's back — but it is silent, so
-    it is announced once at startup.
+    it is announced once at startup: spans then carry random trace ids, and a
+    streaming message cannot be followed from ingestion to death under one trace.
     """
     provider = trace.get_tracer_provider()
     if not config.adopt_host_id_generator:
         _log.info(
-            "otel_host_provider_random_trace_ids",
+            ObservabilityLogEvent.HOST_TRACE_IDS_RANDOM,
             extra={
-                "setting": "observability.otel.config.adopt_host_id_generator",
-                "provider": type(provider).__name__,
-                "consequence": (
-                    "spans are emitted with random trace ids; a streaming message "
-                    "cannot be followed from ingestion to death under one trace"
-                ),
+                LogField.SETTING: "observability.otel.config.adopt_host_id_generator",
+                ObservabilityLogField.OTEL_PROVIDER: type(provider).__name__,
             },
         )
         return trace.get_tracer(config.tracer_name, config.tracer_version or None)
@@ -195,17 +195,17 @@ def _build_exporter(config: OtelConfig) -> Any:
     return exporter_cls(**kwargs)
 
 
-class OtelSpanFilter(logging.Filter):
-    """Stamp each record with the ids of the active recording OTEL span."""
+def otel_trace_ids() -> tuple[str | None, str | None]:
+    """The ids every record carries: the recording OTEL span's, else loom's trace id.
 
-    def filter(self, record: logging.LogRecord) -> bool:
-        """Add ``otel_trace_id`` and ``otel_span_id`` to *record* and let it through."""
-        span = trace.get_current_span()
-        if span.is_recording():
-            ctx = span.get_span_context()
-            record.__dict__.setdefault("otel_trace_id", format(ctx.trace_id, "032x"))
-            record.__dict__.setdefault("otel_span_id", format(ctx.span_id, "016x"))
-        return True
+    The one trace id of a record. Loom's own spans adopt loom's trace id as
+    their OTEL trace id, so the two agree whenever a loom span is recording.
+    """
+    span = trace.get_current_span()
+    if not span.is_recording():
+        return loom_trace_ids()
+    ctx = span.get_span_context()
+    return format(ctx.trace_id, "032x"), format(ctx.span_id, "016x")
 
 
 _LOG_EXPORT_STATE: tuple[Any, LoggingHandler] | None = None
@@ -220,7 +220,7 @@ def install_otel_log_export(
 
     The handler is not attached to the root logger: pass it to
     :func:`~loom.core.logger.install.configure_logging`, which attaches it and
-    puts the context filter on it like on every handler loom owns. The helper is
+    puts the value filter on it like on every root handler. The helper is
     idempotent for the current process: later calls return the same handler.
 
     Args:
@@ -304,7 +304,7 @@ def _resolve_log_protocol(config: OtelConfig) -> str:
 
 
 __all__ = [
-    "OtelSpanFilter",
     "build_tracer",
     "install_otel_log_export",
+    "otel_trace_ids",
 ]

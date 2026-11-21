@@ -40,6 +40,8 @@ from opentelemetry.sdk.trace.sampling import (
 from opentelemetry.trace import INVALID_TRACE_ID
 
 from loom.core.config.observability import OtelConfig
+from loom.core.logger import LogField
+from loom.core.observability.log_events import ObservabilityLogEvent, ObservabilityLogField
 from loom.core.tracing.context import get_trace_id
 
 _TRACE_ID_HEX_LEN = 32
@@ -135,7 +137,10 @@ def adopt_host_id_generator(provider: object) -> bool:
     When the installed provider is a ``ProxyTracerProvider`` — or anything else
     without an ``id_generator`` — there is nothing to install onto: assigning
     the attribute would create a field nobody reads. That is reported as a
-    warning and ignored. Telemetry never interrupts execution.
+    warning and ignored: streaming spans keep random trace ids, so a message
+    cannot be followed end to end; install an opentelemetry-sdk
+    ``TracerProvider`` before building the Loom runtime, or set an OTLP
+    endpoint so Loom owns its own provider. Telemetry never interrupts execution.
 
     Args:
         provider: Provider currently installed in the process.
@@ -146,16 +151,10 @@ def adopt_host_id_generator(provider: object) -> bool:
     """
     if not isinstance(provider, TracerProvider):
         _log.warning(
-            "otel_adopt_host_id_generator_unavailable",
+            ObservabilityLogEvent.HOST_ID_GENERATOR_UNAVAILABLE,
             extra={
-                "setting": "observability.otel.config.adopt_host_id_generator",
-                "provider": type(provider).__name__,
-                "consequence": (
-                    "streaming spans keep random trace ids, so a message cannot be "
-                    "followed end to end; install an opentelemetry-sdk TracerProvider "
-                    "before building the Loom runtime, or set an OTLP endpoint so Loom "
-                    "owns its own provider"
-                ),
+                LogField.SETTING: "observability.otel.config.adopt_host_id_generator",
+                ObservabilityLogField.OTEL_PROVIDER: type(provider).__name__,
             },
         )
         return False

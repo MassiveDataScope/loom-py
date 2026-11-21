@@ -2,21 +2,15 @@
 
 from __future__ import annotations
 
-from collections.abc import Mapping
 from enum import StrEnum
 from typing import Self
 
 import msgspec
+from msgspec.structs import force_setattr
 from opentelemetry.util.types import AttributeValue
 
+from loom.core.logger import NO_ATTRIBUTES, LogField, SpanAttributes
 from loom.core.model import LoomFrozenStruct
-
-
-def _as_attribute(value: object) -> AttributeValue:
-    """Coerce one meta value to something OTEL can store."""
-    if isinstance(value, bool | int | float | str):
-        return value
-    return str(value)
 
 
 class EventKind(StrEnum):
@@ -109,11 +103,12 @@ class LifecycleEvent(LoomFrozenStruct, frozen=True, kw_only=True):
         duration_ms: Wall-clock duration in milliseconds. Set on ``END``
             and ``ERROR`` events only.
         status: Short outcome label. Set on ``END`` and exposed as a stable enum.
-        error: Human-readable error description. Set on ``ERROR`` only.
-        meta: Domain-specific fields forwarded as top-level keys by all
-            observer backends. Adapters use this to carry rich context
-            (``flow``, ``node_idx``, ``run_id``, …) without coupling
-            ``LifecycleEvent`` to domain types.
+        failure: The exception that ended the work. Set on ``ERROR`` only,
+            and only while the observers receive the event: the runtime drops
+            it once dispatched, so an observer that keeps the event does not
+            keep its traceback alive.
+        attributes: Domain-specific fields under vocabulary keys, forwarded
+            as they are by every observer backend.
     """
 
     scope: Scope
@@ -124,8 +119,8 @@ class LifecycleEvent(LoomFrozenStruct, frozen=True, kw_only=True):
     id: str | None = None
     duration_ms: float | None = None
     status: LifecycleStatus | None = None
-    error: str | None = None
-    meta: dict[str, object] = msgspec.field(default_factory=dict)
+    failure: BaseException | None = None
+    attributes: SpanAttributes = msgspec.field(default_factory=lambda: NO_ATTRIBUTES)
 
     @classmethod
     def start(
@@ -136,7 +131,7 @@ class LifecycleEvent(LoomFrozenStruct, frozen=True, kw_only=True):
         trace_id: str | None = None,
         correlation_id: str | None = None,
         id: str | None = None,
-        meta: Mapping[str, object] | None = None,
+        attributes: SpanAttributes = NO_ATTRIBUTES,
     ) -> Self:
         """Build a ``START`` lifecycle event."""
         return cls(
@@ -146,7 +141,7 @@ class LifecycleEvent(LoomFrozenStruct, frozen=True, kw_only=True):
             trace_id=trace_id,
             correlation_id=correlation_id,
             id=id,
-            meta=dict(meta or {}),
+            attributes=attributes,
         )
 
     @classmethod
@@ -160,7 +155,7 @@ class LifecycleEvent(LoomFrozenStruct, frozen=True, kw_only=True):
         id: str | None = None,
         duration_ms: float | None = None,
         status: LifecycleStatus = LifecycleStatus.SUCCESS,
-        meta: Mapping[str, object] | None = None,
+        attributes: SpanAttributes = NO_ATTRIBUTES,
     ) -> Self:
         """Build an ``END`` lifecycle event."""
         return cls(
@@ -172,7 +167,7 @@ class LifecycleEvent(LoomFrozenStruct, frozen=True, kw_only=True):
             id=id,
             duration_ms=duration_ms,
             status=status,
-            meta=dict(meta or {}),
+            attributes=attributes,
         )
 
     @classmethod
@@ -185,9 +180,9 @@ class LifecycleEvent(LoomFrozenStruct, frozen=True, kw_only=True):
         correlation_id: str | None = None,
         id: str | None = None,
         duration_ms: float | None = None,
-        error: str | None = None,
+        failure: BaseException | None = None,
         status: LifecycleStatus = LifecycleStatus.FAILURE,
-        meta: Mapping[str, object] | None = None,
+        attributes: SpanAttributes = NO_ATTRIBUTES,
     ) -> Self:
         """Build an ``ERROR`` lifecycle event."""
         return cls(
@@ -199,31 +194,36 @@ class LifecycleEvent(LoomFrozenStruct, frozen=True, kw_only=True):
             id=id,
             duration_ms=duration_ms,
             status=status,
-            error=error,
-            meta=dict(meta or {}),
+            failure=failure,
+            attributes=attributes,
         )
+
+    def drop_failure(self) -> None:
+        """Forget the exception once every observer has seen it, so its traceback is freed."""
+        if self.failure is not None:
+            force_setattr(self, "failure", None)
 
     def otel_span_name(self) -> str:
         """Return the canonical OTEL span name for this event."""
         return f"{self.scope.value}:{self.name}"
 
     def otel_attributes(self) -> dict[str, AttributeValue]:
-        """Return OTEL span attributes derived from this event.
+        """Return OTEL span attributes derived from this event, under vocabulary keys.
 
-        Meta values that OTEL already accepts — ``bool``, ``int``, ``float``,
-        ``str`` — are passed through unchanged so a backend can filter on them
-        (``loom.batch_size > 100``, ``loom.links_truncated = true``). Anything
-        else is stringified, because an attribute of an unsupported type is
-        dropped by the SDK with a warning rather than exported.
+        The attributes are scalars, which OTEL stores as they are, so a backend
+        can filter on them (``loom.batch_size > 100``).
         """
-        attrs: dict[str, AttributeValue] = {"scope": self.scope.value, "name": self.name}
+        attrs: dict[str, AttributeValue] = {
+            LogField.SCOPE: self.scope.value,
+            LogField.NAME: self.name,
+        }
         if self.trace_id:
-            attrs["trace_id"] = self.trace_id
+            attrs[LogField.TRACE_ID] = self.trace_id
         if self.correlation_id:
-            attrs["correlation_id"] = self.correlation_id
+            attrs[LogField.CORRELATION_ID] = self.correlation_id
         if self.id:
-            attrs["id"] = self.id
-        attrs.update({key: _as_attribute(value) for key, value in self.meta.items()})
+            attrs[LogField.EVENT_ID] = self.id
+        attrs.update(self.attributes.items())
         return attrs
 
 

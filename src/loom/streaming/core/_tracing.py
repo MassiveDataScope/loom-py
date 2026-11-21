@@ -11,15 +11,15 @@ trace is a link or an attribute, not a parent.
 
 from __future__ import annotations
 
-from collections.abc import Mapping
-
+from loom.core.logger import NO_ATTRIBUTES, LogField, LogKey, Scalar, SpanAttributes
 from loom.core.observability.event import Scope, TerminalReason
 from loom.core.observability.observability import Observability
 from loom.core.observability.span import LoomSpan
 from loom.streaming.core._message import MessageMeta
+from loom.streaming.log_events import StreamingLogField
 
 
-def message_attributes(meta: MessageMeta) -> dict[str, object]:
+def message_attributes(meta: MessageMeta) -> SpanAttributes:
     """Return the ``loom.*`` span attributes carried by one message.
 
     Only the fields that are actually set are returned, so a span never
@@ -31,17 +31,16 @@ def message_attributes(meta: MessageMeta) -> dict[str, object]:
     Returns:
         Attribute mapping ready to merge into a span's meta fields.
     """
-    attrs: dict[str, object] = {"loom.message_id": meta.message_id}
-    optional: dict[str, object | None] = {
-        "loom.parent_trace_id": meta.parent_trace_id,
-        "loom.causation_id": meta.causation_id,
-        "loom.message_type": meta.message_type,
-        "messaging.source.name": meta.topic,
-        "messaging.kafka.partition": meta.partition,
-        "messaging.kafka.offset": meta.offset,
+    optional: dict[LogKey, Scalar | None] = {
+        StreamingLogField.MESSAGE_ID: meta.message_id,
+        StreamingLogField.PARENT_TRACE_ID: meta.parent_trace_id,
+        StreamingLogField.CAUSATION_ID: meta.causation_id,
+        StreamingLogField.MESSAGE_TYPE: meta.message_type,
+        LogField.MESSAGING_DESTINATION_NAME: meta.topic,
+        StreamingLogField.KAFKA_PARTITION: meta.partition,
+        StreamingLogField.KAFKA_OFFSET: meta.offset,
     }
-    attrs.update({key: value for key, value in optional.items() if value is not None})
-    return attrs
+    return {key: value for key, value in optional.items() if value is not None}
 
 
 def open_terminal_span(
@@ -50,7 +49,7 @@ def open_terminal_span(
     reason: TerminalReason,
     *,
     start_time_ns: int | None = None,
-    attributes: Mapping[str, object] | None = None,
+    attributes: SpanAttributes = NO_ATTRIBUTES,
 ) -> LoomSpan:
     """Open the span that ends one message's life, in that message's own trace.
 
@@ -82,9 +81,9 @@ def open_terminal_span(
         root=True,
         start_time_ns=start_time_ns,
         attributes={
-            "terminal.reason": reason.value,
+            StreamingLogField.TERMINAL_REASON: reason.value,
             **message_attributes(meta),
-            **(attributes or {}),
+            **attributes,
         },
     )
 

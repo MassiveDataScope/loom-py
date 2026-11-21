@@ -10,6 +10,7 @@ from confluent_kafka import Consumer as _Consumer
 from confluent_kafka import Message as _RawMessage
 from confluent_kafka import TopicPartition
 
+from loom.core.logger import LogField
 from loom.core.observability.event import Scope
 from loom.core.observability.observability import Observability
 from loom.streaming.kafka._config import ConsumerSettings
@@ -215,7 +216,7 @@ class KafkaConsumerClient:
             trace_id=_header_trace_id(record.headers),
             correlation_id=_header_correlation_id(record.headers),
             root=True,
-            topic=record.topic,
+            attributes={LogField.MESSAGING_DESTINATION_NAME: record.topic},
         ).end()
 
     def commit(self, *, asynchronous: bool = False) -> None:

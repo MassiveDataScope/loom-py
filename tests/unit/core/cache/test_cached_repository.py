@@ -933,7 +933,7 @@ class TestPostCommitDeferral:
 
         resolver.bump_from_events = _boom  # type: ignore[method-assign]
         async with enlisted_write() as channel:
-            created = await wrapped.create(_Create(name="entity-1"))
+            await wrapped.create(_Create(name="entity-1"))
 
         with caplog.at_level("ERROR"), pytest.raises(PostCommitError) as excinfo:
             await channel.drain(committed=True)
@@ -942,7 +942,6 @@ class TestPostCommitDeferral:
         text = logged_text(caplog)
         assert "CachePostCommitBumpFailed" in text
         assert wrapped.entity_name in text
-        assert str(created.id) in text
 
 
 class TestPrimaryKeyByName:

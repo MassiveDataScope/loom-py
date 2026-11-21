@@ -33,6 +33,7 @@ from opentelemetry.trace import StatusCode
 
 from loom.ai._transport import always_closed
 from loom.core.config.observability import OtelConfig
+from loom.core.logger import LogField
 from loom.core.model.redaction import Dsn
 from loom.core.observability.config import ObservabilityConfig, OtelObservabilityConfig
 from loom.core.observability.event import EventKind, LifecycleEvent, Scope
@@ -185,7 +186,7 @@ class TestSpanTreeIsExported:
         assert len(spans) == 1
         step = spans[0]
         assert step.status.status_code is StatusCode.ERROR
-        assert step.status.description == "boom"
+        assert step.status.description == "ValueError"
         # ``record_exception=False`` on the span: exactly one exception event,
         # recorded by the runtime, not a second one added by the SDK's own
         # exit handler.
@@ -287,7 +288,8 @@ class TestConcurrentRunsAreDisjoint:
         spans = exporter.get_finished_spans()
         assert len(spans) == 4
         by_run = {
-            (str(_attribute(span, "scope")), str(_attribute(span, "id"))): span for span in spans
+            (str(_attribute(span, LogField.SCOPE)), str(_attribute(span, LogField.EVENT_ID))): span
+            for span in spans
         }
         assert set(by_run) == {
             ("poll_cycle", "run-a"),
@@ -348,7 +350,7 @@ class TestSpanAcrossAsendBoundaries:
         """
         runtime, exporter = exporting_runtime
 
-        handle = runtime.open_span(Scope.AGENT, "agent_run", agent="analyst")
+        handle = runtime.open_span(Scope.AGENT, "agent_run", attributes={LogField.NAME: "analyst"})
         frames = self._frames(handle)
 
         assert await frames.asend(None) == "first"
@@ -378,7 +380,7 @@ class TestSpanAcrossAsendBoundaries:
         runtime, exporter = exporting_runtime
         caplog.set_level(logging.DEBUG, logger=_OTEL_CONTEXT_LOGGER)
 
-        handle = runtime.open_span(Scope.AGENT, "agent_run", agent="analyst")
+        handle = runtime.open_span(Scope.AGENT, "agent_run", attributes={LogField.NAME: "analyst"})
         frames = self._frames(handle)
 
         assert await asyncio.create_task(frames.asend(None)) == "first"
@@ -399,7 +401,7 @@ class TestSpanAcrossAsendBoundaries:
     ) -> None:
         runtime, exporter = exporting_runtime
 
-        handle = runtime.open_span(Scope.AGENT, "agent_run", agent="analyst")
+        handle = runtime.open_span(Scope.AGENT, "agent_run", attributes={LogField.NAME: "analyst"})
         frames = self._frames(handle, fail=True)
 
         assert await frames.asend(None) == "first"
@@ -409,7 +411,7 @@ class TestSpanAcrossAsendBoundaries:
         spans = exporter.get_finished_spans()
         assert len(spans) == 1
         assert spans[0].status.status_code is StatusCode.ERROR
-        assert spans[0].status.description == "stream broke"
+        assert spans[0].status.description == "RuntimeError"
 
     @pytest.mark.asyncio
     async def test_an_abandoned_stream_closes_the_span_exactly_once(
@@ -418,7 +420,7 @@ class TestSpanAcrossAsendBoundaries:
         """A client that walks away ends the generator with ``GeneratorExit``."""
         runtime, exporter = exporting_runtime
 
-        handle = runtime.open_span(Scope.AGENT, "agent_run", agent="analyst")
+        handle = runtime.open_span(Scope.AGENT, "agent_run", attributes={LogField.NAME: "analyst"})
         frames = self._frames(handle)
         assert await frames.asend(None) == "first"
         await frames.aclose()
@@ -435,7 +437,7 @@ class TestSpanAcrossAsendBoundaries:
     ) -> None:
         runtime, exporter = exporting_runtime
 
-        handle = runtime.open_span(Scope.AGENT, "agent_run", agent="analyst")
+        handle = runtime.open_span(Scope.AGENT, "agent_run", attributes={LogField.NAME: "analyst"})
         with handle.as_current(), runtime.span(Scope.TOOL, "create_order"):
             pass
         handle.end()
@@ -459,47 +461,47 @@ class TestClosingAnnotations:
     ) -> None:
         runtime, exporter = exporting_runtime
 
-        handle = runtime.open_span(Scope.AGENT, "agent_run", agent="analyst")
-        handle.annotate({"gen_ai.usage.input_tokens": 1840})
+        handle = runtime.open_span(Scope.AGENT, "agent_run", attributes={LogField.NAME: "analyst"})
+        handle.annotate({LogField.COUNT: 1840})
         handle.end()
 
         span = _span_by_name(exporter.get_finished_spans(), "agent:agent_run")
-        assert _attribute(span, "gen_ai.usage.input_tokens") == 1840
+        assert _attribute(span, LogField.COUNT) == 1840
 
     def test_an_annotation_reaches_the_closing_event_and_not_the_start(self) -> None:
         observer = RecordingObserver()
         runtime, _exporter = _exporting_runtime(observer)
 
-        handle = runtime.open_span(Scope.AGENT, "agent_run", agent="analyst")
-        handle.annotate({"gen_ai.usage.input_tokens": 1840})
+        handle = runtime.open_span(Scope.AGENT, "agent_run", attributes={LogField.NAME: "analyst"})
+        handle.annotate({LogField.COUNT: 1840})
         handle.end()
 
         start, end = observer.events
-        assert "gen_ai.usage.input_tokens" not in start.meta
-        assert end.meta["gen_ai.usage.input_tokens"] == 1840
-        assert end.meta["agent"] == "analyst"
+        assert LogField.COUNT not in start.attributes
+        assert end.attributes[LogField.COUNT] == 1840
+        assert end.attributes[LogField.NAME] == "analyst"
 
     def test_a_failing_span_still_carries_what_the_run_spent(self) -> None:
         observer = RecordingObserver()
         runtime, _exporter = _exporting_runtime(observer)
 
-        handle = runtime.open_span(Scope.AGENT, "agent_run", agent="analyst")
-        handle.annotate({"gen_ai.usage.input_tokens": 1840})
+        handle = runtime.open_span(Scope.AGENT, "agent_run", attributes={LogField.NAME: "analyst"})
+        handle.annotate({LogField.COUNT: 1840})
         handle.fail(RuntimeError("provider died"))
 
-        assert observer.events[-1].meta["gen_ai.usage.input_tokens"] == 1840
+        assert observer.events[-1].attributes[LogField.COUNT] == 1840
 
     def test_annotating_a_closed_span_changes_nothing(
         self, exporting_runtime: tuple[Observability, InMemorySpanExporter]
     ) -> None:
         runtime, exporter = exporting_runtime
 
-        handle = runtime.open_span(Scope.AGENT, "agent_run", agent="analyst")
+        handle = runtime.open_span(Scope.AGENT, "agent_run", attributes={LogField.NAME: "analyst"})
         handle.end()
-        handle.annotate({"gen_ai.usage.input_tokens": 1840})
+        handle.annotate({LogField.COUNT: 1840})
 
         span = _span_by_name(exporter.get_finished_spans(), "agent:agent_run")
-        assert _attribute(span, "gen_ai.usage.input_tokens") is None
+        assert _attribute(span, LogField.COUNT) is None
 
 
 class TestHostProviderCoexistence:
@@ -619,8 +621,8 @@ class TestEventStreamIsUnchanged:
             event.correlation_id,
             event.id,
             event.status,
-            event.error,
-            dict(event.meta),
+            None if event.failure is None else type(event.failure).__name__,
+            dict(event.attributes),
             event.duration_ms is not None,
         )
 
@@ -635,7 +637,7 @@ class TestEventStreamIsUnchanged:
                 trace_id=_TRACE_ID_HEX,
                 correlation_id="corr-1",
                 id="run-1",
-                attempt=1,
+                attributes={LogField.ATTEMPT: 1},
             ),
             runtime.span(Scope.STEP, "LoadOrders", trace_id=_TRACE_ID_HEX),
         ):
@@ -651,7 +653,7 @@ class TestEventStreamIsUnchanged:
                 "run-1",
                 None,
                 None,
-                {"attempt": 1},
+                {LogField.ATTEMPT: 1},
                 False,
             ),
             (
@@ -687,7 +689,7 @@ class TestEventStreamIsUnchanged:
                 "run-1",
                 "success",
                 None,
-                {"attempt": 1},
+                {LogField.ATTEMPT: 1},
                 True,
             ),
         ]
@@ -723,8 +725,8 @@ class TestEventStreamIsUnchanged:
                 None,
                 "step-1",
                 "failure",
-                "boom",
-                {"error_type": "ValueError"},
+                None,
+                {},
                 True,
             ),
         ]

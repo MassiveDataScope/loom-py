@@ -7,6 +7,7 @@ import logging
 import prefect
 from prefect.exceptions import MissingContextError
 
+from loom.core.logger.record import exception_type
 from loom.core.observability.event import EventKind, LifecycleEvent, Scope
 
 
@@ -53,7 +54,7 @@ class PrefectObserver:
                     "[%s] ERROR %s: %s",
                     event.scope,
                     event.name,
-                    event.error,
+                    None if event.failure is None else exception_type(type(event.failure)),
                 )
 
 

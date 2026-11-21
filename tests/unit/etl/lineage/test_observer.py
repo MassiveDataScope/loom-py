@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+from loom.core.logger import LogField
 from loom.core.observability.event import EventKind, LifecycleEvent, LifecycleStatus, Scope
 from loom.etl.lineage._observer import LineageObserver
 from loom.etl.lineage._records import (
@@ -11,6 +12,7 @@ from loom.etl.lineage._records import (
     RunStatus,
     StepRunRecord,
 )
+from loom.etl.log_events import EtlLogField
 
 
 class _CaptureStore:
@@ -31,7 +33,11 @@ class TestLineageObserver:
                 scope=Scope.PIPELINE,
                 name="DailyPipeline",
                 id="run-1",
-                meta={"run_id": "run-1", "attempt": 2, "last_attempt": False},
+                attributes={
+                    EtlLogField.RUN_ID: "run-1",
+                    LogField.ATTEMPT: 2,
+                    EtlLogField.LAST_ATTEMPT: False,
+                },
             )
         )
         observer.on_event(
@@ -41,7 +47,7 @@ class TestLineageObserver:
                 id="run-1",
                 duration_ms=12.0,
                 status=LifecycleStatus.SUCCESS,
-                meta={"run_id": "run-1", "attempt": 2},
+                attributes={EtlLogField.RUN_ID: "run-1", LogField.ATTEMPT: 2},
             )
         )
 
@@ -64,7 +70,11 @@ class TestLineageObserver:
                 name="BuildOrders",
                 id="step-1",
                 correlation_id="corr-1",
-                meta={"run_id": "run-1", "attempt": 1, "process_run_id": "proc-1"},
+                attributes={
+                    EtlLogField.RUN_ID: "run-1",
+                    LogField.ATTEMPT: 1,
+                    EtlLogField.PROCESS_RUN_ID: "proc-1",
+                },
             )
         )
         observer.on_event(
@@ -74,12 +84,11 @@ class TestLineageObserver:
                 id="step-1",
                 correlation_id="corr-1",
                 duration_ms=7.5,
-                error="boom",
-                meta={
-                    "run_id": "run-1",
-                    "attempt": 1,
-                    "process_run_id": "proc-1",
-                    "error_type": "RuntimeError",
+                failure=RuntimeError("boom"),
+                attributes={
+                    EtlLogField.RUN_ID: "run-1",
+                    LogField.ATTEMPT: 1,
+                    EtlLogField.PROCESS_RUN_ID: "proc-1",
                 },
             )
         )
@@ -105,7 +114,7 @@ class TestLineageObserver:
                 name="BuildCatalog",
                 id="proc-1",
                 correlation_id="corr-1",
-                meta={"run_id": "run-1"},
+                attributes={EtlLogField.RUN_ID: "run-1"},
             )
         )
         observer.on_event(
@@ -114,8 +123,8 @@ class TestLineageObserver:
                 name="BuildCatalog",
                 id="proc-1",
                 correlation_id="corr-1",
-                error="boom",
-                meta={"run_id": "run-1", "error_type": "ValueError"},
+                failure=ValueError("boom"),
+                attributes={EtlLogField.RUN_ID: "run-1"},
             )
         )
 
@@ -138,7 +147,7 @@ class TestLineageObserver:
                 scope=Scope.STEP,
                 name="Transform",
                 id="step-1",
-                meta={"run_id": "run-1", "process_run_id": "proc-1"},
+                attributes={EtlLogField.RUN_ID: "run-1", EtlLogField.PROCESS_RUN_ID: "proc-1"},
             )
         )
         observer.on_event(
@@ -148,7 +157,7 @@ class TestLineageObserver:
                 id="step-1",
                 duration_ms=2.0,
                 status=LifecycleStatus.SUCCESS,
-                meta={"run_id": "run-1", "process_run_id": "proc-1"},
+                attributes={EtlLogField.RUN_ID: "run-1", EtlLogField.PROCESS_RUN_ID: "proc-1"},
             )
         )
         observer.on_event(

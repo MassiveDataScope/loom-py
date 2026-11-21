@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+from loom.core.logger import LogField
 from loom.core.observability.event import EventKind, LifecycleEvent, LifecycleStatus, Scope
 from loom.core.observability.observability import Observability
 from loom.core.observability.observer.log import LogLifecycleObserver
@@ -35,7 +36,7 @@ class TestObservability:
                 scope=Scope.NODE,
                 name="my_flow:0",
                 kind=EventKind.START,
-                meta={"flow": "my_flow", "node_idx": 0, "node_type": "Step"},
+                attributes={LogField.NAME: "my_flow"},
             )
         )
         runtime.emit(
@@ -45,7 +46,7 @@ class TestObservability:
                 kind=EventKind.END,
                 duration_ms=5,
                 status=LifecycleStatus.SUCCESS,
-                meta={"flow": "my_flow", "node_idx": 0, "node_type": "Step"},
+                attributes={LogField.NAME: "my_flow"},
             )
         )
         runtime.emit(LifecycleEvent(scope=Scope.POLL_CYCLE, name="my_flow", kind=EventKind.END))
@@ -60,14 +61,13 @@ class TestObservability:
         runtime = Observability([FailingFlowObserver(), good])
 
         runtime.emit(LifecycleEvent(scope=Scope.POLL_CYCLE, name="test", kind=EventKind.START))
-        runtime.emit(LifecycleEvent(scope=Scope.NODE, name="test:0", kind=EventKind.START, meta={}))
+        runtime.emit(LifecycleEvent(scope=Scope.NODE, name="test:0", kind=EventKind.START))
         runtime.emit(
             LifecycleEvent(
                 scope=Scope.NODE,
                 name="test:0",
                 kind=EventKind.ERROR,
-                error="ValueError('bad')",
-                meta={},
+                failure=ValueError("bad"),
             )
         )
         runtime.emit(LifecycleEvent(scope=Scope.POLL_CYCLE, name="test", kind=EventKind.END))

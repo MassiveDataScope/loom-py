@@ -299,14 +299,14 @@ class TestEtlPillarDoesNotImportAi:
             "import loom.etl, loom.etl.compiler, loom.etl.executor, loom.etl.runner\n"
             "leaked = sorted(m for m in sys.modules if m == 'loom.ai' "
             "or m.startswith('loom.ai.'))\n"
-            "print(','.join(leaked))\n"
+            "print('leaked=' + ','.join(leaked))\n"
         )
 
         result = subprocess.run(
             [sys.executable, "-c", script], capture_output=True, text=True, check=True
         )
 
-        assert result.stdout.strip() == ""
+        assert "leaked=\n" in result.stdout
 
 
 _AGENT_YAML = """\
@@ -505,7 +505,7 @@ class TestFromYamlWithoutAi:
             "ETLRunner.from_yaml(sys.argv[1])\n"
             "leaked = sorted(m for m in sys.modules if m == 'loom.ai' "
             "or m.startswith('loom.ai.'))\n"
-            "print(','.join(leaked))\n"
+            "print('leaked=' + ','.join(leaked))\n"
         )
 
         result = subprocess.run(
@@ -515,4 +515,4 @@ class TestFromYamlWithoutAi:
             check=True,
         )
 
-        assert result.stdout.strip() == ""
+        assert "leaked=\n" in result.stdout

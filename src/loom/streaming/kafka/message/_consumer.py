@@ -7,6 +7,7 @@ from typing import Generic, Literal, TypeVar
 
 from confluent_kafka import TopicPartition
 
+from loom.core.logger import LogField
 from loom.core.model import LoomFrozenStruct, LoomStruct
 from loom.core.observability.event import LifecycleEvent, Scope
 from loom.core.observability.observability import Observability
@@ -73,8 +74,8 @@ class KafkaMessageConsumer(Generic[PayloadT]):
                         name="kafka_decode",
                         trace_id=_header_trace_id(record.headers),
                         correlation_id=_header_correlation_id(record.headers),
-                        error=str(exc),
-                        meta={"topic": record.topic},
+                        failure=exc,
+                        attributes={LogField.MESSAGING_DESTINATION_NAME: record.topic},
                     )
                 )
             raise KafkaDeserializationError(str(exc)) from exc
@@ -86,7 +87,9 @@ class KafkaMessageConsumer(Generic[PayloadT]):
                     duration_ms=(perf_counter() - started) * 1000,
                     trace_id=message.meta.trace_id,
                     correlation_id=message.meta.correlation_id,
-                    meta={"content_type": message.meta.descriptor.content_type.media_type},
+                    attributes={
+                        LogField.CONTENT_TYPE: message.meta.descriptor.content_type.media_type
+                    },
                 )
             )
         return KafkaRecord(

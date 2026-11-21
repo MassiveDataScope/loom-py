@@ -8,13 +8,13 @@ import pytest
 from opentelemetry.sdk.trace import TracerProvider
 
 from loom.core.config.observability import OtelConfig
+from loom.core.logger import LogField
 from loom.core.observability.event import EventKind, LifecycleEvent, LifecycleStatus, Scope
+from loom.core.observability.observability import Observability
 from loom.core.observability.observer.log import LogLifecycleObserver
 from loom.core.observability.observer.noop import NoopObserver
-from loom.core.observability.observer.otel import (
-    OtelSpanFilter,
-    install_otel_log_export,
-)
+from loom.core.observability.observer.otel import install_otel_log_export, otel_trace_ids
+from loom.core.tracing.context import active_trace_id
 from tests.helpers.loggers import CapturedLog
 from tests.unit.core.observability.conftest import LogExport
 
@@ -30,7 +30,7 @@ class TestLifecycleEventHelpers:
     def test_start_end_and_error_builders_set_expected_kinds(self) -> None:
         start = LifecycleEvent.start(scope=Scope.NODE, name="step")
         end = LifecycleEvent.end(scope=Scope.NODE, name="step")
-        error = LifecycleEvent.exception(scope=Scope.NODE, name="step", error="boom")
+        error = LifecycleEvent.exception(scope=Scope.NODE, name="step", failure=ValueError("x"))
 
         assert start.kind is EventKind.START
         assert end.kind is EventKind.END
@@ -47,18 +47,30 @@ class TestLifecycleEventHelpers:
             trace_id="trace-1",
             id="run-1",
             correlation_id="corr-1",
-            meta={"flow": "ingest"},
+            attributes={LogField.COUNT: 3},
         )
 
         assert event.otel_span_name() == "node:transform"
         assert event.otel_attributes() == {
-            "scope": "node",
-            "name": "transform",
+            "loom.scope": "node",
+            "loom.name": "transform",
             "trace_id": "trace-1",
-            "id": "run-1",
-            "correlation_id": "corr-1",
-            "flow": "ingest",
+            "loom.event_id": "run-1",
+            "loom.correlation_id": "corr-1",
+            "loom.count": 3,
         }
+
+    def test_the_runtime_drops_the_exception_once_every_observer_saw_it(self) -> None:
+        seen: list[BaseException | None] = []
+        event = LifecycleEvent.exception(scope=Scope.NODE, name="step", failure=ValueError("x"))
+
+        class _Seeing:
+            def on_event(self, received: LifecycleEvent) -> None:
+                seen.append(received.failure)
+
+        Observability([_Seeing()]).emit(event)
+
+        assert (seen[0] is not None, event.failure) == (True, None)
 
 
 class TestOtelLogExport:
@@ -119,9 +131,9 @@ class TestLogLifecycleObserver:
                 id="end",
             ),
             pytest.param(
-                LifecycleEvent(scope=Scope.NODE, name="x", kind=EventKind.ERROR, error="boom"),
+                LifecycleEvent(scope=Scope.NODE, name="x", kind=EventKind.ERROR),
                 "ERROR",
-                "observability.lifecycle_failed",
+                "observability.lifecycle_ended",
                 id="error",
             ),
             pytest.param(
@@ -131,9 +143,9 @@ class TestLogLifecycleObserver:
                 id="transport-end",
             ),
             pytest.param(
-                LifecycleEvent(scope=Scope.TRANSPORT, name="x", kind=EventKind.ERROR, error="e"),
+                LifecycleEvent(scope=Scope.TRANSPORT, name="x", kind=EventKind.ERROR),
                 "WARNING",
-                "observability.lifecycle_failed",
+                "observability.lifecycle_ended",
                 id="transport-error",
             ),
         ],
@@ -172,30 +184,20 @@ class TestLogLifecycleObserver:
         )
         assert (fields["loom.duration_ms"], fields["loom.status"]) == (12.5, "success")
 
-    def test_meta_is_forwarded_under_its_own_prefix(self, lifecycle_log: CapturedLog) -> None:
+    def test_the_attributes_are_fields_under_their_own_keys(
+        self, lifecycle_log: CapturedLog
+    ) -> None:
         LogLifecycleObserver().on_event(
             LifecycleEvent(
                 scope=Scope.NODE,
                 name="x",
                 kind=EventKind.START,
-                meta={"flow": "my_flow", "node_idx": 0},
+                attributes={LogField.COUNT: 2, LogField.HTTP_ROUTE: "/orders"},
             )
         )
 
         [fields] = lifecycle_log.named("observability.lifecycle_started")
-        assert (fields["loom.meta.flow"], fields["loom.meta.node_idx"]) == ("my_flow", 0)
-
-    def test_a_meta_key_that_is_a_record_attribute_does_not_break_logging(
-        self, lifecycle_log: CapturedLog
-    ) -> None:
-        LogLifecycleObserver().on_event(
-            LifecycleEvent(
-                scope=Scope.FLOW, name="ingest", kind=EventKind.END, meta={"name": "orders"}
-            )
-        )
-
-        [fields] = lifecycle_log.named("observability.lifecycle_ended")
-        assert fields["loom.meta.name"] == "orders"
+        assert (fields["loom.count"], fields["http.route"]) == (2, "/orders")
 
 
 class TestPrometheusLifecycleObserver:
@@ -246,20 +248,16 @@ class TestPrometheusLifecycleObserver:
         adapter.on_event(LifecycleEvent(scope=Scope.NODE, name="x", kind=EventKind.START))
 
 
-class TestOtelSpanFilter:
-    def test_adds_trace_and_span_ids_when_span_is_recording(self) -> None:
+class TestOtelTraceIds:
+    def test_a_recording_span_gives_the_one_trace_id_and_its_span_id(self) -> None:
         tracer = TracerProvider().get_tracer("tests")
-        record = logging.makeLogRecord({})
 
         with tracer.start_as_current_span("work") as span:
-            OtelSpanFilter().filter(record)
+            ids = otel_trace_ids()
             context = span.get_span_context()
 
-        assert record.__dict__["otel_trace_id"] == format(context.trace_id, "032x")
-        assert record.__dict__["otel_span_id"] == format(context.span_id, "016x")
+        assert ids == (format(context.trace_id, "032x"), format(context.span_id, "016x"))
 
-    def test_ignores_a_record_outside_any_span(self) -> None:
-        record = logging.makeLogRecord({})
-
-        assert OtelSpanFilter().filter(record) is True
-        assert "otel_trace_id" not in record.__dict__
+    def test_outside_any_span_the_trace_id_is_loom_s(self) -> None:
+        with active_trace_id("a" * 32):
+            assert otel_trace_ids() == ("a" * 32, None)

@@ -9,6 +9,7 @@ from typing import Literal
 from confluent_kafka import Message as _RawMessage
 from confluent_kafka import Producer as _Producer
 
+from loom.core.logger import LogField
 from loom.core.observability.event import LifecycleEvent, Scope
 from loom.core.observability.observability import Observability
 from loom.streaming.kafka._config import ProducerSettings
@@ -84,8 +85,8 @@ class KafkaProducerClient:
                         name="kafka_produce",
                         trace_id=_header_trace_id(record.headers),
                         correlation_id=_header_correlation_id(record.headers),
-                        error=str(exc),
-                        meta={"topic": record.topic},
+                        failure=exc,
+                        attributes={LogField.MESSAGING_DESTINATION_NAME: record.topic},
                     )
                 )
             _notify_delivery(self._delivery_callback, record, error)
@@ -149,7 +150,7 @@ class KafkaProducerClient:
                             name="kafka_produce",
                             trace_id=_header_trace_id(record.headers),
                             correlation_id=_header_correlation_id(record.headers),
-                            meta={"topic": record.topic},
+                            attributes={LogField.MESSAGING_DESTINATION_NAME: record.topic},
                         )
                     )
                 else:
@@ -159,8 +160,8 @@ class KafkaProducerClient:
                             name="kafka_produce",
                             trace_id=_header_trace_id(record.headers),
                             correlation_id=_header_correlation_id(record.headers),
-                            error=str(delivery_error),
-                            meta={"topic": record.topic},
+                            failure=delivery_error,
+                            attributes={LogField.MESSAGING_DESTINATION_NAME: record.topic},
                         )
                     )
             _notify_delivery(self._delivery_callback, record, delivery_error)

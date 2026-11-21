@@ -19,7 +19,7 @@ def _start(name: str, step_run_id: str) -> LifecycleEvent:
         id=step_run_id,
         trace_id=event.trace_id,
         correlation_id=event.correlation_id,
-        meta=event.meta,
+        attributes=event.attributes,
     )
 
 
@@ -37,7 +37,7 @@ def _end(name: str, step_run_id: str) -> LifecycleEvent:
         id=step_run_id,
         trace_id=event.trace_id,
         correlation_id=event.correlation_id,
-        meta=event.meta,
+        attributes=event.attributes,
         duration_ms=event.duration_ms,
         status=event.status,
     )

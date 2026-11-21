@@ -16,6 +16,7 @@ from loom.streaming.core._errors import ErrorEnvelope, ErrorKind, snapshot_messa
 from loom.streaming.core._message import Message
 from loom.streaming.core._tracing import open_terminal_span
 from loom.streaming.core._typing import StreamPayload
+from loom.streaming.log_events import StreamingLogField
 
 Stream: TypeAlias = Any
 NodeResult: TypeAlias = Message[StreamPayload] | ErrorEnvelope[StreamPayload]
@@ -73,7 +74,10 @@ def _build_error_envelope(
         boundary.observer,
         original.meta,
         TerminalReason.ERROR_ENVELOPE,
-        attributes={"flow": boundary.flow, "error.kind": kind.value, "error.reason": reason},
+        attributes={
+            StreamingLogField.FLOW: boundary.flow,
+            StreamingLogField.ERROR_KIND: kind.value,
+        },
     ).end()
     snapshot = snapshot_message(original)
     payload_type = original.payload.__class__.loom_message_type()

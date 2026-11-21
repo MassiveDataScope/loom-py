@@ -13,6 +13,7 @@ import pytest
 
 import loom.stores.dynamodb.plugin as backend_module
 from loom.core.config import ConfigContext
+from loom.core.logger import LogField
 from loom.core.stores import StoreWiring
 from loom.core.stores.profile import SERVER_PROFILE
 from loom.stores.dynamodb.plugin import DynamoDBStorePlugin
@@ -137,6 +138,5 @@ class TestDynamoDBExecutorLifespan:
 
         assert ready is False
         [record] = caplog.records
-        assert record.exc_info is not None
-        assert record.exc_info[0] is RuntimeError
+        assert record.__dict__[LogField.EXCEPTION_TYPE] == "RuntimeError"
         assert created == [16]

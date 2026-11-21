@@ -15,25 +15,25 @@ is what lets Loom coexist with a host SDK without owning anything global.
 from __future__ import annotations
 
 import logging
-from collections.abc import Generator, Mapping, Sequence
-from contextlib import contextmanager
+from collections.abc import Generator, Sequence
+from contextlib import AbstractContextManager, contextmanager, nullcontext
 from functools import partial
 from time import perf_counter
 from typing import Self
 
-from opentelemetry.trace import Link, NoOpTracer, Span, Tracer
+from opentelemetry.trace import INVALID_SPAN, Link, NoOpTracer, Span, Tracer
 from prometheus_client import start_http_server
 
-from loom.core.config.observability import OtelConfig
 from loom.core.environment import Environment, resolve_environment
+from loom.core.logger import NO_ATTRIBUTES, LogField, LogRuntime, SpanAttributes
 from loom.core.logger.install import LogInstallation, configure_logging
-from loom.core.logger.stamp import LogRuntime
 from loom.core.observability.config import (
     ObservabilityConfig,
     OtelObservabilityConfig,
     PrometheusObservabilityConfig,
 )
 from loom.core.observability.event import LifecycleEvent, Scope
+from loom.core.observability.log_events import ObservabilityLogEvent
 from loom.core.observability.observer.log import LogLifecycleObserver
 from loom.core.observability.observer.noop import NoopObserver
 from loom.core.observability.protocol import LifecycleObserver, SpanFlusher
@@ -44,7 +44,7 @@ from loom.core.observability.span import (
     elapsed_ms,
 )
 from loom.core.observability.topology import ROOT_SCOPES
-from loom.core.tracing.context import active_trace_id
+from loom.core.tracing.context import active_trace_id, get_trace_id
 from loom.prometheus.lifecycle import PrometheusLifecycleObserver
 
 
@@ -75,23 +75,30 @@ def _configure_logging(
     environment: Environment,
     service_name: str | None,
     service_version: str | None,
-    export: OtelConfig | None,
 ) -> LogInstallation:
-    """Install the log format and, when *export* is given, the OTEL log export beside it."""
-    filters: tuple[logging.Filter, ...] = ()
-    extra_handlers: tuple[logging.Handler, ...] = ()
-    if export is not None:
-        from loom.core.observability.observer.otel import OtelSpanFilter, install_otel_log_export
+    """Make the process's records safe and install the log format.
 
-        filters = (OtelSpanFilter(),)
-        extra_handlers = (install_otel_log_export(export),)
+    With OTEL, the records carry the ids of the recording span and, when
+    ``export_logs`` is set, the OTEL log export is installed beside the format.
+    """
+    otel = config.otel
+    if not otel.enabled or otel.config is None:
+        return configure_logging(
+            config.log,
+            environment=environment,
+            service_name=service_name,
+            service_version=service_version,
+        )
+    from loom.core.observability.observer.otel import install_otel_log_export, otel_trace_ids
+
+    extra_handlers = (install_otel_log_export(otel.config),) if otel.export_logs else ()
     return configure_logging(
         config.log,
         environment=environment,
         service_name=service_name,
         service_version=service_version,
         extra_handlers=extra_handlers,
-        filters=filters,
+        trace_ids=otel_trace_ids,
     )
 
 
@@ -163,6 +170,7 @@ class Observability:
         self._observers = tuple(observers)
         self._logging = _logging
         self._tracer: Tracer = tracer if tracer is not None else NoOpTracer()
+        self._records_spans = not isinstance(self._tracer, NoOpTracer)
         self._scrape_port = _scrape_port
         self._scrape_addr = _scrape_addr
         self._scrape_server_started = False
@@ -230,16 +238,27 @@ class Observability:
             self._span_flusher.force_flush()
 
     def _dispatch(self, event: LifecycleEvent) -> None:
-        """Forward one event to each observer with isolated failures."""
+        """Forward one event to each observer with isolated failures, then drop its exception."""
         for obs in self._observers:
             try:
                 obs.on_event(event)
             except Exception:
                 self._log.warning(
-                    "observer_error",
-                    extra={"observer": type(obs).__name__, "scope": event.scope},
+                    ObservabilityLogEvent.OBSERVER_FAILED,
+                    extra={
+                        LogField.OBSERVER: type(obs).__name__,
+                        LogField.SCOPE: event.scope.value,
+                    },
                     exc_info=True,
                 )
+        event.drop_failure()
+
+    def use_case(self, name: str, attributes: SpanAttributes) -> AbstractContextManager[None]:
+        """The ``use_case`` scope of one execution of *name*, in the running trace.
+
+        The engine opens it for every execution, whatever runtime asked for it.
+        """
+        return self.span(Scope.USE_CASE, name, trace_id=get_trace_id(), attributes=attributes)
 
     @contextmanager
     def span(
@@ -249,7 +268,8 @@ class Observability:
         *,
         trace_id: str | None = None,
         correlation_id: str | None = None,
-        **meta: object,
+        id: str | None = None,
+        attributes: SpanAttributes = NO_ATTRIBUTES,
     ) -> Generator[None, None, None]:
         """Open one span, emitting ``START`` on entry and ``END``/``ERROR`` on exit.
 
@@ -271,39 +291,45 @@ class Observability:
             name: Operation name within the scope.
             trace_id: Trace identifier propagated to both events.
             correlation_id: Business lineage identifier propagated to both events.
-            **meta: Domain-specific fields forwarded as top-level keys in ``event.meta``.
+            id: Stable identifier of this operation instance, such as a task id.
+            attributes: Fields of the span and of both events, under vocabulary keys.
 
         Example::
 
-            with runtime.span(Scope.NODE, "transform", trace_id=tid, flow="ingest"):
+            with runtime.span(Scope.NODE, "transform", attributes={LogField.COUNT: 3}):
                 result = transform(message)
         """
-        identity = SpanIdentity.build(
-            scope, name, trace_id=trace_id, correlation_id=correlation_id, meta=meta
-        )
+        identity = SpanIdentity(scope, name, trace_id, correlation_id, id, attributes)
         start_event = identity.start_event()
         started = perf_counter()
         try:
-            with (
-                active_trace_id(trace_id),
-                self._tracer.start_as_current_span(
-                    start_event.otel_span_name(),
-                    attributes=start_event.otel_attributes(),
-                    record_exception=False,
-                    set_status_on_exception=False,
-                ) as otel_span,
-            ):
+            with active_trace_id(trace_id), self._current_otel_span(start_event) as otel_span:
                 self.emit(start_event)
                 try:
                     yield
                 except Exception as exc:
-                    otel_span.record_exception(exc)
                     self._close_span(otel_span, identity.error_event(exc, elapsed_ms(started)))
                     raise
                 else:
                     self._close_span(otel_span, identity.end_event(elapsed_ms(started)))
         finally:
             self._flush_root(scope)
+
+    def _current_otel_span(self, start_event: LifecycleEvent) -> AbstractContextManager[Span]:
+        """The OTEL span of *start_event*, made current; with no tracer, an invalid one.
+
+        A no-op tracer would make a non-recording span current and hide the
+        caller's span from whatever annotates it, so none is opened and the
+        caller's span stays current, untouched by this scope's outcome.
+        """
+        if not self._records_spans:
+            return nullcontext(INVALID_SPAN)
+        return self._tracer.start_as_current_span(
+            start_event.otel_span_name(),
+            attributes=start_event.otel_attributes(),
+            record_exception=False,
+            set_status_on_exception=False,
+        )
 
     def open_span(
         self,
@@ -312,11 +338,11 @@ class Observability:
         *,
         trace_id: str | None = None,
         correlation_id: str | None = None,
+        id: str | None = None,
         links: Sequence[Link] | None = None,
         start_time_ns: int | None = None,
         root: bool = False,
-        attributes: Mapping[str, object] | None = None,
-        **meta: object,
+        attributes: SpanAttributes = NO_ATTRIBUTES,
     ) -> LoomSpan:
         """Open a span whose end does not share a lexical scope with its start.
 
@@ -335,6 +361,7 @@ class Observability:
                 When it is a 32-character hex id and the span turns out to be a
                 root, it also becomes the OTEL trace id.
             correlation_id: Business lineage identifier propagated likewise.
+            id: Stable identifier of this operation instance.
             links: Spans this one fans in from — a batch operation has N
                 parents, which a trace tree cannot express.
             start_time_ns: Epoch nanoseconds the work really started at, for a
@@ -342,9 +369,7 @@ class Observability:
             root: Open the span with no parent, whatever the ambient context
                 is. A message's own span must land in the message's trace, not
                 in the trace of the batch or node that happens to enclose it.
-            attributes: Extra fields merged into ``**meta``, for keys that are
-                not valid Python identifiers such as ``terminal.reason``.
-            **meta: Domain-specific fields forwarded as top-level keys in ``event.meta``.
+            attributes: Fields of the span and of its events, under vocabulary keys.
 
         Returns:
             The open span handle. The caller owns closing it exactly once with
@@ -353,18 +378,12 @@ class Observability:
 
         Example::
 
-            handle = runtime.open_span(Scope.AGENT, "agent_run", agent=name)
+            handle = runtime.open_span(Scope.AGENT, "agent_run", attributes=agent_fields)
             with always_closed(handle):
                 async for frame in frames:
                     yield frame
         """
-        identity = SpanIdentity.build(
-            scope,
-            name,
-            trace_id=trace_id,
-            correlation_id=correlation_id,
-            meta={**meta, **(attributes or {})},
-        )
+        identity = SpanIdentity(scope, name, trace_id, correlation_id, id, attributes)
         with active_trace_id(trace_id):
             return LoomSpan.open(
                 tracer=self._tracer,
@@ -401,8 +420,10 @@ class Observability:
         Loom's own provider when an endpoint is configured, and the host's
         provider when the endpoint is empty.
 
-        When ``log`` is enabled, the log format is installed from inside this
-        method, so it is in place before any observer emits its first event.
+        The record factory, the value filter and the log format are installed
+        from inside this method, whether or not ``log`` is enabled, so every
+        record is safe before any observer emits its first event. ``log.enabled``
+        only turns the lifecycle records on.
 
         Args:
             config: Unified observability configuration.
@@ -417,30 +438,15 @@ class Observability:
 
         Raises:
             ValueError: If OTEL config is invalid (wrong protocol, missing exporter).
-            ValueError: If OTEL log export is enabled while the log backend is not.
             ConfigError: If ``observability.log.format`` is not registered.
         """
-        if config.otel.enabled and config.otel.export_logs and not config.log.enabled:
-            raise ValueError(
-                "observability.otel.export_logs requires observability.log.enabled=True."
-            )
         if config.otel.enabled and config.otel.export_logs and config.otel.config is None:
             raise ValueError(
                 "observability.otel.export_logs requires observability.otel.config to be provided."
             )
 
-        resolved = resolve_environment(environment)
-        exporting = config.otel.enabled and config.otel.export_logs
-        installation = (
-            _configure_logging(
-                config,
-                resolved,
-                service_name,
-                service_version,
-                config.otel.config if exporting else None,
-            )
-            if config.log.enabled
-            else None
+        installation = _configure_logging(
+            config, resolve_environment(environment), service_name, service_version
         )
         observers = _build_observers(config)
         tracer, flusher = _resolve_tracer(config.otel)

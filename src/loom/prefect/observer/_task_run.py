@@ -8,6 +8,7 @@ import uuid
 from contextvars import Token
 from typing import Any
 
+from loom.core.logger.record import exception_type
 from loom.core.observability.event import EventKind, LifecycleEvent, Scope
 from loom.prefect._async import run_sync
 from loom.prefect.observer._logging_bridge import _current_task_run_id
@@ -88,7 +89,11 @@ class PrefectTaskRunObserver:
         task_run_id = self._task_runs.pop(event.id, None) if event.id else None
         if task_run_id is None:
             return
-        self._set_state(task_run_id, completed=False, message=event.error)
+        self._set_state(
+            task_run_id,
+            completed=False,
+            message=None if event.failure is None else exception_type(type(event.failure)),
+        )
 
     def _reset_log_binding(self, step_run_id: str | None) -> None:
         if step_run_id is None:

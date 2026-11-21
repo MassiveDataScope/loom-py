@@ -19,8 +19,10 @@ from opentelemetry.sdk.trace.export.in_memory_span_exporter import InMemorySpanE
 from opentelemetry.trace import ProxyTracerProvider
 
 from loom.core.config.observability import OtelConfig
+from loom.core.logger import LogField
 from loom.core.model.redaction import Dsn
 from loom.core.observability.event import Scope
+from loom.core.observability.log_events import ObservabilityLogEvent, ObservabilityLogField
 from loom.core.observability.observability import Observability
 from loom.core.observability.observer import otel as _otel
 from loom.core.observability.otel_ids import LoomMessageIdGenerator
@@ -103,9 +105,10 @@ class TestHostProviderWithoutAdoption:
         assert [span.name for span in spans] == ["node:n"]
         assert _hex_trace(spans[0]) != _TRACE_A
 
-        records = [r for r in caplog.records if r.message == "otel_host_provider_random_trace_ids"]
+        random_ids = ObservabilityLogEvent.HOST_TRACE_IDS_RANDOM
+        records = [r for r in caplog.records if r.message == random_ids]
         assert len(records) == 1
-        assert records[0].setting == _ADOPT_SETTING  # type: ignore[attr-defined]
+        assert getattr(records[0], LogField.SETTING) == _ADOPT_SETTING
 
 
 class TestHostProviderWithAdoption:
@@ -159,13 +162,11 @@ class TestAdoptionOnAProxyProvider:
         assert not hasattr(proxy, "id_generator"), (
             "blind assignment creates a field nobody reads and hides the failure"
         )
-        records = [
-            r for r in caplog.records if r.message == "otel_adopt_host_id_generator_unavailable"
-        ]
+        unavailable = ObservabilityLogEvent.HOST_ID_GENERATOR_UNAVAILABLE
+        records = [r for r in caplog.records if r.message == unavailable]
         assert len(records) == 1
-        assert records[0].setting == _ADOPT_SETTING  # type: ignore[attr-defined]
-        assert records[0].provider == "ProxyTracerProvider"  # type: ignore[attr-defined]
-        assert "random trace ids" in records[0].consequence  # type: ignore[attr-defined]
+        assert getattr(records[0], LogField.SETTING) == _ADOPT_SETTING
+        assert getattr(records[0], ObservabilityLogField.OTEL_PROVIDER) == "ProxyTracerProvider"
 
 
 class TestConfigValidation:

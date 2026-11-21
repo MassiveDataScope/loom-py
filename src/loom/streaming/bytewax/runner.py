@@ -23,6 +23,7 @@ from loom.core.config import (
 )
 from loom.core.config.overrides import load_application_config
 from loom.core.environment import Environment, config_source_paths, resolve_environment
+from loom.core.logger import LogField
 from loom.core.model import LoomFrozenStruct
 from loom.core.model.types import PositiveInt
 from loom.core.observability.config import ObservabilityConfig
@@ -406,14 +407,14 @@ class StreamingRunner:
                 Scope.POLL_CYCLE,
                 self._plan.name,
                 id=generate_trace_id(),
-                node_count=len(self._plan.nodes),
+                attributes={LogField.COUNT: len(self._plan.nodes)},
             ):
                 self._observability.start_scrape_server()
                 prepared = self.prepare_run(runtime=resolved_runtime)
                 with self._observability.span(
                     Scope.FLOW,
                     self._plan.name,
-                    node_count=len(self._plan.nodes),
+                    attributes={LogField.COUNT: len(self._plan.nodes)},
                 ):
                     cast(_BytewaxCliMain, cli_main)(
                         prepared.dataflow,

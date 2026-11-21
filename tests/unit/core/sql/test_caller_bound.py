@@ -12,12 +12,14 @@ import pytest
 
 from loom.core.config.errors import ConfigError
 from loom.core.identity import ANONYMOUS, Identity
+from loom.core.logger import LogField
 from loom.core.observability.event import EventKind, LifecycleEvent, Scope
 from loom.core.observability.observability import Observability
 from loom.core.stores.sql.abc import RolesNotBoundError, UnknownConnectionError
 from loom.core.stores.sql.caller_bound import CallerBoundSql
 from loom.core.stores.sql.config import SqlConfig, SqlConnectionConfig
 from loom.core.stores.sql.service import NullSqlQueryService, SqlQueryService
+from tests.helpers.spans import build_recorder
 from tests.unit.core.sql._fakes import FakeSqlExecutor, make_connection_config, make_sql_config
 
 
@@ -182,34 +184,41 @@ class TestCallerBoundRoles:
         fake_executor: FakeSqlExecutor,
     ) -> None:
         """The bound path records the labels the REST endpoint guarantees, on its own span."""
-        observer = AcmeSqlRecordingObserver()
-        sql = _caller_bound(
-            fake_executor, make_connection_config(), observability=Observability([observer])
-        )
+        recorder = build_recorder()
+        sql = _caller_bound(fake_executor, make_connection_config(), observability=recorder.runtime)
         await sql.execute("SELECT 1", connection="analytics", identity=_identity("role_viz_sales"))
-        started = next(e for e in observer.events if e.kind == EventKind.START)
-        assert started.scope == Scope.READ
-        assert started.name == "sql:analytics"
-        assert started.meta["roles"] == "role_viz_sales"
-        assert started.meta["subject"] == "user-1"
-        assert started.meta["mechanism"] == "jwt"
+        attributes = recorder.one("read:sql:analytics").attributes or {}
+        assert (attributes["roles"], attributes["subject"]) == ("role_viz_sales", "user-1")
+        assert attributes[LogField.AUTH_MECHANISM] == "jwt"
+
+    async def test_the_roles_and_the_subject_stay_off_the_lifecycle_records(
+        self,
+        fake_executor: FakeSqlExecutor,
+    ) -> None:
+        """The audit trail is the OTEL span: what the observers log names no role nor caller."""
+        recorder = build_recorder()
+        sql = _caller_bound(fake_executor, make_connection_config(), observability=recorder.runtime)
+        await sql.execute("SELECT 1", connection="analytics", identity=_identity("role_viz_sales"))
+        started = next(e for e in recorder.collector.events if e.kind == EventKind.START)
+        assert (started.scope, started.name) == (Scope.READ, "sql:analytics")
+        assert dict(started.attributes) == {
+            LogField.SQL_CONNECTION: "analytics",
+            LogField.AUTH_MECHANISM: "jwt",
+        }
 
     async def test_the_span_names_only_the_roles_the_query_runs_with(
         self,
         fake_executor: FakeSqlExecutor,
     ) -> None:
         """A dropped role must not appear in the audit trail as if it had applied."""
-        observer = AcmeSqlRecordingObserver()
-        sql = _caller_bound(
-            fake_executor, make_connection_config(), observability=Observability([observer])
-        )
+        recorder = build_recorder()
+        sql = _caller_bound(fake_executor, make_connection_config(), observability=recorder.runtime)
         await sql.execute(
             "SELECT 1",
             connection="analytics",
             identity=_identity("role_viz_sales", "role_intruder"),
         )
-        started = next(e for e in observer.events if e.kind == EventKind.START)
-        assert started.meta["roles"] == "role_viz_sales"
+        assert (recorder.one("read:sql:analytics").attributes or {})["roles"] == "role_viz_sales"
 
     async def test_a_refused_query_emits_no_span(self, fake_executor: FakeSqlExecutor) -> None:
         """No query ran, so there is nothing to attribute to any set of roles."""

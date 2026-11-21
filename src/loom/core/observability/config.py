@@ -33,8 +33,9 @@ class LogObservabilityConfig(LogSettings, frozen=True, kw_only=True, forbid_unkn
     """Log backend configuration: the format and level, and whether lifecycle events are logged.
 
     Args:
-        enabled: Configure logging and write lifecycle events as log records.
-            Defaults to ``True``.
+        enabled: Write lifecycle events as log records. Defaults to ``True``.
+            The record factory, the value filter and the format are installed
+            either way, so turning it off never turns safety off.
     """
 
     enabled: bool = True

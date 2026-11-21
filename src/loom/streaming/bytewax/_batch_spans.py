@@ -32,21 +32,23 @@ exported, and never to one that was not.
 
 from __future__ import annotations
 
-from collections.abc import Callable, Mapping, Sequence
+from collections.abc import Callable, Sequence
 from dataclasses import dataclass
 from time import time_ns
 
 from opentelemetry.trace import Link
 
+from loom.core.logger import SpanAttributes
 from loom.core.observability.event import Scope
 from loom.core.observability.observability import Observability
 from loom.core.observability.span import LoomSpan
 from loom.core.tracing.context import generate_trace_id
 from loom.streaming.core._message import MessageMeta
+from loom.streaming.log_events import StreamingLogField
 
 _NS_PER_MS = 1_000_000
 
-ParticipationOpener = Callable[[MessageMeta, Mapping[str, object], int], LoomSpan]
+ParticipationOpener = Callable[[MessageMeta, SpanAttributes, int], LoomSpan]
 """Opens one message's participation span, given its meta, extra attributes, and start time."""
 
 
@@ -74,7 +76,7 @@ class BatchSpan:
 
     scope: Scope
     name: str
-    attributes: Mapping[str, object]
+    attributes: SpanAttributes
 
 
 def emit_batch_spans(
@@ -109,13 +111,13 @@ def emit_batch_spans(
         emit_batch_spans(
             runtime,
             [item.meta for item in items],
-            batch=BatchSpan(Scope.WRITE, "orders:sink", {"sink": "orders"}),
+            batch=BatchSpan(Scope.WRITE, "orders:sink", {StreamingLogField.SINK: "orders"}),
             open_participation=open_write_terminal,
             window=BatchWindow.since(window_start),
         )
     """
     batch_id = generate_trace_id()
-    batch_attributes: Mapping[str, object] = {"loom.batch_id": batch_id}
+    batch_attributes: SpanAttributes = {StreamingLogField.BATCH_ID: batch_id}
     links: list[Link] = []
     truncated = False
     for meta in metas:
@@ -137,8 +139,8 @@ def emit_batch_spans(
             start_time_ns=window.started_ns,
             attributes={
                 **batch_attributes,
-                "loom.batch_size": len(metas),
-                "loom.links_truncated": truncated,
+                StreamingLogField.BATCH_SIZE: len(metas),
+                StreamingLogField.LINKS_TRUNCATED: truncated,
                 **batch.attributes,
             },
         ),

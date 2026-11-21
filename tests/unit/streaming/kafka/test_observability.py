@@ -3,6 +3,7 @@ from __future__ import annotations
 import pytest
 from prometheus_client import CollectorRegistry, generate_latest
 
+from loom.core.logger import LogField
 from loom.core.observability.event import LifecycleEvent, Scope
 from loom.core.observability.observability import Observability
 from loom.prometheus import KafkaPrometheusMetrics
@@ -36,7 +37,13 @@ class TestKafkaPrometheusMetrics:
     ) -> None:
         obs, _ = _make_obs(kafka_registry)
 
-        obs.emit(LifecycleEvent.end(scope=Scope.TRANSPORT, name=name, meta={"topic": "orders"}))
+        obs.emit(
+            LifecycleEvent.end(
+                scope=Scope.TRANSPORT,
+                name=name,
+                attributes={LogField.MESSAGING_DESTINATION_NAME: "orders"},
+            )
+        )
 
         text = generate_latest(kafka_registry).decode()
         assert expected in text
@@ -67,8 +74,8 @@ class TestKafkaPrometheusMetrics:
             LifecycleEvent.exception(
                 scope=Scope.TRANSPORT,
                 name=name,
-                error=error,
-                meta={"topic": "orders"},
+                failure=RuntimeError(error),
+                attributes={LogField.MESSAGING_DESTINATION_NAME: "orders"},
             )
         )
 
@@ -102,7 +109,7 @@ class TestKafkaPrometheusMetrics:
                 scope=Scope.TRANSPORT,
                 name=name,
                 duration_ms=duration_ms,
-                meta={"content_type": "application/x-loom-msgpack"},
+                attributes={LogField.CONTENT_TYPE: "application/x-loom-msgpack"},
             )
         )
 
@@ -121,7 +128,13 @@ class TestKafkaPrometheusMetrics:
     def test_unknown_transport_name_is_ignored(self, kafka_registry: CollectorRegistry) -> None:
         obs, _ = _make_obs(kafka_registry)
 
-        obs.emit(LifecycleEvent.end(scope=Scope.TRANSPORT, name="unknown_op", meta={"topic": "x"}))
+        obs.emit(
+            LifecycleEvent.end(
+                scope=Scope.TRANSPORT,
+                name="unknown_op",
+                attributes={LogField.MESSAGING_DESTINATION_NAME: "x"},
+            )
+        )
 
         text = generate_latest(kafka_registry).decode()
         assert 'topic="x"' not in text
@@ -131,12 +144,16 @@ class TestKafkaPrometheusMetrics:
 
         obs.emit(
             LifecycleEvent.end(
-                scope=Scope.TRANSPORT, name="kafka_produce", meta={"topic": "orders"}
+                scope=Scope.TRANSPORT,
+                name="kafka_produce",
+                attributes={LogField.MESSAGING_DESTINATION_NAME: "orders"},
             )
         )
         obs.emit(
             LifecycleEvent.end(
-                scope=Scope.TRANSPORT, name="kafka_consume", meta={"topic": "orders"}
+                scope=Scope.TRANSPORT,
+                name="kafka_consume",
+                attributes={LogField.MESSAGING_DESTINATION_NAME: "orders"},
             )
         )
         obs.emit(
@@ -144,7 +161,7 @@ class TestKafkaPrometheusMetrics:
                 scope=Scope.TRANSPORT,
                 name="kafka_encode",
                 duration_ms=1.0,
-                meta={"content_type": "application/x-loom-msgpack"},
+                attributes={LogField.CONTENT_TYPE: "application/x-loom-msgpack"},
             )
         )
         obs.emit(
@@ -152,7 +169,7 @@ class TestKafkaPrometheusMetrics:
                 scope=Scope.TRANSPORT,
                 name="kafka_decode",
                 duration_ms=2.0,
-                meta={"content_type": "application/x-loom-msgpack"},
+                attributes={LogField.CONTENT_TYPE: "application/x-loom-msgpack"},
             )
         )
 

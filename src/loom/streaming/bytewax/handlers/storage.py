@@ -20,13 +20,13 @@ from __future__ import annotations
 
 import logging
 from collections import deque
-from collections.abc import Mapping
 from time import time_ns
 from typing import Any, TypeGuard
 
 from bytewax.operators import output as bw_output
 from bytewax.outputs import DynamicSink, StatelessSinkPartition
 
+from loom.core.logger import SpanAttributes
 from loom.core.observability.event import Scope, TerminalReason
 from loom.core.observability.observability import Observability
 from loom.core.observability.span import LoomSpan
@@ -37,6 +37,7 @@ from loom.streaming.compiler._plan import CompiledStorageSink
 from loom.streaming.core._exceptions import UnsupportedNodeError
 from loom.streaming.core._message import Message, MessageMeta
 from loom.streaming.core._tracing import open_terminal_span
+from loom.streaming.log_events import StreamingLogField
 from loom.streaming.nodes._sink import IntoSink, SinkPartition
 from loom.streaming.nodes._table import IntoTable, TableEngine
 
@@ -150,10 +151,9 @@ class _StorageSinkPartition(StatelessSinkPartition[Message[Any]]):
                 scope=Scope.WRITE,
                 name=f"{self._flow_name}:{self._node_name}",
                 attributes={
-                    "flow": self._flow_name,
-                    "sink": self._node_name,
-                    "batch_size": len(metas),
-                    "loom.flow_run_id": self._flow_run_id,
+                    StreamingLogField.FLOW: self._flow_name,
+                    StreamingLogField.SINK: self._node_name,
+                    StreamingLogField.FLOW_RUN_ID: self._flow_run_id,
                 },
             ),
             open_participation=self._open_terminal,
@@ -164,7 +164,7 @@ class _StorageSinkPartition(StatelessSinkPartition[Message[Any]]):
     def _open_terminal(
         self,
         meta: MessageMeta,
-        batch_attributes: Mapping[str, object],
+        batch_attributes: SpanAttributes,
         started_ns: int,
     ) -> LoomSpan:
         return open_terminal_span(
@@ -173,8 +173,8 @@ class _StorageSinkPartition(StatelessSinkPartition[Message[Any]]):
             TerminalReason.SINK_WRITE,
             start_time_ns=started_ns,
             attributes={
-                "flow": self._flow_name,
-                "sink": self._node_name,
+                StreamingLogField.FLOW: self._flow_name,
+                StreamingLogField.SINK: self._node_name,
                 **batch_attributes,
             },
         )

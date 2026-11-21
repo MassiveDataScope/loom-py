@@ -6,6 +6,7 @@ import threading
 from dataclasses import dataclass
 from datetime import UTC, datetime
 
+from loom.core.logger import LogField, LogKey
 from loom.core.observability.event import EventKind, LifecycleEvent, Scope
 from loom.core.observability.protocol import LifecycleObserver
 from loom.etl.lineage._records import (
@@ -17,6 +18,7 @@ from loom.etl.lineage._records import (
     StepRunRecord,
 )
 from loom.etl.lineage.sinks._protocol import LineageStore
+from loom.etl.log_events import EtlLogField
 
 
 class LineageObserver(LifecycleObserver):
@@ -111,11 +113,11 @@ class _EntityContext:
     def from_event(cls, event: LifecycleEvent) -> _EntityContext:
         return cls(
             run_ctx=RunContext(
-                run_id=_meta_str(event, "run_id") or _event_id(event),
+                run_id=_attribute_str(event, EtlLogField.RUN_ID) or _event_id(event),
                 correlation_id=event.correlation_id,
-                attempt=_meta_int(event, "attempt") or 1,
-                last_attempt=_meta_bool(event, "last_attempt", True),
-                process_run_id=_meta_str(event, "process_run_id"),
+                attempt=_attribute_int(event, LogField.ATTEMPT) or 1,
+                last_attempt=_attribute_bool(event, EtlLogField.LAST_ATTEMPT, True),
+                process_run_id=_attribute_str(event, EtlLogField.PROCESS_RUN_ID),
             ),
             name=event.name,
             started_at=_now(),
@@ -140,7 +142,7 @@ def _build_pipeline_record(
         started_at=entity_ctx.started_at,
         status=_event_status(event),
         duration_ms=_duration_ms(event),
-        error=event.error,
+        error=error_message,
         error_type=error_type,
         error_message=error_message,
         failed_step_run_id=failure.step_run_id,
@@ -168,7 +170,7 @@ def _build_process_record(
         started_at=entity_ctx.started_at,
         status=_event_status(event),
         duration_ms=_duration_ms(event),
-        error=event.error,
+        error=error_message,
         error_type=error_type,
         error_message=error_message,
         failed_step_run_id=failure.step_run_id,
@@ -193,7 +195,7 @@ def _build_step_record(
         started_at=entity_ctx.started_at,
         status=_event_status(event),
         duration_ms=_duration_ms(event),
-        error=event.error,
+        error=error_message,
         process_run_id=entity_ctx.run_ctx.process_run_id,
         error_type=error_type,
         error_message=error_message,
@@ -225,14 +227,15 @@ def _failure_details(
 
 
 def _error_details(event: LifecycleEvent) -> tuple[str | None, str | None]:
-    if event.kind is EventKind.ERROR:
-        error_type = _meta_str(event, "error_type") or "Exception"
-        return error_type, event.error
-    return None, None
+    if event.kind is not EventKind.ERROR:
+        return None, None
+    if event.failure is None:
+        return "Exception", None
+    return type(event.failure).__name__, str(event.failure)
 
 
 def _event_id(event: LifecycleEvent) -> str:
-    return event.id or _meta_str(event, "run_id") or event.name
+    return event.id or _attribute_str(event, EtlLogField.RUN_ID) or event.name
 
 
 def _event_status(event: LifecycleEvent) -> RunStatus:
@@ -247,18 +250,18 @@ def _duration_ms(event: LifecycleEvent) -> int:
     return int(event.duration_ms)
 
 
-def _meta_str(event: LifecycleEvent, key: str) -> str | None:
-    value = event.meta.get(key)
+def _attribute_str(event: LifecycleEvent, key: LogKey) -> str | None:
+    value = event.attributes.get(key)
     return value if isinstance(value, str) else None
 
 
-def _meta_int(event: LifecycleEvent, key: str) -> int | None:
-    value = event.meta.get(key)
+def _attribute_int(event: LifecycleEvent, key: LogKey) -> int | None:
+    value = event.attributes.get(key)
     return value if isinstance(value, int) else None
 
 
-def _meta_bool(event: LifecycleEvent, key: str, default: bool) -> bool:
-    value = event.meta.get(key)
+def _attribute_bool(event: LifecycleEvent, key: LogKey, default: bool) -> bool:
+    value = event.attributes.get(key)
     return value if isinstance(value, bool) else default
 
 

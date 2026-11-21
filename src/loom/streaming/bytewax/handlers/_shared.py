@@ -17,7 +17,7 @@ from typing import (
 )
 
 from loom.core.async_bridge import AsyncBridge
-from loom.core.logger import log_context
+from loom.core.logger import SpanAttributes, log_context
 from loom.core.model import LoomFrozenStruct, LoomStruct
 from loom.core.observability.event import Scope, TerminalReason
 from loom.core.observability.observability import Observability
@@ -29,6 +29,7 @@ from loom.streaming.core._errors import ErrorEnvelope, ErrorKind
 from loom.streaming.core._message import Message
 from loom.streaming.core._tracing import open_terminal_span
 from loom.streaming.core._typing import StreamPayload
+from loom.streaming.log_events import StreamingLogField
 
 if TYPE_CHECKING:
     from loom.stores.sqlalchemy.session_manager import SessionManager
@@ -184,9 +185,13 @@ def _node_span_name(flow_name: str, idx: int) -> str:
     return f"{flow_name}:{idx}"
 
 
-def _node_meta(flow_name: str, idx: int, node_type: str) -> dict[str, object]:
+def _node_meta(flow_name: str, idx: int, node_type: str) -> SpanAttributes:
     """Return the fields every node span of one position carries."""
-    return {"flow": flow_name, "node_idx": idx, "node_type": node_type}
+    return {
+        StreamingLogField.FLOW: flow_name,
+        StreamingLogField.NODE_INDEX: idx,
+        StreamingLogField.NODE_TYPE: node_type,
+    }
 
 
 def _node_log_context(flow_name: str, idx: int, node_type: str) -> AbstractContextManager[None]:
@@ -216,7 +221,7 @@ def _observe_node(
             _node_span_name(flow_name, idx),
             trace_id=trace_id,
             correlation_id=correlation_id,
-            **_node_meta(flow_name, idx, node_type),
+            attributes=_node_meta(flow_name, idx, node_type),
         ),
     ):
         yield
@@ -443,9 +448,9 @@ def _record_dropped_no_route(
         message.meta,
         TerminalReason.DROPPED_NO_ROUTE,
         attributes={
-            "flow": flow_name,
-            "loom.declared_routes": ",".join(routes),
-            "loom.has_default_route": has_default,
+            StreamingLogField.FLOW: flow_name,
+            StreamingLogField.DECLARED_ROUTES: ",".join(routes),
+            StreamingLogField.HAS_DEFAULT_ROUTE: has_default,
         },
     ).end()
 

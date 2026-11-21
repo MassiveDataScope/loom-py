@@ -11,6 +11,7 @@ from loom.core.observability.event import EventKind, LifecycleEvent, Scope
 from loom.core.observability.observability import Observability
 from loom.core.stores.sql import CallerBoundSql, NullSqlQueryService, SqlQueryService
 from loom.core.stores.sql.abc import RolesNotBoundError
+from tests.helpers.spans import build_recorder
 from tests.unit.core.sql._fakes import FakeSqlExecutor, make_connection_config, make_sql_config
 
 
@@ -67,15 +68,15 @@ class TestSqlCollaboratorRegistration:
         self,
     ) -> None:
         """The span must reach the app's observers, not a runtime built on the side."""
-        observer = RecordingAuditObserver()
+        recorder = build_recorder()
         container = LoomContainer()
-        register_sql_collaborators(container, _wiring(), Observability([observer]))
+        register_sql_collaborators(container, _wiring(), recorder.runtime)
         sql = container.resolve(CallerBoundSql)
         await sql.execute(
             "SELECT 1",
             connection="analytics",
             identity=Identity(subject="user-1", roles=("role_viz_sales",), mechanism="jwt"),
         )
-        started = next(e for e in observer.events if e.kind == EventKind.START)
+        started = next(e for e in recorder.collector.events if e.kind == EventKind.START)
         assert started.scope == Scope.READ
-        assert started.meta["roles"] == "role_viz_sales"
+        assert (recorder.one("read:sql:analytics").attributes or {})["roles"] == "role_viz_sales"

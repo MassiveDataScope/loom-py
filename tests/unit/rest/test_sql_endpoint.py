@@ -10,6 +10,7 @@ from fastapi import FastAPI
 from fastapi.testclient import TestClient
 
 from loom.core.errors import SystemError as LoomSystemError
+from loom.core.logger import LogField
 from loom.core.observability.event import EventKind, Scope
 from loom.core.observability.observability import Observability
 from loom.core.stores.sql.abc import SqlExecutionError
@@ -225,7 +226,7 @@ class TestSqlEndpointErrorBodies:
         detail = response.json()["detail"]
         assert (response.status_code, detail["code"]) == (422, "rule_violation")
 
-    def test_a_backend_system_failure_answers_the_fixed_500_and_logs_its_message(
+    def test_a_backend_system_failure_answers_the_fixed_500_and_logs_no_message(
         self,
         caplog: pytest.LogCaptureFixture,
     ) -> None:
@@ -244,8 +245,8 @@ class TestSqlEndpointErrorBodies:
             },
         )
         [record] = [r for r in caplog.records if r.levelname == "ERROR"]
-        assert record.exc_info is not None
-        assert str(record.exc_info[1]) == "clickhouse.internal:9000 refused"
+        assert LogField.EXCEPTION_STACKTRACE in record.__dict__
+        assert "clickhouse.internal" not in caplog.text
 
     def test_an_unexpected_error_answers_the_generic_500_body(
         self,
@@ -459,9 +460,11 @@ class TestSqlEndpointSpan:
         assert [event.kind for event in observer.events] == [EventKind.START, EventKind.END]
         start = observer.events[0]
         assert (start.scope, start.name) == (Scope.USE_CASE, "execute_sql_analytics")
-        assert (start.meta["route"], start.meta["method"], start.meta["read_only"]) == (
-            "/sql/analytics",
-            "POST",
-            True,
-        )
-        assert (type(start.meta["status_code"]), start.meta["status_code"]) == (int, 200)
+        attributes = start.attributes
+        assert (
+            attributes[LogField.HTTP_ROUTE],
+            attributes[LogField.HTTP_REQUEST_METHOD],
+            attributes[LogField.READ_ONLY],
+        ) == ("/sql/analytics", "POST", True)
+        status = attributes[LogField.HTTP_RESPONSE_STATUS_CODE]
+        assert (type(status), status) == (int, 200)

@@ -26,13 +26,15 @@ nothing.
 
 from __future__ import annotations
 
-from collections.abc import Mapping
-from contextlib import AbstractContextManager, nullcontext
+from collections.abc import Iterator, Mapping
+from contextlib import AbstractContextManager, contextmanager, nullcontext
 from typing import Any
 
 from loom.core.identity import Identity
+from loom.core.logger import LogField
 from loom.core.observability.event import Scope
 from loom.core.observability.observability import Observability
+from loom.core.observability.span import annotate_current_span
 from loom.core.stores.sql.abc.contracts import SqlQueryResult
 from loom.core.stores.sql.abc.errors import RolesNotBoundError
 from loom.core.stores.sql.config import SqlConfig
@@ -204,12 +206,30 @@ class CallerBoundSql:
         """
         if self._observability is None:
             return nullcontext()
-        return self._observability.span(
-            Scope.READ,
-            f"sql:{connection}",
-            trace_id=get_trace_id(),
-            connection=connection,
-            roles=",".join(roles),
-            subject=identity.subject,
-            mechanism=identity.mechanism,
+        return audited_sql_span(
+            self._observability.span(
+                Scope.READ,
+                f"sql:{connection}",
+                trace_id=get_trace_id(),
+                attributes={
+                    LogField.SQL_CONNECTION: connection,
+                    LogField.AUTH_MECHANISM: identity.mechanism,
+                },
+            ),
+            ",".join(roles),
+            identity,
         )
+
+
+@contextmanager
+def audited_sql_span(
+    span: AbstractContextManager[None], roles: str, identity: Identity
+) -> Iterator[None]:
+    """*span*, marked on the trace with the roles a query runs with and its caller.
+
+    The one owner of the SQL audit trail: the roles and the subject go on the
+    OTEL span only, never on its lifecycle records nor in any log.
+    """
+    with span:
+        annotate_current_span({"roles": roles, "subject": identity.subject or ""})
+        yield

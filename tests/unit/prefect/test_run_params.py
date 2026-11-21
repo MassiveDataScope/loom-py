@@ -19,6 +19,7 @@ from prefect.runtime import flow_run as prefect_flow_run
 from prefect.settings import PREFECT_CLIENT_MAX_RETRIES
 from prefect.types import DateTime as PrefectDateTime
 
+from loom.core.logger import LogField
 from loom.etl import ETLParams, ETLPipeline, ETLProcess, ETLStep, FromTable, IntoTable
 from loom.etl.maintenance._runner import MaintenanceReport
 from loom.etl.maintenance._step import MaintenanceStep
@@ -26,6 +27,7 @@ from loom.prefect import backfill_flow, etl_flow
 from loom.prefect.flow import _backfill_body, _body, _maintenance, _params
 from loom.prefect.flow._common import prefect_run_anchor
 from loom.prefect.flow._run_name import make_run_name_callback
+from tests.helpers.loggers import rendered
 from tests.unit.prefect.doubles import (
     AcmeSampleParams,
     AcmeWindowPipeline,
@@ -313,8 +315,8 @@ class TestEtlRunParams:
         [record] = [r for r in caplog.records if r.name == _params.__name__]
         assert record.levelno == logging.ERROR
         assert str(_RUN_ID) in record.getMessage()
-        assert record.exc_info is not None
-        assert "api down" in str(record.exc_info[1])
+        assert record.__dict__[LogField.EXCEPTION_TYPE] == "RuntimeError"
+        assert "api down" not in rendered(record)
 
     @pytest.mark.usefixtures("in_run")
     def test_a_payload_that_cannot_be_built_is_logged_and_the_run_goes_on(
@@ -337,8 +339,8 @@ class TestEtlRunParams:
         client.update_flow_run.assert_not_called()
         [record] = [r for r in caplog.records if r.name == _params.__name__]
         assert record.levelno == logging.ERROR
-        assert record.exc_info is not None
-        assert "cannot serialise" in str(record.exc_info[1])
+        assert record.__dict__[LogField.EXCEPTION_TYPE] == "TypeError"
+        assert "cannot serialise" not in rendered(record)
 
     def test_nothing_is_recorded_outside_a_flow_run(
         self, tmp_path: Path, client: AcmePrefectClient, invoked: list[tuple[Any, Any]]

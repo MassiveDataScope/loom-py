@@ -11,6 +11,7 @@ from prometheus_client import REGISTRY, CollectorRegistry
 
 from loom.core.engine.events import EventKind as UseCaseEventKind
 from loom.core.engine.events import ExecutionEvent
+from loom.core.logger import LogField
 from loom.core.observability.event import EventKind, LifecycleEvent, Scope
 from loom.prometheus import (
     KafkaPrometheusMetrics,
@@ -213,7 +214,7 @@ class TestDefaultRegistryCache:
                     scope=Scope.TRANSPORT,
                     name="kafka_produce",
                     kind=EventKind.END,
-                    meta={"topic": topic},
+                    attributes={LogField.MESSAGING_DESTINATION_NAME: topic},
                 )
             )
         assert REGISTRY.get_sample_value(
@@ -229,7 +230,7 @@ class TestDefaultRegistryCache:
             scope=Scope.TRANSPORT,
             name="kafka_produce",
             kind=EventKind.END,
-            meta={"topic": labels["topic"]},
+            attributes={LogField.MESSAGING_DESTINATION_NAME: labels["topic"]},
         )
 
         KafkaPrometheusMetrics(registry=first_registry).on_event(event)
@@ -259,7 +260,7 @@ class TestCustomRegistryCache:
             scope=Scope.TRANSPORT,
             name="kafka_produce",
             kind=EventKind.END,
-            meta={"topic": labels["topic"]},
+            attributes={LogField.MESSAGING_DESTINATION_NAME: labels["topic"]},
         )
 
         for metrics in (

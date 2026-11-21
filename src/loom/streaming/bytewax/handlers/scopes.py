@@ -10,6 +10,7 @@ import anyio
 from bytewax.operators import branch, flat_map
 from bytewax.operators import map as bw_map
 
+from loom.core.logger import SpanAttributes
 from loom.core.observability.event import Scope
 from loom.core.observability.observability import Observability
 from loom.core.observability.span import LoomSpan
@@ -329,7 +330,7 @@ def _emit_node_batch_spans(
 
     def _open_participation(
         meta: MessageMeta,
-        batch_attributes: Mapping[str, object],
+        batch_attributes: SpanAttributes,
         started_ns: int,
     ) -> LoomSpan:
         return observer.open_span(

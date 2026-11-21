@@ -14,6 +14,7 @@ from loom.etl.declarative.expr._refs import TableRef
 from loom.etl.declarative.source import SourceSpec
 from loom.etl.declarative.target import TargetSpec
 from loom.etl.lineage._records import EventName, RunStatus
+from loom.etl.log_events import EtlLogField
 from loom.etl.schema._schema import ColumnSchema, LoomDtype
 
 _UNKNOWN_DTYPE = LoomDtype.NULL
@@ -205,19 +206,19 @@ class RecordingRunObserver(LifecycleObserver):
             "id": event.id,
             "status": _run_status(event),
             "duration_ms": event.duration_ms,
-            "error": event.error,
-            "meta": event.meta,
+            "error_type": None if event.failure is None else type(event.failure).__name__,
+            "attributes": dict(event.attributes),
         }
         if event.scope is Scope.PIPELINE and event.kind is EventKind.START:
             data["pipeline"] = event.name
-            data["run_id"] = event.meta.get("run_id")
+            data["run_id"] = event.attributes.get(EtlLogField.RUN_ID)
         if event.scope is Scope.PROCESS and event.kind is EventKind.START:
             data["process"] = event.name
             data["process_run_id"] = event.id
         if event.scope is Scope.STEP:
             data["step"] = event.name
             data["step_run_id"] = event.id
-            run_id = event.meta.get("run_id")
+            run_id = event.attributes.get(EtlLogField.RUN_ID)
             data["run_id"] = run_id if isinstance(run_id, str) else None
         self.events.append((name, data))
         if event.kind is EventKind.ERROR:

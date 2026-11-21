@@ -24,6 +24,7 @@ from fastapi import FastAPI
 from fastapi.testclient import TestClient
 
 from loom.core.identity import Identity, reset_identity, set_identity
+from loom.core.logger import LogField
 from loom.core.observability.observability import Observability
 from loom.core.stores.sql.config import SqlEndpointConfig
 from loom.core.stores.sql.service import SqlQueryService
@@ -34,12 +35,12 @@ from loom.rest.auth import (
     RequestCredentials,
 )
 from loom.rest.fastapi.sql import mount_sql_endpoints
+from tests.helpers.spans import build_recorder
 from tests.unit.core.sql._fakes import (
     FakeSqlExecutor,
     make_connection_config,
     make_sql_config,
 )
-from tests.unit.rest.doubles import RecordingLifecycleObserver
 
 ROLES_CLAIM = "loom_sql_roles"
 ROLE_A = "role_viz_reader"
@@ -397,18 +398,19 @@ class TestNonJwtMechanismDerivesRoles:
         self,
     ) -> None:
         """Auditability: the span states who ran the query, how, and with which privileges."""
-        observer = RecordingLifecycleObserver()
+        recorder = build_recorder()
         client = _client(
             FakeSqlExecutor(),
             identity=_identity((ROLE_A, ROLE_B), subject="user-42"),
-            runtime=Observability([observer]),
+            runtime=recorder.runtime,
         )
 
         response = _post(client, roles=[ROLE_B])
 
         assert response.status_code == 200
-        meta = observer.events[0].meta
-        assert (meta["roles"], meta["subject"], meta["mechanism"]) == (ROLE_B, "user-42", "test")
+        attributes = recorder.one("use_case:execute_sql_analytics").attributes or {}
+        assert (attributes["roles"], attributes["subject"]) == (ROLE_B, "user-42")
+        assert attributes[LogField.AUTH_MECHANISM] == "test"
 
 
 class TestSingleRoleConnection:
@@ -447,7 +449,7 @@ class TestSingleRoleConnection:
         self,
     ) -> None:
         """The audit label must state the privileges the query really ran with."""
-        observer = RecordingLifecycleObserver()
+        recorder = build_recorder()
         executor = FakeSqlExecutor()
         connection = make_connection_config(
             allowed_roles=(),
@@ -461,11 +463,11 @@ class TestSingleRoleConnection:
             service=SqlQueryService(executors={"analytics": executor}, config=config),
             config=config,
             authenticator=_RoleAuthenticator(),
-            observability=Observability([observer]),
+            observability=recorder.runtime,
         )
         app.add_middleware(AcmeFixedIdentityMiddleware, identity=_identity((ROLE_B,)))
 
         response = _post(TestClient(app, raise_server_exceptions=False))
 
         assert response.status_code == 200
-        assert observer.events[0].meta["roles"] == ROLE_A
+        assert (recorder.one("use_case:execute_sql_analytics").attributes or {})["roles"] == ROLE_A

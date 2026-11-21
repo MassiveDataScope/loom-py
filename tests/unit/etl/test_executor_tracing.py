@@ -160,7 +160,7 @@ class TestExecutorTracing:
         }
         for span in spans:
             assert span.status.status_code is StatusCode.ERROR
-            assert span.status.description == "intentional failure"
+            assert span.status.description == "ValueError"
         assert _parent_span_id(_by_name(spans, "step:FailingLoad")) == _span_id(
             _by_name(spans, "process:FailingStaging")
         )

@@ -10,8 +10,10 @@ import pytest
 from loom.core.config import ConfigError
 from loom.core.config.observability import OtelConfig
 from loom.core.environment import Environment
-from loom.core.logger import ContextFilter, LogRuntime
+from loom.core.logger import LogField, LogRuntime
+from loom.core.logger.filter import LogFilter
 from loom.core.logger.install import HANDLER_NAME
+from loom.core.logger.record import LoomRecordFactory
 from loom.core.model.redaction import Dsn
 from loom.core.observability.config import (
     LogObservabilityConfig,
@@ -22,7 +24,7 @@ from loom.core.observability.config import (
 )
 from loom.core.observability.event import EventKind, LifecycleEvent, LifecycleStatus, Scope
 from loom.core.observability.observability import Observability
-from loom.core.observability.observer.otel import OtelSpanFilter
+from loom.core.observability.observer.log import LogLifecycleObserver
 from loom.core.tracing.context import active_trace_id
 from tests.unit.core.observability.conftest import LogExport
 
@@ -88,7 +90,7 @@ class TestSpan:
 
         assert obs.events[0].kind is EventKind.START
         assert obs.events[1].kind is EventKind.ERROR
-        assert obs.events[1].error == "bad input"
+        assert obs.events[1].failure is None, "dropped once every observer saw it"
 
     def test_error_event_reraises_exception(self) -> None:
         runtime = Observability([AcmeRuntimeRecordingObserver()])
@@ -120,16 +122,16 @@ class TestSpan:
             assert event.trace_id == "t-1"
             assert event.correlation_id == "c-1"
 
-    def test_meta_forwarded_to_both_events(self) -> None:
+    def test_attributes_forwarded_to_both_events(self) -> None:
         obs = AcmeRuntimeRecordingObserver()
         runtime = Observability([obs])
 
-        with runtime.span(Scope.NODE, "x", flow="my_flow"):
+        with runtime.span(Scope.NODE, "x", attributes={LogField.NAME: "my_flow"}):
             # Intentional no-op: the test only needs the context manager to close.
             pass
 
         for event in obs.events:
-            assert event.meta == {"flow": "my_flow"}
+            assert event.attributes == {LogField.NAME: "my_flow"}
 
 
 class TestNoop:
@@ -156,13 +158,7 @@ def _loom_handler() -> logging.Handler:
 
 
 class TestFromConfig:
-    def test_export_logs_requires_the_log_backend(self) -> None:
-        config = ObservabilityConfig(log=LogObservabilityConfig(enabled=False), otel=_OTEL)
-
-        with pytest.raises(ValueError, match="export_logs requires observability.log.enabled"):
-            Observability.from_config(config)
-
-    def test_export_logs_attaches_the_export_handler_with_the_context_and_span_filters(
+    def test_export_logs_attaches_the_export_handler_with_the_value_filter(
         self, log_export: LogExport
     ) -> None:
         config = ObservabilityConfig(log=LogObservabilityConfig(format="json"), otel=_OTEL)
@@ -170,8 +166,7 @@ class TestFromConfig:
         Observability.from_config(config, service_name="billing")
 
         for owned in (_loom_handler(), log_export.handler):
-            assert any(isinstance(f, ContextFilter) for f in owned.filters)
-            assert any(isinstance(f, OtelSpanFilter) for f in owned.filters)
+            assert [type(f) for f in owned.filters].count(LogFilter) == 1
         assert log_export.handler in logging.getLogger().handlers
 
     def test_configuring_twice_keeps_the_context_on_the_exported_logs(
@@ -189,7 +184,7 @@ class TestFromConfig:
         handlers = logging.getLogger().handlers
         assert handlers.count(log_export.handler) == 1
         assert len([h for h in handlers if h.get_name() == HANDLER_NAME]) == 1
-        assert [type(f) for f in log_export.handler.filters].count(ContextFilter) == 1
+        assert [type(f) for f in log_export.handler.filters].count(LogFilter) == 1
 
     def test_the_log_format_is_installed_with_the_service_identity(
         self, capsys: pytest.CaptureFixture[str]
@@ -217,12 +212,17 @@ class TestFromConfig:
 
         assert json.loads(capsys.readouterr().out)["loom.runtime"] == "celery"
 
-    def test_a_disabled_log_backend_installs_no_handler(self) -> None:
-        before = list(logging.getLogger().handlers)
+    def test_a_disabled_log_backend_still_makes_every_record_safe(self) -> None:
+        config = ObservabilityConfig(log=LogObservabilityConfig(enabled=False, format="json"))
 
-        Observability.from_config(ObservabilityConfig(log=LogObservabilityConfig(enabled=False)))
+        runtime = Observability.from_config(config)
 
-        assert logging.getLogger().handlers == before
+        assert isinstance(logging.getLogRecordFactory(), LoomRecordFactory)
+        assert all(
+            any(isinstance(f, LogFilter) for f in handler.filters)
+            for handler in logging.getLogger().handlers
+        )
+        assert not any(isinstance(o, LogLifecycleObserver) for o in runtime.observers)
 
     def test_an_unregistered_format_stops_the_start(self) -> None:
         config = ObservabilityConfig(log=LogObservabilityConfig(format="xml"))

@@ -5,6 +5,7 @@ from __future__ import annotations
 from time import perf_counter
 from typing import Generic, Literal, TypeVar
 
+from loom.core.logger import LogField
 from loom.core.model import LoomFrozenStruct, LoomStruct
 from loom.core.observability.event import LifecycleEvent, Scope
 from loom.core.observability.observability import Observability
@@ -133,7 +134,7 @@ class KafkaMessageProducer(Generic[PayloadT]):
                     duration_ms=(perf_counter() - encode_started) * 1000,
                     trace_id=message.meta.trace_id,
                     correlation_id=message.meta.correlation_id,
-                    meta={"content_type": descriptor.content_type.media_type},
+                    attributes={LogField.CONTENT_TYPE: descriptor.content_type.media_type},
                 )
             )
         resolved_key: bytes | str | None = key

@@ -5,11 +5,13 @@ from __future__ import annotations
 from datetime import UTC, datetime
 from typing import Any
 
+from loom.core.logger import LogField
 from loom.core.observability.event import LifecycleEvent, LifecycleStatus, Scope
 from loom.etl.declarative.expr._refs import TableRef
 from loom.etl.declarative.source import TableSourceSpec
 from loom.etl.declarative.target._table import ReplaceSpec
 from loom.etl.lineage._records import EventName, RunContext, RunStatus
+from loom.etl.log_events import EtlLogField
 from loom.etl.schema._schema import ColumnSchema, LoomDtype
 from loom.etl.testing._scenario import ETLScenario, StepRunnerProto
 from loom.etl.testing._stubs import (
@@ -106,10 +108,10 @@ class TestRecordingRunObserver:
                 name="Pipe",
                 id=ctx.run_id,
                 correlation_id=ctx.correlation_id,
-                meta={
-                    "run_id": ctx.run_id,
-                    "attempt": ctx.attempt,
-                    "last_attempt": ctx.last_attempt,
+                attributes={
+                    EtlLogField.RUN_ID: ctx.run_id,
+                    LogField.ATTEMPT: ctx.attempt,
+                    EtlLogField.LAST_ATTEMPT: ctx.last_attempt,
                 },
             )
         )
@@ -119,7 +121,7 @@ class TestRecordingRunObserver:
                 name="Proc",
                 id="proc-1",
                 correlation_id=ctx.correlation_id,
-                meta={"run_id": ctx.run_id, "attempt": ctx.attempt},
+                attributes={EtlLogField.RUN_ID: ctx.run_id, LogField.ATTEMPT: ctx.attempt},
             )
         )
         observer.on_event(
@@ -128,10 +130,10 @@ class TestRecordingRunObserver:
                 name="MyStep",
                 id="step-1",
                 correlation_id=ctx.correlation_id,
-                meta={
-                    "run_id": ctx.run_id,
-                    "attempt": ctx.attempt,
-                    "process_run_id": "proc-1",
+                attributes={
+                    EtlLogField.RUN_ID: ctx.run_id,
+                    LogField.ATTEMPT: ctx.attempt,
+                    EtlLogField.PROCESS_RUN_ID: "proc-1",
                 },
             )
         )
@@ -141,11 +143,11 @@ class TestRecordingRunObserver:
                 name="MyStep",
                 id="step-1",
                 correlation_id=ctx.correlation_id,
-                error="boom",
-                meta={
-                    "run_id": ctx.run_id,
-                    "attempt": ctx.attempt,
-                    "process_run_id": "proc-1",
+                failure=RuntimeError("boom"),
+                attributes={
+                    EtlLogField.RUN_ID: ctx.run_id,
+                    LogField.ATTEMPT: ctx.attempt,
+                    EtlLogField.PROCESS_RUN_ID: "proc-1",
                 },
             )
         )
@@ -157,10 +159,10 @@ class TestRecordingRunObserver:
                 correlation_id=ctx.correlation_id,
                 duration_ms=5,
                 status=LifecycleStatus.FAILURE,
-                meta={
-                    "run_id": ctx.run_id,
-                    "attempt": ctx.attempt,
-                    "process_run_id": "proc-1",
+                attributes={
+                    EtlLogField.RUN_ID: ctx.run_id,
+                    LogField.ATTEMPT: ctx.attempt,
+                    EtlLogField.PROCESS_RUN_ID: "proc-1",
                 },
             )
         )
@@ -172,7 +174,7 @@ class TestRecordingRunObserver:
                 correlation_id=ctx.correlation_id,
                 duration_ms=6,
                 status=LifecycleStatus.FAILURE,
-                meta={"run_id": ctx.run_id, "attempt": ctx.attempt},
+                attributes={EtlLogField.RUN_ID: ctx.run_id, LogField.ATTEMPT: ctx.attempt},
             )
         )
         observer.on_event(
@@ -183,7 +185,7 @@ class TestRecordingRunObserver:
                 correlation_id=ctx.correlation_id,
                 duration_ms=7,
                 status=LifecycleStatus.FAILURE,
-                meta={"run_id": ctx.run_id, "attempt": ctx.attempt},
+                attributes={EtlLogField.RUN_ID: ctx.run_id, LogField.ATTEMPT: ctx.attempt},
             )
         )
 

@@ -37,6 +37,7 @@ from collections.abc import Callable
 from typing import Any
 
 from loom.core.config import ConfigContext
+from loom.core.logger import LogField, LogKey, Scalar
 from loom.core.observability.event import Scope
 from loom.core.observability.observability import Observability
 from loom.core.runner import SupportsFlush
@@ -58,6 +59,7 @@ from loom.etl.declarative.target._temp import TempFanInSpec, TempSpec
 from loom.etl.executor._agents import AgentMapper
 from loom.etl.executor._dispatcher import ParallelDispatcher, ThreadDispatcher
 from loom.etl.lineage._records import RunContext, RunStatus, WriteContext
+from loom.etl.log_events import EtlLogField
 from loom.etl.pipeline._step_sql import StepSQL
 from loom.etl.ports._config_values import resolve_config_value
 from loom.etl.ports.contracts import (
@@ -174,11 +176,12 @@ class ETLExecutor:
                 trace_id=ctx.run_id,
                 correlation_id=ctx.correlation_id,
                 id=ctx.run_id,
-                run_id=ctx.run_id,
-                attempt=ctx.attempt,
-                last_attempt=ctx.last_attempt,
-                nodes=len(plan.nodes),
-                params=_render_params(params),
+                attributes={
+                    EtlLogField.RUN_ID: ctx.run_id,
+                    LogField.ATTEMPT: ctx.attempt,
+                    EtlLogField.LAST_ATTEMPT: ctx.last_attempt,
+                    LogField.COUNT: len(plan.nodes),
+                },
             ):
                 for node in plan.nodes:
                     self._run_pipeline_node(node, params, ctx)
@@ -222,9 +225,11 @@ class ETLExecutor:
             trace_id=ctx.run_id,
             correlation_id=ctx.correlation_id,
             id=process_run_id,
-            run_id=ctx.run_id,
-            process_run_id=process_run_id,
-            steps=len(plan.nodes),
+            attributes={
+                EtlLogField.RUN_ID: ctx.run_id,
+                EtlLogField.PROCESS_RUN_ID: process_run_id,
+                LogField.COUNT: len(plan.nodes),
+            },
         ):
             for node in plan.nodes:
                 self._run_process_node(node, params, process_ctx)
@@ -261,18 +266,22 @@ class ETLExecutor:
             step_run_id,
             [b.alias for b in plan.source_bindings],
         )
+        attributes: dict[LogKey, Scalar] = {
+            EtlLogField.RUN_ID: ctx.run_id,
+            EtlLogField.STEP_RUN_ID: step_run_id,
+            EtlLogField.SOURCES: ",".join(b.alias for b in plan.source_bindings),
+            EtlLogField.TARGET: _span_target_label(plan.target_binding.spec),
+            EtlLogField.STREAMING: plan.streaming,
+        }
+        if ctx.process_run_id is not None:
+            attributes[EtlLogField.PROCESS_RUN_ID] = ctx.process_run_id
         with self._observability.span(
             Scope.STEP,
             plan.step_type.__name__,
             trace_id=ctx.run_id,
             correlation_id=ctx.correlation_id,
             id=step_run_id,
-            run_id=ctx.run_id,
-            process_run_id=ctx.process_run_id,
-            step_run_id=step_run_id,
-            sources=[b.alias for b in plan.source_bindings],
-            target=_span_target_label(plan.target_binding.spec),
-            streaming=plan.streaming,
+            attributes=attributes,
         ):
             values = {**self._resolve_config_values(plan), **self._bind_agents(plan)}
             if isinstance(plan.target_binding.spec, ClientSpec):
@@ -498,25 +507,6 @@ def _span_target_label(spec: Any) -> str:
     if isinstance(spec, ClientSpec):
         return "client"
     return str(getattr(spec, "table_ref", None) or getattr(spec, "path", None))
-
-
-def _render_params(params: Any) -> dict[str, Any]:
-    """Render an ``ETLParams`` instance as a JSON-friendly dict for events.
-
-    Used to attach the resolved invocation parameters to the pipeline START
-    event so observers (structlog/JSON sinks, Prefect UI) can show what the
-    pipeline was called with. Datetimes are ISO-formatted by ``msgspec``.
-    Falls back to ``str(params)`` if msgspec cannot encode the object.
-    """
-    import msgspec  # noqa: PLC0415
-
-    try:
-        rendered = msgspec.to_builtins(params)
-    except Exception:  # noqa: BLE001
-        return {"repr": str(params)}
-    if isinstance(rendered, dict):
-        return rendered
-    return {"value": rendered}
 
 
 def _ms(start: float) -> int:

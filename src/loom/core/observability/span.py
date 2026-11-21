@@ -22,7 +22,7 @@ from collections.abc import Callable, Mapping, Sequence
 from contextlib import AbstractContextManager
 from dataclasses import dataclass, replace
 from time import perf_counter
-from typing import Self
+from typing import Final, Self
 
 from opentelemetry.context import Context
 from opentelemetry.trace import (
@@ -35,7 +35,12 @@ from opentelemetry.trace import (
     use_span,
 )
 
+from loom.core.logger import LogField, LogKey, Scalar, SpanAttributes
+from loom.core.logger.record import exception_type, failure_fields
 from loom.core.observability.event import EventKind, LifecycleEvent, Scope
+
+EXCEPTION_EVENT: Final = "exception"
+"""Name of the span event that describes a failure, as OpenTelemetry names it."""
 
 
 def elapsed_ms(started: float) -> float:
@@ -57,39 +62,13 @@ class SpanIdentity:
     trace_id: str | None
     correlation_id: str | None
     event_id: str | None
-    meta: Mapping[str, object]
+    attributes: SpanAttributes
 
-    @classmethod
-    def build(
-        cls,
-        scope: Scope,
-        name: str,
-        *,
-        trace_id: str | None,
-        correlation_id: str | None,
-        meta: Mapping[str, object],
-    ) -> Self:
-        """Build an identity, promoting ``id`` out of the caller's meta fields.
-
-        ``id`` is a first-class ``LifecycleEvent`` field, so observers can
-        correlate START with END without reaching into ``meta``.
-        """
-        fields = dict(meta)
-        raw_id = fields.pop("id", None)
-        return cls(
-            scope=scope,
-            name=name,
-            trace_id=trace_id,
-            correlation_id=correlation_id,
-            event_id=str(raw_id) if raw_id is not None else None,
-            meta=fields,
-        )
-
-    def with_meta(self, extra: Mapping[str, object]) -> Self:
-        """Return a copy carrying *extra* on top of this identity's meta."""
+    def with_attributes(self, extra: Mapping[LogKey, Scalar]) -> Self:
+        """Return a copy carrying *extra* on top of this identity's attributes."""
         if not extra:
             return self
-        return replace(self, meta={**self.meta, **extra})
+        return replace(self, attributes={**self.attributes, **extra})
 
     def start_event(self) -> LifecycleEvent:
         """Return the ``START`` event of this span."""
@@ -99,7 +78,7 @@ class SpanIdentity:
             trace_id=self.trace_id,
             correlation_id=self.correlation_id,
             id=self.event_id,
-            meta=self.meta,
+            attributes=self.attributes,
         )
 
     def end_event(self, duration_ms: float) -> LifecycleEvent:
@@ -111,7 +90,7 @@ class SpanIdentity:
             correlation_id=self.correlation_id,
             id=self.event_id,
             duration_ms=duration_ms,
-            meta=self.meta,
+            attributes=self.attributes,
         )
 
     def error_event(self, exc: BaseException, duration_ms: float) -> LifecycleEvent:
@@ -123,14 +102,16 @@ class SpanIdentity:
             correlation_id=self.correlation_id,
             id=self.event_id,
             duration_ms=duration_ms,
-            error=str(exc),
-            meta={**self.meta, "error_type": type(exc).__name__},
+            failure=exc,
+            attributes=self.attributes,
         )
 
 
 def apply_terminal_state(span: Span, event: LifecycleEvent) -> None:
     """Copy the outcome carried by a closing lifecycle event onto its span.
 
+    A failure sets the status to ``ERROR`` described by the exception type and
+    adds an ``exception`` event with its type, code and frames: never its message.
     Internal to the observability package.
 
     Args:
@@ -138,11 +119,16 @@ def apply_terminal_state(span: Span, event: LifecycleEvent) -> None:
         event: ``END`` or ``ERROR`` event describing the outcome.
     """
     if event.duration_ms is not None:
-        span.set_attribute("duration_ms", event.duration_ms)
-    if event.kind is EventKind.ERROR:
-        span.set_status(StatusCode.ERROR, event.error or "")
+        span.set_attribute(LogField.DURATION_MS, event.duration_ms)
+    if event.kind is not EventKind.ERROR:
+        span.set_status(StatusCode.OK)
         return
-    span.set_status(StatusCode.OK)
+    failure = event.failure
+    if failure is None:
+        span.set_status(StatusCode.ERROR)
+        return
+    span.set_status(StatusCode.ERROR, exception_type(type(failure)))
+    span.add_event(EXCEPTION_EVENT, failure_fields(failure, stacktrace=True))
 
 
 class LoomSpan:
@@ -160,7 +146,9 @@ class LoomSpan:
 
     Example::
 
-        handle = runtime.open_span(Scope.AGENT, "agent_run", agent="analyst")
+        handle = runtime.open_span(
+            Scope.AGENT, "agent_run", attributes={LogField.NAME: "analyst"}
+        )
         try:
             async for frame in frames:
                 yield frame
@@ -185,7 +173,7 @@ class LoomSpan:
         self._on_closed = on_closed
         self._started = perf_counter()
         self._closed = False
-        self._closing: dict[str, object] = {}
+        self._closing: dict[LogKey, Scalar] = {}
 
     @classmethod
     def open(
@@ -265,7 +253,7 @@ class LoomSpan:
         """
         return self._span.get_span_context()
 
-    def annotate(self, attributes: Mapping[str, object]) -> None:
+    def annotate(self, attributes: Mapping[LogKey, Scalar]) -> None:
         """Record attributes the closing event of this span carries.
 
         For values only known once the work is done — a run's token usage, a
@@ -274,13 +262,11 @@ class LoomSpan:
         the last value, and annotating a closed span does nothing.
 
         Args:
-            attributes: Fields merged into the closing event's ``meta``. Keys
-                need not be valid Python identifiers, so a semantic-convention
-                name such as ``gen_ai.usage.input_tokens`` is expressible.
+            attributes: Fields merged into the closing event's attributes.
 
         Example::
 
-            handle.annotate({"rows": 142})
+            handle.annotate({LogField.COUNT: 142})
         """
         if self._closed:
             return
@@ -320,7 +306,7 @@ class LoomSpan:
         end_time_ns: int | None = None,
         duration_ms: float | None = None,
     ) -> None:
-        """Close the span as a failure, recording *exc*, and emit ``ERROR``.
+        """Close the span as a failure described by *exc*, and emit ``ERROR``.
 
         Calling this after the span is already closed does nothing.
 
@@ -329,37 +315,26 @@ class LoomSpan:
             end_time_ns: Epoch nanoseconds the work really ended at.
             duration_ms: Duration reported on the ``ERROR`` event.
         """
-        if self._closed:
-            return
-        self._span.record_exception(exc)
         self._close(
             self._closing_identity().error_event(exc, self._duration(duration_ms)),
             end_time_ns=end_time_ns,
         )
 
     def _closing_identity(self) -> SpanIdentity:
-        return self._identity.with_meta(self._closing)
+        return self._identity.with_attributes(self._closing)
 
     def _duration(self, duration_ms: float | None) -> float:
         if duration_ms is not None:
             return duration_ms
         return elapsed_ms(self._started)
 
-    def _apply_annotations(self, event: LifecycleEvent) -> None:
-        """Copy the annotated keys onto the span, converted as the event does."""
-        if not self._closing:
-            return
-        attributes = event.otel_attributes()
-        self._span.set_attributes(
-            {key: value for key, value in attributes.items() if key in self._closing}
-        )
-
     def _close(self, event: LifecycleEvent, *, end_time_ns: int | None = None) -> None:
         if self._closed:
             return
         self._closed = True
         apply_terminal_state(self._span, event)
-        self._apply_annotations(event)
+        if self._closing:
+            self._span.set_attributes(dict(self._closing.items()))
         with use_span(
             self._span, end_on_exit=False, record_exception=False, set_status_on_exception=False
         ):
