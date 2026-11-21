@@ -125,7 +125,9 @@ class TestRunnerLoggerEnvironment:
         StreamingRunner.from_dict(bytewax_stream_flow, config, environment="test")
         logging.getLogger("tests.streaming").warning("streaming.check_done")
 
-        assert json.loads(capsys.readouterr().out)["deployment.environment.name"] == "test"
+        records = [json.loads(line) for line in capsys.readouterr().out.splitlines()]
+        written = next(r for r in records if r["message"] == "streaming.check_done")
+        assert written["deployment.environment.name"] == "test"
 
 
 class TestRuntimeOverrideVariable:
