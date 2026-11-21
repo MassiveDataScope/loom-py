@@ -22,10 +22,10 @@ from loom.core.job.job import Job
 from loom.core.job.outcome import JobPostponement
 from loom.core.job.policy import Backoff, Countdown
 from loom.core.job.timer import JobDelayRefusedError, Step
-from loom.core.logger.failure import exception_type
 from loom.core.use_case import Delivery
 from loom.jobs.inline import AsyncioJobTimer
 from loom.testing.jobs import ManualTimer
+from tests.helpers.boundary import type_name
 from tests.helpers.jobs import InlineServiceFixture, JobKernel, RecordingExecutionObserver
 from tests.helpers.loggers import logged_events
 
@@ -155,7 +155,7 @@ class TestRetries:
 
         assert acme.runs == [(1, 0), (2, 0), (3, 0)]
         assert acme.timer.pending == 0
-        assert Notify.failures == [exception_type(AcmeError)]
+        assert Notify.failures == [type_name(AcmeError)]
         with pytest.raises(JobFailedError) as failed:
             handle.wait()
         assert str(failed.value.cause) == "attempt 3"
@@ -219,7 +219,7 @@ class TestWithoutATimer:
         await acme.service.wait_until_idle()
 
         assert acme.runs == [(1, 0)]
-        assert Notify.failures == [exception_type(AcmeError)]
+        assert Notify.failures == [type_name(AcmeError)]
         with pytest.raises(JobFailedError) as failed:
             handle.wait()
         assert type(failed.value.cause) is AcmeError

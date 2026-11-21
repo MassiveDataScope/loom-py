@@ -16,6 +16,7 @@ from typing import TYPE_CHECKING, Any, Final, Protocol
 from loom.composition import CompositionErrorCode, CompositionStateError, LoopHost, Recipe
 from loom.core.config import ConfigError
 from loom.core.errors import MalformedJobMessage
+from loom.core.errors.boundary import boundary
 from loom.core.identity import ON_BEHALF_OF_ATTRIBUTE, Identity
 from loom.core.identity.wire import encode_identity
 from loom.core.job.envelope import JobEnvelope
@@ -36,7 +37,7 @@ from loom.serverless.aws.lambda_._refusals import (
     check_resolved_ai,
     refuse_unserved_config,
 )
-from loom.serverless.aws.lambda_.boundary import LambdaBoundary, lambda_reference
+from loom.serverless.aws.lambda_.boundary import LambdaBoundary
 from loom.serverless.aws.lambda_.functions import (
     EventTrigger,
     HttpTrigger,
@@ -161,9 +162,10 @@ class LambdaRuntime:
             CompositionStateError: When :meth:`recipe` has not run on this
                 instance, or it is already bound.
             ConfigError: When an authentication exclusion reaches a templated route.
-            FailureReference: In place of the failure to open the application,
-                or of an MCP server resolving to ``transport: stdio``: logged
-                once, so Init reports its type, code and trace id only.
+            ConfigError: When an MCP server resolves to ``transport: stdio``.
+
+        Mounting is the function's Init, so it goes through the loom boundary:
+        the runtime reports any failure as a clean ``LoomError``.
         """
         if self._bind is None:
             raise CompositionStateError(
@@ -173,14 +175,13 @@ class LambdaRuntime:
             raise CompositionStateError(
                 CompositionErrorCode.RUNTIME_ALREADY_COMPOSED.issue(component=COMPONENT)
             )
-        try:
-            check_resolved_ai(application.ai.config)
-            self._handler = LambdaBoundary(self._bind(application))
-        except Exception as exc:
-            failure = lambda_reference(exc)
-        else:
-            return self._handler
-        raise failure
+        return boundary(self._bound)(application)
+
+    def _bound(self, application: Application) -> LambdaHandler:
+        assert self._bind is not None
+        check_resolved_ai(application.ai.config)
+        self._handler = LambdaBoundary(self._bind(application))
+        return self._handler
 
     def close(self) -> None:
         """Close the bound handler, as :meth:`LambdaHandler.close` does."""

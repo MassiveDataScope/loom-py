@@ -13,7 +13,6 @@ from loom.cli import schema as schema_cli
 from loom.cli.app import app
 from loom.stores.sqlalchemy import alembic, rls
 from loom.stores.sqlalchemy.rls import DatabaseUser, Finding, Report
-from tests.helpers.handoffs import EchoedFailures
 
 runner = CliRunner()
 
@@ -59,7 +58,7 @@ class TestSchemaCommands:
         ]
 
     def test_bootstrap_names_the_missing_password_variable(
-        self, config: Path, monkeypatch: pytest.MonkeyPatch, echoed: EchoedFailures
+        self, config: Path, monkeypatch: pytest.MonkeyPatch
     ) -> None:
         users = {"app_rw": DatabaseUser(login=True, access="write")}
         monkeypatch.setattr(alembic, "load_store_schema", lambda path: _application(users))
@@ -70,10 +69,10 @@ class TestSchemaCommands:
         result = runner.invoke(app, ["schema", "bootstrap", "--config", str(config)])
 
         assert result.exit_code == 1
-        assert "LOOM_DB_PASSWORD_APP_RW" in echoed.messages
+        assert "LOOM_DB_PASSWORD_APP_RW" in result.output
 
     def test_bootstrap_without_the_superuser_url_fails(
-        self, config: Path, monkeypatch: pytest.MonkeyPatch, echoed: EchoedFailures
+        self, config: Path, monkeypatch: pytest.MonkeyPatch
     ) -> None:
         monkeypatch.setattr(alembic, "load_store_schema", lambda path: _application({}))
         monkeypatch.setenv("LOOM_DB_PASSWORD_APP_MIGRATOR", "m1grator")
@@ -82,7 +81,7 @@ class TestSchemaCommands:
         result = runner.invoke(app, ["schema", "bootstrap", "--config", str(config)])
 
         assert result.exit_code == 1
-        assert "LOOM_SUPERUSER_URL" in echoed.messages
+        assert "LOOM_SUPERUSER_URL" in result.output
 
     def test_verify_prints_one_finding_per_line_and_exits_one(
         self, config: Path, monkeypatch: pytest.MonkeyPatch

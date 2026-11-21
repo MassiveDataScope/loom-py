@@ -8,6 +8,7 @@ complies, or when code that does not is missing from it.
 
 from __future__ import annotations
 
+import functools
 from pathlib import Path
 from typing import Final
 
@@ -17,7 +18,12 @@ from loom.core.logger import LogIdentity
 from loom.core.logger.filter import LogFilter
 from loom.core.logger.formats import TextFormatter
 from loom.core.logger.install import install_record_factory
-from loom.testing.log_calls import LogCallOffence, exception_text_offences, log_call_offences
+from loom.testing.log_calls import (
+    LogCallOffence,
+    exception_text_offences,
+    free_text_offences,
+    log_call_offences,
+)
 from tests.helpers.source_tree import SRC, source_files
 
 UNMIGRATED_PACKAGES: Final[tuple[str, ...]] = (
@@ -58,7 +64,6 @@ EXCEPTION_TEXT_EXITS: Final[dict[str, tuple[int, str]]] = {
     "loom.core.model._loom_type": (3, _VALIDATION_TEXT),
     "loom.core.model.keys": (2, _VALIDATION_TEXT),
     "loom.rest.fastapi.sql": (1, _VALIDATION_TEXT),
-    "loom.core.logger.failure": (1, "the text of a FailureReference is its public form"),
     "loom.core.job.outcome": (2, "a job signal's statement, the words the job declares"),
     "loom.streaming.mongo._bytewax_source": (
         1,
@@ -87,7 +92,11 @@ UNMIGRATED_EXCEPTION_TEXT: Final[dict[str, int]] = {
     "loom.ai.execution._lifecycle": 2,
     "loom.ai.execution._turn": 1,
     "loom.ai.remote_auth": 2,
+    "loom.cli.check": 1,
+    "loom.cli.deploy": 1,
+    "loom.cli.schema": 2,
     "loom.composition._jobs": 1,
+    "loom.composition.application": 1,
     "loom.composition.phases": 1,
     "loom.composition.recipe": 1,
     "loom.core.bootstrap.kernel": 1,
@@ -102,6 +111,7 @@ UNMIGRATED_EXCEPTION_TEXT: Final[dict[str, int]] = {
     "loom.core.di.installer": 4,
     "loom.core.discovery.scanner": 1,
     "loom.core.engine.declared_observers": 2,
+    "loom.core.engine.post_commit": 1,
     "loom.core.errors.jobs": 1,
     "loom.core.job.config": 1,
     "loom.core.job.envelope": 1,
@@ -109,6 +119,7 @@ UNMIGRATED_EXCEPTION_TEXT: Final[dict[str, int]] = {
     "loom.core.model.introspection": 1,
     "loom.core.stores.uow.coordinator": 1,
     "loom.etl.compiler._validators_config": 1,
+    "loom.etl.io.sources._dynamodb": 1,
     "loom.etl.runner.config_loader": 1,
     "loom.etl.schema._contract": 1,
     "loom.etl.storage._config": 2,
@@ -140,10 +151,53 @@ UNMIGRATED_EXCEPTION_TEXT: Final[dict[str, int]] = {
 }
 """Modules that put an exception's text into a new error's message: how many places.
 
-Rule 1 of spec 019: the message of an exception is never a payload. These
-messages leave nothing today (every exit renders the public form), but they
-carry foreign text a later exit could copy; L2c rewrites them. Shrinks until
-empty."""
+Rule 2 of spec 019: the message of an exception is never a payload. These
+messages carry foreign text into a loom error; L2c rewrites them. Shrinks
+until empty."""
+
+UNMIGRATED_CONSTRUCTIONS: Final[tuple[str, ...]] = (
+    "loom.ai",
+    "loom.celery",
+    "loom.cli",
+    "loom.composition",
+    "loom.connections",
+    "loom.core.authz",
+    "loom.core.bootstrap",
+    "loom.core.cache",
+    "loom.core.checks",
+    "loom.core.config",
+    "loom.core.connections",
+    "loom.core.di",
+    "loom.core.discovery",
+    "loom.core.engine",
+    "loom.core.environment",
+    "loom.core.errors",
+    "loom.core.execution",
+    "loom.core.identity",
+    "loom.core.introspection",
+    "loom.core.job",
+    "loom.core.logger",
+    "loom.core.model",
+    "loom.core.projection",
+    "loom.core.routing",
+    "loom.core.schema_names",
+    "loom.core.stores",
+    "loom.core.symbols",
+    "loom.core.use_case",
+    "loom.etl",
+    "loom.jobs",
+    "loom.prefect",
+    "loom.rest",
+    "loom.serverless",
+    "loom.stores",
+    "loom.streaming",
+    "loom.testing",
+)
+"""Packages that still raise errors with text built from values, not declared fields.
+
+Rule 2 of spec 019: a ``LoomError`` is built as ``Cls(**fields)``. L2c migrates
+each package's constructions and its own ``raise ValueError/TypeError``; the
+list shrinks until empty, and 12.0 ships when it is."""
 
 
 def module_of(offence: LogCallOffence) -> str:
@@ -151,9 +205,9 @@ def module_of(offence: LogCallOffence) -> str:
     return ".".join(Path(offence.path).relative_to(SRC.parent).with_suffix("").parts)
 
 
-def is_unmigrated(module: str) -> bool:
-    """Whether *module* is, or is inside, an entry of :data:`UNMIGRATED_PACKAGES`."""
-    return any(module == entry or module.startswith(f"{entry}.") for entry in UNMIGRATED_PACKAGES)
+def is_unmigrated(module: str, entries: tuple[str, ...] = UNMIGRATED_PACKAGES) -> bool:
+    """Whether *module* is, or is inside, one of *entries*."""
+    return any(module == entry or module.startswith(f"{entry}.") for entry in entries)
 
 
 def loom_offences() -> list[LogCallOffence]:
@@ -184,3 +238,9 @@ def exception_text_sites() -> dict[str, int]:
         module = module_of(offence)
         sites[module] = sites.get(module, 0) + 1
     return sites
+
+
+@functools.cache
+def free_text_modules() -> frozenset[str]:
+    """The modules of ``src/loom`` that raise an error with text built from values, read once."""
+    return frozenset(module_of(offence) for offence in free_text_offences(source_files()))

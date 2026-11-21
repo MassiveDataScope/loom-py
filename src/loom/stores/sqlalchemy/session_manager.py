@@ -17,6 +17,7 @@ from sqlalchemy.ext.asyncio import (
 from sqlalchemy.orm import Session
 from sqlalchemy.pool import Pool, QueuePool
 
+from loom.core.errors.boundary import boundary
 from loom.core.identity import Acting
 from loom.core.model.redaction import reveal_for_driver
 from loom.core.stores.catalog import StoreKey
@@ -123,7 +124,7 @@ class SessionManager:
         self._metadata = metadata if metadata is not None else get_metadata()
         self.store = store
         session_class = type("LoomSession", (Session,), {})
-        event.listen(session_class, "after_begin", _refuse_an_expired_caller)
+        event.listen(session_class, "after_begin", boundary(_refuse_an_expired_caller))
         if session_settings is not None:
             install_session_settings(session_class, session_settings)
         self._session_factory = async_sessionmaker(
@@ -383,6 +384,7 @@ def _register_trace_id_listener(async_engine: AsyncEngine) -> None:
     """
 
     @event.listens_for(async_engine.sync_engine, "before_cursor_execute", retval=True)
+    @boundary
     def _inject(
         conn: Any,
         cursor: Any,

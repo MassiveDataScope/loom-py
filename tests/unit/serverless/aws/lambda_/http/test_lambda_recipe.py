@@ -20,7 +20,7 @@ from loom.core.stores import LAMBDA_PROFILE
 from loom.rest.compiler import InterfaceCompilationError
 from loom.rest.fastapi import FastAPIRuntime
 from loom.serverless.aws.lambda_ import LambdaRuntime, LambdaUnservedConfigError
-from tests.helpers.handoffs import lambda_failure
+from tests.helpers.boundary import left_loom
 from tests.unit.serverless.aws.lambda_.http._clients import LambdaProject, lambda_client
 
 pytestmark = [
@@ -110,7 +110,7 @@ class TestLambdaRecipe:
     ) -> None:
         config = contract_project(exclude_paths=("/items/everything",))
         composed = adapter()
-        raises = lambda_failure if adapter is LambdaRuntime else pytest.raises
+        raises = left_loom if adapter is LambdaRuntime else pytest.raises
 
         with raises(ConfigError, match=r"served by the route '/items/\{item_id\}'"):
             create_app(config, runtime=composed, environment=_TEST)

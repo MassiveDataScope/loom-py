@@ -23,6 +23,7 @@ from sqlalchemy.ext.asyncio import AsyncEngine
 
 from loom.core.authz.elevation import elevated_scopes
 from loom.core.config import ConfigError
+from loom.core.errors.boundary import boundary
 from loom.core.identity.context import current_identity
 from loom.core.identity.identity import ON_BEHALF_OF_ATTRIBUTE
 from loom.core.model.scoped import ScopedTables, declared_scopes
@@ -156,6 +157,7 @@ def install_pool_reset(engine: AsyncEngine) -> None:
     """
 
     @event.listens_for(engine.sync_engine, "reset")
+    @boundary
     def _reset(dbapi_connection: Any, _record: Any, state: Any) -> None:
         if state.terminate_only or not state.asyncio_safe:
             return

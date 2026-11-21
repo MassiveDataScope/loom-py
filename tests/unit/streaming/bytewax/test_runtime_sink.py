@@ -11,7 +11,6 @@ from tests.helpers.version_limited_extras import require_bytewax
 
 require_bytewax()
 
-from loom.core.logger.failure import exception_type  # noqa: E402
 from loom.streaming.bytewax import _runtime_io  # noqa: E402
 from loom.streaming.core._message import Message  # noqa: E402
 from loom.streaming.kafka._codec import MsgspecCodec  # noqa: E402
@@ -19,6 +18,7 @@ from loom.streaming.kafka._errors import KafkaDeliveryError  # noqa: E402
 from loom.streaming.kafka._message import MessageEnvelope  # noqa: E402
 from loom.streaming.kafka._record import KafkaRecord  # noqa: E402
 from loom.streaming.nodes._boundary import PartitionGuarantee, PartitionPolicy  # noqa: E402
+from tests.helpers.boundary import type_name  # noqa: E402
 from tests.unit.streaming.bytewax.cases import (  # noqa: E402
     build_compiled_sink,
     build_order_message,
@@ -161,7 +161,7 @@ class TestDlqRouting:
         sink.write_batch([build_order_message("123", None, partition=2, offset=9)])
 
         dlq_record = next(r for r in fake_raw.sent if r.topic == "orders.dlq")
-        assert dlq_record.headers.get("x-dlq-error") == exception_type(KafkaDeliveryError).encode()
+        assert dlq_record.headers.get("x-dlq-error") == type_name(KafkaDeliveryError).encode()
         assert fake_raw.flush_count == 2
         assert tracker.completed == [("orders.in", 2, 9)]
 

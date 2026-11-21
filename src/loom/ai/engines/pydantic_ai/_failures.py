@@ -16,11 +16,28 @@ from __future__ import annotations
 
 import functools
 from enum import Enum
-from typing import Final, cast
+from typing import ClassVar, Final, cast
 
-from pydantic_ai.exceptions import ModelRetry, ToolFailed
+from pydantic_ai.exceptions import ApprovalRequired, CallDeferred, ModelRetry, ToolFailed
 
 from loom.ai.errors import AgentRunError, AgentRunErrorCode
+from loom.core.errors.boundary import BoundaryClass, PassThrough
+
+PYDANTIC_AI_PASS_THROUGH: Final[PassThrough] = (
+    ModelRetry,
+    ToolFailed,
+    CallDeferred,
+    ApprovalRequired,
+)
+"""Engine control-flow signals a tool may raise; they leave the guard and the boundary untouched."""
+
+
+class ToolsetBoundary(BoundaryClass):
+    """Base of every pydantic-ai toolset loom writes: what the engine calls crosses the boundary."""
+
+    BOUNDARY_METHODS: ClassVar[frozenset[str]] = frozenset({"call_tool", "get_tools"})
+    PASS_THROUGH: ClassVar[PassThrough] = PYDANTIC_AI_PASS_THROUGH
+
 
 CLIENT_MADE_CODES: Final[frozenset[int]] = frozenset(
     {

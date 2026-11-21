@@ -27,8 +27,8 @@ from loom.rest.fastapi import FastAPIRuntime
 from loom.serverless.aws.lambda_ import LambdaRuntime, LambdaUnservedConfigError
 from loom.serverless.aws.lambda_.boundary import LambdaBoundary
 from tests.helpers.ai import CountingEngineProvider
+from tests.helpers.boundary import left_loom
 from tests.helpers.composition import composition_project
-from tests.helpers.handoffs import lambda_failure
 from tests.unit.serverless.aws.lambda_._probe import Probe
 from tests.unit.serverless.aws.lambda_._records import WORKER, make_record, with_worker
 from tests.unit.serverless.aws.lambda_.http._clients import lambda_client
@@ -249,7 +249,7 @@ class TestLambdaAiRefusals:
             tmp_path, jobs_manifest, {**_AI, "mcp_servers": {"x": server}}
         ).compose(adapter)
 
-        with lambda_failure(LambdaUnservedConfigError) as raised:
+        with left_loom(LambdaUnservedConfigError) as raised:
             adapter.mount(application)
 
         assert raised.value.key == "ai.mcp_servers.x.transport"

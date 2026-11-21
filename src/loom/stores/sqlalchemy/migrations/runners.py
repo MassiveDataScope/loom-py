@@ -28,6 +28,7 @@ from sqlalchemy.ext.asyncio import create_async_engine
 from sqlalchemy.pool import NullPool
 
 from loom.core.config import ConfigError
+from loom.core.errors.boundary import boundary
 from loom.core.model.audited import AuditedTables
 from loom.core.model.scoped import registered_model_tables
 from loom.core.schema_names import SchemaNames
@@ -354,7 +355,7 @@ def _install_timeouts(connection: Connection, lock_timeout: str, statement_timeo
     def on_begin(conn: Connection) -> None:
         conn.execute(_SET_TIMEOUTS, timeouts)
 
-    event.listen(connection, "begin", on_begin)
+    event.listen(connection, "begin", boundary(on_begin))
 
 
 def assert_revision(connection: Connection, guard: str) -> None:

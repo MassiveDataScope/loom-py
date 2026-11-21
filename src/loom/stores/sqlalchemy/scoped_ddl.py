@@ -17,6 +17,7 @@ from typing import Any, Final, get_args
 from sqlalchemy import Connection, Table, event, text
 
 from loom.core.config import ConfigError
+from loom.core.errors.boundary import boundary
 from loom.core.model.field import Reach
 from loom.core.model.partition import PartitionRange
 from loom.core.model.privilege import Privilege
@@ -218,13 +219,13 @@ def register_listeners(
         return
     table.info[_REGISTERED] = True
     if scoped is not None:
-        event.listen(table, "before_create", _postgres_only(_open_hatch, {}))
+        event.listen(table, "before_create", boundary(_postgres_only(_open_hatch, {})))
         parameters = protect_parameters(schema, table.name, scoped)
-        event.listen(table, "after_create", _postgres_only(_protect, parameters))
+        event.listen(table, "after_create", boundary(_postgres_only(_protect, parameters)))
         return
     if any(privileges.values()):
         parameters = grant_parameters(schema, table.name, privileges)
-        event.listen(table, "after_create", _postgres_only(_grant_table, parameters))
+        event.listen(table, "after_create", boundary(_postgres_only(_grant_table, parameters)))
 
 
 def _open_hatch(connection: Connection, parameters: Parameters) -> None:

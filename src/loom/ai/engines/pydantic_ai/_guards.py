@@ -14,19 +14,14 @@ import logging
 from collections.abc import AsyncIterator, Awaitable, Callable
 from contextlib import AbstractContextManager, asynccontextmanager, nullcontext
 from dataclasses import dataclass
-from typing import Any, Final, TypeVar
+from typing import Any, TypeVar
 
 from pydantic_ai import ToolReturn
-from pydantic_ai.exceptions import (
-    ApprovalRequired,
-    CallDeferred,
-    ModelRetry,
-    ToolFailed,
-)
 from pydantic_ai.tools import RunContext
 from pydantic_ai.toolsets import AbstractToolset, ToolsetTool, WrapperToolset
 
 from loom.ai.compiler import AgentPlan, CompiledMcpCapability
+from loom.ai.engines.pydantic_ai._failures import PYDANTIC_AI_PASS_THROUGH, ToolsetBoundary
 from loom.ai.engines.pydantic_ai._mcp import SharedMcpToolsets
 from loom.ai.engines.pydantic_ai._returns import foreign_return, refusal
 from loom.ai.errors import (
@@ -52,15 +47,6 @@ _FAILED_MESSAGE = "the operation failed; the detail is recorded server-side and 
 """Generic cause: no driver text, no DSN, no schema name, no statement."""
 
 
-_ENGINE_SIGNALS: Final[tuple[type[Exception], ...]] = (
-    ModelRetry,
-    ToolFailed,
-    CallDeferred,
-    ApprovalRequired,
-)
-"""Engine control-flow signals a tool may raise; they leave the guard untouched."""
-
-
 _T = TypeVar("_T")
 
 
@@ -84,6 +70,16 @@ class BuildContext:
     timeout_s: float
     mcp: SharedMcpToolsets
     mcp_grants: tuple[CompiledMcpCapability, ...]
+
+    def tool_span(self, kind: str, tool: str) -> AbstractContextManager[None]:
+        """Open the ``Scope.TOOL`` span of one capability call, or a no-op."""
+        if self.observability is None:
+            return nullcontext()
+        return self.observability.span(
+            Scope.TOOL,
+            tool,
+            attributes={AiLogField.AGENT: self.agent, AiLogField.CAPABILITY: kind},
+        )
 
     @classmethod
     def from_plan(
@@ -132,23 +128,12 @@ def bundle_container(run: RunContext[Any]) -> LoomContainer:
     return container
 
 
-def _span(context: BuildContext, kind: str, tool: str) -> AbstractContextManager[None]:
-    """Open the ``Scope.TOOL`` span of one capability call, or a no-op."""
-    if context.observability is None:
-        return nullcontext()
-    return context.observability.span(
-        Scope.TOOL,
-        tool,
-        attributes={AiLogField.AGENT: context.agent, AiLogField.CAPABILITY: kind},
-    )
-
-
 @asynccontextmanager
 async def capability_call(
     context: BuildContext, kind: str, tool: str, identity: Identity
 ) -> AsyncIterator[None]:
     """Bound one capability call by the plan's tool timeout, inside its span."""
-    with _span(context, kind, tool):
+    with context.tool_span(kind, tool):
         try:
             async with asyncio.timeout(context.timeout_s):
                 yield
@@ -183,7 +168,7 @@ async def guarded(
         return present(await operation())
     except AgentRunError:
         raise
-    except _ENGINE_SIGNALS:
+    except PYDANTIC_AI_PASS_THROUGH:
         raise
     except DENIALS as exc:
         raise AgentRunError(
@@ -195,7 +180,7 @@ async def guarded(
 
 
 @dataclass
-class _GuardedToolset(WrapperToolset[Any]):
+class _GuardedToolset(ToolsetBoundary, WrapperToolset[Any]):
     """Applies loom's call boundary to a toolset loom did not author.
 
     Every tool of the wrapped toolset acts as the authenticated identity

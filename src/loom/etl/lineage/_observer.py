@@ -6,7 +6,7 @@ import threading
 from dataclasses import dataclass
 from datetime import UTC, datetime
 
-from loom.core.logger import LogField, LogKey
+from loom.core.logger import LogField
 from loom.core.observability.event import EventKind, LifecycleEvent, Scope
 from loom.core.observability.protocol import LifecycleObserver
 from loom.etl.lineage._records import (
@@ -113,11 +113,11 @@ class _EntityContext:
     def from_event(cls, event: LifecycleEvent) -> _EntityContext:
         return cls(
             run_ctx=RunContext(
-                run_id=_attribute_str(event, EtlLogField.RUN_ID) or _event_id(event),
+                run_id=event.attribute(EtlLogField.RUN_ID, str) or _event_id(event),
                 correlation_id=event.correlation_id,
-                attempt=_attribute_int(event, LogField.ATTEMPT) or 1,
-                last_attempt=_attribute_bool(event, EtlLogField.LAST_ATTEMPT, True),
-                process_run_id=_attribute_str(event, EtlLogField.PROCESS_RUN_ID),
+                attempt=event.attribute(LogField.ATTEMPT, int) or 1,
+                last_attempt=event.attribute(EtlLogField.LAST_ATTEMPT, bool) is not False,
+                process_run_id=event.attribute(EtlLogField.PROCESS_RUN_ID, str),
             ),
             name=event.name,
             started_at=_now(),
@@ -235,7 +235,7 @@ def _error_details(event: LifecycleEvent) -> tuple[str | None, str | None]:
 
 
 def _event_id(event: LifecycleEvent) -> str:
-    return event.id or _attribute_str(event, EtlLogField.RUN_ID) or event.name
+    return event.id or event.attribute(EtlLogField.RUN_ID, str) or event.name
 
 
 def _event_status(event: LifecycleEvent) -> RunStatus:
@@ -248,21 +248,6 @@ def _duration_ms(event: LifecycleEvent) -> int:
     if event.duration_ms is None:
         return 0
     return int(event.duration_ms)
-
-
-def _attribute_str(event: LifecycleEvent, key: LogKey) -> str | None:
-    value = event.attributes.get(key)
-    return value if isinstance(value, str) else None
-
-
-def _attribute_int(event: LifecycleEvent, key: LogKey) -> int | None:
-    value = event.attributes.get(key)
-    return value if isinstance(value, int) else None
-
-
-def _attribute_bool(event: LifecycleEvent, key: LogKey, default: bool) -> bool:
-    value = event.attributes.get(key)
-    return value if isinstance(value, bool) else default
 
 
 def _now() -> datetime:

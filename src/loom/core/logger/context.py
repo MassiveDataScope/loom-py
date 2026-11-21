@@ -7,6 +7,8 @@ from contextlib import contextmanager
 from contextvars import ContextVar
 from types import MappingProxyType
 
+from loom.core.fields import render_value
+
 _NO_FIELDS: Mapping[str, object] = MappingProxyType({})
 _fields: ContextVar[Mapping[str, object]] = ContextVar("loom_log_fields", default=_NO_FIELDS)
 
@@ -45,9 +47,6 @@ def log_context(fields: Mapping[str, object] = _NO_FIELDS, /, **named: object) -
         with log_context(invoice_id=invoice_id):
             log.info(InvoiceEvent.ISSUED)
     """
-    # Imported here: loom.core.errors imports this package, and values imports the errors.
-    from loom.core.logger.values import render_value  # noqa: PLC0415
-
     added = {
         str(key): render_value(value)
         for key, value in (*fields.items(), *named.items())

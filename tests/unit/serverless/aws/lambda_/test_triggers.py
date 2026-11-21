@@ -15,10 +15,10 @@ from loom.core.config import ConfigContext, ConfigError
 from loom.core.engine.events import EventKind as RuntimeEventKind
 from loom.core.engine.events import ExecutionEvent
 from loom.core.errors import BoundaryValidationError, LoomError, MalformedJobMessage
+from loom.core.errors.log_events import ErrorLogField
 from loom.core.identity import Identity, current_identity
 from loom.core.job.job import Job
 from loom.core.job.outcome import JobPostponement
-from loom.core.logger import LogField
 from loom.core.observability.event import EventKind, LifecycleEvent, Scope
 from loom.core.observability.observability import Observability
 from loom.core.use_case import Input
@@ -30,8 +30,8 @@ from loom.testing import LambdaEvent
 from loom.testing.serverless import QueueableEvent
 from tests.helpers.aws import ACCOUNT
 from tests.helpers.aws_island import FakeAwsIsland
+from tests.helpers.boundary import left_loom
 from tests.helpers.composition import composition_project
-from tests.helpers.handoffs import lambda_failure
 from tests.helpers.sqs import FakeSqs, queue_url
 from tests.unit.serverless.aws.lambda_._records import consumed_queues
 
@@ -283,7 +283,7 @@ class TestDirectTrigger:
         handler = serve(_events())
         event = LambdaEvent.eventbridge(payload)
 
-        with lambda_failure(error):
+        with left_loom(error):
             handler(event, None)
 
     def test_a_job_postponement_is_abandoned_not_postponed_as_the_same_event_comes_back_undelayed(
@@ -292,7 +292,7 @@ class TestDirectTrigger:
         observer = _RecordingExecutionObserver()
         handler = serve(_events(), execution_observer=observer)
 
-        with lambda_failure(JobPostponement, match="warming up"):
+        with left_loom(JobPostponement, match="warming up"):
             handler(LambdaEvent.eventbridge({"number": "wait"}), None)
 
         assert observer.kinds == [RuntimeEventKind.JOB_STARTED, RuntimeEventKind.JOB_ABANDONED]
@@ -303,7 +303,7 @@ class TestDirectTrigger:
         observer = _RecordingExecutionObserver()
         handler = serve(_events(), execution_observer=observer)
 
-        with lambda_failure(ValueError, match="job failed"):
+        with left_loom(ValueError, match="job failed"):
             handler(LambdaEvent.eventbridge({"number": "fail"}), None)
 
         assert observer.kinds == [RuntimeEventKind.JOB_STARTED, RuntimeEventKind.JOB_FAILED]
@@ -312,7 +312,7 @@ class TestDirectTrigger:
         observer = _Observer()
         handler = serve(_events(), observer=observer)
 
-        with lambda_failure(MalformedJobMessage):
+        with left_loom(MalformedJobMessage):
             handler({"id": "1", "detail": "text"}, None)
         assert [(e.scope, e.kind) for e in observer.events] == [
             (Scope.JOB, EventKind.START),
@@ -320,14 +320,18 @@ class TestDirectTrigger:
         ]
 
     @pytest.mark.parametrize(
-        ("payload", "stacks_written"),
-        [({"number": 5, "note": _SENTINEL}, 0), ({"number": "fail", "note": _SENTINEL}, 1)],
+        ("payload", "kind", "stacks_written"),
+        [
+            ({"number": 5, "note": _SENTINEL}, BoundaryValidationError, 0),
+            ({"number": "fail", "note": _SENTINEL}, ValueError, 1),
+        ],
         ids=["validation", "job-raises"],
     )
     def test_a_failure_never_logs_the_payload(
         self,
         serve: Serve,
         payload: dict[str, Any],
+        kind: type[Exception],
         stacks_written: int,
         caplog: pytest.LogCaptureFixture,
         capsys: pytest.CaptureFixture[str],
@@ -335,11 +339,11 @@ class TestDirectTrigger:
         handler = serve(_events())
         event = LambdaEvent.eventbridge(payload)
 
-        with lambda_failure(ValueError):  # the validation error is a ValueError too
+        with left_loom(kind):
             handler(event, None)
 
         captured = capsys.readouterr()
-        stacks = [r for r in caplog.records if LogField.EXCEPTION_STACKTRACE in r.__dict__]
+        stacks = [r for r in caplog.records if ErrorLogField.EXCEPTION_STACKTRACE in r.__dict__]
         assert len(stacks) == stacks_written, "an unexpected failure's stack is written once"
         assert _SENTINEL not in caplog.text + captured.out + captured.err
 
@@ -349,7 +353,7 @@ class TestDirectTrigger:
         handler = serve({"source": "s3", "job": "ImportObject"})
         event = LambdaEvent.s3(["ok/1.csv", "fail/2.csv", "ok/3.csv"])
 
-        with lambda_failure(ValueError, match="job failed"):
+        with left_loom(ValueError, match="job failed"):
             handler(event, None)
 
         assert [found.key for found, _ in ran] == ["ok/1.csv", "fail/2.csv"]
@@ -363,7 +367,7 @@ class TestDirectTrigger:
         event = LambdaEvent.s3(["in/a.csv"])
         del event["Records"][0][missing]
 
-        with lambda_failure(MalformedJobMessage, match=f"names no {missing}"):
+        with left_loom(MalformedJobMessage, match=f"names no {missing}"):
             handler(event, None)
         assert ran == []
         assert [(e.scope, e.kind) for e in observer.events] == [

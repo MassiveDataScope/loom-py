@@ -1,17 +1,20 @@
-"""The static guards, logging calls and exception text, and the code still outside them."""
+"""The static guards: logging calls, exception text and free text, and the code outside them."""
 
 from __future__ import annotations
 
+from collections.abc import Set
 from pathlib import Path
 
 import pytest
 
-from loom.testing.log_calls import exception_text_offences, log_call_offences
+from loom.testing.log_calls import exception_text_offences, free_text_offences, log_call_offences
 from tests.helpers.log_standard import (
     EXCEPTION_TEXT_EXITS,
+    UNMIGRATED_CONSTRUCTIONS,
     UNMIGRATED_EXCEPTION_TEXT,
     UNMIGRATED_PACKAGES,
     exception_text_sites,
+    free_text_modules,
     is_unmigrated,
     loom_offences,
     module_of,
@@ -106,13 +109,13 @@ class TestLoomCallSites:
 
     def test_every_allow_list_entry_still_has_an_offence(self) -> None:
         offending = {module_of(offence) for offence in loom_offences()}
-        stale = [
-            entry
-            for entry in UNMIGRATED_PACKAGES
-            if not any(module == entry or module.startswith(f"{entry}.") for module in offending)
-        ]
 
-        assert stale == []
+        assert _stale(UNMIGRATED_PACKAGES, offending) == []
+
+
+def _stale(entries: tuple[str, ...], offending: Set[str]) -> list[str]:
+    """The entries of an allow-list no offending module is in: each must leave the list."""
+    return [entry for entry in entries if not any(is_unmigrated(m, (entry,)) for m in offending)]
 
 
 def _text_rules(tmp_path: Path, body: str) -> list[str]:
@@ -148,15 +151,43 @@ class TestExceptionText:
         assert _text_rules(tmp_path, body) == ["an f-string of the exception 'error'"]
 
     @pytest.mark.parametrize(
+        ("body", "rule"),
+        [
+            (
+                "exc = future.exception()\nfields = {'error': f'{type(exc).__name__}: {exc}'}\n",
+                "an f-string of the exception 'exc'",
+            ),
+            (
+                "_Failure = tuple[Action, Exception]\n"
+                "def log(failures: list[_Failure]) -> None:\n"
+                "    for action, error in failures:\n"
+                "        fields = {'error': repr(error)}\n",
+                "repr(...) of the exception 'error'",
+            ),
+            (
+                "def log(errors: Sequence[ValueError]) -> None:\n"
+                "    for error in errors:\n"
+                "        text = str(error)\n",
+                "str(...) of the exception 'error'",
+            ),
+        ],
+        ids=["future-exception", "unpacked-alias", "iterated-sequence"],
+    )
+    def test_the_text_of_a_name_inferred_as_an_exception_is_refused(
+        self, tmp_path: Path, body: str, rule: str
+    ) -> None:
+        assert _text_rules(tmp_path, body) == [rule]
+
+    @pytest.mark.parametrize(
         "body",
         [
-            _EXCEPT + "    reason = public_form(exc)\n",
+            _EXCEPT + "    reason = Failure(exc).text\n",
             _EXCEPT + "    name = type(exc).__name__\n",
             _EXCEPT + "    code = f'{exc.code}'\n",
             "def mapping(error: JSONRPCError) -> str:\n    return str(error['message'])\n",
             _EXCEPT + "    pass\ntext = str(exc)\n",
         ],
-        ids=["public-form", "type-name", "attribute", "subscript-of-a-mapping", "out-of-scope"],
+        ids=["failure-text", "type-name", "attribute", "subscript-of-a-mapping", "out-of-scope"],
     )
     def test_what_is_not_the_exception_text_passes(self, tmp_path: Path, body: str) -> None:
         assert _text_rules(tmp_path, body) == []
@@ -169,3 +200,52 @@ class TestLoomExceptionText:
             listed[module] = listed.get(module, 0) + count
 
         assert exception_text_sites() == listed
+
+
+def _free_text_rules(tmp_path: Path, body: str) -> list[str]:
+    source = tmp_path / "sample.py"
+    source.write_text(body)
+    return [offence.rule for offence in free_text_offences([source])]
+
+
+class TestFreeText:
+    @pytest.mark.parametrize(
+        "body",
+        [
+            "raise ConfigError(f'bad key {key}')\n",
+            "raise ValueError('bad key %s' % key)\n",
+            "raise NotFound('no {}'.format(name), code=ErrorCode.NOT_FOUND)\n",
+        ],
+        ids=["f-string", "percent", "format"],
+    )
+    def test_an_error_raised_with_text_built_from_values_is_refused(
+        self, tmp_path: Path, body: str
+    ) -> None:
+        [rule] = _free_text_rules(tmp_path, body)
+
+        assert rule.startswith("free text passed to ")
+
+    @pytest.mark.parametrize(
+        "body",
+        [
+            "raise InvoiceOverdue(invoice_id=42, days=3)\n",
+            "raise ValueError('must not be empty')\n",
+            "raise ConfigError(f'fixed text')\n",
+            "raise\n",
+        ],
+        ids=["declared-fields", "fixed-literal", "f-string-without-values", "bare-reraise"],
+    )
+    def test_fields_or_a_fixed_literal_pass(self, tmp_path: Path, body: str) -> None:
+        assert _free_text_rules(tmp_path, body) == []
+
+
+class TestLoomConstructions:
+    def test_code_outside_the_allow_list_builds_errors_from_fields(self) -> None:
+        offending = sorted(
+            m for m in free_text_modules() if not is_unmigrated(m, UNMIGRATED_CONSTRUCTIONS)
+        )
+
+        assert offending == []
+
+    def test_every_allow_list_entry_still_has_an_offence(self) -> None:
+        assert _stale(UNMIGRATED_CONSTRUCTIONS, free_text_modules()) == []

@@ -7,8 +7,8 @@ message, as a ``%r`` argument and in a mapping argument, and ends a scope;
 every output is then searched for it: loom's JSON and text formats, an
 OpenTelemetry log export, the Lambda runtime's own JSON and Text formatters, a
 queue handler's listener, a handler a framework attached to a child logger,
-and the exported span. What leaves the process through a handoff is
-``test_handoff_canary.py``'s.
+and the exported span. What leaves loom through the boundary, and what an
+error's message holds, are ``tests/unit/core/errors/test_canary.py``'s.
 """
 
 from __future__ import annotations
@@ -29,13 +29,12 @@ from opentelemetry.sdk.trace.export.in_memory_span_exporter import InMemorySpanE
 
 from loom.core.config.observability import OtelConfig
 from loom.core.environment import Environment
+from loom.core.fields import MAX_VALUE_LENGTH, Secret
 from loom.core.logger import LogField, log_context
 from loom.core.logger.filter import STANDARD_ATTRIBUTES
 from loom.core.logger.formats import JsonFormatter
 from loom.core.logger.install import configure_logging
 from loom.core.logger.settings import LogSettings
-from loom.core.logger.values import MAX_VALUE_LENGTH
-from loom.core.model.redaction import Secret
 from loom.core.observability.event import Scope
 from loom.core.observability.observability import Observability
 from loom.core.observability.observer import otel as otel_module

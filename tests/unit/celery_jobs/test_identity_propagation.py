@@ -15,12 +15,13 @@ import pytest
 
 from loom.celery.service import CeleryJobTransport
 from loom.core.errors.auth import MissingCaller
+from loom.core.errors.failure import Failure
 from loom.core.identity import ANONYMOUS, Identity, current_identity, reset_identity, set_identity
 from loom.core.job.context import flush_pending_dispatches
 from loom.core.job.job import Job
 from loom.core.job.service import JobService
-from loom.core.logger.failure import FailureReference, exception_type
 from loom.core.use_case.markers import Caller
+from tests.helpers.boundary import left_loom
 from tests.helpers.celery import CeleryBroker
 from tests.helpers.jobs import CeleryWorker
 
@@ -125,10 +126,7 @@ class TestWorkerSide:
     def test_a_job_declaring_a_caller_fails_closed_on_an_envelope_without_identity(
         self, worker: CeleryWorker
     ) -> None:
-        with pytest.raises(FailureReference) as raised:
+        with left_loom(MissingCaller) as left:
             worker.run(ReportJob, attempt=3)
 
-        assert (raised.value.exception_type, raised.value.expected) == (
-            exception_type(MissingCaller),
-            True,
-        )
+        assert Failure(left.value).is_expected

@@ -11,6 +11,7 @@ import pytest
 
 from loom.core.config.errors import ConfigError
 from loom.core.environment import Environment
+from loom.core.errors.log_events import ErrorLogField
 from loom.core.logger import LogField, LogRuntime
 from loom.core.logger.filter import LogFilter
 from loom.core.logger.formats import JsonFormatter
@@ -176,7 +177,7 @@ class TestEveryHandlerSeesTheSafeRecord:
 
         entry = json.loads(stream.getvalue())
         assert _SECRET not in stream.getvalue()
-        assert (entry[LogField.SERVICE_NAME], entry[LogField.EXCEPTION_TYPE]) == (
+        assert (entry[LogField.SERVICE_NAME], entry[ErrorLogField.EXCEPTION_TYPE]) == (
             "billing",
             "ValueError",
         )

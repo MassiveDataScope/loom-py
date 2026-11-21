@@ -22,16 +22,17 @@ from loom.core.errors import (
     RuleViolationsError,
     UndeclaredStoreWrite,
 )
+from loom.core.errors.log_events import ErrorLogField
 from loom.core.execution import current_execution
 from loom.core.identity import ANONYMOUS, current_identity
 from loom.core.job.context import flush_pending_dispatches
 from loom.core.logger import LogField
-from loom.core.logger.failure import exception_type
 from loom.core.observability.log_events import ObservabilityLogEvent
 from loom.core.tracing import reset_trace_id, set_trace_id
 from loom.core.use_case.factory import UseCaseFactory
 from loom.core.use_case.markers import Input, LoadById
 from loom.core.use_case.use_case import UseCase
+from tests.helpers.boundary import type_name
 from tests.helpers.delegation import acting_as
 from tests.helpers.jobs import InlineServiceFixture
 from tests.helpers.loggers import CapturedLog
@@ -115,8 +116,8 @@ class TestLogs:
         [(event, ended)] = [
             c for c in logger.calls if c[0] == ObservabilityLogEvent.LIFECYCLE_ENDED
         ]
-        assert ended[LogField.EXCEPTION_TYPE].endswith("RuleViolationsError")
-        assert LogField.EXCEPTION_STACKTRACE not in ended
+        assert ended[ErrorLogField.EXCEPTION_TYPE].endswith("RuleViolationsError")
+        assert ErrorLogField.EXCEPTION_STACKTRACE not in ended
         assert logger.errors == []
         assert "acme-secret-email" not in repr(logger.calls)
 
@@ -187,7 +188,7 @@ class TestBuildFailure:
             ObservabilityLogEvent.LIFECYCLE_ENDED,
             "AcmeBroken",
         )
-        assert fields[LogField.EXCEPTION_TYPE] == "LookupError"
+        assert fields[ErrorLogField.EXCEPTION_TYPE] == "LookupError"
         assert "acme constructor failed" not in repr(logger.calls)
 
     @pytest.mark.parametrize("on_failure", [None, AcmeOnFailure], ids=["no-callback", "callback"])
@@ -208,7 +209,7 @@ class TestBuildFailure:
 
         assert _failed_scopes(logger, "AcmeBrokenJob") == 1
         assert AcmeOnFailure.calls == (
-            [] if on_failure is None else [exception_type(AcmeUnrecoverableError)]
+            [] if on_failure is None else [type_name(AcmeUnrecoverableError)]
         )
 
 

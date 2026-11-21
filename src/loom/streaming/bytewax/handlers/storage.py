@@ -32,6 +32,7 @@ from loom.core.observability.observability import Observability
 from loom.core.observability.span import LoomSpan
 from loom.streaming.bytewax._batch_spans import BatchSpan, BatchWindow, emit_batch_spans
 from loom.streaming.bytewax._commit_tracker import CommitCompletionPort
+from loom.streaming.bytewax._error_boundary import BytewaxBoundary
 from loom.streaming.bytewax.handlers._shared import _BuildContextProtocol, _step_id
 from loom.streaming.compiler._plan import CompiledStorageSink
 from loom.streaming.core._exceptions import UnsupportedNodeError
@@ -45,7 +46,7 @@ Stream = Any
 logger = logging.getLogger(__name__)
 
 
-class _StorageSinkPartition(StatelessSinkPartition[Message[Any]]):
+class _StorageSinkPartition(BytewaxBoundary, StatelessSinkPartition[Message[Any]]):
     """Bytewax sink partition that delegates writes to a loom SinkPartition.
 
     Extracts the typed payload from each Loom ``Message`` envelope and forwards
@@ -224,7 +225,7 @@ class _StorageSinkPartition(StatelessSinkPartition[Message[Any]]):
             self._pending.clear()
 
 
-class _StorageDynamicSink(DynamicSink[Message[Any]]):
+class _StorageDynamicSink(BytewaxBoundary, DynamicSink[Message[Any]]):
     """Bytewax DynamicSink that builds one _StorageSinkPartition per worker.
 
     Args:

@@ -40,9 +40,9 @@ from loom.celery.runtime import CeleryRuntime, _connect_lifecycle_signals, _Work
 from loom.composition import AppConfig, Application, ApplicationHost
 from loom.core.config import ConfigContext, ConfigError
 from loom.core.job.job import Job
-from loom.core.logger.failure import FailureReference, exception_type
 from tests.helpers import acme_callbacks
 from tests.helpers.acme_callbacks import AcmeSyncCallback
+from tests.helpers.boundary import type_name
 from tests.helpers.celery import WorkerDouble, isolated_signals
 from tests.helpers.composition import TaskAffine, application_of, composition_project
 from tests.helpers.loggers import exception_types
@@ -165,7 +165,7 @@ class TestPrefork:
             worker_init.send(sender=WorkerDouble("prefork", start_method=start_method))
 
         assert (caught.value.__cause__, caught.value.__context__) == (None, None)
-        assert exception_types(caplog) == [exception_type(ConfigError)]
+        assert exception_types(caplog) == [type_name(ConfigError)]
         assert start_methods == []
         assert application.events == []
 
@@ -310,9 +310,8 @@ class TestFailedChildOpen:
             failures = [task.apply().result for _ in range(2)]
 
         for failure in failures:
-            assert isinstance(failure, FailureReference)
-            assert failure.exception_type == exception_type(WorkerNotOpenError)
-            assert "clickhouse" not in repr(failure.args)
+            assert isinstance(failure, WorkerNotOpenError)
+            assert "clickhouse" not in repr(failure.args) + str(failure)
         assert exception_types(caplog).count("RuntimeError") == 1
 
     @pytest.mark.parametrize(

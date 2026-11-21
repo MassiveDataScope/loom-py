@@ -27,7 +27,7 @@ from loom.rest.fastapi.runtime import (
     _RestConfig,
     mount_request_stack,
 )
-from loom.rest.middleware import TraceIdMiddleware
+from loom.rest.middleware import BoundaryMiddleware, TraceIdMiddleware
 
 
 def _declaration(cors: CorsConfig | None = None) -> RestDeclaration:
@@ -50,7 +50,7 @@ class TestRequestObservabilityStack:
 
         assert TraceIdMiddleware in [m.cls for m in app.user_middleware]
 
-    def test_the_request_stack_mounts_metrics_between_cors_and_tracing(
+    def test_the_boundary_is_outermost_and_metrics_sit_between_cors_and_tracing(
         self,
     ) -> None:
         app = FastAPI()
@@ -64,6 +64,7 @@ class TestRequestObservabilityStack:
 
         outer_to_inner: list[Any] = [m.cls for m in app.user_middleware]
         assert outer_to_inner == [
+            BoundaryMiddleware,
             CORSMiddleware,
             PrometheusMiddleware,
             TraceIdMiddleware,

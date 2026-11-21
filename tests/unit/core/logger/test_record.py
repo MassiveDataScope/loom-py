@@ -8,6 +8,7 @@ from collections.abc import Iterator
 import pytest
 
 from loom.core.errors import NotFound, SystemError
+from loom.core.errors.log_events import ErrorLogField
 from loom.core.logger import LogField, LogIdentity, LogRuntime, log_context
 from loom.core.logger.filter import LogFilter
 from loom.core.logger.install import install_record_factory
@@ -110,23 +111,23 @@ class TestExceptionPolicy:
 
         (record,) = stamped.records
         assert (record.exc_info, record.exc_text, record.stack_info) == (None, None, None)
-        assert record.__dict__[LogField.EXCEPTION_TYPE] == "loom.core.errors.base.SystemError"
-        assert record.__dict__[LogField.ERROR_CODE] == "system_error"
-        assert "test_record.py" in record.__dict__[LogField.EXCEPTION_STACKTRACE]
+        assert record.__dict__[ErrorLogField.EXCEPTION_TYPE] == "loom.core.errors.base.SystemError"
+        assert record.__dict__[ErrorLogField.ERROR_CODE] == "system_error"
+        assert "test_record.py" in record.__dict__[ErrorLogField.EXCEPTION_STACKTRACE]
 
     def test_an_expected_failure_writes_no_stack_even_at_error(
         self, stamped: CapturingHandler
     ) -> None:
         _log.error("billing.invoice_failed", exc_info=_raised(NotFound("Invoice", id=1)))
 
-        assert LogField.EXCEPTION_STACKTRACE not in stamped.records[0].__dict__
+        assert ErrorLogField.EXCEPTION_STACKTRACE not in stamped.records[0].__dict__
 
     def test_below_error_the_exception_is_its_type_only(self, stamped: CapturingHandler) -> None:
         _log.warning("billing.invoice_retried", exc_info=_raised(ValueError(_SECRET)))
 
         fields = stamped.records[0].__dict__
-        assert fields[LogField.EXCEPTION_TYPE] == "ValueError"
-        assert LogField.EXCEPTION_STACKTRACE not in fields
+        assert fields[ErrorLogField.EXCEPTION_TYPE] == "ValueError"
+        assert ErrorLogField.EXCEPTION_STACKTRACE not in fields
 
     def test_stack_info_is_cleared(self, stamped: CapturingHandler) -> None:
         _log.info("billing.invoice_issued", stack_info=True)
@@ -137,10 +138,10 @@ class TestExceptionPolicy:
         _log.error(
             "billing.invoice_failed",
             exc_info=_raised(ValueError(_SECRET)),
-            extra={LogField.EXCEPTION_TYPE: "Forged"},
+            extra={ErrorLogField.EXCEPTION_TYPE: "Forged"},
         )
 
-        assert stamped.records[0].__dict__[LogField.EXCEPTION_TYPE] == "ValueError"
+        assert stamped.records[0].__dict__[ErrorLogField.EXCEPTION_TYPE] == "ValueError"
 
 
 class TestExceptionAsText:
@@ -152,7 +153,7 @@ class TestExceptionAsText:
             ("billing.invoice_failed %(error)s", ({"error": ValueError(_SECRET)},)),
         ],
     )
-    def test_an_exception_in_the_message_or_the_arguments_is_its_public_form(
+    def test_an_exception_in_the_message_or_the_arguments_is_its_type(
         self, stamped: CapturingHandler, message: object, args: tuple[object, ...]
     ) -> None:
         _log.error(message, *args)

@@ -8,6 +8,7 @@ import pytest
 
 from loom.core.engine.events import AbandonReason, EventKind, ExecutionEvent, Status
 from loom.core.errors import SystemError
+from loom.core.errors.log_events import ErrorLogField
 from loom.core.job.delivery import JobDelivery
 from loom.core.job.job import Job
 from loom.core.job.log_events import JobLogEvent, JobLogField
@@ -180,7 +181,7 @@ class TestJobRunnerDecisionLog:
             LogField.ATTEMPT: 3,
             JobLogField.POSTPONEMENTS: 2,
             LogField.REASON: "attempts_exhausted",
-            LogField.EXCEPTION_TYPE: "ValueError",
+            ErrorLogField.EXCEPTION_TYPE: "ValueError",
             LogField.TASK_ID: delivery.task_id,
         }
         assert "acme-secret" not in repr(logged_events(caplog))
@@ -191,7 +192,7 @@ class TestJobRunnerDecisionLog:
         await _runner(_raising(ValueError("boom"))).run(_DATA.delivery())
 
         (logged,) = self._decisions(caplog, JobLogEvent.DELIVERY_RETRIED)
-        assert (logged["level"], logged[LogField.EXCEPTION_TYPE]) == ("warning", "ValueError")
+        assert (logged["level"], logged[ErrorLogField.EXCEPTION_TYPE]) == ("warning", "ValueError")
         assert self._decisions(caplog, JobLogEvent.DELIVERY_ABANDONED) == []
 
     @pytest.mark.parametrize(
@@ -216,7 +217,7 @@ class TestJobRunnerDecisionLog:
         (logged,) = self._decisions(caplog, JobLogEvent.DELIVERY_ABANDONED)
         assert (
             logged[LogField.REASON],
-            logged[LogField.EXCEPTION_TYPE].rsplit(".", 1)[-1],
+            logged[ErrorLogField.EXCEPTION_TYPE].rsplit(".", 1)[-1],
             logged[LogField.TASK_ID],
         ) == ("not_retryable", "UnretryableError", "m-1")
 
@@ -227,7 +228,7 @@ _ABANDONMENT_KEYS = (
     LogField.ATTEMPT,
     JobLogField.POSTPONEMENTS,
     LogField.REASON,
-    LogField.EXCEPTION_TYPE,
+    ErrorLogField.EXCEPTION_TYPE,
     LogField.TASK_ID,
 )
 

@@ -27,7 +27,7 @@ from pydantic_ai.toolsets import AbstractToolset, ToolsetTool
 
 from loom.ai.abc import ConcurrentMcpSession, McpSession, McpToolCallResult, McpToolInfo
 from loom.ai.compiler import CompiledMcpCapability, mcp_connection
-from loom.ai.engines.pydantic_ai._failures import McpCallInterrupted, Outcome
+from loom.ai.engines.pydantic_ai._failures import McpCallInterrupted, Outcome, ToolsetBoundary
 from loom.ai.errors import AgentCompilationError, AgentErrorCode
 from loom.ai.registry import require_provider_sdk
 from loom.ai.remote_auth import headers_from_ref, shared_mcp_auth
@@ -375,7 +375,7 @@ class _ToolsetSession(ConcurrentMcpSession):
                 self._close(held)
 
 
-class _SessionToolset(AbstractToolset[Any]):
+class _SessionToolset(ToolsetBoundary, AbstractToolset[Any]):
     """What the engine puts behind an agent's ``mcp`` grant: the connection's one session.
 
     The toolset a session speaks through changes at every renewal, so this

@@ -6,15 +6,16 @@ import dataclasses
 import functools
 import logging
 import warnings
-from collections.abc import AsyncIterator, Awaitable, Callable, Collection, Mapping
+from collections.abc import AsyncIterator, Callable, Collection, Mapping
 from contextlib import AbstractAsyncContextManager, asynccontextmanager
-from typing import Any
+from typing import Any, Final
 
 import msgspec
 import prometheus_client
 from fastapi import FastAPI
 from prometheus_client import CollectorRegistry
 from starlette.applications import Starlette
+from starlette.exceptions import HTTPException as StarletteHTTPException
 from starlette.middleware.cors import CORSMiddleware
 from starlette.responses import Response
 
@@ -35,14 +36,13 @@ from loom.core.config.errors import ConfigError
 from loom.core.config.loader import convert_section
 from loom.core.discovery._utils import infer_model_from_use_case
 from loom.core.discovery.base import DiscoveryResult
+from loom.core.errors.boundary import PassThrough, ProcessHooks, boundary
 from loom.core.introspection import (
     INTROSPECTION_STATE_ATTR,
     AppIntrospection,
     ContributorRef,
 )
 from loom.core.logger import LogRuntime
-from loom.core.logger.failure import Handoff, reference
-from loom.core.logger.uncaught import install_process_hooks
 from loom.core.observability.config import PrometheusObservabilityConfig
 from loom.core.stores import (
     SERVER_PROFILE,
@@ -91,7 +91,7 @@ from loom.rest.fastapi.health import HEALTH_PATH, mount_health, reject_health_co
 from loom.rest.fastapi.sql import (
     mount_sql_endpoints,
 )
-from loom.rest.middleware import TraceIdMiddleware
+from loom.rest.middleware import BoundaryMiddleware, TraceIdMiddleware
 from loom.rest.model import RestInterface
 
 _logger = logging.getLogger(__name__)
@@ -354,6 +354,10 @@ def _build_pool_metrics(
     return PrometheusPoolMetrics(registry, application=application, entrypoint=SERVER_PROFILE.name)
 
 
+STARLETTE_PASS_THROUGH: Final[PassThrough] = (StarletteHTTPException,)
+"""Starlette's control flow, an ``HTTPException``: it crosses the ASGI boundary as it is."""
+
+
 def _metrics_path(cfg: PrometheusObservabilityConfig) -> str:
     """Return the REST metrics path declared in the Prometheus config."""
     return cfg.config.path if cfg.config is not None else "/metrics"
@@ -367,7 +371,9 @@ def mount_request_stack(
 ) -> None:
     """Mount the request middlewares every HTTP transport serves, in their one order.
 
-    Each call wraps the previous one: from the outside in, CORS, metrics,
+    Each call wraps the previous one: from the outside in, the loom boundary
+    (:class:`~loom.rest.middleware.BoundaryMiddleware`, right inside
+    Starlette's own error middleware), CORS, metrics,
     request tracing, the body cap and authentication. The body cap sits
     outside authentication, so an oversized body is refused before any token
     is verified; tracing wraps the cap, so its ``413`` and every ``401`` carry
@@ -386,6 +392,7 @@ def mount_request_stack(
     if mount_metrics is not None:
         mount_metrics()
     _mount_cors(app, declared.rest.cors)
+    app.add_middleware(BoundaryMiddleware, pass_through=STARLETTE_PASS_THROUGH)
 
 
 def _mount_request_guards(app: Starlette, rest_cfg: _RestConfig) -> None:
@@ -657,48 +664,28 @@ def compose_rest(
     return recipe, declared
 
 
-class RestHandoff(Handoff):
-    """Where a REST application hands a failure to the ASGI server or to the client."""
-
-    LIFESPAN_STARTUP = "rest.lifespan_startup"
-    LIFESPAN_SHUTDOWN = "rest.lifespan_shutdown"
-    ERROR_BODY = "rest.error_body"
-
-
-async def _handed_off(step: Awaitable[object]) -> None:
-    """Await *step*; a failure reaches the ASGI server as a reference, with no context."""
-    try:
-        await step
-    except Exception as exc:
-        failure = reference(exc)
-    else:
-        return
-    raise failure
-
-
 def application_lifespan(
     application: Application,
 ) -> Callable[[object], AbstractAsyncContextManager[None]]:
     """The ASGI lifespan that opens *application* at startup and closes it at shutdown.
 
     The lifespan is the ASGI process's runtime entry point: it installs loom's
-    process hooks. A failure to open or to close reaches the server as a
-    :class:`~loom.core.logger.failure.FailureReference`: Starlette formats the
-    exception it receives into the text uvicorn logs, so that text names the
-    type, code and trace id only.
+    process hooks until shutdown. Opening and closing go through the loom
+    boundary: Starlette formats the exception it receives into the text uvicorn
+    logs, so that exception is a clean ``LoomError``.
     """
 
     @asynccontextmanager
     async def lifespan(_: object) -> AsyncIterator[None]:
-        install_process_hooks()
-        running = application.running()
-        await _handed_off(running.__aenter__())
-        try:
-            yield
-        except BaseException as thrown:
-            await running.__aexit__(type(thrown), thrown, thrown.__traceback__)
-            raise
-        await _handed_off(running.__aexit__(None, None, None))
+        with ProcessHooks():
+            running = application.running()
+            await boundary(running.__aenter__)()
+            try:
+                yield
+            except BaseException as thrown:
+                await running.__aexit__(type(thrown), thrown, thrown.__traceback__)
+                raise
+            await boundary(running.__aexit__)(None, None, None)
 
     return lifespan
 

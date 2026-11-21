@@ -23,6 +23,7 @@ from loom.stores.sqlalchemy.session_settings import (
     install_session_settings,
     settings_statement,
 )
+from tests.helpers.boundary import left_loom
 
 
 def _sqlite_session_class(provider: SessionSettings) -> tuple[Engine, type[Session]]:
@@ -161,7 +162,7 @@ class TestSessionSettings:
         engine, session_class = _sqlite_session_class(raising)
         statement = text("SELECT 1")
         with session_class(engine) as session:
-            with pytest.raises(ProviderError):
+            with left_loom(ProviderError):
                 session.execute(statement)
             assert session.connection().invalidated
 
@@ -169,7 +170,7 @@ class TestSessionSettings:
         engine, session_class = _sqlite_session_class(lambda: {"app.tenant_id": "acme"})
         statement = text("SELECT 1")
         with session_class(engine) as session:
-            with pytest.raises(OperationalError):
+            with left_loom(OperationalError):
                 session.execute(statement)
             assert session.connection().invalidated
 

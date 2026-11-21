@@ -14,6 +14,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from loom.core.stores.catalog import DEFAULT_STORE
 from loom.stores.sqlalchemy.session_manager import SessionManager
 from loom.stores.sqlalchemy.session_settings import SessionSettings
+from tests.helpers.boundary import left_loom
 
 from .conftest import ROWS_TABLE, TENANT_SETTING
 
@@ -218,7 +219,7 @@ class TestSessionSettings:
         rows = text(_ROWS)
         try:
             async with manager.session() as session:
-                with pytest.raises(error):
+                with left_loom(error):
                     await session.execute(rows)
         finally:
             await manager.close()
@@ -242,7 +243,7 @@ class TestSessionSettings:
         rows = text(_ROWS)
         try:
             async with manager.session() as session:
-                with pytest.raises(ProviderError):
+                with left_loom(ProviderError):
                     await session.execute(rows)
                 with pytest.raises(PendingRollbackError):
                     await session.execute(rows)

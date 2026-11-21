@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 from loom.core.errors import SystemError
-from loom.core.logger.failure import public_form
+from loom.core.errors.failure import Failure
 
 
 class WorkerNotOpenError(SystemError):
@@ -15,8 +15,9 @@ class WorkerNotOpenError(SystemError):
     this error, chained (``from``) to the failure to open. A system error: a
     retry may land on a healthy process.
 
-    The message names the public form of the failure, never its text: it
-    travels to the result backend and the caller. The failure itself is in the
+    The message names the failure as :attr:`Failure.text
+    <loom.core.errors.failure.Failure.text>` allows, never a foreign message:
+    it travels to the result backend and the caller. The failure itself is in the
     worker's log.
 
     Args:
@@ -26,7 +27,7 @@ class WorkerNotOpenError(SystemError):
     def __init__(self, cause: BaseException) -> None:
         super().__init__(
             f"this worker process could not open its application "
-            f"({public_form(cause)}); "
+            f"({Failure(cause).text}); "
             "its tasks fail until the process is replaced"
         )
 

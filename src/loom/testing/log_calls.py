@@ -2,7 +2,8 @@
 
 :func:`log_call_offences` checks logging call sites; :func:`exception_text_offences`
 finds every place an exception's text is formatted, which no field, payload
-or new error may carry.
+or new error may carry; :func:`free_text_offences` finds every exception
+raised with text built from values, where a ``LoomError`` takes declared fields.
 
 A logging call follows the record definition *(event, level, fields)*:
 
@@ -31,6 +32,9 @@ Example::
 
     def test_no_exception_text_leaves() -> None:
         assert exception_text_offences(Path("src/billing").rglob("*.py")) == []
+
+    def test_errors_are_built_from_fields() -> None:
+        assert free_text_offences(Path("src/billing").rglob("*.py")) == []
 """
 
 from __future__ import annotations
@@ -229,10 +233,12 @@ def exception_text_offences(paths: Iterable[Path]) -> list[LogCallOffence]:
     """Every place in *paths* that formats an exception's text, in file and line order.
 
     An exception's message is never a payload: a field, an answer, a broker
-    message or a new error renders its public form instead
-    (:func:`loom.core.logger.failure.public_form`). An exception is a name an
-    ``except`` clause bound, or a name annotated with an exception type
-    (a parameter or an annotated assignment); its text is ``str``, ``repr``,
+    message or a new error carries its type or its declared fields instead
+    (:class:`loom.core.errors.failure.Failure`). An exception is a
+    name an ``except`` clause bound, a name annotated with an exception type (a
+    parameter or an annotated assignment, through a module type alias too), a
+    name a ``for`` loop unpacks from a container of those, or a name assigned
+    ``<future>.exception()``; its text is ``str``, ``repr``,
     ``ascii`` or ``format`` of it or of its ``.args``, an f-string or a ``%``
     or ``.format()`` that holds them, or the text ``traceback`` formats.
 
@@ -253,35 +259,134 @@ def exception_text_offences(paths: Iterable[Path]) -> list[LogCallOffence]:
     return offences
 
 
-def _is_exception_annotation(annotation: ast.expr | None) -> bool:
-    if annotation is None:
-        return False
-    return any(
-        (name := _name_of(node)) is not None and name.endswith(_EXCEPTION_SUFFIXES)
-        for node in ast.walk(annotation)
-        if isinstance(node, ast.Name | ast.Attribute)
-    )
+_CONTAINERS: Final = frozenset(
+    {"list", "set", "frozenset", "Sequence", "Iterable", "Iterator", "Collection", "tuple"}
+)
+"""Generic types whose first argument is the type of what a ``for`` loop yields."""
 
 
 class _ExceptionTextChecker(_Checker):
+    """Find exception text, knowing which names hold an exception in each scope.
+
+    A name holds one when an ``except`` clause binds it, when it is annotated
+    with an exception type (a parameter or an annotated assignment, through a
+    module type alias too), when a ``for`` loop unpacks it from a container of
+    those, or when it is assigned ``<future>.exception()``.
+    """
+
     def __init__(self, path: str) -> None:
         super().__init__(path)
         self._scopes: list[set[str]] = [set()]
+        self._annotations: list[dict[str, ast.expr]] = [{}]
+        self._aliases: dict[str, ast.expr] = {}
+
+    def visit_Module(self, node: ast.Module) -> None:
+        for statement in node.body:
+            if isinstance(statement, ast.Assign) and len(statement.targets) == 1:
+                target = statement.targets[0]
+                if isinstance(target, ast.Name):
+                    self._aliases[target.id] = statement.value
+            elif (
+                isinstance(statement, ast.AnnAssign)
+                and isinstance(statement.target, ast.Name)
+                and statement.value is not None
+                and _name_of(statement.annotation) == "TypeAlias"
+            ):
+                self._aliases[statement.target.id] = statement.value
+        self.generic_visit(node)
+
+    def _resolved(self, annotation: ast.expr) -> ast.expr:
+        """*annotation*, or what the module type alias it names stands for."""
+        if isinstance(annotation, ast.Name) and annotation.id in self._aliases:
+            return self._aliases[annotation.id]
+        return annotation
+
+    def _is_exception_annotation(self, annotation: ast.expr | None) -> bool:
+        if annotation is None:
+            return False
+        return any(
+            (name := _name_of(node)) is not None and name.endswith(_EXCEPTION_SUFFIXES)
+            for node in ast.walk(self._resolved(annotation))
+            if isinstance(node, ast.Name | ast.Attribute) and not isinstance(node.ctx, ast.Store)
+        ) and not self._is_container(annotation)
+
+    def _is_container(self, annotation: ast.expr) -> bool:
+        resolved = self._resolved(annotation)
+        return isinstance(resolved, ast.Subscript) and _name_of(resolved.value) in _CONTAINERS
+
+    def _element_of(self, annotation: ast.expr) -> ast.expr | None:
+        """The type a ``for`` loop over a value of *annotation* yields, if it is a container."""
+        resolved = self._resolved(annotation)
+        if not self._is_container(resolved):
+            return None
+        assert isinstance(resolved, ast.Subscript)
+        arguments = resolved.slice
+        return arguments.elts[0] if isinstance(arguments, ast.Tuple) else arguments
+
+    def _bind(self, name: str, annotation: ast.expr | None) -> None:
+        if annotation is not None:
+            self._annotations[-1][name] = annotation
+        if self._is_exception_annotation(annotation):
+            self._scopes[-1].add(name)
+
+    def _annotation_of(self, name: str) -> ast.expr | None:
+        for scope in reversed(self._annotations):
+            if name in scope:
+                return scope[name]
+        return None
 
     def _visit_function(self, node: ast.FunctionDef | ast.AsyncFunctionDef) -> None:
-        arguments = [*node.args.posonlyargs, *node.args.args, *node.args.kwonlyargs]
-        typed = {arg.arg for arg in arguments if _is_exception_annotation(arg.annotation)}
-        self._scopes.append(typed)
+        self._scopes.append(set())
+        self._annotations.append({})
+        for arg in [*node.args.posonlyargs, *node.args.args, *node.args.kwonlyargs]:
+            self._bind(arg.arg, arg.annotation)
         self.generic_visit(node)
+        self._annotations.pop()
         self._scopes.pop()
 
     visit_FunctionDef = _visit_function
     visit_AsyncFunctionDef = _visit_function
 
     def visit_AnnAssign(self, node: ast.AnnAssign) -> None:
-        if isinstance(node.target, ast.Name) and _is_exception_annotation(node.annotation):
-            self._scopes[-1].add(node.target.id)
+        if isinstance(node.target, ast.Name):
+            self._bind(node.target.id, node.annotation)
         self.generic_visit(node)
+
+    def visit_Assign(self, node: ast.Assign) -> None:
+        value = node.value
+        is_future_exception = (
+            isinstance(value, ast.Call)
+            and isinstance(value.func, ast.Attribute)
+            and value.func.attr == "exception"
+            and not value.args
+        )
+        if is_future_exception:
+            for target in node.targets:
+                if isinstance(target, ast.Name):
+                    self._scopes[-1].add(target.id)
+        self.generic_visit(node)
+
+    def visit_For(self, node: ast.For | ast.AsyncFor) -> None:
+        iterated = node.iter
+        annotation = self._annotation_of(iterated.id) if isinstance(iterated, ast.Name) else None
+        element = None if annotation is None else self._element_of(annotation)
+        if element is not None:
+            self._bind_unpacked(node.target, element)
+        self.generic_visit(node)
+
+    visit_AsyncFor = visit_For
+
+    def _bind_unpacked(self, target: ast.expr, element: ast.expr) -> None:
+        if isinstance(target, ast.Name):
+            self._bind(target.id, element)
+            return
+        resolved = self._resolved(element)
+        if not (isinstance(target, ast.Tuple) and isinstance(resolved, ast.Subscript)):
+            return
+        if not isinstance(resolved.slice, ast.Tuple):
+            return
+        for item, kind in zip(target.elts, resolved.slice.elts, strict=False):
+            self._bind_unpacked(item, kind)
 
     def visit_ExceptHandler(self, node: ast.ExceptHandler) -> None:
         if node.name is None:
@@ -336,3 +441,45 @@ class _ExceptionTextChecker(_Checker):
         if isinstance(value, ast.Name) and any(value.id in scope for scope in self._scopes):
             return value.id
         return None
+
+
+def free_text_offences(paths: Iterable[Path]) -> list[LogCallOffence]:
+    """Every exception in *paths* raised with text built from values, in file and line order.
+
+    A ``LoomError`` is built from its declared fields, ``Cls(**fields)``, which
+    it renders itself; text an f-string, a ``%`` or ``.format()`` builds is
+    free text, whatever it holds. A fixed literal is not.
+
+    Args:
+        paths: The Python files to read.
+
+    Returns:
+        The offences; empty when every raise builds its error from fields.
+    """
+    offences: list[LogCallOffence] = []
+    for path in sorted(paths):
+        checker = _FreeTextChecker(str(path))
+        checker.visit(ast.parse(path.read_text(encoding="utf-8"), str(path)))
+        offences.extend(checker.offences)
+    return offences
+
+
+class _FreeTextChecker(_Checker):
+    def visit_Raise(self, node: ast.Raise) -> None:
+        raised = node.exc
+        if isinstance(raised, ast.Call) and any(map(_is_built_text, raised.args)):
+            self._offend(node, f"free text passed to {_name_of(raised.func)}(...)")
+        self.generic_visit(node)
+
+
+def _is_built_text(node: ast.expr) -> bool:
+    """Whether *node* is text built from values: a valued f-string, a ``%`` or ``.format()``."""
+    if isinstance(node, ast.JoinedStr):
+        return any(isinstance(part, ast.FormattedValue) for part in node.values)
+    if isinstance(node, ast.BinOp):
+        return isinstance(node.op, ast.Mod) and isinstance(node.left, ast.Constant | ast.JoinedStr)
+    return (
+        isinstance(node, ast.Call)
+        and isinstance(node.func, ast.Attribute)
+        and (node.func.attr == "format" and isinstance(node.func.value, ast.Constant))
+    )

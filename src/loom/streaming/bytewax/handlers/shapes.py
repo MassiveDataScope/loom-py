@@ -7,6 +7,7 @@ from typing import Any
 
 from bytewax.operators import collect, flat_map, key_on, key_rm
 
+from loom.core.errors.boundary import boundary
 from loom.streaming.bytewax.handlers._shared import (
     _BuildContextProtocol,
     _drop_and_commit,
@@ -56,7 +57,7 @@ def _apply_collect_batch_default(
     step_prefix: str,
 ) -> Stream:
     """Apply processing-time count-and-timeout collect (``WindowStrategy.COLLECT``)."""
-    keyed = key_on(f"collect_key_{step_prefix}", stream, _batch_key)
+    keyed = key_on(f"collect_key_{step_prefix}", stream, boundary(_batch_key))
     collected = collect(
         f"collect_{step_prefix}",
         keyed,
@@ -67,7 +68,7 @@ def _apply_collect_batch_default(
 
 
 def _apply_for_each(stream: Stream, _raw: object, idx: int, ctx: _BuildContextProtocol) -> Stream:
-    return flat_map(_step_id(f"foreach_{idx}", ctx), stream, _identity)
+    return flat_map(_step_id(f"foreach_{idx}", ctx), stream, boundary(_identity))
 
 
 def _apply_drain(stream: Stream, _raw: object, idx: int, ctx: _BuildContextProtocol) -> None:
@@ -75,4 +76,8 @@ def _apply_drain(stream: Stream, _raw: object, idx: int, ctx: _BuildContextProto
     if tracker is None:
         return
 
-    flat_map(_step_id(f"drain_{idx}", ctx), stream, lambda item: _drop_and_commit(item, tracker))
+    flat_map(
+        _step_id(f"drain_{idx}", ctx),
+        stream,
+        boundary(lambda item: _drop_and_commit(item, tracker)),
+    )

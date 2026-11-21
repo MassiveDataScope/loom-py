@@ -5,12 +5,13 @@ from __future__ import annotations
 import logging
 from collections.abc import Callable, Sequence
 from dataclasses import dataclass
-from typing import Any, Protocol, TypeAlias, TypeVar
+from typing import Any, ClassVar, Protocol, TypeAlias, TypeVar
 
 from bytewax.operators import branch, flat_map
 
 from loom.core.errors import DomainError
-from loom.core.logger.failure import public_form
+from loom.core.errors.boundary import BoundaryClass, boundary
+from loom.core.errors.failure import Failure
 from loom.core.observability.event import TerminalReason
 from loom.core.observability.observability import Observability
 from loom.streaming.core._errors import ErrorEnvelope, ErrorKind, snapshot_message
@@ -23,6 +24,27 @@ Stream: TypeAlias = Any
 NodeResult: TypeAlias = Message[StreamPayload] | ErrorEnvelope[StreamPayload]
 ResultT = TypeVar("ResultT")
 logger = logging.getLogger(__name__)
+
+
+class BytewaxBoundary(BoundaryClass):
+    """Base of every bytewax source, sink and partition loom writes.
+
+    Bytewax calls their methods from its own worker loop and prints what they
+    raise, so each method it calls goes through the loom boundary.
+    """
+
+    BOUNDARY_METHODS: ClassVar[frozenset[str]] = frozenset(
+        {
+            "build",
+            "build_part",
+            "list_parts",
+            "next_batch",
+            "next_awake",
+            "snapshot",
+            "write_batch",
+            "close",
+        }
+    )
 
 
 class _ErrorSplitContext(Protocol):
@@ -62,12 +84,13 @@ def _build_error_envelope(
     kind: ErrorKind,
     failure: BaseException,
     original: Message[StreamPayload],
-    boundary: ErrorBoundary,
+    error_boundary: ErrorBoundary,
 ) -> ErrorEnvelope[StreamPayload]:
     """Wrap a failed message as an error envelope and close its trace.
 
     The envelope leaves the process, to an error topic or a dead-letter
-    queue: its reason is the failure's public form, never its text.
+    queue: its reason is the text ``Failure`` allows: a ``LoomError``'s message, any other
+    exception's type.
 
     This is where the *original* message dies: what continues downstream is the
     envelope, whose onward journey is the envelope's own life, correlated by
@@ -75,11 +98,11 @@ def _build_error_envelope(
     claim a message survived its own failure.
     """
     open_terminal_span(
-        boundary.observer,
+        error_boundary.observer,
         original.meta,
         TerminalReason.ERROR_ENVELOPE,
         attributes={
-            StreamingLogField.FLOW: boundary.flow,
+            StreamingLogField.FLOW: error_boundary.flow,
             StreamingLogField.ERROR_KIND: kind.value,
         },
     ).end()
@@ -87,7 +110,7 @@ def _build_error_envelope(
     payload_type = original.payload.__class__.loom_message_type()
     return ErrorEnvelope(
         kind=kind,
-        reason=public_form(failure),
+        reason=Failure(failure).text,
         payload_type=payload_type,
         original_message=snapshot,
     )
@@ -97,7 +120,7 @@ def _execute_in_boundary(
     classify: Callable[[Exception], ErrorKind],
     original: Message[StreamPayload],
     fn: Callable[[], ResultT],
-    boundary: ErrorBoundary,
+    error_boundary: ErrorBoundary,
 ) -> ResultT | ErrorEnvelope[StreamPayload]:
     """Execute one message node and capture failures as error envelopes."""
     try:
@@ -105,14 +128,14 @@ def _execute_in_boundary(
     except Exception as exc:
         kind = classify(exc)
         _log_boundary_error(kind, exc, original)
-        return _build_error_envelope(kind, exc, original, boundary)
+        return _build_error_envelope(kind, exc, original, error_boundary)
 
 
 def _execute_batch_in_boundary(
     classify: Callable[[Exception], ErrorKind],
     originals: Sequence[Message[StreamPayload]],
     fn: Callable[[], Sequence[NodeResult]],
-    boundary: ErrorBoundary,
+    error_boundary: ErrorBoundary,
 ) -> list[NodeResult]:
     """Execute one batch node and capture failures as per-message envelopes."""
     try:
@@ -121,7 +144,7 @@ def _execute_batch_in_boundary(
         kind = classify(exc)
         if originals:
             _log_boundary_error(kind, exc, originals[0], batch_size=len(originals))
-        return [_build_error_envelope(kind, exc, message, boundary) for message in originals]
+        return [_build_error_envelope(kind, exc, message, error_boundary) for message in originals]
 
 
 def _split_node_result(
@@ -131,7 +154,7 @@ def _split_node_result(
     kind: ErrorKind,
 ) -> Stream:
     """Split node results into success and error branches and wire errors."""
-    split = branch(f"{step_id}_split", stream, _is_message)
+    split = branch(f"{step_id}_split", stream, boundary(_is_message))
     ctx.wire_node_error(kind, step_id, split.falses)
     return split.trues
 
@@ -143,8 +166,8 @@ def _split_batch_node_result(
     kind: ErrorKind,
 ) -> Stream:
     """Split batch-shaped node results into success and error branches."""
-    split = branch(f"{step_id}_split", stream, _is_message_batch)
-    errors = flat_map(f"{step_id}_errors", split.falses, _identity)
+    split = branch(f"{step_id}_split", stream, boundary(_is_message_batch))
+    errors = flat_map(f"{step_id}_errors", split.falses, boundary(_identity))
     ctx.wire_node_error(kind, step_id, errors)
     return split.trues
 

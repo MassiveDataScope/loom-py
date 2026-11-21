@@ -13,6 +13,7 @@ import re
 from collections.abc import Awaitable, Callable
 from typing import Any
 
+from loom.core.errors.boundary import NO_PASS_THROUGH, PassThrough, boundary
 from loom.core.tracing import generate_trace_id, reset_trace_id, set_trace_id
 
 _Scope = dict[str, Any]
@@ -21,6 +22,31 @@ _Send = Callable[[dict[str, Any]], Awaitable[None]]
 _ASGIApp = Callable[[_Scope, _Receive, _Send], Awaitable[None]]
 
 _TRACE_ID_RE = re.compile(r"^[\w.-]{1,128}$", re.ASCII)
+
+
+class BoundaryMiddleware:
+    """The loom boundary of an ASGI application: what reaches the server is a clean ``LoomError``.
+
+    It is the outermost middleware loom mounts, so it sits right inside the
+    framework's own error middleware (Starlette's ``ServerErrorMiddleware``),
+    and a test pins that order: anything the server or that middleware prints
+    holds no foreign text.
+
+    Args:
+        app: The ASGI application to wrap.
+        pass_through: The framework's control-flow exceptions, raised as they are.
+    """
+
+    def __init__(self, app: _ASGIApp, pass_through: PassThrough = NO_PASS_THROUGH) -> None:
+        self._app = app
+        self._call = boundary(self._forward, pass_through=pass_through)
+
+    async def __call__(self, scope: _Scope, receive: _Receive, send: _Send) -> None:
+        """Serve one ASGI call through the boundary."""
+        await self._call(scope, receive, send)
+
+    async def _forward(self, scope: _Scope, receive: _Receive, send: _Send) -> None:
+        await self._app(scope, receive, send)
 
 
 class TraceIdMiddleware:

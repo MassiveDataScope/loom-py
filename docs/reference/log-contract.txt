@@ -8,6 +8,7 @@ code.line.number
 compiler.use_case_compiled
 deployment.environment.name
 engine.execution_steps
+errors.failure_left_loom
 exception.stacktrace
 exception.type
 gen_ai.agent.name
@@ -24,10 +25,7 @@ http.response.status_code
 http.route
 job.delivery_abandoned
 job.delivery_retried
-logger.failure_handed_off
 logger.handlers_unfiltered
-logger.uncaught_exception
-logger.unraisable_exception
 loom.ai.capability
 loom.ai.interaction_id
 loom.ai.mcp_server
@@ -46,7 +44,12 @@ loom.count
 loom.declared_routes
 loom.duration_ms
 loom.engine.steps
+loom.error.class
 loom.error.code
+loom.error.misdeclaration
+loom.error.original_type
+loom.error.violation_codes
+loom.error.violation_count
 loom.etl.last_attempt
 loom.etl.process_run_id
 loom.etl.run_id
@@ -100,5 +103,4 @@ rest.request_failed
 service.name
 service.version
 span_id
-thread.name
 trace_id

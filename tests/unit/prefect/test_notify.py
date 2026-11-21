@@ -9,7 +9,7 @@ from unittest.mock import MagicMock
 import pytest
 from botocore.exceptions import ClientError
 
-from loom.core.logger import LogField
+from loom.core.errors.log_events import ErrorLogField
 from loom.prefect.notify import (
     NotifyEvent,
     SlackNotifier,
@@ -215,7 +215,7 @@ class TestSnsNotifier:
                 "flow": "etl-x",
                 "run": "run-1",
                 "state": "Failed",
-                LogField.EXCEPTION_TYPE: "botocore.exceptions.ClientError",
+                ErrorLogField.EXCEPTION_TYPE: "botocore.exceptions.ClientError",
             }
         ]
 
@@ -274,6 +274,6 @@ class TestSnsNotifierOnMoto:
                 "flow": "etl-x",
                 "run": "run-1",
                 "state": "Failed",
-                LogField.EXCEPTION_TYPE: "botocore.errorfactory.NotFoundException",
+                ErrorLogField.EXCEPTION_TYPE: "botocore.errorfactory.NotFoundException",
             }
         ]

@@ -33,7 +33,7 @@ from loom.core.cache.keys import call_key
 from loom.core.cache.wiring import CacheGateways, cache_module, cache_module_for
 from loom.core.config import ConfigContext
 from loom.core.di.container import LoomContainer, ResolutionError
-from loom.core.logger.vocabulary import LogField
+from loom.core.errors.log_events import ErrorLogField
 from loom.core.model.redaction import RedactedMap
 from loom.core.stores.catalog import DEFAULT_STORE
 from loom.core.stores.repository import (
@@ -555,7 +555,7 @@ class TestTheBinderReportsAnAbandonedLoad:
 
         records = _abandoned_warnings(caplog)
         assert len(records) == 1
-        assert records[0].__dict__[LogField.EXCEPTION_TYPE] == "RuntimeError"
+        assert records[0].__dict__[ErrorLogField.EXCEPTION_TYPE] == "RuntimeError"
         assert "upstream down" not in rendered(records[0])
 
 

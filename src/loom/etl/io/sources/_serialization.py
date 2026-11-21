@@ -6,7 +6,7 @@ import logging
 import threading
 from dataclasses import dataclass, field
 
-from loom.core.logger.failure import public_form
+from loom.core.errors.failure import Failure
 
 _log = logging.getLogger(__name__)
 
@@ -22,7 +22,7 @@ class SerializationStats:
     def record(self, exc: BaseException) -> int:
         with self._lock:
             self.failures += 1
-            self.last_error = public_form(exc)
+            self.last_error = Failure(exc).text
             return self.failures
 
 

@@ -7,6 +7,7 @@ from typing import Any
 
 import pytest
 
+from loom.core.errors.log_events import ErrorLogField
 from loom.core.logger import LogField
 from loom.core.logger.formats import record_fields
 
@@ -110,9 +111,9 @@ def logged_text(caplog: pytest.LogCaptureFixture) -> str:
 def exception_types(caplog: pytest.LogCaptureFixture) -> list[str]:
     """The ``exception.type`` of every record of *caplog* that reported an exception, in order."""
     return [
-        record.__dict__[LogField.EXCEPTION_TYPE]
+        record.__dict__[ErrorLogField.EXCEPTION_TYPE]
         for record in caplog.records
-        if LogField.EXCEPTION_TYPE in record.__dict__
+        if ErrorLogField.EXCEPTION_TYPE in record.__dict__
     ]
 
 

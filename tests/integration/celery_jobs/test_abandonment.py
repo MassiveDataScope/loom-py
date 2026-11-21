@@ -11,7 +11,7 @@ from celery.worker.request import Request  # type: ignore[import-untyped]
 from loom.core.job.envelope import wire_job_name
 from loom.core.job.job import Job
 from loom.core.job.outcome import JobAbandonment
-from loom.core.logger.failure import FailureReference, exception_type
+from tests.helpers.boundary import type_name
 from tests.helpers.celery import CeleryBroker
 from tests.integration.celery_jobs.conftest import JSON, Workbench
 from tests.integration.celery_jobs.doubles import FAILURE_CALLBACK, AbandonedJob
@@ -29,12 +29,12 @@ class TestEagerAbandonment:
         result = task.apply(kwargs={"failure_callback": "on-error"})  # type: ignore[attr-defined]
 
         assert result.failed()
-        with pytest.raises(FailureReference, match=exception_type(JobAbandonment)):
+        with pytest.raises(JobAbandonment):
             result.get()
         (message,) = broker.sent()
         assert (message.task, message.kwargs["exc_type"]) == (
             "on-error",
-            exception_type(JobAbandonment),
+            type_name(JobAbandonment),
         )
 
 
@@ -71,9 +71,8 @@ class TestWorkerAbandonment:
         finally:
             signals.task_failure.disconnect(on_failure)
 
-        assert (stored.state, type(stored.result)) == ("FAILURE", FailureReference)
-        assert stored.result.exception_type == exception_type(JobAbandonment)
+        assert (stored.state, type(stored.result)) == ("FAILURE", JobAbandonment)
         assert [call["hook"] for call in calls] == ["on_failure"]
-        assert failures.count("FailureReference") == 1
+        assert failures.count("JobAbandonment") == 1
         assert settlements == [("ack",)]
         assert AbandonedJob.runs == ["ran"]

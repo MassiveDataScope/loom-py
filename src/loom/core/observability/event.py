@@ -3,14 +3,17 @@
 from __future__ import annotations
 
 from enum import StrEnum
-from typing import Self
+from typing import Self, TypeVar
 
 import msgspec
 from msgspec.structs import force_setattr
 from opentelemetry.util.types import AttributeValue
 
+from loom.core.fields import LogKey, Scalar
 from loom.core.logger import NO_ATTRIBUTES, LogField, SpanAttributes
 from loom.core.model import LoomFrozenStruct
+
+S = TypeVar("S", bound=Scalar)
 
 
 class EventKind(StrEnum):
@@ -197,6 +200,11 @@ class LifecycleEvent(LoomFrozenStruct, frozen=True, kw_only=True):
             failure=failure,
             attributes=attributes,
         )
+
+    def attribute(self, key: LogKey, kind: type[S]) -> S | None:
+        """The attribute under *key* when it holds a *kind*, else ``None``."""
+        value = self.attributes.get(key)
+        return value if isinstance(value, kind) else None
 
     def drop_failure(self) -> None:
         """Forget the exception once every observer has seen it, so its traceback is freed."""

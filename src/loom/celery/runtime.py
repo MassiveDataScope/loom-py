@@ -77,10 +77,10 @@ from loom.core.discovery.worker import (
     WorkerComponents,
 )
 from loom.core.engine.compilable import Compilable
+from loom.core.errors.boundary import ProcessHooks, boundary
+from loom.core.errors.failure import Failure
 from loom.core.job.callback import CallbackOutcome
 from loom.core.logger import LogRuntime
-from loom.core.logger.failure import reference
-from loom.core.logger.uncaught import install_process_hooks
 from loom.core.runner import shutdown_runner
 from loom.core.stores import WORKER_PROFILE
 
@@ -164,6 +164,7 @@ class _WorkerLifecycle:
         self._application = application
         self._runtime = process_bridge
         self._stop: _Step | None = None
+        self._hooks: ProcessHooks | None = None
 
     def on_worker_init(self, worker: Any) -> None:
         """Check once; open here too unless the pool forks children that open.
@@ -173,8 +174,11 @@ class _WorkerLifecycle:
                 does not start (Celery logs and swallows a plain exception
                 raised by a signal handler). The failure is logged once through
                 loom and not chained, so nothing Celery prints carries its text.
+
+        The worker is a runtime entry point: it installs loom's process hooks,
+        which :meth:`close` restores.
         """
-        install_process_hooks()
+        self._hooks = ProcessHooks().install()
         try:
             if _is_prefork(worker):
                 self._fork_children(worker)
@@ -182,7 +186,7 @@ class _WorkerLifecycle:
             else:
                 self._open(check=True)
         except Exception as exc:
-            reference(exc)
+            Failure(exc).report()
         else:
             return
         raise WorkerTerminate(_EX_FAILURE)
@@ -207,19 +211,22 @@ class _WorkerLifecycle:
     def on_process_init(self) -> None:
         """Open in a prefork child; the parent already checked.
 
-        A failure is logged once and its reference recorded on the bridge, so
+        A failure is translated, so logged once, and recorded on the bridge, so
         every task of this child fails with
-        :class:`~loom.celery.errors.WorkerNotOpenError` chained to that
-        reference. The child is not killed: the pool would respawn it into the
+        :class:`~loom.celery.errors.WorkerNotOpenError` naming its type. The
+        child is not killed: the pool would respawn it into the
         same failure.
         """
         try:
             self._open(check=False)
         except Exception as exc:
-            self._runtime.refuse(reference(exc))
+            self._runtime.refuse(Failure(exc).translate())
 
     def close(self) -> None:
-        """Close what this process opened, then stop its bridge."""
+        """Close what this process opened, stop its bridge and restore the process hooks."""
+        hooks, self._hooks = self._hooks, None
+        if hooks is not None:
+            hooks.restore()
         stop, self._stop = self._stop, None
         stop_coroutine: Any = None
         try:
@@ -276,7 +283,7 @@ def _connect_lifecycle_signals(lifecycle: _WorkerLifecycle) -> None:
     def _on_shutdown(**kwargs: Any) -> None:
         lifecycle.close()
 
-    handlers = {
+    handlers: dict[Any, Callable[..., None]] = {
         setup_logging: _keep_loom_logging,
         worker_init: _on_worker_init,
         worker_process_init: _on_process_init,
@@ -286,7 +293,7 @@ def _connect_lifecycle_signals(lifecycle: _WorkerLifecycle) -> None:
     for signal, handler in handlers.items():
         uid = _SIGNAL_UIDS[signal]
         signal.disconnect(dispatch_uid=uid)
-        signal.connect(handler, weak=False, dispatch_uid=uid)
+        signal.connect(boundary(handler), weak=False, dispatch_uid=uid)
 
 
 def _register_tasks(

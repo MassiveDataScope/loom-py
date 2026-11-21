@@ -11,36 +11,12 @@ trace is a link or an attribute, not a parent.
 
 from __future__ import annotations
 
-from loom.core.logger import NO_ATTRIBUTES, LogField, LogKey, Scalar, SpanAttributes
+from loom.core.logger import NO_ATTRIBUTES, SpanAttributes
 from loom.core.observability.event import Scope, TerminalReason
 from loom.core.observability.observability import Observability
 from loom.core.observability.span import LoomSpan
 from loom.streaming.core._message import MessageMeta
 from loom.streaming.log_events import StreamingLogField
-
-
-def message_attributes(meta: MessageMeta) -> SpanAttributes:
-    """Return the ``loom.*`` span attributes carried by one message.
-
-    Only the fields that are actually set are returned, so a span never
-    advertises an empty lineage.
-
-    Args:
-        meta: Metadata of the message the span belongs to.
-
-    Returns:
-        Attribute mapping ready to merge into a span's meta fields.
-    """
-    optional: dict[LogKey, Scalar | None] = {
-        StreamingLogField.MESSAGE_ID: meta.message_id,
-        StreamingLogField.PARENT_TRACE_ID: meta.parent_trace_id,
-        StreamingLogField.CAUSATION_ID: meta.causation_id,
-        StreamingLogField.MESSAGE_TYPE: meta.message_type,
-        LogField.MESSAGING_DESTINATION_NAME: meta.topic,
-        StreamingLogField.KAFKA_PARTITION: meta.partition,
-        StreamingLogField.KAFKA_OFFSET: meta.offset,
-    }
-    return {key: value for key, value in optional.items() if value is not None}
 
 
 def open_terminal_span(
@@ -82,10 +58,10 @@ def open_terminal_span(
         start_time_ns=start_time_ns,
         attributes={
             StreamingLogField.TERMINAL_REASON: reason.value,
-            **message_attributes(meta),
+            **meta.span_attributes(),
             **attributes,
         },
     )
 
 
-__all__ = ["message_attributes", "open_terminal_span"]
+__all__ = ["open_terminal_span"]

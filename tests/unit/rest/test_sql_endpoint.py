@@ -10,6 +10,7 @@ from fastapi import FastAPI
 from fastapi.testclient import TestClient
 
 from loom.core.errors import SystemError as LoomSystemError
+from loom.core.errors.log_events import ErrorLogField
 from loom.core.logger import LogField
 from loom.core.observability.event import EventKind, Scope
 from loom.core.observability.observability import Observability
@@ -245,7 +246,7 @@ class TestSqlEndpointErrorBodies:
             },
         )
         [record] = [r for r in caplog.records if r.levelname == "ERROR"]
-        assert LogField.EXCEPTION_STACKTRACE in record.__dict__
+        assert ErrorLogField.EXCEPTION_STACKTRACE in record.__dict__
         assert "clickhouse.internal" not in caplog.text
 
     def test_an_unexpected_error_answers_the_generic_500_body(

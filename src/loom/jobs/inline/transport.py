@@ -7,6 +7,7 @@ from dataclasses import dataclass, replace
 from datetime import UTC, datetime
 from typing import TYPE_CHECKING, Any
 
+from loom.core.errors.failure import Failure
 from loom.core.identity import Acting, reset_identity, set_identity
 from loom.core.job.callback import CallbackOutcome, JobCallback, notify
 from loom.core.job.context import add_pending_dispatch
@@ -17,7 +18,6 @@ from loom.core.job.outcome import Abandoned, Failed, JobOutcome, Postponed, Succ
 from loom.core.job.policy import Countdown, Redelivery
 from loom.core.job.runner import JobRunner
 from loom.core.job.timer import JobDelayRefusedError, JobTimer
-from loom.core.logger.failure import reference
 
 if TYPE_CHECKING:
     from loom.core.engine.execution_observer import ExecutionObserver
@@ -196,13 +196,13 @@ class InlineJobTransport:
         pending.outcome.fail(error)
         callback = pending.dispatch.on_failure
         if callback is not None:
-            handed_off = reference(error)
+            failure = Failure(error)
             await notify(
                 self._factory,
                 callback,
                 CallbackOutcome.FAILURE,
                 job_id=pending.dispatch.envelope.task_id,
-                exc_type=handed_off.exception_type,
-                exc_msg=str(handed_off),
+                exc_type=failure.type,
+                exc_msg=failure.text,
                 **(pending.dispatch.envelope.payload or {}),
             )

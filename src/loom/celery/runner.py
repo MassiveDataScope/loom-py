@@ -27,7 +27,7 @@ import asyncio
 import inspect
 import logging
 from dataclasses import dataclass, field
-from typing import TYPE_CHECKING, Any
+from typing import TYPE_CHECKING, Any, Final
 
 from celery import Celery  # type: ignore[import-untyped]
 from celery.exceptions import TaskPredicate  # type: ignore[import-untyped]
@@ -37,6 +37,8 @@ from loom.celery.errors import WorkerNotOpenError
 from loom.celery.log_events import CeleryLogField
 from loom.celery.service import CallbackLink
 from loom.core.async_bridge import AsyncBridge
+from loom.core.errors.boundary import PassThrough, boundary
+from loom.core.errors.failure import Failure
 from loom.core.execution import ExecutionScope
 from loom.core.identity import Acting, current_caller
 from loom.core.job.callback import CallbackOutcome, notify
@@ -53,7 +55,6 @@ from loom.core.job.outcome import (
 from loom.core.job.policy import Redelivery
 from loom.core.job.run import EnvelopeInvocation
 from loom.core.job.runner import JobRunner
-from loom.core.logger.failure import Handoff, reference
 from loom.core.observability.event import Scope
 from loom.core.observability.observability import Observability
 from loom.core.tracing import active_trace_id
@@ -157,13 +158,8 @@ class _CeleryProcessBridge:
         self._bridge = None
 
 
-class CeleryHandoff(Handoff):
-    """Where a Celery worker hands a failure to Celery, its result backend or a callback."""
-
-    RESULT = "celery.result"
-    RETRY = "celery.retry"
-    FAILURE_CALLBACK = "celery.failure_callback"
-    WORKER_INIT = "celery.worker_init"
+CELERY_PASS_THROUGH: Final[PassThrough] = (TaskPredicate,)
+"""Celery's control flow, ``Retry``, ``Ignore`` and ``Reject``: it crosses the boundary as it is."""
 
 
 def _close_unrun(coro: Any) -> None:
@@ -294,36 +290,28 @@ def _make_job_task(
 
         Raises:
             Retry: When the job failed with attempts left or was postponed; its
-                ``exc`` is the failure's reference, which Celery stores.
-            FailureReference: In place of the error that ended an abandoned job,
-                which the worker stores as the task's failure before
-                acknowledging the message.
+                ``exc`` is the failure as it leaves loom
+                (:meth:`~loom.core.errors.failure.Failure.as_loom_error`), which
+                Celery stores.
+            Exception: The error that ended an abandoned job, which the task's
+                boundary translates and the worker stores as the task's failure
+                before acknowledging the message.
         """
         match outcome:
             case Succeeded(result=result):
                 return result
             case Failed(error=error, delay=delay):
-                raise task_self.retry(exc=reference(error), countdown=delay.seconds)
+                raise task_self.retry(exc=Failure(error).as_loom_error(), countdown=delay.seconds)
             case Postponed(delay=delay) as postponed:
                 kwargs = {**(task_self.request.kwargs or {}), "postponements": postponements + 1}
                 raise task_self.retry(
-                    exc=reference(JobPostponement(postponed.reason, delay.seconds)),
+                    exc=Failure(JobPostponement(postponed.reason, delay.seconds)).as_loom_error(),
                     countdown=delay.seconds,
                     kwargs=kwargs,
                 )
             case Abandoned() as abandoned:
-                raise reference(abandoned.as_exception())
+                raise abandoned.as_exception()
 
-    @celery_app.task(  # type: ignore[untyped-decorator]
-        name=wire_job_name(job_type.__qualname__),
-        shared=False,
-        bind=True,
-        acks_late=True,
-        acks_on_failure_or_timeout=True,
-        reject_on_worker_lost=True,
-        max_retries=None,
-        soft_time_limit=timeout,
-    )
     def _job_task(
         self: Any,
         *,
@@ -348,14 +336,22 @@ def _make_job_task(
         except TaskPredicate:
             raise
         except Exception as error:
-            failure = reference(error)
-        if failure_callback is not None:
-            CallbackLink(self.request.id, payload or {}, trace_id, identity).send_failure(
-                celery_app, failure_callback, failure
-            )
-        raise failure
+            if failure_callback is not None:
+                CallbackLink(self.request.id, payload or {}, trace_id, identity).send_failure(
+                    celery_app, failure_callback, Failure(error)
+                )
+            raise
 
-    return _job_task
+    return celery_app.task(
+        name=wire_job_name(job_type.__qualname__),
+        shared=False,
+        bind=True,
+        acks_late=True,
+        acks_on_failure_or_timeout=True,
+        reject_on_worker_lost=True,
+        max_retries=None,
+        soft_time_limit=timeout,
+    )(boundary(_job_task, pass_through=CELERY_PASS_THROUGH))
 
 
 def _make_callback_task(
@@ -427,9 +423,6 @@ def _make_callback_task(
                 **{**context, "job_id": job_id, **details(job_result, exc_type, exc_msg)},
             )
 
-    @celery_app.task(  # type: ignore[untyped-decorator]
-        name=callback_task_name(callback_type, outcome), shared=False, bind=True
-    )
     def _callback_task(
         self: Any,
         *job_result: Any,
@@ -471,4 +464,6 @@ def _make_callback_task(
                         "declare it async def"
                     )
 
-    return _callback_task
+    return celery_app.task(
+        name=callback_task_name(callback_type, outcome), shared=False, bind=True
+    )(boundary(_callback_task, pass_through=CELERY_PASS_THROUGH))

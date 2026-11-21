@@ -26,7 +26,7 @@ from loom.core.errors import (
     SystemError,
 )
 from loom.core.errors.codes import ErrorCode
-from loom.core.logger import LogField
+from loom.core.errors.log_events import ErrorLogField
 from loom.core.logger.formats import record_fields
 from loom.core.tracing import get_trace_id
 from loom.rest.errors import HttpErrorMapper
@@ -57,7 +57,10 @@ class QueryFailed(LoomError):
     """The pricing query did not answer; the client may see which query."""
 
     http_status = HTTPStatus.BAD_GATEWAY
-    public_message = True
+
+    @property
+    def client_message(self) -> str | None:
+        return self.message
 
     def __init__(self, message: str = _QUERY_MESSAGE, *, failed: str = _FAILED_QUERY) -> None:
         super().__init__(message, code=_QueryCode.BAD_GATEWAY)
@@ -82,7 +85,9 @@ class _HiddenUpstream(LoomError):
 class _OverridesMessage(LoomError):
     """A 5xx that tries to replace the message loom writes."""
 
-    public_message = True
+    @property
+    def client_message(self) -> str | None:
+        return self.message
 
     def __init__(self) -> None:
         super().__init__("leaked-message-host", code=ErrorCode.SYSTEM_ERROR)
@@ -94,7 +99,9 @@ class _OverridesMessage(LoomError):
 class _OverridesEntity(NotFound):
     """A not-found that tries to replace the entity loom writes."""
 
-    public_message = True
+    @property
+    def client_message(self) -> str | None:
+        return self.message
 
     def public_detail(self) -> Mapping[str, Any]:
         return {"entity": "leaked-field-value"}
@@ -117,7 +124,7 @@ def _assert_misdeclaration_logged(
     assert len(records) == 1
     record = records[0]
     assert record.levelno == logging.ERROR
-    assert record.__dict__[LogField.EXCEPTION_TYPE]
+    assert record.__dict__[ErrorLogField.EXCEPTION_TYPE]
     assert class_name in record.getMessage()
     assert problem in record.getMessage()
     logged = f"{record.getMessage()} {record_fields(record)}"
@@ -170,7 +177,9 @@ class QueryCode(StrEnum):
 
 class QueryFailed(LoomError):
     http_status = HTTPStatus.BAD_GATEWAY
-    public_message = True
+    @property
+    def client_message(self) -> str | None:
+        return self.message
 
     def __init__(self) -> None:
         super().__init__("upstream refused the sale quote", code=QueryCode.BAD_GATEWAY)
@@ -239,7 +248,9 @@ class QueryCode(StrEnum):
 
 
 class CollidingQuery(LoomError):
-    public_message = True
+    @property
+    def client_message(self) -> str | None:
+        return self.message
 
     def __init__(self) -> None:
         super().__init__("postgresql://db.internal:5432/orders", code=QueryCode.BAD_GATEWAY)
@@ -250,7 +261,9 @@ class CollidingQuery(LoomError):
 
 class BadStatusQuery(LoomError):
     http_status = 200
-    public_message = True
+    @property
+    def client_message(self) -> str | None:
+        return self.message
 
     def __init__(self) -> None:
         super().__init__("postgresql://db.internal:5432/orders", code=QueryCode.BAD_GATEWAY)
@@ -316,7 +329,7 @@ class TestDeclaredPublicErrorBody:
     def test_a_5xx_keeps_the_fixed_message_when_public_message_is_off(
         self,
     ) -> None:
-        """Extra fields are public; the message is not, unless the error opts in."""
+        """Extra fields are public; the message is not, unless the error declares it for clients."""
         exc = HttpErrorMapper().to_http(_HiddenUpstream())
 
         assert exc.status_code == HTTPStatus.BAD_GATEWAY
@@ -326,16 +339,6 @@ class TestDeclaredPublicErrorBody:
             "failed": _FAILED_QUERY,
             "trace_id": get_trace_id(),
         }
-
-    def test_a_5xx_shows_its_own_message_when_public_message_is_on(
-        self,
-    ) -> None:
-        error = _HiddenUpstream()
-        error.public_message = True
-
-        detail = _detail(HttpErrorMapper().to_http(error))
-
-        assert detail["message"] == _LEAKY
 
     def test_a_public_field_the_mapper_did_not_set_is_kept(
         self,
@@ -357,21 +360,6 @@ class TestDeclaredPublicErrorBody:
             "trace_id": get_trace_id(),
             "entity": "Query",
         }
-
-    def test_a_truthy_non_bool_public_message_keeps_the_fixed_5xx_message(
-        self,
-    ) -> None:
-        class _Declared(LoomError):
-            http_status = HTTPStatus.BAD_GATEWAY
-
-            def __init__(self) -> None:
-                super().__init__("secret-host", code=ErrorCode.SYSTEM_ERROR)
-
-        error = _Declared()
-        flag: Any = "no"
-        error.public_message = flag
-
-        assert _detail(HttpErrorMapper().to_http(error))["message"] == _FIXED_500
 
 
 class TestMisdeclaredHttpStatus:
@@ -419,7 +407,9 @@ class TestMisdeclaredHttpStatus:
         self, status: object, caplog: pytest.LogCaptureFixture
     ) -> None:
         class _Declared(LoomError):
-            public_message = True
+            @property
+            def client_message(self) -> str | None:
+                return self.message
 
             def __init__(self) -> None:
                 super().__init__("secret-status-host", code=ErrorCode.SYSTEM_ERROR)
@@ -542,17 +532,16 @@ class TestDeclaredStatusAcceptance:
             **extra,
         }
 
-    def test_an_instance_may_declare_the_status_and_the_public_message(
+    def test_an_instance_may_declare_the_status_and_keeps_the_fixed_message(
         self,
     ) -> None:
         error = SystemError(_QUERY_MESSAGE, code=ErrorCode.SYSTEM_ERROR)
         error.http_status = HTTPStatus.BAD_GATEWAY
-        error.public_message = True
 
         exc = HttpErrorMapper().to_http(error)
 
         assert exc.status_code == HTTPStatus.BAD_GATEWAY
-        assert _detail(exc)["message"] == _QUERY_MESSAGE
+        assert _detail(exc)["message"] == _FIXED_500
 
 
 class TestDeclaredStatusAcrossRuntimes:

@@ -9,8 +9,8 @@ from __future__ import annotations
 import logging
 from typing import Final
 
+from loom.core.fields import render_value
 from loom.core.logger.record import STAMP, RecordStamp
-from loom.core.logger.values import render_value
 
 STANDARD_ATTRIBUTES: Final = frozenset(logging.makeLogRecord({}).__dict__) | {
     "message",

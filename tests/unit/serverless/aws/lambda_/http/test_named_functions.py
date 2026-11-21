@@ -20,7 +20,7 @@ from loom.rest.fastapi import FastAPIRuntime
 from loom.serverless.aws.lambda_ import LambdaRuntime
 from loom.serverless.aws.lambda_.boundary import LambdaBoundary
 from tests.helpers.aws_island import FakeAwsIsland
-from tests.helpers.handoffs import lambda_failure
+from tests.helpers.boundary import left_loom
 from tests.helpers.lambda_jobs import jobs_queue, jobs_trigger
 from tests.unit.serverless.aws.lambda_.http._clients import lambda_client
 from tests.unit.serverless.aws.lambda_.http._contract_app import bearer
@@ -265,7 +265,7 @@ class TestNamedFunctions:
     ) -> None:
         path = project("public_api", _PUBLIC_AND_ADMIN, _disable("GET", "/ops/nowhere"))
 
-        with lambda_failure(InterfaceCompilationError, match="matches no route"):
+        with left_loom(InterfaceCompilationError, match="matches no route"):
             serve(path)
 
     def test_an_explicit_runtime_wins_over_the_entry(

@@ -30,8 +30,8 @@ from loom.prefect._flow_yaml import extract_pool_config
 from loom.prefect.flow import _backfill_body, _body, _maintenance
 from loom.prefect.flow._hooks import _env_from_params
 from loom.prefect.flow._signature import synthesise_flow_signature
+from tests.helpers.boundary import left_loom
 from tests.helpers.deploy_checks import write_failing_check_module
-from tests.helpers.handoffs import prefect_failure
 from tests.unit.prefect.doubles import (
     AcmeMaintenance,
     AcmeMaintenanceParams,
@@ -144,7 +144,7 @@ class TestRuns:
         monkeypatch.setenv(ENVIRONMENT_VARIABLE, "production")
         flow = _etl(tmp_path)
 
-        with prefect_failure(ConfigError, match="'development'.*'production'"):
+        with left_loom(ConfigError, match="'development'.*'production'"):
             flow.fn(env="development", **_WINDOW)
 
         from_yaml.assert_not_called()
@@ -161,7 +161,7 @@ class TestRuns:
     def test_an_unknown_env_fails_the_run(self, tmp_path: Path, from_yaml: MagicMock) -> None:
         flow = _etl(tmp_path)
 
-        with prefect_failure(ConfigError, match="'prod'"):
+        with left_loom(ConfigError, match="'prod'"):
             flow.fn(env="prod", **_WINDOW)
 
     def test_a_backfill_slice_hands_its_environment_to_the_runner(
@@ -204,7 +204,7 @@ class TestRuns:
             chunk="day",
         )
 
-        with prefect_failure(ConfigError, match="'staging'.*'production'"):
+        with left_loom(ConfigError, match="'staging'.*'production'"):
             flow.fn(env="staging", **_WINDOW)
 
         from_yaml.assert_not_called()
@@ -226,7 +226,7 @@ class TestRuns:
             source_file=_SOURCE_FILE,
         )
 
-        with prefect_failure(ConfigError, match="'development'.*'production'"):
+        with left_loom(ConfigError, match="'development'.*'production'"):
             flow.fn(env="development")
 
         load_context.assert_not_called()
@@ -259,7 +259,7 @@ class TestRuns:
             storage_config_path=str(storage),
         )
 
-        with prefect_failure(DeployCheckError, match=check.check_id):
+        with left_loom(DeployCheckError, match=check.check_id):
             flow.fn(env="production")
 
 

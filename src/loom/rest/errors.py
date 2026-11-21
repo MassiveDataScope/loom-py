@@ -6,7 +6,7 @@ import logging
 from collections.abc import Mapping
 from enum import StrEnum
 from http import HTTPStatus
-from typing import Any, ClassVar, Final
+from typing import Any, ClassVar
 
 from fastapi import HTTPException
 
@@ -22,7 +22,7 @@ from loom.core.errors import (
     RuleViolationsError,
 )
 from loom.core.errors.codes import ErrorCode
-from loom.core.logger.failure import public_form
+from loom.core.errors.failure import Failure
 from loom.core.tracing import get_trace_id
 from loom.rest.constants import BEARER_CHALLENGE, RETRY_AFTER_HEADER, WWW_AUTHENTICATE_HEADER
 
@@ -100,10 +100,12 @@ class HttpErrorMapper:
     - ``public_detail``: extra fields merged into the detail. A key this
       mapper already set (``code``, ``message``, ``trace_id``, and the
       type-specific ones) is a misdeclaration and does not replace it.
-    - ``public_message``: when ``True``, the body shows the error's own
-      message. By default a validation error carries its validation text,
-      any other ``4xx`` the error's public form (code and declared fields)
-      and a ``5xx`` the fixed text.
+
+    The message is what the error declares a client reads
+    (:attr:`~loom.core.errors.LoomError.client_message`, validation text by
+    default), else its code for a ``4xx`` and the fixed text for a ``5xx``.
+    An error's :attr:`~loom.core.errors.LoomError.client_detail` becomes its
+    ``violations``.
 
     A misdeclaration is logged and answered as ``500`` with the error's
     code, the fixed message and the trace id, and no extra fields.
@@ -222,6 +224,12 @@ def _convert(mapper: HttpErrorMapper, error: LoomError) -> HTTPException:
     if isinstance(error, PostCommitError):
         detail[ErrorField.COMMITTED] = error.committed
 
+    if error.client_detail:
+        detail[ErrorField.VIOLATIONS] = [
+            {ErrorField.FIELD: v.field, ErrorField.CODE: v.code, ErrorField.MESSAGE: v.text}
+            for v in error.client_detail
+        ]
+
     _add_public_detail(detail, error)
     return HTTPException(status_code=status, detail=detail, headers=_headers(error, status))
 
@@ -289,30 +297,15 @@ def _owned_overlap(detail: Mapping[str, Any], extra: Mapping[str, Any]) -> set[s
     return set(detail) & set(extra)
 
 
-_CLIENT_VALIDATION_CODES: Final = frozenset(
-    {
-        ErrorCode.BOUNDARY_VALIDATION,
-        ErrorCode.QUERY_VALIDATION,
-        ErrorCode.RULE_VIOLATION,
-        ErrorCode.RULE_VIOLATIONS,
-        ErrorCode.UNSUPPORTED_QUERY,
-        ErrorCode.UNSUPPORTED_FORMAT,
-    }
-)
-"""Codes whose message is validation text about the data the client sent: it may read it."""
-
-
 def _message_of(error: LoomError, status: HTTPStatus) -> str:
-    """The message of *error*'s body: never its text, unless the client may read it.
+    """The message of *error*'s body: what it declares a client reads, else its code.
 
-    Validation text about the client's own data (:data:`_CLIENT_VALIDATION_CODES`)
-    and the message of an error that declares ``public_message`` are shown; any
-    other body carries the error's public form (its code and declared fields),
-    or the fixed text of a ``5xx``.
+    A ``5xx`` that declares nothing answers with the fixed text.
     """
-    if error.code in _CLIENT_VALIDATION_CODES or error.public_message is True:
-        return error.message
-    return _public_message(status, public_form(error))
+    message = Failure(error).client_message
+    if message is not None:
+        return message
+    return _public_message(status, str(error.code))
 
 
 def _public_message(status: int, message: str) -> str:

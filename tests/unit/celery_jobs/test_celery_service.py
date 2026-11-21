@@ -15,11 +15,11 @@ from celery import Celery
 from loom.celery.constants import TASK_JOB_PREFIX
 from loom.celery.service import CallbackLink, CeleryJobTransport
 from loom.core.engine.events import EventKind
+from loom.core.errors.failure import Failure
 from loom.core.job.callback import DispatchableCallbacks, JobCallback
 from loom.core.job.context import flush_pending_dispatches
 from loom.core.job.job import Job
 from loom.core.job.service import JobService
-from loom.core.logger.failure import FailureReference
 from loom.core.tracing import reset_trace_id, set_trace_id
 from tests.helpers.celery import CeleryBroker
 from tests.helpers.jobs import RecordingExecutionObserver
@@ -178,13 +178,13 @@ class TestCallbacks:
 
 
 class TestFailureCallbackSend:
-    def test_the_worker_sends_the_callback_task_with_the_link_and_the_failure_reference(
+    def test_the_worker_sends_the_callback_task_with_the_link_and_the_failure_type(
         self,
     ) -> None:
         broker = CeleryBroker([DEFAULT_QUEUE])
         link = CallbackLink("job-1", {"order_id": 99}, "acme-trace", None)
 
-        failure = FailureReference("ValueError", None, "acme-trace", expected=False, retryable=True)
+        failure = Failure(ValueError("acme-secret"))
 
         link.send_failure(broker.app, "loom.callback_error.Acme", failure)
 
@@ -197,7 +197,7 @@ class TestFailureCallbackSend:
                 "trace_id": "acme-trace",
                 "identity": None,
                 "exc_type": "ValueError",
-                "exc_msg": "ValueError trace_id=acme-trace",
+                "exc_msg": "ValueError",
             },
         )
 

@@ -35,8 +35,8 @@ from opentelemetry.trace import (
     use_span,
 )
 
+from loom.core.errors.failure import Failure
 from loom.core.logger import LogField, LogKey, Scalar, SpanAttributes
-from loom.core.logger.failure import failure_fields, is_expected
 from loom.core.observability.event import EventKind, LifecycleEvent, Scope
 
 EXCEPTION_EVENT: Final = "exception"
@@ -112,9 +112,10 @@ def apply_terminal_state(span: Span, event: LifecycleEvent) -> None:
 
     A failure adds an ``exception`` event with its type, its code and the fields
     it declares, never its message nor its stack (loom's log record holds the
-    stack), and sets the status to ``ERROR`` described by the exception type,
-    unless the failure is expected, which leaves the status unset. Internal to
-    the observability package.
+    stack), and sets the status to ``ERROR`` described by its code, or its type
+    when it has none, unless the failure is expected, which leaves the status
+    unset. The span only observes: it never changes what the caller sees.
+    Internal to the observability package.
 
     Args:
         span: Span being closed.
@@ -129,10 +130,10 @@ def apply_terminal_state(span: Span, event: LifecycleEvent) -> None:
     if failure is None:
         span.set_status(StatusCode.ERROR)
         return
-    fields = failure_fields(failure, stacktrace=False)
-    span.add_event(EXCEPTION_EVENT, cast("Mapping[str, Scalar]", fields))
-    if not is_expected(failure):
-        span.set_status(StatusCode.ERROR, str(fields[LogField.EXCEPTION_TYPE.value]))
+    described = Failure(failure)
+    span.add_event(EXCEPTION_EVENT, cast("Mapping[str, Scalar]", described.fields()))
+    if not described.is_expected:
+        span.set_status(StatusCode.ERROR, described.code or described.type)
 
 
 class LoomSpan:

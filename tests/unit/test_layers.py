@@ -72,8 +72,10 @@ _RULES: dict[str, tuple[tuple[str, ...], tuple[str, ...]]] = {
         (),
     ),
     "loom.core.engine": (("loom.core.observability", "opentelemetry"), ()),
-    # The errors sit under the failure policy that reads them: only the log vocabulary is below.
-    "loom.core.errors": (("loom",), ("loom.core.errors", "loom.core.logger.vocabulary")),
+    # What a field is: the leaf every package that writes a field depends on.
+    "loom.core.fields": (("loom",), ("loom.core.fields",)),
+    # The errors own every failure question: only the fields are below them.
+    "loom.core.errors": (("loom",), ("loom.core.errors", "loom.core.fields")),
     "loom.rest": (("loom.serverless",), ()),
     # A job transport raises its own errors; the composition root maps them.
     "loom.jobs": (("loom.composition",), ()),

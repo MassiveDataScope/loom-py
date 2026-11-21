@@ -14,8 +14,8 @@ from bytewax.outputs import DynamicSink, StatelessSinkPartition
 from confluent_kafka import OFFSET_BEGINNING, OFFSET_END, KafkaError
 from confluent_kafka.admin import AdminClient
 
+from loom.core.errors.failure import Failure
 from loom.core.logger import NO_ATTRIBUTES, SpanAttributes
-from loom.core.logger.failure import public_form
 from loom.core.observability.event import Scope, TerminalReason
 from loom.core.observability.observability import Observability
 from loom.core.observability.span import LoomSpan
@@ -23,6 +23,7 @@ from loom.core.plugins.optional import import_optional
 from loom.core.tracing import generate_trace_id
 from loom.streaming.bytewax._batch_spans import BatchSpan, BatchWindow, emit_batch_spans
 from loom.streaming.bytewax._commit_tracker import CommitCompletionPort, KafkaCommitTracker
+from loom.streaming.bytewax._error_boundary import BytewaxBoundary
 from loom.streaming.compiler._plan import (
     CompiledMongoCDCSource,
     CompiledMultiSource,
@@ -124,7 +125,7 @@ def _write_kafka_batch(
     except KafkaDeliveryError as exc:
         if sink.dlq_topic is None:
             raise
-        dlq_error = public_form(exc).encode("utf-8")
+        dlq_error = Failure(exc).text.encode("utf-8")
         try:
             for item in items:
                 request = item_to_send(item)
@@ -238,7 +239,9 @@ def _warn_on_stale_resume_state(
     )
 
 
-class KafkaPartitionedSource(FixedPartitionedSource[KafkaRecord[bytes], "int | None"]):
+class KafkaPartitionedSource(
+    BytewaxBoundary, FixedPartitionedSource[KafkaRecord[bytes], "int | None"]
+):
     """One Bytewax input partition per Kafka partition.
 
     Partition keys are ``"{topic}:{index}"`` — a durable contract: they are
@@ -365,7 +368,9 @@ class KafkaPartitionedSource(FixedPartitionedSource[KafkaRecord[bytes], "int | N
         self._commit_tracker = commit_tracker
 
 
-class _KafkaSourcePartition(StatefulSourcePartition[KafkaRecord[bytes], "int | None"]):
+class _KafkaSourcePartition(
+    BytewaxBoundary, StatefulSourcePartition[KafkaRecord[bytes], "int | None"]
+):
     """One assigned Kafka partition: batch consume, register, coalesced flush."""
 
     def __init__(
@@ -438,7 +443,7 @@ class _KafkaSourcePartition(StatefulSourcePartition[KafkaRecord[bytes], "int | N
             self._client.close()
 
 
-class _KafkaSinkPartitionBase:
+class _KafkaSinkPartitionBase(BytewaxBoundary):
     """Shared Kafka producer lifecycle and commit-tracker management."""
 
     def __init__(
@@ -533,7 +538,7 @@ def _terminal_failure_attributes(dlq_topic: str | None) -> SpanAttributes:
     return {StreamingLogField.FAILURE_SCOPE: "batch", StreamingLogField.DLQ_TOPIC: dlq_topic}
 
 
-class _TracedMessageSinkPartition(StatelessSinkPartition[Message[StreamPayload]]):
+class _TracedMessageSinkPartition(BytewaxBoundary, StatelessSinkPartition[Message[StreamPayload]]):
     """Record an outbound-topic write as the death of every message in it.
 
     Wraps :class:`_KafkaMessageSinkPartition` and emits the N+1 shape of
@@ -673,7 +678,7 @@ class _KafkaDecodeErrorSinkPartition(_KafkaSinkPartitionBase, StatelessSinkParti
         )
 
 
-class _KafkaDynamicSinkBase:
+class _KafkaDynamicSinkBase(BytewaxBoundary):
     """Shared init and commit-tracker management for Kafka dynamic sinks."""
 
     def __init__(self, sink: CompiledSink) -> None:

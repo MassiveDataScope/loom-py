@@ -18,6 +18,7 @@ from loom.core.config import ConfigContext, ConfigError
 from loom.core.discovery.base import DiscoveryResult
 from loom.core.discovery.scanner import PackageScanner
 from loom.core.discovery.worker import DuplicateJobName
+from loom.core.errors.log_events import ErrorLogField
 from loom.core.identity import ANONYMOUS, current_identity
 from loom.core.job.job import Job
 from loom.core.job.log_events import JobLogEvent
@@ -35,8 +36,8 @@ from loom.serverless.aws.lambda_ import (
     LambdaUnservedConfigError,
 )
 from loom.testing import RecordingJobTransport
+from tests.helpers.boundary import left_loom
 from tests.helpers.composition import composition_project
-from tests.helpers.handoffs import lambda_failure
 from tests.helpers.loggers import rendered
 from tests.helpers.loops import RecordedLoops
 from tests.unit.serverless.aws.lambda_._probe import Probe
@@ -255,7 +256,7 @@ print([name for name in loaded if name in sys.modules])
     ) -> None:
         adapter, application, _ = built
         _add_broken_resource(application)
-        with lambda_failure(RuntimeError, match="open failed"):
+        with left_loom(RuntimeError, match="open failed"):
             adapter.mount(application)
 
     @pytest.mark.parametrize("fifo", [False, True])
@@ -417,7 +418,7 @@ print([name for name in loaded if name in sys.modules])
     ) -> None:
         adapter, application, _ = built
         _add_broken_resource(application)
-        with lambda_failure(RuntimeError, match="open failed"):
+        with left_loom(RuntimeError, match="open failed"):
             adapter.mount(application)
         assert event_loops.created[0].is_closed()
 
@@ -426,7 +427,7 @@ print([name for name in loaded if name in sys.modules])
     ) -> None:
         adapter, application, _ = built
         _add_broken_resource(application)
-        with lambda_failure(RuntimeError, match="open failed"):
+        with left_loom(RuntimeError, match="open failed"):
             adapter.mount(application)
         assert event_loops.made_current[-1] is None
 
@@ -647,7 +648,7 @@ print([name for name in loaded if name in sys.modules])
     ) -> None:
         handler({"Records": [record("42", "committed")]}, None)
         [final] = [r for r in caplog.records if r.getMessage() == JobLogEvent.DELIVERY_ABANDONED]
-        assert final.__dict__[LogField.EXCEPTION_TYPE].endswith("PostCommitError")
+        assert final.__dict__[ErrorLogField.EXCEPTION_TYPE].endswith("PostCommitError")
         assert final.__dict__[LogField.TASK_ID] == "42"
 
     @pytest.mark.parametrize(

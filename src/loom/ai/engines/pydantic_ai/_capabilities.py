@@ -45,6 +45,7 @@ from loom.ai.compiler import (
     CompiledUsecaseCapability,
 )
 from loom.ai.engines.pydantic_ai._a2a import require_a2a_sdk, send_to_remote_agent
+from loom.ai.engines.pydantic_ai._failures import PYDANTIC_AI_PASS_THROUGH
 from loom.ai.engines.pydantic_ai._guards import (
     BuildContext,
     bundle_container,
@@ -78,6 +79,7 @@ from loom.ai.registry import require_provider_sdk
 from loom.core.di import LoomContainer
 from loom.core.engine.compilable import Compilable
 from loom.core.engine.plan import ExecutionPlan
+from loom.core.errors.boundary import boundary
 from loom.core.stores.sql.abc import SqlQueryResult
 from loom.core.stores.sql.service import SqlQueryService
 from loom.core.use_case.invoker import ApplicationInvoker
@@ -179,7 +181,7 @@ def _usecase_tool(grant: _UsecaseGrant, context: BuildContext) -> Tool[Any]:
             return await guarded(grant.tool_name, lambda: grant.invoke(arguments), ok_return)
 
     return Tool.from_schema(
-        call,
+        boundary(call, pass_through=PYDANTIC_AI_PASS_THROUGH),
         name=grant.tool_name,
         description=grant.description,
         json_schema=grant.schema,
@@ -206,7 +208,7 @@ def _sql_toolset(capability: CompiledSqlCapability, context: BuildContext) -> Ab
             )
 
     tool = Tool.from_schema(
-        call,
+        boundary(call, pass_through=PYDANTIC_AI_PASS_THROUGH),
         name=name,
         description=(
             f"Run a read-only query against the '{capability.connection}' connection, "
@@ -386,7 +388,7 @@ def _a2a_tool(capability: CompiledA2ACapability, name: str) -> Tool[Any]:
         return await _delegate(capability, prompt, name)
 
     return Tool.from_schema(
-        call,
+        boundary(call, pass_through=PYDANTIC_AI_PASS_THROUGH),
         name=name,
         description=_a2a_description(capability),
         json_schema=a2a_schema(),

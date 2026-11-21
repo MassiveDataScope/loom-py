@@ -16,8 +16,8 @@ from loom.jobs.aws.errors import SQSQueueConfigError
 from loom.serverless.aws.lambda_ import LambdaRuntime
 from tests.helpers.aws import ACCOUNT, OTHER_REGION
 from tests.helpers.aws_island import FakeAwsIsland, FakeSdkError
+from tests.helpers.boundary import left_loom
 from tests.helpers.composition import composition_project
-from tests.helpers.handoffs import lambda_failure
 from tests.helpers.loggers import logged_events
 from tests.helpers.sqs import FakeSqs, queue_url
 from tests.unit.serverless.aws.lambda_._probe import Probe
@@ -88,7 +88,7 @@ class TestConsumedQueue:
     def test_a_dead_letter_queue_without_a_policy_fails_start_up_naming_the_queue(
         self, tmp_path: Path, probe: tuple[type[Job[None]], Probe], mount: Mount
     ) -> None:
-        with lambda_failure(SQSQueueConfigError) as raised:
+        with left_loom(SQSQueueConfigError) as raised:
             mount(tmp_path, probe, FakeSqs())
 
         assert "'jobs'" in str(raised.value)
@@ -99,7 +99,7 @@ class TestConsumedQueue:
     ) -> None:
         jobs = {probe[0].__name__: {"queue": "jobs", "retry": {"max_attempts": 7}}}
 
-        with lambda_failure(
+        with left_loom(
             ConfigError, match=r"declares jobs\.<Job>\.retry\.max_attempts.*maxReceiveCount"
         ):
             mount(tmp_path, probe, FakeSqs(_POLICY), jobs=jobs)
@@ -150,7 +150,7 @@ class TestConsumedQueue:
     def test_a_queue_that_cannot_be_read_at_start_up_fails_naming_it(
         self, tmp_path: Path, probe: tuple[type[Job[None]], Probe], mocked_aws: None, mount: Mount
     ) -> None:
-        with lambda_failure(ConfigError, match=r"queue 'jobs'.*NonExistentQueue"):
+        with left_loom(ConfigError, match=r"queue 'jobs'.*NonExistentQueue"):
             mount(tmp_path, probe, None)
 
     def test_an_error_that_is_not_the_sdks_propagates_unwrapped(
@@ -158,7 +158,7 @@ class TestConsumedQueue:
     ) -> None:
         client = FakeSqs(_POLICY, lookup_raises=TypeError("a bug"))
 
-        with lambda_failure(TypeError, match="a bug"):
+        with left_loom(TypeError, match="a bug"):
             mount(tmp_path, probe, client)
 
     def test_a_fake_sdk_error_at_init_fails_naming_the_queue_through_the_fake_island(
@@ -172,7 +172,7 @@ class TestConsumedQueue:
             make_client=lambda service, config: FakeSqs(lookup_raises=FakeSdkError("throttled"))
         ).install(monkeypatch)
 
-        with lambda_failure(ConfigError, match=r"queue 'jobs'.*FakeSdkError: throttled"):
+        with left_loom(ConfigError, match=r"queue 'jobs'.*FakeSdkError: throttled"):
             mount(tmp_path, probe, None)
 
     def test_the_policy_is_read_at_start_up_with_the_retrying_client_only(
@@ -224,11 +224,11 @@ class TestConsumedQueue:
             "Attributes": {"RedrivePolicy": policy}
         }
 
-        with lambda_failure(SQSQueueConfigError, match=r"queue 'jobs' has a RedrivePolicy"):
+        with left_loom(SQSQueueConfigError, match=r"queue 'jobs' has a RedrivePolicy"):
             mount(tmp_path, probe, client)
 
     def test_a_consumed_queue_sqs_queues_does_not_map_fails_start_up(
         self, tmp_path: Path, probe: tuple[type[Job[None]], Probe], mount: Mount
     ) -> None:
-        with lambda_failure(ConfigError, match=r"sqs\.queues\.jobs is missing"):
+        with left_loom(ConfigError, match=r"sqs\.queues\.jobs is missing"):
             mount(tmp_path, probe, FakeSqs(), unmapped=True)

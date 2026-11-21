@@ -9,7 +9,6 @@ the metadata contract is made in exactly one place.
 
 from __future__ import annotations
 
-import functools
 import inspect
 from collections.abc import Callable, Mapping
 from dataclasses import dataclass
@@ -21,7 +20,7 @@ import msgspec
 import prefect
 
 from loom.core.environment import Environment
-from loom.core.logger.failure import Handoff, reference
+from loom.core.errors.boundary import boundary
 from loom.prefect._config import FlowConfig, flow_config_from_mapping
 from loom.prefect._flow_yaml import (
     extract_pool_config,
@@ -85,34 +84,6 @@ def flow_settings_from_mapping(raw_cfg: Mapping[str, Any]) -> FlowSettings:
     )
 
 
-class PrefectHandoff(Handoff):
-    """Where a flow built by loom hands a failure to Prefect or to a notification channel."""
-
-    FLOW_STATE = "prefect.flow_state"
-    NOTIFICATION = "prefect.notification"
-
-
-def handing_off(body: Callable[..., None]) -> Callable[..., None]:
-    """Wrap a flow *body* so a failure reaches Prefect as a reference, with no context.
-
-    Prefect writes the raised exception's text into the run's ``Failed``
-    state message, its result and the notifications built from it; the
-    failure itself is logged once through loom.
-    """
-
-    @functools.wraps(body)
-    def run(**kwargs: Any) -> None:
-        try:
-            body(**kwargs)
-        except Exception as exc:
-            failure = reference(exc)
-        else:
-            return
-        raise failure
-
-    return run
-
-
 def flow_attribute_name(name: str) -> str:
     """Derive the Python attribute name a flow body carries for *name*.
 
@@ -140,7 +111,11 @@ def assemble_flow(
 ) -> Any:
     """Decorate *body* as a Prefect flow and attach the deployer metadata.
 
-    A failure of *body* reaches Prefect as a reference (:func:`handing_off`).
+    The body and every hook go through the loom boundary: Prefect writes the
+    raised exception's text into the run's ``Failed`` state, its result and
+    the notifications built from it, so that exception is a clean
+    ``LoomError``. Prefect's own signals are ``BaseException``s, which cross
+    it as they are.
 
     Args:
         name: Logical flow name (Prefect flow name AND deployment name).
@@ -167,7 +142,7 @@ def assemble_flow(
     """
     check_inherited_params(settings.trigger, params_type, name=name)
     safe_name = flow_attribute_name(name)
-    flow_body: Any = handing_off(body)
+    flow_body: Any = boundary(body)
     flow_body.__signature__ = signature
     flow_body.__name__ = safe_name
     flow_body.__qualname__ = safe_name
@@ -175,12 +150,12 @@ def assemble_flow(
     failure_hooks, completion_hooks = make_notification_hooks(name, settings.notifiers)
     decorated = prefect.flow(
         name=name,
-        flow_run_name=make_run_name_callback(correlation_field),
+        flow_run_name=boundary(make_run_name_callback(correlation_field)),
         retries=retries,
         retry_delay_seconds=retry_delay_seconds,
         validate_parameters=False,
-        on_failure=[pause_schedule_on_failure, *failure_hooks],
-        on_completion=completion_hooks or None,
+        on_failure=[boundary(hook) for hook in (pause_schedule_on_failure, *failure_hooks)],
+        on_completion=[boundary(hook) for hook in completion_hooks] or None,
     )(flow_body)
     setattr(
         decorated,

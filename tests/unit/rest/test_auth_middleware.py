@@ -21,8 +21,8 @@ from fastapi import FastAPI
 from fastapi.testclient import TestClient
 
 from loom.core.errors import SystemError
+from loom.core.errors.log_events import ErrorLogField
 from loom.core.identity import Identity, current_identity
-from loom.core.logger import LogField
 from loom.core.tracing import active_trace_id
 from loom.rest.auth import AuthenticationMiddleware, AuthenticationUnavailable, RequestCredentials
 from loom.rest.fastapi.auto import create_app
@@ -368,8 +368,8 @@ class TestAuthenticatorOutage:
         error = AuthenticationUnavailable("issuer keys unreachable")
         with caplog.at_level(logging.WARNING, logger="loom.rest.auth.middleware"):
             await _raw_call(_FailingAuthenticator(error))
-        [record] = [r for r in caplog.records if LogField.EXCEPTION_TYPE in r.__dict__]
-        assert record.__dict__[LogField.EXCEPTION_TYPE].endswith("AuthenticationUnavailable")
+        [record] = [r for r in caplog.records if ErrorLogField.EXCEPTION_TYPE in r.__dict__]
+        assert record.__dict__[ErrorLogField.EXCEPTION_TYPE].endswith("AuthenticationUnavailable")
         assert "issuer keys unreachable" not in caplog.text
 
     async def test_an_unavailable_mechanism_is_logged_as_a_warning(

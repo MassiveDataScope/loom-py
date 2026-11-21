@@ -12,6 +12,7 @@ import asyncio
 import pytest
 
 from loom.composition import Application
+from loom.core.errors.log_events import ErrorLogField
 from loom.core.execution import ExecutionRequired
 from loom.core.identity import Identity, reset_identity, set_identity
 from loom.core.job import JobService
@@ -60,7 +61,7 @@ async def _run_as(application: Application, caller: Identity, shipment_id: str) 
 def _failed_jobs(caplog: pytest.LogCaptureFixture) -> list[str]:
     """The exception type of each message of the job the runner abandoned."""
     return [
-        str(entry[LogField.EXCEPTION_TYPE])
+        str(entry[ErrorLogField.EXCEPTION_TYPE])
         for entry in logged_events(caplog)
         if entry["event"] == JobLogEvent.DELIVERY_ABANDONED
         and entry.get(LogField.JOB) == TrackShipmentJob.__name__

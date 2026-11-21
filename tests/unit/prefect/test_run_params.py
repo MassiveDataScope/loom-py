@@ -19,7 +19,7 @@ from prefect.runtime import flow_run as prefect_flow_run
 from prefect.settings import PREFECT_CLIENT_MAX_RETRIES
 from prefect.types import DateTime as PrefectDateTime
 
-from loom.core.logger import LogField
+from loom.core.errors.log_events import ErrorLogField
 from loom.etl import ETLParams, ETLPipeline, ETLProcess, ETLStep, FromTable, IntoTable
 from loom.etl.maintenance._runner import MaintenanceReport
 from loom.etl.maintenance._step import MaintenanceStep
@@ -315,7 +315,7 @@ class TestEtlRunParams:
         [record] = [r for r in caplog.records if r.name == _params.__name__]
         assert record.levelno == logging.ERROR
         assert str(_RUN_ID) in record.getMessage()
-        assert record.__dict__[LogField.EXCEPTION_TYPE] == "RuntimeError"
+        assert record.__dict__[ErrorLogField.EXCEPTION_TYPE] == "RuntimeError"
         assert "api down" not in rendered(record)
 
     @pytest.mark.usefixtures("in_run")
@@ -339,7 +339,7 @@ class TestEtlRunParams:
         client.update_flow_run.assert_not_called()
         [record] = [r for r in caplog.records if r.name == _params.__name__]
         assert record.levelno == logging.ERROR
-        assert record.__dict__[LogField.EXCEPTION_TYPE] == "TypeError"
+        assert record.__dict__[ErrorLogField.EXCEPTION_TYPE] == "TypeError"
         assert "cannot serialise" not in rendered(record)
 
     def test_nothing_is_recorded_outside_a_flow_run(

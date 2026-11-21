@@ -5,6 +5,7 @@ from __future__ import annotations
 import json
 import logging
 
+from loom.core.errors.log_events import ErrorLogField
 from loom.core.logger import LogField
 from loom.core.logger.formats import JsonFormatter, TextFormatter
 
@@ -50,9 +51,11 @@ class TestTextFormatter:
 
     def test_the_stacktrace_follows_the_line_with_every_row_indented(self) -> None:
         first, *rows = (
-            TextFormatter().format(_record(**{LogField.EXCEPTION_STACKTRACE: _STACK})).splitlines()
+            TextFormatter()
+            .format(_record(**{ErrorLogField.EXCEPTION_STACKTRACE: _STACK}))
+            .splitlines()
         )
 
-        assert LogField.EXCEPTION_STACKTRACE.value not in first
+        assert ErrorLogField.EXCEPTION_STACKTRACE.value not in first
         assert rows[0] == "  | Traceback (most recent call last):"
         assert all(row.startswith("  | ") for row in rows)

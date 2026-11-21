@@ -11,6 +11,7 @@ from pymongo.errors import OperationFailure
 
 from loom.connections.mongo import mongo_island
 from loom.core.model.redaction import reveal_for_driver
+from loom.streaming.bytewax._error_boundary import BytewaxBoundary
 from loom.streaming.compiler._plan import CompiledMongoCDCSource
 from loom.streaming.core._message import Message
 from loom.streaming.mongo._event import MongoCDCEvent
@@ -59,7 +60,10 @@ class _DatabaseLike(Protocol):
         ...
 
 
-class MongoCDCPartition(StatefulSourcePartition[Message[MongoCDCEvent], dict[str, object] | None]):
+class MongoCDCPartition(
+    BytewaxBoundary,
+    StatefulSourcePartition[Message[MongoCDCEvent], dict[str, object] | None],
+):
     """Single MongoDB change-stream partition backed by PyMongo."""
 
     def __init__(
@@ -138,7 +142,9 @@ class MongoCDCPartition(StatefulSourcePartition[Message[MongoCDCEvent], dict[str
         return self._stream.try_next()
 
 
-class MongoCDCSource(FixedPartitionedSource[Message[MongoCDCEvent], dict[str, object] | None]):
+class MongoCDCSource(
+    BytewaxBoundary, FixedPartitionedSource[Message[MongoCDCEvent], dict[str, object] | None]
+):
     """Bytewax source wrapping a MongoDB change stream."""
 
     _PARTITION_KEY = "mongo_cdc"

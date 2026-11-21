@@ -9,6 +9,7 @@ from bytewax.operators import branch as bw_branch
 from bytewax.operators import flat_map as bw_flat_map
 from bytewax.operators import map as bw_map
 
+from loom.core.errors.boundary import boundary
 from loom.core.observability.observability import Observability
 from loom.streaming.bytewax._error_boundary import (
     ErrorBoundary,
@@ -70,7 +71,7 @@ def _apply_router(
     router = raw
     observer = ctx.flow_runtime
     flow_name = ctx.plan.name
-    boundary = ErrorBoundary(observer=observer, flow=flow_name)
+    error_boundary = ErrorBoundary(observer=observer, flow=flow_name)
     branches = tuple(iter_branches(router))
     router_path = ctx.current_path
 
@@ -80,11 +81,11 @@ def _apply_router(
             _classify_routing,
             message,
             lambda: _execute_router_step(observer, flow_name, idx, router, branches, message),
-            boundary,
+            error_boundary,
         )
 
     sid = _step_id(f"router_{idx}", ctx)
-    routed = bw_map(sid, stream, step)
+    routed = bw_map(sid, stream, boundary(step))
     for branch in branches:
         if branch_ends_path(branch):
             ctx.wire_branch(
@@ -92,13 +93,15 @@ def _apply_router(
                 bw_flat_map(
                     _step_id(f"router_{idx}_to_{branch.index}", ctx),
                     routed,
-                    _routed_to(branch.index),
+                    boundary(_routed_to(branch.index)),
                 ),
                 branch.nodes,
                 router_path + (branch.index,),
                 start=len(branch.nodes) - 1,
             )
-    continuing = bw_flat_map(_step_id(f"router_{idx}_continue", ctx), routed, _routed_to(None))
+    continuing = bw_flat_map(
+        _step_id(f"router_{idx}_continue", ctx), routed, boundary(_routed_to(None))
+    )
     live = _split_node_result(continuing, sid, ctx, ErrorKind.ROUTING)
     return None if router_ends_every_path(router) else live
 
@@ -158,7 +161,7 @@ def _apply_broadcast(
         stream = bw_map(
             _step_id(f"broadcast_{idx}_fanout", ctx),
             stream,
-            lambda item: _register_broadcast_fanout(item, tracker, len(node.routes)),
+            boundary(lambda item: _register_broadcast_fanout(item, tracker, len(node.routes))),
         )
 
     for branch in iter_branches(node):
@@ -220,8 +223,10 @@ def _wire_row_fanout(
     return bw_map(
         _step_id(f"expand_routes_{idx}_fanout", ctx),
         stream,
-        lambda item: _register_row_fanout(
-            item, tracker, declared_types, has_default, observer, flow_name
+        boundary(
+            lambda item: _register_row_fanout(
+                item, tracker, declared_types, has_default, observer, flow_name
+            )
         ),
     )
 
@@ -245,7 +250,7 @@ def _apply_expand_routes(
     expanded_stream = bw_map(
         _step_id(f"expand_routes_{idx}_expand", ctx),
         stream,
-        do_expand,
+        boundary(do_expand),
     )
 
     expanded_stream = _wire_row_fanout(expanded_stream, node, idx, ctx)
@@ -256,7 +261,7 @@ def _apply_expand_routes(
         route_stream = bw_flat_map(
             _step_id(f"expand_routes_{idx}_extract_{branch.index}", ctx),
             expanded_stream,
-            _row_extractor(node, output_type),
+            boundary(_row_extractor(node, output_type)),
         )
         ctx.wire_branch(
             f"expand_routes_{idx}_out_{branch.index}", route_stream, branch.nodes, branch_path
@@ -293,7 +298,7 @@ def _apply_fork(stream: Stream, raw: object, idx: int, ctx: _BuildContextProtoco
 
             kind = "by" if keyed else "when"
             split = bw_branch(
-                _step_id(f"fork_{idx}_{kind}_{branch.index}", ctx), remaining, predicate
+                _step_id(f"fork_{idx}_{kind}_{branch.index}", ctx), remaining, boundary(predicate)
             )
             claimed, remaining = split.trues, split.falses
         ctx.wire_branch(f"fork_{idx}_out_{branch.index}", claimed, branch.nodes, branch_path)

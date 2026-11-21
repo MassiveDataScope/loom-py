@@ -10,7 +10,6 @@ import yaml
 from typer.testing import CliRunner
 
 from loom.cli.app import app
-from tests.helpers.handoffs import EchoedFailures
 
 runner = CliRunner()
 SRC = Path(__file__).resolve().parents[3] / "src"
@@ -83,9 +82,7 @@ class TestSchemaInit:
             "stores": {"default": {"backend": "sqlalchemy", "schema": DERIVED}}
         }
 
-    def test_init_never_overwrites_a_name_the_product_changed(
-        self, tmp_path: Path, echoed: EchoedFailures
-    ) -> None:
+    def test_init_never_overwrites_a_name_the_product_changed(self, tmp_path: Path) -> None:
         config = tmp_path / "loom.yaml"
         changed = {**DERIVED, "guard": "notes_guard"}
         config.write_text(
@@ -95,16 +92,16 @@ class TestSchemaInit:
         result = runner.invoke(app, ["schema", "init", "notes", "--config", str(config)])
 
         assert result.exit_code == 1
-        assert "stores.default.schema.guard" in echoed.messages
+        assert "stores.default.schema.guard" in result.output
         assert yaml.safe_load(config.read_text()) == {
             "stores": {"default": {"backend": "sqlalchemy", "schema": changed}}
         }
 
-    def test_init_rejects_a_schema_name_postgres_would_change(self, echoed: EchoedFailures) -> None:
+    def test_init_rejects_a_schema_name_postgres_would_change(self) -> None:
         result = runner.invoke(app, ["schema", "init", "Notes"])
 
         assert result.exit_code == 1
-        assert "Notes" in echoed.messages
+        assert "Notes" in result.output
 
     def test_init_fills_a_null_database_section(self, tmp_path: Path) -> None:
         config = tmp_path / "loom.yaml"
@@ -132,7 +129,7 @@ class TestSchemaInit:
         ],
     )
     def test_init_refuses_a_section_that_is_not_a_mapping(
-        self, document: str, expected: str, tmp_path: Path, echoed: EchoedFailures
+        self, document: str, expected: str, tmp_path: Path
     ) -> None:
         config = tmp_path / "loom.yaml"
         config.write_text(document)
@@ -140,12 +137,10 @@ class TestSchemaInit:
         result = runner.invoke(app, ["schema", "init", "notes", "--config", str(config)])
 
         assert result.exit_code == 1
-        assert expected in echoed.messages
+        assert expected in result.output
         assert config.read_text() == document
 
-    def test_init_reports_a_section_the_product_replaced_by_a_value(
-        self, tmp_path: Path, echoed: EchoedFailures
-    ) -> None:
+    def test_init_reports_a_section_the_product_replaced_by_a_value(self, tmp_path: Path) -> None:
         config = tmp_path / "loom.yaml"
         config.write_text(
             yaml.safe_dump(
@@ -156,7 +151,7 @@ class TestSchemaInit:
         result = runner.invoke(app, ["schema", "init", "notes", "--config", str(config)])
 
         assert result.exit_code == 1
-        assert "stores.default.schema.groups" in echoed.messages
+        assert "stores.default.schema.groups" in result.output
 
     def test_init_works_without_sqlalchemy(self) -> None:
         result = _run(

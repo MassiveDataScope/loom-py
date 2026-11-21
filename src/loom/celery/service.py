@@ -36,12 +36,12 @@ from loom.celery.constants import callback_task_name
 from loom.celery.log_events import CeleryLogField
 from loom.core.engine.events import EventKind, ExecutionEvent
 from loom.core.engine.execution_observer import NullExecutionObserver
+from loom.core.errors.failure import Failure
 from loom.core.job.callback import CallbackOutcome
 from loom.core.job.context import add_pending_publish
 from loom.core.job.dispatch import JobDispatch
 from loom.core.job.handle import JobHandle
 from loom.core.logger import LogField
-from loom.core.logger.failure import FailureReference
 from loom.core.observability.event import Scope
 from loom.core.observability.observability import Observability
 
@@ -131,8 +131,8 @@ class CallbackLink(msgspec.Struct, frozen=True):
             kwargs=msgspec.structs.asdict(self),
         )
 
-    def send_failure(self, celery_app: Celery, task_name: str, error: FailureReference) -> None:
-        """Send the failure callback task *task_name* with this link and the failure's reference.
+    def send_failure(self, celery_app: Celery, task_name: str, failure: Failure) -> None:
+        """Send the failure callback task *task_name* with this link and the failure's type, text.
 
         The callback runs at least once: a worker that dies between this send
         and acknowledging the job's message sends it again. A send that fails
@@ -141,17 +141,17 @@ class CallbackLink(msgspec.Struct, frozen=True):
         Args:
             celery_app: The application the callback task belongs to.
             task_name: The name of the callback task (:func:`callback_task_name`).
-            error: The reference of the error that ended the job: ``exc_type`` is
-                the original type, ``exc_msg`` its public text (type, code and
-                trace id), never the error's message.
+            failure: The error that ended the job: ``exc_type`` is its fully
+                qualified type, ``exc_msg`` its :attr:`~loom.core.errors.failure.Failure.text`,
+                never a foreign message.
         """
         try:
             celery_app.send_task(
                 task_name,
                 kwargs={
                     **msgspec.structs.asdict(self),
-                    "exc_type": error.exception_type,
-                    "exc_msg": str(error),
+                    "exc_type": failure.type,
+                    "exc_msg": failure.text,
                 },
             )
         except Exception:

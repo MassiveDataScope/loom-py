@@ -20,8 +20,8 @@ from loom.serverless.aws.lambda_ import LambdaRuntime
 from loom.serverless.aws.lambda_.handler import LambdaHandler
 from loom.serverless.aws.lambda_.triggers.http import LambdaHTTPHandler
 from loom.testing import LambdaTestClient
+from tests.helpers.boundary import left_loom
 from tests.helpers.composition import application_of
-from tests.helpers.handoffs import lambda_failure
 from tests.helpers.jobs import InlineServiceFixture, JobActivity, JobKernel
 from tests.helpers.loops import RecordedLoops
 from tests.unit.serverless.aws.lambda_.http._clients import LambdaProject, Reply, lambda_client
@@ -216,7 +216,7 @@ class TestLambdaHandler:
     ) -> None:
         adapter, application = unreachable
 
-        with lambda_failure(ConnectionError, match="database unreachable"):
+        with left_loom(ConnectionError, match="database unreachable"):
             adapter.mount(application)
 
     def test_a_failure_to_open_closes_its_loop(
@@ -224,7 +224,7 @@ class TestLambdaHandler:
     ) -> None:
         adapter, application = unreachable
 
-        with lambda_failure(ConnectionError):
+        with left_loom(ConnectionError):
             adapter.mount(application)
         assert event_loops.created[0].is_closed()
 
@@ -233,7 +233,7 @@ class TestLambdaHandler:
     ) -> None:
         adapter, application = unreachable
 
-        with lambda_failure(ConnectionError):
+        with left_loom(ConnectionError):
             adapter.mount(application)
         assert event_loops.made_current[-1] is None
 

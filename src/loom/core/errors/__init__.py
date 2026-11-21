@@ -8,7 +8,13 @@ from loom.core.errors.auth import (
     MissingCaller,
     Unauthenticated,
 )
-from loom.core.errors.base import DomainError, LoomError, SystemError
+from loom.core.errors.base import (
+    ClientViolation,
+    DomainError,
+    ErrorDeclarationError,
+    LoomError,
+    SystemError,
+)
 from loom.core.errors.container import ContainerSealed, ResolutionError
 from loom.core.errors.domain import (
     BODY_FIELD,
@@ -19,6 +25,7 @@ from loom.core.errors.domain import (
     RuleViolationsError,
     UnsupportedQuery,
 )
+from loom.core.errors.failure import UnexpectedError
 from loom.core.errors.jobs import (
     JobFailedError,
     JobTimeoutError,
@@ -41,10 +48,12 @@ from loom.core.errors.stores import (
 __all__ = [
     "BODY_FIELD",
     "BoundaryValidationError",
+    "ClientViolation",
     "Conflict",
     "ContainerSealed",
     "DelegationExpired",
     "DomainError",
+    "ErrorDeclarationError",
     "Forbidden",
     "IdentityFixed",
     "ForeignSessionError",
@@ -66,6 +75,7 @@ __all__ = [
     "StoresNotCommittedError",
     "SystemError",
     "Unauthenticated",
+    "UnexpectedError",
     "UncomposedStore",
     "UndeclaredStoreWrite",
     "UnitOfWorkInsideScope",

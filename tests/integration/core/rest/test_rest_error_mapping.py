@@ -202,7 +202,7 @@ class TestNotFoundErrors:
         assert detail["entity"] == "Product"
         assert detail["id"] == 99
 
-    def test_not_found_body_has_the_public_form_not_the_message(self) -> None:
+    def test_not_found_body_answers_with_its_code_not_the_error_text(self) -> None:
         harness = HttpTestHarness()
         harness.inject_repo(Product, InMemoryProductRepository())
         harness.force_error(Product, "get_by_id", NotFound("Product", id=1))

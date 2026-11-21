@@ -21,7 +21,6 @@ import pytest
 pytest.importorskip("fastmcp", reason="fastmcp is not installed: uv sync --group mcp-tests")
 
 from pydantic_ai import Agent  # noqa: E402
-from pydantic_ai.exceptions import ModelRetry  # noqa: E402
 from pydantic_ai.messages import (  # noqa: E402
     ModelMessage,
     ModelResponse,
@@ -320,14 +319,17 @@ class TestACallThatMayHaveRun:
     async def test_a_cut_after_the_tool_ran_fails_the_run_and_never_reaches_the_model(
         self, monkeypatch: pytest.MonkeyPatch
     ) -> None:
-        """Round 3, H1: the client's own error arrives wrapped in ``ModelRetry``."""
+        """Round 3, H1: the client's own error arrives wrapped in ``ModelRetry``.
+
+        The toolset is a loom boundary, so the failure leaves it with its chain cleaned.
+        """
         async with _world(monkeypatch) as world:
             world.server.fault("echo", "cut")
 
             error, model = await world.failed_run()
 
         assert error.code is AgentRunErrorCode.MCP_CALL_INTERRUPTED
-        assert isinstance(error.__cause__, ModelRetry)
+        assert error.__cause__ is None
         assert (model.calls, model.seen) == (1, [])
         assert world.server.runs["echo"] == 1
         assert len(world.built) == 1

@@ -7,7 +7,10 @@ from typing import Generic, TypeVar
 import msgspec
 from typing_extensions import TypeAliasType
 
+from loom.core.fields import LogKey, Scalar
+from loom.core.logger import LogField, SpanAttributes
 from loom.core.model import LoomFrozenStruct, LoomStruct
+from loom.streaming.log_events import StreamingLogField
 
 StreamPayload = TypeAliasType("StreamPayload", LoomStruct | LoomFrozenStruct)
 """Union of all valid streaming payload types."""
@@ -48,6 +51,22 @@ class MessageMeta(LoomFrozenStruct, frozen=True, kw_only=True):
     offset: int | None = None
     key: bytes | str | None = None
     headers: dict[str, bytes] = msgspec.field(default_factory=dict)
+
+    def span_attributes(self) -> SpanAttributes:
+        """The ``loom.*`` span attributes this message carries, only those that are set.
+
+        A span never advertises an empty lineage.
+        """
+        optional: dict[LogKey, Scalar | None] = {
+            StreamingLogField.MESSAGE_ID: self.message_id,
+            StreamingLogField.PARENT_TRACE_ID: self.parent_trace_id,
+            StreamingLogField.CAUSATION_ID: self.causation_id,
+            StreamingLogField.MESSAGE_TYPE: self.message_type,
+            LogField.MESSAGING_DESTINATION_NAME: self.topic,
+            StreamingLogField.KAFKA_PARTITION: self.partition,
+            StreamingLogField.KAFKA_OFFSET: self.offset,
+        }
+        return {key: value for key, value in optional.items() if value is not None}
 
 
 class Message(LoomFrozenStruct, Generic[PayloadT], frozen=True, kw_only=True):

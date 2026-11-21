@@ -10,6 +10,7 @@ from opentelemetry.trace import StatusCode
 
 from loom.core.bootstrap.kernel import create_kernel
 from loom.core.errors import NotFound
+from loom.core.errors.log_events import ErrorLogField
 from loom.core.logger import LogField, LogIdentity
 from loom.core.logger.install import install_record_factory
 from loom.core.observability.event import EventKind, Scope
@@ -56,9 +57,9 @@ class TestNestedScopes:
 
         inner, outer = _ended(lifecycle)
         assert (inner.levelname, outer.levelname) == ("ERROR", "WARNING")
-        assert LogField.EXCEPTION_STACKTRACE in inner.__dict__
-        assert LogField.EXCEPTION_STACKTRACE not in outer.__dict__
-        assert outer.__dict__[LogField.EXCEPTION_TYPE] == "ValueError"
+        assert ErrorLogField.EXCEPTION_STACKTRACE in inner.__dict__
+        assert ErrorLogField.EXCEPTION_STACKTRACE not in outer.__dict__
+        assert outer.__dict__[ErrorLogField.EXCEPTION_TYPE] == "ValueError"
         assert outer.__dict__[LogField.STATUS] == "failure"
         assert _SECRET not in lifecycle.text
 
@@ -68,8 +69,8 @@ class TestNestedScopes:
         _fail_in(Observability([LogLifecycleObserver()]), NotFound("Invoice", id=1))
 
         assert [r.levelname for r in _ended(lifecycle)] == ["INFO", "INFO"]
-        assert all(LogField.EXCEPTION_STACKTRACE not in r.__dict__ for r in _ended(lifecycle))
-        assert _ended(lifecycle)[0].__dict__[LogField.ERROR_CODE] == "not_found"
+        assert all(ErrorLogField.EXCEPTION_STACKTRACE not in r.__dict__ for r in _ended(lifecycle))
+        assert _ended(lifecycle)[0].__dict__[ErrorLogField.ERROR_CODE] == "not_found"
 
 
 class TestSpanOutputs:
@@ -89,8 +90,11 @@ class TestSpanOutputs:
             StatusCode.ERROR,
             "RuntimeError",
         )
-        assert (event.name, attributes[LogField.EXCEPTION_TYPE]) == ("exception", "RuntimeError")
-        assert LogField.EXCEPTION_STACKTRACE not in attributes
+        assert (event.name, attributes[ErrorLogField.EXCEPTION_TYPE]) == (
+            "exception",
+            "RuntimeError",
+        )
+        assert ErrorLogField.EXCEPTION_STACKTRACE not in attributes
         assert _SECRET not in repr(span.to_json())
 
     def test_an_expected_failure_leaves_the_span_status_unset(self) -> None:
@@ -101,7 +105,7 @@ class TestSpanOutputs:
 
         span = recorder.one("job:SendInvoice")
         assert span.status.status_code is StatusCode.UNSET
-        assert dict(span.events[0].attributes or {})[LogField.ERROR_CODE] == "not_found"
+        assert dict(span.events[0].attributes or {})[ErrorLogField.ERROR_CODE] == "not_found"
 
 
 class TestEngineScope:

@@ -6,8 +6,8 @@ import logging
 from collections.abc import Mapping
 from typing import Final, cast
 
+from loom.core.errors.failure import Failure
 from loom.core.logger import LogField, Scalar
-from loom.core.logger.failure import failure_level
 from loom.core.observability.event import EventKind, LifecycleEvent, LifecycleStatus, Scope
 from loom.core.observability.log_events import ObservabilityLogEvent
 
@@ -85,7 +85,7 @@ class LogLifecycleObserver:
     def _level_of(event: LifecycleEvent) -> int:
         """The level of the record that writes *event*."""
         if event.kind is EventKind.ERROR:
-            level = logging.ERROR if event.failure is None else failure_level(event.failure)
+            level = logging.ERROR if event.failure is None else Failure(event.failure).level
             return min(level, logging.WARNING) if event.scope is Scope.TRANSPORT else level
         if event.scope is Scope.TRANSPORT:
             return logging.DEBUG

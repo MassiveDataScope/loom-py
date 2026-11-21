@@ -10,6 +10,8 @@ from typing import Final, cast
 
 from loom.core.config.errors import ConfigError
 from loom.core.environment import Environment, resolve_environment
+from loom.core.errors.boundary import ProcessHooks
+from loom.core.fields import MAX_LIST_ITEMS
 from loom.core.logger.filter import LogFilter
 from loom.core.logger.formats import (
     json_format,
@@ -21,8 +23,6 @@ from loom.core.logger.log_events import LoggerLogEvent, LoggerLogField
 from loom.core.logger.record import LoomRecordFactory, TraceIds, loom_trace_ids
 from loom.core.logger.settings import LogSettings
 from loom.core.logger.stamp import LogIdentity, LogRuntime
-from loom.core.logger.uncaught import install_process_hooks
-from loom.core.logger.values import MAX_LIST_ITEMS
 from loom.core.logger.vocabulary import LogField
 from loom.core.plugins.entrypoints import (
     EntryPointNotFoundError,
@@ -99,7 +99,7 @@ class LogInstallation:
         self.factory.running_as(runtime)
 
 
-def install_entry_point() -> None:
+def install_entry_point() -> ProcessHooks:
     """Make a runtime entry point safe before it reads any configuration.
 
     Lambda Init and the ``loom`` command run before logging is configured: the
@@ -107,9 +107,12 @@ def install_entry_point() -> None:
     logged with no message, and the process hooks (uncaught exceptions,
     threads, unraisable exceptions, warnings) report through loom. The
     environment is the process's, or production when ``LOOM_ENV`` is unreadable.
+
+    Returns:
+        The installed hooks, which the entry point restores when it ends.
     """
     install_record_factory(LogIdentity(environment=_environment_name()))
-    install_process_hooks()
+    return ProcessHooks().install()
 
 
 def _environment_name() -> str:
@@ -154,7 +157,7 @@ def configure_logging(
     level too. The third-party floors and ``named_levels`` are applied. Calling
     it again leaves one filter on each handler. The hooks for uncaught
     exceptions and warnings are a runtime entry point's to install
-    (:func:`~loom.core.logger.uncaught.install_process_hooks`).
+    (:class:`~loom.core.errors.boundary.ProcessHooks`).
 
     Args:
         settings: The ``observability.log`` settings.

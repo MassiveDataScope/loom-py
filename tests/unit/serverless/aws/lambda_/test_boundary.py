@@ -1,19 +1,20 @@
-"""The Lambda edges: a failure reaches the runtime as a reference, and is logged once."""
+"""The Lambda edges: a failure reaches the runtime as a clean loom exception, logged once."""
 
 from __future__ import annotations
 
 import logging
+import sys
+import threading
 from typing import Any
 
 import pytest
 
 from loom.core.errors import NotFound
-from loom.core.logger import LogField, LogIdentity
-from loom.core.logger.failure import FailureReference
+from loom.core.errors.log_events import ErrorLogEvent, ErrorLogField
+from loom.core.logger import LogIdentity
 from loom.core.logger.install import install_record_factory
-from loom.core.logger.log_events import LoggerLogEvent
 from loom.serverless.aws.lambda_.boundary import LambdaBoundary, lambda_init
-from tests.helpers.handoffs import lambda_failure
+from tests.helpers.boundary import left_loom
 
 _SECRET = "patient 0042"
 
@@ -32,35 +33,41 @@ class _Raising:
 @pytest.fixture
 def boundary_log(caplog: pytest.LogCaptureFixture) -> pytest.LogCaptureFixture:
     install_record_factory(LogIdentity(environment="test"))
-    caplog.set_level(logging.DEBUG, logger="loom.core.logger.failure")
+    caplog.set_level(logging.DEBUG, logger="loom.core.errors.failure")
     return caplog
 
 
+@pytest.fixture
+def kept_hooks(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Lambda Init installs the process hooks for good: put pytest's back after the test."""
+    monkeypatch.setattr(sys, "excepthook", sys.excepthook)
+    monkeypatch.setattr(threading, "excepthook", threading.excepthook)
+    monkeypatch.setattr(sys, "unraisablehook", sys.unraisablehook)
+
+
 def _reports(caplog: pytest.LogCaptureFixture) -> list[logging.LogRecord]:
-    return [r for r in caplog.records if r.getMessage() == LoggerLogEvent.FAILURE_HANDED_OFF]
+    return [r for r in caplog.records if r.getMessage() == ErrorLogEvent.FAILURE_LEFT_LOOM]
 
 
 class TestLambdaBoundary:
-    def test_the_runtime_gets_a_reference_named_after_the_type_and_no_message(
+    def test_the_runtime_gets_the_failure_without_its_message(
         self, boundary_log: pytest.LogCaptureFixture
     ) -> None:
-        with pytest.raises(FailureReference) as raised:
+        with left_loom(ValueError) as left:
             LambdaBoundary(_Raising(ValueError(_SECRET)))({}, None)  # type: ignore[arg-type]
 
-        assert type(raised.value).__name__ == "ValueError"
-        assert raised.value.__context__ is None
-        assert _SECRET not in str(raised.value) + repr(raised.value)
+        assert _SECRET not in str(left.value) + repr(left.value)
         [record] = _reports(boundary_log)
-        assert (record.levelno, record.__dict__[LogField.EXCEPTION_TYPE]) == (
+        assert (record.levelno, record.__dict__[ErrorLogField.EXCEPTION_TYPE]) == (
             logging.ERROR,
             "ValueError",
         )
         assert _SECRET not in boundary_log.text
 
-    def test_an_expected_failure_is_handed_off_unlogged(
+    def test_an_expected_failure_leaves_unlogged(
         self, boundary_log: pytest.LogCaptureFixture
     ) -> None:
-        with lambda_failure(NotFound):
+        with left_loom(NotFound):
             LambdaBoundary(_Raising(NotFound("Patient", id=42)))({}, None)  # type: ignore[arg-type]
 
         assert _reports(boundary_log) == []
@@ -71,22 +78,23 @@ class TestLambdaBoundary:
         error = ValueError(_SECRET)
         logging.getLogger("acme").error("acme.step_failed", exc_info=error)
 
-        with lambda_failure(ValueError):
+        with left_loom(ValueError):
             LambdaBoundary(_Raising(error))({}, None)  # type: ignore[arg-type]
 
         assert _reports(boundary_log) == []
 
 
 class TestLambdaInit:
-    def test_init_installs_the_factory_first_and_hands_off_a_failure(
+    @pytest.mark.usefixtures("kept_hooks")
+    def test_a_failing_init_is_logged_once_without_its_message(
         self, boundary_log: pytest.LogCaptureFixture
     ) -> None:
         def build() -> None:
             raise RuntimeError(_SECRET)
 
-        with lambda_failure(RuntimeError, match=_SECRET):
+        with left_loom(RuntimeError):
             lambda_init(build)
 
         [record] = _reports(boundary_log)
-        assert record.__dict__[LogField.EXCEPTION_TYPE] == "RuntimeError"
+        assert record.__dict__[ErrorLogField.EXCEPTION_TYPE] == "RuntimeError"
         assert _SECRET not in boundary_log.text

@@ -30,9 +30,7 @@ from starlette.requests import Request
 from loom.ai.abc import AgentEvent, AgentResult, AgentUsage, ErrorEvent, FinalEvent
 from loom.ai.config import AgentEndpointConfig
 from loom.ai.errors import AgentRunError, AgentRunErrorCode
-from loom.ai.log_events import AiLogField
 from loom.core.identity import Identity, current_identity
-from loom.core.logger import LogKey, Scalar
 from loom.core.model import LoomType
 from loom.core.observability.span import LoomSpan
 
@@ -167,44 +165,6 @@ def require_caller(name: str, endpoint: AgentEndpointConfig | None) -> Identity:
     raise TransportError(401, "UNAUTHORIZED", f"agent {name!r} requires a verified caller")
 
 
-def usage_attributes(usage: AgentUsage) -> dict[LogKey, Scalar]:
-    """Return the closing span attributes carrying one run's usage.
-
-    Mapped from loom's own :class:`~loom.ai.abc.AgentUsage`, not from the
-    engine's usage type, so a second engine publishes the same attributes and
-    no engine type reaches a transport. The names follow the OpenTelemetry
-    GenAI semantic conventions where those define one, and stay under the same
-    prefix where they do not — cost, requests and tool calls, which the
-    conventions leave out and an operator comparing models needs most.
-
-    An unpriced model contributes no cost key at all — a zero would read as a
-    free run and win a cost comparison it never entered — but it always
-    contributes ``cost_known``, so a dashboard summing the cost can tell a
-    complete total from a lower bound instead of silently reporting one as the
-    other. The engine's own usage details have no key in the vocabulary and are
-    not published.
-
-    Args:
-        usage: Accounting of the run that is about to close its span.
-
-    Returns:
-        The attributes, ready for
-        :meth:`~loom.core.observability.span.LoomSpan.annotate`.
-    """
-    attributes: dict[LogKey, Scalar] = {
-        AiLogField.USAGE_INPUT_TOKENS: usage.input_tokens,
-        AiLogField.USAGE_OUTPUT_TOKENS: usage.output_tokens,
-        AiLogField.USAGE_CACHE_READ_INPUT_TOKENS: usage.cache_read_tokens,
-        AiLogField.USAGE_CACHE_CREATION_INPUT_TOKENS: usage.cache_write_tokens,
-        AiLogField.USAGE_REQUESTS: usage.requests,
-        AiLogField.USAGE_TOOL_CALLS: usage.tool_calls,
-        AiLogField.USAGE_COST_KNOWN: usage.cost is not None,
-    }
-    if usage.cost is not None:
-        attributes[AiLogField.USAGE_COST] = float(usage.cost)
-    return attributes
-
-
 def annotate_usage(span: LoomSpan, usage: AgentUsage | None) -> None:
     """Publish *usage* on the closing attributes of *span*, when there is any.
 
@@ -218,7 +178,7 @@ def annotate_usage(span: LoomSpan, usage: AgentUsage | None) -> None:
     """
     if usage is None:
         return
-    span.annotate(usage_attributes(usage))
+    span.annotate(usage.span_attributes())
 
 
 @contextmanager

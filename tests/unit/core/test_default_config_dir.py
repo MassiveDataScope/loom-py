@@ -17,7 +17,6 @@ from loom.core.environment import (
     resolve_config_dir,
     select_config_paths,
 )
-from tests.helpers.handoffs import echoed_failures
 
 
 def _config_dir(parent: Path, name: str) -> Path:
@@ -120,8 +119,7 @@ class TestProjectAndCheckShareTheDefault:
     def test_the_command_names_both_sources_when_the_directory_is_missing(
         self, workdir: Path
     ) -> None:
-        with echoed_failures() as echoed:
-            result = CliRunner().invoke(cli, ["check", "--deploy"])
+        result = CliRunner().invoke(cli, ["check", "--deploy"])
 
         assert result.exit_code == 1
-        assert "LOOM_CONFIG_DIR" in echoed.messages
+        assert "LOOM_CONFIG_DIR" in result.output

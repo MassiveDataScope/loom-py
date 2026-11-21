@@ -51,6 +51,7 @@ from loom.ai.log_events import AiLogField
 from loom.core.config.errors import ConfigError
 from loom.core.di import LoomContainer
 from loom.core.errors import Forbidden
+from loom.core.errors.log_events import ErrorLogField
 from loom.core.identity import ANONYMOUS, Identity, reset_identity, set_identity
 from loom.core.logger import LogField
 from loom.core.model import loom_type, msgspec_type
@@ -1162,7 +1163,7 @@ class TestErrorMapping:
         assert len(body.pop("interaction_id")) == _INTERACTION_ID_LENGTH
         assert (response.status_code, body) == (status, {"code": str(code), "message": message})
         [record] = [r for r in caplog.records if r.levelname == "ERROR"]
-        assert LogField.EXCEPTION_TYPE in record.__dict__
+        assert ErrorLogField.EXCEPTION_TYPE in record.__dict__
         assert leaky not in caplog.text
 
 

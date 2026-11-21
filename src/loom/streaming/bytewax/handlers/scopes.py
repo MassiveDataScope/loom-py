@@ -10,6 +10,7 @@ import anyio
 from bytewax.operators import branch, flat_map
 from bytewax.operators import map as bw_map
 
+from loom.core.errors.boundary import boundary
 from loom.core.logger import SpanAttributes
 from loom.core.observability.event import Scope
 from loom.core.observability.observability import Observability
@@ -42,7 +43,6 @@ from loom.streaming.bytewax.handlers._shared import (
 from loom.streaming.core._errors import ErrorKind
 from loom.streaming.core._exceptions import MissingBridgeError, UnsupportedNodeError
 from loom.streaming.core._message import Message, MessageMeta
-from loom.streaming.core._tracing import message_attributes
 from loom.streaming.core._typing import StreamPayload
 from loom.streaming.nodes._boundary import IntoTopic
 from loom.streaming.nodes._step import RecordStep
@@ -60,7 +60,7 @@ def _apply_with(stream: Stream, raw: object, idx: int, ctx: _BuildContextProtoco
     observer = ctx.flow_runtime
     flow_name = ctx.plan.name
     node_type = type(node).__name__
-    boundary = ErrorBoundary(observer=observer, flow=flow_name)
+    error_boundary = ErrorBoundary(observer=observer, flow=flow_name)
     inner_steps, sink_partition = _resolve_inner_process(node, ctx)
 
     def step(msg: Any) -> list[Any]:
@@ -79,11 +79,11 @@ def _apply_with(stream: Stream, raw: object, idx: int, ctx: _BuildContextProtoco
                 sink_partition,
                 messages,
             ),
-            boundary,
+            error_boundary,
         )
 
     sid = _step_id(f"with_{idx}", ctx)
-    flat = flat_map(f"{sid}_flat", bw_map(sid, stream, step), _identity)
+    flat = flat_map(f"{sid}_flat", bw_map(sid, stream, boundary(step)), boundary(_identity))
     return _split_node_result(flat, _step_id(f"with_{idx}_{node_type}", ctx), ctx, ErrorKind.TASK)
 
 
@@ -115,7 +115,7 @@ def _apply_with_async_process(
     observer = ctx.flow_runtime
     flow_name = ctx.plan.name
     node_type = type(node).__name__
-    boundary = ErrorBoundary(observer=observer, flow=flow_name)
+    error_boundary = ErrorBoundary(observer=observer, flow=flow_name)
 
     inner_steps, sink_partition = _resolve_inner_process(node, ctx)
 
@@ -135,7 +135,7 @@ def _apply_with_async_process(
                         deps,
                         node.task_timeout_ms,
                         node.max_concurrency,
-                        boundary,
+                        error_boundary,
                     )
                 )
         except Exception as exc:
@@ -143,7 +143,8 @@ def _apply_with_async_process(
                 observer, flow_name, idx, node_type, batch, BatchWindow.since(started_ns), exc
             )
             return [
-                _build_error_envelope(ErrorKind.TASK, exc, message, boundary) for message in batch
+                _build_error_envelope(ErrorKind.TASK, exc, message, error_boundary)
+                for message in batch
             ]
         _emit_node_batch_spans(
             observer, flow_name, idx, node_type, batch, BatchWindow.since(started_ns), None
@@ -151,9 +152,9 @@ def _apply_with_async_process(
         return results
 
     sid = _step_id(f"with_async_process_{idx}", ctx)
-    mapped = bw_map(sid, stream, step_fn)
-    flat = flat_map(f"{sid}_flat", mapped, _identity)
-    split = branch(f"{sid}_split", flat, _is_message_result)
+    mapped = bw_map(sid, stream, boundary(step_fn))
+    flat = flat_map(f"{sid}_flat", mapped, boundary(_identity))
+    split = branch(f"{sid}_split", flat, boundary(_is_message_result))
     ctx.wire_node_error(ErrorKind.TASK, sid, split.falses)
     return split.trues
 
@@ -204,7 +205,7 @@ async def _execute_with_async_message(
     sink_partition: Any,
     deps: Mapping[str, object],
     timeout_ms: int | None,
-    boundary: ErrorBoundary,
+    error_boundary: ErrorBoundary,
 ) -> Any:
     try:
         current = await _execute_inner_process(
@@ -216,7 +217,7 @@ async def _execute_with_async_message(
         )
         return current
     except Exception as exc:
-        return _build_error_envelope(_classify_task(exc), exc, message, boundary)
+        return _build_error_envelope(_classify_task(exc), exc, message, error_boundary)
 
 
 async def _execute_with_async_batch(
@@ -226,7 +227,7 @@ async def _execute_with_async_batch(
     deps: Mapping[str, object],
     timeout_ms: int | None,
     max_concurrency: int,
-    boundary: ErrorBoundary,
+    error_boundary: ErrorBoundary,
 ) -> list[Any]:
     if not messages:
         return []
@@ -242,7 +243,7 @@ async def _execute_with_async_batch(
                 sink_partition,
                 deps,
                 timeout_ms,
-                boundary,
+                error_boundary,
             )
 
     async with anyio.create_task_group() as task_group:
@@ -339,7 +340,7 @@ def _emit_node_batch_spans(
             correlation_id=meta.correlation_id,
             root=True,
             start_time_ns=started_ns,
-            attributes={**meta_fields, **message_attributes(meta), **batch_attributes},
+            attributes={**meta_fields, **meta.span_attributes(), **batch_attributes},
         )
 
     emit_batch_spans(

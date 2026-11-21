@@ -17,6 +17,7 @@ import pytest
 from loom.core.engine.executor import UseCaseExecutor
 from loom.core.engine.post_commit import PostCommitChannel, bind_channel, reset_channel
 from loom.core.errors import DelegationExpired, Unauthenticated
+from loom.core.errors.log_events import ErrorLogField
 from loom.core.execution import ExecutionScope
 from loom.core.identity import ANONYMOUS, Delegation, IdentityFixed, captured_delegation
 from loom.core.identity.wire import encode_identity
@@ -24,11 +25,10 @@ from loom.core.job.context import flush_pending_dispatches
 from loom.core.job.envelope import JobEnvelope, job_context
 from loom.core.job.handle import JobHandle
 from loom.core.job.run import EnvelopeInvocation
-from loom.core.logger.failure import exception_type
-from loom.core.logger.vocabulary import LogField
 from loom.core.observability.observability import Observability
 from loom.core.use_case.factory import UseCaseFactory
 from loom.testing import JobTestData, make
+from tests.helpers.boundary import type_name
 from tests.helpers.celery import CeleryBroker
 from tests.helpers.delegation import acting_as, assert_new_delegation
 from tests.helpers.jobs import CeleryServiceFixture, InlineServiceFixture
@@ -155,9 +155,10 @@ class TestJobContext:
 def _refusals(caplog: pytest.LogCaptureFixture) -> list[str]:
     """The exception type of each inline job step the timer abandoned because it raised."""
     return [
-        record.__dict__[LogField.EXCEPTION_TYPE]
+        record.__dict__[ErrorLogField.EXCEPTION_TYPE]
         for record in caplog.records
-        if record.getMessage() == "Job abandoned" and LogField.EXCEPTION_TYPE in record.__dict__
+        if record.getMessage() == "Job abandoned"
+        and ErrorLogField.EXCEPTION_TYPE in record.__dict__
     ]
 
 
@@ -206,7 +207,7 @@ class TestAQueuedDispatch:
 
         await jobs.wait_until_idle()
 
-        assert _refusals(caplog) == [exception_type(DelegationExpired)]
+        assert _refusals(caplog) == [type_name(DelegationExpired)]
         assert callback_log == []
 
     async def test_flushed_under_a_later_delegation_of_its_dispatcher_keeps_the_captured_deadline(
@@ -225,7 +226,7 @@ class TestAQueuedDispatch:
 
         await jobs.wait_until_idle()
 
-        assert _refusals(caplog) == [exception_type(DelegationExpired)]
+        assert _refusals(caplog) == [type_name(DelegationExpired)]
         assert callback_log == []
 
     async def test_flushed_by_a_task_outliving_work_switched_back_to_its_dispatcher_is_refused(
@@ -250,7 +251,7 @@ class TestAQueuedDispatch:
 
         await jobs.wait_until_idle()
 
-        assert _refusals(caplog) == [exception_type(DelegationExpired)]
+        assert _refusals(caplog) == [type_name(DelegationExpired)]
         assert callback_log == []
 
     async def test_drained_inside_work_acting_as_its_dispatcher_runs(
@@ -275,7 +276,7 @@ class TestAQueuedDispatch:
 
         await jobs.wait_until_idle()
 
-        assert _refusals(caplog) == [exception_type(IdentityFixed)]
+        assert _refusals(caplog) == [type_name(IdentityFixed)]
         assert callback_log == []
 
 
@@ -315,7 +316,7 @@ class TestADispatchWithNoCaller:
 
         await jobs.wait_until_idle()
 
-        assert _refusals(caplog) == [exception_type(IdentityFixed)]
+        assert _refusals(caplog) == [type_name(IdentityFixed)]
         assert callback_log == []
 
     async def test_inline_runs_the_job_with_no_caller(
@@ -334,7 +335,7 @@ class TestADispatchWithNoCaller:
         await executor.execute(AcmeRun(dispatch))
         await jobs.wait_until_idle()
 
-        assert failures == [exception_type(Unauthenticated)]
+        assert failures == [type_name(Unauthenticated)]
 
     async def test_celery_runs_the_job_with_no_caller(
         self, factory: UseCaseFactory, executor: UseCaseExecutor

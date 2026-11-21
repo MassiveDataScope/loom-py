@@ -8,6 +8,7 @@ from typing import Any
 from bytewax.operators import flat_map
 from bytewax.operators import map as bw_map
 
+from loom.core.errors.boundary import boundary
 from loom.core.observability.observability import Observability
 from loom.streaming.bytewax._error_boundary import (
     ErrorBoundary,
@@ -52,7 +53,7 @@ def _apply_record_step(stream: Stream, raw: object, idx: int, ctx: _BuildContext
     name = _resolve_node_name(record_step)
     observer = ctx.flow_runtime
     flow_name = ctx.plan.name
-    boundary = ErrorBoundary(observer=observer, flow=flow_name)
+    error_boundary = ErrorBoundary(observer=observer, flow=flow_name)
 
     def step_fn(msg: Any) -> NodeResult:
         message = _require_message(msg)
@@ -60,11 +61,11 @@ def _apply_record_step(stream: Stream, raw: object, idx: int, ctx: _BuildContext
             _classify_task,
             message,
             lambda: _execute_record_step(observer, flow_name, idx, name, record_step, message),
-            boundary,
+            error_boundary,
         )
 
     sid = _step_id(f"record_{idx}_{name}", ctx)
-    mapped = bw_map(sid, stream, step_fn)
+    mapped = bw_map(sid, stream, boundary(step_fn))
     return _split_node_result(mapped, sid, ctx, ErrorKind.TASK)
 
 
@@ -75,7 +76,7 @@ def _apply_batch_step(stream: Stream, raw: object, idx: int, ctx: _BuildContextP
     name = _resolve_node_name(batch_step)
     observer = ctx.flow_runtime
     flow_name = ctx.plan.name
-    boundary = ErrorBoundary(observer=observer, flow=flow_name)
+    error_boundary = ErrorBoundary(observer=observer, flow=flow_name)
 
     def step_fn(batch: list[Any]) -> list[NodeResult]:
         messages = [_require_message(item) for item in batch]
@@ -90,11 +91,11 @@ def _apply_batch_step(stream: Stream, raw: object, idx: int, ctx: _BuildContextP
                 batch_step,
                 messages,
             ),
-            boundary,
+            error_boundary,
         )
 
     sid = _step_id(f"batch_{idx}_{name}", ctx)
-    mapped = bw_map(sid, stream, step_fn)
+    mapped = bw_map(sid, stream, boundary(step_fn))
     return _split_batch_node_result(mapped, sid, ctx, ErrorKind.TASK)
 
 
@@ -110,7 +111,7 @@ def _apply_expand_step(
     name = _resolve_node_name(expand_step)
     observer = ctx.flow_runtime
     flow_name = ctx.plan.name
-    boundary = ErrorBoundary(observer=observer, flow=flow_name)
+    error_boundary = ErrorBoundary(observer=observer, flow=flow_name)
 
     tracker = ctx.commit_tracker
 
@@ -127,14 +128,14 @@ def _apply_expand_step(
                 expand_step,
                 message,
             ),
-            boundary,
+            error_boundary,
         )
         _reconcile_fanout([message], results, tracker)
         return results
 
     sid = _step_id(f"expand_{idx}_{name}", ctx)
-    mapped = bw_map(sid, stream, step_fn)
-    flattened_stream = flat_map(_step_id(f"flatten_expand_{idx}", ctx), mapped, _identity)
+    mapped = bw_map(sid, stream, boundary(step_fn))
+    flattened_stream = flat_map(_step_id(f"flatten_expand_{idx}", ctx), mapped, boundary(_identity))
     return _split_node_result(flattened_stream, sid, ctx, ErrorKind.TASK)
 
 
@@ -150,7 +151,7 @@ def _apply_batch_expand_step(
     name = _resolve_node_name(batch_expand_step)
     observer = ctx.flow_runtime
     flow_name = ctx.plan.name
-    boundary = ErrorBoundary(observer=observer, flow=flow_name)
+    error_boundary = ErrorBoundary(observer=observer, flow=flow_name)
 
     tracker = ctx.commit_tracker
 
@@ -167,14 +168,14 @@ def _apply_batch_expand_step(
                 batch_expand_step,
                 messages,
             ),
-            boundary,
+            error_boundary,
         )
         _reconcile_fanout(messages, results, tracker)
         return results
 
     sid = _step_id(f"batch_expand_{idx}_{name}", ctx)
-    mapped = bw_map(sid, stream, step_fn)
-    flattened = flat_map(_step_id(f"flatten_batch_expand_{idx}", ctx), mapped, _identity)
+    mapped = bw_map(sid, stream, boundary(step_fn))
+    flattened = flat_map(_step_id(f"flatten_batch_expand_{idx}", ctx), mapped, boundary(_identity))
     return _split_node_result(flattened, sid, ctx, ErrorKind.TASK)
 
 
@@ -185,7 +186,7 @@ def _apply_explode(stream: Stream, raw: object, idx: int, ctx: _BuildContextProt
     name = _resolve_node_name(explode_node.exploder)
     observer = ctx.flow_runtime
     flow_name = ctx.plan.name
-    boundary = ErrorBoundary(observer=observer, flow=flow_name)
+    error_boundary = ErrorBoundary(observer=observer, flow=flow_name)
 
     tracker = ctx.commit_tracker
 
@@ -202,14 +203,14 @@ def _apply_explode(stream: Stream, raw: object, idx: int, ctx: _BuildContextProt
                 explode_node,
                 message,
             ),
-            boundary,
+            error_boundary,
         )
         _reconcile_fanout([message], results, tracker)
         return results
 
     sid = _step_id(f"explode_{idx}_{name}", ctx)
-    mapped = bw_map(sid, stream, step_fn)
-    flattened = flat_map(_step_id(f"flatten_explode_{idx}", ctx), mapped, _identity)
+    mapped = bw_map(sid, stream, boundary(step_fn))
+    flattened = flat_map(_step_id(f"flatten_explode_{idx}", ctx), mapped, boundary(_identity))
     return _split_node_result(flattened, sid, ctx, ErrorKind.TASK)
 
 

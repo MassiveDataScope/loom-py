@@ -64,7 +64,7 @@ def create_app(
         What *runtime* binds: an ASGI app, a Celery app, a handler.
 
     Inside AWS Lambda this is the function's Init: any failure reaches the
-    runtime as a :class:`~loom.core.logger.failure.FailureReference`, after the
+    runtime through the loom boundary, as a clean ``LoomError``, after the
     record factory was installed ahead of the configuration.
 
     Raises:

@@ -31,6 +31,7 @@ from starlette.responses import Response
 from starlette.types import ExceptionHandler
 
 from loom.core.errors import BODY_FIELD
+from loom.core.errors.boundary import boundary
 from loom.core.errors.codes import ErrorCode
 from loom.core.tracing import get_trace_id
 from loom.rest._body import malformed_body_detail
@@ -75,10 +76,10 @@ def register_error_handlers(app: Starlette) -> None:
     Args:
         app: Application whose exception handlers are being configured.
     """
-    app.add_exception_handler(RequestValidationError, _handle_validation_error)
-    app.add_exception_handler(HTTPException, _handle_http_exception)
+    app.add_exception_handler(RequestValidationError, boundary(_handle_validation_error))
+    app.add_exception_handler(HTTPException, boundary(_handle_http_exception))
     app.add_exception_handler(
-        StarletteHTTPException, cast(ExceptionHandler, http_exception_handler)
+        StarletteHTTPException, boundary(cast(ExceptionHandler, http_exception_handler))
     )
 
 

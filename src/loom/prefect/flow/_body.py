@@ -13,6 +13,7 @@ from loom.core.environment import (
     confirm_environment,
     loom_variable,
 )
+from loom.core.errors.boundary import boundary
 from loom.etl.compiler import flatten_step_names
 from loom.etl.compiler._plan import PipelinePlan, iter_processes, iter_steps_in_process
 from loom.etl.pipeline import ETLPipeline
@@ -151,7 +152,6 @@ def _invoke_runner(
         if not proc_pending:
             continue
 
-        @prefect.task(name=proc.process_type.__name__)
         def _run_proc(steps: list[str] = proc_pending) -> None:
             runner.run(
                 pipeline,
@@ -161,7 +161,7 @@ def _invoke_runner(
                 correlation_id=ctx.correlation_id,
             )
 
-        _run_proc()
+        prefect.task(name=proc.process_type.__name__)(boundary(_run_proc))()
 
 
 def _etl_summary(plan: PipelinePlan, pending: list[str]) -> str:

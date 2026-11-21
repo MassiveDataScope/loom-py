@@ -8,6 +8,7 @@ from collections.abc import Coroutine
 from typing import TYPE_CHECKING, Any, TypeVar
 
 from loom.composition.errors import CompositionErrorCode, CompositionStateError
+from loom.core.errors.boundary import ProcessHooks
 
 if TYPE_CHECKING:
     from loom.composition.application import Application
@@ -169,6 +170,7 @@ class LoopHost:
 
     def __init__(self, application: Application) -> None:
         self._loop = asyncio.new_event_loop()
+        self._loop.set_exception_handler(ProcessHooks.handle_asyncio_exception)
         asyncio.set_event_loop(self._loop)
         self._application = application
         self._host = ApplicationHost(application)

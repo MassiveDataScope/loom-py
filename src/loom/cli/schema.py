@@ -19,7 +19,6 @@ from loom.core.environment import (
     VERIFY_URL_VARIABLE,
     loom_variable,
 )
-from loom.core.logger.failure import public_form
 from loom.core.schema_names import SchemaNames
 from loom.core.stores.catalog import BACKEND_KEY, DEFAULT_STORE, SQLALCHEMY_BACKEND
 
@@ -48,7 +47,6 @@ _ConfigOption = Annotated[
 ]
 
 
-@schema_app.command("init")
 def init(
     name: Annotated[str, typer.Argument(help="The application schema.")],
     config: Annotated[
@@ -73,7 +71,7 @@ def init(
             return
         _write(config, block)
     except (ValueError, yaml.YAMLError) as exc:
-        typer.echo(public_form(exc), err=True)
+        typer.echo(str(exc), err=True)
         raise typer.Exit(1) from exc
 
 
@@ -137,7 +135,6 @@ def _merge(target: dict[str, Any], values: dict[str, Any], path: str) -> list[st
     return conflicts
 
 
-@schema_app.command("bootstrap")
 def bootstrap(config: _ConfigOption = None) -> None:
     """Install or upgrade the guard and configure roles, as the superuser; idempotent.
 
@@ -158,7 +155,6 @@ def bootstrap(config: _ConfigOption = None) -> None:
     typer.echo("guard is installed and configured")
 
 
-@schema_app.command("verify")
 def verify_schema(config: _ConfigOption = None) -> None:
     """Compare the database with the application; exit 1 on any drift.
 
@@ -189,7 +185,6 @@ def _print_report(report: Report) -> None:
         typer.echo(f"expired audit partition: {partition}")
 
 
-@audit_app.command("drop-expired")
 def drop_expired() -> None:
     """Drop the oldest audit partition past the retention, as the migrator; one per run."""
     from loom.stores.sqlalchemy.rls.audit import drop_expired_audit_partition
@@ -201,7 +196,6 @@ def drop_expired() -> None:
     typer.echo(f"dropped {dropped}" if dropped else "no audit partition is past the retention")
 
 
-@audit_app.command("ensure-partitions")
 def ensure_partitions() -> None:
     """Create the audit partitions missing in the next twelve months, as the migrator.
 
@@ -246,5 +240,5 @@ def _env(name: str) -> str:
 
 
 def _fail(exc: Exception) -> NoReturn:
-    typer.echo(public_form(exc), err=True)
+    typer.echo(str(exc), err=True)
     raise typer.Exit(1) from exc

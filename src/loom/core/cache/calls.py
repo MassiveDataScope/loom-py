@@ -36,7 +36,7 @@ from loom.core.cache.decorators import _CallPolicy, declares_cache_call
 from loom.core.cache.keys import call_key
 from loom.core.cache.result_codec import ResultCodec, build_call_codec
 from loom.core.di.container import LoomContainer
-from loom.core.logger.failure import public_form
+from loom.core.errors.failure import Failure
 from loom.core.model.introspection import resolve_type_hints
 
 AsyncCallable = Callable[..., Awaitable[Any]]
@@ -486,7 +486,7 @@ class _ConfiguredCalls:
         try:
             key = spec.key(args, kwargs)
         except _Unrenderable as error:
-            self._warn_once("CacheCallKeyUnrenderable", spec.func, error=public_form(error))
+            self._warn_once("CacheCallKeyUnrenderable", spec.func, error=Failure(error).text)
             return await spec.func(*args, **kwargs)
 
         payload = await self._read(spec, key)
@@ -560,7 +560,7 @@ class _ConfiguredCalls:
                 spec.func,
                 key=key,
                 value_type=type(result).__name__,
-                error=public_form(error),
+                error=Failure(error).text,
             )
         return encoded.value
 

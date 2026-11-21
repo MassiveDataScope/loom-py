@@ -10,7 +10,8 @@ from tests.helpers.version_limited_extras import require_bytewax
 
 require_bytewax()
 
-from loom.core.logger.failure import public_form  # noqa: E402
+
+from loom.core.errors.failure import Failure  # noqa: E402
 from loom.streaming.bytewax import _runtime_io  # noqa: E402
 from loom.streaming.core._errors import (  # noqa: E402
     ErrorEnvelope,
@@ -34,7 +35,7 @@ from tests.unit.streaming.kafka.doubles import RawProducerStub  # noqa: E402
 pytestmark = pytest.mark.bytewax
 
 
-_DLQ_ERROR = public_form(KafkaDeliveryError("broker down")).encode()
+_DLQ_ERROR = Failure(KafkaDeliveryError("broker down")).text.encode()
 
 
 def _failing_sink_producer(monkeypatch: pytest.MonkeyPatch) -> RawProducerStub:

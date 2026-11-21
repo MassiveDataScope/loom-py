@@ -7,18 +7,16 @@ A mapping or a sequence revealed that way is a copy.
 
 from __future__ import annotations
 
-import copy
 import re
 import types
 from collections.abc import Iterator, Mapping, Sequence
 from functools import cache
-from typing import Any, Generic, TypeVar, Union, get_args, get_origin
+from typing import Any, Union, get_args, get_origin
 
 import msgspec
 
-T = TypeVar("T")
+from loom.core.fields import MASK, FieldValue, Scalar, Secret
 
-MASK = "***"
 _UNION = (Union, types.UnionType)
 _SECRET_TOKENS = frozenset({"password", "passwd", "pwd", "secret", "token", "apikey", "credential"})
 _EXACT_NAMES = frozenset({"webhook_url", "authorization", "cookie", "authmechanismproperties"})
@@ -26,49 +24,7 @@ _KEY_EXCEPTIONS = frozenset({"primary_key", "foreign_key", "partition_key", "sor
 _CAMEL_BOUNDARY = re.compile(r"(?<=[a-z0-9])(?=[A-Z])|(?<=[A-Z])(?=[A-Z][a-z])")
 
 
-class Secret(Generic[T]):
-    """A credential. Display is always ``***``; the value comes from :meth:`reveal`.
-
-    Args:
-        value: The credential. A blank string is refused.
-
-    Raises:
-        ValueError: When *value* is a blank string. The message does not include it.
-    """
-
-    __slots__ = ("_value",)
-
-    def __init__(self, value: T) -> None:
-        if isinstance(value, str) and not value.strip():
-            raise ValueError("must not be empty")
-        self._value = value
-
-    def reveal(self) -> T:
-        """Return the credential. A mapping or a sequence is a copy."""
-        value = self._value
-        if isinstance(value, (dict, list)):
-            return copy.deepcopy(value)
-        return value
-
-    def __repr__(self) -> str:
-        return MASK
-
-    def __str__(self) -> str:
-        return MASK
-
-    def __format__(self, format_spec: str) -> str:
-        return MASK
-
-    def __eq__(self, other: object) -> bool:
-        if isinstance(other, Secret):
-            return bool(self._value == other._value)
-        return bool(self._value == other)
-
-    def __hash__(self) -> int:
-        return hash(self._value)
-
-
-class Dsn:
+class Dsn(FieldValue):
     """A connection or service address.
 
     ``repr``, ``str`` and ``format`` keep the scheme, user, host, port, path
@@ -113,6 +69,10 @@ class Dsn:
         _scheme, separator, rest = body.partition("://")
         return bool(separator) and _userinfo_at(rest) != -1
 
+    def field_value(self) -> Scalar:
+        """The address with its password and secret query values masked."""
+        return mask_dsn(self._value)
+
     def __repr__(self) -> str:
         return mask_dsn(self._value)
 
@@ -133,7 +93,7 @@ class Dsn:
         return hash(self._value)
 
 
-class RedactedMap(Mapping[str, Any]):
+class RedactedMap(FieldValue, Mapping[str, Any]):
     """A free mapping whose secret-named values are hidden in display.
 
     Item access returns what was stored. :meth:`reveal` returns a copy for the
@@ -181,6 +141,10 @@ class RedactedMap(Mapping[str, Any]):
 
     def __len__(self) -> int:
         return len(self._value)
+
+    def field_value(self) -> Scalar:
+        """The mask: a mapping is never a field value."""
+        return MASK
 
     def __repr__(self) -> str:
         return repr(mask_structure(self._value))

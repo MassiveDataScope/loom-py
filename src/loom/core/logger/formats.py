@@ -17,17 +17,17 @@ import sys
 from datetime import UTC, datetime
 from typing import Final
 
+from loom.core.errors.log_events import ErrorLogField
+from loom.core.fields import render_value
 from loom.core.logger.filter import STANDARD_ATTRIBUTES
 from loom.core.logger.settings import LogSettings
-from loom.core.logger.values import render_value
-from loom.core.logger.vocabulary import LogField
 
 LAMBDA_RUNTIME_HANDLERS: Final = frozenset(
     {"LambdaLoggerHandler", "LambdaLoggerHandlerWithFrameType"}
 )
 """Class names of the handler the Lambda Python runtime puts on the root logger."""
 
-_STACKTRACE: Final = LogField.EXCEPTION_STACKTRACE.value
+_STACKTRACE: Final = ErrorLogField.EXCEPTION_STACKTRACE.value
 _CONTINUATION: Final = "  | "
 
 

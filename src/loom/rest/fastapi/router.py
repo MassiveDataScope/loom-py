@@ -46,9 +46,9 @@ from starlette.responses import Response
 from loom.core.engine.executor import UseCaseExecutor
 from loom.core.errors import BODY_FIELD, BoundaryValidationError, Forbidden, LoomError
 from loom.core.errors.codes import ErrorCode
+from loom.core.errors.failure import Failure
 from loom.core.identity import Identity, current_identity
 from loom.core.logger import LogField
-from loom.core.logger.failure import failure_level, is_stack_written
 from loom.core.model import LoomType, loom_type, msgspec_type
 from loom.core.stores.repository.query import (
     FilterGroup,
@@ -665,9 +665,9 @@ class _RouteHandler:
             )
             if refusal is not None:
                 raise _error_mapper.to_http(refusal) from exc
-            if not is_stack_written(exc):
+            if not Failure(exc).is_stack_written:
                 _logger.log(
-                    failure_level(exc),
+                    Failure(exc).level,
                     RestLogEvent.REQUEST_FAILED,
                     exc_info=exc,
                     extra={LogField.HTTP_ROUTE: self._runtime.compiled_route.full_path},

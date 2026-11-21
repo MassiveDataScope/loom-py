@@ -13,9 +13,9 @@ from collections.abc import Iterator
 
 import pytest
 
+from loom.core.errors.log_events import ErrorLogField
 from loom.core.identity import Identity, current_caller
 from loom.core.job.log_events import JobLogEvent
-from loom.core.logger import LogField
 from loom.serverless.aws.lambda_ import LambdaHandler
 from loom.testing import LambdaEvent, LambdaTestClient
 from tests.helpers.aws_island import FakeAwsIsland
@@ -51,7 +51,7 @@ def _job(caller: Identity | None) -> LambdaEvent:
 def _failures(caplog: pytest.LogCaptureFixture) -> list[tuple[str, str]]:
     """The runner's decision on each failed message, with the short type of its failure."""
     return [
-        (str(entry["event"]), str(entry[LogField.EXCEPTION_TYPE]).rsplit(".", 1)[-1])
+        (str(entry["event"]), str(entry[ErrorLogField.EXCEPTION_TYPE]).rsplit(".", 1)[-1])
         for entry in logged_events(caplog)
         if entry["event"] == FAILED_FINALLY
     ]

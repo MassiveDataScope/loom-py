@@ -1,4 +1,4 @@
-"""Every terminal failure of a job task sends its failure callback once, with its reference."""
+"""Every terminal failure of a job task sends its failure callback once, with type and text."""
 
 from __future__ import annotations
 
@@ -10,13 +10,13 @@ import pytest
 from loom.celery.errors import WorkerNotOpenError
 from loom.core.errors import (
     JobTimeoutError,
-    LoomError,
     PostCommitError,
     RuleViolationError,
     RuleViolationsError,
 )
+from loom.core.errors.failure import Failure
 from loom.core.job.outcome import JobAbandonment
-from loom.core.logger.failure import FailureReference, exception_type
+from tests.helpers.boundary import type_name
 from tests.helpers.loggers import logged_events
 from tests.integration.celery_jobs.conftest import JSON, Workbench
 from tests.integration.celery_jobs.doubles import (
@@ -33,12 +33,6 @@ from tests.integration.celery_jobs.doubles import (
     SoftLimitJob,
     SucceedingJob,
 )
-
-
-def _reference_text(error: Exception) -> str:
-    """The text of the reference a callback receives for *error*, with no trace."""
-    code = str(error.code) if isinstance(error, LoomError) else None
-    return str(FailureReference(exception_type(type(error)), code, None, False, True))
 
 
 class TestFailureCallbackAcrossSerializers:
@@ -67,7 +61,7 @@ class TestFailureCallbackAcrossSerializers:
 
         assert stored.state == "FAILURE"
         assert [(call["exc_type"], call["exc_msg"]) for call in calls] == [
-            (exception_type(type(error)), _reference_text(error))
+            (type_name(type(error)), Failure(error).text)
         ]
 
 
@@ -78,7 +72,7 @@ class TestFailureCallbackFromTheWorker:
         _, calls = served.settle(task_id, notified=1)
 
         assert [(call["exc_type"], call["exc_msg"]) for call in calls] == [
-            (exception_type(JobAbandonment), exception_type(JobAbandonment))
+            (type_name(JobAbandonment), type_name(JobAbandonment))
         ]
 
     def test_a_worker_that_could_not_open_its_application_notifies_once(
@@ -88,7 +82,7 @@ class TestFailureCallbackFromTheWorker:
         stored, calls = served.settle(task_id, notified=1)
 
         assert stored.state == "FAILURE"
-        assert [call["exc_type"] for call in calls] == [exception_type(WorkerNotOpenError)]
+        assert [call["exc_type"] for call in calls] == [type_name(WorkerNotOpenError)]
         assert "database down" not in calls[0]["exc_msg"]
 
     def test_a_soft_time_limit_notifies_once(self, served: Workbench) -> None:
@@ -97,7 +91,7 @@ class TestFailureCallbackFromTheWorker:
 
         assert stored.state == "FAILURE"
         assert [(call["exc_type"], call["exc_msg"]) for call in calls] == [
-            (exception_type(type(SOFT_LIMIT)), exception_type(type(SOFT_LIMIT)))
+            (type_name(type(SOFT_LIMIT)), type_name(type(SOFT_LIMIT)))
         ]
 
     def test_a_bridge_error_notifies_once_with_its_type(self, served: Workbench) -> None:
@@ -164,10 +158,7 @@ class TestBrokenFailureCallbackSend:
         stored, calls = served.settle(task_id, notified=0)
 
         assert calls == []
-        assert (stored.state, stored.result.exception_type) == (
-            "FAILURE",
-            exception_type(JobAbandonment),
-        )
+        assert (stored.state, type(stored.result)) == ("FAILURE", JobAbandonment)
         assert [
             entry["event"]
             for entry in logged_events(caplog)

@@ -36,9 +36,11 @@ from bytewax.operators import output as bw_output
 from bytewax.outputs import DynamicSink, StatelessSinkPartition
 
 from loom.core.async_bridge import AsyncBridge
+from loom.core.errors.boundary import boundary
 from loom.core.observability.observability import Observability
 from loom.core.tracing.context import generate_trace_id
 from loom.streaming.bytewax._commit_tracker import CommitCompletionPort
+from loom.streaming.bytewax._error_boundary import BytewaxBoundary
 from loom.streaming.bytewax._errors import RuntimeConfigurationError
 from loom.streaming.bytewax._resource_manager import ResourceManager
 from loom.streaming.bytewax._runtime_io import build_runtime_terminal_sinks, drop_item_to_commit
@@ -80,7 +82,7 @@ class _BuiltDataflow:
     shutdown: Callable[[], None]
 
 
-class _DropSinkPartition(StatelessSinkPartition[Any]):
+class _DropSinkPartition(BytewaxBoundary, StatelessSinkPartition[Any]):
     """Discard the items of a path that ends without a sink.
 
     Such a path is an error kind with no route, a branch or flow end that owns
@@ -102,7 +104,7 @@ class _DropSinkPartition(StatelessSinkPartition[Any]):
                 self._commit_tracker.complete(topic, partition, offset)
 
 
-class _DropSink(DynamicSink[Any]):
+class _DropSink(BytewaxBoundary, DynamicSink[Any]):
     """Build the tracker-aware discard sink for a path that ends without a sink."""
 
     def __init__(self, commit_tracker: CommitCompletionPort | None = None) -> None:
@@ -504,7 +506,7 @@ def _build_source_pipeline(flow: Any, ctx: _BuildContext) -> Stream:
     decoded = _decode_source_stream(stream, ctx, codec, step_id)
     decoded_branch = _split_decode_results(decoded, step_id)
     ctx.wire_decode_error(decoded_branch.falses)
-    return bw_map(f"{step_id}_message", decoded_branch.trues, _decode_ok_message)
+    return bw_map(f"{step_id}_message", decoded_branch.trues, boundary(_decode_ok_message))
 
 
 def _decode_source_stream(
@@ -514,12 +516,12 @@ def _decode_source_stream(
     step_id: str,
 ) -> Stream:
     """Map raw source items into decode results without raising wire errors."""
-    return bw_map(step_id, stream, lambda item: _decode_source_record(item, ctx, codec))
+    return bw_map(step_id, stream, boundary(lambda item: _decode_source_record(item, ctx, codec)))
 
 
 def _split_decode_results(stream: Stream, step_id: str) -> Any:
     """Split decode results into successful messages and wire errors."""
-    return branch(f"{step_id}_is_ok", stream, _is_decode_ok)
+    return branch(f"{step_id}_is_ok", stream, boundary(_is_decode_ok))
 
 
 def _qualified_step_id(step_id: str, path: tuple[int, ...]) -> str:

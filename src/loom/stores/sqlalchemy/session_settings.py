@@ -8,6 +8,8 @@ from typing import Any, Final
 from sqlalchemy import TextClause, event, text
 from sqlalchemy.orm import Session
 
+from loom.core.errors.boundary import boundary
+
 SessionSettings = Callable[[], Mapping[str, str] | None]
 """Returns the settings to apply to the transaction about to start, or ``None`` to apply none.
 
@@ -81,6 +83,7 @@ def install_session_settings(session_class: type[Session], provider: SessionSett
     """
 
     @event.listens_for(session_class, "after_begin")
+    @boundary
     def _apply_session_settings(_session: Session, transaction: Any, connection: Any) -> None:
         if transaction.nested:
             return

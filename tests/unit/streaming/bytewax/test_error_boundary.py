@@ -11,8 +11,9 @@ from tests.helpers.version_limited_extras import require_bytewax
 
 require_bytewax()
 
+
 from loom.core.errors import BoundaryValidationError, RuleViolationError  # noqa: E402
-from loom.core.logger.failure import public_form  # noqa: E402
+from loom.core.errors.failure import Failure  # noqa: E402
 from loom.core.observability.observability import Observability  # noqa: E402
 from loom.streaming.bytewax import _error_boundary  # noqa: E402
 from loom.streaming.core._errors import ErrorEnvelope, ErrorKind  # noqa: E402
@@ -86,7 +87,7 @@ class TestExecuteInBoundary:
 
         assert isinstance(result, ErrorEnvelope)
         assert result.kind is ErrorKind.BUSINESS
-        assert result.reason == public_form(RuleViolationError("field", "boom"))
+        assert result.reason == Failure(RuleViolationError("field", "boom")).text
         assert result.payload_type == AcmePayload.loom_message_type()
         original = result.original_message
         assert original is not None
