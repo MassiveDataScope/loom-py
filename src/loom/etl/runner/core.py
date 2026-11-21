@@ -132,7 +132,8 @@ class ETLRunner:
         )
         if config_context is not None:
             enforce_deploy_checks(
-                config_context, resolved_environment, scope=CheckScope.without_rest()
+                config_context.with_environment(resolved_environment),
+                scope=CheckScope.without_rest(),
             )
         return cls._assemble(
             config,
@@ -231,7 +232,7 @@ class ETLRunner:
         storage_config, obs_config = _parse_sections(context)
         storage_config.validate()
         observability = Observability.from_config(obs_config, environment=resolved_environment)
-        enforce_deploy_checks(context, resolved_environment, scope=CheckScope.without_rest())
+        enforce_deploy_checks(context, scope=CheckScope.without_rest())
         return cls._assemble(
             storage_config,
             obs_config,

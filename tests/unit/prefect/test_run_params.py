@@ -19,6 +19,8 @@ from prefect.runtime import flow_run as prefect_flow_run
 from prefect.settings import PREFECT_CLIENT_MAX_RETRIES
 from prefect.types import DateTime as PrefectDateTime
 
+from loom.core.config import ConfigContext
+from loom.core.environment import Environment
 from loom.etl import ETLParams, ETLPipeline, ETLProcess, ETLStep, FromTable, IntoTable
 from loom.etl.maintenance._runner import MaintenanceReport
 from loom.etl.maintenance._step import MaintenanceStep
@@ -374,7 +376,11 @@ class TestMaintenanceRunParams:
         runner.run.return_value = MaintenanceReport()
         monkeypatch.setattr(_maintenance, "install_log_bridge", MagicMock())
         monkeypatch.setattr(_maintenance, "uninstall_log_bridge", MagicMock())
-        monkeypatch.setattr(_maintenance, "_load_context", lambda path, **_kw: MagicMock())
+        monkeypatch.setattr(
+            _maintenance,
+            "_load_context",
+            lambda path, **_kw: ConfigContext.from_dict({}, environment=Environment.TEST),
+        )
         monkeypatch.setattr(
             _maintenance, "_parse_sections", lambda context: (MagicMock(), MagicMock())
         )

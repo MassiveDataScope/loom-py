@@ -185,7 +185,7 @@ class TestEmptyGroupWarnsAtStartupAndInCheck:
         raw = {"app": {"name": "acme", "entry_points": ["acme.unknown"]}}
 
         report = enforce_deploy_checks(
-            ConfigContext.from_dict(raw), Environment.PRODUCTION, scope=CheckScope()
+            ConfigContext.from_dict(raw, environment=Environment.PRODUCTION), scope=CheckScope()
         )
 
         assert report is not None

@@ -274,7 +274,7 @@ falling back to defaults.
 - Ids are stable. loom's areas start with `loom.` (`loom.rest.E001`); an
   application registers under its own (`billing.gateway.E001`). A duplicate or
   malformed id is refused at registration.
-- `enforce_deploy_checks(config, environment, scope=...)` runs only when the
+- `enforce_deploy_checks(config, scope=...)` runs only when the environment of `config`
   environment is deployed, on the final merged configuration; otherwise it
   logs one WARNING that the checks were skipped, naming the environment and
   `LOOM_ENV`, and reads no entry point. `scope` is a `CheckScope(required,

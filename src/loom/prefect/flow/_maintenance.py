@@ -66,7 +66,7 @@ def maintenance_flow(
             context = _load_context(actual_path, environment=environment)
             storage_config, observability_config = _parse_sections(context)
             observability = Observability.from_config(observability_config, environment=environment)
-            enforce_deploy_checks(context, environment, scope=CheckScope.without_rest())
+            enforce_deploy_checks(context, scope=CheckScope.without_rest())
             with observability.span(Scope.MAINTENANCE, step.__name__):
                 report = MaintenanceRunner.from_config(storage_config).run(step, params=params)
                 set_run_summary(_maintenance_summary(report, decoded))

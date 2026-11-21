@@ -46,7 +46,7 @@ def composition_project(
     directory.
     """
     return Project(
-        config=ctx,
+        config=ctx.with_environment(environment),
         environment=environment,
         code_path=code_path if code_path is not None else Path.cwd(),
         config_root=config_root if config_root is not None else Path.cwd(),

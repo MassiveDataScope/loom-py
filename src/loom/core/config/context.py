@@ -67,6 +67,10 @@ class ConfigContext:
         self._binder = binder or StructBinder()
         self._environment = environment
 
+    def with_environment(self, environment: Environment) -> ConfigContext:
+        """This configuration read for *environment*, for a caller that resolved its own."""
+        return ConfigContext(self._config, binder=self._binder, environment=environment)
+
     @property
     def environment(self) -> Environment:
         """The environment this configuration was loaded for, which the deploy checks read."""
@@ -113,6 +117,7 @@ class ConfigContext:
         raw: Mapping[str, Any],
         *,
         binder: StructBinder | None = None,
+        environment: Environment | None = None,
     ) -> ConfigContext:
         """Build a :class:`ConfigContext` from a plain Python mapping.
 
@@ -122,6 +127,7 @@ class ConfigContext:
         Args:
             raw: Plain Python mapping of config keys to values.
             binder: Optional :class:`StructBinder` override.
+            environment: The environment the configuration is read for.
 
         Returns:
             A ready-to-use :class:`ConfigContext`.
@@ -134,7 +140,7 @@ class ConfigContext:
         cfg = OmegaConf.create(dict(raw))
         if not isinstance(cfg, DictConfig):
             raise TypeError(f"Config must be a mapping, got {type(cfg).__name__}")
-        return cls(cfg, binder=binder)
+        return cls(cfg, binder=binder, environment=environment)
 
     def has(self, key: str | ConfigKey) -> bool:
         """Return ``True`` if the dot-separated *key* exists in the config.
