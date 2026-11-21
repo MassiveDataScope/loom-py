@@ -12,7 +12,11 @@ from loom.stores.sqlalchemy.registry import (
     build_sqlalchemy_repository_registration_module,
 )
 from loom.stores.sqlalchemy.repository import SQLAlchemyRepository, with_session_scope
-from loom.stores.sqlalchemy.session_manager import SessionManager, build_session_manager
+from loom.stores.sqlalchemy.session_manager import (
+    EngineSpec,
+    SessionManager,
+    build_session_manager,
+)
 from loom.stores.sqlalchemy.session_settings import SessionSettings
 from loom.stores.sqlalchemy.transactional import SupportsPostCommit, transactional
 
@@ -21,6 +25,7 @@ __all__ = [
     "AuditableModel",
     "Base",
     "BaseModel",
+    "EngineSpec",
     "IdentityMixin",
     "Projection",
     "SQLAlchemyRepository",

@@ -24,7 +24,6 @@ from alembic.script import Script, ScriptDirectory
 from alembic.util.exc import CommandError
 from sqlalchemy import Connection, event, text
 from sqlalchemy.exc import DBAPIError
-from sqlalchemy.ext.asyncio import create_async_engine
 from sqlalchemy.pool import NullPool
 
 from loom.core.config import ConfigError
@@ -43,6 +42,7 @@ from loom.stores.sqlalchemy.scoped_ddl import (
     LOCK_TIMEOUT,
     validate_timeout,
 )
+from loom.stores.sqlalchemy.session_manager import EngineSpec
 
 if TYPE_CHECKING:
     from loom.stores.sqlalchemy.alembic import StoreSchema
@@ -96,6 +96,17 @@ def alembic_config(script_location: str, url: str) -> Config:
         DATA_TREE if Path(script_location).name == DATA_TREE else STRUCTURAL_TREE
     )
     return config
+
+
+def migration_engine_spec(config: Config, schema: StoreSchema) -> EngineSpec:
+    """The engine spec a migration run connects with: the tree's URL, the store's arguments.
+
+    The URL is the one :func:`alembic_config` recorded, a migrator's or a
+    bypass user's; the ``connect()`` arguments are the store section's, as
+    the runtime engine takes them (:meth:`EngineSpec.from_config`).
+    """
+    url = str(config.get_main_option("sqlalchemy.url")).replace("%%", "%")
+    return EngineSpec.from_config(schema.database).with_url(url)
 
 
 def run_migrations(
@@ -239,8 +250,7 @@ def _sqlstate(exc: DBAPIError) -> str | None:
 
 async def _registry_drift(config: Config, schema: StoreSchema) -> None:
     bootstrap = _require_bootstrap(schema)
-    url = str(config.get_main_option("sqlalchemy.url")).replace("%%", "%")
-    engine = create_async_engine(url, poolclass=NullPool)
+    engine = migration_engine_spec(config, schema).create_async_engine(poolclass=NullPool)
     try:
         async with engine.connect() as connection:
             await connection.execute(_GUARD_FIRST, _guard(bootstrap.names.guard))

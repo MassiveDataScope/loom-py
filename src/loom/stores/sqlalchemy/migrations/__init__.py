@@ -12,6 +12,7 @@ from loom.stores.sqlalchemy.migrations.hook import scope_protection_hook
 from loom.stores.sqlalchemy.migrations.runners import (
     alembic_config,
     check,
+    migration_engine_spec,
     run_data_migrations,
     run_migrations,
 )
@@ -22,6 +23,7 @@ __all__ = [
     "ENV_TEMPLATE_PATH",
     "alembic_config",
     "check",
+    "migration_engine_spec",
     "run_data_migrations",
     "run_migrations",
     "scope_protection_hook",
