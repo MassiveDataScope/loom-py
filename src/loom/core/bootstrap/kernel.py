@@ -18,6 +18,7 @@ from typing import Any
 
 from loom.core.authz.elevation import ElevationSink
 from loom.core.bootstrap.bootstrap import BootstrapError
+from loom.core.bootstrap.log_events import BootstrapLogEvent
 from loom.core.di.container import BindingKey, LoomContainer
 from loom.core.di.errors import describe_key
 from loom.core.engine.compilable import Compilable
@@ -26,7 +27,7 @@ from loom.core.engine.execution_observer import ExecutionObserver
 from loom.core.engine.executor import UseCaseExecutor
 from loom.core.environment import Environment, resolve_environment
 from loom.core.execution import ExecutionResolver
-from loom.core.logger import LogEvent, LogField
+from loom.core.logger import LogField
 from loom.core.stores.repository.registration import classify_key
 from loom.core.stores.uow.coordinator import Coordinator
 from loom.core.use_case.factory import UseCaseFactory, main_repository
@@ -35,16 +36,6 @@ from loom.core.use_case.kinds import declare_kinds
 from loom.core.use_case.registry import UseCaseRegistry
 
 _log = logging.getLogger(__name__)
-
-
-class BootEvent(LogEvent):
-    """What the bootstrap logs while it composes the container and the kernel."""
-
-    CONTAINER_INITIALISING = "bootstrap.container_initialising"
-    MODULE_REGISTERING = "bootstrap.module_registering"
-    USE_CASES_COMPILING = "bootstrap.use_cases_compiling"
-    CONTAINER_VALIDATING = "bootstrap.container_validating"
-    KERNEL_COMPLETED = "bootstrap.kernel_completed"
 
 
 KERNEL_KEYS: tuple[BindingKey, ...] = (
@@ -151,10 +142,10 @@ def create_kernel(
         KernelRecipe.container(), seeds, modules=modules, reserved=KERNEL_KEYS
     ) as container:
         kernel = recipe.install(container)
-        _log.info(BootEvent.CONTAINER_VALIDATING)
+        _log.info(BootstrapLogEvent.CONTAINER_VALIDATING)
         container.validate()
         kernel.factory.verify()
-    _log.info(BootEvent.KERNEL_COMPLETED)
+    _log.info(BootstrapLogEvent.KERNEL_COMPLETED)
     return kernel
 
 
@@ -191,13 +182,13 @@ def seeded_container(
             the ``with`` block, cause chained. A ``BootstrapError`` passes through.
     """
     try:
-        _log.info(BootEvent.CONTAINER_INITIALISING)
+        _log.info(BootstrapLogEvent.CONTAINER_INITIALISING)
         for key, seed in seeds.items():
             container.register_instance(key, seed)
         view = container.bindings()
         for module in modules:
             name = getattr(module, "__qualname__", None) or repr(module)
-            _log.info(BootEvent.MODULE_REGISTERING, extra={LogField.BOOTSTRAP_MODULE: name})
+            _log.info(BootstrapLogEvent.MODULE_REGISTERING, extra={LogField.BOOTSTRAP_MODULE: name})
             before = {key: view.get(key) for key in reserved}
             module(container)
             for key in reserved:
@@ -297,7 +288,8 @@ class KernelRecipe:
             CompilationError: When a use case does not compile.
         """
         _log.info(
-            BootEvent.USE_CASES_COMPILING, extra={LogField.USE_CASE_COUNT: len(self.use_cases)}
+            BootstrapLogEvent.USE_CASES_COMPILING,
+            extra={LogField.USE_CASE_COUNT: len(self.use_cases)},
         )
         compiler = UseCaseCompiler(execution_observer=self.execution_observer)
         for use_case in self.use_cases:
