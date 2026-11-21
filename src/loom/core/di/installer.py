@@ -145,7 +145,7 @@ class ConfiguredInstaller(Installer, Generic[SettingsT]):
     def _decode(cls, config: ConfigContext) -> SettingsT:
         try:
             written = AwsInheritance.resolved(config).apply(
-                cls.settings_type, config.section(cls.section, Any), cls.section
+                cls.settings_type, config.section(cls.section, object), cls.section
             )
         except ConfigError as error:
             raise cls._error(str(error)) from error
