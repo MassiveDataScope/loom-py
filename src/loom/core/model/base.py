@@ -6,6 +6,7 @@ import msgspec
 from msgspec import UNSET, UnsetType
 
 from loom.core.model.field import ColumnFieldSpec
+from loom.core.model.introspection import derived_key_of
 from loom.core.model.projection import Projection
 from loom.core.model.relation import Relation
 from loom.core.model.struct import LoomStruct
@@ -19,6 +20,9 @@ if TYPE_CHECKING:
         pass
 else:
     _StructMeta = type(msgspec.Struct)
+
+
+_KEY_FOR = "key_for"
 
 
 def _resolve_annotation(annotation: Any, namespace: dict[str, Any]) -> Any:
@@ -102,6 +106,10 @@ class LoomStructMeta(_StructMeta):
         relations: dict[str, Relation] = {}
         projections: dict[str, Projection] = {}
         annotations = _take_class_body_annotations(namespace)
+        if _KEY_FOR in annotations:
+            raise TypeError(
+                f"{name}.{_KEY_FOR} cannot be a field: it is the method that derives the key"
+            )
 
         eval_ns = _build_eval_namespace(namespace)
 
@@ -142,3 +150,22 @@ class BaseModel(LoomStruct, metaclass=LoomStructMeta):  # type: ignore[metaclass
 
     __tablename__: ClassVar[str]
     __store__: ClassVar[str]
+
+    @classmethod
+    def key_for(cls, row: object) -> str:
+        """Return the id the model derives from the business key of *row*.
+
+        *row* is a model instance, any object with the business-key fields as
+        attributes (a command, a ``Struct``) or a mapping (an ETL row); the
+        model reads only its business-key fields, in the declared order, and
+        ignores the rest.
+
+        Raises:
+            ValueError: If the model derives no key.
+            BoundaryValidationError: If a business-key field is missing, has
+                no value or has no canonical form.
+        """
+        derived = derived_key_of(cls)
+        if derived is None:
+            raise ValueError(f"{cls.__name__} derives no key")
+        return derived.id_for(row)

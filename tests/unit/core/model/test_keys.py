@@ -9,6 +9,7 @@ from enum import Enum, IntEnum, StrEnum
 from typing import Any
 from uuid import UUID
 
+import msgspec
 import pytest
 from hypothesis import given
 from hypothesis import strategies as st
@@ -49,6 +50,11 @@ class AcmeListing(BaseModel):
     title: str | None = None
 
 
+class _ListingCommand(msgspec.Struct):
+    portal: str
+    external_id: str
+
+
 class AcmeSlot(BaseModel):
     __tablename__ = "acme_slots"
     __business_key__ = BusinessKey("portal", "slot")
@@ -65,6 +71,16 @@ def _model(**attributes: Any) -> type[BaseModel]:
 
 
 _ISO_PLUS_TWO = timezone(timedelta(hours=2))
+
+
+def _key_for(hash_: KeyHash, **values: Any) -> str:
+    """The id of a throwaway model keyed by *values*, derived with *hash_*."""
+    model = _model(
+        __annotations__={"id": str, **{name: type(value) for name, value in values.items()}},
+        id=ColumnField(primary_key=True, derived=hash_),
+        __business_key__=BusinessKey(*values),
+    )
+    return model.key_for(values)
 
 
 class TestCanonicalForm:
@@ -164,8 +180,8 @@ class TestGoldenVectors:
     def test_the_formulas_give_the_pinned_ids(
         self, values: dict[str, Any], uuid5: str, sha256: str
     ) -> None:
-        assert UUID5.key_for(values) == uuid5
-        assert SHA256.key_for(values) == sha256
+        assert _key_for(UUID5, **values) == uuid5
+        assert _key_for(SHA256, **values) == sha256
 
 
 _scalars = st.one_of(
@@ -185,8 +201,8 @@ class TestKeyProperties:
         named = {f"f{i}": value for i, value in enumerate(values)}
         again = {name: _equal_copy(value) for name, value in named.items()}
 
-        assert UUID5.key_for(named) == UUID5.key_for(again)
-        assert SHA256.key_for(named) == SHA256.key_for(again)
+        assert _key_for(UUID5, **named) == _key_for(UUID5, **again)
+        assert _key_for(SHA256, **named) == _key_for(SHA256, **again)
 
     @given(first=st.text(max_size=12), second=st.text(max_size=12))
     def test_values_that_differ_in_their_canonical_form_give_different_keys(
@@ -194,12 +210,12 @@ class TestKeyProperties:
     ) -> None:
         same = unicodedata.normalize("NFC", first) == unicodedata.normalize("NFC", second)
 
-        assert (SHA256.key_for({"v": first}) == SHA256.key_for({"v": second})) is same
+        assert (_key_for(SHA256, v=first) == _key_for(SHA256, v=second)) is same
 
     @given(left=st.text(max_size=8), right=st.text(max_size=8))
     def test_the_boundary_between_values_is_part_of_the_key(self, left: str, right: str) -> None:
-        joined = SHA256.key_for({"a": left + right, "b": ""})
-        split = SHA256.key_for({"a": left, "b": right})
+        joined = _key_for(SHA256, a=left + right, b="")
+        split = _key_for(SHA256, a=left, b=right)
 
         assert (joined == split) is (right == "")
 
@@ -217,18 +233,51 @@ def _equal_copy(value: object) -> object:
 
 
 class TestKeyFor:
-    def test_a_missing_value_is_refused_naming_the_field(self) -> None:
-        with pytest.raises(BoundaryValidationError, match="'external_id' has no value"):
-            UUID5.key_for({"portal": "p", "external_id": None})
+    def test_a_missing_field_is_refused_naming_model_and_field(self) -> None:
+        with pytest.raises(
+            BoundaryValidationError, match="AcmeListing: .*'external_id' is missing"
+        ):
+            AcmeListing.key_for({"portal": "p"})
+
+    def test_a_field_without_a_value_is_refused_naming_model_and_field(self) -> None:
+        with pytest.raises(
+            BoundaryValidationError, match="AcmeListing: .*'external_id' has no value"
+        ):
+            AcmeListing.key_for({"portal": "p", "external_id": None})
 
     def test_a_naive_datetime_is_refused_naming_the_field(self) -> None:
         with pytest.raises(BoundaryValidationError, match="'at'.*naive datetime"):
-            UUID5.key_for({"at": datetime(2026, 1, 1)})
+            _key_for(UUID5, at=datetime(2026, 1, 1))
 
     def test_the_namespace_is_part_of_the_formula(self) -> None:
         other = KeyHash.uuid5(UUID(int=1))
 
-        assert other.key_for({"v": "x"}) != UUID5.key_for({"v": "x"})
+        assert _key_for(other, v="x") != _key_for(UUID5, v="x")
+
+    def test_a_model_that_derives_no_key_refuses_the_call(self) -> None:
+        with pytest.raises(ValueError, match="AcmeSlot derives no key"):
+            AcmeSlot.key_for({"portal": "p", "slot": 1})
+
+    @pytest.mark.parametrize(
+        "row",
+        [
+            {"external_id": "123", "portal": "idealista", "title": "x", "extra": 1},
+            AcmeListing(id="whatever", portal="idealista", external_id="123", title="y"),
+            msgspec.convert({"portal": "idealista", "external_id": "123"}, _ListingCommand),
+        ],
+        ids=["mapping-with-extra-columns", "model-instance", "command"],
+    )
+    def test_any_row_shape_reads_only_the_business_key_in_its_declared_order(
+        self, row: object
+    ) -> None:
+        assert AcmeListing.key_for(row) == "f90f18f3-4e23-5dcc-b138-8fa5956aecbe"
+
+    def test_the_getters_are_built_once_per_model(self) -> None:
+        assert derived_key_of(AcmeListing) is derived_key_of(AcmeListing)
+
+    def test_a_model_cannot_have_a_field_named_key_for(self) -> None:
+        with pytest.raises(TypeError, match="AcmeDraft.key_for cannot be a field"):
+            _model(__annotations__={"id": int, "key_for": str}, id=ColumnField(primary_key=True))
 
 
 class TestBusinessKey:

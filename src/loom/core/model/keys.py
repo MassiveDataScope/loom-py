@@ -11,11 +11,13 @@ from __future__ import annotations
 import hashlib
 import unicodedata
 import uuid
-from collections.abc import Iterable, Mapping
+from collections.abc import Callable, Iterable, Mapping, Sequence
 from dataclasses import dataclass
+from dataclasses import field as dataclass_field
 from datetime import UTC, date, datetime
 from decimal import Decimal
 from enum import Enum, StrEnum
+from operator import attrgetter, itemgetter
 from typing import Any
 from uuid import UUID
 
@@ -96,11 +98,12 @@ class KeyAlgorithm(StrEnum):
 
 @dataclass(frozen=True, slots=True)
 class KeyHash:
-    """The formula that derives a primary key from the canonical form of a business key.
+    """The formula that turns the canonical strings of a business key into an id.
 
-    The canonical strings of the key's values, in order, are encoded as a JSON
-    list and hashed: ``uuid5`` returns the UUID text under *namespace*,
-    ``sha256`` the hex digest. Build it with :meth:`uuid5` or :meth:`sha256`.
+    The strings, in order, are encoded as a JSON list and hashed: ``uuid5``
+    returns the UUID text under *namespace*, ``sha256`` the hex digest. Build
+    it with :meth:`uuid5` or :meth:`sha256`; applications read a derived id
+    through ``Model.key_for``, not through the formula.
     """
 
     algorithm: KeyAlgorithm
@@ -123,34 +126,12 @@ class KeyHash:
             return self.algorithm.value
         return f"{self.algorithm.value}({self.namespace})"
 
-    def key_for(self, values: Mapping[str, Any]) -> str:
-        """Return the id of the business key whose values are *values*.
-
-        The values are hashed in the order of the mapping, which is the order
-        of the business key; a name is not part of the hash.
-
-        Raises:
-            BoundaryValidationError: If a value is ``None``, or has no
-                canonical form.
-        """
-        canonical = [self._canonical(name, value) for name, value in values.items()]
-        encoded = msgspec.json.encode(canonical)
+    def digest(self, canonical_values: Sequence[str]) -> str:
+        """Return the id of the business key whose canonical strings are *canonical_values*."""
+        encoded = msgspec.json.encode(list(canonical_values))
         if self.algorithm is KeyAlgorithm.UUID5 and self.namespace is not None:
             return str(uuid.uuid5(self.namespace, encoded.decode()))
         return hashlib.sha256(encoded).hexdigest()
-
-    @staticmethod
-    def _canonical(name: str, value: object) -> str:
-        if value is None:
-            raise BoundaryValidationError(
-                f"business key field {name!r} has no value", ((name, "is required"),)
-            )
-        try:
-            return canonical_form(value)
-        except (TypeError, ValueError) as exc:
-            raise BoundaryValidationError(
-                f"business key field {name!r}: {exc}", ((name, str(exc)),)
-            ) from exc
 
 
 @dataclass(frozen=True, slots=True)
@@ -183,23 +164,53 @@ class KeyMismatch:
     expected: str
 
 
+def _as_tuple(getter: Callable[[Any], Any], count: int) -> Callable[[Any], tuple[Any, ...]]:
+    """Make *getter*, an ``attrgetter`` or ``itemgetter``, return a tuple for any *count*."""
+    if count == 1:
+        return lambda row: (getter(row),)
+    return getter
+
+
 @dataclass(frozen=True, slots=True)
 class DerivedKey:
-    """The primary-key field of a model and the formula that fills it from its business key."""
+    """The primary-key field of a model and the formula that fills it from its business key.
+
+    The getters that read the business-key fields are built once, here, so a
+    call reads, canonicalises and hashes.
+    """
 
     model: str
     field: str
     business_key: BusinessKey
     key_hash: KeyHash
+    _from_attributes: Callable[[Any], tuple[Any, ...]] = dataclass_field(
+        init=False, repr=False, compare=False
+    )
+    _from_items: Callable[[Any], tuple[Any, ...]] = dataclass_field(
+        init=False, repr=False, compare=False
+    )
 
-    def id_for(self, values: Mapping[str, Any]) -> str:
-        """Return the id *values* derive, reading the business-key fields from it.
+    def __post_init__(self) -> None:
+        names = self.business_key.fields
+        object.__setattr__(self, "_from_attributes", _as_tuple(attrgetter(*names), len(names)))
+        object.__setattr__(self, "_from_items", _as_tuple(itemgetter(*names), len(names)))
+
+    def id_for(self, row: object) -> str:
+        """Return the id *row* derives, reading only the business-key fields from it.
+
+        *row* is a mapping or any object with the fields as attributes; its
+        other fields are ignored.
 
         Raises:
-            BoundaryValidationError: If a business-key field is missing or has
-                no canonical form.
+            BoundaryValidationError: If a business-key field is missing, has
+                no value or has no canonical form.
         """
-        return self.key_hash.key_for({name: values.get(name) for name in self.business_key.fields})
+        values = self._read(row)
+        canonical = [
+            self._canonical(name, value)
+            for name, value in zip(self.business_key.fields, values, strict=True)
+        ]
+        return self.key_hash.digest(canonical)
 
     def complete(self, values: dict[str, Any]) -> dict[str, Any]:
         """Return *values* with the derived id in the key field.
@@ -241,3 +252,31 @@ class DerivedKey:
             if str(row.get(self.field)) != expected:
                 mismatches.append(KeyMismatch(row, expected))
         return tuple(mismatches)
+
+    def _read(self, row: object) -> tuple[Any, ...]:
+        reader = self._from_items if isinstance(row, Mapping) else self._from_attributes
+        try:
+            return reader(row)
+        except (KeyError, AttributeError):
+            missing = next(name for name in self.business_key.fields if not _has(row, name))
+            raise BoundaryValidationError(
+                f"{self.model}: the business key field {missing!r} is missing",
+                ((missing, "is required"),),
+            ) from None
+
+    def _canonical(self, name: str, value: object) -> str:
+        if value is None or value is msgspec.UNSET:
+            raise BoundaryValidationError(
+                f"{self.model}: the business key field {name!r} has no value",
+                ((name, "is required"),),
+            )
+        try:
+            return canonical_form(value)
+        except (TypeError, ValueError) as exc:
+            raise BoundaryValidationError(
+                f"{self.model}: the business key field {name!r}: {exc}", ((name, str(exc)),)
+            ) from exc
+
+
+def _has(row: object, name: str) -> bool:
+    return name in row if isinstance(row, Mapping) else hasattr(row, name)
