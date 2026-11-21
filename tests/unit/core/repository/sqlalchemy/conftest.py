@@ -226,3 +226,11 @@ def repository_owner(
 @pytest.fixture
 def owner_without_session_manager() -> ServiceWithoutSessionManager:
     return ServiceWithoutSessionManager()
+
+
+@pytest.fixture
+def mutations(monkeypatch: pytest.MonkeyPatch) -> list[MutationEvent]:
+    """Record every mutation event the repository emits."""
+    events: list[MutationEvent] = []
+    monkeypatch.setattr("loom.stores.sqlalchemy.mixins.record_mutation", events.append)
+    return events

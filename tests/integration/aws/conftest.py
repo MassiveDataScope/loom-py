@@ -73,6 +73,12 @@ def aws(aws_url: str) -> AwsClientFactory:
 
 
 @pytest.fixture
+def sqs(aws: AwsClientFactory) -> Any:
+    """The SQS client of the emulator."""
+    return aws("sqs")
+
+
+@pytest.fixture
 def write_config(tmp_path: Path, aws_url: str) -> ConfigWriter:
     """Write *sections* to a YAML file under ``aws: {url, region}`` and return its path."""
 

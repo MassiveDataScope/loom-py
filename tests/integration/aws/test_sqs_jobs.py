@@ -21,7 +21,7 @@ from loom.core.use_case.use_case import UseCase
 from loom.serverless.aws.lambda_ import LambdaRuntime
 from loom.testing import LambdaEvent
 from tests.helpers.jobs import JobsAdapter
-from tests.integration.aws.conftest import AwsClientFactory, ConfigWriter, unique
+from tests.integration.aws.conftest import ConfigWriter, unique
 
 pytestmark = [pytest.mark.integration, pytest.mark.timeout(60)]
 
@@ -99,11 +99,6 @@ def _forget_runs() -> Iterator[None]:
     _runs.clear()
     yield
     _runs.clear()
-
-
-@pytest.fixture
-def sqs(aws: AwsClientFactory) -> Any:
-    return aws("sqs")
 
 
 @pytest.fixture
