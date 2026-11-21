@@ -27,6 +27,10 @@ OpenRepository = Callable[..., AbstractAsyncContextManager[Any]]
 
 _IDEALISTA = CreateListing(portal="idealista", external_id="123", title="flat")
 _FOTOCASA = CreateListing(portal="fotocasa", external_id="123", title="house")
+_NFC_JOSE = "Jos\u00e9"
+_NFD_JOSE = "Jose\u0301"
+_JOSE_NFC = CreateListing(portal="idealista", external_id=_NFC_JOSE)
+_JOSE_NFD = CreateListing(portal="idealista", external_id=_NFD_JOSE)
 _DERIVED_ID = "f90f18f3-4e23-5dcc-b138-8fa5956aecbe"
 
 
@@ -133,6 +137,51 @@ class TestContractDerivedKey:
 
             assert [row.portal for row in created] == ["fotocasa"]
             assert await listings.get_by_id(existing.id) == existing
+
+
+class TestContractNormalizedBusinessKey:
+    """Equal text in NFC and NFD is one identity: the stored value is what the id hashes."""
+
+    async def test_create_stores_the_nfc_form_of_a_decomposed_key(
+        self, case: BackendCase, open_repository: OpenRepository
+    ) -> None:
+        require(case, Creatable, Readable)
+
+        async with open_repository(AcmeContractListing) as listings:
+            created = await listings.create(_JOSE_NFD)
+
+            stored = await listings.get_by_id(created.id)
+
+        assert created.id == AcmeContractListing.key_for(_JOSE_NFC)
+        assert stored is not None
+        assert stored.external_id == _NFC_JOSE
+
+    async def test_create_conflicts_on_the_same_key_in_the_other_form(
+        self, case: BackendCase, open_repository: OpenRepository
+    ) -> None:
+        require(case, Creatable)
+
+        async with open_repository(AcmeContractListing) as listings:
+            await listings.create(_JOSE_NFC)
+
+            with pytest.raises(Conflict):
+                await listings.create(_JOSE_NFD)
+
+    async def test_ignore_stores_one_row_for_both_forms_of_a_key(
+        self, case: BackendCase, open_repository: OpenRepository
+    ) -> None:
+        require(case, BulkCreatable, Readable)
+
+        async with open_repository(AcmeContractListing) as listings:
+            created = await listings.create_many(
+                [_JOSE_NFC, _JOSE_NFD], on_conflict=OnConflict.IGNORE
+            )
+
+            stored = await listings.get_by_id(AcmeContractListing.key_for(_JOSE_NFC))
+
+        assert len(created) == 1
+        assert stored is not None
+        assert stored.external_id == _NFC_JOSE
 
 
 class TestContractCreateCheckpoint:

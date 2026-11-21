@@ -97,6 +97,9 @@ hashed. The owner of the rule is `loom.core.model.keys.canonical_form`.
 Any other type, `float` included, is refused at startup. `uuid5` hashes the JSON text under the
 namespace; `sha256` returns the hex digest of its UTF-8 bytes.
 
+The `str` fields of a derived key are stored in NFC, not only hashed in it: the model normalises
+them when it is built, so `José` written in either form is one row with one stored value.
+
 ## Uniqueness, store by store
 
 - **SQLAlchemy**: a `UNIQUE` constraint over the business key, with or without a derived id.

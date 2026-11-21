@@ -2492,6 +2492,10 @@
   `seed_temp` and `run`. `ETLScenario.apply` still calls `seed(ref, data,
   columns)` positionally when no schema is declared.
 
+## 🐛 Fixes
+
+- **model:** a model that derives its id from a business key stores the NFC form of its `str` business-key fields, the form the id hashes. `José` written in NFC and NFD gave one id but two column values, so `create_many(IGNORE)` on SQLAlchemy missed its `ON CONFLICT` target and raised `Conflict` on the primary key, and UNIQUE no longer meant one row per identity. The model normalises at construction (a value already in NFC is not written), and a repository create from a mapping does the same through `DerivedKey.complete`.
+
 # 🚀 Releases 2.1.3 to 9.0.0
 
 Entries from 2.1.3 to 9.0.0 were kept under one heading and are not split

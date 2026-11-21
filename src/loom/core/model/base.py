@@ -27,9 +27,12 @@ _DERIVES_KEY = "__derives_key__"
 
 
 def _set_derived_id(model: Any) -> None:
-    """Fill the derived id of *model* when it is unset and every business-key field is present."""
+    """Normalise the business-key text of *model*, then fill its derived id when it is unset."""
     derived = derived_key_of(type(model))
-    if derived is None or getattr(model, derived.field) is not UNSET:
+    if derived is None:
+        return
+    derived.normalize_text(model)
+    if getattr(model, derived.field) is not UNSET:
         return
     if derived.has_every_field(model):
         msgspec.structs.force_setattr(model, derived.field, derived.id_for(model))

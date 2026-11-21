@@ -49,7 +49,7 @@ def canonical_form(value: object) -> str:
         case bool():
             return "true" if value else "false"
         case str():
-            return unicodedata.normalize("NFC", value)
+            return _nfc(value)
         case int():
             return str(value)
         case Decimal():
@@ -62,6 +62,10 @@ def canonical_form(value: object) -> str:
             return str(value)
         case _:
             raise TypeError(f"{type(value).__name__} has no canonical form")
+
+
+def _nfc(text: str) -> str:
+    return text if unicodedata.is_normalized("NFC", text) else unicodedata.normalize("NFC", text)
 
 
 def is_canonical_type(python_type: type) -> bool:
@@ -212,6 +216,18 @@ class DerivedKey:
         ]
         return self.key_hash.digest(canonical)
 
+    def normalize_text(self, model: msgspec.Struct) -> None:
+        """Store the NFC form of each ``str`` business-key field of *model*, in place.
+
+        The id hashes the NFC form, so the stored value must be that form for
+        the business key to stay unique per id. A field already in NFC is not
+        written, which works on a frozen model.
+        """
+        for name in self.business_key.fields:
+            value = getattr(model, name, None)
+            if isinstance(value, str) and _nfc(value) != value:
+                msgspec.structs.force_setattr(model, name, _nfc(value))
+
     def has_every_field(self, row: object) -> bool:
         """Whether *row* holds a value for every business-key field."""
         try:
@@ -227,6 +243,7 @@ class DerivedKey:
             BoundaryValidationError: If *values* carries an id other than the
                 derived one, or a business-key field is missing.
         """
+        values = self._with_normalized_text(values)
         derived = self.id_for(values)
         supplied = values.get(self.field)
         if supplied is not None and supplied is not msgspec.UNSET and str(supplied) != derived:
@@ -237,6 +254,14 @@ class DerivedKey:
                 ((self.field, f"must be {derived}"),),
             )
         return {**values, self.field: derived}
+
+    def _with_normalized_text(self, values: dict[str, Any]) -> dict[str, Any]:
+        normalized = {
+            name: _nfc(values[name])
+            for name in self.business_key.fields
+            if isinstance(values.get(name), str)
+        }
+        return {**values, **normalized}
 
     def refuse_change(self, written: Iterable[str]) -> None:
         """Refuse an update that writes a business-key field, which would orphan the id.

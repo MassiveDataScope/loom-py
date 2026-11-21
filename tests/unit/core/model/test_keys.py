@@ -514,6 +514,54 @@ class TestModelDerivesItsId:
         assert AcmeSlot(portal="p", slot=1).id is None
 
 
+_NFC_JOSE = "Jos\u00e9"
+_NFD_JOSE = "Jose\u0301"
+
+
+class AcmePlainListing(BaseModel):
+    __tablename__ = "acme_plain_listings"
+
+    id: str = ColumnField(primary_key=True)
+    portal: str = ColumnField()
+
+
+class TestModelStoresTheTextItHashes:
+    def test_construction_stores_a_decomposed_key_field_in_nfc(self) -> None:
+        listing = AcmeListing(portal="idealista", external_id=_NFD_JOSE)
+
+        assert listing.external_id == _NFC_JOSE
+        assert listing.id == AcmeListing(portal="idealista", external_id=_NFC_JOSE).id
+
+    def test_decoding_a_decomposed_row_stores_it_in_nfc(self) -> None:
+        row = {"portal": "idealista", "externalId": _NFD_JOSE}
+
+        assert msgspec.convert(row, AcmeListing).external_id == _NFC_JOSE
+
+    def test_a_supplied_id_is_verified_against_the_normalized_key(self) -> None:
+        derived = derived_key_of(AcmeListing)
+        assert derived is not None
+        supplied = AcmeListing.key_for({"portal": "idealista", "external_id": _NFC_JOSE})
+
+        completed = derived.complete(
+            {"id": supplied, "portal": "idealista", "external_id": _NFD_JOSE}
+        )
+
+        assert completed["external_id"] == _NFC_JOSE
+
+    def test_a_normalized_value_is_left_as_the_same_object(self) -> None:
+        text = "".join(["Jos", "\u00e9"])
+
+        assert AcmeListing(portal="idealista", external_id=text).external_id is text
+
+    def test_a_field_outside_the_business_key_is_left_as_given(self) -> None:
+        listing = AcmeListing(portal="idealista", external_id="123", title=_NFD_JOSE)
+
+        assert listing.title == _NFD_JOSE
+
+    def test_a_model_without_a_derived_key_is_left_as_given(self) -> None:
+        assert AcmePlainListing(id="1", portal=_NFD_JOSE).portal == _NFD_JOSE
+
+
 def _derived_with(**fields: Any) -> type[BaseModel]:
     return _model(
         __annotations__={
