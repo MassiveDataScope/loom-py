@@ -12,6 +12,7 @@ from typing import Any, TypeVar, Union, cast, get_args, get_origin
 
 import msgspec
 
+from loom.core.config.entry_points import EntryPointGroup
 from loom.core.model.redaction import MASK, Dsn, RedactedMap, Secret, mask_structure
 
 T = TypeVar("T")
@@ -19,7 +20,7 @@ _UNION = (Union, types.UnionType)
 
 
 class _Decoder:
-    """Build a ``Secret``, ``Dsn`` or ``RedactedMap`` while decoding config."""
+    """Build a ``Secret``, ``Dsn``, ``RedactedMap`` or ``EntryPointGroup`` while decoding config."""
 
     __slots__ = ("_strict",)
 
@@ -32,6 +33,8 @@ class _Decoder:
         origin = get_origin(typ) or typ
         if origin is Secret:
             return self._secret(typ, value)
+        if typ is EntryPointGroup:
+            return EntryPointGroup.from_declared(value)
         if typ is Dsn or typ is RedactedMap:
             return self._typed(value, typ)
         raise TypeError(

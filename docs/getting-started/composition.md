@@ -87,10 +87,21 @@ installer it does not find has its section unchecked.
   module, in a fixed order. A plugin distribution registers its package in a
   group (`[project.entry-points."acme.plugins"]`, `acme_billing = "acme_billing"`)
   and the application declares `entry_points: [acme.plugins]`. A group no
-  installed distribution provides is valid, as for an optional plugin group
-  that is legitimately empty: the startup deploy checks and `loom check`
-  report the warning `loom.discovery.W001`, so a typo in a group name stays visible. Put
-  the id in `checks.silenced` to accept an optional group on purpose.
+  installed distribution provides is valid: the startup deploy checks and `loom check`
+  report the warning `loom.discovery.W001`, so a typo in a group name stays visible.
+  Declare a group that is legitimately empty as optional, and only it stops warning:
+
+  ```yaml
+  app:
+    entry_points:
+      - acme.plugins                  # required: warns when empty
+      - group: acme.extras
+        optional: true                # no W001 when empty; still scanned when installed
+  ```
+
+  Each item is a string (required) or a mapping with `group` and `optional`; any other
+  key is a `ConfigError` naming it. Putting the id in `checks.silenced` still silences the
+  check for every group.
 - Every module in a listed package is imported at scan: keep script-like
   modules such as `__main__.py` out of it.
 - A directory inside a listed package that holds `.py` files but no

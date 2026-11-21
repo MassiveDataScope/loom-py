@@ -12,6 +12,7 @@ from types import ModuleType
 from typing import TypeVar
 
 from loom.core.config import ConfigError
+from loom.core.config.entry_points import EntryPointGroup
 from loom.core.discovery._utils import collect_from_modules
 from loom.core.discovery.base import DiscoveryResult
 
@@ -25,11 +26,14 @@ class PackageScanner:
         packages: The ``app.packages`` entries.
         entry_points: The ``app.entry_points`` groups; the module of every
             installed entry point in them is scanned like a package entry. A
-            group with no installed entry point is a valid, empty state that
-            ``loom check`` and the deploy checks report (``loom.discovery.W001``).
+            group with no installed entry point is a valid, empty state; a
+            required one is reported by ``loom check`` and the deploy checks
+            (``loom.discovery.W001``), an optional one is not.
     """
 
-    def __init__(self, packages: Sequence[str] = (), *, entry_points: Sequence[str] = ()) -> None:
+    def __init__(
+        self, packages: Sequence[str] = (), *, entry_points: Sequence[EntryPointGroup] = ()
+    ) -> None:
         self._packages = packages
         self._entry_points = entry_points
 
@@ -40,16 +44,16 @@ class PackageScanner:
     def _entry_point_modules(self) -> list[str]:
         modules: set[str] = set()
         for group in self._entry_points:
-            provided = importlib.metadata.entry_points(group=group)
+            provided = importlib.metadata.entry_points(group=group.name)
             modules.update(entry_point.module for entry_point in provided)
         return sorted(modules)
 
     def empty_groups(self) -> list[str]:
-        """Return the declared groups with no installed entry point, in declared order."""
+        """Return the required groups with no installed entry point, in declared order."""
         return [
-            group
+            group.name
             for group in self._entry_points
-            if not importlib.metadata.entry_points(group=group)
+            if not group.is_optional and not importlib.metadata.entry_points(group=group.name)
         ]
 
     def discover(self, *, agents: Sequence[str] = ()) -> DiscoveryResult:

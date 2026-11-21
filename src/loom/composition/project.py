@@ -22,6 +22,7 @@ from loom.core.config import (
     ConfigKey,
     ConfigResolver,
 )
+from loom.core.config.entry_points import EntryPointGroup
 from loom.core.config.overrides import load_application_config
 from loom.core.discovery.scanner import PackageScanner
 from loom.core.environment import Environment, resolve_environment, select_config_paths
@@ -50,9 +51,10 @@ class AppConfig(msgspec.Struct, kw_only=True):
     ``loom check`` sees: declare there every module holding installers, models
     and use cases. ``entry_points`` lists entry-point groups: the module of every
     installed entry point in each group is scanned like an ``app.packages``
-    entry. A group no distribution provides is valid (an optional plugin
-    group): the deploy checks and ``loom check`` warn with
-    ``loom.discovery.W001``, so a typo in a group name stays visible.
+    entry. Each item is a group name (required) or ``{group: <name>, optional: true}``.
+    A required group no distribution provides is valid but the deploy checks and
+    ``loom check`` warn with ``loom.discovery.W001``, so a typo in a group name stays
+    visible; an optional one stays silent.
     """
 
     name: str
@@ -61,7 +63,7 @@ class AppConfig(msgspec.Struct, kw_only=True):
     job_service: str | None = None
     code_path: str = DEFAULT_CODE_PATH
     packages: list[str] = msgspec.field(default_factory=list)
-    entry_points: list[str] = msgspec.field(default_factory=list)
+    entry_points: list[EntryPointGroup] = msgspec.field(default_factory=list)
     agents: list[str] = msgspec.field(default_factory=list)
 
     @classmethod

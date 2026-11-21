@@ -435,7 +435,7 @@ check fails startup, a `W` check logs a warning.
 | `loom.rest.W001` | The API publishes its documentation or schema: one of `app.rest.docs_url`, `redoc_url`, `openapi_url` is not `null`. |
 | `loom.logger.E001` | `observability.log.format` names no registered log format. |
 | `loom.logger.E002` | `observability.log.level` or a `named_levels` value is not a log level. |
-| `loom.discovery.W001` | A group of `app.entry_points` has no installed entry point: it adds nothing to the scan. Valid for an optional plugin group; a typo in the name shows here. |
+| `loom.discovery.W001` | A required group of `app.entry_points` has no installed entry point: it adds nothing to the scan. A typo in the name shows here; declare a legitimately empty group as `{group: <name>, optional: true}` to leave it out of the check. |
 | `loom.cursors.E001` | `stores.settings.cursors` is configured and pagination cursors are not signed with a configured key (without that section no cursor is issued and nothing is checked): `stores.settings.cursors.signing` is set to anything but the literal `signed`, or `current_key_id` names no entry of `keys`. |
 
 Processes that serve no HTTP (the worker and the runners) skip the

@@ -22,6 +22,7 @@ import msgspec
 from sqlalchemy import MetaData
 
 from loom.core.config import ConfigError, ConfigKey
+from loom.core.config.entry_points import EntryPointGroup
 from loom.core.config.overrides import load_application_config
 from loom.core.discovery.scanner import PackageScanner
 from loom.core.environment import (
@@ -68,7 +69,7 @@ class _AppSection(msgspec.Struct, kw_only=True):
     name: str
     code_path: str = DEFAULT_CODE_PATH
     packages: list[str] = msgspec.field(default_factory=list)
-    entry_points: list[str] = msgspec.field(default_factory=list)
+    entry_points: list[EntryPointGroup] = msgspec.field(default_factory=list)
 
 
 @dataclass(frozen=True, slots=True)

@@ -6,11 +6,14 @@ from pathlib import Path
 
 import pytest
 import yaml
+from typer.testing import CliRunner
 
+from loom.cli.app import app
 from loom.composition.checked import CheckedProject
 from loom.composition.project import Project
 from loom.core.checks import CheckScope, enforce_deploy_checks
-from loom.core.config import ConfigContext
+from loom.core.config import ConfigContext, ConfigError
+from loom.core.config.entry_points import EntryPointGroup
 from loom.core.discovery.checks import EMPTY_ENTRY_POINT_GROUP_CHECK
 from loom.core.discovery.scanner import PackageScanner
 from loom.core.environment import Environment
@@ -46,7 +49,7 @@ class TestEntryPointScan:
         )
         install_distribution("acme-plugin-a", {_GROUP: ["acme_plugin_a"]})
 
-        result = PackageScanner(entry_points=[_GROUP]).discover()
+        result = PackageScanner(entry_points=[EntryPointGroup(_GROUP)]).discover()
 
         assert [model.__name__ for model in result.models] == ["Plugged"]
         assert [use_case.__name__ for use_case in result.use_cases] == ["PluggedPing"]
@@ -58,7 +61,9 @@ class TestEntryPointScan:
         write_package("acme_plugin_c", {"models.py": _MODEL.format(name="Other", table="other")})
         install_distribution("acme-plugin-bc", {_GROUP: ["acme_plugin_b", "acme_plugin_c"]})
 
-        result = PackageScanner(["acme_plugin_b"], entry_points=[_GROUP]).discover()
+        result = PackageScanner(
+            ["acme_plugin_b"], entry_points=[EntryPointGroup(_GROUP)]
+        ).discover()
 
         assert [model.__name__ for model in result.models] == ["Shared", "Other"]
 
@@ -70,8 +75,12 @@ class TestEntryPointScan:
         install_distribution("acme-plugin-y", {"acme.first": ["acme_plugin_y"]})
         install_distribution("acme-plugin-x", {"acme.second": ["acme_plugin_x"]})
 
-        forward = PackageScanner(entry_points=["acme.first", "acme.second"]).discover()
-        backward = PackageScanner(entry_points=["acme.second", "acme.first"]).discover()
+        forward = PackageScanner(
+            entry_points=[EntryPointGroup("acme.first"), EntryPointGroup("acme.second")]
+        ).discover()
+        backward = PackageScanner(
+            entry_points=[EntryPointGroup("acme.second"), EntryPointGroup("acme.first")]
+        ).discover()
 
         assert forward.models == backward.models
         assert [model.__module__ for model in forward.models] == [
@@ -80,7 +89,7 @@ class TestEntryPointScan:
         ]
 
     def test_a_group_without_an_installed_entry_point_scans_nothing(self) -> None:
-        result = PackageScanner(entry_points=["acme.unknown"]).discover()
+        result = PackageScanner(entry_points=[EntryPointGroup("acme.unknown")]).discover()
 
         assert result.models == ()
 
@@ -90,12 +99,67 @@ class TestEntryPointScan:
         write_package("acme_plugin_g", {})
         install_distribution("acme-plugin-g", {_GROUP: ["acme_plugin_g"]})
 
-        scanner = PackageScanner(entry_points=["acme.unknown", _GROUP, "acme.other"])
+        scanner = PackageScanner(
+            entry_points=[
+                EntryPointGroup("acme.unknown"),
+                EntryPointGroup(_GROUP),
+                EntryPointGroup("acme.other"),
+            ]
+        )
 
         assert scanner.empty_groups() == ["acme.unknown", "acme.other"]
 
+    def test_an_optional_group_without_an_installed_entry_point_is_not_listed(self) -> None:
+        scanner = PackageScanner(
+            entry_points=[
+                EntryPointGroup("acme.typo"),
+                EntryPointGroup("acme.plugins_maybe", is_optional=True),
+            ]
+        )
 
-def _write_config(tmp_path: Path, entry_points: list[str]) -> str:
+        assert scanner.empty_groups() == ["acme.typo"]
+
+    def test_an_optional_group_with_entry_points_still_loads_them(
+        self, write_package: PackageWriter, install_distribution: DistributionWriter
+    ) -> None:
+        write_package("acme_plugin_o", {"models.py": _MODEL.format(name="Maybe", table="maybe")})
+        install_distribution("acme-plugin-o", {_GROUP: ["acme_plugin_o"]})
+
+        result = PackageScanner(entry_points=[EntryPointGroup(_GROUP, is_optional=True)]).discover()
+
+        assert [model.__name__ for model in result.models] == ["Maybe"]
+
+
+class TestEntryPointGroupDeclaration:
+    @pytest.mark.parametrize(
+        ("declared", "expected"),
+        [
+            ("acme.plugins", EntryPointGroup("acme.plugins")),
+            ({"group": "acme.plugins"}, EntryPointGroup("acme.plugins")),
+            (
+                {"group": "acme.plugins", "optional": True},
+                EntryPointGroup("acme.plugins", is_optional=True),
+            ),
+        ],
+        ids=["string", "mapping-required", "mapping-optional"],
+    )
+    def test_an_item_is_decoded_into_one_group(
+        self, declared: object, expected: EntryPointGroup
+    ) -> None:
+        assert EntryPointGroup.from_declared(declared) == expected
+
+    def test_an_unknown_key_is_refused_naming_it(self) -> None:
+        with pytest.raises(ValueError, match="'optionl'"):
+            EntryPointGroup.from_declared({"group": "acme.plugins", "optionl": True})
+
+    def test_the_application_config_refuses_an_unknown_key_naming_it(self, tmp_path: Path) -> None:
+        entry = {"group": "acme.plugins", "optionl": True}
+
+        with pytest.raises(ConfigError, match="optionl"):
+            Project.load(_write_config(tmp_path, [entry]), environment="test")
+
+
+def _write_config(tmp_path: Path, entry_points: list[object]) -> str:
     document = {"app": {"name": "acme", "entry_points": entry_points}}
     config = tmp_path / "app.yaml"
     config.write_text(yaml.safe_dump(document), encoding="utf-8")
@@ -175,3 +239,48 @@ class TestEmptyGroupWarnsAtStartupAndInCheck:
         assert _empty_group_findings(checked) == []
         assert discovered.models == ()
         assert CapturedLog(caplog, "loom.core.discovery.scanner").calls == []
+
+
+_OPTIONAL_UNKNOWN = {"group": "acme.unknown", "optional": True}
+
+
+class TestOptionalGroup:
+    def test_an_optional_empty_group_gives_no_warning(self, tmp_path: Path) -> None:
+        checked = CheckedProject.load(
+            _write_config(tmp_path, [_OPTIONAL_UNKNOWN]), environment="test"
+        )
+
+        assert _empty_group_findings(checked) == []
+
+    def test_a_required_empty_group_still_warns(self, tmp_path: Path) -> None:
+        checked = CheckedProject.load(
+            _write_config(tmp_path, [{"group": "acme.unknown"}]), environment="test"
+        )
+
+        assert _empty_group_findings(checked) == [
+            "app.entry_points group 'acme.unknown' has no installed entry point."
+        ]
+
+    def test_a_mixed_list_warns_only_for_the_required_group(self, tmp_path: Path) -> None:
+        checked = CheckedProject.load(
+            _write_config(tmp_path, ["acme.typo", _OPTIONAL_UNKNOWN, {"group": "acme.other"}]),
+            environment="test",
+        )
+
+        assert _empty_group_findings(checked) == [
+            "app.entry_points group 'acme.typo', 'acme.other' has no installed entry point."
+        ]
+
+    @pytest.mark.parametrize(
+        ("entry", "warns"),
+        [(_OPTIONAL_UNKNOWN, False), ("acme.unknown", True)],
+        ids=["optional", "required"],
+    )
+    def test_loom_check_output_names_the_check_only_for_a_required_group(
+        self, tmp_path: Path, entry: object, warns: bool
+    ) -> None:
+        config = _write_config(tmp_path, [entry])
+
+        result = CliRunner().invoke(app, ["check", "--deploy", config, "--skip", "app.rest"])
+
+        assert (_CHECK in result.output) is warns, result.output
