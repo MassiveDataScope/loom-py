@@ -85,6 +85,10 @@ resp = client.get("/products/")
 assert resp.status_code == 200
 ```
 
+`InMemoryRepository` keys rows by the primary key the model declares, single
+or composite; a type that declares none raises `ValueError` when the
+repository is built.
+
 Force errors on specific methods:
 
 ```python
@@ -92,6 +96,33 @@ from loom.core.errors import NotFound
 
 harness.force_error(Product, "get_by_id", NotFound("not found"))
 ```
+
+### Recording what a caller sent
+
+`RecordingRepository(inner, fails_with=None)` wraps any repository, an
+`InMemoryRepository` or a real store, and records every call of the repository
+port as a `RepositoryCall(method, arguments)`, with the arguments by name and
+defaults included. With `fails_with`, every call raises that error after it is
+recorded and never reaches `inner`, so a test drives its caller's reject,
+retry and exit paths. Here a writer tries its batch twice and gives up:
+
+```python
+from loom.core.errors import Conflict
+from loom.core.stores.repository import OnConflict
+from loom.testing import InMemoryRepository, RecordingRepository, RepositoryCall
+
+readings = RecordingRepository(InMemoryRepository(Reading), fails_with=Conflict("taken"))
+
+await writer.write(readings, batch)
+
+sent = RepositoryCall("create_many", {"data": tuple(batch), "on_conflict": OnConflict.ERROR})
+assert readings.calls == [sent, sent]
+```
+
+`create_many` records its rows as a tuple copied at the call, so a batch the
+caller changes afterwards keeps the rows that were sent. The wrapper declares
+every capability of `RepoFor`; a method the wrapped repository lacks raises
+`AttributeError` when it is forwarded.
 
 ### Substituting dependencies
 
