@@ -23,6 +23,7 @@ persistence registry turns an ``ImportError`` at entry-point load into a
 
 from __future__ import annotations
 
+import logging
 from collections.abc import Callable, Iterable, Mapping, Sequence
 from datetime import UTC, datetime
 from typing import Any, ClassVar, Generic, Protocol, cast
@@ -34,7 +35,6 @@ from pymongo.errors import BulkWriteError, DuplicateKeyError, PyMongoError
 from pymongo.results import DeleteResult, InsertManyResult, InsertOneResult
 
 from loom.core.errors import Conflict
-from loom.core.logger import get_logger
 from loom.core.model.convert import to_struct
 from loom.core.model.introspection import (
     column_annotations,
@@ -82,7 +82,7 @@ Document = dict[str, Any]
 SessionProvider = Callable[[bool], AsyncClientSession | None]
 """Returns the client session a driver call runs in, given whether the call writes."""
 
-_log = get_logger(__name__).bind(component="repository")
+_log = logging.getLogger(__name__)
 
 _ID = "_id"
 _ID_ASCENDING: tuple[str, int] = (_ID, 1)
@@ -452,7 +452,7 @@ class MongoRepository(
         try:
             await self._collection.delete_many({_ID: {"$in": keys}})
         except PyMongoError as exc:
-            _log.error("MongoBulkUndoFailed", keys=keys, conflict=str(conflict))
+            _log.error("MongoBulkUndoFailed", extra={"keys": keys, "conflict": str(conflict)})
             exc.add_note(f"while undoing a partial create_many after: {conflict}")
             raise
 

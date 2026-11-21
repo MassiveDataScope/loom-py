@@ -33,17 +33,17 @@ invocation error: the caller reads :class:`InvocationOutcome` and decides.
 from __future__ import annotations
 
 import asyncio
+import logging
 from collections.abc import Awaitable, Callable, Iterable, Mapping
 from dataclasses import dataclass
 from typing import ClassVar, Protocol, TypeGuard
 
 from loom.core.concurrency import run_to_completion
 from loom.core.errors import UncomposedStore
-from loom.core.logger import get_logger
 from loom.core.stores.catalog import StoreKey
 from loom.core.stores.uow.abc import UnitOfWork, UnitOfWorkFactory, UowEvent
 
-_log = get_logger(__name__).bind(component="uow")
+_log = logging.getLogger(__name__)
 
 ROLLBACK_TIMEOUT_S = 30.0
 """How long the phased rollbacks of one invocation may take, together, by default.
@@ -238,7 +238,7 @@ class _PhasedDriver:
         try:
             await self._uow.close()
         except Exception:
-            _log.exception(UowEvent.CLOSE_FAILED, store=self._key)
+            _log.exception(UowEvent.CLOSE_FAILED, extra={"store": self._key})
 
     async def flush(self) -> None:
         await self._uow.flush()
@@ -664,7 +664,7 @@ class _Settlement:
             await step()
         except Exception as exc:
             if log_failure_as is not None:
-                _log.exception(log_failure_as, store=participant.key)
+                _log.exception(log_failure_as, extra={"store": participant.key})
             return exc
         except BaseException as exc:  # NOSONAR S5754
             self._interrupt = self._interrupt or exc
@@ -683,6 +683,6 @@ def _log_outcome(outcome: InvocationOutcome, participants: Mapping[StoreKey, Par
         for store in outcome.stores
     ]
     if outcome.has_succeeded:
-        _log.debug(UowEvent.INVOCATION_OUTCOME, stores=stores)
+        _log.debug(UowEvent.INVOCATION_OUTCOME, extra={"stores": stores})
     else:
-        _log.warning(UowEvent.INVOCATION_OUTCOME, stores=stores)
+        _log.warning(UowEvent.INVOCATION_OUTCOME, extra={"stores": stores})

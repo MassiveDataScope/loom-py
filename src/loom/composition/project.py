@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import asyncio
 import functools
+import logging
 from collections.abc import Sequence
 from dataclasses import dataclass
 from pathlib import Path
@@ -25,7 +26,6 @@ from loom.core.config.overrides import load_application_config
 from loom.core.discovery.scanner import PackageScanner
 from loom.core.environment import Environment, resolve_environment, select_config_paths
 from loom.core.locator import DEFAULT_CODE_PATH, add_code_path
-from loom.core.logger import get_logger
 from loom.core.observability.config import ObservabilityConfig
 from loom.core.observability.observability import Observability
 from loom.core.resources import Resource, ResourceKind, closing
@@ -37,6 +37,8 @@ if TYPE_CHECKING:
     from loom.core.discovery.base import DiscoveryResult
     from loom.core.stores import StorePlugin
 
+
+_log = logging.getLogger(__name__)
 
 T = TypeVar("T")
 
@@ -54,6 +56,7 @@ class AppConfig(msgspec.Struct, kw_only=True):
     """
 
     name: str
+    version: str | None = None
     entry: str | None = None
     job_service: str | None = None
     code_path: str = DEFAULT_CODE_PATH
@@ -202,10 +205,13 @@ class Project:
         observability_config = loaded.config.section_or_default(
             ConfigKey.OBSERVABILITY, ObservabilityConfig, ObservabilityConfig()
         )
-        observability = Observability.from_config(
-            observability_config, environment=loaded.environment
-        )
         app_cfg = AppConfig.from_config(loaded.config)
+        observability = Observability.from_config(
+            observability_config,
+            environment=loaded.environment,
+            service_name=app_cfg.name,
+            service_version=app_cfg.version,
+        )
         return cls(
             config=loaded.config,
             environment=loaded.environment,
@@ -279,14 +285,14 @@ class Project:
                 deployed environment.
             ReservedBindingError: When an installer binds a framework-owned key.
         """
-        logger = get_logger(__name__)
         clock = phases.PhaseClock()
         clock.lap("scan", self.discovered)
         recipe = clock.lap("plan", phases.plan(self, runtime))
+        self.observability.running_as(recipe.log_runtime)
         stores = clock.lap("build_stores", phases.build_stores(self, recipe))
         installers = phases.build_installers(self.config, recipe.discovered.installers)
         kernel, sql, job_resources = clock.lap(
-            "register", phases.register(self, recipe, stores, installers, logger=logger)
+            "register", phases.register(self, recipe, stores, installers)
         )
         analysis = clock.lap("analysed", recipe.analysed(kernel.factory.graph))
         ai = clock.lap("wire_ai", phases.wire_ai(self, recipe, kernel, analysis, sql))
@@ -327,19 +333,21 @@ class Project:
             job_settings=stores.job_settings,
             resources=roster.resources,
         )
-        logger.info(
+        _log.info(
             "loom.composition.composed",
-            runtime=type(runtime).__qualname__,
-            use_cases=len(discovered.use_cases),
-            jobs=len(discovered.jobs),
-            store_plugins=stores.store_plugins,
-            keys=len(kernel.container.bindings()),
-            installers=len(discovered.installers),
-            overrides=len(recipe.overrides),
-            agents=len(ai.plans),
-            mcp_servers=len(ai.mcp_servers),
-            phase_ms=clock.ms,
-            duration_ms=clock.total_ms,
+            extra={
+                "runtime": type(runtime).__qualname__,
+                "use_cases": len(discovered.use_cases),
+                "jobs": len(discovered.jobs),
+                "store_plugins": stores.store_plugins,
+                "keys": len(kernel.container.bindings()),
+                "installers": len(discovered.installers),
+                "overrides": len(recipe.overrides),
+                "agents": len(ai.plans),
+                "mcp_servers": len(ai.mcp_servers),
+                "phase_ms": clock.ms,
+                "duration_ms": clock.total_ms,
+            },
         )
         return application
 

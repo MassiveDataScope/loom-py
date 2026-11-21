@@ -22,6 +22,7 @@ from loom.core.stores.catalog import DEFAULT_STORE
 from loom.core.stores.uow.coordinator import OrderedCommits
 from loom.core.use_case.use_case import UseCase
 from tests.helpers.jobs import CeleryServiceFixture
+from tests.helpers.loggers import logged_events
 
 from ._lifecycle_doubles import Log, StubUnitOfWorkFactory
 
@@ -98,11 +99,7 @@ def logged() -> Iterator[Callable[[str], asyncio.Event]]:
 
 def _event(caplog: pytest.LogCaptureFixture, name: str) -> dict[str, Any]:
     """The structured fields of the one post-commit log record named *name*."""
-    (fields,) = [
-        record.msg
-        for record in caplog.records
-        if isinstance(record.msg, dict) and record.msg.get("event") == name
-    ]
+    (fields,) = [entry for entry in logged_events(caplog) if entry["event"] == name]
     return fields
 
 

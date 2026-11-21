@@ -34,7 +34,7 @@ from loom.core.identity import (
     current_caller,
     set_identity,
 )
-from tests.helpers.loggers import RecordingLogger
+from tests.helpers.loggers import CapturedLog
 from tests.unit.core.execution.context.doubles import ACME_ALICE, ACME_BOB, AcmePerExecutionValue
 
 Outliving = Callable[..., Awaitable["asyncio.Task[object]"]]
@@ -83,7 +83,7 @@ class TestATaskOutlivingItsExecution:
             await task
 
     async def test_an_execution_scope_as_another_is_a_logged_switch(
-        self, outliving: Outliving, switches: RecordingLogger
+        self, outliving: Outliving, switches: CapturedLog
     ) -> None:
         def as_bob() -> Identity:
             with ExecutionScope(ACME_BOB):
@@ -116,7 +116,7 @@ class TestATaskOutlivingItsExecution:
     async def test_opening_an_execution_past_the_window_is_refused(
         self,
         outliving: Outliving,
-        recorded: RecordingLogger,
+        recorded: CapturedLog,
         past_the_window: Callable[[], None],
     ) -> None:
         def late() -> object:
@@ -173,7 +173,7 @@ class TestATaskOutlivingItsExecution:
         assert "they act as the same caller" in str(caught.value)
 
     async def test_each_refused_read_logs_the_guidance_once_without_the_caller(
-        self, outliving: Outliving, recorded: RecordingLogger
+        self, outliving: Outliving, recorded: CapturedLog
     ) -> None:
         task = await outliving(per_execution(AcmePerExecutionValue, AcmePerExecutionValue))
 
@@ -358,7 +358,7 @@ class TestANestedExecutionEnding:
     )
     def test_another_identity_opened_inside_it_is_a_logged_switch(
         self,
-        switches: RecordingLogger,
+        switches: CapturedLog,
         outer: ExecutionScope | NoExecution,
         from_subject: str | None,
     ) -> None:

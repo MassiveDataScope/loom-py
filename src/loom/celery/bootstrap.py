@@ -51,7 +51,7 @@ from loom.core.use_case.factory import UseCaseFactory
 
 if TYPE_CHECKING:
     from loom.core.engine.compilable import Compilable
-    from loom.core.engine.metrics import MetricsRecorder
+    from loom.core.engine.execution_observer import ExecutionObserver
     from loom.core.job.job import Job
 
 
@@ -82,7 +82,7 @@ def bootstrap_worker(
     jobs: Sequence[type[Job[Any]]] = (),
     use_cases: Sequence[type[Compilable]] = (),
     interfaces: Sequence[type[Any]] = (),
-    metrics: MetricsRecorder | None = None,
+    execution_observer: ExecutionObserver | None = None,
     resolvers: Sequence[ConfigResolver] = (),
 ) -> WorkerBootstrapResult:
     """Bootstrap a Celery worker process and register all Job tasks.
@@ -125,7 +125,7 @@ def bootstrap_worker(
             same classes via ``use_cases=`` but without having to enumerate
             individual use-case types — useful when callbacks interact with
             AutoCRUD-generated use-cases that are not importable by name.
-        metrics: Optional metrics recorder forwarded to the compiler and
+        execution_observer: Optional execution observer forwarded to the compiler and
             executor.
         resolvers: Resolvers for ``${name:key}`` placeholders, registered
             before the built-in ``secrets`` and ``ssm`` defaults.  A resolver
@@ -168,7 +168,7 @@ def bootstrap_worker(
         jobs=jobs,
         use_cases=use_cases,
         interfaces=interfaces,
-        metrics=metrics,
+        execution_observer=execution_observer,
     )
     application = project.compose(runtime)
     celery_app = runtime.mount(application)

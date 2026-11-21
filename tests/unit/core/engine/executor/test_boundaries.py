@@ -56,7 +56,7 @@ from ...uow._coordinator_fakes import (
 from .._lifecycle_doubles import (
     BusinessError,
     Log,
-    Metrics,
+    RecordingExecutionObserver,
     Run,
     StubUnitOfWorkFactory,
     context_is_clean,
@@ -379,19 +379,19 @@ class TestOneStoreRaisesAsToday:
         assert isinstance(raised.value.__cause__, ConnectionError)
 
     async def test_a_failed_flush_is_reported_as_the_commit(
-        self, metrics: Metrics, make_executor: MakeExecutor
+        self, observer: RecordingExecutionObserver, make_executor: MakeExecutor
     ) -> None:
         stores = AcmeStores(Ledger(), Fault("flush", Effect.RAISE))
 
         executor = make_executor(
-            coordinator=OrderedCommits({DEFAULT_STORE: stores}), metrics=metrics
+            coordinator=OrderedCommits({DEFAULT_STORE: stores}), execution_observer=observer
         )
         use_case = Run(done())
 
         with pytest.raises(Boom):
             await executor.execute(use_case)
 
-        assert metrics.only(EventKind.EXEC_ERROR).error_kind == "commit"
+        assert observer.only(EventKind.EXEC_ERROR).error_kind == "commit"
 
 
 class TestStoresNotCommittedError:

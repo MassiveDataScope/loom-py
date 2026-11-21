@@ -24,7 +24,6 @@ from loom.composition.project import Project
 from loom.core.bootstrap import BootstrapError
 from loom.core.di import ContainerSealed
 from loom.core.di.container import ResolutionError
-from loom.core.logger import get_logger
 from tests.helpers.composition import Serving
 from tests.unit.composition.phases.components import (
     AcmeJob,
@@ -162,9 +161,7 @@ class TestStartupErrors:
         recipe = replace(phases.plan(project, adapter), overrides=(binds_unbuildable,))
         stores = phases.build_stores(project, recipe)
         installers = phases.build_installers(project.config, recipe.discovered.installers)
-        kernel, _sql, _jobs = phases.register(
-            project, recipe, stores, installers, logger=get_logger("tests.acme")
-        )
+        kernel, _sql, _jobs = phases.register(project, recipe, stores, installers)
         analysis = recipe.analysed(kernel.factory.graph)
 
         with pytest.raises(BootstrapError, match="AcmeUnbuildable") as caught:

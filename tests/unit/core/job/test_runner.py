@@ -22,6 +22,7 @@ from loom.core.job.outcome import (
 from loom.core.job.policy import Backoff, Redelivery, RetryPolicy
 from loom.core.job.runner import JobRunner
 from loom.testing import JobTestData
+from tests.helpers.loggers import logged_events
 
 POLICY = RetryPolicy(Backoff(first_s=4, factor=2, max_s=100, jitter=False), max_attempts=3)
 
@@ -31,7 +32,7 @@ class AcmeJob(Job[None]):
         return None
 
 
-class Metrics:
+class RecordingExecutionObserver:
     def __init__(self) -> None:
         self.events: list[ExecutionEvent] = []
 
@@ -47,12 +48,14 @@ _DATA = JobTestData().with_job_type(AcmeJob).with_policy(POLICY).with_trace_id("
 
 
 def _runner(
-    behaviour: Any, metrics: Metrics | None = None, redelivery: Redelivery = Redelivery.DELAYED
+    behaviour: Any,
+    observer: RecordingExecutionObserver | None = None,
+    redelivery: Redelivery = Redelivery.DELAYED,
 ) -> JobRunner:
     async def invocation(delivery: JobDelivery) -> Any:
         return await behaviour(delivery)
 
-    return JobRunner(invocation, redelivery=redelivery, metrics=metrics)
+    return JobRunner(invocation, redelivery=redelivery, execution_observer=observer)
 
 
 def _returning(value: Any) -> Any:
@@ -156,11 +159,7 @@ class TestJobRunnerDelivery:
 class TestJobRunnerAbandonmentLog:
     @staticmethod
     def _abandonments(caplog: pytest.LogCaptureFixture) -> list[dict[str, Any]]:
-        return [
-            record.msg
-            for record in caplog.records
-            if isinstance(record.msg, dict) and record.msg.get("event") == "Job abandoned"
-        ]
+        return [entry for entry in logged_events(caplog) if entry["event"] == "Job abandoned"]
 
     async def test_an_abandoned_run_logs_one_warning_naming_the_message_and_why(
         self, caplog: pytest.LogCaptureFixture
@@ -170,19 +169,17 @@ class TestJobRunnerAbandonmentLog:
         await _runner(_raising(ValueError("boom"))).run(delivery)
 
         (logged,) = self._abandonments(caplog)
-        assert logged | {"timestamp": None} == {
+        assert logged == {
             "event": "Job abandoned",
             "level": "warning",
-            "logger": "loom.core.job.runner",
-            "timestamp": None,
-            "job": "AcmeJob",
+            "loom.job": "AcmeJob",
             "queue": delivery.queue,
-            "attempt": 3,
+            "loom.attempt": 3,
             "postponements": 2,
             "reason": "attempts_exhausted",
             "error_type": "ValueError",
             "error_message": "boom",
-            "task_id": delivery.task_id,
+            "loom.task_id": delivery.task_id,
         }
 
     @pytest.mark.parametrize(
@@ -205,7 +202,7 @@ class TestJobRunnerAbandonmentLog:
         )
 
         (logged,) = self._abandonments(caplog)
-        assert (logged["reason"], logged["error_type"], logged["task_id"]) == (
+        assert (logged["reason"], logged["error_type"], logged["loom.task_id"]) == (
             "not_retryable",
             "UnretryableError",
             "m-1",
@@ -242,10 +239,10 @@ class TestJobRunnerEvents:
     async def test_emits_started_then_the_event_of_the_outcome(
         self, behaviour: Any, kind: EventKind, status: Status
     ) -> None:
-        metrics = Metrics()
-        await _runner(behaviour, metrics).run(_DATA.delivery())
+        observer = RecordingExecutionObserver()
+        await _runner(behaviour, observer).run(_DATA.delivery())
 
-        started, settled = metrics.events
+        started, settled = observer.events
         assert started.kind is EventKind.JOB_STARTED
         assert (settled.kind, settled.status) == (kind, status)
         assert settled.use_case_name == "AcmeJob"
@@ -264,16 +261,16 @@ class TestJobRunnerEvents:
     async def test_an_abandoned_event_carries_the_reason(
         self, behaviour: Any, reason: AbandonReason
     ) -> None:
-        metrics = Metrics()
-        await _runner(behaviour, metrics, redelivery=Redelivery.NONE).run(_DATA.delivery())
+        observer = RecordingExecutionObserver()
+        await _runner(behaviour, observer, redelivery=Redelivery.NONE).run(_DATA.delivery())
 
-        assert metrics.events[-1].reason is reason
+        assert observer.events[-1].reason is reason
 
     async def test_a_failed_event_carries_the_error(self) -> None:
-        metrics = Metrics()
+        observer = RecordingExecutionObserver()
         error = ValueError("boom")
-        await _runner(_raising(error), metrics).run(_DATA.delivery())
-        assert metrics.events[-1].error is error
+        await _runner(_raising(error), observer).run(_DATA.delivery())
+        assert observer.events[-1].error is error
 
     async def test_a_runner_without_metrics_runs(self) -> None:
         outcome: JobOutcome = await _runner(_returning(1)).run(_DATA.delivery())
@@ -322,12 +319,12 @@ class TestJobRunnerRedelivery:
     async def test_an_abandoned_job_postponement_emits_the_abandonment_not_a_postponement(
         self,
     ) -> None:
-        metrics = Metrics()
+        observer = RecordingExecutionObserver()
         await _runner(
-            _raising(JobPostponement("later", 30)), metrics, redelivery=Redelivery.NONE
+            _raising(JobPostponement("later", 30)), observer, redelivery=Redelivery.NONE
         ).run(_DATA.delivery())
 
-        assert [event.kind for event in metrics.events] == [
+        assert [event.kind for event in observer.events] == [
             EventKind.JOB_STARTED,
             EventKind.JOB_ABANDONED,
         ]
@@ -355,11 +352,11 @@ class TestJobRunnerDecideUnrunnable:
         )
 
     def test_it_emits_the_event_of_the_outcome_named_by_the_error_class(self) -> None:
-        metrics = Metrics()
+        observer = RecordingExecutionObserver()
         error = UnretryableError("never")
-        _runner(_returning(1), metrics).decide_unrunnable(error, 1, POLICY)
+        _runner(_returning(1), observer).decide_unrunnable(error, 1, POLICY)
 
-        [event] = metrics.events
+        [event] = observer.events
         assert (event.kind, event.status, event.use_case_name, event.error) == (
             EventKind.JOB_ABANDONED,
             Status.ABANDONED,

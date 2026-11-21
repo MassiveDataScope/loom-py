@@ -13,6 +13,7 @@ from loom.core.locator import DEFAULT_CODE_PATH, add_code_path
 from loom.core.stores.catalog import StoreKey
 from loom.stores.sqlalchemy.alembic import StoreSchema, load_store_schema
 from loom.stores.sqlalchemy.rls import SchemaNames
+from tests.helpers.loggers import rendered
 
 SCOPED_MODULE = "tests.integration.agnosticism.notes"
 PLAIN_MODULE = "tests.unit.core.locator_fixtures.plain"
@@ -395,7 +396,7 @@ class TestStoreSections:
             application = load_store_schema(two_stores, store=StoreKey(store))
 
         loaded = (set(application.metadata.tables), application.store, application.path)
-        left_out = [r.getMessage() for r in caplog.records if "StoresNotLoaded" in r.getMessage()]
+        left_out = [rendered(r) for r in caplog.records if "StoresNotLoaded" in r.getMessage()]
         assert loaded == ({table}, store, f"stores.{store}")
         assert application.database.url == url
         assert len(left_out) == 1

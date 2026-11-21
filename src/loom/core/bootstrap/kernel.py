@@ -10,6 +10,7 @@ and :meth:`KernelRecipe.install` are its steps.
 
 from __future__ import annotations
 
+import logging
 from collections.abc import Callable, Collection, Iterator, Mapping, Sequence
 from contextlib import contextmanager
 from dataclasses import dataclass
@@ -21,17 +22,30 @@ from loom.core.di.container import BindingKey, LoomContainer
 from loom.core.di.errors import describe_key
 from loom.core.engine.compilable import Compilable
 from loom.core.engine.compiler import UseCaseCompiler
+from loom.core.engine.execution_observer import ExecutionObserver
 from loom.core.engine.executor import UseCaseExecutor
-from loom.core.engine.metrics import MetricsRecorder
 from loom.core.environment import Environment, resolve_environment
 from loom.core.execution import ExecutionResolver
-from loom.core.logger import LoggerPort, get_logger
+from loom.core.logger import LogEvent, LogField
 from loom.core.stores.repository.registration import classify_key
 from loom.core.stores.uow.coordinator import Coordinator
 from loom.core.use_case.factory import UseCaseFactory, main_repository
 from loom.core.use_case.invoker import AppInvoker, ApplicationInvoker
 from loom.core.use_case.kinds import declare_kinds
 from loom.core.use_case.registry import UseCaseRegistry
+
+_log = logging.getLogger(__name__)
+
+
+class BootEvent(LogEvent):
+    """What the bootstrap logs while it composes the container and the kernel."""
+
+    CONTAINER_INITIALISING = "bootstrap.container_initialising"
+    MODULE_REGISTERING = "bootstrap.module_registering"
+    USE_CASES_COMPILING = "bootstrap.use_cases_compiling"
+    CONTAINER_VALIDATING = "bootstrap.container_validating"
+    KERNEL_COMPLETED = "bootstrap.kernel_completed"
+
 
 KERNEL_KEYS: tuple[BindingKey, ...] = (
     UseCaseFactory,
@@ -56,7 +70,7 @@ class Kernel:
             it invokes acts as the identity acting where it is called;
             :meth:`~loom.core.use_case.invoker.AppInvoker.for_identity` binds a
             copy to one caller.
-        metrics: Optional metrics recorder the executor reports to.
+        execution_observer: Optional execution observer the executor reports to.
     """
 
     container: LoomContainer
@@ -65,7 +79,7 @@ class Kernel:
     executor: UseCaseExecutor
     registry: UseCaseRegistry
     invoker: AppInvoker
-    metrics: MetricsRecorder | None = None
+    execution_observer: ExecutionObserver | None = None
 
 
 def create_kernel(
@@ -73,8 +87,7 @@ def create_kernel(
     config: object,
     use_cases: Sequence[type[Compilable]],
     modules: Sequence[Callable[[LoomContainer], None]] = (),
-    logger: LoggerPort | None = None,
-    metrics: MetricsRecorder | None = None,
+    execution_observer: ExecutionObserver | None = None,
     coordinator: Coordinator | None = None,
     repo_resolver: Callable[[type[Any]], Any] | None = None,
     environment: Environment | str | None = None,
@@ -95,8 +108,7 @@ def create_kernel(
             scope under its concrete type.
         use_cases: Compilable classes to compile at startup.
         modules: Container registration modules, run in order.
-        logger: Optional logger override; defaults to ``loom.bootstrap``.
-        metrics: Optional metrics recorder.
+        execution_observer: Optional execution observer.
         coordinator: Coordinator of the application's stores, which runs
             each execution in their units of work; ``None`` runs without one.
         repo_resolver: Optional repository resolver used by marker-based loads.
@@ -126,25 +138,23 @@ def create_kernel(
             directly, naming the module, when a module binds a key of
             :data:`KERNEL_KEYS`.
     """
-    log = logger or get_logger("loom.bootstrap")
     seeds = {type(config): config, Environment: resolve_environment(environment)}
     recipe = KernelRecipe(
         use_cases,
-        log,
-        metrics=metrics,
+        execution_observer=execution_observer,
         coordinator=coordinator,
         repo_resolver=repo_resolver,
         agent_resolver=agent_resolver,
         mcp_resolver=mcp_resolver,
     )
     with seeded_container(
-        KernelRecipe.container(), seeds, modules=modules, logger=log, reserved=KERNEL_KEYS
+        KernelRecipe.container(), seeds, modules=modules, reserved=KERNEL_KEYS
     ) as container:
         kernel = recipe.install(container)
-        log.info("[BOOT] Validating container bindings")
+        _log.info(BootEvent.CONTAINER_VALIDATING)
         container.validate()
         kernel.factory.verify()
-    log.info("[BOOT] Bootstrap complete")
+    _log.info(BootEvent.KERNEL_COMPLETED)
     return kernel
 
 
@@ -159,7 +169,6 @@ def seeded_container(
     seeds: Mapping[BindingKey, object],
     *,
     modules: Sequence[Callable[[LoomContainer], None]],
-    logger: LoggerPort,
     reserved: Collection[BindingKey] = (),
     error: Callable[[Callable[..., object], BindingKey], BootstrapError] = _kernel_key_bound,
 ) -> Iterator[LoomContainer]:
@@ -173,7 +182,6 @@ def seeded_container(
         container: The container to fill.
         seeds: Instances bound under their key before any module runs.
         modules: DI modules run in order.
-        logger: Where each module's registration is logged.
         reserved: Keys no module may bind or replace.
         error: Builds the error raised for a module and the reserved key it bound.
 
@@ -183,13 +191,13 @@ def seeded_container(
             the ``with`` block, cause chained. A ``BootstrapError`` passes through.
     """
     try:
-        logger.info("[BOOT] Initialising DI container")
+        _log.info(BootEvent.CONTAINER_INITIALISING)
         for key, seed in seeds.items():
             container.register_instance(key, seed)
         view = container.bindings()
         for module in modules:
             name = getattr(module, "__qualname__", None) or repr(module)
-            logger.info(f"[BOOT] Registering module: {name}")
+            _log.info(BootEvent.MODULE_REGISTERING, extra={LogField.BOOTSTRAP_MODULE: name})
             before = {key: view.get(key) for key in reserved}
             module(container)
             for key in reserved:
@@ -208,8 +216,7 @@ class KernelRecipe:
 
     Args:
         use_cases: Compilable classes to compile.
-        logger: Logger of the compilation.
-        metrics: Optional metrics recorder.
+        execution_observer: Optional execution observer.
         coordinator: Coordinator of the application's stores; ``None`` runs without one.
         repo_resolver: Repository resolver of marker-based loads; defaults to
             the container's ``resolve_repo``.
@@ -218,8 +225,7 @@ class KernelRecipe:
     """
 
     use_cases: Sequence[type[Compilable]]
-    logger: LoggerPort
-    metrics: MetricsRecorder | None = None
+    execution_observer: ExecutionObserver | None = None
     coordinator: Coordinator | None = None
     repo_resolver: Callable[[type[Any]], Any] | None = None
     agent_resolver: ExecutionResolver | None = None
@@ -259,7 +265,7 @@ class KernelRecipe:
         executor = UseCaseExecutor(
             compiler,
             coordinator=self.coordinator,
-            metrics=self.metrics,
+            execution_observer=self.execution_observer,
             repo_resolver=self.repo_resolver or container.resolve_repo,
             resolvers=container.kinds,
             builder=factory.build,
@@ -279,7 +285,7 @@ class KernelRecipe:
             executor=executor,
             registry=registry,
             invoker=invoker,
-            metrics=self.metrics,
+            execution_observer=self.execution_observer,
         )
 
     def _install_use_cases(
@@ -290,8 +296,10 @@ class KernelRecipe:
         Raises:
             CompilationError: When a use case does not compile.
         """
-        self.logger.info(f"[BOOT] Compiling {len(self.use_cases)} use case(s)")
-        compiler = UseCaseCompiler(logger=self.logger, metrics=self.metrics)
+        _log.info(
+            BootEvent.USE_CASES_COMPILING, extra={LogField.USE_CASE_COUNT: len(self.use_cases)}
+        )
+        compiler = UseCaseCompiler(execution_observer=self.execution_observer)
         for use_case in self.use_cases:
             compiler.compile(use_case)
         factory = UseCaseFactory(container)

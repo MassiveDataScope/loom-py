@@ -1,4 +1,4 @@
-"""Tests for metrics wiring through create_kernel → create_fastapi_app."""
+"""Tests for observer wiring through create_kernel → create_fastapi_app."""
 
 from __future__ import annotations
 
@@ -9,8 +9,8 @@ import pytest
 
 from loom.core.bootstrap import create_kernel
 from loom.core.engine.events import EventKind, ExecutionEvent
+from loom.core.engine.execution_observer import ExecutionObserver
 from loom.core.engine.executor import UseCaseExecutor
-from loom.core.engine.metrics import MetricsRecorder
 from loom.core.model import LoomStruct
 from loom.core.use_case.use_case import UseCase
 
@@ -24,24 +24,24 @@ class _SimpleUseCase(UseCase[Any, None]):
         return None
 
 
-class TestKernelCarriesMetrics:
+class TestKernelCarriesExecutionObserver:
     def test_metrics_none_by_default(self) -> None:
         result = create_kernel(config=object(), use_cases=[_SimpleUseCase])
-        assert result.metrics is None
+        assert result.execution_observer is None
 
     def test_metrics_stored_when_provided(self) -> None:
-        adapter = MagicMock(spec=MetricsRecorder)
+        adapter = MagicMock(spec=ExecutionObserver)
         result = create_kernel(
             config=object(),
             use_cases=[_SimpleUseCase],
-            metrics=adapter,
+            execution_observer=adapter,
         )
-        assert result.metrics is adapter
+        assert result.execution_observer is adapter
 
 
-class TestCreateFastapiAppWiresMetrics:
-    async def test_executor_receives_metrics_recorder(self) -> None:
-        """create_kernel must register UseCaseExecutor with the metrics recorder."""
+class TestCreateFastapiAppWiresExecutionObserver:
+    async def test_executor_receives_execution_observer(self) -> None:
+        """create_kernel must register UseCaseExecutor with the observer recorder."""
         pytest.importorskip("fastapi")
 
         from loom.rest.compiler import RouteSources
@@ -59,7 +59,7 @@ class TestCreateFastapiAppWiresMetrics:
         result = create_kernel(
             config=object(),
             use_cases=[_SimpleUseCase],
-            metrics=adapter,
+            execution_observer=adapter,
         )
 
         class _Iface(RestInterface[_Model]):

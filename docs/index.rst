@@ -66,6 +66,7 @@ Companion demo application:
 
    guides/ports-and-adapters
    guides/business-keys
+   guides/logging
 
 .. toctree::
    :maxdepth: 2

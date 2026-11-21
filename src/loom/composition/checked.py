@@ -14,6 +14,7 @@ from loom.core.config import ConfigContext, ConfigError, ConfigKey
 from loom.core.config.keys import INTERPOLATION
 from loom.core.config.loader import convert_section
 from loom.core.discovery.base import DiscoveryResult
+from loom.core.engine.declared_observers import check_written_execution_observers
 from loom.core.environment import Environment
 from loom.core.job.config import JobShutdown
 from loom.core.locator import DEFAULT_CODE_PATH, add_code_path
@@ -73,8 +74,10 @@ class CheckedProject:
             ConfigError: When the configuration does not load, breaks an ``app``
                 rule, declares a store whose backend is unknown or not
                 installed, ``app.code_path`` is not a literal path, the
-                ``checks`` section or ``jobs.shutdown`` is invalid, or the section of a discovered
-                ``ConfiguredInstaller`` is missing or invalid, as at start-up.
+                ``checks`` section or ``jobs.shutdown`` is invalid, an entry of
+                ``observability.execution_observers`` is not an execution observer, or the
+                section of a discovered ``ConfiguredInstaller`` is missing or invalid, as at
+                start-up.
         """
         loaded = LoadedConfig.from_paths(
             config_paths,
@@ -102,6 +105,7 @@ class CheckedProject:
         )
         phases.check_installers(ctx, checked.discovered.installers)
         JobShutdown.check_written(ctx)
+        check_written_execution_observers(ctx)
         return checked
 
     def unknown_paths(self, paths: Iterable[str]) -> tuple[str, ...]:

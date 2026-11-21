@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import logging
 from collections.abc import Sequence
 from typing import Any, Literal
 
@@ -10,7 +11,6 @@ from deltalake import CommitProperties, DeltaTable, WriterProperties, write_delt
 from deltalake.exceptions import TableNotFoundError
 from deltalake.table import TableMerger
 
-from loom.core.logger import get_logger
 from loom.etl.declarative.target import SchemaMode, UpsertDeleteFlagError
 from loom.etl.declarative.target._file import FileSpec
 from loom.etl.declarative.target._history import HistorifySpec
@@ -57,7 +57,7 @@ from ._dtype import loom_type_to_polars
 from ._file_writer import PolarsFileWriter
 from ._streaming import partition_rows_from_spool, spool_lazy_to_arrow_reader
 
-_log = get_logger(__name__)
+_log = logging.getLogger(__name__)
 _COMMIT_EVENT = "delta write commit"
 _DELTA_SCHEMA_MODES: dict[SchemaMode, Literal["merge", "overwrite"]] = {
     SchemaMode.OVERWRITE: "overwrite",
@@ -76,12 +76,14 @@ def _log_write_start(
 ) -> None:
     _log.info(
         "delta write start",
-        mode=mode,
-        uri=location.uri,
-        rows=frame.height,
-        cols=len(frame.columns),
-        partition_cols=list(partition_cols) or None,
-        predicate=predicate,
+        extra={
+            "mode": mode,
+            "uri": location.uri,
+            "rows": frame.height,
+            "cols": len(frame.columns),
+            "partition_cols": list(partition_cols) or None,
+            "predicate": predicate,
+        },
     )
 
 
@@ -103,21 +105,27 @@ def _log_write_commit(mode: str, location: TableLocation) -> None:
     try:
         dt = _open_delta_table(location)
         if dt is None:
-            _log.info(_COMMIT_EVENT, mode=mode, uri=location.uri, metrics="unavailable")
+            _log.info(
+                _COMMIT_EVENT, extra={"mode": mode, "uri": location.uri, "metrics": "unavailable"}
+            )
             return
         version, entry = _last_commit(dt)
         metrics = entry.get("operationMetrics") or {}
         _log.info(
             _COMMIT_EVENT,
-            mode=mode,
-            uri=location.uri,
-            version=version,
-            rows=int(metrics.get("numOutputRows", 0)) or None,
-            bytes=int(metrics.get("numOutputBytes", 0)) or None,
-            files=int(metrics.get("numAddedFiles", 0)) or None,
+            extra={
+                "mode": mode,
+                "uri": location.uri,
+                "version": version,
+                "rows": int(metrics.get("numOutputRows", 0)) or None,
+                "bytes": int(metrics.get("numOutputBytes", 0)) or None,
+                "files": int(metrics.get("numAddedFiles", 0)) or None,
+            },
         )
     except Exception:  # noqa: BLE001
-        _log.info(_COMMIT_EVENT, mode=mode, uri=location.uri, metrics="unavailable")
+        _log.info(
+            _COMMIT_EVENT, extra={"mode": mode, "uri": location.uri, "metrics": "unavailable"}
+        )
 
 
 def _check_null_dtype_columns_lazy(frame: pl.LazyFrame) -> None:
@@ -371,7 +379,7 @@ class PolarsTargetWriter(_WritePolicy[pl.LazyFrame, pl.DataFrame, PolarsPhysical
         with spool_lazy_to_arrow_reader(frame) as spool:
             partition_rows = partition_rows_from_spool(spool.spool_path, spec.partition_cols)
             if not partition_rows:
-                _log.warning("replace_partitions empty frame", table=location.uri)
+                _log.warning("replace_partitions empty frame", extra={"table": location.uri})
                 return
             null_rows = [r for r in partition_rows if any(v is None for v in r.values())]
             if null_rows:
@@ -391,12 +399,14 @@ class PolarsTargetWriter(_WritePolicy[pl.LazyFrame, pl.DataFrame, PolarsPhysical
             predicate = _build_partition_predicate(iter(partition_rows), spec.partition_cols)
             _log.info(
                 "delta write start",
-                mode="replace_partitions",
-                uri=location.uri,
-                rows="streaming",
-                cols=None,
-                partition_cols=list(spec.partition_cols),
-                predicate=predicate,
+                extra={
+                    "mode": "replace_partitions",
+                    "uri": location.uri,
+                    "rows": "streaming",
+                    "cols": None,
+                    "partition_cols": list(spec.partition_cols),
+                    "predicate": predicate,
+                },
             )
             write_deltalake(
                 location.uri,
@@ -430,8 +440,7 @@ class PolarsTargetWriter(_WritePolicy[pl.LazyFrame, pl.DataFrame, PolarsPhysical
                 if frame.is_empty():
                     _log.warning(
                         "create skipped: empty frame missing partition columns",
-                        table=location.uri,
-                        missing=list(missing),
+                        extra={"table": location.uri, "missing": list(missing)},
                     )
                     return
                 raise ValueError(
@@ -444,8 +453,7 @@ class PolarsTargetWriter(_WritePolicy[pl.LazyFrame, pl.DataFrame, PolarsPhysical
                 "Polars write first-create for Unity Catalog. "
                 "delta-rs writes Delta log data, but catalog registration is not guaranteed; "
                 "pre-create the table in UC (Spark SQL/Databricks) before this write.",
-                ref=path_target.logical_ref.ref,
-                uri=location.uri,
+                extra={"ref": path_target.logical_ref.ref, "uri": location.uri},
             )
         kwargs = _delta_write_kwargs(location)
 
@@ -526,8 +534,7 @@ class PolarsTargetWriter(_WritePolicy[pl.LazyFrame, pl.DataFrame, PolarsPhysical
         path_target = _require_path_target(target)
         if frame.is_empty():
             _log.warning(
-                "replace_partitions empty frame",
-                table=path_target.location.uri,
+                "replace_partitions empty frame", extra={"table": path_target.location.uri}
             )
             return
 

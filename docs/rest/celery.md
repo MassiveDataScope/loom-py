@@ -304,6 +304,64 @@ recover entity IDs and other parameters the callback needs.
 
 ---
 
+## React to job outcomes in your application
+
+Every job run reports to the *execution observers*: `JOB_STARTED`, then
+`JOB_SUCCEEDED`, `JOB_POSTPONED`, `JOB_FAILED` or `JOB_ABANDONED`, the last
+carrying its `reason` (an `AbandonReason`). An observer is any class with
+`on_event(event: ExecutionEvent)`. It works the same on every transport (inline,
+Celery, SQS, Lambda), which a job callback does not: callbacks differ per
+transport, and SQS refuses them.
+
+Declare your own per environment, as `module:Class` references:
+
+```yaml
+observability:
+  execution_observers:
+    - trachinus.entrypoints.job_failures:JobFailureRecorder
+```
+
+Loom builds each class with no arguments, after the observers it builds itself
+(Prometheus when enabled), and delivers every event to all of them.
+
+- A reference that is malformed, does not import or names a class without
+  `on_event` is a `ConfigError` naming the entry, at start-up and in
+  `loom check --deploy`. `loom check` imports the module from `app.code_path`,
+  as it does for `checks.modules`; it does not build the class.
+- An observer that raises is logged (`engine.execution_observer_failed`) and
+  skipped: it breaks neither the run nor the other observers.
+- `on_event` may be called from any thread. Keep the observer thread-safe and quick.
+
+A consumer that must exit with status 1 when a job was abandoned records it in
+an observer and checks it after `running()`:
+
+```python
+# trachinus/entrypoints/job_failures.py
+import threading
+
+from loom.core.engine.events import EventKind, ExecutionEvent
+
+
+class JobFailureRecorder:
+    abandoned: list[ExecutionEvent] = []
+    _lock = threading.Lock()
+
+    def on_event(self, event: ExecutionEvent) -> None:
+        if event.kind is EventKind.JOB_ABANDONED:
+            with self._lock:
+                self.abandoned.append(event)
+```
+
+```python
+# trachinus/entrypoints/consume.py
+async def consume(application: Application) -> int:
+    async with application.running():
+        await drain_queue(application)
+    for event in JobFailureRecorder.abandoned:
+        print(f"abandoned {event.use_case_name}: {event.reason}", file=sys.stderr)
+    return 1 if JobFailureRecorder.abandoned else 0
+```
+
 ## Post-commit failures
 
 A job's own unit of work — opened by the executor around its `execute()` —

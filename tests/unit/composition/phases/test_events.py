@@ -2,13 +2,14 @@
 
 from __future__ import annotations
 
+import logging
 from collections.abc import Callable
 
 import pytest
 
-from loom.composition import Application, project
+from loom.composition import Application
 from loom.core.di.container import LoomContainer
-from tests.helpers.loggers import RecordingLogger
+from tests.helpers.loggers import CapturedLog
 
 _PHASES = ("scan", "plan", "build_stores", "register", "analysed", "wire_ai", "seal")
 
@@ -19,15 +20,14 @@ def _acme_module(container: LoomContainer) -> None:
 
 class TestComposedEvent:
     def test_one_event_carries_the_counts_and_each_phase_duration(
-        self, overridden: Callable[..., Application], monkeypatch: pytest.MonkeyPatch
+        self, overridden: Callable[..., Application], caplog: pytest.LogCaptureFixture
     ) -> None:
-        logger = RecordingLogger()
-        monkeypatch.setattr(project, "get_logger", lambda name: logger)
+        caplog.set_level(logging.INFO, logger="loom.composition.project")
 
         overridden(modules=(_acme_module,))
 
         [(event, fields)] = [
-            call for call in logger.calls if call[0].startswith("loom.composition.")
+            call for call in CapturedLog(caplog).calls if call[0].startswith("loom.composition.")
         ]
         assert event == "loom.composition.composed"
         phase_ms = fields.pop("phase_ms")

@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import logging
 from collections.abc import Callable, Sequence
 from dataclasses import dataclass, field
 from typing import TYPE_CHECKING, TypeVar
@@ -12,14 +13,13 @@ from loom.connections.aws import AwsClients
 from loom.core.connections.aws import aws_error_code
 from loom.core.job.outcome import Abandoned, Failed, JobOutcome, Postponed, Succeeded
 from loom.core.job.policy import Countdown
-from loom.core.logger import get_logger
 from loom.jobs.aws.queue import AbandonedMessage, BatchResult, SQSQueue, SQSRecord
 
 if TYPE_CHECKING:
     from loom.jobs.aws.sqs import SQSConfig
 
 _EntryT = TypeVar("_EntryT")
-_log = get_logger(__name__)
+_log = logging.getLogger(__name__)
 
 SETTLEMENT_TIMEOUT_S = 1
 """Seconds a settlement call waits to connect, and again to read."""
@@ -113,8 +113,7 @@ class SQSJobSettlement:
         for arn in {record.queue_arn for record in strays}:
             _log.error(
                 "SQS settlement cannot reach the queue: it is not the one this function consumes",
-                queue_arn=arn,
-                queue=queue.name,
+                extra={"queue_arn": arn, "queue": queue.name},
             )
         return strays + self._settle_queue(queue, consumed)
 
@@ -125,10 +124,12 @@ class SQSJobSettlement:
         for record, reason in plan.discards:
             _log.error(
                 "SQS message discarded: its queue has no dead-letter queue",
-                queue=queue.name,
-                message_id=record.message_id,
-                outcome="discarded",
-                reason=reason,
+                extra={
+                    "queue": queue.name,
+                    "message_id": record.message_id,
+                    "outcome": "discarded",
+                    "reason": reason,
+                },
             )
         self._settle(queue, "change_visibility", plan.retries, queue.change_visibility_batch)
         unsent = self._settle(queue, "abandon", plan.abandonments, queue.abandon_batch)
@@ -147,16 +148,16 @@ class SQSJobSettlement:
         try:
             result = send(entries)
         except Exception as exc:
-            _log.exception("SQS settlement call raised", queue=queue.name, action=action)
+            _log.exception(
+                "SQS settlement call raised", extra={"queue": queue.name, "action": action}
+            )
             code = aws_error_code(exc)
             result = BatchResult(failed={record.message_id: code for record, _ in entries})
         else:
             if result.failed:
                 _log.warning(
                     "SQS settlement entries failed",
-                    queue=queue.name,
-                    action=action,
-                    entries=dict(result.failed),
+                    extra={"queue": queue.name, "action": action, "entries": dict(result.failed)},
                 )
         return [record for record, _ in entries if record.message_id in result.failed]
 

@@ -35,6 +35,7 @@ Rules:
 
 from __future__ import annotations
 
+import logging
 import math
 import time
 from contextvars import ContextVar, Token
@@ -45,11 +46,10 @@ from loom.core.config.errors import ConfigError
 from loom.core.errors import DelegationExpired, IdentityFixed
 from loom.core.identity.identity import ANONYMOUS, Identity
 from loom.core.identity.wire import NO_DELEGATION, Delegation
-from loom.core.logger import get_logger
 from loom.core.model.types import PositiveSeconds
 from loom.core.tracing import get_trace_id
 
-_log = get_logger(__name__)
+_log = logging.getLogger(__name__)
 
 
 class Acting(msgspec.Struct, frozen=True, gc=False):
@@ -170,7 +170,7 @@ class Acting(msgspec.Struct, frozen=True, gc=False):
         in_time = time.time() <= self.deadline
         if not in_time:
             error = DelegationExpired()
-            _log.warning("delegation_expired", guidance=str(error))
+            _log.warning("delegation_expired", extra={"guidance": str(error)})
             raise error
 
     def report_switch(self, identity: Identity | None, what: str) -> None:
@@ -194,17 +194,17 @@ class Acting(msgspec.Struct, frozen=True, gc=False):
         to_subject = getattr(identity, "subject", None)
         _log.warning(
             "identity_switched",
-            from_subject=from_subject,
-            to_subject=to_subject,
-            from_roles=getattr(previous, "roles", None),
-            to_roles=getattr(identity, "roles", None),
-            attributes_changed=(
-                previous is not None
+            extra={
+                "from_subject": from_subject,
+                "to_subject": to_subject,
+                "from_roles": getattr(previous, "roles", None),
+                "to_roles": getattr(identity, "roles", None),
+                "attributes_changed": previous is not None
                 and identity is not None
-                and previous.attributes != identity.attributes
-            ),
-            use_case=what,
-            trace_id=get_trace_id(),
+                and previous.attributes != identity.attributes,
+                "use_case": what,
+                "trace_id": get_trace_id(),
+            },
         )
         annotate_current_span(
             {

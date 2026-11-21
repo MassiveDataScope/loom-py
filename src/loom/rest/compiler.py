@@ -45,7 +45,7 @@ from typing import Any, NamedTuple, TypeVar
 import msgspec
 
 from loom.core.engine.compiler import UseCaseCompiler
-from loom.core.engine.metrics import MetricsRecorder
+from loom.core.engine.execution_observer import ExecutionObserver
 from loom.core.engine.plan import ExecutionPlan
 from loom.core.errors import UnsupportedBoundaryType
 from loom.core.model import get_column_fields, is_pydantic_model, loom_type, msgspec_type
@@ -634,7 +634,7 @@ class RestInterfaceCompiler:
         defaults: Global REST API defaults applied when interface/route
             level is unset.  Defaults to :class:`~loom.rest.model.RestApiDefaults`
             with offset pagination.
-        metrics: Optional metrics recorder.  Reserved for future use
+        execution_observer: Optional execution observer.  Reserved for future use
             (HTTP metrics are emitted at request time by the router runtime).
 
     Example::
@@ -647,11 +647,11 @@ class RestInterfaceCompiler:
         self,
         use_case_compiler: UseCaseCompiler,
         defaults: RestApiDefaults | None = None,
-        metrics: MetricsRecorder | None = None,
+        execution_observer: ExecutionObserver | None = None,
     ) -> None:
         self._uc_compiler = use_case_compiler
         self._defaults = defaults or RestApiDefaults()
-        self._metrics = metrics
+        self._execution_observer = execution_observer
         self._cache: dict[type[RestInterface[Any]], list[CompiledRoute]] = {}
 
     def compile(self, interface: type[RestInterface[Any]]) -> list[CompiledRoute]:

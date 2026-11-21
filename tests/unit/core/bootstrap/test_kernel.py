@@ -114,15 +114,17 @@ class TestCreateKernel:
 
         assert isinstance(built.factory.build(_RepoDepsUseCase), _RepoDepsUseCase)
 
-    def test_create_kernel_reports_compilation_to_the_metrics_recorder(self) -> None:
+    def test_create_kernel_reports_compilation_to_the_execution_observer(self) -> None:
         events: list[ExecutionEvent] = []
 
-        class RecordingMetrics:
+        class RecordingExecutionObserver:
             def on_event(self, event: ExecutionEvent) -> None:
                 events.append(event)
 
         create_kernel(
-            config=AcmeKernelConfig(), use_cases=[_NoDepsUseCase], metrics=RecordingMetrics()
+            config=AcmeKernelConfig(),
+            use_cases=[_NoDepsUseCase],
+            execution_observer=RecordingExecutionObserver(),
         )
 
         assert any(event.use_case_name == "_NoDepsUseCase" for event in events)

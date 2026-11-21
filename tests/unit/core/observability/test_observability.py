@@ -2,13 +2,16 @@
 
 from __future__ import annotations
 
-from typing import cast
+import json
+import logging
 
 import pytest
 
+from loom.core.config import ConfigError
 from loom.core.config.observability import OtelConfig
 from loom.core.environment import Environment
-from loom.core.logger.config import LoggerConfig
+from loom.core.logger import ContextFilter, LogRuntime
+from loom.core.logger.install import HANDLER_NAME
 from loom.core.model.redaction import Dsn
 from loom.core.observability.config import (
     LogObservabilityConfig,
@@ -19,6 +22,9 @@ from loom.core.observability.config import (
 )
 from loom.core.observability.event import EventKind, LifecycleEvent, LifecycleStatus, Scope
 from loom.core.observability.observability import Observability
+from loom.core.observability.observer.otel import OtelSpanFilter
+from loom.core.tracing.context import active_trace_id
+from tests.unit.core.observability.conftest import LogExport
 
 
 class AcmeRuntimeRecordingObserver:
@@ -139,80 +145,90 @@ class TestNoop:
         runtime.emit(LifecycleEvent(scope=Scope.NODE, name="x", kind=EventKind.END))
 
 
+_OTEL = OtelObservabilityConfig(
+    enabled=True, export_logs=True, config=OtelConfig(endpoint=None, service_name="loom")
+)
+
+
+def _loom_handler() -> logging.Handler:
+    (handler,) = [h for h in logging.getLogger().handlers if h.get_name() == HANDLER_NAME]
+    return handler
+
+
 class TestFromConfig:
-    def test_export_logs_requires_logger_config(self) -> None:
-        config = ObservabilityConfig(
-            log=LogObservabilityConfig(enabled=True, config=None),
-            otel=OtelObservabilityConfig(
-                enabled=True,
-                export_logs=True,
-                config=OtelConfig(endpoint=None, service_name="loom"),
-            ),
-        )
+    def test_export_logs_requires_the_log_backend(self) -> None:
+        config = ObservabilityConfig(log=LogObservabilityConfig(enabled=False), otel=_OTEL)
 
         with pytest.raises(ValueError, match="export_logs requires observability.log.enabled"):
             Observability.from_config(config)
 
-    def test_export_logs_installs_otel_log_export_when_logger_config_present(
-        self, monkeypatch: pytest.MonkeyPatch
+    def test_export_logs_attaches_the_export_handler_with_the_context_and_span_filters(
+        self, log_export: LogExport
     ) -> None:
-        captured: dict[str, object] = {}
+        config = ObservabilityConfig(log=LogObservabilityConfig(format="json"), otel=_OTEL)
 
-        def _fake_configure_logging_from_values(**kwargs: object) -> None:
-            captured.update(kwargs)
+        Observability.from_config(config, service_name="billing")
 
-        def _fake_install_otel_log_export(_: OtelConfig) -> object:
-            captured["otel_log_export_installed"] = True
-            return object()
+        for owned in (_loom_handler(), log_export.handler):
+            assert any(isinstance(f, ContextFilter) for f in owned.filters)
+            assert any(isinstance(f, OtelSpanFilter) for f in owned.filters)
+        assert log_export.handler in logging.getLogger().handlers
 
-        monkeypatch.setattr(
-            "loom.core.observability.observability.configure_logging_from_values",
-            _fake_configure_logging_from_values,
-        )
-        # Patched on the owning module: ``runtime`` imports the OTEL bootstrap
-        # lazily so that core stays importable without the OpenTelemetry SDK.
-        monkeypatch.setattr(
-            "loom.core.observability.observer.otel.install_otel_log_export",
-            _fake_install_otel_log_export,
-        )
-
-        config = ObservabilityConfig(
-            log=LogObservabilityConfig(enabled=True, config=LoggerConfig()),
-            otel=OtelObservabilityConfig(
-                enabled=True,
-                export_logs=True,
-                config=OtelConfig(endpoint=None, service_name="loom"),
-            ),
-        )
-
-        runtime = Observability.from_config(config)
-
-        assert isinstance(runtime, Observability)
-        assert "extra_processors" in captured
-        extra_processors = cast(tuple[object, ...], captured["extra_processors"])
-        assert len(extra_processors) == 1
-        assert captured["otel_log_export_installed"] is True
-
-    @pytest.mark.parametrize(
-        ("given", "expected"),
-        [({}, Environment.TEST), ({"environment": Environment.STAGING}, Environment.STAGING)],
-    )
-    def test_the_logger_receives_the_environment_of_the_runtime(
-        self,
-        monkeypatch: pytest.MonkeyPatch,
-        given: dict[str, Environment],
-        expected: Environment,
+    def test_configuring_twice_keeps_the_context_on_the_exported_logs(
+        self, log_export: LogExport
     ) -> None:
-        captured: dict[str, object] = {}
-        monkeypatch.setattr(
-            "loom.core.observability.observability.configure_logging_from_values",
-            lambda **kwargs: captured.update(kwargs),
+        config = ObservabilityConfig(log=LogObservabilityConfig(format="json"), otel=_OTEL)
+
+        Observability.from_config(config, service_name="billing")
+        Observability.from_config(config, service_name="billing")
+        with active_trace_id("trace-42"):
+            logging.getLogger("tests.export").warning("billing.check_done")
+
+        attributes = log_export.exported()["billing.check_done"]
+        assert (attributes["service.name"], attributes["trace_id"]) == ("billing", "trace-42")
+        handlers = logging.getLogger().handlers
+        assert handlers.count(log_export.handler) == 1
+        assert len([h for h in handlers if h.get_name() == HANDLER_NAME]) == 1
+        assert [type(f) for f in log_export.handler.filters].count(ContextFilter) == 1
+
+    def test_the_log_format_is_installed_with_the_service_identity(
+        self, capsys: pytest.CaptureFixture[str]
+    ) -> None:
+        config = ObservabilityConfig(log=LogObservabilityConfig(format="json"))
+
+        Observability.from_config(
+            config, environment=Environment.STAGING, service_name="billing", service_version="2.4"
         )
-        config = ObservabilityConfig(log=LogObservabilityConfig(config=LoggerConfig()))
+        logging.getLogger("tests.observability").warning("billing.check_done")
 
-        Observability.from_config(config, **given)
+        entry = json.loads(capsys.readouterr().out)
+        assert entry["service.name"] == "billing"
+        assert entry["service.version"] == "2.4"
+        assert entry["deployment.environment.name"] == "staging"
 
-        assert captured["environment"] is expected
+    def test_the_runtime_is_stamped_once_the_composition_names_it(
+        self, capsys: pytest.CaptureFixture[str]
+    ) -> None:
+        config = ObservabilityConfig(log=LogObservabilityConfig(format="json"))
+        observability = Observability.from_config(config)
+
+        observability.running_as(LogRuntime.CELERY)
+        logging.getLogger("tests.observability").warning("billing.check_done")
+
+        assert json.loads(capsys.readouterr().out)["loom.runtime"] == "celery"
+
+    def test_a_disabled_log_backend_installs_no_handler(self) -> None:
+        before = list(logging.getLogger().handlers)
+
+        Observability.from_config(ObservabilityConfig(log=LogObservabilityConfig(enabled=False)))
+
+        assert logging.getLogger().handlers == before
+
+    def test_an_unregistered_format_stops_the_start(self) -> None:
+        config = ObservabilityConfig(log=LogObservabilityConfig(format="xml"))
+
+        with pytest.raises(ConfigError, match="unknown log format 'xml'"):
+            Observability.from_config(config)
 
 
 class TestStartScrapeServer:

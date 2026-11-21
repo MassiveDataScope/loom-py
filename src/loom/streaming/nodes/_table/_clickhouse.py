@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import logging
 import math
 from collections.abc import Sequence
 from time import monotonic
@@ -17,6 +18,8 @@ from loom.streaming.nodes._table.common import (
     _column_names,
     _set_column_values,
 )
+
+_log = logging.getLogger(__name__)
 
 
 def _to_ch_row(item: Any, column_names: list[str], target: str) -> list[Any]:
@@ -93,10 +96,8 @@ class _ClickHouseTablePartition:
         self,
         settings: ClickHouseSinkConfig,
         payload_type: type[Any],
-        logger: Any = None,
     ) -> None:
         self._client = build_clickhouse_client(_bounded(settings))
-        self._logger = logger
         self._table = settings.table
         self._target = f"ClickHouse table {settings.table!r}"
         self._column_names = _column_names(payload_type)
@@ -179,26 +180,24 @@ class _ClickHouseTablePartition:
                 column_oriented=True,
             )
         except Exception:
-            if self._logger is not None:
-                self._logger.error(
-                    "sink_flush_error",
-                    backend="clickhouse",
-                    table=self._table,
-                    records=n,
-                )
+            _log.error(
+                "sink_flush_error",
+                extra={"backend": "clickhouse", "table": self._table, "records": n},
+            )
             raise
         self._buffer = [[] for _ in self._column_names]
         self._buffer_records = 0
         self._buffer_bytes = 0
         self._buffer_started_at = None
-        if self._logger is not None:
-            self._logger.info(
-                "sink_flush",
-                trace_id=trace_id,
-                correlation_id=correlation_id,
-                backend="clickhouse",
-                table=self._table,
-                records=n,
-                duration_ms=round((monotonic() - t0) * 1000, 1),
-            )
+        _log.info(
+            "sink_flush",
+            extra={
+                "trace_id": trace_id,
+                "correlation_id": correlation_id,
+                "backend": "clickhouse",
+                "table": self._table,
+                "records": n,
+                "duration_ms": round((monotonic() - t0) * 1000, 1),
+            },
+        )
         return n

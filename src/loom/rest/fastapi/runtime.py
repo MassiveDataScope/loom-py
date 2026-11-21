@@ -40,6 +40,7 @@ from loom.core.introspection import (
     AppIntrospection,
     ContributorRef,
 )
+from loom.core.logger import LogRuntime
 from loom.core.observability.config import PrometheusObservabilityConfig
 from loom.core.stores import (
     SERVER_PROFILE,
@@ -48,7 +49,7 @@ from loom.core.stores import (
 )
 from loom.core.stores.catalog import SQLALCHEMY_BACKEND, StoreKey, store_of
 from loom.core.use_case.constants import CrudOp
-from loom.prometheus import PrometheusMetricsRecorder
+from loom.prometheus import PrometheusExecutionObserver
 from loom.prometheus.db_pool import PrometheusPoolMetrics
 from loom.prometheus.middleware import PrometheusMiddleware
 from loom.rest._body import DEFAULT_MAX_BODY_BYTES, BodySizeLimitMiddleware
@@ -322,18 +323,18 @@ def _build_metrics_adapter(
     cfg: PrometheusObservabilityConfig,
     registry: CollectorRegistry | None,
 ) -> Any | None:
-    """Return a ``PrometheusMetricsRecorder`` when metrics are enabled, else ``None``.
+    """Return a ``PrometheusExecutionObserver`` when metrics are enabled, else ``None``.
 
     Args:
         cfg: Metrics feature config.
         registry: Optional Prometheus registry override.
 
     Returns:
-        ``PrometheusMetricsRecorder`` or ``None``.
+        ``PrometheusExecutionObserver`` or ``None``.
     """
     if not cfg.enabled:
         return None
-    return PrometheusMetricsRecorder(registry=registry)
+    return PrometheusExecutionObserver(registry=registry)
 
 
 def _build_pool_metrics(
@@ -647,7 +648,8 @@ def compose_rest(
         default_store_plugin=SQLALCHEMY_BACKEND,
         check_scope=CheckScope(required=frozenset({ConfigKey.APP_REST})),
         agents=True,
-        metrics=_build_metrics_adapter(metrics_cfg, metrics_registry),
+        log_runtime=LogRuntime.FASTAPI,
+        execution_observer=_build_metrics_adapter(metrics_cfg, metrics_registry),
         pool_metrics=_build_pool_metrics(metrics_cfg, metrics_registry, project.app.name),
     )
     return recipe, declared

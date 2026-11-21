@@ -11,6 +11,7 @@ are compiled. A missing key raises ``ConfigError`` naming it; nothing is default
 
 from __future__ import annotations
 
+import logging
 import re
 from collections.abc import Mapping, Sequence
 from dataclasses import dataclass, field
@@ -29,7 +30,6 @@ from loom.core.environment import (
     resolve_environment,
 )
 from loom.core.locator import DEFAULT_CODE_PATH, add_code_path
-from loom.core.logger import get_logger
 from loom.core.model.audited import AuditedTables
 from loom.core.model.scoped import ScopedTables, declared_scopes
 from loom.core.schema_names import SchemaNames, schema_identifier
@@ -59,7 +59,7 @@ from loom.stores.sqlalchemy.schema import (
 )
 from loom.stores.sqlalchemy.scoped_ddl import SCHEMA_KEY
 
-_log = get_logger(__name__)
+_log = logging.getLogger(__name__)
 
 _SCOPE_SOURCE = re.compile(r"^(identity|request)\.[A-Za-z_]\w*$")
 
@@ -149,7 +149,7 @@ def load_store_schema(
     models = stores.get(store, ())
     skipped = sorted(key for key, held in stores.items() if held and key != store)
     if skipped:
-        _log.info("StoresNotLoaded", store=store, skipped=skipped)
+        _log.info("StoresNotLoaded", extra={"store": store, "skipped": skipped})
     schema = database.schema
     metadata = _compiled_metadata(models, schema, spec.path)
     scoped = scoped_tables(metadata)

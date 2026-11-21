@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import logging
 from collections.abc import Awaitable, Callable
 from contextlib import AbstractAsyncContextManager, nullcontext
 from functools import wraps
@@ -8,7 +9,6 @@ from typing import Any, ClassVar, Generic, TypeVar, cast
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from loom.core.errors import ForeignSessionError
-from loom.core.logger import get_logger
 from loom.core.stores.repository import (
     BulkCreatable,
     Countable,
@@ -33,6 +33,9 @@ from loom.stores.sqlalchemy.mixins import (
 from loom.stores.sqlalchemy.session_manager import SessionManager, bare_url
 
 R = TypeVar("R")
+
+
+_log = logging.getLogger(__name__)
 
 
 def with_session_scope(
@@ -124,7 +127,6 @@ class SQLAlchemyRepository(  # type: ignore[misc]
         self.model = model
         self.cursor_codec = cursor_codec
         self._init_struct_model()
-        self.log = get_logger(__name__).bind(repository=self.__class__.__name__)
 
     def has_caller_scoped_session(self) -> bool:
         """Whether a read would run inside the session of its store's participant.
@@ -147,7 +149,7 @@ class SQLAlchemyRepository(  # type: ignore[misc]
 
     async def on_transaction_committed(self, events: tuple[MutationEvent, ...]) -> None:
         """Handle post-commit mutation events (cache invalidation hook)."""
-        self.log.debug("RepositoryTransactionCommitted", mutation_count=len(events))
+        _log.debug("RepositoryTransactionCommitted", extra={"mutation_count": len(events)})
 
     def _require_own(self, session: AsyncSession, joined: AsyncSession | None) -> None:
         """Refuse *session* unless it is *joined*, or, with no participant, runs on this engine."""

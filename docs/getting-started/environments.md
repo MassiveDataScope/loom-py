@@ -183,7 +183,7 @@ LOOM_ENV=development
 ```
 
 The logger section refuses a key it does not declare, a removed one included
-(`observability.log.config.environment`), and an `observability` section that
+(`observability.log.environment`), and an `observability` section that
 fails validation stops startup: a stale setting fails loudly instead of being
 silently ignored.
 
@@ -215,7 +215,7 @@ pydantic-settings. In development and test any leaf can; in production and
 staging only an allowlisted key can (below):
 
 ```bash
-LOOM__OBSERVABILITY__LOG__CONFIG__LEVEL=DEBUG     # observability.log.config.level
+LOOM__OBSERVABILITY__LOG__LEVEL=DEBUG     # observability.log.level
 LOOM__SQL__CONNECTIONS__ANALYTICS__POOL__SIZE=20  # sql.connections.analytics.pool.size
 LOOM__STORES__DEFAULT__POOL__SIZE=1               # stores.default.pool.size
 LOOM__CELERY__WORKER_CONCURRENCY=8                # celery.worker_concurrency
@@ -299,7 +299,7 @@ LOOM__CELERY__WORKER_CONCURRENCY=8                # celery.worker_concurrency
   values are never logged.
 - A log level on a parent cannot hide the deploy checks: the
   `loom.core.checks` logger sets its own WARNING level, so
-  `LOOM__OBSERVABILITY__LOG__CONFIG__LEVEL=CRITICAL` still shows a check's
+  `LOOM__OBSERVABILITY__LOG__LEVEL=CRITICAL` still shows a check's
   warning and the silenced ids. To quiet them on purpose, name the logger:
   `named_levels: {loom.core.checks: ERROR}`.
 
@@ -336,7 +336,7 @@ injects them as variables, and the YAML references them with
       "name": "api",
       "environment": [
         {"name": "LOOM_ENV", "value": "production"},
-        {"name": "LOOM__OBSERVABILITY__LOG__CONFIG__LEVEL", "value": "INFO"},
+        {"name": "LOOM__OBSERVABILITY__LOG__LEVEL", "value": "INFO"},
         {"name": "LOOM__CELERY__WORKER_CONCURRENCY", "value": "8"}
       ],
       "secrets": [
@@ -409,13 +409,14 @@ In `.github/workflows/ci.yml` (a step):
 
 ## Logger defaults
 
-The logger's renderer and colours follow the environment unless
-`observability.log.config` sets them:
+The log format follows the environment unless `observability.log.format` sets it
+(see the [logging guide](../guides/logging.md)):
 
-| Environment | Renderer | Colours |
-|---|---|---|
-| `production`, `staging` | `json` | off |
-| `development`, `test` | `console` | on |
+| Environment | Format |
+|---|---|
+| inside AWS Lambda | `lambda` (the runtime's own JSON) |
+| `production`, `staging` | `json` |
+| `development`, `test` | `text` |
 
 ## Deploy checks
 
@@ -432,7 +433,8 @@ check fails startup, a `W` check logs a warning.
 |---|---|
 | `loom.rest.E001` | The API authenticates no caller: neither a literal `app.rest.auth.jwt` mapping nor the literal `app.rest.auth.custom: true` is set, or the trigger `auth` of an http function of `lambda.functions`, which replaces it for that function, sets neither. A `jwt` given by a placeholder fails, since it may resolve to null. |
 | `loom.rest.W001` | The API publishes its documentation or schema: one of `app.rest.docs_url`, `redoc_url`, `openapi_url` is not `null`. |
-| `loom.logger.W001` | `observability.log.config` asks for the `console` renderer, top-level or on a handler. |
+| `loom.logger.E001` | `observability.log.format` names no registered log format. |
+| `loom.logger.E002` | `observability.log.level` or a `named_levels` value is not a log level. |
 | `loom.discovery.W001` | A group of `app.entry_points` has no installed entry point: it adds nothing to the scan. Valid for an optional plugin group; a typo in the name shows here. |
 | `loom.cursors.E001` | `stores.settings.cursors` is configured and pagination cursors are not signed with a configured key (without that section no cursor is issued and nothing is checked): `stores.settings.cursors.signing` is set to anything but the literal `signed`, or `current_key_id` names no entry of `keys`. |
 

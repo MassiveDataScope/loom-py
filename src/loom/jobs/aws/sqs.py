@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import asyncio
 import functools
+import logging
 import threading
 from collections.abc import Mapping, Sequence
 from dataclasses import dataclass, field
@@ -15,14 +16,13 @@ import msgspec
 from loom.core.config import ConfigKey
 from loom.core.connections.aws import AwsClientConfig, aws_error_code
 from loom.core.engine.events import EventKind, ExecutionEvent
-from loom.core.engine.metrics import NoMetrics
+from loom.core.engine.execution_observer import NullExecutionObserver
 from loom.core.engine.post_commit import log_never_ran
 from loom.core.job.config import JobSettings
 from loom.core.job.context import add_pending_publish, pending_publish_group
 from loom.core.job.dispatch import JobDispatch
 from loom.core.job.handle import JobHandle
 from loom.core.job.job import Job
-from loom.core.logger import get_logger
 from loom.core.model.types import PositiveInt
 from loom.jobs.aws.errors import SQSDispatchError, SQSErrorCode, SQSQueueConfigError
 from loom.jobs.aws.queue import (
@@ -37,7 +37,7 @@ from loom.jobs.aws.queue import (
 if TYPE_CHECKING:
     from loom.composition import JobTransportContext
     from loom.core.config import ConfigContext
-    from loom.core.engine.metrics import MetricsRecorder
+    from loom.core.engine.execution_observer import ExecutionObserver
     from loom.core.job.callback import JobCallback
 
 ResultT = TypeVar("ResultT")
@@ -45,7 +45,7 @@ ResultT = TypeVar("ResultT")
 MAX_MESSAGE_BYTES = 256 * 1024
 _REFUSED_CHARACTERS = (b"\xef\xbf\xbe", b"\xef\xbf\xbf")
 
-_log = get_logger(__name__)
+_log = logging.getLogger(__name__)
 
 
 class SQSConfig(AwsClientConfig, frozen=True, kw_only=True):
@@ -98,7 +98,7 @@ def build_transport(context: JobTransportContext) -> SQSJobTransport:
     config = SQSConfig.load(context.config)
     check_queues(config.queues, context.jobs, context.settings)
     client = context.aws.client("sqs", config)
-    return SQSJobTransport(client, config, metrics=context.metrics)
+    return SQSJobTransport(client, config, execution_observer=context.execution_observer)
 
 
 @dataclass(frozen=True)
@@ -131,10 +131,12 @@ class _PendingSQSSend:
     def log_failure(self, code: str) -> None:
         _log.error(
             "SQS send failed",
-            job=self.task_name,
-            task_id=self.task_id,
-            queue=self.queue.name,
-            error_code=code,
+            extra={
+                "job": self.task_name,
+                "task_id": self.task_id,
+                "queue": self.queue.name,
+                "error_code": code,
+            },
         )
 
 
@@ -232,12 +234,14 @@ class SQSJobTransport:
     """Send validated jobs to SQS, batching the post-commit channel when configured."""
 
     def __init__(
-        self, client: Any, config: SQSConfig, *, metrics: MetricsRecorder | None = None
+        self, client: Any, config: SQSConfig, *, execution_observer: ExecutionObserver | None = None
     ) -> None:
         self._config = config
         self._queues = SQSQueues(client, config.queues)
         self._new_batch = functools.partial(_PendingSQSBatch, config)
-        self._metrics = NoMetrics() if metrics is None else metrics
+        self._execution_observer = (
+            NullExecutionObserver() if execution_observer is None else execution_observer
+        )
 
     def send_after_commit(self, dispatch: JobDispatch) -> JobHandle[Any]:
         """Validate SQS placement now and publish after a successful commit."""
@@ -284,7 +288,7 @@ class SQSJobTransport:
             dispatch.job_type, envelope.payload or {}, task_id, dispatch.countdown, body.decode()
         )
         send = _PendingSQSSend(target, envelope.job, task_id, message)
-        self._metrics.on_event(
+        self._execution_observer.on_event(
             ExecutionEvent(
                 kind=EventKind.JOB_DISPATCHED,
                 use_case_name=dispatch.job_type.__qualname__,

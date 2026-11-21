@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import asyncio
 import importlib.util
+import logging
 import warnings
 from collections.abc import Callable, Mapping
 from dataclasses import dataclass, field, replace
@@ -20,7 +21,6 @@ from loom.core.job.job import Job
 from loom.core.job.service import JobService
 from loom.core.job.timer import JobTimer
 from loom.core.job.transport import JobTransport
-from loom.core.logger import get_logger
 from loom.core.observability.observability import Observability
 from loom.core.plugins.optional import MissingExtraError
 from loom.core.resources import Resource, ResourceKind, closing
@@ -29,11 +29,11 @@ from loom.jobs.inline import AsyncioJobTimer, InlineJobTransport
 
 if TYPE_CHECKING:
     from loom.celery.config import CeleryConfig
+    from loom.core.engine.execution_observer import ExecutionObserver
     from loom.core.engine.executor import UseCaseExecutor
-    from loom.core.engine.metrics import MetricsRecorder
     from loom.core.use_case.factory import UseCaseFactory
 
-_log = get_logger(__name__)
+_log = logging.getLogger(__name__)
 
 
 @dataclass(frozen=True, kw_only=True)
@@ -53,7 +53,7 @@ class JobTransportContext:
     aws: AwsClients
     factory: UseCaseFactory
     executor: UseCaseExecutor
-    metrics: MetricsRecorder | None
+    execution_observer: ExecutionObserver | None
     observability: Observability | None
     jobs: tuple[type[Job[Any]], ...] = ()
     callbacks: DispatchableCallbacks = field(default_factory=DispatchableCallbacks.any)
@@ -85,7 +85,7 @@ def _celery_transport(context: JobTransportContext, celery_cfg: CeleryConfig) ->
         raise JobTransportError(f"the celery section is invalid: {exc}") from exc
     service = CeleryJobTransport(
         app,
-        metrics=context.metrics,
+        execution_observer=context.execution_observer,
         observability=context.observability,
     )
     closer = Resource(
@@ -114,13 +114,15 @@ def _inline(context: JobTransportContext) -> _Built:
         context.factory,
         context.executor,
         timer=timer,
-        metrics=context.metrics,
+        execution_observer=context.execution_observer,
     )
     if context.jobs:
         _log.info(
             "Job retry policies",
-            transport="inline",
-            jobs=context.settings.describe_retries(service.redelivery, context.jobs),
+            extra={
+                "transport": "inline",
+                "jobs": context.settings.describe_retries(service.redelivery, context.jobs),
+            },
         )
     return service, resources
 
@@ -260,7 +262,7 @@ def configure_job_service(
         aws=aws,
         factory=result.factory,
         executor=result.executor,
-        metrics=result.metrics,
+        execution_observer=result.execution_observer,
         observability=observability,
         jobs=jobs,
         callbacks=DispatchableCallbacks(callbacks),

@@ -173,6 +173,8 @@ class TestBootstrapWorkerResult:
             config: ObservabilityConfig,
             *,
             environment: Environment,
+            service_name: str | None = None,
+            service_version: str | None = None,
         ) -> Observability:
             captured["config"] = config
             captured["environment"] = environment

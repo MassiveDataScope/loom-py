@@ -31,7 +31,6 @@ from loom.core.concurrency import run_in_executor
 from loom.core.config import ConfigError
 from loom.core.connections.aws import aws_error_code
 from loom.core.errors import Conflict
-from loom.core.logger import get_logger
 from loom.core.model.convert import to_struct
 from loom.core.model.introspection import (
     business_key_of,
@@ -124,7 +123,6 @@ class DynamoDBRepository(
         self._serializer = TypeSerializer()
         self._deserializer = TypeDeserializer()
         self._client_error = ClientError
-        self.log = get_logger(__name__).bind(repository=self.__class__.__name__)
 
     @property
     def model(self) -> type:

@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import logging
 from collections.abc import Mapping
 from typing import Any
 
@@ -11,13 +12,12 @@ from loom.connections.aws import AwsClients
 from loom.core.config import ConfigContext
 from loom.core.config.keys import ConfigKey
 from loom.core.connections.aws import AwsClientConfig
-from loom.core.logger import get_logger
 from loom.prefect.notify._event import NotifyEvent
 from loom.prefect.notify._format import run_details, should_notify
 
 _ERROR_MAX_CHARS = 60_000
 
-_log = get_logger(__name__)
+_log = logging.getLogger(__name__)
 
 
 class SnsNotifier:
@@ -69,9 +69,7 @@ class SnsNotifier:
         except (BotoCoreError, ClientError):
             _log.warning(
                 "SNS publish failed",
-                flow=event.flow_name,
-                run=event.flow_run_name,
-                state=event.state,
+                extra={"flow": event.flow_name, "run": event.flow_run_name, "state": event.state},
                 exc_info=True,
             )
 

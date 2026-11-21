@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import logging
 from collections.abc import Awaitable, Callable
 from functools import partial, wraps
 from typing import (
@@ -19,7 +20,6 @@ from loom.core.errors import (
     StoresNotCommittedError,
     UndeclaredStoreWrite,
 )
-from loom.core.logger import get_logger
 from loom.core.stores.repository.mutation import MutationEvent
 from loom.core.stores.uow.alone import single_store
 from loom.core.stores.uow.scope import InvocationScope, current_scope
@@ -37,7 +37,7 @@ class SupportsPostCommit(Protocol):
 T = TypeVar("T")
 P = ParamSpec("P")
 
-_log = get_logger(__name__).bind(component="transactional")
+_log = logging.getLogger(__name__)
 
 
 def record_mutation(event: MutationEvent) -> None:
@@ -94,8 +94,7 @@ def transactional(
             _require_enlisted(scope, session_manager)
             _log.debug(
                 "TransactionalSessionReused",
-                owner=self.__class__.__name__,
-                method=method.__name__,
+                extra={"owner": self.__class__.__name__, "method": method.__name__},
             )
             return await method(self, *args, **kwargs)
 
@@ -167,15 +166,16 @@ async def _run_in_own_invocation(
     except Exception:
         _log.exception(
             "TransactionRolledBack",
-            owner=owner.__class__.__name__,
-            method=method.__name__,
+            extra={"owner": owner.__class__.__name__, "method": method.__name__},
         )
         raise
     _log.info(
         "TransactionCommitted",
-        owner=owner.__class__.__name__,
-        method=method.__name__,
-        mutation_count=len(pending),
+        extra={
+            "owner": owner.__class__.__name__,
+            "method": method.__name__,
+            "mutation_count": len(pending),
+        },
     )
     return result
 

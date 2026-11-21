@@ -44,6 +44,7 @@ from loom.etl.engines._write_policy import _WritePolicy
 from loom.etl.schema._schema import SchemaError, SchemaNotFoundError
 from loom.etl.storage._config import MissingTablePolicy
 from loom.etl.storage.routing import ResolvedTarget
+from tests.helpers.loggers import CapturedLog
 
 # ---------------------------------------------------------------------------
 # Minimal concrete _WritePolicy for testing dispatch
@@ -325,15 +326,13 @@ class TestHistorifyRepairReportPassthrough:
         assert result is None
 
     def test_repair_report_returned_and_logged_when_transform_reports(
-        self, fake_scd2_transform: None, monkeypatch: pytest.MonkeyPatch
+        self, fake_scd2_transform: None, caplog: pytest.LogCaptureFixture
     ) -> None:
         report = HistorifyRepairReport(
             affected_keys=frozenset({("player_id", 42)}),
             dates_requiring_rerun=("2025-01-01",),
             warnings=("rewove 1 record",),
         )
-        log = MagicMock()
-        monkeypatch.setattr(_write_policy, "_log", log)
         writer = _StubWritePolicy(schema_exists=True)
         writer.historify.report = report
         target = MagicMock()
@@ -342,11 +341,10 @@ class TestHistorifyRepairReportPassthrough:
         result = writer._do_historify([1], target, _spec(), None)
 
         assert result is report
-        log.warning.assert_called_once()
-        assert log.warning.call_args.args == ("historify_temporal_rerun",)
-        assert log.warning.call_args.kwargs["target"] == "wh.dim_players"
-        assert log.warning.call_args.kwargs["affected_key_count"] == 1
-        assert log.warning.call_args.kwargs["dates_requiring_rerun"] == ["2025-01-01"]
+        [fields] = CapturedLog(caplog).named("historify_temporal_rerun")
+        assert fields["target"] == "wh.dim_players"
+        assert fields["affected_key_count"] == 1
+        assert fields["dates_requiring_rerun"] == ["2025-01-01"]
 
 
 # ---------------------------------------------------------------------------

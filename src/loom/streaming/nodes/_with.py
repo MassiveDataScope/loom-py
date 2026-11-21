@@ -9,7 +9,6 @@ from types import MappingProxyType
 from typing import TYPE_CHECKING, Any, Generic, TypeGuard, TypeVar
 
 from loom.core.config import Configurable
-from loom.core.logger import LoggerPort, get_logger
 from loom.core.model import LoomFrozenStruct, LoomStruct
 
 if TYPE_CHECKING:
@@ -52,30 +51,14 @@ class ContextSupplier(Configurable):
         With(process=Process(ValidateOrder, IntoTopic("validated")), scope=BATCH, db=db)
     """
 
-    __slots__ = ("_factory", "_log")
+    __slots__ = ("_factory",)
 
     def __init__(self, factory: Callable[[], ContextDependency]) -> None:
         self._factory = factory
-        self._log: LoggerPort | None = None
 
     def create(self) -> ContextDependency:
         """Return a fresh context-manager instance."""
         return self._factory()
-
-    @property
-    def log(self) -> LoggerPort:
-        """Structured logger bound to this factory class and module."""
-        logger = self._log
-        if logger is None:
-            cls = type(self)
-            logger = get_logger(cls.__qualname__).bind(
-                component="context_supplier",
-                class_name=cls.__qualname__,
-                module=cls.__module__,
-                factory_name=cls.__qualname__,
-            )
-            self._log = logger
-        return logger
 
 
 class _WithBase(Generic[InT, OutT]):

@@ -38,6 +38,7 @@ Lifetime:
 
 from __future__ import annotations
 
+import logging
 import threading
 from collections.abc import Callable, Hashable
 from contextvars import Token
@@ -48,9 +49,8 @@ from loom.core.errors import Unauthenticated
 from loom.core.execution.errors import ExecutionClosed, ExecutionRequired
 from loom.core.identity import Acting, Identity
 from loom.core.identity.context import _acting  # pyright: ignore[reportPrivateUsage]
-from loom.core.logger import get_logger
 
-_log = get_logger(__name__)
+_log = logging.getLogger(__name__)
 
 _acting_now = _acting.get
 
@@ -251,7 +251,7 @@ _ENDED = _EndedCache()
 
 def _closed(read: str) -> ExecutionClosed:
     """Log the supported paths for background work and return the error to raise."""
-    _log.warning("execution_closed", read=read, guidance=_BACKGROUND_WORK)
+    _log.warning("execution_closed", extra={"read": read, "guidance": _BACKGROUND_WORK})
     return ExecutionClosed(_ENDED_MESSAGE)
 
 

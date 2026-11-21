@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import logging
 from collections import deque
 from collections.abc import Sequence
 from time import monotonic
@@ -18,6 +19,8 @@ from loom.streaming.nodes._table.common import (
     _row_size_bytes,
     _SessionManagerLike,
 )
+
+_log = logging.getLogger(__name__)
 
 
 class _SQLAlchemyTablePartition:
@@ -46,11 +49,9 @@ class _SQLAlchemyTablePartition:
         payload_type: type[Any],
         bridge: AsyncBridge,
         session_manager: _SessionManagerLike,
-        logger: Any = None,
     ) -> None:
         self._bridge = bridge
         self._session_manager = session_manager
-        self._logger = logger
         self._table = sa_table_for(payload_type, settings.table)
         self._chunk_size = settings.chunk_size
         self._buffer_policy = settings.buffer_policy
@@ -134,16 +135,17 @@ class _SQLAlchemyTablePartition:
                         await session.execute(statement, same_columns)
                     n += len(rows)
                 await session.commit()
-                if self._logger is not None:
-                    self._logger.info(
-                        "sink_flush",
-                        trace_id=trace_id,
-                        correlation_id=correlation_id,
-                        backend="sqlalchemy",
-                        table=self._table.name,
-                        records=n,
-                        duration_ms=round((monotonic() - t0) * 1000, 1),
-                    )
+                _log.info(
+                    "sink_flush",
+                    extra={
+                        "trace_id": trace_id,
+                        "correlation_id": correlation_id,
+                        "backend": "sqlalchemy",
+                        "table": self._table.name,
+                        "records": n,
+                        "duration_ms": round((monotonic() - t0) * 1000, 1),
+                    },
+                )
             except Exception:
                 await session.rollback()
                 raise

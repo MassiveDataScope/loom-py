@@ -13,6 +13,7 @@ import pytest
 from loom.composition import ApplicationHost, CompositionErrorCode, CompositionStateError
 from loom.core.resources import Resource, ResourceKind, closing
 from tests.helpers.composition import TaskAffine, application_of
+from tests.helpers.loggers import exception_text
 
 
 def _failing_to_close(message: str) -> Resource:
@@ -184,7 +185,7 @@ class TestOpening:
             del starting
             gc.collect()
 
-        assert "pool gone" in caplog.text
+        assert "pool gone" in exception_text(caplog)
         # Nothing reached the loop's handler: no "exception was never retrieved".
         assert loop_errors == []
 
@@ -306,7 +307,7 @@ class TestShutdown:
             await asyncio.sleep(0)
 
         assert gate.closed
-        assert caplog.text.count("pool gone") == 1
+        assert exception_text(caplog).count("RuntimeError: pool gone") == 1
 
     def test_a_cancelled_owner_still_closes_in_its_own_task(self) -> None:
         affine = TaskAffine()

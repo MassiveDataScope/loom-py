@@ -33,7 +33,6 @@ from .doubles import (
     AcmeEveryInputUseCase,
     AcmeOrder,
     AcmeProbe,
-    AcmeRecordingLogger,
     AcmeSession,
     AcmeSettings,
     AcmeUser,
@@ -89,7 +88,6 @@ class TestRun:
         executor = UseCaseExecutor(
             UseCaseCompiler(),
             coordinator=OrderedCommits({DEFAULT_STORE: stores}),
-            logger=AcmeRecordingLogger(),
         )
         loaded = AcmeUser(id=1, email="u@u.com")
         order_repo = fake_repo(AcmeOrder(id=7))
@@ -200,7 +198,7 @@ class TestExecute:
                 return f"value={value}"
 
         compiler = UseCaseCompiler()
-        ex = UseCaseExecutor(compiler, logger=AcmeRecordingLogger())
+        ex = UseCaseExecutor(compiler)
 
         # Execute twice — _build_plan should only be called once
         with patch.object(compiler, "_build_plan", wraps=compiler._build_plan) as mock_build:

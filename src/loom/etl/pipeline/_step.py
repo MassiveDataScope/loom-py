@@ -18,7 +18,6 @@ from __future__ import annotations
 from enum import Enum
 from typing import Any, ClassVar, Generic, TypeVar
 
-from loom.core.logger import get_logger
 from loom.etl.declarative._with_agent import WithAgent
 from loom.etl.declarative.source import (
     FromConfig,
@@ -112,13 +111,11 @@ class ETLStep(Generic[ParamsT]):
     _inline_sources: ClassVar[dict[str, FromTable | FromFile | FromTemp]]
     _config_values: ClassVar[dict[str, FromConfig]]
     _agents: ClassVar[dict[str, WithAgent]]
-    _log: ClassVar[Any]
 
     def __init_subclass__(cls, **kwargs: Any) -> None:
         super().__init_subclass__(**kwargs)
         cls._params_type = _extract_generic_arg(cls, ETLStep)
         cls._inline_sources = {}
-        cls._log = get_logger(f"{cls.__module__}.{cls.__qualname__}")
         _validate_streaming_flag(cls)
         _validate_and_classify_sources(cls)
         cls._config_values = _collect_declared(cls, FromConfig)

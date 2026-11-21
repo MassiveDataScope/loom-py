@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import contextlib
+import logging
 import queue
 import threading
 import time
@@ -12,7 +13,6 @@ from typing import Any
 
 import polars as pl
 
-from loom.core.logger import get_logger
 from loom.etl.declarative.source._from_dynamodb import FromDynamoDB
 from loom.etl.declarative.source._specs import DynamoDBSourceSpec, ExtraFieldsMode
 from loom.etl.engines.polars._dtype import loom_type_to_polars
@@ -27,7 +27,7 @@ from loom.etl.io.sources._mongo_batch import (
 from loom.etl.io.sources._serialization import _serialization_stats
 from loom.etl.schema._schema import LoomDtype
 
-_log = get_logger(__name__)
+_log = logging.getLogger(__name__)
 
 _QUEUE_POLL_S = 0.1
 _SOURCE_LABEL = "DynamoDBSourceReader"
@@ -276,8 +276,7 @@ class _ParallelSegmentScanner:
             if exc is not None:
                 _log.warning(
                     "dynamodb segment failed",
-                    segment=segment,
-                    error=f"{type(exc).__name__}: {exc}",
+                    extra={"segment": segment, "error": f"{type(exc).__name__}: {exc}"},
                 )
 
     def close(self) -> None:
@@ -298,13 +297,15 @@ def _open_item_source(
 ) -> Generator[dict[str, Any], None, None] | _ParallelSegmentScanner:
     _log.info(
         "dynamodb scan",
-        table=spec.table,
-        filter=scan_kwargs.get("FilterExpression"),
-        projection=scan_kwargs.get("ProjectionExpression"),
-        batch_size=spec.batch_size,
-        limit=effective_limit,
-        consistent_read=spec.consistent_read,
-        total_segments=spec.total_segments,
+        extra={
+            "table": spec.table,
+            "filter": scan_kwargs.get("FilterExpression"),
+            "projection": scan_kwargs.get("ProjectionExpression"),
+            "batch_size": spec.batch_size,
+            "limit": effective_limit,
+            "consistent_read": spec.consistent_read,
+            "total_segments": spec.total_segments,
+        },
     )
     if spec.total_segments is not None:
         return _ParallelSegmentScanner(client, scan_kwargs, spec.total_segments)
@@ -342,15 +343,15 @@ def _infer_schema_from_sample(
     finally:
         source.close()
     if not items:
-        _log.info("dynamodb schema inferred", table=spec.table, sampled=0, columns=0)
+        _log.info(
+            "dynamodb schema inferred", extra={"table": spec.table, "sampled": 0, "columns": 0}
+        )
         return {}
     frame = batch_processor.build_frame(items)
     schema = _normalize_null_dtypes(dict(zip(frame.columns, frame.dtypes, strict=True)))
     _log.info(
         "dynamodb schema inferred",
-        table=spec.table,
-        sampled=len(items),
-        columns=len(schema),
+        extra={"table": spec.table, "sampled": len(items), "columns": len(schema)},
     )
     return schema  # noqa: RET504
 
@@ -406,9 +407,9 @@ class _ScanTracker:
             "elapsed_s": round(time.monotonic() - self._started, 3),
         }
         if self._batches == 1:
-            _log.info("dynamodb first batch", **payload)
+            _log.info("dynamodb first batch", extra={**payload})
         else:
-            _log.debug("dynamodb batch", **payload)
+            _log.debug("dynamodb batch", extra={**payload})
         return remaining - rows if remaining is not None else None
 
     def log_complete(self) -> None:
@@ -416,17 +417,21 @@ class _ScanTracker:
         if serialization_failures:
             _log.warning(
                 "dynamodb read degraded",
-                table=self._table,
-                serialization_failures=serialization_failures,
-                last_error=_serialization_stats.last_error,
+                extra={
+                    "table": self._table,
+                    "serialization_failures": serialization_failures,
+                    "last_error": _serialization_stats.last_error,
+                },
             )
         _log.info(
             "dynamodb read complete",
-            table=self._table,
-            items=self._rows,
-            batches=self._batches,
-            serialization_failures=serialization_failures,
-            duration_s=round(time.monotonic() - self._started, 3),
+            extra={
+                "table": self._table,
+                "items": self._rows,
+                "batches": self._batches,
+                "serialization_failures": serialization_failures,
+                "duration_s": round(time.monotonic() - self._started, 3),
+            },
         )
 
 

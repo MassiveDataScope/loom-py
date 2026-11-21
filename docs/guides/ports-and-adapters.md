@@ -345,8 +345,8 @@ separately.
   it: `loom.core` imports none of `loom.composition`, `loom.rest`,
   `loom.celery` and `loom.ai`, and `loom.composition` imports no transport.
 - **loom keeps the coupling a framework accepts.** msgspec is its model
-  language (models, commands, configuration). structlog and OpenTelemetry sit
-  behind `loom.core.logger` and `loom.core.observability`. contextvars and
+  language (models, commands, configuration). The standard `logging` module and
+  OpenTelemetry sit behind `loom.core.logger` and `loom.core.observability`. contextvars and
   asyncio are the Python runtime.
 
 Known debt:

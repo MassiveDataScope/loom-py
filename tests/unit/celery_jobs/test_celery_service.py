@@ -21,7 +21,7 @@ from loom.core.job.job import Job
 from loom.core.job.service import JobService
 from loom.core.tracing import reset_trace_id, set_trace_id
 from tests.helpers.celery import CeleryBroker
-from tests.helpers.jobs import RecordingMetrics
+from tests.helpers.jobs import RecordingExecutionObserver
 from tests.helpers.spans import build_recorder
 
 QUEUES = ("email", "heavy")
@@ -58,14 +58,14 @@ def broker() -> CeleryBroker:
 
 
 @pytest.fixture
-def metrics() -> RecordingMetrics:
-    return RecordingMetrics()
+def observer() -> RecordingExecutionObserver:
+    return RecordingExecutionObserver()
 
 
 @pytest.fixture
-def service(broker: CeleryBroker, metrics: RecordingMetrics) -> JobService:
+def service(broker: CeleryBroker, observer: RecordingExecutionObserver) -> JobService:
     return JobService(
-        CeleryJobTransport(broker.app, metrics=metrics),
+        CeleryJobTransport(broker.app, execution_observer=observer),
         callbacks=DispatchableCallbacks([SuccessCallback, FailureCallback]),
     )
 
@@ -201,7 +201,7 @@ class TestFailureCallbackSend:
 
 class TestEvents:
     def test_a_dispatch_emits_job_dispatched_with_the_job_and_trace(
-        self, service: JobService, metrics: RecordingMetrics
+        self, service: JobService, observer: RecordingExecutionObserver
     ) -> None:
         token = set_trace_id("dispatch-trace")
         try:
@@ -209,7 +209,7 @@ class TestEvents:
         finally:
             reset_trace_id(token)
 
-        (event,) = metrics.events
+        (event,) = observer.events
         assert (event.kind, event.use_case_name, event.trace_id) == (
             EventKind.JOB_DISPATCHED,
             EmailJob.__qualname__,

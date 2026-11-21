@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import logging
 from typing import Any
 from unittest.mock import AsyncMock
 
@@ -12,6 +13,7 @@ from loom.core.engine.executor import UseCaseExecutor
 from loom.core.errors import NotFound, PostCommitError, RuleViolationError, RuleViolationsError
 from loom.core.use_case.markers import Input, LoadById
 from loom.core.use_case.use_case import UseCase
+from tests.helpers.loggers import CapturedLog
 
 # ---------------------------------------------------------------------------
 # Fixtures
@@ -27,7 +29,7 @@ class Entity:
 
 
 class _RecordingAdapter:
-    """In-memory MetricsRecorder for test assertions."""
+    """In-memory ExecutionObserver for test assertions."""
 
     def __init__(self) -> None:
         self.events: list[ExecutionEvent] = []
@@ -80,22 +82,22 @@ class _LoadUseCase(UseCase[Any, str]):
 
 
 def _make_compiler(adapter: _RecordingAdapter | None = None) -> UseCaseCompiler:
-    return UseCaseCompiler(metrics=adapter)
+    return UseCaseCompiler(execution_observer=adapter)
 
 
 def _make_executor(
     compiler: UseCaseCompiler,
     adapter: _RecordingAdapter | None = None,
 ) -> UseCaseExecutor:
-    return UseCaseExecutor(compiler, metrics=adapter)
+    return UseCaseExecutor(compiler, execution_observer=adapter)
 
 
 # ---------------------------------------------------------------------------
-# MetricsRecorder protocol
+# ExecutionObserver protocol
 # ---------------------------------------------------------------------------
 
 
-class TestMetricsRecorderProtocol:
+class TestExecutionObserverProtocol:
     def test_a_recording_double_satisfies_the_protocol(self) -> None:
         adapter = _RecordingAdapter()
         event = ExecutionEvent(kind=EventKind.EXEC_DONE, use_case_name="X")
@@ -328,74 +330,45 @@ class TestExecutorEventsNotFound:
 # ---------------------------------------------------------------------------
 
 
-class _RecordingLogger:
-    def __init__(self) -> None:
-        self.calls: list[tuple[str, dict[str, Any]]] = []
-
-    def bind(self, **fields: Any) -> _RecordingLogger:
-        return self
-
-    def debug(self, event: str, **fields: Any) -> None:
-        self.calls.append((event, fields))
-
-    def info(self, event: str, **fields: Any) -> None:
-        self.calls.append((event, fields))
-
-    def warning(self, event: str, **fields: Any) -> None:
-        self.calls.append((event, fields))
-
-    def error(self, event: str, **fields: Any) -> None:
-        self.calls.append((event, fields))
-
-    def exception(self, event: str, **fields: Any) -> None:
-        self.calls.append((event, fields))
-
-    def fields_for(self, substr: str) -> dict[str, Any]:
-        for msg, fields in self.calls:
-            if substr in msg:
-                return fields
-        return {}
+@pytest.fixture
+def log(caplog: pytest.LogCaptureFixture) -> CapturedLog:
+    caplog.set_level(logging.DEBUG)
+    return CapturedLog(caplog)
 
 
 class TestStructuredLogs:
-    async def test_done_has_usecase_field(self) -> None:
-        log = _RecordingLogger()
-        compiler = UseCaseCompiler(logger=log)
-        executor = UseCaseExecutor(compiler, logger=log)
+    async def test_done_has_usecase_field(self, log: CapturedLog) -> None:
+        executor = UseCaseExecutor(UseCaseCompiler())
         await executor.execute(_SimpleUseCase(), payload={"value": "x"})
         fields = log.fields_for("[DONE]")
         assert fields.get("usecase") == "_SimpleUseCase"
 
-    async def test_done_has_duration_ms_and_status(self) -> None:
-        log = _RecordingLogger()
-        compiler = UseCaseCompiler(logger=log)
-        executor = UseCaseExecutor(compiler, logger=log)
+    async def test_done_has_duration_ms_and_status(self, log: CapturedLog) -> None:
+        executor = UseCaseExecutor(UseCaseCompiler())
         await executor.execute(_SimpleUseCase(), payload={"value": "x"})
         fields = log.fields_for("[DONE]")
         assert "duration_ms" in fields
         assert fields.get("status") == "success"
 
-    async def test_fail_log_has_status_failure(self) -> None:
-        log = _RecordingLogger()
-        compiler = UseCaseCompiler(logger=log)
-        executor = UseCaseExecutor(compiler, logger=log)
+    async def test_fail_log_has_status_failure(self, log: CapturedLog) -> None:
+        executor = UseCaseExecutor(UseCaseCompiler())
         use_case = _FailingUseCase()
         with pytest.raises(RuntimeError):
             await executor.execute(use_case, payload={"value": "x"})
         fields = log.fields_for("[FAIL]")
         assert fields.get("status") == "failure"
 
-    async def test_fail_log_says_whether_a_post_commit_failure_committed(self) -> None:
-        log = _RecordingLogger()
-        executor = UseCaseExecutor(UseCaseCompiler(logger=log), logger=log)
+    async def test_fail_log_says_whether_a_post_commit_failure_committed(
+        self, log: CapturedLog
+    ) -> None:
+        executor = UseCaseExecutor(UseCaseCompiler())
         use_case = _FailingAfterCommitUseCase()
         with pytest.raises(PostCommitError):
             await executor.execute(use_case, payload={"value": "x"})
         fields = log.fields_for("[FAIL]")
         assert (fields.get("committed"), fields.get("failures")) == (True, 1)
 
-    async def test_compile_log_has_usecase_field(self) -> None:
-        log = _RecordingLogger()
-        UseCaseCompiler(logger=log).compile(_SimpleUseCase)
-        fields = log.fields_for("[BOOT] Compiled UseCase")
-        assert fields.get("usecase") == "_SimpleUseCase"
+    async def test_compile_log_has_usecase_field(self, log: CapturedLog) -> None:
+        UseCaseCompiler().compile(_SimpleUseCase)
+        [fields] = log.named("compiler.use_case_compiled")
+        assert fields["loom.use_case"] == "_SimpleUseCase"

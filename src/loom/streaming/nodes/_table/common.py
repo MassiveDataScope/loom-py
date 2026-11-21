@@ -219,7 +219,6 @@ class IntoTable(Generic[EventT]):
         worker_count: int,
         bridge: AsyncBridge | None = None,
         session_manager: _SessionManagerLike | None = None,
-        logger: Any = None,
     ) -> SinkPartition[EventT]:
         """Build the per-worker partition for this sink.
 
@@ -263,7 +262,6 @@ class IntoTable(Generic[EventT]):
                     self.payload,
                     bridge,
                     session_manager,
-                    logger=logger,
                 ),
             )
         if self.engine is TableEngine.DELTA:
@@ -279,7 +277,7 @@ class IntoTable(Generic[EventT]):
             )
             return cast(
                 SinkPartition[EventT],
-                delta._DeltaTablePartition(config, self.payload, logger=logger),
+                delta._DeltaTablePartition(config, self.payload),
             )
         if self.engine is TableEngine.CLICKHOUSE:
             if not isinstance(config, ClickHouseSinkConfig):
@@ -289,7 +287,7 @@ class IntoTable(Generic[EventT]):
             )
             return cast(
                 SinkPartition[EventT],
-                clickhouse._ClickHouseTablePartition(config, self.payload, logger=logger),
+                clickhouse._ClickHouseTablePartition(config, self.payload),
             )
         raise ValueError(f"Unsupported table engine: {self.engine!r}")
 

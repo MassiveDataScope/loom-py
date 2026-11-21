@@ -1,110 +1,49 @@
 from __future__ import annotations
 
 import asyncio
-import io
-import logging
-from collections.abc import Iterator
 
 import pytest
-import structlog
 
-from loom.core.logger import get_logger, log_context
-
-_REQUEST_ID = "req-7f3a"
-
-
-def _loom_formatter() -> logging.Formatter:
-    """Return the formatter ``configure_logging`` installed on the root logger."""
-    formatter = next(
-        (
-            handler.formatter
-            for handler in logging.getLogger().handlers
-            if isinstance(handler.formatter, structlog.stdlib.ProcessorFormatter)
-        ),
-        None,
-    )
-    if formatter is None:
-        pytest.fail("configure_logging() has not installed loom's formatter")
-    return formatter
-
-
-@pytest.fixture(autouse=True)
-def _empty_log_context() -> Iterator[None]:
-    structlog.contextvars.clear_contextvars()
-    yield
-    structlog.contextvars.clear_contextvars()
-
-
-@pytest.fixture
-def output() -> Iterator[io.StringIO]:
-    stream = io.StringIO()
-    handler = logging.StreamHandler(stream)
-    handler.setFormatter(_loom_formatter())
-    root = logging.getLogger()
-    root.addHandler(handler)
-    try:
-        yield stream
-    finally:
-        root.removeHandler(handler)
-
-
-def _fail_inside_context() -> None:
-    with log_context(request_id=_REQUEST_ID):
-        raise RuntimeError("boom")
+from loom.core.logger import LogField, current_log_fields, log_context
 
 
 class TestLogContext:
-    def test_value_reaches_loom_logger_records(self, output: io.StringIO) -> None:
-        with log_context(request_id=_REQUEST_ID):
-            get_logger("tests.log_context").info("inside")
+    def test_fields_are_present_inside_the_block_only(self) -> None:
+        with log_context(invoice_id="inv-1"):
+            inside = dict(current_log_fields())
 
-        assert _REQUEST_ID in output.getvalue()
+        assert inside == {"invoice_id": "inv-1"}
+        assert dict(current_log_fields()) == {}
 
-    def test_value_reaches_stdlib_records(self, output: io.StringIO) -> None:
-        with log_context(request_id=_REQUEST_ID):
-            logging.getLogger("tests.log_context.stdlib").warning("inside")
+    def test_an_inner_block_shadows_an_outer_key_and_the_outer_value_returns(self) -> None:
+        with log_context(invoice_id="outer", tenant="t1"):
+            with log_context(invoice_id="inner"):
+                inner = dict(current_log_fields())
+            after_inner = dict(current_log_fields())
 
-        assert _REQUEST_ID in output.getvalue()
+        assert inner == {"invoice_id": "inner", "tenant": "t1"}
+        assert after_inner == {"invoice_id": "outer", "tenant": "t1"}
 
-    def test_value_is_gone_after_exit(self, output: io.StringIO) -> None:
-        with log_context(request_id=_REQUEST_ID):
-            pass
-        get_logger("tests.log_context").info("after")
+    def test_the_fields_are_removed_when_the_block_raises(self) -> None:
+        with pytest.raises(RuntimeError), log_context(invoice_id="inv-1"):
+            raise RuntimeError("boom")
 
-        assert "after" in output.getvalue()
-        assert _REQUEST_ID not in output.getvalue()
+        assert dict(current_log_fields()) == {}
 
-    def test_value_is_gone_after_an_exception(self, output: io.StringIO) -> None:
-        with pytest.raises(RuntimeError):
-            _fail_inside_context()
-        get_logger("tests.log_context").info("after")
+    def test_a_dotted_key_is_given_as_a_mapping(self) -> None:
+        with log_context({LogField.JOB: "SendInvoice"}, attempt=2):
+            inside = dict(current_log_fields())
 
-        assert "after" in output.getvalue()
-        assert _REQUEST_ID not in output.getvalue()
+        assert inside == {"loom.job": "SendInvoice", "attempt": 2}
 
-    def test_nested_context_restores_the_outer_value(self, output: io.StringIO) -> None:
-        with log_context(request_id="outer-req"):
-            with log_context(request_id="inner-req"):
-                pass
-            get_logger("tests.log_context").info("outer again")
+    async def test_concurrent_tasks_do_not_see_each_other_fields(self) -> None:
+        seen: dict[str, object] = {}
 
-        assert "outer-req" in output.getvalue()
-        assert "inner-req" not in output.getvalue()
+        async def work(name: str) -> None:
+            with log_context(task=name):
+                await asyncio.sleep(0)
+                seen[name] = current_log_fields().get("task")
 
-    async def test_concurrent_tasks_do_not_see_each_other(self, output: io.StringIO) -> None:
-        both_bound = asyncio.Barrier(2)
+        await asyncio.gather(work("a"), work("b"))
 
-        async def handle(request_id: str) -> None:
-            with log_context(request_id=request_id):
-                await both_bound.wait()
-                get_logger("tests.log_context").info(f"handled-{request_id}")
-
-        await asyncio.gather(handle("req-a"), handle("req-b"))
-
-        lines = output.getvalue().splitlines()
-        line_a = next(line for line in lines if "handled-req-a" in line)
-        line_b = next(line for line in lines if "handled-req-b" in line)
-        assert line_a.count("req-a") == 2
-        assert "req-b" not in line_a
-        assert line_b.count("req-b") == 2
-        assert "req-a" not in line_b
+        assert seen == {"a": "a", "b": "b"}

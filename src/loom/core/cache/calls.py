@@ -20,6 +20,7 @@ from __future__ import annotations
 import dataclasses
 import functools
 import inspect
+import logging
 import math
 import random
 from collections.abc import Awaitable, Callable, Mapping
@@ -35,7 +36,6 @@ from loom.core.cache.decorators import _CallPolicy, declares_cache_call
 from loom.core.cache.keys import call_key
 from loom.core.cache.result_codec import ResultCodec, build_call_codec
 from loom.core.di.container import LoomContainer
-from loom.core.logger import get_logger
 from loom.core.model.introspection import resolve_type_hints
 
 AsyncCallable = Callable[..., Awaitable[Any]]
@@ -323,7 +323,9 @@ def _log_abandoned_call(key: str, error: BaseException) -> None:
     The body of a cached call is arbitrary application code, so a failure the
     single flight can hand to nobody would otherwise disappear entirely.
     """
-    get_logger(__name__).warning("CacheCallLoadAbandoned", key=key, error=repr(error))
+    logging.getLogger(__name__).warning(
+        "CacheCallLoadAbandoned", extra={"key": key, "error": repr(error)}
+    )
 
 
 def _coroutine_methods(obj: object, warn_once: _WarnOnce) -> list[AsyncCallable]:
@@ -378,7 +380,7 @@ class _WarnOnce:
     __slots__ = ("_log", "_seen")
 
     def __init__(self) -> None:
-        self._log = get_logger(__name__)
+        self._log = logging.getLogger(__name__)
         self._seen: set[tuple[str, str]] = set()
 
     def __call__(self, event: str, func: AsyncCallable, **fields: Any) -> None:
@@ -404,7 +406,7 @@ class _WarnOnce:
         if (event, name) in self._seen:
             return
         self._seen.add((event, name))
-        self._log.warning(event, function=name, **fields)
+        self._log.warning(event, extra={"function": name, **fields})
 
 
 class _ConfiguredCalls:

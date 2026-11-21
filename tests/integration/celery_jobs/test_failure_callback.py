@@ -13,6 +13,7 @@ from loom.core.errors import (
     RuleViolationError,
     RuleViolationsError,
 )
+from tests.helpers.loggers import logged_events
 from tests.integration.celery_jobs.conftest import JSON, Workbench
 from tests.integration.celery_jobs.doubles import (
     ABANDONMENT,
@@ -156,7 +157,7 @@ class TestBrokenFailureCallbackSend:
         assert calls == []
         assert (stored.state, type(stored.result).__name__) == ("FAILURE", "JobAbandonment")
         assert [
-            record.msg["event"]
-            for record in caplog.records
-            if isinstance(record.msg, dict) and "not sent" in record.msg.get("event", "")
+            entry["event"]
+            for entry in logged_events(caplog)
+            if "not sent" in entry.get("event", "")
         ] == ["Failure callback not sent"]

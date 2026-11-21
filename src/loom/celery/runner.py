@@ -25,6 +25,7 @@ from __future__ import annotations
 
 import asyncio
 import inspect
+import logging
 from dataclasses import dataclass, field
 from typing import TYPE_CHECKING, Any
 
@@ -51,18 +52,17 @@ from loom.core.job.outcome import (
 from loom.core.job.policy import Redelivery
 from loom.core.job.run import EnvelopeInvocation
 from loom.core.job.runner import JobRunner
-from loom.core.logger import get_logger
 from loom.core.observability.event import Scope
 from loom.core.observability.observability import Observability
 from loom.core.tracing import active_trace_id
 
 if TYPE_CHECKING:
+    from loom.core.engine.execution_observer import ExecutionObserver
     from loom.core.engine.executor import UseCaseExecutor
-    from loom.core.engine.metrics import MetricsRecorder
     from loom.core.job.job import Job
     from loom.core.use_case.factory import UseCaseFactory
 
-_log = get_logger(__name__)
+_log = logging.getLogger(__name__)
 
 REDELIVERY = Redelivery.DELAYED
 """What the broker does with a job that must run again: it waits the countdown it is sent with."""
@@ -171,7 +171,7 @@ def _make_job_task(
     factory: UseCaseFactory,
     executor: UseCaseExecutor,
     process_bridge: _CeleryProcessBridge,
-    metrics: MetricsRecorder | None = None,
+    execution_observer: ExecutionObserver | None = None,
     observability: Observability | None = None,
     *,
     settings: JobSettings,
@@ -212,7 +212,7 @@ def _make_job_task(
         job_type: Concrete :class:`~loom.core.job.job.Job` subclass.
         factory: Used to build the Job instance via DI.
         executor: UseCaseExecutor driving the compiled ExecutionPlan.
-        metrics: Optional metrics recorder.  Receives the job events the
+        execution_observer: Optional execution observer.  Receives the job events the
             runner emits (``JOB_STARTED``, ``JOB_SUCCEEDED``,
             ``JOB_POSTPONED``, ``JOB_FAILED`` and ``JOB_ABANDONED``).
         settings: The application's job settings, which give the task its
@@ -229,7 +229,7 @@ def _make_job_task(
     runner = JobRunner(
         EnvelopeInvocation(factory, executor, runtime),
         redelivery=REDELIVERY,
-        metrics=metrics,
+        execution_observer=execution_observer,
     )
 
     def _deliver(

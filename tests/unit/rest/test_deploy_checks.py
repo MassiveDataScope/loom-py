@@ -304,7 +304,7 @@ class TestOverridesFromVariables:
         self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
     ) -> None:
         config = write_project(tmp_path)
-        monkeypatch.setenv("LOOM__OBSERVABILITY__LOG__CONFIG__LEVLE", "DEBUG")
+        monkeypatch.setenv("LOOM__OBSERVABILITY__LOG__LEVLE", "DEBUG")
 
         with pytest.raises(ConfigError, match="levle"):
             create_app(config, environment="development")
@@ -411,7 +411,7 @@ class TestApplicationModuleChecks:
 
 class TestUnknownConfigurationKeys:
     def test_a_removed_logger_key_stops_startup(self, tmp_path: Path) -> None:
-        observability = {"log": {"config": {"environment": "dev"}}}
+        observability = {"log": {"environment": "dev"}}
         config = write_project(tmp_path, observability=observability)
 
         with pytest.raises(ConfigError, match="environment"):

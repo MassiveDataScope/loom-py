@@ -16,7 +16,6 @@ from loom.composition.errors import ReservedBindingError
 from loom.core.bootstrap.kernel import seeded_container
 from loom.core.di.container import LoomContainer
 from loom.core.di.scope import Scope
-from loom.core.logger import get_logger
 from loom.core.observability.observability import Observability
 from loom.core.stores.catalog import DEFAULT_STORE
 from loom.core.stores.repository import RepositoryCatalog
@@ -47,7 +46,6 @@ def _run(module: Module, container: LoomContainer) -> None:
         container,
         {},
         modules=(module,),
-        logger=get_logger("acme"),
         reserved=reserved_keys((DEFAULT_STORE,)),
         error=ReservedBindingError.for_key,
     ):

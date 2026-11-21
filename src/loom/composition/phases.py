@@ -31,10 +31,11 @@ from loom.core.di.container import ResolutionError
 from loom.core.di.graph import GraphAnalysis
 from loom.core.di.installer import Installer
 from loom.core.engine.compilable import Compilable
+from loom.core.engine.declared_observers import build_execution_observers
+from loom.core.engine.execution_observer import FanOutExecutionObserver
 from loom.core.environment import Environment
 from loom.core.identity import DEFAULT_MAX_DELEGATION_SECONDS, configure_delegation
 from loom.core.job.config import JobSettings
-from loom.core.logger import LoggerPort
 from loom.core.model import BaseModel
 from loom.core.observability.observability import Observability
 from loom.core.resources import Resource, ResourceKind
@@ -204,8 +205,6 @@ def register(
     recipe: Recipe,
     stores: Stores,
     installers: tuple[Installer, ...],
-    *,
-    logger: LoggerPort,
 ) -> tuple[Kernel, SqlWiring, tuple[Resource, ...]]:
     """Fill a container and build the kernel on it, then register the job service and SQL.
 
@@ -225,13 +224,14 @@ def register(
         recipe: What it composes.
         stores: The stores, whose repositories and units of work it registers.
         installers: The discovered installers, built by :func:`build_installers`.
-        logger: Where the container and the compilation log.
 
     Returns:
         The kernel, the SQL wiring and the job transports' resources.
 
     Raises:
-        ConfigError: When a ``ConfiguredInstaller`` section, the ``cache`` section, an elevation,
+        ConfigError: When an entry of ``observability.execution_observers`` is not a
+            buildable execution observer, a ``ConfiguredInstaller`` section, the ``cache``
+            section, an elevation,
             ``stores.settings.rollback_timeout``,
             ``identity.max_delegation_seconds`` or the ``sql`` section is
             invalid. Raised as is.
@@ -260,6 +260,10 @@ def register(
         if factories
         else None
     )
+    execution_observer = FanOutExecutionObserver.combine(
+        recipe.execution_observer,
+        build_execution_observers(project.observability_config.execution_observers),
+    )
     seeds = {
         type(project.app): project.app,
         Environment: project.environment,
@@ -271,7 +275,6 @@ def register(
         KernelRecipe.container(),
         seeds,
         modules=(*(installer.install for installer in installers), *recipe.overrides),
-        logger=logger,
         reserved=reserved_keys(catalog.specs),
         error=ReservedBindingError.for_key,
     ) as container:
@@ -283,8 +286,7 @@ def register(
             container.register_instance(ElevationSink, sink)
         kernel = KernelRecipe(
             recipe.discovered.use_cases,
-            logger,
-            metrics=recipe.metrics,
+            execution_observer=execution_observer,
             coordinator=coordinator,
         ).install(container)
     job_resources = configure_job_service(

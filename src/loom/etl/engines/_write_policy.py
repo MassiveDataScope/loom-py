@@ -7,11 +7,11 @@ while delegating backend-specific operations to abstract hooks.
 
 from __future__ import annotations
 
+import logging
 from abc import abstractmethod
 from dataclasses import dataclass
 from typing import TYPE_CHECKING, Any, Generic, TypeVar
 
-from loom.core.logger import get_logger
 from loom.etl.declarative.target import (
     AppendSpec,
     ClientSpec,
@@ -38,7 +38,7 @@ from loom.etl.storage.routing import ResolvedTarget, TableRouteResolver
 if TYPE_CHECKING:
     from loom.etl.lineage._records import WriteContext
 
-_log = get_logger(__name__)
+_log = logging.getLogger(__name__)
 
 InputFrameT = TypeVar("InputFrameT")
 WriteFrameT = TypeVar("WriteFrameT")
@@ -510,10 +510,12 @@ class _WritePolicy(TargetWriter, Generic[InputFrameT, WriteFrameT, PhysicalSchem
         if report is not None:
             _log.warning(
                 "historify_temporal_rerun",
-                target=target.logical_ref.ref,
-                affected_key_count=len(report.affected_keys),
-                dates_requiring_rerun=[str(d) for d in report.dates_requiring_rerun],
-                warnings=list(report.warnings),
+                extra={
+                    "target": target.logical_ref.ref,
+                    "affected_key_count": len(report.affected_keys),
+                    "dates_requiring_rerun": [str(d) for d in report.dates_requiring_rerun],
+                    "warnings": list(report.warnings),
+                },
             )
         self._write_history(result, target, spec=spec, create=create)
         return report
@@ -657,7 +659,7 @@ class _WritePolicy(TargetWriter, Generic[InputFrameT, WriteFrameT, PhysicalSchem
         materialized = self._materialize_for_write(frame, streaming)
         if allow_empty:
             if self._row_count_if_cheap(materialized) == 0:
-                _log.warning("write_produced_no_rows", target=target.logical_ref.ref)
+                _log.warning("write_produced_no_rows", extra={"target": target.logical_ref.ref})
             return materialized
         pinned, empty = self._pin_rows(materialized)
         if empty:

@@ -5,6 +5,7 @@ The ``s3:TestEvent`` S3 sends when a notification is configured runs no job.
 
 from __future__ import annotations
 
+import logging
 from collections.abc import Mapping
 from datetime import datetime
 from typing import Any
@@ -12,10 +13,9 @@ from urllib.parse import unquote_plus
 
 from loom.core.command import Command
 from loom.core.errors import MalformedJobMessage
-from loom.core.logger import get_logger
 from loom.serverless.aws.lambda_.triggers import Decoded, a_list, an_object
 
-_log = get_logger(__name__)
+_log = logging.getLogger(__name__)
 _TEST_EVENT = "s3:TestEvent"
 
 

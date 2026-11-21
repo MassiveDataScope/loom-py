@@ -22,6 +22,7 @@ Requires ``bytewax`` to be installed.
 
 from __future__ import annotations
 
+import logging
 from collections.abc import Callable, Iterator, Mapping
 from contextlib import contextmanager
 from dataclasses import dataclass
@@ -35,7 +36,6 @@ from bytewax.operators import output as bw_output
 from bytewax.outputs import DynamicSink, StatelessSinkPartition
 
 from loom.core.async_bridge import AsyncBridge
-from loom.core.logger import get_logger
 from loom.core.observability.observability import Observability
 from loom.core.tracing.context import generate_trace_id
 from loom.streaming.bytewax._commit_tracker import CommitCompletionPort
@@ -67,7 +67,7 @@ from loom.streaming.kafka._wire import (
 from loom.streaming.nodes._with import With, WithAsync
 
 Stream: TypeAlias = Any
-logger = get_logger(__name__)
+logger = logging.getLogger(__name__)
 
 __all__ = ["build_dataflow", "build_dataflow_with_shutdown", "_NODE_HANDLERS"]
 
@@ -390,9 +390,7 @@ class _BuildContext:
             return
         logger.warning(
             "unrouted_error_drop_sink",
-            flow=self.plan.name,
-            kind=kind.value,
-            step_id=step_id,
+            extra={"flow": self.plan.name, "kind": kind.value, "step_id": step_id},
         )
         bw_output(f"{step_id}_{kind.value}_dropped", stream, _DropSink(self.commit_tracker))
 

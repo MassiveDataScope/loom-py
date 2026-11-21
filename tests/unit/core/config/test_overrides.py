@@ -78,9 +78,9 @@ class TestConfigVariableOverrides:
     def test_an_undeclared_key_of_a_known_section_is_added_in_lower_case(
         self, config_file: str, monkeypatch: pytest.MonkeyPatch
     ) -> None:
-        monkeypatch.setenv("LOOM__OBSERVABILITY__LOG__CONFIG__LEVEL", "DEBUG")
+        monkeypatch.setenv("LOOM__OBSERVABILITY__LOG__LEVEL", "DEBUG")
 
-        assert _value(_load(config_file), "observability.log.config.level") == "DEBUG"
+        assert _value(_load(config_file), "observability.log.level") == "DEBUG"
 
     @pytest.mark.parametrize(
         ("raw", "parsed"),
@@ -206,11 +206,11 @@ class TestDeployedOperationalOverrides:
     @pytest.mark.parametrize(
         ("variable", "value", "key"),
         [
-            ("LOOM__OBSERVABILITY__LOG__CONFIG__LEVEL", "DEBUG", "observability.log.config.level"),
+            ("LOOM__OBSERVABILITY__LOG__LEVEL", "DEBUG", "observability.log.level"),
             (
-                "LOOM__OBSERVABILITY__LOG__CONFIG__NAMED_LEVELS__ASYNCIO",
+                "LOOM__OBSERVABILITY__LOG__NAMED_LEVELS__ASYNCIO",
                 "WARNING",
-                "observability.log.config.named_levels.asyncio",
+                "observability.log.named_levels.asyncio",
             ),
             ("LOOM__CELERY__WORKER_CONCURRENCY", "8", "celery.worker_concurrency"),
             (
@@ -261,7 +261,7 @@ class TestDeployedOperationalOverrides:
             ("LOOM__APP__REST__AUTH__JWT__AUDIENCE", "other"),
             ("LOOM__CHECKS__SILENCED", "[loom.rest.E001]"),
             ("LOOM__APP__REST__DOCS_URL", "/docs"),
-            ("LOOM__OBSERVABILITY__LOG__CONFIG__LEVELS", "DEBUG"),
+            ("LOOM__OBSERVABILITY__LOG__LEVELS", "DEBUG"),
             ("LOOM__SQL__CONNECTIONS__ANALYTICS__MAX_EXECUTION_TIME", "0"),
             ("LOOM__APP__REST__INTERFACES__ORDERS__FILTERABLE", "all"),
             ("LOOM__APP__REST__INTERFACES__ORDERS__SORTABLE", "[total]"),

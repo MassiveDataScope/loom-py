@@ -78,7 +78,7 @@ def ran() -> Iterator[list[tuple[Any, Identity]]]:
     _RAN.clear()
 
 
-class _Metrics:
+class _RecordingExecutionObserver:
     def __init__(self) -> None:
         self.kinds: list[RuntimeEventKind] = []
 
@@ -287,24 +287,24 @@ class TestDirectTrigger:
     def test_a_job_postponement_is_abandoned_not_postponed_as_the_same_event_comes_back_undelayed(
         self, serve: Serve
     ) -> None:
-        metrics = _Metrics()
-        handler = serve(_events(), metrics=metrics)
+        observer = _RecordingExecutionObserver()
+        handler = serve(_events(), execution_observer=observer)
 
         with pytest.raises(JobPostponement, match="warming up"):
             handler(LambdaEvent.eventbridge({"number": "wait"}), None)
 
-        assert metrics.kinds == [RuntimeEventKind.JOB_STARTED, RuntimeEventKind.JOB_ABANDONED]
+        assert observer.kinds == [RuntimeEventKind.JOB_STARTED, RuntimeEventKind.JOB_ABANDONED]
 
     def test_a_failure_is_reported_as_failed_for_lambda_to_retry_the_event(
         self, serve: Serve
     ) -> None:
-        metrics = _Metrics()
-        handler = serve(_events(), metrics=metrics)
+        observer = _RecordingExecutionObserver()
+        handler = serve(_events(), execution_observer=observer)
 
         with pytest.raises(ValueError, match="job failed"):
             handler(LambdaEvent.eventbridge({"number": "fail"}), None)
 
-        assert metrics.kinds == [RuntimeEventKind.JOB_STARTED, RuntimeEventKind.JOB_FAILED]
+        assert observer.kinds == [RuntimeEventKind.JOB_STARTED, RuntimeEventKind.JOB_FAILED]
 
     def test_a_malformed_event_fails_the_invocation_in_a_failed_span(self, serve: Serve) -> None:
         observer = _Observer()

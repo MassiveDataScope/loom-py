@@ -10,6 +10,7 @@ reports the messages the queue must deliver again.
 
 from __future__ import annotations
 
+import logging
 from collections.abc import Mapping, Sequence
 from contextlib import suppress
 from dataclasses import dataclass
@@ -24,7 +25,6 @@ from loom.core.job.outcome import (
     Succeeded,
     failure_log_fields,
 )
-from loom.core.logger import get_logger
 from loom.jobs.aws.queue import SQSRecord
 from loom.serverless.aws.lambda_._jobs import (
     TIMEOUT_SAFETY_MARGIN_MS,
@@ -38,7 +38,7 @@ if TYPE_CHECKING:
     from loom.composition import Application, LoopHost
     from loom.core.job.job import Job
 
-_log = get_logger(__name__)
+_log = logging.getLogger(__name__)
 MALFORMED_JOB = "<malformed>"
 """Job label of a record whose body could not be decoded."""
 
@@ -198,21 +198,25 @@ class SQSBatch:
             case Postponed(reason=reason, delay=delay):
                 _log.info(
                     "SQS job postponed",
-                    job=job,
-                    message_id=record.message_id,
-                    reason=reason,
-                    delay_s=delay.seconds,
+                    extra={
+                        "job": job,
+                        "message_id": record.message_id,
+                        "reason": reason,
+                        "delay_s": delay.seconds,
+                    },
                 )
             case Failed():
                 error = outcome.as_exception()
                 _log.exception(
                     "SQS job failed",
-                    job=job,
-                    message_id=record.message_id,
-                    attempt=record.receive_count,
-                    error_class=type(error).__name__,
+                    extra={
+                        "job": job,
+                        "message_id": record.message_id,
+                        "attempt": record.receive_count,
+                        "error_class": type(error).__name__,
+                        **failure_log_fields(error),
+                    },
                     exc_info=error,
-                    **failure_log_fields(error),
                 )
 
 

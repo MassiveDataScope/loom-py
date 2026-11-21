@@ -175,8 +175,8 @@ Within any file, its own values win over its `includes`.
 
 | Key | Why it is safe to change per deploy |
 |---|---|
-| `observability.log.config.level` | Verbosity only; what is logged does not change, how much does. |
-| `observability.log.config.named_levels.*` | The same, per stdlib logger (a noisy library). |
+| `observability.log.level` | Verbosity only; what is logged does not change, how much does. |
+| `observability.log.named_levels.*` | The same, per stdlib logger (a noisy library). |
 | `celery.worker_concurrency` | Capacity of a worker; tasks and their routing do not change. |
 | `celery.worker_max_tasks_per_child` | Process recycling; a resource limit. |
 | `celery.worker_prefetch_multiplier` | Queue fairness against throughput; a capacity knob. |
@@ -239,7 +239,7 @@ Example on ECS (one container definition of the task definition):
 {
   "environment": [
     {"name": "LOOM_ENV", "value": "production"},
-    {"name": "LOOM__OBSERVABILITY__LOG__CONFIG__LEVEL", "value": "INFO"},
+    {"name": "LOOM__OBSERVABILITY__LOG__LEVEL", "value": "INFO"},
     {"name": "LOOM__CELERY__WORKER_CONCURRENCY", "value": "8"}
   ],
   "secrets": [
@@ -287,8 +287,7 @@ falling back to defaults.
   that accepts the exception, and every deployed startup logs a warning naming
   the silenced ids.
 - The `loom.core.checks` logger, a stdlib logger, sets its own WARNING level,
-  and the handlers `configure_logging` attaches pass every record, so a
-  parent at `CRITICAL`
+  and a parent at `CRITICAL`
   (the top-level level or `named_levels.loom`) cannot hide a check's warning
   or the silenced ids, in any environment; a named level on
   `loom.core.checks` itself is the explicit way to quiet them. A level on the
@@ -328,7 +327,8 @@ configuration name a mechanism supplied in code:
 |---|---|
 | `loom.rest.E001` | Neither a literal `app.rest.auth.jwt` mapping nor the literal `app.rest.auth.custom: true` is set: the API authenticates nobody. A placeholder `jwt` fails, since it may resolve to null. |
 | `loom.rest.W001` | `app.rest.docs_url`, `redoc_url` or `openapi_url` is not `null`: the schema is published. |
-| `loom.logger.W001` | `observability.log.config` asks for the `console` renderer. |
+| `loom.logger.E001` | `observability.log.format` names no registered log format. |
+| `loom.logger.E002` | `observability.log.level` or a `named_levels` value is not a log level. |
 
 `app.rest.auth.custom: true` declares that `create_app` receives an
 `authenticator`. `create_app` refuses an `authenticator` without it, `custom:
@@ -451,10 +451,8 @@ unknown fields.
 - The SQL timeouts, `pool.size` and `executor_threads`, the Celery
   `runtime.shutdown_timeout_ms` and the streaming runtime's
   `epoch_interval_ms` and `force_shutdown_timeout_ms` must be above zero.
-- The handlers `configure_logging` attaches pass every record, so a named
-  level below the top-level level now takes effect for stdlib loggers;
-  structlog loggers, loom's own included, still drop events below the
-  top-level level.
+- A named level below the top-level level takes effect for every logger,
+  loom's own included: they are all stdlib loggers.
 - A consumer's test suite must set `LOOM_ENV=test`, or every application it
   builds starts as production and runs the deploy checks.
 - The migration locator resolves `LOOM_ENV`, applies the `LOOM__*` variables

@@ -28,6 +28,7 @@ from starlette.routing import Route
 
 from loom.composition import Application, LoopHost, Project, Recipe
 from loom.core.config import ConfigContext, ConfigKey
+from loom.core.logger import LogRuntime
 from loom.core.observability.observability import Observability
 from loom.core.stores import LAMBDA_PROFILE
 from loom.core.stores.sql import SqlConfig
@@ -85,7 +86,12 @@ def compose_http(
         select_interfaces=served.select,
     )
     recipe = dataclasses.replace(
-        recipe, profile=LAMBDA_PROFILE, agents=True, agent_endpoints=False, pool_metrics=None
+        recipe,
+        profile=LAMBDA_PROFILE,
+        agents=True,
+        agent_endpoints=False,
+        log_runtime=LogRuntime.LAMBDA,
+        pool_metrics=None,
     )
     return recipe, functools.partial(_bind, declared)
 

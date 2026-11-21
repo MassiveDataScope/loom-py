@@ -4,8 +4,8 @@ from __future__ import annotations
 
 from loom.core.observability.event import EventKind, LifecycleEvent, LifecycleStatus, Scope
 from loom.core.observability.observability import Observability
+from loom.core.observability.observer.log import LogLifecycleObserver
 from loom.core.observability.observer.noop import NoopObserver
-from loom.core.observability.observer.structlog import StructlogLifecycleObserver
 from loom.core.observability.protocol import LifecycleObserver
 from tests.unit.streaming.observability.cases import FailingFlowObserver, RecordingFlowObserver
 
@@ -17,9 +17,9 @@ class TestFlowObserverProtocol:
         for kind in EventKind:
             observer.on_event(LifecycleEvent(scope=Scope.NODE, name="test", kind=kind))
 
-    def test_structlog_flow_observer_matches_protocol(self) -> None:
-        observer: LifecycleObserver = StructlogLifecycleObserver()
-        assert type(observer) is StructlogLifecycleObserver
+    def test_log_flow_observer_matches_protocol(self) -> None:
+        observer: LifecycleObserver = LogLifecycleObserver()
+        assert type(observer) is LogLifecycleObserver
         observer.on_event(LifecycleEvent(scope=Scope.NODE, name="test", kind=EventKind.START))
 
 

@@ -15,7 +15,6 @@ classifiers = [
 ]
 dependencies = [
     "msgspec>=0.18,<1.0",
-    "structlog>=24.4,<27.0",
     "omegaconf>=2.3,<2.5",
     "prometheus-client>=0.20",
     "aiocache>=0.12,<1.0",
@@ -391,8 +390,11 @@ extend-immutable-calls = [
 
 [tool.ruff.lint.flake8-tidy-imports.banned-api]
 "unittest.mock".msg = "Double a port of ours instead (clean-code testing.md §3); third-party clients are tested against moto, LocalStack or Redis."
+"structlog".msg = "Log with the standard library; structlog belongs to the adapter under loom/logging/."
+"aws_lambda_powertools.logging".msg = "Log with the standard library; Powertools logging belongs to the adapter under loom/logging/."
 
 [tool.ruff.lint.per-file-ignores]
+"src/loom/logging/**" = ["TID251"]
 "tests/helpers/aws_island.py" = ["TID251"]
 "tests/integration/core/repository/sqlalchemy/test_cache_integration.py" = ["TID251"]
 "tests/integration/streaming/test_into_table_integration.py" = ["TID251"]
@@ -401,7 +403,7 @@ extend-immutable-calls = [
 "tests/unit/celery_bootstrap/test_bootstrap_cache.py" = ["TID251"]
 "tests/unit/celery_bootstrap/test_bootstrap.py" = ["TID251"]
 "tests/unit/composition/test_job_service.py" = ["TID251"]
-"tests/unit/core/bootstrap/test_kernel_metrics.py" = ["TID251"]
+"tests/unit/core/bootstrap/test_kernel_execution_observer.py" = ["TID251"]
 "tests/unit/core/cache/test_gateway_config.py" = ["TID251"]
 "tests/unit/core/config/test_aws_section.py" = ["TID251"]
 "tests/unit/core/config/test_secrets.py" = ["TID251"]
@@ -411,7 +413,7 @@ extend-immutable-calls = [
 "tests/unit/core/engine/executor/test_executor.py" = ["TID251"]
 "tests/unit/core/engine/executor/test_observation.py" = ["TID251"]
 "tests/unit/core/engine/executor/test_preparation.py" = ["TID251"]
-"tests/unit/core/engine/test_metrics.py" = ["TID251"]
+"tests/unit/core/engine/test_execution_observer.py" = ["TID251"]
 "tests/unit/core/engine/test_post_commit_publish.py" = ["TID251"]
 "tests/unit/core/errors/test_errors.py" = ["TID251"]
 "tests/unit/core/repository/dynamodb/test_plugin.py" = ["TID251"]

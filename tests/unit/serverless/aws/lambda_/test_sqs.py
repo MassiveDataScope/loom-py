@@ -34,9 +34,15 @@ from loom.serverless.aws.lambda_ import (
 )
 from loom.testing import RecordingJobTransport
 from tests.helpers.composition import composition_project
+from tests.helpers.loggers import rendered
 from tests.helpers.loops import RecordedLoops
 from tests.unit.serverless.aws.lambda_._probe import Probe
 from tests.unit.serverless.aws.lambda_._records import WORKER, RecordFactory, with_worker
+
+
+def _logged(caplog: pytest.LogCaptureFixture) -> list[str]:
+    """Each record of *caplog*, message and fields in one string."""
+    return [rendered(record) for record in caplog.records]
 
 
 class _OtherJobTransport(RecordingJobTransport):
@@ -307,7 +313,7 @@ print([name for name in loaded if name in sys.modules])
         assert result["batchItemFailures"] == [{"itemIdentifier": item} for item in expected]
         assert [item[0] for item in seen] == ran
         error_class = "MalformedJobMessage" if poison == "body" else "UnknownJob"
-        assert any(error_class in message for message in caplog.messages)
+        assert any(error_class in message for message in _logged(caplog))
 
     def test_timeout_marks_remaining_records_failed(
         self,
@@ -580,7 +586,7 @@ print([name for name in loaded if name in sys.modules])
         adapter, application, _ = built
         adapter.mount(application)
         try:
-            assert any("InlineJobTransport" in message for message in caplog.messages)
+            assert any("InlineJobTransport" in message for message in _logged(caplog))
         finally:
             adapter.close()
 
@@ -604,9 +610,9 @@ print([name for name in loaded if name in sys.modules])
         adapter.mount(application)
         try:
             assert any(
-                "through the configured job transport" in record.getMessage()
-                and "_OtherJobTransport" in record.getMessage()
-                for record in caplog.records
+                "through the configured job transport" in message
+                and "_OtherJobTransport" in message
+                for message in _logged(caplog)
             )
         finally:
             adapter.close()
@@ -628,7 +634,7 @@ print([name for name in loaded if name in sys.modules])
         )
         configured = _manifest_project(project, "acme_jobs")
         LambdaRuntime(jobs=[probe[0]]).recipe(configured)
-        assert any("ignores AutoCRUD" in message for message in caplog.messages)
+        assert any("ignores AutoCRUD" in message for message in _logged(caplog))
 
     def test_committed_failure_logs_final_outcome(
         self,
@@ -637,11 +643,11 @@ print([name for name in loaded if name in sys.modules])
         caplog: pytest.LogCaptureFixture,
     ) -> None:
         handler({"Records": [record("42", "committed")]}, None)
-        final_logs = [message for message in caplog.messages if "Job abandoned" in message]
+        final_logs = [message for message in _logged(caplog) if "Job abandoned" in message]
         assert len(final_logs) == 1
         assert "PostCommitError" in final_logs[0]
-        assert "task_id': '42'" in final_logs[0]
-        assert "committed': True" in final_logs[0]
+        assert "'loom.task_id': '42'" in final_logs[0]
+        assert "'committed': True" in final_logs[0]
 
     @pytest.mark.parametrize(
         ("sections", "key"),

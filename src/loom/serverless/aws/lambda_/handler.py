@@ -9,6 +9,7 @@ message is settled by what its job came to: a final failure is dead-lettered.
 from __future__ import annotations
 
 import functools
+import logging
 from collections.abc import Callable, Mapping, Sequence
 from typing import TYPE_CHECKING, Any, Final, Protocol
 
@@ -21,7 +22,6 @@ from loom.core.job.envelope import JobEnvelope
 from loom.core.job.outcome import Abandoned, Failed, failure_log_fields
 from loom.core.job.policy import Redelivery
 from loom.core.job.runner import JobRunner
-from loom.core.logger import get_logger
 from loom.serverless.aws.lambda_._jobs import (
     JobConsumer,
     QueueConsumer,
@@ -58,11 +58,11 @@ from loom.serverless.aws.lambda_.triggers.sqs import QueueSource, SQSBatch
 if TYPE_CHECKING:
     from loom.composition import Application, Project
     from loom.core.engine.compilable import Compilable
-    from loom.core.engine.metrics import MetricsRecorder
+    from loom.core.engine.execution_observer import ExecutionObserver
     from loom.core.job.job import Job
     from loom.rest.auth import Authenticator
 
-_log = get_logger(__name__)
+_log = logging.getLogger(__name__)
 _DIRECT: Final[Mapping[str, Decoder]] = {
     "eventbridge": eventbridge.decode,
     "s3": s3.decode,
@@ -108,7 +108,7 @@ class LambdaRuntime:
             requires ``custom: true`` in the authentication in effect.
         jobs: Explicit job classes of a function running jobs.
         use_cases: Explicit use case classes of a function running jobs.
-        metrics: Receives the executor events of a function running jobs.
+        execution_observer: Receives the executor events of a function running jobs.
     """
 
     def __init__(
@@ -118,13 +118,13 @@ class LambdaRuntime:
         authenticator: Authenticator | None = None,
         jobs: Sequence[type[Job[Any]]] = (),
         use_cases: Sequence[type[Compilable]] = (),
-        metrics: MetricsRecorder | None = None,
+        execution_observer: ExecutionObserver | None = None,
     ) -> None:
         self._function = function
         self._authenticator = authenticator
         self._jobs = tuple(jobs)
         self._use_cases = tuple(use_cases)
-        self._metrics = metrics
+        self._execution_observer = execution_observer
         self._bind: _Bind | None = None
         self._handler: LambdaHandler | None = None
 
@@ -181,8 +181,10 @@ class LambdaRuntime:
             self._handler.close()
 
     def _compose_http(self, project: Project, name: str | None) -> tuple[Recipe, _Bind]:
-        if self._jobs or self._use_cases or self._metrics is not None:
-            raise ConfigError(f"{COMPONENT} jobs=, use_cases= and metrics= run jobs, not http")
+        if self._jobs or self._use_cases or self._execution_observer is not None:
+            raise ConfigError(
+                f"{COMPONENT} jobs=, use_cases= and execution_observer= run jobs, not http"
+            )
         from loom.serverless.aws.lambda_.triggers.http import compose_http
 
         return compose_http(project, name, self._authenticator)
@@ -192,7 +194,9 @@ class LambdaRuntime:
     ) -> tuple[Recipe, _Bind]:
         if self._authenticator is not None:
             raise ConfigError(f"{COMPONENT} authenticator= applies to an http function only")
-        recipe, declared = jobs_recipe(project, self._jobs, self._use_cases, self._metrics)
+        recipe, declared = jobs_recipe(
+            project, self._jobs, self._use_cases, self._execution_observer
+        )
         if not isinstance(trigger, EventTrigger):
             assert trigger.queue is not None
             return recipe, functools.partial(_bind_jobs, declared, trigger.queue.name)
@@ -349,10 +353,12 @@ class _DirectEvents:
         except Exception as exc:
             _log.exception(
                 "Lambda event job failed; the event is retried, then sent to its destination",
-                function=self._function,
-                job=self._label,
-                error_class=type(exc).__name__,
-                **failure_log_fields(exc),
+                extra={
+                    "function": self._function,
+                    "job": self._label,
+                    "error_class": type(exc).__name__,
+                    **failure_log_fields(exc),
+                },
             )
             raise
 

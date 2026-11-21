@@ -8,7 +8,7 @@ from loom.core.engine.boundaries import Boundaries, outside_departed_execution
 from loom.core.engine.compilable import Compilable
 from loom.core.engine.compiler import UseCaseCompiler
 from loom.core.engine.events import Phase
-from loom.core.engine.metrics import MetricsRecorder
+from loom.core.engine.execution_observer import ExecutionObserver
 from loom.core.engine.observation import ExecutionReporter
 from loom.core.engine.plan import ExecutionPlan, ParameterBindingError
 from loom.core.engine.preparation import ArgumentBinder, ExecutionInputs
@@ -19,7 +19,7 @@ from loom.core.execution import (
     Kind,
 )
 from loom.core.identity import Identity, current_caller
-from loom.core.logger import LoggerPort, get_logger
+from loom.core.logger import LogField, log_context
 from loom.core.stores.uow.coordinator import Coordinator
 from loom.core.stores.uow.scope import current_scope, refuse_write_under_read_only
 from loom.core.use_case.kinds import AGENT, MCP
@@ -75,7 +75,7 @@ class UseCaseExecutor:
         debug_execution: When ``True``, each execution's terminal log lists
             the steps it ran under ``steps``. Defaults to ``False``.
         logger: Optional logger. Defaults to the framework logger.
-        metrics: Optional metrics recorder. When provided, receives
+        execution_observer: Optional execution observer. When provided, receives
             ``EXEC_START``, ``EXEC_DONE``, and ``EXEC_ERROR`` events.
         repo_resolver: Optional callable that resolves a repository instance
             from an entity model type. Used by ``Load``/``Exists`` when
@@ -94,7 +94,7 @@ class UseCaseExecutor:
         executor = UseCaseExecutor(
             compiler,
             coordinator=OrderedCommits({DEFAULT_STORE: uow_factory}),
-            metrics=prometheus_adapter,
+            execution_observer=prometheus_adapter,
         )
         result = await executor.execute(
             use_case,
@@ -109,8 +109,7 @@ class UseCaseExecutor:
         *,
         coordinator: Coordinator | None = None,
         debug_execution: bool = False,
-        logger: LoggerPort | None = None,
-        metrics: MetricsRecorder | None = None,
+        execution_observer: ExecutionObserver | None = None,
         repo_resolver: Callable[[type[Any]], Any] | None = None,
         resolvers: ExecutionKinds | None = None,
         builder: Callable[[type[Any]], Any] | None = None,
@@ -121,7 +120,7 @@ class UseCaseExecutor:
         self._compiler = compiler
         self._builder = builder
         self._kinds = ExecutionKinds() if resolvers is None else resolvers
-        self._reporter = ExecutionReporter(logger or get_logger(__name__), metrics, debug_execution)
+        self._reporter = ExecutionReporter(execution_observer, debug_execution)
         self._boundaries = Boundaries(coordinator, elevation_sink)
         self._binder = ArgumentBinder(self._kinds, repo_resolver)
         if agent_resolver is not None:
@@ -393,34 +392,35 @@ class UseCaseExecutor:
                     use_case_type, build, target, inputs, identity, read_only
                 )
         use_case = use_case_type.__qualname__
-        phase = Phase.BEGIN
-        execution = None
-        try:
-            plan = self._plan_for(use_case_type)
-            read_only = read_only or plan.read_only
-            if identity is None:
-                identity = current_caller()
-            execution = ExecutionContext.entered(identity, use_case)
-            if not read_only:
-                refuse_write_under_read_only(f"{use_case}, which writes,")
-            phase = Phase.BUILD
-            compilable = build(target)
-        except Exception as exc:
-            self._reporter.not_started(use_case, exc, phase)
-            if execution is not None:
+        with log_context({LogField.USE_CASE: use_case}):
+            phase = Phase.BEGIN
+            execution = None
+            try:
+                plan = self._plan_for(use_case_type)
+                read_only = read_only or plan.read_only
+                if identity is None:
+                    identity = current_caller()
+                execution = ExecutionContext.entered(identity, use_case)
+                if not read_only:
+                    refuse_write_under_read_only(f"{use_case}, which writes,")
+                phase = Phase.BUILD
+                compilable = build(target)
+            except Exception as exc:
+                self._reporter.not_started(use_case, exc, phase)
+                if execution is not None:
+                    execution.close()
+                raise
+            try:
+                started = self._reporter.start(use_case)
+                call = self._binder.call
+                return await self._boundaries.run(
+                    self._boundaries.boundary_for(scope, plan, read_only),
+                    plan,
+                    started,
+                    lambda: started.business(call(plan, compilable, inputs, identity, started)),
+                )
+            finally:
                 execution.close()
-            raise
-        try:
-            started = self._reporter.start(use_case)
-            call = self._binder.call
-            return await self._boundaries.run(
-                self._boundaries.boundary_for(scope, plan, read_only),
-                plan,
-                started,
-                lambda: started.business(call(plan, compilable, inputs, identity, started)),
-            )
-        finally:
-            execution.close()
 
     def _plan_for(self, uc_type: type[Compilable]) -> ExecutionPlan:
         """Return the plan compiled for exactly ``uc_type``, compiling on demand.

@@ -31,7 +31,7 @@ from loom.stores.sqlalchemy.session_manager import SessionManager
 from loom.stores.sqlalchemy.uow import SQLAlchemyUnitOfWorkFactory
 
 from ...repository.mongo._fake import FakeMongoClient
-from .._lifecycle_doubles import Broker, Log, Metrics, start_hanging
+from .._lifecycle_doubles import Broker, Log, RecordingExecutionObserver, start_hanging
 
 # ---------------------------------------------------------------------------
 # SQLAlchemy seams: a counting session manager over a real sqlite one
@@ -492,8 +492,8 @@ async def case(request: pytest.FixtureRequest, log: Log) -> AsyncIterator[Lifecy
 
 
 @pytest.fixture
-def metrics(log: Log) -> Metrics:
-    return Metrics(log)
+def observer(log: Log) -> RecordingExecutionObserver:
+    return RecordingExecutionObserver(log)
 
 
 @pytest.fixture
@@ -502,9 +502,9 @@ def broker(log: Log) -> Broker:
 
 
 @pytest.fixture
-def executor(case: LifecycleCase, metrics: Metrics) -> UseCaseExecutor:
+def executor(case: LifecycleCase, observer: RecordingExecutionObserver) -> UseCaseExecutor:
     return UseCaseExecutor(
         UseCaseCompiler(),
         coordinator=OrderedCommits({DEFAULT_STORE: case.factory}),
-        metrics=metrics,
+        execution_observer=observer,
     )

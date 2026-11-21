@@ -18,6 +18,7 @@ from fastapi.testclient import TestClient
 
 from loom.core.cache.gateway import CacheGateway
 from loom.rest.fastapi.auto import create_app
+from tests.helpers.loggers import rendered
 from tests.unit.core.cache._doubles import MEMORY_BACKEND, SERIALIZED_BACKEND
 from tests.unit.rest._fixture_app import CACHED_READS, CACHED_RECORDS_PREFIX, write_project
 
@@ -85,7 +86,7 @@ class TestReadsThroughTheCache:
         ]
         assert len(warnings) == 1
         assert warnings[0].levelno == logging.WARNING
-        assert "CachedRecordRepository" in warnings[0].getMessage()
+        assert "CachedRecordRepository" in rendered(warnings[0])
 
 
 class TestShutdownClosesTheGateways:

@@ -25,6 +25,7 @@ from loom.core.use_case import Delivery
 from loom.jobs.inline import AsyncioJobTimer
 from loom.testing.jobs import ManualTimer
 from tests.helpers.jobs import InlineServiceFixture, JobKernel
+from tests.helpers.loggers import logged_events
 
 pytestmark = pytest.mark.timeout(10)
 
@@ -273,11 +274,7 @@ class TestAsyncioTimer:
             timer.schedule(Countdown(900), step, job="AcmeJob", task_id=f"t{n}")
         await timer.close()
 
-        lost = [
-            record.msg
-            for record in caplog.records
-            if isinstance(record.msg, dict) and record.msg["event"] == LOST
-        ]
+        lost = [entry for entry in logged_events(caplog) if entry["event"] == LOST]
         assert ran == []
         assert [entry["jobs"] for entry in lost] == [["AcmeJob:t0", "AcmeJob:t1", "AcmeJob:t2"]]
 
@@ -305,11 +302,7 @@ class TestAsyncioTimer:
 
 
 def _lost_jobs(caplog: pytest.LogCaptureFixture) -> list[list[str]]:
-    return [
-        record.msg["jobs"]
-        for record in caplog.records
-        if isinstance(record.msg, dict) and record.msg["event"] == LOST
-    ]
+    return [entry["jobs"] for entry in logged_events(caplog) if entry["event"] == LOST]
 
 
 class TestAsyncioTimerShutdown:

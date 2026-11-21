@@ -40,6 +40,7 @@ from loom.core.cache.decorators import cache_call
 from loom.core.cache.result_codec import EncodedResult
 from loom.core.di.container import LoomContainer
 from loom.core.model.redaction import RedactedMap
+from tests.helpers.loggers import rendered
 
 from ._doubles import SERIALIZED_BACKEND, CountingCacheStore
 
@@ -918,7 +919,7 @@ class TestAnOverrideThatIsNotACoroutine:
         assert bound == []
         records = _warnings(caplog, "CacheCallOverriddenBySync")
         assert len(records) == 1
-        assert "_SyncOverride.search" in records[0].getMessage()
+        assert "_SyncOverride.search" in rendered(records[0])
 
 
 class TestWrapMethodsPublishesTheCoroutineMethods:
@@ -1101,7 +1102,7 @@ class TestWithoutASection:
         assert runs == 2
         records = _warnings(caplog, "CacheCallNotConfigured")
         assert len(records) == 1
-        assert f"{fetch.__module__}.{fetch.__qualname__}" in records[0].getMessage()
+        assert f"{fetch.__module__}.{fetch.__qualname__}" in rendered(records[0])
 
     def test_an_unmarked_function_is_not_announced(
         self, caplog: pytest.LogCaptureFixture, _capture_call_warnings: None
@@ -1157,7 +1158,7 @@ class TestAFailedWriteNeverFailsTheCall:
 
         records = _warnings(caplog, "CacheCallWriteFailed")
         assert len(records) == 1
-        message = records[0].getMessage()
+        message = rendered(records[0])
         assert f"'function': '{fetch.__module__}.{fetch.__qualname__}'" in message
         assert f"'key': '{_expected_key(fetch)}'" in message
         assert "'value_type': 'AcmeCallDoc'" in message
@@ -1217,7 +1218,7 @@ class TestABackendOutageDegradesToAnUncachedCall:
         assert runs == 2
         records = _warnings(caplog, "CacheCallReadFailed")
         assert len(records) == 1
-        message = records[0].getMessage()
+        message = rendered(records[0])
         assert f"'function': '{fetch.__module__}.{fetch.__qualname__}'" in message
         assert f"'key': '{_expected_key(fetch)}'" in message
         assert "'error': 'ConnectionError'" in message
@@ -1236,7 +1237,7 @@ class TestABackendOutageDegradesToAnUncachedCall:
 
         records = _warnings(caplog, "CacheCallWriteFailed")
         assert len(records) == 1
-        message = records[0].getMessage()
+        message = rendered(records[0])
         assert f"'key': '{_expected_key(fetch)}'" in message
         assert "ConnectionError" in message
 
@@ -1640,7 +1641,7 @@ class TestAPayloadThatNoLongerFits:
         assert len(backend.set_ttls) == 2
         records = _warnings(caplog, "CacheCallPayloadMismatch")
         assert len(records) == 1
-        assert "call:" in records[0].getMessage()
+        assert "call:" in rendered(records[0])
 
     async def test_a_mismatch_logs_no_value_from_the_stored_payload(
         self, caplog: pytest.LogCaptureFixture, _capture_call_warnings: None
@@ -1665,7 +1666,7 @@ class TestAPayloadThatNoLongerFits:
 
         records = _warnings(caplog, "CacheCallPayloadMismatch")
         assert len(records) == 1
-        message = records[0].getMessage()
+        message = rendered(records[0])
         assert "call:" in message
         assert stored_title not in message
         assert "input_value" not in message
