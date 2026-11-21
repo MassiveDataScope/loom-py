@@ -1,7 +1,7 @@
 from loom.core.engine.compiler import UseCaseCompiler
 from loom.core.engine.events import EventKind, ExecutionEvent
+from loom.core.engine.execution_observer import ExecutionObserver
 from loom.core.engine.executor import UseCaseExecutor
-from loom.core.engine.metrics import MetricsRecorder
 from loom.core.engine.plan import (
     ComputeStep,
     ExecutionPlan,
@@ -18,7 +18,7 @@ __all__ = [
     "ExecutionPlan",
     "InputBinding",
     "LoadStep",
-    "MetricsRecorder",
+    "ExecutionObserver",
     "ParamBinding",
     "PostCommitChannel",
     "RuleStep",

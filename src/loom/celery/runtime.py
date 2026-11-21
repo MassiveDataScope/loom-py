@@ -82,7 +82,7 @@ from loom.core.runner import shutdown_runner
 from loom.core.stores import WORKER_PROFILE
 
 if TYPE_CHECKING:
-    from loom.core.engine.metrics import MetricsRecorder
+    from loom.core.engine.execution_observer import ExecutionObserver
     from loom.core.job.job import Job
 
 _log = logging.getLogger(__name__)
@@ -276,7 +276,6 @@ def _register_tasks(
     declared: _Declared,
     application: Application,
     process_bridge: _CeleryProcessBridge,
-    metrics: MetricsRecorder | None,
 ) -> None:
     """Register one task per job and one per callback class and outcome."""
     kernel, observability = application.kernel, application.observability
@@ -295,7 +294,7 @@ def _register_tasks(
             kernel.factory,
             kernel.executor,
             process_bridge,
-            metrics,
+            kernel.execution_observer,
             observability=observability,
             settings=application.job_settings,
         )
@@ -333,7 +332,7 @@ class CeleryRuntime:
             a job can invoke them.
         interfaces: ``RestInterface`` subclasses whose route use cases are
             compiled in the worker.
-        metrics: Use-case and job metrics, or ``None``.
+        execution_observer: Observer of use-case and job events, or ``None``.
     """
 
     def __init__(
@@ -342,12 +341,12 @@ class CeleryRuntime:
         jobs: Sequence[type[Job[Any]]] = (),
         use_cases: Sequence[type[Compilable]] = (),
         interfaces: Sequence[type[Any]] = (),
-        metrics: MetricsRecorder | None = None,
+        execution_observer: ExecutionObserver | None = None,
     ) -> None:
         self._jobs = tuple(jobs)
         self._use_cases = tuple(use_cases)
         self._interfaces = tuple(interfaces)
-        self._metrics = metrics
+        self._execution_observer = execution_observer
         self._declared: _Declared | None = None
 
     def recipe(self, project: Project) -> Recipe:
@@ -398,7 +397,7 @@ class CeleryRuntime:
             check_scope=CheckScope.without_rest(),
             agents=False,
             log_runtime=LogRuntime.CELERY,
-            metrics=self._metrics,
+            execution_observer=self._execution_observer,
             connection_only=not resolved.models,
         )
 
@@ -416,7 +415,7 @@ class CeleryRuntime:
 
         process_bridge = _build_process_bridge(declared.celery.runtime)
         celery_app = create_celery_app(declared.celery)
-        _register_tasks(celery_app, declared, application, process_bridge, self._metrics)
+        _register_tasks(celery_app, declared, application, process_bridge)
         _connect_lifecycle_signals(_WorkerLifecycle(application, process_bridge))
         return celery_app
 

@@ -8,7 +8,7 @@ from loom.core.engine.boundaries import Boundaries, outside_departed_execution
 from loom.core.engine.compilable import Compilable
 from loom.core.engine.compiler import UseCaseCompiler
 from loom.core.engine.events import Phase
-from loom.core.engine.metrics import MetricsRecorder
+from loom.core.engine.execution_observer import ExecutionObserver
 from loom.core.engine.observation import ExecutionReporter
 from loom.core.engine.plan import ExecutionPlan, ParameterBindingError
 from loom.core.engine.preparation import ArgumentBinder, ExecutionInputs
@@ -75,7 +75,7 @@ class UseCaseExecutor:
         debug_execution: When ``True``, each execution's terminal log lists
             the steps it ran under ``steps``. Defaults to ``False``.
         logger: Optional logger. Defaults to the framework logger.
-        metrics: Optional metrics recorder. When provided, receives
+        execution_observer: Optional execution observer. When provided, receives
             ``EXEC_START``, ``EXEC_DONE``, and ``EXEC_ERROR`` events.
         repo_resolver: Optional callable that resolves a repository instance
             from an entity model type. Used by ``Load``/``Exists`` when
@@ -94,7 +94,7 @@ class UseCaseExecutor:
         executor = UseCaseExecutor(
             compiler,
             coordinator=OrderedCommits({DEFAULT_STORE: uow_factory}),
-            metrics=prometheus_adapter,
+            execution_observer=prometheus_adapter,
         )
         result = await executor.execute(
             use_case,
@@ -109,7 +109,7 @@ class UseCaseExecutor:
         *,
         coordinator: Coordinator | None = None,
         debug_execution: bool = False,
-        metrics: MetricsRecorder | None = None,
+        execution_observer: ExecutionObserver | None = None,
         repo_resolver: Callable[[type[Any]], Any] | None = None,
         resolvers: ExecutionKinds | None = None,
         builder: Callable[[type[Any]], Any] | None = None,
@@ -120,7 +120,7 @@ class UseCaseExecutor:
         self._compiler = compiler
         self._builder = builder
         self._kinds = ExecutionKinds() if resolvers is None else resolvers
-        self._reporter = ExecutionReporter(metrics, debug_execution)
+        self._reporter = ExecutionReporter(execution_observer, debug_execution)
         self._boundaries = Boundaries(coordinator, elevation_sink)
         self._binder = ArgumentBinder(self._kinds, repo_resolver)
         if agent_resolver is not None:

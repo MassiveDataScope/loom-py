@@ -1,4 +1,4 @@
-"""Each attempted run reports one terminal outcome: events, metrics and one log line.
+"""Each attempted run reports one terminal outcome: events, observer and one log line.
 
 ``loom.core.engine.observation``: ``EXEC_START`` once the use case is built,
 then ``[DONE]``/``EXEC_DONE`` or ``[FAIL]``/``EXEC_ERROR``; a constructor
@@ -32,7 +32,7 @@ from tests.helpers.delegation import acting_as
 from tests.helpers.jobs import InlineServiceFixture
 from tests.helpers.loggers import CapturedLog
 
-from .._lifecycle_doubles import Metrics
+from .._lifecycle_doubles import RecordingExecutionObserver
 from .conftest import MakeExecutor
 from .doubles import (
     ALICE,
@@ -145,9 +145,9 @@ class TestTraceId:
     """The trace id in flight reaches every event."""
 
     async def test_exec_start_carries_trace_id_when_set(
-        self, make_executor: MakeExecutor, metrics: Metrics
+        self, make_executor: MakeExecutor, observer: RecordingExecutionObserver
     ) -> None:
-        executor = make_executor(metrics=metrics)
+        executor = make_executor(execution_observer=observer)
 
         token = set_trace_id("trace-abc")
         try:
@@ -155,13 +155,13 @@ class TestTraceId:
         finally:
             reset_trace_id(token)
 
-        start_events = [e for e in metrics.events if e.kind == EventKind.EXEC_START]
+        start_events = [e for e in observer.events if e.kind == EventKind.EXEC_START]
         assert start_events[0].trace_id == "trace-abc"
 
     async def test_exec_done_carries_trace_id_when_set(
-        self, make_executor: MakeExecutor, metrics: Metrics
+        self, make_executor: MakeExecutor, observer: RecordingExecutionObserver
     ) -> None:
-        executor = make_executor(metrics=metrics)
+        executor = make_executor(execution_observer=observer)
 
         token = set_trace_id("trace-xyz")
         try:
@@ -169,17 +169,17 @@ class TestTraceId:
         finally:
             reset_trace_id(token)
 
-        done_events = [e for e in metrics.events if e.kind == EventKind.EXEC_DONE]
+        done_events = [e for e in observer.events if e.kind == EventKind.EXEC_DONE]
         assert done_events[0].trace_id == "trace-xyz"
 
     async def test_trace_id_is_none_when_not_set(
-        self, make_executor: MakeExecutor, metrics: Metrics
+        self, make_executor: MakeExecutor, observer: RecordingExecutionObserver
     ) -> None:
-        executor = make_executor(metrics=metrics)
+        executor = make_executor(execution_observer=observer)
 
         await executor.execute(AcmeTracedUseCase())
 
-        for ev in metrics.events:
+        for ev in observer.events:
             assert ev.trace_id is None
 
 
@@ -239,12 +239,12 @@ class TestDuration:
     async def test_a_slow_exec_start_observer_is_included_in_the_duration(
         self, make_executor: MakeExecutor
     ) -> None:
-        metrics = AcmeSlowStart()
+        observer = AcmeSlowStart()
 
-        await make_executor(metrics=metrics).execute(AcmeTracedUseCase())
+        await make_executor(execution_observer=observer).execute(AcmeTracedUseCase())
 
-        assert metrics.done_ms is not None
-        assert metrics.done_ms >= AcmeSlowStart.DELAY_S * 1000
+        assert observer.done_ms is not None
+        assert observer.done_ms >= AcmeSlowStart.DELAY_S * 1000
 
 
 class TestOneTerminalOutcome:
@@ -280,10 +280,10 @@ class TestOneTerminalOutcome:
         assert JOURNAL.entries == []
 
 
-class _RaisesOnStart(Metrics):
+class _RaisesOnStart(RecordingExecutionObserver):
     def on_event(self, event: ExecutionEvent) -> None:
         if event.kind is EventKind.EXEC_START:
-            raise RuntimeError("acme metrics down")
+            raise RuntimeError("acme observer down")
         super().on_event(event)
 
 
@@ -336,19 +336,19 @@ class TestUnstartedRunsLogOneTerminalLine:
 
         assert _terminal_lines(logger, "AcmeNoMarkersUseCase") == [("[FAIL]", "begin")]
 
-    async def test_a_metrics_recorder_raising_on_start(
+    async def test_a_execution_observer_raising_on_start(
         self, make_executor: MakeExecutor, logger: CapturedLog
     ) -> None:
-        metrics = _RaisesOnStart()
+        observer = _RaisesOnStart()
 
-        executor = make_executor(metrics=metrics)
+        executor = make_executor(execution_observer=observer)
         use_case = AcmeNoMarkersUseCase()
 
-        with pytest.raises(RuntimeError, match="acme metrics down"):
+        with pytest.raises(RuntimeError, match="acme observer down"):
             await executor.execute(use_case, params={"value": 1})
 
         assert _terminal_lines(logger, "AcmeNoMarkersUseCase") == [("[FAIL]", "begin")]
-        assert metrics.events == []
+        assert observer.events == []
 
 
 def _terminal_lines(logger: CapturedLog, use_case: str) -> list[tuple[str, str | None]]:

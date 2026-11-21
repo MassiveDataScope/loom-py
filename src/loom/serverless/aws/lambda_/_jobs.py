@@ -35,7 +35,7 @@ from loom.jobs.aws.sqs import SQSConfig
 if TYPE_CHECKING:
     from loom.composition import Application, Project
     from loom.core.engine.compilable import Compilable
-    from loom.core.engine.metrics import MetricsRecorder
+    from loom.core.engine.execution_observer import ExecutionObserver
     from loom.core.job.job import Job
 
 _log = logging.getLogger(__name__)
@@ -50,7 +50,7 @@ def jobs_recipe(
     project: Project,
     jobs: Sequence[type[Job[Any]]],
     use_cases: Sequence[type[Compilable]],
-    metrics: MetricsRecorder | None,
+    execution_observer: ExecutionObserver | None,
 ) -> tuple[Recipe, dict[str, type[Job[Any]]]]:
     """The recipe of a function running jobs, with Lambda pool defaults, and the jobs by name.
 
@@ -74,7 +74,7 @@ def jobs_recipe(
         agents=True,
         agent_endpoints=False,
         log_runtime=LogRuntime.LAMBDA,
-        metrics=metrics,
+        execution_observer=execution_observer,
         connection_only=not resolved.models,
     )
     return recipe, {job_type.__qualname__: job_type for job_type in resolved.jobs}
@@ -212,7 +212,7 @@ def job_runner(application: Application, redelivery: Redelivery) -> JobRunner:
     return JobRunner(
         EnvelopeInvocation(kernel.factory, kernel.executor, application.observability),
         redelivery=redelivery,
-        metrics=kernel.metrics,
+        execution_observer=kernel.execution_observer,
     )
 
 

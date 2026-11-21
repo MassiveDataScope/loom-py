@@ -29,7 +29,7 @@ class Entity:
 
 
 class _RecordingAdapter:
-    """In-memory MetricsRecorder for test assertions."""
+    """In-memory ExecutionObserver for test assertions."""
 
     def __init__(self) -> None:
         self.events: list[ExecutionEvent] = []
@@ -82,22 +82,22 @@ class _LoadUseCase(UseCase[Any, str]):
 
 
 def _make_compiler(adapter: _RecordingAdapter | None = None) -> UseCaseCompiler:
-    return UseCaseCompiler(metrics=adapter)
+    return UseCaseCompiler(execution_observer=adapter)
 
 
 def _make_executor(
     compiler: UseCaseCompiler,
     adapter: _RecordingAdapter | None = None,
 ) -> UseCaseExecutor:
-    return UseCaseExecutor(compiler, metrics=adapter)
+    return UseCaseExecutor(compiler, execution_observer=adapter)
 
 
 # ---------------------------------------------------------------------------
-# MetricsRecorder protocol
+# ExecutionObserver protocol
 # ---------------------------------------------------------------------------
 
 
-class TestMetricsRecorderProtocol:
+class TestExecutionObserverProtocol:
     def test_a_recording_double_satisfies_the_protocol(self) -> None:
         adapter = _RecordingAdapter()
         event = ExecutionEvent(kind=EventKind.EXEC_DONE, use_case_name="X")

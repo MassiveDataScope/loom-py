@@ -34,7 +34,7 @@ from celery import Celery  # type: ignore[import-untyped]
 
 from loom.celery.constants import callback_task_name
 from loom.core.engine.events import EventKind, ExecutionEvent
-from loom.core.engine.metrics import NoMetrics
+from loom.core.engine.execution_observer import NullExecutionObserver
 from loom.core.job.callback import CallbackOutcome
 from loom.core.job.context import add_pending_publish
 from loom.core.job.dispatch import JobDispatch
@@ -43,7 +43,7 @@ from loom.core.observability.event import Scope
 from loom.core.observability.observability import Observability
 
 if TYPE_CHECKING:
-    from loom.core.engine.metrics import MetricsRecorder
+    from loom.core.engine.execution_observer import ExecutionObserver
     from loom.core.job.callback import JobCallback
 
 ResultT = TypeVar("ResultT")
@@ -158,18 +158,20 @@ class CeleryJobTransport:
 
     Args:
         celery_app: Broker application owned by this transport.
-        metrics: Receives dispatch events.
+        execution_observer: Receives dispatch events.
         observability: Traces each broker send.
     """
 
     def __init__(
         self,
         celery_app: Celery,
-        metrics: MetricsRecorder | None = None,
+        execution_observer: ExecutionObserver | None = None,
         observability: Observability | None = None,
     ) -> None:
         self._app = celery_app
-        self._metrics = NoMetrics() if metrics is None else metrics
+        self._execution_observer = (
+            NullExecutionObserver() if execution_observer is None else execution_observer
+        )
         self._observability = observability or Observability.noop()
 
     def close(self) -> None:
@@ -226,7 +228,7 @@ class CeleryJobTransport:
             else callback_task_name(dispatch.on_failure, CallbackOutcome.FAILURE),
             observability=self._observability,
         )
-        self._metrics.on_event(
+        self._execution_observer.on_event(
             ExecutionEvent(
                 kind=EventKind.JOB_DISPATCHED,
                 use_case_name=dispatch.job_type.__qualname__,

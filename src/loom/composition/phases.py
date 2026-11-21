@@ -32,6 +32,8 @@ from loom.core.di.graph import GraphAnalysis
 from loom.core.di.installer import Installer
 from loom.core.di.scope import Scope
 from loom.core.engine.compilable import Compilable
+from loom.core.engine.declared_observers import build_execution_observers
+from loom.core.engine.execution_observer import FanOutExecutionObserver
 from loom.core.environment import Environment
 from loom.core.identity import DEFAULT_MAX_DELEGATION_SECONDS, configure_delegation
 from loom.core.job.config import JobSettings
@@ -231,7 +233,9 @@ def register(
         The kernel, the SQL wiring and the job transports' resources.
 
     Raises:
-        ConfigError: When a ``ConfiguredInstaller`` section, the ``cache`` section, an elevation,
+        ConfigError: When an entry of ``observability.execution_observers`` is not a
+            buildable execution observer, a ``ConfiguredInstaller`` section, the ``cache``
+            section, an elevation,
             ``stores.settings.rollback_timeout``,
             ``identity.max_delegation_seconds`` or the ``sql`` section is
             invalid. Raised as is.
@@ -260,6 +264,10 @@ def register(
         if factories
         else None
     )
+    execution_observer = FanOutExecutionObserver.combine(
+        recipe.execution_observer,
+        build_execution_observers(project.observability_config.execution_observers),
+    )
     seeds = {
         type(project.app): project.app,
         Environment: project.environment,
@@ -282,7 +290,7 @@ def register(
             container.register_instance(ElevationSink, sink)
         kernel = KernelRecipe(
             recipe.discovered.use_cases,
-            metrics=recipe.metrics,
+            execution_observer=execution_observer,
             coordinator=coordinator,
         ).install(container)
     job_resources = configure_job_service(

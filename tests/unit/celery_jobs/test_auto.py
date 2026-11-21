@@ -10,7 +10,7 @@ from loom.celery.auto import create_app
 from loom.core.engine.events import EventKind
 from loom.core.job.envelope import wire_job_name
 from loom.core.job.job import Job
-from tests.helpers.jobs import RecordingMetrics
+from tests.helpers.jobs import RecordingExecutionObserver
 
 WORKER_CONFIG = """\
 app:
@@ -44,13 +44,13 @@ class TestCreateApp:
 
         assert wire_job_name(AutoJob.__qualname__) in app.tasks
 
-    def test_the_application_runs_a_job_and_reports_it_to_the_metrics_recorder(
+    def test_the_application_runs_a_job_and_reports_it_to_the_execution_observer(
         self, config_path: str
     ) -> None:
-        metrics = RecordingMetrics()
-        app = create_app(config_path, jobs=[AutoJob], metrics=metrics)
+        observer = RecordingExecutionObserver()
+        app = create_app(config_path, jobs=[AutoJob], execution_observer=observer)
 
         result = app.tasks[wire_job_name(AutoJob.__qualname__)].apply().get()
 
         assert result == 1
-        assert EventKind.JOB_SUCCEEDED in metrics.kinds
+        assert EventKind.JOB_SUCCEEDED in observer.kinds

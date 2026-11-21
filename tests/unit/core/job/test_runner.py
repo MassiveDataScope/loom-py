@@ -32,7 +32,7 @@ class AcmeJob(Job[None]):
         return None
 
 
-class Metrics:
+class RecordingExecutionObserver:
     def __init__(self) -> None:
         self.events: list[ExecutionEvent] = []
 
@@ -48,12 +48,14 @@ _DATA = JobTestData().with_job_type(AcmeJob).with_policy(POLICY).with_trace_id("
 
 
 def _runner(
-    behaviour: Any, metrics: Metrics | None = None, redelivery: Redelivery = Redelivery.DELAYED
+    behaviour: Any,
+    observer: RecordingExecutionObserver | None = None,
+    redelivery: Redelivery = Redelivery.DELAYED,
 ) -> JobRunner:
     async def invocation(delivery: JobDelivery) -> Any:
         return await behaviour(delivery)
 
-    return JobRunner(invocation, redelivery=redelivery, metrics=metrics)
+    return JobRunner(invocation, redelivery=redelivery, execution_observer=observer)
 
 
 def _returning(value: Any) -> Any:
@@ -237,10 +239,10 @@ class TestJobRunnerEvents:
     async def test_emits_started_then_the_event_of_the_outcome(
         self, behaviour: Any, kind: EventKind, status: Status
     ) -> None:
-        metrics = Metrics()
-        await _runner(behaviour, metrics).run(_DATA.delivery())
+        observer = RecordingExecutionObserver()
+        await _runner(behaviour, observer).run(_DATA.delivery())
 
-        started, settled = metrics.events
+        started, settled = observer.events
         assert started.kind is EventKind.JOB_STARTED
         assert (settled.kind, settled.status) == (kind, status)
         assert settled.use_case_name == "AcmeJob"
@@ -259,16 +261,16 @@ class TestJobRunnerEvents:
     async def test_an_abandoned_event_carries_the_reason(
         self, behaviour: Any, reason: AbandonReason
     ) -> None:
-        metrics = Metrics()
-        await _runner(behaviour, metrics, redelivery=Redelivery.NONE).run(_DATA.delivery())
+        observer = RecordingExecutionObserver()
+        await _runner(behaviour, observer, redelivery=Redelivery.NONE).run(_DATA.delivery())
 
-        assert metrics.events[-1].reason is reason
+        assert observer.events[-1].reason is reason
 
     async def test_a_failed_event_carries_the_error(self) -> None:
-        metrics = Metrics()
+        observer = RecordingExecutionObserver()
         error = ValueError("boom")
-        await _runner(_raising(error), metrics).run(_DATA.delivery())
-        assert metrics.events[-1].error is error
+        await _runner(_raising(error), observer).run(_DATA.delivery())
+        assert observer.events[-1].error is error
 
     async def test_a_runner_without_metrics_runs(self) -> None:
         outcome: JobOutcome = await _runner(_returning(1)).run(_DATA.delivery())
@@ -317,12 +319,12 @@ class TestJobRunnerRedelivery:
     async def test_an_abandoned_job_postponement_emits_the_abandonment_not_a_postponement(
         self,
     ) -> None:
-        metrics = Metrics()
+        observer = RecordingExecutionObserver()
         await _runner(
-            _raising(JobPostponement("later", 30)), metrics, redelivery=Redelivery.NONE
+            _raising(JobPostponement("later", 30)), observer, redelivery=Redelivery.NONE
         ).run(_DATA.delivery())
 
-        assert [event.kind for event in metrics.events] == [
+        assert [event.kind for event in observer.events] == [
             EventKind.JOB_STARTED,
             EventKind.JOB_ABANDONED,
         ]
@@ -350,11 +352,11 @@ class TestJobRunnerDecideUnrunnable:
         )
 
     def test_it_emits_the_event_of_the_outcome_named_by_the_error_class(self) -> None:
-        metrics = Metrics()
+        observer = RecordingExecutionObserver()
         error = UnretryableError("never")
-        _runner(_returning(1), metrics).decide_unrunnable(error, 1, POLICY)
+        _runner(_returning(1), observer).decide_unrunnable(error, 1, POLICY)
 
-        [event] = metrics.events
+        [event] = observer.events
         assert (event.kind, event.status, event.use_case_name, event.error) == (
             EventKind.JOB_ABANDONED,
             Status.ABANDONED,

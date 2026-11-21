@@ -29,8 +29,8 @@ from loom.jobs.inline import AsyncioJobTimer, InlineJobTransport
 
 if TYPE_CHECKING:
     from loom.celery.config import CeleryConfig
+    from loom.core.engine.execution_observer import ExecutionObserver
     from loom.core.engine.executor import UseCaseExecutor
-    from loom.core.engine.metrics import MetricsRecorder
     from loom.core.use_case.factory import UseCaseFactory
 
 _log = logging.getLogger(__name__)
@@ -53,7 +53,7 @@ class JobTransportContext:
     aws: AwsClients
     factory: UseCaseFactory
     executor: UseCaseExecutor
-    metrics: MetricsRecorder | None
+    execution_observer: ExecutionObserver | None
     observability: Observability | None
     jobs: tuple[type[Job[Any]], ...] = ()
     callbacks: DispatchableCallbacks = field(default_factory=DispatchableCallbacks.any)
@@ -85,7 +85,7 @@ def _celery_transport(context: JobTransportContext, celery_cfg: CeleryConfig) ->
         raise JobTransportError(f"the celery section is invalid: {exc}") from exc
     service = CeleryJobTransport(
         app,
-        metrics=context.metrics,
+        execution_observer=context.execution_observer,
         observability=context.observability,
     )
     closer = Resource(
@@ -114,7 +114,7 @@ def _inline(context: JobTransportContext) -> _Built:
         context.factory,
         context.executor,
         timer=timer,
-        metrics=context.metrics,
+        execution_observer=context.execution_observer,
     )
     if context.jobs:
         _log.info(
@@ -262,7 +262,7 @@ def configure_job_service(
         aws=aws,
         factory=result.factory,
         executor=result.executor,
-        metrics=result.metrics,
+        execution_observer=result.execution_observer,
         observability=observability,
         jobs=jobs,
         callbacks=DispatchableCallbacks(callbacks),

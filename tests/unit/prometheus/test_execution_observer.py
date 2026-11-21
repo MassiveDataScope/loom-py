@@ -1,4 +1,4 @@
-"""Unit tests for PrometheusMetricsRecorder."""
+"""Unit tests for PrometheusExecutionObserver."""
 
 from __future__ import annotations
 
@@ -6,12 +6,12 @@ import pytest
 from prometheus_client import CollectorRegistry
 
 from loom.core.engine.events import AbandonReason, EventKind, ExecutionEvent
-from loom.prometheus import PrometheusMetricsRecorder
+from loom.prometheus import PrometheusExecutionObserver
 
 
-def _adapter() -> tuple[PrometheusMetricsRecorder, CollectorRegistry]:
+def _adapter() -> tuple[PrometheusExecutionObserver, CollectorRegistry]:
     registry = CollectorRegistry()
-    return PrometheusMetricsRecorder(registry=registry), registry
+    return PrometheusExecutionObserver(registry=registry), registry
 
 
 def _metric_value(registry: CollectorRegistry, sample_name: str, labels: dict[str, str]) -> float:

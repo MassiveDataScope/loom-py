@@ -156,11 +156,13 @@ class TestRecipe:
         assert AcmePingCallback not in recipe.discovered.use_cases
 
     def test_the_metrics_reach_the_recipe(self, tmp_path: Path) -> None:
-        metrics: Any = object()
+        observer: Any = object()
 
-        recipe = CeleryRuntime(jobs=[_PingJob], metrics=metrics).recipe(_project(tmp_path, {}))
+        recipe = CeleryRuntime(jobs=[_PingJob], execution_observer=observer).recipe(
+            _project(tmp_path, {})
+        )
 
-        assert recipe.metrics is metrics
+        assert recipe.execution_observer is observer
 
     def test_a_second_recipe_on_the_same_runtime_is_refused(self, tmp_path: Path) -> None:
         adapter = CeleryRuntime(jobs=[_PingJob])

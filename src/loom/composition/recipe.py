@@ -28,7 +28,7 @@ if TYPE_CHECKING:
     from loom.core.config import ConfigContext
     from loom.core.di.container import LoomContainer
     from loom.core.discovery.base import DiscoveryResult
-    from loom.core.engine.metrics import MetricsRecorder
+    from loom.core.engine.execution_observer import ExecutionObserver
     from loom.core.stores.profile import PoolMetricsSink, RuntimeProfile
 
 T_co = TypeVar("T_co", covariant=True)
@@ -55,7 +55,7 @@ class Recipe:
             markers.
         log_runtime: The kind of process the log records are stamped as
             coming from.
-        metrics: Use-case metrics, or ``None``.
+        execution_observer: Use-case and job execution observer, or ``None``.
         pool_metrics: Connection-pool metrics, only for an entry point that
             serves a scrape.
         connection_only: Ask the backend for its connection only, no
@@ -81,7 +81,7 @@ class Recipe:
     agents: bool = False
     agent_endpoints: bool = True
     log_runtime: LogRuntime = LogRuntime.CLI
-    metrics: MetricsRecorder | None = None
+    execution_observer: ExecutionObserver | None = None
     pool_metrics: PoolMetricsSink | None = None
     connection_only: bool = False
     overrides: tuple[Callable[[LoomContainer], None], ...] = ()

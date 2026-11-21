@@ -20,7 +20,7 @@ from loom.testing import JobTestData
 from tests.helpers.jobs import InlineServiceFixture
 
 
-class Metrics:
+class RecordingExecutionObserver:
     def __init__(self) -> None:
         self.events: list[ExecutionEvent] = []
 
@@ -60,8 +60,8 @@ class TwoDeliveriesJob(Job[None]):
 
 
 @pytest.fixture
-def metrics() -> Metrics:
-    return Metrics()
+def observer() -> RecordingExecutionObserver:
+    return RecordingExecutionObserver()
 
 
 @pytest.fixture
@@ -75,8 +75,8 @@ def factory() -> UseCaseFactory:
 
 
 @pytest.fixture
-def executor(metrics: Metrics) -> UseCaseExecutor:
-    return UseCaseExecutor(UseCaseCompiler(), metrics=metrics)
+def executor(observer: RecordingExecutionObserver) -> UseCaseExecutor:
+    return UseCaseExecutor(UseCaseCompiler(), execution_observer=observer)
 
 
 class TestDeliveryMarker:
@@ -123,7 +123,7 @@ class TestJobSignalReporting:
         self,
         factory: UseCaseFactory,
         executor: UseCaseExecutor,
-        metrics: Metrics,
+        observer: RecordingExecutionObserver,
         caplog: pytest.LogCaptureFixture,
         job_type: type[Job[Any]],
         status: Status,
@@ -134,6 +134,6 @@ class TestJobSignalReporting:
         assert not [record for record in caplog.records if record.levelno >= logging.ERROR]
         assert not [record for record in caplog.records if "[FAIL]" in record.getMessage()]
         assert any("[SIGNAL]" in record.getMessage() for record in caplog.records)
-        [reported] = [e for e in metrics.events if e.kind is EventKind.EXEC_ERROR]
+        [reported] = [e for e in observer.events if e.kind is EventKind.EXEC_ERROR]
         assert reported.status is status
         assert reported.status is not Status.FAILURE
