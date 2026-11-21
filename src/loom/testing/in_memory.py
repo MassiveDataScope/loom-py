@@ -24,6 +24,7 @@ from __future__ import annotations
 
 from collections.abc import Callable, Sequence
 from dataclasses import replace
+from datetime import UTC, datetime
 from typing import Any, Generic, TypeVar
 
 import msgspec
@@ -51,6 +52,8 @@ from loom.core.stores.repository import (
 )
 from loom.core.stores.repository.record import (
     PrimaryKey,
+    RecordLayout,
+    ServerStamps,
     refuse_key_change,
     with_derived_key,
 )
@@ -71,9 +74,13 @@ class InMemoryRepository(
     when no ``creator`` callable is provided: fields present on the command
     are copied to the entity, and the id field is the one the model derives from
     its business key, else the command's when it carries one, else an internal
-    auto-increment counter's; a ``creator`` fills the id itself. Creating a primary
-    key or a business key the store already holds raises ``Conflict``, as every real
-    repository does, and neither ``create`` nor ``create_many`` overwrites a row.
+    auto-increment counter's; a ``creator`` fills the id itself. As the SQL store's
+    server defaults do, a ``NOW`` field the command, or the ``creator``'s entity,
+    leaves unset or ``None`` holds the current UTC time, and every update stamps
+    the ``NOW`` on-update fields.
+    Creating a primary key or a business key the store already holds raises
+    ``Conflict``, as every real repository does, and neither ``create`` nor
+    ``create_many`` overwrites a row.
     ``create_many`` follows the port and the SQLAlchemy adapter: with ``ERROR`` a
     repeated or existing key raises ``Conflict`` and nothing is stored; with ``IGNORE``
     a row is skipped only when its business key (its primary key when the model
@@ -90,7 +97,7 @@ class InMemoryRepository(
             is the store key.
         creator: Optional ``(cmd, next_id) -> T`` callable used by
             :meth:`create`.  When provided, the automatic field-mapping is
-            bypassed entirely.
+            bypassed; the server stamps still fill the entity's empty ``NOW`` fields.
 
     Example::
 
@@ -116,6 +123,7 @@ class InMemoryRepository(
         business_key = business_key_of(entity_type)
         self._business_key_fields = () if business_key is None else business_key.fields
         self._creator = creator
+        self._stamps = ServerStamps.of(entity_type)
         self._store: dict[tuple[Any, ...], T] = {}
         self._key_by_business_key: dict[tuple[Any, ...], tuple[Any, ...]] = {}
         self._next_id: int = 1
@@ -208,9 +216,10 @@ class InMemoryRepository(
     async def update(self, obj_id: Any, data: Any) -> T | None:
         """Update the entity at ``obj_id`` with fields from ``data``.
 
-        Only non-``None`` fields present on both ``data`` and the entity are
-        overwritten, and a field a command leaves at its default is not sent;
-        the id field is never changed.
+        Only non-``None``, non-``UNSET`` fields present on both ``data`` and the
+        entity are overwritten, and a field a command leaves at its default is not
+        sent; the id field is never changed. The ``NOW`` on-update fields hold the
+        current UTC time, whatever ``data`` sends for them.
 
         Args:
             obj_id: Identity value of the entity to update, as in :meth:`get_by_id`.
@@ -228,11 +237,16 @@ class InMemoryRepository(
         changes = {
             k: v
             for k, v in updates.items()
-            if v is not None and k in current and k not in self._key.names
+            if v is not None
+            and v is not msgspec.UNSET
+            and k in current
+            and k not in self._key.names
         }
         refuse_key_change(self._entity_type, changes)
         current.update(changes)
-        updated = to_struct(self._entity_type, current)
+        updated = to_struct(
+            self._entity_type, self._stamps.with_update_stamps(current, datetime.now(UTC))
+        )
         self._put(updated)
         return updated
 
@@ -283,11 +297,19 @@ class InMemoryRepository(
         ]
 
     def _build_entity(self, data: Any) -> T:
+        """Build the entity *data* creates, with the server stamps a store fills."""
         if self._creator is None:
-            return self._auto_create(data)
-        entity = self._creator(data, self._next_id)
+            values = self._command_values(data)
+        else:
+            values = self._creator_values(self._creator, data)
+        stamped = self._stamps.with_create_stamps(values, datetime.now(UTC))
+        return to_struct(self._entity_type, stamped)
+
+    def _creator_values(self, creator: Callable[[Any, int], T], data: Any) -> dict[str, Any]:
+        """Return the field values of the entity *creator* builds, ``UNSET`` left out."""
+        entity = creator(data, self._next_id)
         self._next_id += 1
-        return entity
+        return RecordLayout.from_struct(type(entity)).to_values(entity)
 
     def _business_key_of(self, entity: T) -> tuple[Any, ...]:
         return tuple(getattr(entity, name) for name in self._business_key_fields)
@@ -351,19 +373,20 @@ class InMemoryRepository(
                 )
             business_keys.add(business_key)
 
-    def _auto_create(self, cmd: Any) -> T:
-        """Derive entity from command attributes and auto-increment id."""
+    def _command_values(self, cmd: Any) -> dict[str, Any]:
+        """Return the entity values *cmd* carries, the derived or auto-increment id filled in."""
         entity_fields = {f.name for f in msgspec.structs.fields(self._entity_type)}
         data: dict[str, Any] = {}
         for f_name in entity_fields:
-            if hasattr(cmd, f_name):
-                data[f_name] = getattr(cmd, f_name)
+            value = getattr(cmd, f_name, msgspec.UNSET)
+            if value is not msgspec.UNSET:
+                data[f_name] = value
         data = with_derived_key(self._entity_type, data)
         match self._key.names:
             case (name,) if data.get(name) is None:
                 data[name] = self._next_id
         self._next_id += 1
-        return to_struct(self._entity_type, data)
+        return data
 
     def _projection_plan_for_profile(self, profile: str) -> ProjectionPlan | None:
         if profile in self._projection_plans:

@@ -2,12 +2,23 @@
 
 from __future__ import annotations
 
+from collections.abc import Awaitable, Callable
+from datetime import UTC, datetime
 from typing import Any
 
 import msgspec
 import pytest
+from msgspec import UnsetType
 
-from loom.core.model import BaseModel, Cardinality, ColumnField, ProjectionField, RelationField
+from loom.core.model import (
+    BaseModel,
+    Cardinality,
+    ColumnField,
+    CreatedAtField,
+    ProjectionField,
+    RelationField,
+    UpdatedAtField,
+)
 from loom.core.projection.loaders import CountLoader
 from loom.testing.in_memory import InMemoryRepository
 
@@ -322,3 +333,102 @@ class TestProjectionProfiles:
         payload = msgspec.to_builtins(loaded)
         assert isinstance(payload, dict)
         assert payload["reviewCount"] == 0
+
+
+class _Stamped(BaseModel):
+    __tablename__ = "in_memory_stamped"
+
+    key: str = ColumnField(primary_key=True, length=16)
+    note: str = ColumnField(length=16)
+    created_at: datetime | UnsetType = CreatedAtField()
+    updated_at: datetime | UnsetType = UpdatedAtField()
+
+
+class _NoteCmd(msgspec.Struct):
+    note: str | UnsetType = msgspec.UNSET
+
+
+_LONG_AGO = datetime(2020, 1, 1, tzinfo=UTC)
+
+_Create = Callable[[InMemoryRepository[_Stamped], _Stamped], Awaitable[_Stamped]]
+
+
+async def _create_one(repo: InMemoryRepository[_Stamped], row: _Stamped) -> _Stamped:
+    return await repo.create(row)
+
+
+async def _create_in_batch(repo: InMemoryRepository[_Stamped], row: _Stamped) -> _Stamped:
+    (created,) = await repo.create_many([row])
+    return created
+
+
+def _note_creator(cmd: _NoteCmd, next_id: int) -> _Stamped:
+    return _Stamped(key=f"k{next_id}", note=str(cmd.note))
+
+
+class TestServerStamps:
+    @pytest.fixture
+    def repo(self) -> InMemoryRepository[_Stamped]:
+        return InMemoryRepository(_Stamped)
+
+    async def test_a_creator_entity_is_stamped_like_a_command_one(self) -> None:
+        repo = InMemoryRepository(_Stamped, creator=_note_creator)
+        before = datetime.now(UTC)
+
+        created = await repo.create(_NoteCmd(note="new"))
+
+        assert created.key == "k1"
+        assert isinstance(created.created_at, datetime)
+        assert before <= created.created_at <= datetime.now(UTC)
+        assert created.updated_at == created.created_at
+
+    @pytest.fixture(params=[_create_one, _create_in_batch], ids=["create", "create_many"])
+    def create(self, request: pytest.FixtureRequest) -> _Create:
+        return request.param
+
+    async def test_a_create_stamps_the_unset_server_defaults_with_one_current_time(
+        self, repo: InMemoryRepository[_Stamped], create: _Create
+    ) -> None:
+        before = datetime.now(UTC)
+
+        created = await create(repo, _Stamped(key="a", note="new"))
+
+        assert isinstance(created.created_at, datetime)
+        assert before <= created.created_at <= datetime.now(UTC)
+        assert created.updated_at == created.created_at
+        assert await repo.get_by_id("a") == created
+
+    async def test_a_create_keeps_the_stamps_it_is_given(
+        self, repo: InMemoryRepository[_Stamped], create: _Create
+    ) -> None:
+        row = _Stamped(key="a", note="new", created_at=_LONG_AGO, updated_at=_LONG_AGO)
+
+        created = await create(repo, row)
+
+        assert created == row
+
+    async def test_an_update_restamps_the_update_field_and_keeps_the_creation_one(
+        self, repo: InMemoryRepository[_Stamped]
+    ) -> None:
+        repo.seed(_Stamped(key="a", note="old", created_at=_LONG_AGO, updated_at=_LONG_AGO))
+        before = datetime.now(UTC)
+
+        updated = await repo.update("a", _NoteCmd(note="new"))
+
+        assert updated is not None
+        assert updated.note == "new"
+        assert updated.created_at == _LONG_AGO
+        assert isinstance(updated.updated_at, datetime)
+        assert before <= updated.updated_at <= datetime.now(UTC)
+        assert await repo.get_by_id("a") == updated
+
+    async def test_an_update_leaves_a_field_the_command_sends_unset(
+        self, repo: InMemoryRepository[_Stamped]
+    ) -> None:
+        repo.seed(_Stamped(key="a", note="old", created_at=_LONG_AGO, updated_at=_LONG_AGO))
+
+        updated = await repo.update("a", _NoteCmd())
+
+        assert updated is not None
+        assert updated.note == "old"
+        assert updated.updated_at != _LONG_AGO

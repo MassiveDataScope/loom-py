@@ -225,8 +225,8 @@ class DynamoDBRepository(
         changes = self._to_internal(data)
         changes.pop(self._id_attr, None)
         refuse_key_change(self._model, changes)
-        changes.update(msgspec.to_builtins(_stamp(self._stamps.on_update)))
-        merged = {**self._decode_item(existing), **changes}
+        stamped = msgspec.to_builtins(self._stamps.with_update_stamps(changes, datetime.now(UTC)))
+        merged = {**self._decode_item(existing), **stamped}
         try:
             await self._write(
                 self._client.put_item,
@@ -351,8 +351,9 @@ class DynamoDBRepository(
         Every field that is not ``msgspec.UNSET`` is included, defaults too, and
         a ``ServerDefault.NOW`` field left empty holds the current UTC time.
         """
-        values = creation_values(self._model, data)
-        values.update(_stamp(self._stamps.missing_in(values)))
+        values = self._stamps.with_create_stamps(
+            creation_values(self._model, data), datetime.now(UTC)
+        )
         return cast(dict[str, Any], msgspec.to_builtins(values))
 
     def _to_internal(self, data: msgspec.Struct) -> dict[str, Any]:
@@ -422,12 +423,6 @@ def refuse_business_key_without_hash(model: type) -> None:
             "its primary key; derive the key with ColumnField(primary_key=True, "
             "derived=KeyHash...)"
         )
-
-
-def _stamp(fields: frozenset[str]) -> dict[str, datetime]:
-    """Return *fields* mapped to one shared current UTC time."""
-    now = datetime.now(UTC)
-    return dict.fromkeys(fields, now)
 
 
 def _floats_to_decimal(value: Any) -> Any:

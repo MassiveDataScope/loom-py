@@ -4,6 +4,7 @@ from __future__ import annotations
 
 from collections.abc import Iterable
 from dataclasses import dataclass
+from datetime import datetime
 from typing import Any, ClassVar
 
 import msgspec
@@ -103,6 +104,9 @@ def refuse_key_change(model: type, written: Iterable[str]) -> None:
 class ServerStamps:
     """The timestamp fields a store without server defaults stamps itself.
 
+    Each stamping gives every field it fills one shared instant, *now*, which the
+    store reads from its clock in its storage form.
+
     Attributes:
         on_create: Fields stamped with the current UTC time when a create leaves them empty.
         on_update: Fields stamped with the current UTC time on every update.
@@ -128,9 +132,21 @@ class ServerStamps:
             ),
         )
 
-    def missing_in(self, values: dict[str, Any]) -> frozenset[str]:
-        """The ``on_create`` fields *values* leaves empty."""
-        return frozenset(name for name in self.on_create if values.get(name) is None)
+    def with_create_stamps(self, values: dict[str, Any], now: datetime) -> dict[str, Any]:
+        """Return a copy of *values* with each ``on_create`` field it leaves empty holding *now*.
+
+        A field is empty when *values* lacks it or holds ``None``; a supplied
+        value is kept.
+        """
+        empty = (name for name in self.on_create if values.get(name) is None)
+        return {**values, **dict.fromkeys(empty, now)}
+
+    def with_update_stamps(self, changes: dict[str, Any], now: datetime) -> dict[str, Any]:
+        """Return a copy of *changes* with every ``on_update`` field holding *now*.
+
+        A value *changes* sends for an ``on_update`` field is overwritten.
+        """
+        return {**changes, **dict.fromkeys(self.on_update, now)}
 
 
 def single_id_attribute(model: type, *, why_single: str) -> str:
