@@ -13,7 +13,6 @@ from loom.composition import Recipe
 from loom.composition.checked import CheckedProject
 from loom.composition.phases import build_stores
 from loom.composition.project import Project
-from loom.connections.aws import AwsClients
 from loom.core.config import ConfigError
 from loom.core.discovery.base import DiscoveryResult
 from loom.core.stores import SERVER_PROFILE
@@ -138,7 +137,7 @@ class TestBackendsLoadedPerEntryPoint:
             default_store_plugin="none",
         )
 
-        build_stores(project, recipe, AwsClients())
+        build_stores(project, recipe)
 
         assert loaded == ["none"]
 

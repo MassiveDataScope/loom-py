@@ -8,6 +8,7 @@ from dataclasses import dataclass, replace
 from enum import StrEnum
 from typing import TYPE_CHECKING, Any, cast
 
+from loom.connections.aws import AwsClients
 from loom.core.di.container import LoomContainer, ResolutionError
 from loom.core.model import LoomStruct
 from loom.core.stores.repository.registration import (
@@ -95,17 +96,33 @@ class Override:
 
 
 class OverrideRuntime:
-    """Apply test overrides to a runtime recipe during composition."""
+    """Apply test overrides, and optionally the application's AWS clients, to a runtime recipe.
 
-    def __init__(self, runtime: Runtime[Any], overrides: tuple[Override, ...]) -> None:
+    Args:
+        runtime: The runtime whose recipe is substituted.
+        overrides: The substitutions run right after the discovered installers.
+        aws: The recording or fake AWS clients the stores, the job transports and
+            the container all use; the recipe's own without it. ``AwsClients``
+            is not an :class:`Override` key: composition owns it once.
+    """
+
+    def __init__(
+        self,
+        runtime: Runtime[Any],
+        overrides: tuple[Override, ...],
+        *,
+        aws: AwsClients | None = None,
+    ) -> None:
         self._runtime = runtime
         self._overrides = overrides
+        self._aws = aws
 
     def recipe(self, project: Project) -> Recipe:
-        """Return the wrapped recipe with the test overrides."""
+        """Return the wrapped recipe with the test overrides and AWS clients."""
         recipe = self._runtime.recipe(project)
         return replace(
             recipe,
+            aws=recipe.aws if self._aws is None else self._aws,
             overrides=(*recipe.overrides, *(override.install for override in self._overrides)),
         )
 

@@ -11,7 +11,7 @@
       "scope": "APPLICATION"
     },
     "AwsClients": {
-      "provider": "register.<locals>.<lambda>",
+      "provider": "LoomContainer.register_instance.<locals>.<lambda>",
       "resolved": "AwsClients",
       "scope": "APPLICATION"
     },

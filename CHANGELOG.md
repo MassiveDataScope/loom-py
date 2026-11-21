@@ -2,6 +2,17 @@
 
 ## 💥 Breaking
 
+- **composition:** `AwsClients` is a reserved key with one owner: the recipe.
+  The stores, the job transports and the container's `AwsClients` binding are
+  one object, seeded before any installer runs, no longer registered after the
+  modules. An installer or an override binding `AwsClients` fails with
+  `ReservedBindingError` (`CompositionErrorCode.RESERVED_AWS_CLIENTS`).
+  **Migration:** drop the binding. A test supplies a recording or fake
+  `AwsClients` with the `aws=` parameter of `HttpTestHarness`,
+  `LambdaTestClient` or `OverrideRuntime` instead of
+  `Override.instance(AwsClients, double)` or a monkeypatch of
+  `AwsClients.client`. `phases.build_stores` and `phases.register` no longer
+  take `aws`: it is `Recipe.aws`.
 - **composition:** `loom.composition.resources` is `loom.core.resources`, so an
   `Installer` in the core can name `Resource`. **Migration:** import `Resource`,
   `ResourceKind` and `closing` from `loom.core.resources`.
@@ -1249,6 +1260,10 @@
 
 ### composition
 
+- **composition:** `Recipe.aws` is the application's one `AwsClients`; the
+  testing harnesses (`HttpTestHarness`, `LambdaTestClient`, `OverrideRuntime`)
+  take `aws=` to supply a recording or fake one that the stores, the job
+  transports and the container all use. See `docs/rest/testing.md`.
 - **composition:** `Installer.resources(container)` lets an application declare
   what it opens and closes. The resources it returns (default none) are opened
   by `Application.running()` after the stores and before the job timer and get

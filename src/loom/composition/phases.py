@@ -30,7 +30,6 @@ from loom.core.config import ConfigContext, ConfigError, ConfigKey
 from loom.core.di.container import ResolutionError
 from loom.core.di.graph import GraphAnalysis
 from loom.core.di.installer import Installer
-from loom.core.di.scope import Scope
 from loom.core.engine.compilable import Compilable
 from loom.core.environment import Environment
 from loom.core.identity import DEFAULT_MAX_DELEGATION_SECONDS, configure_delegation
@@ -147,7 +146,7 @@ def plan(project: Project, runtime: Runtime[object]) -> Recipe:
     return recipe
 
 
-def build_stores(project: Project, recipe: Recipe, aws: AwsClients) -> Stores:
+def build_stores(project: Project, recipe: Recipe) -> Stores:
     """Read each job's settings, then build and prepare every store the discovered models use.
 
     The stores share one cursor codec, built only when
@@ -155,8 +154,7 @@ def build_stores(project: Project, recipe: Recipe, aws: AwsClients) -> Stores:
 
     Args:
         project: What the application composes from.
-        recipe: What it composes.
-        aws: The application's AWS clients, which the store backends take their clients from.
+        recipe: What it composes; its AWS clients are the store backends' own.
 
     Returns:
         The job settings and the stores.
@@ -189,7 +187,7 @@ def build_stores(project: Project, recipe: Recipe, aws: AwsClients) -> Stores:
             catalog=catalog,
             store=key,
             cursor_codec=cursor_codec,
-            aws=aws,
+            aws=recipe.aws,
         )
         wiring = wirings[key] = backends[key].build(ctx, models, context)
         wiring.prepare_models(models)
@@ -205,7 +203,6 @@ def register(
     project: Project,
     recipe: Recipe,
     stores: Stores,
-    aws: AwsClients,
     installers: tuple[Installer, ...],
     *,
     logger: LoggerPort,
@@ -213,7 +210,8 @@ def register(
     """Fill a container and build the kernel on it, then register the job service and SQL.
 
     The order: the seed keys (the application's ``AppConfig``,
-    ``Environment``, ``Observability`` and ``StoreCatalog``); the
+    ``Environment``, ``Observability``, ``StoreCatalog`` and the recipe's
+    ``AwsClients``, which the job transports and the stores share); the
     discovered installers; the recipe's overrides; each store's repositories and the
     ``RepositoryCatalog`` over them; the cache module; the framework's keys,
     among them the kernel, whose construction compiles the discovered use
@@ -226,8 +224,6 @@ def register(
         project: What the application composes from.
         recipe: What it composes.
         stores: The stores, whose repositories and units of work it registers.
-        aws: The application's AWS clients, registered in the container and
-            given to the job transports.
         installers: The discovered installers, built by :func:`build_installers`.
         logger: Where the container and the compilation log.
 
@@ -269,6 +265,7 @@ def register(
         Environment: project.environment,
         Observability: observability,
         StoreCatalog: catalog,
+        AwsClients: recipe.aws,
     }
     with seeded_container(
         KernelRecipe.container(),
@@ -281,7 +278,6 @@ def register(
         for wiring in stores.wirings.values():
             wiring.repo_registration_module(container)
         container.register_instance(RepositoryCatalog, RepositoryCatalog(container, stores.models))
-        container.register(AwsClients, lambda: aws, scope=Scope.APPLICATION)
         cache(container)
         if sink is not None:
             container.register_instance(ElevationSink, sink)
@@ -299,7 +295,7 @@ def register(
         jobs=recipe.discovered.jobs,
         callbacks=recipe.discovered.callbacks,
         settings=stores.job_settings,
-        aws=aws,
+        aws=recipe.aws,
         can_wait_in_process=recipe.profile.can_wait_in_process,
     )
     sql = resolve_sql(ctx)

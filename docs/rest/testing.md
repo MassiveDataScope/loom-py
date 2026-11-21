@@ -142,6 +142,32 @@ A singleton the application already built from the real repository, such as
 a service that received it in its constructor, keeps the real one: override
 that service, or the repository at build time through `overrides=`.
 
+### Supplying the AWS clients
+
+`AwsClients` is not an override key: composition owns one object, and the
+stores, the job transports and the container's `AwsClients` binding all share
+it. A test that must see or fake the AWS calls supplies its own at build time:
+
+```python
+class RecordingAwsClients(AwsClients):
+    def __init__(self):
+        super().__init__()
+        self.requested = []
+
+    def client(self, service, config):
+        self.requested.append(service)
+        return FakeClient(service)
+
+
+aws = RecordingAwsClients()
+harness = HttpTestHarness(aws=aws)
+client = harness.build_app(interfaces=[ProductRestInterface])
+```
+
+`LambdaTestClient(..., aws=aws)` and `OverrideRuntime(runtime, overrides, aws=aws)`
+take it the same way. An installer or an override binding `AwsClients` fails
+the composition with `ReservedBindingError`.
+
 A unit test with no composed application builds a catalog directly:
 
 ```python

@@ -13,7 +13,6 @@ import msgspec
 
 from loom.composition import phases
 from loom.composition.application import Application
-from loom.connections.aws import AwsClients
 from loom.connections.resolvers import with_built_in_resolvers
 from loom.core.cache.wiring import CacheGateways
 from loom.core.config import (
@@ -284,11 +283,10 @@ class Project:
         clock = phases.PhaseClock()
         clock.lap("scan", self.discovered)
         recipe = clock.lap("plan", phases.plan(self, runtime))
-        aws = AwsClients()
-        stores = clock.lap("build_stores", phases.build_stores(self, recipe, aws))
+        stores = clock.lap("build_stores", phases.build_stores(self, recipe))
         installers = phases.build_installers(self.config, recipe.discovered.installers)
         kernel, sql, job_resources = clock.lap(
-            "register", phases.register(self, recipe, stores, aws, installers, logger=logger)
+            "register", phases.register(self, recipe, stores, installers, logger=logger)
         )
         analysis = clock.lap("analysed", recipe.analysed(kernel.factory.graph))
         ai = clock.lap("wire_ai", phases.wire_ai(self, recipe, kernel, analysis, sql))
@@ -304,7 +302,7 @@ class Project:
                 Resource(
                     kind=ResourceKind.AWS,
                     name="clients",
-                    manager=closing(lambda: asyncio.to_thread(aws.close)),
+                    manager=closing(lambda: asyncio.to_thread(recipe.aws.close)),
                 ),
                 *job_resources,
                 *(

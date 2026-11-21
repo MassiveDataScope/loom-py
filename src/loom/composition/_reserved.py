@@ -5,6 +5,7 @@ from __future__ import annotations
 import sys
 from collections.abc import Iterable
 
+from loom.connections.aws import AwsClients
 from loom.core.authz.elevation import ElevationSink
 from loom.core.bootstrap.kernel import KERNEL_KEYS
 from loom.core.di.container import BindingKey
@@ -20,6 +21,7 @@ _RESERVED: tuple[BindingKey, ...] = (
     StoreCatalog,
     RepositoryCatalog,
     ElevationSink,
+    AwsClients,
     *KERNEL_KEYS,
 )
 
