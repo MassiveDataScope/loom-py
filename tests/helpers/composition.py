@@ -47,7 +47,6 @@ def composition_project(
     """
     return Project(
         config=ctx.with_environment(environment),
-        environment=environment,
         code_path=code_path if code_path is not None else Path.cwd(),
         config_root=config_root if config_root is not None else Path.cwd(),
         app=app if app is not None else ctx.section(ConfigKey.APP, AppConfig),

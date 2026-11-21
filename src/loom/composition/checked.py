@@ -28,18 +28,22 @@ class CheckedProject:
     """A configuration loaded as written, and the deploy checks run on it.
 
     Args:
-        config: Loaded configuration, placeholders left unresolved.
-        environment: Environment the overlay was picked for.
+        config: Loaded configuration, placeholders left unresolved, carrying the
+            environment the overlay was picked for.
         report: Findings of the deploy checks, and the paths checked and skipped.
         config_root: Directory of the first configuration file.
         code_path: Application code directory, already on ``sys.path``.
     """
 
     config: ConfigContext
-    environment: Environment
     report: DeployReport
     config_root: Path
     code_path: Path
+
+    @property
+    def environment(self) -> Environment:
+        """The environment the overlay was picked for."""
+        return self.config.environment
 
     @classmethod
     def load(
@@ -98,7 +102,6 @@ class CheckedProject:
         code_path = add_code_path(raw_code_path, loaded.config_root)
         checked = cls(
             config=ctx,
-            environment=loaded.environment,
             report=run_deploy_checks(ctx, scope=CheckScope.declared_by(ctx, excluded=excluded)),
             config_root=loaded.config_root,
             code_path=code_path,
@@ -122,7 +125,6 @@ class CheckedProject:
         """
         return Project(
             config=self.config,
-            environment=self.environment,
             code_path=self.code_path,
             config_root=self.config_root,
             app=convert_section(self.config.raw(ConfigKey.APP), ConfigKey.APP, AppConfig),

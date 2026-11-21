@@ -92,8 +92,10 @@ class TestRequestObservabilityStack:
         def _fake_load(
             *config_paths: str, resolvers: Any = (), environment: Any = None
         ) -> ConfigContext:
-            del config_paths, resolvers, environment
-            return ConfigContext.from_dict(cast(dict[str, Any], OmegaConf.to_container(raw)))
+            del config_paths, resolvers
+            return ConfigContext.from_dict(
+                cast(dict[str, Any], OmegaConf.to_container(raw)), environment=environment
+            )
 
         def _fake_from_config(
             cls: type[Observability],
