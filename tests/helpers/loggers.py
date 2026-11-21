@@ -3,11 +3,11 @@
 from __future__ import annotations
 
 import logging
-import traceback
 from typing import Any
 
 import pytest
 
+from loom.core.logger import LogField
 from loom.core.logger.formats import record_fields
 
 
@@ -22,10 +22,31 @@ class CapturingHandler(logging.Handler):
         self.records.append(record)
 
 
+_STAMPED_ORIGIN = frozenset(
+    {
+        LogField.SERVICE_NAME,
+        LogField.SERVICE_VERSION,
+        LogField.ENVIRONMENT,
+        LogField.RUNTIME,
+        LogField.CODE_FUNCTION,
+        LogField.CODE_LINE,
+    }
+)
+"""The stamp fields every record carries, which say nothing about the call."""
+
+
+def call_fields(record: logging.LogRecord) -> dict[str, Any]:
+    """The fields of *record* that the call wrote: its ``extra``, context, trace and failure."""
+    return {
+        key: value for key, value in record_fields(record).items() if key not in _STAMPED_ORIGIN
+    }
+
+
 class CapturedLog:
     """The events a logger put in a test's ``caplog``, as ``(event, fields)`` pairs.
 
-    The event is the record's message; the fields are what the call passed as ``extra``.
+    The event is the record's message; the fields are what the call wrote,
+    without the emitter identity and the code origin every record is stamped with.
 
     Args:
         caplog: The fixture that captured the records.
@@ -40,7 +61,7 @@ class CapturedLog:
     def calls(self) -> list[tuple[str, dict[str, Any]]]:
         """Each event logged so far, in order, with the fields it carried."""
         return [
-            (record.getMessage(), record_fields(record))
+            (record.getMessage(), call_fields(record))
             for record in self._caplog.records
             if self._logger is None or record.name == self._logger
         ]
@@ -54,7 +75,7 @@ class CapturedLog:
     def errors(self) -> list[tuple[str, dict[str, Any]]]:
         """Each event logged at ERROR or above, in order, with the fields it carried."""
         return [
-            (record.getMessage(), record_fields(record))
+            (record.getMessage(), call_fields(record))
             for record in self._caplog.records
             if record.levelno >= logging.ERROR
             and (self._logger is None or record.name == self._logger)
@@ -82,13 +103,13 @@ def logged_text(caplog: pytest.LogCaptureFixture) -> str:
     return "\n".join(rendered(record) for record in caplog.records)
 
 
-def exception_text(caplog: pytest.LogCaptureFixture) -> str:
-    """The traceback of every record of *caplog* that carries an exception, one after another."""
-    return "".join(
-        "".join(traceback.format_exception(*record.exc_info))
+def exception_types(caplog: pytest.LogCaptureFixture) -> list[str]:
+    """The ``exception.type`` of every record of *caplog* that reported an exception, in order."""
+    return [
+        record.__dict__[LogField.EXCEPTION_TYPE]
         for record in caplog.records
-        if record.exc_info is not None and record.exc_info[0] is not None
-    )
+        if LogField.EXCEPTION_TYPE in record.__dict__
+    ]
 
 
 def logged_events(caplog: pytest.LogCaptureFixture) -> list[dict[str, Any]]:
@@ -102,7 +123,8 @@ def logged_events(caplog: pytest.LogCaptureFixture) -> list[dict[str, Any]]:
 __all__ = [
     "CapturedLog",
     "CapturingHandler",
-    "exception_text",
+    "call_fields",
+    "exception_types",
     "logged_events",
     "logged_text",
     "rendered",

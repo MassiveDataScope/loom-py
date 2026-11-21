@@ -1,26 +1,53 @@
 from __future__ import annotations
 
+import io
 import json
 import logging
+import queue
+from logging.handlers import QueueHandler, QueueListener
 
 import pytest
 
 from loom.core.config.errors import ConfigError
 from loom.core.environment import Environment
-from loom.core.logger import ContextFilter, LogField, LogRuntime
-from loom.core.logger.install import HANDLER_NAME, configure_logging, resolve_format
-from loom.core.logger.settings import LogSettings
+from loom.core.logger import LogField, LogRuntime
+from loom.core.logger.filter import LogFilter
+from loom.core.logger.formats import JsonFormatter
+from loom.core.logger.install import (
+    HANDLER_NAME,
+    configure_logging,
+    resolve_format,
+    unfiltered_root_handlers,
+    warn_unfiltered_handlers,
+)
+from loom.core.logger.log_events import LoggerLogEvent
+from loom.core.logger.settings import THIRD_PARTY_FLOORS, LogSettings
 from tests.helpers.loggers import CapturingHandler
 
 _LAMBDA = "AWS_LAMBDA_FUNCTION_NAME"
-
-
-def _stamping(handler: logging.Handler) -> list[ContextFilter]:
-    return [f for f in handler.filters if isinstance(f, ContextFilter)]
+_SECRET = "card 4111-1111-1111-1111"
 
 
 def _installed(root: logging.Logger) -> list[logging.Handler]:
     return [h for h in root.handlers if h.get_name() == HANDLER_NAME]
+
+
+def _filters(handler: logging.Handler) -> list[LogFilter]:
+    return [f for f in handler.filters if isinstance(f, LogFilter)]
+
+
+def _fail(logger: logging.Logger) -> None:
+    try:
+        raise ValueError(_SECRET)
+    except ValueError:
+        logger.exception("billing.charge_failed")
+
+
+def _stream_handler(formatter: logging.Formatter) -> tuple[logging.Handler, io.StringIO]:
+    stream = io.StringIO()
+    handler = logging.StreamHandler(stream)
+    handler.setFormatter(formatter)
+    return handler, stream
 
 
 class TestJsonInstallation:
@@ -34,10 +61,10 @@ class TestJsonInstallation:
             service_version="2.4.0",
         )
 
-        logging.getLogger("acme_library").warning("Found credentials")
+        logging.getLogger("acme_library").warning("billing.card_expiring")
 
         entry = json.loads(capsys.readouterr().out)
-        assert entry["message"] == "Found credentials"
+        assert entry["message"] == "billing.card_expiring"
         assert entry[LogField.SERVICE_NAME] == "billing"
         assert entry[LogField.RUNTIME] == "cli"
 
@@ -48,15 +75,9 @@ class TestJsonInstallation:
             configure_logging(LogSettings(format="json"), environment=Environment.PRODUCTION)
 
         assert len(_installed(pristine_root_logger)) == 1
+        assert all(len(_filters(h)) == 1 for h in pristine_root_logger.handlers)
 
-    def test_a_handler_somebody_else_added_stays(
-        self, handler: CapturingHandler, pristine_root_logger: logging.Logger
-    ) -> None:
-        configure_logging(LogSettings(format="json"), environment=Environment.PRODUCTION)
-
-        assert handler in pristine_root_logger.handlers
-
-    def test_the_level_and_the_named_levels_are_applied(
+    def test_the_level_the_floors_and_the_named_levels_are_applied(
         self, pristine_root_logger: logging.Logger
     ) -> None:
         settings = LogSettings(
@@ -67,33 +88,82 @@ class TestJsonInstallation:
 
         assert pristine_root_logger.level == logging.WARNING
         assert logging.getLogger("acme_library").level == logging.ERROR
+        assert {
+            name: logging.getLevelName(logging.getLogger(name).level) for name in THIRD_PARTY_FLOORS
+        } == dict(THIRD_PARTY_FLOORS)
 
     def test_the_runtime_is_named_after_the_composition(
-        self, pristine_root_logger: logging.Logger
+        self, handler: CapturingHandler, pristine_root_logger: logging.Logger
     ) -> None:
         installation = configure_logging(
             LogSettings(format="json"), environment=Environment.PRODUCTION
         )
 
         installation.running_as(LogRuntime.CELERY)
+        logging.getLogger("tests.runtime").info("billing.invoice_issued")
 
-        (handler,) = _installed(pristine_root_logger)
-        record = logging.LogRecord("x", logging.INFO, __file__, 1, "x.y_z", (), None)
-        _stamping(handler)[0].filter(record)
+        (record,) = handler.records
         assert record.__dict__[LogField.RUNTIME] == "celery"
 
-    def test_an_extra_filter_goes_on_the_handler_beside_the_context_filter(
+
+class TestEveryHandlerSeesTheSafeRecord:
+    def test_a_root_handler_added_before_the_configuration_gets_the_filter(
+        self, handler: CapturingHandler
+    ) -> None:
+        configure_logging(LogSettings(format="json"), environment=Environment.PRODUCTION)
+
+        assert len(_filters(handler)) == 1
+
+    def test_a_handler_on_a_child_logger_gets_no_exception_message(
         self, pristine_root_logger: logging.Logger
     ) -> None:
-        extra = logging.Filter()
+        configure_logging(LogSettings(format="json"), environment=Environment.PRODUCTION)
+        child = logging.getLogger("acme_library.payments")
+        child_handler, stream = _stream_handler(logging.Formatter("%(message)s"))
+        child.addHandler(child_handler)
+        try:
+            _fail(child)
+        finally:
+            child.removeHandler(child_handler)
 
+        assert stream.getvalue() == "billing.charge_failed\n"
+
+    def test_a_handler_added_after_the_configuration_gets_no_exception_and_is_reported(
+        self, pristine_root_logger: logging.Logger, caplog: pytest.LogCaptureFixture
+    ) -> None:
+        configure_logging(LogSettings(format="json"), environment=Environment.PRODUCTION)
+        late, stream = _stream_handler(logging.Formatter("%(message)s"))
+        pristine_root_logger.addHandler(late)
+
+        _fail(logging.getLogger("acme_library"))
+        warn_unfiltered_handlers()
+
+        assert _SECRET not in stream.getvalue()
+        assert late in unfiltered_root_handlers()
+        assert LoggerLogEvent.HANDLERS_UNFILTERED in caplog.messages
+
+    def test_a_queue_handler_carries_the_fields_and_no_message_to_its_listener(
+        self, pristine_root_logger: logging.Logger
+    ) -> None:
+        records: queue.SimpleQueue[logging.LogRecord] = queue.SimpleQueue()
+        pristine_root_logger.addHandler(QueueHandler(records))
         configure_logging(
-            LogSettings(format="json"), environment=Environment.PRODUCTION, filters=(extra,)
+            LogSettings(format="json"), environment=Environment.PRODUCTION, service_name="billing"
         )
+        sink, stream = _stream_handler(JsonFormatter())
+        listener = QueueListener(records, sink)
+        listener.start()
+        try:
+            _fail(logging.getLogger("acme_library"))
+        finally:
+            listener.stop()
 
-        (handler,) = _installed(pristine_root_logger)
-        assert extra in handler.filters
-        assert len(_stamping(handler)) == 1
+        entry = json.loads(stream.getvalue())
+        assert _SECRET not in stream.getvalue()
+        assert (entry[LogField.SERVICE_NAME], entry[LogField.EXCEPTION_TYPE]) == (
+            "billing",
+            "ValueError",
+        )
 
 
 class TestLambdaInstallation:
@@ -104,41 +174,41 @@ class TestLambdaInstallation:
         monkeypatch.setenv(_LAMBDA, "billing-handler")
         return handler
 
-    def test_no_handler_is_installed(
-        self, runtime_handler: CapturingHandler, pristine_root_logger: logging.Logger
-    ) -> None:
-        before = list(pristine_root_logger.handlers)
-
-        configure_logging(LogSettings(), environment=Environment.PRODUCTION)
-
-        assert pristine_root_logger.handlers == before
-
-    def test_the_level_of_the_runtime_is_left_alone(
+    def test_no_handler_is_installed_and_the_level_is_left_alone(
         self, runtime_handler: CapturingHandler, pristine_root_logger: logging.Logger
     ) -> None:
         pristine_root_logger.setLevel(logging.ERROR)
+        before = list(pristine_root_logger.handlers)
 
         configure_logging(LogSettings(level="DEBUG"), environment=Environment.PRODUCTION)
 
+        assert pristine_root_logger.handlers == before
         assert pristine_root_logger.level == logging.ERROR
 
-    def test_the_context_filter_goes_on_the_handler_of_the_runtime(
-        self, runtime_handler: CapturingHandler
+    def test_the_text_format_of_the_runtime_gets_the_json_layout_so_no_field_is_lost(
+        self, runtime_handler: CapturingHandler, monkeypatch: pytest.MonkeyPatch
     ) -> None:
-        configure_logging(LogSettings(), environment=Environment.PRODUCTION, service_name="billing")
+        monkeypatch.setenv("AWS_LAMBDA_LOG_FORMAT", "Text")
+        runtime_handler.setFormatter(logging.Formatter("%(message)s"))
 
+        configure_logging(LogSettings(), environment=Environment.PRODUCTION, service_name="billing")
         logging.getLogger("tests.lambda").error("billing.invoice_failed")
 
         (record,) = runtime_handler.records
-        assert record.__dict__[LogField.SERVICE_NAME] == "billing"
+        entry = json.loads(runtime_handler.format(record))
+        assert entry[LogField.SERVICE_NAME] == "billing"
 
-    def test_configuring_twice_leaves_one_context_filter(
-        self, runtime_handler: CapturingHandler
+    def test_the_json_format_of_the_runtime_keeps_its_own_formatter(
+        self, runtime_handler: CapturingHandler, monkeypatch: pytest.MonkeyPatch
     ) -> None:
-        for _ in range(2):
-            configure_logging(LogSettings(), environment=Environment.PRODUCTION)
+        monkeypatch.setenv("AWS_LAMBDA_LOG_FORMAT", "JSON")
+        own = logging.Formatter("%(message)s")
+        runtime_handler.setFormatter(own)
 
-        assert len(_stamping(runtime_handler)) == 1
+        configure_logging(LogSettings(), environment=Environment.PRODUCTION)
+
+        assert runtime_handler.formatter is own
+        assert len(_filters(runtime_handler)) == 1
 
 
 class TestResolveFormat:
@@ -146,5 +216,5 @@ class TestResolveFormat:
         with pytest.raises(ConfigError, match=r"unknown log format 'xml'.*json.*lambda.*text"):
             resolve_format("xml")
 
-    def test_a_registered_format_is_a_callable_of_the_settings(self) -> None:
+    def test_the_lambda_format_keeps_the_runtime_handler(self) -> None:
         assert resolve_format("lambda")(LogSettings()) is None

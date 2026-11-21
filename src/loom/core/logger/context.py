@@ -21,8 +21,8 @@ def log_context(fields: Mapping[str, object] = _NO_FIELDS, /, **named: object) -
     """Add *fields* to every log record emitted inside the block.
 
     The records of the application and of its libraries carry them once
-    :func:`~loom.core.logger.install.configure_logging` has put its filter on
-    the handler. The fields live in a context variable, so they follow the
+    :func:`~loom.core.logger.install.configure_logging` has installed loom's
+    record factory. The fields live in a context variable, so they follow the
     current thread or asyncio task and never reach a concurrent request. Blocks
     nest: an inner key shadows an outer one and the outer value returns on exit,
     normal or by exception. Enter and exit a block in the same context. As a
@@ -30,10 +30,10 @@ def log_context(fields: Mapping[str, object] = _NO_FIELDS, /, **named: object) -
     def`` is the creation of the coroutine: use a ``with`` block inside it.
 
     A dotted key is not a keyword: pass the fields as a mapping,
-    ``log_context({LogField.JOB: name})``.
+    ``log_context({LogField.JOB: name})``. Values are rendered like ``extra``.
 
     Args:
-        fields: Fields to attach under their key, ``LogField`` members included.
+        fields: Fields to attach under their key, ``LogKey`` members.
         **named: Fields to attach under their keyword, e.g. ``invoice_id="..."``.
 
     Yields:
@@ -44,7 +44,8 @@ def log_context(fields: Mapping[str, object] = _NO_FIELDS, /, **named: object) -
         with log_context(invoice_id=invoice_id):
             log.info(InvoiceEvent.ISSUED)
     """
-    token = _fields.set({**_fields.get(), **fields, **named})
+    added = {str(key): value for key, value in fields.items()}
+    token = _fields.set({**_fields.get(), **added, **named})
     try:
         yield
     finally:

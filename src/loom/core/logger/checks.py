@@ -2,6 +2,7 @@
 
 ``loom.logger.E001``: ``format`` names no registered format.
 ``loom.logger.E002``: ``level`` or a ``named_levels`` value is not a log level.
+``loom.logger.W001``: ``named_levels`` lowers a third-party floor.
 
 Neither resolves a placeholder; a value that holds one is not judged.
 """
@@ -13,7 +14,7 @@ from typing import TYPE_CHECKING, Final
 from loom.core.checks import CheckSet, Finding
 from loom.core.config.keys import INTERPOLATION
 from loom.core.logger.install import format_names
-from loom.core.logger.settings import is_log_level
+from loom.core.logger.settings import THIRD_PARTY_FLOORS, is_log_level, lowers_floor
 
 if TYPE_CHECKING:
     from loom.core.config.context import ConfigContext
@@ -23,6 +24,9 @@ UNKNOWN_FORMAT_CHECK: Final = "loom.logger.E001"
 
 UNKNOWN_LEVEL_CHECK: Final = "loom.logger.E002"
 """Id of the check refusing a level the standard library does not know."""
+
+LOWERED_FLOOR_CHECK: Final = "loom.logger.W001"
+"""Id of the check warning that a library logger writes below its floor."""
 
 CHECKS: Final = CheckSet()
 """Checks of ``observability.log``, run when the process uses that path."""
@@ -68,3 +72,23 @@ def _known_levels(config: ConfigContext) -> Finding | None:
                 hint="use DEBUG, INFO, WARNING, ERROR or CRITICAL.",
             )
     return None
+
+
+@CHECKS.register(LOWERED_FLOOR_CHECK)
+def _kept_floors(config: ConfigContext) -> Finding | None:
+    named = _written(config).get("named_levels")
+    if not isinstance(named, dict):
+        return None
+    lowered = sorted(
+        name
+        for name, value in named.items()
+        if (level := _literal(value)) is not None and lowers_floor(name, level)
+    )
+    if not lowered:
+        return None
+    floors = ", ".join(f"{name}: {THIRD_PARTY_FLOORS[name]}" for name in lowered)
+    return Finding(
+        message=f"{_PATH}.named_levels lowers {', '.join(lowered)} below the floor ({floors}).",
+        hint="these libraries write SQL, URLs or task results in their message text; "
+        "keep the floor in a deployed environment.",
+    )

@@ -5,6 +5,8 @@ from __future__ import annotations
 import json
 import logging
 import os
+import sys
+import threading
 from collections.abc import Iterator
 from functools import lru_cache
 from pathlib import Path
@@ -280,13 +282,23 @@ def _test_environment() -> Iterator[None]:
 
 @pytest.fixture(autouse=True)
 def restored_root_logger() -> Iterator[None]:
-    """Give every test an INFO root logger and leave it as found."""
+    """Give every test an INFO root logger and leave logging as found.
+
+    ``configure_logging`` installs a record factory, the uncaught-exception
+    hooks and ``logging.raiseExceptions = False`` for the whole process; a test
+    that composes an application must not leave them to the next one.
+    """
     root = logging.getLogger()
     handlers, level = list(root.handlers), root.level
     root.setLevel(logging.INFO)
     filters = {handler: list(handler.filters) for handler in handlers}
+    factory, raise_exceptions = logging.getLogRecordFactory(), logging.raiseExceptions
+    hooks = sys.excepthook, threading.excepthook
     yield
     root.handlers[:] = handlers
     root.setLevel(level)
     for handler, kept in filters.items():
         handler.filters[:] = kept
+    logging.setLogRecordFactory(factory)
+    logging.raiseExceptions = raise_exceptions
+    sys.excepthook, threading.excepthook = hooks

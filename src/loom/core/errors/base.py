@@ -4,9 +4,24 @@ from __future__ import annotations
 
 from collections.abc import Mapping
 from enum import StrEnum
-from typing import Any
+from typing import Any, Final
 
 from loom.core.errors.codes import ErrorCode
+
+EXPECTED_CODES: Final = frozenset(
+    {
+        ErrorCode.NOT_FOUND,
+        ErrorCode.RULE_VIOLATION,
+        ErrorCode.RULE_VIOLATIONS,
+        ErrorCode.UNAUTHENTICATED,
+        ErrorCode.INSUFFICIENT_AUTHENTICATION,
+        ErrorCode.FORBIDDEN,
+        ErrorCode.BOUNDARY_VALIDATION,
+        ErrorCode.QUERY_VALIDATION,
+    }
+)
+"""The codes of an outcome the caller caused: a not-found, a rule violation, a denial, a
+validation error. Its scope ends at INFO, with no stack."""
 
 
 class LoomError(Exception):
@@ -82,6 +97,15 @@ class LoomError(Exception):
     def public_detail(self) -> Mapping[str, Any]:
         """Return fields an HTTP error detail may add. Empty unless overridden."""
         return {}
+
+    @property
+    def expected(self) -> bool:
+        """Whether this error is an outcome the caller caused, not a fault.
+
+        Its code is in :data:`EXPECTED_CODES`: the one failure classification
+        logging reads.
+        """
+        return self.code in EXPECTED_CODES
 
 
 class DomainError(LoomError):
