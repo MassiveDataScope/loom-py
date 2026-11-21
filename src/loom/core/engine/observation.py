@@ -1,13 +1,10 @@
-"""What the executor reports: runtime events and one structured log per run.
+"""What the executor reports: the runtime events of each run, and its steps in debug mode.
 
-Every attempted run logs exactly one terminal line. A run whose use case was
-built starts a :class:`StartedExecution` (``EXEC_START`` event) and ends it
-once, either way: ``[DONE]`` and ``EXEC_DONE``, or ``[FAIL]`` and
-``EXEC_ERROR`` with the ``error_kind`` of the phase that failed. A run that
-never started (its plan, identity, read-only check or constructor failed)
-logs ``[FAIL]`` with ``error_kind`` ``begin`` or ``build`` and emits no
-event. A rule failure's ``[FAIL]`` lists the rules broken; in debug mode the
-terminal line lists the steps run.
+A run whose use case was built starts a :class:`StartedExecution`
+(``EXEC_START`` event) and ends it once, either way: ``EXEC_DONE``, or
+``EXEC_ERROR`` with the ``error_kind`` of the phase that failed. The record of
+a run, success or failure, is its ``use_case`` scope's, which the lifecycle
+observer writes; in debug mode the steps it ran follow as one DEBUG record.
 """
 
 from __future__ import annotations
@@ -15,31 +12,23 @@ from __future__ import annotations
 import asyncio
 import logging
 import time
-from collections.abc import Awaitable, Mapping
+from collections.abc import Awaitable
 from dataclasses import dataclass
-from types import MappingProxyType
-from typing import Any, NamedTuple, TypeVar
+from typing import TypeVar
 
 from loom.core.engine.events import EventKind, ExecutionEvent, Phase, Status
 from loom.core.engine.execution_observer import ExecutionObserver, NullExecutionObserver
-from loom.core.errors import PostCommitError, RuleViolationError, RuleViolationsError
-from loom.core.job.outcome import JobSignal, failure_log_fields
+from loom.core.engine.log_events import EngineLogEvent, EngineLogField
+from loom.core.errors import PostCommitError, RuleViolationsError
+from loom.core.job.outcome import JobSignal
+from loom.core.logger import LogField
 from loom.core.stores.uow.coordinator import InvocationOutcome
 from loom.core.stores.uow.scope import InvocationScope
 from loom.core.tracing import get_trace_id
 
 ResultT = TypeVar("ResultT")
 
-_NO_FIELDS: Mapping[str, Any] = MappingProxyType({})
 _log = logging.getLogger(__name__)
-
-
-class BrokenRule(NamedTuple):
-    """One rule a command broke: the rule's name (``None`` when unknown), the field, why."""
-
-    rule: str | None
-    field: str
-    message: str
 
 
 class ExecutionReporter:
@@ -62,31 +51,18 @@ class ExecutionReporter:
         """Report *use_case*'s execution started, and return what reports its end.
 
         Raises:
-            Exception: What the execution observer raised, once logged as the
-                execution failing to begin.
+            Exception: What the execution observer raised.
         """
-        execution = self._execution(use_case)
-        try:
-            self._execution_observer.on_event(
-                ExecutionEvent(
-                    kind=EventKind.EXEC_START, use_case_name=use_case, trace_id=execution.trace_id
-                )
-            )
-        except Exception as exc:
-            execution.log_failure(exc, Status.FAILURE, Phase.BEGIN)
-            raise
-        return execution
-
-    def not_started(self, use_case: str, error: Exception, phase: Phase) -> None:
-        """Report a run of *use_case* that failed in *phase* before it started, with no event."""
-        self._execution(use_case).log_failure(error, Status.FAILURE, phase)
-
-    def _execution(self, use_case: str) -> StartedExecution:
-        trace_id = get_trace_id()
         steps: list[str] | None = [] if self._debug else None
-        return StartedExecution(
-            self._execution_observer, use_case, trace_id, time.perf_counter(), steps
+        execution = StartedExecution(
+            self._execution_observer, use_case, get_trace_id(), time.perf_counter(), steps
         )
+        self._execution_observer.on_event(
+            ExecutionEvent(
+                kind=EventKind.EXEC_START, use_case_name=use_case, trace_id=execution.trace_id
+            )
+        )
+        return execution
 
 
 @dataclass(slots=True)
@@ -96,7 +72,7 @@ class StartedExecution:
     ``phase`` names the step in flight so a failure is reported with the
     ``error_kind`` of the step that raised; whoever runs a phase sets it and
     records its duration (``pipeline_ms``, ``commit_ms``). ``steps`` collects
-    the steps run, in debug mode only; ``broken_rules`` the rules broken.
+    the steps run, in debug mode only.
     """
 
     execution_observer: ExecutionObserver
@@ -107,16 +83,11 @@ class StartedExecution:
     phase: Phase = Phase.BEGIN
     pipeline_ms: float | None = None
     commit_ms: float | None = None
-    broken_rules: tuple[BrokenRule, ...] = ()
 
     def step(self, label: str) -> None:
         """Record one step run, in debug mode only."""
         if self.steps is not None:
             self.steps.append(label)
-
-    def rule_failed(self, rule: str, violation: RuleViolationError) -> None:
-        """Record one rule broken; the terminal ``[FAIL]`` lists them all."""
-        self.broken_rules += (BrokenRule(rule, violation.field, violation.message),)
 
     async def business(self, call: Awaitable[ResultT]) -> ResultT:
         """Await *call* as the business phase, recording its duration."""
@@ -141,18 +112,9 @@ class StartedExecution:
             self.commit_ms = (time.perf_counter() - started) * 1000
 
     def succeeded(self) -> None:
-        """Report the execution's success: ``[DONE]`` and ``EXEC_DONE``."""
+        """Report the execution's success: ``EXEC_DONE``."""
         elapsed_ms = (time.perf_counter() - self.start) * 1000
-        ran = _NO_FIELDS if self.steps is None else {"steps": self.steps}
-        _log.info(
-            f"[DONE] {elapsed_ms:.1f}ms",
-            extra={
-                "usecase": self.use_case_name,
-                "duration_ms": elapsed_ms,
-                "status": Status.SUCCESS,
-                **ran,
-            },
-        )
+        self._log_steps()
         self.execution_observer.on_event(
             ExecutionEvent(
                 kind=EventKind.EXEC_DONE,
@@ -166,59 +128,30 @@ class StartedExecution:
         )
 
     def failed(self, error: BaseException) -> None:
-        """Report the execution's failure: ``[FAIL]`` and ``EXEC_ERROR``."""
+        """Report the execution's failure: ``EXEC_ERROR``."""
         elapsed_ms = (time.perf_counter() - self.start) * 1000
-        error_kind = self._error_kind(error)
-        status = self._status(error)
-        self.log_failure(error, status, error_kind, duration_ms=elapsed_ms)
+        self._log_steps()
         self.execution_observer.on_event(
             ExecutionEvent(
                 kind=EventKind.EXEC_ERROR,
                 use_case_name=self.use_case_name,
                 duration_ms=elapsed_ms,
-                status=status,
+                status=self._status(error),
                 error=error,
                 trace_id=self.trace_id,
-                error_kind=error_kind,
+                error_kind=self._error_kind(error),
                 pipeline_ms=self.pipeline_ms,
                 commit_ms=self.commit_ms,
             )
         )
 
-    def log_failure(
-        self, error: BaseException, status: Status, error_kind: Phase, **timing: Any
-    ) -> None:
-        """Log the terminal ``[FAIL]``: a broken rule is a warning, anything else an error."""
-        if isinstance(error, JobSignal):
-            _log.info(
-                f"[SIGNAL] {self.use_case_name}",
-                extra={
-                    "usecase": self.use_case_name,
-                    **timing,
-                    "status": status,
-                    "signal": type(error).__name__,
-                    "reason": str(error),
-                },
-            )
-            return
-        message = f"[FAIL] {self.use_case_name}"
-        fields: dict[str, Any] = {
-            "usecase": self.use_case_name,
-            **timing,
-            "status": status,
-            "error_kind": error_kind,
-        }
+    def _log_steps(self) -> None:
+        """Write the steps run as one DEBUG record, in debug mode."""
         if self.steps is not None:
-            fields["steps"] = self.steps
-        if isinstance(error, RuleViolationsError):
-            broken = self.broken_rules or tuple(
-                BrokenRule(None, violation.field, violation.message)
-                for violation in error.violations
+            _log.debug(
+                EngineLogEvent.EXECUTION_STEPS,
+                extra={LogField.COUNT: len(self.steps), EngineLogField.STEPS: self.steps},
             )
-            fields["broken_rules"] = [rule._asdict() for rule in broken]
-            _log.warning(message, extra={**fields})
-            return
-        _log.error(message, extra={**fields, **failure_log_fields(error), "error": str(error)})
 
     @staticmethod
     def _status(error: BaseException) -> Status:

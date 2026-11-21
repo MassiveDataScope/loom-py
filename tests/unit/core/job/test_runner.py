@@ -10,6 +10,7 @@ from loom.core.engine.events import AbandonReason, EventKind, ExecutionEvent, St
 from loom.core.errors import SystemError
 from loom.core.job.delivery import JobDelivery
 from loom.core.job.job import Job
+from loom.core.job.log_events import JobLogEvent, JobLogField
 from loom.core.job.outcome import (
     Abandoned,
     Failed,
@@ -21,6 +22,7 @@ from loom.core.job.outcome import (
 )
 from loom.core.job.policy import Backoff, Redelivery, RetryPolicy
 from loom.core.job.runner import JobRunner
+from loom.core.logger import LogField
 from loom.testing import JobTestData
 from tests.helpers.loggers import logged_events
 
@@ -156,43 +158,53 @@ class TestJobRunnerDelivery:
         assert seen == [delivery]
 
 
-class TestJobRunnerAbandonmentLog:
-    @staticmethod
-    def _abandonments(caplog: pytest.LogCaptureFixture) -> list[dict[str, Any]]:
-        return [entry for entry in logged_events(caplog) if entry["event"] == "Job abandoned"]
+class TestJobRunnerDecisionLog:
+    """The runner logs only its own decision on a failed run, as its own fact."""
 
-    async def test_an_abandoned_run_logs_one_warning_naming_the_message_and_why(
+    @staticmethod
+    def _decisions(caplog: pytest.LogCaptureFixture, event: str) -> list[dict[str, Any]]:
+        return [entry for entry in logged_events(caplog) if entry["event"] == event]
+
+    async def test_an_abandoned_run_logs_one_error_naming_the_message_and_why(
         self, caplog: pytest.LogCaptureFixture
     ) -> None:
         delivery = _DATA.delivery(attempt=3, postponements=2)
 
-        await _runner(_raising(ValueError("boom"))).run(delivery)
+        await _runner(_raising(ValueError("acme-secret"))).run(delivery)
 
-        (logged,) = self._abandonments(caplog)
-        assert logged == {
-            "event": "Job abandoned",
-            "level": "warning",
-            "loom.job": "AcmeJob",
-            "queue": delivery.queue,
-            "loom.attempt": 3,
-            "postponements": 2,
-            "reason": "attempts_exhausted",
-            "error_type": "ValueError",
-            "error_message": "boom",
-            "loom.task_id": delivery.task_id,
+        (logged,) = self._decisions(caplog, JobLogEvent.DELIVERY_ABANDONED)
+        assert logged["level"] == "error"
+        assert {key: logged[key] for key in _ABANDONMENT_KEYS} == {
+            LogField.JOB: "AcmeJob",
+            LogField.MESSAGING_DESTINATION_NAME: delivery.queue,
+            LogField.ATTEMPT: 3,
+            JobLogField.POSTPONEMENTS: 2,
+            LogField.REASON: "attempts_exhausted",
+            LogField.EXCEPTION_TYPE: "ValueError",
+            LogField.TASK_ID: delivery.task_id,
         }
+        assert "acme-secret" not in repr(logged_events(caplog))
+
+    async def test_a_failed_run_that_comes_back_logs_one_retry_warning(
+        self, caplog: pytest.LogCaptureFixture
+    ) -> None:
+        await _runner(_raising(ValueError("boom"))).run(_DATA.delivery())
+
+        (logged,) = self._decisions(caplog, JobLogEvent.DELIVERY_RETRIED)
+        assert (logged["level"], logged[LogField.EXCEPTION_TYPE]) == ("warning", "ValueError")
+        assert self._decisions(caplog, JobLogEvent.DELIVERY_ABANDONED) == []
 
     @pytest.mark.parametrize(
         "behaviour",
-        [_returning(1), _raising(ValueError("boom")), _raising(JobPostponement("later", 1))],
-        ids=["succeeded", "failed", "postponed"],
+        [_returning(1), _raising(JobPostponement("later", 1))],
+        ids=["succeeded", "postponed"],
     )
-    async def test_a_run_that_comes_back_logs_no_abandonment(
+    async def test_a_run_that_did_not_fail_logs_no_decision(
         self, caplog: pytest.LogCaptureFixture, behaviour: Any
     ) -> None:
         await _runner(behaviour).run(_DATA.delivery())
 
-        assert self._abandonments(caplog) == []
+        assert [e for e in logged_events(caplog) if e["event"] in set(JobLogEvent)] == []
 
     def test_a_message_that_cannot_run_logs_why_with_its_message_id(
         self, caplog: pytest.LogCaptureFixture
@@ -201,12 +213,23 @@ class TestJobRunnerAbandonmentLog:
             UnretryableError("never"), 1, POLICY, message_id="m-1"
         )
 
-        (logged,) = self._abandonments(caplog)
-        assert (logged["reason"], logged["error_type"], logged["loom.task_id"]) == (
-            "not_retryable",
-            "UnretryableError",
-            "m-1",
-        )
+        (logged,) = self._decisions(caplog, JobLogEvent.DELIVERY_ABANDONED)
+        assert (
+            logged[LogField.REASON],
+            logged[LogField.EXCEPTION_TYPE].rsplit(".", 1)[-1],
+            logged[LogField.TASK_ID],
+        ) == ("not_retryable", "UnretryableError", "m-1")
+
+
+_ABANDONMENT_KEYS = (
+    LogField.JOB,
+    LogField.MESSAGING_DESTINATION_NAME,
+    LogField.ATTEMPT,
+    JobLogField.POSTPONEMENTS,
+    LogField.REASON,
+    LogField.EXCEPTION_TYPE,
+    LogField.TASK_ID,
+)
 
 
 class TestJobRunnerJitter:

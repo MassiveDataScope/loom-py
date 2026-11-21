@@ -41,7 +41,7 @@ _WORK = object()
 
 def _switched(switches: CapturedLog) -> list[tuple[object, object, object]]:
     return [
-        (fields["from_subject"], fields["to_subject"], fields["use_case"])
+        (fields.get("from_subject"), fields.get("to_subject"), fields["use_case"])
         for event, fields in switches.calls
         if event == "identity_switched"
     ]

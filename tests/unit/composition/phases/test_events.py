@@ -9,6 +9,7 @@ import pytest
 
 from loom.composition import Application
 from loom.core.di.container import LoomContainer
+from loom.core.logger.log_events import LoggerLogEvent
 from tests.helpers.loggers import CapturedLog
 
 _PHASES = ("scan", "plan", "build_stores", "register", "analysed", "wire_ai", "seal")
@@ -30,19 +31,32 @@ class TestComposedEvent:
             call for call in CapturedLog(caplog).calls if call[0].startswith("loom.composition.")
         ]
         assert event == "loom.composition.composed"
-        phase_ms = fields.pop("phase_ms")
-        total = fields.pop("duration_ms")
-        assert tuple(phase_ms) == _PHASES
-        assert all(isinstance(ms, float) for ms in phase_ms.values())
-        assert total >= sum(phase_ms.values())
+        assert fields.pop("phase_ms") == "dict", "not a scalar list: its type until L2c"
+        assert fields.pop("duration_ms") > 0
         assert fields.pop("keys") > 10
         assert fields == {
             "runtime": "Serving",
             "use_cases": 1,
             "jobs": 1,
-            "store_plugins": {"default": "sqlalchemy"},
+            "store_plugins": "dict",
             "installers": 0,
             "overrides": 1,
             "agents": 0,
             "mcp_servers": 0,
         }
+
+    def test_a_root_handler_added_during_composition_is_reported_once_it_ends(
+        self, overridden: Callable[..., Application], caplog: pytest.LogCaptureFixture
+    ) -> None:
+        late = logging.NullHandler()
+
+        def adds_a_handler(container: LoomContainer) -> None:
+            del container
+            logging.getLogger().addHandler(late)
+
+        try:
+            overridden(modules=(adds_a_handler,))
+        finally:
+            logging.getLogger().removeHandler(late)
+
+        assert LoggerLogEvent.HANDLERS_UNFILTERED in caplog.messages

@@ -14,6 +14,7 @@ from loom.core.engine.events import AbandonReason, EventKind, ExecutionEvent, St
 from loom.core.engine.execution_observer import ExecutionObserver, NullExecutionObserver
 from loom.core.errors import LoomError
 from loom.core.job.delivery import JobDelivery
+from loom.core.job.log_events import JobLogEvent, JobLogField
 from loom.core.job.outcome import (
     Abandoned,
     Failed,
@@ -22,7 +23,6 @@ from loom.core.job.outcome import (
     JobPostponement,
     Postponed,
     Succeeded,
-    failure_log_fields,
 )
 from loom.core.job.policy import Redelivery, RetryPolicy
 from loom.core.logger import LogField, log_context
@@ -35,7 +35,7 @@ Invocation = Callable[[JobDelivery], Awaitable[Any]]
 
 @dataclass(frozen=True, slots=True)
 class _Whereabouts:
-    """Which message an abandonment log is about; a job and a queue only when it was readable."""
+    """Which message a decision record is about; a job and a queue only when it was readable."""
 
     job: str | None
     queue: str | None
@@ -66,27 +66,32 @@ class _Whereabouts:
         }
         return {key: value for key, value in known.items() if value is not None}
 
-    def log_fields(self) -> dict[str, object]:
-        """The fields of the abandonment record."""
-        known = {"queue": self.queue, "postponements": self.postponements}
-        return {
-            **self.run_fields(),
-            **{key: value for key, value in known.items() if value is not None},
-        }
+    def log_decision(self, outcome: JobOutcome) -> None:
+        """Write the runner's own decision on a failed run: one record, the error as its exception.
 
-    def log_abandoned(self, outcome: Abandoned) -> None:
-        """Write the one WARNING that says why *outcome* ended this message."""
-        error = outcome.as_exception()
-        _log.warning(
-            "Job abandoned",
-            extra={
-                "reason": outcome.reason.value,
-                "error_type": type(error).__qualname__,
-                "error_message": str(error),
-                **self.log_fields(),
-                **failure_log_fields(error),
-            },
-        )
+        ``job.delivery_retried`` (WARNING) when another attempt follows, and
+        ``job.delivery_abandoned`` (ERROR) when the message will not run again.
+        The record factory turns the error into its type and code, and writes
+        its stack only when no scope has written it.
+        """
+        match outcome:
+            case Failed(error=error, delay=delay):
+                _log.warning(
+                    JobLogEvent.DELIVERY_RETRIED,
+                    exc_info=error,
+                    extra={**self.run_fields(), JobLogField.RETRY_DELAY_S: delay.seconds},
+                )
+            case Abandoned(reason=reason):
+                _log.error(
+                    JobLogEvent.DELIVERY_ABANDONED,
+                    exc_info=outcome.as_exception(),
+                    extra={
+                        **self.run_fields(),
+                        LogField.REASON: reason.value,
+                        LogField.MESSAGING_DESTINATION_NAME: self.queue,
+                        JobLogField.POSTPONEMENTS: self.postponements,
+                    },
+                )
 
 
 class JobRunner:
@@ -95,8 +100,9 @@ class JobRunner:
     Every transport maps the returned :class:`~loom.core.job.outcome.JobOutcome`
     to its own action; none of them classifies a failure. The runner emits the
     ``JOB_STARTED`` event and one of ``JOB_SUCCEEDED``, ``JOB_POSTPONED``,
-    ``JOB_FAILED`` or ``JOB_ABANDONED`` for each run, and logs one WARNING for
-    every message it abandons, whatever the transport. It knows what its transport
+    ``JOB_FAILED`` or ``JOB_ABANDONED`` for each run, and logs its decision on a
+    failed run, ``job.delivery_retried`` or ``job.delivery_abandoned``, whatever
+    the transport. It knows what its transport
     can do with a job that must run again, so it never postpones or fails a run that
     would not come back.
 
@@ -149,8 +155,7 @@ class JobRunner:
         self._execution_observer.on_event(
             self._build_event(outcome, name, trace_id, (time.monotonic() - started) * 1000)
         )
-        if isinstance(outcome, Abandoned):
-            whereabouts.log_abandoned(outcome)
+        whereabouts.log_decision(outcome)
         return outcome
 
     async def _run_once(self, delivery: JobDelivery) -> JobOutcome:
@@ -188,8 +193,7 @@ class JobRunner:
         self._execution_observer.on_event(
             self._build_event(outcome, type(error).__qualname__, None, None)
         )
-        if isinstance(outcome, Abandoned):
-            _Whereabouts.of_unrunnable(attempt, message_id).log_abandoned(outcome)
+        _Whereabouts.of_unrunnable(attempt, message_id).log_decision(outcome)
         return outcome
 
     def _decide(self, error: Exception, attempt: int, policy: RetryPolicy) -> Abandoned | Failed:

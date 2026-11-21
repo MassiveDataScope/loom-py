@@ -337,37 +337,6 @@ def log(caplog: pytest.LogCaptureFixture) -> CapturedLog:
 
 
 class TestStructuredLogs:
-    async def test_done_has_usecase_field(self, log: CapturedLog) -> None:
-        executor = UseCaseExecutor(UseCaseCompiler())
-        await executor.execute(_SimpleUseCase(), payload={"value": "x"})
-        fields = log.fields_for("[DONE]")
-        assert fields.get("usecase") == "_SimpleUseCase"
-
-    async def test_done_has_duration_ms_and_status(self, log: CapturedLog) -> None:
-        executor = UseCaseExecutor(UseCaseCompiler())
-        await executor.execute(_SimpleUseCase(), payload={"value": "x"})
-        fields = log.fields_for("[DONE]")
-        assert "duration_ms" in fields
-        assert fields.get("status") == "success"
-
-    async def test_fail_log_has_status_failure(self, log: CapturedLog) -> None:
-        executor = UseCaseExecutor(UseCaseCompiler())
-        use_case = _FailingUseCase()
-        with pytest.raises(RuntimeError):
-            await executor.execute(use_case, payload={"value": "x"})
-        fields = log.fields_for("[FAIL]")
-        assert fields.get("status") == "failure"
-
-    async def test_fail_log_says_whether_a_post_commit_failure_committed(
-        self, log: CapturedLog
-    ) -> None:
-        executor = UseCaseExecutor(UseCaseCompiler())
-        use_case = _FailingAfterCommitUseCase()
-        with pytest.raises(PostCommitError):
-            await executor.execute(use_case, payload={"value": "x"})
-        fields = log.fields_for("[FAIL]")
-        assert (fields.get("committed"), fields.get("failures")) == (True, 1)
-
     async def test_compile_log_has_usecase_field(self, log: CapturedLog) -> None:
         UseCaseCompiler().compile(_SimpleUseCase)
         [fields] = log.named("compiler.use_case_compiled")

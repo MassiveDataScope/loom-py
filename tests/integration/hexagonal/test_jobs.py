@@ -17,6 +17,8 @@ from loom.core.identity import Identity, reset_identity, set_identity
 from loom.core.job import JobService
 from loom.core.job.context import flush_pending_dispatches
 from loom.core.job.handle import JobFailedError, JobHandle
+from loom.core.job.log_events import JobLogEvent
+from loom.core.logger import LogField
 from tests.helpers.loggers import logged_events
 from tests.integration.hexagonal.conftest import (
     ANA,
@@ -56,10 +58,12 @@ async def _run_as(application: Application, caller: Identity, shipment_id: str) 
 
 
 def _failed_jobs(caplog: pytest.LogCaptureFixture) -> list[str]:
+    """The exception type of each message of the job the runner abandoned."""
     return [
-        str(entry["error"])
+        str(entry[LogField.EXCEPTION_TYPE])
         for entry in logged_events(caplog)
-        if entry.get("usecase") == TrackShipmentJob.__name__ and entry.get("status") == "failure"
+        if entry["event"] == JobLogEvent.DELIVERY_ABANDONED
+        and entry.get(LogField.JOB) == TrackShipmentJob.__name__
     ]
 
 
@@ -96,7 +100,7 @@ class TestACallerlessDispatch:
             await _dispatched_by(application, None)
 
         (failure,) = _failed_jobs(caplog)
-        assert failure.startswith("Authentication required")
+        assert failure.endswith("Unauthenticated")
         assert seen.calls == []
 
     async def test_waits_into_job_failed_error(self, application: Application) -> None:

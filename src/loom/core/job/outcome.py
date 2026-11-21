@@ -6,14 +6,14 @@ from dataclasses import dataclass
 from typing import Any, ClassVar
 
 from loom.core.engine.events import AbandonReason, Status
-from loom.core.errors import PostCommitError
 from loom.core.job.policy import Countdown
 
 
 class JobSignal(Exception):
-    """Raised by a job to steer its own delivery; not a failure."""
+    """Raised by a job to steer its own delivery; not a failure, so always expected."""
 
     status: ClassVar[Status]
+    expected: ClassVar[bool] = True
 
 
 class JobPostponement(JobSignal):
@@ -107,10 +107,3 @@ class Failed:
 
 
 JobOutcome = Succeeded | Postponed | Abandoned | Failed
-
-
-def failure_log_fields(exc: BaseException) -> dict[str, object]:
-    """Return transport-neutral details for a failed job."""
-    if isinstance(exc, PostCommitError):
-        return {"committed": exc.committed, "failures": len(exc.failures)}
-    return {}

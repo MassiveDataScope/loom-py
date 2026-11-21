@@ -18,6 +18,7 @@ from typing import Any
 
 from loom.core.authz.elevation import ElevationSink
 from loom.core.bootstrap.bootstrap import BootstrapError
+from loom.core.bootstrap.log_events import BootstrapLogEvent, BootstrapLogField
 from loom.core.di.container import BindingKey, LoomContainer
 from loom.core.di.errors import describe_key
 from loom.core.engine.compilable import Compilable
@@ -26,7 +27,9 @@ from loom.core.engine.execution_observer import ExecutionObserver
 from loom.core.engine.executor import UseCaseExecutor
 from loom.core.environment import Environment, resolve_environment
 from loom.core.execution import ExecutionResolver
-from loom.core.logger import LogEvent, LogField
+from loom.core.logger import LogField
+from loom.core.logger.filter import MAX_LIST_ITEMS
+from loom.core.observability.observability import Observability
 from loom.core.stores.repository.registration import classify_key
 from loom.core.stores.uow.coordinator import Coordinator
 from loom.core.use_case.factory import UseCaseFactory, main_repository
@@ -35,16 +38,6 @@ from loom.core.use_case.kinds import declare_kinds
 from loom.core.use_case.registry import UseCaseRegistry
 
 _log = logging.getLogger(__name__)
-
-
-class BootEvent(LogEvent):
-    """What the bootstrap logs while it composes the container and the kernel."""
-
-    CONTAINER_INITIALISING = "bootstrap.container_initialising"
-    MODULE_REGISTERING = "bootstrap.module_registering"
-    USE_CASES_COMPILING = "bootstrap.use_cases_compiling"
-    CONTAINER_VALIDATING = "bootstrap.container_validating"
-    KERNEL_COMPLETED = "bootstrap.kernel_completed"
 
 
 KERNEL_KEYS: tuple[BindingKey, ...] = (
@@ -151,10 +144,10 @@ def create_kernel(
         KernelRecipe.container(), seeds, modules=modules, reserved=KERNEL_KEYS
     ) as container:
         kernel = recipe.install(container)
-        _log.info(BootEvent.CONTAINER_VALIDATING)
+        _log.info(BootstrapLogEvent.CONTAINER_VALIDATING)
         container.validate()
         kernel.factory.verify()
-    _log.info(BootEvent.KERNEL_COMPLETED)
+    _log.info(BootstrapLogEvent.KERNEL_COMPLETED)
     return kernel
 
 
@@ -191,18 +184,22 @@ def seeded_container(
             the ``with`` block, cause chained. A ``BootstrapError`` passes through.
     """
     try:
-        _log.info(BootEvent.CONTAINER_INITIALISING)
+        _log.info(BootstrapLogEvent.CONTAINER_INITIALISING)
         for key, seed in seeds.items():
             container.register_instance(key, seed)
         view = container.bindings()
+        names: list[str] = []
         for module in modules:
-            name = getattr(module, "__qualname__", None) or repr(module)
-            _log.info(BootEvent.MODULE_REGISTERING, extra={LogField.BOOTSTRAP_MODULE: name})
+            names.append(getattr(module, "__qualname__", None) or repr(module))
             before = {key: view.get(key) for key in reserved}
             module(container)
             for key in reserved:
                 if view.get(key) is not before[key]:
                     raise error(module, key)
+        _log.info(
+            BootstrapLogEvent.MODULES_REGISTERED,
+            extra={BootstrapLogField.MODULES: names[:MAX_LIST_ITEMS], LogField.COUNT: len(names)},
+        )
         yield container
     except BootstrapError:
         raise
@@ -255,7 +252,8 @@ class KernelRecipe:
         if any), :class:`~loom.core.use_case.registry.UseCaseRegistry` and
         :class:`~loom.core.use_case.invoker.ApplicationInvoker`. Gives the
         executor ``container.kinds``, that registry, the factory's ``build``
-        as its builder, and the agent and MCP resolvers, if any. Validates
+        as its builder, the agent and MCP resolvers and the container's
+        :class:`~loom.core.observability.observability.Observability`, if any. Validates
         nothing.
 
         Raises:
@@ -272,6 +270,7 @@ class KernelRecipe:
             elevation_sink=container.resolve_or_none(ElevationSink),
             agent_resolver=self.agent_resolver,
             mcp_resolver=self.mcp_resolver,
+            scopes=container.resolve_or_none(Observability),
         )
         registry = UseCaseRegistry.build(list(self.use_cases))
         invoker = AppInvoker(factory=factory, executor=executor, registry=registry)
@@ -297,7 +296,7 @@ class KernelRecipe:
             CompilationError: When a use case does not compile.
         """
         _log.info(
-            BootEvent.USE_CASES_COMPILING, extra={LogField.USE_CASE_COUNT: len(self.use_cases)}
+            BootstrapLogEvent.USE_CASES_COMPILING, extra={LogField.COUNT: len(self.use_cases)}
         )
         compiler = UseCaseCompiler(execution_observer=self.execution_observer)
         for use_case in self.use_cases:

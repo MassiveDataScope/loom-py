@@ -122,9 +122,10 @@ class TestJobSettings:
         with pytest.raises(ConfigError, match="_ReportJob"):
             project.compose(adapter)
 
-    def test_start_up_logs_one_line_with_each_jobs_effective_retry_policy(
+    def test_start_up_logs_one_line_for_the_jobs_retry_policies(
         self, tmp_path: Path, caplog: pytest.LogCaptureFixture
     ) -> None:
+        """Its list of policies is not a scalar list, so it is written as its type until L2c."""
         project = job_project(
             tmp_path, {"jobs": {"_ReportJob": {"retry": {"max_attempts": 5}}}}, "inline"
         )
@@ -133,10 +134,7 @@ class TestJobSettings:
             project.compose(JobsAdapter(_ReportJob))
 
         [fields] = CapturedLog(caplog).named("Job retry policies")
-        described = str(fields["jobs"])
-        assert "_ReportJob" in described
-        assert "jobs.<Job>.retry" in described
-        assert "max_attempts=5 (jobs.<Job>.retry)" in described
+        assert fields["jobs"] == "list"
 
     def test_a_retry_that_breaks_the_backoff_fails_the_composition(self, tmp_path: Path) -> None:
         project = job_project(

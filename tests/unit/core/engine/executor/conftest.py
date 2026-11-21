@@ -13,6 +13,11 @@ from loom.core.engine.compiler import UseCaseCompiler
 from loom.core.engine.executor import UseCaseExecutor
 from loom.core.execution import current_execution
 from loom.core.identity import ANONYMOUS, current_identity
+from loom.core.logger import LogIdentity
+from loom.core.logger.install import install_record_factory
+from loom.core.observability.observability import Observability
+from loom.core.observability.observer import log as log_observer
+from loom.core.observability.observer.log import LogLifecycleObserver
 from loom.core.stores.catalog import DEFAULT_STORE
 from loom.core.stores.uow.coordinator import OrderedCommits
 from loom.core.use_case.factory import UseCaseFactory
@@ -42,10 +47,13 @@ def no_execution_left_open() -> Iterator[None]:
 
 @pytest.fixture
 def make_executor() -> MakeExecutor:
-    """An executor reporting its events to ``JOURNAL`` and logging to a recorder, by default."""
+    """An executor reporting its events to ``JOURNAL`` and opening logged scopes, by default."""
 
     def make(**options: Any) -> UseCaseExecutor:
-        defaults: dict[str, Any] = {"execution_observer": JOURNAL}
+        defaults: dict[str, Any] = {
+            "execution_observer": JOURNAL,
+            "scopes": Observability([LogLifecycleObserver()]),
+        }
         return UseCaseExecutor(UseCaseCompiler(), **{**defaults, **options})
 
     return make
@@ -58,9 +66,11 @@ def executor(make_executor: MakeExecutor) -> UseCaseExecutor:
 
 @pytest.fixture
 def logger(caplog: pytest.LogCaptureFixture) -> CapturedLog:
-    """What the executor reports through its logger during the test."""
+    """What the executor and its scopes record during the test, behind loom's record factory."""
+    install_record_factory(LogIdentity(environment="test"))
     caplog.set_level(logging.DEBUG, logger=observation.__name__)
-    return CapturedLog(caplog, observation.__name__)
+    caplog.set_level(logging.DEBUG, logger=log_observer.__name__)
+    return CapturedLog(caplog)
 
 
 @pytest.fixture

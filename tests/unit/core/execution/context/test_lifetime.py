@@ -369,7 +369,10 @@ class TestANestedExecutionEnding:
             assert current_caller() is (None if from_subject is None else ACME_ALICE)
 
         [switch] = switches.named("identity_switched")
-        assert (switch["from_subject"], switch["to_subject"]) == (from_subject, ACME_BOB.subject)
+        assert (switch.get("from_subject"), switch["to_subject"]) == (
+            from_subject,
+            ACME_BOB.subject,
+        )
 
     def test_the_enclosing_execution_keeps_its_cache(self) -> None:
         session = per_execution(AcmePerExecutionValue, AcmePerExecutionValue)

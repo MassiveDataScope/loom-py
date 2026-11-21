@@ -9,6 +9,7 @@ from typing import Any, Final, get_args, get_origin
 from loom.core.engine.compilable import Compilable
 from loom.core.engine.events import EventKind, ExecutionEvent
 from loom.core.engine.execution_observer import ExecutionObserver, NullExecutionObserver
+from loom.core.engine.log_events import EngineLogEvent
 from loom.core.engine.plan import (
     CallerBinding,
     CommandStep,
@@ -23,7 +24,7 @@ from loom.core.engine.plan import (
 from loom.core.errors import UnsupportedBoundaryType
 from loom.core.execution import ExecutionBinding
 from loom.core.job.job import Job
-from loom.core.logger import LogEvent, LogField
+from loom.core.logger import LogField
 from loom.core.model import BaseModel, loom_type
 from loom.core.model.introspection import resolve_type_hints
 from loom.core.stores.catalog import StoreKey, store_of
@@ -55,12 +56,6 @@ from loom.core.use_case.markers import (
 )
 
 _log = logging.getLogger(__name__)
-
-
-class CompilerEvent(LogEvent):
-    """What the compiler logs."""
-
-    USE_CASE_COMPILED = "compiler.use_case_compiled"
 
 
 class CompilationError(Exception):
@@ -169,7 +164,7 @@ class UseCaseCompiler:
             + len(rule_steps)
         )
         _log.info(
-            CompilerEvent.USE_CASE_COMPILED,
+            EngineLogEvent.USE_CASE_COMPILED,
             extra={
                 LogField.USE_CASE: uc_name,
                 "detected": bindings.detected,

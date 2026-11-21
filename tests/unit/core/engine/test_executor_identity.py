@@ -206,19 +206,15 @@ class TestNestedIdentity:
         assert REFUSED_JOIN in refused.message
         assert after == ANA
 
-    async def test_a_refused_nesting_is_logged_with_the_use_cases_only(
+    async def test_a_refused_nesting_never_reaches_the_log_as_text(
         self, executor: UseCaseExecutor, caplog: pytest.LogCaptureFixture
     ) -> None:
-        """The refusal names no identity; the switch before it is logged by subject (T09a)."""
+        """The refusal is an exception, and no exception message is logged (T09a)."""
         parent = _catching(_child_call(executor, Child(_whoami), BOB))
 
         await executor.execute(parent, identity=ANA)
 
-        refusals = [
-            rendered(record) for record in caplog.records if REFUSED_JOIN in rendered(record)
-        ]
-        assert refusals
-        assert all(BOB.subject not in refusal for refusal in refusals)
+        assert all(REFUSED_JOIN not in rendered(record) for record in caplog.records)
 
     async def test_changing_the_ambient_identity_mid_execution_does_not_unlock_a_join(
         self,

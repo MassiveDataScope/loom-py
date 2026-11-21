@@ -132,8 +132,6 @@ class TestJobSignalReporting:
             await executor.run(job_type, factory=factory)
 
         assert not [record for record in caplog.records if record.levelno >= logging.ERROR]
-        assert not [record for record in caplog.records if "[FAIL]" in record.getMessage()]
-        assert any("[SIGNAL]" in record.getMessage() for record in caplog.records)
         [reported] = [e for e in observer.events if e.kind is EventKind.EXEC_ERROR]
         assert reported.status is status
         assert reported.status is not Status.FAILURE

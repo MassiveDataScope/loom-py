@@ -27,6 +27,7 @@ from loom.core.config.overrides import load_application_config
 from loom.core.discovery.scanner import PackageScanner
 from loom.core.environment import Environment, resolve_environment, select_config_paths
 from loom.core.locator import DEFAULT_CODE_PATH, add_code_path
+from loom.core.logger.install import warn_unfiltered_handlers
 from loom.core.observability.config import ObservabilityConfig
 from loom.core.observability.observability import Observability
 from loom.core.resources import Resource, ResourceKind, closing
@@ -351,6 +352,7 @@ class Project:
                 "duration_ms": clock.total_ms,
             },
         )
+        warn_unfiltered_handlers()
         return application
 
     def serve(

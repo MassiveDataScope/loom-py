@@ -1,13 +1,13 @@
 from __future__ import annotations
 
 from collections.abc import Callable
-from typing import TYPE_CHECKING, Any, TypeVar, overload
+from contextlib import AbstractContextManager, nullcontext
+from typing import TYPE_CHECKING, Any, Protocol, TypeVar, overload
 
 from loom.core.authz.elevation import ElevationSink
 from loom.core.engine.boundaries import Boundaries, outside_departed_execution
 from loom.core.engine.compilable import Compilable
 from loom.core.engine.compiler import UseCaseCompiler
-from loom.core.engine.events import Phase
 from loom.core.engine.execution_observer import ExecutionObserver
 from loom.core.engine.observation import ExecutionReporter
 from loom.core.engine.plan import ExecutionPlan, ParameterBindingError
@@ -19,7 +19,7 @@ from loom.core.execution import (
     Kind,
 )
 from loom.core.identity import Identity, current_caller
-from loom.core.logger import LogField, log_context
+from loom.core.logger import NO_ATTRIBUTES, LogField, SpanAttributes, log_context
 from loom.core.stores.uow.coordinator import Coordinator
 from loom.core.stores.uow.scope import current_scope, refuse_write_under_read_only
 from loom.core.use_case.kinds import AGENT, MCP
@@ -30,10 +30,18 @@ if TYPE_CHECKING:
     from loom.core.use_case.factory import UseCaseFactory
     from loom.core.use_case.use_case import UseCase
 
-__all__ = ["ParameterBindingError", "UseCaseExecutor"]
+__all__ = ["ParameterBindingError", "UseCaseExecutor", "UseCaseScopes"]
 
 ResultT = TypeVar("ResultT")
 _TargetT = TypeVar("_TargetT")
+
+
+class UseCaseScopes(Protocol):
+    """Opens the ``use_case`` scope of one execution: the port the observability runtime fills."""
+
+    def use_case(self, name: str, attributes: SpanAttributes) -> AbstractContextManager[None]:
+        """The scope of the execution of *name*, carrying *attributes*."""
+        ...
 
 
 class UseCaseExecutor:
@@ -53,8 +61,11 @@ class UseCaseExecutor:
       command, loads, computes, rules) and the call itself.
     - :mod:`~loom.core.engine.observation`: ``EXEC_START`` before the unit of
       work opens and exactly one terminal outcome, ``EXEC_DONE`` or
-      ``EXEC_ERROR`` with the ``error_kind`` of the step that failed, with
-      one structured log (``usecase``, ``duration_ms``, ``status``).
+      ``EXEC_ERROR`` with the ``error_kind`` of the step that failed.
+
+    With ``scopes``, every execution runs in a ``use_case`` scope,
+    whatever runtime asked for it (REST, a job, the CLI, Lambda): the lifecycle
+    observer writes its start and its one end, success or failure.
 
     One acting identity governs everything a request causes: row-level
     security, the jobs it dispatches, its nested executions
@@ -88,6 +99,8 @@ class UseCaseExecutor:
             ``build``. ``None`` leaves :meth:`run` to the ``factory`` it is given.
         agent_resolver: Bound as by :meth:`bind_agent_resolver`.
         mcp_resolver: Bound as by :meth:`bind_mcp_resolver`.
+        scopes: Opens the ``use_case`` scope of every execution; none
+            runs the executions with no scope.
 
     Example::
 
@@ -116,8 +129,10 @@ class UseCaseExecutor:
         agent_resolver: ExecutionResolver | None = None,
         mcp_resolver: ExecutionResolver | None = None,
         elevation_sink: ElevationSink | None = None,
+        scopes: UseCaseScopes | None = None,
     ) -> None:
         self._compiler = compiler
+        self._scopes = scopes
         self._builder = builder
         self._kinds = ExecutionKinds() if resolvers is None else resolvers
         self._reporter = ExecutionReporter(execution_observer, debug_execution)
@@ -182,6 +197,7 @@ class UseCaseExecutor:
         read_only: bool = False,
         identity: Identity | None = None,
         delivery: JobDelivery | None = None,
+        attributes: SpanAttributes = NO_ATTRIBUTES,
     ) -> Any:
         """Build ``use_case_type`` inside a new execution and execute it there.
 
@@ -207,6 +223,8 @@ class UseCaseExecutor:
             identity: Verified caller for this execution, as for :meth:`execute`.
             delivery: The job delivery a ``Delivery()`` parameter receives; none
                 binds ``None``.
+            attributes: Fields of the execution's ``use_case`` scope, such as
+                the route a transport served it on.
 
         Returns:
             The result produced by ``execute()``.
@@ -228,6 +246,7 @@ class UseCaseExecutor:
             ExecutionInputs(params, payload, dependencies, load_overrides, delivery),
             identity,
             read_only,
+            attributes,
         )
 
     @overload
@@ -356,6 +375,7 @@ class UseCaseExecutor:
             ExecutionInputs(params, payload, dependencies, load_overrides),
             identity,
             read_only,
+            NO_ATTRIBUTES,
         )
 
     async def _execute(
@@ -366,6 +386,7 @@ class UseCaseExecutor:
         inputs: ExecutionInputs,
         identity: Identity | None,
         read_only: bool,
+        attributes: SpanAttributes,
     ) -> Any:
         """Run one execution of ``build(target)``, behind both :meth:`run` and :meth:`execute`.
 
@@ -389,11 +410,10 @@ class UseCaseExecutor:
         if scope is not None and scope.closed:
             with outside_departed_execution():
                 return await self._execute(
-                    use_case_type, build, target, inputs, identity, read_only
+                    use_case_type, build, target, inputs, identity, read_only, attributes
                 )
         use_case = use_case_type.__qualname__
-        with log_context({LogField.USE_CASE: use_case}):
-            phase = Phase.BEGIN
+        with log_context({LogField.USE_CASE: use_case}), self._scope(use_case, attributes):
             execution = None
             try:
                 plan = self._plan_for(use_case_type)
@@ -403,10 +423,8 @@ class UseCaseExecutor:
                 execution = ExecutionContext.entered(identity, use_case)
                 if not read_only:
                     refuse_write_under_read_only(f"{use_case}, which writes,")
-                phase = Phase.BUILD
                 compilable = build(target)
-            except Exception as exc:
-                self._reporter.not_started(use_case, exc, phase)
+            except Exception:
                 if execution is not None:
                     execution.close()
                 raise
@@ -421,6 +439,12 @@ class UseCaseExecutor:
                 )
             finally:
                 execution.close()
+
+    def _scope(self, use_case: str, attributes: SpanAttributes) -> AbstractContextManager[None]:
+        """The ``use_case`` scope of one execution; nothing without scopes."""
+        if self._scopes is None:
+            return nullcontext()
+        return self._scopes.use_case(use_case, attributes)
 
     def _plan_for(self, uc_type: type[Compilable]) -> ExecutionPlan:
         """Return the plan compiled for exactly ``uc_type``, compiling on demand.

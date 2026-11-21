@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import asyncio
 from collections.abc import AsyncIterator, Awaitable, Callable
 from contextlib import AsyncExitStack, asynccontextmanager
 from dataclasses import dataclass, field
@@ -10,6 +11,7 @@ from typing import TYPE_CHECKING
 from loom.composition.errors import ApplicationAlreadyOpenError
 from loom.core.job.config import JobSettings
 from loom.core.job.service import JobService
+from loom.core.logger.uncaught import log_asyncio_exception
 from loom.core.resources import Resource, in_opening_order
 
 if TYPE_CHECKING:
@@ -117,6 +119,9 @@ class Application:
                 prefork worker checks once in the parent and opens each child
                 with ``check=False``.
 
+        The running loop logs an exception no task retrieved as one loom
+        record, under the record factory's policy.
+
         Raises:
             ApplicationAlreadyOpenError: When the application is already open.
             BaseExceptionGroup: When several resources fail to close. A single
@@ -127,6 +132,7 @@ class Application:
         if self._open:
             raise ApplicationAlreadyOpenError
         self._open = True
+        asyncio.get_running_loop().set_exception_handler(log_asyncio_exception)
         failures: list[BaseException] = []
         opened = False
         try:

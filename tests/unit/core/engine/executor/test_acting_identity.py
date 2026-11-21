@@ -27,6 +27,7 @@ from loom.core.errors import Unauthenticated
 from loom.core.execution import ExecutionScope, execution_identity
 from loom.core.identity import ANONYMOUS, Identity, current_caller, current_identity
 from loom.core.job.context import add_pending_dispatch, flush_pending_dispatches
+from loom.core.logger import LogField
 from loom.core.stores.uow.scope import current_scope
 from loom.core.tracing import active_trace_id
 from loom.core.use_case.invoker import AppInvoker
@@ -124,11 +125,12 @@ class TestExplicitSwitch:
                 {
                     "from_subject": ALICE.subject,
                     "to_subject": BOB.subject,
-                    "from_roles": ALICE.roles,
-                    "to_roles": BOB.roles,
+                    "from_roles": list(ALICE.roles),
+                    "to_roles": list(BOB.roles),
                     "attributes_changed": False,
                     "use_case": "AcmeWho",
                     "trace_id": "acme-trace",
+                    LogField.USE_CASE: "AcmeWho",
                 },
             )
         ]
@@ -140,7 +142,7 @@ class TestExplicitSwitch:
 
         [line] = switches.named("identity_switched")
         assert (line["from_subject"], line["to_subject"]) == (ALICE.subject, ALICE.subject)
-        assert (line["from_roles"], line["to_roles"]) == (ALICE.roles, ("admin",))
+        assert (line["from_roles"], line["to_roles"]) == (list(ALICE.roles), ["admin"])
 
     async def test_a_roles_change_keeps_the_delegation_and_is_refused_past_it(
         self, executor: UseCaseExecutor, past_the_window: Callable[[], None]

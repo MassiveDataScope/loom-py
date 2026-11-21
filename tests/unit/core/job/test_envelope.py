@@ -5,7 +5,7 @@ from __future__ import annotations
 import msgspec
 import pytest
 
-from loom.core.errors import MalformedJobMessage, PostCommitError, UnknownJob
+from loom.core.errors import MalformedJobMessage, UnknownJob
 from loom.core.job.envelope import (
     JobEnvelope,
     decode_job_envelope,
@@ -13,7 +13,6 @@ from loom.core.job.envelope import (
     wire_job_name,
 )
 from loom.core.job.job import Job
-from loom.core.job.outcome import failure_log_fields
 from loom.testing import make
 
 
@@ -43,13 +42,6 @@ class TestJobEnvelope:
         self, error: Exception, is_retryable: bool
     ) -> None:
         assert error.is_retryable is is_retryable  # type: ignore[attr-defined]
-
-    def test_post_commit_failure_log_fields(self) -> None:
-        error = PostCommitError(committed=True, failures=(ValueError("failed"),))
-        assert failure_log_fields(error) == {"committed": True, "failures": 1}
-
-    def test_ordinary_failure_log_fields(self) -> None:
-        assert failure_log_fields(ValueError("failed")) == {}
 
 
 class TestJobEnvelopeTaskId:

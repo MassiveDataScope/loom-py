@@ -348,14 +348,13 @@ def _rules(plan: ExecutionPlan) -> Bind | None:
     if binding is None or not plan.rule_steps:
         return None
     rules = tuple(
-        (cast(Any, step.fn), step.accepts_context, step.label, f"Rule {step.label}")
-        for step in plan.rule_steps
+        (cast(Any, step.fn), step.accepts_context, f"Rule {step.label}") for step in plan.rule_steps
     )
 
     def check(call: _ExecuteArguments) -> None:
         command = call.bound[binding.name]
         violations: list[RuleViolationError] = []
-        for fn, accepts_context, label, step_label in rules:
+        for fn, accepts_context, step_label in rules:
             try:
                 if accepts_context:
                     fn(command, call.fields_set, call.bound)
@@ -364,7 +363,6 @@ def _rules(plan: ExecutionPlan) -> Bind | None:
                 call.started.step(step_label)
             except RuleViolationError as exc:
                 violations.append(exc)
-                call.started.rule_failed(label, exc)
         if violations:
             raise RuleViolationsError(violations)
 

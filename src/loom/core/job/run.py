@@ -5,6 +5,7 @@ from __future__ import annotations
 from typing import TYPE_CHECKING, Any
 
 from loom.core.job.envelope import job_context
+from loom.core.job.log_events import JobLogField
 from loom.core.observability.event import Scope
 
 if TYPE_CHECKING:
@@ -47,7 +48,7 @@ class EnvelopeInvocation:
                 envelope.job_name,
                 trace_id=envelope.trace_id,
                 id=delivery.task_id,
-                payload_size=len(envelope.payload or {}),
+                attributes={JobLogField.PAYLOAD_SIZE: len(envelope.payload or {})},
             ),
         ):
             return await self._executor.run(
