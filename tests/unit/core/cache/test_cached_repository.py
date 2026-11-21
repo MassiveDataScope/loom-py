@@ -31,6 +31,7 @@ from loom.core.stores.repository.query import (
     build_page_result,
 )
 from loom.testing import make
+from tests.helpers.loggers import logged_text
 from tests.unit.core.uow._coordinator_fakes import (
     NonTransactionalStore,
     StoreFactory,
@@ -938,9 +939,10 @@ class TestPostCommitDeferral:
             await channel.drain(committed=True)
 
         assert isinstance(excinfo.value.failures[0], RuntimeError)
-        assert "CachePostCommitBumpFailed" in caplog.text
-        assert wrapped.entity_name in caplog.text
-        assert str(created.id) in caplog.text
+        text = logged_text(caplog)
+        assert "CachePostCommitBumpFailed" in text
+        assert wrapped.entity_name in text
+        assert str(created.id) in text
 
 
 class TestPrimaryKeyByName:

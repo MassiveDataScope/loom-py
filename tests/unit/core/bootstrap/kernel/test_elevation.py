@@ -7,7 +7,7 @@ from loom.core.bootstrap import create_kernel
 from loom.core.bootstrap.kernel import KernelRecipe
 from loom.core.di.container import LoomContainer
 from tests.unit.core.authz._elevation_doubles import ElevatesEditor, FakeSink, elevations_through
-from tests.unit.core.bootstrap.kernel.components import LOG, AcmeConfig, AcmePing
+from tests.unit.core.bootstrap.kernel.components import AcmeConfig, AcmePing
 
 
 class TestKernelElevationBinding:
@@ -27,13 +27,13 @@ class TestKernelElevationBinding:
         container = KernelRecipe.container()
         container.register_instance(ElevationSink, sink)
 
-        kernel = KernelRecipe([AcmePing], LOG).install(container)
+        kernel = KernelRecipe([AcmePing]).install(container)
 
         assert await elevations_through(kernel.executor, sink) == ["editor"]
         assert container.resolve(ElevationSink) is sink
 
     async def test_without_any_sink_an_elevation_flags_nothing(self) -> None:
-        kernel = KernelRecipe([AcmePing], LOG).install(KernelRecipe.container())
+        kernel = KernelRecipe([AcmePing]).install(KernelRecipe.container())
 
         assert await kernel.executor.execute(ElevatesEditor()) is None
         assert kernel.container.resolve_or_none(ElevationSink) is None

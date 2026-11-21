@@ -38,6 +38,7 @@ from loom.core.stores.uow.coordinator import (
 )
 from loom.stores.mongo.uow import MongoUnitOfWork
 from loom.stores.sqlalchemy.uow import SQLAlchemyUnitOfWork
+from tests.helpers.loggers import rendered
 
 from ..conftest import RecordingSessionManager, make_session
 from ..repository.mongo._fake import FakeMongoClient
@@ -151,7 +152,7 @@ class TestEnlist:
             await coordinator.enlist(scope, S0)
 
         assert "UoWCloseFailed" in caplog.text
-        assert "'store': 's0'" in caplog.text
+        assert "store=s0" in caplog.text
 
     async def test_a_store_without_a_factory_is_refused_naming_it_and_the_composed_ones(
         self,
@@ -839,7 +840,7 @@ class TestOutcomeLog:
 
         records = [r for r in caplog.records if "InvocationOutcome" in r.getMessage()]
         assert [record.levelno for record in records] == [logging.WARNING]
-        assert "fake" in records[0].getMessage()
+        assert "fake" in rendered(records[0])
 
     async def test_a_successful_invocation_logs_no_warning(
         self, caplog: pytest.LogCaptureFixture

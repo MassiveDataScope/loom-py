@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import asyncio
+import logging
 import math
 import time
 
@@ -26,7 +27,7 @@ from loom.core.identity import (
 )
 from loom.core.identity import context as identity_context
 from tests.helpers.delegation import acting_as, assert_new_delegation
-from tests.helpers.loggers import RecordingLogger
+from tests.helpers.loggers import CapturedLog
 
 _ALICE = Identity(subject="alice", mechanism="test")
 _PROMOTED_ALICE = Identity(subject="alice", mechanism="test", roles=("admin",))
@@ -38,7 +39,7 @@ _WORK = object()
 """Stands for the work fixing the identity: opaque to the identity layer."""
 
 
-def _switched(switches: RecordingLogger) -> list[tuple[object, object, object]]:
+def _switched(switches: CapturedLog) -> list[tuple[object, object, object]]:
     return [
         (fields["from_subject"], fields["to_subject"], fields["use_case"])
         for event, fields in switches.calls
@@ -121,7 +122,7 @@ class TestTheCarrier:
 class TestATransportSwitch:
     """Outside work a transport may replace the caller; replacing a different one is logged."""
 
-    def test_replacing_a_different_caller_is_logged(self, switches: RecordingLogger) -> None:
+    def test_replacing_a_different_caller_is_logged(self, switches: CapturedLog) -> None:
         outer = set_identity(_ALICE)
         try:
             reset_identity(set_identity(_BOB))
@@ -136,7 +137,7 @@ class TestATransportSwitch:
         ids=["over-no-caller", "the-same-caller"],
     )
     def test_installing_over_no_caller_or_the_same_one_is_no_switch(
-        self, switches: RecordingLogger, acting: Identity | None, installed: Identity
+        self, switches: CapturedLog, acting: Identity | None, installed: Identity
     ) -> None:
         outer = set_identity(acting)
         try:
@@ -147,19 +148,24 @@ class TestATransportSwitch:
         assert switches.calls == []
 
     def test_a_failing_report_leaves_the_previous_caller_installed(
-        self, monkeypatch: pytest.MonkeyPatch
+        self,
     ) -> None:
         """The switch is not half done: the caller it would replace still acts."""
 
-        class AcmeBrokenLogger(RecordingLogger):
-            def warning(self, event: str, **fields: object) -> None:
+        class AcmeBrokenHandler(logging.Handler):
+            def emit(self, record: logging.LogRecord) -> None:
                 raise RuntimeError("acme logger down")
 
-        monkeypatch.setattr(identity_context, "_log", AcmeBrokenLogger())
-        with acting_as(_ALICE):
-            with pytest.raises(RuntimeError, match="acme logger down"):
-                set_identity(_BOB)
-            assert current_caller() is _ALICE
+        broken = AcmeBrokenHandler()
+        log = logging.getLogger(identity_context.__name__)
+        log.addHandler(broken)
+        try:
+            with acting_as(_ALICE):
+                with pytest.raises(RuntimeError, match="acme logger down"):
+                    set_identity(_BOB)
+                assert current_caller() is _ALICE
+        finally:
+            log.removeHandler(broken)
 
 
 class TestAFixedIdentity:
@@ -191,7 +197,7 @@ class TestPinnedFor:
         ids=["the-caller-acting", "the-same-subject-with-other-roles"],
     )
     def test_the_same_subject_keeps_the_deadline(
-        self, switches: RecordingLogger, given: Identity, logged: list[object]
+        self, switches: CapturedLog, given: Identity, logged: list[object]
     ) -> None:
         with acting_as(_ALICE, until=_LATER):
             pinned = Acting.current().pinned_for(given, _WORK, "AcmeUseCase")
@@ -209,7 +215,7 @@ class TestPinnedFor:
         "given", [_ALICE, _PROMOTED_ALICE], ids=["the-caller-acting", "the-same-subject"]
     )
     def test_the_same_subject_past_its_deadline_is_refused(
-        self, switches: RecordingLogger, given: Identity, deadline: float
+        self, switches: CapturedLog, given: Identity, deadline: float
     ) -> None:
         with acting_as(_ALICE, until=deadline):
             acting = Acting.current()
@@ -219,7 +225,7 @@ class TestPinnedFor:
         assert [event for event, _ in switches.calls] == ["delegation_expired"]
 
     def test_another_subject_is_a_logged_switch_with_a_new_delegation(
-        self, switches: RecordingLogger, window: float
+        self, switches: CapturedLog, window: float
     ) -> None:
         with acting_as(_ALICE, until=_PASSED):
             before = time.time()
@@ -230,7 +236,7 @@ class TestPinnedFor:
         assert _switched(switches) == [("alice", "bob", "AcmeUseCase")]
 
     def test_no_caller_given_under_one_is_a_logged_switch_with_no_deadline(
-        self, switches: RecordingLogger
+        self, switches: CapturedLog
     ) -> None:
         """Alice's deadline has passed: none is kept, so the work is not refused."""
         with acting_as(_ALICE, until=_PASSED):
@@ -241,14 +247,14 @@ class TestPinnedFor:
         assert _switched(switches) == [("alice", None, "AcmeUseCase")]
 
     def test_a_caller_given_with_nothing_acting_is_the_transport_s_and_no_switch(
-        self, switches: RecordingLogger
+        self, switches: CapturedLog
     ) -> None:
         Acting.current().pinned_for(_ALICE, _WORK, "AcmeUseCase")
 
         assert switches.calls == []
 
     def test_a_caller_given_inside_work_with_none_is_a_switch_from_no_one(
-        self, switches: RecordingLogger
+        self, switches: CapturedLog
     ) -> None:
         outer = Acting.current().pinned_for(None, _WORK, "AcmeOuter")
 
@@ -312,7 +318,7 @@ class TestRefuseExpired:
 
     @pytest.mark.parametrize("deadline", [_PASSED, math.nan], ids=["passed", "not-a-number"])
     def test_refuses_past_the_deadline_logging_the_guidance(
-        self, switches: RecordingLogger, deadline: float
+        self, switches: CapturedLog, deadline: float
     ) -> None:
         with acting_as(_ALICE, until=deadline):
             acting = Acting.current()

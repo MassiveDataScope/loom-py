@@ -24,7 +24,7 @@ from loom.core.use_case.factory import UseCaseFactory
 from loom.core.use_case.invoker import ApplicationInvoker
 from loom.core.use_case.registry import UseCaseRegistry
 from loom.core.use_case.use_case import UseCase
-from tests.unit.core.bootstrap.kernel.components import LOG, AcmeConfig, AcmePing
+from tests.unit.core.bootstrap.kernel.components import AcmeConfig, AcmePing
 
 
 class AcmeUncompilable(UseCase[Any, None]):
@@ -100,7 +100,7 @@ class TestKernelContainer:
         container = KernelRecipe.container()
         _binds_unbuildable(container)
 
-        kernel = KernelRecipe([AcmePing], LOG).install(container)
+        kernel = KernelRecipe([AcmePing]).install(container)
 
         assert kernel.container is container
         assert set(container.bindings()) == {
@@ -114,12 +114,12 @@ class TestKernelContainer:
         assert kernel.compiler.get_plan(AcmePing) is not None
 
     def test_installing_constructs_one_executor(self, executors: list[UseCaseExecutor]) -> None:
-        kernel = KernelRecipe([AcmePing], LOG).install(KernelRecipe.container())
+        kernel = KernelRecipe([AcmePing]).install(KernelRecipe.container())
 
         assert executors == [kernel.executor]
 
     def test_installing_raises_a_compilation_error_as_is(self) -> None:
-        recipe = KernelRecipe([AcmeUncompilable], LOG)
+        recipe = KernelRecipe([AcmeUncompilable])
         container = KernelRecipe.container()
 
         with pytest.raises(CompilationError, match="AcmeUncompilable.execute"):

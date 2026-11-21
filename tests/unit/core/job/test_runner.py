@@ -22,6 +22,7 @@ from loom.core.job.outcome import (
 from loom.core.job.policy import Backoff, Redelivery, RetryPolicy
 from loom.core.job.runner import JobRunner
 from loom.testing import JobTestData
+from tests.helpers.loggers import logged_events
 
 POLICY = RetryPolicy(Backoff(first_s=4, factor=2, max_s=100, jitter=False), max_attempts=3)
 
@@ -156,11 +157,7 @@ class TestJobRunnerDelivery:
 class TestJobRunnerAbandonmentLog:
     @staticmethod
     def _abandonments(caplog: pytest.LogCaptureFixture) -> list[dict[str, Any]]:
-        return [
-            record.msg
-            for record in caplog.records
-            if isinstance(record.msg, dict) and record.msg.get("event") == "Job abandoned"
-        ]
+        return [entry for entry in logged_events(caplog) if entry["event"] == "Job abandoned"]
 
     async def test_an_abandoned_run_logs_one_warning_naming_the_message_and_why(
         self, caplog: pytest.LogCaptureFixture
@@ -170,19 +167,17 @@ class TestJobRunnerAbandonmentLog:
         await _runner(_raising(ValueError("boom"))).run(delivery)
 
         (logged,) = self._abandonments(caplog)
-        assert logged | {"timestamp": None} == {
+        assert logged == {
             "event": "Job abandoned",
             "level": "warning",
-            "logger": "loom.core.job.runner",
-            "timestamp": None,
-            "job": "AcmeJob",
+            "loom.job": "AcmeJob",
             "queue": delivery.queue,
-            "attempt": 3,
+            "loom.attempt": 3,
             "postponements": 2,
             "reason": "attempts_exhausted",
             "error_type": "ValueError",
             "error_message": "boom",
-            "task_id": delivery.task_id,
+            "loom.task_id": delivery.task_id,
         }
 
     @pytest.mark.parametrize(
@@ -205,7 +200,7 @@ class TestJobRunnerAbandonmentLog:
         )
 
         (logged,) = self._abandonments(caplog)
-        assert (logged["reason"], logged["error_type"], logged["task_id"]) == (
+        assert (logged["reason"], logged["error_type"], logged["loom.task_id"]) == (
             "not_retryable",
             "UnretryableError",
             "m-1",

@@ -33,7 +33,7 @@ from loom.core.use_case.invoker import AppInvoker
 from loom.core.use_case.registry import UseCaseRegistry
 from tests.helpers.delegation import acting_as
 from tests.helpers.jobs import InlineServiceFixture
-from tests.helpers.loggers import RecordingLogger
+from tests.helpers.loggers import CapturedLog
 from tests.helpers.outliving import outlive
 
 from .._lifecycle_doubles import Run
@@ -113,7 +113,7 @@ class TestExplicitSwitch:
         assert await executor.execute(outer, identity=ALICE) == (BOB,) * 3
 
     async def test_it_is_logged_with_subjects_roles_the_use_case_and_the_trace(
-        self, executor: UseCaseExecutor, switches: RecordingLogger
+        self, executor: UseCaseExecutor, switches: CapturedLog
     ) -> None:
         with active_trace_id("acme-trace"):
             await executor.execute(AcmeNests(executor, AcmeWho(), BOB), identity=ALICE)
@@ -134,7 +134,7 @@ class TestExplicitSwitch:
         ]
 
     async def test_a_roles_change_under_the_same_subject_is_a_switch(
-        self, executor: UseCaseExecutor, switches: RecordingLogger
+        self, executor: UseCaseExecutor, switches: CapturedLog
     ) -> None:
         await executor.execute(AcmeNests(executor, AcmeWho(), PROMOTED_ALICE), identity=ALICE)
 
@@ -167,7 +167,7 @@ class TestExplicitSwitch:
             assert await executor.execute(Run(as_the_system_late)) == (BOB,) * 3
 
     async def test_an_invoker_bound_with_for_identity_is_a_logged_switch(
-        self, executor: UseCaseExecutor, switches: RecordingLogger
+        self, executor: UseCaseExecutor, switches: CapturedLog
     ) -> None:
         bound = AppInvoker(BUILDING, executor, cast(UseCaseRegistry, None)).for_identity(BOB)
 
@@ -179,7 +179,7 @@ class TestExplicitSwitch:
         assert (line["from_subject"], line["to_subject"]) == (ALICE.subject, BOB.subject)
 
     async def test_an_execution_scope_acting_as_another_than_the_transport_is_logged(
-        self, switches: RecordingLogger
+        self, switches: CapturedLog
     ) -> None:
         with acting_as(ALICE), ExecutionScope(BOB):
             assert current_caller() is BOB
@@ -208,7 +208,7 @@ class TestExplicitSwitch:
     async def test_acting_as_the_identity_already_acting_is_no_switch(
         self,
         executor: UseCaseExecutor,
-        switches: RecordingLogger,
+        switches: CapturedLog,
         around: Callable[[], AbstractContextManager[object]],
     ) -> None:
         with around():

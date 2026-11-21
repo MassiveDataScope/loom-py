@@ -30,6 +30,7 @@ from loom.core.use_case.invoker import AppInvoker
 from loom.core.use_case.registry import UseCaseRegistry
 from tests.helpers.delegation import acting_as
 from tests.helpers.jobs import InlineServiceFixture
+from tests.helpers.loggers import rendered
 from tests.unit.core.authz._elevation_doubles import FakeSink
 from tests.unit.core.engine._lifecycle_doubles import Body, Log, Run, StubUnitOfWorkFactory
 
@@ -214,7 +215,7 @@ class TestNestedIdentity:
         await executor.execute(parent, identity=ANA)
 
         refusals = [
-            record.getMessage() for record in caplog.records if REFUSED_JOIN in record.getMessage()
+            rendered(record) for record in caplog.records if REFUSED_JOIN in rendered(record)
         ]
         assert refusals
         assert all(BOB.subject not in refusal for refusal in refusals)

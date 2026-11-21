@@ -35,7 +35,7 @@ from tests.helpers.acme_callbacks import AcmePingCallback
 from tests.helpers.aws import OTHER_REGION
 from tests.helpers.aws_island import FakeAwsIsland
 from tests.helpers.composition import composition_project
-from tests.helpers.loggers import RecordingLogger
+from tests.helpers.loggers import CapturedLog
 from tests.unit.core.cache._doubles import SERIALIZED_BACKEND
 
 _CELERY = {"broker_url": "memory://", "result_backend": "cache+memory://"}
@@ -203,15 +203,13 @@ class TestBind:
         assert f"{TASK_CALLBACK_ERROR_PREFIX}.{AcmePingCallback.__qualname__}" in app.tasks
 
     def test_bind_logs_one_policy_line_for_all_its_jobs_as_celery(
-        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+        self, tmp_path: Path, caplog: pytest.LogCaptureFixture
     ) -> None:
-        log = RecordingLogger()
-        monkeypatch.setattr("loom.celery.runtime._log", log)
         adapter = CeleryRuntime(jobs=[_PingJob, _SecondJob])
 
         adapter.mount(_application(tmp_path, {}, adapter))
 
-        (line,) = log.named("Job retry policies")
+        (line,) = CapturedLog(caplog).named("Job retry policies")
         assert line["transport"] == "celery"
         assert [entry["job"] for entry in line["jobs"]] == [
             _PingJob.__qualname__,

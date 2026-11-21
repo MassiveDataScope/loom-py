@@ -32,6 +32,7 @@ from pydantic_ai.toolsets import FunctionToolset  # noqa: E402
 from loom.core.cache import CacheConfig, CachedCalls, cached_calls  # noqa: E402
 from loom.core.cache.wiring import cache_module  # noqa: E402
 from loom.core.di.container import LoomContainer  # noqa: E402
+from tests.helpers.loggers import rendered
 
 from ._doubles import SERIALIZED_BACKEND  # noqa: E402
 from ._toolset_module import AcmeToolsetDoc, CursorTools, SearchTools  # noqa: E402
@@ -108,7 +109,7 @@ class TestAnUnresolvableAnnotation:
             record for record in caplog.records if "CacheCallNotCacheable" in record.getMessage()
         ]
         assert len(warnings) == 1
-        assert "CursorTools.resume" in warnings[0].getMessage()
+        assert "CursorTools.resume" in rendered(warnings[0])
 
     def test_the_cacheable_sibling_still_builds_a_toolset(self, calls: CachedCalls) -> None:
         latest = next(

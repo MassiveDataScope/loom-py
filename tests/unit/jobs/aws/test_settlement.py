@@ -29,6 +29,7 @@ from loom.jobs.aws.settlement import SETTLEMENT_TIMEOUT_S, SQSJobSettlement
 from loom.jobs.aws.sqs import SQSConfig
 from tests.helpers.aws import ACCOUNT, OTHER_REGION
 from tests.helpers.aws_island import FakeAwsIsland
+from tests.helpers.loggers import logged_events
 from tests.helpers.sqs import FakeSqs, queue_url
 
 pytestmark = pytest.mark.timeout(10)
@@ -95,11 +96,7 @@ def _logged(
     caplog: pytest.LogCaptureFixture, event: str | None = None, **fields: Any
 ) -> list[dict[str, Any]]:
     wanted = {"event": event, **fields} if event else fields
-    return [
-        record.msg
-        for record in caplog.records
-        if isinstance(record.msg, dict) and wanted.items() <= record.msg.items()
-    ]
+    return [entry for entry in logged_events(caplog) if wanted.items() <= entry.items()]
 
 
 def _ids(records: list[SQSRecord]) -> list[str]:

@@ -19,6 +19,7 @@ from loom.core.job.job import Job
 from loom.core.job.service import JobService
 from tests.helpers.celery import CeleryBroker
 from tests.helpers.jobs import BROKER, JobsAdapter, job_project
+from tests.helpers.loggers import CapturedLog
 
 _CONFIGURED = {"queue": "reports", "countdown": 5, "priority": 3, "timeout": 60}
 _DECLARED = {"queue": "default", "countdown": 0, "priority": 0, "soft_time_limit": None}
@@ -131,13 +132,11 @@ class TestJobSettings:
         with caplog.at_level("INFO"):
             project.compose(JobsAdapter(_ReportJob))
 
-        lines = [
-            record.getMessage() for record in caplog.records if "retry policies" in str(record.msg)
-        ]
-        assert len(lines) == 1
-        assert "_ReportJob" in lines[0]
-        assert "jobs.<Job>.retry" in lines[0]
-        assert "max_attempts=5 (jobs.<Job>.retry)" in lines[0]
+        [fields] = CapturedLog(caplog).named("Job retry policies")
+        described = str(fields["jobs"])
+        assert "_ReportJob" in described
+        assert "jobs.<Job>.retry" in described
+        assert "max_attempts=5 (jobs.<Job>.retry)" in described
 
     def test_a_retry_that_breaks_the_backoff_fails_the_composition(self, tmp_path: Path) -> None:
         project = job_project(

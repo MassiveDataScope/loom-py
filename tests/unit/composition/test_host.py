@@ -5,6 +5,7 @@ from __future__ import annotations
 import asyncio
 import gc
 import logging
+import traceback
 from collections.abc import AsyncIterator, Awaitable, Callable
 from contextlib import asynccontextmanager
 
@@ -184,7 +185,8 @@ class TestOpening:
             del starting
             gc.collect()
 
-        assert "pool gone" in caplog.text
+        [failure] = [record for record in caplog.records if record.exc_info is not None]
+        assert "pool gone" in "".join(traceback.format_exception(*failure.exc_info))  # type: ignore[misc]
         # Nothing reached the loop's handler: no "exception was never retrieved".
         assert loop_errors == []
 

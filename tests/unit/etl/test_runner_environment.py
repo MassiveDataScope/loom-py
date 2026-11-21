@@ -7,6 +7,8 @@ like ``create_app`` and the Celery worker.
 
 from __future__ import annotations
 
+import json
+import logging
 from pathlib import Path
 from typing import Any
 from unittest.mock import MagicMock, patch
@@ -15,7 +17,7 @@ import pytest
 import yaml
 
 from loom.core.checks import DeployCheckError
-from loom.core.environment import ENVIRONMENT_VARIABLE, Environment
+from loom.core.environment import ENVIRONMENT_VARIABLE
 from loom.etl.runner import ETLRunner
 from tests.helpers.deploy_checks import FailingCheckModule, write_failing_check_module
 
@@ -68,20 +70,16 @@ class TestRunnerEnvironment:
         assert isinstance(runner, ETLRunner)
 
     def test_the_logger_takes_the_environment_of_the_runner(
-        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+        self, tmp_path: Path, capsys: pytest.CaptureFixture[str]
     ) -> None:
-        captured: dict[str, object] = {}
-        monkeypatch.setattr(
-            "loom.core.observability.observability.configure_logging_from_values",
-            lambda **kwargs: captured.update(kwargs),
-        )
         ETLRunner.from_dict(
             _storage(tmp_path),
-            {"log": {"enabled": True, "config": {"level": "INFO"}}},
+            {"log": {"enabled": True, "format": "json", "level": "INFO"}},
             environment="test",
         )
+        logging.getLogger("tests.etl").warning("etl.check_done")
 
-        assert captured["environment"] is Environment.TEST
+        assert json.loads(capsys.readouterr().out)["deployment.environment.name"] == "test"
 
     def test_an_override_variable_reaches_the_storage_config(
         self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch

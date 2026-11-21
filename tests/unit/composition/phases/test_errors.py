@@ -25,7 +25,6 @@ from loom.connections.aws import AwsClients
 from loom.core.bootstrap import BootstrapError
 from loom.core.di import ContainerSealed
 from loom.core.di.container import ResolutionError
-from loom.core.logger import get_logger
 from tests.helpers.composition import Serving
 from tests.unit.composition.phases.components import (
     AcmeJob,
@@ -164,9 +163,7 @@ class TestStartupErrors:
         aws = AwsClients()
         stores = phases.build_stores(project, recipe, aws)
         installers = phases.build_installers(project.config, recipe.discovered.installers)
-        kernel, _sql, _jobs = phases.register(
-            project, recipe, stores, aws, installers, logger=get_logger("tests.acme")
-        )
+        kernel, _sql, _jobs = phases.register(project, recipe, stores, aws, installers)
         analysis = recipe.analysed(kernel.factory.graph)
 
         with pytest.raises(BootstrapError, match="AcmeUnbuildable") as caught:

@@ -2,11 +2,13 @@
 
 from __future__ import annotations
 
+import logging
 from collections.abc import Callable, Iterator
 from typing import Any
 
 import pytest
 
+from loom.core.engine import observation
 from loom.core.engine.compiler import UseCaseCompiler
 from loom.core.engine.executor import UseCaseExecutor
 from loom.core.execution import current_execution
@@ -14,12 +16,12 @@ from loom.core.identity import ANONYMOUS, current_identity
 from loom.core.stores.catalog import DEFAULT_STORE
 from loom.core.stores.uow.coordinator import OrderedCommits
 from loom.core.use_case.factory import UseCaseFactory
+from tests.helpers.loggers import CapturedLog
 
 from ...uow._coordinator_fakes import Ledger
 from .._lifecycle_doubles import Metrics
 from .doubles import (
     JOURNAL,
-    AcmeRecordingLogger,
     AcmeStores,
     McpCalls,
     mcp_resolver,
@@ -43,7 +45,7 @@ def make_executor() -> MakeExecutor:
     """An executor reporting its events to ``JOURNAL`` and logging to a recorder, by default."""
 
     def make(**options: Any) -> UseCaseExecutor:
-        defaults: dict[str, Any] = {"logger": AcmeRecordingLogger(), "metrics": JOURNAL}
+        defaults: dict[str, Any] = {"metrics": JOURNAL}
         return UseCaseExecutor(UseCaseCompiler(), **{**defaults, **options})
 
     return make
@@ -55,8 +57,10 @@ def executor(make_executor: MakeExecutor) -> UseCaseExecutor:
 
 
 @pytest.fixture
-def logger() -> AcmeRecordingLogger:
-    return AcmeRecordingLogger()
+def logger(caplog: pytest.LogCaptureFixture) -> CapturedLog:
+    """What the executor reports through its logger during the test."""
+    caplog.set_level(logging.DEBUG, logger=observation.__name__)
+    return CapturedLog(caplog, observation.__name__)
 
 
 @pytest.fixture

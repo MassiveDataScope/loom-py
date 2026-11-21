@@ -42,6 +42,7 @@ from loom.core.stores.repository import (
     build_repository_registration_module,
 )
 from loom.core.stores.repository.capabilities import Listable, Readable
+from tests.helpers.loggers import rendered
 
 from ._doubles import (
     MEMORY_BACKEND,
@@ -222,7 +223,7 @@ class TestDecoration:
             if "CacheDecoratorAlreadyRegistered" in record.getMessage()
         ]
         assert len(warnings) == 1
-        assert "_TaggingDecorator" in warnings[0].getMessage()
+        assert "_TaggingDecorator" in rendered(warnings[0])
 
     def test_two_aliases_open_two_gateways(self) -> None:
         container = _container(cache_module(_two_aliases()))
@@ -347,7 +348,7 @@ class TestCacheNotConfigured:
 
         warnings = _not_configured_warnings(caplog)
         assert len(warnings) == 1
-        assert "CachedWidgetRepository" in warnings[0].getMessage()
+        assert "CachedWidgetRepository" in rendered(warnings[0])
         assert isinstance(container.resolve_repo(AcmeCacheWidget), CachedWidgetRepository)
 
     def test_resolving_after_validate_warns_no_further(
@@ -472,7 +473,7 @@ class TestCachedCallsBinding:
         assert cached_calls(container) is user_calls
         warnings = _already_registered_warnings(caplog)
         assert len(warnings) == 1
-        assert "_UserCalls" in warnings[0].getMessage()
+        assert "_UserCalls" in rendered(warnings[0])
 
     def test_a_container_holding_a_decorator_still_gets_the_configured_binder(self) -> None:
         """The decorator block returns early; the binder must be bound before it."""
@@ -553,7 +554,7 @@ class TestTheBinderReportsAnAbandonedLoad:
 
         records = _abandoned_warnings(caplog)
         assert len(records) == 1
-        assert "upstream down" in records[0].getMessage()
+        assert "upstream down" in rendered(records[0])
 
 
 def _abandoned_warnings(caplog: pytest.LogCaptureFixture) -> list[logging.LogRecord]:

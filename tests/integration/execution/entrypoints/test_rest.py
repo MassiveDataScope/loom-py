@@ -33,7 +33,7 @@ from loom.rest.compiler import RestInterfaceCompiler
 from loom.rest.dispatcher import RestUseCaseDispatcher
 from loom.rest.fastapi.router import mount_interfaces
 from tests.helpers.delegation import acting_as, assert_new_delegation
-from tests.helpers.loggers import RecordingLogger
+from tests.helpers.loggers import CapturedLog
 
 from .doubles import ALICE, BOB, CALLERS, AcmeAuthenticator, AcmeGreeting, AcmeRoutes, as_caller
 
@@ -109,7 +109,7 @@ class TestAuthenticationMiddleware:
         assert_new_delegation(seen["deadline"], before, window)
 
     def test_a_dependency_replacing_the_request_caller_is_a_logged_switch(
-        self, switches: RecordingLogger
+        self, switches: CapturedLog
     ) -> None:
         async def as_bob() -> AsyncIterator[None]:
             with acting_as(BOB):

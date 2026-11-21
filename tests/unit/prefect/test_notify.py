@@ -15,9 +15,14 @@ from loom.prefect.notify import (
     SnsNotifier,
     build_notifiers,
 )
-from loom.prefect.notify import _sns as sns_module
 from tests.helpers.aws import ACCOUNT, OTHER_REGION, moto_client
 from tests.helpers.aws_island import FakeAwsIsland
+from tests.helpers.loggers import CapturedLog
+
+
+def _publish_failures(caplog: pytest.LogCaptureFixture) -> list[dict[str, Any]]:
+    return CapturedLog(caplog).named("SNS publish failed")
+
 
 _TOPIC = f"arn:aws:sns:{OTHER_REGION}:{ACCOUNT}:etl-failures"
 
@@ -198,17 +203,13 @@ class TestSnsNotifier:
         assert "x" * 59_985 + "ValueError: end\n" in message
         assert len(message) < 60_100
 
-    def test_swallows_and_logs_a_client_error(self, monkeypatch: pytest.MonkeyPatch) -> None:
-        log = MagicMock()
-        monkeypatch.setattr(sns_module, "_log", log)
+    def test_swallows_and_logs_a_client_error(self, caplog: pytest.LogCaptureFixture) -> None:
         client = MagicMock()
         client.publish.side_effect = ClientError(
             {"Error": {"Code": "AuthorizationError"}}, "Publish"
         )
         SnsNotifier(topic_arn=_TOPIC, client=client).notify(_make_event(state="Failed"))
-        log.warning.assert_called_once_with(
-            "SNS publish failed", flow="etl-x", run="run-1", state="Failed", exc_info=True
-        )
+        assert _publish_failures(caplog) == [{"flow": "etl-x", "run": "run-1", "state": "Failed"}]
 
     def test_default_client_uses_the_topic_region(self, island: FakeAwsIsland) -> None:
         SnsNotifier(topic_arn=_TOPIC)
@@ -256,13 +257,8 @@ class TestSnsNotifierOnMoto:
         assert "Open in Prefect: https://prefect/runs/1" in published["Message"]
 
     def test_a_publish_to_a_missing_topic_is_swallowed_and_logged(
-        self, mocked_aws: None, monkeypatch: pytest.MonkeyPatch
+        self, mocked_aws: None, caplog: pytest.LogCaptureFixture
     ) -> None:
-        log = MagicMock()
-        monkeypatch.setattr(sns_module, "_log", log)
-
         SnsNotifier(topic_arn=_TOPIC).notify(_make_event(state="Failed"))
 
-        log.warning.assert_called_once_with(
-            "SNS publish failed", flow="etl-x", run="run-1", state="Failed", exc_info=True
-        )
+        assert _publish_failures(caplog) == [{"flow": "etl-x", "run": "run-1", "state": "Failed"}]

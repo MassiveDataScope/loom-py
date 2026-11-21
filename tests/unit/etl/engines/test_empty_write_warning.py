@@ -14,6 +14,7 @@ from loom.etl.engines._write_policy import _WritePolicy
 from loom.etl.engines.polars._writer import PolarsTargetWriter
 from loom.etl.storage._locator import TableLocation
 from loom.etl.storage.routing import PathTarget
+from tests.helpers.loggers import logged_text
 from tests.helpers.version_limited_extras import require_pyspark
 
 _WARNING_EVENT = "write_produced_no_rows"
@@ -55,7 +56,7 @@ class TestMaterializeChecked:
         with caplog.at_level(logging.WARNING):
             writer._materialize_checked(empty, target, streaming=False)
 
-        emitted = " ".join(record.getMessage() for record in caplog.records)
+        emitted = logged_text(caplog)
         assert _WARNING_EVENT in emitted
         assert "silver.players" in emitted
 
@@ -67,7 +68,7 @@ class TestMaterializeChecked:
         with caplog.at_level(logging.WARNING):
             writer._materialize_checked(populated, target, streaming=False)
 
-        assert _WARNING_EVENT not in " ".join(r.getMessage() for r in caplog.records)
+        assert _WARNING_EVENT not in logged_text(caplog)
 
     def test_the_frame_is_returned_unchanged(
         self, writer: PolarsTargetWriter, target: PathTarget

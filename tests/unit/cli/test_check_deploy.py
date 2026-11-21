@@ -185,7 +185,7 @@ class TestCheckDeploy:
     def test_skipping_app_rest_runs_the_rest_of_the_checks_without_fastapi(
         self, tmp_path: Path
     ) -> None:
-        observability = {"log": {"config": {"renderer": "console"}}}
+        observability = {"log": {"format": "xml"}}
         config = _write(
             tmp_path / "app.yaml", {"app": _UNAUTHENTICATED_APP, "observability": observability}
         )
@@ -194,8 +194,8 @@ class TestCheckDeploy:
             "check", "--deploy", "--skip", "app.rest", str(config), blocked=("fastapi",)
         )
 
-        assert result.returncode == 0, result.stderr
-        assert "loom.logger.W001" in result.stdout
+        assert result.returncode == 1, result.stderr
+        assert "loom.logger.E001" in result.stdout
         assert "skipped: app.rest (left out by the process)" in result.stdout
 
     def test_an_undeclared_app_rest_is_skipped_and_never_imported(self, tmp_path: Path) -> None:
@@ -215,7 +215,7 @@ class TestCheckDeploy:
         assert "loom.rest matches no check set" in result.output
 
     def test_the_report_lists_the_paths_it_checked(self, tmp_path: Path) -> None:
-        observability = {"log": {"config": {"renderer": "console"}}}
+        observability = {"log": {"format": "xml"}}
         config = _write(tmp_path / "app.yaml", {"app": _SAFE_APP, "observability": observability})
 
         result = runner.invoke(app, ["check", "--deploy", str(config)])
@@ -263,12 +263,12 @@ class TestCheckDeploy:
         self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
     ) -> None:
         config = _write(tmp_path / "app.yaml", {"app": _SAFE_APP})
-        monkeypatch.setenv("LOOM__OBSERVABILITY__LOG__CONFIG__RENDERER", "console")
+        monkeypatch.setenv("LOOM__OBSERVABILITY__LOG__LEVEL", "LOUD")
 
         result = runner.invoke(app, ["check", "--deploy", str(config)])
 
-        assert result.exit_code == 0, result.output
-        assert "loom.logger.W001" in result.output
+        assert result.exit_code == 1, result.output
+        assert "loom.logger.E002" in result.output
 
     def test_skip_leaves_out_an_area_for_a_process_serving_no_http(self, tmp_path: Path) -> None:
         config = _write(
@@ -282,18 +282,18 @@ class TestCheckDeploy:
         assert "skipped: app.rest (left out by the process)" in result.output
         assert "loom.rest.E001" not in result.output
 
-    def test_a_secret_placeholder_in_the_logger_config_does_not_break_the_check(
+    def test_a_secret_placeholder_in_the_log_settings_does_not_break_the_check(
         self,
         tmp_path: Path,
     ) -> None:
-        logger_config = {"renderer": "console", "level": "${secrets:/logging/level}"}
-        document = {"app": _SAFE_APP, "observability": {"log": {"config": logger_config}}}
+        log_settings = {"format": "xml", "level": "${secrets:/logging/level}"}
+        document = {"app": _SAFE_APP, "observability": {"log": log_settings}}
         config = _write(tmp_path / "app.yaml", document)
 
         result = runner.invoke(app, ["check", "--deploy", str(config)])
 
-        assert result.exit_code == 0, result.output
-        assert "loom.logger.W001" in result.output
+        assert result.exit_code == 1, result.output
+        assert "loom.logger.E001" in result.output
 
     @pytest.mark.parametrize("code_path", ["${oc.env:CODE_DIR}", 5, ["src"]])
     def test_a_code_path_that_is_not_a_literal_path_fails(

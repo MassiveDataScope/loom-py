@@ -10,13 +10,13 @@ from typing import Any, cast
 
 import anyio
 import pytest
-from structlog.contextvars import get_contextvars
 
 from tests.helpers.version_limited_extras import require_bytewax
 
 require_bytewax()
 
 from loom.core.errors import RuleViolationError  # noqa: E402
+from loom.core.logger import current_log_fields  # noqa: E402
 from loom.core.observability.event import EventKind, LifecycleEvent, Scope  # noqa: E402
 from loom.core.observability.observability import Observability  # noqa: E402
 from loom.streaming.bytewax._error_boundary import ErrorBoundary  # noqa: E402
@@ -285,7 +285,7 @@ class _ContextAwareRecordStep(RecordStep[AcmePayload, AcmePayload]):
 
     def execute(self, message: Message[StreamPayload], **kwargs: object) -> AcmePayload:
         del kwargs
-        self.context = dict(get_contextvars())
+        self.context = dict(current_log_fields())
         return _message_payload(message)
 
 

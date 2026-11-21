@@ -41,6 +41,7 @@ from loom.stores.sqlalchemy.schema import compile_all, get_compiled
 from loom.stores.sqlalchemy.session_manager import SessionManager
 from loom.stores.sqlalchemy.uow import SQLAlchemyUnitOfWork
 from tests.helpers.jobs import SQS_URL, EmailJob, SQSClient, sqs_service
+from tests.helpers.loggers import logged_events
 from tests.unit.core.cache._doubles import CountingCacheStore
 
 pytestmark = pytest.mark.timeout(30)
@@ -591,9 +592,5 @@ class TestStorePostCommit:
         with pytest.raises(StoresNotCommittedError):
             await stores.executor.execute(use_case)
 
-        (fields,) = [
-            record.msg
-            for record in caplog.records
-            if isinstance(record.msg, dict) and record.msg.get("event") == _NEVER_RAN
-        ]
+        (fields,) = [entry for entry in logged_events(caplog) if entry["event"] == _NEVER_RAN]
         assert (fields["job_name"], fields["task_id"]) == ("EmailJob", "task-1")
