@@ -21,7 +21,7 @@ Usage::
 
 from __future__ import annotations
 
-from collections.abc import Callable
+from collections.abc import Callable, Sequence
 from dataclasses import replace
 from typing import Any, Generic, TypeVar
 
@@ -30,7 +30,7 @@ import msgspec
 from loom.core.errors import Conflict
 from loom.core.model import BaseModel
 from loom.core.model.convert import to_struct
-from loom.core.model.introspection import get_projections
+from loom.core.model.introspection import business_key_of, get_projections
 from loom.core.projection.loaders import (
     build_memory_loader,
     find_relation_name_for_loader,
@@ -41,7 +41,14 @@ from loom.core.projection.plan import (
     build_projection_plan,
     execute_projection_plan,
 )
-from loom.core.stores.repository import Creatable, Deletable, Readable, Updatable
+from loom.core.stores.repository import (
+    BulkCreatable,
+    Creatable,
+    Deletable,
+    OnConflict,
+    Readable,
+    Updatable,
+)
 from loom.core.stores.repository.record import (
     refuse_key_change,
     single_id_attribute,
@@ -51,7 +58,9 @@ from loom.core.stores.repository.record import (
 T = TypeVar("T", bound=msgspec.Struct)
 
 
-class InMemoryRepository(Readable[T], Creatable[T], Updatable[T], Deletable[T], Generic[T]):
+class InMemoryRepository(
+    Readable[T], Creatable[T], BulkCreatable[T], Updatable[T], Deletable[T], Generic[T]
+):
     """Generic in-memory repository for testing any ``msgspec.Struct`` model.
 
     Stores entities in a plain dict keyed by their id field value.  Provides
@@ -64,7 +73,11 @@ class InMemoryRepository(Readable[T], Creatable[T], Updatable[T], Deletable[T], 
     its business key, else the command's when it carries one, else an internal
     auto-increment counter's; a ``creator`` fills the id itself. Creating an id the
     store already holds raises ``Conflict``, as every real repository does.
-    It declares the key capabilities (``Readable``, ``Creatable``,
+    ``create_many`` follows the port and the SQLAlchemy adapter: with ``ERROR`` a
+    repeated or existing id raises ``Conflict`` and nothing is stored; with ``IGNORE``
+    a row is skipped when its business key (its id when the model declares none)
+    is already stored or came earlier in the batch.
+    It declares the key capabilities (``Readable``, ``Creatable``, ``BulkCreatable``,
     ``Updatable``, ``Deletable``); ``list_paginated`` is a convenience that
     returns every entity, not the ``Listable`` contract.
 
@@ -155,11 +168,7 @@ class InMemoryRepository(Readable[T], Creatable[T], Updatable[T], Deletable[T], 
         Raises:
             Conflict: When the entity's id is already stored.
         """
-        if self._creator is not None:
-            entity = self._creator(data, self._next_id)
-            self._next_id += 1
-        else:
-            entity = self._auto_create(data)
+        entity = self._build_entity(data)
         id_val = getattr(entity, self._id_field)
         if id_val in self._store:
             raise Conflict(
@@ -167,6 +176,37 @@ class InMemoryRepository(Readable[T], Creatable[T], Updatable[T], Deletable[T], 
             )
         self._store[id_val] = entity
         return entity
+
+    async def create_many(
+        self, data: Sequence[Any], *, on_conflict: OnConflict = OnConflict.ERROR
+    ) -> tuple[T, ...]:
+        """Create and store the entities of *data* in one step.
+
+        Args:
+            data: Command or payload objects, as :meth:`create` takes.
+            on_conflict: ``ERROR`` raises on an id that is stored or repeated;
+                ``IGNORE`` skips the rows whose business key (id when the
+                model declares none) is stored or came earlier in *data*.
+
+        Returns:
+            The stored entities in input order: every one with ``ERROR``, only
+            the inserted ones with ``IGNORE``.
+
+        Raises:
+            Conflict: With ``ERROR``, when an id already exists; nothing is stored.
+        """
+        entities = [self._build_entity(item) for item in data]
+        if on_conflict is OnConflict.IGNORE:
+            entities = self._without_known_identities(entities)
+        ids = [getattr(entity, self._id_field) for entity in entities]
+        if on_conflict is OnConflict.ERROR and (
+            len(set(ids)) != len(ids) or any(id_val in self._store for id_val in ids)
+        ):
+            raise Conflict(
+                f"{self._entity_type.__name__} create_many hit an id that already exists."
+            )
+        self._store.update(zip(ids, entities, strict=True))
+        return tuple(entities)
 
     async def update(self, obj_id: Any, data: Any) -> T | None:
         """Update the entity at ``obj_id`` with fields from ``data``.
@@ -242,6 +282,30 @@ class InMemoryRepository(Readable[T], Creatable[T], Updatable[T], Deletable[T], 
             self._apply_projection_values(entity, projection_values.get(i))
             for i, entity in enumerate(entities)
         ]
+
+    def _build_entity(self, data: Any) -> T:
+        if self._creator is None:
+            return self._auto_create(data)
+        entity = self._creator(data, self._next_id)
+        self._next_id += 1
+        return entity
+
+    def _identity_of(self, entity: T) -> Any:
+        """Return what ``IGNORE`` compares: the business key, else the id."""
+        key = business_key_of(self._entity_type)
+        if key is None:
+            return getattr(entity, self._id_field)
+        return tuple(getattr(entity, name) for name in key.fields)
+
+    def _without_known_identities(self, entities: list[T]) -> list[T]:
+        known = {self._identity_of(stored) for stored in self._store.values()}
+        fresh = []
+        for entity in entities:
+            identity = self._identity_of(entity)
+            if identity not in known:
+                known.add(identity)
+                fresh.append(entity)
+        return fresh
 
     def _auto_create(self, cmd: Any) -> T:
         """Derive entity from command attributes and auto-increment id."""

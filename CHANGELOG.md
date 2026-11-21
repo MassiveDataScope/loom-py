@@ -2494,7 +2494,7 @@
 
 ## 🐛 Fixes
 
-- **model:** a model that derives its id from a business key stores the NFC form of its `str` business-key fields, the form the id hashes. `José` written in NFC and NFD gave one id but two column values, so `create_many(IGNORE)` on SQLAlchemy missed its `ON CONFLICT` target and raised `Conflict` on the primary key, and UNIQUE no longer meant one row per identity. The model normalises at construction (a value already in NFC is not written), and a repository create from a mapping does the same through `DerivedKey.complete`.
+- **model:** a model that derives its id from a business key stores the NFC form of its `str` business-key fields, the form the id hashes. `José` written in NFC and NFD gave one id but two column values, so `create_many(IGNORE)` on SQLAlchemy missed its `ON CONFLICT` target and raised `Conflict` on the primary key, and UNIQUE no longer meant one row per identity. The model normalises at construction (a value already in NFC is not written), and a repository create from a mapping does the same through `DerivedKey.complete`. `InMemoryRepository` now implements `BulkCreatable`: `create_many` raises `Conflict` and stores nothing on an existing or repeated id (`ERROR`), and with `IGNORE` skips by business key, else by primary key, as the SQLAlchemy adapter does.
 
 # 🚀 Releases 2.1.3 to 9.0.0
 

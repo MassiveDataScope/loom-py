@@ -42,6 +42,27 @@ class TestContractBulkCreate:
 
         assert await repository.count() == 0
 
+    async def test_create_many_with_a_duplicate_stores_no_row_of_the_batch(
+        self, case: BackendCase, repository: Any
+    ) -> None:
+        require(case, BulkCreatable, Readable)
+
+        with pytest.raises(Conflict):
+            await repository.create_many([SEED[0], SEED[1], SEED[0]])
+
+        assert [await repository.get_by_id(row.id) for row in SEED[:2]] == [None, None]
+
+    async def test_create_many_with_an_existing_key_stores_no_row_of_the_batch(
+        self, case: BackendCase, repository: Any
+    ) -> None:
+        require(case, BulkCreatable, Readable)
+        await repository.create(SEED[1])
+
+        with pytest.raises(Conflict):
+            await repository.create_many([SEED[0], SEED[1]])
+
+        assert await repository.get_by_id(SEED[0].id) is None
+
     async def test_ignore_skips_existing_and_repeated_keys_in_input_order(
         self, case: BackendCase, repository: Any
     ) -> None:

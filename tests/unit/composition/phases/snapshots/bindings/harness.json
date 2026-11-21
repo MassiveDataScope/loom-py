@@ -80,6 +80,11 @@
       "resolved": "UseCaseRegistry",
       "scope": "APPLICATION"
     },
+    "loom.core.stores.repository.capabilities.BulkCreatable[tests.unit.composition.phases.components.AcmeRecord]": {
+      "provider": "Override.install.<locals>.<lambda>",
+      "resolved": "InMemoryRepository",
+      "scope": "APPLICATION"
+    },
     "loom.core.stores.repository.capabilities.Creatable[tests.unit.composition.phases.components.AcmeRecord]": {
       "provider": "Override.install.<locals>.<lambda>",
       "resolved": "InMemoryRepository",
