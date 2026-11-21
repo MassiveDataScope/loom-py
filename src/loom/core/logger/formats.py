@@ -118,6 +118,9 @@ class JsonFormatter(logging.Formatter):
         return json.dumps(entry, default=str)
 
 
+_CONTINUATION: Final = "  | "
+
+
 def _one_line(text: str) -> str:
     return text.replace("\r", "\\r").replace("\n", "\\n")
 
@@ -126,7 +129,8 @@ class TextFormatter(logging.Formatter):
     """A readable line: time, level, logger, the message, then ``key=value`` fields.
 
     A line break in the message or in a value is written escaped, so a value
-    cannot forge a second record. From ERROR up the traceback follows the line.
+    cannot forge a second record. From ERROR up the traceback follows the line,
+    each of its rows prefixed so that the record's first line is the only unindented one.
     """
 
     def __init__(self) -> None:
@@ -142,7 +146,9 @@ class TextFormatter(logging.Formatter):
         if fields:
             line = f"{line} {fields}"
         stacktrace = _stacktrace(self, record)
-        return line if stacktrace is None else f"{line}\n{stacktrace}"
+        if stacktrace is None:
+            return line
+        return "\n".join([line, *(f"{_CONTINUATION}{row}" for row in stacktrace.splitlines())])
 
 
 def _stdout_handler(formatter: logging.Formatter) -> logging.Handler:

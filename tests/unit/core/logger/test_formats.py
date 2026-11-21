@@ -103,8 +103,23 @@ class TestTextFormatter:
     def test_an_error_traceback_follows_the_line(self) -> None:
         line = TextFormatter().format(_failure(logging.ERROR))
 
-        assert "Traceback" in line
-        assert line.rstrip().endswith("ValueError: amount below zero")
+        assert "  | Traceback" in line
+        assert line.rstrip().endswith("  | ValueError: amount below zero")
+
+    def test_a_forged_record_inside_an_exception_message_stays_indented_or_escaped(self) -> None:
+        forged = "boom\n2026-01-01 ERROR fake"
+        try:
+            raise ValueError(forged)
+        except ValueError:
+            record = _record(logging.ERROR)
+            record.exc_info = sys.exc_info()
+
+        rows = TextFormatter().format(record).split("\n")
+
+        assert [row for row in rows if not row.startswith("  | ")] == [rows[0]]
+        assert "exception.message=boom\\n2026-01-01 ERROR fake" in rows[0]
+        assert "  | ValueError: boom" in rows
+        assert "  | 2026-01-01 ERROR fake" in rows
 
     def test_below_error_there_is_no_traceback_but_the_type_and_message(self) -> None:
         line = TextFormatter().format(_failure(logging.WARNING))
