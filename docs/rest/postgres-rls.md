@@ -857,6 +857,29 @@ file or directory, else the default config directory, and holds the models of th
 named: those `app.packages` scans and the store serves. A store that is not declared
 with the SQLAlchemy backend is a `ConfigError` naming its section.
 
+Its engine dials what the runtime engine dials, `connect_args` (SSL,
+`server_settings`) and the standard timeouts included, through
+{class}`~loom.stores.sqlalchemy.DatabaseDial`:
+
+```python
+from sqlalchemy.pool import NullPool
+
+from loom.stores.sqlalchemy import DatabaseDial
+from loom.stores.sqlalchemy.alembic import load_store_schema
+
+schema = load_store_schema(store="default")
+dial = DatabaseDial.from_config(schema.database)
+engine = dial.with_url(MIGRATOR_URL).create_async_engine(poolclass=NullPool)
+```
+
+`with_url` swaps the address for another database user's and keeps the store's
+arguments; leave it out to dial the store's own URL. With a configuration from
+{func}`~loom.stores.sqlalchemy.migrations.alembic_config`,
+{func}`~loom.stores.sqlalchemy.migrations.migration_dial` returns the same dial for the
+URL the configuration recorded, as loom's environment uses it. The environment loom
+ships dials that way: a revision runs with the store's `connect_args` and its
+`read_timeout`, so a statement longer than `read_timeout` fails.
+
 Generate and apply structural revisions with the migrator URL:
 
 ```python

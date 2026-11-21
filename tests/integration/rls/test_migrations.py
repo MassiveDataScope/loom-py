@@ -10,9 +10,11 @@ from __future__ import annotations
 import asyncio
 import os
 import sys
+from dataclasses import replace
 from pathlib import Path
 from typing import Any
 
+import msgspec
 import pytest
 from alembic import command
 from alembic.config import Config
@@ -21,6 +23,7 @@ from sqlalchemy.exc import DBAPIError
 
 from loom.core.config import ConfigError
 from loom.core.environment import CONFIG_DIR_VARIABLE
+from loom.core.model.redaction import RedactedMap
 from loom.stores.sqlalchemy.alembic import StoreSchema
 from loom.stores.sqlalchemy.migrations import (
     ENV_TEMPLATE_PATH,
@@ -78,6 +81,25 @@ def upgrade() -> None:
 
 def downgrade() -> None:
     op.execute("UPDATE {schema}.notes SET body = ''")
+'''
+
+_MIGRATION_APPLICATION_NAME = "loom-migrations"
+
+_RECORD_APPLICATION_NAME_REVISION = '''"""Write the session's application name into every note."""
+
+from alembic import op
+
+revision = "d0002"
+down_revision = None
+data_migration = True
+
+
+def upgrade() -> None:
+    op.execute("UPDATE {schema}.notes SET body = current_setting('application_name')")
+
+
+def downgrade() -> None:
+    pass
 '''
 
 _MISPLACED_DATA_REVISION = '''"""A data revision dropped into the structural tree by mistake."""
@@ -332,6 +354,33 @@ class TestMigrations:
         assert await scalar(database.bypass, reviewed) == 2
         versions = "SELECT version_num FROM notes_data.alembic_version_data"
         assert await scalar(database.superuser, versions) == "d0001"
+
+    async def test_the_stores_connect_args_reach_the_migration_engine(
+        self, scoped_database: BootstrapFactory, tmp_path: Path
+    ) -> None:
+        database = await scoped_database("notes_dial")
+        trees = await _upgraded_trees(database, notes, tmp_path, schema="notes_dial")
+        server_settings = {"server_settings": {"application_name": _MIGRATION_APPLICATION_NAME}}
+        trees.application = replace(
+            trees.application,
+            database=msgspec.structs.replace(
+                trees.application.database, connect_args=RedactedMap(server_settings)
+            ),
+        )
+        await execute(
+            database.bypass,
+            "INSERT INTO notes_dial.notes (owner_id, editor, body) VALUES ('u1', 'e', 'a')",
+        )
+        trees.write_revision(
+            trees.data,
+            "d0002_application_name",
+            _RECORD_APPLICATION_NAME_REVISION.format(schema="notes_dial"),
+        )
+
+        await asyncio.to_thread(command.upgrade, trees.config(trees.data, database.bypass), "head")
+
+        recorded = "SELECT string_agg(body, ',') FROM notes_dial.notes"
+        assert await scalar(database.bypass, recorded) == _MIGRATION_APPLICATION_NAME
 
     async def test_a_structural_revision_in_the_data_tree_is_rejected(
         self, scoped_database: BootstrapFactory, tmp_path: Path

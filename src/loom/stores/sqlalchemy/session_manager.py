@@ -3,7 +3,8 @@ from __future__ import annotations
 import logging
 from collections.abc import AsyncIterator, Mapping
 from contextlib import asynccontextmanager
-from typing import Any, cast
+from dataclasses import dataclass, replace
+from typing import Any, Self, cast
 
 from sqlalchemy import MetaData, event
 from sqlalchemy.engine import URL, make_url
@@ -18,7 +19,7 @@ from sqlalchemy.orm import Session
 from sqlalchemy.pool import Pool, QueuePool
 
 from loom.core.identity import Acting
-from loom.core.model.redaction import reveal_for_driver
+from loom.core.model.redaction import Dsn, RedactedMap
 from loom.core.stores.catalog import StoreKey
 from loom.core.stores.database import DatabaseConfig
 from loom.core.stores.profile import PoolMetricsSink, RuntimeProfile
@@ -296,6 +297,65 @@ def bare_url(url: URL) -> str:
     ).render_as_string()
 
 
+@dataclass(frozen=True, slots=True)
+class DatabaseDial:
+    """What the driver of a relational store dials: its URL and its ``connect()`` arguments.
+
+    The one owner of both for every engine of a store: the session manager's
+    and a migration environment's take them from here. Secrets stay hidden:
+    ``repr`` masks the URL's password and the secret-named arguments, and only
+    :meth:`create_async_engine` reveals them, to the driver.
+
+    Example::
+
+        engine = DatabaseDial.from_config(config).create_async_engine(poolclass=NullPool)
+    """
+
+    url: Dsn
+    client_options: RedactedMap
+
+    @classmethod
+    def from_config(cls, config: DatabaseConfig) -> Self:
+        """The dial of a store section.
+
+        ``username`` and ``password``, when set, win over the URL's
+        credentials; :attr:`client_options` are the section's
+        :meth:`~loom.core.stores.database.DatabaseConfig.client_options`,
+        ``connect_args`` plus the standard timeouts.
+        """
+        url = make_url(config.url.reveal())
+        if config.username is not None:
+            url = url.set(username=config.username)
+        if config.password is not None:
+            url = url.set(password=config.password.reveal())
+        return cls(
+            url=Dsn(url.render_as_string(hide_password=False)),
+            client_options=RedactedMap(config.client_options()),
+        )
+
+    def with_url(self, url: str) -> Self:
+        """This dial at another address, as another database user of the same store connects."""
+        return replace(self, url=Dsn(url))
+
+    def default_pool_class(self) -> type[Pool]:
+        """The pool class the URL's dialect takes when the caller names none."""
+        url = make_url(self.url.reveal())
+        dialect = cast("type[DefaultDialect]", url.get_dialect())
+        return dialect.get_pool_class(url)
+
+    def create_async_engine(self, **engine_kwargs: Any) -> AsyncEngine:
+        """Create an async engine that dials :attr:`url` passing :attr:`client_options`.
+
+        Args:
+            **engine_kwargs: Further ``create_async_engine`` keywords, such as
+                ``poolclass``; ``connect_args`` belongs to the dial and is
+                refused with a ``TypeError``.
+        """
+        return create_async_engine(
+            self.url.reveal(), connect_args=self.client_options.reveal(), **engine_kwargs
+        )
+
+
 def build_session_manager(
     config: DatabaseConfig,
     profile: RuntimeProfile,
@@ -306,10 +366,11 @@ def build_session_manager(
 ) -> SessionManager:
     """Build the session manager of a relational store section for one entry point.
 
-    The single constructor every runtime entry point uses: each pool key the
-    section declares wins, the rest come from *profile*. A dialect whose
-    default pool holds no queue (in-memory SQLite) takes neither size, overflow
-    nor timeout, so a profile never breaks a test or a local run.
+    The single constructor every runtime entry point uses: the engine dials
+    :meth:`DatabaseDial.from_config`, each pool key the section declares
+    wins, the rest come from *profile*. A dialect whose default pool holds no
+    queue (in-memory SQLite) takes neither size, overflow nor timeout, so a
+    profile never breaks a test or a local run.
 
     Args:
         config: The decoded store section.
@@ -324,8 +385,9 @@ def build_session_manager(
     Returns:
         A session manager whose engine has not opened any connection yet.
     """
+    dial = DatabaseDial.from_config(config)
     pool = config.pool.resolve(profile)
-    pool_class = manager_kwargs.get("poolclass") or _default_pool_class(str(config.url))
+    pool_class = manager_kwargs.get("poolclass") or dial.default_pool_class()
     queued = issubclass(pool_class, QueuePool)
     if not queued:
         _log.debug("PoolSizingOmitted", extra={"reason": "dialect pool holds no queue"})
@@ -335,38 +397,20 @@ def build_session_manager(
             pool_class, cast(PoolMetricsSink, pool_metrics), database
         )
     manager = SessionManager(
-        _engine_url(config),
+        dial.url.reveal(),
         echo=config.echo,
         pool_pre_ping=pool.pre_ping,
         pool_size=pool.size if queued else None,
         max_overflow=pool.max_overflow if queued else None,
         pool_timeout=pool.timeout_s if queued else None,
         pool_recycle=pool.recycle_s,
-        connect_args=reveal_for_driver(config.client_options()),
+        connect_args=dial.client_options.reveal(),
         store=database,
         **manager_kwargs,
     )
     if instrumented:
         cast(PoolMetricsSink, pool_metrics).register_engine(manager.engine.sync_engine, database)
     return manager
-
-
-def _engine_url(config: DatabaseConfig) -> str:
-    """Return the URL the driver dials. Explicit credentials win over the address."""
-    parsed = make_url(config.url.reveal())
-    if config.username is None and config.password is None:
-        return parsed.render_as_string(hide_password=False)
-    parsed = parsed.set(
-        username=config.username if config.username is not None else parsed.username,
-        password=config.password.reveal() if config.password is not None else parsed.password,
-    )
-    return parsed.render_as_string(hide_password=False)
-
-
-def _default_pool_class(url: str) -> type[Pool]:
-    parsed = make_url(url)
-    dialect = cast("type[DefaultDialect]", parsed.get_dialect())
-    return dialect.get_pool_class(parsed)
 
 
 def _register_trace_id_listener(async_engine: AsyncEngine) -> None:
