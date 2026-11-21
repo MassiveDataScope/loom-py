@@ -531,11 +531,12 @@ class TestServerSetKeyFields:
         ("annotation", "spec"),
         [
             (datetime, CreatedAtField()),
+            (datetime | None, CreatedAtField()),
             (datetime, UpdatedAtField()),
             (str, ColumnField(server_default=ServerDefault.UUID4)),
             (int, ColumnField(autoincrement=True)),
         ],
-        ids=["created_at", "updated_at", "server-default", "autoincrement"],
+        ids=["created_at", "optional-created_at", "updated_at", "server-default", "autoincrement"],
     )
     def test_a_field_the_store_sets_after_the_insert_cannot_feed_the_key(
         self, annotation: type, spec: Any

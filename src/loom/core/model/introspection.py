@@ -600,10 +600,14 @@ def derived_key_of(cls: type) -> DerivedKey | None:
 
 
 def _checked_derived_key(cls: type) -> DerivedKey | None:
-    key = business_key_of(cls)
     derived = {name: info for name, info in get_column_fields(cls).items() if info.field.derived}
     if not derived:
+        business_key_of(cls)
         return None
+    declared = getattr(cls, "__business_key__", None)
+    if isinstance(declared, BusinessKey):
+        _refuse_server_set_fields(cls, declared)
+    key = business_key_of(cls)
     prefix = f"{cls.__name__}: derived key"
     if len(derived) > 1:
         raise ValueError(f"{prefix} is declared on {', '.join(derived)}; only one field derives")
@@ -616,7 +620,6 @@ def _checked_derived_key(cls: type) -> DerivedKey | None:
         raise ValueError(f"{prefix} {name!r} needs a __business_key__ to derive from")
     if name in key.fields:
         raise ValueError(f"{prefix} {name!r} cannot be part of its own business key")
-    _refuse_server_set_fields(cls, key)
     return DerivedKey(cls.__name__, name, key, cast(Any, info.field.derived))
 
 
@@ -626,7 +629,10 @@ def _refuse_server_set_fields(cls: type, key: BusinessKey) -> None:
 
     fields = get_column_fields(cls)
     for name in key.fields:
-        field = fields[name].field
+        info = fields.get(name)
+        if info is None:
+            continue
+        field = info.field
         if (
             field.server_default is None
             and field.server_onupdate is None
