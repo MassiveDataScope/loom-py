@@ -69,7 +69,7 @@ infrastructure (DB, cache, transport) without breaking business logic.
 | `src/loom/etl/compiler` | Compile-time validation and execution plan builder. |
 | `src/loom/etl/runner` | `ETLRunner` entry point and YAML config loader. |
 | `src/loom/etl/checkpoint` | Step-level checkpoint store for incremental re-runs. |
-| `src/loom/etl/observability` | Run/step observers, OTEL sink, structlog sink, and execution records. |
+| `src/loom/etl/observability` | Run/step observers, OTEL sink, log sink, and execution records. |
 | `src/loom/etl/engines/polars` | Polars + Delta Lake reader, writer, and schema aligner. |
 | `src/loom/etl/engines/spark` | Spark + Delta reader, writer, and schema aligner. |
 | `src/loom/etl/testing` | `PolarsStepRunner`, `SparkStepRunner`, `ETLScenario`, and test stubs. |

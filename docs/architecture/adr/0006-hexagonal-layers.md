@@ -207,7 +207,7 @@ everywhere. Three levels are judged separately.
 - **Accepted coupling.** These are decisions, not debt:
   - msgspec is loom's model language (models, commands, configuration).
     Abstracting it would add nothing.
-  - structlog and OpenTelemetry are cross-cutting, behind `loom.core.logger`
+  - the standard `logging` module and OpenTelemetry are cross-cutting; `loom.core.logger` holds the event and field vocabulary
     and `loom.core.observability`.
   - contextvars and asyncio are the Python runtime.
 
