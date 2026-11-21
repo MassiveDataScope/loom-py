@@ -358,8 +358,8 @@ class TestMigrations:
     async def test_the_stores_connect_args_reach_the_migration_engine(
         self, scoped_database: BootstrapFactory, tmp_path: Path
     ) -> None:
-        database = await scoped_database("notes_dial")
-        trees = await _upgraded_trees(database, notes, tmp_path, schema="notes_dial")
+        database = await scoped_database("notes_options")
+        trees = await _upgraded_trees(database, notes, tmp_path, schema="notes_options")
         server_settings = {"server_settings": {"application_name": _MIGRATION_APPLICATION_NAME}}
         trees.application = replace(
             trees.application,
@@ -369,17 +369,17 @@ class TestMigrations:
         )
         await execute(
             database.bypass,
-            "INSERT INTO notes_dial.notes (owner_id, editor, body) VALUES ('u1', 'e', 'a')",
+            "INSERT INTO notes_options.notes (owner_id, editor, body) VALUES ('u1', 'e', 'a')",
         )
         trees.write_revision(
             trees.data,
             "d0002_application_name",
-            _RECORD_APPLICATION_NAME_REVISION.format(schema="notes_dial"),
+            _RECORD_APPLICATION_NAME_REVISION.format(schema="notes_options"),
         )
 
         await asyncio.to_thread(command.upgrade, trees.config(trees.data, database.bypass), "head")
 
-        recorded = "SELECT string_agg(body, ',') FROM notes_dial.notes"
+        recorded = "SELECT string_agg(body, ',') FROM notes_options.notes"
         assert await scalar(database.bypass, recorded) == _MIGRATION_APPLICATION_NAME
 
     async def test_a_structural_revision_in_the_data_tree_is_rejected(

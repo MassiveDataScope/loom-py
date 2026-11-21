@@ -298,8 +298,8 @@ def bare_url(url: URL) -> str:
 
 
 @dataclass(frozen=True, slots=True)
-class DatabaseDial:
-    """What the driver of a relational store dials: its URL and its ``connect()`` arguments.
+class EngineSpec:
+    """What a relational store's engine connects to: its URL and the driver's arguments.
 
     The one owner of both for every engine of a store: the session manager's
     and a migration environment's take them from here. Secrets stay hidden:
@@ -308,7 +308,7 @@ class DatabaseDial:
 
     Example::
 
-        engine = DatabaseDial.from_config(config).create_async_engine(poolclass=NullPool)
+        engine = EngineSpec.from_config(config).create_async_engine(poolclass=NullPool)
     """
 
     url: Dsn
@@ -316,7 +316,7 @@ class DatabaseDial:
 
     @classmethod
     def from_config(cls, config: DatabaseConfig) -> Self:
-        """The dial of a store section.
+        """The spec of a store section.
 
         ``username`` and ``password``, when set, win over the URL's
         credentials; :attr:`client_options` are the section's
@@ -334,7 +334,7 @@ class DatabaseDial:
         )
 
     def with_url(self, url: str) -> Self:
-        """This dial at another address, as another database user of the same store connects."""
+        """This spec at another address, as another database user of the same store connects."""
         return replace(self, url=Dsn(url))
 
     def default_pool_class(self) -> type[Pool]:
@@ -344,11 +344,11 @@ class DatabaseDial:
         return dialect.get_pool_class(url)
 
     def create_async_engine(self, **engine_kwargs: Any) -> AsyncEngine:
-        """Create an async engine that dials :attr:`url` passing :attr:`client_options`.
+        """Create an async engine that connects to :attr:`url` with :attr:`client_options`.
 
         Args:
             **engine_kwargs: Further ``create_async_engine`` keywords, such as
-                ``poolclass``; ``connect_args`` belongs to the dial and is
+                ``poolclass``; ``connect_args`` belongs to the spec and is
                 refused with a ``TypeError``.
         """
         return create_async_engine(
@@ -366,8 +366,8 @@ def build_session_manager(
 ) -> SessionManager:
     """Build the session manager of a relational store section for one entry point.
 
-    The single constructor every runtime entry point uses: the engine dials
-    :meth:`DatabaseDial.from_config`, each pool key the section declares
+    The single constructor every runtime entry point uses: the engine connects
+    as :meth:`EngineSpec.from_config` says, each pool key the section declares
     wins, the rest come from *profile*. A dialect whose default pool holds no
     queue (in-memory SQLite) takes neither size, overflow nor timeout, so a
     profile never breaks a test or a local run.
@@ -385,9 +385,9 @@ def build_session_manager(
     Returns:
         A session manager whose engine has not opened any connection yet.
     """
-    dial = DatabaseDial.from_config(config)
+    spec = EngineSpec.from_config(config)
     pool = config.pool.resolve(profile)
-    pool_class = manager_kwargs.get("poolclass") or dial.default_pool_class()
+    pool_class = manager_kwargs.get("poolclass") or spec.default_pool_class()
     queued = issubclass(pool_class, QueuePool)
     if not queued:
         _log.debug("PoolSizingOmitted", extra={"reason": "dialect pool holds no queue"})
@@ -397,14 +397,14 @@ def build_session_manager(
             pool_class, cast(PoolMetricsSink, pool_metrics), database
         )
     manager = SessionManager(
-        dial.url.reveal(),
+        spec.url.reveal(),
         echo=config.echo,
         pool_pre_ping=pool.pre_ping,
         pool_size=pool.size if queued else None,
         max_overflow=pool.max_overflow if queued else None,
         pool_timeout=pool.timeout_s if queued else None,
         pool_recycle=pool.recycle_s,
-        connect_args=dial.client_options.reveal(),
+        connect_args=spec.client_options.reveal(),
         store=database,
         **manager_kwargs,
     )

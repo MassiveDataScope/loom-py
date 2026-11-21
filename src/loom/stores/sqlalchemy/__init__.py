@@ -13,7 +13,7 @@ from loom.stores.sqlalchemy.registry import (
 )
 from loom.stores.sqlalchemy.repository import SQLAlchemyRepository, with_session_scope
 from loom.stores.sqlalchemy.session_manager import (
-    DatabaseDial,
+    EngineSpec,
     SessionManager,
     build_session_manager,
 )
@@ -25,7 +25,7 @@ __all__ = [
     "AuditableModel",
     "Base",
     "BaseModel",
-    "DatabaseDial",
+    "EngineSpec",
     "IdentityMixin",
     "Projection",
     "SQLAlchemyRepository",

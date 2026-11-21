@@ -15,7 +15,7 @@ from loom.core.stores.plugin import StoreWiring
 from loom.core.stores.profile import SERVER_PROFILE
 from loom.stores.sqlalchemy.plugin import SQLAlchemyStorePlugin
 from loom.stores.sqlalchemy.schema import get_compiled
-from loom.stores.sqlalchemy.session_manager import DatabaseDial
+from loom.stores.sqlalchemy.session_manager import EngineSpec
 from tests.helpers.persistence import build_backend
 
 
@@ -37,7 +37,7 @@ def _queued(
     **schema: object,
 ) -> StoreWiring:
     """Build a file-SQLite backend whose pool is a queue, as Postgres is."""
-    monkeypatch.setattr(DatabaseDial, "default_pool_class", lambda _dial: QueuePool)
+    monkeypatch.setattr(EngineSpec, "default_pool_class", lambda _dial: QueuePool)
     wiring = _wiring(f"sqlite+aiosqlite:///{path}", *models, **schema)
     wiring.prepare_models(models)
     return wiring

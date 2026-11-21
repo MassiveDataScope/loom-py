@@ -1,6 +1,6 @@
 """A store's ``connect_args`` reach asyncpg through the runtime engine.
 
-The migrations environment dials with the same arguments; its test lives with
+The migrations environment connects with the same arguments; its test lives with
 the other migration runs, in ``tests/integration/rls/test_migrations.py``.
 """
 
