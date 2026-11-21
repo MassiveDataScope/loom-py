@@ -69,7 +69,11 @@ from loom.core.stores.repository import (
     build_page_result,
 )
 from loom.core.stores.repository.cursor import require_cursor_sort
-from loom.core.stores.repository.record import RecordLayout, single_id_attribute
+from loom.core.stores.repository.record import (
+    creation_values,
+    refuse_key_change,
+    single_id_attribute,
+)
 from loom.stores.mongo.ids import IdPolicy, Uuid4IdPolicy
 from loom.stores.mongo.query_compiler import MongoFilter, MongoQueryCompiler, MongoSort
 from loom.stores.mongo.values import to_storage_datetime, to_storage_value
@@ -475,6 +479,7 @@ class MongoRepository(
             for name, value in self._to_internal(data).items()
             if value is not None and name != self._id_attr
         }
+        refuse_key_change(self._model, changes)
         changes.update(_stamp(self._onupdate_fields))
         if changes:
             document = await self._collection.find_one_and_update(
@@ -642,7 +647,7 @@ class MongoRepository(
         Every field that is not ``msgspec.UNSET`` is included, defaults too.
         """
         values = msgspec.to_builtins(
-            RecordLayout.from_struct(type(data)).to_values(data), builtin_types=_NATIVE_TYPES
+            creation_values(self._model, data), builtin_types=_NATIVE_TYPES
         )
         return self._stored_columns(cast(dict[str, Any], values))
 

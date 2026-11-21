@@ -19,11 +19,21 @@ from dataclasses import dataclass
 from datetime import datetime
 from enum import StrEnum
 from typing import Any, cast
+from uuid import UUID
 
 import pytest
 
 from loom.core.command import Command
-from loom.core.model import BaseModel, ColumnField, DateTime, String
+from loom.core.model import (
+    BaseModel,
+    BusinessKey,
+    ColumnField,
+    DateTime,
+    KeyHash,
+    String,
+    get_column_fields,
+    get_table_name,
+)
 from loom.core.stores.catalog import DEFAULT_STORE
 from loom.core.stores.repository import CursorCodec, FilterGroup, FilterOp, FilterSpec, SortSpec
 from loom.core.stores.repository.registration import capabilities_of
@@ -82,6 +92,50 @@ class UpdateOrder(Command, frozen=True):
     note: str | None = None
     tags: list[str] = []
     priority: int = 0
+
+
+LISTING_NAMESPACE = UUID("6ba7b811-9dad-11d1-80b4-00c04fd430c8")
+
+
+class AcmeContractListing(BaseModel):
+    """A listing whose id is derived from the portal it is published on and its reference."""
+
+    __tablename__ = "contract_listings"
+    __business_key__ = BusinessKey("portal", "external_id")
+
+    id: str = ColumnField(primary_key=True, derived=KeyHash.uuid5(LISTING_NAMESPACE), length=36)
+    portal: str = ColumnField(length=32)
+    external_id: str = ColumnField(length=32)
+    title: str | None = ColumnField(nullable=True, default=None)
+
+
+class AcmeContractSlot(BaseModel):
+    """A booking slot unique per portal and slot number, under a random id."""
+
+    __tablename__ = "contract_slots"
+    __business_key__ = BusinessKey("portal", "slot")
+
+    id: str = ColumnField(primary_key=True, length=36)
+    portal: str = ColumnField(length=32)
+    slot: int = ColumnField()
+
+
+class CreateListing(Command, frozen=True):
+    portal: str
+    external_id: str
+    title: str | None = None
+    id: str | None = None
+
+
+class UpdateListing(Command, frozen=True):
+    title: str | None = None
+    portal: str | None = None
+
+
+class CreateSlot(Command, frozen=True):
+    id: str
+    portal: str
+    slot: int
 
 
 def _day(day: int) -> datetime:
@@ -197,16 +251,22 @@ class BackendCase:
         fail_commit: Arms a failure that surfaces from ``commit``, not the
             body. Called inside the unit of work after the first write.
         fixtures: Fixtures the backend's store needs while the repository is open.
+        enforces_unique: Whether the store enforces the business key of a model that does
+            not derive its id, with a UNIQUE constraint.
+        refuses_unhashed_business_key: Whether the store refuses such a model when its
+            repository is built, because it could not enforce the key.
     """
 
     name: str
-    repository_factory: Callable[[], AbstractAsyncContextManager[Any]]
+    repository_factory: Callable[..., AbstractAsyncContextManager[Any]]
     model: type[AcmeContractOrder]
     capabilities: frozenset[type]
     transactions: bool
     unit_of_work: Callable[[Any], UnitOfWork] | None = None
     fail_commit: Callable[[Any], Awaitable[None]] | None = None
     fixtures: tuple[str, ...] = ()
+    enforces_unique: bool = False
+    refuses_unhashed_business_key: bool = False
 
     def open_unit_of_work(self, repository: Any) -> UnitOfWork:
         """Return a unit of work bound to *repository*'s store, or skip the test without one."""
@@ -221,8 +281,10 @@ class BackendCase:
 
 
 @asynccontextmanager
-async def _sqlalchemy_repository() -> AsyncIterator[SQLAlchemyRepository[AcmeContractOrder, int]]:
-    compile_all(AcmeContractOrder)
+async def _sqlalchemy_repository(
+    model: type[BaseModel] = AcmeContractOrder,
+) -> AsyncIterator[SQLAlchemyRepository[Any, Any]]:
+    compile_all(model)
     # ``None`` pool options: SQLAlchemy picks StaticPool for ``:memory:``.
     manager = SessionManager(
         "sqlite+aiosqlite:///:memory:",
@@ -233,14 +295,14 @@ async def _sqlalchemy_repository() -> AsyncIterator[SQLAlchemyRepository[AcmeCon
         connect_args={},
         store=DEFAULT_STORE,
     )
-    compiled = get_compiled(AcmeContractOrder)
+    compiled = get_compiled(model)
     assert compiled is not None
     try:
         async with manager.engine.begin() as connection:
             await connection.run_sync(compiled.metadata.create_all)
         yield SQLAlchemyRepository(
             session_manager=manager,
-            model=AcmeContractOrder,
+            model=model,
             cursor_codec=CursorCodec(signing="ephemeral"),
         )
     finally:
@@ -248,19 +310,29 @@ async def _sqlalchemy_repository() -> AsyncIterator[SQLAlchemyRepository[AcmeCon
 
 
 @asynccontextmanager
-async def _dynamodb_repository() -> AsyncIterator[DynamoDBRepository[AcmeContractOrder, int]]:
-    table = MotoTable.create(moto_client("dynamodb"), _TABLE)
-    yield DynamoDBRepository(client=table.client, table_name=_TABLE, model=AcmeContractOrder)
+async def _dynamodb_repository(
+    model: type[BaseModel] = AcmeContractOrder,
+) -> AsyncIterator[DynamoDBRepository[Any, Any]]:
+    key_type = "S" if _key_type_of(model) is str else "N"
+    table_name = get_table_name(model)
+    table = MotoTable.create(moto_client("dynamodb"), table_name, key_type)
+    yield DynamoDBRepository(client=table.client, table_name=table_name, model=model)
+
+
+def _key_type_of(model: type[BaseModel]) -> type:
+    return next(
+        info.python_type for info in get_column_fields(model).values() if info.field.primary_key
+    )
 
 
 @asynccontextmanager
-async def _mongo_repository() -> AsyncIterator[MongoRepository[AcmeContractOrder, int]]:
+async def _mongo_repository(
+    model: type[BaseModel] = AcmeContractOrder,
+) -> AsyncIterator[MongoRepository[Any, Any]]:
     # ``AcmeContractOrder.id`` is autoincrement, which the mongo backend refuses at boot;
     # the repository itself only maps the key, and the seed ids are explicit.
-    collection = FakeMongoClient().collection(_TABLE)
-    yield MongoRepository(
-        AcmeContractOrder, collection, cursor_codec=CursorCodec(signing="ephemeral")
-    )
+    collection = FakeMongoClient().collection(get_table_name(model))
+    yield MongoRepository(model, collection, cursor_codec=CursorCodec(signing="ephemeral"))
 
 
 # Repository -> client for the transactional mongo case. A weak key keeps the
@@ -274,13 +346,13 @@ def mongo_client_of(repository: Any) -> FakeMongoClient:
 
 
 @asynccontextmanager
-async def _mongo_transactional_repository() -> AsyncIterator[
-    MongoRepository[AcmeContractOrder, int]
-]:
+async def _mongo_transactional_repository(
+    model: type[BaseModel] = AcmeContractOrder,
+) -> AsyncIterator[MongoRepository[Any, Any]]:
     client = FakeMongoClient()
-    collection = client.collection(_TABLE)
+    collection = client.collection(get_table_name(model))
     repository = MongoRepository(
-        AcmeContractOrder,
+        model,
         collection,
         session_provider=MongoSessions(cast(Any, client), store=DEFAULT_STORE),
         cursor_codec=CursorCodec(signing="ephemeral"),
@@ -302,8 +374,10 @@ async def _fail_mongo_commit(repository: Any) -> None:
 
 
 @asynccontextmanager
-async def _in_memory_repository() -> AsyncIterator[InMemoryRepository[AcmeContractOrder]]:
-    yield InMemoryRepository(AcmeContractOrder)
+async def _in_memory_repository(
+    model: type[BaseModel] = AcmeContractOrder,
+) -> AsyncIterator[InMemoryRepository[Any]]:
+    yield InMemoryRepository(model)
 
 
 def _in_memory_case() -> BackendCase:
@@ -325,6 +399,7 @@ def _sqlalchemy_case() -> BackendCase:
         transactions=True,
         unit_of_work=lambda repository: SQLAlchemyUnitOfWork(repository.session_manager),
         fail_commit=_fail_sqlalchemy_commit,
+        enforces_unique=True,
     )
 
 
@@ -337,6 +412,7 @@ def _dynamodb_case() -> BackendCase:
         transactions=False,
         unit_of_work=lambda _repository: DynamoDBUnitOfWork(),
         fixtures=("mocked_aws",),
+        refuses_unhashed_business_key=True,
     )
 
 
@@ -387,10 +463,20 @@ def case(request: pytest.FixtureRequest) -> BackendCase:
 
 
 @pytest.fixture
-async def repository(case: BackendCase, request: pytest.FixtureRequest) -> AsyncIterator[Any]:
+def open_repository(
+    case: BackendCase, request: pytest.FixtureRequest
+) -> Callable[..., AbstractAsyncContextManager[Any]]:
+    """Open a repository of a given model over a fresh empty store, as ``repository`` does."""
     for name in case.fixtures:
         request.getfixturevalue(name)
-    async with case.repository_factory() as repo:
+    return case.repository_factory
+
+
+@pytest.fixture
+async def repository(
+    open_repository: Callable[..., AbstractAsyncContextManager[Any]],
+) -> AsyncIterator[Any]:
+    async with open_repository() as repo:
         yield repo
 
 

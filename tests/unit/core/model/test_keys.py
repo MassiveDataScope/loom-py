@@ -20,6 +20,7 @@ from loom.core.model import (
     BusinessKey,
     ColumnField,
     KeyHash,
+    LoomStructMeta,
     business_key_of,
     declared_unique,
     derived_key_of,
@@ -45,8 +46,8 @@ class AcmeListing(BaseModel):
     __business_key__ = BusinessKey("portal", "external_id")
 
     id: str = ColumnField(primary_key=True, derived=UUID5)
-    portal: str
-    external_id: str
+    portal: str = ColumnField()
+    external_id: str = ColumnField()
     title: str | None = None
 
 
@@ -60,14 +61,12 @@ class AcmeSlot(BaseModel):
     __business_key__ = BusinessKey("portal", "slot")
 
     id: int = ColumnField(primary_key=True, autoincrement=True)
-    portal: str
-    slot: int
+    portal: str = ColumnField()
+    slot: int = ColumnField()
 
 
 def _model(**attributes: Any) -> type[BaseModel]:
-    return type(BaseModel)(
-        "AcmeDraft", (BaseModel,), {"__tablename__": "acme_drafts", **attributes}
-    )
+    return LoomStructMeta("AcmeDraft", (BaseModel,), {"__tablename__": "acme_drafts", **attributes})
 
 
 _ISO_PLUS_TWO = timezone(timedelta(hours=2))

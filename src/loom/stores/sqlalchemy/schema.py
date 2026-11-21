@@ -57,6 +57,7 @@ from loom.core.model.introspection import (
     declared_partition,
     declared_privileges,
     declared_unique,
+    derived_key_of,
     extract_model_from_hint,
     get_column_fields,
     get_id_attribute,
@@ -385,6 +386,7 @@ def _declared_constraints(struct_cls: type, table_name: str) -> list[Constraint 
     check on an existing table, and changing a predicate, are written by hand in
     a revision, and ``check`` does not report them as drift.
     """
+    derived_key_of(struct_cls)
     constraints: list[Constraint | Index] = [
         UniqueConstraint(*columns) for columns in declared_unique(struct_cls)
     ]

@@ -16,7 +16,7 @@ import loom.connections.mongo.client as mongo_island
 import loom.stores.mongo.plugin as backend_module
 from loom.core.config import ConfigContext, ConfigError
 from loom.core.di.container import LoomContainer
-from loom.core.model import BaseModel, ColumnField
+from loom.core.model import BaseModel, ColumnField, KeyHash
 from loom.core.stores import StoreWiring, resolve_store_plugin
 from loom.core.stores.catalog import StoreKey
 from loom.core.stores.profile import SERVER_PROFILE, WORKER_PROFILE, RuntimeProfile
@@ -50,6 +50,14 @@ except ConfigError as exc:
 else:
     raise SystemExit("resolve_store_plugin('mongo') did not fail without pymongo")
 """
+
+
+class AcmeMongoDerived(BaseModel):
+    """Derives its key but declares no business key to derive it from."""
+
+    __tablename__ = "derived"
+
+    id: str = ColumnField(primary_key=True, derived=KeyHash.sha256())
 
 
 class AcmeMongoTicket(BaseModel):
@@ -252,6 +260,15 @@ class TestMongoClientOptions:
 
         with pytest.raises(ConfigError, match=r"AcmeMongoTicket\.id .*int"):
             wiring.prepare_models((Article, AcmeMongoTicket))
+
+    def test_prepare_models_rejects_a_derived_key_without_a_business_key(
+        self,
+        monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        wiring = _wiring(monkeypatch, FakeMongoClient(), _SECTION, (AcmeMongoDerived,))
+
+        with pytest.raises(ValueError, match="AcmeMongoDerived: derived key 'id' needs"):
+            wiring.prepare_models((AcmeMongoDerived,))
 
     def test_prepare_models_accepts_models_with_a_client_or_generated_key(
         self,

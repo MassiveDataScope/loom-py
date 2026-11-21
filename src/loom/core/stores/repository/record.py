@@ -2,12 +2,13 @@
 
 from __future__ import annotations
 
+from collections.abc import Iterable
 from typing import Any, ClassVar
 
 import msgspec
 
 from loom.core.config import ConfigError
-from loom.core.model.introspection import get_id_attributes
+from loom.core.model.introspection import derived_key_of, get_id_attributes
 
 
 class RecordLayout:
@@ -59,6 +60,41 @@ class RecordLayout:
         if self._tag is not None:
             values[self._tag[0]] = self._tag[1]
         return values
+
+
+def with_derived_key(model: type, values: dict[str, Any]) -> dict[str, Any]:
+    """Return *values* with the id *model* derives from its business key.
+
+    The one place a repository fills a derived id: every create path passes
+    its values through here. A model that derives no key gets *values* back.
+
+    Raises:
+        BoundaryValidationError: If *values* carries an id other than the
+            derived one, or lacks a business-key field.
+    """
+    derived = derived_key_of(model)
+    return values if derived is None else derived.complete(values)
+
+
+def creation_values(model: type, row: msgspec.Struct) -> dict[str, Any]:
+    """Return the values a repository persists when it creates *model* from *row*.
+
+    These are :meth:`RecordLayout.to_values` of the row, with the derived id
+    filled in by :func:`with_derived_key`.
+    """
+    return with_derived_key(model, RecordLayout.from_struct(type(row)).to_values(row))
+
+
+def refuse_key_change(model: type, written: Iterable[str]) -> None:
+    """Refuse an update of *model* that writes one of the *written* field names of a derived key.
+
+    Raises:
+        BoundaryValidationError: If *model* derives its id and *written* names
+            a business-key field.
+    """
+    derived = derived_key_of(model)
+    if derived is not None:
+        derived.refuse_change(written)
 
 
 def single_id_attribute(model: type, *, why_single: str) -> str:

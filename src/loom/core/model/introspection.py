@@ -6,7 +6,6 @@ from dataclasses import dataclass, replace
 from datetime import date, datetime, time
 from decimal import Decimal
 from enum import Enum
-from functools import cache
 from types import UnionType
 from typing import (
     Annotated,
@@ -545,14 +544,23 @@ def declared_unique(cls: type) -> tuple[tuple[str, ...], ...]:
     return (*declared, key.fields)
 
 
-@cache
+_BUSINESS_KEYS: dict[type, BusinessKey | None] = {}
+_DERIVED_KEYS: dict[type, DerivedKey | None] = {}
+
+
 def business_key_of(cls: type) -> BusinessKey | None:
-    """The business key declared with ``__business_key__``, checked against the columns.
+    """The business key declared with ``__business_key__``, checked against the columns once.
 
     Raises:
         ValueError: If the declaration is not a ``BusinessKey``, or names an
             unknown or nullable field, or one whose type has no canonical form.
     """
+    if cls not in _BUSINESS_KEYS:
+        _BUSINESS_KEYS[cls] = _checked_business_key(cls)
+    return _BUSINESS_KEYS[cls]
+
+
+def _checked_business_key(cls: type) -> BusinessKey | None:
     key = getattr(cls, "__business_key__", None)
     if key is None:
         return None
@@ -574,17 +582,23 @@ def business_key_of(cls: type) -> BusinessKey | None:
     return key
 
 
-@cache
 def derived_key_of(cls: type) -> DerivedKey | None:
     """The primary key a model derives from its business key, or ``None`` when it derives none.
 
-    Checks the declared business key too, as :func:`business_key_of` does.
+    Checks the declared business key too, as :func:`business_key_of` does, and
+    builds the key's readers once per model.
 
     Raises:
         ValueError: If ``derived=`` is not on the single ``str`` primary-key
             field, the model declares no ``__business_key__``, or the key
             contains the derived field.
     """
+    if cls not in _DERIVED_KEYS:
+        _DERIVED_KEYS[cls] = _checked_derived_key(cls)
+    return _DERIVED_KEYS[cls]
+
+
+def _checked_derived_key(cls: type) -> DerivedKey | None:
     key = business_key_of(cls)
     derived = {name: info for name, info in get_column_fields(cls).items() if info.field.derived}
     if not derived:

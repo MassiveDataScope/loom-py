@@ -20,7 +20,7 @@ from loom.connections.mongo.client import build_async_mongo_client
 from loom.core.config import ConfigContext
 from loom.core.connections.mongo import MongoConnection, MongoPool
 from loom.core.di.container import LoomContainer
-from loom.core.model import BaseModel
+from loom.core.model import BaseModel, derived_key_of
 from loom.core.model.types import NonNegativeInt, PositiveInt
 from loom.core.stores.catalog import StoreCapabilities, StoreKey, StoreSpec, store_binding
 from loom.core.stores.database import PoolConfig
@@ -173,9 +173,10 @@ def _with_sessions(
 
 
 def _prepare_models(models: Sequence[type[BaseModel]]) -> None:
-    """Reject, naming the model, any primary key Mongo cannot serve."""
+    """Reject, naming the model, a primary key Mongo cannot serve or an invalid key declaration."""
     for model in models:
         validate_id_field(model)
+        derived_key_of(model)
 
 
 async def _readiness(client: AsyncMongoClient[Any]) -> bool:

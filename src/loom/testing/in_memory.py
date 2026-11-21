@@ -42,7 +42,11 @@ from loom.core.projection.plan import (
     execute_projection_plan,
 )
 from loom.core.stores.repository import Creatable, Deletable, Readable, Updatable
-from loom.core.stores.repository.record import single_id_attribute
+from loom.core.stores.repository.record import (
+    refuse_key_change,
+    single_id_attribute,
+    with_derived_key,
+)
 
 T = TypeVar("T", bound=msgspec.Struct)
 
@@ -56,8 +60,9 @@ class InMemoryRepository(Readable[T], Creatable[T], Updatable[T], Deletable[T], 
 
     The ``create`` method derives entity fields from the command automatically
     when no ``creator`` callable is provided: fields present on the command
-    are copied to the entity, and the id field is the command's when it carries
-    one and an internal auto-increment counter's otherwise. Creating an id the
+    are copied to the entity, and the id field is the one the model derives from
+    its business key, else the command's when it carries one, else an internal
+    auto-increment counter's; a ``creator`` fills the id itself. Creating an id the
     store already holds raises ``Conflict``, as every real repository does.
     It declares the key capabilities (``Readable``, ``Creatable``,
     ``Updatable``, ``Deletable``); ``list_paginated`` is a convenience that
@@ -182,9 +187,13 @@ class InMemoryRepository(Readable[T], Creatable[T], Updatable[T], Deletable[T], 
             return None
         current = msgspec.structs.asdict(entity)
         updates = data if isinstance(data, dict) else _sent_values(data)
-        for k, v in updates.items():
-            if v is not None and k in current and k != self._id_field:
-                current[k] = v
+        changes = {
+            k: v
+            for k, v in updates.items()
+            if v is not None and k in current and k != self._id_field
+        }
+        refuse_key_change(self._entity_type, changes)
+        current.update(changes)
         updated = to_struct(self._entity_type, current)
         self._store[obj_id] = updated
         return updated
@@ -241,6 +250,7 @@ class InMemoryRepository(Readable[T], Creatable[T], Updatable[T], Deletable[T], 
         for f_name in entity_fields:
             if hasattr(cmd, f_name):
                 data[f_name] = getattr(cmd, f_name)
+        data = with_derived_key(self._entity_type, data)
         if data.get(self._id_field) is None:
             data[self._id_field] = self._next_id
         self._next_id += 1

@@ -19,7 +19,10 @@ from loom.core.stores.profile import StorePluginContext
 from loom.stores.dynamodb.registry import (
     build_dynamodb_repository_registration_module,
 )
-from loom.stores.dynamodb.repository import DynamoDBRepository
+from loom.stores.dynamodb.repository import (
+    DynamoDBRepository,
+    refuse_business_key_without_hash,
+)
 from loom.stores.dynamodb.uow import DynamoDBUnitOfWorkFactory
 
 _READY_TABLE_STATUSES = frozenset({"ACTIVE", "UPDATING"})
@@ -99,12 +102,19 @@ class DynamoDBStorePlugin:
         executor = _ReopenableThreads(dynamo_cfg.pool.size)
         return StoreWiring(
             uow_factory=DynamoDBUnitOfWorkFactory(),
+            prepare_models=_prepare_models,
             repo_registration_module=build_dynamodb_repository_registration_module(
                 client, dynamo_cfg.table, models, store=spec.key, executor=executor
             ),
             lifespan_init=lambda: _lifespan(executor),
             readiness=lambda: _readiness(client, dynamo_cfg.table, executor),
         )
+
+
+def _prepare_models(models: Sequence[type[BaseModel]]) -> None:
+    """Reject, naming the model, any business key DynamoDB cannot keep unique."""
+    for model in models:
+        refuse_business_key_without_hash(model)
 
 
 class _ReopenableThreads(Executor):

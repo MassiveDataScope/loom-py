@@ -24,11 +24,14 @@ from typing import Any, ClassVar, Generic, cast
 import msgspec
 
 from loom.core.concurrency import run_in_executor
+from loom.core.config import ConfigError
 from loom.core.connections.aws import aws_error_code
 from loom.core.errors import Conflict
 from loom.core.logger import get_logger
 from loom.core.model.convert import to_struct
 from loom.core.model.introspection import (
+    business_key_of,
+    derived_key_of,
     get_column_fields,
     get_table_name,
 )
@@ -43,7 +46,11 @@ from loom.core.stores.repository import (
     Readable,
     Updatable,
 )
-from loom.core.stores.repository.record import RecordLayout, single_id_attribute
+from loom.core.stores.repository.record import (
+    creation_values,
+    refuse_key_change,
+    single_id_attribute,
+)
 from loom.core.stores.uow.coordinator import Participant
 from loom.core.stores.uow.scope import InvocationScope, current_scope
 
@@ -83,7 +90,8 @@ class DynamoDBRepository(
             event loop's default executor.
 
     Raises:
-        ConfigError: If the model's primary key is composite.
+        ConfigError: If the model's primary key is composite, or it declares a
+            business key without deriving its primary key from it.
     """
 
     backend_name: ClassVar[str] = "dynamodb"
@@ -97,6 +105,7 @@ class DynamoDBRepository(
         )
         from botocore.exceptions import ClientError  # type: ignore[import-untyped]
 
+        refuse_business_key_without_hash(model)
         self._client = client
         self._executor = executor
         self._table_name = table_name
@@ -211,6 +220,7 @@ class DynamoDBRepository(
             return None
         changes = self._to_internal(data)
         changes.pop(self._id_attr, None)
+        refuse_key_change(self._model, changes)
         merged = {**self._decode_item(existing), **changes}
         try:
             await self._write(
@@ -337,7 +347,7 @@ class DynamoDBRepository(
         """
         return cast(
             dict[str, Any],
-            msgspec.to_builtins(RecordLayout.from_struct(type(data)).to_values(data)),
+            msgspec.to_builtins(creation_values(self._model, data)),
         )
 
     def _to_internal(self, data: msgspec.Struct) -> dict[str, Any]:
@@ -390,6 +400,23 @@ class DynamoDBRepository(
         stores it, so a key such as a ``UUID`` matches its stored form.
         """
         return {self._id_attr: self._encode_value(msgspec.to_builtins(obj_id))}
+
+
+def refuse_business_key_without_hash(model: type) -> None:
+    """Refuse a model whose business key DynamoDB could not keep unique.
+
+    Only the primary key is unique in DynamoDB, so a ``BusinessKey`` needs a
+    ``KeyHash`` on the primary key to be enforced.
+
+    Raises:
+        ConfigError: If the model declares a business key and derives no id from it.
+    """
+    if business_key_of(model) is not None and derived_key_of(model) is None:
+        raise ConfigError(
+            f"{model.__qualname__} declares a business key, but DynamoDB only enforces "
+            "its primary key; derive the key with ColumnField(primary_key=True, "
+            "derived=KeyHash...)"
+        )
 
 
 def _floats_to_decimal(value: Any) -> Any:
