@@ -25,6 +25,7 @@ from typing import Any
 
 from fastapi import FastAPI
 from fastapi.testclient import TestClient
+from starlette.types import ASGIApp, Receive, Scope, Send
 
 from loom.composition.application import Application
 from loom.composition.project import AppConfig, Project
@@ -33,6 +34,7 @@ from loom.connections.aws import AwsClients
 from loom.core.config import ConfigContext
 from loom.core.di.container import LoomContainer
 from loom.core.environment import resolve_environment
+from loom.core.job.service import JobService
 from loom.core.observability.config import ObservabilityConfig
 from loom.core.observability.observability import Observability
 from loom.core.stores import SERVER_PROFILE
@@ -41,6 +43,24 @@ from loom.rest.fastapi.app import create_fastapi_app
 from loom.rest.model import RestInterface
 from loom.testing.golden import _ErrorProxy
 from loom.testing.overrides import Override
+
+
+class _JobsIdleAfterRequest:
+    """ASGI middleware that returns from a request once the inline jobs it dispatched have run.
+
+    Args:
+        app: The application serving the request.
+        jobs: The job service whose inline jobs are waited for.
+    """
+
+    def __init__(self, app: ASGIApp, *, jobs: JobService) -> None:
+        self._app = app
+        self._jobs = jobs
+
+    async def __call__(self, scope: Scope, receive: Receive, send: Send) -> None:
+        await self._app(scope, receive, send)
+        if scope["type"] == "http":
+            await self._jobs.wait_until_idle()
 
 
 class _HarnessRuntime:
@@ -101,8 +121,10 @@ class _HarnessRuntime:
         )
 
     def mount(self, application: Application) -> FastAPI:
-        """Mount the routes on *application*'s kernel."""
-        return create_fastapi_app(application.kernel, self._routes, **self._fastapi_kwargs)
+        """Mount the routes on *application*'s kernel; each request returns once its jobs ran."""
+        app = create_fastapi_app(application.kernel, self._routes, **self._fastapi_kwargs)
+        app.add_middleware(_JobsIdleAfterRequest, jobs=application.jobs)
+        return app
 
 
 class HttpTestHarness:
@@ -117,6 +139,11 @@ class HttpTestHarness:
     parameter of the use case) rather than by interface.  The harness derives
     the correct binding automatically by scanning the use cases declared in
     the REST interfaces.
+
+    Its jobs run inline, and each request returns once the jobs it
+    dispatched, and the jobs those dispatch, have run: a test asserts their
+    effects right after the call. A job with a countdown is waited for too; bind
+    a :class:`~loom.testing.ManualTimer` to hold it until the test moves the clock.
 
     Args:
         overrides: Substitutions applied while the application is composed.

@@ -68,7 +68,8 @@ def _no_events() -> None:
 async def _run_give_up_job(project: Project, adapter: JobsAdapter) -> None:
     application = project.compose(adapter)
     async with application.running():
-        await application.kernel.container.resolve(JobService).dispatch_now(GiveUpJob)
+        await application.jobs.dispatch_now(GiveUpJob)
+        await application.jobs.wait_until_idle()
 
 
 class TestAbandonedJob:

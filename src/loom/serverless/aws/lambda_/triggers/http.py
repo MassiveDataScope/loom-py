@@ -206,9 +206,11 @@ class LambdaHTTPHandler:
         self._host = host
 
     def __call__(self, event: dict[str, Any], context: Any) -> dict[str, Any]:
-        """Answer one API Gateway HTTP API event."""
+        """Answer one API Gateway HTTP API event once the inline jobs it dispatched have run."""
         self._host.make_current()
-        return self._mangum(event, context)
+        response: dict[str, Any] = self._mangum(event, context)
+        self._host.wait_until_idle()
+        return response
 
     def close(self) -> None:
         """Close the application and its loop, from a shutdown hook or a test; idempotent.

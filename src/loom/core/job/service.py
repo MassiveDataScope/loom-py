@@ -60,6 +60,16 @@ class JobService:
         """The transport that sends the jobs of *queue*."""
         return self._routes.get(queue, self._default)
 
+    async def wait_until_idle(self) -> None:
+        """Return once no dispatched job is running or waiting in this process.
+
+        The inline transport's jobs are waited for, those they dispatch and
+        those waiting for a countdown included; the jobs a broker carries run
+        in another process and are not.
+        """
+        for transport in dict.fromkeys((self._default, *self._routes.values())):
+            await transport.wait_until_idle()
+
     async def run(
         self,
         job_type: type[Job[ResultT]],

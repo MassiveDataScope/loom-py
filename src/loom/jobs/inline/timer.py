@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import asyncio
+import contextlib
 import logging
 
 from loom.core.engine.events import AbandonReason
@@ -64,10 +65,20 @@ class AsyncioJobTimer:
         except Exception as error:
             self._abandon(delayed, AbandonReason.STEP_CRASHED, error)
 
+    async def wait_until_idle(self) -> None:
+        """Return once no step is running or waiting, the steps that steps schedule included.
+
+        A step waiting for a countdown is waited for too, however long it is.
+        """
+        while self._tasks:
+            await asyncio.wait(tuple(self._tasks))
+
     async def close(self) -> None:
         """Let the pending steps run when waiting, then cancel the rest and report them lost."""
         if self._shutdown.is_waiting:
-            await self._wait_until_idle()
+            with contextlib.suppress(TimeoutError):
+                async with asyncio.timeout(self._shutdown.timeout_s):
+                    await self.wait_until_idle()
         lost = dict(self._tasks)
         for task in lost:
             task.cancel()
@@ -88,11 +99,3 @@ class AsyncioJobTimer:
             },
             exc_info=error,
         )
-
-    async def _wait_until_idle(self) -> None:
-        try:
-            async with asyncio.timeout(self._shutdown.timeout_s):
-                while self._tasks:
-                    await asyncio.wait(tuple(self._tasks))
-        except TimeoutError:
-            return

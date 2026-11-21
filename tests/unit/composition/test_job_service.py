@@ -7,6 +7,7 @@ already did, in every entry point: the API and the worker alike. Without
 
 from __future__ import annotations
 
+import asyncio
 import logging
 import sys
 import warnings
@@ -223,7 +224,7 @@ class TestInlineTimer:
         assert [resource.kind for resource in application.resources].count(ResourceKind.TIMER) == 1
         assert [event for event, _ in warnings_logged.calls] == ["Job retry policies"]
 
-    async def test_lambda_composes_no_timer_and_refuses_a_delay(
+    async def test_lambda_runs_jobs_on_a_timer_that_refuses_a_delay(
         self, tmp_path: Path, warnings_logged: CapturedLog
     ) -> None:
         application = self._compose(tmp_path, _LambdaJobsAdapter(AcmePingJob))
@@ -231,7 +232,7 @@ class TestInlineTimer:
 
         with pytest.raises(JobDelayRefusedError):
             service.dispatch_after_commit(AcmePingJob, countdown=60)
-        assert all(resource.kind != ResourceKind.TIMER for resource in application.resources)
+        assert [resource.kind for resource in application.resources].count(ResourceKind.TIMER) == 1
         ((event, fields),) = warnings_logged.calls
         assert (event, fields["transport"]) == ("Job retry policies", "inline")
         assert "max_attempts=1 (no redelivery)" in fields["jobs"][0]["retry"]
@@ -256,24 +257,26 @@ class PostponingOnceJob(Job[str]):
 
 
 class TestInlineShutdown:
-    """``Application.running()`` exit is the only trigger of ``jobs.shutdown``."""
+    """``Application.running()`` exit is the only trigger of ``jobs.shutdown``.
+
+    A job sent now waits on the timer, so stopping right after the dispatch finds it pending.
+    """
 
     @staticmethod
-    async def _stop_with_a_postponed_job(tmp_path: Path, shutdown: dict[str, Any]) -> list[int]:
+    async def _stop_with_a_dispatched_job(tmp_path: Path, shutdown: dict[str, Any]) -> list[int]:
         PostponingOnceJob.runs.clear()
         application = job_project(tmp_path, {"jobs": {"shutdown": shutdown}}, "inline").compose(
             JobsAdapter(PostponingOnceJob)
         )
         async with application.running():
-            service = application.kernel.container.resolve(JobService)
-            await service.dispatch_now(PostponingOnceJob)
-            assert PostponingOnceJob.runs == [0]
+            await application.jobs.dispatch_now(PostponingOnceJob)
+            assert PostponingOnceJob.runs == []
         return list(PostponingOnceJob.runs)
 
-    async def test_wait_runs_the_postponed_job_before_the_application_stops(
+    async def test_wait_runs_the_job_and_its_postponement_before_the_application_stops(
         self, tmp_path: Path
     ) -> None:
-        assert await self._stop_with_a_postponed_job(tmp_path, {"mode": "wait"}) == [0, 1]
+        assert await self._stop_with_a_dispatched_job(tmp_path, {"mode": "wait"}) == [0, 1]
 
     async def test_a_bound_manual_timer_is_closed_on_exit_by_its_own_policy(
         self, tmp_path: Path
@@ -282,9 +285,8 @@ class TestInlineShutdown:
         timer = ManualTimer(JobShutdown(mode=ShutdownMode.WAIT))
         application = self._compose_with(tmp_path, timer)
         async with application.running():
-            service = application.kernel.container.resolve(JobService)
-            await service.dispatch_now(PostponingOnceJob)
-            assert (PostponingOnceJob.runs, timer.pending) == ([0], 1)
+            await application.jobs.dispatch_now(PostponingOnceJob)
+            assert (PostponingOnceJob.runs, timer.pending) == ([], 1)
 
         assert (PostponingOnceJob.runs, timer.pending, timer.lost) == ([0, 1], 0, [])
 
@@ -295,9 +297,9 @@ class TestInlineShutdown:
         timer = ManualTimer()
         application = self._compose_with(tmp_path, timer)
         async with application.running():
-            await application.kernel.container.resolve(JobService).dispatch_now(PostponingOnceJob)
+            await application.jobs.dispatch_now(PostponingOnceJob)
 
-        assert (PostponingOnceJob.runs, len(timer.lost)) == ([0], 1)
+        assert (PostponingOnceJob.runs, len(timer.lost)) == ([], 1)
 
     @staticmethod
     def _compose_with(tmp_path: Path, timer: ManualTimer) -> Application:
@@ -307,8 +309,43 @@ class TestInlineShutdown:
             )
         )
 
-    async def test_cancel_loses_the_postponed_job(self, tmp_path: Path) -> None:
-        assert await self._stop_with_a_postponed_job(tmp_path, {"mode": "cancel"}) == [0]
+    async def test_cancel_loses_the_job_not_yet_run(self, tmp_path: Path) -> None:
+        assert await self._stop_with_a_dispatched_job(tmp_path, {"mode": "cancel"}) == []
+
+
+class OpenProbeJob(Job[None]):
+    """Records whether its application is open, and the first link sends a second."""
+
+    application: ClassVar[Application]
+    seen_open: ClassVar[list[bool]] = []
+
+    def __init__(self, jobs: JobService) -> None:
+        self._jobs = jobs
+
+    async def execute(self, link: int) -> None:
+        self.seen_open.append(self.application.is_open)
+        if link == 0:
+            await self._jobs.dispatch_now(OpenProbeJob, params={"link": 1})
+
+
+class TestWaitUntilIdle:
+    async def test_inside_running_it_returns_once_a_chain_ran_with_the_application_open(
+        self, tmp_path: Path
+    ) -> None:
+        OpenProbeJob.seen_open.clear()
+        application = job_project(tmp_path, {}, "inline").compose(JobsAdapter(OpenProbeJob))
+        OpenProbeJob.application = application
+        async with application.running():
+            await application.jobs.dispatch_now(OpenProbeJob, params={"link": 0})
+
+            await application.jobs.wait_until_idle()
+
+            assert OpenProbeJob.seen_open == [True, True]
+
+    async def test_a_celery_application_returns_at_once(self, tmp_path: Path) -> None:
+        application = job_project(tmp_path, _CELERY, "celery").compose(JobsAdapter(AcmePingJob))
+
+        await asyncio.wait_for(application.jobs.wait_until_idle(), 1)
 
 
 class AcmeEmailJob(Job[int]):

@@ -93,6 +93,7 @@ def _clear_seen() -> None:
 class TestInlineContract:
     async def test_success(self, inline: Inline) -> None:
         handle = await inline.service.dispatch_now(SucceedingJob)
+        await inline.service.wait_until_idle()
 
         assert handle.wait() == "done"
         assert inline.timer.pending == 0
@@ -124,6 +125,7 @@ class TestInlineContract:
         self, inline: Inline
     ) -> None:
         handle = await inline.service.dispatch_now(UnretryableJob)
+        await inline.service.wait_until_idle()
 
         assert inline.timer.pending == 0
         with pytest.raises(JobFailedError) as failed:
@@ -173,6 +175,7 @@ class TestInlineContract:
 
     async def test_a_job_abandonment_is_abandoned_with_its_reason(self, inline: Inline) -> None:
         handle = await inline.service.dispatch_now(AbandoningJob)
+        await inline.service.wait_until_idle()
 
         assert inline.timer.pending == 0
         with pytest.raises(JobFailedError) as failed:

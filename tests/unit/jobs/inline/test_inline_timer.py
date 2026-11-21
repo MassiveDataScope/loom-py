@@ -134,10 +134,11 @@ class TestCountdown:
         assert acme.runs == [(1, 0)]
         assert handle.wait() == "done"
 
-    async def test_no_countdown_runs_without_a_timer_hop(self) -> None:
+    async def test_no_countdown_runs_once_the_timer_is_idle_without_moving_the_clock(self) -> None:
         acme = Acme()
-
         await acme.service.dispatch_now(SucceedingJob)
+
+        await acme.timer.wait_until_idle()
 
         assert acme.runs == [(1, 0)]
         assert acme.timer.pending == 0
@@ -162,12 +163,10 @@ class TestRetries:
         self,
     ) -> None:
         acme = Acme()
-
         await acme.service.dispatch_now(SpinningJob)
 
-        assert acme.runs == [(1, 0)]
-        assert acme.timer.pending == 1
         await acme.timer.advance(0)
+
         assert len(acme.runs) == SPINS + 1
         assert acme.timer.pending == 0
 
@@ -191,7 +190,10 @@ class TestWithoutATimer:
             await Acme(timed=False).service.dispatch_now(SucceedingJob, countdown=60)
 
     async def test_a_zero_countdown_still_runs(self) -> None:
-        handle = await Acme(timed=False).service.dispatch_now(SucceedingJob, countdown=0)
+        acme = Acme(timed=False)
+        handle = await acme.service.dispatch_now(SucceedingJob, countdown=0)
+
+        await acme.service.wait_until_idle()
 
         assert handle.wait() == "done"
 
@@ -200,8 +202,9 @@ class TestWithoutATimer:
         self, delay: int
     ) -> None:
         acme = Acme(timed=False)
-
         handle = await acme.service.dispatch_now(PostponingJob, params={"delay": delay})
+
+        await acme.service.wait_until_idle()
 
         with pytest.raises(JobFailedError) as failed:
             handle.wait()
@@ -210,8 +213,9 @@ class TestWithoutATimer:
 
     async def test_a_failure_runs_once_and_keeps_its_own_error(self) -> None:
         acme = Acme(timed=False)
-
         handle = await acme.service.dispatch_now(FailingJob, on_failure=Notify)
+
+        await acme.service.wait_until_idle()
 
         assert acme.runs == [(1, 0)]
         assert Notify.failures == ["AcmeError"]

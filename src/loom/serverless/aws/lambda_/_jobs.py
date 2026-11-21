@@ -23,7 +23,6 @@ from loom.core.job.outcome import JobOutcome
 from loom.core.job.policy import Redelivery, RetryPolicy
 from loom.core.job.run import EnvelopeInvocation
 from loom.core.job.runner import JobRunner
-from loom.core.job.service import JobService
 from loom.core.job.settlement import JobSettlement
 from loom.core.logger import LogRuntime
 from loom.core.observability.event import Scope
@@ -86,7 +85,7 @@ def open_host(application: Application) -> LoopHost:
     Raises:
         Exception: The failure to open the application, as itself.
     """
-    service = application.kernel.container.resolve(JobService)
+    service = application.jobs
     host = LoopHost(application)
     host.start()
     _log.info(

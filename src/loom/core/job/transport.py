@@ -25,3 +25,11 @@ class JobTransport(Protocol):
     ) -> None:
         """Refuse callbacks that the transport cannot carry before discovery checks."""
         ...
+
+    async def wait_until_idle(self) -> None:
+        """Return once no job this transport sent is running or waiting in this process.
+
+        A transport whose jobs run in another process (a broker's consumer)
+        returns at once.
+        """
+        ...

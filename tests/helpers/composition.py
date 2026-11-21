@@ -19,6 +19,7 @@ from loom.core.di.container import LoomContainer
 from loom.core.discovery.base import DiscoveryResult
 from loom.core.engine.executor import UseCaseExecutor
 from loom.core.environment import Environment
+from loom.core.job.service import JobService
 from loom.core.model import BaseModel
 from loom.core.observability.config import ObservabilityConfig
 from loom.core.observability.observability import Observability
@@ -26,6 +27,7 @@ from loom.core.resources import Resource, ResourceKind
 from loom.core.stores import SERVER_PROFILE
 from loom.core.stores.catalog import DEFAULT_STORE, StoreKey
 from loom.core.stores.uow.abc import UnitOfWorkFactory
+from loom.testing.jobs import RecordingJobTransport
 from tests.unit.rest._fixture_app import write_project
 
 ProjectFactory = Callable[..., str]
@@ -176,11 +178,19 @@ def application_openings(monkeypatch: pytest.MonkeyPatch) -> list[str]:
     return events
 
 
-def application_of(*resources: Resource) -> Application:
-    """An application owning *resources*, whose composition facts play no part in its lifecycle."""
+def application_of(*resources: Resource, jobs: JobService | None = None) -> Application:
+    """An application owning *resources*, whose composition facts play no part in its lifecycle.
+
+    Its jobs are *jobs*; without them they go to a recording transport, so waiting
+    until they are idle returns at once.
+    """
     unused = cast(Any, SimpleNamespace())
+    container = LoomContainer()
+    container.register_instance(
+        JobService, JobService(RecordingJobTransport()) if jobs is None else jobs
+    )
     return Application(
-        kernel=unused,
+        kernel=cast(Any, SimpleNamespace(container=container)),
         config=unused,
         environment=unused,
         code_path=unused,

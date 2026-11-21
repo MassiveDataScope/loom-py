@@ -26,6 +26,7 @@ from loom.core.use_case.use_case import UseCase
 from loom.stores.sqlalchemy.repository import SQLAlchemyRepository
 from loom.stores.sqlalchemy.schema import compile_all, get_metadata, reset_registry
 from loom.stores.sqlalchemy.session_manager import SessionManager
+from loom.testing import ManualTimer
 from tests.helpers import acme_recording_callbacks
 from tests.helpers.acme_recording_callbacks import (
     AcmeCallbackSink,
@@ -290,6 +291,7 @@ def celery_files(tmp_path: Path, monkeypatch: Any) -> Any:
     asyncio.run(_create_schema(db_url))
 
     callback_sink = AcmeCallbackSink()
+    timer = ManualTimer()
 
     def _module(container: LoomContainer) -> None:
         # SessionManager is the backend's: the composition refuses a module binding it.
@@ -309,12 +311,13 @@ def celery_files(tmp_path: Path, monkeypatch: Any) -> Any:
             lambda: InlineServiceFixture(
                 container.resolve(UseCaseFactory),
                 container.resolve(UseCaseExecutor),
+                timer=timer,
             ),
             scope=Scope.APPLICATION,
         )
 
     try:
-        yield str(config_path), db_path, _module, callback_sink
+        yield str(config_path), db_path, _module, callback_sink, timer
     finally:
         asyncio.run(_drop_schema(db_url))
         reset_registry()
@@ -322,12 +325,16 @@ def celery_files(tmp_path: Path, monkeypatch: Any) -> Any:
             db_path.unlink()
 
 
+_PAST_EVERY_RETRY_S = 3600
+"""Moves the inline clock past the retries of every child job, so each one has finished."""
+
+
 class TestAutoCreateAppIntegration:
     def test_create_app_executes_job_that_invokes_use_case(
         self,
         celery_files: Any,
     ) -> None:
-        config_path, _db_path, module, callback_sink = celery_files
+        config_path, _db_path, module, callback_sink, timer = celery_files
 
         adapter = CeleryRuntime(
             jobs=[
@@ -377,6 +384,8 @@ class TestAutoCreateAppIntegration:
         assert (
             failed_dispatch.result is True
         )  # fire-and-forget: exception silenced, job returns True
+
+        asyncio.run(timer.advance(_PAST_EVERY_RETRY_S))
 
         assert any("callback-ok" in entry for entry in callback_sink.successes)
         assert any("callback-fail" in entry for entry in callback_sink.failures)

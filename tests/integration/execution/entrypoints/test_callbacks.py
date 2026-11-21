@@ -62,6 +62,7 @@ class TestInlineCallbacks:
             jobs.dispatch_after_commit(job, on_success=callback, on_failure=callback)
 
         await executor.execute(AcmeRun(dispatch), identity=ALICE)
+        await jobs.wait_until_idle()
 
         assert callback_log == [("built", AS_ALICE), (moment, AS_ALICE)]
 
@@ -86,6 +87,7 @@ class TestInlineCallbacks:
             )
 
         await executor.execute(AcmeRun(dispatch), identity=ALICE)
+        await jobs.wait_until_idle()
 
         assert [moment for moment, _ in callback_log] == moments
 
@@ -101,6 +103,7 @@ class TestInlineCallbacks:
             )
 
         await executor.execute(AcmeRun(dispatch))
+        await jobs.wait_until_idle()
 
         assert callback_log == [("built", NO_CALLER), ("on_failure", NO_CALLER)]
 

@@ -98,26 +98,24 @@ def _celery_transport(context: JobTransportContext, celery_cfg: CeleryConfig) ->
 
 def _inline(context: JobTransportContext) -> _Built:
     timer = context.timer
-    if timer is None and context.can_wait_in_process:
+    can_wait = timer is not None or context.can_wait_in_process
+    if timer is None:
         timer = AsyncioJobTimer(
             context.settings.shutdown, execution_observer=context.execution_observer
         )
-        if not context.settings.shutdown.is_waiting:
+        if can_wait and not context.settings.shutdown.is_waiting:
             _log.warning(
                 "Inline jobs wait in process memory: a delayed job is lost when the process "
                 "stops; use Celery or SQS in production, or jobs.shutdown.mode: wait"
             )
-    resources = (
-        ()
-        if timer is None
-        else (Resource(kind=ResourceKind.TIMER, name="jobs", manager=closing(timer.close)),)
-    )
     service = InlineJobTransport(
         context.factory,
         context.executor,
         timer=timer,
+        can_wait_in_process=can_wait,
         execution_observer=context.execution_observer,
     )
+    resources = (Resource(kind=ResourceKind.TIMER, name="jobs", manager=closing(timer.close)),)
     if context.jobs:
         _log.info(
             "Job retry policies",
@@ -244,9 +242,10 @@ def configure_job_service(
         settings: Each job's settings in this application.
         aws: The application's AWS clients, which the SQS transport takes its client from.
         can_wait_in_process: Whether the inline service may hold delayed jobs in memory;
-            without it the inline service refuses every delay. A
+            without it the inline service refuses every delay, and its timer
+            runs only the jobs dispatched with none. A
             :class:`~loom.core.job.timer.JobTimer` already bound in the container
-            is used either way.
+            is used either way, delays included.
 
     Returns:
         One resource per built transport that owns something to close.

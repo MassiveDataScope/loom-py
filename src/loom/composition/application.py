@@ -9,6 +9,7 @@ from typing import TYPE_CHECKING
 
 from loom.composition.errors import ApplicationAlreadyOpenError
 from loom.core.job.config import JobSettings
+from loom.core.job.service import JobService
 from loom.core.resources import Resource, in_opening_order
 
 if TYPE_CHECKING:
@@ -60,6 +61,17 @@ class Application:
 
     def __post_init__(self) -> None:
         self.resources = in_opening_order(self.resources)
+
+    @property
+    def jobs(self) -> JobService:
+        """The application's job service: dispatch jobs, or wait until those running here finish.
+
+        ``await application.jobs.wait_until_idle()`` inside :meth:`running`
+        returns once no inline job is running or waiting, while the resources
+        its jobs use are still open.
+        """
+        service: JobService = self.kernel.container.resolve(JobService)
+        return service
 
     @property
     def is_open(self) -> bool:
