@@ -5,6 +5,7 @@ from contextlib import AbstractAsyncContextManager
 from typing import Any
 from uuid import uuid4
 
+import msgspec
 import pytest
 
 from loom.core.config import ConfigError
@@ -17,6 +18,7 @@ from .conftest import (
     BackendCase,
     CreateListing,
     CreateSlot,
+    PartialListing,
     UpdateListing,
     require,
 )
@@ -131,6 +133,55 @@ class TestContractDerivedKey:
 
             assert [row.portal for row in created] == ["fotocasa"]
             assert await listings.get_by_id(existing.id) == existing
+
+
+class TestContractCreateCheckpoint:
+    async def test_create_stores_a_model_whose_id_it_derived_on_construction(
+        self, case: BackendCase, open_repository: OpenRepository
+    ) -> None:
+        require(case, Creatable, Readable)
+        listing = AcmeContractListing(portal="idealista", external_id="123")
+
+        async with open_repository(AcmeContractListing) as listings:
+            created = await listings.create(listing)
+
+            assert created.id == listing.id == _DERIVED_ID
+            assert await listings.get_by_id(_DERIVED_ID) == created
+
+    async def test_create_refuses_a_stale_id_after_a_key_field_was_reassigned(
+        self, case: BackendCase, open_repository: OpenRepository
+    ) -> None:
+        require(case, Creatable, Readable)
+        listing = AcmeContractListing(portal="idealista", external_id="123")
+        msgspec.structs.force_setattr(listing, "external_id", "999")
+
+        async with open_repository(AcmeContractListing) as listings:
+            with pytest.raises(
+                BoundaryValidationError, match=r"AcmeContractListing\.id is derived from"
+            ):
+                await listings.create(listing)
+
+            assert await listings.get_by_id(_DERIVED_ID) is None
+
+    async def test_create_refuses_a_row_missing_a_business_key_field(
+        self, case: BackendCase, open_repository: OpenRepository
+    ) -> None:
+        require(case, Creatable, Readable)
+
+        async with open_repository(AcmeContractListing) as listings:
+            with pytest.raises(BoundaryValidationError, match="'external_id' is missing"):
+                await listings.create(PartialListing(portal="idealista"))
+
+    async def test_create_many_refuses_a_row_missing_a_business_key_field_and_stores_nothing(
+        self, case: BackendCase, open_repository: OpenRepository
+    ) -> None:
+        require(case, BulkCreatable, Readable)
+
+        async with open_repository(AcmeContractListing) as listings:
+            with pytest.raises(BoundaryValidationError, match="'external_id' is missing"):
+                await listings.create_many([_IDEALISTA, PartialListing(portal="fotocasa")])
+
+            assert await listings.get_by_id(_DERIVED_ID) is None
 
 
 class TestContractUniqueBusinessKey:

@@ -41,16 +41,42 @@ of the formula, so keep it constant forever. The model refuses at startup an unk
 nullable field, an empty key, a field whose type has no canonical form, a derived field that is
 not the single `str` primary key, and a field named `key_for`.
 
-## Reading and writing
+## Who computes the id
 
-`Listing.key_for(row)` returns the id. `row` may be a model, a command, any object with those
-attributes, or a mapping such as an ETL row with extra columns; only the business-key fields are
-read, in the declared order.
+**The model.** A model that derives its id computes it when it is built (constructor, `msgspec`
+decode or convert, `make()`), if the id is unset and the model holds every business-key field.
+If a field is missing the id stays unset. A supplied id is never recomputed, so a row read from
+the database carries its stored id and pays no hashing. The id field is declared `str`: a reader
+always sees a `str`, because rows come from the store with their id; only a model built before
+its key is complete holds `msgspec.UNSET`. An `__post_init__` of your own keeps working without
+calling `super()`: the id is derived first.
 
-Every repository (SQLAlchemy, Mongo, DynamoDB and `InMemoryRepository`) fills the id on `create`
-and `create_many`. A command that carries an id must carry the derived one, or the create is
-refused with an error naming the model, the field and the formula. An update that writes a
-business-key field is refused.
+```python
+Listing(portal="idealista", external_id="123").id   # the derived id
+Listing(portal="idealista").id                      # msgspec.UNSET
+```
+
+**The repository checks.** At `create` and `create_many` every repository (SQLAlchemy, Mongo,
+DynamoDB and `InMemoryRepository`) completes an unset id, verifies that a supplied id equals
+`Listing.key_for(row)`, and refuses a row still missing a business-key field, naming the model
+and the field. A mismatch stores nothing. An update that writes a business-key field is refused,
+even with an equal value.
+
+Identity must be known at creation: every business-key field has a value before the row is
+written. A field the store sets after the insert cannot feed the key, so startup refuses a
+business-key field of a derived model that has `server_default`, `server_onupdate` or
+`autoincrement` (`CreatedAtField()` and `UpdatedAtField()` included). Keep two times apart:
+`created_at` is audit, set by loom or the store after the fact; `observed_at` is business time,
+set by the application, and may be part of a business key.
+
+`Listing.key_for(row)` returns the id for a model, a command, any object with those attributes,
+or a mapping such as an ETL row with extra columns; only the business-key fields are read, in
+the declared order.
+
+A business-key field reassigned in memory after construction (possible with a model declared
+`frozen=False`, or with `msgspec.structs.force_setattr`) leaves a stale id. The repository catches
+it at create, and writes outside loom do not, so use `verify_keys` for those and prefer frozen
+models, which are the default, when deriving.
 
 ## Canonical form
 

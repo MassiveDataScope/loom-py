@@ -11,18 +11,22 @@ from uuid import UUID
 import msgspec
 import pytest
 
+from loom.core.config import ConfigError
 from loom.core.errors import BoundaryValidationError
 from loom.core.model import (
     BaseModel,
     BusinessKey,
     ColumnField,
+    CreatedAtField,
     KeyHash,
     LoomStructMeta,
+    UpdatedAtField,
     business_key_of,
     declared_unique,
     derived_key_of,
     verify_keys,
 )
+from loom.core.model.enums import ServerDefault
 from loom.core.model.keys import canonical_form, is_canonical_type
 from tests.helpers.keys import derived_id
 
@@ -426,3 +430,130 @@ class TestVerifyKeys:
     def test_a_model_that_derives_no_key_has_nothing_to_verify(self) -> None:
         with pytest.raises(ValueError, match="AcmeSlot derives no key"):
             verify_keys(AcmeSlot, [])
+
+
+class AcmeAudited(BaseModel):
+    __tablename__ = "acme_audited"
+    __business_key__ = BusinessKey("portal")
+
+    id: str = ColumnField(primary_key=True, derived=SHA256)
+    portal: str = ColumnField()
+    title: str = ColumnField(default="")
+
+    def __post_init__(self) -> None:
+        if self.id is msgspec.UNSET:
+            raise ValueError("the id was not derived before the application's check")
+        if self.title == "bad":
+            raise ValueError("bad title")
+
+
+class AcmeLater(AcmeListing):
+    __tablename__ = "acme_later"
+
+    note: str = ColumnField(default="")
+
+
+class AcmeObserved(BaseModel):
+    __tablename__ = "acme_observed"
+    __business_key__ = BusinessKey("sensor", "observed_at")
+
+    id: str = ColumnField(primary_key=True, derived=SHA256)
+    sensor: str = ColumnField()
+    observed_at: datetime = ColumnField()
+
+
+class TestModelDerivesItsId:
+    def test_a_model_with_every_business_key_field_computes_its_id(self) -> None:
+        listing = AcmeListing(portal="idealista", external_id="123")
+
+        assert listing.id == "f90f18f3-4e23-5dcc-b138-8fa5956aecbe"
+
+    def test_a_model_missing_a_business_key_field_leaves_the_id_unset(self) -> None:
+        listing = AcmeListing(portal="idealista")
+
+        assert listing.id is msgspec.UNSET
+
+    def test_a_supplied_id_is_not_recomputed(self) -> None:
+        listing = AcmeListing(id="stored", portal="idealista", external_id="123")
+
+        assert listing.id == "stored"
+
+    def test_decoding_a_row_without_an_id_computes_it(self) -> None:
+        listing = msgspec.convert({"portal": "idealista", "externalId": "123"}, AcmeListing)
+
+        assert listing.id == "f90f18f3-4e23-5dcc-b138-8fa5956aecbe"
+
+    def test_decoding_a_row_with_an_id_keeps_it(self) -> None:
+        row = {"id": "stored", "portal": "idealista", "externalId": "123"}
+
+        assert msgspec.convert(row, AcmeListing).id == "stored"
+
+    def test_the_model_is_frozen_once_built(self) -> None:
+        listing = AcmeListing(portal="idealista", external_id="123")
+
+        with pytest.raises(AttributeError):
+            listing.portal = "fotocasa"  # type: ignore[misc]
+
+    def test_the_application_post_init_runs_after_the_id_is_derived(self) -> None:
+        assert AcmeAudited(portal="idealista").id != msgspec.UNSET
+
+    def test_the_application_post_init_still_validates(self) -> None:
+        with pytest.raises(ValueError, match="bad title"):
+            AcmeAudited(portal="idealista", title="bad")
+
+    def test_a_subclass_derives_its_id_too(self) -> None:
+        assert AcmeLater(portal="idealista", external_id="123").id == (
+            "f90f18f3-4e23-5dcc-b138-8fa5956aecbe"
+        )
+
+    def test_a_value_without_a_canonical_form_is_refused_at_construction(self) -> None:
+        with pytest.raises(BoundaryValidationError, match="'observed_at'.*naive datetime"):
+            AcmeObserved(sensor="s", observed_at=datetime(2026, 1, 1))
+
+    def test_a_model_that_derives_nothing_computes_no_id(self) -> None:
+        assert AcmeSlot(portal="p", slot=1).id is None
+
+
+def _derived_with(**fields: Any) -> type[BaseModel]:
+    return _model(
+        __annotations__={
+            "id": str,
+            **{name: annotation for name, (annotation, _) in fields.items()},
+        },
+        id=ColumnField(primary_key=True, derived=SHA256),
+        __business_key__=BusinessKey(*fields),
+        **{name: spec for name, (_, spec) in fields.items()},
+    )
+
+
+class TestServerSetKeyFields:
+    @pytest.mark.parametrize(
+        ("annotation", "spec"),
+        [
+            (datetime, CreatedAtField()),
+            (datetime, UpdatedAtField()),
+            (str, ColumnField(server_default=ServerDefault.UUID4)),
+            (int, ColumnField(autoincrement=True)),
+        ],
+        ids=["created_at", "updated_at", "server-default", "autoincrement"],
+    )
+    def test_a_field_the_store_sets_after_the_insert_cannot_feed_the_key(
+        self, annotation: type, spec: Any
+    ) -> None:
+        model = _derived_with(stamp=(annotation, spec))
+
+        with pytest.raises(ConfigError, match=r"AcmeDraft\.stamp .*observed_at"):
+            derived_key_of(model)
+
+    def test_a_business_time_field_the_application_sets_is_accepted(self) -> None:
+        assert derived_key_of(AcmeObserved) is not None
+
+    def test_a_model_that_does_not_derive_may_key_on_such_a_field(self) -> None:
+        model = _model(
+            __annotations__={"id": int, "stamp": datetime},
+            id=ColumnField(primary_key=True),
+            stamp=CreatedAtField(),
+            __business_key__=BusinessKey("stamp"),
+        )
+
+        assert business_key_of(model) is not None

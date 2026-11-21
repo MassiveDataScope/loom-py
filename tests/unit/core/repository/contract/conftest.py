@@ -127,6 +127,10 @@ class CreateListing(Command, frozen=True):
     id: str | None = None
 
 
+class PartialListing(Command, frozen=True):
+    portal: str
+
+
 class UpdateListing(Command, frozen=True):
     title: str | None = None
     portal: str | None = None

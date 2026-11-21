@@ -212,6 +212,14 @@ class DerivedKey:
         ]
         return self.key_hash.digest(canonical)
 
+    def has_every_field(self, row: object) -> bool:
+        """Whether *row* holds a value for every business-key field."""
+        try:
+            values = self._read(row)
+        except BoundaryValidationError:
+            return False
+        return all(value is not None and value is not msgspec.UNSET for value in values)
+
     def complete(self, values: dict[str, Any]) -> dict[str, Any]:
         """Return *values* with the derived id in the key field.
 
@@ -221,7 +229,7 @@ class DerivedKey:
         """
         derived = self.id_for(values)
         supplied = values.get(self.field)
-        if supplied is not None and str(supplied) != derived:
+        if supplied is not None and supplied is not msgspec.UNSET and str(supplied) != derived:
             fields = ", ".join(self.business_key.fields)
             raise BoundaryValidationError(
                 f"{self.model}.{self.field} is derived from ({fields}) with "

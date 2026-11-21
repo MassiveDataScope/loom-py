@@ -592,6 +592,7 @@ def derived_key_of(cls: type) -> DerivedKey | None:
         ValueError: If ``derived=`` is not on the single ``str`` primary-key
             field, the model declares no ``__business_key__``, or the key
             contains the derived field.
+        ConfigError: If a key field is set by the store after the insert.
     """
     if cls not in _DERIVED_KEYS:
         _DERIVED_KEYS[cls] = _checked_derived_key(cls)
@@ -615,7 +616,29 @@ def _checked_derived_key(cls: type) -> DerivedKey | None:
         raise ValueError(f"{prefix} {name!r} needs a __business_key__ to derive from")
     if name in key.fields:
         raise ValueError(f"{prefix} {name!r} cannot be part of its own business key")
+    _refuse_server_set_fields(cls, key)
     return DerivedKey(cls.__name__, name, key, cast(Any, info.field.derived))
+
+
+def _refuse_server_set_fields(cls: type, key: BusinessKey) -> None:
+    """Refuse a business-key field the store sets after the insert, which cannot feed the key."""
+    from loom.core.config.errors import ConfigError
+
+    fields = get_column_fields(cls)
+    for name in key.fields:
+        field = fields[name].field
+        if (
+            field.server_default is None
+            and field.server_onupdate is None
+            and not field.autoincrement
+        ):
+            continue
+        raise ConfigError(
+            f"{cls.__name__}.{name} is in the business key of a derived id, but the store sets "
+            "it after the insert (server_default, server_onupdate or autoincrement), so it "
+            "cannot feed the key; use a business-time field the application sets, such as "
+            "observed_at, not created_at or updated_at"
+        )
 
 
 def verify_keys(model: type, rows: Iterable[Mapping[str, Any]]) -> tuple[KeyMismatch, ...]:
