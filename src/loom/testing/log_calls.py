@@ -3,7 +3,7 @@
 :func:`log_call_offences` checks logging call sites; :func:`exception_text_offences`
 finds every place an exception's text is formatted, which no field, payload
 or new error may carry; :func:`free_text_offences` finds every exception
-raised with text built from values, where a ``LoomError`` takes declared fields.
+raised with text built from values, where a ``LoomError`` takes declared attributes.
 
 A logging call follows the record definition *(event, level, fields)*:
 
@@ -233,7 +233,7 @@ def exception_text_offences(paths: Iterable[Path]) -> list[LogCallOffence]:
     """Every place in *paths* that formats an exception's text, in file and line order.
 
     An exception's message is never a payload: a field, an answer, a broker
-    message or a new error carries its type or its declared fields instead
+    message or a new error carries its type or its declared attributes instead
     (:class:`loom.core.errors.failure.Failure`). An exception is a
     name an ``except`` clause bound, a name annotated with an exception type (a
     parameter or an annotated assignment, through a module type alias too), a
@@ -446,7 +446,7 @@ class _ExceptionTextChecker(_Checker):
 def free_text_offences(paths: Iterable[Path]) -> list[LogCallOffence]:
     """Every exception in *paths* raised with text built from values, in file and line order.
 
-    A ``LoomError`` is built from its declared fields, ``Cls(**fields)``, which
+    A ``LoomError`` is built from its declared attributes, ``Cls(**attributes)``, which
     it renders itself; text an f-string, a ``%`` or ``.format()`` builds is
     free text, whatever it holds. A fixed literal is not.
 

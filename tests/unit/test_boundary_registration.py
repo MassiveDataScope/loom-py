@@ -18,6 +18,7 @@ test pins as the outermost one.
 from __future__ import annotations
 
 import ast
+import functools
 import importlib
 from collections.abc import Iterator
 from dataclasses import dataclass
@@ -226,12 +227,13 @@ def _names_assigned_boundary(scope: ast.AST) -> set[str]:
     """The names *scope* itself assigns ``boundary(...)`` to."""
     names: set[str] = set()
     for node in ast.iter_child_nodes(scope):
-        value = getattr(node, "value", None)
-        is_boundary = isinstance(value, ast.Call) and isinstance(value.func, ast.Name)
-        if not (is_boundary and value.func.id == "boundary"):  # type: ignore[union-attr]
-            continue
-        targets = node.targets if isinstance(node, ast.Assign) else [getattr(node, "target", None)]
-        names.update(target.id for target in targets if isinstance(target, ast.Name))
+        match node:
+            case ast.Assign(targets=targets, value=ast.Call(func=ast.Name(id="boundary"))):
+                names.update(target.id for target in targets if isinstance(target, ast.Name))
+            case ast.AnnAssign(
+                target=ast.Name(id=name), value=ast.Call(func=ast.Name(id="boundary"))
+            ):
+                names.add(name)
     return names
 
 
@@ -323,11 +325,19 @@ class TestLoomRegistrations:
         assert unwrapped == []
 
 
+@functools.cache
+def _sources() -> tuple[tuple[str, str], ...]:
+    """Each module of ``src/loom`` with its source, read once for every foreign base."""
+    return tuple(
+        (".".join(path.relative_to(SRC.parent).with_suffix("").parts), path.read_text("utf-8"))
+        for path in source_files()
+    )
+
+
 def _import_modules_naming(name: str) -> None:
     """Import every module of ``src/loom`` whose source names *name*, so its subclasses exist."""
-    for path in source_files():
-        if name in path.read_text(encoding="utf-8"):
-            dotted = ".".join(path.relative_to(SRC.parent).with_suffix("").parts)
+    for dotted, source in _sources():
+        if name in source:
             importlib.import_module(dotted.removesuffix(".__init__"))
 
 

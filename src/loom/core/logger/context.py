@@ -7,7 +7,7 @@ from contextlib import contextmanager
 from contextvars import ContextVar
 from types import MappingProxyType
 
-from loom.core.fields import render_value
+from loom.core.vocabulary import render_value
 
 _NO_FIELDS: Mapping[str, object] = MappingProxyType({})
 _fields: ContextVar[Mapping[str, object]] = ContextVar("loom_log_fields", default=_NO_FIELDS)

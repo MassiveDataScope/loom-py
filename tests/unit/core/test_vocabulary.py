@@ -6,7 +6,8 @@ import math
 
 import pytest
 
-from loom.core.fields import (
+from loom.core.model.redaction import Dsn, RedactedMap
+from loom.core.vocabulary import (
     MASK,
     MAX_LIST_ITEMS,
     MAX_VALUE_LENGTH,
@@ -16,7 +17,6 @@ from loom.core.fields import (
     Secret,
     render_value,
 )
-from loom.core.model.redaction import Dsn, RedactedMap
 
 
 class _Card:

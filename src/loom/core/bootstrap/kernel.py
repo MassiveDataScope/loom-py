@@ -27,7 +27,6 @@ from loom.core.engine.execution_observer import ExecutionObserver
 from loom.core.engine.executor import UseCaseExecutor
 from loom.core.environment import Environment, resolve_environment
 from loom.core.execution import ExecutionResolver
-from loom.core.fields import MAX_LIST_ITEMS
 from loom.core.logger import LogField
 from loom.core.observability.observability import Observability
 from loom.core.stores.repository.registration import classify_key
@@ -36,6 +35,7 @@ from loom.core.use_case.factory import UseCaseFactory, main_repository
 from loom.core.use_case.invoker import AppInvoker, ApplicationInvoker
 from loom.core.use_case.kinds import declare_kinds
 from loom.core.use_case.registry import UseCaseRegistry
+from loom.core.vocabulary import MAX_LIST_ITEMS
 
 _log = logging.getLogger(__name__)
 

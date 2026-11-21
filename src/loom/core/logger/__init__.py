@@ -6,7 +6,7 @@ installing a format is :mod:`loom.core.logger.install`.
 
 from loom.core.logger.context import current_log_fields, log_context
 from loom.core.logger.stamp import LogIdentity, LogRuntime
-from loom.core.logger.vocabulary import (
+from loom.core.vocabulary import (
     EVENT_FORM,
     NO_ATTRIBUTES,
     LogEvent,

@@ -7,9 +7,9 @@ from typing import Generic, TypeVar
 import msgspec
 from typing_extensions import TypeAliasType
 
-from loom.core.fields import LogKey, Scalar
 from loom.core.logger import LogField, SpanAttributes
 from loom.core.model import LoomFrozenStruct, LoomStruct
+from loom.core.vocabulary import LogKey, Scalar
 from loom.streaming.log_events import StreamingLogField
 
 StreamPayload = TypeAliasType("StreamPayload", LoomStruct | LoomFrozenStruct)

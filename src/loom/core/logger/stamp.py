@@ -7,7 +7,7 @@ from dataclasses import dataclass, replace
 from enum import StrEnum
 from types import MappingProxyType
 
-from loom.core.logger.vocabulary import LogField
+from loom.core.vocabulary import LogField
 
 
 class LogRuntime(StrEnum):

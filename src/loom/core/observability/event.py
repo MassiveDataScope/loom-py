@@ -9,9 +9,9 @@ import msgspec
 from msgspec.structs import force_setattr
 from opentelemetry.util.types import AttributeValue
 
-from loom.core.fields import LogKey, Scalar
 from loom.core.logger import NO_ATTRIBUTES, LogField, SpanAttributes
 from loom.core.model import LoomFrozenStruct
+from loom.core.vocabulary import LogKey, Scalar
 
 S = TypeVar("S", bound=Scalar)
 

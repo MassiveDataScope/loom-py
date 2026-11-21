@@ -27,14 +27,14 @@ import pytest
 from loom.core.errors import SystemError
 from loom.core.errors.boundary import BoundaryClass, ProcessHooks, boundary
 from loom.core.errors.failure import Failure
-from loom.core.fields import MASK, MAX_VALUE_LENGTH, TRUNCATION_MARKER, Secret
 from loom.core.logger import LogField
+from loom.core.vocabulary import MASK, MAX_VALUE_LENGTH, TRUNCATION_MARKER, Secret
 from tests.helpers.canary import CANARY, canary_failure
 
 
 class _Declared(SystemError):
     template = "charge {setting} failed: {reason}"
-    field_keys = MappingProxyType({"setting": LogField.SETTING, "reason": LogField.REASON})
+    attributes = MappingProxyType({"setting": LogField.SETTING, "reason": LogField.REASON})
 
 
 def _foreign() -> Exception:

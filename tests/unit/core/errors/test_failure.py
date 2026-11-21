@@ -11,9 +11,9 @@ import pytest
 from loom.core.errors import NotFound, RuleViolationError, SystemError, UnexpectedError
 from loom.core.errors.failure import Failure
 from loom.core.errors.log_events import ErrorLogEvent, ErrorLogField
-from loom.core.fields import MASK, Secret
 from loom.core.job.outcome import JobAbandonment
 from loom.core.logger import LogField
+from loom.core.vocabulary import MASK, Secret
 
 _SECRET = "iban ES91 2100 0418 4502 0005 1332"
 _log = logging.getLogger("tests.failure")
@@ -21,7 +21,7 @@ _log = logging.getLogger("tests.failure")
 
 class _Declaring(SystemError):
     template = "{count} settings failed, {setting} first"
-    field_keys = MappingProxyType({"count": LogField.COUNT, "setting": LogField.SETTING})
+    attributes = MappingProxyType({"count": LogField.COUNT, "setting": LogField.SETTING})
 
 
 @pytest.fixture

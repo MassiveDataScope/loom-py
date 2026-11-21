@@ -29,7 +29,6 @@ from opentelemetry.sdk.trace.export.in_memory_span_exporter import InMemorySpanE
 
 from loom.core.config.observability import OtelConfig
 from loom.core.environment import Environment
-from loom.core.fields import MAX_VALUE_LENGTH, Secret
 from loom.core.logger import LogField, log_context
 from loom.core.logger.filter import STANDARD_ATTRIBUTES
 from loom.core.logger.formats import JsonFormatter
@@ -40,6 +39,7 @@ from loom.core.observability.observability import Observability
 from loom.core.observability.observer import otel as otel_module
 from loom.core.observability.observer.log import LogLifecycleObserver
 from loom.core.observability.observer.otel import install_otel_log_export
+from loom.core.vocabulary import MAX_VALUE_LENGTH, Secret
 from tests.helpers.canary import CANARY, Leaky, canary_failure
 
 

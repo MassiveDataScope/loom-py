@@ -15,7 +15,7 @@ from typing import Any, Union, get_args, get_origin
 
 import msgspec
 
-from loom.core.fields import MASK, FieldValue, Scalar, Secret
+from loom.core.vocabulary import MASK, FieldValue, Scalar, Secret
 
 _UNION = (Union, types.UnionType)
 _SECRET_TOKENS = frozenset({"password", "passwd", "pwd", "secret", "token", "apikey", "credential"})

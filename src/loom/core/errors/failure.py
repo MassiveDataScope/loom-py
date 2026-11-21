@@ -1,7 +1,7 @@
 """What loom says about a failure, and what leaves loom in its place.
 
 :class:`Failure` is the one owner of every question about an exception: its
-type, its code, its declared fields, whether it is expected, the level that
+type, its code, its declared attributes, whether it is expected, the level that
 reports it, what a client reads, its frames-only stack and its translation at
 the loom boundary. Ask ``Failure(exc)``, never the exception.
 
@@ -39,7 +39,7 @@ class UnexpectedError(SystemError):
     """
 
     template = "unexpected {original_type}"
-    field_keys = MappingProxyType({"original_type": ErrorLogField.ORIGINAL_TYPE})
+    attributes = MappingProxyType({"original_type": ErrorLogField.ORIGINAL_TYPE})
 
     @property
     def original_type(self) -> str | None:
@@ -131,7 +131,7 @@ class Failure:
         return self.exc.client_detail if isinstance(self.exc, LoomError) else ()
 
     def fields(self, *, stacktrace: bool = False) -> dict[str, object]:
-        """The fields that describe it: declared fields, type, code, violation codes, stack.
+        """The fields that describe it: declared attributes, type, code, violation codes, stack.
 
         Args:
             stacktrace: Whether to include ``exception.stacktrace``.

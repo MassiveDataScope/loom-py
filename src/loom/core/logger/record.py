@@ -22,8 +22,8 @@ from typing import Any, Final
 from loom.core.errors.failure import Failure
 from loom.core.logger.context import current_log_fields
 from loom.core.logger.stamp import LogIdentity, LogRuntime
-from loom.core.logger.vocabulary import LogField
 from loom.core.tracing.context import get_trace_id
+from loom.core.vocabulary import LogField
 
 STAMP: Final = "_loom"
 """Attribute of a record that holds its :class:`RecordStamp` until a :class:`LogFilter` reads it."""

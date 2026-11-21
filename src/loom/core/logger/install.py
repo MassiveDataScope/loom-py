@@ -11,7 +11,6 @@ from typing import Final, cast
 from loom.core.config.errors import ConfigError
 from loom.core.environment import Environment, resolve_environment
 from loom.core.errors.boundary import ProcessHooks
-from loom.core.fields import MAX_LIST_ITEMS
 from loom.core.logger.filter import LogFilter
 from loom.core.logger.formats import (
     json_format,
@@ -23,7 +22,6 @@ from loom.core.logger.log_events import LoggerLogEvent, LoggerLogField
 from loom.core.logger.record import LoomRecordFactory, TraceIds, loom_trace_ids
 from loom.core.logger.settings import LogSettings
 from loom.core.logger.stamp import LogIdentity, LogRuntime
-from loom.core.logger.vocabulary import LogField
 from loom.core.plugins.entrypoints import (
     EntryPointNotFoundError,
     MissingDependency,
@@ -31,6 +29,7 @@ from loom.core.plugins.entrypoints import (
     registered_names,
     select_entry_point,
 )
+from loom.core.vocabulary import MAX_LIST_ITEMS, LogField
 
 _log = logging.getLogger(__name__)
 

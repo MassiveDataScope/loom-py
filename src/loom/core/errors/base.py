@@ -1,4 +1,4 @@
-"""Framework error bases: a loom error is built from its declared fields, never free text."""
+"""Framework error bases: a loom error is built from its declared attributes, never free text."""
 
 from __future__ import annotations
 
@@ -11,7 +11,7 @@ from typing import Any, ClassVar, Final
 
 from loom.core.errors.codes import ErrorCode
 from loom.core.errors.log_events import ErrorLogField
-from loom.core.fields import LogKey, render_value
+from loom.core.vocabulary import LogKey, render_value
 
 EXPECTED_CODES: Final = frozenset(
     {
@@ -42,7 +42,7 @@ CLIENT_CODES: Final = frozenset(
 client reads it, as :attr:`LoomError.client_message`."""
 
 ABSENT: Final = "<absent>"
-"""How a template shows a declared field the error was built without."""
+"""How a template shows a declared attribute the error was built without."""
 
 _RESERVED_NAMES: Final = frozenset({"code", "client_detail"})
 
@@ -66,18 +66,18 @@ class ClientViolation:
 
 
 class LoomError(Exception):
-    """Base class for all framework errors: a code, a template and declared fields.
+    """Base class for all framework errors: a code, a template and declared attributes.
 
     A subclass declares, on the class, its :attr:`code` (a member of a
     catalogue such as :class:`~loom.core.errors.codes.ErrorCode`), its
-    :attr:`template` and :attr:`field_keys`, which maps each placeholder of the
+    :attr:`template` and :attr:`attributes`, which maps each placeholder of the
     template, a Python identifier, to a vocabulary key. It is built as
-    ``Cls(**fields)``: each value is rendered once, here, as any field value is
+    ``Cls(**attributes)``: each value is rendered once, here, as any field value is
     (a ``Secret`` masked, a long string cut, an object its type name), and the
     template is rendered from the rendered values. So ``str(error)`` holds no
     free text and is safe anywhere. ``args`` is ``(code,)``, and every
     declared class rebuilds from no arguments or from its code alone, a
-    missing field shown as :data:`ABSENT`: Celery's JSON rebuild calls
+    missing attribute shown as :data:`ABSENT`: Celery's JSON rebuild calls
     ``Cls(*args)``.
 
     A class that serves several codes takes ``code=`` as an override. A class
@@ -102,10 +102,10 @@ class LoomError(Exception):
             class; the free-text message of a class not migrated yet.
         code: The code, for a class that serves several.
         client_detail: The violations only the client reads.
-        **fields: The declared fields, by name.
+        **attributes: The declared attributes, by name.
 
     Raises:
-        ErrorDeclarationError: When a field is not declared, or a positional
+        ErrorDeclarationError: When an attribute is not declared, or a positional
             argument of a declared class is not one of its codes.
 
     Attributes:
@@ -119,28 +119,28 @@ class LoomError(Exception):
         class InvoiceOverdue(DomainError):
             code = BillingCode.INVOICE_OVERDUE
             template = "invoice {invoice_id} is {days} days overdue"
-            field_keys = {"invoice_id": BillingLogField.INVOICE_ID, "days": LogField.COUNT}
+            attributes = {"invoice_id": BillingLogField.INVOICE_ID, "days": LogField.COUNT}
 
         raise InvoiceOverdue(invoice_id=42, days=3)
     """
 
     code: StrEnum = ErrorCode.SYSTEM_ERROR
     template: ClassVar[str] = ""
-    field_keys: ClassVar[Mapping[str, LogKey]] = MappingProxyType({})
+    attributes: ClassVar[Mapping[str, LogKey]] = MappingProxyType({})
     is_retryable: bool = True
     http_status: int | None = None
     client_detail: tuple[ClientViolation, ...] = ()
 
     def __init_subclass__(cls, **kwargs: Any) -> None:
-        """Check that a declared template and its field map name the same fields.
+        """Check that a declared template and its attribute map name the same attributes.
 
         Raises:
             ErrorDeclarationError: When a placeholder has no key, a key has no
-                placeholder, a placeholder is not a plain identifier or a field
+                placeholder, a placeholder is not a plain identifier or an attribute
                 takes a reserved name.
         """
         super().__init_subclass__(**kwargs)
-        if "template" not in cls.__dict__ and "field_keys" not in cls.__dict__:
+        if "template" not in cls.__dict__ and "attributes" not in cls.__dict__:
             return
         reason = cls._declaration_fault()
         if reason is not None:
@@ -155,10 +155,10 @@ class LoomError(Exception):
             if spec or conversion or not name.isidentifier():
                 return Misdeclaration.PLACEHOLDER_NOT_A_NAME
             placeholders.add(name)
-        if placeholders != set(cls.field_keys):
-            return Misdeclaration.FIELDS_DIFFER_FROM_TEMPLATE
+        if placeholders != set(cls.attributes):
+            return Misdeclaration.ATTRIBUTES_DIFFER_FROM_TEMPLATE
         if placeholders & _RESERVED_NAMES:
-            return Misdeclaration.RESERVED_FIELD_NAME
+            return Misdeclaration.RESERVED_ATTRIBUTE_NAME
         return None
 
     def __init__(
@@ -166,7 +166,7 @@ class LoomError(Exception):
         *rebuilt: object,
         code: StrEnum | None = None,
         client_detail: Sequence[ClientViolation] = (),
-        **fields: object,
+        **attributes: object,
     ) -> None:
         if code is not None:
             self.code = code
@@ -174,26 +174,26 @@ class LoomError(Exception):
             self.client_detail = tuple(client_detail)
         if not self.is_declared:
             self.message = str(rebuilt[0]) if rebuilt else type(self).__qualname__
-            self._fields: dict[str, object] = {}
+            self._values: dict[str, object] = {}
             super().__init__(self.message)
             return
         if rebuilt:
             self.code = self._rebuilt_code(rebuilt)
-        undeclared = fields.keys() - self.field_keys.keys()
+        undeclared = attributes.keys() - self.attributes.keys()
         if undeclared:
             raise ErrorDeclarationError(
-                error_class=type(self).__qualname__, reason=Misdeclaration.UNDECLARED_FIELD
+                error_class=type(self).__qualname__, reason=Misdeclaration.UNDECLARED_ATTRIBUTE
             )
-        self._fields = {name: render_value(fields.get(name)) for name in self.field_keys}
+        self._values = {name: render_value(attributes.get(name)) for name in self.attributes}
         self.message = self.template.format_map(
-            {name: ABSENT if value is None else value for name, value in self._fields.items()}
+            {name: ABSENT if value is None else value for name, value in self._values.items()}
         )
         super().__init__(self.code)
 
     @property
     def is_declared(self) -> bool:
-        """Whether the class declares a template, so it is built from fields only."""
-        return bool(self.template) or bool(self.field_keys)
+        """Whether the class declares a template, so it is built from attributes only."""
+        return bool(self.template) or bool(self.attributes)
 
     def _rebuilt_code(self, rebuilt: tuple[object, ...]) -> StrEnum:
         value = rebuilt[0]
@@ -227,14 +227,15 @@ class LoomError(Exception):
             setattr(self, name, value)
 
     def log_fields(self) -> Mapping[LogKey, object]:
-        """The declared fields under their vocabulary keys, rendered; an absent one is left out.
+        """The declared attributes under their vocabulary keys, rendered; an absent one is left out.
 
-        A class not migrated yet may override it to declare fields by hand.
+        They are the fields a record about the error carries. A class not migrated yet
+        may override it to declare them by hand.
         """
-        values = getattr(self, "_fields", {})
+        values = getattr(self, "_values", {})
         return {
             key: values[name]
-            for name, key in self.field_keys.items()
+            for name, key in self.attributes.items()
             if values.get(name) is not None
         }
 
@@ -287,9 +288,9 @@ class Misdeclaration(StrEnum):
     """How an error class or its construction breaks the constructor's rules."""
 
     PLACEHOLDER_NOT_A_NAME = "placeholder_not_a_name"
-    FIELDS_DIFFER_FROM_TEMPLATE = "fields_differ_from_template"
-    RESERVED_FIELD_NAME = "reserved_field_name"
-    UNDECLARED_FIELD = "undeclared_field"
+    ATTRIBUTES_DIFFER_FROM_TEMPLATE = "attributes_differ_from_template"
+    RESERVED_ATTRIBUTE_NAME = "reserved_attribute_name"
+    UNDECLARED_ATTRIBUTE = "undeclared_attribute"
     FREE_TEXT = "free_text"
 
 
@@ -297,11 +298,11 @@ class ErrorDeclarationError(SystemError):
     """Raised when an error class is declared, or built, outside the constructor's rules.
 
     A programming error: a template whose placeholders differ from its field
-    map, a field that is not declared, or free text passed to a declared class.
+    map, an attribute that is not declared, or free text passed to a declared class.
     """
 
     is_retryable = False
     template = "{error_class} breaks the error constructor: {reason}"
-    field_keys = MappingProxyType(
+    attributes = MappingProxyType(
         {"error_class": ErrorLogField.ERROR_CLASS, "reason": ErrorLogField.MISDECLARATION}
     )

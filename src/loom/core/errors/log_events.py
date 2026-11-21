@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from loom.core.fields import LogEvent, LogKey
+from loom.core.vocabulary import LogEvent, LogKey
 
 
 class ErrorLogEvent(LogEvent):

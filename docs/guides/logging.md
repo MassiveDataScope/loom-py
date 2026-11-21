@@ -91,8 +91,8 @@ failure is safe where it is made, so any output may show it.
   Each host's control flow crosses it untouched: `typer.Exit`, Celery
   `Retry`/`Ignore`/`Reject`, pydantic-ai `ModelRetry`, Starlette
   `HTTPException`, and any `BaseException` that is not an `Exception`.
-- **A `LoomError` is built from declared fields.** The class declares its
-  `code`, its `template` and `field_keys`, which maps each placeholder to a
+- **A `LoomError` is built from declared attributes.** The class declares its
+  `code`, its `template` and `attributes`, which maps each placeholder to a
   vocabulary key; `__init_subclass__` checks that they match. Values are
   rendered once, when the error is built, as any field is (a `Secret` masked, a
   long string cut, any object its type name), so `str(error)` holds no free
@@ -101,19 +101,19 @@ failure is safe where it is made, so any output may show it.
   ```python
   class InvoiceLocked(Conflict):
       template = "invoice {invoice_id} is locked"
-      field_keys = MappingProxyType({"invoice_id": BillingLogField.INVOICE_ID})
+      attributes = MappingProxyType({"invoice_id": BillingLogField.INVOICE_ID})
 
   raise InvoiceLocked(invoice_id=7)
   ```
 
-  The declared fields go into the record; the `409` body answers with the
+  The declared attributes go into the record; the `409` body answers with the
   code. What a client reads is declared by the error: `client_message` (its
   message, for a validation or client-caused code) and `client_detail`, the
   violations of a `422`, which never enter `str(error)` or the log (the log
   carries their count and codes). Loom's own errors still built from a
   positional message are migrated package by package before 12.0.
 - **An application's own value** declares how a field shows it by deriving
-  from `loom.core.fields.FieldValue` (`Dsn` writes its masked address).
+  from `loom.core.vocabulary.FieldValue` (`Dsn` writes its masked address).
 - `loom.testing.log_calls.exception_text_offences(paths)` finds every place
   your code formats an exception's text (`str`, `repr`, an f-string, `%`,
   `.format()` of an except-bound or exception-typed name or its `.args`, or

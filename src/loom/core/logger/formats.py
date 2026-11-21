@@ -18,9 +18,9 @@ from datetime import UTC, datetime
 from typing import Final
 
 from loom.core.errors.log_events import ErrorLogField
-from loom.core.fields import render_value
 from loom.core.logger.filter import STANDARD_ATTRIBUTES
 from loom.core.logger.settings import LogSettings
+from loom.core.vocabulary import render_value
 
 LAMBDA_RUNTIME_HANDLERS: Final = frozenset(
     {"LambdaLoggerHandler", "LambdaLoggerHandlerWithFrameType"}

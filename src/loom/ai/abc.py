@@ -41,9 +41,9 @@ from loom.ai.inference import InferenceTarget
 from loom.ai.log_events import AiLogField
 from loom.core.di import LoomContainer
 from loom.core.errors.model import BoundaryValidationError
-from loom.core.fields import LogKey, Scalar
 from loom.core.identity import Identity
 from loom.core.model import LoomFrozenStruct, LoomType
+from loom.core.vocabulary import LogKey, Scalar
 
 CONVERSATION_ID_MAX_LENGTH: Final[int] = 128
 """Longest ``conversation_id`` a run accepts; the value itself is opaque."""
