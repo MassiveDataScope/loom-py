@@ -1,7 +1,8 @@
 """Generic in-memory repository for use in tests.
 
 Provides :class:`InMemoryRepository` — a fully functional, zero-dependency
-fake repository that stores :class:`msgspec.Struct` entities in a plain dict.
+fake repository that stores the entities of a loom model in a plain dict, keyed
+by the primary key the model declares.
 
 Designed to be used with :class:`~loom.testing.http_harness.HttpTestHarness`
 or standalone in unit tests, eliminating the need to write a ``FakeXxxRepo``
@@ -9,7 +10,7 @@ class for every domain model.
 
 Usage::
 
-    repo = InMemoryRepository(Product, id_field="id")
+    repo = InMemoryRepository(Product)
     repo.seed(Product(id=1, name="Widget"))
 
     product = await repo.get_by_id(1)   # → Product(id=1, name="Widget")
@@ -28,7 +29,6 @@ from typing import Any, Generic, TypeVar
 import msgspec
 
 from loom.core.errors import Conflict
-from loom.core.model import BaseModel
 from loom.core.model.convert import to_struct
 from loom.core.model.introspection import business_key_of, get_id_attributes, get_projections
 from loom.core.projection.loaders import (
@@ -61,7 +61,7 @@ T = TypeVar("T", bound=msgspec.Struct)
 class InMemoryRepository(
     Readable[T], Creatable[T], BulkCreatable[T], Updatable[T], Deletable[T], Generic[T]
 ):
-    """Generic in-memory repository for testing any ``msgspec.Struct`` model.
+    """Generic in-memory repository for testing any model that declares a primary key.
 
     Stores entities in a plain dict keyed by their primary-key values.  Provides
     the standard repository surface (``get_by_id``, ``create``, ``update``,
@@ -79,39 +79,40 @@ class InMemoryRepository(
     a row is skipped only when its business key (its primary key when the model
     declares none) is already stored or came earlier in the batch, and any other
     collision, a primary key included, still raises ``Conflict`` and stores nothing.
-    A composite primary key is an id tuple in key order, as in the SQLAlchemy adapter.
+    The key is the primary key the model declares, single or composite; a
+    composite key is an id tuple in key order, as in the SQLAlchemy adapter.
     It declares the key capabilities (``Readable``, ``Creatable``, ``BulkCreatable``,
     ``Updatable``, ``Deletable``); ``list_paginated`` is a convenience that
     returns every entity, not the ``Listable`` contract.
 
     Args:
-        entity_type: The ``msgspec.Struct`` subclass this repository stores.
-        id_field: Name of the identity field on the entity.  Defaults to
-            ``"id"``; a model with a composite primary key uses its own key fields.
+        entity_type: The model this repository stores; its declared primary key
+            is the store key.
         creator: Optional ``(cmd, next_id) -> T`` callable used by
             :meth:`create`.  When provided, the automatic field-mapping is
             bypassed entirely.
 
     Example::
 
-        repo = InMemoryRepository(Product, id_field="id")
+        repo = InMemoryRepository(Product)
         repo.seed(Product(id=1, name="Widget"), Product(id=2, name="Gadget"))
 
         harness = HttpTestHarness()
         harness.inject_repo(Product, repo)
         client = harness.build_app(interfaces=[ProductRestInterface])
+
+    Raises:
+        ValueError: If *entity_type* declares no primary-key field.
     """
 
     def __init__(
         self,
         entity_type: type[T],
         *,
-        id_field: str = "id",
         creator: Callable[[Any, int], T] | None = None,
     ) -> None:
         self._entity_type = entity_type
-        self._id_field = id_field
-        self._key = PrimaryKey(entity_type.__name__, _key_names(entity_type, id_field))
+        self._key = PrimaryKey(entity_type.__name__, get_id_attributes(entity_type))
         business_key = business_key_of(entity_type)
         self._business_key_fields = () if business_key is None else business_key.fields
         self._creator = creator
@@ -123,8 +124,8 @@ class InMemoryRepository(
     def seed(self, *entities: T) -> None:
         """Pre-load entities into the store.
 
-        The internal id counter is advanced past the highest integer id seen
-        so that subsequent :meth:`create` calls do not collide.
+        The internal id counter is advanced past the highest integer single-field
+        id seen so that subsequent :meth:`create` calls do not collide.
 
         Args:
             *entities: Entity instances to load.
@@ -135,9 +136,9 @@ class InMemoryRepository(
         """
         for entity in entities:
             self._put(entity)
-            id_val = getattr(entity, self._id_field, None)
-            if isinstance(id_val, int) and id_val >= self._next_id:
-                self._next_id = id_val + 1
+            obj_id = self._key.id_of(entity)
+            if isinstance(obj_id, int) and obj_id >= self._next_id:
+                self._next_id = obj_id + 1
 
     async def get_by_id(self, obj_id: Any, profile: str = "default") -> T | None:
         """Return the entity with ``obj_id``, or ``None`` if not found.
@@ -160,8 +161,8 @@ class InMemoryRepository(
 
         If a ``creator`` callable was provided at construction it is called as
         ``creator(data, next_id)``.  Otherwise, command attributes whose names
-        match entity fields are copied automatically, and the id field is set
-        from the internal auto-increment counter.
+        match entity fields are copied automatically, and a single-field primary
+        key the command leaves unset comes from the internal auto-increment counter.
 
         Args:
             data: Command or payload object carrying the new entity's data.
@@ -273,7 +274,7 @@ class InMemoryRepository(
         projection_values = await execute_projection_plan(
             plan,
             objs=entities,
-            id_attr=self._id_field,
+            id_attr=self._key.names[0],
             backend_context=None,
         )
         return [
@@ -358,8 +359,9 @@ class InMemoryRepository(
             if hasattr(cmd, f_name):
                 data[f_name] = getattr(cmd, f_name)
         data = with_derived_key(self._entity_type, data)
-        if self._id_field in entity_fields and data.get(self._id_field) is None:
-            data[self._id_field] = self._next_id
+        match self._key.names:
+            case (name,) if data.get(name) is None:
+                data[name] = self._next_id
         self._next_id += 1
         return to_struct(self._entity_type, data)
 
@@ -408,7 +410,7 @@ class InMemoryRepository(
         result = await execute_projection_plan(
             plan,
             objs=[entity],
-            id_attr=self._id_field,
+            id_attr=self._key.names[0],
             backend_context=None,
         )
         return self._apply_projection_values(entity, result.get(0))
@@ -419,18 +421,6 @@ class InMemoryRepository(
         data = msgspec.structs.asdict(entity)
         data.update(values)
         return self._entity_type(**data)
-
-
-def _key_names(entity_type: type, id_field: str) -> tuple[str, ...]:
-    """The primary-key fields: a model's own when composite, else the single *id_field*."""
-    if issubclass(entity_type, BaseModel):
-        try:
-            names = get_id_attributes(entity_type)
-        except ValueError:
-            return (id_field,)
-        if len(names) > 1:
-            return names
-    return (id_field,)
 
 
 def _sent_values(data: msgspec.Struct) -> dict[str, Any]:

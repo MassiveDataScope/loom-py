@@ -16,7 +16,7 @@ from loom.core.command.base import Command
 from loom.core.errors import Conflict, NotFound
 from loom.core.job.job import Job
 from loom.core.job.service import JobService
-from loom.core.model import LoomStruct
+from loom.core.model import BaseModel, ColumnField
 from loom.core.stores.repository import Readable
 from loom.core.use_case.markers import Input
 from loom.core.use_case.use_case import UseCase
@@ -31,9 +31,11 @@ from tests.helpers.jobs import JobActivity
 # ---------------------------------------------------------------------------
 
 
-class Product(LoomStruct):
-    id: int
-    name: str
+class Product(BaseModel):
+    __tablename__ = "harness_products"
+
+    id: int = ColumnField(primary_key=True, autoincrement=True)
+    name: str = ColumnField(length=64)
 
 
 class CreateProductCmd(Command, frozen=True):
@@ -68,9 +70,11 @@ class ProductInterface(RestInterface[Product]):
 # ---------------------------------------------------------------------------
 
 
-class Tag(LoomStruct):
-    id: int
-    label: str
+class Tag(BaseModel):
+    __tablename__ = "harness_tags"
+
+    id: int = ColumnField(primary_key=True, autoincrement=True)
+    label: str = ColumnField(length=64)
 
 
 class GetTagUseCase(UseCase[Tag, Tag | None]):
@@ -346,9 +350,11 @@ class TestDisableRoutesForwarding:
 # ---------------------------------------------------------------------------
 
 
-class AcmeItem(LoomStruct):
-    id: int
-    name: str
+class AcmeItem(BaseModel):
+    __tablename__ = "harness_acme_items"
+
+    id: int = ColumnField(primary_key=True, autoincrement=True)
+    name: str = ColumnField(length=64)
 
 
 class AcmeItemLookup(Readable[AcmeItem], Protocol):
