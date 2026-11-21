@@ -7,6 +7,8 @@ from typing import ClassVar
 
 import msgspec
 
+from loom.core.connections.aws import AwsClientConfig
+
 
 class AcmeStoresSettings(msgspec.Struct, kw_only=True):
     """The ``acme.stores`` section; every decode is recorded in :attr:`decoded`."""
@@ -25,3 +27,19 @@ class AcmeBucket:
 
     name: str
     backend: str
+
+
+class AcmeSessionsSettings(msgspec.Struct, kw_only=True):
+    """The ``acme.sessions`` section: a table and the DynamoDB client that reaches it."""
+
+    table: str
+    dynamodb: AwsClientConfig
+
+
+@dataclass(frozen=True)
+class AcmeSessions:
+    """What the sessions installer binds from its settings."""
+
+    table: str
+    region: str | None
+    url: str | None

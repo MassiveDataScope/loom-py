@@ -10,6 +10,7 @@ import msgspec
 from loom.core.config import ConfigContext, ConfigError
 from loom.core.config.keys import INTERPOLATION
 from loom.core.config.loader import config_strings, convert_section
+from loom.core.connections.aws import AwsInheritance
 from loom.core.di.container import LoomContainer
 from loom.core.resources import Resource
 
@@ -105,6 +106,10 @@ class ConfiguredInstaller(Installer, Generic[SettingsT]):
     def from_config(cls, config: ConfigContext) -> Self:
         """Decode the section into ``settings_type`` and build the installer with it.
 
+        A field of the settings typed ``AwsClientConfig``, at any depth, takes
+        the keys it does not set from the top-level ``aws:`` section, as loom's
+        own store plugins do.
+
         Raises:
             ConfigError: When the section is missing or fails validation; the
                 message names the section and the installer.
@@ -115,8 +120,10 @@ class ConfiguredInstaller(Installer, Generic[SettingsT]):
     def check_config(cls, config: ConfigContext) -> None:
         """Validate the section as written, resolving no placeholder.
 
-        A section with no placeholder is decoded as :meth:`from_config`
-        decodes it, with the same error. A section holding placeholders is
+        The ``aws:`` section, as written, fills the fields typed
+        ``AwsClientConfig`` first, as :meth:`from_config` does. A section with
+        no placeholder is decoded as :meth:`from_config` decodes it, with the
+        same error. A section holding placeholders is
         judged part by part: every value without a placeholder is decoded
         into its field's type as start-up decodes it, and a settings struct
         holding a placeholder somewhere below is judged on its keys (no key
@@ -128,7 +135,7 @@ class ConfiguredInstaller(Installer, Generic[SettingsT]):
         Raises:
             ConfigError: As :meth:`from_config`, naming the section and the installer.
         """
-        written = config.raw(cls.section)
+        written = cls._inheriting(AwsInheritance.as_written(config), config.raw(cls.section))
         if _holds_placeholder(written):
             cls._check_written(cls.settings_type, written, cls.section)
         else:
@@ -137,7 +144,24 @@ class ConfiguredInstaller(Installer, Generic[SettingsT]):
     @classmethod
     def _decode(cls, config: ConfigContext) -> SettingsT:
         try:
-            settings: SettingsT = config.section(cls.section, cls.settings_type)
+            written = AwsInheritance.resolved(config).apply(
+                cls.settings_type, config.section(cls.section, Any), cls.section
+            )
+        except ConfigError as error:
+            raise cls._error(str(error)) from error
+        return cls._convert(written)
+
+    @classmethod
+    def _inheriting(cls, inheritance: AwsInheritance, written: object) -> Any:
+        try:
+            return inheritance.apply(cls.settings_type, written, cls.section)
+        except ConfigError as error:
+            raise cls._error(str(error)) from error
+
+    @classmethod
+    def _convert(cls, written: object) -> SettingsT:
+        try:
+            settings: SettingsT = convert_section(written, cls.section, cls.settings_type)
         except ConfigError as error:
             raise cls._error(str(error)) from error
         return settings

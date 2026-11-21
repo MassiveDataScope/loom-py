@@ -11,11 +11,13 @@ from loom.core.connections.aws.config import (
     RetryMode,
     aws_error_code,
 )
+from loom.core.connections.aws.inheritance import AwsInheritance
 from loom.core.connections.aws.source import AwsClientSource
 
 __all__ = [
     "AwsClientConfig",
     "AwsClientSource",
+    "AwsInheritance",
     "AwsPool",
     "RetryMode",
     "aws_error_code",

@@ -1260,6 +1260,13 @@
 
 ### composition
 
+- **composition:** a `ConfiguredInstaller`'s settings inherit the top-level `aws:`
+  section as loom's own store plugins do: any field typed `AwsClientConfig` (or
+  a subclass), nested anywhere (structs, optional fields, lists, mappings),
+  takes the keys it does not set from `aws:`, and the field's own values win.
+  `loom check` judges the inherited values, with the `aws:` section as written.
+  `AwsInheritance` owns the walk, and `AwsClientConfig.inherit_from` the merge
+  that the store plugins' `AwsClientConfig.inherit` shares.
 - **composition:** `Recipe.aws` is the application's one `AwsClients`; the
   testing harnesses (`HttpTestHarness`, `LambdaTestClient`, `OverrideRuntime`)
   take `aws=` to supply a recording or fake one that the stores, the job
