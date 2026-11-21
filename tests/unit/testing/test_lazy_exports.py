@@ -28,6 +28,7 @@ from loom.testing import (  # noqa: F401
     GoldenHarness,
     InMemoryRepository,
     RecordingJobTransport,
+    RecordingRepository,
     UseCaseTest,
     LambdaEvent,
 )
