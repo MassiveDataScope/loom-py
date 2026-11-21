@@ -3,12 +3,42 @@
 from __future__ import annotations
 
 from collections.abc import Awaitable, Callable
+from dataclasses import dataclass
 from typing import Protocol
 
+from loom.core.engine.events import AbandonReason, EventKind, ExecutionEvent, Status
 from loom.core.job.policy import Countdown
 
 Step = Callable[[], Awaitable[None]]
 """What runs when a delay is over."""
+
+
+@dataclass(frozen=True, slots=True)
+class DelayedJob:
+    """A job a timer holds: what it needs to say which one was lost.
+
+    Attributes:
+        job: The qualified name of the job.
+        task_id: The id of the job's dispatch.
+    """
+
+    job: str
+    task_id: str
+
+    @property
+    def label(self) -> str:
+        """The job as ``Job:task_id``."""
+        return f"{self.job}:{self.task_id}"
+
+    def abandoned(self, reason: AbandonReason, error: Exception | None = None) -> ExecutionEvent:
+        """The ``JOB_ABANDONED`` event that reports this job lost for *reason*."""
+        return ExecutionEvent(
+            EventKind.JOB_ABANDONED,
+            self.job,
+            status=Status.ABANDONED,
+            error=error,
+            reason=reason,
+        )
 
 
 class JobDelayRefusedError(RuntimeError):

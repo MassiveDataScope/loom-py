@@ -4,10 +4,12 @@ from __future__ import annotations
 
 import pytest
 
+from loom.core.engine.events import AbandonReason, EventKind
 from loom.core.job.config import JobShutdown, ShutdownMode
 from loom.core.job.policy import Countdown
 from loom.core.job.timer import Step
 from loom.testing import ManualTimer
+from tests.helpers.jobs import RecordingExecutionObserver
 
 pytestmark = pytest.mark.timeout(10)
 
@@ -118,3 +120,33 @@ class TestManualTimerClose:
         await timer.close()
 
         assert (ran, timer.pending, timer.lost) == (["first"], 0, ["J:second"])
+
+
+class TestManualTimerAbandonments:
+    async def test_the_jobs_dropped_at_close_are_reported_as_abandoned_by_shutdown(self) -> None:
+        observer = RecordingExecutionObserver()
+        timer = ManualTimer(execution_observer=observer)
+
+        async def step() -> None:
+            return None
+
+        timer.schedule(Countdown(10), step, job="AcmeJob", task_id="a")
+        timer.schedule(Countdown(20), step, job="OtherJob", task_id="b")
+        await timer.close()
+
+        assert [(e.kind, e.use_case_name, e.reason) for e in observer.events] == [
+            (EventKind.JOB_ABANDONED, "AcmeJob", AbandonReason.SHUTDOWN),
+            (EventKind.JOB_ABANDONED, "OtherJob", AbandonReason.SHUTDOWN),
+        ]
+
+    async def test_a_wait_that_runs_everything_reports_nothing(self) -> None:
+        observer = RecordingExecutionObserver()
+        timer = ManualTimer(JobShutdown(mode=ShutdownMode.WAIT), execution_observer=observer)
+
+        async def step() -> None:
+            return None
+
+        timer.schedule(Countdown(10), step, job="AcmeJob", task_id="a")
+        await timer.close()
+
+        assert observer.events == []

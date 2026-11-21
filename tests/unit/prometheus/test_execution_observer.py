@@ -6,6 +6,8 @@ import pytest
 from prometheus_client import CollectorRegistry
 
 from loom.core.engine.events import AbandonReason, EventKind, ExecutionEvent
+from loom.core.job.policy import Countdown
+from loom.jobs.inline import AsyncioJobTimer
 from loom.prometheus import PrometheusExecutionObserver
 
 
@@ -174,5 +176,24 @@ class TestJobEvents:
             registry,
             "loom_job_events_total",
             {"kind": "job_succeeded", "job": "SendEmail", "reason": ""},
+        )
+        assert count == pytest.approx(1.0)
+
+
+class TestTimerAbandonments:
+    async def test_a_delayed_job_lost_at_shutdown_is_counted_under_its_reason(self) -> None:
+        adapter, registry = _adapter()
+        timer = AsyncioJobTimer(execution_observer=adapter)
+
+        async def step() -> None:
+            return None
+
+        timer.schedule(Countdown(900), step, job="SendEmail", task_id="t")
+        await timer.close()
+
+        count = _metric_value(
+            registry,
+            "loom_job_events_total",
+            {"kind": "job_abandoned", "job": "SendEmail", "reason": "shutdown"},
         )
         assert count == pytest.approx(1.0)

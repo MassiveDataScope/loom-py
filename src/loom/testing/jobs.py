@@ -17,6 +17,8 @@ from dataclasses import dataclass, replace
 from datetime import UTC, datetime
 from typing import TYPE_CHECKING, Any, TypeVar
 
+from loom.core.engine.events import AbandonReason
+from loom.core.engine.execution_observer import ExecutionObserver, NullExecutionObserver
 from loom.core.identity import Identity
 from loom.core.job.callback import ANY_CALLBACKS, DispatchableCallbacks
 from loom.core.job.config import CANCEL_AT_SHUTDOWN, JobSettings, JobShutdown
@@ -27,7 +29,7 @@ from loom.core.job.envelope import JobEnvelope, wire_job_name
 from loom.core.job.handle import JobHandle
 from loom.core.job.job import Job
 from loom.core.job.policy import DEFAULT_RETRY, Countdown, RetryPolicy
-from loom.core.job.timer import Step
+from loom.core.job.timer import DelayedJob, Step
 
 if TYPE_CHECKING:
     from loom.composition import JobTransportContext
@@ -161,7 +163,8 @@ class ManualTimer:
     steps in order, moving the clock to each, and the steps they schedule, until
     none is pending or the next one falls beyond ``timeout_s`` seconds from now
     (no timeout runs until idle); the rest is dropped. :attr:`lost` lists what was
-    dropped, each as ``Job:task_id``. A timer bound in the container is closed by
+    dropped, each as ``Job:task_id``; each is also reported to *execution_observer*
+    as ``JOB_ABANDONED`` with reason ``shutdown``. A timer bound in the container is closed by
     ``Application.running()`` on exit like the built one, so a test does not call
     :meth:`close` itself.
 
@@ -169,12 +172,21 @@ class ManualTimer:
         shutdown: What :meth:`close` does with the steps still pending. The test
             states it here: ``jobs.shutdown`` configures the timer composition
             builds, not one a test binds.
+        execution_observer: Receives the abandonments; none when omitted.
     """
 
-    def __init__(self, shutdown: JobShutdown = CANCEL_AT_SHUTDOWN) -> None:
+    def __init__(
+        self,
+        shutdown: JobShutdown = CANCEL_AT_SHUTDOWN,
+        *,
+        execution_observer: ExecutionObserver | None = None,
+    ) -> None:
         self._shutdown = shutdown
+        self._execution_observer: ExecutionObserver = (
+            NullExecutionObserver() if execution_observer is None else execution_observer
+        )
         self._now = 0.0
-        self._steps: list[tuple[float, int, Step, str]] = []
+        self._steps: list[tuple[float, int, Step, DelayedJob]] = []
         self._order = itertools.count()
         self.lost: list[str] = []
 
@@ -192,7 +204,7 @@ class ManualTimer:
             job: The qualified name of the job, listed in :attr:`lost` if dropped.
             task_id: The id of the dispatch, listed in :attr:`lost` if dropped.
         """
-        entry = (self._now + delay.seconds, next(self._order), step, f"{job}:{task_id}")
+        entry = (self._now + delay.seconds, next(self._order), step, DelayedJob(job, task_id))
         heapq.heappush(self._steps, entry)
 
     async def advance(self, seconds: int) -> None:
@@ -213,8 +225,11 @@ class ManualTimer:
         if self._shutdown.is_waiting:
             timeout = self._shutdown.timeout_s
             await self._run_until(None if timeout is None else self._now + timeout)
-        self.lost = [label for *_, label in sorted(self._steps)]
+        dropped = [delayed for *_, delayed in sorted(self._steps)]
         self._steps.clear()
+        self.lost = [delayed.label for delayed in dropped]
+        for delayed in dropped:
+            self._execution_observer.on_event(delayed.abandoned(AbandonReason.SHUTDOWN))
 
     async def _run_until(self, limit: float | None) -> None:
         while self._steps and (limit is None or self._steps[0][0] <= limit):

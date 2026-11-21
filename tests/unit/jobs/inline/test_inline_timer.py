@@ -12,6 +12,7 @@ from typing import Any, ClassVar
 
 import pytest
 
+from loom.core.engine.events import AbandonReason, EventKind
 from loom.core.errors import JobFailedError, JobTimeoutError
 from loom.core.job.callback import JobCallback
 from loom.core.job.config import JobShutdown, ShutdownMode
@@ -24,14 +25,14 @@ from loom.core.job.timer import JobDelayRefusedError, Step
 from loom.core.use_case import Delivery
 from loom.jobs.inline import AsyncioJobTimer
 from loom.testing.jobs import ManualTimer
-from tests.helpers.jobs import InlineServiceFixture, JobKernel
+from tests.helpers.jobs import InlineServiceFixture, JobKernel, RecordingExecutionObserver
 from tests.helpers.loggers import logged_events
 
 pytestmark = pytest.mark.timeout(10)
 
 STEADY = Backoff(first_s=4, factor=2, max_s=100, jitter=False)
 SPINS = 5
-LOST = "Delayed jobs lost at shutdown"
+ABANDONED = "Job abandoned"
 
 
 class AcmeError(Exception):
@@ -259,9 +260,9 @@ class TestAsyncioTimer:
         await asyncio.sleep(0)
         await timer.close()
 
-        assert LOST not in caplog.text
+        assert ABANDONED not in caplog.text
 
-    async def test_close_cancels_the_pending_steps_and_logs_the_lost_jobs_once(
+    async def test_close_cancels_the_pending_steps_and_logs_each_lost_job_as_an_abandonment(
         self, caplog: pytest.LogCaptureFixture
     ) -> None:
         ran: list[int] = []
@@ -274,16 +275,18 @@ class TestAsyncioTimer:
             timer.schedule(Countdown(900), step, job="AcmeJob", task_id=f"t{n}")
         await timer.close()
 
-        lost = [entry for entry in logged_events(caplog) if entry["event"] == LOST]
         assert ran == []
-        assert [entry["jobs"] for entry in lost] == [["AcmeJob:t0", "AcmeJob:t1", "AcmeJob:t2"]]
+        assert [
+            (entry["level"], entry["loom.job"], entry["loom.task_id"], entry["loom.reason"])
+            for entry in _abandonments(caplog)
+        ] == [("error", "AcmeJob", f"t{n}", "shutdown") for n in range(3)]
 
     async def test_close_with_nothing_pending_logs_nothing(
         self, caplog: pytest.LogCaptureFixture
     ) -> None:
         await AsyncioJobTimer().close()
 
-        assert LOST not in caplog.text
+        assert ABANDONED not in caplog.text
 
     async def test_each_timer_owns_its_tasks(self) -> None:
         first, second = AsyncioJobTimer(), AsyncioJobTimer()
@@ -301,8 +304,12 @@ class TestAsyncioTimer:
         assert ran == ["second"]
 
 
-def _lost_jobs(caplog: pytest.LogCaptureFixture) -> list[list[str]]:
-    return [entry["jobs"] for entry in logged_events(caplog) if entry["event"] == LOST]
+def _abandonments(caplog: pytest.LogCaptureFixture) -> list[dict[str, Any]]:
+    return [entry for entry in logged_events(caplog) if entry["event"] == ABANDONED]
+
+
+def _lost_jobs(caplog: pytest.LogCaptureFixture) -> list[str]:
+    return [f"{entry['loom.job']}:{entry['loom.task_id']}" for entry in _abandonments(caplog)]
 
 
 class TestAsyncioTimerShutdown:
@@ -318,7 +325,7 @@ class TestAsyncioTimerShutdown:
         timer.schedule(Countdown(900), step, job="AcmeJob", task_id="t")
         await timer.close()
 
-        assert (ran, _lost_jobs(caplog)) == ([], [["AcmeJob:t"]])
+        assert (ran, _lost_jobs(caplog)) == ([], ["AcmeJob:t"])
 
     async def test_wait_runs_the_pending_steps_and_the_steps_they_schedule(
         self, caplog: pytest.LogCaptureFixture
@@ -366,7 +373,7 @@ class TestAsyncioTimerShutdown:
         timer.schedule(Countdown(900), step("late"), job="AcmeJob", task_id="late")
         await timer.close()
 
-        assert (ran, _lost_jobs(caplog)) == (["soon"], [["AcmeJob:late"]])
+        assert (ran, _lost_jobs(caplog)) == (["soon"], ["AcmeJob:late"])
 
     async def test_wait_without_a_timeout_waits_for_a_step_still_running(self) -> None:
         timer = AsyncioJobTimer(JobShutdown(mode=ShutdownMode.WAIT))
@@ -385,3 +392,78 @@ class TestAsyncioTimerShutdown:
         await asyncio.wait_for(closing, 1)
 
         assert finished.is_set()
+
+
+def _observed_timer(
+    shutdown: JobShutdown | None = None,
+) -> tuple[AsyncioJobTimer, RecordingExecutionObserver]:
+    observer = RecordingExecutionObserver()
+    timer = AsyncioJobTimer(
+        shutdown or JobShutdown(mode=ShutdownMode.CANCEL), execution_observer=observer
+    )
+    return timer, observer
+
+
+def _reported(
+    observer: RecordingExecutionObserver,
+) -> list[tuple[EventKind, str, AbandonReason | None]]:
+    return [(event.kind, event.use_case_name, event.reason) for event in observer.events]
+
+
+async def _never() -> None:
+    return None
+
+
+class TestAsyncioTimerAbandonments:
+    async def test_cancel_reports_each_pending_job_as_abandoned_by_shutdown(self) -> None:
+        timer, observer = _observed_timer()
+
+        timer.schedule(Countdown(900), _never, job="AcmeJob", task_id="a")
+        timer.schedule(Countdown(900), _never, job="OtherJob", task_id="b")
+        await timer.close()
+
+        assert _reported(observer) == [
+            (EventKind.JOB_ABANDONED, "AcmeJob", AbandonReason.SHUTDOWN),
+            (EventKind.JOB_ABANDONED, "OtherJob", AbandonReason.SHUTDOWN),
+        ]
+
+    async def test_a_wait_timeout_reports_only_the_jobs_left(self) -> None:
+        timer, observer = _observed_timer(JobShutdown(mode=ShutdownMode.WAIT, timeout_s=0.01))
+
+        timer.schedule(Countdown(0), _never, job="AcmeJob", task_id="soon")
+        timer.schedule(Countdown(900), _never, job="LateJob", task_id="late")
+        await timer.close()
+
+        assert _reported(observer) == [(EventKind.JOB_ABANDONED, "LateJob", AbandonReason.SHUTDOWN)]
+
+    async def test_a_wait_that_completes_reports_nothing(self) -> None:
+        timer, observer = _observed_timer(JobShutdown(mode=ShutdownMode.WAIT))
+
+        timer.schedule(Countdown(0), _never, job="AcmeJob", task_id="t")
+        await timer.close()
+
+        assert observer.events == []
+
+    async def test_a_step_that_raises_outside_the_settle_path_is_reported_as_crashed(
+        self, caplog: pytest.LogCaptureFixture
+    ) -> None:
+        timer, observer = _observed_timer()
+        crashed = asyncio.Event()
+
+        async def step() -> None:
+            crashed.set()
+            raise AcmeError("notify down")
+
+        timer.schedule(Countdown(0), step, job="AcmeJob", task_id="t")
+        await asyncio.wait_for(crashed.wait(), 1)
+        await asyncio.sleep(0)
+        await timer.close()
+
+        (event,) = observer.events
+        assert (event.kind, event.reason, type(event.error)) == (
+            EventKind.JOB_ABANDONED,
+            AbandonReason.STEP_CRASHED,
+            AcmeError,
+        )
+        (logged,) = _abandonments(caplog)
+        assert (logged["level"], logged["loom.reason"]) == ("error", "step_crashed")

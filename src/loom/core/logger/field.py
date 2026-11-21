@@ -21,6 +21,7 @@ class LogField(StrEnum):
     JOB = "loom.job"
     TASK_ID = "loom.task_id"
     ATTEMPT = "loom.attempt"
+    REASON = "loom.reason"
     CODE_FUNCTION = "code.function.name"
     CODE_LINE = "code.line.number"
     CODE_FILE = "code.file.path"

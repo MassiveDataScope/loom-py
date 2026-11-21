@@ -56,7 +56,6 @@ UNMIGRATED_MODULES: Final[tuple[str, ...]] = (
     "loom.etl.maintenance.backends._delta_rs",
     "loom.jobs.aws.settlement",
     "loom.jobs.aws.sqs",
-    "loom.jobs.inline.timer",
     "loom.prefect.flow._hooks",
     "loom.prefect.notify._slack",
     "loom.prefect.notify._sns",

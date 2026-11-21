@@ -24,6 +24,7 @@ from tests.helpers.execution_observers import (
     RECORDING,
     GiveUpJob,
     JobOutcomeRecorder,
+    PostponeForLongJob,
 )
 from tests.helpers.jobs import JobsAdapter, job_project
 
@@ -79,6 +80,18 @@ class TestAbandonedJob:
         await _run_give_up_job(project, JobsAdapter(GiveUpJob))
 
         assert JobOutcomeRecorder.abandonments() == [AbandonReason.JOB_ASKED]
+
+    async def test_a_postponed_job_lost_at_exit_reaches_the_observer_as_a_shutdown(
+        self, tmp_path: Path
+    ) -> None:
+        project = job_project(tmp_path, _declaring(RECORDING), "inline")
+        application = project.compose(JobsAdapter(PostponeForLongJob))
+
+        async with application.running():
+            await application.kernel.container.resolve(JobService).dispatch_now(PostponeForLongJob)
+            assert JobOutcomeRecorder.abandonments() == []
+
+        assert JobOutcomeRecorder.abandonments() == [AbandonReason.SHUTDOWN]
 
     async def test_a_raising_observer_breaks_neither_the_run_nor_the_others(
         self, tmp_path: Path, caplog: pytest.LogCaptureFixture

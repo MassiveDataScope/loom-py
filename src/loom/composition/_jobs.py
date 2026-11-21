@@ -99,7 +99,9 @@ def _celery_transport(context: JobTransportContext, celery_cfg: CeleryConfig) ->
 def _inline(context: JobTransportContext) -> _Built:
     timer = context.timer
     if timer is None and context.can_wait_in_process:
-        timer = AsyncioJobTimer(context.settings.shutdown)
+        timer = AsyncioJobTimer(
+            context.settings.shutdown, execution_observer=context.execution_observer
+        )
         if not context.settings.shutdown.is_waiting:
             _log.warning(
                 "Inline jobs wait in process memory: a delayed job is lost when the process "

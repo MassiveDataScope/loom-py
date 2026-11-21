@@ -6,7 +6,7 @@ from typing import ClassVar
 
 from loom.core.engine.events import AbandonReason, EventKind, ExecutionEvent
 from loom.core.job.job import Job
-from loom.core.job.outcome import JobAbandonment
+from loom.core.job.outcome import JobAbandonment, JobPostponement
 
 RECORDING = "tests.helpers.execution_observers:JobOutcomeRecorder"
 RAISING = "tests.helpers.execution_observers:RaisingObserver"
@@ -53,3 +53,10 @@ class GiveUpJob(Job[None]):
 
     def execute(self) -> None:
         raise JobAbandonment("customer closed")
+
+
+class PostponeForLongJob(Job[None]):
+    """A job that asks to run again in a quarter of an hour, so a timer still holds it at exit."""
+
+    def execute(self) -> None:
+        raise JobPostponement("later", 900)

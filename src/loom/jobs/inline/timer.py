@@ -5,9 +5,12 @@ from __future__ import annotations
 import asyncio
 import logging
 
+from loom.core.engine.events import AbandonReason
+from loom.core.engine.execution_observer import ExecutionObserver, NullExecutionObserver
 from loom.core.job.config import CANCEL_AT_SHUTDOWN, JobShutdown
 from loom.core.job.policy import Countdown
-from loom.core.job.timer import Step
+from loom.core.job.timer import DelayedJob, Step
+from loom.core.logger import LogField
 
 _log = logging.getLogger(__name__)
 
@@ -18,16 +21,27 @@ class AsyncioJobTimer:
     It owns the tasks it starts. Closing it follows its *shutdown* policy: under
     ``cancel`` it cancels every step still pending; under ``wait`` it first
     awaits the pending steps, and the steps they schedule, until none is left or
-    the timeout is over. The jobs lost are logged, each as ``Job:task_id``, in
-    one line.
+    the timeout is over. Each job lost, because the process stopped or because
+    its step raised outside the settle path, is reported to the execution observer
+    as ``JOB_ABANDONED`` with reason ``shutdown`` or ``step_crashed`` and logged as
+    one ERROR record.
 
     Args:
         shutdown: What closing does with the steps still pending.
+        execution_observer: Receives the abandonments; none when omitted.
     """
 
-    def __init__(self, shutdown: JobShutdown = CANCEL_AT_SHUTDOWN) -> None:
+    def __init__(
+        self,
+        shutdown: JobShutdown = CANCEL_AT_SHUTDOWN,
+        *,
+        execution_observer: ExecutionObserver | None = None,
+    ) -> None:
         self._shutdown = shutdown
-        self._tasks: dict[asyncio.Task[None], str] = {}
+        self._tasks: dict[asyncio.Task[None], DelayedJob] = {}
+        self._execution_observer: ExecutionObserver = (
+            NullExecutionObserver() if execution_observer is None else execution_observer
+        )
 
     def schedule(self, delay: Countdown, step: Step, *, job: str, task_id: str) -> None:
         """Run *step* on the running loop after *delay*.
@@ -38,28 +52,42 @@ class AsyncioJobTimer:
             job: The qualified name of the job the step runs.
             task_id: The id of the job's dispatch.
         """
-        task = asyncio.get_running_loop().create_task(self._after(delay, step))
-        self._tasks[task] = f"{job}:{task_id}"
+        delayed = DelayedJob(job, task_id)
+        task = asyncio.get_running_loop().create_task(self._after(delay, step, delayed))
+        self._tasks[task] = delayed
         task.add_done_callback(self._tasks.pop)
 
-    @staticmethod
-    async def _after(delay: Countdown, step: Step) -> None:
+    async def _after(self, delay: Countdown, step: Step, delayed: DelayedJob) -> None:
         await asyncio.sleep(delay.seconds)
         try:
             await step()
-        except Exception:
-            _log.exception("Delayed job step failed")
+        except Exception as error:
+            self._abandon(delayed, AbandonReason.STEP_CRASHED, error)
 
     async def close(self) -> None:
-        """Let the pending steps run when waiting, then cancel the rest and log the jobs lost."""
+        """Let the pending steps run when waiting, then cancel the rest and report them lost."""
         if self._shutdown.is_waiting:
             await self._wait_until_idle()
         lost = dict(self._tasks)
         for task in lost:
             task.cancel()
         await asyncio.gather(*lost, return_exceptions=True)
-        if lost:
-            _log.warning("Delayed jobs lost at shutdown", extra={"jobs": list(lost.values())})
+        for delayed in lost.values():
+            self._abandon(delayed, AbandonReason.SHUTDOWN)
+
+    def _abandon(
+        self, delayed: DelayedJob, reason: AbandonReason, error: Exception | None = None
+    ) -> None:
+        self._execution_observer.on_event(delayed.abandoned(reason, error))
+        _log.error(
+            "Job abandoned",
+            extra={
+                LogField.JOB: delayed.job,
+                LogField.TASK_ID: delayed.task_id,
+                LogField.REASON: reason.value,
+            },
+            exc_info=error,
+        )
 
     async def _wait_until_idle(self) -> None:
         try:

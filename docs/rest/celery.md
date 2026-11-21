@@ -176,7 +176,8 @@ Use `dispatch_after_commit()` for fire-and-forget work; use `run()` when you nee
 delayed job waits in the memory of the process on a `JobTimer` and runs again
 with its attempt and postponements carried. Exhausted attempts abandon the job and
 call `on_failure`. A job delayed this way is lost when the process stops (the
-timer logs them, by job and task id, in one line at shutdown), so the service logs a warning at
+timer reports each one to the execution observers as `JOB_ABANDONED` with reason
+`shutdown`, and logs it), so the service logs a warning at
 start-up: use Celery or SQS in production. A Lambda function composes no
 timer: its inline service refuses a countdown above zero with `JobDelayRefusedError`,
 abandons a `JobPostponement`, and abandons a failing job at its first attempt with its own error.
@@ -196,8 +197,14 @@ jobs:
 
 | Mode | On exit |
 |------|---------|
-| `cancel` (default) | Cancels every pending step and logs one `WARNING`, `Delayed jobs lost at shutdown`, listing them as `Job:task_id`. |
-| `wait` | Waits until no step is pending, counting the steps scheduled meanwhile (retries, postponements, callbacks of running steps), for at most `timeout_s`. What is still pending then is cancelled and logged as in `cancel`. |
+| `cancel` (default) | Cancels every pending step and reports each job lost as `JOB_ABANDONED` with reason `shutdown`. |
+| `wait` | Waits until no step is pending, counting the steps scheduled meanwhile (retries, postponements, callbacks of running steps), for at most `timeout_s`. What is still pending then is cancelled and reported as in `cancel`. |
+
+Each job lost is also one `ERROR` record, `Job abandoned`, with `loom.job`,
+`loom.task_id` and `loom.reason`. A delayed step that raises outside the run of its job
+(a failure callback that cannot notify, for example) is abandoned the same way with
+reason `step_crashed`. An application observer therefore sees every delayed job
+lost: a CLI that counts abandonments exits non-zero when work was dropped at shutdown.
 
 A server keeps `cancel`: stopping must be quick, and a job delayed inline is not durable
 anyway. A CLI or a process that ends by itself uses `wait`, so the delayed jobs it
@@ -208,7 +215,8 @@ hold nothing pending in this process, so `jobs.shutdown` does not affect them.
 In tests, `ManualTimer(JobShutdown(mode=ShutdownMode.WAIT))` bound with
 `Override.instance(JobTimer, ...)` follows the same contract in fake time, closed by
 `running()` exit like the built timer: on exit it runs the pending steps until idle or until `timeout_s`
-seconds of the fake clock, and `timer.lost` lists what was dropped.
+seconds of the fake clock, and `timer.lost` lists what was dropped. Give it
+`ManualTimer(execution_observer=...)` to receive the same `shutdown` abandonments.
 
 ---
 
@@ -308,7 +316,10 @@ recover entity IDs and other parameters the callback needs.
 
 Every job run reports to the *execution observers*: `JOB_STARTED`, then
 `JOB_SUCCEEDED`, `JOB_POSTPONED`, `JOB_FAILED` or `JOB_ABANDONED`, the last
-carrying its `reason` (an `AbandonReason`). An observer is any class with
+carrying its `reason` (an `AbandonReason`: `attempts_exhausted`, `not_retryable`,
+`job_asked`, `cannot_wait`, and, for a delayed inline job, `shutdown` when it was
+cancelled as the process stopped and `step_crashed` when its step raised outside the run
+of the job). An observer is any class with
 `on_event(event: ExecutionEvent)`. It works the same on every transport (inline,
 Celery, SQS, Lambda), which a job callback does not: callbacks differ per
 transport, and SQS refuses them.
@@ -361,6 +372,9 @@ async def consume(application: Application) -> int:
         print(f"abandoned {event.use_case_name}: {event.reason}", file=sys.stderr)
     return 1 if JobFailureRecorder.abandoned else 0
 ```
+
+This count includes the delayed inline jobs lost at shutdown (reason `shutdown`), so the
+CLI no longer exits 0 when work was dropped.
 
 ## Post-commit failures
 

@@ -36,12 +36,18 @@ class Status(StrEnum):
 
 
 class AbandonReason(StrEnum):
-    """Why a job message will not run again."""
+    """Why a job message will not run again.
+
+    ``SHUTDOWN``: a delayed inline job was cancelled when the process stopped.
+    ``STEP_CRASHED``: a delayed inline step raised outside the settle path.
+    """
 
     ATTEMPTS_EXHAUSTED = "attempts_exhausted"
     NOT_RETRYABLE = "not_retryable"
     JOB_ASKED = "job_asked"
     CANNOT_WAIT = "cannot_wait"
+    SHUTDOWN = "shutdown"
+    STEP_CRASHED = "step_crashed"
 
 
 class Phase(StrEnum):
