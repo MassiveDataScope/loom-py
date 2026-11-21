@@ -2,18 +2,18 @@
 
 from __future__ import annotations
 
+import logging
 import os
 from collections.abc import Iterable
 from typing import Any
 
 from loom.core.config.errors import ConfigError
 from loom.core.environment import resolve_environment
-from loom.core.logger import get_logger
 from loom.prefect._async import run_sync
 from loom.prefect._summary import get_run_summary
 from loom.prefect.notify import Notifier, NotifyEvent
 
-_log = get_logger(__name__)
+_log = logging.getLogger(__name__)
 
 
 def pause_schedule_on_failure(flow: Any, flow_run: Any, state: Any) -> None:  # noqa: ARG001
@@ -33,7 +33,9 @@ def pause_schedule_on_failure(flow: Any, flow_run: Any, state: Any) -> None:  # 
                     await client.update_deployment_schedule(deployment_id, sched.id, active=False)
 
         run_sync(_pause())
-        _log.warning("pause-on-failure: deactivated schedules", deployment_id=str(deployment_id))
+        _log.warning(
+            "pause-on-failure: deactivated schedules", extra={"deployment_id": str(deployment_id)}
+        )
     except Exception:  # noqa: BLE001
         _log.warning("pause-on-failure hook failed", exc_info=True)
 

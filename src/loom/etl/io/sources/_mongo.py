@@ -2,12 +2,12 @@
 
 from __future__ import annotations
 
+import logging
 import time
 from typing import Any
 
 import polars as pl
 
-from loom.core.logger import get_logger
 from loom.etl.declarative.source._from_mongo import FromMongo, SourceRef
 from loom.etl.declarative.source._specs import ExtraFieldsMode, MongoSourceSpec
 from loom.etl.engines.polars._dtype import loom_type_to_polars
@@ -22,7 +22,7 @@ from loom.etl.io.sources._mongo_predicate import predicate_to_mongo
 from loom.etl.io.sources._serialization import _serialization_stats
 from loom.etl.schema._schema import LoomDtype
 
-_log = get_logger(__name__)
+_log = logging.getLogger(__name__)
 
 
 class MongoSourceReader:
@@ -157,15 +157,16 @@ def _infer_schema_from_first_batch(
     finally:
         cursor.close()
     if not docs:
-        _log.info("mongo schema inferred", collection=collection.name, sampled=0, columns=0)
+        _log.info(
+            "mongo schema inferred",
+            extra={"collection": collection.name, "sampled": 0, "columns": 0},
+        )
         return {}
     frame = batch_processor.build_frame(docs)
     schema = _normalize_null_dtypes(dict(zip(frame.columns, frame.dtypes, strict=True)))
     _log.info(
         "mongo schema inferred",
-        collection=collection.name,
-        sampled=len(docs),
-        columns=len(schema),
+        extra={"collection": collection.name, "sampled": len(docs), "columns": len(schema)},
     )
     return schema  # noqa: RET504
 
@@ -185,12 +186,14 @@ def _open_cursor(
         cursor = cursor.limit(effective_limit)
     _log.info(
         "mongo query",
-        collection=collection.name,
-        database=getattr(collection.database, "name", None),
-        filter=filter_dict,
-        projection=list(projection) if projection else None,
-        batch_size=spec.batch_size,
-        limit=effective_limit,
+        extra={
+            "collection": collection.name,
+            "database": getattr(collection.database, "name", None),
+            "filter": filter_dict,
+            "projection": list(projection) if projection else None,
+            "batch_size": spec.batch_size,
+            "limit": effective_limit,
+        },
     )
     return cursor
 
@@ -294,17 +297,21 @@ def _scan(
         if serialization_failures:
             _log.warning(
                 "mongo read degraded",
-                collection=collection.name,
-                serialization_failures=serialization_failures,
-                last_error=_serialization_stats.last_error,
+                extra={
+                    "collection": collection.name,
+                    "serialization_failures": serialization_failures,
+                    "last_error": _serialization_stats.last_error,
+                },
             )
         _log.info(
             "mongo read complete",
-            collection=collection.name,
-            docs=total_rows,
-            batches=batches_yielded,
-            serialization_failures=serialization_failures,
-            duration_s=round(time.monotonic() - started, 3),
+            extra={
+                "collection": collection.name,
+                "docs": total_rows,
+                "batches": batches_yielded,
+                "serialization_failures": serialization_failures,
+                "duration_s": round(time.monotonic() - started, 3),
+            },
         )
 
 
@@ -319,9 +326,9 @@ def _log_batch(
         "elapsed_s": round(elapsed_s, 3),
     }
     if batch_index == 1:
-        _log.info("mongo first batch", **payload)
+        _log.info("mongo first batch", extra={**payload})
     else:
-        _log.debug("mongo batch", **payload)
+        _log.debug("mongo batch", extra={**payload})
 
 
 __all__ = ["FromMongo", "MongoSourceReader", "MongoSourceSpec", "SourceRef"]

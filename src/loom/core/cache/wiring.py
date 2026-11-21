@@ -12,6 +12,7 @@ section both only announce, at boot, what runs uncached.
 
 from __future__ import annotations
 
+import logging
 import random
 from collections.abc import Callable, Iterator
 from dataclasses import dataclass
@@ -31,7 +32,6 @@ from loom.core.cache.gateway import CacheGateway
 from loom.core.cache.repository import CachedRepository
 from loom.core.config import ConfigContext, ConfigKey
 from loom.core.di.container import LoomContainer
-from loom.core.logger import get_logger
 from loom.core.stores.repository.registration import RepositoryDecorator
 
 
@@ -82,7 +82,9 @@ class _CacheSlot:
         """Bind *instance* under :attr:`key`, or log :attr:`kept` naming the binding kept."""
         existing = container.resolve_or_none(self.key)
         if existing is not None:
-            get_logger(__name__).warning(self.kept, **{self.log_field: type(existing).__qualname__})
+            logging.getLogger(__name__).warning(
+                self.kept, extra={self.log_field: type(existing).__qualname__}
+            )
             return
         container.register_instance(self.key, instance)
 
@@ -151,7 +153,9 @@ def _announce_uncached(repository: Any) -> Any:
     decorator a single time per model per container.
     """
     if declares_cache_policy(type(repository)):
-        get_logger(__name__).warning("CacheNotConfigured", repository=type(repository).__qualname__)
+        logging.getLogger(__name__).warning(
+            "CacheNotConfigured", extra={"repository": type(repository).__qualname__}
+        )
     return repository
 
 

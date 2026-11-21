@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import logging
 from collections.abc import Callable, Sequence
 from dataclasses import dataclass
 from typing import Any, Protocol, TypeAlias, TypeVar
@@ -9,7 +10,6 @@ from typing import Any, Protocol, TypeAlias, TypeVar
 from bytewax.operators import branch, flat_map
 
 from loom.core.errors import DomainError
-from loom.core.logger import get_logger
 from loom.core.observability.event import TerminalReason
 from loom.core.observability.observability import Observability
 from loom.streaming.core._errors import ErrorEnvelope, ErrorKind, snapshot_message
@@ -20,7 +20,7 @@ from loom.streaming.core._typing import StreamPayload
 Stream: TypeAlias = Any
 NodeResult: TypeAlias = Message[StreamPayload] | ErrorEnvelope[StreamPayload]
 ResultT = TypeVar("ResultT")
-logger = get_logger(__name__)
+logger = logging.getLogger(__name__)
 
 
 class _ErrorSplitContext(Protocol):
@@ -177,6 +177,6 @@ def _log_boundary_error(
         "batch_size": batch_size,
     }
     if isinstance(exc, DomainError):
-        logger.warning("managed_boundary_error", **context, reason=str(exc))
+        logger.warning("managed_boundary_error", extra={**context, "reason": str(exc)})
         return
-    logger.exception("unhandled_boundary_error", **context, reason=str(exc))
+    logger.exception("unhandled_boundary_error", extra={**context, "reason": str(exc)})

@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import asyncio
 import importlib.util
+import logging
 import warnings
 from collections.abc import Callable, Mapping
 from dataclasses import dataclass, field, replace
@@ -20,7 +21,6 @@ from loom.core.job.job import Job
 from loom.core.job.service import JobService
 from loom.core.job.timer import JobTimer
 from loom.core.job.transport import JobTransport
-from loom.core.logger import get_logger
 from loom.core.observability.observability import Observability
 from loom.core.plugins.optional import MissingExtraError
 from loom.core.resources import Resource, ResourceKind, closing
@@ -33,7 +33,7 @@ if TYPE_CHECKING:
     from loom.core.engine.metrics import MetricsRecorder
     from loom.core.use_case.factory import UseCaseFactory
 
-_log = get_logger(__name__)
+_log = logging.getLogger(__name__)
 
 
 @dataclass(frozen=True, kw_only=True)
@@ -118,8 +118,10 @@ def _inline(context: JobTransportContext) -> _Built:
     if context.jobs:
         _log.info(
             "Job retry policies",
-            transport="inline",
-            jobs=context.settings.describe_retries(service.redelivery, context.jobs),
+            extra={
+                "transport": "inline",
+                "jobs": context.settings.describe_retries(service.redelivery, context.jobs),
+            },
         )
     return service, resources
 

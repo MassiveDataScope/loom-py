@@ -26,19 +26,19 @@ Usage::
 from __future__ import annotations
 
 import asyncio
+import logging
 from typing import Any, ClassVar
 
 from sqlalchemy.exc import DBAPIError, InterfaceError, OperationalError
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from loom.core.concurrency import held_task
-from loom.core.logger import get_logger
 from loom.core.stores.uow.abc import UnitOfWork, UowEvent
 from loom.core.stores.uow.alone import EntersAlone
 from loom.core.stores.uow.coordinator import CommitUncertain, PhysicalStore
 from loom.stores.sqlalchemy.session_manager import SessionManager, bare_url
 
-_log = get_logger(__name__).bind(component="uow")
+_log = logging.getLogger(__name__)
 
 
 class SQLAlchemyUnitOfWork(EntersAlone):

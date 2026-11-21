@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import logging
 from collections.abc import AsyncIterator, Mapping
 from contextlib import asynccontextmanager
 from typing import Any, cast
@@ -17,7 +18,6 @@ from sqlalchemy.orm import Session
 from sqlalchemy.pool import Pool, QueuePool
 
 from loom.core.identity import Acting
-from loom.core.logger import get_logger
 from loom.core.model.redaction import reveal_for_driver
 from loom.core.stores.catalog import StoreKey
 from loom.core.stores.database import DatabaseConfig
@@ -31,7 +31,7 @@ from loom.stores.sqlalchemy.session_settings import (
     install_session_settings,
 )
 
-_log = get_logger(__name__).bind(module="session_manager")
+_log = logging.getLogger(__name__)
 
 
 class SessionManager:
@@ -117,7 +117,7 @@ class SessionManager:
         if connect_args is not None:
             engine_config["connect_args"] = connect_args
 
-        self._log = get_logger(__name__).bind(module="session_manager")
+        self._log = logging.getLogger(__name__)
         self._engine = create_async_engine(url, **engine_config)
         self._session_settings = session_settings
         self._metadata = metadata if metadata is not None else get_metadata()
@@ -136,10 +136,12 @@ class SessionManager:
             _register_trace_id_listener(self._engine)
         self._log.info(
             "SessionManagerInitialized",
-            backend=self._engine.url.get_backend_name(),
-            driver=self._engine.url.get_driver_name(),
-            inject_trace_id=inject_trace_id,
-            session_settings=session_settings is not None,
+            extra={
+                "backend": self._engine.url.get_backend_name(),
+                "driver": self._engine.url.get_driver_name(),
+                "inject_trace_id": inject_trace_id,
+                "session_settings": session_settings is not None,
+            },
         )
 
     @property
@@ -247,7 +249,8 @@ class SessionManager:
                     await session.commit()
             except Exception as exc:
                 self._log.error(
-                    "OperationSessionRollback", store=self.store, error=type(exc).__name__
+                    "OperationSessionRollback",
+                    extra={"store": self.store, "error": type(exc).__name__},
                 )
                 raise
 
@@ -325,7 +328,7 @@ def build_session_manager(
     pool_class = manager_kwargs.get("poolclass") or _default_pool_class(str(config.url))
     queued = issubclass(pool_class, QueuePool)
     if not queued:
-        _log.debug("PoolSizingOmitted", reason="dialect pool holds no queue")
+        _log.debug("PoolSizingOmitted", extra={"reason": "dialect pool holds no queue"})
     instrumented = pool_metrics is not None and queued
     if instrumented:
         manager_kwargs["poolclass"] = instrumented_pool_class(

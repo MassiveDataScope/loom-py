@@ -9,6 +9,7 @@ message is settled by what its job came to: a final failure is dead-lettered.
 from __future__ import annotations
 
 import functools
+import logging
 from collections.abc import Callable, Mapping, Sequence
 from typing import TYPE_CHECKING, Any, Final, Protocol
 
@@ -21,7 +22,6 @@ from loom.core.job.envelope import JobEnvelope
 from loom.core.job.outcome import Abandoned, Failed, failure_log_fields
 from loom.core.job.policy import Redelivery
 from loom.core.job.runner import JobRunner
-from loom.core.logger import get_logger
 from loom.serverless.aws.lambda_._jobs import (
     JobConsumer,
     QueueConsumer,
@@ -62,7 +62,7 @@ if TYPE_CHECKING:
     from loom.core.job.job import Job
     from loom.rest.auth import Authenticator
 
-_log = get_logger(__name__)
+_log = logging.getLogger(__name__)
 _DIRECT: Final[Mapping[str, Decoder]] = {
     "eventbridge": eventbridge.decode,
     "s3": s3.decode,
@@ -349,10 +349,12 @@ class _DirectEvents:
         except Exception as exc:
             _log.exception(
                 "Lambda event job failed; the event is retried, then sent to its destination",
-                function=self._function,
-                job=self._label,
-                error_class=type(exc).__name__,
-                **failure_log_fields(exc),
+                extra={
+                    "function": self._function,
+                    "job": self._label,
+                    "error_class": type(exc).__name__,
+                    **failure_log_fields(exc),
+                },
             )
             raise
 

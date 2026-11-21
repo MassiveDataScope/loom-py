@@ -7,14 +7,15 @@ at module level is safe and avoids hidden lazy-import latency at call time.
 
 from __future__ import annotations
 
+import logging
+
 from deltalake import CommitProperties, DeltaTable, WriterProperties
 
-from loom.core.logger import get_logger
 from loom.etl.maintenance._ops import CompactSpec, VacuumSpec, ZOrderSpec
 from loom.etl.maintenance._protocol import OptimizeResult, VacuumResult
 from loom.etl.storage._locator import TableLocation
 
-_log = get_logger(__name__)
+_log = logging.getLogger(__name__)
 
 
 class DeltaRsMaintainer:
@@ -43,7 +44,10 @@ class DeltaRsMaintainer:
             full=spec.full,
             commit_properties=commit,
         )
-        _log.info("vacuum", uri=uri, dry_run=spec.dry_run, full=spec.full, files=len(deleted))
+        _log.info(
+            "vacuum",
+            extra={"uri": uri, "dry_run": spec.dry_run, "full": spec.full, "files": len(deleted)},
+        )
         return VacuumResult(files_deleted=deleted)
 
     def compact(
@@ -61,9 +65,11 @@ class DeltaRsMaintainer:
         )
         _log.info(
             "compact",
-            uri=uri,
-            added=result["numFilesAdded"],
-            removed=result["numFilesRemoved"],
+            extra={
+                "uri": uri,
+                "added": result["numFilesAdded"],
+                "removed": result["numFilesRemoved"],
+            },
         )
         return OptimizeResult(
             num_files_added=result["numFilesAdded"],
@@ -86,10 +92,12 @@ class DeltaRsMaintainer:
         )
         _log.info(
             "z_order",
-            uri=uri,
-            columns=spec.columns,
-            added=result["numFilesAdded"],
-            removed=result["numFilesRemoved"],
+            extra={
+                "uri": uri,
+                "columns": spec.columns,
+                "added": result["numFilesAdded"],
+                "removed": result["numFilesRemoved"],
+            },
         )
         return OptimizeResult(
             num_files_added=result["numFilesAdded"],

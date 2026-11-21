@@ -25,6 +25,7 @@ from __future__ import annotations
 
 import asyncio
 import inspect
+import logging
 from dataclasses import dataclass, field
 from typing import TYPE_CHECKING, Any
 
@@ -51,7 +52,6 @@ from loom.core.job.outcome import (
 from loom.core.job.policy import Redelivery
 from loom.core.job.run import EnvelopeInvocation
 from loom.core.job.runner import JobRunner
-from loom.core.logger import get_logger
 from loom.core.observability.event import Scope
 from loom.core.observability.observability import Observability
 from loom.core.tracing import active_trace_id
@@ -62,7 +62,7 @@ if TYPE_CHECKING:
     from loom.core.job.job import Job
     from loom.core.use_case.factory import UseCaseFactory
 
-_log = get_logger(__name__)
+_log = logging.getLogger(__name__)
 
 REDELIVERY = Redelivery.DELAYED
 """What the broker does with a job that must run again: it waits the countdown it is sent with."""

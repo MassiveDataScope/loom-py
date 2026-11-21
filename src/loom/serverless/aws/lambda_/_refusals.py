@@ -2,12 +2,12 @@
 
 from __future__ import annotations
 
+import logging
 from collections.abc import Iterator, Mapping
 from typing import TYPE_CHECKING
 
 from loom.core.config import ConfigKey
 from loom.core.config.errors import ConfigError
-from loom.core.logger import get_logger
 
 if TYPE_CHECKING:
     from loom.ai.config import AiConfig
@@ -18,7 +18,7 @@ COMPONENT = "LambdaRuntime"
 _STDIO = "stdio"
 """The MCP transport that runs a server as a subprocess, which a frozen function cannot keep."""
 
-_log = get_logger(__name__)
+_log = logging.getLogger(__name__)
 
 
 class LambdaUnservedConfigError(ConfigError):
@@ -74,7 +74,9 @@ def check_resolved_ai(config: AiConfig | None) -> None:
         return
     _refuse_stdio({name: server.transport for name, server in config.mcp_servers.items()})
     for key in _endpoint_keys(config):
-        _log.warning(f"{key} is ignored on Lambda: {COMPONENT} serves no agent endpoint", key=key)
+        _log.warning(
+            f"{key} is ignored on Lambda: {COMPONENT} serves no agent endpoint", extra={"key": key}
+        )
 
 
 def _written_transports(servers: object) -> dict[str, object]:

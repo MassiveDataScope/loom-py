@@ -24,6 +24,7 @@ Usage::
 from __future__ import annotations
 
 import asyncio
+import logging
 from dataclasses import dataclass
 from datetime import UTC, datetime
 from typing import TYPE_CHECKING, Any, TypeVar
@@ -38,7 +39,6 @@ from loom.core.job.callback import CallbackOutcome
 from loom.core.job.context import add_pending_publish
 from loom.core.job.dispatch import JobDispatch
 from loom.core.job.handle import JobHandle
-from loom.core.logger import get_logger
 from loom.core.observability.event import Scope
 from loom.core.observability.observability import Observability
 
@@ -47,7 +47,7 @@ if TYPE_CHECKING:
     from loom.core.job.callback import JobCallback
 
 ResultT = TypeVar("ResultT")
-_log = get_logger(__name__)
+_log = logging.getLogger(__name__)
 
 
 @dataclass
@@ -148,7 +148,9 @@ class CallbackLink(msgspec.Struct, frozen=True):
                 },
             )
         except Exception:
-            _log.exception("Failure callback not sent", job_id=self.job_id, task=task_name)
+            _log.exception(
+                "Failure callback not sent", extra={"job_id": self.job_id, "task": task_name}
+            )
 
 
 class CeleryJobTransport:

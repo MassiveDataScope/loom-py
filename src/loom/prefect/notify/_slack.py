@@ -3,17 +3,17 @@
 from __future__ import annotations
 
 import json as _json
+import logging
 import urllib.error
 import urllib.request
 from collections.abc import Callable
 from typing import Any
 
-from loom.core.logger import get_logger
 from loom.core.model.redaction import Dsn
 from loom.prefect.notify._event import NotifyEvent
 from loom.prefect.notify._format import FAILURE_STATES, run_details, should_notify
 
-_log = get_logger(__name__)
+_log = logging.getLogger(__name__)
 
 
 HttpPost = Callable[..., Any]
@@ -62,9 +62,7 @@ class SlackNotifier:
         except (urllib.error.URLError, TimeoutError, RuntimeError):
             _log.warning(
                 "Slack post failed",
-                flow=event.flow_name,
-                run=event.flow_run_name,
-                state=event.state,
+                extra={"flow": event.flow_name, "run": event.flow_run_name, "state": event.state},
                 exc_info=True,
             )
 

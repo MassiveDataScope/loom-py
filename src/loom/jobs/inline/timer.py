@@ -3,13 +3,13 @@
 from __future__ import annotations
 
 import asyncio
+import logging
 
 from loom.core.job.config import CANCEL_AT_SHUTDOWN, JobShutdown
 from loom.core.job.policy import Countdown
 from loom.core.job.timer import Step
-from loom.core.logger import get_logger
 
-_log = get_logger(__name__)
+_log = logging.getLogger(__name__)
 
 
 class AsyncioJobTimer:
@@ -59,7 +59,7 @@ class AsyncioJobTimer:
             task.cancel()
         await asyncio.gather(*lost, return_exceptions=True)
         if lost:
-            _log.warning("Delayed jobs lost at shutdown", jobs=list(lost.values()))
+            _log.warning("Delayed jobs lost at shutdown", extra={"jobs": list(lost.values())})
 
     async def _wait_until_idle(self) -> None:
         try:

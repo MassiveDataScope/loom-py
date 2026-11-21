@@ -18,6 +18,7 @@ entirely in the adapter layer.
 
 from __future__ import annotations
 
+import logging
 from collections import deque
 from collections.abc import Mapping
 from time import time_ns
@@ -26,7 +27,6 @@ from typing import Any, TypeGuard
 from bytewax.operators import output as bw_output
 from bytewax.outputs import DynamicSink, StatelessSinkPartition
 
-from loom.core.logger import get_logger
 from loom.core.observability.event import Scope, TerminalReason
 from loom.core.observability.observability import Observability
 from loom.core.observability.span import LoomSpan
@@ -41,7 +41,7 @@ from loom.streaming.nodes._sink import IntoSink, SinkPartition
 from loom.streaming.nodes._table import IntoTable, TableEngine
 
 Stream = Any
-logger = get_logger(__name__)
+logger = logging.getLogger(__name__)
 
 
 class _StorageSinkPartition(StatelessSinkPartition[Message[Any]]):
@@ -202,10 +202,12 @@ class _StorageSinkPartition(StatelessSinkPartition[Message[Any]]):
         if not self._is_durable_count(durable):
             logger.error(
                 "storage_sink_close_count_invalid",
-                sink=self._node_name,
-                flow=self._flow_name,
-                pending=len(self._pending),
-                got=repr(durable),
+                extra={
+                    "sink": self._node_name,
+                    "flow": self._flow_name,
+                    "pending": len(self._pending),
+                    "got": repr(durable),
+                },
             )
             self._pending.clear()
             return
@@ -213,9 +215,11 @@ class _StorageSinkPartition(StatelessSinkPartition[Message[Any]]):
         if self._pending:
             logger.warning(
                 "storage_sink_closed_with_pending_events",
-                sink=self._node_name,
-                flow=self._flow_name,
-                pending=len(self._pending),
+                extra={
+                    "sink": self._node_name,
+                    "flow": self._flow_name,
+                    "pending": len(self._pending),
+                },
             )
             self._pending.clear()
 
@@ -257,10 +261,6 @@ class _StorageDynamicSink(DynamicSink[Message[Any]]):
         del step_id
         node = self._compiled.node
         node_name = node.name or type(node).__name__
-        bound_logger = get_logger(__name__).bind(
-            flow=self._ctx.plan.name,
-            sink=node_name,
-        )
         if isinstance(node, IntoTable):
             session_manager = None
             if node.engine is TableEngine.SQLALCHEMY:
@@ -280,7 +280,6 @@ class _StorageDynamicSink(DynamicSink[Message[Any]]):
                 worker_count,
                 bridge=self._ctx.bridge,
                 session_manager=session_manager,
-                logger=bound_logger,
             )
         else:
             partition = node.build_partition(

@@ -23,6 +23,7 @@ entry-point load into a ``ConfigError`` naming the extra.
 from __future__ import annotations
 
 import asyncio
+import logging
 from collections.abc import Callable
 from typing import Any, ClassVar, cast
 
@@ -31,14 +32,13 @@ from pymongo.asynchronous.client_session import AsyncClientSession
 from pymongo.errors import PyMongoError
 
 from loom.core.concurrency import held_task
-from loom.core.logger import get_logger
 from loom.core.stores.catalog import StoreKey
 from loom.core.stores.uow.abc import UnitOfWork, UowEvent
 from loom.core.stores.uow.alone import EntersAlone
 from loom.core.stores.uow.coordinator import CommitUncertain, PhysicalStore
 from loom.core.stores.uow.scope import current_handle
 
-_log = get_logger(__name__).bind(component="uow")
+_log = logging.getLogger(__name__)
 
 
 class MongoSessions:
