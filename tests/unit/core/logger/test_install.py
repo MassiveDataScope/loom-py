@@ -8,7 +8,8 @@ import pytest
 from loom.core.config.errors import ConfigError
 from loom.core.environment import Environment
 from loom.core.logger import ContextFilter, LogField, LogRuntime
-from loom.core.logger.install import HANDLER_NAME, configure_logging, resolve_format
+from loom.core.logger.formats import HANDLER_NAME, LambdaFormat
+from loom.core.logger.install import configure_logging, resolve_format
 from loom.core.logger.settings import LogSettings
 from tests.helpers.loggers import CapturingHandler
 
@@ -146,5 +147,5 @@ class TestResolveFormat:
         with pytest.raises(ConfigError, match=r"unknown log format 'xml'.*json.*lambda.*text"):
             resolve_format("xml")
 
-    def test_a_registered_format_is_a_callable_of_the_settings(self) -> None:
-        assert resolve_format("lambda")(LogSettings()) is None
+    def test_a_registered_format_is_built_by_calling_what_is_registered(self) -> None:
+        assert isinstance(resolve_format("lambda")(), LambdaFormat)

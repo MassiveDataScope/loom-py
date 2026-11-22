@@ -11,7 +11,7 @@ from loom.core.config import ConfigError
 from loom.core.config.observability import OtelConfig
 from loom.core.environment import Environment
 from loom.core.logger import ContextFilter, LogRuntime
-from loom.core.logger.install import HANDLER_NAME
+from loom.core.logger.formats import HANDLER_NAME
 from loom.core.model.redaction import Dsn
 from loom.core.observability.config import (
     LogObservabilityConfig,

@@ -1,9 +1,8 @@
-"""The formats loom ships: what a record looks like on the console or the collector.
+"""The formats loom ships: where the records go and what they look like.
 
-A format is a callable from the :class:`~loom.core.logger.settings.LogSettings`
-to the handler that writes the records, or to ``None`` when something else
-already does. An extra or an application adds its own under the
-``loom.logging.formats`` entry-point group.
+A format is a :class:`LogFormat` that installs itself on the root logger. An extra
+or an application adds its own under the ``loom.logging.formats`` entry-point group,
+as a callable with no arguments that returns it, such as the class.
 """
 
 from __future__ import annotations
@@ -12,12 +11,12 @@ import json
 import logging
 import math
 import sys
+from dataclasses import dataclass
 from datetime import UTC, datetime
-from typing import Final
+from typing import Final, Protocol
 
 from loom.core.environment import LambdaHost
 from loom.core.logger.field import LogField
-from loom.core.logger.settings import LogSettings
 from loom.core.model.redaction import MASK, Dsn, RedactedMap, Secret
 
 _STANDARD_ATTRIBUTES: Final = frozenset(logging.makeLogRecord({}).__dict__) | {"message", "asctime"}
@@ -33,6 +32,9 @@ TRUNCATION_MARKER: Final = "...[truncated]"
 _STACKTRACE_LEVEL: Final = logging.ERROR
 
 _STACK_WRITTEN: Final = "__loom_stack_written__"
+
+HANDLER_NAME: Final = "loom"
+"""Name of the handler loom installs, so a second configuration replaces it only."""
 
 LAMBDA_RUNTIME_HANDLERS: Final = frozenset(
     {"LambdaLoggerHandler", "LambdaLoggerHandlerWithFrameType"}
@@ -183,34 +185,73 @@ class TextFormatter(logging.Formatter):
         return "\n".join([line, *(f"{_CONTINUATION}{row}" for row in stacktrace.splitlines())])
 
 
-def _stdout_handler(formatter: logging.Formatter) -> logging.Handler:
-    handler = logging.StreamHandler(sys.stdout)
-    handler.setFormatter(formatter)
-    return handler
+class LogFormat(Protocol):
+    """How and where the process writes its records."""
+
+    def install(self, root: logging.Logger, level: str) -> list[logging.Handler]:
+        """Put the format on *root* at *level*; return the handlers loom stamps."""
+        ...
 
 
-def json_format(settings: LogSettings) -> logging.Handler:
-    """Write JSON lines to stdout: services, containers and workers."""
-    del settings
-    return _stdout_handler(JsonFormatter())
+@dataclass(frozen=True, slots=True)
+class StdoutFormat:
+    """Loom's own handler on stdout, with *formatter*; it sets the root level.
+
+    The handler is named :data:`HANDLER_NAME` and replaces the one a previous
+    installation put; a handler somebody else added stays.
+
+    Attributes:
+        formatter: What each record looks like.
+    """
+
+    formatter: logging.Formatter
+
+    @classmethod
+    def json(cls) -> StdoutFormat:
+        """JSON lines: services, containers and workers."""
+        return cls(JsonFormatter())
+
+    @classmethod
+    def text(cls) -> StdoutFormat:
+        """Readable lines: development."""
+        return cls(TextFormatter())
+
+    def install(self, root: logging.Logger, level: str) -> list[logging.Handler]:
+        """Replace loom's handler on *root* with one on stdout and set the level."""
+        handler = logging.StreamHandler(sys.stdout)
+        handler.setFormatter(self.formatter)
+        handler.set_name(HANDLER_NAME)
+        for installed in [h for h in root.handlers if h.get_name() == HANDLER_NAME]:
+            root.removeHandler(installed)
+        root.addHandler(handler)
+        root.setLevel(level.upper())
+        return [handler]
 
 
-def text_format(settings: LogSettings) -> logging.Handler:
-    """Write readable lines to stdout: development."""
-    del settings
-    return _stdout_handler(TextFormatter())
-
-
-def lambda_format(settings: LogSettings) -> None:
-    """Keep the Lambda runtime's handler and level; give it loom's JSON layout when it needs one.
+@dataclass(frozen=True, slots=True)
+class LambdaFormat:
+    """The Lambda runtime's handler and level stay; loom gives it a JSON layout when needed.
 
     With ``AWS_LAMBDA_LOG_FORMAT=JSON`` the runtime writes each field at the top level,
     so its formatter stays. With the default ``Text`` format it writes the message only
     and drops every field, so its handler gets :class:`JsonFormatter`.
+
+    Attributes:
+        host: What the runtime says about the process.
     """
-    del settings
-    if LambdaHost.from_process().has_json_logs:
-        return
-    for handler in logging.getLogger().handlers:
-        if type(handler).__name__ in LAMBDA_RUNTIME_HANDLERS:
-            handler.setFormatter(JsonFormatter())
+
+    host: LambdaHost
+
+    @classmethod
+    def from_process(cls) -> LambdaFormat:
+        """The format for the running process."""
+        return cls(LambdaHost.from_process())
+
+    def install(self, root: logging.Logger, level: str) -> list[logging.Handler]:
+        """Lay out the runtime's handler when it needs it; *level* stays the function's."""
+        del level
+        if not self.host.has_json_logs:
+            for handler in root.handlers:
+                if type(handler).__name__ in LAMBDA_RUNTIME_HANDLERS:
+                    handler.setFormatter(JsonFormatter())
+        return list(root.handlers)

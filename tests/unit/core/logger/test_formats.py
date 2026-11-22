@@ -5,21 +5,20 @@ from __future__ import annotations
 import json
 import logging
 import sys
-from collections.abc import Iterator
+from collections.abc import Callable, Iterator
 
 import pytest
 
+from loom.core.environment import LambdaHost
 from loom.core.logger import LogField
 from loom.core.logger.formats import (
     MAX_VALUE_LENGTH,
     TRUNCATION_MARKER,
     JsonFormatter,
+    LambdaFormat,
+    StdoutFormat,
     TextFormatter,
-    json_format,
-    lambda_format,
-    text_format,
 )
-from loom.core.logger.settings import LogSettings
 from loom.core.model.redaction import MASK, Dsn, RedactedMap, Secret
 
 
@@ -159,20 +158,17 @@ class TestLambdaFormat:
         root.removeHandler(handler)
 
     def test_the_text_format_of_the_runtime_gets_the_json_layout(
-        self, runtime_handler: logging.Handler, monkeypatch: pytest.MonkeyPatch
+        self, runtime_handler: logging.Handler
     ) -> None:
-        monkeypatch.setenv("AWS_LAMBDA_LOG_FORMAT", "Text")
-
-        assert lambda_format(LogSettings()) is None
+        installed = LambdaFormat(LambdaHost("billing", "Text")).install(logging.getLogger(), "INFO")
 
         assert isinstance(runtime_handler.formatter, JsonFormatter)
+        assert runtime_handler in installed
 
     def test_the_json_format_of_the_runtime_keeps_its_own_formatter(
-        self, runtime_handler: logging.Handler, monkeypatch: pytest.MonkeyPatch
+        self, runtime_handler: logging.Handler
     ) -> None:
-        monkeypatch.setenv("AWS_LAMBDA_LOG_FORMAT", "JSON")
-
-        lambda_format(LogSettings())
+        LambdaFormat(LambdaHost("billing", "JSON")).install(logging.getLogger(), "INFO")
 
         assert runtime_handler.formatter is None
 
@@ -306,14 +302,23 @@ class TestLogInjection:
 
 class TestStdoutFormats:
     @pytest.mark.parametrize(
-        ("build", "formatter"), [(json_format, JsonFormatter), (text_format, TextFormatter)]
+        ("build", "formatter"),
+        [(StdoutFormat.json, JsonFormatter), (StdoutFormat.text, TextFormatter)],
+        ids=["json", "text"],
     )
     def test_the_handler_writes_to_stdout_with_its_formatter(
-        self, build: object, formatter: type[logging.Formatter], capsys: pytest.CaptureFixture[str]
+        self,
+        build: Callable[[], StdoutFormat],
+        formatter: type[logging.Formatter],
+        capsys: pytest.CaptureFixture[str],
     ) -> None:
-        handler = build(LogSettings())  # type: ignore[operator]
+        root = logging.Logger("isolated")
 
+        (handler,) = build().install(root, "info")
         handler.handle(_record())
+
+        assert isinstance(handler.formatter, formatter)
+        assert root.level == logging.INFO
 
         assert isinstance(handler.formatter, formatter)
         assert "billing.invoice_issued" in capsys.readouterr().out

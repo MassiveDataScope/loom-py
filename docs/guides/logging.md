@@ -127,9 +127,11 @@ The settings are validated at startup and by `loom check` as written
 (`loom.logger.E001` for an unregistered format, `loom.logger.E002` for an unknown
 level; a value that holds a placeholder is not judged).
 
-An extra or an application adds a format by registering a callable from the
-settings to the handler (or `None`) under the `loom.logging.formats` entry-point
-group.
+An extra or an application adds a format by registering, under the
+`loom.logging.formats` entry-point group, a callable with no arguments that returns
+a `LogFormat`: an object whose `install(root, level)` puts its handlers on the root
+logger and returns the ones loom stamps. `StdoutFormat(formatter)` covers a new
+layout on stdout.
 
 ### AWS Lambda
 
