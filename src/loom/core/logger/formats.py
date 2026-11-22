@@ -11,6 +11,7 @@ from __future__ import annotations
 import json
 import logging
 import math
+import os
 import sys
 from datetime import UTC, datetime
 from typing import Final
@@ -31,18 +32,15 @@ TRUNCATION_MARKER: Final = "...[truncated]"
 
 _STACKTRACE_LEVEL: Final = logging.ERROR
 
-_MESSAGE_SAFE: Final = LogField.EXCEPTION_MESSAGE_SAFE.value
+_STACK_WRITTEN: Final = "__loom_stack_written__"
+
+LAMBDA_RUNTIME_HANDLERS: Final = frozenset(
+    {"LambdaLoggerHandler", "LambdaLoggerHandlerWithFrameType"}
+)
+"""Class names of the handler the Lambda Python runtime puts on the root logger."""
 
 RESERVED_KEYS: Final = frozenset(
-    {
-        "timestamp",
-        "level",
-        "message",
-        "logger",
-        LogField.EXCEPTION_TYPE.value,
-        LogField.EXCEPTION_MESSAGE.value,
-        LogField.EXCEPTION_STACKTRACE.value,
-    }
+    {"timestamp", "level", "message", "logger", LogField.EXCEPTION_STACKTRACE.value}
 )
 """Keys a format writes from the record itself; an ``extra`` key of that name cannot take them."""
 
@@ -94,55 +92,45 @@ def render_value(value: object) -> object:
     return type(value).__name__
 
 
-def _exception_fields(record: logging.LogRecord) -> dict[str, object]:
-    """What a format writes about the exception *record* carries: the one owner of the policy.
-
-    The type always. The message, which driver and application code fill with row
-    values, only from ERROR up or when the call declares it safe with
-    ``LogField.EXCEPTION_MESSAGE_SAFE``.
-    """
-    exc_info = record.exc_info
-    if exc_info is None or exc_info[0] is None:
-        return {}
-    fields: dict[str, object] = {LogField.EXCEPTION_TYPE.value: exc_info[0].__qualname__}
-    if record.levelno >= _STACKTRACE_LEVEL or record.__dict__.get(_MESSAGE_SAFE) is True:
-        fields[LogField.EXCEPTION_MESSAGE.value] = render_value(str(exc_info[1]))
-    return fields
-
-
 def _rendered_fields(record: logging.LogRecord) -> dict[str, object]:
     """The fields of *record* as a format writes them, in one pass.
 
     A key the format writes itself (:data:`RESERVED_KEYS`) is never taken from
-    ``extra``: it is written under ``loom.extra.<key>``, or dropped when the record's own
-    exception supplies it.
+    ``extra``: it is written under ``loom.extra.<key>``.
     """
-    derived = _exception_fields(record)
-    fields: dict[str, object] = {}
-    for key, value in record.__dict__.items():
-        if key in _STANDARD_ATTRIBUTES or key.startswith("_"):
-            continue
-        name = str(key)
-        if name == _MESSAGE_SAFE or name in derived:
-            continue
-        fields[EXTRA_PREFIX + name if name in RESERVED_KEYS else name] = render_value(value)
-    return fields | derived
+    return {
+        EXTRA_PREFIX + name if name in RESERVED_KEYS else name: render_value(value)
+        for name, value in record_fields(record).items()
+    }
 
 
 def _stacktrace(formatter: logging.Formatter, record: logging.LogRecord) -> str | None:
-    """The traceback of *record* when it is an error and carries one."""
-    if record.levelno < _STACKTRACE_LEVEL or record.exc_info is None or record.exc_info[0] is None:
+    """The traceback of *record* from ERROR up, written once per exception.
+
+    Every handler of the same record gets the same text, cached on the record as the
+    standard library does; a later record of an exception already written carries its
+    type and code only.
+    """
+    if record.levelno < _STACKTRACE_LEVEL or record.exc_info is None:
         return None
-    return _truncated(formatter.formatException(record.exc_info))
+    exc = record.exc_info[1]
+    if exc is None:
+        return None
+    if record.exc_text is None:
+        if getattr(exc, _STACK_WRITTEN, False):
+            return None
+        record.exc_text = _truncated(formatter.formatException(record.exc_info))
+        BaseException.__setattr__(exc, _STACK_WRITTEN, True)
+    return record.exc_text
 
 
 class JsonFormatter(logging.Formatter):
     """One JSON object per record, fields at the top level.
 
     The keys of Lambda's JSON format (``timestamp``, ``level``, ``message``,
-    ``logger``) come first and cannot be overwritten by ``extra``. An exception is
-    written as ``exception.type``; from ERROR up also ``exception.message`` and
-    ``exception.stacktrace``. Values are rendered by :func:`render_value`.
+    ``logger``) come first and cannot be overwritten by ``extra``. From ERROR up an
+    exception adds ``exception.stacktrace``, once per exception. Values are rendered
+    by :func:`render_value`.
     """
 
     def format(self, record: logging.LogRecord) -> str:
@@ -214,5 +202,15 @@ def text_format(settings: LogSettings) -> logging.Handler:
 
 
 def lambda_format(settings: LogSettings) -> None:
-    """Install nothing: the Lambda runtime renders the records and sets the level."""
+    """Keep the Lambda runtime's handler and level; give it loom's JSON layout when it needs one.
+
+    With ``AWS_LAMBDA_LOG_FORMAT=JSON`` the runtime writes each field at the top level,
+    so its formatter stays. With the default ``Text`` format it writes the message only
+    and drops every field, so its handler gets :class:`JsonFormatter`.
+    """
     del settings
+    if os.environ.get("AWS_LAMBDA_LOG_FORMAT", "").upper() == "JSON":
+        return
+    for handler in logging.getLogger().handlers:
+        if type(handler).__name__ in LAMBDA_RUNTIME_HANDLERS:
+            handler.setFormatter(JsonFormatter())

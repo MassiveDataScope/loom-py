@@ -6,6 +6,7 @@ import logging
 from dataclasses import dataclass, replace
 from enum import StrEnum
 
+from loom.core.errors.base import LoomError
 from loom.core.logger.context import current_log_fields
 from loom.core.logger.field import LogField
 from loom.core.tracing.context import get_trace_id
@@ -51,22 +52,16 @@ class LogIdentity:
         return {key: value for key, value in known.items() if value is not None}
 
 
-def exception_type_of(record: logging.LogRecord) -> str | None:
-    """The qualified name of the exception *record* carries, if any."""
-    exc_info = record.exc_info
-    if exc_info is None or exc_info[0] is None:
-        return None
-    return exc_info[0].__qualname__
-
-
 class ContextFilter(logging.Filter):
     """Stamp each record with the emitter's identity, its trace and the running work.
 
     Attach it to a handler, not to a logger, so the records of the
     application and of its libraries get the same fields as loom's. A field
     already on the record, passed as ``extra``, is kept. A record that carries an
-    exception also gets ``exception.type``, so a format loom does not render, such
-    as ``lambda``, still says what failed. It never drops a record.
+    exception gets ``exception.type``, and ``loom.error.code`` for a
+    :class:`~loom.core.errors.LoomError`: this filter is their one writer, so every
+    handler, rendered by loom or not, says what failed. ``extra`` cannot forge them.
+    It never drops a record.
 
     Args:
         identity: The service and process the records come from.
@@ -99,7 +94,11 @@ class ContextFilter(logging.Filter):
         fields.setdefault(LogField.CODE_FUNCTION, record.funcName)
         fields.setdefault(LogField.CODE_LINE, record.lineno)
         fields.setdefault(LogField.CODE_FILE, record.pathname)
-        exception_type = exception_type_of(record)
-        if exception_type is not None:
-            fields.setdefault(LogField.EXCEPTION_TYPE, exception_type)
+        fields.pop(LogField.EXCEPTION_TYPE, None)
+        fields.pop(LogField.ERROR_CODE, None)
+        exc = record.exc_info[1] if record.exc_info else None
+        if exc is not None:
+            fields[LogField.EXCEPTION_TYPE] = type(exc).__qualname__
+            if isinstance(exc, LoomError):
+                fields[LogField.ERROR_CODE] = exc.code.value
         return True

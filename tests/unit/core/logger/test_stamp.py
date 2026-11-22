@@ -4,6 +4,7 @@ import logging
 
 import pytest
 
+from loom.core.errors import NotFound
 from loom.core.logger import (
     ContextFilter,
     LogField,
@@ -106,7 +107,7 @@ class TestContextFilter:
         assert record[LogField.CODE_LINE] == Greeter.greet.__code__.co_firstlineno + 1
         assert record[LogField.CODE_FILE] == __file__
 
-    def test_a_record_with_an_exception_gets_its_type_for_formats_loom_does_not_render(
+    def test_a_record_with_an_exception_gets_its_type_and_no_message(
         self, stamped: CapturingHandler
     ) -> None:
         try:
@@ -116,7 +117,31 @@ class TestContextFilter:
 
         record = _only(stamped).__dict__
         assert record[LogField.EXCEPTION_TYPE] == "ValueError"
-        assert LogField.EXCEPTION_MESSAGE.value not in record
+        assert LogField.ERROR_CODE.value not in record
+        assert "secret row value" not in str(
+            {k: v for k, v in record.items() if k not in {"exc_info", "exc_text"}}
+        )
+
+    def test_a_loom_error_also_gets_its_code(self, stamped: CapturingHandler) -> None:
+        try:
+            raise NotFound("Invoice", id=7)
+        except NotFound:
+            logging.getLogger("tests.stamp").info("billing.invoice_missing", exc_info=True)
+
+        record = _only(stamped).__dict__
+        assert (record[LogField.EXCEPTION_TYPE], record[LogField.ERROR_CODE]) == (
+            "NotFound",
+            "not_found",
+        )
+
+    def test_extra_cannot_forge_what_failed(self, stamped: CapturingHandler) -> None:
+        forged = {LogField.EXCEPTION_TYPE.value: "Forged", LogField.ERROR_CODE.value: "forged"}
+
+        logging.getLogger("tests.stamp").info("billing.invoice_issued", extra=forged)
+
+        record = _only(stamped).__dict__
+        assert LogField.EXCEPTION_TYPE.value not in record
+        assert LogField.ERROR_CODE.value not in record
 
     def test_a_record_without_an_exception_gets_no_exception_type(
         self, stamped: CapturingHandler

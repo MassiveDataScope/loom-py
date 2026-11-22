@@ -5,6 +5,7 @@ from __future__ import annotations
 import json
 import logging
 import sys
+from collections.abc import Iterator
 
 import pytest
 
@@ -15,6 +16,7 @@ from loom.core.logger.formats import (
     JsonFormatter,
     TextFormatter,
     json_format,
+    lambda_format,
     text_format,
 )
 from loom.core.logger.settings import LogSettings
@@ -71,45 +73,37 @@ class TestJsonFormatter:
 
         assert (entry["loom.job"], entry["amount"]) == ("SendInvoice", 12.5)
 
-    def test_an_error_carries_the_exception_type_message_and_stacktrace(self) -> None:
+    def test_an_error_writes_its_stacktrace_and_no_message_field(self) -> None:
         entry = json.loads(JsonFormatter().format(_failure(logging.ERROR)))
 
-        assert entry["exception.type"] == "ValueError"
-        assert entry["exception.message"] == "amount below zero"
-        assert "ValueError: amount below zero" in entry["exception.stacktrace"]
+        assert "ValueError" in entry["exception.stacktrace"]
+        assert "exception.message" not in entry
 
-    def test_below_error_the_exception_is_its_type_only(self) -> None:
+    def test_below_error_there_is_no_stacktrace(self) -> None:
         entry = json.loads(JsonFormatter().format(_failure(logging.WARNING)))
 
-        assert entry["exception.type"] == "ValueError"
-        assert "exception.message" not in entry
         assert "exception.stacktrace" not in entry
 
-    def test_a_call_can_declare_the_message_safe_below_error(self) -> None:
-        record = _failure(logging.WARNING)
-        record.__dict__[LogField.EXCEPTION_MESSAGE_SAFE.value] = True
 
-        entry = json.loads(JsonFormatter().format(record))
+class TestStackOnce:
+    def test_a_later_record_of_the_same_exception_carries_no_stack(self) -> None:
+        first = _failure()
+        second = _record(logging.ERROR)
+        second.exc_info = first.exc_info
 
-        assert entry["exception.message"] == "amount below zero"
-        assert "exception.stacktrace" not in entry
-        assert LogField.EXCEPTION_MESSAGE_SAFE.value not in entry
+        formatter = JsonFormatter()
+        written = [json.loads(formatter.format(r)) for r in (first, second)]
 
-    def test_only_true_declares_the_message_safe(self) -> None:
-        record = _failure(logging.WARNING)
-        record.__dict__[LogField.EXCEPTION_MESSAGE_SAFE.value] = "yes"
+        assert "exception.stacktrace" in written[0]
+        assert "exception.stacktrace" not in written[1]
 
-        assert "exception.message" not in json.loads(JsonFormatter().format(record))
+    def test_every_handler_of_one_record_gets_the_same_stack(self) -> None:
+        record = _failure()
 
-    def test_extra_cannot_forge_the_exception_fields(self) -> None:
-        record = _failure(logging.WARNING)
-        record.__dict__["exception.message"] = "forged"
-        record.__dict__["exception.type"] = "Forged"
+        json_stack = json.loads(JsonFormatter().format(record))["exception.stacktrace"]
+        text = TextFormatter().format(record)
 
-        entry = json.loads(JsonFormatter().format(record))
-
-        assert entry["exception.type"] == "ValueError"
-        assert "exception.message" not in entry
+        assert json_stack.splitlines()[-1] in text
 
 
 class TestTextFormatter:
@@ -141,25 +135,46 @@ class TestTextFormatter:
         rows = TextFormatter().format(record).split("\n")
 
         assert [row for row in rows if not row.startswith("  | ")] == [rows[0]]
-        assert "exception.message=boom\\n2026-01-01 ERROR fake" in rows[0]
         assert "  | ValueError: boom" in rows
         assert "  | 2026-01-01 ERROR fake" in rows
 
-    def test_below_error_there_is_no_traceback_but_the_type_and_message(self) -> None:
+    def test_below_error_there_is_no_traceback_and_no_message(self) -> None:
         line = TextFormatter().format(_failure(logging.WARNING))
 
         assert "Traceback" not in line
-        assert "exception.type=ValueError" in line
         assert "amount below zero" not in line
 
-    def test_a_call_can_declare_the_message_safe_below_error_in_text_too(self) -> None:
-        record = _failure(logging.WARNING)
-        record.__dict__[LogField.EXCEPTION_MESSAGE_SAFE.value] = True
 
-        line = TextFormatter().format(record)
+class TestLambdaFormat:
+    class LambdaLoggerHandler(logging.Handler):
+        def emit(self, record: logging.LogRecord) -> None:
+            del record
 
-        assert "exception.message=amount below zero" in line
-        assert "Traceback" not in line
+    @pytest.fixture
+    def runtime_handler(self) -> Iterator[logging.Handler]:
+        handler = self.LambdaLoggerHandler()
+        root = logging.getLogger()
+        root.addHandler(handler)
+        yield handler
+        root.removeHandler(handler)
+
+    def test_the_text_format_of_the_runtime_gets_the_json_layout(
+        self, runtime_handler: logging.Handler, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        monkeypatch.setenv("AWS_LAMBDA_LOG_FORMAT", "Text")
+
+        assert lambda_format(LogSettings()) is None
+
+        assert isinstance(runtime_handler.formatter, JsonFormatter)
+
+    def test_the_json_format_of_the_runtime_keeps_its_own_formatter(
+        self, runtime_handler: logging.Handler, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        monkeypatch.setenv("AWS_LAMBDA_LOG_FORMAT", "JSON")
+
+        lambda_format(LogSettings())
+
+        assert runtime_handler.formatter is None
 
 
 def _colliding_record(extra: dict[str, str]) -> logging.LogRecord:

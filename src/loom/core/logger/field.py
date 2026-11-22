@@ -37,6 +37,5 @@ class LogField(StrEnum):
     EVENT_KIND = "loom.event_kind"
     USE_CASE_COUNT = "loom.use_case_count"
     EXCEPTION_TYPE = "exception.type"
-    EXCEPTION_MESSAGE = "exception.message"
+    ERROR_CODE = "loom.error.code"
     EXCEPTION_STACKTRACE = "exception.stacktrace"
-    EXCEPTION_MESSAGE_SAFE = "loom.exception_message_safe"

@@ -18,6 +18,8 @@
 
 ## 💥 Breaking
 
+- **logging:** no format writes an exception's message as a field any more. `exception.message`, `LogField.EXCEPTION_MESSAGE` and `LogField.EXCEPTION_MESSAGE_SAFE` are removed. A record that carries an exception gets `exception.type` and, for a `LoomError`, the new `loom.error.code` (`LogField.ERROR_CODE`), both written only by `ContextFilter`, so `extra` cannot forge them and every handler sees them. From ERROR up the `json` and `text` formats write `exception.stacktrace` once per exception: a later record of the same exception carries its type and code only. With the Lambda runtime's `Text` log format, the `lambda` format gives the runtime's handler loom's JSON layout, so fields are no longer dropped; with `AWS_LAMBDA_LOG_FORMAT=JSON` nothing changes. `stamp.exception_type_of` is removed.
+
 - **testing:** `InMemoryRepository` takes its key from the model alone. The `id_field` argument is removed: the store key is the primary key the model declares, single or composite, read as every other repository reads it, so a single key not named `id` is stored, numbered by `create` and advanced by `seed` under its own name. A type that declares no primary key, a plain `msgspec.Struct` or `LoomStruct` included, raises `ValueError` at construction, naming the type, where it used to be keyed by an `id` attribute.
   **Migration:** drop `id_field=`; a model with no declared key declares it, as a `BaseModel` with its `__tablename__` and `ColumnField(primary_key=True)` on the key field.
 
