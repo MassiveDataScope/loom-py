@@ -20,6 +20,7 @@ from loom.core.environment import (
     CONFIG_DIR_VARIABLE,
     ENVIRONMENT_VARIABLE,
     Environment,
+    LambdaHost,
     config_source_paths,
     confirm_environment,
     environment_config_paths,
@@ -251,3 +252,30 @@ class TestScopedLoomVariable:
 
         with pytest.raises(ValueError, match="HOME"):
             scope.__enter__()
+
+
+class TestLambdaHost:
+    def test_outside_lambda_it_hosts_nothing_and_writes_no_json(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        monkeypatch.delenv("AWS_LAMBDA_FUNCTION_NAME", raising=False)
+        monkeypatch.delenv("AWS_LAMBDA_LOG_FORMAT", raising=False)
+
+        host = LambdaHost.from_process()
+
+        assert (host.is_hosting, host.has_json_logs) == (False, False)
+
+    @pytest.mark.parametrize(
+        ("log_format", "has_json_logs"),
+        [("JSON", True), ("json", True), ("Text", False)],
+        ids=["json", "json-lowercase", "text"],
+    )
+    def test_inside_lambda_it_reads_the_runtime_log_format(
+        self, monkeypatch: pytest.MonkeyPatch, log_format: str, has_json_logs: bool
+    ) -> None:
+        monkeypatch.setenv("AWS_LAMBDA_FUNCTION_NAME", "billing")
+        monkeypatch.setenv("AWS_LAMBDA_LOG_FORMAT", log_format)
+
+        host = LambdaHost.from_process()
+
+        assert (host.is_hosting, host.has_json_logs) == (True, has_json_logs)

@@ -11,11 +11,11 @@ from __future__ import annotations
 import json
 import logging
 import math
-import os
 import sys
 from datetime import UTC, datetime
 from typing import Final
 
+from loom.core.environment import LambdaHost
 from loom.core.logger.field import LogField
 from loom.core.logger.settings import LogSettings
 from loom.core.model.redaction import MASK, Dsn, RedactedMap, Secret
@@ -209,7 +209,7 @@ def lambda_format(settings: LogSettings) -> None:
     and drops every field, so its handler gets :class:`JsonFormatter`.
     """
     del settings
-    if os.environ.get("AWS_LAMBDA_LOG_FORMAT", "").upper() == "JSON":
+    if LambdaHost.from_process().has_json_logs:
         return
     for handler in logging.getLogger().handlers:
         if type(handler).__name__ in LAMBDA_RUNTIME_HANDLERS:

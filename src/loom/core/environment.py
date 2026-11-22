@@ -16,6 +16,9 @@ value. A containment test enforces it. Every other module receives the
 resolved :class:`Environment` through configuration or the container; the
 entry points resolve it once and pass it on.
 
+It also owns the variables the AWS Lambda runtime sets, read through
+:class:`LambdaHost`.
+
 The environment also picks the configuration overlay of a config directory:
 ``base.yaml`` first, then ``<environment>.yaml`` when it exists.
 """
@@ -25,6 +28,7 @@ from __future__ import annotations
 import os
 from collections.abc import Iterator, Sequence
 from contextlib import contextmanager
+from dataclasses import dataclass
 from enum import StrEnum
 from pathlib import Path
 from typing import Final
@@ -87,6 +91,37 @@ class Environment(StrEnum):
 
 
 _VALID = ", ".join(member.value for member in Environment)
+
+
+@dataclass(frozen=True, slots=True)
+class LambdaHost:
+    """What the AWS Lambda runtime says about this process through its variables.
+
+    Attributes:
+        function_name: ``AWS_LAMBDA_FUNCTION_NAME``; ``None`` outside Lambda.
+        log_format: ``AWS_LAMBDA_LOG_FORMAT``, ``JSON`` or ``Text``; ``None`` when unset.
+    """
+
+    function_name: str | None
+    log_format: str | None
+
+    @classmethod
+    def from_process(cls) -> LambdaHost:
+        """The variables of the running process."""
+        return cls(
+            function_name=os.environ.get("AWS_LAMBDA_FUNCTION_NAME"),
+            log_format=os.environ.get("AWS_LAMBDA_LOG_FORMAT"),
+        )
+
+    @property
+    def is_hosting(self) -> bool:
+        """Whether the process runs inside AWS Lambda."""
+        return self.function_name is not None
+
+    @property
+    def has_json_logs(self) -> bool:
+        """Whether the runtime writes its log records as JSON, each field at the top level."""
+        return (self.log_format or "").upper() == "JSON"
 
 
 def resolve_environment(explicit: Environment | str | None = None) -> Environment:
