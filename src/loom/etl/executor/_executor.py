@@ -387,7 +387,7 @@ class ETLExecutor:
             )
         _log.info(
             EtlEvent.SOURCE_READ_STARTED,
-            extra={EtlKey.KIND: spec.kind, EtlKey.TABLE: _span_target_label(spec)},
+            extra={EtlKey.KIND: spec.kind, **_location_fields(spec)},
         )
         if streaming:
             if not isinstance(self._reader, StreamingSourceReader):
@@ -424,7 +424,7 @@ class ETLExecutor:
                 append=isinstance(spec, TempFanInSpec),
             )
         else:
-            _log.info(EtlEvent.TARGET_WRITE_STARTED, extra={EtlKey.TABLE: _span_target_label(spec)})
+            _log.info(EtlEvent.TARGET_WRITE_STARTED, extra=_location_fields(spec))
             self._writer.write(result, spec, params, streaming=streaming, write_ctx=write_ctx)
 
     def _cleanup_temps(self, ctx: RunContext, status: RunStatus) -> None:
@@ -481,6 +481,15 @@ class ETLExecutor:
 def _new_run_id() -> str:
     """Generate a fresh UUID4 run identifier."""
     return str(uuid.uuid4())
+
+
+def _location_fields(spec: Any) -> dict[str, str]:
+    """The log fields naming where *spec* reads or writes: a table, a path, or nothing."""
+    table_ref = getattr(spec, "table_ref", None)
+    if table_ref is not None:
+        return {EtlKey.TABLE: table_ref.ref}
+    path = getattr(spec, "path", None)
+    return {} if path is None else {EtlKey.URI: str(path)}
 
 
 def _span_target_label(spec: Any) -> str:

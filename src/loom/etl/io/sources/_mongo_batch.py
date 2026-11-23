@@ -533,7 +533,7 @@ def _build_frame_fallback(
 def align_to_schema(
     df: pl.DataFrame,
     schema: dict[str, pl.DataType],
-    table: str | None = None,
+    table: str,
 ) -> pl.DataFrame:
     """Align a schemaless-path batch to the sample-inferred registered schema.
 
@@ -573,7 +573,6 @@ def apply_declared_schema(
     declared: dict[str, pl.DataType],
     mode: ExtraFieldsMode,
     schema_name: str,
-    source_label: str = "MongoSourceReader",
 ) -> pl.DataFrame:
     """Add missing declared columns and dispatch extra columns per extra_fields_mode.
 
@@ -582,7 +581,6 @@ def apply_declared_schema(
         declared:     User-declared schema (column → dtype).
         mode:         How undeclared fields are handled.
         schema_name:  Collection or table name used in messages.
-        source_label: Reader name used as prefix in emitted messages.
 
     Raises:
         InvalidValue: When *mode* is :attr:`ExtraFieldsMode.ERROR` and undeclared fields
@@ -600,16 +598,13 @@ def apply_declared_schema(
     if extra_cols:
         if mode == ExtraFieldsMode.ERROR:
             raise InvalidValue(
-                f"{source_label}: documents contain fields not declared in "
-                f"{schema_name}. "
+                f"{schema_name}: documents contain fields not declared in the schema. "
                 "Use on_extra_fields('ignore'), ('warn'), or ('capture') to suppress."
             )
         if mode == ExtraFieldsMode.WARN:
             _log.warning(
                 EtlEvent.SOURCE_UNDECLARED_FIELDS_DROPPED,
-                extra={
-                    EtlKey.COLUMNS: extra_cols,
-                },
+                extra={EtlKey.TABLE: schema_name, EtlKey.COLUMNS: extra_cols},
             )
         if mode == ExtraFieldsMode.CAPTURE:
             extra_struct = pl.struct([df[c] for c in extra_cols])

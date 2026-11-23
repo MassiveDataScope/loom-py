@@ -17,13 +17,11 @@ _FAILURE_WARNINGS_LIMIT = 10
 @dataclass(slots=True)
 class SerializationStats:
     failures: int = 0
-    last_error: str = ""
     _lock: threading.Lock = field(default_factory=threading.Lock, repr=False)
 
-    def record(self, exc: BaseException) -> int:
+    def record(self) -> int:
         with self._lock:
             self.failures += 1
-            self.last_error = ErrorSummary.of(exc).describe()
             return self.failures
 
 
@@ -31,7 +29,7 @@ _serialization_stats = SerializationStats()
 
 
 def _record_serialization_failure(exc: BaseException, value: object) -> None:
-    count = _serialization_stats.record(exc)
+    count = _serialization_stats.record()
     log = _log.warning if count <= _FAILURE_WARNINGS_LIMIT else _log.debug
     log(
         EtlEvent.SOURCE_VALUE_UNSERIALISABLE,

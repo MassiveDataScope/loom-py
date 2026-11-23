@@ -263,7 +263,7 @@ def _log_partition_combos(
     """
     _log.debug(
         EtlEvent.MERGE_PARTITIONS_FOUND,
-        extra={EtlKey.TABLE: table_ref},
+        extra={EtlKey.TABLE: table_ref, EtlKey.PARTITIONS: len(combos)},
     )
 
 

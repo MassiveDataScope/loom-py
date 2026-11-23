@@ -345,7 +345,7 @@ class ETLRunner:
         """
         plan = self._compiler.compile(pipeline)
         if include is not None:
-            _log.debug(EtlEvent.PLAN_FILTERED)
+            _log.debug(EtlEvent.PLAN_FILTERED, extra={EtlKey.PIPELINE: pipeline.__name__})
             plan = filter_plan(plan, include)
         ctx = RunContext(
             run_id=run_id if run_id is not None else str(uuid.uuid4()),

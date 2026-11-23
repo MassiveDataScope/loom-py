@@ -66,7 +66,7 @@ class DeltaRsMaintainer:
         )
         _log.info(
             EtlEvent.TABLE_COMPACTED,
-            extra={EtlKey.URI: uri},
+            extra={EtlKey.URI: uri, EtlKey.FILES: result["numFilesAdded"]},
         )
         return OptimizeResult(
             num_files_added=result["numFilesAdded"],

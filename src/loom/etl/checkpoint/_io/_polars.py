@@ -76,8 +76,8 @@ class _PolarsCheckpointIO:
         final = _arrow_part(name, base) if append else _arrow_path(name, base)
         tmp = f"{final}{_WRITING}"
 
-        _log.info(EtlEvent.CHECKPOINT_WRITTEN, extra={EtlKey.CHECKPOINT: name, EtlKey.URI: final})
         _write_atomic(frame, tmp, final, self._options)
+        _log.info(EtlEvent.CHECKPOINT_WRITTEN, extra={EtlKey.CHECKPOINT: name, EtlKey.URI: final})
 
     def _find_arrow(self, name: str, base: str) -> str | None:
         """Return scan path for *name* under *base*, or None if absent."""

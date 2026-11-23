@@ -71,9 +71,8 @@ _DELTA_SCHEMA_MODES: dict[SchemaMode, Literal["merge", "overwrite"]] = {
 def _log_write_start(
     mode: str,
     location: TableLocation,
-    frame: pl.DataFrame,
+    frame: pl.DataFrame | None = None,
     *,
-    partition_cols: tuple[str, ...] = (),
     predicate: str | None = None,
 ) -> None:
     _log.info(
@@ -81,10 +80,14 @@ def _log_write_start(
         extra={
             EtlKey.MODE: mode,
             EtlKey.URI: location.uri,
-            EtlKey.ROWS: frame.height,
-            EtlKey.PREDICATE: predicate,
+            EtlKey.ROWS: None if frame is None else frame.height,
         },
     )
+    if predicate is not None:
+        _log.debug(
+            EtlEvent.DELTA_WRITE_PREDICATE,
+            extra={EtlKey.URI: location.uri, EtlKey.PREDICATE: predicate},
+        )
 
 
 def _open_delta_table(location: TableLocation) -> DeltaTable | None:
@@ -102,7 +105,6 @@ def _last_commit(table: DeltaTable) -> tuple[int, dict[str, Any]]:
 
 
 def _log_write_commit(mode: str, location: TableLocation) -> None:
-    event = EtlEvent.DELTA_COMMIT_METRICS_UNAVAILABLE
     fields: dict[str, object] = {EtlKey.MODE: mode, EtlKey.URI: location.uri}
     with contextlib.suppress(Exception):
         dt = _open_delta_table(location)
@@ -114,8 +116,7 @@ def _log_write_commit(mode: str, location: TableLocation) -> None:
                 EtlKey.ROWS: int(metrics.get("numOutputRows", 0)) or None,
                 EtlKey.FILES: int(metrics.get("numAddedFiles", 0)) or None,
             }
-            event = EtlEvent.DELTA_WRITE_COMMITTED
-    _log.info(event, extra=fields)
+    _log.info(EtlEvent.DELTA_WRITE_COMMITTED, extra=fields)
 
 
 def _check_null_dtype_columns_lazy(frame: pl.LazyFrame) -> None:
@@ -380,14 +381,7 @@ class PolarsTargetWriter(_WritePolicy[pl.LazyFrame, pl.DataFrame, PolarsPhysical
                     f"partition columns are non-null before writing."
                 )
             predicate = _build_partition_predicate(iter(partition_rows), spec.partition_cols)
-            _log.info(
-                EtlEvent.DELTA_WRITE_STARTED,
-                extra={
-                    EtlKey.MODE: "replace_partitions",
-                    EtlKey.URI: location.uri,
-                    EtlKey.PREDICATE: predicate,
-                },
-            )
+            _log_write_start("replace_partitions", location, predicate=predicate)
             write_deltalake(
                 location.uri,
                 spool.reader,
@@ -434,7 +428,7 @@ class PolarsTargetWriter(_WritePolicy[pl.LazyFrame, pl.DataFrame, PolarsPhysical
             )
         kwargs = _delta_write_kwargs(location)
 
-        _log_write_start("create", location, frame, partition_cols=partition_cols)
+        _log_write_start("create", location, frame)
         if partition_cols:
             write_deltalake(
                 location.uri,
@@ -534,7 +528,6 @@ class PolarsTargetWriter(_WritePolicy[pl.LazyFrame, pl.DataFrame, PolarsPhysical
             "replace_partitions",
             location,
             frame,
-            partition_cols=partition_cols,
             predicate=predicate,
         )
         write_deltalake(
@@ -690,7 +683,6 @@ class PolarsTargetWriter(_WritePolicy[pl.LazyFrame, pl.DataFrame, PolarsPhysical
             mode,
             location,
             frame,
-            partition_cols=spec.partition_cols,
             predicate=merge_plan.predicate,
         )
         merger = dt.merge(

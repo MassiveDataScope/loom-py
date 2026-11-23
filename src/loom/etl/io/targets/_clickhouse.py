@@ -159,8 +159,8 @@ class ClickHouseTargetWriter:
         qualified = f"{spec.database}.{spec.table}" if spec.database else spec.table
 
         if spec.write_mode == "replace":
-            _log.debug(EtlEvent.CLICKHOUSE_TABLE_TRUNCATED, extra={EtlKey.TABLE: qualified})
             self._client.command(f"TRUNCATE TABLE IF EXISTS {qualified}")
+            _log.debug(EtlEvent.CLICKHOUSE_TABLE_TRUNCATED, extra={EtlKey.TABLE: qualified})
 
         column_names = df.columns
         data = [df[col].to_list() for col in column_names]

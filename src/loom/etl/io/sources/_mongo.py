@@ -208,7 +208,7 @@ def _finalize_batch(
     if declared_schema:
         frame = apply_declared_schema(frame, declared_schema, extra_fields_mode, schema_name)
     else:
-        frame = align_to_schema(frame, registered_schema)
+        frame = align_to_schema(frame, registered_schema, table=schema_name)
     if with_columns:
         present = [c for c in with_columns if c in frame.columns]
         frame = frame.select(present) if present else frame.head(0)

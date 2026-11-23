@@ -43,7 +43,11 @@ class _SparkCheckpointIO:
         Returns:
             Spark DataFrame when found; ``None`` when the path does not exist.
         """
-        return _probe_spark(self._spark, _join_path(base, name))
+        path = _join_path(base, name)
+        frame = _probe_spark(self._spark, path)
+        event = EtlEvent.CHECKPOINT_MISSED if frame is None else EtlEvent.CHECKPOINT_HIT
+        _log.info(event, extra={EtlKey.CHECKPOINT: name, EtlKey.URI: path})
+        return frame
 
     def write(self, name: str, base: str, data: Any, *, append: bool) -> None:
         """Write *data* as a Parquet directory under *base*.
@@ -75,8 +79,8 @@ class _SparkCheckpointIO:
         if append and existing_schema is not None:
             frame = _align_spark_to_existing(frame, existing_schema)
 
-        _log.debug(EtlEvent.CHECKPOINT_WRITTEN, extra={EtlKey.URI: path})
         frame.write.mode("append" if append else "overwrite").parquet(path)
+        _log.debug(EtlEvent.CHECKPOINT_WRITTEN, extra={EtlKey.CHECKPOINT: name, EtlKey.URI: path})
 
 
 def _is_spark_dataframe(obj: Any) -> bool:

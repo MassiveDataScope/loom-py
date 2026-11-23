@@ -43,8 +43,8 @@ class FsspecTempCleaner:
         try:
             fs, fpath = fsspec.core.url_to_fs(path, **self._storage_options)
             if fs.exists(fpath):
-                _log.debug(EtlEvent.CHECKPOINT_CLEANED, extra={EtlKey.URI: path})
                 fs.rm(fpath, recursive=True)
+                _log.debug(EtlEvent.CHECKPOINT_CLEANED, extra={EtlKey.URI: path})
         except Exception as exc:
             _log.warning(
                 EtlEvent.CHECKPOINT_CLEANUP_SKIPPED,
