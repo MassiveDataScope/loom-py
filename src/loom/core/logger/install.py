@@ -5,13 +5,12 @@ from __future__ import annotations
 import logging
 import sys
 from collections.abc import Sequence
-from dataclasses import dataclass
 from typing import Final
 
 from loom.core.environment import Environment, lambda_writes_json_logs
 from loom.core.logger.formats import JsonFormatter, LambdaFormatter, TextFormatter
 from loom.core.logger.settings import LogFormatName, LogSettings
-from loom.core.logger.stamp import ContextFilter, LogIdentity, LogRuntime
+from loom.core.logger.stamp import ContextFilter, LogIdentity
 
 HANDLER_NAME: Final = "loom"
 """Name of the handler loom installs, so a second configuration replaces it only."""
@@ -19,18 +18,6 @@ HANDLER_NAME: Final = "loom"
 _LAMBDA_RUNTIME_HANDLER: Final = "LambdaLoggerHandler"
 """Class-name prefix of the Lambda runtime's handlers (awslambdaric 4.2.3), which
 cannot be imported."""
-
-
-@dataclass(frozen=True, slots=True)
-class LogInstallation:
-    """The filters a configuration put on the handlers, to keep them current."""
-
-    filters: tuple[ContextFilter, ...]
-
-    def running_as(self, runtime: LogRuntime) -> None:
-        """Stamp the following records as emitted by *runtime*."""
-        for stamping in self.filters:
-            stamping.use_runtime(runtime)
 
 
 def configure_logging(
@@ -41,7 +28,7 @@ def configure_logging(
     service_version: str | None = None,
     extra_handlers: Sequence[logging.Handler] = (),
     filters: Sequence[logging.Filter] = (),
-) -> LogInstallation:
+) -> ContextFilter:
     """Write records in the format *settings* choose and stamp every one on loom's handlers.
 
     ``json`` and ``text`` write to stdout through a handler named ``loom``, which
@@ -59,12 +46,14 @@ def configure_logging(
         filters: Further filters for every owned handler, beside the context filter.
 
     Returns:
-        The installation, to name the runtime once it is known.
+        The context filter, shared by every handler, to name the runtime once it is known.
     """
     root = logging.getLogger()
     for extra in extra_handlers:
         if extra not in root.handlers:
             root.addHandler(extra)
+    for stale in [h for h in root.handlers if h.get_name() == HANDLER_NAME]:
+        root.removeHandler(stale)
     root.setLevel(settings.level.upper())
     match settings.format_for(environment):
         case LogFormatName.TEXT:
@@ -72,31 +61,28 @@ def configure_logging(
         case LogFormatName.JSON:
             written = [_stdout_handler(root, JsonFormatter())]
         case LogFormatName.LAMBDA:
-            written = [
+            runtime = [
                 h for h in root.handlers if type(h).__name__.startswith(_LAMBDA_RUNTIME_HANDLER)
             ]
             formatter = LambdaFormatter(json_frames=lambda_writes_json_logs())
-            for handler in written:
+            for handler in runtime:
                 handler.setFormatter(formatter)
-            written = written or [_stdout_handler(root, JsonFormatter())]
-    handlers = [*written, *extra_handlers]
+            written = runtime or [_stdout_handler(root, JsonFormatter())]
     for name, level in settings.named_levels.items():
         logging.getLogger(name).setLevel(level.upper())
     identity = LogIdentity(
         environment=environment.value, service_name=service_name, service_version=service_version
     )
-    stamping = tuple(ContextFilter(identity) for _ in handlers)
-    for target, context_filter in zip(handlers, stamping, strict=True):
+    stamp = ContextFilter(identity)
+    for target in (*written, *extra_handlers):
         target.filters = [f for f in target.filters if not isinstance(f, ContextFilter)]
-        for each in (context_filter, *filters):
+        for each in (stamp, *filters):
             target.addFilter(each)
-    return LogInstallation(stamping)
+    return stamp
 
 
 def _stdout_handler(root: logging.Logger, formatter: logging.Formatter) -> logging.Handler:
-    """Put loom's stdout handler with *formatter* on *root*, replacing a previous one."""
-    for installed in [h for h in root.handlers if h.get_name() == HANDLER_NAME]:
-        root.removeHandler(installed)
+    """Put loom's stdout handler with *formatter* on *root*."""
     handler = logging.StreamHandler(sys.stdout)
     handler.setFormatter(formatter)
     handler.set_name(HANDLER_NAME)

@@ -100,11 +100,11 @@ class TestJsonInstallation:
     def test_the_runtime_is_named_after_the_composition(
         self, pristine_root_logger: logging.Logger
     ) -> None:
-        installation = configure_logging(
+        stamp = configure_logging(
             LogSettings(format=LogFormatName.JSON), environment=Environment.PRODUCTION
         )
 
-        installation.running_as(LogRuntime.CELERY)
+        stamp.use_runtime(LogRuntime.CELERY)
 
         (handler,) = _installed(pristine_root_logger)
         record = logging.LogRecord("x", logging.INFO, __file__, 1, "x.y_z", (), None)
@@ -203,6 +203,17 @@ class TestLambdaInstallation:
 
         (record,) = runtime_handler.records
         assert record.__dict__[LogField.SERVICE_NAME] == "billing"
+
+    def test_switching_from_json_leaves_no_loom_handler_behind(
+        self, runtime_handler: LambdaLoggerHandler, pristine_root_logger: logging.Logger
+    ) -> None:
+        configure_logging(
+            LogSettings(format=LogFormatName.JSON), environment=Environment.PRODUCTION
+        )
+
+        configure_logging(LogSettings(), environment=Environment.PRODUCTION)
+
+        assert _installed(pristine_root_logger) == []
 
     def test_configuring_twice_leaves_one_context_filter(
         self, runtime_handler: LambdaLoggerHandler
