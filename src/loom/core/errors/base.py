@@ -10,18 +10,24 @@ from loom.core.errors.codes import ErrorCode
 
 
 class LoomError(Exception):
-    """Every error loom raises: a marker, so ``except LoomError`` catches anything from loom.
+    """The base of loom's own errors: a marker with no code and no transport meaning.
 
-    It carries no code and no transport meaning; :class:`CodedError` adds those.
+    :class:`CodedError` adds the code transports translate.
     """
 
 
 class InvalidValue(LoomError, ValueError):
-    """A loom API was given a value of the right type that it cannot accept."""
+    """A loom API was given a value of the right type that it cannot accept.
+
+    The message names the parameter and the rule, never the value it was given.
+    """
 
 
 class InvalidType(LoomError, TypeError):
-    """A loom API was given a value of a type it does not accept."""
+    """A loom API was given a value of a type it does not accept.
+
+    The message names the parameter and the expected type, never the value it was given.
+    """
 
 
 class CodedError(LoomError):

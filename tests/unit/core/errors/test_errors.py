@@ -42,7 +42,7 @@ class _AppCode(StrEnum):
     BROKEN = "broken"
 
 
-class TestLoomError:
+class TestCodedError:
     def test_stores_message_and_code(self) -> None:
         err = CodedError("something broke", code=_AppCode.BROKEN)
         assert err.message == "something broke"
@@ -131,7 +131,7 @@ class TestNotFound:
         assert "Product" in err.message
         assert "abc-123" in err.message
 
-    def test_catchable_as_loom_error(self) -> None:
+    def test_catchable_as_coded_error(self) -> None:
         with pytest.raises(CodedError):
             raise NotFound("User", id=1)
 

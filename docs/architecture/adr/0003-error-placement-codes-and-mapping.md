@@ -720,3 +720,16 @@ What the hotfix did where this ADR left a choice, and what it found:
    gets its own code in the 2.x hotfix.
 
 > Renamed in 12.0.0: modules rest/fastapi/router_runtime.py → rest/fastapi/router.py, ai/runtime/ → ai/execution/, etl/backends/ → etl/engines/.
+
+
+## Amendment (spec 022): the marker base
+
+`LoomError` is the empty base of loom's own errors, with no code and no transport
+meaning, as a library base is in `requests` or SQLAlchemy. The coded failure that
+transports translate (code, `http_status`, `is_retryable`, `public_*`) is
+`CodedError`; `DomainError` and `SystemError` derive from it, and REST, the job
+runner and `ErrorSummary` ask `CodedError`. A misuse of a loom API raises
+`InvalidValue(LoomError, ValueError)` or `InvalidType(LoomError, TypeError)`,
+whose message names the parameter, never the value. `ConfigError` and
+`BootstrapError` derive from `LoomError`. Packages move their plain built-in
+raises under `LoomError` one by one.

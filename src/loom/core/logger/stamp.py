@@ -67,7 +67,7 @@ class ContextFilter(logging.Filter):
     application and of its libraries get the same fields as loom's. A field
     already on the record, passed as ``extra``, is kept. It is the one owner of what
     a record says about its exception: ``exception.type``, ``loom.error.code`` for a
-    loom error, and from ERROR up ``exception.stacktrace``, never the message. It
+    ``CodedError``, and from ERROR up ``exception.stacktrace``, never the message. It
     never drops a record.
 
     Args:
