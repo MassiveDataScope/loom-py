@@ -45,8 +45,6 @@ class RecordField(StrEnum):
     DURATION_MS = "duration_ms"
     ERROR_TYPE = "error_type"
     ERROR_CODE = "error_code"
-    FAILED_STEP_RUN_ID = "failed_step_run_id"
-    FAILED_STEP = "failed_step"
     PIPELINE = "pipeline"
     PROCESS_RUN_ID = "process_run_id"
     PROCESS = "process"
@@ -118,8 +116,6 @@ class PipelineRunRecord:
     duration_ms: int
     error_type: str | None = None
     error_code: str | None = None
-    failed_step_run_id: str | None = None
-    failed_step: str | None = None
 
     def to_row(self) -> dict[str, Any]:
         """Convert record into a storage row mapping."""
@@ -141,8 +137,6 @@ class ProcessRunRecord:
     duration_ms: int
     error_type: str | None = None
     error_code: str | None = None
-    failed_step_run_id: str | None = None
-    failed_step: str | None = None
 
     def to_row(self) -> dict[str, Any]:
         """Convert record into a storage row mapping."""
@@ -191,8 +185,6 @@ _PIPELINE_RECORD_SCHEMA: tuple[ColumnSchema, ...] = (
     ColumnSchema("duration_ms", LoomDtype.INT64, nullable=False),
     ColumnSchema("error_type", LoomDtype.UTF8, nullable=True),
     ColumnSchema("error_code", LoomDtype.UTF8, nullable=True),
-    ColumnSchema("failed_step_run_id", LoomDtype.UTF8, nullable=True),
-    ColumnSchema("failed_step", LoomDtype.UTF8, nullable=True),
 )
 
 _PROCESS_RECORD_SCHEMA: tuple[ColumnSchema, ...] = (
@@ -206,8 +198,6 @@ _PROCESS_RECORD_SCHEMA: tuple[ColumnSchema, ...] = (
     ColumnSchema("duration_ms", LoomDtype.INT64, nullable=False),
     ColumnSchema("error_type", LoomDtype.UTF8, nullable=True),
     ColumnSchema("error_code", LoomDtype.UTF8, nullable=True),
-    ColumnSchema("failed_step_run_id", LoomDtype.UTF8, nullable=True),
-    ColumnSchema("failed_step", LoomDtype.UTF8, nullable=True),
 )
 
 _STEP_RECORD_SCHEMA: tuple[ColumnSchema, ...] = (

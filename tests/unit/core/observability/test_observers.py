@@ -8,7 +8,7 @@ import pytest
 from opentelemetry.sdk.trace import TracerProvider
 
 from loom.core.config.observability import OtelConfig
-from loom.core.errors.base import ErrorSummary
+from loom.core.logger import ErrorSummary
 from loom.core.observability.event import EventKind, LifecycleEvent, LifecycleStatus, Scope
 from loom.core.observability.observer.log import LogLifecycleObserver
 from loom.core.observability.observer.noop import NoopObserver
@@ -31,9 +31,7 @@ class TestLifecycleEventHelpers:
     def test_start_end_and_error_builders_set_expected_kinds(self) -> None:
         start = LifecycleEvent.start(scope=Scope.NODE, name="step")
         end = LifecycleEvent.end(scope=Scope.NODE, name="step")
-        error = LifecycleEvent.exception(
-            scope=Scope.NODE, name="step", failure=ErrorSummary(type="ValueError")
-        )
+        error = LifecycleEvent.exception(scope=Scope.NODE, name="step", error=ValueError())
 
         assert start.kind is EventKind.START
         assert end.kind is EventKind.END

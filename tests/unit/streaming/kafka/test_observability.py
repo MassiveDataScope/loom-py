@@ -3,7 +3,6 @@ from __future__ import annotations
 import pytest
 from prometheus_client import CollectorRegistry, generate_latest
 
-from loom.core.errors.base import ErrorSummary
 from loom.core.observability.event import LifecycleEvent, Scope
 from loom.core.observability.observability import Observability
 from loom.prometheus import KafkaPrometheusMetrics
@@ -47,20 +46,20 @@ class TestKafkaPrometheusMetrics:
         [
             pytest.param(
                 "kafka_produce",
-                "KafkaException",
+                RuntimeError("timeout"),
                 'streaming_kafka_produced_total{status="delivery_error",topic="orders"}',
                 id="produce_error_increments_produced_total_with_delivery_error",
             ),
             pytest.param(
                 "kafka_decode",
-                "DecodeError",
+                ValueError("bad bytes"),
                 'streaming_kafka_consumed_total{status="decode_error",topic="orders"}',
                 id="decode_error_increments_consumed_total_with_decode_error",
             ),
         ],
     )
     def test_error_increments_its_total_with_the_error_status(
-        self, name: str, error: str, expected: str, kafka_registry: CollectorRegistry
+        self, name: str, error: Exception, expected: str, kafka_registry: CollectorRegistry
     ) -> None:
         obs, _ = _make_obs(kafka_registry)
 
@@ -68,7 +67,7 @@ class TestKafkaPrometheusMetrics:
             LifecycleEvent.exception(
                 scope=Scope.TRANSPORT,
                 name=name,
-                failure=ErrorSummary(type=error),
+                error=error,
                 meta={"topic": "orders"},
             )
         )

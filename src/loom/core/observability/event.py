@@ -9,7 +9,7 @@ from typing import Self
 import msgspec
 from opentelemetry.util.types import AttributeValue
 
-from loom.core.errors.base import ErrorSummary
+from loom.core.logger.field import ErrorSummary
 from loom.core.model import LoomFrozenStruct
 
 
@@ -186,11 +186,11 @@ class LifecycleEvent(LoomFrozenStruct, frozen=True, kw_only=True):
         correlation_id: str | None = None,
         id: str | None = None,
         duration_ms: float | None = None,
-        failure: ErrorSummary | None = None,
+        error: BaseException,
         status: LifecycleStatus = LifecycleStatus.FAILURE,
         meta: Mapping[str, object] | None = None,
     ) -> Self:
-        """Build an ``ERROR`` lifecycle event."""
+        """Build the ``ERROR`` lifecycle event of *error*, which keeps its type and code only."""
         return cls(
             scope=scope,
             name=name,
@@ -200,7 +200,7 @@ class LifecycleEvent(LoomFrozenStruct, frozen=True, kw_only=True):
             id=id,
             duration_ms=duration_ms,
             status=status,
-            failure=failure,
+            failure=ErrorSummary.of(error),
             meta=dict(meta or {}),
         )
 

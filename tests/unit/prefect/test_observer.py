@@ -12,7 +12,6 @@ import logging
 
 import pytest
 
-from loom.core.errors.base import ErrorSummary
 from loom.core.observability.event import LifecycleEvent, LifecycleStatus, Scope
 from loom.prefect.observer import PrefectObserver
 
@@ -47,7 +46,7 @@ def _error_event(name: str = "MyStep") -> LifecycleEvent:
         trace_id="trace-1",
         correlation_id="corr-1",
         duration_ms=5.0,
-        failure=ErrorSummary(type="ValueError"),
+        error=ValueError(),
     )
 
 

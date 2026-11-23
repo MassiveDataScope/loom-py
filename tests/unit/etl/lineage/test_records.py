@@ -45,8 +45,6 @@ class TestLineageRecords:
             duration_ms=7,
             error_type="RuntimeError",
             error_code="not_found",
-            failed_step_run_id="step-1",
-            failed_step="Transform",
         )
         step = StepRunRecord(
             event=EventName.STEP_END,

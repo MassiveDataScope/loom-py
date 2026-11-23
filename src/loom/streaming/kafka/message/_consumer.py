@@ -7,7 +7,6 @@ from typing import Generic, Literal, TypeVar
 
 from confluent_kafka import TopicPartition
 
-from loom.core.errors.base import ErrorSummary
 from loom.core.model import LoomFrozenStruct, LoomStruct
 from loom.core.observability.event import LifecycleEvent, Scope
 from loom.core.observability.observability import Observability
@@ -74,7 +73,7 @@ class KafkaMessageConsumer(Generic[PayloadT]):
                         name="kafka_decode",
                         trace_id=_header_trace_id(record.headers),
                         correlation_id=_header_correlation_id(record.headers),
-                        failure=ErrorSummary.of(exc),
+                        error=exc,
                         meta={"topic": record.topic},
                     )
                 )

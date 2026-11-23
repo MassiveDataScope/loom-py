@@ -34,10 +34,7 @@ from opentelemetry.trace import (
     get_current_span,
     use_span,
 )
-from opentelemetry.util.types import AttributeValue
 
-from loom.core.errors.base import ErrorSummary
-from loom.core.logger import LogField
 from loom.core.observability.event import EventKind, LifecycleEvent, Scope
 
 
@@ -126,7 +123,7 @@ class SpanIdentity:
             correlation_id=self.correlation_id,
             id=self.event_id,
             duration_ms=duration_ms,
-            failure=ErrorSummary.of(exc),
+            error=exc,
             meta=self.meta,
         )
 
@@ -143,12 +140,11 @@ def apply_terminal_state(span: Span, event: LifecycleEvent) -> None:
     if event.duration_ms is not None:
         span.set_attribute("duration_ms", event.duration_ms)
     if event.kind is EventKind.ERROR:
-        failure = event.failure or ErrorSummary(type="Exception")
-        span.set_status(StatusCode.ERROR, failure.describe())
-        attributes: dict[str, AttributeValue] = {LogField.EXCEPTION_TYPE: failure.type}
-        if failure.code is not None:
-            attributes[LogField.ERROR_CODE] = failure.code
-        span.add_event("exception", attributes)
+        if event.failure is None:
+            span.set_status(StatusCode.ERROR)
+            return
+        span.set_status(StatusCode.ERROR, event.failure.describe())
+        span.add_event("exception", dict(event.failure.fields()))
         return
     span.set_status(StatusCode.OK)
 

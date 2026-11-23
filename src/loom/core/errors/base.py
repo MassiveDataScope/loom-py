@@ -6,8 +6,6 @@ from collections.abc import Mapping
 from enum import StrEnum
 from typing import Any
 
-import msgspec
-
 from loom.core.errors.codes import ErrorCode
 
 
@@ -84,23 +82,6 @@ class LoomError(Exception):
     def public_detail(self) -> Mapping[str, Any]:
         """Return fields an HTTP error detail may add. Empty unless overridden."""
         return {}
-
-
-class ErrorSummary(msgspec.Struct, frozen=True, kw_only=True):
-    """What a failure is, without its message: its type and, for a :class:`LoomError`, its code."""
-
-    type: str
-    code: str | None = None
-
-    @classmethod
-    def of(cls, exc: BaseException) -> ErrorSummary:
-        """Summarise *exc*."""
-        code = str(exc.code) if isinstance(exc, LoomError) else None
-        return cls(type=type(exc).__qualname__, code=code)
-
-    def describe(self) -> str:
-        """The type, followed by the code when there is one: ``DomainError (not_found)``."""
-        return self.type if self.code is None else f"{self.type} ({self.code})"
 
 
 class DomainError(LoomError):

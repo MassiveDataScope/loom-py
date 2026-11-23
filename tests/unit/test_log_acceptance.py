@@ -292,6 +292,17 @@ class TestScopeFailure:
         assert "DomainError" in fields
         assert ErrorCode.NOT_FOUND.value in fields
 
+    def test_the_span_names_the_type_and_the_code(
+        self, traced: tuple[Observability, InMemorySpanExporter]
+    ) -> None:
+        _fail_a_scope(traced[0])
+
+        (span,) = traced[1].get_finished_spans()
+        assert span.status.description == f"DomainError ({ErrorCode.NOT_FOUND.value})"
+        assert [dict(e.attributes or {}) for e in span.events] == [
+            {LogField.EXCEPTION_TYPE: "DomainError", LogField.ERROR_CODE: ErrorCode.NOT_FOUND.value}
+        ]
+
     def test_the_span_does_not_carry_the_message(
         self, traced: tuple[Observability, InMemorySpanExporter]
     ) -> None:
