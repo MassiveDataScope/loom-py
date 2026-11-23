@@ -88,7 +88,6 @@ class TestAtomicity:
     async def test_a_clean_execution_persists_its_write(
         self, ledger: Ledger, stores: AcmeStores, executor: UseCaseExecutor
     ) -> None:
-
         async def body() -> None:
             write(stores, "row")
 
@@ -99,7 +98,6 @@ class TestAtomicity:
     async def test_a_failure_after_writing_rolls_back_closes_and_persists_nothing(
         self, ledger: Ledger, stores: AcmeStores, executor: UseCaseExecutor
     ) -> None:
-
         async def body() -> None:
             write(stores, "row")
             raise BusinessError
@@ -117,7 +115,6 @@ class TestAtomicity:
     async def test_a_failure_after_a_nested_write_persists_nothing(
         self, ledger: Ledger, stores: AcmeStores, executor: UseCaseExecutor
     ) -> None:
-
         async def nested() -> None:
             write(stores, "nested-row")
 
@@ -184,7 +181,6 @@ class TestAtomicity:
     async def test_a_writer_under_a_read_only_nested_execution_is_refused(
         self, ledger: Ledger, stores: AcmeStores, executor: UseCaseExecutor
     ) -> None:
-
         async def read() -> None:
             await executor.execute(Run(done()))
 
@@ -204,7 +200,6 @@ class TestOwnership:
     async def test_a_gather_child_running_a_nested_execution_is_refused(
         self, executor: UseCaseExecutor
     ) -> None:
-
         async def outer() -> None:
             await asyncio.gather(executor.execute(Run(done())))
 
@@ -216,7 +211,6 @@ class TestOwnership:
     async def test_a_refused_gather_child_rolls_the_invocation_back(
         self, ledger: Ledger, stores: AcmeStores, executor: UseCaseExecutor
     ) -> None:
-
         async def outer() -> None:
             write(stores, "row")
             await asyncio.gather(executor.execute(Run(done())))
@@ -290,7 +284,6 @@ class TestOwnership:
     async def test_a_gather_child_touching_the_participant_is_refused(
         self, stores: AcmeStores, executor: UseCaseExecutor
     ) -> None:
-
         async def touch() -> None:
             scope_now().participant_for(DEFAULT_STORE, stores.last.owner, write=False)
 
@@ -305,7 +298,6 @@ class TestOwnership:
     async def test_a_thread_touching_the_participant_is_refused(
         self, stores: AcmeStores, executor: UseCaseExecutor
     ) -> None:
-
         async def outer() -> None:
             scope = scope_now()
             await asyncio.to_thread(

@@ -47,7 +47,6 @@ class TestRuntimeSinkPartitionPolicy:
         self,
         producer: RawProducerStub,
     ) -> None:
-
         policy = PartitionPolicy(
             strategy=AcmeOrderPartitionStrategy(),
             guarantee=PartitionGuarantee.ENTITY_STABLE,
@@ -67,7 +66,6 @@ class TestRuntimeSinkPartitionPolicy:
         self,
         producer: RawProducerStub,
     ) -> None:
-
         policy = PartitionPolicy(
             strategy=AcmeOrderPartitionStrategy(),
             guarantee=PartitionGuarantee.BEST_EFFORT,
@@ -86,7 +84,6 @@ class TestRuntimeSinkPartitionPolicy:
         self,
         producer: RawProducerStub,
     ) -> None:
-
         policy = PartitionPolicy(
             strategy=AcmeOrderPartitionStrategy(),
             guarantee=PartitionGuarantee.BEST_EFFORT,

@@ -30,6 +30,31 @@ class InvalidType(LoomError, TypeError):
     """
 
 
+class InvalidUse(LoomError, RuntimeError):
+    """A loom API was called in a state that does not allow it.
+
+    Such as before it was opened or compiled, after it was closed, or a second
+    bind of what binds once. The message names the state, never a value.
+    """
+
+
+class InternalError(LoomError, RuntimeError):
+    """A loom invariant broke: a defect in loom, never the caller's fault.
+
+    The message names the invariant, never a value.
+    """
+
+
+class UnknownKey(LoomError, KeyError):
+    """A lookup by key or name found nothing.
+
+    The message names what was looked up and where, never a value. It reads as
+    written, without the quotes ``KeyError`` adds.
+    """
+
+    __str__ = Exception.__str__
+
+
 class CodedError(LoomError):
     """A failure transports translate into an answer.
 
