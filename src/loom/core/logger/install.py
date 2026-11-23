@@ -100,7 +100,8 @@ def configure_logging(
 
     The handler of a format is named ``loom`` and replaces the one a previous
     call installed; a handler somebody else added stays. A format that installs
-    no handler, ``lambda``, leaves the runtime's, and the level too. Every
+    no handler, ``lambda``, formats the runtime's instead. The root level is
+    always the settings', in Lambda too. Every
     handler loom owns gets the context filter through this one path: the one
     of the format, each of *extra_handlers* (attached to the root logger when
     they are not yet), and the runtime's. Calling it again leaves one filter on each.
@@ -124,6 +125,7 @@ def configure_logging(
         if extra not in root.handlers:
             root.addHandler(extra)
     handler = resolve_format(settings.format_for(environment))(settings)
+    root.setLevel(settings.level.upper())
     if handler is None:
         handlers = list(root.handlers)
     else:
@@ -131,7 +133,6 @@ def configure_logging(
         for installed in [h for h in root.handlers if h.get_name() == HANDLER_NAME]:
             root.removeHandler(installed)
         root.addHandler(handler)
-        root.setLevel(settings.level.upper())
         handlers = [handler, *extra_handlers]
     for name, level in settings.named_levels.items():
         logging.getLogger(name).setLevel(level.upper())

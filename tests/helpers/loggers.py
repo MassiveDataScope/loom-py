@@ -22,6 +22,10 @@ class CapturingHandler(logging.Handler):
         self.records.append(record)
 
 
+class LambdaLoggerHandler(CapturingHandler):
+    """Named like the Lambda runtime's handler, which loom recognises by its class name."""
+
+
 class CapturedLog:
     """The events a logger put in a test's ``caplog``, as ``(event, fields)`` pairs.
 

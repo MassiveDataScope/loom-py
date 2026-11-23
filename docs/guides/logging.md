@@ -59,8 +59,8 @@ log.info(InvoiceEvent.ISSUED, extra={LogField.JOB: "SendInvoice"})
   error, and from ERROR up `exception.stacktrace` (the standard traceback, its last
   16 384 characters). The message is never a field of its own. Pass `exc_info` once
   per failure, where your code stops the exception, so one failure is one record
-  and one stack. With the `lambda` format loom installs no formatter, so the
-  runtime renders the record; the filter's fields are on it all the same.
+  and one stack. With the `lambda` format
+  the runtime's handler writes loom's JSON line too, so no field is lost.
 - Reserved keys: `timestamp`, `level`, `message` and `logger` belong to the record;
   the `json` and `text` formats write an `extra` of one of those names as
   `loom.extra.<key>`. The exception fields belong to the filter, which drops an
@@ -119,7 +119,7 @@ observability:
 
 | Format | Output | Default when |
 |---|---|---|
-| `lambda` | Nothing installed: the Lambda runtime renders the JSON and sets the level | `AWS_LAMBDA_FUNCTION_NAME` is set |
+| `lambda` | The Lambda runtime's handler, given loom's JSON line under both log formats (`Text` and `JSON`); loom sets the level | `AWS_LAMBDA_FUNCTION_NAME` is set |
 | `json` | One JSON object per line on stdout; fields at the top level; `exception.type`, `loom.error.code`, `exception.stacktrace` | a deployed environment (`production`, `staging`) |
 | `text` | A readable line with `key=value` fields; line breaks in values are escaped | any other environment |
 

@@ -3,12 +3,11 @@
 from __future__ import annotations
 
 import logging
-import os
 from typing import Final
 
 import msgspec
 
-from loom.core.environment import Environment
+from loom.core.environment import Environment, is_inside_lambda
 from loom.core.model import LoomFrozenStruct
 
 LAMBDA_FORMAT: Final = "lambda"
@@ -49,6 +48,6 @@ class LogSettings(LoomFrozenStruct, frozen=True, kw_only=True, forbid_unknown_fi
         """The format name in effect for a process running in *environment*."""
         if self.format is not None:
             return self.format
-        if os.environ.get("AWS_LAMBDA_FUNCTION_NAME") is not None:
+        if is_inside_lambda():
             return LAMBDA_FORMAT
         return JSON_FORMAT if environment.is_deployed else TEXT_FORMAT
