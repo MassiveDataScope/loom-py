@@ -9,6 +9,7 @@ import pytest
 from loom.core.engine.events import AbandonReason, EventKind, ExecutionEvent, Status
 from loom.core.errors import SystemError
 from loom.core.job.delivery import JobDelivery
+from loom.core.job.event import JobEvent, JobKey
 from loom.core.job.job import Job
 from loom.core.job.outcome import (
     Abandoned,
@@ -21,6 +22,7 @@ from loom.core.job.outcome import (
 )
 from loom.core.job.policy import Backoff, Redelivery, RetryPolicy
 from loom.core.job.runner import JobRunner
+from loom.core.log_names import LogField
 from loom.testing import JobTestData
 from tests.helpers.loggers import logged_events
 
@@ -159,7 +161,11 @@ class TestJobRunnerDelivery:
 class TestJobRunnerAbandonmentLog:
     @staticmethod
     def _abandonments(caplog: pytest.LogCaptureFixture) -> list[dict[str, Any]]:
-        return [entry for entry in logged_events(caplog) if entry["event"] == "Job abandoned"]
+        return [
+            entry
+            for entry in logged_events(caplog)
+            if entry["event"] == JobEvent.DELIVERY_ABANDONED
+        ]
 
     async def test_an_abandoned_run_logs_one_warning_naming_the_message_and_why(
         self, caplog: pytest.LogCaptureFixture
@@ -170,13 +176,13 @@ class TestJobRunnerAbandonmentLog:
 
         (logged,) = self._abandonments(caplog)
         assert logged == {
-            "event": "Job abandoned",
+            "event": JobEvent.DELIVERY_ABANDONED,
             "level": "warning",
             "loom.job": "AcmeJob",
-            "queue": delivery.queue,
+            JobKey.QUEUE: delivery.queue,
             "loom.attempt": 3,
-            "postponements": 2,
-            "reason": "attempts_exhausted",
+            JobKey.POSTPONEMENTS: 2,
+            LogField.REASON: "attempts_exhausted",
             "exception.type": "ValueError",
             "loom.task_id": delivery.task_id,
         }
@@ -201,7 +207,7 @@ class TestJobRunnerAbandonmentLog:
         )
 
         (logged,) = self._abandonments(caplog)
-        assert (logged["reason"], logged["exception.type"], logged["loom.task_id"]) == (
+        assert (logged[LogField.REASON], logged["exception.type"], logged["loom.task_id"]) == (
             "not_retryable",
             "UnretryableError",
             "m-1",

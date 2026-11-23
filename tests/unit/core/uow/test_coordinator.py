@@ -21,6 +21,7 @@ from loom.core.concurrency import run_to_completion
 from loom.core.errors import UncomposedStore
 from loom.core.errors.codes import ErrorCode
 from loom.core.stores.catalog import DEFAULT_STORE, StoreKey
+from loom.core.stores.event import StoresKey
 from loom.core.stores.uow import coordinator as coordinator_module
 from loom.core.stores.uow.abc import UnitOfWork, UowEvent
 from loom.core.stores.uow.coordinator import (
@@ -38,7 +39,6 @@ from loom.core.stores.uow.coordinator import (
 )
 from loom.stores.mongo.uow import MongoUnitOfWork
 from loom.stores.sqlalchemy.uow import SQLAlchemyUnitOfWork
-from tests.helpers.loggers import rendered
 
 from ..conftest import RecordingSessionManager, make_session
 from ..repository.mongo._fake import FakeMongoClient
@@ -151,7 +151,7 @@ class TestEnlist:
         with caplog.at_level(logging.ERROR), pytest.raises(Boom, match="begin failed"):
             await coordinator.enlist(scope, S0)
 
-        assert "UoWCloseFailed" in caplog.text
+        assert UowEvent.CLOSE_FAILED in caplog.text
         assert "store=s0" in caplog.text
 
     async def test_a_store_without_a_factory_is_refused_naming_it_and_the_composed_ones(
@@ -462,9 +462,9 @@ class TestTeardownFailures:
     @pytest.mark.parametrize(
         ("store_type", "phase", "event"),
         [
-            (PhasedStore, "rollback", "UoWRollbackFailed"),
-            (ThirdPartyStore, "rollback", "UoWRollbackFailed"),
-            (PhasedStore, "close", "UoWCloseFailed"),
+            (PhasedStore, "rollback", UowEvent.ROLLBACK_FAILED),
+            (ThirdPartyStore, "rollback", UowEvent.ROLLBACK_FAILED),
+            (PhasedStore, "close", UowEvent.CLOSE_FAILED),
         ],
         ids=["phased-rollback", "third-party-rollback", "phased-close"],
     )
@@ -472,7 +472,7 @@ class TestTeardownFailures:
         self,
         store_type: type[AnyStore],
         phase: str,
-        event: str,
+        event: UowEvent,
         caplog: pytest.LogCaptureFixture,
     ) -> None:
         ledger = Ledger()
@@ -524,7 +524,7 @@ class TestHungRollback:
         with caplog.at_level(logging.ERROR):
             await _finish_within_a_second(coordinator, scope, Boom("business"), ledger)
 
-        assert "UoWRollbackFailed" in caplog.text
+        assert UowEvent.ROLLBACK_FAILED in caplog.text
 
     async def test_the_owning_task_can_still_be_cancelled(self) -> None:
         ledger = Ledger()
@@ -840,9 +840,9 @@ class TestOutcomeLog:
         with caplog.at_level(logging.WARNING):
             await coordinator.finish(scope, Boom("business"))
 
-        records = [r for r in caplog.records if "InvocationOutcome" in r.getMessage()]
+        records = [r for r in caplog.records if r.getMessage() == UowEvent.INVOCATION_OUTCOME]
         assert [record.levelno for record in records] == [logging.WARNING]
-        assert "fake" in rendered(records[0])
+        assert getattr(records[0], StoresKey.OUTCOMES) == ["s0:RolledBack", "s1:RolledBack"]
 
     async def test_a_successful_invocation_logs_no_warning(
         self, caplog: pytest.LogCaptureFixture
@@ -853,7 +853,7 @@ class TestOutcomeLog:
         with caplog.at_level(logging.WARNING):
             await coordinator.finish(scope, None)
 
-        assert not [r for r in caplog.records if "InvocationOutcome" in r.getMessage()]
+        assert not [r for r in caplog.records if r.getMessage() == UowEvent.INVOCATION_OUTCOME]
 
 
 class TestUowEvent:
@@ -862,13 +862,13 @@ class TestUowEvent:
     @pytest.mark.parametrize(
         ("event", "name"),
         [
-            (UowEvent.BEGIN, "UoWBegin"),
-            (UowEvent.COMMIT, "UoWCommit"),
-            (UowEvent.ROLLBACK, "UoWRollback"),
-            (UowEvent.INVALIDATE_FAILED, "UoWInvalidateFailed"),
-            (UowEvent.ROLLBACK_FAILED, "UoWRollbackFailed"),
-            (UowEvent.CLOSE_FAILED, "UoWCloseFailed"),
-            (UowEvent.INVOCATION_OUTCOME, "InvocationOutcome"),
+            (UowEvent.BEGIN, "stores.uow_transaction_began"),
+            (UowEvent.COMMIT, "stores.uow_transaction_committed"),
+            (UowEvent.ROLLBACK, "stores.uow_transaction_rolled_back"),
+            (UowEvent.INVALIDATE_FAILED, "stores.uow_invalidate_failed"),
+            (UowEvent.ROLLBACK_FAILED, "stores.uow_rollback_failed"),
+            (UowEvent.CLOSE_FAILED, "stores.uow_close_failed"),
+            (UowEvent.INVOCATION_OUTCOME, "stores.uow_invocation_outcome"),
         ],
     )
     def test_each_event_keeps_its_name(self, event: UowEvent, name: str) -> None:

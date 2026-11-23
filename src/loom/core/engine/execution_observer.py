@@ -5,7 +5,7 @@ from collections.abc import Sequence
 from typing import Protocol
 
 from loom.core.engine.events import ExecutionEvent
-from loom.core.logger import LogField
+from loom.core.log_names import LogEvent, LogField
 
 
 class ExecutionObserver(Protocol):
@@ -39,6 +39,12 @@ class ExecutionObserver(Protocol):
 
 
 _log = logging.getLogger(__name__)
+
+
+class ExecutionObserverEvent(LogEvent):
+    """What the fan-out of execution observers logs."""
+
+    FAILED = "engine.execution_observer_failed"
 
 
 class NullExecutionObserver:
@@ -83,7 +89,7 @@ class FanOutExecutionObserver:
                 observer.on_event(event)
             except Exception:
                 _log.warning(
-                    "engine.execution_observer_failed",
+                    ExecutionObserverEvent.FAILED,
                     extra={
                         LogField.OBSERVER: type(observer).__name__,
                         LogField.EVENT_KIND: event.kind,

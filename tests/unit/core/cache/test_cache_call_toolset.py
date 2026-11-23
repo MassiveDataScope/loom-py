@@ -30,6 +30,7 @@ pytest.importorskip("pydantic_ai", reason="requires the ai-pydantic extra")
 from pydantic_ai.toolsets import FunctionToolset  # noqa: E402
 
 from loom.core.cache import CacheConfig, CachedCalls, cached_calls  # noqa: E402
+from loom.core.cache.event import CacheEvent
 from loom.core.cache.wiring import cache_module  # noqa: E402
 from loom.core.di.container import LoomContainer  # noqa: E402
 from tests.helpers.loggers import rendered
@@ -106,7 +107,9 @@ class TestAnUnresolvableAnnotation:
         assert not getattr(bound["resume"], "__cache_call_wrapped__", False)
         assert getattr(bound["latest"], "__cache_call_wrapped__", False)
         warnings = [
-            record for record in caplog.records if "CacheCallNotCacheable" in record.getMessage()
+            record
+            for record in caplog.records
+            if CacheEvent.CALL_NOT_CACHEABLE in record.getMessage()
         ]
         assert len(warnings) == 1
         assert "CursorTools.resume" in rendered(warnings[0])

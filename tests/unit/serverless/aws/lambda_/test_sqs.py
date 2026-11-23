@@ -19,6 +19,7 @@ from loom.core.discovery.base import DiscoveryResult
 from loom.core.discovery.scanner import PackageScanner
 from loom.core.discovery.worker import DuplicateJobName
 from loom.core.identity import ANONYMOUS, current_identity
+from loom.core.job.event import JobEvent
 from loom.core.job.job import Job
 from loom.core.job.service import JobService
 from loom.core.model import BaseModel
@@ -199,6 +200,7 @@ from loom.core.config import ConfigContext, ConfigError
 from loom.core.environment import Environment
 from loom.core.observability.config import ObservabilityConfig
 from loom.core.observability.observability import Observability
+from loom.core.job.event import JobEvent
 from loom.core.job.job import Job
 class Probe(Job[None]):
     def execute(self) -> None:
@@ -643,11 +645,13 @@ print([name for name in loaded if name in sys.modules])
         caplog: pytest.LogCaptureFixture,
     ) -> None:
         handler({"Records": [record("42", "committed")]}, None)
-        final_logs = [message for message in _logged(caplog) if "Job abandoned" in message]
+        final_logs = [
+            message for message in _logged(caplog) if JobEvent.DELIVERY_ABANDONED in message
+        ]
         assert len(final_logs) == 1
         assert "PostCommitError" in final_logs[0]
         assert "'loom.task_id': '42'" in final_logs[0]
-        assert "'committed': True" in final_logs[0]
+        assert "'loom.job.committed': True" in final_logs[0]
 
     @pytest.mark.parametrize(
         ("sections", "key"),

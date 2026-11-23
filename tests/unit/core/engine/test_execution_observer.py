@@ -10,7 +10,10 @@ from loom.core.command import Command
 from loom.core.engine.compiler import UseCaseCompiler
 from loom.core.engine.events import EventKind, ExecutionEvent
 from loom.core.engine.executor import UseCaseExecutor
+from loom.core.engine.observation import UseCaseEvent
 from loom.core.errors import NotFound, PostCommitError, RuleViolationError, RuleViolationsError
+from loom.core.job.event import JobKey
+from loom.core.log_names import LogField
 from loom.core.use_case.markers import Input, LoadById
 from loom.core.use_case.use_case import UseCase
 from tests.helpers.loggers import CapturedLog
@@ -340,23 +343,24 @@ class TestStructuredLogs:
     async def test_done_has_usecase_field(self, log: CapturedLog) -> None:
         executor = UseCaseExecutor(UseCaseCompiler())
         await executor.execute(_SimpleUseCase(), payload={"value": "x"})
-        fields = log.fields_for("[DONE]")
-        assert fields.get("usecase") == "_SimpleUseCase"
+        [fields] = log.named(UseCaseEvent.DONE)
+        assert fields.get(LogField.USE_CASE) == "_SimpleUseCase"
 
-    async def test_done_has_duration_ms_and_status(self, log: CapturedLog) -> None:
+    async def test_done_has_duration_ms_and_no_failure_status(self, log: CapturedLog) -> None:
         executor = UseCaseExecutor(UseCaseCompiler())
         await executor.execute(_SimpleUseCase(), payload={"value": "x"})
-        fields = log.fields_for("[DONE]")
-        assert "duration_ms" in fields
-        assert fields.get("status") == "success"
+        [fields] = log.named(UseCaseEvent.DONE)
+        assert LogField.DURATION_MS in fields
+        assert LogField.STATUS not in fields
+        assert log.named(UseCaseEvent.FAILED) == []
 
     async def test_fail_log_has_status_failure(self, log: CapturedLog) -> None:
         executor = UseCaseExecutor(UseCaseCompiler())
         use_case = _FailingUseCase()
         with pytest.raises(RuntimeError):
             await executor.execute(use_case, payload={"value": "x"})
-        fields = log.fields_for("[FAIL]")
-        assert fields.get("status") == "failure"
+        [fields] = log.named(UseCaseEvent.FAILED)
+        assert fields.get(LogField.STATUS) == "failure"
 
     async def test_fail_log_says_whether_a_post_commit_failure_committed(
         self, log: CapturedLog
@@ -365,8 +369,8 @@ class TestStructuredLogs:
         use_case = _FailingAfterCommitUseCase()
         with pytest.raises(PostCommitError):
             await executor.execute(use_case, payload={"value": "x"})
-        fields = log.fields_for("[FAIL]")
-        assert (fields.get("committed"), fields.get("failures")) == (True, 1)
+        [fields] = log.named(UseCaseEvent.FAILED)
+        assert (fields.get(JobKey.COMMITTED), fields.get(JobKey.FAILURES)) == (True, 1)
 
     async def test_compile_log_has_usecase_field(self, log: CapturedLog) -> None:
         UseCaseCompiler().compile(_SimpleUseCase)

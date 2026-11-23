@@ -1,0 +1,20 @@
+"""The records the job runner logs, and the fields they carry."""
+
+from __future__ import annotations
+
+from loom.core.log_names import LogEvent, LogKey
+
+
+class JobEvent(LogEvent):
+    """What the job runner logs."""
+
+    DELIVERY_ABANDONED = "job.delivery_abandoned"
+
+
+class JobKey(LogKey):
+    """The fields of a job record."""
+
+    QUEUE = "loom.job.queue"
+    POSTPONEMENTS = "loom.job.postponements"
+    COMMITTED = "loom.job.committed"
+    FAILURES = "loom.job.failures"

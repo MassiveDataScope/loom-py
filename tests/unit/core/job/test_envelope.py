@@ -12,6 +12,7 @@ from loom.core.job.envelope import (
     encode_job_message,
     wire_job_name,
 )
+from loom.core.job.event import JobKey
 from loom.core.job.job import Job
 from loom.core.job.outcome import failure_log_fields
 from loom.testing import make
@@ -46,7 +47,7 @@ class TestJobEnvelope:
 
     def test_post_commit_failure_log_fields(self) -> None:
         error = PostCommitError(committed=True, failures=(ValueError("failed"),))
-        assert failure_log_fields(error) == {"committed": True, "failures": 1}
+        assert failure_log_fields(error) == {JobKey.COMMITTED: True, JobKey.FAILURES: 1}
 
     def test_ordinary_failure_log_fields(self) -> None:
         assert failure_log_fields(ValueError("failed")) == {}

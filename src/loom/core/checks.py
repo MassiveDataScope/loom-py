@@ -50,6 +50,7 @@ from loom.core.config.errors import ConfigError
 from loom.core.config.keys import FASTAPI_ENTRY, INTERPOLATION, ConfigKey
 from loom.core.environment import ENVIRONMENT_VARIABLE, Environment
 from loom.core.errors import InvalidValue
+from loom.core.log_names import LogEvent, LogField, LogKey
 from loom.core.plugins.entrypoints import MissingDependency, list_entry_points
 
 if TYPE_CHECKING:
@@ -59,6 +60,23 @@ if TYPE_CHECKING:
 
 _logger = logging.getLogger(__name__)
 _logger.setLevel(logging.WARNING)
+
+
+class ChecksEvent(LogEvent):
+    """What the deploy checks log at startup."""
+
+    DEPLOY_SKIPPED = "checks.deploy_skipped"
+    DEPLOY_SILENCED = "checks.deploy_silenced"
+    DEPLOY_WARNED = "checks.deploy_warned"
+
+
+class ChecksKey(LogKey):
+    """The fields of a deploy check record."""
+
+    ID = "loom.checks.id"
+    IDS = "loom.checks.ids"
+    MESSAGE = "loom.checks.message"
+
 
 CHECK_ID: Final = re.compile(r"[a-z][a-z0-9_]*(?:\.[a-z][a-z0-9_]*)*\.[EW]\d{3}")
 """Shape of a check id: a dotted area, then ``E`` or ``W`` and three digits."""
@@ -465,22 +483,19 @@ def enforce_deploy_checks(
             third-party module that is not installed.
     """
     if not environment.is_deployed:
-        _logger.warning(
-            "deploy checks skipped: the environment is %r (%s); they run in production and staging",
-            str(environment),
-            ENVIRONMENT_VARIABLE,
-        )
+        _logger.warning(ChecksEvent.DEPLOY_SKIPPED, extra={LogField.ENVIRONMENT: str(environment)})
         return None
     report = run_deploy_checks(config, scope=scope, application=application)
     if report.silenced:
         _logger.warning(
-            "deploy checks silenced by %s in the %r environment: %s",
-            SILENCED_KEY,
-            str(environment),
-            ", ".join(report.silenced),
+            ChecksEvent.DEPLOY_SILENCED,
+            extra={LogField.ENVIRONMENT: str(environment), ChecksKey.IDS: list(report.silenced)},
         )
     for result in report.warnings:
-        _logger.warning("deploy check %s", result.describe())
+        _logger.warning(
+            ChecksEvent.DEPLOY_WARNED,
+            extra={ChecksKey.ID: result.id, ChecksKey.MESSAGE: result.message},
+        )
     if report.errors:
         raise DeployCheckError(environment, report.errors)
     return report

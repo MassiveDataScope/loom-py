@@ -16,6 +16,7 @@ from loom.core.di.container import LoomContainer
 from loom.core.environment import ENVIRONMENT_VARIABLE, Environment
 from loom.core.errors import UnsupportedQuery
 from loom.core.errors.codes import ErrorCode
+from loom.core.stores.event import StoresEvent
 from loom.core.stores.repository import (
     CURSOR_SIGNING_CHECK,
     Cursor,
@@ -695,7 +696,8 @@ class TestModes:
         CursorCodec(signing="unsigned")
 
         assert any(
-            record.levelname == "WARNING" and "unsigned" in record.getMessage()
+            record.levelname == "WARNING"
+            and record.getMessage() == StoresEvent.CURSOR_SIGNING_UNSIGNED
             for record in caplog.records
         )
 
@@ -706,7 +708,8 @@ class TestModes:
 
         assert _decode(ephemeral, _encode(ephemeral, _at(1))) == _at(1)
         assert any(
-            record.levelname == "WARNING" and "restart" in record.getMessage()
+            record.levelname == "WARNING"
+            and record.getMessage() == StoresEvent.CURSOR_SIGNING_EPHEMERAL
             for record in caplog.records
         )
 

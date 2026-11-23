@@ -1,8 +1,8 @@
 """Each attempted run reports one terminal outcome: events, observer and one log line.
 
 ``loom.core.engine.observation``: ``EXEC_START`` once the use case is built,
-then ``[DONE]``/``EXEC_DONE`` or ``[FAIL]``/``EXEC_ERROR``; a constructor
-failure reports ``[FAIL]`` with ``error_kind="build"`` and no event.
+then ``use_case_done``/``EXEC_DONE`` or ``use_case_failed``/``EXEC_ERROR``; a
+constructor failure reports ``use_case_failed`` with the phase ``build`` and no event.
 """
 
 from __future__ import annotations
@@ -15,6 +15,7 @@ import pytest
 from loom.core.engine.compiler import CompilationError
 from loom.core.engine.events import EventKind, ExecutionEvent
 from loom.core.engine.executor import UseCaseExecutor
+from loom.core.engine.observation import UseCaseEvent, UseCaseKey
 from loom.core.errors import (
     DelegationExpired,
     RuleViolationError,
@@ -24,6 +25,7 @@ from loom.core.errors import (
 from loom.core.execution import current_execution
 from loom.core.identity import ANONYMOUS, current_identity
 from loom.core.job.context import flush_pending_dispatches
+from loom.core.log_names import LogField
 from loom.core.tracing import reset_trace_id, set_trace_id
 from loom.core.use_case.factory import UseCaseFactory
 from loom.core.use_case.markers import Input, LoadById
@@ -61,9 +63,9 @@ class TestLogs:
         await executor.execute(AcmeNoMarkersUseCase(), params={"value": 1})
 
         [(event, fields)] = logger.calls
-        assert event.startswith("[DONE]")
-        assert event.endswith("ms")
-        assert (fields["usecase"], fields["status"]) == ("AcmeNoMarkersUseCase", "success")
+        assert event == UseCaseEvent.DONE
+        assert fields[LogField.USE_CASE] == "AcmeNoMarkersUseCase"
+        assert fields[LogField.DURATION_MS] >= 0
 
     async def test_outside_debug_mode_the_log_lists_no_steps(
         self, make_executor: MakeExecutor, logger: CapturedLog
@@ -72,7 +74,7 @@ class TestLogs:
         await executor.execute(AcmeInputOnlyUseCase(), payload={"email": "a@b.com", "name": "X"})
 
         [(_, fields)] = logger.calls
-        assert "steps" not in fields
+        assert UseCaseKey.STEPS not in fields
 
     async def test_in_debug_mode_the_log_lists_every_step_in_order(
         self, make_executor: MakeExecutor, logger: CapturedLog
@@ -84,7 +86,7 @@ class TestLogs:
         )
 
         [(_, fields)] = logger.calls
-        assert fields["steps"] == ["Load AcmeUser", "Execute core logic"]
+        assert fields[UseCaseKey.STEPS] == ["Load AcmeUser", "Execute core logic"]
 
     async def test_in_debug_mode_the_log_lists_the_command_bind(
         self, make_executor: MakeExecutor, logger: CapturedLog
@@ -93,7 +95,7 @@ class TestLogs:
         await executor.execute(AcmeInputOnlyUseCase(), payload={"email": "a@b.com", "name": "X"})
 
         [(_, fields)] = logger.calls
-        assert fields["steps"] == ["Bind Input", "Execute core logic"]
+        assert fields[UseCaseKey.STEPS] == ["Bind Input", "Execute core logic"]
 
     async def test_a_rule_failure_is_one_warning_listing_every_broken_rule(
         self, make_executor: MakeExecutor, logger: CapturedLog
@@ -116,12 +118,9 @@ class TestLogs:
             await executor.execute(use_case, payload={"email": "x@x.com", "name": "X"})
 
         [(event, fields)] = logger.calls
-        assert event.startswith("[FAIL]")
-        assert fields["status"] == "rule_failure"
-        assert fields["broken_rules"] == [
-            {"rule": "bad_email", "field": "email", "message": "bad"},
-            {"rule": "bad_name", "field": "name", "message": "short"},
-        ]
+        assert event == UseCaseEvent.FAILED
+        assert fields[LogField.STATUS] == "rule_failure"
+        assert fields[UseCaseKey.BROKEN_RULES] == ["bad_email:email", "bad_name:name"]
 
     async def test_violations_raised_by_execute_are_listed_without_a_rule_name(
         self, make_executor: MakeExecutor, logger: CapturedLog
@@ -137,8 +136,8 @@ class TestLogs:
             await executor.execute(use_case)
 
         [(_, fields)] = logger.calls
-        assert fields["status"] == "rule_failure"
-        assert fields["broken_rules"] == [{"rule": None, "field": "email", "message": "taken"}]
+        assert fields[LogField.STATUS] == "rule_failure"
+        assert fields[UseCaseKey.BROKEN_RULES] == ["email"]
 
 
 class TestTraceId:
@@ -186,7 +185,7 @@ class TestTraceId:
 class TestBuildFailure:
     """A constructor failure raises as is, before ``EXEC_START``, logged with its kind.
 
-    ``[FAIL]`` with ``error_kind="build"``, like an execution failing.
+    ``use_case_failed`` with the phase ``build``, like an execution failing.
     """
 
     async def test_a_constructor_failure_raises_before_the_execution_starts(
@@ -208,8 +207,9 @@ class TestBuildFailure:
             await executor.run(AcmeBroken, factory=factory)
 
         ((event, fields),) = logger.errors
-        assert event == "[FAIL] AcmeBroken"
-        assert fields["error_kind"] == "build"
+        assert event == UseCaseEvent.FAILED
+        assert fields[LogField.USE_CASE] == "AcmeBroken"
+        assert fields[UseCaseKey.PHASE] == "build"
         assert fields["exception.type"] == "LookupError"
         assert "acme constructor failed" not in str(fields)
 
@@ -229,7 +229,9 @@ class TestBuildFailure:
         await flush_pending_dispatches()
         await service.wait_until_idle()
 
-        assert [event for event, _ in logger.errors] == ["[FAIL] AcmeBrokenJob"]
+        assert [(event, fields[LogField.USE_CASE]) for event, fields in logger.errors] == [
+            (UseCaseEvent.FAILED, "AcmeBrokenJob")
+        ]
         assert AcmeOnFailure.calls == (
             [] if on_failure is None else [("AcmeUnrecoverableError", None)]
         )
@@ -250,14 +252,14 @@ class TestDuration:
 
 
 class TestOneTerminalOutcome:
-    """Exactly one ``[DONE]`` or ``[FAIL]`` line per attempted run, built or not."""
+    """Exactly one done or failed record per attempted run, built or not."""
 
     async def test_a_run_that_succeeds_logs_one_done_and_no_fail(
         self, make_executor: MakeExecutor, logger: CapturedLog
     ) -> None:
         await make_executor().execute(AcmeNoMarkersUseCase(), params={"value": 1})
 
-        assert [_outcome(m) for m in logger.messages if _outcome(m)] == ["[DONE]"]
+        assert [_outcome(m) for m in logger.messages if _outcome(m)] == [UseCaseEvent.DONE]
 
     async def test_a_run_that_fails_logs_one_fail_and_no_done(
         self, make_executor: MakeExecutor, logger: CapturedLog
@@ -268,7 +270,7 @@ class TestOneTerminalOutcome:
         with pytest.raises(ValueError, match="missing required parameter"):
             await executor.execute(use_case, params={})
 
-        assert [_outcome(m) for m in logger.messages if _outcome(m)] == ["[FAIL]"]
+        assert [_outcome(m) for m in logger.messages if _outcome(m)] == [UseCaseEvent.FAILED]
 
     async def test_a_run_that_fails_to_build_logs_one_fail_and_emits_no_event(
         self, make_executor: MakeExecutor, logger: CapturedLog, factory: UseCaseFactory
@@ -278,7 +280,7 @@ class TestOneTerminalOutcome:
         with pytest.raises(LookupError):
             await executor.run(AcmeBroken, factory=factory)
 
-        assert [_outcome(m) for m in logger.messages if _outcome(m)] == ["[FAIL]"]
+        assert [_outcome(m) for m in logger.messages if _outcome(m)] == [UseCaseEvent.FAILED]
         assert JOURNAL.entries == []
 
 
@@ -295,7 +297,7 @@ class _DoesNotCompile(UseCase[Any, None]):
 
 
 class TestUnstartedRunsLogOneTerminalLine:
-    """A run refused before its unit of work opens logs one ``[FAIL]`` with ``error_kind=begin``."""
+    """A run refused before its unit of work opens logs one failure with the phase ``begin``."""
 
     async def test_a_plan_that_fails_to_compile_on_demand(
         self, make_executor: MakeExecutor, logger: CapturedLog
@@ -306,7 +308,7 @@ class TestUnstartedRunsLogOneTerminalLine:
         with pytest.raises(CompilationError):
             await executor.execute(use_case)
 
-        assert _terminal_lines(logger, "_DoesNotCompile") == [("[FAIL]", "begin")]
+        assert _terminal_lines(logger, "_DoesNotCompile") == [(UseCaseEvent.FAILED, "begin")]
 
     @pytest.mark.usefixtures("switches")
     async def test_a_caller_past_its_delegation(
@@ -318,7 +320,7 @@ class TestUnstartedRunsLogOneTerminalLine:
         with acting_as(ALICE, until=time.time() - 1), pytest.raises(DelegationExpired):
             await executor.execute(use_case, params={"value": 1})
 
-        assert _terminal_lines(logger, "AcmeNoMarkersUseCase") == [("[FAIL]", "begin")]
+        assert _terminal_lines(logger, "AcmeNoMarkersUseCase") == [(UseCaseEvent.FAILED, "begin")]
 
     async def test_a_writer_under_a_read_only_execution(
         self, make_executor: MakeExecutor, logger: CapturedLog
@@ -336,7 +338,7 @@ class TestUnstartedRunsLogOneTerminalLine:
         with pytest.raises(UndeclaredStoreWrite):
             await executor.execute(use_case)
 
-        assert _terminal_lines(logger, "AcmeNoMarkersUseCase") == [("[FAIL]", "begin")]
+        assert _terminal_lines(logger, "AcmeNoMarkersUseCase") == [(UseCaseEvent.FAILED, "begin")]
 
     async def test_a_execution_observer_raising_on_start(
         self, make_executor: MakeExecutor, logger: CapturedLog
@@ -349,19 +351,19 @@ class TestUnstartedRunsLogOneTerminalLine:
         with pytest.raises(RuntimeError, match="acme observer down"):
             await executor.execute(use_case, params={"value": 1})
 
-        assert _terminal_lines(logger, "AcmeNoMarkersUseCase") == [("[FAIL]", "begin")]
+        assert _terminal_lines(logger, "AcmeNoMarkersUseCase") == [(UseCaseEvent.FAILED, "begin")]
         assert observer.events == []
 
 
 def _terminal_lines(logger: CapturedLog, use_case: str) -> list[tuple[str, str | None]]:
-    """The outcome tag and ``error_kind`` of each terminal line *use_case* logged."""
+    """The event and phase of each terminal record *use_case* logged."""
     return [
-        (tag, fields.get("error_kind"))
+        (event, fields.get(UseCaseKey.PHASE))
         for event, fields in logger.calls
-        if fields.get("usecase") == use_case and (tag := _outcome(event)) is not None
+        if fields.get(LogField.USE_CASE) == use_case and _outcome(event) is not None
     ]
 
 
 def _outcome(message: str) -> str | None:
-    """``[DONE]`` or ``[FAIL]`` when *message* is a terminal outcome line."""
-    return next((tag for tag in ("[DONE]", "[FAIL]") if message.startswith(tag)), None)
+    """*message* when it is a terminal outcome record."""
+    return next((e for e in (UseCaseEvent.DONE, UseCaseEvent.FAILED) if message == e), None)

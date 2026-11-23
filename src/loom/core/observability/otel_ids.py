@@ -40,6 +40,7 @@ from opentelemetry.sdk.trace.sampling import (
 from opentelemetry.trace import INVALID_TRACE_ID
 
 from loom.core.config.observability import OtelConfig
+from loom.core.observability.diagnostic import ObservabilityEvent, ObservabilityKey
 from loom.core.tracing.context import get_trace_id
 
 _TRACE_ID_HEX_LEN = 32
@@ -146,17 +147,8 @@ def adopt_host_id_generator(provider: object) -> bool:
     """
     if not isinstance(provider, TracerProvider):
         _log.warning(
-            "otel_adopt_host_id_generator_unavailable",
-            extra={
-                "setting": "observability.otel.config.adopt_host_id_generator",
-                "provider": type(provider).__name__,
-                "consequence": (
-                    "streaming spans keep random trace ids, so a message cannot be "
-                    "followed end to end; install an opentelemetry-sdk TracerProvider "
-                    "before building the Loom runtime, or set an OTLP endpoint so Loom "
-                    "owns its own provider"
-                ),
-            },
+            ObservabilityEvent.HOST_ID_GENERATOR_UNAVAILABLE,
+            extra={ObservabilityKey.PROVIDER: type(provider).__name__},
         )
         return False
     provider.id_generator = LoomMessageIdGenerator(provider.id_generator)  # type: ignore[assignment]

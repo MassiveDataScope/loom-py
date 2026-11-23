@@ -14,6 +14,7 @@ from pymongo.errors import ConnectionFailure, OperationFailure, PyMongoError
 import loom.stores.mongo.uow as uow_module
 from loom.core.stores.catalog import DEFAULT_STORE, StoreKey
 from loom.core.stores.repository import CursorCodec
+from loom.core.stores.uow.abc import UowEvent
 from loom.core.stores.uow.coordinator import (
     InvocationOutcome,
     OrderedCommits,
@@ -172,7 +173,7 @@ class TestTransactional:
 
         assert current_scope() is None
         assert client.sessions[0].ended is True
-        assert "UoWRollbackFailed" in caplog.text
+        assert UowEvent.ROLLBACK_FAILED in caplog.text
 
     async def test_session_is_ended_when_start_transaction_fails(self) -> None:
         client = FakeMongoClient()
@@ -201,7 +202,7 @@ class TestTransactional:
                 raise _WriteFailed()
 
         assert current_scope() is None
-        assert "UoWCloseFailed" in caplog.text
+        assert UowEvent.CLOSE_FAILED in caplog.text
 
     async def test_commit_failure_ends_the_session_without_a_second_abort(
         self, caplog: pytest.LogCaptureFixture
@@ -221,7 +222,7 @@ class TestTransactional:
         assert client.aborted == 0
         assert client.sessions[0].ended is True
         assert current_scope() is None
-        assert "UoWRollbackFailed" not in caplog.text
+        assert UowEvent.ROLLBACK_FAILED not in caplog.text
         assert "InvalidOperation" not in caplog.text
 
     async def test_a_second_cancellation_waits_for_the_abort_then_ends_the_session(
@@ -400,7 +401,7 @@ class TestPhased:
             await uow.close()
 
         assert uow.session is None
-        assert "UoWCloseFailed" in caplog.text
+        assert UowEvent.CLOSE_FAILED in caplog.text
 
     async def test_a_cancelled_close_still_ends_the_session(self) -> None:
         client = FakeMongoClient()
@@ -491,7 +492,7 @@ class TestPhased:
         assert outcome.stores == (RolledBack(DEFAULT_STORE, client.commit_error),)
         assert client.aborted == 0
         assert client.sessions[0].ended is True
-        assert "UoWRollbackFailed" not in caplog.text
+        assert UowEvent.ROLLBACK_FAILED not in caplog.text
 
     @pytest.mark.parametrize(
         "error",

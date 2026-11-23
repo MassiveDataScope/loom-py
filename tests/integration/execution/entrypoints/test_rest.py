@@ -25,6 +25,8 @@ from loom.core.identity import (
     reset_identity,
     set_identity,
 )
+from loom.core.identity.context import IdentityEvent, IdentityKey
+from loom.core.log_names import LogField
 from loom.core.observability.observability import Observability
 from loom.core.transport.dispatcher import ExecutionRequest
 from loom.core.use_case.factory import UseCaseFactory
@@ -127,8 +129,13 @@ class TestAuthenticationMiddleware:
 
         assert response.json() == {"caller": BOB.subject}
         [(event, fields)] = switches.calls
-        assert (event, fields["from_subject"], fields["to_subject"], fields["use_case"]) == (
-            "identity_switched",
+        assert (
+            event,
+            fields[IdentityKey.SWITCHED_FROM],
+            fields[IdentityKey.SWITCHED_TO],
+            fields[LogField.USE_CASE],
+        ) == (
+            IdentityEvent.CALLER_SWITCHED,
             ALICE.subject,
             BOB.subject,
             "transport",

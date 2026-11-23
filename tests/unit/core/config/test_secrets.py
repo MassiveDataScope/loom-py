@@ -16,6 +16,7 @@ from loom.core.config.errors import ConfigError
 from loom.core.config.resolver import ConfigResolver
 from tests.helpers.aws import OTHER_REGION, moto_client
 from tests.helpers.aws_island import FakeAwsIsland
+from tests.helpers.loggers import rendered
 from tests.unit.core.config.doubles import BotocoreClientError
 
 
@@ -197,7 +198,7 @@ class TestSecretsManagerResolverLogging:
         }
         with caplog.at_level(logging.INFO, logger="loom.connections.aws.secrets"):
             SecretsManagerResolver().resolve("/prod/db.host")
-        messages = [r.message for r in caplog.records]
+        messages = [rendered(r) for r in caplog.records]
         assert any("/prod/db" in msg for msg in messages), (
             f"Expected a log record containing '/prod/db', got: {messages}"
         )
@@ -208,7 +209,7 @@ class TestSecretsManagerResolverLogging:
         mock_client.get_secret_value.return_value = {"SecretString": "mysecret"}
         with caplog.at_level(logging.INFO, logger="loom.connections.aws.secrets"):
             SecretsManagerResolver().resolve("/prod/token")
-        messages = [r.message for r in caplog.records]
+        messages = [rendered(r) for r in caplog.records]
         assert all("mysecret" not in msg for msg in messages), (
             f"Log must not contain the secret value 'mysecret', got: {messages}"
         )
@@ -223,7 +224,7 @@ class TestSecretsManagerResolverLogging:
         monkeypatch.setenv("STAGE", "prod")
         with caplog.at_level(logging.INFO, logger="loom.connections.aws.secrets"):
             SecretsManagerResolver().resolve("/app/%STAGE%/db")
-        messages = [r.message for r in caplog.records]
+        messages = [rendered(r) for r in caplog.records]
         assert any("/app/%STAGE%/db" in msg for msg in messages), messages
         assert all("/app/prod/db" not in msg for msg in messages), messages
 
@@ -248,7 +249,7 @@ class TestSecretsManagerResolverUnexpandedKey:
     ) -> None:
         with caplog.at_level(logging.INFO, logger="loom.connections.aws.secrets"):
             SecretsManagerResolver().resolve(self.KEY)
-        messages = [r.message for r in caplog.records]
+        messages = [rendered(r) for r in caplog.records]
         assert all("super-secret" not in msg for msg in messages), messages
         assert any(self.KEY in msg for msg in messages), messages
         mock_client.get_secret_value.assert_called_once_with(SecretId=self.EXPANDED)
@@ -291,7 +292,7 @@ class TestSecretsManagerResolverUnexpandedKey:
             value = SecretsManagerResolver().resolve("/app/svc/%DOTTED_ENV%")
         assert value == json.dumps({"host": "db"})
         mock_client.get_secret_value.assert_called_once_with(SecretId="/app/svc/db.prod-secret")
-        messages = [r.message for r in caplog.records]
+        messages = [rendered(r) for r in caplog.records]
         assert all("prod-secret" not in msg for msg in messages), messages
 
     def test_env_token_in_base_segment_still_expands_and_navigates(

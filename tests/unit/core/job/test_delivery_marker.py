@@ -9,6 +9,7 @@ from loom.core.di.container import LoomContainer
 from loom.core.engine.compiler import CompilationError, UseCaseCompiler
 from loom.core.engine.events import EventKind, ExecutionEvent, Status
 from loom.core.engine.executor import UseCaseExecutor
+from loom.core.engine.observation import UseCaseEvent
 from loom.core.job.delivery import JobDelivery
 from loom.core.job.job import Job
 from loom.core.job.outcome import JobAbandonment, JobPostponement
@@ -132,8 +133,8 @@ class TestJobSignalReporting:
             await executor.run(job_type, factory=factory)
 
         assert not [record for record in caplog.records if record.levelno >= logging.ERROR]
-        assert not [record for record in caplog.records if "[FAIL]" in record.getMessage()]
-        assert any("[SIGNAL]" in record.getMessage() for record in caplog.records)
+        assert not [r for r in caplog.records if r.getMessage() == UseCaseEvent.FAILED]
+        assert any(r.getMessage() == UseCaseEvent.SIGNALLED for r in caplog.records)
         [reported] = [e for e in observer.events if e.kind is EventKind.EXEC_ERROR]
         assert reported.status is status
         assert reported.status is not Status.FAILURE

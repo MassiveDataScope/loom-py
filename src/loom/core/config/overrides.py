@@ -62,6 +62,7 @@ from typing import TYPE_CHECKING, Any, Final
 
 from loom.core.config.context import ConfigContext
 from loom.core.config.errors import ConfigError
+from loom.core.config.event import ConfigEvent, ConfigLogKey
 from loom.core.config.keys import INTERPOLATION, ConfigKey
 from loom.core.config.loader import config_strings, load_config
 from loom.core.config.retired import reject_retired_sections
@@ -204,11 +205,7 @@ def _apply_overrides(
         if environment.is_deployed:
             _require_no_import(name, key, layer, environment)
         merged = _merged(merged, name, key, layer)
-    _logger.warning(
-        "configuration keys overridden by %s variables: %s",
-        OVERRIDE_PREFIX,
-        ", ".join(sorted(keys.values())),
-    )
+    _logger.warning(ConfigEvent.KEYS_OVERRIDDEN, extra={ConfigLogKey.KEYS: sorted(keys.values())})
     result: DictConfig = merged
     return result
 

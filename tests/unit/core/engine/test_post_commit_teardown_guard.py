@@ -21,7 +21,12 @@ import pytest
 import loom.core.stores.uow.scope as scope_module
 from loom.core.engine.compiler import UseCaseCompiler
 from loom.core.engine.executor import UseCaseExecutor
-from loom.core.engine.post_commit import PostCommitChannel, active_channel, drain_after_failure
+from loom.core.engine.post_commit import (
+    PostCommitChannel,
+    PostCommitEvent,
+    active_channel,
+    drain_after_failure,
+)
 from loom.core.stores.catalog import DEFAULT_STORE
 from loom.core.stores.uow.coordinator import OrderedCommits
 from loom.core.use_case.use_case import UseCase
@@ -188,7 +193,7 @@ class TestDrainCommittedChannelLoggingFailure:
         with caplog.at_level("ERROR"):
             await drain_after_failure(cast(PostCommitChannel, channel))
 
-        assert "PostCommitDrainFailedDuringTeardown" in caplog.text
+        assert PostCommitEvent.DRAIN_FAILED_DURING_TEARDOWN in caplog.text
 
     async def test_a_cancellation_from_drain_is_not_swallowed(self) -> None:
         channel = cast(PostCommitChannel, _StubChannel(asyncio.CancelledError()))

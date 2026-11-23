@@ -7,6 +7,7 @@ from typing import Any, ClassVar
 
 from loom.core.engine.events import AbandonReason, Status
 from loom.core.errors import PostCommitError
+from loom.core.job.event import JobKey
 from loom.core.job.policy import Countdown
 
 
@@ -14,6 +15,7 @@ class JobSignal(Exception):
     """Raised by a job to steer its own delivery; not a failure."""
 
     status: ClassVar[Status]
+    reason: str
 
 
 class JobPostponement(JobSignal):
@@ -112,5 +114,5 @@ JobOutcome = Succeeded | Postponed | Abandoned | Failed
 def failure_log_fields(exc: BaseException) -> dict[str, object]:
     """Return transport-neutral details for a failed job."""
     if isinstance(exc, PostCommitError):
-        return {"committed": exc.committed, "failures": len(exc.failures)}
+        return {JobKey.COMMITTED: exc.committed, JobKey.FAILURES: len(exc.failures)}
     return {}

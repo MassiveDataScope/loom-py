@@ -19,12 +19,23 @@ from __future__ import annotations
 
 import logging
 from collections.abc import Sequence
+from enum import StrEnum
 from typing import NoReturn
 
 from loom.core.identity import Identity
+from loom.core.log_names import LogField
+from loom.core.stores.event import StoresEvent, StoresKey
 from loom.core.stores.sql.abc.errors import RoleNotAllowedError, RolesNotBoundError
 
 _logger = logging.getLogger(__name__)
+
+
+class _Denial(StrEnum):
+    """Why a request was denied; recorded server-side only."""
+
+    NO_IDENTITY = "no_identity"
+    NO_ROLE = "no_role"
+    NO_ALLOWLISTED_ROLE = "no_allowlisted_role"
 
 
 def resolve_query_roles(
@@ -70,12 +81,12 @@ def _authorized_roles(
 ) -> tuple[str, ...]:
     """Intersect the roles the identity holds with the allowlist, fail-closed."""
     if not identity.is_authenticated:
-        _deny(connection, identity, "the request carries no verified identity")
+        _deny(connection, identity, _Denial.NO_IDENTITY)
     if not identity.roles:
-        _deny(connection, identity, "the verified identity carries no role")
+        _deny(connection, identity, _Denial.NO_ROLE)
     authorized = tuple(role for role in identity.roles if role in allowed_roles)
     if not authorized:
-        _deny(connection, identity, "no role held by the identity is allowlisted")
+        _deny(connection, identity, _Denial.NO_ALLOWLISTED_ROLE)
     return authorized
 
 
@@ -93,17 +104,19 @@ def _narrow(
     return tuple(dict.fromkeys(requested))
 
 
-def _deny(connection: str, identity: Identity, reason: str) -> NoReturn:
+def _deny(connection: str, identity: Identity, reason: _Denial) -> NoReturn:
     """Log the audit trail of a denial and refuse the request.
 
     The response message stays generic on purpose (no oracle about which part
     of the credentials failed); the precise reason is only recorded server-side.
     """
     _logger.warning(
-        "SQL role authorization denied: connection=%s subject=%s mechanism=%s reason=%s",
-        connection,
-        identity.subject,
-        identity.mechanism,
-        reason,
+        StoresEvent.ROLE_AUTHORIZATION_DENIED,
+        extra={
+            StoresKey.CONNECTION: connection,
+            StoresKey.SUBJECT: identity.subject,
+            StoresKey.MECHANISM: identity.mechanism,
+            LogField.REASON: reason,
+        },
     )
     raise RolesNotBoundError(connection)

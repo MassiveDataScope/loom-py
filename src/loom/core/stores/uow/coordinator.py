@@ -41,6 +41,7 @@ from typing import ClassVar, Protocol, TypeGuard
 from loom.core.concurrency import run_to_completion
 from loom.core.errors import UncomposedStore
 from loom.core.stores.catalog import StoreKey
+from loom.core.stores.event import StoresKey
 from loom.core.stores.uow.abc import UnitOfWork, UnitOfWorkFactory, UowEvent
 
 _log = logging.getLogger(__name__)
@@ -54,7 +55,7 @@ deadline bounds every rollback of the invocation, however many stores it
 enlisted. Thirty seconds outlasts any rollback a live server answers, yet
 stays well under the minutes a TCP keepalive or driver socket timeout may
 take to give up. A rollback that times out is logged as
-``UoWRollbackFailed``, like any other failed rollback, and ``close`` runs
+``stores.uow_rollback_failed``, like any other failed rollback, and ``close`` runs
 next; the server discards the transaction once the connection is gone.
 """
 
@@ -238,7 +239,7 @@ class _PhasedDriver:
         try:
             await self._uow.close()
         except Exception:
-            _log.exception(UowEvent.CLOSE_FAILED, extra={"store": self._key})
+            _log.exception(UowEvent.CLOSE_FAILED, extra={StoresKey.STORE: self._key})
 
     async def flush(self) -> None:
         await self._uow.flush()
@@ -664,7 +665,7 @@ class _Settlement:
             await step()
         except Exception as exc:
             if log_failure_as is not None:
-                _log.exception(log_failure_as, extra={"store": participant.key})
+                _log.exception(log_failure_as, extra={StoresKey.STORE: participant.key})
             return exc
         except BaseException as exc:  # NOSONAR S5754
             self._interrupt = self._interrupt or exc
@@ -674,15 +675,8 @@ class _Settlement:
 
 
 def _log_outcome(outcome: InvocationOutcome, participants: Mapping[StoreKey, Participant]) -> None:
-    stores = [
-        {
-            "store": store.key,
-            "outcome": type(store).__name__,
-            "backend": participants[store.key].physical.backend,
-        }
-        for store in outcome.stores
-    ]
+    stores = [f"{store.key}:{type(store).__name__}" for store in outcome.stores]
     if outcome.has_succeeded:
-        _log.debug(UowEvent.INVOCATION_OUTCOME, extra={"stores": stores})
+        _log.debug(UowEvent.INVOCATION_OUTCOME, extra={StoresKey.OUTCOMES: stores})
     else:
-        _log.warning(UowEvent.INVOCATION_OUTCOME, extra={"stores": stores})
+        _log.warning(UowEvent.INVOCATION_OUTCOME, extra={StoresKey.OUTCOMES: stores})

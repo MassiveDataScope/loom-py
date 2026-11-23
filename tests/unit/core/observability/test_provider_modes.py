@@ -21,13 +21,13 @@ from opentelemetry.trace import ProxyTracerProvider
 from loom.core.config import ConfigError
 from loom.core.config.observability import OtelConfig
 from loom.core.model.redaction import Dsn
+from loom.core.observability.diagnostic import ObservabilityEvent, ObservabilityKey
 from loom.core.observability.event import Scope
 from loom.core.observability.observability import Observability
 from loom.core.observability.observer import otel as _otel
 from loom.core.observability.otel_ids import LoomMessageIdGenerator
 
 _TRACE_A = "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa1"
-_ADOPT_SETTING = "observability.otel.config.adopt_host_id_generator"
 
 
 def _host_provider(monkeypatch: pytest.MonkeyPatch) -> InMemorySpanExporter:
@@ -104,9 +104,13 @@ class TestHostProviderWithoutAdoption:
         assert [span.name for span in spans] == ["node:n"]
         assert _hex_trace(spans[0]) != _TRACE_A
 
-        records = [r for r in caplog.records if r.message == "otel_host_provider_random_trace_ids"]
+        records = [
+            r
+            for r in caplog.records
+            if r.message == ObservabilityEvent.HOST_PROVIDER_RANDOM_TRACE_IDS
+        ]
         assert len(records) == 1
-        assert records[0].setting == _ADOPT_SETTING  # type: ignore[attr-defined]
+        assert getattr(records[0], ObservabilityKey.PROVIDER) == "TracerProvider"
 
 
 class TestHostProviderWithAdoption:
@@ -161,12 +165,12 @@ class TestAdoptionOnAProxyProvider:
             "blind assignment creates a field nobody reads and hides the failure"
         )
         records = [
-            r for r in caplog.records if r.message == "otel_adopt_host_id_generator_unavailable"
+            r
+            for r in caplog.records
+            if r.message == ObservabilityEvent.HOST_ID_GENERATOR_UNAVAILABLE
         ]
         assert len(records) == 1
-        assert records[0].setting == _ADOPT_SETTING  # type: ignore[attr-defined]
-        assert records[0].provider == "ProxyTracerProvider"  # type: ignore[attr-defined]
-        assert "random trace ids" in records[0].consequence  # type: ignore[attr-defined]
+        assert getattr(records[0], ObservabilityKey.PROVIDER) == "ProxyTracerProvider"
 
 
 class TestConfigValidation:

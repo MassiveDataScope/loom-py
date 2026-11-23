@@ -49,8 +49,22 @@ from loom.core.errors import InvalidUse, Unauthenticated
 from loom.core.execution.errors import ExecutionClosed, ExecutionRequired
 from loom.core.identity import Acting, Identity
 from loom.core.identity.context import _acting  # pyright: ignore[reportPrivateUsage]
+from loom.core.log_names import LogEvent, LogKey
 
 _log = logging.getLogger(__name__)
+
+
+class ExecutionContextEvent(LogEvent):
+    """What the execution context logs."""
+
+    CLOSED = "execution.context_closed"
+
+
+class ExecutionContextKey(LogKey):
+    """The fields of an execution context record."""
+
+    READ = "loom.execution.read"
+
 
 _acting_now = _acting.get
 
@@ -251,7 +265,7 @@ _ENDED = _EndedCache()
 
 def _closed(read: str) -> ExecutionClosed:
     """Log the supported paths for background work and return the error to raise."""
-    _log.warning("execution_closed", extra={"read": read, "guidance": _BACKGROUND_WORK})
+    _log.warning(ExecutionContextEvent.CLOSED, extra={ExecutionContextKey.READ: read})
     return ExecutionClosed(_ENDED_MESSAGE)
 
 

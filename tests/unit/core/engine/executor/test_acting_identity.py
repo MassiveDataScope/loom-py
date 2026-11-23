@@ -26,9 +26,10 @@ from loom.core.engine.post_commit import active_channel
 from loom.core.errors import Unauthenticated
 from loom.core.execution import ExecutionScope, execution_identity
 from loom.core.identity import ANONYMOUS, Identity, current_caller, current_identity
+from loom.core.identity.context import IdentityEvent, IdentityKey
 from loom.core.job.context import add_pending_dispatch, flush_pending_dispatches
+from loom.core.log_names import LogField
 from loom.core.stores.uow.scope import current_scope
-from loom.core.tracing import active_trace_id
 from loom.core.use_case.invoker import AppInvoker
 from loom.core.use_case.registry import UseCaseRegistry
 from tests.helpers.delegation import acting_as
@@ -112,23 +113,21 @@ class TestExplicitSwitch:
 
         assert await executor.execute(outer, identity=ALICE) == (BOB,) * 3
 
-    async def test_it_is_logged_with_subjects_roles_the_use_case_and_the_trace(
+    async def test_it_is_logged_with_subjects_roles_and_the_use_case(
         self, executor: UseCaseExecutor, switches: CapturedLog
     ) -> None:
-        with active_trace_id("acme-trace"):
-            await executor.execute(AcmeNests(executor, AcmeWho(), BOB), identity=ALICE)
+        await executor.execute(AcmeNests(executor, AcmeWho(), BOB), identity=ALICE)
 
         assert switches.calls == [
             (
-                "identity_switched",
+                IdentityEvent.CALLER_SWITCHED,
                 {
-                    "from_subject": ALICE.subject,
-                    "to_subject": BOB.subject,
-                    "from_roles": ALICE.roles,
-                    "to_roles": BOB.roles,
-                    "attributes_changed": False,
-                    "use_case": "AcmeWho",
-                    "trace_id": "acme-trace",
+                    IdentityKey.SWITCHED_FROM: ALICE.subject,
+                    IdentityKey.SWITCHED_TO: BOB.subject,
+                    IdentityKey.ROLES_FROM: ALICE.roles,
+                    IdentityKey.ROLES_TO: BOB.roles,
+                    IdentityKey.ATTRIBUTES_CHANGED: False,
+                    LogField.USE_CASE: "AcmeWho",
                 },
             )
         ]
@@ -138,9 +137,15 @@ class TestExplicitSwitch:
     ) -> None:
         await executor.execute(AcmeNests(executor, AcmeWho(), PROMOTED_ALICE), identity=ALICE)
 
-        [line] = switches.named("identity_switched")
-        assert (line["from_subject"], line["to_subject"]) == (ALICE.subject, ALICE.subject)
-        assert (line["from_roles"], line["to_roles"]) == (ALICE.roles, ("admin",))
+        [line] = switches.named(IdentityEvent.CALLER_SWITCHED)
+        assert (line[IdentityKey.SWITCHED_FROM], line[IdentityKey.SWITCHED_TO]) == (
+            ALICE.subject,
+            ALICE.subject,
+        )
+        assert (line[IdentityKey.ROLES_FROM], line[IdentityKey.ROLES_TO]) == (
+            ALICE.roles,
+            ("admin",),
+        )
 
     async def test_a_roles_change_keeps_the_delegation_and_is_refused_past_it(
         self, executor: UseCaseExecutor, past_the_window: Callable[[], None]
@@ -175,8 +180,11 @@ class TestExplicitSwitch:
             return await bound.invoke(AcmeWho)
 
         assert await executor.execute(Run(invoke), identity=ALICE) == (BOB,) * 3
-        [line] = switches.named("identity_switched")
-        assert (line["from_subject"], line["to_subject"]) == (ALICE.subject, BOB.subject)
+        [line] = switches.named(IdentityEvent.CALLER_SWITCHED)
+        assert (line[IdentityKey.SWITCHED_FROM], line[IdentityKey.SWITCHED_TO]) == (
+            ALICE.subject,
+            BOB.subject,
+        )
 
     async def test_an_execution_scope_acting_as_another_than_the_transport_is_logged(
         self, switches: CapturedLog
@@ -184,8 +192,12 @@ class TestExplicitSwitch:
         with acting_as(ALICE), ExecutionScope(BOB):
             assert current_caller() is BOB
 
-        [line] = switches.named("identity_switched")
-        assert (line["from_subject"], line["to_subject"], line["use_case"]) == (
+        [line] = switches.named(IdentityEvent.CALLER_SWITCHED)
+        assert (
+            line[IdentityKey.SWITCHED_FROM],
+            line[IdentityKey.SWITCHED_TO],
+            line[LogField.USE_CASE],
+        ) == (
             ALICE.subject,
             BOB.subject,
             "ExecutionScope",

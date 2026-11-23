@@ -10,6 +10,7 @@ from collections.abc import Callable, Hashable
 from typing import Any
 
 from loom.core.config.errors import ConfigError
+from loom.core.config.event import ConfigEvent, ConfigLogKey
 
 _CLIENT = ("client",)
 
@@ -36,7 +37,9 @@ def resolve_cached(
         raise ConfigError(f"{label} key must not be empty")
     base, json_keys = _split_resolver_key(key)
     path = _expand_env_vars(base)
-    logging.getLogger(f"loom.core.config.{name}").info("%s_resolver: fetching %s", name, key)
+    logging.getLogger(f"loom.core.config.{name}").info(
+        ConfigEvent.RESOLVER_FETCHING, extra={ConfigLogKey.RESOLVER: name, ConfigLogKey.KEY: key}
+    )
     if _CLIENT not in cache:
         cache[_CLIENT] = client()
     raw = fetch(cache[_CLIENT], path, label=key)

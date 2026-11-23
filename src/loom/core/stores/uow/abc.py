@@ -25,20 +25,21 @@ Usage::
 
 from __future__ import annotations
 
-from enum import StrEnum
 from typing import ClassVar, Protocol, runtime_checkable
 
+from loom.core.log_names import LogEvent
 
-class UowEvent(StrEnum):
-    """Log event names emitted by units of work and the commit coordinator."""
 
-    BEGIN = "UoWBegin"
-    COMMIT = "UoWCommit"
-    ROLLBACK = "UoWRollback"
-    INVALIDATE_FAILED = "UoWInvalidateFailed"
-    ROLLBACK_FAILED = "UoWRollbackFailed"
-    CLOSE_FAILED = "UoWCloseFailed"
-    INVOCATION_OUTCOME = "InvocationOutcome"
+class UowEvent(LogEvent):
+    """Log events emitted by units of work and the commit coordinator."""
+
+    BEGIN = "stores.uow_transaction_began"
+    COMMIT = "stores.uow_transaction_committed"
+    ROLLBACK = "stores.uow_transaction_rolled_back"
+    INVALIDATE_FAILED = "stores.uow_invalidate_failed"
+    ROLLBACK_FAILED = "stores.uow_rollback_failed"
+    CLOSE_FAILED = "stores.uow_close_failed"
+    INVOCATION_OUTCOME = "stores.uow_invocation_outcome"
 
 
 @runtime_checkable

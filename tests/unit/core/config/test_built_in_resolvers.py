@@ -20,7 +20,9 @@ from loom.core.config import (
     merge_resolvers,
     with_default_resolvers,
 )
+from loom.core.config.event import ConfigEvent, ConfigLogKey
 from tests.helpers.aws_island import FakeAwsIsland
+from tests.helpers.loggers import CapturedLog
 
 
 class StubResolver:
@@ -93,8 +95,8 @@ class TestDefaultResolvers:
         with caplog.at_level(logging.DEBUG, logger="loom.core.config.resolver"):
             merge_resolvers((), built_in_resolvers())
 
-        assert caplog.messages == [
-            "config resolver 'secrets' already registered; loom default skipped"
+        assert CapturedLog(caplog).calls == [
+            (ConfigEvent.RESOLVER_DEFAULT_SKIPPED, {ConfigLogKey.RESOLVER: "secrets"})
         ]
 
     def test_merge_resolvers_does_not_log_default_taken_by_explicit(

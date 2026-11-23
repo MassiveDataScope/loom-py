@@ -19,6 +19,7 @@ from loom.core.config.checks import EMBEDDED_PASSWORD_CHECK
 from loom.core.config.errors import ConfigError
 from loom.core.environment import ENVIRONMENT_VARIABLE, Environment
 from loom.core.job.job import Job
+from tests.helpers.loggers import logged_text
 
 _CELERY = {
     "broker_url": "memory://",
@@ -72,7 +73,7 @@ class TestBootstrapEnvironment:
         with caplog.at_level(logging.WARNING, logger="loom.core.checks"):
             bootstrap_worker(config, environment="production", jobs=[_SyncJob])
 
-        messages = " ".join(r.getMessage() for r in caplog.records)
+        messages = logged_text(caplog)
         assert EMBEDDED_PASSWORD_CHECK in messages
         assert rest_checks.AUTHENTICATION_CHECK not in messages
         assert rest_checks.SCHEMA_CHECK not in messages

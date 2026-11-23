@@ -29,6 +29,7 @@ from loom.core.cache import (
 )
 from loom.core.cache.calls import AsyncCallable, _ConfiguredCalls, _UnconfiguredCalls
 from loom.core.cache.decorators import cached
+from loom.core.cache.event import CacheEvent
 from loom.core.cache.keys import call_key
 from loom.core.cache.wiring import CacheGateways, cache_module, cache_module_for
 from loom.core.config import ConfigContext
@@ -222,7 +223,7 @@ class TestDecoration:
         warnings = [
             record
             for record in caplog.records
-            if "CacheDecoratorAlreadyRegistered" in record.getMessage()
+            if CacheEvent.DECORATOR_ALREADY_REGISTERED in record.getMessage()
         ]
         assert len(warnings) == 1
         assert "_TaggingDecorator" in rendered(warnings[0])
@@ -326,11 +327,12 @@ def _not_configured_warnings(caplog: pytest.LogCaptureFixture) -> list[logging.L
     return [
         record
         for record in caplog.records
-        if record.levelno == logging.WARNING and "CacheNotConfigured" in record.getMessage()
+        if record.levelno == logging.WARNING
+        and CacheEvent.REPOSITORY_NOT_CONFIGURED in record.getMessage()
     ]
 
 
-class TestCacheNotConfigured:
+class TestRepositoryNotConfigured:
     @pytest.fixture
     def _capture_wiring_warnings(self, caplog: pytest.LogCaptureFixture) -> None:
         caplog.set_level(logging.WARNING, logger="loom.core.cache.wiring")
@@ -433,7 +435,9 @@ class _UserCalls:
 
 def _already_registered_warnings(caplog: pytest.LogCaptureFixture) -> list[logging.LogRecord]:
     return [
-        record for record in caplog.records if "CacheCallsAlreadyRegistered" in record.getMessage()
+        record
+        for record in caplog.records
+        if CacheEvent.CALLS_ALREADY_REGISTERED in record.getMessage()
     ]
 
 
@@ -456,7 +460,7 @@ class TestCachedCallsBinding:
         no binding at all, so an ``isinstance`` check alone would pass with no
         registration whatsoever. The registration is what makes every factory
         in one container share a binder — and with it the once-set that keeps
-        ``CacheCallNotConfigured`` to one record per marked coroutine.
+        ``cache.call_not_configured`` to one record per marked coroutine.
         """
         container = _container(cache_module_for(ConfigContext.from_dict(raw)))
 
@@ -563,4 +567,4 @@ class TestTheBinderReportsAnAbandonedLoad:
 
 
 def _abandoned_warnings(caplog: pytest.LogCaptureFixture) -> list[logging.LogRecord]:
-    return [record for record in caplog.records if "CacheCallLoadAbandoned" in record.getMessage()]
+    return [record for record in caplog.records if CacheEvent.LOAD_ABANDONED in record.getMessage()]

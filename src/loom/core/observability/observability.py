@@ -27,6 +27,7 @@ from prometheus_client import start_http_server
 from loom.core.config.errors import ConfigError
 from loom.core.config.observability import OtelConfig
 from loom.core.environment import Environment, resolve_environment
+from loom.core.log_names import LogField
 from loom.core.logger.install import configure_logging
 from loom.core.logger.stamp import ContextFilter, LogRuntime
 from loom.core.observability.config import (
@@ -34,6 +35,7 @@ from loom.core.observability.config import (
     OtelObservabilityConfig,
     PrometheusObservabilityConfig,
 )
+from loom.core.observability.diagnostic import ObservabilityEvent
 from loom.core.observability.event import LifecycleEvent, Scope
 from loom.core.observability.observer.log import LogLifecycleObserver
 from loom.core.observability.observer.noop import NoopObserver
@@ -237,8 +239,8 @@ class Observability:
                 obs.on_event(event)
             except Exception:
                 self._log.warning(
-                    "observer_error",
-                    extra={"observer": type(obs).__name__, "scope": event.scope},
+                    ObservabilityEvent.OBSERVER_FAILED,
+                    extra={LogField.OBSERVER: type(obs).__name__, LogField.SCOPE: event.scope},
                     exc_info=True,
                 )
 
