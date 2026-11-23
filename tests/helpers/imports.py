@@ -1,4 +1,4 @@
-"""What a module imports at run time, read from its source."""
+"""What a module imports at run time, read from its source or measured in a child interpreter."""
 
 from __future__ import annotations
 
@@ -23,18 +23,28 @@ print(json.dumps(sorted(frozenset(sys.modules) - baseline)))
 
 @dataclass(frozen=True)
 class ImportDelta:
-    """The modules importing one module adds to a bare interpreter."""
+    """The modules importing one module adds to an isolated interpreter."""
 
     modules: frozenset[str]
 
     @property
     def loom(self) -> frozenset[str]:
+        """The loaded ``loom`` modules."""
         return frozenset(name for name in self.modules if name.split(".")[0] == "loom")
 
     @property
     def third_party(self) -> frozenset[str]:
+        """Top-level packages loaded from outside the stdlib and loom."""
         roots = {name.split(".")[0] for name in self.modules}
         return frozenset(roots - sys.stdlib_module_names - {"loom"})
+
+    def under(self, *roots: str) -> frozenset[str]:
+        """The loaded modules that are one of *roots* or inside one."""
+        return frozenset(
+            name
+            for name in self.modules
+            if any(name == root or name.startswith(f"{root}.") for root in roots)
+        )
 
 
 def import_delta(module: str) -> ImportDelta:
@@ -43,8 +53,10 @@ def import_delta(module: str) -> ImportDelta:
         [sys.executable, "-I", "-c", _DELTA_SCRIPT, str(_SRC), module],
         capture_output=True,
         text=True,
-        check=True,
+        check=False,
     )
+    if result.returncode:
+        raise AssertionError(result.stderr)
     return ImportDelta(frozenset(json.loads(result.stdout.splitlines()[-1])))
 
 

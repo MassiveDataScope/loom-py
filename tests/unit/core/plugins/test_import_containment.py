@@ -42,10 +42,4 @@ class TestPluginImportContainment:
         """Importing the ETL provider loader must not pull in REST-only modules."""
         imported = import_delta("loom.etl.runner._engines")
 
-        leaked = sorted(
-            name
-            for name in imported.modules
-            if any(name == root or name.startswith(f"{root}.") for root in _FORBIDDEN)
-        )
-
-        assert leaked == [], f"forbidden modules imported: {leaked}"
+        assert imported.under(*_FORBIDDEN) == frozenset()

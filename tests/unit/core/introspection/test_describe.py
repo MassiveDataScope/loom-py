@@ -13,7 +13,6 @@ from __future__ import annotations
 import sys
 import types
 from collections.abc import Iterator
-from pathlib import Path
 from typing import Any
 
 import pytest
@@ -25,8 +24,6 @@ from loom.core.introspection import (
     describe_app,
 )
 from tests.helpers.imports import import_delta
-
-_SRC = Path(__file__).resolve().parents[4] / "src"
 
 _MODULE_NAME = "tests.unit.core.introspection._describe_contributors"
 
@@ -195,13 +192,7 @@ class TestImportContainment:
 
     def test_importing_introspection_pulls_in_no_pillar(self) -> None:
         """No ``loom.ai`` / ``loom.rest`` / ``loom.streaming`` / ``loom.etl`` module appears."""
-        leaked = [
-            name
-            for name in import_delta("loom.core.introspection").modules
-            if any(name == root or name.startswith(f"{root}.") for root in _FORBIDDEN_ROOTS)
-        ]
-
-        assert leaked == []
+        assert import_delta("loom.core.introspection").under(*_FORBIDDEN_ROOTS) == frozenset()
 
     def test_importing_introspection_does_not_pull_in_fastapi_or_pydantic(self) -> None:
         """The REST stack is not a dependency of describing an application."""
