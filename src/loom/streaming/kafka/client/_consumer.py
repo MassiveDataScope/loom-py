@@ -7,8 +7,8 @@ from collections.abc import Iterable, Mapping
 from typing import Any, Literal, Protocol, cast
 
 from confluent_kafka import Consumer as _Consumer
+from confluent_kafka import KafkaError, TopicPartition
 from confluent_kafka import Message as _RawMessage
-from confluent_kafka import TopicPartition
 
 from loom.core.logger.field import ErrorSummary
 from loom.core.observability.event import Scope
@@ -264,7 +264,7 @@ class KafkaConsumerClient:
         except Exception as exc:
             raise KafkaCommitError(ErrorSummary.cite(exc)) from exc
 
-    def _on_commit(self, error: object | None, partitions: list[TopicPartition]) -> None:
+    def _on_commit(self, error: KafkaError | None, partitions: list[TopicPartition]) -> None:
         """Report the outcome of an asynchronous offset commit.
 
         Asynchronous commits return before the broker answers, so a rejection
@@ -283,7 +283,7 @@ class KafkaConsumerClient:
         logger.error(
             "kafka asynchronous offset commit failed: %s (partitions: %s); the group "
             "offset did not advance, so these records will be reprocessed on restart",
-            error,
+            error.name(),
             ", ".join(f"{part.topic}:{part.partition}@{part.offset}" for part in partitions),
         )
 
