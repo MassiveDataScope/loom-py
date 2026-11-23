@@ -10,6 +10,7 @@ from bytewax.inputs import FixedPartitionedSource, StatefulSourcePartition
 from pymongo.errors import OperationFailure
 
 from loom.connections.mongo import mongo_island
+from loom.core.errors import InvalidType, InvalidUse, UnknownKey
 from loom.core.errors.summary import ErrorSummary
 from loom.core.model.redaction import reveal_for_driver
 from loom.streaming.compiler._plan import CompiledMongoCDCSource
@@ -96,7 +97,7 @@ class MongoCDCPartition(StatefulSourcePartition[Message[MongoCDCEvent], dict[str
             if change is None:
                 break
             if not isinstance(change, Mapping):
-                raise TypeError("Mongo change stream yielded a non-mapping event.")
+                raise InvalidType("Mongo change stream yielded a non-mapping event.")
             try:
                 message = build_mongo_cdc_message(change)
             except Exception as exc:
@@ -127,9 +128,9 @@ class MongoCDCPartition(StatefulSourcePartition[Message[MongoCDCEvent], dict[str
             _MAX_RESTART_ATTEMPTS,
         )
         if self._restart_count > _MAX_RESTART_ATTEMPTS:
-            raise RuntimeError(
-                f"MongoCDC stream restarted {self._restart_count} times due to oplog expiry;"
-                " manual intervention required"
+            raise InvalidUse(
+                f"MongoCDC stream restarted more than {_MAX_RESTART_ATTEMPTS} times due to "
+                "oplog expiry; manual intervention required"
             )
         self._stream.close()
         self._resume_token = None
@@ -158,7 +159,9 @@ class MongoCDCSource(FixedPartitionedSource[Message[MongoCDCEvent], dict[str, ob
         """Build the single Mongo CDC source partition."""
         del step_id
         if for_part != self._PARTITION_KEY:
-            raise KeyError(f"Unknown Mongo CDC partition {for_part!r}.")
+            raise UnknownKey(
+                f"Unknown Mongo CDC partition; the only partition is {self._PARTITION_KEY!r}."
+            )
         return MongoCDCPartition(self._source, resume_state)
 
 

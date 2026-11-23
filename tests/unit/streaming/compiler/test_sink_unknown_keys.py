@@ -121,3 +121,22 @@ class TestSinkSectionKeys:
         assert len(issues) == 1
         assert f"both 'url' and '{key}'" in issues[0].message
         assert remedy in issues[0].message
+
+    @pytest.mark.parametrize("key", ["staging", "writer_properties"])
+    def test_a_delta_key_that_is_not_a_mapping_is_a_sink_config_issue(
+        self, streaming_kafka_config: DictConfig, key: str
+    ) -> None:
+        section = {**_SECTIONS[TableEngine.DELTA], key: "zstd"}
+        flow = _flow(TableEngine.DELTA)
+        context = _config(streaming_kafka_config, section)
+
+        with pytest.raises(CompilationError) as failure:
+            compile_flow(flow, config=context)
+
+        issues = [
+            issue
+            for issue in failure.value.issues
+            if issue.code is StreamingErrorCode.SINK_CONFIG_INVALID
+        ]
+        assert len(issues) == 1
+        assert f"'{key}' must be a mapping" in issues[0].message

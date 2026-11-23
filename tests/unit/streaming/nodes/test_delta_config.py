@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import pytest
 
+from loom.core.errors import InvalidType
 from loom.streaming.nodes._table import DeltaSinkConfig
 
 
@@ -56,7 +57,7 @@ class TestDeltaSinkConfig:
 
     @pytest.mark.parametrize("key", ["staging", "writer_properties"])
     def test_delta_sink_config_refuses_a_section_key_that_is_not_a_mapping(self, key: str) -> None:
-        with pytest.raises(ValueError, match=f"'{key}' must be a mapping"):
+        with pytest.raises(InvalidType, match=f"'{key}' must be a mapping"):
             DeltaSinkConfig.from_config(
                 {"uri": "s3://lake/events", key: "zstd"}, default_table="events"
             )

@@ -7,6 +7,7 @@ from types import MappingProxyType
 from typing import Any, Generic, TypeAlias, TypeVar
 
 from loom.core.config import ConfigBinding
+from loom.core.errors import InvalidType, InvalidValue
 from loom.core.model import LoomFrozenStruct
 from loom.streaming.core._errors import ErrorKind
 from loom.streaming.core._message import StreamPayload
@@ -53,7 +54,7 @@ class Process(Generic[InT, OutT]):
 
     def __init__(self, *nodes: ProcessNode) -> None:
         if not nodes:
-            raise ValueError("Process must contain at least one node.")
+            raise InvalidValue("Process must contain at least one node.")
         self._nodes = nodes
 
     def __iter__(self) -> Iterator[ProcessNode]:
@@ -113,7 +114,7 @@ class StreamFlow(Generic[InT, OutT]):
         errors: ErrorRoutes = None,
     ) -> None:
         if not name:
-            raise ValueError("StreamFlow.name must not be empty.")
+            raise InvalidValue("StreamFlow.name must not be empty.")
         self._name = name
         self._source = source
         self._process = process
@@ -157,9 +158,9 @@ def _normalize_error_routes(
         return _routes_from_error_route(errors)
     if isinstance(errors, Sequence):
         if isinstance(errors, (str, bytes, bytearray)):
-            raise TypeError("StreamFlow.errors must be an error route declaration, not text.")
+            raise InvalidType("StreamFlow.errors must be an error route declaration, not text.")
         if not errors:
-            raise ValueError("StreamFlow.errors must not be an empty sequence.")
+            raise InvalidValue("StreamFlow.errors must not be an empty sequence.")
         normalized: dict[ErrorKind, IntoTopic[StreamPayload]] = {}
         for route in errors:
             _merge_error_route(normalized, route)
@@ -178,8 +179,8 @@ def _merge_error_route(
     route: ErrorRoute,
 ) -> None:
     if not route.kinds:
-        raise ValueError("ErrorRoute.kinds must not be empty.")
+        raise InvalidValue("ErrorRoute.kinds must not be empty.")
     for kind in route.kinds:
         if kind in normalized and normalized[kind] is not route.output:
-            raise ValueError(f"error kind {kind.value} is declared more than once")
+            raise InvalidValue(f"error kind {kind.value} is declared more than once")
         normalized[kind] = route.output

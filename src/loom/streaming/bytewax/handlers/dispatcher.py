@@ -6,6 +6,7 @@ from collections.abc import Callable
 from types import MappingProxyType
 from typing import Any, TypeAlias
 
+from loom.core.errors import InvalidUse
 from loom.streaming.bytewax.handlers._shared import (
     _BuildContextProtocol,
 )
@@ -62,12 +63,12 @@ def _wire_process(
     Node indices, and so compiled paths, stay those of the full *nodes*.
 
     Raises:
-        RuntimeError: If a node ended every path and another node follows it.
+        InvalidUse: If a node ended every path and another node follows it.
     """
     live: Stream | None = stream
     for idx, node in enumerate(nodes[start:], start):
         if live is None:
-            raise RuntimeError(
+            raise InvalidUse(
                 f"{type(nodes[idx - 1]).__name__} ended every path, so "
                 f"{type(node).__name__} after it would receive nothing."
             )

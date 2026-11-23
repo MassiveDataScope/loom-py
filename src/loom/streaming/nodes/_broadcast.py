@@ -4,6 +4,7 @@ from __future__ import annotations
 
 from typing import TYPE_CHECKING, Any, Generic, TypeVar
 
+from loom.core.errors import InvalidValue
 from loom.core.model import LoomFrozenStruct
 from loom.streaming.core._message import StreamPayload
 from loom.streaming.nodes._boundary import IntoTopic
@@ -65,7 +66,7 @@ class Broadcast(Generic[InT]):
         *routes: One or more :class:`BroadcastRoute` declarations.
 
     Raises:
-        ValueError: If no routes are provided.
+        InvalidValue: If no routes are provided.
 
     Example::
 
@@ -85,7 +86,7 @@ class Broadcast(Generic[InT]):
 
     def __init__(self, *routes: BroadcastRoute[InT, Any]) -> None:
         if not routes:
-            raise ValueError("Broadcast requires at least one route.")
+            raise InvalidValue("Broadcast requires at least one route.")
         self._routes = routes
 
     @property

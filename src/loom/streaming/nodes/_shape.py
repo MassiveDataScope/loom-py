@@ -5,6 +5,7 @@ from __future__ import annotations
 from enum import StrEnum
 from typing import ClassVar
 
+from loom.core.errors import InvalidValue
 from loom.core.model import LoomFrozenStruct
 
 
@@ -76,7 +77,7 @@ class CollectBatch(LoomFrozenStruct, frozen=True):
             other than ``COLLECT``.
 
     Raises:
-        ValueError: If ``max_records`` or ``timeout_ms`` are below one, or
+        InvalidValue: If ``max_records`` or ``timeout_ms`` are below one, or
             if ``event_time=True`` is combined with ``WindowStrategy.COLLECT``.
 
     Example:
@@ -93,11 +94,11 @@ class CollectBatch(LoomFrozenStruct, frozen=True):
     def __post_init__(self) -> None:
         """Validate batch collection parameters."""
         if self.max_records < 1:
-            raise ValueError("CollectBatch.max_records must be greater than zero.")
+            raise InvalidValue("CollectBatch.max_records must be greater than zero.")
         if self.timeout_ms < 1:
-            raise ValueError("CollectBatch.timeout_ms must be greater than zero.")
+            raise InvalidValue("CollectBatch.timeout_ms must be greater than zero.")
         if self.event_time and self.window is WindowStrategy.COLLECT:
-            raise ValueError("event_time=True requires a windowing strategy other than COLLECT.")
+            raise InvalidValue("event_time=True requires a windowing strategy other than COLLECT.")
 
 
 class Drain(LoomFrozenStruct, frozen=True):

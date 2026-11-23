@@ -17,6 +17,7 @@ from loom.core.observability.observability import Observability  # noqa: E402
 from loom.core.stores.database import DatabaseConfig, PoolConfig  # noqa: E402
 from loom.streaming.bytewax.handlers import storage as _storage  # noqa: E402
 from loom.streaming.compiler import CompiledStorageSink  # noqa: E402
+from loom.streaming.core._exceptions import MissingBridgeError  # noqa: E402
 from loom.streaming.nodes._table import IntoTable, TableEngine  # noqa: E402
 from loom.streaming.nodes._table.common import SqlAlchemySinkConfig  # noqa: E402
 from tests.unit.streaming.compiler.cases import Result  # noqa: E402
@@ -140,5 +141,5 @@ class TestStorageDynamicSink:
         )
         dynamic_sink = _storage._StorageDynamicSink(compiled, cast(Any, _FakeCtx(bridge=None)))
 
-        with pytest.raises(RuntimeError, match="requires an AsyncBridge"):
+        with pytest.raises(MissingBridgeError, match="requires an AsyncBridge"):
             dynamic_sink.build("step", 0, 1)

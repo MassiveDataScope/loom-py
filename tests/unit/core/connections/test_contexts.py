@@ -204,11 +204,13 @@ class TestClickHouseSinkDatabase:
         assert _values(connection, _CLICKHOUSE) == _CLICKHOUSE
 
     def test_a_sink_database_with_http_url_names_its_new_key(self) -> None:
-        with pytest.raises(ValueError, match=r"stores\.warehouse\.http_url was renamed to url"):
+        with pytest.raises(ConfigError, match=r"stores\.warehouse\.http_url was renamed to url"):
             _sink_connection({"http_url": "http://h:8123"})
 
     def test_a_relational_database_behind_a_clickhouse_sink_names_the_engine(self) -> None:
-        with pytest.raises(ValueError, match=r"stores\.warehouse holds a 'postgresql\+asyncpg'"):
+        with pytest.raises(
+            ConfigError, match=r"stores\.warehouse holds a database of another engine"
+        ):
             _sink_connection({"url": "postgresql+asyncpg://h/db"})
 
 

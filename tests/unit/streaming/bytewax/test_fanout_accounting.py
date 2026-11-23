@@ -39,6 +39,7 @@ from bytewax.run import cli_main  # noqa: E402
 from bytewax.testing import TestingSink, TestingSource  # noqa: E402
 
 from loom.core.config import ConfigContext  # noqa: E402
+from loom.core.errors import InvalidType, InvalidValue  # noqa: E402
 from loom.core.model import LoomStruct  # noqa: E402
 from loom.core.observability.observability import Observability  # noqa: E402
 from loom.streaming import (  # noqa: E402
@@ -1526,7 +1527,7 @@ class TestStorageCompletesAfterItsFlush:
                 return cast(int, None)
 
         sink, tracker = self._sink(_CountsLate(flush_at=10), 0, 1)
-        with pytest.raises(TypeError, match="must return how many"):
+        with pytest.raises(InvalidType, match="must return an int count"):
             sink.write_batch(self._orders(0, 1))
 
         sink.close()
@@ -1579,5 +1580,20 @@ class TestStorageCompletesAfterItsFlush:
 
         sink, _ = self._sink(_Silent(), 0)
 
-        with pytest.raises(TypeError, match="must return how many of the 1 pending items"):
+        with pytest.raises(InvalidType, match="must return an int count"):
+            sink.write_batch(self._orders(0))
+
+    @pytest.mark.parametrize("count", [-1, 2])
+    def test_a_partition_that_reports_a_count_out_of_range_is_refused(self, count: int) -> None:
+        class _OutOfRange:
+            def write_batch(self, items: Sequence[Any]) -> int:
+                del items
+                return count
+
+            def close(self) -> int:
+                return count
+
+        sink, _ = self._sink(_OutOfRange(), 0)
+
+        with pytest.raises(InvalidValue, match="between zero and the number of pending items"):
             sink.write_batch(self._orders(0))

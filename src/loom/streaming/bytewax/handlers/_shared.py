@@ -17,6 +17,7 @@ from typing import (
 )
 
 from loom.core.async_bridge import AsyncBridge
+from loom.core.errors import InvalidType, InvalidValue
 from loom.core.logger import log_context
 from loom.core.model import LoomFrozenStruct, LoomStruct
 from loom.core.observability.event import Scope, TerminalReason
@@ -230,7 +231,7 @@ def _resolve_record_result(
 ) -> StreamPayload | Message[StreamPayload]:
     """Resolve a synchronous record-shaped result and reject awaitables."""
     if isinstance(result, Awaitable):
-        raise TypeError(f"{node_type} returned an awaitable outside WithAsync.")
+        raise InvalidType(f"{node_type} returned an awaitable outside WithAsync.")
     return result
 
 
@@ -241,7 +242,7 @@ def _resolve_batch_result(
 ) -> list[StreamPayload | Message[StreamPayload]]:
     """Resolve a synchronous batch-shaped result and reject awaitables."""
     if isinstance(result, Awaitable):
-        raise TypeError(f"{node_type} returned an awaitable outside WithAsync.")
+        raise InvalidType(f"{node_type} returned an awaitable outside WithAsync.")
     return result
 
 
@@ -251,7 +252,7 @@ def _resolve_expand_result(
 ) -> ExpandT:
     """Resolve a synchronous expanding result and reject awaitables."""
     if isinstance(result, Awaitable):
-        raise TypeError(f"{node_type} returned an awaitable outside WithAsync.")
+        raise InvalidType(f"{node_type} returned an awaitable outside WithAsync.")
     return result
 
 
@@ -273,7 +274,7 @@ def _messages_from_batch(batch: list[Any]) -> list[Message[StreamPayload]]:
 def _require_message(value: Any) -> Message[StreamPayload]:
     """Validate that the runtime stream carries Loom messages."""
     if not _is_message(value):
-        raise TypeError(f"Expected Message, got {type(value).__name__}.")
+        raise InvalidType(f"Expected Message, got {type(value).__name__}.")
     return value
 
 
@@ -287,7 +288,7 @@ def _replace_payload(message: Message[StreamPayload], payload: Any) -> Message[S
     if isinstance(payload, Message):
         return cast(Message[StreamPayload], payload)
     if not isinstance(payload, (LoomStruct, LoomFrozenStruct)):
-        raise TypeError(f"Expected StreamPayload, got {type(payload).__name__}.")
+        raise InvalidType(f"Expected StreamPayload, got {type(payload).__name__}.")
     return Message(payload=payload, meta=message.meta)
 
 
@@ -297,7 +298,7 @@ def _replace_payloads(
 ) -> list[Message[StreamPayload]]:
     """Preserve per-record metadata for batch task outputs."""
     if len(messages) != len(payloads):
-        raise RuntimeError("Batch task output length must match input length.")
+        raise InvalidValue("Batch task output length must match input length.")
     return [
         _replace_payload(message, payload)
         for message, payload in zip(messages, payloads, strict=True)

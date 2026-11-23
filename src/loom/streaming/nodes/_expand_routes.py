@@ -6,6 +6,7 @@ from collections.abc import Mapping
 from types import MappingProxyType
 from typing import TYPE_CHECKING, Any, Generic, TypeVar
 
+from loom.core.errors import InvalidValue
 from loom.streaming.core._message import StreamPayload
 from loom.streaming.nodes._decompose import PayloadExpander
 
@@ -38,7 +39,7 @@ class ExpandRoutes(Generic[InT]):
         default: Optional fallback Process for types not declared in routes.
 
     Raises:
-        ValueError: If routes is empty and default is None.
+        InvalidValue: If routes is empty and default is None.
     """
 
     __slots__ = ("_default", "_expander", "_routes")
@@ -51,7 +52,7 @@ class ExpandRoutes(Generic[InT]):
         default: Process[Any, Any] | None = None,
     ) -> None:
         if not routes and default is None:
-            raise ValueError("ExpandRoutes requires at least one route or a default Process.")
+            raise InvalidValue("ExpandRoutes requires at least one route or a default Process.")
         self._expander = expander
         self._routes: Mapping[type, Process[Any, Any]] = MappingProxyType(dict(routes))
         self._default = default

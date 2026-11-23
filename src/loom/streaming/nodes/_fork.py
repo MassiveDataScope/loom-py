@@ -6,6 +6,7 @@ from collections.abc import Mapping, Sequence
 from enum import StrEnum
 from typing import TYPE_CHECKING, Any, Generic, TypeVar
 
+from loom.core.errors import InvalidValue
 from loom.core.model import LoomFrozenStruct
 from loom.streaming.core._message import StreamPayload
 from loom.streaming.nodes._expr_eval import (
@@ -100,7 +101,7 @@ class Fork(Generic[InT]):
             Fork declaration.
         """
         if not branches:
-            raise ValueError("Fork.by requires at least one keyed route.")
+            raise InvalidValue("Fork.by requires at least one keyed route.")
         return cls(kind=ForkKind.KEYED, selector=selector, routes=branches, default=default)
 
     @classmethod
@@ -120,7 +121,7 @@ class Fork(Generic[InT]):
             Fork declaration.
         """
         if not routes:
-            raise ValueError("Fork.when requires at least one predicate route.")
+            raise InvalidValue("Fork.when requires at least one predicate route.")
         return cls(
             kind=ForkKind.PREDICATE,
             predicate_routes=routes,
@@ -164,9 +165,9 @@ def _reject_foreign_routes(
     would never be indexed, validated or wired.
     """
     if kind is ForkKind.KEYED and predicate_routes:
-        raise ValueError("Fork(kind=keyed) does not dispatch predicate_routes.")
+        raise InvalidValue("Fork(kind=keyed) does not dispatch predicate_routes.")
     if kind is ForkKind.PREDICATE and routes:
-        raise ValueError("Fork(kind=predicate) does not dispatch keyed routes.")
+        raise InvalidValue("Fork(kind=predicate) does not dispatch keyed routes.")
 
 
 __all__ = ["Fork", "ForkKind", "ForkRoute", "evaluate_predicate", "select_value"]

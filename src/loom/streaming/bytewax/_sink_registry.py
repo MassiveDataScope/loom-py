@@ -9,6 +9,7 @@ from __future__ import annotations
 from typing import Any, ClassVar, Literal, Protocol, runtime_checkable
 
 from loom.core.config import ConfigContext
+from loom.core.errors import InvalidType
 from loom.core.model import LoomFrozenStruct
 from loom.streaming.core._errors import ErrorKind
 from loom.streaming.core._exceptions import DuplicateErrorSinkError
@@ -76,11 +77,12 @@ class SinkRegistry:
             cls: Class that satisfies the RegisteredSink protocol.
 
         Raises:
-            TypeError: If cls does not implement RegisteredSink.
+            InvalidType: If cls does not implement RegisteredSink.
         """
         if not isinstance(cls, RegisteredSink):
-            raise TypeError(
-                f"{cls!r} does not satisfy the RegisteredSink protocol. "
+            raise InvalidType(
+                f"{getattr(cls, '__qualname__', type(cls).__qualname__)} does not satisfy "
+                "the RegisteredSink protocol. "
                 "Required class attributes: sink_type (str), config_type (type), "
                 "and classmethod build_binding(cfg, ctx)."
             )

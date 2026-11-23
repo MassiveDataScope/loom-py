@@ -14,6 +14,7 @@ import msgspec
 
 from loom.core.config import ConfigContext, ConfigError
 from loom.core.config.keys import ConfigKey
+from loom.core.errors import InvalidType
 from loom.core.stores.catalog import StoreCatalog
 from loom.streaming.compiler._errors import CompilationIssue, StreamingErrorCode
 from loom.streaming.core._typing import StreamPayload
@@ -322,12 +323,13 @@ def _validate_storage_sink_resolution(
 ) -> list[CompilationIssue]:
     """Resolve one IntoTable config and return validation errors.
 
-    A sink section that is invalid (``ValueError``) or names a store the
-    catalog does not hold as it needs (``ConfigError``) is one issue.
+    A sink section that is invalid (``InvalidValue``), holds a key of the
+    wrong type (``InvalidType``) or names a store the catalog does not hold as
+    it needs (``ConfigError``) is one issue.
     """
     try:
         resolve()
-    except (ValueError, ConfigError) as exc:
+    except (ValueError, InvalidType, ConfigError) as exc:
         component = node.name or type(node).__name__
         return [StreamingErrorCode.SINK_CONFIG_INVALID.issue(component=component, exc=exc)]
     return []

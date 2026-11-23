@@ -16,6 +16,7 @@ from loom.streaming.bytewax._operators import (  # noqa: E402
     SyncResourceLifecycle,
     lifecycle_for,
 )
+from loom.streaming.core._exceptions import MissingBridgeError  # noqa: E402
 from loom.streaming.nodes._with import ContextSupplier  # noqa: E402
 
 pytestmark = pytest.mark.bytewax
@@ -169,5 +170,5 @@ class TestAsyncResourceLifecycle:
             process=Process(IntoTopic("out", payload=AcmeOperatorPayload))
         )
 
-        with pytest.raises(ValueError, match="AsyncBridge"):
+        with pytest.raises(MissingBridgeError, match="AsyncBridge"):
             lifecycle_for(node)
