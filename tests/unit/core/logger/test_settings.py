@@ -20,11 +20,11 @@ class TestLogSettings:
         assert LogSettings(level=level).level == level
 
     def test_an_unknown_level_is_refused(self) -> None:
-        with pytest.raises(ValueError, match="unsupported log level 'LOUD'"):
+        with pytest.raises(ValueError, match="unsupported log level"):
             LogSettings(level="LOUD")
 
     def test_an_unknown_named_level_is_refused_when_decoded(self) -> None:
-        with pytest.raises(msgspec.ValidationError, match="unsupported log level 'LOUD'"):
+        with pytest.raises(msgspec.ValidationError, match="unsupported log level"):
             msgspec.convert({"named_levels": {"botocore": "LOUD"}}, LogSettings)
 
     def test_an_unknown_key_is_refused_when_decoded(self) -> None:

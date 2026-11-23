@@ -12,6 +12,7 @@ from msgspec import structs
 from loom.core.config import ConfigContext, ConfigError, ConfigKey
 from loom.core.config.keys import INTERPOLATION
 from loom.core.config.loader import config_strings, convert_section
+from loom.core.errors import InvalidValue
 from loom.core.job.delivery import JobDelivery
 from loom.core.job.envelope import JobEnvelope
 from loom.core.job.job import Job
@@ -102,7 +103,7 @@ class JobShutdown(LoomFrozenStruct, frozen=True, kw_only=True, forbid_unknown_fi
         timeout_s: Seconds ``wait`` lasts at most; ``None`` waits until idle.
 
     Raises:
-        ValueError: When *timeout_s* is not above zero, or is set with ``cancel``.
+        InvalidValue: When *timeout_s* is not above zero, or is set with ``cancel``.
     """
 
     mode: ShutdownMode = ShutdownMode.CANCEL
@@ -112,9 +113,9 @@ class JobShutdown(LoomFrozenStruct, frozen=True, kw_only=True, forbid_unknown_fi
         if self.timeout_s is None:
             return
         if self.mode is ShutdownMode.CANCEL:
-            raise ValueError("timeout_s only applies to mode 'wait'")
+            raise InvalidValue("timeout_s only applies to mode 'wait'")
         if self.timeout_s <= 0:
-            raise ValueError(f"timeout_s must be above zero, got {self.timeout_s}")
+            raise InvalidValue("timeout_s must be above zero")
 
     @classmethod
     def check_written(cls, ctx: ConfigContext) -> None:
@@ -161,7 +162,7 @@ class ResolvedRetry:
         Each field takes the value of the most specific layer that sets it.
 
         Raises:
-            ValueError: When the resulting policy is invalid.
+            InvalidValue: When the resulting policy is invalid.
         """
         fields: dict[str, tuple[Any, RetrySource]] = {
             name: (value, RetrySource.LOOM)
@@ -263,7 +264,7 @@ class JobOptions:
         """*config* over the ClassVars of *job_type*: a ``None`` field keeps its ClassVar.
 
         Raises:
-            ValueError: When a retry layer makes the backoff invalid.
+            InvalidValue: When a retry layer makes the backoff invalid.
             ConfigError: When the effective countdown is outside 0 to
                 :attr:`~loom.core.job.policy.Countdown.MAX_SECONDS` seconds.
         """

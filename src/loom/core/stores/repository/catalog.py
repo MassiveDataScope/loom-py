@@ -6,6 +6,7 @@ from collections.abc import Mapping, Sequence
 from typing import Any, TypeVar, cast
 
 from loom.core.di.container import LoomContainer
+from loom.core.errors import InvalidValue, UnknownKey
 from loom.core.model import BaseModel
 from loom.core.model.introspection import get_table_name
 from loom.core.stores.catalog import StoreKey, refuse_duplicate_tables, store_of
@@ -66,10 +67,10 @@ class RepositoryCatalog:
             included.
 
         Raises:
-            KeyError: When no store serves *model*.
+            UnknownKey: When no store serves *model*.
         """
         if not self._container.has_repo_mapping(model):
-            raise KeyError(f"No store serves {model.__qualname__}")
+            raise UnknownKey(f"No store serves {model.__qualname__}")
         return cast(RepoFor[ModelT], self._container.resolve_repo(model))
 
     def for_table(self, table: str, *, store: StoreKey | None = None) -> RepoFor[Any]:
@@ -83,20 +84,20 @@ class RepositoryCatalog:
             The repository bound for the model.
 
         Raises:
-            KeyError: When no searched store serves a model of *table*.
-            ValueError: When *store* is omitted and several stores serve *table*.
+            UnknownKey: When no searched store serves a model of *table*.
+            InvalidValue: When *store* is omitted and several stores serve *table*.
         """
         by_store = self._tables.get(table, {})
         if store is None:
             searched = self._stores
             if len(by_store) > 1:
-                raise ValueError(
-                    f"Table {table!r} is served by stores {', '.join(by_store)}; pass store="
+                raise InvalidValue(
+                    f"The table is served by stores {', '.join(by_store)}; pass store="
                 )
             model = next(iter(by_store.values()), None)
         else:
             searched = (store,)
             model = by_store.get(store)
         if model is None:
-            raise KeyError(f"No model stored in table {table!r}; searched {', '.join(searched)}")
+            raise UnknownKey(f"No model stored in the table; searched {', '.join(searched)}")
         return self[model]

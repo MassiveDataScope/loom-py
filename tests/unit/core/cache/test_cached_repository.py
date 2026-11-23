@@ -20,7 +20,7 @@ from loom.core.cache import (
 from loom.core.cache.keys import entity_key
 from loom.core.cache.repository import _DELEGATED_METHODS
 from loom.core.engine.post_commit import PostCommitChannel, bind_channel, reset_channel
-from loom.core.errors import PostCommitError
+from loom.core.errors import InvalidType, PostCommitError
 from loom.core.model import BaseModel, Cardinality, ColumnField, ProjectionField, RelationField
 from loom.core.stores.repository import FilterParams, OnConflict, PageParams, PageResult, Repository
 from loom.core.stores.repository.mutation import MutationEvent
@@ -556,7 +556,7 @@ class TestDependencySpecs:
         cache = _MemoryCacheStore()
         resolver = GenerationalDependencyResolver(cache)
 
-        with pytest.raises(ValueError, match="Invalid dependency spec"):
+        with pytest.raises(ValueError, match="dependency spec"):
             CachedRepository(
                 repository, config=cache_config, cache=cache, dependency_resolver=resolver
             )
@@ -1149,7 +1149,7 @@ class TestDelegationPrecondition:
         repository = cast(Any, _ReadOnlyRepository())
         dependency_resolver = GenerationalDependencyResolver(cache)
 
-        with pytest.raises(RuntimeError, match="_ReadOnlyRepository") as info:
+        with pytest.raises(InvalidType, match="_ReadOnlyRepository") as info:
             CachedRepository(
                 repository,
                 config=cache_config,

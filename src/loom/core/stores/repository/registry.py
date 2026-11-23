@@ -4,6 +4,7 @@ from collections.abc import Callable
 from dataclasses import dataclass
 from typing import TYPE_CHECKING, Any, Protocol
 
+from loom.core.errors import InvalidValue
 from loom.core.model import LoomStruct
 
 if TYPE_CHECKING:
@@ -93,7 +94,7 @@ def repository_for(
             :class:`RepositoryBuildContext` to construct the repository.
 
     Raises:
-        RuntimeError: If another repository is already registered for ``model``.
+        InvalidValue: If another repository is already registered for ``model``.
 
     Example — custom capability protocol::
 
@@ -119,7 +120,7 @@ def repository_for(
     def decorator(repository_type: type[Any]) -> type[Any]:
         existing: RepositoryRegistration | None = getattr(model, _LOOM_REPOSITORY_ATTR, None)
         if existing is not None and existing.repository_type is not repository_type:
-            raise RuntimeError(
+            raise InvalidValue(
                 f"Repository already registered for model {model.__qualname__}: "
                 f"{existing.repository_type.__qualname__}"
             )

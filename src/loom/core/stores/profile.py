@@ -16,6 +16,7 @@ from dataclasses import dataclass, field
 from typing import TYPE_CHECKING, Any, Protocol
 
 from loom.core.connections.aws import AwsClientSource
+from loom.core.errors import InvalidValue
 from loom.core.stores.catalog import StoreKey
 
 if TYPE_CHECKING:
@@ -35,7 +36,7 @@ class PoolDefaults:
         pre_ping: Whether a connection is checked before it is handed out.
 
     Raises:
-        ValueError: When a value has no valid meaning, naming the field.
+        InvalidValue: When a value has no valid meaning, naming the field.
     """
 
     size: int
@@ -47,9 +48,9 @@ class PoolDefaults:
     def __post_init__(self) -> None:
         for name in ("size", "timeout_s", "recycle_s"):
             if getattr(self, name) <= 0:
-                raise ValueError(f"PoolDefaults.{name} must be above zero")
+                raise InvalidValue(f"PoolDefaults.{name} must be above zero")
         if self.max_overflow < 0:
-            raise ValueError("PoolDefaults.max_overflow must be zero or above")
+            raise InvalidValue("PoolDefaults.max_overflow must be zero or above")
 
 
 @dataclass(frozen=True)

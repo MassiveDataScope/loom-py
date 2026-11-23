@@ -178,28 +178,21 @@ class TestForbidden:
         assert Forbidden("no", missing=iter(["grants.manage"])).missing == ("grants.manage",)
 
     @pytest.mark.parametrize(
-        "kwargs",
+        ("kwargs", "error"),
         [
-            {"reason": ""},
-            {"reason": "  "},
-            {"reason": 5},
-            {"missing": "grants.manage"},
-            {"missing": b"ab"},
-            {"missing": ["ok", ""]},
-            {"missing": [1]},
-        ],
-        ids=[
-            "empty-reason",
-            "blank-reason",
-            "reason-not-a-string",
-            "string-as-missing",
-            "bytes-as-missing",
-            "empty-permission",
-            "not-a-string",
+            pytest.param({"reason": ""}, InvalidValue, id="empty-reason"),
+            pytest.param({"reason": "  "}, InvalidValue, id="blank-reason"),
+            pytest.param({"reason": 5}, InvalidType, id="reason-not-a-string"),
+            pytest.param({"missing": "grants.manage"}, InvalidType, id="string-as-missing"),
+            pytest.param({"missing": b"ab"}, InvalidType, id="bytes-as-missing"),
+            pytest.param({"missing": ["ok", ""]}, InvalidValue, id="empty-permission"),
+            pytest.param({"missing": [1]}, InvalidType, id="not-a-string"),
         ],
     )
-    def test_a_malformed_reason_or_missing_is_refused(self, kwargs: dict[str, object]) -> None:
-        with pytest.raises(ValueError):
+    def test_a_malformed_reason_or_missing_is_refused(
+        self, kwargs: dict[str, object], error: type[Exception]
+    ) -> None:
+        with pytest.raises(error):
             Forbidden("no", **kwargs)  # type: ignore[arg-type]
 
 
@@ -324,7 +317,7 @@ class TestRateLimited:
 
     @pytest.mark.parametrize("seconds", [math.nan, math.inf, -math.inf])
     def test_a_non_finite_delay_is_refused(self, seconds: float) -> None:
-        with pytest.raises(ValueError, match="retry_after"):
+        with pytest.raises(InvalidValue, match="retry_after"):
             RateLimited(seconds)
 
 
@@ -338,36 +331,25 @@ class TestInsufficientAuthentication:
         assert InsufficientAuthentication(max_age=0).max_age == 0
 
     @pytest.mark.parametrize(
-        "kwargs",
+        ("kwargs", "error"),
         [
-            {"max_age": -1},
-            {"max_age": True},
-            {"acr_values": "urn:mfa"},
-            {"acr_values": [""]},
-            {"acr_values": ["urn mfa"]},
-            {"acr_values": ['urn"mfa']},
-            {"acr_values": ["urn\\mfa"]},
-            {"acr_values": ["urn:mfá"]},
-            {"acr_values": [1]},
-            {"acr_values": b"urn"},
-            {"message": 5},
-        ],
-        ids=[
-            "negative-age",
-            "bool-age",
-            "single-str",
-            "blank",
-            "space",
-            "quote",
-            "backslash",
-            "non-ascii",
-            "int-item",
-            "bytes",
-            "non-str-message",
+            pytest.param({"max_age": -1}, InvalidValue, id="negative-age"),
+            pytest.param({"max_age": True}, InvalidType, id="bool-age"),
+            pytest.param({"acr_values": "urn:mfa"}, InvalidType, id="single-str"),
+            pytest.param({"acr_values": [""]}, InvalidValue, id="blank"),
+            pytest.param({"acr_values": ["urn mfa"]}, InvalidValue, id="space"),
+            pytest.param({"acr_values": ['urn"mfa']}, InvalidValue, id="quote"),
+            pytest.param({"acr_values": ["urn\\mfa"]}, InvalidValue, id="backslash"),
+            pytest.param({"acr_values": ["urn:mfá"]}, InvalidValue, id="non-ascii"),
+            pytest.param({"acr_values": [1]}, InvalidType, id="int-item"),
+            pytest.param({"acr_values": b"urn"}, InvalidType, id="bytes"),
+            pytest.param({"message": 5}, InvalidType, id="non-str-message"),
         ],
     )
-    def test_refuses_what_a_challenge_cannot_carry(self, kwargs: dict[str, Any]) -> None:
-        with pytest.raises(ValueError, match="InsufficientAuthentication"):
+    def test_refuses_what_a_challenge_cannot_carry(
+        self, kwargs: dict[str, Any], error: type[Exception]
+    ) -> None:
+        with pytest.raises(error, match="InsufficientAuthentication"):
             InsufficientAuthentication(**kwargs)
 
 

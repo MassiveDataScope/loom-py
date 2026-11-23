@@ -23,6 +23,7 @@ import msgspec
 from loom.core.config import ConfigContext, ConfigError, reject_retired_keys
 from loom.core.config.loader import convert_section
 from loom.core.connections import ConnectionPool, ConnectionSettings, require_text
+from loom.core.errors import InvalidValue
 from loom.core.model.redaction import Dsn, RedactedMap, Secret
 from loom.core.model.types import NonNegativeInt, PositiveInt
 from loom.core.stores.catalog import SQLALCHEMY_BACKEND, load_catalog
@@ -156,7 +157,7 @@ class DatabaseConfig(ConnectionSettings, frozen=True, kw_only=True, forbid_unkno
             only (asyncpg ``command_timeout``).
 
     Raises:
-        ValueError: When the URL is empty, a timeout is set for a URL that is
+        InvalidValue: When the URL is empty, a timeout is set for a URL that is
             not ``postgresql+asyncpg``, or ``connect_args`` sets the asyncpg
             argument a timeout decides. Surfaced as ``ConfigError``, naming
             the section, through :func:`decode_database_config`.
@@ -191,13 +192,13 @@ class DatabaseConfig(ConnectionSettings, frozen=True, kw_only=True, forbid_unkno
             declared = ", ".join(
                 field for field in _ASYNCPG_TIMEOUTS if getattr(self, field) is not None
             )
-            raise ValueError(
+            raise InvalidValue(
                 f"{declared} applies to {_ASYNCPG} URLs only; "
                 "set the driver's own timeout in connect_args"
             )
         clashes = sorted(set(timeouts) & set(self.connect_args))
         if clashes:
-            raise ValueError(
+            raise InvalidValue(
                 f"connect_args sets {', '.join(clashes)}, which connect_timeout and "
                 "read_timeout decide; set each timeout in one place"
             )

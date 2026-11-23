@@ -5,6 +5,7 @@ from typing import Annotated
 
 import msgspec
 
+from loom.core.errors import InvalidValue
 from loom.core.model.field import ColumnType
 
 
@@ -34,11 +35,11 @@ def Numeric(*, precision: int | None = None, scale: int | None = None) -> Column
     """A ``NUMERIC`` column; with no precision it is unbounded.
 
     Raises:
-        ValueError: A scale is given without a precision; SQLAlchemy would
+        InvalidValue: A scale is given without a precision; SQLAlchemy would
             ignore it.
     """
     if scale is not None and precision is None:
-        raise ValueError("Numeric: a scale needs a precision")
+        raise InvalidValue("Numeric: a scale needs a precision")
     return ColumnType("Numeric", kwargs=(("precision", precision), ("scale", scale)))
 
 

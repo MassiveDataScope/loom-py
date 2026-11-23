@@ -15,6 +15,7 @@ import msgspec
 
 from loom.core.config import reject_retired_keys
 from loom.core.connections.clickhouse import ClickHouseConnection
+from loom.core.errors import InvalidValue
 from loom.core.model import LoomFrozenStruct
 from loom.core.model.redaction import Dsn, RedactedMap
 from loom.core.model.types import PositiveInt
@@ -130,7 +131,7 @@ class SqlConnectionConfig(ClickHouseConnection, frozen=True, kw_only=True):
         sql_endpoint: Optional REST endpoint settings for this connection.
 
     Raises:
-        ValueError: On invalid role format, ``default_limit`` above
+        InvalidValue: On invalid role format, ``default_limit`` above
             ``max_limit``, or an enabled endpoint without role/auth, including
             a non-empty allowlist under an auth mode that carries no verified
             identity. Surfaced as ``ConfigError`` when parsed through the
@@ -200,7 +201,7 @@ _PINNED_DSN_OPTIONS = frozenset(
 def _refuse_pinned_dsn_options(url: Dsn) -> None:
     pinned = sorted({name.lower() for name in url.query_names()} & _PINNED_DSN_OPTIONS)
     if pinned:
-        raise ValueError(
+        raise InvalidValue(
             f"the url's query sets {', '.join(pinned)}, which the SQL service decides; "
             "remove it from the url (credentials go in 'username' and 'password')"
         )
@@ -215,15 +216,12 @@ def _validate_roles(allowed_roles: tuple[str, ...], default_role: str | None) ->
 
 def _validate_role_format(role: str) -> None:
     if not _ROLE_PATTERN.fullmatch(role):
-        raise ValueError(
-            f"Invalid SQL role {role!r}: roles must contain only "
-            "ASCII letters, digits or underscores"
-        )
+        raise InvalidValue("An SQL role must contain only ASCII letters, digits or underscores")
 
 
 def _validate_limits(default_limit: int, max_limit: int) -> None:
     if default_limit > max_limit:
-        raise ValueError(f"default_limit ({default_limit}) must not exceed max_limit ({max_limit})")
+        raise InvalidValue("default_limit must not exceed max_limit")
 
 
 def _validate_endpoint(
@@ -234,16 +232,16 @@ def _validate_endpoint(
     if not endpoint.enabled:
         return
     if not allowed_roles and default_role is None:
-        raise ValueError(
+        raise InvalidValue(
             "sql_endpoint.enabled requires a 'default_role' or a non-empty "
             "'allowed_roles' on the connection"
         )
     if allowed_roles and not endpoint.is_identity_bound:
-        raise ValueError(
+        raise InvalidValue(
             "sql_endpoint.enabled with a non-empty 'allowed_roles' requires "
             f"'sql_endpoint.auth: {_IDENTITY_BOUND_AUTH}': it is the only mode whose "
             "verified identity can bind a caller to a subset of the allowlist. With "
-            f"auth={endpoint.auth!r} the endpoint would let any caller pick any "
+            "another auth mode the endpoint would let any caller pick any "
             "allowlisted role. Either switch the auth mode, or leave 'allowed_roles' "
             "empty and pin a single 'default_role'"
         )

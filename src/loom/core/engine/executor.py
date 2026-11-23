@@ -12,6 +12,7 @@ from loom.core.engine.execution_observer import ExecutionObserver
 from loom.core.engine.observation import ExecutionReporter
 from loom.core.engine.plan import ExecutionPlan, ParameterBindingError
 from loom.core.engine.preparation import ArgumentBinder, ExecutionInputs
+from loom.core.errors import InvalidUse
 from loom.core.execution import (
     ExecutionContext,
     ExecutionKinds,
@@ -140,7 +141,7 @@ class UseCaseExecutor:
                 ``Agent()`` declarations.
 
         Raises:
-            RuntimeError: If a resolver is already bound.
+            InvalidUse: If a resolver is already bound.
         """
         self._bind(AGENT, resolver)
 
@@ -155,7 +156,7 @@ class UseCaseExecutor:
                 ``Mcp()`` declarations.
 
         Raises:
-            RuntimeError: If a resolver is already bound.
+            InvalidUse: If a resolver is already bound.
         """
         self._bind(MCP, resolver)
 
@@ -163,11 +164,11 @@ class UseCaseExecutor:
         """Bind *resolver* to *kind*.
 
         Raises:
-            TypeError: If *resolver* does not implement ``resolve(declaration, annotation)``.
-            RuntimeError: If *kind* already has a resolver.
+            InvalidType: If *resolver* does not implement ``resolve(declaration, annotation)``.
+            InvalidUse: If *kind* already has a resolver.
         """
         if self._kinds.is_bound(kind):
-            raise RuntimeError(f"UseCaseExecutor.bind_{kind.name}_resolver() called more than once")
+            raise InvalidUse(f"UseCaseExecutor.bind_{kind.name}_resolver() called more than once")
         self._kinds.register(kind, resolver)
 
     async def run(
@@ -212,12 +213,12 @@ class UseCaseExecutor:
             The result produced by ``execute()``.
 
         Raises:
-            TypeError: When neither ``factory`` nor the executor's ``builder``
+            InvalidType: When neither ``factory`` nor the executor's ``builder``
                 is given.
         """
         build = self._builder if factory is None else factory.build
         if build is None:
-            raise TypeError(
+            raise InvalidUse(
                 "UseCaseExecutor.run() needs factory=... or an executor constructed "
                 "with builder=..."
             )

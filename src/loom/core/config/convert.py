@@ -13,6 +13,7 @@ from typing import Any, TypeVar, Union, cast, get_args, get_origin
 import msgspec
 
 from loom.core.config.entry_points import EntryPointGroup
+from loom.core.errors import InvalidType, InvalidValue
 from loom.core.model.redaction import MASK, Dsn, RedactedMap, Secret, mask_structure
 
 T = TypeVar("T")
@@ -37,7 +38,7 @@ class _Decoder:
             return EntryPointGroup.from_declared(value)
         if typ is Dsn or typ is RedactedMap:
             return self._typed(value, typ)
-        raise TypeError(
+        raise InvalidType(
             f"Decoding objects of type {getattr(typ, '__name__', typ)!r} is unsupported"
         )
 
@@ -51,11 +52,11 @@ class _Decoder:
         args = get_args(typ)
         inner = args[0] if args else str
         if isinstance(value, str) and not value.strip():
-            raise ValueError("must not be empty")
+            raise InvalidValue("must not be empty")
         try:
             converted = msgspec.convert(value, type=inner, strict=self._strict, dec_hook=self)
         except msgspec.ValidationError as exc:
-            raise TypeError(str(exc).split(" - at ", 1)[0]) from None
+            raise InvalidType(str(exc).split(" - at ", 1)[0]) from None
         return Secret(converted)
 
     def _typed(self, value: Any, target: type[Dsn] | type[RedactedMap]) -> Dsn | RedactedMap:
@@ -73,7 +74,7 @@ class _Decoder:
             accepted = dict
             expected = "object"
         if not isinstance(value, accepted):
-            raise TypeError(f"Expected `{expected}`, got `{type(value).__name__}`")
+            raise InvalidType(f"Expected `{expected}`, got `{type(value).__name__}`")
         return target(value)
 
 
@@ -191,7 +192,7 @@ def dump_config(value: object) -> Any:
     """Return builtins for *value*, with secrets and addresses masked.
 
     Raises:
-        TypeError: When *value* holds a type this encoder does not know.
+        InvalidType: When *value* holds a type this encoder does not know.
     """
     return msgspec.to_builtins(value, enc_hook=_encode)
 
@@ -203,7 +204,7 @@ def _encode(value: Any) -> Any:
         return str(value)
     if isinstance(value, RedactedMap):
         return mask_structure(dict(value))
-    raise TypeError(f"Encoding objects of type {type(value).__name__} is unsupported")
+    raise InvalidType(f"Encoding objects of type {type(value).__name__} is unsupported")
 
 
 __all__ = ["convert_config", "dump_config"]

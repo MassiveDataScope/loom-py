@@ -33,5 +33,5 @@ class TestRouting:
             kind="test target",
         )
 
-        with pytest.raises(KeyError, match="orders"):
+        with pytest.raises(KeyError, match="route not found"):
             resolver.resolve("orders")

@@ -5,6 +5,7 @@ from __future__ import annotations
 from collections.abc import Mapping
 from typing import Generic, Protocol, TypeVar
 
+from loom.core.errors import UnknownKey
 from loom.core.routing.ref import LogicalRef, as_logical_ref
 
 TargetT = TypeVar("TargetT")
@@ -49,7 +50,7 @@ class DefaultingRouteResolver(Generic[TargetT]):
             Specific target when present, otherwise the default target.
 
         Raises:
-            KeyError: If no specific or default target is configured.
+            UnknownKey: If no specific or default target is configured.
         """
 
         logical_ref = as_logical_ref(ref)
@@ -57,7 +58,7 @@ class DefaultingRouteResolver(Generic[TargetT]):
             return self._overrides[logical_ref.ref]
         if self._default is not None:
             return self._default
-        raise KeyError(f"{self._kind} route not found for logical reference {logical_ref.ref!r}.")
+        raise UnknownKey(f"{self._kind} route not found for the logical reference.")
 
 
 __all__ = ["DefaultingRouteResolver", "RouteResolver"]

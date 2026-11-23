@@ -47,7 +47,7 @@ from loom.core.checks import silenced_checks
 from loom.core.config.errors import ConfigError
 from loom.core.config.keys import ConfigKey
 from loom.core.environment import Environment, configured_variable, resolve_environment
-from loom.core.errors import UnsupportedQuery
+from loom.core.errors import InvalidType, InvalidValue, UnsupportedQuery
 from loom.core.model.struct import LoomFrozenStruct
 from loom.core.stores.repository.query import FilterSpec, QuerySpec
 
@@ -115,7 +115,7 @@ class CursorKeySource(LoomFrozenStruct, frozen=True, kw_only=True, forbid_unknow
         env: Environment variable holding the key (how ECS/Fargate inject secrets).
 
     Raises:
-        ValueError: When neither or both sources are set.
+        InvalidValue: When neither or both sources are set.
     """
 
     path: str | None = None
@@ -123,7 +123,7 @@ class CursorKeySource(LoomFrozenStruct, frozen=True, kw_only=True, forbid_unknow
 
     def __post_init__(self) -> None:
         if (self.path is None) == (self.env is None):
-            raise ValueError("a cursor key needs exactly one source: 'path' or 'env'")
+            raise InvalidValue("a cursor key needs exactly one source: 'path' or 'env'")
 
 
 class CursorConfig(LoomFrozenStruct, frozen=True, kw_only=True, forbid_unknown_fields=True):
@@ -518,7 +518,7 @@ def _wrap(value: object) -> _Key:
     if isinstance(value, Enum):
         value = value.value
     if isinstance(value, float | Decimal) and not math.isfinite(value):
-        raise ValueError("a non-finite number cannot position a page")
+        raise InvalidValue("a non-finite number cannot position a page")
     if value is None or isinstance(value, int | float | str):
         return value
     if isinstance(value, datetime):
@@ -531,7 +531,7 @@ def _wrap(value: object) -> _Key:
         return _UuidKey(value)
     if isinstance(value, Decimal):
         return _DecimalKey(value)
-    raise TypeError(f"Unsupported cursor key type: {type(value).__name__}")
+    raise InvalidType(f"Unsupported cursor key type: {type(value).__name__}")
 
 
 def _unwrap(key: _Key) -> object:

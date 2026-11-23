@@ -36,7 +36,7 @@ class TestSchemaNames:
     def test_a_schema_name_leaves_room_for_every_guard_object_name(self) -> None:
         name = "a" * (MAX_SCHEMA_LENGTH + 1)
 
-        with pytest.raises(ValueError, match=name):
+        with pytest.raises(ValueError, match="not a usable SQL identifier"):
             schema_identifier(name)
 
     @pytest.mark.parametrize("bad", ["my-schema", "1st", "Notes", "select", "s" * 48])

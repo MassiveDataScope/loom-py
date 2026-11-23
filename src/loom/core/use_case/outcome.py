@@ -5,6 +5,8 @@ import string
 from dataclasses import dataclass
 from typing import Generic, TypeVar
 
+from loom.core.errors import InvalidValue
+
 T = TypeVar("T")
 
 _URI_CHARACTERS = frozenset(string.ascii_letters + string.digits + "-._~:/?#[]@!$&'()*+,;=%")
@@ -24,10 +26,10 @@ class Created(Generic[T]):
             ``None``.
 
     Raises:
-        ValueError: If ``location`` is empty or holds a character not allowed
+        InvalidValue: If ``location`` is empty or holds a character not allowed
             in an RFC 3986 URI reference (unreserved, reserved and
             percent-encoded characters only).
-        TypeError: If ``location`` is not a ``str``.
+        InvalidType: If ``location`` is not a ``str``.
 
     Example::
 
@@ -46,7 +48,7 @@ class Created(Generic[T]):
             or not location
             or not _URI_CHARACTERS.issuperset(location)
         ):
-            raise ValueError(
+            raise InvalidValue(
                 "Created.location must be non-empty and hold only characters allowed "
                 "in an RFC 3986 URI reference"
             )

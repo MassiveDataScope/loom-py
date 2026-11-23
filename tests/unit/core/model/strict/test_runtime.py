@@ -5,6 +5,7 @@ from __future__ import annotations
 import msgspec
 import pytest
 
+from loom.core.errors import InvalidValue
 from loom.core.model import LoomFrozenStruct, StrictStruct
 from loom.core.model.redaction import Secret
 
@@ -45,7 +46,7 @@ class TestStrictStructRuntime:
         assert Positional(1) == Positional(a=1)
 
     def test_a_subclass_cannot_unfreeze(self) -> None:
-        with pytest.raises(TypeError, match="frozen=False is not allowed"):
+        with pytest.raises(InvalidValue, match="frozen=False is not allowed"):
 
             class Mutable(StrictStruct, frozen=False):  # type: ignore[misc]  # pyright: ignore[reportGeneralTypeIssues]
                 a: int

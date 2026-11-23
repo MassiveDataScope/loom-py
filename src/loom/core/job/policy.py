@@ -9,6 +9,8 @@ from typing import Annotated, ClassVar
 
 import msgspec
 
+from loom.core.errors import InvalidValue
+
 MIN_SECONDS = 0
 """The shortest delay, and the lowest start of a backoff."""
 MAX_COUNTDOWN_SECONDS = 900
@@ -45,7 +47,7 @@ class Countdown:
     """A delay in whole seconds, from 0 to 900: the longest any job transport can wait.
 
     Raises:
-        ValueError: When the seconds fall outside the bound.
+        InvalidValue: When the seconds fall outside the bound.
     """
 
     MAX_SECONDS: ClassVar[int] = MAX_COUNTDOWN_SECONDS
@@ -54,7 +56,7 @@ class Countdown:
 
     def __post_init__(self) -> None:
         if not MIN_SECONDS <= self.seconds <= self.MAX_SECONDS:
-            raise ValueError(f"a countdown is 0 to {self.MAX_SECONDS} seconds, not {self.seconds}")
+            raise InvalidValue(f"a countdown is 0 to {self.MAX_SECONDS} seconds")
 
 
 @dataclass(frozen=True, slots=True)
@@ -68,7 +70,7 @@ class Backoff:
         jitter: Whether a delay is drawn uniformly from zero to its ceiling.
 
     Raises:
-        ValueError: When *max_s* is outside 0 to 900, *first_s* is negative
+        InvalidValue: When *max_s* is outside 0 to 900, *first_s* is negative
             or *factor* is below 1.
     """
 
@@ -79,11 +81,11 @@ class Backoff:
 
     def __post_init__(self) -> None:
         if not MIN_SECONDS <= self.max_s <= Countdown.MAX_SECONDS:
-            raise ValueError(f"max_s must be 0 to {Countdown.MAX_SECONDS}, not {self.max_s}")
+            raise InvalidValue(f"max_s must be 0 to {Countdown.MAX_SECONDS}")
         if self.first_s < MIN_SECONDS:
-            raise ValueError(f"first_s cannot be negative, not {self.first_s}")
+            raise InvalidValue("first_s cannot be negative")
         if self.factor < MIN_BACKOFF_FACTOR:
-            raise ValueError(f"factor must be at least 1, not {self.factor}")
+            raise InvalidValue("factor must be at least 1")
 
     def delay(self, attempt: int, rng: random.Random) -> Countdown:
         """The wait after failed attempt number *attempt*, counting from 1.
@@ -113,7 +115,7 @@ class RetryPolicy:
             leaves the limit to the transport.
 
     Raises:
-        ValueError: When *max_attempts* is below 1.
+        InvalidValue: When *max_attempts* is below 1.
     """
 
     backoff: Backoff
@@ -121,7 +123,7 @@ class RetryPolicy:
 
     def __post_init__(self) -> None:
         if self.max_attempts is not None and self.max_attempts < MIN_ATTEMPTS:
-            raise ValueError(f"max_attempts must be at least 1, not {self.max_attempts}")
+            raise InvalidValue("max_attempts must be at least 1")
 
     def can_retry_after(self, attempt: int) -> bool:
         """Whether a failed attempt number *attempt* may be followed by another."""

@@ -19,8 +19,10 @@ from typing import Any
 import pytest
 
 from loom.core.config.observability import OtelConfig
+from loom.core.errors import InvalidValue
 from loom.core.model.redaction import Dsn
 from loom.core.observability.observer import otel
+from loom.core.plugins.optional import MissingExtraError
 
 _GRPC = "opentelemetry.exporter.otlp.proto.grpc"
 _HTTP = "opentelemetry.exporter.otlp.proto.http"
@@ -54,13 +56,13 @@ def _without(*prefixes: str) -> Iterator[None]:
 
 class TestSpanExporterLoader:
     def test_names_the_grpc_package_when_grpc_is_absent(self) -> None:
-        with _without(_GRPC), pytest.raises(ValueError) as excinfo:
+        with _without(_GRPC), pytest.raises(MissingExtraError) as excinfo:
             otel._load_span_exporter_cls("grpc")
         assert "grpc" in str(excinfo.value)
         assert isinstance(excinfo.value.__cause__, ImportError)
 
     def test_names_the_http_package_when_http_is_absent(self) -> None:
-        with _without(_HTTP), pytest.raises(ValueError) as excinfo:
+        with _without(_HTTP), pytest.raises(MissingExtraError) as excinfo:
             otel._load_span_exporter_cls("http/protobuf")
         assert "http" in str(excinfo.value)
         assert isinstance(excinfo.value.__cause__, ImportError)
@@ -72,17 +74,17 @@ class TestSpanExporterLoader:
 
 class TestLogExporterLoader:
     def test_names_the_grpc_package_when_grpc_is_absent(self) -> None:
-        with _without(_GRPC), pytest.raises(ValueError) as excinfo:
+        with _without(_GRPC), pytest.raises(MissingExtraError) as excinfo:
             otel._load_log_exporter_cls("grpc")
         assert "grpc" in str(excinfo.value)
 
     def test_names_the_http_package_when_http_is_absent(self) -> None:
-        with _without(_HTTP), pytest.raises(ValueError) as excinfo:
+        with _without(_HTTP), pytest.raises(MissingExtraError) as excinfo:
             otel._load_log_exporter_cls("http/protobuf")
         assert "http" in str(excinfo.value)
 
     def test_rejects_an_unsupported_protocol_without_importing(self) -> None:
-        with pytest.raises(ValueError):
+        with pytest.raises(InvalidValue):
             otel._load_log_exporter_cls("thrift")
 
     @pytest.mark.parametrize("protocol", ["grpc", "http/protobuf"])
@@ -100,7 +102,7 @@ class TestBuildTracerSdkGuard:
 
     def test_names_the_missing_exporter_before_the_missing_sdk(self) -> None:
         config = OtelConfig(endpoint=Dsn("http://collector:4318/v1/traces"))
-        with _without(_HTTP, "opentelemetry.sdk"), pytest.raises(ValueError) as excinfo:
+        with _without(_HTTP, "opentelemetry.sdk"), pytest.raises(MissingExtraError) as excinfo:
             otel.build_tracer(config)
         assert "http" in str(excinfo.value)
 

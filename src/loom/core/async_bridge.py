@@ -36,6 +36,8 @@ from typing import Any, TypeVar, cast
 import anyio
 from anyio.from_thread import BlockingPortal, start_blocking_portal
 
+from loom.core.errors import InvalidUse
+
 logger = logging.getLogger(__name__)
 T = TypeVar("T")
 
@@ -105,13 +107,13 @@ class AsyncBridge:
             The coroutine's return value.
 
         Raises:
-            RuntimeError: If the bridge has been shut down.
+            InvalidUse: If the bridge has been shut down.
             TimeoutError: If *timeout* elapses before completion.
             Exception: Any exception raised by *coro*.
         """
         if self._closed:
             coro.close()
-            raise RuntimeError("AsyncBridge has been shut down.")
+            raise InvalidUse("AsyncBridge has been shut down.")
 
         async def _await_coro_with_timeout() -> T:
             with anyio.fail_after(timeout):

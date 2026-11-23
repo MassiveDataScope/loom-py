@@ -45,7 +45,7 @@ from contextvars import Token
 from types import TracebackType
 from typing import Any, cast
 
-from loom.core.errors import Unauthenticated
+from loom.core.errors import InvalidUse, Unauthenticated
 from loom.core.execution.errors import ExecutionClosed, ExecutionRequired
 from loom.core.identity import Acting, Identity
 from loom.core.identity.context import _acting  # pyright: ignore[reportPrivateUsage]
@@ -158,7 +158,7 @@ class ExecutionContext:
         as the same caller.
 
         Raises:
-            RuntimeError: When this is not the execution in progress (closed
+            InvalidUse: When this is not the execution in progress (closed
                 twice, out of order, or with an execution entered over it and
                 not closed). The current :mod:`contextvars` context is then
                 closed for good: it reads as no execution and acts as no one
@@ -169,7 +169,7 @@ class ExecutionContext:
         token = self._token
         if token is None or _acting_now().work is not self:
             _acting.set(_CLOSED_CONTEXT_ACTING)
-            raise RuntimeError(_MISUSED_TOKEN_MESSAGE)
+            raise InvalidUse(_MISUSED_TOKEN_MESSAGE)
         _acting.reset(token)
         self._token = None
         self._cache = _ENDED
@@ -440,7 +440,7 @@ class ExecutionScope:
 
     def __enter__(self) -> None:
         if self._execution is not None:
-            raise RuntimeError("This ExecutionScope is already open")
+            raise InvalidUse("This ExecutionScope is already open")
         self._execution = ExecutionContext.entered(self._identity, self._what)
 
     def __exit__(
@@ -451,7 +451,7 @@ class ExecutionScope:
     ) -> None:
         execution = self._execution
         if execution is None:
-            raise RuntimeError("This ExecutionScope is not open")
+            raise InvalidUse("This ExecutionScope is not open")
         self._execution = None
         execution.close()
 
@@ -479,7 +479,7 @@ class NoExecution:
 
     def __enter__(self) -> None:
         if self._token is not None:
-            raise RuntimeError("This NoExecution is already open")
+            raise InvalidUse("This NoExecution is already open")
         self._token = _acting.set(_NO_EXECUTION_ACTING)
 
     def __exit__(
@@ -492,5 +492,5 @@ class NoExecution:
         self._token = None
         if _acting_now() is not _NO_EXECUTION_ACTING:
             _acting.set(_CLOSED_CONTEXT_ACTING)
-            raise RuntimeError(_LEFT_OPEN_MESSAGE)
+            raise InvalidUse(_LEFT_OPEN_MESSAGE)
         _acting.reset(token)

@@ -97,7 +97,7 @@ class TestNamingConvention:
 
         backend, context = SQLAlchemyStorePlugin(), ConfigContext.from_yaml(str(path))
         with pytest.raises(
-            ConfigError, match=r"stores\.default\.schema\.naming_convention.*'primary'"
+            ConfigError, match=r"stores\.default\.schema\.naming_convention.*unknown kind"
         ):
             build_backend(backend, context, rosters.MODELS, SERVER_PROFILE)
 

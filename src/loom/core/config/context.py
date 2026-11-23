@@ -13,6 +13,7 @@ from loom.core.config.errors import ConfigError
 from loom.core.config.keys import ConfigKey
 from loom.core.config.loader import load_config
 from loom.core.config.loader import section as _section
+from loom.core.errors import InvalidType
 from loom.core.model.types import PositiveSeconds
 
 if TYPE_CHECKING:
@@ -107,13 +108,13 @@ class ConfigContext:
             A ready-to-use :class:`ConfigContext`.
 
         Raises:
-            TypeError: If *raw* does not produce a DictConfig.
+            InvalidType: If *raw* does not produce a DictConfig.
         """
         from omegaconf import DictConfig, OmegaConf
 
         cfg = OmegaConf.create(dict(raw))
         if not isinstance(cfg, DictConfig):
-            raise TypeError(f"Config must be a mapping, got {type(cfg).__name__}")
+            raise InvalidType(f"Config must be a mapping, got {type(cfg).__name__}")
         return cls(cfg, binder=binder)
 
     def has(self, key: str | ConfigKey) -> bool:

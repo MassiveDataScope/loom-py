@@ -5,6 +5,7 @@ from typing import TYPE_CHECKING, Any, ClassVar
 import msgspec
 from msgspec import UNSET, UnsetType
 
+from loom.core.errors import InvalidType
 from loom.core.model.field import ColumnFieldSpec
 from loom.core.model.introspection import derived_key_of
 from loom.core.model.projection import Projection
@@ -135,7 +136,7 @@ class LoomStructMeta(_StructMeta):
         projections: dict[str, Projection] = {}
         annotations = _take_class_body_annotations(namespace)
         if _KEY_FOR in annotations:
-            raise TypeError(
+            raise InvalidType(
                 f"{name}.{_KEY_FOR} cannot be a field: it is the method that derives the key"
             )
 
@@ -198,11 +199,11 @@ class BaseModel(LoomStruct, metaclass=LoomStructMeta):  # type: ignore[metaclass
         ignores the rest.
 
         Raises:
-            ValueError: If the model derives no key.
+            InvalidType: If the model derives no key.
             BoundaryValidationError: If a business-key field is missing, has
                 no value or has no canonical form.
         """
         derived = derived_key_of(cls)
         if derived is None:
-            raise ValueError(f"{cls.__name__} derives no key")
+            raise InvalidType(f"{cls.__name__} derives no key")
         return derived.id_for(row)

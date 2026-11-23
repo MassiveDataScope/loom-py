@@ -18,6 +18,7 @@ from opentelemetry.sdk.trace.export import SimpleSpanProcessor
 from opentelemetry.sdk.trace.export.in_memory_span_exporter import InMemorySpanExporter
 from opentelemetry.trace import ProxyTracerProvider
 
+from loom.core.config import ConfigError
 from loom.core.config.observability import OtelConfig
 from loom.core.model.redaction import Dsn
 from loom.core.observability.event import Scope
@@ -182,5 +183,5 @@ class TestConfigValidation:
     ) -> None:
         config = OtelConfig(**kwargs)
 
-        with pytest.raises(ValueError, match=message):
+        with pytest.raises(ConfigError, match=message):
             config.validate()

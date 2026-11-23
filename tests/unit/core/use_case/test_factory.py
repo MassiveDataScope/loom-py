@@ -12,6 +12,7 @@ from loom.core.di.container import LoomContainer, ResolutionError
 from loom.core.di.graph import ClassNode
 from loom.core.di.introspection import KeyDependency, RepoDependency
 from loom.core.di.scope import Scope
+from loom.core.errors import InvalidUse
 from loom.core.model import LoomStruct
 from loom.core.stores.repository import Listable, RepoFor
 from loom.core.stores.repository.registration import classify_key
@@ -538,5 +539,5 @@ class TestDeprecatedBareContainer:
         assert factory.graph is container.graph
 
     def test_a_container_reading_another_way_is_refused(self) -> None:
-        with pytest.raises(ValueError, match="reads constructors another way"):
+        with pytest.raises(InvalidUse, match="reads constructors another way"):
             UseCaseFactory(LoomContainer(classify_key=classify_key))

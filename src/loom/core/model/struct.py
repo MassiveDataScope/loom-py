@@ -14,6 +14,7 @@ from typing import Any, dataclass_transform
 
 import msgspec
 
+from loom.core.errors import InvalidType, InvalidValue
 from loom.core.model.redaction import ensure_redacted
 
 
@@ -130,8 +131,11 @@ class _StrictStructMeta(_RedactingStructMeta):
         namespace: dict[str, Any],
         **kwargs: Any,
     ) -> _RedactingStructMeta:
-        if kwargs.get("frozen", True) is not True:
-            raise TypeError(f"{name}: a StrictStruct is frozen; frozen=False is not allowed")
+        frozen = kwargs.get("frozen", True)
+        if not isinstance(frozen, bool):
+            raise InvalidType(f"{name}: frozen must be a bool")
+        if not frozen:
+            raise InvalidValue(f"{name}: a StrictStruct is frozen; frozen=False is not allowed")
         kwargs.setdefault("kw_only", True)
         return super().__new__(cls, name, bases, namespace, **kwargs)
 

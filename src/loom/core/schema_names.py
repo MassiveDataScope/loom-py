@@ -11,6 +11,8 @@ from collections.abc import Mapping
 from dataclasses import dataclass
 from typing import Final
 
+from loom.core.errors import InvalidValue
+
 MAX_IDENTIFIER_LENGTH: Final = 63
 MAX_SCHEMA_LENGTH: Final = 47
 NAMING_CONVENTION_KINDS: Final = frozenset({"pk", "fk", "uq", "ck", "ix"})
@@ -139,7 +141,7 @@ def sql_identifier(name: str, *, max_length: int = MAX_IDENTIFIER_LENGTH) -> str
     ``pg_`` name.
 
     Raises:
-        ValueError: Naming the offending identifier.
+        InvalidValue: Naming the offending identifier.
     """
     if (
         not _IDENTIFIER.fullmatch(name)
@@ -148,8 +150,8 @@ def sql_identifier(name: str, *, max_length: int = MAX_IDENTIFIER_LENGTH) -> str
         or name in _SPECIAL_ROLES
         or name.startswith("pg_")
     ):
-        raise ValueError(
-            f"{name!r} is not a usable SQL identifier: lowercase letters, digits and '_', "
+        raise InvalidValue(
+            f"a name is not a usable SQL identifier: lowercase letters, digits and '_', "
             f"at most {max_length} characters, not a reserved word, special role or pg_ name"
         )
     return name
@@ -168,15 +170,14 @@ def naming_convention(value: Mapping[str, str] | None) -> dict[str, str] | None:
     this function, so they compile the same names.
 
     Raises:
-        ValueError: Naming the first key that is not ``pk``, ``fk``, ``uq``, ``ck`` or ``ix``.
+        InvalidValue: Naming the first key that is not ``pk``, ``fk``, ``uq``, ``ck`` or ``ix``.
     """
     if value is None:
         return None
     unknown = sorted(set(value) - NAMING_CONVENTION_KINDS)
     if unknown:
-        raise ValueError(
-            f"unknown kind {unknown[0]!r}; expected one of "
-            f"{', '.join(sorted(NAMING_CONVENTION_KINDS))}"
+        raise InvalidValue(
+            f"unknown kind; expected one of {', '.join(sorted(NAMING_CONVENTION_KINDS))}"
         )
     return dict(value)
 

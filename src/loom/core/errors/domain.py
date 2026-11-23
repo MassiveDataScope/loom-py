@@ -6,7 +6,7 @@ import math
 from collections.abc import Sequence
 from typing import Any
 
-from loom.core.errors.base import DomainError
+from loom.core.errors.base import DomainError, InvalidValue
 from loom.core.errors.codes import ErrorCode
 
 
@@ -55,7 +55,7 @@ class RateLimited(DomainError):
         message: Human-readable description of the refusal.
 
     Raises:
-        ValueError: ``retry_after`` is not finite.
+        InvalidValue: ``retry_after`` is not finite.
 
     Example::
 
@@ -64,7 +64,7 @@ class RateLimited(DomainError):
 
     def __init__(self, retry_after: float, message: str = "Too many requests.") -> None:
         if not math.isfinite(retry_after):
-            raise ValueError(f"RateLimited.retry_after must be finite, got {retry_after!r}")
+            raise InvalidValue("RateLimited.retry_after must be finite")
         super().__init__(message, code=ErrorCode.RATE_LIMITED)
         self.retry_after = max(1, math.ceil(retry_after))
 

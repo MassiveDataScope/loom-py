@@ -151,7 +151,9 @@ class TestScopedApplicationSchema:
 
         config_path = _write(tmp_path, "a.yaml", _config(SCOPED_MODULE, **schema))
 
-        with pytest.raises(ConfigError, match=r"stores\.default\.schema:.*'Versions'"):
+        with pytest.raises(
+            ConfigError, match=r"stores\.default\.schema:.*not a usable SQL identifier"
+        ):
             load_store_schema(config_path)
 
     def test_a_declared_scope_without_a_source_names_the_scope(self, tmp_path: Path) -> None:
@@ -305,7 +307,7 @@ class TestCompiledSchemaNaming:
         config_path = _write(tmp_path, "bad.yaml", _config(SCOPED_MODULE, **schema))
 
         with pytest.raises(
-            ConfigError, match=r"stores\.default\.schema\.naming_convention.*'primary'"
+            ConfigError, match=r"stores\.default\.schema\.naming_convention.*unknown kind"
         ):
             load_store_schema(config_path)
 

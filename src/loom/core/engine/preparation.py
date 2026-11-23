@@ -20,7 +20,14 @@ from typing import TYPE_CHECKING, Any, TypeAlias, cast
 from loom.core.engine.compilable import Compilable
 from loom.core.engine.observation import StartedExecution
 from loom.core.engine.plan import ExecutionPlan, ExistsStep, LoadStep, ParameterBindingError
-from loom.core.errors import MissingCaller, RuleViolationError, RuleViolationsError
+from loom.core.errors import (
+    InvalidType,
+    InvalidUse,
+    InvalidValue,
+    MissingCaller,
+    RuleViolationError,
+    RuleViolationsError,
+)
 from loom.core.execution import ExecutionKinds, UnboundKind
 from loom.core.identity import Identity
 from loom.core.use_case.kinds import CALLER
@@ -171,7 +178,7 @@ class ArgumentBinder:
                         binding.kind, binding.declaration, binding.annotation
                     )
                 except UnboundKind:
-                    raise RuntimeError(
+                    raise InvalidUse(
                         f"{use_case}.execute declares an {binding.kind.spelling} parameter but "
                         f"no {binding.kind.name!r} resolver is bound on this executor. Call "
                         f"UseCaseExecutor.bind_{binding.kind.name}_resolver() once the AI "
@@ -200,7 +207,7 @@ class ArgumentBinder:
         value = step.value(call.bound)
         exists_by = getattr(repo, "exists_by", None)
         if not callable(exists_by):
-            raise RuntimeError(
+            raise InvalidType(
                 "Repository for "
                 f"'{step.entity_type.__name__}' must implement exists_by(field, value)"
             )
@@ -217,8 +224,8 @@ class ArgumentBinder:
         if repo is not None:
             return repo
         if dependencies is None and self._repo_resolver is None:
-            raise RuntimeError(f"No dependencies provided for {marker}({entity_type.__name__})")
-        raise RuntimeError(f"No repository registered for entity type '{entity_type.__name__}'")
+            raise InvalidUse(f"No dependencies provided for {marker}({entity_type.__name__})")
+        raise InvalidUse(f"No repository registered for entity type '{entity_type.__name__}'")
 
 
 def _combined(steps: tuple[Bind | None, ...]) -> Bind | None:
@@ -267,7 +274,7 @@ def _params(plan: ExecutionPlan) -> Bind | None:
         params = call.inputs.params or {}
         for binding in bindings:
             if binding.name not in params:
-                raise ValueError(f"{use_case}: missing required parameter '{binding.name}'")
+                raise InvalidValue(f"{use_case}: missing required parameter '{binding.name}'")
             call.bound[binding.name] = binding.coerce(params[binding.name], use_case)
 
     return bind
@@ -312,7 +319,7 @@ def _command(plan: ExecutionPlan) -> Bind | None:
     def bind(call: _ExecuteArguments) -> None:
         payload = call.inputs.payload
         if payload is None:
-            raise ValueError(f"{use_case}: payload is required for a UseCase with Input()")
+            raise InvalidValue(f"{use_case}: payload is required for a UseCase with Input()")
         command, fields_set = binding.command_type.from_payload(payload)
         call.bound[binding.name] = command
         call.fields_set = cast(frozenset[str], fields_set)

@@ -101,7 +101,7 @@ class TestSchemaInit:
         result = runner.invoke(app, ["schema", "init", "Notes"])
 
         assert result.exit_code == 1
-        assert "Notes" in result.output
+        assert "usable SQL identifier" in result.output
 
     def test_init_fills_a_null_database_section(self, tmp_path: Path) -> None:
         config = tmp_path / "loom.yaml"

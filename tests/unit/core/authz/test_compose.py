@@ -60,12 +60,12 @@ class TestRoleComposition:
         assert catalog.role("custom:acme/analyst").permissions == {READ, QUERY}
         assert catalog.role("admin") is BASE.role("admin")
 
-    def test_a_permission_above_the_ceiling_is_rejected_by_name(self) -> None:
+    def test_a_permission_above_the_ceiling_is_rejected(self) -> None:
         custom = {"boss": RoleSpec(permissions=frozenset({"members.manage"}))}
 
         composition_rules = rules()
 
-        with pytest.raises(ValueError, match="'boss'.*members.manage"):
+        with pytest.raises(ValueError, match="above the ceiling"):
             RoleCatalog.compose(BASE, custom, composition_rules, namespace="acme")
 
     def test_an_inherited_permission_above_the_ceiling_is_rejected_too(self) -> None:
@@ -73,7 +73,7 @@ class TestRoleComposition:
 
         composition_rules = rules()
 
-        with pytest.raises(ValueError, match="'shadow'.*members.manage"):
+        with pytest.raises(ValueError, match="above the ceiling"):
             RoleCatalog.compose(BASE, custom, composition_rules, namespace="acme")
 
     def test_a_custom_role_cannot_take_a_base_name(self) -> None:
@@ -84,7 +84,7 @@ class TestRoleComposition:
 
         composition_rules = rules()
 
-        with pytest.raises(ValueError, match="base.*'custom:acme/viewer'"):
+        with pytest.raises(ValueError, match="name of a base role"):
             RoleCatalog.compose(base, custom, composition_rules, namespace="acme")
 
     def test_a_non_extensible_base_role_cannot_be_extended(self) -> None:
@@ -92,7 +92,7 @@ class TestRoleComposition:
 
         composition_rules = rules()
 
-        with pytest.raises(ValueError, match="'platform'.*not extensible"):
+        with pytest.raises(ValueError, match="not extensible"):
             RoleCatalog.compose(BASE, custom, composition_rules, namespace="acme")
 
     def test_extending_base_roles_can_be_disabled_entirely(self) -> None:

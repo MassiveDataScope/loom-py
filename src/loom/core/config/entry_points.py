@@ -5,6 +5,8 @@ from __future__ import annotations
 from collections.abc import Mapping
 from typing import Final
 
+from loom.core.errors import InvalidType, InvalidValue
+
 _GROUP_KEY: Final = "group"
 _OPTIONAL_KEY: Final = "optional"
 _KEYS: Final = frozenset({_GROUP_KEY, _OPTIONAL_KEY})
@@ -37,25 +39,25 @@ class EntryPointGroup:
             declared: A group name, or a mapping with ``group`` and optionally ``optional``.
 
         Raises:
-            ValueError: When the item has another shape, a key other than ``group`` and
-                ``optional``, no group name, or an ``optional`` that is not a boolean.
+            InvalidType: When the item has another shape, no group name, or an ``optional``
+                that is not a boolean.
+            InvalidValue: When the item has a key other than ``group`` and ``optional``.
         """
         if isinstance(declared, str):
             return cls(declared)
         if not isinstance(declared, Mapping):
-            raise ValueError("expected a group name or {group: <name>, optional: <bool>}")
+            raise InvalidType("expected a group name or {group: <name>, optional: <bool>}")
         unknown = sorted(str(key) for key in declared if key not in _KEYS)
         if unknown:
-            raise ValueError(
-                f"unknown key {unknown[0]!r} in an entry point group: "
-                f"use {_GROUP_KEY!r} and {_OPTIONAL_KEY!r}"
+            raise InvalidValue(
+                f"an entry point group has an unknown key: use {_GROUP_KEY!r} and {_OPTIONAL_KEY!r}"
             )
         name = declared.get(_GROUP_KEY)
         if not isinstance(name, str):
-            raise ValueError(f"an entry point group needs a {_GROUP_KEY!r} name")
+            raise InvalidType(f"an entry point group needs a {_GROUP_KEY!r} name")
         is_optional = declared.get(_OPTIONAL_KEY, False)
         if not isinstance(is_optional, bool):
-            raise ValueError(f"{_OPTIONAL_KEY!r} must be true or false")
+            raise InvalidType(f"{_OPTIONAL_KEY!r} must be true or false")
         return cls(name, is_optional=is_optional)
 
     def __eq__(self, other: object) -> bool:

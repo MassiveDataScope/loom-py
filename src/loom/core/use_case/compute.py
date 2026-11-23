@@ -7,6 +7,7 @@ from typing import Any, TypeVar
 import msgspec
 
 from loom.core.command.base import Command
+from loom.core.errors import InvalidUse, InvalidValue, UnknownKey
 from loom.core.use_case._predicates import (
     predicate_is_present as _predicate_is_present,
 )
@@ -32,7 +33,7 @@ class _ComputeSpec:
 
     def from_params(self, *names: str) -> _ComputeSpec:
         if not names:
-            raise ValueError("Compute.from_params(...) requires at least one param name.")
+            raise InvalidValue("Compute.from_params(...) requires at least one param name.")
         return replace(self, param_names=(*self.param_names, *names))
 
     def when_present(self, predicate: FieldRef | FieldExpr) -> _ComputeSpec:
@@ -57,14 +58,14 @@ class _ComputeSpec:
 
         if self.param_names:
             if context is None:
-                raise ValueError("Compute.from_params(...) requires runtime context.")
-            if missing := [n for n in self.param_names if n not in context]:
-                raise ValueError(f"Missing runtime context keys for compute: {', '.join(missing)}")
+                raise InvalidUse("Compute.from_params(...) requires runtime context.")
+            if any(n not in context for n in self.param_names):
+                raise UnknownKey("Missing runtime context keys for compute")
             args.extend(context[n] for n in self.param_names)
 
         if self.via is None:
             if len(args) != 1:
-                raise ValueError(
+                raise InvalidValue(
                     "Compute without via requires exactly one source. "
                     "Use from_command(F(...)) or provide via=..."
                 )
@@ -88,7 +89,7 @@ class _ComputeSetBuilder:
     ) -> _ComputeSpec:
         if not sources:
             if via is None:
-                raise ValueError(
+                raise InvalidValue(
                     "Compute.from_command() without fields requires via=... "
                     "to derive the target value."
                 )
@@ -99,7 +100,7 @@ class _ComputeSetBuilder:
             )
 
         if len(sources) > 1 and via is None:
-            raise ValueError("A via callable is required when multiple command fields are used.")
+            raise InvalidValue("A via callable is required when multiple command fields are used.")
 
         return _ComputeSpec(
             target=self._target,

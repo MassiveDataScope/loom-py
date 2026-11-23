@@ -31,6 +31,7 @@ from pathlib import Path
 from typing import Final
 
 from loom.core.config.errors import ConfigError
+from loom.core.errors import InvalidValue
 
 ENVIRONMENT_VARIABLE: Final = "LOOM_ENV"
 """Name of the variable selecting the environment."""
@@ -177,7 +178,7 @@ def loom_variable(name: str) -> str | None:
     """Return the value of the ``LOOM_*`` variable *name*, or ``None`` when unset.
 
     Raises:
-        ValueError: When *name* is not a ``LOOM_*`` variable.
+        InvalidValue: When *name* is not a ``LOOM_*`` variable.
     """
     _require_loom_variable(name)
     return os.environ.get(name)
@@ -215,7 +216,7 @@ def scoped_loom_variable(name: str, value: str) -> Iterator[None]:
     Not thread-safe: the process environment is shared.
 
     Raises:
-        ValueError: When *name* is not a ``LOOM_*`` variable.
+        InvalidValue: When *name* is not a ``LOOM_*`` variable.
     """
     _require_loom_variable(name)
     previous = os.environ.get(name)
@@ -231,7 +232,7 @@ def scoped_loom_variable(name: str, value: str) -> Iterator[None]:
 
 def _require_loom_variable(name: str) -> None:
     if not name.startswith("LOOM_"):
-        raise ValueError(f"{name!r} is not a loom variable")
+        raise InvalidValue("the name is not a loom variable")
 
 
 def override_variables() -> dict[str, str]:

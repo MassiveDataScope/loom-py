@@ -5,6 +5,7 @@ from collections.abc import Awaitable, Callable, Collection, Mapping
 from dataclasses import dataclass, field, replace
 from typing import TYPE_CHECKING, Any, Self, cast
 
+from loom.core.errors import InvalidType
 from loom.core.execution import ExecutionBinding
 from loom.core.stores.catalog import DEFAULT_STORE, StoreCapabilities, StoreCatalog, StoreKey
 from loom.core.stores.uow.scope import Frame
@@ -193,16 +194,14 @@ class LookupStep:
         """The lookup value among the arguments *bound* so far.
 
         Raises:
-            RuntimeError: When the command has no field named ``source_name``.
+            InvalidType: When the command has no field named ``source_name``.
         """
         if self.command is None:
             return bound[self.source_name]
         command = bound[self.command]
         found = getattr(command, self.source_name, _ABSENT)
         if found is _ABSENT:
-            raise RuntimeError(
-                f"Command '{type(command).__name__}' has no field '{self.source_name}'"
-            )
+            raise InvalidType(f"Command '{type(command).__name__}' has no field to bind from")
         return found
 
 
@@ -234,13 +233,13 @@ class LoadStep(LookupStep):
         """The entity *repo* holds under *value*, by id or by ``against``; ``None`` if none.
 
         Raises:
-            RuntimeError: When a field lookup's repository has no ``get_by``.
+            InvalidType: When a field lookup's repository has no ``get_by``.
         """
         if self.lookup_kind is LookupKind.BY_ID:
             return await repo.get_by_id(value, profile=self.profile)
         get_by = getattr(repo, "get_by", None)
         if not callable(get_by):
-            raise RuntimeError(
+            raise InvalidType(
                 f"Repository for '{self.entity_type.__name__}' must implement get_by(field, value)"
             )
         get_by_async = cast(Callable[..., Awaitable[Any | None]], get_by)

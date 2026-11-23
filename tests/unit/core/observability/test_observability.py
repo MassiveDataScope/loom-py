@@ -8,6 +8,7 @@ import logging
 import msgspec
 import pytest
 
+from loom.core.config import ConfigError
 from loom.core.config.observability import OtelConfig
 from loom.core.environment import Environment
 from loom.core.errors.summary import ErrorSummary
@@ -161,7 +162,7 @@ class TestFromConfig:
     def test_export_logs_requires_the_log_backend(self) -> None:
         config = ObservabilityConfig(log=LogObservabilityConfig(enabled=False), otel=_OTEL)
 
-        with pytest.raises(ValueError, match="export_logs requires observability.log.enabled"):
+        with pytest.raises(ConfigError, match="export_logs requires observability.log.enabled"):
             Observability.from_config(config)
 
     def test_export_logs_attaches_the_export_handler_with_the_context_and_span_filters(

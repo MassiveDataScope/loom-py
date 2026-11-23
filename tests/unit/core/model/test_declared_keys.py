@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import pytest
 
+from loom.core.errors import InvalidType, InvalidValue
 from loom.core.model import BaseModel, ColumnField, ScopedField
 from loom.core.model.introspection import (
     PartialUnique,
@@ -47,7 +48,7 @@ class TestDeclaredKeys:
             holder: int = ScopedField(Integer, primary_key=True, scope="holder")
             reference: str = ColumnField(Text)
 
-        with pytest.raises(ValueError, match=r"C5.*Loose.*reference"):
+        with pytest.raises(ValueError, match=r"C5.*Loose.*lacks the boundary"):
             scope_columns(Loose)
 
     def test_a_declared_unique_naming_an_unknown_column_is_rejected(self) -> None:
@@ -57,7 +58,7 @@ class TestDeclaredKeys:
             holder: int = ScopedField(Integer, primary_key=True, scope="holder")
             reference: str = ColumnField(Text)
 
-        with pytest.raises(ValueError, match=r"Typo.*refrence"):
+        with pytest.raises(ValueError, match=r"Typo.*names an unknown column"):
             declared_unique(Typo)
 
     def test_global_table_privileges_are_keyed_by_group(self) -> None:
@@ -79,7 +80,7 @@ class TestDeclaredKeys:
             __privileges__ = {"admins": frozenset({Privilege.SELECT})}
             id: int = ColumnField(Integer, primary_key=True)
 
-        with pytest.raises(ValueError, match=r"BadGroup.*admins"):
+        with pytest.raises(ValueError, match=r"BadGroup.*unknown privilege group"):
             declared_privileges(BadGroup)
 
     def test_a_privilege_outside_the_closed_set_is_rejected(self) -> None:
@@ -88,7 +89,7 @@ class TestDeclaredKeys:
             __privileges__ = {"writers": frozenset({"TRUNCATE"})}
             id: int = ColumnField(Integer, primary_key=True)
 
-        with pytest.raises(ValueError, match=r"Truncating.*TRUNCATE"):
+        with pytest.raises(ValueError, match=r"Truncating.*not a row privilege"):
             declared_privileges(Truncating)
 
 
@@ -119,14 +120,18 @@ class TestDeclaredChecks:
         with pytest.raises(ValueError, match=r"Odd: __checks__ rule"):
             declared_checks(Odd)
 
-    @pytest.mark.parametrize("expression", ["", "   ", 42])
-    def test_a_check_without_an_sql_expression_is_rejected(self, expression: object) -> None:
+    @pytest.mark.parametrize(
+        ("expression", "error"), [("", InvalidValue), ("   ", InvalidValue), (42, InvalidType)]
+    )
+    def test_a_check_without_an_sql_expression_is_rejected(
+        self, expression: object, error: type[Exception]
+    ) -> None:
         class Blank(BaseModel):
             __tablename__ = "blank"
             __checks__ = {"positive": expression}
             id: int = ColumnField(Integer, primary_key=True)
 
-        with pytest.raises(ValueError, match=r"Blank: __checks__ rule 'positive'"):
+        with pytest.raises(error, match=r"Blank: __checks__ rule"):
             declared_checks(Blank)
 
     @pytest.mark.parametrize("declared", [[("positive", "id > 0")], "id > 0", ("id > 0",)])
@@ -136,7 +141,7 @@ class TestDeclaredChecks:
             __checks__ = declared
             id: int = ColumnField(Integer, primary_key=True)
 
-        with pytest.raises(ValueError, match=r"Listed: __checks__ must be a mapping"):
+        with pytest.raises(InvalidType, match=r"Listed: __checks__ must be a mapping"):
             declared_checks(Listed)
 
     def test_a_check_rule_that_is_not_a_string_is_rejected(self) -> None:
@@ -145,7 +150,7 @@ class TestDeclaredChecks:
             __checks__ = {1: "id > 0"}
             id: int = ColumnField(Integer, primary_key=True)
 
-        with pytest.raises(ValueError, match=r"Numbered: __checks__ rule 1 must be a string"):
+        with pytest.raises(InvalidType, match=r"Numbered: __checks__ rule must be a string"):
             declared_checks(Numbered)
 
     def test_partial_unique_that_is_not_a_mapping_is_rejected(self) -> None:
@@ -155,7 +160,7 @@ class TestDeclaredChecks:
             id: int = ColumnField(Integer, primary_key=True)
             is_owner: bool = ColumnField(Boolean)
 
-        with pytest.raises(ValueError, match=r"Listed: __partial_unique__ must be a mapping"):
+        with pytest.raises(InvalidType, match=r"Listed: __partial_unique__ must be a mapping"):
             declared_partial_unique(Listed)
 
     def test_partial_unique_indexes_are_read_from_the_model(self) -> None:
@@ -171,21 +176,29 @@ class TestDeclaredChecks:
             id: int = ColumnField(Integer, primary_key=True)
             is_owner: bool = ColumnField(Boolean)
 
-        with pytest.raises(ValueError, match=r"Typo: __partial_unique__ rule 'owner'.*'is_ownr'"):
+        with pytest.raises(ValueError, match=r"Typo: __partial_unique__ names an unknown column"):
             declared_partial_unique(Typo)
 
     @pytest.mark.parametrize(
-        "entry",
-        [((), "is_owner"), (("id",), ""), (("id",), None), ("id", "is_owner"), (("id",),)],
+        ("entry", "error"),
+        [
+            (((), "is_owner"), InvalidValue),
+            ((("id",), ""), InvalidValue),
+            ((("id",), None), InvalidType),
+            (("id", "is_owner"), InvalidType),
+            ((("id",),), InvalidValue),
+        ],
     )
-    def test_a_malformed_partial_unique_is_rejected(self, entry: object) -> None:
+    def test_a_malformed_partial_unique_is_rejected(
+        self, entry: object, error: type[Exception]
+    ) -> None:
         class Malformed(BaseModel):
             __tablename__ = "malformed"
             __partial_unique__ = {"owner": entry}
             id: int = ColumnField(Integer, primary_key=True)
             is_owner: bool = ColumnField(Boolean)
 
-        with pytest.raises(ValueError, match=r"Malformed: __partial_unique__ rule 'owner'"):
+        with pytest.raises(error, match=r"Malformed: __partial_unique__"):
             declared_partial_unique(Malformed)
 
     def test_a_partial_unique_rule_that_is_not_an_identifier_is_rejected(self) -> None:
@@ -195,7 +208,7 @@ class TestDeclaredChecks:
             id: int = ColumnField(Integer, primary_key=True)
             is_owner: bool = ColumnField(Boolean)
 
-        with pytest.raises(ValueError, match=r"Shouting: __partial_unique__ rule 'Owner'"):
+        with pytest.raises(ValueError, match=r"Shouting: __partial_unique__ rule"):
             declared_partial_unique(Shouting)
 
     def test_a_partial_unique_without_the_boundary_fails_c5(self) -> None:
@@ -206,9 +219,7 @@ class TestDeclaredChecks:
             roster: int = ColumnField(Integer)
             is_owner: bool = ColumnField(Boolean)
 
-        with pytest.raises(
-            ValueError, match=r"C5: LooseOwner partial unique owner \(roster\) lacks the boundary"
-        ):
+        with pytest.raises(ValueError, match=r"C5: LooseOwner partial unique lacks the boundary"):
             scope_columns(LooseOwner)
 
     def test_a_partial_unique_with_the_boundary_passes_c5(self) -> None:

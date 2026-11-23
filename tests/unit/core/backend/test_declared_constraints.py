@@ -92,7 +92,7 @@ class TestDeclaredConstraints:
             is_owner: bool = ColumnField(Boolean)
 
         metadata = MetaData()
-        with pytest.raises(ValueError, match=r"C5: LooseSeat partial unique owner"):
+        with pytest.raises(ValueError, match=r"C5: LooseSeat partial unique lacks the boundary"):
             compile_all(LooseSeat, metadata=metadata)
 
     def test_without_a_naming_convention_names_are_unchanged(self) -> None:
@@ -131,7 +131,7 @@ class TestDeclaredConstraints:
     def test_a_configured_naming_convention_with_an_unknown_kind_names_the_setting(self) -> None:
         with pytest.raises(
             ConfigError,
-            match=r"^stores\.default\.schema\.naming_convention: unknown kind 'primary'",
+            match=r"^stores\.default\.schema\.naming_convention: unknown kind;",
         ):
             configured_naming_convention({"primary": "pk_%(table_name)s"}, path="stores.default")
 

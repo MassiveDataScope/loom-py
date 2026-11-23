@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import msgspec
 
+from loom.core.errors import InvalidValue
 from loom.core.model import LoomFrozenStruct
 
 
@@ -29,7 +30,7 @@ class ConfigBinding(LoomFrozenStruct, frozen=True):
     def __post_init__(self) -> None:
         """Validate the config path."""
         if self.config_path and not self.config_path.strip():
-            raise ValueError("ConfigBinding.config_path must not be blank.")
+            raise InvalidValue("ConfigBinding.config_path must not be blank.")
 
 
 class Configurable:
@@ -52,10 +53,10 @@ class Configurable:
             Deferred config binding for this class.
 
         Raises:
-            ValueError: If ``config_path`` is empty or blank.
+            InvalidValue: If ``config_path`` is empty or blank.
         """
         if not config_path.strip():
-            raise ValueError("config_path must not be empty.")
+            raise InvalidValue("config_path must not be empty.")
         return ConfigBinding(
             target=cls,
             config_path=config_path,

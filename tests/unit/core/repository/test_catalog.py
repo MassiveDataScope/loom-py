@@ -97,16 +97,14 @@ class TestRepositoryCatalogForTable:
         with pytest.raises(ValueError, match=f"{DEFAULT_STORE}, {LEDGER}.*store="):
             catalog.for_table("catalog_shared")
 
-    def test_an_unknown_table_names_it_and_the_stores_searched(
-        self, catalog: RepositoryCatalog
-    ) -> None:
-        with pytest.raises(KeyError, match=f"catalog_missing.*{DEFAULT_STORE}, {LEDGER}"):
+    def test_an_unknown_table_names_the_stores_searched(self, catalog: RepositoryCatalog) -> None:
+        with pytest.raises(KeyError, match=f"No model stored.*{DEFAULT_STORE}, {LEDGER}"):
             catalog.for_table("catalog_missing")
 
     def test_a_table_of_another_store_is_unknown_in_the_store_asked(
         self, catalog: RepositoryCatalog
     ) -> None:
-        with pytest.raises(KeyError, match=f"catalog_orders.*{DEFAULT_STORE}"):
+        with pytest.raises(KeyError, match=f"No model stored.*{DEFAULT_STORE}"):
             catalog.for_table("catalog_orders", store=DEFAULT_STORE)
 
 
@@ -152,5 +150,5 @@ class TestFromRepositories:
 
         assert catalog[AcmeLedgerRecord] is repository
         assert catalog.for_table("ledger_records", store=LEDGER) is repository
-        with pytest.raises(KeyError, match="ledger_records"):
+        with pytest.raises(KeyError, match="No model stored"):
             catalog.for_table("ledger_records", store=DEFAULT_STORE)

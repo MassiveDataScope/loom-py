@@ -16,11 +16,9 @@ def _segments_of(path: Iterable[str]) -> tuple[str, ...]:
 
 def _segment(value: object) -> str:
     if not isinstance(value, str):
-        raise TypeError(f"A scope segment must be a string: {value!r}.")
+        raise TypeError("A scope segment must be a string.")
     if not value or _SEPARATOR in value:
-        raise ValueError(
-            f"A scope segment must be non-empty and free of {_SEPARATOR!r}: {value!r}."
-        )
+        raise ValueError(f"A scope segment must be non-empty and free of {_SEPARATOR!r}.")
     return value
 
 
@@ -105,7 +103,7 @@ class Scope:
                 (other than the root) or holds an empty segment.
         """
         if not text.startswith(_SEPARATOR):
-            raise ValueError(f"A scope text starts with {_SEPARATOR!r}: {text!r}.")
+            raise ValueError(f"A scope text starts with {_SEPARATOR!r}.")
         if text == _SEPARATOR:
             return cls.root()
         return cls(text[1:].split(_SEPARATOR))

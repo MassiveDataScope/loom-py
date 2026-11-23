@@ -18,7 +18,7 @@ def require_name(kind: str, name: str) -> None:
         ValueError: When *name* is empty or contains whitespace.
     """
     if not name or any(character.isspace() for character in name):
-        raise ValueError(f"A {kind} name must be non-empty and contain no whitespace: {name!r}.")
+        raise ValueError(f"A {kind} name must be non-empty and contain no whitespace.")
 
 
 class UnknownRoleError(LookupError):
@@ -148,18 +148,17 @@ class _Flattener:
 
     def _enter(self, name: str) -> None:
         if name in self._visiting:
-            path = [*self._visiting[self._visiting.index(name) :], name]
-            raise ValueError(f"Role extends form a cycle: {' -> '.join(map(repr, path))}.")
+            raise ValueError("Role extends form a cycle.")
         self._visiting.append(name)
 
     def _base(self, name: str, base: str) -> frozenset[Permission]:
         if base not in self._specs and base not in self._bases:
-            raise ValueError(f"Role {name!r} extends unknown role {base!r}.")
+            raise ValueError("A role extends an unknown role.")
         return self._resolve(base)
 
     def _permission(self, name: str, permission: str) -> Permission:
         if permission not in self._declared:
-            raise ValueError(f"Role {name!r} uses undeclared permission {permission}.")
+            raise ValueError("A role uses an undeclared permission.")
         return self._declared[permission]
 
 
@@ -170,9 +169,9 @@ def _check_extensions(
         if extended not in base_roles:
             continue
         if not rules.may_extend_base:
-            raise ValueError(f"Custom role {name!r} may not extend base roles.")
+            raise ValueError("A custom role may not extend base roles.")
         if extended in rules.non_extensible:
-            raise ValueError(f"Base role {extended!r} is not extensible.")
+            raise ValueError("A base role that is not extensible cannot be extended.")
 
 
 def _custom_role(
@@ -184,18 +183,16 @@ def _custom_role(
 ) -> Role:
     above = sorted(permission.name for permission in permissions - rules.ceiling)
     if above:
-        raise ValueError(f"Custom role {name!r} exceeds the ceiling: {', '.join(above)}.")
+        raise ValueError("A custom role may not hold permissions above the ceiling.")
     effective = f"{rules.custom_prefix}{namespace}/{name}"
     if effective in base_roles:
-        raise ValueError(
-            f"A base role is already named {effective!r}; custom roles never replace it."
-        )
+        raise ValueError("A custom role may not take the name of a base role.")
     return Role(effective, permissions)
 
 
 def _require_segment(kind: str, value: str) -> None:
     if not value or "/" in value:
-        raise ValueError(f"A {kind} must be non-empty and contain no '/': {value!r}.")
+        raise ValueError(f"A {kind} must be non-empty and contain no '/'.")
 
 
 class RoleCatalog:
@@ -227,12 +224,10 @@ class RoleCatalog:
         indexed: dict[str, Role] = {}
         for role in roles:
             if role.name in indexed:
-                raise ValueError(f"Role {role.name!r} is declared twice.")
+                raise ValueError("A role is declared twice.")
             undeclared = sorted(permission.name for permission in role.permissions - declared)
             if undeclared:
-                raise ValueError(
-                    f"Role {role.name!r} uses undeclared permissions: {', '.join(undeclared)}."
-                )
+                raise ValueError("A role uses undeclared permissions.")
             indexed[role.name] = role
         self._permissions = declared
         self._roles: Mapping[str, Role] = indexed

@@ -8,6 +8,7 @@ from enum import StrEnum
 import msgspec
 
 from loom.core.environment import Environment, is_inside_lambda
+from loom.core.errors import InvalidValue
 from loom.core.model import LoomFrozenStruct
 
 
@@ -43,7 +44,7 @@ class LogSettings(LoomFrozenStruct, frozen=True, kw_only=True, forbid_unknown_fi
         """Refuse a level the standard library does not know."""
         for name in (self.level, *self.named_levels.values()):
             if not is_log_level(name):
-                raise ValueError(f"unsupported log level {name!r}")
+                raise InvalidValue("unsupported log level")
 
     def format_for(self, environment: Environment) -> LogFormatName:
         """The format name in effect for a process running in *environment*."""

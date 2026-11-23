@@ -23,7 +23,7 @@ from uuid import UUID
 
 import msgspec
 
-from loom.core.errors import BoundaryValidationError
+from loom.core.errors import BoundaryValidationError, InvalidType, InvalidValue
 
 CANONICAL_TYPES: tuple[type, ...] = (str, int, Decimal, date, UUID, Enum)
 """The classes a business-key field may be annotated with, ``bool`` and ``datetime`` included."""
@@ -40,8 +40,8 @@ def canonical_form(value: object) -> str:
     hyphenated.
 
     Raises:
-        TypeError: If the value's type has no canonical form.
-        ValueError: If the value is a naive ``datetime`` or a non-finite ``Decimal``.
+        InvalidType: If the value's type has no canonical form.
+        InvalidValue: If the value is a naive ``datetime`` or a non-finite ``Decimal``.
     """
     match value:
         case Enum():
@@ -61,7 +61,7 @@ def canonical_form(value: object) -> str:
         case UUID():
             return str(value)
         case _:
-            raise TypeError(f"{type(value).__name__} has no canonical form")
+            raise InvalidType(f"{type(value).__name__} has no canonical form")
 
 
 def _nfc(text: str) -> str:
@@ -82,13 +82,13 @@ def is_canonical_type(python_type: type) -> bool:
 
 def _canonical_decimal(value: Decimal) -> str:
     if not value.is_finite():
-        raise ValueError("a non-finite Decimal has no canonical form")
+        raise InvalidValue("a non-finite Decimal has no canonical form")
     return "0" if value == 0 else format(value.normalize(), "f")
 
 
 def _canonical_datetime(value: datetime) -> str:
     if value.tzinfo is None or value.utcoffset() is None:
-        raise ValueError("a naive datetime has no canonical form; give it a timezone")
+        raise InvalidValue("a naive datetime has no canonical form; give it a timezone")
     utc = value.astimezone(UTC).replace(tzinfo=None)
     return f"{utc.isoformat(timespec='microseconds')}Z"
 
@@ -147,16 +147,16 @@ class BusinessKey:
     model. Startup refuses an unknown or nullable field.
 
     Raises:
-        ValueError: If no field is named, or one is named twice.
+        InvalidValue: If no field is named, or one is named twice.
     """
 
     fields: tuple[str, ...]
 
     def __init__(self, *fields: str) -> None:
         if not fields:
-            raise ValueError("BusinessKey needs at least one field")
+            raise InvalidValue("BusinessKey needs at least one field")
         if len(set(fields)) != len(fields):
-            raise ValueError(f"BusinessKey repeats a field: {', '.join(fields)}")
+            raise InvalidValue("BusinessKey repeats a field")
         object.__setattr__(self, "fields", fields)
 
 

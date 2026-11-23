@@ -50,5 +50,5 @@ def load_authz_product() -> AuthzProduct | None:
     loaded: object = entry.load()
     product = loaded() if callable(loaded) else loaded
     if not isinstance(product, AuthzProduct):
-        raise TypeError(f"entry point {entry.name!r} does not provide an AuthzProduct")
+        raise TypeError("an authz entry point does not provide an AuthzProduct")
     return product

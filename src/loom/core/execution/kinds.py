@@ -14,6 +14,7 @@ from collections.abc import Callable
 from dataclasses import dataclass
 from typing import Any, Protocol, TypeVar, get_origin, runtime_checkable
 
+from loom.core.errors import InvalidType, InvalidUse, InvalidValue
 from loom.core.errors.container import ContainerSealed
 
 _K = TypeVar("_K")
@@ -152,19 +153,19 @@ class ExecutionKinds:
         """Register the resolver of ``kind``.
 
         Raises:
-            TypeError: When ``resolver`` has no ``resolve(declaration, annotation)``,
+            InvalidType: When ``resolver`` has no ``resolve(declaration, annotation)``,
                 such as a positional ``(name, identity)`` callable.
-            RuntimeError: When ``kind`` already has one.
+            InvalidUse: When ``kind`` already has one.
         """
         self._check_frozen()
         if not isinstance(resolver, ExecutionResolver):
-            raise TypeError(
+            raise InvalidType(
                 f"The {kind.name!r} resolver must be an ExecutionResolver with "
                 "resolve(declaration, annotation); positional callables such as "
                 "(name, identity) are no longer accepted"
             )
         if kind in self._resolvers:
-            raise RuntimeError(f"A resolver is already bound for the {kind.name!r} kind")
+            raise InvalidUse(f"A resolver is already bound for the {kind.name!r} kind")
         self._resolvers[kind] = resolver
 
     def is_bound(self, kind: Kind) -> bool:
@@ -187,4 +188,4 @@ class ExecutionKinds:
         self._check_frozen()
         current = table.setdefault(key, value)
         if current != value:
-            raise ValueError(f"{key!r} is already declared as {current!r}, not {value!r}")
+            raise InvalidValue("a key is already declared with a different value")

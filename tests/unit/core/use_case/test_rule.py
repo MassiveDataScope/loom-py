@@ -5,7 +5,7 @@ from typing import Any, cast
 import pytest
 
 from loom.core.command import Command, Patch
-from loom.core.errors import RuleViolationError, RuleViolationsError
+from loom.core.errors import InvalidUse, RuleViolationError, RuleViolationsError
 from loom.core.use_case import F
 from loom.core.use_case.rule import Rule
 
@@ -150,7 +150,7 @@ class TestRuleDsl:
     ) -> None:
         rule = Rule.check(F(AcmeRuledUser).email, via=cast(Any, lambda _email: outcome))
 
-        with pytest.raises(TypeError, match=r"field 'email'.*returned .*or None"):
+        with pytest.raises(TypeError, match=r"returned .*or None"):
             rule(AcmeRuledUser(email="a@b.com", name="Alice"), frozenset({"email", "name"}))
 
     def test_check_rejects_message_keyword(self) -> None:
@@ -233,7 +233,7 @@ class TestRuleDsl:
         cmd = AcmeRuledUser(email="ok@example.com", name="Alice")
         fields_set = frozenset({"email", "name"})
 
-        with pytest.raises(ValueError, match="runtime context"):
+        with pytest.raises(InvalidUse, match="runtime context"):
             rule(cmd, fields_set)
 
     def test_require_present_for_non_patch_field(self) -> None:
