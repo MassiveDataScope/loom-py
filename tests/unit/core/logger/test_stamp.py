@@ -4,6 +4,7 @@ import logging
 
 import pytest
 
+from loom.core.errors import NotFound
 from loom.core.logger import (
     ContextFilter,
     LogField,
@@ -11,6 +12,7 @@ from loom.core.logger import (
     LogRuntime,
     log_context,
 )
+from loom.core.logger.stamp import MAX_STACK_LENGTH
 from loom.core.tracing.context import active_trace_id
 from tests.helpers.loggers import CapturingHandler
 
@@ -106,18 +108,6 @@ class TestContextFilter:
         assert record[LogField.CODE_LINE] == Greeter.greet.__code__.co_firstlineno + 1
         assert record[LogField.CODE_FILE] == __file__
 
-    def test_a_record_with_an_exception_gets_its_type_for_formats_loom_does_not_render(
-        self, stamped: CapturingHandler
-    ) -> None:
-        try:
-            raise ValueError("secret row value")
-        except ValueError:
-            logging.getLogger("tests.stamp").warning("billing.invoice_failed", exc_info=True)
-
-        record = _only(stamped).__dict__
-        assert record[LogField.EXCEPTION_TYPE] == "ValueError"
-        assert LogField.EXCEPTION_MESSAGE.value not in record
-
     def test_a_record_without_an_exception_gets_no_exception_type(
         self, stamped: CapturingHandler
     ) -> None:
@@ -147,3 +137,52 @@ class TestContextFilter:
         logging.getLogger("tests.stamp").info("billing.invoice_issued")
 
         assert _only(handler).__dict__[LogField.RUNTIME] == "celery"
+
+
+def _log_failure(level: int, failure: Exception, **extra: object) -> None:
+    try:
+        raise failure
+    except Exception:
+        logging.getLogger("tests.stamp").log(
+            level, "billing.invoice_failed", exc_info=True, extra=extra
+        )
+
+
+class TestFailureFields:
+    """The filter is the one owner of what a record says about its exception."""
+
+    def test_a_record_names_the_type_and_never_the_message(self, stamped: CapturingHandler) -> None:
+        _log_failure(logging.WARNING, ValueError("secret row value"))
+
+        record = _only(stamped).__dict__
+        assert record[LogField.EXCEPTION_TYPE] == "ValueError"
+        assert "secret row value" not in {str(value) for value in record.values()}
+        assert LogField.EXCEPTION_STACKTRACE.value not in record
+
+    def test_a_loom_error_adds_its_code(self, stamped: CapturingHandler) -> None:
+        _log_failure(logging.WARNING, NotFound("Invoice", id=7))
+
+        assert _only(stamped).__dict__[LogField.ERROR_CODE] == "not_found"
+
+    def test_from_error_up_the_stack_is_written(self, stamped: CapturingHandler) -> None:
+        _log_failure(logging.ERROR, ValueError("amount below zero"))
+
+        stack = _only(stamped).__dict__[LogField.EXCEPTION_STACKTRACE]
+        assert stack.startswith("Traceback (most recent call last):")
+        assert stack.endswith("ValueError: amount below zero")
+
+    def test_a_long_stack_keeps_its_end(self, stamped: CapturingHandler) -> None:
+        _log_failure(logging.ERROR, ValueError("x" * MAX_STACK_LENGTH))
+
+        stack = _only(stamped).__dict__[LogField.EXCEPTION_STACKTRACE]
+        assert len(stack) == MAX_STACK_LENGTH
+        assert stack.endswith("x" * 100)
+
+    def test_extra_cannot_forge_the_failure_fields(self, stamped: CapturingHandler) -> None:
+        forged = {LogField.EXCEPTION_TYPE.value: "Forged", LogField.ERROR_CODE.value: "forged"}
+
+        _log_failure(logging.WARNING, ValueError("boom"), **forged)
+
+        record = _only(stamped).__dict__
+        assert record[LogField.EXCEPTION_TYPE] == "ValueError"
+        assert LogField.ERROR_CODE.value not in record

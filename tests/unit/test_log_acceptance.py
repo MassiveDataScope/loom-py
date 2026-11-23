@@ -177,7 +177,7 @@ class TestFieldsSurvive:
     """Requirement 1: a record's fields reach every output."""
 
     @pytest.mark.parametrize(
-        "output", _cells("PR 1: Lambda Text gets loom's layout", "lambda_text"), indirect=True
+        "output", _cells("PR 2: Lambda gets loom's JSON", "lambda_text"), indirect=True
     )
     def test_a_field_reaches_the_output(self, output: Output) -> None:
         _LOGGER.info("order_accepted", extra={LogField.ATTEMPT: 3})
@@ -189,14 +189,16 @@ class TestFailureIdentity:
     """Requirement 2: a failure's type and code are written."""
 
     @pytest.mark.parametrize(
-        "output", _cells("PR 1: Lambda Text gets loom's layout", "lambda_text"), indirect=True
+        "output", _cells("PR 2: Lambda gets loom's JSON", "lambda_text"), indirect=True
     )
     def test_the_type_of_a_failure_is_written(self, output: Output) -> None:
         _LOGGER.error("order_failed", exc_info=_failure())
 
         assert "DomainError" in output.read_fields()
 
-    @pytest.mark.parametrize("output", _cells("PR 1: the code is written", *OUTPUTS), indirect=True)
+    @pytest.mark.parametrize(
+        "output", _cells("PR 2: Lambda gets loom's JSON", "lambda_text"), indirect=True
+    )
     def test_the_code_of_a_loom_error_is_written(self, output: Output) -> None:
         _LOGGER.error("order_failed", exc_info=_failure())
 
@@ -204,15 +206,15 @@ class TestFailureIdentity:
 
 
 class TestStackOnce:
-    """Requirement 2: a failure logged twice writes its stack once."""
+    """Requirement 2: a record writes its failure's stack once.
 
-    @pytest.mark.parametrize(
-        "output", _cells("PR 1: 'once' to be defined", *OUTPUTS), indirect=True
-    )
-    def test_the_same_failure_logged_twice_writes_one_stack(self, output: Output) -> None:
-        failure = _failure()
-        _LOGGER.error("order_failed", exc_info=failure)
-        _LOGGER.error("request_failed", exc_info=failure)
+    Once per record: loom passes ``exc_info`` only where it stops the exception,
+    so one failure is one record.
+    """
+
+    @pytest.mark.parametrize("output", OUTPUTS, indirect=True)
+    def test_a_failure_writes_one_stack(self, output: Output) -> None:
+        _LOGGER.error("order_failed", exc_info=_failure())
 
         assert output.read().count(STACK_HEAD) == 1
 
@@ -222,7 +224,7 @@ class TestNoMessageField:
 
     @pytest.mark.parametrize(
         "output",
-        _cells("PR 1 (stdout), PR 2 (OTEL handler)", "stdout_json", "stdout_text", "otel_export"),
+        _cells("PR 3: the OTEL export gets no exc_info", "otel_export"),
         indirect=True,
     )
     def test_the_message_of_a_failure_is_not_a_field(self, output: Output) -> None:
@@ -249,7 +251,7 @@ def _fail_a_scope(observability: Observability) -> None:
 class TestScopeFailure:
     """Requirements 2 and 3 for the record and the span a failing scope writes."""
 
-    @pytest.mark.xfail(strict=True, reason="backlog: PR 2: the observer writes error.message")
+    @pytest.mark.xfail(strict=True, reason="backlog: PR 4: the observer writes error.message")
     def test_the_scope_record_does_not_carry_the_message(
         self, traced: tuple[Observability, InMemorySpanExporter], stdout_json: Output
     ) -> None:
@@ -257,7 +259,7 @@ class TestScopeFailure:
 
         assert CANARY not in stdout_json.read_fields()
 
-    @pytest.mark.xfail(strict=True, reason="backlog: PR 2: the observer passes no exception")
+    @pytest.mark.xfail(strict=True, reason="backlog: PR 4: the observer passes no exception")
     def test_the_scope_record_carries_type_and_code(
         self, traced: tuple[Observability, InMemorySpanExporter], stdout_json: Output
     ) -> None:
@@ -267,7 +269,7 @@ class TestScopeFailure:
         assert "DomainError" in fields
         assert ErrorCode.NOT_FOUND.value in fields
 
-    @pytest.mark.xfail(strict=True, reason="backlog: PR 2: span status and event carry the message")
+    @pytest.mark.xfail(strict=True, reason="backlog: PR 4: span status and event carry the message")
     def test_the_span_does_not_carry_the_message(
         self, traced: tuple[Observability, InMemorySpanExporter]
     ) -> None:

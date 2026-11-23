@@ -297,8 +297,10 @@ class TestMongoClientOptions:
         with caplog.at_level(logging.WARNING, logger=backend_module.__name__):
             assert await wiring.readiness() is False
 
-        assert "readiness" in caplog.text
-        assert "ConnectionError" in caplog.text
+        failure = caplog.records[-1]
+        assert failure.getMessage() == "mongo readiness probe failed"
+        assert failure.exc_info is not None
+        assert failure.exc_info[0] is ConnectionError
 
     async def test_lifespan_closes_the_client_on_shutdown(
         self, monkeypatch: pytest.MonkeyPatch
