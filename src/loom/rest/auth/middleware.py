@@ -20,12 +20,13 @@ import msgspec
 
 from loom.core.errors.codes import ErrorCode
 from loom.core.identity import reset_identity, set_identity
+from loom.core.log_names import LogField
 from loom.core.tracing import get_trace_id
 from loom.rest.auth.abc import AuthenticationUnavailable, Authenticator, RequestCredentials
 from loom.rest.auth.config import JwtAuthConfig
 from loom.rest.auth.jwt import JwtAuthenticator
 from loom.rest.constants import BEARER_CHALLENGE
-from loom.rest.event import RestEvent, RestKey
+from loom.rest.event import RestEvent
 
 _Scope = dict[str, Any]
 _Receive = Callable[[], Awaitable[dict[str, Any]]]
@@ -102,7 +103,7 @@ class AuthenticationMiddleware:
         except AuthenticationUnavailable:
             _logger.warning(
                 RestEvent.AUTHENTICATION_UNAVAILABLE,
-                extra={RestKey.ROUTE: scope.get("path", _UNKNOWN_CLIENT)},
+                extra={LogField.HTTP_REQUEST_METHOD: scope.get("method", _UNKNOWN_CLIENT)},
                 exc_info=True,
             )
             await _send_error(
@@ -116,10 +117,7 @@ class AuthenticationMiddleware:
         if identity is None:
             _logger.info(
                 RestEvent.AUTHENTICATION_REFUSED,
-                extra={
-                    RestKey.ROUTE: scope.get("path", _UNKNOWN_CLIENT),
-                    RestKey.CLIENT: _client_host(scope),
-                },
+                extra={LogField.HTTP_REQUEST_METHOD: scope.get("method", _UNKNOWN_CLIENT)},
             )
             await send_unauthorized(send)
             return
@@ -174,14 +172,6 @@ def _credentials(scope: _Scope) -> RequestCredentials:
         path=scope.get("path", ""),
         client_host=client[0] if client else None,
     )
-
-
-def _client_host(scope: _Scope) -> str:
-    """The caller's address, or a placeholder: ASGI allows ``client`` to be absent."""
-    client = scope.get("client")
-    if not client:
-        return _UNKNOWN_CLIENT
-    return str(client[0])
 
 
 async def send_unauthorized(send: _Send) -> None:

@@ -13,8 +13,10 @@ from typing import Any
 
 import pytest
 
+from loom.core.log_names import LogField
 from loom.rest.auth.abc import RequestCredentials
 from loom.rest.auth.middleware import AuthenticationMiddleware
+from loom.rest.event import RestEvent
 
 
 class RefusingAuthenticator:
@@ -78,9 +80,9 @@ class TestAuthRejectionLogging:
         with caplog.at_level(logging.INFO, logger="loom.rest.auth.middleware"):
             await _call(middleware)
 
-        logged = caplog.text
-        assert "/v1/catalog/search" in logged
-        assert "203.0.113.7" in logged
+        (record,) = caplog.records
+        assert record.msg == RestEvent.AUTHENTICATION_REFUSED
+        assert getattr(record, LogField.HTTP_REQUEST_METHOD) == "GET"
 
     async def test_the_log_never_carries_the_credential(
         self, middleware: AuthenticationMiddleware, caplog: pytest.LogCaptureFixture

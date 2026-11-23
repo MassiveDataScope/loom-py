@@ -390,7 +390,7 @@ class TestMisdeclaredHttpStatus:
         _assert_internal_fallback(exc, error)
         _assert_misdeclaration_logged(
             caplog,
-            type(error).__name__,
+            type(error).__qualname__,
             "public_detail",
             "leaked-field-value",
             "leaked-message-host",
@@ -407,7 +407,7 @@ class TestMisdeclaredHttpStatus:
 
         _assert_internal_fallback(exc, error)
         _assert_misdeclaration_logged(
-            caplog, type(error).__name__, "public_detail", "secret-raise-value"
+            caplog, type(error).__qualname__, "public_detail", "secret-raise-value"
         )
 
     @pytest.mark.parametrize(
@@ -435,7 +435,11 @@ class TestMisdeclaredHttpStatus:
 
         _assert_internal_fallback(exc, error)
         _assert_misdeclaration_logged(
-            caplog, type(error).__name__, "http_status", "secret-status-host", "secret-status-field"
+            caplog,
+            type(error).__qualname__,
+            "http_status",
+            "secret-status-host",
+            "secret-status-field",
         )
 
 

@@ -1169,7 +1169,7 @@ class TestDeclaredColumns:
         assert dict(route.filter_fields) == {"id": int, "title": str, "pages": int, "shelf_id": int}
         (record,) = caplog.records
         assert record.levelno == logging.WARNING
-        assert getattr(record, RestKey.ROUTE).endswith("IFace: route (GET, '/')")
+        assert getattr(record, RestKey.ROUTE) == "/books/"
 
     def test_a_uuid_column_is_filterable_sortable_and_in_all(self) -> None:
         class Declared(RestInterface[_Pass]):

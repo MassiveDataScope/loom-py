@@ -434,6 +434,7 @@ class _ColumnPolicy:
 
     Args:
         where: Route label used in compilation errors and warnings.
+        path: The route's full path template, the one a warning records.
         model: The use case's model, ``None`` when it declares none.
         takes_query_spec: Whether the use case takes a ``QuerySpec``.
         response: Result type of the use case, ``Created`` removed.
@@ -442,6 +443,7 @@ class _ColumnPolicy:
     """
 
     where: str
+    path: str
     model: type[Any] | None
     takes_query_spec: bool
     response: Any = Any
@@ -533,7 +535,7 @@ class _ColumnPolicy:
             )
         columns = scalar_column_annotations(self.model)
         if declared is ALL:
-            _logger.warning(RestEvent.COLUMNS_ALL_EXPOSED, extra={RestKey.ROUTE: self.where})
+            _logger.warning(RestEvent.COLUMNS_ALL_EXPOSED, extra={RestKey.ROUTE: self.path})
             return columns
         resolved: dict[str, Any] = {}
         for entry in declared:
@@ -771,6 +773,7 @@ class RestInterfaceCompiler:
             pagination_override = self._resolve_allow_pagination_override(route, interface)
             columns = _ColumnPolicy(
                 where=where,
+                path=path,
                 model=route.use_case.describe_main_repo()[0],
                 takes_query_spec=takes_query_spec,
                 response=result_type,

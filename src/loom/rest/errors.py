@@ -167,7 +167,7 @@ class HttpErrorMapper:
         except _Misdeclared:
             _logger.error(
                 RestEvent.HTTP_ERROR_MISDECLARED,
-                extra={RestKey.ERROR_CLASS: type(error).__name__},
+                extra={RestKey.ERROR_CLASS: type(error).__qualname__},
                 exc_info=True,
             )
             return _internal_fallback(error)
