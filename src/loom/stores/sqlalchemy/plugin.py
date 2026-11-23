@@ -31,6 +31,7 @@ from loom.core.stores.database import (
 )
 from loom.core.stores.plugin import StoreWiring, no_model_preparation
 from loom.core.stores.profile import StorePluginContext
+from loom.stores.sqlalchemy.event import SqlalchemyEvent, SqlalchemyKey
 from loom.stores.sqlalchemy.registry import (
     build_sqlalchemy_repository_registration_module,
     register_session_manager,
@@ -214,12 +215,7 @@ def _prepare_models(
     or verifies the schema, from the scoped tables this compilation captured.
     """
     if not models:
-        _logger.warning(
-            "no BaseModel classes discovered: the application starts with an empty "
-            "relational schema. Declare your first model, or set "
-            "%s.backend: none if it never persists.",
-            path,
-        )
+        _logger.warning(SqlalchemyEvent.NO_MODELS_DISCOVERED, extra={SqlalchemyKey.PATH: path})
     compile_all(*models, metadata=metadata)
     if settings is None:
         return
@@ -236,7 +232,7 @@ async def _readiness(session_manager: SessionManager) -> bool:
         async with session_manager.session() as session:
             await session.execute(_PROBE)
     except Exception:
-        _logger.warning("sqlalchemy readiness probe failed", exc_info=True)
+        _logger.warning(SqlalchemyEvent.READINESS_PROBE_FAILED, exc_info=True)
         return False
     return True
 
@@ -347,7 +343,8 @@ async def _run_startup_checks(store: _Store) -> None:
     check_time_zone_columns(dialect, metadata)
     if unprotected:
         _logger.warning(
-            "scoped tables left unprotected on this dialect: %s", ", ".join(unprotected)
+            SqlalchemyEvent.SCOPED_TABLES_UNPROTECTED,
+            extra={SqlalchemyKey.TABLES: list(unprotected)},
         )
     try:
         async with session_manager.engine.begin() as connection:
@@ -475,13 +472,13 @@ def _warn_audit_horizon(path: str, covered: int | None) -> None:
     """
     if covered is None or covered >= AUDIT_HORIZON_WARNING_MONTHS:
         return
-    fix = "run `loom schema audit ensure-partitions` or deploy"
     if covered == 0:
-        _logger.error(
-            "%s: no audit partition covers this month; audited writes fail; %s", path, fix
-        )
+        _logger.error(SqlalchemyEvent.AUDIT_PARTITION_MISSING, extra={SqlalchemyKey.PATH: path})
     else:
-        _logger.warning("%s: audit partitions cover only %d more month(s); %s", path, covered, fix)
+        _logger.warning(
+            SqlalchemyEvent.AUDIT_PARTITIONS_RUNNING_OUT,
+            extra={SqlalchemyKey.PATH: path, SqlalchemyKey.MONTHS_COVERED: covered},
+        )
 
 
 async def _refuse_scoped_in_database(connection: AsyncConnection, path: str) -> None:

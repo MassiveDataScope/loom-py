@@ -12,8 +12,8 @@ from loom.core.config.errors import ConfigError
 from loom.core.locator import DEFAULT_CODE_PATH, add_code_path
 from loom.core.stores.catalog import StoreKey
 from loom.stores.sqlalchemy.alembic import StoreSchema, load_store_schema
+from loom.stores.sqlalchemy.event import SqlalchemyEvent, SqlalchemyKey
 from loom.stores.sqlalchemy.rls import SchemaNames
-from tests.helpers.loggers import rendered
 
 SCOPED_MODULE = "tests.integration.agnosticism.notes"
 PLAIN_MODULE = "tests.unit.core.locator_fixtures.plain"
@@ -398,11 +398,12 @@ class TestStoreSections:
             application = load_store_schema(two_stores, store=StoreKey(store))
 
         loaded = (set(application.metadata.tables), application.store, application.path)
-        left_out = [rendered(r) for r in caplog.records if "StoresNotLoaded" in r.getMessage()]
+        left_out = [r for r in caplog.records if r.msg == SqlalchemyEvent.STORES_NOT_LOADED]
         assert loaded == ({table}, store, f"stores.{store}")
         assert application.database.url == url
         assert len(left_out) == 1
-        assert repr(skipped) in left_out[0]
+        assert left_out[0].__dict__[SqlalchemyKey.STORE] == store
+        assert left_out[0].__dict__[SqlalchemyKey.SKIPPED_STORES] == [skipped]
 
 
 @pytest.fixture

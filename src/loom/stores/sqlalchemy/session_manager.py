@@ -18,6 +18,7 @@ from sqlalchemy.orm import Session
 from sqlalchemy.pool import Pool, QueuePool
 
 from loom.core.errors import InvalidValue
+from loom.core.errors.summary import ErrorSummary
 from loom.core.identity import Acting
 from loom.core.model.redaction import reveal_for_driver
 from loom.core.stores.catalog import StoreKey
@@ -26,6 +27,7 @@ from loom.core.stores.profile import PoolMetricsSink, RuntimeProfile
 from loom.core.stores.uow.scope import current_handle
 from loom.core.tracing import get_trace_id
 from loom.stores.sqlalchemy._pool_metrics import instrumented_pool_class
+from loom.stores.sqlalchemy.event import SqlalchemyEvent, SqlalchemyKey
 from loom.stores.sqlalchemy.schema import get_metadata
 from loom.stores.sqlalchemy.session_settings import (
     SessionSettings,
@@ -116,7 +118,6 @@ class SessionManager:
         if connect_args is not None:
             engine_config["connect_args"] = connect_args
 
-        self._log = logging.getLogger(__name__)
         self._engine = create_async_engine(url, **engine_config)
         self._session_settings = session_settings
         self._metadata = metadata if metadata is not None else get_metadata()
@@ -133,13 +134,13 @@ class SessionManager:
         )
         if inject_trace_id:
             _register_trace_id_listener(self._engine)
-        self._log.info(
-            "SessionManagerInitialized",
+        _log.info(
+            SqlalchemyEvent.SESSION_MANAGER_INITIALIZED,
             extra={
-                "backend": self._engine.url.get_backend_name(),
-                "driver": self._engine.url.get_driver_name(),
-                "inject_trace_id": inject_trace_id,
-                "session_settings": session_settings is not None,
+                SqlalchemyKey.BACKEND: self._engine.url.get_backend_name(),
+                SqlalchemyKey.DRIVER: self._engine.url.get_driver_name(),
+                SqlalchemyKey.INJECT_TRACE_ID: inject_trace_id,
+                SqlalchemyKey.SESSION_SETTINGS: session_settings is not None,
             },
         )
 
@@ -247,9 +248,9 @@ class SessionManager:
                 if write:
                     await session.commit()
             except Exception as exc:
-                self._log.error(
-                    "OperationSessionRollback",
-                    extra={"store": self.store, "error": type(exc).__name__},
+                _log.error(
+                    SqlalchemyEvent.OPERATION_SESSION_ROLLED_BACK,
+                    extra={SqlalchemyKey.STORE: self.store, **ErrorSummary.of(exc).fields()},
                 )
                 raise
 
@@ -264,18 +265,18 @@ class SessionManager:
         Yields:
             An ``AsyncSession`` bound to the managed engine.
         """
-        self._log.debug("SessionScopeOpened")
+        _log.debug(SqlalchemyEvent.SESSION_OPENED)
         session = self._session_factory()
         try:
             yield session
         finally:
             await session.close()
-            self._log.debug("SessionScopeClosed")
+            _log.debug(SqlalchemyEvent.SESSION_CLOSED)
 
     async def close(self) -> None:
         """Close the engine and release all pooled connections."""
         await self._engine.dispose()
-        self._log.info("SessionManagerClosed")
+        _log.info(SqlalchemyEvent.SESSION_MANAGER_CLOSED)
 
     @property
     def engine(self) -> AsyncEngine:
@@ -327,7 +328,7 @@ def build_session_manager(
     pool_class = manager_kwargs.get("poolclass") or _default_pool_class(str(config.url))
     queued = issubclass(pool_class, QueuePool)
     if not queued:
-        _log.debug("PoolSizingOmitted", extra={"reason": "dialect pool holds no queue"})
+        _log.debug(SqlalchemyEvent.POOL_SIZING_OMITTED)
     instrumented = pool_metrics is not None and queued
     if instrumented:
         manager_kwargs["poolclass"] = instrumented_pool_class(

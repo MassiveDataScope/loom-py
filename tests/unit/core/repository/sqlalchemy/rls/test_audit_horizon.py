@@ -6,6 +6,7 @@ import logging
 
 import pytest
 
+from loom.stores.sqlalchemy.event import SqlalchemyEvent, SqlalchemyKey
 from loom.stores.sqlalchemy.plugin import _warn_audit_horizon
 from loom.stores.sqlalchemy.rls.audit_verify import AuditState, audit_findings
 
@@ -34,17 +35,24 @@ class TestAuditHorizon:
         assert audit_findings(state, {}) == []
 
     @pytest.mark.parametrize(
-        ("covered", "level"),
-        [(0, logging.ERROR), (2, logging.WARNING)],
+        ("covered", "level", "event"),
+        [
+            (0, logging.ERROR, SqlalchemyEvent.AUDIT_PARTITION_MISSING),
+            (2, logging.WARNING, SqlalchemyEvent.AUDIT_PARTITIONS_RUNNING_OUT),
+        ],
     )
     def test_startup_logs_a_short_horizon(
-        self, caplog: pytest.LogCaptureFixture, covered: int, level: int
+        self,
+        caplog: pytest.LogCaptureFixture,
+        covered: int,
+        level: int,
+        event: SqlalchemyEvent,
     ) -> None:
         with caplog.at_level(logging.WARNING):
             _warn_audit_horizon("stores.default", covered)
 
-        assert [record.levelno for record in caplog.records] == [level]
-        assert "ensure-partitions" in caplog.records[0].getMessage()
+        assert [(record.levelno, record.msg) for record in caplog.records] == [(level, event)]
+        assert caplog.records[0].__dict__[SqlalchemyKey.PATH] == "stores.default"
 
     @pytest.mark.parametrize("covered", [None, 3, 13])
     def test_startup_is_silent_without_a_log_or_with_margin(
