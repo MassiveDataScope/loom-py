@@ -160,6 +160,9 @@ def loom_events_follow_the_contract(request: pytest.FixtureRequest) -> Iterator[
 
 @pytest.fixture(autouse=True)
 def caplog_shows_fields(request: pytest.FixtureRequest) -> None:
-    """Make ``caplog.text`` show each record with its fields, as the text format writes it."""
+    """Make ``caplog.text`` show each record with its fields, laid out as the text format does.
+
+    Values stay raw: caplog's handler carries no ``ContextFilter``.
+    """
     if "caplog" in request.fixturenames:
         request.getfixturevalue("caplog").handler.setFormatter(TextFormatter())
