@@ -99,8 +99,8 @@ class JwtIssuer:
             ValueError: If the identity is anonymous, holds an attribute that would
                 be unreadable once encoded, or *ttl* is out of bounds.
             RuntimeError: If the identity carries no role (a translation bug), or
-                signing fails; then the cause is not chained, so the caller learns
-                nothing about the key or the algorithm.
+                signing fails (the cause is then not chained, so the caller learns
+                nothing about the key or the algorithm).
         """
         lifetime = self._checked_lifetime(ttl)
         issued_at = datetime.now(tz=UTC)
