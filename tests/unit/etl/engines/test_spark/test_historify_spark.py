@@ -100,21 +100,18 @@ def _stamp_new_rows(frame: DataFrame, spec: HistorifySpec, eff_date: Any) -> Dat
 _CANARY = "card 4111"
 
 
-class TestDuplicateKeys:
-    def test_unique_frame_has_none(self, spark: SparkSession) -> None:
+class TestHasDuplicates:
+    def test_a_unique_frame_has_none(self, spark: SparkSession) -> None:
         frame = spark.createDataFrame(
             [{"player_id": 1, "team_id": "RM"}, {"player_id": 2, "team_id": "BCA"}]
         )
-        assert SparkHistorifyOps().duplicate_keys(frame, ["player_id", "team_id"]) is None
+        assert not SparkHistorifyOps().has_duplicates(frame, ["player_id", "team_id"])
 
-    def test_duplicates_name_the_key_columns_and_never_their_values(
-        self, spark: SparkSession
-    ) -> None:
+    def test_a_repeated_combination_is_found(self, spark: SparkSession) -> None:
         frame = spark.createDataFrame(
             [{"player_id": 1, "team_id": _CANARY}, {"player_id": 1, "team_id": _CANARY}]
         )
-        described = SparkHistorifyOps().duplicate_keys(frame, ["player_id", "team_id"])
-        assert described == "['player_id', 'team_id']"
+        assert SparkHistorifyOps().has_duplicates(frame, ["player_id", "team_id"])
 
 
 class TestAssertNoDateCollisions:

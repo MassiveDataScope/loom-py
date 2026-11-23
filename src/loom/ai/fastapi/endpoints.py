@@ -59,7 +59,6 @@ from loom.core.config.errors import ConfigError
 from loom.core.errors import BoundaryValidationError
 from loom.core.identity import Identity, current_identity
 from loom.core.model import LoomFrozenStruct
-from loom.core.model._loom_type import _msgspec_error
 from loom.core.observability.event import Scope
 from loom.core.observability.observability import Observability
 from loom.core.observability.span import LoomSpan
@@ -219,7 +218,7 @@ async def _read_request(
     try:
         parsed = _REQUEST_DECODER.decode(body)
     except msgspec.DecodeError as exc:
-        raise TransportError(422, "INVALID_REQUEST", _msgspec_error(exc).message) from exc
+        raise TransportError(422, "INVALID_REQUEST", str(exc)) from exc
     if len(parsed.prompt.encode("utf-8")) > max_prompt_bytes:
         raise TransportError(
             413,

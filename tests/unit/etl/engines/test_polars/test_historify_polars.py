@@ -118,15 +118,14 @@ def _stamp_new_rows(frame: pl.DataFrame, spec: HistorifySpec, eff_date: Any) -> 
 _CANARY = "card 4111"
 
 
-class TestDuplicateKeys:
-    def test_unique_frame_has_none(self) -> None:
+class TestHasDuplicates:
+    def test_a_unique_frame_has_none(self) -> None:
         frame = pl.DataFrame({"player_id": [1, 2], "team_id": ["RM", "BCA"]})
-        assert PolarsHistorifyOps().duplicate_keys(frame, ["player_id", "team_id"]) is None
+        assert not PolarsHistorifyOps().has_duplicates(frame, ["player_id", "team_id"])
 
-    def test_duplicates_name_the_key_columns_and_never_their_values(self) -> None:
+    def test_a_repeated_combination_is_found(self) -> None:
         frame = pl.DataFrame({"player_id": [1, 1], "team_id": [_CANARY, _CANARY]})
-        described = PolarsHistorifyOps().duplicate_keys(frame, ["player_id", "team_id"])
-        assert described == "['player_id', 'team_id']"
+        assert PolarsHistorifyOps().has_duplicates(frame, ["player_id", "team_id"])
 
 
 class TestAssertNoDateCollisions:

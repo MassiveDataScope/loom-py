@@ -258,8 +258,8 @@ class PolarsHistorifyOps:
         boundary_dtype = _history_boundary_dtype(spec)
         return result.with_columns(pl.lit(None, dtype=boundary_dtype).alias(spec.deleted_at))
 
-    def duplicate_keys(self, frame: pl.DataFrame, keys: list[str]) -> str | None:
-        return None if len(frame) == frame.select(keys).n_unique() else str(keys)
+    def has_duplicates(self, frame: pl.DataFrame, keys: list[str]) -> bool:
+        return len(frame) != frame.select(keys).n_unique()
 
     def assert_no_date_collisions(
         self,

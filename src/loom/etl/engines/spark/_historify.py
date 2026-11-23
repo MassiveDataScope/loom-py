@@ -273,9 +273,8 @@ class SparkHistorifyOps:
         boundary_dtype = _history_boundary_dtype_sql(spec)
         return result.withColumn(spec.deleted_at, F.lit(None).cast(boundary_dtype))
 
-    def duplicate_keys(self, frame: DataFrame, keys: list[str]) -> str | None:
-        unique = frame.groupBy(keys).count().filter(F.col("count") > 1).isEmpty()
-        return None if unique else str(keys)
+    def has_duplicates(self, frame: DataFrame, keys: list[str]) -> bool:
+        return not frame.groupBy(keys).count().filter(F.col("count") > 1).isEmpty()
 
     def assert_no_date_collisions(
         self,

@@ -84,7 +84,7 @@ from typing import TYPE_CHECKING, Any, Final, cast, get_type_hints
 import msgspec
 
 from loom.ai.errors import AgentCompilationError, AgentErrorCode
-from loom.core.model._loom_type import _msgspec_error
+from loom.core.errors.summary import ErrorSummary
 from loom.core.model.redaction import Secret
 from loom.core.plugins.entrypoints import (
     DuplicateEntryPointError,
@@ -416,8 +416,7 @@ def _build(auth: CompiledRemoteAuth) -> ClientAuth:
         raise AgentCompilationError(
             [
                 AgentErrorCode.MCP_AUTH_STRATEGY_INVALID.issue(
-                    kind=auth.kind,
-                    reason=f"a setting has the wrong type: {_msgspec_error(exc).message}",
+                    kind=auth.kind, reason=f"a setting has the wrong type: {exc}"
                 )
             ]
         ) from exc
@@ -427,7 +426,8 @@ def _build(auth: CompiledRemoteAuth) -> ClientAuth:
         raise AgentCompilationError(
             [
                 AgentErrorCode.MCP_AUTH_STRATEGY_INVALID.issue(
-                    kind=auth.kind, reason=f"it rejected its settings: {exc}"
+                    kind=auth.kind,
+                    reason=f"it rejected its settings: {ErrorSummary.message_for(exc)}",
                 )
             ]
         ) from exc
