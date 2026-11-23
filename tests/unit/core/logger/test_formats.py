@@ -13,10 +13,7 @@ from loom.core.logger.formats import (
     TRUNCATION_MARKER,
     JsonFormatter,
     TextFormatter,
-    json_format,
-    text_format,
 )
-from loom.core.logger.settings import LogSettings
 from loom.core.model.redaction import MASK, Dsn, RedactedMap, Secret
 
 _STACK = LogField.EXCEPTION_STACKTRACE.value
@@ -218,18 +215,3 @@ class TestLogInjection:
 
         assert "\n" not in line
         assert json.loads(line)["user"] == self.FORGED
-
-
-class TestStdoutFormats:
-    @pytest.mark.parametrize(
-        ("build", "formatter"), [(json_format, JsonFormatter), (text_format, TextFormatter)]
-    )
-    def test_the_handler_writes_to_stdout_with_its_formatter(
-        self, build: object, formatter: type[logging.Formatter], capsys: pytest.CaptureFixture[str]
-    ) -> None:
-        handler = build(LogSettings())  # type: ignore[operator]
-
-        handler.handle(_record())
-
-        assert isinstance(handler.formatter, formatter)
-        assert "billing.invoice_issued" in capsys.readouterr().out

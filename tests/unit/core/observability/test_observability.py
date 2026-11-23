@@ -5,13 +5,14 @@ from __future__ import annotations
 import json
 import logging
 
+import msgspec
 import pytest
 
-from loom.core.config import ConfigError
 from loom.core.config.observability import OtelConfig
 from loom.core.environment import Environment
 from loom.core.logger import ContextFilter, LogRuntime
 from loom.core.logger.install import HANDLER_NAME
+from loom.core.logger.settings import LogFormatName
 from loom.core.model.redaction import Dsn
 from loom.core.observability.config import (
     LogObservabilityConfig,
@@ -165,7 +166,9 @@ class TestFromConfig:
     def test_export_logs_attaches_the_export_handler_with_the_context_and_span_filters(
         self, log_export: LogExport
     ) -> None:
-        config = ObservabilityConfig(log=LogObservabilityConfig(format="json"), otel=_OTEL)
+        config = ObservabilityConfig(
+            log=LogObservabilityConfig(format=LogFormatName.JSON), otel=_OTEL
+        )
 
         Observability.from_config(config, service_name="billing")
 
@@ -177,7 +180,9 @@ class TestFromConfig:
     def test_configuring_twice_keeps_the_context_on_the_exported_logs(
         self, log_export: LogExport
     ) -> None:
-        config = ObservabilityConfig(log=LogObservabilityConfig(format="json"), otel=_OTEL)
+        config = ObservabilityConfig(
+            log=LogObservabilityConfig(format=LogFormatName.JSON), otel=_OTEL
+        )
 
         Observability.from_config(config, service_name="billing")
         Observability.from_config(config, service_name="billing")
@@ -194,7 +199,7 @@ class TestFromConfig:
     def test_the_log_format_is_installed_with_the_service_identity(
         self, capsys: pytest.CaptureFixture[str]
     ) -> None:
-        config = ObservabilityConfig(log=LogObservabilityConfig(format="json"))
+        config = ObservabilityConfig(log=LogObservabilityConfig(format=LogFormatName.JSON))
 
         Observability.from_config(
             config, environment=Environment.STAGING, service_name="billing", service_version="2.4"
@@ -209,7 +214,7 @@ class TestFromConfig:
     def test_the_runtime_is_stamped_once_the_composition_names_it(
         self, capsys: pytest.CaptureFixture[str]
     ) -> None:
-        config = ObservabilityConfig(log=LogObservabilityConfig(format="json"))
+        config = ObservabilityConfig(log=LogObservabilityConfig(format=LogFormatName.JSON))
         observability = Observability.from_config(config)
 
         observability.running_as(LogRuntime.CELERY)
@@ -224,11 +229,9 @@ class TestFromConfig:
 
         assert logging.getLogger().handlers == before
 
-    def test_an_unregistered_format_stops_the_start(self) -> None:
-        config = ObservabilityConfig(log=LogObservabilityConfig(format="xml"))
-
-        with pytest.raises(ConfigError, match="unknown log format 'xml'"):
-            Observability.from_config(config)
+    def test_an_unknown_format_is_refused_when_the_configuration_is_read(self) -> None:
+        with pytest.raises(msgspec.ValidationError, match="format"):
+            msgspec.convert({"format": "xml"}, LogObservabilityConfig)
 
 
 class TestStartScrapeServer:

@@ -31,7 +31,7 @@ from loom.core.errors.base import DomainError
 from loom.core.errors.codes import ErrorCode
 from loom.core.logger.field import LogField
 from loom.core.logger.install import HANDLER_NAME, configure_logging
-from loom.core.logger.settings import LogSettings
+from loom.core.logger.settings import LogFormatName, LogSettings
 from loom.core.model.redaction import MASK, Secret
 from loom.core.observability.event import Scope
 from loom.core.observability.observability import Observability
@@ -91,14 +91,14 @@ def _loom_stream() -> io.StringIO:
 
 @pytest.fixture
 def stdout_json() -> Output:
-    configure_logging(LogSettings(format="json"), environment=Environment.PRODUCTION)
+    configure_logging(LogSettings(format=LogFormatName.JSON), environment=Environment.PRODUCTION)
     stream = _loom_stream()
     return Output(stream.getvalue, lambda: _json_fields(stream.getvalue()))
 
 
 @pytest.fixture
 def stdout_text() -> Output:
-    configure_logging(LogSettings(format="text"), environment=Environment.DEVELOPMENT)
+    configure_logging(LogSettings(format=LogFormatName.TEXT), environment=Environment.DEVELOPMENT)
     stream = _loom_stream()
     return Output(stream.getvalue, lambda: _text_fields(stream.getvalue()))
 
@@ -113,7 +113,7 @@ def runtime() -> Iterator[LambdaLoggerHandler]:
 
 
 def _lambda_output(runtime: LambdaLoggerHandler) -> Output:
-    configure_logging(LogSettings(format="lambda"), environment=Environment.PRODUCTION)
+    configure_logging(LogSettings(format=LogFormatName.LAMBDA), environment=Environment.PRODUCTION)
 
     def read() -> str:
         return "".join(runtime.lines)
@@ -140,7 +140,7 @@ def otel_export() -> Iterator[Output]:
     provider.add_log_record_processor(SimpleLogRecordProcessor(exporter))
     handler = LoggingHandler(level=logging.NOTSET, logger_provider=provider)
     configure_logging(
-        LogSettings(format="json"),
+        LogSettings(format=LogFormatName.JSON),
         environment=Environment.PRODUCTION,
         extra_handlers=[handler],
     )

@@ -109,6 +109,7 @@ print("OBSERVERS:" + str([type(o).__name__ for o in runtime.observers]))
         result = _run_without_sdk(
             """
 from loom.core.config.observability import OtelConfig
+from loom.core.logger.settings import LogFormatName
 from loom.core.observability import ObservabilityConfig, Observability, Scope
 from loom.core.observability.config import OtelObservabilityConfig
 
@@ -176,10 +177,11 @@ else:
             """
 from loom.core.config.observability import OtelConfig
 from loom.core.observability import ObservabilityConfig, Observability
+from loom.core.logger.settings import LogFormatName
 from loom.core.observability.config import LogObservabilityConfig, OtelObservabilityConfig
 
 config = ObservabilityConfig(
-    log=LogObservabilityConfig(enabled=True, format="json"),
+    log=LogObservabilityConfig(enabled=True, format=LogFormatName.JSON),
     otel=OtelObservabilityConfig(
         enabled=True, export_logs=True, config=OtelConfig()
     ),

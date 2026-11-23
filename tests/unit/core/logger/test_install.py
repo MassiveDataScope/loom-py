@@ -6,16 +6,15 @@ from collections.abc import Iterator
 
 import pytest
 
-from loom.core.config.errors import ConfigError
 from loom.core.environment import (
     LAMBDA_FUNCTION_VARIABLE,
     LAMBDA_LOG_FORMAT_VARIABLE,
     Environment,
 )
 from loom.core.logger import ContextFilter, LogField, LogRuntime
-from loom.core.logger.formats import JsonFormatter, LambdaFormatter
-from loom.core.logger.install import HANDLER_NAME, configure_logging, resolve_format
-from loom.core.logger.settings import LogSettings
+from loom.core.logger.formats import JsonFormatter, LambdaFormatter, TextFormatter
+from loom.core.logger.install import HANDLER_NAME, configure_logging
+from loom.core.logger.settings import LogFormatName, LogSettings
 from tests.helpers.loggers import CapturingHandler, LambdaLoggerHandler
 
 
@@ -27,12 +26,34 @@ def _installed(root: logging.Logger) -> list[logging.Handler]:
     return [h for h in root.handlers if h.get_name() == HANDLER_NAME]
 
 
+class TestStdoutFormats:
+    @pytest.mark.parametrize(
+        ("log_format", "formatter"),
+        [(LogFormatName.JSON, JsonFormatter), (LogFormatName.TEXT, TextFormatter)],
+        ids=["json", "text"],
+    )
+    def test_loom_handler_writes_to_stdout_with_the_format_formatter(
+        self,
+        pristine_root_logger: logging.Logger,
+        capsys: pytest.CaptureFixture[str],
+        log_format: LogFormatName,
+        formatter: type[logging.Formatter],
+    ) -> None:
+        configure_logging(LogSettings(format=log_format), environment=Environment.PRODUCTION)
+
+        logging.getLogger("tests.stdout").warning("billing.invoice_issued")
+
+        (handler,) = _installed(pristine_root_logger)
+        assert type(handler.formatter) is formatter
+        assert "billing.invoice_issued" in capsys.readouterr().out
+
+
 class TestJsonInstallation:
     def test_json_lines_reach_stdout_stamped_with_the_service(
         self, pristine_root_logger: logging.Logger, capsys: pytest.CaptureFixture[str]
     ) -> None:
         configure_logging(
-            LogSettings(format="json"),
+            LogSettings(format=LogFormatName.JSON),
             environment=Environment.PRODUCTION,
             service_name="billing",
             service_version="2.4.0",
@@ -49,14 +70,18 @@ class TestJsonInstallation:
         self, pristine_root_logger: logging.Logger
     ) -> None:
         for _ in range(2):
-            configure_logging(LogSettings(format="json"), environment=Environment.PRODUCTION)
+            configure_logging(
+                LogSettings(format=LogFormatName.JSON), environment=Environment.PRODUCTION
+            )
 
         assert len(_installed(pristine_root_logger)) == 1
 
     def test_a_handler_somebody_else_added_stays(
         self, handler: CapturingHandler, pristine_root_logger: logging.Logger
     ) -> None:
-        configure_logging(LogSettings(format="json"), environment=Environment.PRODUCTION)
+        configure_logging(
+            LogSettings(format=LogFormatName.JSON), environment=Environment.PRODUCTION
+        )
 
         assert handler in pristine_root_logger.handlers
 
@@ -64,7 +89,7 @@ class TestJsonInstallation:
         self, pristine_root_logger: logging.Logger
     ) -> None:
         settings = LogSettings(
-            format="text", level="warning", named_levels={"acme_library": "ERROR"}
+            format=LogFormatName.TEXT, level="warning", named_levels={"acme_library": "ERROR"}
         )
 
         configure_logging(settings, environment=Environment.DEVELOPMENT)
@@ -76,7 +101,7 @@ class TestJsonInstallation:
         self, pristine_root_logger: logging.Logger
     ) -> None:
         installation = configure_logging(
-            LogSettings(format="json"), environment=Environment.PRODUCTION
+            LogSettings(format=LogFormatName.JSON), environment=Environment.PRODUCTION
         )
 
         installation.running_as(LogRuntime.CELERY)
@@ -92,7 +117,9 @@ class TestJsonInstallation:
         extra = logging.Filter()
 
         configure_logging(
-            LogSettings(format="json"), environment=Environment.PRODUCTION, filters=(extra,)
+            LogSettings(format=LogFormatName.JSON),
+            environment=Environment.PRODUCTION,
+            filters=(extra,),
         )
 
         (handler,) = _installed(pristine_root_logger)
@@ -184,9 +211,3 @@ class TestLambdaInstallation:
             configure_logging(LogSettings(), environment=Environment.PRODUCTION)
 
         assert len(_stamping(runtime_handler)) == 1
-
-
-class TestResolveFormat:
-    def test_an_unregistered_format_lists_the_registered_ones(self) -> None:
-        with pytest.raises(ConfigError, match=r"unknown log format 'xml'.*json.*lambda.*text"):
-            resolve_format("xml")

@@ -1,24 +1,14 @@
-"""The formats loom ships: what a record looks like on the console or the collector.
-
-A format is a callable from the :class:`~loom.core.logger.settings.LogSettings`
-to the handler that writes the records, or to ``None`` when something else
-already does. An extra or an application adds its own under the
-``loom.logging.formats`` entry-point group.
-"""
+"""The formatters loom ships: what a record looks like on the console or the collector."""
 
 from __future__ import annotations
 
 import json
 import logging
 import math
-import sys
-from collections.abc import Mapping
 from datetime import UTC, datetime
 from typing import Final
 
-from loom.core.environment import lambda_writes_json_logs
 from loom.core.logger.field import LogField
-from loom.core.logger.settings import LogSettings
 from loom.core.model.redaction import MASK, Dsn, RedactedMap, Secret
 
 _STANDARD_ATTRIBUTES: Final = frozenset(logging.makeLogRecord({}).__dict__) | {"message", "asctime"}
@@ -185,54 +175,18 @@ class LambdaFormatter(JsonFormatter):
     """Loom's JSON line for the Lambda runtime's handler, ended by a line break as the runtime's.
 
     Args:
-        frames: The runtime's frame type per level, which its handler reads; empty
-            under the ``Text`` log format, where the handler frames the line as text.
+        json_frames: Whether the function uses the ``JSON`` log format, under which
+            the runtime's handler reads the record's frame type; under ``Text`` it
+            frames the line as text.
     """
 
-    def __init__(self, frames: Mapping[int, bytes]) -> None:
+    def __init__(self, *, json_frames: bool) -> None:
         super().__init__()
-        self._frames = frames
+        self._json_frames = json_frames
 
     def format(self, record: logging.LogRecord) -> str:
         """Render *record* as a JSON object on one line, ended by a line break."""
-        frame = self._frames.get(min(max(record.levelno, 0), logging.CRITICAL) // 10 * 10)
-        if frame is not None:
-            record.__dict__["_frame_type"] = frame
+        if self._json_frames:
+            level = min(max(record.levelno, 0), logging.CRITICAL) // 10 * 10
+            record.__dict__["_frame_type"] = _LAMBDA_JSON_FRAMES[level]
         return super().format(record) + "\n"
-
-
-def _stdout_handler(formatter: logging.Formatter) -> logging.Handler:
-    handler = logging.StreamHandler(sys.stdout)
-    handler.setFormatter(formatter)
-    return handler
-
-
-def json_format(settings: LogSettings) -> logging.Handler:
-    """Write JSON lines to stdout: services, containers and workers."""
-    del settings
-    return _stdout_handler(JsonFormatter())
-
-
-def text_format(settings: LogSettings) -> logging.Handler:
-    """Write readable lines to stdout: development."""
-    del settings
-    return _stdout_handler(TextFormatter())
-
-
-def lambda_format(settings: LogSettings) -> logging.Handler | None:
-    """Give the Lambda runtime's handlers loom's JSON line; without one, write JSON to stdout.
-
-    Other handlers are left alone. The runtime cannot be imported, so its handlers
-    are known by class name (awslambdaric 4.2.3).
-    """
-    runtime = [
-        handler
-        for handler in logging.getLogger().handlers
-        if type(handler).__name__.startswith("LambdaLoggerHandler")
-    ]
-    if not runtime:
-        return json_format(settings)
-    formatter = LambdaFormatter(_LAMBDA_JSON_FRAMES if lambda_writes_json_logs() else {})
-    for handler in runtime:
-        handler.setFormatter(formatter)
-    return None

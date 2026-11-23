@@ -21,10 +21,10 @@ def _ids(log: dict[str, Any] | None) -> list[str]:
 
 class TestLogFormatCheck:
     @pytest.mark.parametrize("log", [None, {}, {"format": "json"}, {"format": "lambda"}])
-    def test_a_registered_or_absent_format_passes(self, log: dict[str, Any] | None) -> None:
+    def test_a_known_or_absent_format_passes(self, log: dict[str, Any] | None) -> None:
         assert _ids(log) == []
 
-    def test_an_unregistered_format_fails(self) -> None:
+    def test_an_unknown_format_fails(self) -> None:
         assert _ids({"format": "xml"}) == [UNKNOWN_FORMAT_CHECK]
 
     def test_a_format_from_a_placeholder_is_not_judged(self) -> None:

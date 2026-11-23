@@ -3,76 +3,22 @@
 from __future__ import annotations
 
 import logging
-from collections.abc import Callable, Mapping, Sequence
+import sys
+from collections.abc import Sequence
 from dataclasses import dataclass
-from types import MappingProxyType
-from typing import Final, cast
+from typing import Final
 
-from loom.core.config.errors import ConfigError
-from loom.core.environment import Environment
-from loom.core.logger.formats import json_format, lambda_format, text_format
-from loom.core.logger.settings import LogSettings
+from loom.core.environment import Environment, lambda_writes_json_logs
+from loom.core.logger.formats import JsonFormatter, LambdaFormatter, TextFormatter
+from loom.core.logger.settings import LogFormatName, LogSettings
 from loom.core.logger.stamp import ContextFilter, LogIdentity, LogRuntime
-from loom.core.plugins.entrypoints import (
-    EntryPointNotFoundError,
-    MissingDependency,
-    load_entry_point,
-    registered_names,
-    select_entry_point,
-)
-
-LOG_FORMATS_GROUP: Final = "loom.logging.formats"
-"""Entry-point group an extra or an application registers its own log formats under."""
 
 HANDLER_NAME: Final = "loom"
 """Name of the handler loom installs, so a second configuration replaces it only."""
 
-LogFormat = Callable[[LogSettings], logging.Handler | None]
-"""A format: the settings in, the handler that writes the records out, or ``None``."""
-
-
-BUILTIN_FORMATS: Final[Mapping[str, LogFormat]] = MappingProxyType(
-    {"lambda": lambda_format, "json": json_format, "text": text_format}
-)
-"""The formats loom ships. They resolve without entry-point metadata, which a packaged
-Lambda function or a zipapp may not carry."""
-
-
-def resolve_format(name: str, *, path: str = "observability.log.format") -> LogFormat:
-    """Load the format called *name*: one loom ships, else one registered under the group.
-
-    Args:
-        name: Name of the format.
-        path: Configuration key that names it, for the message.
-
-    Returns:
-        The format.
-
-    Raises:
-        ConfigError: When no format is registered under *name* (the message lists
-            the registered ones), or the format needs a module that is not installed.
-    """
-    builtin = BUILTIN_FORMATS.get(name)
-    if builtin is not None:
-        return builtin
-    try:
-        return cast("LogFormat", load_entry_point(LOG_FORMATS_GROUP, name, on_duplicate="error"))
-    except EntryPointNotFoundError as exc:
-        known = ", ".join(format_names())
-        raise ConfigError(
-            f"{path}: unknown log format {name!r}. Registered formats: {known}."
-        ) from exc
-    except ModuleNotFoundError as exc:
-        entry = select_entry_point(LOG_FORMATS_GROUP, name, on_duplicate="error")
-        missing = None if entry is None else MissingDependency.from_import_error(exc, entry)
-        if missing is None:
-            raise
-        raise ConfigError(f"{path}: log format {name!r} {missing.describe()}") from exc
-
-
-def format_names() -> tuple[str, ...]:
-    """The names of the formats loom ships and the ones registered under the group."""
-    return tuple(sorted({*BUILTIN_FORMATS, *registered_names(LOG_FORMATS_GROUP)}))
+_LAMBDA_RUNTIME_HANDLER: Final = "LambdaLoggerHandler"
+"""Class-name prefix of the Lambda runtime's handlers (awslambdaric 4.2.3), which
+cannot be imported."""
 
 
 @dataclass(frozen=True, slots=True)
@@ -96,15 +42,13 @@ def configure_logging(
     extra_handlers: Sequence[logging.Handler] = (),
     filters: Sequence[logging.Filter] = (),
 ) -> LogInstallation:
-    """Install the format *settings* choose and stamp every record that reaches its handler.
+    """Write records in the format *settings* choose and stamp every one on loom's handlers.
 
-    The handler of a format is named ``loom`` and replaces the one a previous
-    call installed; a handler somebody else added stays. A format that installs
-    no handler, ``lambda``, formats the runtime's instead. The root level is
-    always the settings', in Lambda too. Every
-    handler loom owns gets the context filter through this one path: the one
-    of the format, each of *extra_handlers* (attached to the root logger when
-    they are not yet), and the runtime's. Calling it again leaves one filter on each.
+    ``json`` and ``text`` write to stdout through a handler named ``loom``, which
+    replaces the one a previous call installed. ``lambda`` gives the runtime's
+    handlers loom's JSON line, or writes JSON to stdout when there is none. The
+    root level is always the settings'. Every handler loom owns, *extra_handlers*
+    included, gets the context filter once, however often this runs.
 
     Args:
         settings: The ``observability.log`` settings.
@@ -116,24 +60,26 @@ def configure_logging(
 
     Returns:
         The installation, to name the runtime once it is known.
-
-    Raises:
-        ConfigError: When the format is not registered.
     """
     root = logging.getLogger()
     for extra in extra_handlers:
         if extra not in root.handlers:
             root.addHandler(extra)
-    handler = resolve_format(settings.format_for(environment))(settings)
     root.setLevel(settings.level.upper())
-    if handler is None:
-        handlers = list(root.handlers)
-    else:
-        handler.set_name(HANDLER_NAME)
-        for installed in [h for h in root.handlers if h.get_name() == HANDLER_NAME]:
-            root.removeHandler(installed)
-        root.addHandler(handler)
-        handlers = [handler, *extra_handlers]
+    match settings.format_for(environment):
+        case LogFormatName.TEXT:
+            written = [_stdout_handler(root, TextFormatter())]
+        case LogFormatName.JSON:
+            written = [_stdout_handler(root, JsonFormatter())]
+        case LogFormatName.LAMBDA:
+            written = [
+                h for h in root.handlers if type(h).__name__.startswith(_LAMBDA_RUNTIME_HANDLER)
+            ]
+            formatter = LambdaFormatter(json_frames=lambda_writes_json_logs())
+            for handler in written:
+                handler.setFormatter(formatter)
+            written = written or [_stdout_handler(root, JsonFormatter())]
+    handlers = [*written, *extra_handlers]
     for name, level in settings.named_levels.items():
         logging.getLogger(name).setLevel(level.upper())
     identity = LogIdentity(
@@ -145,3 +91,14 @@ def configure_logging(
         for each in (context_filter, *filters):
             target.addFilter(each)
     return LogInstallation(stamping)
+
+
+def _stdout_handler(root: logging.Logger, formatter: logging.Formatter) -> logging.Handler:
+    """Put loom's stdout handler with *formatter* on *root*, replacing a previous one."""
+    for installed in [h for h in root.handlers if h.get_name() == HANDLER_NAME]:
+        root.removeHandler(installed)
+    handler = logging.StreamHandler(sys.stdout)
+    handler.setFormatter(formatter)
+    handler.set_name(HANDLER_NAME)
+    root.addHandler(handler)
+    return handler
