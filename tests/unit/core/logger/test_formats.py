@@ -13,6 +13,7 @@ from loom.core.logger.formats import (
     TRUNCATION_MARKER,
     JsonFormatter,
     TextFormatter,
+    render_fields,
 )
 from loom.core.model.redaction import MASK, Dsn, RedactedMap, Secret
 
@@ -32,6 +33,7 @@ def _record(
         exc_info=None,
     )
     record.__dict__.update(extra)
+    render_fields(record)
     return record
 
 

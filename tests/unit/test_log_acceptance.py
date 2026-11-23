@@ -32,7 +32,7 @@ from loom.core.errors.codes import ErrorCode
 from loom.core.log_names import LogField
 from loom.core.logger.install import HANDLER_NAME, configure_logging
 from loom.core.logger.settings import LogFormatName, LogSettings
-from loom.core.model.redaction import MASK, Secret
+from loom.core.model.redaction import MASK, RedactedMap, Secret
 from loom.core.observability.event import Scope
 from loom.core.observability.observability import Observability
 from loom.core.observability.observer.log import LogLifecycleObserver
@@ -45,6 +45,11 @@ CANARY = "CANARY-ROW-VALUE-4711"
 STACK_HEAD = "Traceback (most recent call last)"
 
 _LOGGER = logging.getLogger("loom.acceptance")
+
+
+@dataclass(frozen=True, slots=True)
+class _Card:
+    number: str = CANARY
 
 
 def _failure() -> DomainError:
@@ -187,11 +192,19 @@ class TestValuesRendered:
     """Requirement 1: a value reaches every output rendered, a secret masked."""
 
     @pytest.mark.parametrize("output", OUTPUTS, indirect=True)
-    def test_a_secret_is_masked(self, output: Output) -> None:
-        _LOGGER.info("order_accepted", extra={LogField.ATTEMPT: Secret(CANARY)})
+    @pytest.mark.parametrize("secret", [Secret(CANARY), RedactedMap({"card": CANARY})])
+    def test_a_secret_is_masked(self, output: Output, secret: object) -> None:
+        _LOGGER.info("order_accepted", extra={LogField.ATTEMPT: secret})
 
         assert CANARY not in output.read_fields()
         assert MASK in output.read_fields()
+
+    @pytest.mark.parametrize("output", OUTPUTS, indirect=True)
+    def test_an_object_is_its_type_name_never_its_repr(self, output: Output) -> None:
+        _LOGGER.info("order_accepted", extra={LogField.ATTEMPT: _Card()})
+
+        assert "_Card" in output.read_fields()
+        assert CANARY not in output.read_fields()
 
 
 class TestFailureIdentity:

@@ -8,7 +8,6 @@ import pytest
 from opentelemetry.sdk.trace import TracerProvider
 
 from loom.core.config.observability import OtelConfig
-from loom.core.errors.summary import ErrorSummary
 from loom.core.observability.event import EventKind, LifecycleEvent, LifecycleStatus, Scope
 from loom.core.observability.observer.log import LogLifecycleObserver
 from loom.core.observability.observer.noop import NoopObserver
@@ -16,6 +15,7 @@ from loom.core.observability.observer.otel import (
     OtelSpanFilter,
     install_otel_log_export,
 )
+from loom.testing import make
 from tests.helpers.loggers import CapturedLog
 from tests.unit.core.observability.conftest import LogExport
 
@@ -24,7 +24,7 @@ class TestNoopObserver:
     def test_accepts_any_event_without_error(self) -> None:
         obs = NoopObserver()
         for kind in EventKind:
-            obs.on_event(LifecycleEvent(scope=Scope.NODE, name="x", kind=kind))
+            obs.on_event(make(LifecycleEvent, scope=Scope.NODE, kind=kind))
 
 
 class TestLifecycleEventHelpers:
@@ -118,47 +118,37 @@ class TestLogLifecycleObserver:
         ("event", "level", "name"),
         [
             pytest.param(
-                LifecycleEvent(scope=Scope.NODE, name="x", kind=EventKind.START),
+                make(LifecycleEvent, scope=Scope.NODE, kind=EventKind.START),
                 "DEBUG",
                 "observability.lifecycle_started",
                 id="node-start",
             ),
             pytest.param(
-                LifecycleEvent(scope=Scope.PIPELINE, name="x", kind=EventKind.START),
+                make(LifecycleEvent, scope=Scope.PIPELINE, kind=EventKind.START),
                 "INFO",
                 "observability.lifecycle_started",
                 id="pipeline-start",
             ),
             pytest.param(
-                LifecycleEvent(scope=Scope.USE_CASE, name="x", kind=EventKind.END, duration_ms=1),
+                make(LifecycleEvent, scope=Scope.USE_CASE, kind=EventKind.END, duration_ms=1),
                 "INFO",
                 "observability.lifecycle_ended",
                 id="end",
             ),
             pytest.param(
-                LifecycleEvent(
-                    scope=Scope.NODE,
-                    name="x",
-                    kind=EventKind.ERROR,
-                    failure=ErrorSummary(type="ValueError"),
-                ),
+                make(LifecycleEvent, scope=Scope.NODE, kind=EventKind.ERROR),
                 "ERROR",
                 "observability.lifecycle_failed",
                 id="error",
             ),
             pytest.param(
-                LifecycleEvent(scope=Scope.TRANSPORT, name="x", kind=EventKind.END),
+                make(LifecycleEvent, scope=Scope.TRANSPORT, kind=EventKind.END),
                 "DEBUG",
                 "observability.lifecycle_ended",
                 id="transport-end",
             ),
             pytest.param(
-                LifecycleEvent(
-                    scope=Scope.TRANSPORT,
-                    name="x",
-                    kind=EventKind.ERROR,
-                    failure=ErrorSummary(type="ValueError"),
-                ),
+                make(LifecycleEvent, scope=Scope.TRANSPORT, kind=EventKind.ERROR),
                 "WARNING",
                 "observability.lifecycle_failed",
                 id="transport-error",
@@ -181,7 +171,8 @@ class TestLogLifecycleObserver:
         self, lifecycle_log: CapturedLog
     ) -> None:
         LogLifecycleObserver().on_event(
-            LifecycleEvent(
+            make(
+                LifecycleEvent,
                 scope=Scope.USE_CASE,
                 name="CreateOrder",
                 kind=EventKind.END,
@@ -201,9 +192,9 @@ class TestLogLifecycleObserver:
 
     def test_meta_is_forwarded_under_its_own_prefix(self, lifecycle_log: CapturedLog) -> None:
         LogLifecycleObserver().on_event(
-            LifecycleEvent(
+            make(
+                LifecycleEvent,
                 scope=Scope.NODE,
-                name="x",
                 kind=EventKind.START,
                 meta={"flow": "my_flow", "node_idx": 0},
             )
@@ -216,8 +207,12 @@ class TestLogLifecycleObserver:
         self, lifecycle_log: CapturedLog
     ) -> None:
         LogLifecycleObserver().on_event(
-            LifecycleEvent(
-                scope=Scope.FLOW, name="ingest", kind=EventKind.END, meta={"name": "orders"}
+            make(
+                LifecycleEvent,
+                scope=Scope.FLOW,
+                name="ingest",
+                kind=EventKind.END,
+                meta={"name": "orders"},
             )
         )
 
@@ -237,8 +232,12 @@ class TestPrometheusLifecycleObserver:
         adapter = PrometheusLifecycleObserver(registry=registry)
 
         adapter.on_event(
-            LifecycleEvent(
-                scope=Scope.USE_CASE, name="CreateOrder", kind=EventKind.END, duration_ms=42.0
+            make(
+                LifecycleEvent,
+                scope=Scope.USE_CASE,
+                name="CreateOrder",
+                kind=EventKind.END,
+                duration_ms=42.0,
             )
         )
 
@@ -255,7 +254,9 @@ class TestPrometheusLifecycleObserver:
         registry = CollectorRegistry()
         adapter = PrometheusLifecycleObserver(registry=registry)
 
-        adapter.on_event(LifecycleEvent(scope=Scope.NODE, name="transform", kind=EventKind.ERROR))
+        adapter.on_event(
+            make(LifecycleEvent, scope=Scope.NODE, name="transform", kind=EventKind.ERROR)
+        )
 
         assert registry.get_sample_value(
             "lifecycle_errors_total",
@@ -270,7 +271,7 @@ class TestPrometheusLifecycleObserver:
         registry = CollectorRegistry()
         adapter = PrometheusLifecycleObserver(registry=registry)
 
-        adapter.on_event(LifecycleEvent(scope=Scope.NODE, name="x", kind=EventKind.START))
+        adapter.on_event(make(LifecycleEvent, scope=Scope.NODE, kind=EventKind.START))
 
 
 class TestOtelSpanFilter:

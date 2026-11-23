@@ -45,8 +45,12 @@ def record_fields(record: logging.LogRecord) -> dict[str, object]:
     return {
         (key if isinstance(key, SubKey) else str(key)): value
         for key, value in record.__dict__.items()
-        if key not in _STANDARD_ATTRIBUTES and not key.startswith("_")
+        if _is_field(key)
     }
+
+
+def _is_field(key: str) -> bool:
+    return key not in _STANDARD_ATTRIBUTES and not key.startswith("_")
 
 
 def _truncated(text: str) -> str:
@@ -97,15 +101,27 @@ def render_value(value: object) -> object:
     return type(value).__name__ if rendered is _OPAQUE else rendered
 
 
-def _rendered_fields(record: logging.LogRecord) -> dict[str, object]:
-    """The fields of *record* as a format writes them, in one pass.
+def render_fields(record: logging.LogRecord) -> None:
+    """Replace each field of *record* with :func:`render_value` of it.
+
+    Rendering a rendered value gives it back, so a record rendered twice is the
+    same as rendered once. The stack is left as it is: each format writes it whole.
+    """
+    fields = record.__dict__
+    for key, value in list(fields.items()):
+        if _is_field(key) and key != _STACKTRACE:
+            fields[key] = render_value(value)
+
+
+def _laid_out_fields(record: logging.LogRecord) -> dict[str, object]:
+    """The fields of *record* under the names a format writes them.
 
     A key the format writes itself (:data:`RESERVED_KEYS`) is never taken from
     ``extra``: it is written under ``loom.extra.<key>``. The stack is left out: each
     format writes it whole, in its own layout.
     """
     return {
-        EXTRA_PREFIX + name if name in RESERVED_KEYS else name: render_value(value)
+        EXTRA_PREFIX + name if name in RESERVED_KEYS else name: value
         for name, value in record_fields(record).items()
         if name != _STACKTRACE
     }
@@ -122,8 +138,8 @@ class JsonFormatter(logging.Formatter):
 
     The keys of Lambda's JSON format (``timestamp``, ``level``, ``message``,
     ``logger``) come first and cannot be overwritten by ``extra``. Values are
-    rendered by :func:`render_value`; what the record says about its exception
-    comes from the context filter.
+    written as the context filter rendered them, and so is what the record says about
+    its exception.
     """
 
     def format(self, record: logging.LogRecord) -> str:
@@ -135,7 +151,7 @@ class JsonFormatter(logging.Formatter):
             "level": record.levelname,
             "message": _truncated(record.getMessage()),
             "logger": record.name,
-            **_rendered_fields(record),
+            **_laid_out_fields(record),
         }
         stack = _stack_of(record)
         if stack is not None:
@@ -166,7 +182,7 @@ class TextFormatter(logging.Formatter):
         head = f"{self.formatTime(record)} {record.levelname:<7} {record.name}"
         line = f"{head} {_one_line(_truncated(record.getMessage()))}"
         fields = " ".join(
-            f"{key}={_one_line(str(value))}" for key, value in _rendered_fields(record).items()
+            f"{key}={_one_line(str(value))}" for key, value in _laid_out_fields(record).items()
         )
         if fields:
             line = f"{line} {fields}"
