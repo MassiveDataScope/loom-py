@@ -6,19 +6,18 @@ from collections.abc import Iterator
 from dataclasses import dataclass
 
 import pytest
-from opentelemetry.sdk._logs import LoggingHandler
 from opentelemetry.sdk._logs.export import InMemoryLogRecordExporter
 
 from loom.core.config.observability import OtelConfig
 from loom.core.observability.observer import otel as otel_module
-from loom.core.observability.observer.otel import install_otel_log_export
+from loom.core.observability.observer.otel import OtelLogHandler, install_otel_log_export
 
 
 @dataclass(frozen=True)
 class LogExport:
     """The OTEL log export of the test: its handler and what it exported."""
 
-    handler: LoggingHandler
+    handler: OtelLogHandler
     exporter: InMemoryLogRecordExporter
 
     def exported(self) -> dict[object, dict[str, object]]:

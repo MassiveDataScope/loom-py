@@ -16,7 +16,7 @@ from __future__ import annotations
 import io
 import json
 import logging
-from collections.abc import Callable, Collection, Iterator
+from collections.abc import Callable, Iterator
 from dataclasses import dataclass
 
 import pytest
@@ -36,6 +36,7 @@ from loom.core.model.redaction import MASK, Secret
 from loom.core.observability.event import Scope
 from loom.core.observability.observability import Observability
 from loom.core.observability.observer.log import LogLifecycleObserver
+from loom.core.observability.observer.otel import OtelLogHandler
 from tests.helpers.loggers import LambdaLoggerHandler
 
 CANARY = "CANARY-ROW-VALUE-4711"
@@ -138,7 +139,7 @@ def otel_export() -> Iterator[Output]:
     exporter = InMemoryLogExporter()
     provider = LoggerProvider()
     provider.add_log_record_processor(SimpleLogRecordProcessor(exporter))
-    handler = LoggingHandler(level=logging.NOTSET, logger_provider=provider)
+    handler = OtelLogHandler(LoggingHandler(level=logging.NOTSET, logger_provider=provider))
     configure_logging(
         LogSettings(format=LogFormatName.JSON),
         environment=Environment.PRODUCTION,
@@ -170,14 +171,6 @@ OUTPUTS = ("stdout_json", "stdout_text", "lambda_text", "lambda_json", "otel_exp
 @pytest.fixture
 def output(request: pytest.FixtureRequest) -> Output:
     return request.getfixturevalue(request.param)
-
-
-def _cells(owner: str, *red: str) -> list[object]:
-    """One cell per output; the *red* ones are backlog that *owner* turns green."""
-    backlog: Collection[pytest.MarkDecorator] = (
-        pytest.mark.xfail(strict=True, reason=f"backlog: {owner}"),
-    )
-    return [pytest.param(name, marks=backlog if name in red else (), id=name) for name in OUTPUTS]
 
 
 class TestFieldsSurvive:
@@ -256,7 +249,7 @@ class TestNoMessageField:
 
     @pytest.mark.parametrize(
         "output",
-        _cells("PR 3: the OTEL export gets no exc_info", "otel_export"),
+        OUTPUTS,
         indirect=True,
     )
     def test_the_message_of_a_failure_is_not_a_field(self, output: Output) -> None:
