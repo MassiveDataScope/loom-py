@@ -13,7 +13,7 @@ from typing import Any
 
 import polars as pl
 
-from loom.core.logger.field import ErrorSummary
+from loom.core.errors.summary import ErrorSummary
 from loom.etl.declarative.source._from_dynamodb import FromDynamoDB
 from loom.etl.declarative.source._specs import DynamoDBSourceSpec, ExtraFieldsMode
 from loom.etl.engines.polars._dtype import loom_type_to_polars

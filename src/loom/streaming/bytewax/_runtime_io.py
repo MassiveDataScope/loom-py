@@ -14,7 +14,7 @@ from bytewax.outputs import DynamicSink, StatelessSinkPartition
 from confluent_kafka import OFFSET_BEGINNING, OFFSET_END, KafkaError
 from confluent_kafka.admin import AdminClient
 
-from loom.core.logger.field import ErrorSummary
+from loom.core.errors.summary import ErrorSummary
 from loom.core.observability.event import Scope, TerminalReason
 from loom.core.observability.observability import Observability
 from loom.core.observability.span import LoomSpan
@@ -122,7 +122,7 @@ def _write_kafka_batch(
     except KafkaDeliveryError as exc:
         if sink.dlq_topic is None:
             raise
-        sink_error = ErrorSummary.cite(exc)
+        sink_error = ErrorSummary.message_for(exc)
         dlq_error = sink_error.encode("utf-8")
         try:
             for item in items:

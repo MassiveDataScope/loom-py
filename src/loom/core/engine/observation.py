@@ -23,8 +23,8 @@ from typing import Any, NamedTuple, TypeVar
 from loom.core.engine.events import EventKind, ExecutionEvent, Phase, Status
 from loom.core.engine.execution_observer import ExecutionObserver, NullExecutionObserver
 from loom.core.errors import PostCommitError, RuleViolationError, RuleViolationsError
+from loom.core.errors.summary import ErrorSummary
 from loom.core.job.outcome import JobSignal, failure_log_fields
-from loom.core.logger.field import ErrorSummary
 from loom.core.stores.uow.coordinator import InvocationOutcome
 from loom.core.stores.uow.scope import InvocationScope
 from loom.core.tracing import get_trace_id

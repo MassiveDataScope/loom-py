@@ -47,8 +47,8 @@ from loom.core.di.introspection import (
     plain_key,
 )
 from loom.core.di.scope import Scope
+from loom.core.errors.summary import ErrorSummary
 from loom.core.execution import ExecutionKinds, Kind, NoExecution
-from loom.core.logger.field import ErrorSummary
 
 T = TypeVar("T")
 BindingKey = object
@@ -536,7 +536,7 @@ class LoomContainer:
         except Exception as exc:
             raise ResolutionError(
                 f"Failed to instantiate APPLICATION-scope binding "
-                f"for {describe_key(interface)}: {ErrorSummary.cite(exc)}"
+                f"for {describe_key(interface)}: {ErrorSummary.message_for(exc)}"
             ) from exc
 
     def _bind(self, interface: BindingKey, provider: Callable[..., Any], scope: Scope) -> None:

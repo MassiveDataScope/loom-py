@@ -10,7 +10,7 @@ from bytewax.inputs import FixedPartitionedSource, StatefulSourcePartition
 from pymongo.errors import OperationFailure
 
 from loom.connections.mongo import mongo_island
-from loom.core.logger.field import ErrorSummary
+from loom.core.errors.summary import ErrorSummary
 from loom.core.model.redaction import reveal_for_driver
 from loom.streaming.compiler._plan import CompiledMongoCDCSource
 from loom.streaming.core._message import Message

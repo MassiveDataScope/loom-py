@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 from loom.core.errors import SystemError
-from loom.core.logger.field import ErrorSummary
+from loom.core.errors.summary import ErrorSummary
 
 
 class WorkerNotOpenError(SystemError):
@@ -26,7 +26,7 @@ class WorkerNotOpenError(SystemError):
     def __init__(self, cause: BaseException) -> None:
         super().__init__(
             f"this worker process could not open its application "
-            f"({ErrorSummary.cite(cause)}); "
+            f"({ErrorSummary.message_for(cause)}); "
             "its tasks fail until the process is replaced"
         )
 
