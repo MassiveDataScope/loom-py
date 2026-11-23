@@ -25,6 +25,7 @@ from loom.jobs.aws.queue import ABANDONMENT_REASON_ATTRIBUTE
 from loom.rest.auth import RequestCredentials
 from loom.serverless.aws.lambda_ import LambdaRuntime, S3Object
 from loom.serverless.aws.lambda_.triggers import eventbridge, s3, schedule, sns
+from loom.serverless.event import ServerlessEvent
 from loom.testing import LambdaEvent
 from loom.testing.serverless import QueueableEvent
 from tests.helpers.aws import ACCOUNT
@@ -336,7 +337,7 @@ class TestDirectTrigger:
             handler(event, None)
 
         captured = capsys.readouterr()
-        assert any("Lambda event job failed" in message for message in caplog.messages)
+        assert ServerlessEvent.EVENT_JOB_FAILED in caplog.messages
         assert _SENTINEL not in caplog.text + captured.out + captured.err
 
     def test_an_s3_event_stops_at_its_first_failed_object(
@@ -386,7 +387,7 @@ class TestDirectTrigger:
 
         assert handler(LambdaEvent.s3_test_event(), None) is None
         assert ran == []
-        assert any("S3 test event acknowledged" in message for message in caplog.messages)
+        assert ServerlessEvent.S3_TEST_EVENT_ACKNOWLEDGED in caplog.messages
 
     @pytest.mark.parametrize(
         ("source", "event"),

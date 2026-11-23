@@ -13,8 +13,10 @@ from typing import Any
 
 import pytest
 
+from loom.core.log_names import LogField
 from loom.rest.auth.abc import RequestCredentials
 from loom.rest.auth.middleware import AuthenticationMiddleware
+from loom.rest.event import RestEvent
 
 
 class RefusingAuthenticator:
@@ -71,16 +73,16 @@ class TestAuthRejectionLogging:
         assert caplog.records
         assert all(record.levelno >= logging.INFO for record in caplog.records)
 
-    async def test_the_log_says_where_and_what_was_attempted(
+    async def test_a_refusal_logs_the_event_and_the_method(
         self, middleware: AuthenticationMiddleware, caplog: pytest.LogCaptureFixture
     ) -> None:
-        """Correlation is the point: one refusal is noise, a burst from one client is not."""
+        """A refusal names what was attempted by its method, never the raw path or the client."""
         with caplog.at_level(logging.INFO, logger="loom.rest.auth.middleware"):
             await _call(middleware)
 
-        logged = caplog.text
-        assert "/v1/catalog/search" in logged
-        assert "203.0.113.7" in logged
+        (record,) = caplog.records
+        assert record.msg == RestEvent.AUTHENTICATION_REFUSED
+        assert getattr(record, LogField.HTTP_REQUEST_METHOD) == "GET"
 
     async def test_the_log_never_carries_the_credential(
         self, middleware: AuthenticationMiddleware, caplog: pytest.LogCaptureFixture

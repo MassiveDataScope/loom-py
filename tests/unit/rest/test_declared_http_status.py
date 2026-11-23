@@ -28,6 +28,7 @@ from loom.core.errors import (
 from loom.core.errors.codes import ErrorCode
 from loom.core.tracing import get_trace_id
 from loom.rest.errors import HttpErrorMapper
+from loom.rest.event import RestEvent, RestKey
 from loom.rest.fastapi.runtime import FastAPIRuntime
 from loom.serverless.aws.lambda_ import LambdaRuntime
 from loom.serverless.aws.lambda_.triggers.http import LambdaHTTPHandler
@@ -116,11 +117,10 @@ def _assert_misdeclaration_logged(
     record = records[0]
     assert record.levelno == logging.ERROR
     assert record.exc_info is not None
-    assert class_name in record.getMessage()
-    assert problem in record.getMessage()
-    logged = record.getMessage()
-    if record.exc_info is not None:
-        logged = f"{logged} {record.exc_info[1]}"
+    assert record.msg == RestEvent.HTTP_ERROR_MISDECLARED
+    assert getattr(record, RestKey.ERROR_CLASS) == class_name
+    assert problem in str(record.exc_info[1])
+    logged = f"{record.getMessage()} {record.exc_info[1]}"
     for secret in hidden:
         assert secret not in logged
 
@@ -390,7 +390,7 @@ class TestMisdeclaredHttpStatus:
         _assert_internal_fallback(exc, error)
         _assert_misdeclaration_logged(
             caplog,
-            type(error).__name__,
+            type(error).__qualname__,
             "public_detail",
             "leaked-field-value",
             "leaked-message-host",
@@ -407,7 +407,7 @@ class TestMisdeclaredHttpStatus:
 
         _assert_internal_fallback(exc, error)
         _assert_misdeclaration_logged(
-            caplog, type(error).__name__, "public_detail", "secret-raise-value"
+            caplog, type(error).__qualname__, "public_detail", "secret-raise-value"
         )
 
     @pytest.mark.parametrize(
@@ -435,7 +435,11 @@ class TestMisdeclaredHttpStatus:
 
         _assert_internal_fallback(exc, error)
         _assert_misdeclaration_logged(
-            caplog, type(error).__name__, "http_status", "secret-status-host", "secret-status-field"
+            caplog,
+            type(error).__qualname__,
+            "http_status",
+            "secret-status-host",
+            "secret-status-field",
         )
 
 

@@ -86,3 +86,5 @@ class LogField(LogKey):
     EXCEPTION_TYPE = "exception.type"
     EXCEPTION_STACKTRACE = "exception.stacktrace"
     ERROR_CODE = "loom.error.code"
+    HTTP_REQUEST_METHOD = "http.request.method"
+    HTTP_RESPONSE_STATUS_CODE = "http.response.status_code"

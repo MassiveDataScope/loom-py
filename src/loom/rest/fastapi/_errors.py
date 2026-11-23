@@ -32,9 +32,11 @@ from starlette.types import ExceptionHandler
 
 from loom.core.errors import BODY_FIELD
 from loom.core.errors.codes import ErrorCode
+from loom.core.log_names import LogField
 from loom.core.tracing import get_trace_id
 from loom.rest._body import malformed_body_detail
 from loom.rest.errors import _INTERNAL_ERROR_MESSAGE, ErrorField, _public_message
+from loom.rest.event import RestEvent
 from loom.rest.fastapi.response import MsgspecJSONResponse
 
 _VALIDATION_MESSAGE = "Request validation failed"
@@ -118,7 +120,11 @@ def _detail(exc: HTTPException) -> dict[str, Any]:
         return {ErrorField.TRACE_ID: get_trace_id(), **detail}
     message = detail if isinstance(detail, str) else str(detail)
     if exc.status_code >= HTTPStatus.INTERNAL_SERVER_ERROR:
-        _logger.error("HTTP %d (trace_id=%s): %s", exc.status_code, get_trace_id(), message)
+        _logger.error(
+            RestEvent.HTTP_ERROR_SERVED,
+            extra={LogField.HTTP_RESPONSE_STATUS_CODE: exc.status_code},
+            exc_info=exc,
+        )
     return {
         ErrorField.CODE: _code_for(exc.status_code),
         ErrorField.MESSAGE: _public_message(exc.status_code, message),

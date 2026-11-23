@@ -22,6 +22,7 @@ from loom.core.job.envelope import JobEnvelope
 from loom.core.job.outcome import Abandoned, Failed, failure_log_fields
 from loom.core.job.policy import Redelivery
 from loom.core.job.runner import JobRunner
+from loom.core.log_names import LogField
 from loom.serverless.aws.lambda_._jobs import (
     JobConsumer,
     QueueConsumer,
@@ -54,6 +55,7 @@ from loom.serverless.aws.lambda_.triggers import (
     sns,
 )
 from loom.serverless.aws.lambda_.triggers.sqs import QueueSource, SQSBatch
+from loom.serverless.event import ServerlessEvent
 
 if TYPE_CHECKING:
     from loom.composition import Application, Project
@@ -352,13 +354,8 @@ class _DirectEvents:
                     raise outcome.as_exception()
         except Exception as exc:
             _log.exception(
-                "Lambda event job failed; the event is retried, then sent to its destination",
-                extra={
-                    "function": self._function,
-                    "job": self._label,
-                    "error_class": type(exc).__name__,
-                    **failure_log_fields(exc),
-                },
+                ServerlessEvent.EVENT_JOB_FAILED,
+                extra={LogField.JOB: self._label, **failure_log_fields(exc)},
             )
             raise
 

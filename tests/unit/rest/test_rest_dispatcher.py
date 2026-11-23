@@ -50,6 +50,7 @@ from loom.rest.auth import AuthenticationUnavailable
 from loom.rest.dispatcher import RestUseCaseDispatcher
 from loom.rest.errors import ErrorField, HttpErrorMapper
 from loom.rest.fastapi._errors import register_error_handlers
+from tests.helpers.loggers import exception_text
 
 # ---------------------------------------------------------------------------
 # Domain fixtures
@@ -661,4 +662,4 @@ class TestHttpExceptionFixedMessage:
             status,
             message,
         )
-        assert _LEAKY in caplog.text
+        assert _LEAKY in exception_text(caplog)

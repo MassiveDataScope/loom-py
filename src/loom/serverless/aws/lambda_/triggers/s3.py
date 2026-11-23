@@ -14,6 +14,7 @@ from urllib.parse import unquote_plus
 from loom.core.command import Command
 from loom.core.errors import MalformedJobMessage
 from loom.serverless.aws.lambda_.triggers import Decoded, a_list, an_object
+from loom.serverless.event import ServerlessEvent
 
 _log = logging.getLogger(__name__)
 _TEST_EVENT = "s3:TestEvent"
@@ -54,7 +55,7 @@ def decode(event: Any) -> tuple[Decoded, ...]:
     """
     event = an_object(event, "the S3 notification")
     if event.get("Event") == _TEST_EVENT:
-        _log.info("S3 test event acknowledged; it runs no job")
+        _log.info(ServerlessEvent.S3_TEST_EVENT_ACKNOWLEDGED)
         return ()
     records = a_list(event.get("Records"), "the S3 notification's Records")
     return tuple(_object(an_object(record, "an S3 record")) for record in records)

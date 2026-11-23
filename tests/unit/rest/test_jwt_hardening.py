@@ -23,11 +23,13 @@ from loom.core.checks import run_deploy_checks
 from loom.core.config import ConfigContext
 from loom.core.config.errors import ConfigError
 from loom.core.environment import Environment
+from loom.core.log_names import LogField
 from loom.core.model.redaction import Dsn, Secret
 from loom.core.observability.observability import Observability
 from loom.rest.auth import JwtAuthConfig, JwtAuthenticator, RequestCredentials
 from loom.rest.auth.config import JwtIssuerConfig, JwtPublicKey
 from loom.rest.checks import AUDIENCE_CHECK, ISSUER_CHECK
+from loom.rest.event import RestEvent
 from loom.rest.fastapi._auto_ai import _bind_agent_surfaces
 from loom.rest.fastapi._auto_auth import _AuthWiring, _require_deployed_jwt_claims
 from loom.rest.fastapi.auto import create_app
@@ -739,9 +741,9 @@ class TestIssuingFailureLog:
         with caplog.at_level("ERROR"), pytest.raises(RuntimeError):
             issuer.issue(identity)
 
-        record = next(r for r in caplog.records if "issuing failed" in r.getMessage())
+        record = next(r for r in caplog.records if r.msg == RestEvent.TOKEN_SIGNING_FAILED)
         assert record.exc_info is None
-        assert "ValueError" in record.getMessage()
+        assert getattr(record, LogField.EXCEPTION_TYPE) == "ValueError"
 
 
 class TestOtherDerEncodingsAreRefused:
