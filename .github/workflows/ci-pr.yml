@@ -149,7 +149,7 @@ jobs:
       # PySpark 3.5 runs on Java 8, 11 or 17. The runner image's default Java is
       # newer on ubuntu-26.04, where Hadoop's getSubject call fails at start-up,
       # so the lane pins the release Spark supports instead of inheriting it.
-      - uses: actions/setup-java@77dd5b2ce225ea11469928ac317850245a74ae78 # v6.2.0
+      - uses: actions/setup-java@d1374f8ac74474200d16ef8ecee22c7ae7a51880 # v6.3.0
         with:
           distribution: temurin
           java-version: "17"
