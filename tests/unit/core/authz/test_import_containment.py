@@ -68,6 +68,8 @@ class TestAuthorisationImportContainment:
             ("from ..model import LoomType", False),
             ("from loom.core.authzx import thing", False),
             ("import pydantic", False),
+            ("from loom.core.log_names import LogEvent", True),
+            ("from loom.core.logger import x", False),
         ],
     )
     def test_the_import_rule_itself(self, source: str, allowed: bool) -> None:

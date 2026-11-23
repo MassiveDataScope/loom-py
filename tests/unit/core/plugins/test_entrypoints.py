@@ -170,7 +170,7 @@ class TestDuplicatePolicyWarnFirst:
             select_entry_point(_GROUP, _NAME, on_duplicate="warn_first")
 
         (record,) = caplog.records
-        assert record.msg == EntryPointEvent.DUPLICATE_REGISTERED
+        assert record.msg == EntryPointEvent.ENTRY_POINT_DUPLICATED
         assert record.__dict__[EntryPointKey.GROUP] == _GROUP
         assert record.__dict__[EntryPointKey.ENTRY_POINT] == _NAME
         assert record.__dict__[EntryPointKey.DISTRIBUTIONS] == [

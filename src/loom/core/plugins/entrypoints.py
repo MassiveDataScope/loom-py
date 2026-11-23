@@ -23,9 +23,13 @@ _log = logging.getLogger(__name__)
 
 
 class EntryPointEvent(LogEvent):
-    """What the entry-point loader logs while it resolves a plugin."""
+    """What the entry-point loader logs while it resolves a plugin.
 
-    DUPLICATE_REGISTERED = "plugins.entry_point_duplicated"
+    ``ENTRY_POINT_DUPLICATED`` lists the distributions in registration order; the
+    first one listed is the one used.
+    """
+
+    ENTRY_POINT_DUPLICATED = "plugins.entry_point_duplicated"
 
 
 class EntryPointKey(LogKey):
@@ -301,7 +305,7 @@ def _resolve_conflict(
         raise DuplicateEntryPointError(group, name, distributions)
     first = matches[0]
     _log.warning(
-        EntryPointEvent.DUPLICATE_REGISTERED,
+        EntryPointEvent.ENTRY_POINT_DUPLICATED,
         extra={
             EntryPointKey.GROUP: group,
             EntryPointKey.ENTRY_POINT: name,
