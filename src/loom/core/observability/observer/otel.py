@@ -12,6 +12,7 @@ that owns one lexical scope covering both ends of a unit of work.
 from __future__ import annotations
 
 import atexit
+import copy
 import logging
 import os
 from typing import TYPE_CHECKING, Any, cast
@@ -25,7 +26,6 @@ from loom.core.model.redaction import reveal_for_driver
 from loom.core.observability.protocol import SpanFlusher
 
 if TYPE_CHECKING:
-    from opentelemetry.sdk._logs import LoggingHandler
     from opentelemetry.sdk._logs.export import LogRecordExporter
 
 _ERR_MISSING_GRPC = "OTel protocol='grpc' requires 'opentelemetry-exporter-otlp-proto-grpc'."
@@ -208,14 +208,41 @@ class OtelSpanFilter(logging.Filter):
         return True
 
 
-_LOG_EXPORT_STATE: tuple[Any, LoggingHandler] | None = None
+class OtelLogHandler(logging.Handler):
+    """Hand each record to the SDK's log handler with no exception attached.
+
+    The SDK turns ``exc_info`` into ``exception.message`` and a stack of its own; the
+    context filter has already put the type, the code and the stack on the record.
+
+    Args:
+        sdk_handler: The SDK's ``LoggingHandler``.
+    """
+
+    def __init__(self, sdk_handler: logging.Handler) -> None:
+        super().__init__(level=logging.NOTSET)
+        self._sdk_handler = sdk_handler
+
+    def emit(self, record: logging.LogRecord) -> None:
+        """Export *record*, or a copy of it without ``exc_info`` when it carries one."""
+        if record.exc_info is not None:
+            record = copy.copy(record)
+            record.exc_info = None
+            record.exc_text = None
+        self._sdk_handler.emit(record)
+
+    def flush(self) -> None:
+        """Flush the SDK's handler."""
+        self._sdk_handler.flush()
+
+
+_LOG_EXPORT_STATE: tuple[Any, OtelLogHandler] | None = None
 
 
 def install_otel_log_export(
     config: OtelConfig,
     *,
     exporter: LogRecordExporter | None = None,
-) -> LoggingHandler:
+) -> OtelLogHandler:
     """Build the stdlib log handler that exports OTEL logs.
 
     The handler is not attached to the root logger: pass it to
@@ -259,7 +286,7 @@ def install_otel_log_export(
     provider.add_log_record_processor(BatchLogRecordProcessor(log_exporter))
     otel_logs.set_logger_provider(provider)
 
-    handler = LoggingHandler(level=logging.NOTSET, logger_provider=provider)
+    handler = OtelLogHandler(LoggingHandler(level=logging.NOTSET, logger_provider=provider))
     atexit.register(provider.shutdown)
     _LOG_EXPORT_STATE = (provider, handler)
     return handler
@@ -306,5 +333,6 @@ def _resolve_log_protocol(config: OtelConfig) -> str:
 __all__ = [
     "OtelSpanFilter",
     "build_tracer",
+    "OtelLogHandler",
     "install_otel_log_export",
 ]

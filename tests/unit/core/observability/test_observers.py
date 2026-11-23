@@ -80,6 +80,22 @@ class TestOtelLogExport:
         assert finished.log_record.body == "loom otel log export works"
         assert finished.resource.attributes["service.name"] == "loom-test"
 
+    def test_a_failure_is_exported_without_the_sdk_message_and_kept_for_other_handlers(
+        self, log_export: LogExport
+    ) -> None:
+        try:
+            raise ValueError("card 4111")
+        except ValueError as exc:
+            record = logging.LogRecord(
+                "x", logging.ERROR, __file__, 1, "x.y_z", (), (type(exc), exc, exc.__traceback__)
+            )
+
+        log_export.handler.handle(record)
+
+        (attributes,) = log_export.exported().values()
+        assert "exception.message" not in attributes
+        assert record.exc_info is not None
+
     def test_the_handler_is_idempotent_for_the_process(self, log_export: LogExport) -> None:
         again = install_otel_log_export(OtelConfig(endpoint=None, service_name="other"))
 
