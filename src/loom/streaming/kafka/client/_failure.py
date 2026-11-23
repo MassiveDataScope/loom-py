@@ -4,7 +4,7 @@ from __future__ import annotations
 
 from confluent_kafka import KafkaError, KafkaException
 
-from loom.core.logger.field import ErrorSummary
+from loom.core.errors.summary import ErrorSummary
 
 
 def broker_error(exc: BaseException) -> KafkaError | None:
@@ -14,9 +14,9 @@ def broker_error(exc: BaseException) -> KafkaError | None:
     return None
 
 
-def cite_failure(failure: KafkaError | BaseException) -> str:
-    """Name a failure for loom's own text: the broker error name, else ``ErrorSummary.cite``."""
+def failure_message(failure: KafkaError | BaseException) -> str:
+    """The broker error name, else ``ErrorSummary.message_for``."""
     if isinstance(failure, KafkaError):
         return failure.name()
     error = broker_error(failure)
-    return ErrorSummary.cite(failure) if error is None else error.name()
+    return ErrorSummary.message_for(failure) if error is None else error.name()

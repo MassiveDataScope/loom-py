@@ -33,7 +33,7 @@ from opentelemetry.trace import StatusCode
 
 from loom.ai._transport import always_closed
 from loom.core.config.observability import OtelConfig
-from loom.core.logger import ErrorSummary
+from loom.core.errors.summary import ErrorSummary
 from loom.core.model.redaction import Dsn
 from loom.core.observability.config import ObservabilityConfig, OtelObservabilityConfig
 from loom.core.observability.event import EventKind, LifecycleEvent, Scope

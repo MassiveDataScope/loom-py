@@ -7,6 +7,7 @@ from dataclasses import dataclass, replace
 from datetime import UTC, datetime
 from typing import TYPE_CHECKING, Any
 
+from loom.core.errors.summary import ErrorSummary
 from loom.core.identity import Acting, reset_identity, set_identity
 from loom.core.job.callback import CallbackOutcome, JobCallback, notify
 from loom.core.job.context import add_pending_dispatch
@@ -17,7 +18,6 @@ from loom.core.job.outcome import Abandoned, Failed, JobOutcome, Postponed, Succ
 from loom.core.job.policy import Countdown, Redelivery
 from loom.core.job.runner import JobRunner
 from loom.core.job.timer import JobDelayRefusedError, JobTimer
-from loom.core.logger.field import ErrorSummary
 
 if TYPE_CHECKING:
     from loom.core.engine.execution_observer import ExecutionObserver

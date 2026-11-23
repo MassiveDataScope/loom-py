@@ -9,9 +9,9 @@ from typing import Any
 import msgspec
 
 from loom.core.errors import MalformedJobMessage
+from loom.core.errors.summary import ErrorSummary
 from loom.core.identity import Delegation, Identity, reset_identity, set_identity
 from loom.core.job.job import Job
-from loom.core.logger.field import ErrorSummary
 from loom.core.tracing import active_trace_id
 
 TASK_JOB_PREFIX = "loom.job"

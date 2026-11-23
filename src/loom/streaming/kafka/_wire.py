@@ -7,7 +7,7 @@ from typing import Any, Generic, TypeAlias, TypeVar
 
 import msgspec
 
-from loom.core.logger.field import ErrorSummary
+from loom.core.errors.summary import ErrorSummary
 from loom.core.model import LoomFrozenStruct, LoomStruct
 from loom.core.tracing import generate_trace_id
 from loom.streaming.core._dispatch import DispatchTable
@@ -160,7 +160,7 @@ def try_decode_record(
     try:
         envelope = codec.decode(record.value, payload_type)
     except Exception as exc:
-        return _wire_error(ErrorSummary.cite(exc), record)
+        return _wire_error(ErrorSummary.message_for(exc), record)
     return DecodeOk(message=envelope_to_message(envelope, record))
 
 

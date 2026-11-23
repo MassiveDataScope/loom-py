@@ -7,8 +7,9 @@ from dataclasses import dataclass, replace
 from enum import StrEnum
 from typing import Final
 
+from loom.core.errors.summary import ErrorSummary
 from loom.core.logger.context import current_log_fields
-from loom.core.logger.field import ErrorSummary, LogField
+from loom.core.logger.field import LogField
 from loom.core.tracing.context import get_trace_id
 
 MAX_STACK_LENGTH: Final = 16_384

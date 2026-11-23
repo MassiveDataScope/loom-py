@@ -10,7 +10,7 @@ from typing import Any, Protocol, TypeAlias, TypeVar
 from bytewax.operators import branch, flat_map
 
 from loom.core.errors import DomainError
-from loom.core.logger.field import ErrorSummary
+from loom.core.errors.summary import ErrorSummary
 from loom.core.observability.event import TerminalReason
 from loom.core.observability.observability import Observability
 from loom.streaming.core._errors import ErrorEnvelope, ErrorKind, snapshot_message
@@ -98,7 +98,7 @@ def _execute_in_boundary(
     except Exception as exc:
         kind = classify(exc)
         _log_boundary_error(kind, exc, original)
-        return _build_error_envelope(kind, ErrorSummary.cite(exc), original, boundary)
+        return _build_error_envelope(kind, ErrorSummary.message_for(exc), original, boundary)
 
 
 def _execute_batch_in_boundary(
@@ -114,7 +114,7 @@ def _execute_batch_in_boundary(
         kind = classify(exc)
         if originals:
             _log_boundary_error(kind, exc, originals[0], batch_size=len(originals))
-        reason = ErrorSummary.cite(exc)
+        reason = ErrorSummary.message_for(exc)
         return [_build_error_envelope(kind, reason, message, boundary) for message in originals]
 
 

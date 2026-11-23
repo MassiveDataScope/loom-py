@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from loom.core.logger import ErrorSummary
+from loom.core.errors.summary import ErrorSummary
 from loom.core.observability.event import EventKind, LifecycleEvent, LifecycleStatus, Scope
 from loom.core.observability.observability import Observability
 from loom.core.observability.observer.log import LogLifecycleObserver

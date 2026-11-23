@@ -6,7 +6,7 @@ import logging
 import threading
 from dataclasses import dataclass, field
 
-from loom.core.logger.field import ErrorSummary
+from loom.core.errors.summary import ErrorSummary
 
 _log = logging.getLogger(__name__)
 

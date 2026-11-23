@@ -7,7 +7,7 @@ from typing import Generic, Literal, TypeVar
 
 from confluent_kafka import TopicPartition
 
-from loom.core.logger.field import ErrorSummary
+from loom.core.errors.summary import ErrorSummary
 from loom.core.model import LoomFrozenStruct, LoomStruct
 from loom.core.observability.event import LifecycleEvent, Scope
 from loom.core.observability.observability import Observability
@@ -78,7 +78,7 @@ class KafkaMessageConsumer(Generic[PayloadT]):
                         meta={"topic": record.topic},
                     )
                 )
-            raise KafkaDeserializationError(ErrorSummary.cite(exc)) from exc
+            raise KafkaDeserializationError(ErrorSummary.message_for(exc)) from exc
         if self._obs is not None:
             self._obs.emit(
                 LifecycleEvent.end(

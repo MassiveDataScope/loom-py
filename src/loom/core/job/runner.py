@@ -13,6 +13,7 @@ from typing import Any
 from loom.core.engine.events import AbandonReason, EventKind, ExecutionEvent, Status
 from loom.core.engine.execution_observer import ExecutionObserver, NullExecutionObserver
 from loom.core.errors import LoomError
+from loom.core.errors.summary import ErrorSummary
 from loom.core.job.delivery import JobDelivery
 from loom.core.job.outcome import (
     Abandoned,
@@ -26,7 +27,6 @@ from loom.core.job.outcome import (
 )
 from loom.core.job.policy import Redelivery, RetryPolicy
 from loom.core.logger import LogField, log_context
-from loom.core.logger.field import ErrorSummary
 
 _log = logging.getLogger(__name__)
 

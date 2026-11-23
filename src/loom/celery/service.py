@@ -35,11 +35,11 @@ from celery import Celery  # type: ignore[import-untyped]
 from loom.celery.constants import callback_task_name
 from loom.core.engine.events import EventKind, ExecutionEvent
 from loom.core.engine.execution_observer import NullExecutionObserver
+from loom.core.errors.summary import ErrorSummary
 from loom.core.job.callback import CallbackOutcome
 from loom.core.job.context import add_pending_publish
 from loom.core.job.dispatch import JobDispatch
 from loom.core.job.handle import JobHandle
-from loom.core.logger.field import ErrorSummary
 from loom.core.observability.event import Scope
 from loom.core.observability.observability import Observability
 

@@ -7,7 +7,7 @@ from typing import Any, ClassVar
 import msgspec
 import pytest
 
-from loom.core.logger import ErrorSummary
+from loom.core.errors.summary import ErrorSummary
 from tests.helpers.version_limited_extras import require_bytewax
 
 require_bytewax()

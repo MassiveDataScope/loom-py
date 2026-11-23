@@ -7,7 +7,8 @@ import pytest
 from loom.core.config.errors import ConfigError
 from loom.core.errors import DomainError, NotFound
 from loom.core.errors.codes import ErrorCode
-from loom.core.logger import ErrorSummary, LogField
+from loom.core.errors.summary import ErrorSummary
+from loom.core.logger.field import LogField
 
 
 class TestErrorSummary:
@@ -51,9 +52,9 @@ class _UserDomainError(DomainError):
     """An application's own subclass of a loom error."""
 
 
-class TestCite:
+class TestMessageFor:
     @pytest.mark.parametrize(
-        ("cause", "cited"),
+        ("cause", "message"),
         [
             (
                 ConfigError("observability.log.format is unknown"),
@@ -71,6 +72,6 @@ class TestCite:
         ids=["loom-config", "loom-domain", "builtin", "foreign", "user-subclass", "group"],
     )
     def test_it_repeats_loom_text_and_names_anything_else_by_its_summary(
-        self, cause: BaseException, cited: str
+        self, cause: BaseException, message: str
     ) -> None:
-        assert ErrorSummary.cite(cause) == cited
+        assert ErrorSummary.message_for(cause) == message

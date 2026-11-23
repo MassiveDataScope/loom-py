@@ -9,7 +9,7 @@ from typing import Self
 import msgspec
 from opentelemetry.util.types import AttributeValue
 
-from loom.core.logger.field import ErrorSummary
+from loom.core.errors.summary import ErrorSummary
 from loom.core.model import LoomFrozenStruct
 
 

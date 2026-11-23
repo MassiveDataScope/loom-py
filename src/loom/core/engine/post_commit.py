@@ -22,8 +22,8 @@ from typing import Protocol, TypeVar, cast, runtime_checkable
 
 from loom.core.concurrency import held_task
 from loom.core.errors import PostCommitError
+from loom.core.errors.summary import ErrorSummary
 from loom.core.execution import execution_ended
-from loom.core.logger.field import ErrorSummary
 from loom.core.stores.catalog import StoreKey
 from loom.core.stores.uow.scope import current_scope, refuse_write_under_read_only
 

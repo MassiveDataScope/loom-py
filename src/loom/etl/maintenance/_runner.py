@@ -7,7 +7,7 @@ import time
 from dataclasses import dataclass, field
 from typing import TYPE_CHECKING, Any, Literal
 
-from loom.core.logger.field import ErrorSummary
+from loom.core.errors.summary import ErrorSummary
 
 if TYPE_CHECKING:
     from loom.etl.maintenance._protocol import DeltaTableMaintainer, OptimizeResult, VacuumResult
