@@ -38,6 +38,13 @@ class InvalidUse(LoomError, RuntimeError):
     """
 
 
+class InternalError(LoomError, RuntimeError):
+    """A loom invariant broke: a defect in loom, never the caller's fault.
+
+    The message names the invariant, never a value.
+    """
+
+
 class UnknownKey(LoomError, KeyError):
     """A lookup by key or name found nothing.
 

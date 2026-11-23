@@ -18,6 +18,7 @@ from loom.core.errors import (
     Forbidden,
     ForeignSessionError,
     InsufficientAuthentication,
+    InternalError,
     InvalidType,
     InvalidUse,
     InvalidValue,
@@ -83,6 +84,8 @@ class TestErrorHierarchy:
             (InvalidType, TypeError),
             (InvalidUse, LoomError),
             (InvalidUse, RuntimeError),
+            (InternalError, LoomError),
+            (InternalError, RuntimeError),
             (UnknownKey, LoomError),
             (UnknownKey, KeyError),
             (ConfigError, LoomError),
@@ -419,11 +422,20 @@ class TestMarkerBase:
             InvalidValue("bad"),
             InvalidType("bad"),
             InvalidUse("bad"),
+            InternalError("bad"),
             UnknownKey("bad"),
             ConfigError("bad"),
             BootstrapError("bad"),
         ],
-        ids=["invalid-value", "invalid-type", "invalid-use", "unknown-key", "config", "bootstrap"],
+        ids=[
+            "invalid-value",
+            "invalid-type",
+            "invalid-use",
+            "internal",
+            "unknown-key",
+            "config",
+            "bootstrap",
+        ],
     )
     def test_a_loom_error_without_a_code_is_not_a_coded_error(self, error: LoomError) -> None:
         assert (isinstance(error, LoomError), isinstance(error, CodedError)) == (True, False)

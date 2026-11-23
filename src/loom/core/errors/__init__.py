@@ -11,6 +11,7 @@ from loom.core.errors.auth import (
 from loom.core.errors.base import (
     CodedError,
     DomainError,
+    InternalError,
     InvalidType,
     InvalidUse,
     InvalidValue,
@@ -59,6 +60,7 @@ __all__ = [
     "ForeignSessionError",
     "IdentityFixed",
     "InsufficientAuthentication",
+    "InternalError",
     "InvalidType",
     "InvalidUse",
     "InvalidValue",
