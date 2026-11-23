@@ -16,7 +16,7 @@ def broker_error(exc: BaseException) -> KafkaError | None:
 
 def cite_failure(failure: KafkaError | BaseException) -> str:
     """Name a failure for loom's own text: the broker error name, else ``ErrorSummary.cite``."""
-    error = failure if isinstance(failure, KafkaError) else broker_error(failure)
-    if error is not None:
-        return error.name()
-    return ErrorSummary.cite(failure)
+    if isinstance(failure, KafkaError):
+        return failure.name()
+    error = broker_error(failure)
+    return ErrorSummary.cite(failure) if error is None else error.name()
