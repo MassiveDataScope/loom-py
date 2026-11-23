@@ -11,7 +11,9 @@ from typing import Any, Protocol, runtime_checkable
 import polars as pl
 
 from loom.core.errors import InvalidValue
+from loom.core.errors.summary import ErrorSummary
 from loom.etl.declarative.source._specs import ExtraFieldsMode
+from loom.etl.event import EtlEvent, EtlKey
 from loom.etl.io.sources._mongo_bson import _is_bson_type, deep_normalize_for_json
 from loom.etl.io.sources._serialization import _record_serialization_failure
 
@@ -22,7 +24,7 @@ _MAX_NESTED_DEPTH = 64
 _MAX_RISKY_ROWS_REPORTED = 5
 _MAX_RISKY_NOTES_PER_ROW = 8
 _SHAPE_SUMMARY_DEPTH = 8
-_SHAPE_SUMMARY_LIMIT = 24
+_SHAPE_SUMMARY_LIMIT = 20
 
 
 def _json_default(obj: object) -> object:
@@ -32,10 +34,7 @@ def _json_default(obj: object) -> object:
         return obj.hex()
     if _is_bson_type(obj):
         return deep_normalize_for_json(obj)
-    _log.warning(
-        "MongoSourceReader: unexpected type %s in document field — using str()",
-        type(obj).__name__,
-    )
+    _log.warning(EtlEvent.MONGO_TYPE_STRINGIFIED, extra={EtlKey.VALUE_TYPE: type(obj).__name__})
     return str(obj)
 
 
@@ -330,11 +329,13 @@ def _log_risky_rows(
             continue
         reported += 1
         _log.warning(
-            "%s: risky row sample row=%d id=%r issues=%s",
-            source_label,
-            row_index,
-            _row_id(doc),
-            notes[:_MAX_RISKY_NOTES_PER_ROW],
+            EtlEvent.MONGO_RISKY_ROW,
+            extra={
+                EtlKey.SOURCE: source_label,
+                EtlKey.ROW: row_index,
+                EtlKey.DOCUMENT_ID: str(_row_id(doc)),
+                EtlKey.ISSUES: notes[:_MAX_RISKY_NOTES_PER_ROW],
+            },
         )
         if reported >= _MAX_RISKY_ROWS_REPORTED:
             break
@@ -470,10 +471,7 @@ def _coerce_struct_fields(
     declared = {f.name for f in fields}
     extra = sorted(k for k in value if k not in declared)
     if extra:
-        _log.warning(
-            "MongoSourceReader: dropping undeclared sub-field(s) %s from declared struct",
-            extra,
-        )
+        _log.warning(EtlEvent.MONGO_SUBFIELDS_DROPPED, extra={EtlKey.FIELDS: extra})
     return {f.name: _canonicalize_value(value.get(f.name), f.plan) for f in fields}
 
 
@@ -514,10 +512,8 @@ def _apply_series_override(
         return s.cast(override, strict=False)
     except Exception as exc:
         _log.debug(
-            "MongoSourceReader: could not cast %r to %s — leaving inferred type (%s)",
-            k,
-            override,
-            type(exc).__name__,
+            EtlEvent.MONGO_CAST_SKIPPED,
+            extra={EtlKey.FIELD: k, EtlKey.DTYPE: str(override), **ErrorSummary.of(exc).fields()},
         )
         return s
 
@@ -574,9 +570,8 @@ def align_to_schema(
     new_cols = [c for c in df.columns if c not in schema]
     if new_cols:
         _log.warning(
-            "%s: schema drift — field(s) %s not in registered schema, dropping",
-            source_label,
-            sorted(new_cols),
+            EtlEvent.MONGO_SCHEMA_FIELDS_DROPPED,
+            extra={EtlKey.SOURCE: source_label, EtlKey.FIELDS: sorted(new_cols)},
         )
         df = df.drop(new_cols)
     return df.select(list(schema.keys()))
@@ -620,11 +615,12 @@ def apply_declared_schema(
             )
         if mode == ExtraFieldsMode.WARN:
             _log.warning(
-                "%s: dropping %d undeclared field(s) from %s: %s",
-                source_label,
-                len(extra_cols),
-                schema_name,
-                extra_cols,
+                EtlEvent.MONGO_UNDECLARED_FIELDS_DROPPED,
+                extra={
+                    EtlKey.SOURCE: source_label,
+                    EtlKey.SCHEMA: schema_name,
+                    EtlKey.FIELDS: extra_cols,
+                },
             )
         if mode == ExtraFieldsMode.CAPTURE:
             extra_struct = pl.struct([df[c] for c in extra_cols])
@@ -683,16 +679,14 @@ class MongoBatchProcessor:
         dropped_fields = self._observed_fields - current_fields
         if new_fields:
             _log.warning(
-                "%s: schema drift — new field(s) %s appeared after first batch",
-                self._source_label,
-                sorted(new_fields),
+                EtlEvent.MONGO_SCHEMA_FIELDS_APPEARED,
+                extra={EtlKey.SOURCE: self._source_label, EtlKey.FIELDS: sorted(new_fields)},
             )
             self._observed_fields = self._observed_fields | new_fields
         if dropped_fields:
             _log.warning(
-                "%s: schema drift — field(s) %s absent in this batch",
-                self._source_label,
-                sorted(dropped_fields),
+                EtlEvent.MONGO_SCHEMA_FIELDS_ABSENT,
+                extra={EtlKey.SOURCE: self._source_label, EtlKey.FIELDS: sorted(dropped_fields)},
             )
 
     def build_frame(
@@ -744,10 +738,8 @@ class MongoBatchProcessor:
         if self._str_coercion_warned or not str_complex:
             return
         _log.debug(
-            "%s: field(s) %s declared as str in schema but data contains "
-            "complex types — pre-serialising to JSON string",
-            self._source_label,
-            sorted(str_complex),
+            EtlEvent.MONGO_STRING_FIELDS_SERIALISED,
+            extra={EtlKey.SOURCE: self._source_label, EtlKey.FIELDS: sorted(str_complex)},
         )
         self._str_coercion_warned = True
 
@@ -773,29 +765,30 @@ class MongoBatchProcessor:
 
         if to_serialize & all_conflicted:
             _log.warning(
-                "%s: heterogeneous types detected in fields %s — serialising to JSON string",
-                self._source_label,
-                sorted(to_serialize & all_conflicted),
+                EtlEvent.MONGO_TYPES_CONFLICTED,
+                extra={
+                    EtlKey.SOURCE: self._source_label,
+                    EtlKey.FIELDS: sorted(to_serialize & all_conflicted),
+                },
             )
         if to_serialize & all_nested:
             _log.warning(
-                "%s: nested type conflict — serialising parent field(s) %s to JSON string",
-                self._source_label,
-                sorted(to_serialize & all_nested),
+                EtlEvent.MONGO_NESTED_TYPES_CONFLICTED,
+                extra={
+                    EtlKey.SOURCE: self._source_label,
+                    EtlKey.FIELDS: sorted(to_serialize & all_nested),
+                },
             )
         extras_only = (to_serialize & undeclared_complex) - all_conflicted - all_nested
         if extras_only:
             _log.debug(
-                "%s: serialising undeclared complex field(s) %s to JSON string",
-                self._source_label,
-                sorted(extras_only),
+                EtlEvent.MONGO_UNDECLARED_FIELDS_SERIALISED,
+                extra={EtlKey.SOURCE: self._source_label, EtlKey.FIELDS: sorted(extras_only)},
             )
         if skipped:
             _log.warning(
-                "%s: type conflict in declared complex field(s) %s"
-                " — deferring to schema canonicalization",
-                self._source_label,
-                sorted(skipped),
+                EtlEvent.MONGO_CONFLICT_DEFERRED,
+                extra={EtlKey.SOURCE: self._source_label, EtlKey.FIELDS: sorted(skipped)},
             )
         return to_serialize
 
@@ -812,10 +805,11 @@ class MongoBatchProcessor:
         except (pl.exceptions.ComputeError, pl.exceptions.SchemaError, TypeError):
             if batch:
                 _log.warning(
-                    "%s: pl.from_dicts() failed — "
-                    "falling back to series construction. Batch shape sample:\n%s",
-                    self._source_label,
-                    "\n".join(_summarize_nested_shapes(batch[0])),
+                    EtlEvent.MONGO_FRAME_BUILD_FELL_BACK,
+                    extra={
+                        EtlKey.SOURCE: self._source_label,
+                        EtlKey.SHAPE: _summarize_nested_shapes(batch[0]),
+                    },
                 )
             return _build_frame_fallback(batch, schema_overrides)
 

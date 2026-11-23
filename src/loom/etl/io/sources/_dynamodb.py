@@ -18,6 +18,7 @@ from loom.core.errors.summary import ErrorSummary
 from loom.etl.declarative.source._from_dynamodb import FromDynamoDB
 from loom.etl.declarative.source._specs import DynamoDBSourceSpec, ExtraFieldsMode
 from loom.etl.engines.polars._dtype import loom_type_to_polars
+from loom.etl.event import EtlEvent, EtlKey
 from loom.etl.io.sources._dynamodb_items import normalize_dynamo_item
 from loom.etl.io.sources._dynamodb_predicate import predicate_to_dynamo
 from loom.etl.io.sources._mongo_batch import (
@@ -277,8 +278,8 @@ class _ParallelSegmentScanner:
             exc = future.exception()
             if exc is not None:
                 _log.warning(
-                    "dynamodb segment failed",
-                    extra={"segment": segment, **ErrorSummary.of(exc).fields()},
+                    EtlEvent.DYNAMODB_SEGMENT_FAILED,
+                    extra={EtlKey.SEGMENT: segment, **ErrorSummary.of(exc).fields()},
                 )
 
     def close(self) -> None:
@@ -298,15 +299,15 @@ def _open_item_source(
     effective_limit: int | None,
 ) -> Generator[dict[str, Any], None, None] | _ParallelSegmentScanner:
     _log.info(
-        "dynamodb scan",
+        EtlEvent.DYNAMODB_SCAN_STARTED,
         extra={
-            "table": spec.table,
-            "filter": scan_kwargs.get("FilterExpression"),
-            "projection": scan_kwargs.get("ProjectionExpression"),
-            "batch_size": spec.batch_size,
-            "limit": effective_limit,
-            "consistent_read": spec.consistent_read,
-            "total_segments": spec.total_segments,
+            EtlKey.TABLE: spec.table,
+            EtlKey.FILTER: scan_kwargs.get("FilterExpression"),
+            EtlKey.PROJECTION: scan_kwargs.get("ProjectionExpression"),
+            EtlKey.BATCH_SIZE: spec.batch_size,
+            EtlKey.LIMIT: effective_limit,
+            EtlKey.CONSISTENT_READ: spec.consistent_read,
+            EtlKey.TOTAL_SEGMENTS: spec.total_segments,
         },
     )
     if spec.total_segments is not None:
@@ -346,14 +347,19 @@ def _infer_schema_from_sample(
         source.close()
     if not items:
         _log.info(
-            "dynamodb schema inferred", extra={"table": spec.table, "sampled": 0, "columns": 0}
+            EtlEvent.DYNAMODB_SCHEMA_INFERRED,
+            extra={EtlKey.TABLE: spec.table, EtlKey.SAMPLED: 0, EtlKey.COLUMN_COUNT: 0},
         )
         return {}
     frame = batch_processor.build_frame(items)
     schema = _normalize_null_dtypes(dict(zip(frame.columns, frame.dtypes, strict=True)))
     _log.info(
-        "dynamodb schema inferred",
-        extra={"table": spec.table, "sampled": len(items), "columns": len(schema)},
+        EtlEvent.DYNAMODB_SCHEMA_INFERRED,
+        extra={
+            EtlKey.TABLE: spec.table,
+            EtlKey.SAMPLED: len(items),
+            EtlKey.COLUMN_COUNT: len(schema),
+        },
     )
     return schema  # noqa: RET504
 
@@ -401,38 +407,38 @@ class _ScanTracker:
         rows = len(frame)
         self._rows += rows
         self._batches += 1
-        payload = {
-            "table": self._table,
-            "batch": self._batches,
-            "rows": rows,
-            "total_rows": self._rows,
-            "elapsed_s": round(time.monotonic() - self._started, 3),
+        payload: dict[str, object] = {
+            EtlKey.TABLE: self._table,
+            EtlKey.BATCH: self._batches,
+            EtlKey.ROWS: rows,
+            EtlKey.TOTAL_ROWS: self._rows,
+            EtlKey.DURATION_S: round(time.monotonic() - self._started, 3),
         }
         if self._batches == 1:
-            _log.info("dynamodb first batch", extra={**payload})
+            _log.info(EtlEvent.DYNAMODB_FIRST_BATCH_READ, extra=payload)
         else:
-            _log.debug("dynamodb batch", extra={**payload})
+            _log.debug(EtlEvent.DYNAMODB_BATCH_READ, extra=payload)
         return remaining - rows if remaining is not None else None
 
     def log_complete(self) -> None:
         serialization_failures = _serialization_stats.failures - self._failures_mark
         if serialization_failures:
             _log.warning(
-                "dynamodb read degraded",
+                EtlEvent.DYNAMODB_READ_DEGRADED,
                 extra={
-                    "table": self._table,
-                    "serialization_failures": serialization_failures,
-                    "last_error": _serialization_stats.last_error,
+                    EtlKey.TABLE: self._table,
+                    EtlKey.SERIALIZATION_FAILURES: serialization_failures,
+                    EtlKey.LAST_ERROR: _serialization_stats.last_error,
                 },
             )
         _log.info(
-            "dynamodb read complete",
+            EtlEvent.DYNAMODB_READ_COMPLETED,
             extra={
-                "table": self._table,
-                "items": self._rows,
-                "batches": self._batches,
-                "serialization_failures": serialization_failures,
-                "duration_s": round(time.monotonic() - self._started, 3),
+                EtlKey.TABLE: self._table,
+                EtlKey.ITEMS: self._rows,
+                EtlKey.BATCHES: self._batches,
+                EtlKey.SERIALIZATION_FAILURES: serialization_failures,
+                EtlKey.DURATION_S: round(time.monotonic() - self._started, 3),
             },
         )
 

@@ -28,6 +28,7 @@ from dataclasses import dataclass
 from typing import Any, Protocol
 
 from loom.etl.engines._predicate import sql_literal
+from loom.etl.event import EtlEvent, EtlKey
 
 _log = logging.getLogger(__name__)
 
@@ -247,11 +248,7 @@ def _warn_no_partition_cols(table_ref: str) -> None:
     Args:
         table_ref: Logical table reference string (for the log message).
     """
-    _log.warning(
-        "merge table=%s has no partition_cols — full table scan on MERGE. "
-        "Declare partition_cols= to enable Delta log file pruning.",
-        table_ref,
-    )
+    _log.warning(EtlEvent.MERGE_FULL_SCAN, extra={EtlKey.TABLE: table_ref})
 
 
 def _log_partition_combos(
@@ -264,7 +261,10 @@ def _log_partition_combos(
         combos:    List of partition combination dicts collected from the frame.
         table_ref: Logical table reference string.
     """
-    _log.debug("merge table=%s partition_combos=%d", table_ref, len(combos))
+    _log.debug(
+        EtlEvent.MERGE_PARTITIONS_FOUND,
+        extra={EtlKey.TABLE: table_ref, EtlKey.PARTITION_COMBINATIONS: len(combos)},
+    )
 
 
 def _build_partition_predicate(

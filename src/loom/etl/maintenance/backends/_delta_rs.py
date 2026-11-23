@@ -11,6 +11,7 @@ import logging
 
 from deltalake import CommitProperties, DeltaTable, WriterProperties
 
+from loom.etl.event import EtlEvent, EtlKey
 from loom.etl.maintenance._ops import CompactSpec, VacuumSpec, ZOrderSpec
 from loom.etl.maintenance._protocol import OptimizeResult, VacuumResult
 from loom.etl.storage._locator import TableLocation
@@ -45,8 +46,13 @@ class DeltaRsMaintainer:
             commit_properties=commit,
         )
         _log.info(
-            "vacuum",
-            extra={"uri": uri, "dry_run": spec.dry_run, "full": spec.full, "files": len(deleted)},
+            EtlEvent.TABLE_VACUUMED,
+            extra={
+                EtlKey.URI: uri,
+                EtlKey.DRY_RUN: spec.dry_run,
+                EtlKey.FULL: spec.full,
+                EtlKey.FILES: len(deleted),
+            },
         )
         return VacuumResult(files_deleted=deleted)
 
@@ -64,11 +70,11 @@ class DeltaRsMaintainer:
             commit_properties=commit,
         )
         _log.info(
-            "compact",
+            EtlEvent.TABLE_COMPACTED,
             extra={
-                "uri": uri,
-                "added": result["numFilesAdded"],
-                "removed": result["numFilesRemoved"],
+                EtlKey.URI: uri,
+                EtlKey.ADDED_FILES: result["numFilesAdded"],
+                EtlKey.REMOVED_FILES: result["numFilesRemoved"],
             },
         )
         return OptimizeResult(
@@ -91,12 +97,12 @@ class DeltaRsMaintainer:
             commit_properties=commit,
         )
         _log.info(
-            "z_order",
+            EtlEvent.TABLE_Z_ORDERED,
             extra={
-                "uri": uri,
-                "columns": spec.columns,
-                "added": result["numFilesAdded"],
-                "removed": result["numFilesRemoved"],
+                EtlKey.URI: uri,
+                EtlKey.COLUMNS: spec.columns,
+                EtlKey.ADDED_FILES: result["numFilesAdded"],
+                EtlKey.REMOVED_FILES: result["numFilesRemoved"],
             },
         )
         return OptimizeResult(

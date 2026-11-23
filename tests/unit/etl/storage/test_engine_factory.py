@@ -19,6 +19,7 @@ from loom.core.errors import InvalidUse  # noqa: E402
 from loom.core.model.redaction import Dsn, RedactedMap, Secret  # noqa: E402
 from loom.etl.checkpoint._io._polars import _PolarsCheckpointIO  # noqa: E402
 from loom.etl.engines.spark.engine import SparkEtlEngine  # noqa: E402
+from loom.etl.event import EtlEvent, EtlKey  # noqa: E402
 from loom.etl.lineage._config import LineageConfig  # noqa: E402
 from loom.etl.lineage._records import EventName, PipelineRunRecord, RunStatus  # noqa: E402
 from loom.etl.lineage.sinks import TableLineageStore  # noqa: E402
@@ -39,6 +40,7 @@ from loom.etl.storage._config import (  # noqa: E402
     TableRoute,
     TempConfig,
 )
+from tests.helpers.loggers import CapturedLog  # noqa: E402
 
 
 def _path_defaults(root: str) -> StorageDefaults:
@@ -391,4 +393,5 @@ class TestMakeCheckpointStore:
         with caplog.at_level(logging.WARNING, logger="loom.etl.runner._wiring"):
             make_checkpoint_store(config, spark=MagicMock())
 
-        assert any("ignored by the Spark backend" in r.message for r in caplog.records)
+        [fields] = CapturedLog(caplog).named(EtlEvent.CHECKPOINT_ENCRYPTION_IGNORED)
+        assert fields[EtlKey.OPTION_KEYS] == ["aws_server_side_encryption"]

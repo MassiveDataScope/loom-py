@@ -25,6 +25,7 @@ from loom.etl.declarative.target import TargetSpec
 from loom.etl.declarative.target._file import FileSpec
 from loom.etl.declarative.target._table import UpdateSpec, UpsertSpec, upsert_delete_flag_conflict
 from loom.etl.engines._path_template import extract_template_fields
+from loom.etl.event import EtlEvent, EtlKey
 from loom.etl.pipeline._step_client import ClientStep
 from loom.etl.pipeline._step_sql import StepSQL
 
@@ -593,32 +594,17 @@ def _check_historify_delete_marker(step_type: type[Any], spec: _HistorifySpecLik
 
 def _warn_historify_no_partition_scope(step_type: type[Any], spec: _HistorifySpecLike) -> None:
     if spec.partition_scope is None:
-        _log.warning(
-            "%s: IntoHistory declared without 'partition_scope' — "
-            "each run will read and write the entire history table. "
-            "Declare partition_scope to constrain Delta reads/writes to relevant partitions.",
-            step_type.__qualname__,
-        )
+        _log.warning(EtlEvent.HISTORIFY_SCOPE_MISSING, extra={EtlKey.STEP: step_type.__qualname__})
 
 
 def _warn_historify_rerun_without_scope(step_type: type[Any], spec: _HistorifySpecLike) -> None:
     if spec.allow_temporal_rerun and spec.partition_scope is None:
-        _log.warning(
-            "%s: IntoHistory has allow_temporal_rerun=True but no 'partition_scope' — "
-            "a re-weave will affect the entire history table. "
-            "Declare partition_scope to limit re-weave scope.",
-            step_type.__qualname__,
-        )
+        _log.warning(EtlEvent.HISTORIFY_RERUN_UNSCOPED, extra={EtlKey.STEP: step_type.__qualname__})
 
 
 def _warn_historify_track_none(step_type: type[Any], spec: _HistorifySpecLike) -> None:
     if spec.track is None:
-        _log.warning(
-            "%s: IntoHistory 'track=None' — tracked columns will be inferred "
-            "at runtime from the incoming frame. "
-            "Declare 'track' explicitly to fix the tracked columns at compile time.",
-            step_type.__qualname__,
-        )
+        _log.warning(EtlEvent.HISTORIFY_TRACK_INFERRED, extra={EtlKey.STEP: step_type.__qualname__})
 
 
 def _check_upsert_keys_non_empty(step_type: type[Any], spec: _UpsertSpecLike, method: str) -> None:

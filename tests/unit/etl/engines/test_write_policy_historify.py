@@ -42,6 +42,7 @@ from loom.etl.declarative.target._table import (
 from loom.etl.declarative.target._temp import TempSpec
 from loom.etl.engines import _write_policy
 from loom.etl.engines._write_policy import _WritePolicy
+from loom.etl.event import EtlEvent, EtlKey
 from loom.etl.schema._schema import SchemaError, SchemaNotFoundError
 from loom.etl.storage._config import MissingTablePolicy
 from loom.etl.storage.routing import ResolvedTarget
@@ -342,10 +343,10 @@ class TestHistorifyRepairReportPassthrough:
         result = writer._do_historify([1], target, _spec(), None)
 
         assert result is report
-        [fields] = CapturedLog(caplog).named("historify_temporal_rerun")
-        assert fields["target"] == "wh.dim_players"
-        assert fields["affected_key_count"] == 1
-        assert fields["dates_requiring_rerun"] == ["2025-01-01"]
+        [fields] = CapturedLog(caplog).named(EtlEvent.HISTORIFY_RERUN_REQUIRED)
+        assert fields[EtlKey.TARGET] == "wh.dim_players"
+        assert fields[EtlKey.AFFECTED_KEYS] == 1
+        assert fields[EtlKey.RERUN_DATES] == ["2025-01-01"]
 
 
 # ---------------------------------------------------------------------------

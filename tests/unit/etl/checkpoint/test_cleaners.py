@@ -10,6 +10,8 @@ import pytest
 
 from loom.etl.checkpoint._cleaners import FsspecTempCleaner
 from loom.etl.checkpoint._options import checkpoint_options
+from loom.etl.event import EtlEvent, EtlKey
+from tests.helpers.loggers import CapturedLog
 
 
 class TestCheckpointCleaner:
@@ -39,12 +41,9 @@ class TestCheckpointCleaner:
 
         FsspecTempCleaner().delete_tree("nosuchproto://bucket/tmp")
 
-        assert any(
-            record.name == "loom.etl.checkpoint._cleaners"
-            and record.levelno == logging.WARNING
-            and "cleanup skipped" in record.message
-            for record in caplog.records
-        )
+        assert CapturedLog(caplog, "loom.etl.checkpoint._cleaners").messages == [
+            EtlEvent.CHECKPOINT_CLEANUP_SKIPPED
+        ]
 
     # ---------------------------------------------------------------------------
     # CheckpointStore integration — cleaner is called on cleanup
@@ -137,7 +136,8 @@ class TestCheckpointStorageOptions:
 
         assert options.fsspec == {}
         assert options.object_store == {}
-        assert any("storage options ignored" in r.message for r in caplog.records)
+        [fields] = CapturedLog(caplog).named(EtlEvent.CHECKPOINT_OPTIONS_IGNORED)
+        assert fields[EtlKey.OPTION_KEYS] == ["aws_allow_http", "aws_region"]
 
     @pytest.mark.parametrize(
         ("declared", "object_store_value", "botocore_value"),

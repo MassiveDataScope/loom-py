@@ -17,6 +17,7 @@ import pytest
 
 from loom.etl.declarative.expr import col
 from loom.etl.declarative.source._specs import DynamoDBSourceSpec
+from loom.etl.event import EtlEvent, EtlKey
 from loom.etl.io.sources._dynamodb import DynamoDBSourceReader, _ParallelSegmentScanner
 from loom.etl.io.sources._dynamodb_items import normalize_dynamo_item
 from loom.etl.schema._schema import ColumnSchema, LoomDtype
@@ -439,8 +440,11 @@ class TestParallelScanFailures:
 
         scanner.close()  # early stop (e.g. limit satisfied) — must not raise nor hang
 
-        [failure_fields] = CapturedLog(caplog).named("dynamodb segment failed")
-        assert (failure_fields["segment"], failure_fields["exception.type"]) == (0, "RuntimeError")
+        [failure_fields] = CapturedLog(caplog).named(EtlEvent.DYNAMODB_SEGMENT_FAILED)
+        assert (failure_fields[EtlKey.SEGMENT], failure_fields["exception.type"]) == (
+            0,
+            "RuntimeError",
+        )
         assert "throttled" not in str(failure_fields)
 
     def test_error_not_double_logged_when_raised(self, caplog: pytest.LogCaptureFixture) -> None:
@@ -450,7 +454,7 @@ class TestParallelScanFailures:
             for _ in scanner:
                 pass
         scanner.close()
-        assert CapturedLog(caplog).named("dynamodb segment failed") == []
+        assert CapturedLog(caplog).named(EtlEvent.DYNAMODB_SEGMENT_FAILED) == []
 
 
 # ---------------------------------------------------------------------------

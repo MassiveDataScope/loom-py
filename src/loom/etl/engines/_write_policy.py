@@ -39,6 +39,8 @@ from loom.etl.storage.routing import ResolvedTarget, TableRouteResolver
 if TYPE_CHECKING:
     from loom.etl.lineage._records import WriteContext
 
+from loom.etl.event import EtlEvent, EtlKey
+
 _log = logging.getLogger(__name__)
 
 InputFrameT = TypeVar("InputFrameT")
@@ -510,12 +512,12 @@ class _WritePolicy(TargetWriter, Generic[InputFrameT, WriteFrameT, PhysicalSchem
         del existing
         if report is not None:
             _log.warning(
-                "historify_temporal_rerun",
+                EtlEvent.HISTORIFY_RERUN_REQUIRED,
                 extra={
-                    "target": target.logical_ref.ref,
-                    "affected_key_count": len(report.affected_keys),
-                    "dates_requiring_rerun": [str(d) for d in report.dates_requiring_rerun],
-                    "warnings": list(report.warnings),
+                    EtlKey.TARGET: target.logical_ref.ref,
+                    EtlKey.AFFECTED_KEYS: len(report.affected_keys),
+                    EtlKey.RERUN_DATES: [str(d) for d in report.dates_requiring_rerun],
+                    EtlKey.WARNINGS: list(report.warnings),
                 },
             )
         self._write_history(result, target, spec=spec, create=create)
@@ -660,7 +662,9 @@ class _WritePolicy(TargetWriter, Generic[InputFrameT, WriteFrameT, PhysicalSchem
         materialized = self._materialize_for_write(frame, streaming)
         if allow_empty:
             if self._row_count_if_cheap(materialized) == 0:
-                _log.warning("write_produced_no_rows", extra={"target": target.logical_ref.ref})
+                _log.warning(
+                    EtlEvent.WRITE_PRODUCED_NO_ROWS, extra={EtlKey.TARGET: target.logical_ref.ref}
+                )
             return materialized
         pinned, empty = self._pin_rows(materialized)
         if empty:

@@ -12,6 +12,7 @@ from loom.core.errors import InvalidUse
 from loom.etl.declarative.source._from_mongo import FromMongo, SourceRef
 from loom.etl.declarative.source._specs import ExtraFieldsMode, MongoSourceSpec
 from loom.etl.engines.polars._dtype import loom_type_to_polars
+from loom.etl.event import EtlEvent, EtlKey
 from loom.etl.io.sources._mongo_batch import (
     BatchProcessorProtocol,
     MongoBatchProcessor,
@@ -159,15 +160,19 @@ def _infer_schema_from_first_batch(
         cursor.close()
     if not docs:
         _log.info(
-            "mongo schema inferred",
-            extra={"collection": collection.name, "sampled": 0, "columns": 0},
+            EtlEvent.MONGO_SCHEMA_INFERRED,
+            extra={EtlKey.COLLECTION: collection.name, EtlKey.SAMPLED: 0, EtlKey.COLUMN_COUNT: 0},
         )
         return {}
     frame = batch_processor.build_frame(docs)
     schema = _normalize_null_dtypes(dict(zip(frame.columns, frame.dtypes, strict=True)))
     _log.info(
-        "mongo schema inferred",
-        extra={"collection": collection.name, "sampled": len(docs), "columns": len(schema)},
+        EtlEvent.MONGO_SCHEMA_INFERRED,
+        extra={
+            EtlKey.COLLECTION: collection.name,
+            EtlKey.SAMPLED: len(docs),
+            EtlKey.COLUMN_COUNT: len(schema),
+        },
     )
     return schema  # noqa: RET504
 
@@ -186,14 +191,14 @@ def _open_cursor(
     if effective_limit is not None:
         cursor = cursor.limit(effective_limit)
     _log.info(
-        "mongo query",
+        EtlEvent.MONGO_QUERY_STARTED,
         extra={
-            "collection": collection.name,
-            "database": getattr(collection.database, "name", None),
-            "filter": filter_dict,
-            "projection": list(projection) if projection else None,
-            "batch_size": spec.batch_size,
-            "limit": effective_limit,
+            EtlKey.COLLECTION: collection.name,
+            EtlKey.DATABASE: getattr(collection.database, "name", None),
+            EtlKey.FILTER_FIELDS: list(filter_dict),
+            EtlKey.PROJECTION_FIELDS: list(projection) if projection else None,
+            EtlKey.BATCH_SIZE: spec.batch_size,
+            EtlKey.LIMIT: effective_limit,
         },
     )
     return cursor
@@ -297,21 +302,21 @@ def _scan(
         serialization_failures = _serialization_stats.failures - serialization_failures_mark
         if serialization_failures:
             _log.warning(
-                "mongo read degraded",
+                EtlEvent.MONGO_READ_DEGRADED,
                 extra={
-                    "collection": collection.name,
-                    "serialization_failures": serialization_failures,
-                    "last_error": _serialization_stats.last_error,
+                    EtlKey.COLLECTION: collection.name,
+                    EtlKey.SERIALIZATION_FAILURES: serialization_failures,
+                    EtlKey.LAST_ERROR: _serialization_stats.last_error,
                 },
             )
         _log.info(
-            "mongo read complete",
+            EtlEvent.MONGO_READ_COMPLETED,
             extra={
-                "collection": collection.name,
-                "docs": total_rows,
-                "batches": batches_yielded,
-                "serialization_failures": serialization_failures,
-                "duration_s": round(time.monotonic() - started, 3),
+                EtlKey.COLLECTION: collection.name,
+                EtlKey.ITEMS: total_rows,
+                EtlKey.BATCHES: batches_yielded,
+                EtlKey.SERIALIZATION_FAILURES: serialization_failures,
+                EtlKey.DURATION_S: round(time.monotonic() - started, 3),
             },
         )
 
@@ -319,17 +324,17 @@ def _scan(
 def _log_batch(
     collection: str, batch_index: int, rows: int, total_rows: int, elapsed_s: float
 ) -> None:
-    payload = {
-        "collection": collection,
-        "batch": batch_index,
-        "rows": rows,
-        "total_rows": total_rows,
-        "elapsed_s": round(elapsed_s, 3),
+    payload: dict[str, object] = {
+        EtlKey.COLLECTION: collection,
+        EtlKey.BATCH: batch_index,
+        EtlKey.ROWS: rows,
+        EtlKey.TOTAL_ROWS: total_rows,
+        EtlKey.DURATION_S: round(elapsed_s, 3),
     }
     if batch_index == 1:
-        _log.info("mongo first batch", extra={**payload})
+        _log.info(EtlEvent.MONGO_FIRST_BATCH_READ, extra=payload)
     else:
-        _log.debug("mongo batch", extra={**payload})
+        _log.debug(EtlEvent.MONGO_BATCH_READ, extra=payload)
 
 
 __all__ = ["FromMongo", "MongoSourceReader", "MongoSourceSpec", "SourceRef"]

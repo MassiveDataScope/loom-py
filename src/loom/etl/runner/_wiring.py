@@ -17,6 +17,7 @@ from loom.etl.checkpoint import CheckpointStore, FsspecTempCleaner, TempCleaner
 from loom.etl.checkpoint._io._polars import _PolarsCheckpointIO
 from loom.etl.checkpoint._io._spark import _SparkCheckpointIO
 from loom.etl.checkpoint._options import encryption_options
+from loom.etl.event import EtlEvent, EtlKey
 from loom.etl.lineage._config import LineageConfig
 from loom.etl.lineage.sinks import LineageStore, LineageWriter, TableLineageStore
 from loom.etl.ports.contracts import (
@@ -209,9 +210,8 @@ def _make_checkpoint_backend(spark: Any, storage_options: dict[str, str]) -> Any
         encryption = encryption_options(storage_options)
         if encryption:
             _log.warning(
-                "checkpoint encryption options ignored by the Spark backend keys=%s; "
-                "set fs.s3a.server-side-encryption-algorithm / -key on the Spark session",
-                sorted(encryption),
+                EtlEvent.CHECKPOINT_ENCRYPTION_IGNORED,
+                extra={EtlKey.OPTION_KEYS: sorted(encryption)},
             )
         return _SparkCheckpointIO(spark)
     return _PolarsCheckpointIO(storage_options)

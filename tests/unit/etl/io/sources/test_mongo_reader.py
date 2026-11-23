@@ -20,11 +20,13 @@ from bson.decimal128 import Decimal128
 from loom.etl.declarative.expr import col
 from loom.etl.declarative.source._specs import MongoSourceSpec
 from loom.etl.engines.polars._dtype import loom_type_to_polars
+from loom.etl.event import EtlEvent
 from loom.etl.io.sources._mongo import MongoSourceReader
 from loom.etl.io.sources._mongo_batch import _build_schema_plan, _canonicalize_batch
 from loom.etl.io.sources._mongo_bson import normalize_bson_doc
 from loom.etl.schema._contract import resolve_schema
 from loom.etl.schema._schema import ColumnSchema, ListType, LoomDtype, StructField, StructType
+from tests.helpers.loggers import CapturedLog, logged_text
 
 # ---------------------------------------------------------------------------
 # Fake pymongo client stack
@@ -380,7 +382,8 @@ class TestExtraFieldsMode:
         with caplog.at_level(logging.WARNING):
             df = reader.read(_spec(schema=_ORDER_SCHEMA, extra_fields_mode="warn"), None).collect()
         assert "extra_col" not in df.columns
-        assert any("extra_col" in msg for msg in caplog.messages)
+        assert EtlEvent.MONGO_UNDECLARED_FIELDS_DROPPED in CapturedLog(caplog).messages
+        assert "extra_col" in logged_text(caplog)
 
     def test_no_extra_fields_no_error(self) -> None:
         docs = [{"order_id": "o1", "status": "active"}]
@@ -433,7 +436,8 @@ class TestHeterogeneousTypesWithinBatch:
         assert df["year"].dtype == pl.String
         int_row = df.filter(pl.col("id") == 1)["year"][0]
         assert json.loads(int_row) == 2020
-        assert any("year" in msg for msg in caplog.messages)
+        assert EtlEvent.MONGO_TYPES_CONFLICTED in CapturedLog(caplog).messages
+        assert "year" in logged_text(caplog)
 
     def test_list_of_strings_vs_list_of_dicts(self) -> None:
         import json
@@ -460,7 +464,7 @@ class TestHeterogeneousTypesWithinBatch:
             df = reader.read(_spec(), None).collect()
         assert df["attributes"].dtype == pl.Struct
         assert df["attributes"][1] is None
-        assert not any("attributes" in msg for msg in caplog.messages)
+        assert "attributes" not in logged_text(caplog)
 
     def test_uniform_field_not_serialized(self) -> None:
         docs = [{"id": i, "price": 5000} for i in range(4)]
@@ -477,7 +481,8 @@ class TestHeterogeneousTypesWithinBatch:
         reader, _ = _reader(docs)
         with caplog.at_level(logging.WARNING):
             reader.read(_spec(), None)
-        assert any("attributes" in msg for msg in caplog.messages)
+        assert EtlEvent.MONGO_TYPES_CONFLICTED in CapturedLog(caplog).messages
+        assert "attributes" in logged_text(caplog)
 
 
 # ---------------------------------------------------------------------------
@@ -514,7 +519,8 @@ class TestHeterogeneousTypesAcrossBatches:
         reader, _ = _reader(docs)
         with caplog.at_level(logging.WARNING):
             reader.read(_spec(batch_size=2), None).collect()
-        assert any("attributes" in msg for msg in caplog.messages)
+        assert EtlEvent.MONGO_TYPES_CONFLICTED in CapturedLog(caplog).messages
+        assert "attributes" in logged_text(caplog)
 
 
 # ---------------------------------------------------------------------------
@@ -546,7 +552,8 @@ class TestSchemaGuidedCoercion:
         schema = (ColumnSchema("label", LoomDtype.UTF8),)
         with caplog.at_level(logging.DEBUG):
             reader.read(_spec(schema=schema), None).collect()
-        assert any("label" in msg for msg in caplog.messages)
+        assert EtlEvent.MONGO_STRING_FIELDS_SERIALISED in CapturedLog(caplog).messages
+        assert "label" in logged_text(caplog)
 
     def test_recursive_schema_materialises_nested_empty_lists(self) -> None:
         docs = [
@@ -776,8 +783,8 @@ class TestNestedHeterogeneousTypes:
         reader, _ = _reader(docs)
         with caplog.at_level(logging.WARNING):
             reader.read(_spec(), None)
-        assert any("ad" in msg for msg in caplog.messages)
-        assert any("nested" in msg.lower() for msg in caplog.messages)
+        assert EtlEvent.MONGO_NESTED_TYPES_CONFLICTED in CapturedLog(caplog).messages
+        assert "ad" in logged_text(caplog)
 
     def test_non_conflicting_nested_dict_stays_as_struct(self) -> None:
         docs = [
@@ -900,7 +907,8 @@ class TestNestedHeterogeneousTypes:
         assert row0["amount"] == pytest.approx(100.0)
         assert row0["currency"] == "EUR"
         assert "extra_fee" not in row0
-        assert any("extra_fee" in msg for msg in caplog.messages)
+        assert EtlEvent.MONGO_SUBFIELDS_DROPPED in CapturedLog(caplog).messages
+        assert "extra_fee" in logged_text(caplog)
 
     def test_declared_list_of_struct_with_nested_conflict_stays_list(
         self, caplog: pytest.LogCaptureFixture
@@ -929,7 +937,7 @@ class TestNestedHeterogeneousTypes:
             df = reader.read(_spec(schema=schema), None).collect()
 
         assert df["tags"].dtype == pl.List(pl.Struct({"name": pl.String, "weight": pl.Int64}))
-        assert any("deferring" in msg.lower() for msg in caplog.messages)
+        assert EtlEvent.MONGO_CONFLICT_DEFERRED in CapturedLog(caplog).messages
 
 
 # ---------------------------------------------------------------------------
@@ -1275,7 +1283,7 @@ class TestSafeDumpsDegradation:
         assert df.height == 2
         assert df["ref"][0] == '{"at": null}'
         assert _serialization_stats.failures > mark
-        assert any("could not serialise" in r.message for r in caplog.records)
+        assert EtlEvent.MONGO_VALUE_UNSERIALISABLE in CapturedLog(caplog).messages
 
 
 # ---------------------------------------------------------------------------
@@ -1344,7 +1352,8 @@ class TestSchemaDrift:
         with caplog.at_level(logging.WARNING):
             processor.build_frame(batch2)
 
-        assert any("schema drift" in m and "extra" in m for m in caplog.messages)
+        assert EtlEvent.MONGO_SCHEMA_FIELDS_APPEARED in CapturedLog(caplog).messages
+        assert "extra" in logged_text(caplog)
 
     def test_dropped_field_in_second_batch_emits_warning(
         self, caplog: pytest.LogCaptureFixture
@@ -1359,7 +1368,8 @@ class TestSchemaDrift:
         with caplog.at_level(logging.WARNING):
             processor.build_frame(batch2)
 
-        assert any("schema drift" in m and "score" in m for m in caplog.messages)
+        assert EtlEvent.MONGO_SCHEMA_FIELDS_ABSENT in CapturedLog(caplog).messages
+        assert "score" in logged_text(caplog)
 
     def test_dropped_field_warning_persists_in_subsequent_batches(
         self, caplog: pytest.LogCaptureFixture
@@ -1373,7 +1383,8 @@ class TestSchemaDrift:
         with caplog.at_level(logging.WARNING):
             processor.build_frame([{"id": 3}])  # still no score
 
-        assert any("schema drift" in m and "score" in m for m in caplog.messages)
+        assert EtlEvent.MONGO_SCHEMA_FIELDS_ABSENT in CapturedLog(caplog).messages
+        assert "score" in logged_text(caplog)
 
     def test_stable_schema_emits_no_drift_warning(self, caplog: pytest.LogCaptureFixture) -> None:
         from loom.etl.io.sources._mongo_batch import MongoBatchProcessor
@@ -1384,7 +1395,7 @@ class TestSchemaDrift:
             processor.build_frame([{"id": 2, "name": "b"}])
             processor.build_frame([{"id": 3, "name": "c"}])
 
-        assert not any("schema drift" in m for m in caplog.messages)
+        assert CapturedLog(caplog).messages == []
 
 
 # ---------------------------------------------------------------------------
@@ -1509,9 +1520,8 @@ class TestPhase2Improvements:
         ):
             _build_frame_fallback(batch, {"score": pl.Int64})
 
-        debug_messages = [r.message for r in caplog.records if r.levelno == logging.DEBUG]
-        assert any("could not cast" in m for m in debug_messages)
-        assert any("score" in m for m in debug_messages)
+        assert EtlEvent.MONGO_CAST_SKIPPED in CapturedLog(caplog).messages
+        assert "score" in logged_text(caplog)
 
     # ------------------------------------------------------------------
     # T14 — BatchProcessorProtocol structural compatibility

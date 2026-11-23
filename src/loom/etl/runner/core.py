@@ -21,6 +21,7 @@ from loom.core.observability.protocol import LifecycleObserver
 from loom.core.runner import flush_runner
 from loom.etl.checkpoint import CheckpointStore, TempCleaner
 from loom.etl.compiler import ETLCompiler, filter_plan
+from loom.etl.event import EtlEvent, EtlKey
 from loom.etl.executor import ETLExecutor, ParallelDispatcher
 from loom.etl.lineage._config import ETLObservabilityConfig
 from loom.etl.lineage._observer import LineageObserver
@@ -227,7 +228,7 @@ class ETLRunner:
             environment: Environment of the run; overrides ``LOOM_ENV``. Picks
                 the overlay of a config directory.
         """
-        _log.debug("load yaml path=%s", path)
+        _log.debug(EtlEvent.YAML_LOADING, extra={EtlKey.PATH: path})
         resolved_environment = resolve_environment(environment)
         context = _load_context(path, resolvers=resolvers, environment=resolved_environment)
         storage_config, obs_config = _parse_sections(context)
@@ -342,10 +343,10 @@ class ETLRunner:
             attempt: Current attempt number (1-based).
             last_attempt: Whether this is the final allowed attempt.
         """
-        _log.info("compile pipeline=%s", pipeline.__name__)
+        _log.info(EtlEvent.PIPELINE_RUN_REQUESTED, extra={EtlKey.PIPELINE: pipeline.__name__})
         plan = self._compiler.compile(pipeline)
         if include is not None:
-            _log.debug("filter plan include=%s", sorted(include))
+            _log.debug(EtlEvent.PLAN_FILTERED, extra={EtlKey.INCLUDE: sorted(include)})
             plan = filter_plan(plan, include)
         ctx = RunContext(
             run_id=run_id if run_id is not None else str(uuid.uuid4()),
@@ -364,7 +365,9 @@ class ETLRunner:
                         self._checkpoint_store.cleanup_run(ctx.run_id)
                     except Exception:
                         _log.warning(
-                            "checkpoint cleanup failed run_id=%s", ctx.run_id, exc_info=True
+                            EtlEvent.CHECKPOINT_RUN_CLEANUP_FAILED,
+                            extra={EtlKey.RUN_ID: ctx.run_id},
+                            exc_info=True,
                         )
 
     def flush(self) -> None:

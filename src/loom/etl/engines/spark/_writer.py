@@ -40,6 +40,7 @@ from loom.etl.engines._write_policy import _WritePolicy
 from loom.etl.engines.spark._dtype import loom_type_to_spark
 from loom.etl.engines.spark._historify import SparkHistorifyOps
 from loom.etl.engines.spark._schema import SparkPhysicalSchema, apply_schema_spark
+from loom.etl.event import EtlEvent
 from loom.etl.lineage._records import LineageRecord, get_lineage_schema
 from loom.etl.storage._config import MissingTablePolicy
 from loom.etl.storage._file_locator import FileLocator
@@ -186,7 +187,7 @@ class SparkTargetWriter(_WritePolicy[DataFrame, DataFrame, SparkPhysicalSchema])
             else:
                 frame.unpersist()
         except Exception:
-            _log.warning("Could not free the rows pinned for the write.", exc_info=True)
+            _log.warning(EtlEvent.PINNED_ROWS_RELEASE_FAILED, exc_info=True)
 
     def _predicate_to_sql(self, predicate: Any, params: Any) -> str:
         """Convert predicate to SQL."""

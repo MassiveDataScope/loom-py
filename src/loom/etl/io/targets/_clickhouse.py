@@ -14,6 +14,7 @@ from loom.core.connections import ClickHouseConnection
 from loom.core.errors import InternalError, InvalidUse, InvalidValue
 from loom.etl.declarative.target import TargetSpec
 from loom.etl.declarative.target._client import ClientSpec
+from loom.etl.event import EtlEvent, EtlKey
 from loom.etl.io._clickhouse_connection import open_client, resolve_connection
 
 _log = logging.getLogger(__name__)
@@ -152,20 +153,24 @@ class ClickHouseTargetWriter:
             frame.collect(engine=engine) if isinstance(frame, pl.LazyFrame) else frame
         )
         if df.is_empty():
-            _log.warning("write_produced_no_rows", extra={"target": spec.table})
+            _log.warning(EtlEvent.WRITE_PRODUCED_NO_ROWS, extra={EtlKey.TARGET: spec.table})
             return
 
         qualified = f"{spec.database}.{spec.table}" if spec.database else spec.table
 
         if spec.write_mode == "replace":
-            _log.debug("clickhouse_truncate_table", extra={"table": qualified})
+            _log.debug(EtlEvent.CLICKHOUSE_TABLE_TRUNCATED, extra={EtlKey.TABLE: qualified})
             self._client.command(f"TRUNCATE TABLE IF EXISTS {qualified}")
 
         column_names = df.columns
         data = [df[col].to_list() for col in column_names]
         _log.debug(
-            "clickhouse_insert",
-            extra={"rows": len(df), "cols": len(column_names), "table": qualified},
+            EtlEvent.CLICKHOUSE_INSERT_STARTED,
+            extra={
+                EtlKey.ROWS: len(df),
+                EtlKey.COLUMN_COUNT: len(column_names),
+                EtlKey.TABLE: qualified,
+            },
         )
         self._client.insert(
             qualified,

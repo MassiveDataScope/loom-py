@@ -11,6 +11,7 @@ from typing import Any
 
 from loom.core.errors import InvalidType
 from loom.etl.checkpoint._cleaners import _join_path
+from loom.etl.event import EtlEvent, EtlKey
 
 _log = logging.getLogger(__name__)
 
@@ -74,7 +75,7 @@ class _SparkCheckpointIO:
         if append and existing_schema is not None:
             frame = _align_spark_to_existing(frame, existing_schema)
 
-        _log.debug("checkpoint write parquet path=%s append=%s", path, append)
+        _log.debug(EtlEvent.CHECKPOINT_WRITTEN, extra={EtlKey.PATH: path, EtlKey.APPEND: append})
         frame.write.mode("append" if append else "overwrite").parquet(path)
 
 

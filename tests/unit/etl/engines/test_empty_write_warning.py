@@ -12,12 +12,13 @@ import pytest
 from loom.etl.declarative.expr._refs import TableRef
 from loom.etl.engines._write_policy import _WritePolicy
 from loom.etl.engines.polars._writer import PolarsTargetWriter
+from loom.etl.event import EtlEvent
 from loom.etl.storage._locator import TableLocation
 from loom.etl.storage.routing import PathTarget
 from tests.helpers.loggers import logged_text
 from tests.helpers.version_limited_extras import require_pyspark
 
-_WARNING_EVENT = "write_produced_no_rows"
+_WARNING_EVENT = EtlEvent.WRITE_PRODUCED_NO_ROWS
 
 
 @pytest.fixture
