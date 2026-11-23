@@ -38,11 +38,10 @@ class NotifyEvent(msgspec.Struct, frozen=True, kw_only=True):
 
     def log_fields(self) -> dict[str, str]:
         """The fields a record about this notification carries: flow, state and correlation id."""
-        return {
-            PrefectKey.FLOW: self.flow_name,
-            LogField.STATUS: self.state,
-            LogField.CORRELATION_ID: self.correlation_id,
-        }
+        fields: dict[str, str] = {PrefectKey.FLOW: self.flow_name, LogField.STATUS: self.state}
+        if self.correlation_id:
+            fields[LogField.CORRELATION_ID] = self.correlation_id
+        return fields
 
 
 __all__ = ["NotifyEvent"]

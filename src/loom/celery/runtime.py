@@ -286,14 +286,8 @@ def _register_tasks(
     """Register one task per job and one per callback class and outcome."""
     kernel, observability = application.kernel, application.observability
     if declared.jobs:
-        _log.info(
-            JobEvent.RETRY_POLICIES_DESCRIBED,
-            extra={
-                JobKey.RETRY_POLICIES: application.job_settings.describe_retries(
-                    REDELIVERY, declared.jobs
-                )
-            },
-        )
+        policies = application.job_settings.describe_retries(REDELIVERY, declared.jobs)
+        _log.info(JobEvent.RETRY_POLICIES_DESCRIBED, extra={JobKey.RETRY_POLICIES: policies})
     for job_type in declared.jobs:
         _make_job_task(
             celery_app,

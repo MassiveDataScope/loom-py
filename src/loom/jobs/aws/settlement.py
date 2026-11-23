@@ -5,6 +5,7 @@ from __future__ import annotations
 import logging
 from collections.abc import Callable, Sequence
 from dataclasses import dataclass, field
+from enum import StrEnum
 from typing import TYPE_CHECKING, TypeVar
 
 import msgspec
@@ -26,6 +27,14 @@ _log = logging.getLogger(__name__)
 
 SETTLEMENT_TIMEOUT_S = 1
 """Seconds a settlement call waits to connect, and again to read."""
+
+
+class SettlementAction(StrEnum):
+    """The SQS call a settlement makes for a group of messages."""
+
+    CHANGE_VISIBILITY = "change_visibility"
+    ABANDON = "abandon"
+    POSTPONE = "postpone"
 
 
 @dataclass(slots=True)
@@ -116,7 +125,7 @@ class SQSJobSettlement:
         for arn in {record.queue_arn for record in strays}:
             _log.error(
                 JobsEvent.SETTLEMENT_QUEUE_UNREACHABLE,
-                extra={JobKey.QUEUE: arn.rsplit(":", 1)[-1]},
+                extra={JobsKey.QUEUE_ARN: arn},
             )
         return strays + self._settle_queue(queue, consumed)
 
@@ -132,14 +141,21 @@ class SQSJobSettlement:
                     LogField.REASON: reason,
                 },
             )
-        self._settle(queue, plan.retries, queue.change_visibility_batch)
-        unsent = self._settle(queue, plan.abandonments, queue.abandon_batch)
-        unsent += self._settle(queue, plan.postponements, queue.postpone_batch)
+        self._settle(
+            queue, SettlementAction.CHANGE_VISIBILITY, plan.retries, queue.change_visibility_batch
+        )
+        unsent = self._settle(
+            queue, SettlementAction.ABANDON, plan.abandonments, queue.abandon_batch
+        )
+        unsent += self._settle(
+            queue, SettlementAction.POSTPONE, plan.postponements, queue.postpone_batch
+        )
         return [record for record, _ in plan.retries] + unsent
 
     @staticmethod
     def _settle(
         queue: SQSQueue,
+        action: SettlementAction,
         entries: Sequence[tuple[SQSRecord, _EntryT]],
         send: Callable[[Sequence[tuple[SQSRecord, _EntryT]]], BatchResult],
     ) -> list[SQSRecord]:
@@ -150,7 +166,7 @@ class SQSJobSettlement:
         except Exception as exc:
             _log.exception(
                 JobsEvent.SETTLEMENT_CALL_RAISED,
-                extra={JobKey.QUEUE: queue.name},
+                extra={JobKey.QUEUE: queue.name, JobsKey.ACTION: action},
             )
             code = aws_error_code(exc)
             result = BatchResult(failed={record.message_id: code for record, _ in entries})
@@ -160,6 +176,7 @@ class SQSJobSettlement:
                     JobsEvent.SETTLEMENT_ENTRIES_FAILED,
                     extra={
                         JobKey.QUEUE: queue.name,
+                        JobsKey.ACTION: action,
                         JobsKey.FAILED_ENTRIES: [
                             f"{message_id}:{code}" for message_id, code in result.failed.items()
                         ],

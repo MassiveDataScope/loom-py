@@ -116,14 +116,8 @@ def _inline(context: JobTransportContext) -> _Built:
     )
     resources = (Resource(kind=ResourceKind.TIMER, name="jobs", manager=closing(timer.close)),)
     if context.jobs:
-        _log.info(
-            JobEvent.RETRY_POLICIES_DESCRIBED,
-            extra={
-                JobKey.RETRY_POLICIES: context.settings.describe_retries(
-                    service.redelivery, context.jobs
-                )
-            },
-        )
+        policies = context.settings.describe_retries(service.redelivery, context.jobs)
+        _log.info(JobEvent.RETRY_POLICIES_DESCRIBED, extra={JobKey.RETRY_POLICIES: policies})
     return service, resources
 
 

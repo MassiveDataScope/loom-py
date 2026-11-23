@@ -18,4 +18,6 @@ class JobsEvent(LogEvent):
 class JobsKey(LogKey):
     """The fields of a job transport record."""
 
+    QUEUE_ARN = "loom.jobs.queue_arn"
+    ACTION = "loom.jobs.action"
     FAILED_ENTRIES = "loom.jobs.failed_entries"
