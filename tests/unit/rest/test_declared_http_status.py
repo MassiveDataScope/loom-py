@@ -1,4 +1,4 @@
-"""An application ``LoomError`` may declare the HTTP answer the mapper sends."""
+"""An application ``CodedError`` may declare the HTTP answer the mapper sends."""
 
 from __future__ import annotations
 
@@ -18,7 +18,7 @@ from fastapi.testclient import TestClient
 
 from loom.composition import create_app
 from loom.core.errors import (
-    LoomError,
+    CodedError,
     NotFound,
     PostCommitError,
     RateLimited,
@@ -51,7 +51,7 @@ def _detail(exc: HTTPException) -> dict[str, Any]:
     return exc.detail
 
 
-class QueryFailed(LoomError):
+class QueryFailed(CodedError):
     """The pricing query did not answer; the client may see which query."""
 
     http_status = HTTPStatus.BAD_GATEWAY
@@ -65,7 +65,7 @@ class QueryFailed(LoomError):
         return {"failed": self.failed}
 
 
-class _HiddenUpstream(LoomError):
+class _HiddenUpstream(CodedError):
     """A 502 whose message names a host and must stay off the wire."""
 
     http_status = HTTPStatus.BAD_GATEWAY
@@ -77,7 +77,7 @@ class _HiddenUpstream(LoomError):
         return {"failed": _FAILED_QUERY}
 
 
-class _OverridesMessage(LoomError):
+class _OverridesMessage(CodedError):
     """A 5xx that tries to replace the message loom writes."""
 
     public_message = True
@@ -98,7 +98,7 @@ class _OverridesEntity(NotFound):
         return {"entity": "leaked-field-value"}
 
 
-def _assert_internal_fallback(exc: HTTPException, error: LoomError) -> None:
+def _assert_internal_fallback(exc: HTTPException, error: CodedError) -> None:
     assert exc.status_code == HTTPStatus.INTERNAL_SERVER_ERROR
     assert exc.headers is None
     assert _detail(exc) == {
@@ -125,7 +125,7 @@ def _assert_misdeclaration_logged(
         assert secret not in logged
 
 
-class _RaisingDetail(LoomError):
+class _RaisingDetail(CodedError):
     def __init__(self) -> None:
         super().__init__("secret-raise-host", code=ErrorCode.SYSTEM_ERROR)
 
@@ -133,7 +133,7 @@ class _RaisingDetail(LoomError):
         raise RuntimeError("secret-raise-value")
 
 
-class _NoneDetail(LoomError):
+class _NoneDetail(CodedError):
     def __init__(self) -> None:
         super().__init__("secret-none-host", code=ErrorCode.SYSTEM_ERROR)
 
@@ -151,7 +151,7 @@ from enum import StrEnum
 from http import HTTPStatus
 from typing import Any
 
-from loom.core.errors import LoomError
+from loom.core.errors import CodedError
 from loom.core.model import BaseModel, ColumnField
 from loom.core.use_case.use_case import UseCase
 from loom.rest.model import RestInterface, RestRoute
@@ -168,7 +168,7 @@ class QueryCode(StrEnum):
     BAD_GATEWAY = "bad_gateway"
 
 
-class QueryFailed(LoomError):
+class QueryFailed(CodedError):
     http_status = HTTPStatus.BAD_GATEWAY
     public_message = True
 
@@ -221,7 +221,7 @@ from __future__ import annotations
 from enum import StrEnum
 from typing import Any
 
-from loom.core.errors import LoomError
+from loom.core.errors import CodedError
 from loom.core.model import BaseModel, ColumnField
 from loom.core.use_case.use_case import UseCase
 from loom.rest.model import RestInterface, RestRoute
@@ -238,7 +238,7 @@ class QueryCode(StrEnum):
     BAD_GATEWAY = "bad_gateway"
 
 
-class CollidingQuery(LoomError):
+class CollidingQuery(CodedError):
     public_message = True
 
     def __init__(self) -> None:
@@ -248,7 +248,7 @@ class CollidingQuery(LoomError):
         return {"message": "LEAKED-COLLISION"}
 
 
-class BadStatusQuery(LoomError):
+class BadStatusQuery(CodedError):
     http_status = 200
     public_message = True
 
@@ -259,7 +259,7 @@ class BadStatusQuery(LoomError):
         return {"failed": "LEAKED-STATUS"}
 
 
-class RaisingDetailQuery(LoomError):
+class RaisingDetailQuery(CodedError):
     def __init__(self) -> None:
         super().__init__("postgresql://db.internal:5432/orders", code=QueryCode.BAD_GATEWAY)
 
@@ -361,7 +361,7 @@ class TestDeclaredPublicErrorBody:
     def test_a_truthy_non_bool_public_message_keeps_the_fixed_5xx_message(
         self,
     ) -> None:
-        class _Declared(LoomError):
+        class _Declared(CodedError):
             http_status = HTTPStatus.BAD_GATEWAY
 
             def __init__(self) -> None:
@@ -381,7 +381,7 @@ class TestMisdeclaredHttpStatus:
         ids=["message", "entity"],
     )
     def test_a_public_detail_that_overrides_a_mapper_field_answers_500(
-        self, error: LoomError, caplog: pytest.LogCaptureFixture
+        self, error: CodedError, caplog: pytest.LogCaptureFixture
     ) -> None:
         """A colliding key is logged and dropped; the client gets the fixed 500."""
         with caplog.at_level(logging.ERROR, logger="loom.rest.errors"):
@@ -400,7 +400,7 @@ class TestMisdeclaredHttpStatus:
         "error", [_RaisingDetail(), _NoneDetail()], ids=["raises", "not-a-mapping"]
     )
     def test_a_broken_public_detail_answers_the_internal_error(
-        self, error: LoomError, caplog: pytest.LogCaptureFixture
+        self, error: CodedError, caplog: pytest.LogCaptureFixture
     ) -> None:
         with caplog.at_level(logging.ERROR, logger="loom.rest.errors"):
             exc = HttpErrorMapper().to_http(error)
@@ -418,7 +418,7 @@ class TestMisdeclaredHttpStatus:
     def test_an_invalid_http_status_answers_the_internal_error(
         self, status: object, caplog: pytest.LogCaptureFixture
     ) -> None:
-        class _Declared(LoomError):
+        class _Declared(CodedError):
             public_message = True
 
             def __init__(self) -> None:
@@ -445,7 +445,7 @@ class TestDeclaredStatusAcceptance:
     ) -> None:
         """``http_status = 502`` type-checks as ``int`` and is ``HTTPStatus.BAD_GATEWAY``."""
 
-        class _Declared(LoomError):
+        class _Declared(CodedError):
             http_status = 502
 
             def __init__(self) -> None:
@@ -465,7 +465,7 @@ class TestDeclaredStatusAcceptance:
     ) -> None:
         """Normalising matters: the challenge compares with ``is``, not equality."""
 
-        class _Declared(LoomError):
+        class _Declared(CodedError):
             http_status = 401
 
             def __init__(self) -> None:
@@ -479,7 +479,7 @@ class TestDeclaredStatusAcceptance:
 
     @pytest.mark.parametrize("status", [400, 451, 511])
     def test_the_registered_4xx_and_5xx_bounds_are_accepted(self, status: int) -> None:
-        class _Declared(LoomError):
+        class _Declared(CodedError):
             def __init__(self) -> None:
                 super().__init__("bound", code=ErrorCode.SYSTEM_ERROR)
 
@@ -526,7 +526,7 @@ class TestDeclaredStatusAcceptance:
     )
     def test_an_error_without_an_http_declaration_keeps_its_answer(
         self,
-        error: LoomError,
+        error: CodedError,
         status: int,
         message: str,
         extra: dict[str, Any],

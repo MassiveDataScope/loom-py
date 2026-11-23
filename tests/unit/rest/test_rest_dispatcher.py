@@ -17,10 +17,10 @@ from loom.core.engine.compiler import UseCaseCompiler
 from loom.core.engine.executor import UseCaseExecutor
 from loom.core.errors import (
     BoundaryValidationError,
+    CodedError,
     Conflict,
     Forbidden,
     InsufficientAuthentication,
-    LoomError,
     NotFound,
     PostCommitError,
     RateLimited,
@@ -176,10 +176,10 @@ class TestHttpErrorMapper:
 
     @pytest.mark.parametrize(
         "error",
-        [Unauthenticated(), LoomError("Step up.", code="insufficient_authentication")],
+        [Unauthenticated(), CodedError("Step up.", code="insufficient_authentication")],
         ids=["unauthenticated", "custom-insufficient-authentication"],
     )
-    def test_a_401_carries_the_plain_bearer_challenge(self, error: LoomError) -> None:
+    def test_a_401_carries_the_plain_bearer_challenge(self, error: CodedError) -> None:
         """RFC 9110 §11.6.1: a 401 without a challenge is not a valid response."""
         exc = self._mapper().to_http(error)
         assert (exc.status_code, exc.headers) == (401, {"WWW-Authenticate": "Bearer"})
@@ -244,7 +244,7 @@ class TestHttpErrorMapper:
         ],
         ids=["foreign-task", "uow-inside-scope", "stores-not-committed"],
     )
-    def test_an_invocation_scope_error_maps_to_500_with_its_code(self, error: LoomError) -> None:
+    def test_an_invocation_scope_error_maps_to_500_with_its_code(self, error: CodedError) -> None:
         exc = self._mapper().to_http(error)
         assert (exc.status_code, _detail(exc)["code"]) == (500, error.code)
 
@@ -318,7 +318,7 @@ class TestHttpErrorMapper:
         ],
         ids=lambda error: type(error).__name__,
     )
-    def test_no_other_error_body_gains_a_top_level_field(self, error: LoomError) -> None:
+    def test_no_other_error_body_gains_a_top_level_field(self, error: CodedError) -> None:
         assert ErrorField.FIELD not in _detail(self._mapper().to_http(error))
 
     def test_boundary_validation_maps_to_422_with_violations(self) -> None:
@@ -340,7 +340,7 @@ class TestHttpErrorMapper:
         )
 
     def test_another_error_coded_rate_limited_maps_to_429_without_retry_after(self) -> None:
-        exc = self._mapper().to_http(LoomError("slow down", code="rate_limited"))
+        exc = self._mapper().to_http(CodedError("slow down", code="rate_limited"))
         assert (exc.status_code, exc.headers) == (429, None)
 
     def test_query_validation_maps_to_400_with_its_violations(self) -> None:
@@ -377,7 +377,7 @@ class TestHttpErrorMapper:
         class _AppCode(StrEnum):
             UNKNOWN_CUSTOM = "unknown_custom"
 
-        class _CustomError(LoomError):
+        class _CustomError(CodedError):
             pass
 
         err = _CustomError("oops", code=_AppCode.UNKNOWN_CUSTOM)
@@ -550,7 +550,7 @@ class TestRestUseCaseDispatcherErrors:
 
     async def test_custom_error_mapper_used(self) -> None:
         class _AlwaysTeapot(HttpErrorMapper):
-            def to_http(self, error: LoomError) -> HTTPException:
+            def to_http(self, error: CodedError) -> HTTPException:
                 return HTTPException(status_code=418, detail="teapot")
 
         executor = self._make_failing_executor(NotFound("X", id=1))

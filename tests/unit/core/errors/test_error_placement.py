@@ -1,11 +1,11 @@
-"""Placement lint for ``LoomError`` subclasses (ADR 0003, rules R1, R3 and R5).
+"""Placement lint for ``CodedError`` subclasses (ADR 0003, rules R1, R3 and R5).
 
 R1: every ``code=`` an error class passes to ``super().__init__`` is a member
 of a catalogue (``ErrorCode``, or an adapter's own ``*ErrorCode``) or the
 ``code`` parameter it received; a literal string is not a code.
-R2: only ``DomainError`` and ``SystemError`` name ``LoomError`` as a base;
+R2: only ``DomainError`` and ``SystemError`` name ``CodedError`` as a base;
 every other error picks a family.
-R3: a class that extends ``LoomError``, directly or through any subclass,
+R3: a class that extends ``CodedError``, directly or through any subclass,
 lives either under ``loom/core/errors/`` (shared across pillars) or in a
 module named ``errors.py`` / ``_errors.py`` (the owning pillar's errors
 module). R5: nothing under ``loom/core`` imports ``http``, ``fastapi`` or
@@ -24,7 +24,7 @@ from tests.helpers.source_tree import parsed
 _SRC = Path(__file__).resolve().parents[4] / "src" / "loom"
 _ERRORS_PACKAGE = _SRC / "core" / "errors"
 _ERRORS_MODULES = frozenset({"errors.py", "_errors.py"})
-_ROOT = "LoomError"
+_ROOT = "CodedError"
 _FAMILIES = frozenset({"DomainError", "SystemError"})
 _WEB = frozenset({"http", "fastapi", "starlette"})
 
@@ -58,7 +58,7 @@ def _children(by_name: dict[str, list[tuple[Path, ast.ClassDef]]]) -> dict[str, 
 
 
 def _error_classes() -> dict[str, list[tuple[Path, ast.ClassDef]]]:
-    """Every class of ``src/loom`` that descends from ``LoomError``, by name.
+    """Every class of ``src/loom`` that descends from ``CodedError``, by name.
 
     Bases are matched by name and closed transitively: a subclass of a
     pillar-local error counts as well. Names are not resolved through
@@ -142,12 +142,12 @@ class TestErrorPlacementLint:
     def test_the_lint_sees_the_whole_hierarchy(self) -> None:
         """A subclass of a pillar error is an error class too; the catalogue is in."""
         names = _error_classes()
-        assert {"LoomError", "DomainError", "SystemError", "NotFound"} <= names.keys()
+        assert {"CodedError", "DomainError", "SystemError", "NotFound"} <= names.keys()
         assert "UnsupportedFormatError" in names
 
 
 def _outside_a_family() -> list[str]:
-    """``path:line class`` for every class that names ``LoomError`` itself as a base."""
+    """``path:line class`` for every class that names ``CodedError`` itself as a base."""
     return [
         f"{path.relative_to(_SRC)}:{node.lineno} {node.name}"
         for definitions in _error_classes().values()
@@ -166,7 +166,7 @@ class TestErrorPlacement:
         assert _outside_a_family() == []
 
     def test_core_error_subclasses_live_in_an_errors_module(self) -> None:
-        """R3: a ``LoomError`` subclass lives under ``core/errors/`` or in an errors module."""
+        """R3: a ``CodedError`` subclass lives under ``core/errors/`` or in an errors module."""
         assert _misplaced() == []
 
     def test_core_imports_no_web_package(self) -> None:

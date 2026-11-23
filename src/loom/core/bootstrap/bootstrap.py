@@ -2,8 +2,10 @@
 
 from __future__ import annotations
 
+from loom.core.errors.base import LoomError
 
-class BootstrapError(Exception):
+
+class BootstrapError(LoomError):
     """Raised when the application bootstrap pipeline fails.
 
     Args:

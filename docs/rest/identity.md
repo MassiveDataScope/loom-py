@@ -357,7 +357,7 @@ without `custom: true`, `custom: true` without an `authenticator`, and
   exception's message and its chained cause go to the server log at `WARNING`, never
   to the caller. Raised outside an authenticator — from a use case, for instance —
   {class}`~loom.rest.errors.HttpErrorMapper` answers `503` with a fixed message and
-  logs the exception's, like any `5xx` `LoomError`. Any other exception from an authenticator keeps
+  logs the exception's, like any `5xx` `CodedError`. Any other exception from an authenticator keeps
   answering `500`.
 
   ```python

@@ -12,9 +12,9 @@ from fastapi import HTTPException
 
 from loom.core.errors import (
     BoundaryValidationError,
+    CodedError,
     Forbidden,
     InsufficientAuthentication,
-    LoomError,
     NotFound,
     PostCommitError,
     RateLimited,
@@ -61,9 +61,9 @@ class ErrorField(StrEnum):
 
 
 class HttpErrorMapper:
-    """Maps ``LoomError`` subclasses to FastAPI ``HTTPException`` instances.
+    """Maps ``CodedError`` subclasses to FastAPI ``HTTPException`` instances.
 
-    Uses the ``code`` discriminator on each ``LoomError`` to select the
+    Uses the ``code`` discriminator on each ``CodedError`` to select the
     appropriate HTTP status code.  The response body always includes
     ``code``, ``message``, and ``trace_id``.  A ``5xx`` body carries a fixed
     message instead of the error's, which may name hosts, databases or
@@ -111,7 +111,7 @@ class HttpErrorMapper:
         mapper = HttpErrorMapper()
         try:
             ...
-        except LoomError as exc:
+        except CodedError as exc:
             raise mapper.to_http(exc) from exc
     """
 
@@ -146,8 +146,8 @@ class HttpErrorMapper:
         ErrorCode.BOUNDARY_TYPE_UNSUPPORTED: HTTPStatus.INTERNAL_SERVER_ERROR,
     }
 
-    def to_http(self, error: LoomError) -> HTTPException:
-        """Convert a ``LoomError`` to an ``HTTPException``.
+    def to_http(self, error: CodedError) -> HTTPException:
+        """Convert a ``CodedError`` to an ``HTTPException``.
 
         Args:
             error: Domain or system error raised by the UseCase pipeline.
@@ -173,7 +173,7 @@ class HttpErrorMapper:
             )
             return _internal_fallback(error)
 
-    def _status_for(self, error: LoomError) -> HTTPStatus:
+    def _status_for(self, error: CodedError) -> HTTPStatus:
         """Return the error's declared status, or the one its code maps to."""
         declared = error.http_status
         if declared is None:
@@ -189,7 +189,7 @@ class _Misdeclared(Exception):
         super().__init__(problem)
 
 
-def _convert(mapper: HttpErrorMapper, error: LoomError) -> HTTPException:
+def _convert(mapper: HttpErrorMapper, error: CodedError) -> HTTPException:
     status = mapper._status_for(error)
     detail: dict[str, Any] = {
         ErrorField.CODE: error.code,
@@ -225,7 +225,7 @@ def _convert(mapper: HttpErrorMapper, error: LoomError) -> HTTPException:
     return HTTPException(status_code=status, detail=detail, headers=_headers(error, status))
 
 
-def _internal_fallback(error: LoomError) -> HTTPException:
+def _internal_fallback(error: CodedError) -> HTTPException:
     """Answer a misdeclaration with the fixed internal body and nothing else."""
     return HTTPException(
         status_code=HTTPStatus.INTERNAL_SERVER_ERROR,
@@ -263,7 +263,7 @@ def _boundary_violation_fields(violations: tuple[tuple[str, str], ...]) -> list[
     return [{ErrorField.FIELD: field, ErrorField.MESSAGE: message} for field, message in violations]
 
 
-def _add_public_detail(detail: dict[str, Any], error: LoomError) -> None:
+def _add_public_detail(detail: dict[str, Any], error: CodedError) -> None:
     """Merge ``public_detail`` into *detail*.
 
     Owned keys are whatever this response already carries, including a
@@ -301,7 +301,7 @@ def _public_message(status: int, message: str, *, reveal: bool = False) -> str:
     return _INTERNAL_ERROR_MESSAGE
 
 
-def _headers(error: LoomError, status: HTTPStatus) -> dict[str, str] | None:
+def _headers(error: CodedError, status: HTTPStatus) -> dict[str, str] | None:
     if isinstance(error, InsufficientAuthentication):
         return {WWW_AUTHENTICATE_HEADER: _step_up_challenge(error)}
     if status is HTTPStatus.UNAUTHORIZED:

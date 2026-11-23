@@ -6,14 +6,14 @@ from typing import Final
 
 import msgspec
 
-from loom.core.errors.base import LoomError
+from loom.core.errors.base import CodedError
 
 EXCEPTION_TYPE_FIELD: Final = "exception.type"
 ERROR_CODE_FIELD: Final = "loom.error.code"
 
 
 class ErrorSummary(msgspec.Struct, frozen=True, kw_only=True):
-    """What a failure is, without its message: its type and, for a :class:`LoomError`, its code."""
+    """What a failure is, without its message: its type and, for a :class:`CodedError`, its code."""
 
     type: str
     code: str | None = None
@@ -21,7 +21,7 @@ class ErrorSummary(msgspec.Struct, frozen=True, kw_only=True):
     @classmethod
     def of(cls, exc: BaseException) -> ErrorSummary:
         """Summarise *exc*."""
-        code = str(exc.code) if isinstance(exc, LoomError) else None
+        code = str(exc.code) if isinstance(exc, CodedError) else None
         return cls(type=type(exc).__qualname__, code=code)
 
     @classmethod

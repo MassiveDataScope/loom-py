@@ -12,7 +12,7 @@ from typing import Any
 
 from loom.core.engine.events import AbandonReason, EventKind, ExecutionEvent, Status
 from loom.core.engine.execution_observer import ExecutionObserver, NullExecutionObserver
-from loom.core.errors import LoomError
+from loom.core.errors import CodedError
 from loom.core.errors.summary import ErrorSummary
 from loom.core.job.delivery import JobDelivery
 from loom.core.job.outcome import (
@@ -193,7 +193,7 @@ class JobRunner:
         return outcome
 
     def _decide(self, error: Exception, attempt: int, policy: RetryPolicy) -> Abandoned | Failed:
-        if isinstance(error, LoomError) and not error.is_retryable:
+        if isinstance(error, CodedError) and not error.is_retryable:
             return Abandoned(AbandonReason.NOT_RETRYABLE, error)
         if not self._redelivery.can_retry:
             return Abandoned(AbandonReason.CANNOT_WAIT, error)

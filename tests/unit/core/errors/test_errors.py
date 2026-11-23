@@ -9,12 +9,17 @@ from typing import Any
 import pytest
 
 import loom.core.use_case as use_case_package
+from loom.core.bootstrap.bootstrap import BootstrapError
+from loom.core.config.errors import ConfigError
 from loom.core.errors import (
+    CodedError,
     Conflict,
     DomainError,
     Forbidden,
     ForeignSessionError,
     InsufficientAuthentication,
+    InvalidType,
+    InvalidValue,
     LoomError,
     NotFound,
     RateLimited,
@@ -27,7 +32,7 @@ from loom.core.errors.codes import ErrorCode
 from loom.core.use_case import rule as rule_module
 
 # ---------------------------------------------------------------------------
-# LoomError base
+# CodedError base
 # ---------------------------------------------------------------------------
 
 
@@ -39,18 +44,18 @@ class _AppCode(StrEnum):
 
 class TestLoomError:
     def test_stores_message_and_code(self) -> None:
-        err = LoomError("something broke", code=_AppCode.BROKEN)
+        err = CodedError("something broke", code=_AppCode.BROKEN)
         assert err.message == "something broke"
         assert err.code == "broken"
 
     def test_is_exception(self) -> None:
-        assert isinstance(LoomError("msg", code=_AppCode.BROKEN), Exception)
+        assert isinstance(CodedError("msg", code=_AppCode.BROKEN), Exception)
 
     def test_str_is_message(self) -> None:
-        assert str(LoomError("readable message", code=_AppCode.BROKEN)) == "readable message"
+        assert str(CodedError("readable message", code=_AppCode.BROKEN)) == "readable message"
 
     def test_is_retryable_by_default(self) -> None:
-        assert LoomError("msg", code=_AppCode.BROKEN).is_retryable is True
+        assert CodedError("msg", code=_AppCode.BROKEN).is_retryable is True
 
     def test_a_domain_error_is_never_retryable(self) -> None:
         """Repeating the work cannot fix the input or the rule it broke."""
@@ -67,8 +72,15 @@ class TestErrorHierarchy:
     @pytest.mark.parametrize(
         "subclass,base",
         [
-            (DomainError, LoomError),
-            (SystemError, LoomError),
+            (CodedError, LoomError),
+            (DomainError, CodedError),
+            (SystemError, CodedError),
+            (InvalidValue, LoomError),
+            (InvalidValue, ValueError),
+            (InvalidType, LoomError),
+            (InvalidType, TypeError),
+            (ConfigError, LoomError),
+            (BootstrapError, LoomError),
             (NotFound, DomainError),
             (Forbidden, DomainError),
             (Conflict, DomainError),
@@ -120,7 +132,7 @@ class TestNotFound:
         assert "abc-123" in err.message
 
     def test_catchable_as_loom_error(self) -> None:
-        with pytest.raises(LoomError):
+        with pytest.raises(CodedError):
             raise NotFound("User", id=1)
 
 
@@ -389,3 +401,13 @@ class TestForeignSessionError:
         restored = pickle.loads(pickle.dumps(ForeignSessionError.between("own", "active")))
 
         assert restored.code == ErrorCode.FOREIGN_SESSION
+
+
+class TestMarkerBase:
+    @pytest.mark.parametrize(
+        "error",
+        [InvalidValue("bad"), InvalidType("bad"), ConfigError("bad"), BootstrapError("bad")],
+        ids=["invalid-value", "invalid-type", "config", "bootstrap"],
+    )
+    def test_a_loom_error_without_a_code_is_not_a_coded_error(self, error: LoomError) -> None:
+        assert (isinstance(error, LoomError), isinstance(error, CodedError)) == (True, False)

@@ -7,7 +7,7 @@ from typing import Any
 import msgspec
 
 from loom.core.engine.executor import UseCaseExecutor
-from loom.core.errors import LoomError
+from loom.core.errors import CodedError
 from loom.core.identity import current_identity
 from loom.core.transport.dispatcher import ExecutionRequest
 from loom.core.use_case.factory import UseCaseFactory
@@ -24,7 +24,7 @@ class RestUseCaseDispatcher:
     builds the use case class inside its execution through ``factory`` (so
     its constructor ports, ``Caller()`` and per-execution adapters are
     resolved there), as the request's caller. Serializes ``msgspec.Struct``
-    results to plain Python primitives and maps ``LoomError`` subclasses to
+    results to plain Python primitives and maps ``CodedError`` subclasses to
     ``HTTPException`` instances.
 
     Args:
@@ -82,7 +82,7 @@ class RestUseCaseDispatcher:
             or a ``MsgspecJSONResponse`` for a ``Created`` result.
 
         Raises:
-            HTTPException: When the UseCase raises a ``LoomError``.
+            HTTPException: When the UseCase raises a ``CodedError``.
         """
         try:
             result: Any = await self._executor.run(
@@ -92,7 +92,7 @@ class RestUseCaseDispatcher:
                 payload=request.payload,
                 identity=current_identity(),
             )
-        except LoomError as exc:
+        except CodedError as exc:
             raise self._error_mapper.to_http(exc) from exc
 
         if isinstance(result, Created):

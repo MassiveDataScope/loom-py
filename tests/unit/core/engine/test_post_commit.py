@@ -12,7 +12,7 @@ from loom.core.engine.post_commit import (
     bind_channel,
     reset_channel,
 )
-from loom.core.errors import LoomError, PostCommitError
+from loom.core.errors import CodedError, PostCommitError
 
 
 class TestPostCommitChannel:
@@ -77,7 +77,7 @@ class TestPostCommitChannel:
         assert calls == ["middle", "last"]
         assert info.value.committed is True
         assert info.value.failures == (first, second)
-        assert isinstance(info.value, LoomError)
+        assert isinstance(info.value, CodedError)
         assert info.value.code == "post_commit_failure"
 
     async def test_drain_empties_the_channel_so_a_second_one_runs_nothing(self) -> None:

@@ -215,7 +215,7 @@ class HttpTestHarness:
     def force_error(self, model: type[Any], method: str, error: Exception) -> None:
         """Force a repository method to raise a specific error on every call.
 
-        Errors that are :class:`~loom.core.errors.LoomError` subclasses are
+        Errors that are :class:`~loom.core.errors.CodedError` subclasses are
         mapped to the corresponding HTTP status code by the router.
 
         Args:

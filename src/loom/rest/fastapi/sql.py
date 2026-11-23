@@ -32,7 +32,7 @@ from starlette.requests import Request
 from starlette.responses import Response
 
 from loom.core.config.errors import ConfigError
-from loom.core.errors import BODY_FIELD, LoomError, RuleViolationError
+from loom.core.errors import BODY_FIELD, CodedError, RuleViolationError
 from loom.core.identity import current_identity
 from loom.core.model import LoomFrozenStruct
 from loom.core.observability.event import Scope
@@ -255,7 +255,7 @@ def _make_sql_handler(
             return _SqlJSONResponse(content=result)
         except HTTPException:
             raise
-        except LoomError as exc:
+        except CodedError as exc:
             http_error = _error_mapper.to_http(exc)
             if http_error.status_code >= HTTPStatus.INTERNAL_SERVER_ERROR:
                 _logger.error(

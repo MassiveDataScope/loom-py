@@ -8,7 +8,14 @@ from loom.core.errors.auth import (
     MissingCaller,
     Unauthenticated,
 )
-from loom.core.errors.base import DomainError, LoomError, SystemError
+from loom.core.errors.base import (
+    CodedError,
+    DomainError,
+    InvalidType,
+    InvalidValue,
+    LoomError,
+    SystemError,
+)
 from loom.core.errors.container import ContainerSealed, ResolutionError
 from loom.core.errors.domain import (
     BODY_FIELD,
@@ -51,6 +58,9 @@ __all__ = [
     "InsufficientAuthentication",
     "JobFailedError",
     "JobTimeoutError",
+    "CodedError",
+    "InvalidType",
+    "InvalidValue",
     "LoomError",
     "MalformedJobMessage",
     "MissingCaller",
