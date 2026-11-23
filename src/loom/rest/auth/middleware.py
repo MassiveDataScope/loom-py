@@ -36,7 +36,6 @@ _ASGIApp = Callable[[_Scope, _Receive, _Send], Awaitable[None]]
 _HTTP_SCOPE = "http"
 _UNAUTHORIZED_MESSAGE = "Authentication required: missing or invalid credentials."
 _UNAVAILABLE_MESSAGE = "Authentication is temporarily unavailable."
-_UNKNOWN_CLIENT = "unknown"
 
 _logger = logging.getLogger(__name__)
 
@@ -103,7 +102,7 @@ class AuthenticationMiddleware:
         except AuthenticationUnavailable:
             _logger.warning(
                 RestEvent.AUTHENTICATION_UNAVAILABLE,
-                extra={LogField.HTTP_REQUEST_METHOD: scope.get("method", _UNKNOWN_CLIENT)},
+                extra={LogField.HTTP_REQUEST_METHOD: scope.get("method")},
                 exc_info=True,
             )
             await _send_error(
@@ -117,7 +116,7 @@ class AuthenticationMiddleware:
         if identity is None:
             _logger.info(
                 RestEvent.AUTHENTICATION_REFUSED,
-                extra={LogField.HTTP_REQUEST_METHOD: scope.get("method", _UNKNOWN_CLIENT)},
+                extra={LogField.HTTP_REQUEST_METHOD: scope.get("method")},
             )
             await send_unauthorized(send)
             return

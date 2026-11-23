@@ -73,10 +73,10 @@ class TestAuthRejectionLogging:
         assert caplog.records
         assert all(record.levelno >= logging.INFO for record in caplog.records)
 
-    async def test_the_log_says_where_and_what_was_attempted(
+    async def test_a_refusal_logs_the_event_and_the_method(
         self, middleware: AuthenticationMiddleware, caplog: pytest.LogCaptureFixture
     ) -> None:
-        """Correlation is the point: one refusal is noise, a burst from one client is not."""
+        """A refusal names what was attempted by its method, never the raw path or the client."""
         with caplog.at_level(logging.INFO, logger="loom.rest.auth.middleware"):
             await _call(middleware)
 
