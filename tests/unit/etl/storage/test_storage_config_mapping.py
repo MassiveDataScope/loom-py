@@ -8,6 +8,7 @@ from typing import Any
 import msgspec
 import pytest
 
+from loom.core.config import ConfigError
 from loom.etl.runner.core import ETLRunner
 from loom.etl.storage import (
     FileRoute,
@@ -147,7 +148,7 @@ class TestDuplicateRouteName:
 
         config = convert_storage_config(normalise_storage_section(raw))
 
-        with pytest.raises(ValueError, match="storage.tables contains duplicate name 'dup'"):
+        with pytest.raises(ConfigError, match="storage.tables contains a duplicate name"):
             config.validate()
 
 
@@ -159,13 +160,13 @@ class TestInnerRouteName:
     def test_conflicting_inner_name_is_rejected(self) -> None:
         raw = {"tables": {"sales.orders": {"name": "other", "ref": "a.b"}}}
 
-        with pytest.raises(ValueError, match=r"storage\.tables\['sales\.orders'\].*'other'"):
+        with pytest.raises(ConfigError, match=r"storage\.tables entries must not declare a name"):
             normalise_storage_section(raw)
 
     def test_conflicting_inner_name_in_files_is_rejected(self) -> None:
         raw = {"files": {"exports": {"name": "other", "path": {"uri": "/x"}}}}
 
-        with pytest.raises(ValueError, match=r"storage\.files\['exports'\].*'other'"):
+        with pytest.raises(ConfigError, match=r"storage\.files entries must not declare a name"):
             normalise_storage_section(raw)
 
     def test_inner_name_equal_to_key_is_accepted(self) -> None:

@@ -88,7 +88,7 @@ def predicate_to_polars(node: PredicateNode, params_instance: Any) -> pl.Expr:
         Polars expression suitable for :meth:`polars.LazyFrame.filter`.
 
     Raises:
-        TypeError: When an unsupported node type is encountered.
+        InvalidType: When an unsupported node type is encountered.
 
     Example::
 

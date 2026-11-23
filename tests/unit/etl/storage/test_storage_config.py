@@ -7,6 +7,7 @@ from pathlib import Path
 import msgspec
 import pytest
 
+from loom.core.config import ConfigError
 from loom.core.model.redaction import Dsn, RedactedMap, Secret
 from loom.etl.storage._config import (
     AuditConfig,
@@ -53,13 +54,13 @@ class TestStorageConfig:
     def test_validate_rejects_local_checkpoint_root(self, tmp_path: Path) -> None:
         local_path = tmp_path / "loom-checkpoints"
         config = StorageConfig(temp=TempConfig(root=Dsn(str(local_path))))
-        with pytest.raises(ValueError, match="cloud URI"):
+        with pytest.raises(ConfigError, match="cloud URI"):
             config.validate()
 
     @pytest.mark.parametrize("root", ["s3://", "gs://", "abfss://", "file:///tmp/loom"])
     def test_validate_rejects_invalid_checkpoint_cloud_uri(self, root: str) -> None:
         config = StorageConfig(temp=TempConfig(root=Dsn(root)))
-        with pytest.raises(ValueError, match="cloud URI"):
+        with pytest.raises(ConfigError, match="cloud URI"):
             config.validate()
 
     def test_validate_accepts_r2_checkpoint_root(self) -> None:
@@ -73,7 +74,7 @@ class TestStorageConfig:
                 TableRoute(name="raw.orders", path=TablePathConfig(uri=Dsn("s3://raw/orders-v2"))),
             )
         )
-        with pytest.raises(ValueError, match="duplicate name"):
+        with pytest.raises(ConfigError, match="duplicate name"):
             config.validate()
 
     def test_validate_rejects_duplicate_file_names(self) -> None:
@@ -83,12 +84,12 @@ class TestStorageConfig:
                 FileRoute(name="daily.csv", path=FilePathConfig(uri=Dsn("s3://b/daily.csv"))),
             )
         )
-        with pytest.raises(ValueError, match="duplicate name"):
+        with pytest.raises(ConfigError, match="duplicate name"):
             config.validate()
 
     def test_validate_rejects_missing_route_destination(self) -> None:
         config = StorageConfig(tables=(TableRoute(name="raw.orders"),))
-        with pytest.raises(ValueError, match="exactly one destination"):
+        with pytest.raises(ConfigError, match="exactly one destination"):
             config.validate()
 
     def test_validate_rejects_route_with_both_ref_and_path(self) -> None:
@@ -101,7 +102,7 @@ class TestStorageConfig:
                 ),
             )
         )
-        with pytest.raises(ValueError, match="exactly one destination"):
+        with pytest.raises(ConfigError, match="exactly one destination"):
             config.validate()
 
     @pytest.mark.parametrize(
@@ -117,14 +118,14 @@ class TestStorageConfig:
     )
     def test_validate_rejects_an_unroutable_ref(self, ref: str, match: str) -> None:
         config = StorageConfig(tables=(TableRoute(name="raw.orders", ref=ref),))
-        with pytest.raises(ValueError, match=match):
+        with pytest.raises(ConfigError, match=match):
             config.validate()
 
     def test_validate_rejects_unknown_catalog_key(self) -> None:
         config = StorageConfig(
             tables=(TableRoute(name="raw.orders", ref="raw.orders", catalog="finance"),)
         )
-        with pytest.raises(ValueError, match="not defined in storage.catalogs"):
+        with pytest.raises(ConfigError, match="not defined in storage.catalogs"):
             config.validate()
 
     @pytest.mark.parametrize(
@@ -164,7 +165,7 @@ class TestStorageConfig:
             catalogs={"main": CatalogConnection()},
             tables=(TableRoute(name="raw.orders", ref="main.raw.orders"),),
         )
-        with pytest.raises(ValueError, match="non-empty workspace and token"):
+        with pytest.raises(ConfigError, match="non-empty workspace and token"):
             config.validate()
 
     @pytest.mark.parametrize(
@@ -200,7 +201,7 @@ class TestStorageConfig:
         if error is None:
             config.validate()
             return
-        with pytest.raises(TypeError, match=error):
+        with pytest.raises(ConfigError, match=error):
             config.validate()
 
     def test_validate_rejects_non_positive_target_file_size(self) -> None:
@@ -209,7 +210,7 @@ class TestStorageConfig:
                 table_path=TablePathConfig(uri=Dsn("s3://lake"), target_file_size=0)
             )
         )
-        with pytest.raises(ValueError, match="target_file_size"):
+        with pytest.raises(ConfigError, match="target_file_size"):
             config.validate()
 
     def test_has_catalog_routes(self) -> None:
@@ -245,7 +246,7 @@ class TestStorageConfig:
 
     def test_to_path_locator_without_path_routes_raises(self) -> None:
         config = StorageConfig()
-        with pytest.raises(ValueError, match="no path routes configured"):
+        with pytest.raises(ConfigError, match="no path routes configured"):
             config.to_path_locator()
 
 

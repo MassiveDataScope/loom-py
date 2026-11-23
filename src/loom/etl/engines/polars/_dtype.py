@@ -28,6 +28,7 @@ from typing import Literal, cast
 import polars as pl
 from polars.datatypes import DataTypeClass
 
+from loom.core.errors import InvalidType
 from loom.etl.schema._schema import (
     ArrayType,
     CategoricalType,
@@ -112,14 +113,14 @@ def loom_to_polars(dtype: LoomDtype) -> type[pl.DataType]:
         Polars DataType class (e.g. ``pl.Int64``).
 
     Raises:
-        TypeError: If *dtype* is a structural type (``LIST``, ``ARRAY``,
+        InvalidType: If *dtype* is a structural type (``LIST``, ``ARRAY``,
                    ``STRUCT``, ``CATEGORICAL``, ``ENUM``).  Use
                    :func:`loom_type_to_polars` with :class:`~loom.etl._schema.ListType`,
                    :class:`~loom.etl._schema.StructType`, etc. instead.
         KeyError:  If *dtype* has no Polars equivalent.
     """
     if dtype in _STRUCTURAL_DTYPES:
-        raise TypeError(
+        raise InvalidType(
             f"LoomDtype.{dtype} is a structural type with unknown inner structure. "
             "Use the rich LoomType classes (ListType, StructType, ArrayType, …) "
             "together with loom_type_to_polars() to obtain a concrete Polars type."
@@ -197,7 +198,7 @@ def loom_type_to_polars(lt: LoomType) -> pl.DataType:
         Concrete Polars DataType instance.
 
     Raises:
-        TypeError: If *lt* is a coarse structural :class:`~loom.etl._schema.LoomDtype`
+        InvalidType: If *lt* is a coarse structural :class:`~loom.etl._schema.LoomDtype`
                    (e.g. ``LoomDtype.LIST``) whose inner type is unknown.
                    Use :class:`~loom.etl._schema.ListType`,
                    :class:`~loom.etl._schema.StructType`, etc. instead.
@@ -218,12 +219,12 @@ def loom_type_to_polars(lt: LoomType) -> pl.DataType:
         return pl.Categorical()
     if isinstance(lt, EnumType):
         return pl.Enum(list(lt.categories))
-    raise TypeError(f"Unknown LoomType: {lt!r}")
+    raise InvalidType(f"Unknown LoomType: {type(lt).__qualname__}")
 
 
 def _loom_primitive_to_polars(lt: LoomDtype) -> pl.DataType:
     if lt in _STRUCTURAL_DTYPES:
-        raise TypeError(
+        raise InvalidType(
             f"LoomDtype.{lt} is a coarse structural type without inner-type information. "
             "Use the rich LoomType classes (ListType, StructType, ArrayType, …) "
             "to define complex column types."

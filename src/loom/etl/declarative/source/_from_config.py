@@ -9,6 +9,8 @@ source: no reader is involved and it never becomes a
 
 from __future__ import annotations
 
+from loom.core.errors import InvalidValue
+
 
 class FromConfig:
     """Declare a config value injected into ``execute()``.
@@ -30,7 +32,7 @@ class FromConfig:
             A null or absent key is always reported as not set.
 
     Raises:
-        ValueError: When *key* is empty or has an empty segment.
+        InvalidValue: When *key* is empty or has an empty segment.
 
     Example::
 
@@ -52,7 +54,7 @@ class FromConfig:
 
     def __init__(self, key: str, value_type: object = str) -> None:
         if not key or any(not part for part in key.split(".")):
-            raise ValueError(f"FromConfig key must be a dot-separated path, got {key!r}")
+            raise InvalidValue("FromConfig key must be a dot-separated path")
         self._key = key
         self._value_type = value_type
 

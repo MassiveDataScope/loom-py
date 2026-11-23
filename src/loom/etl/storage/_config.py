@@ -12,6 +12,8 @@ from enum import StrEnum
 from typing import TYPE_CHECKING, Any, Final, Literal, cast
 from urllib.parse import urlparse
 
+from loom.core.config import ConfigError
+
 if TYPE_CHECKING:
     from loom.etl.storage._file_locator import MappingFileLocator
 
@@ -108,7 +110,7 @@ class TablePathConfig(LoomFrozenStruct, frozen=True, forbid_unknown_fields=True)
     def validate(self, *, context: str) -> None:
         """Validate path config and delta-rs option dictionaries."""
         if self.uri is None:
-            raise ValueError(f"storage.{context}.uri must be a non-empty string")
+            raise ConfigError(f"storage.{context}.uri must be a non-empty string")
         _validate_writer(self.writer, context=f"{context}.writer")
         _validate_target_file_size(self.target_file_size, context=f"{context}.target_file_size")
         _validate_commit(self.commit, context=f"{context}.commit")
@@ -139,7 +141,7 @@ class FilePathConfig(LoomFrozenStruct, frozen=True, forbid_unknown_fields=True):
     def validate(self, *, context: str) -> None:
         """Validate file path config."""
         if self.uri is None:
-            raise ValueError(f"storage.{context}.uri must be a non-empty string")
+            raise ConfigError(f"storage.{context}.uri must be a non-empty string")
 
 
 _ROUTE_PROFILE_FIELDS: Final[dict[str, frozenset[str]]] = {
@@ -163,7 +165,7 @@ class TempConfig(LoomFrozenStruct, frozen=True, forbid_unknown_fields=True):
 
     def validate(self) -> None:
         if self.root is not None and not _is_cloud_uri(self.root.reveal()):
-            raise ValueError(
+            raise ConfigError(
                 "storage.temp.root must be a cloud URI (s3://, gs://, abfss://, ...). "
                 "Local checkpoint roots are not supported."
             )
@@ -189,21 +191,19 @@ class TableRoute(LoomFrozenStruct, frozen=True, forbid_unknown_fields=True):
     def validate(self, *, catalogs: dict[str, CatalogConnection], context: str) -> None:
         """Validate route syntax and exclusivity constraints."""
         if not self.name.strip():
-            raise ValueError(f"storage.{context}.name must be a non-empty string")
+            raise ConfigError(f"storage.{context}.name must be a non-empty string")
 
         has_ref = bool(self.ref.strip())
         has_path = self.path is not None
         if has_ref == has_path:
-            raise ValueError(
+            raise ConfigError(
                 f"storage.{context} must define exactly one destination: 'ref' or 'path'"
             )
 
         if has_ref:
             _validate_ref(self.ref, context=f"storage.{context}.ref")
             if self.catalog and self.catalog not in catalogs:
-                raise ValueError(
-                    f"storage.{context}.catalog={self.catalog!r} is not defined in storage.catalogs"
-                )
+                raise ConfigError(f"storage.{context}.catalog is not defined in storage.catalogs")
 
         if self.path is not None:
             self.path.validate(context=f"{context}.path")
@@ -223,7 +223,7 @@ class FileRoute(LoomFrozenStruct, frozen=True, forbid_unknown_fields=True):
     def validate(self, *, context: str) -> None:
         """Validate file route fields."""
         if not self.name.strip():
-            raise ValueError(f"storage.{context}.name must be a non-empty string")
+            raise ConfigError(f"storage.{context}.name must be a non-empty string")
         self.path.validate(context=f"{context}.path")
 
 
@@ -424,7 +424,7 @@ class StorageConfig(LoomFrozenStruct, frozen=True, forbid_unknown_fields=True):
         """Build a :class:`TableLocator` from path defaults and per-table path routes.
 
         Raises:
-            ValueError: If no path defaults/routes are configured.
+            ConfigError: If no path defaults/routes are configured.
         """
         mapping = {
             route.name: route.path.to_location() for route in self.tables if route.path is not None
@@ -433,7 +433,7 @@ class StorageConfig(LoomFrozenStruct, frozen=True, forbid_unknown_fields=True):
             self.defaults.table_path.to_location() if self.defaults.table_path is not None else None
         )
         if not mapping and default_location is None:
-            raise ValueError(
+            raise ConfigError(
                 "storage.to_path_locator: no path routes configured. "
                 "Define storage.defaults.table_path or storage.tables[].path."
             )
@@ -455,15 +455,15 @@ class StorageConfig(LoomFrozenStruct, frozen=True, forbid_unknown_fields=True):
                 continue
             catalog_key = _resolve_polars_catalog_key(table_route, self.catalogs)
             if not catalog_key:
-                raise ValueError(
+                raise ConfigError(
                     "Polars UC routes require credentials in storage.catalogs. "
-                    f"Missing mapping for storage.tables[{idx}] (ref={table_route.ref!r}). "
+                    f"Missing mapping for storage.tables[{idx}]. "
                     "Set tables[].catalog or define matching storage.catalogs entry."
                 )
             connection = self.catalogs[catalog_key]
             if connection.workspace is None or connection.token is None:
-                raise ValueError(
-                    f"storage.catalogs[{catalog_key!r}] must define non-empty workspace and token "
+                raise ConfigError(
+                    "storage.catalogs entries must define non-empty workspace and token "
                     "for Polars UC routes."
                 )
 
@@ -492,7 +492,7 @@ def normalise_storage_section(raw: Mapping[str, Any]) -> dict[str, Any]:
     Raises:
         ConfigError: When an engine section (``dynamodb``, ``mongo``,
             ``clickhouse``) holds a retired key, naming its replacement.
-        ValueError: When a mapping entry carries a ``name`` different from its
+        ConfigError: When a mapping entry carries a ``name`` different from its
             key, when a ``profile`` is not declared in ``profiles``, or when a
             profile carries ``uri``. Other fields unknown to
             :class:`StorageProfile` are reported by :func:`convert_storage_config`.
@@ -518,7 +518,7 @@ def _refuse_retired_keys(raw: Mapping[str, Any]) -> None:
         reject_retired_keys(raw.get(section), f"storage.{section}", connection)
     dynamodb = raw.get("dynamodb")
     if isinstance(dynamodb, Mapping) and "enabled" in dynamodb:
-        raise ValueError(
+        raise ConfigError(
             "storage.dynamodb.enabled was removed: declaring storage.dynamodb enables "
             "DynamoDB sources and omitting it disables them; remove the key"
         )
@@ -581,12 +581,12 @@ def _path_with_profile(
 
 def _resolve_profile(name: Any, context: str, profiles: Mapping[str, Any]) -> dict[str, Any]:
     if name not in profiles:
-        raise ValueError(f"{context}.profile={name!r} is not defined in storage.profiles")
+        raise ConfigError(f"{context}.profile is not defined in storage.profiles")
     declared = profiles[name]
     if not isinstance(declared, Mapping):
         return {}
     if "uri" in declared:
-        raise ValueError(f"storage.profiles[{name!r}] must not define uri")
+        raise ConfigError("storage.profiles entries must not define uri")
     return dict(declared)
 
 
@@ -601,8 +601,8 @@ def _route_from_entry(key: Any, value: Any, collection: str) -> Any:
         return value
     inner_name = value.get("name", key)
     if inner_name != key:
-        raise ValueError(
-            f"storage.{collection}[{key!r}] declares name {inner_name!r}; "
+        raise ConfigError(
+            f"storage.{collection} entries must not declare a name other than their mapping key; "
             "the mapping key is the route name"
         )
     return {"name": key, **value}
@@ -611,14 +611,14 @@ def _route_from_entry(key: Any, value: Any, collection: str) -> Any:
 def _validate_ref(ref: str, *, context: str) -> None:
     parts = tuple(part for part in ref.split(".") if part)
     if len(parts) not in (2, 3):
-        raise ValueError(f"{context} must be 'schema.table' or 'catalog.schema.table', got {ref!r}")
+        raise ConfigError(f"{context} must be 'schema.table' or 'catalog.schema.table'")
 
 
 def _ensure_unique_names(names: Any, *, context: str) -> None:
     seen: set[str] = set()
     for name in names:
         if name in seen:
-            raise ValueError(f"{context} contains duplicate name {name!r}")
+            raise ConfigError(f"{context} contains a duplicate name")
         seen.add(name)
 
 
@@ -652,14 +652,14 @@ def _validate_writer(writer: dict[str, Any], *, context: str) -> None:
     try:
         WriterProperties(**writer)
     except TypeError as exc:
-        raise TypeError(f"Invalid key in storage.{context}: {exc}") from exc
+        raise ConfigError(f"Invalid key in storage.{context}") from exc
 
 
 def _validate_target_file_size(target_file_size: int | None, *, context: str) -> None:
     if target_file_size is None:
         return
     if target_file_size <= 0:
-        raise ValueError(f"storage.{context} must be a positive integer when set")
+        raise ConfigError(f"storage.{context} must be a positive integer when set")
 
 
 def _validate_commit(commit: dict[str, Any], *, context: str) -> None:
@@ -668,4 +668,4 @@ def _validate_commit(commit: dict[str, Any], *, context: str) -> None:
     try:
         CommitProperties(**commit)
     except TypeError as exc:
-        raise TypeError(f"Invalid key in storage.{context}: {exc}") from exc
+        raise ConfigError(f"Invalid key in storage.{context}") from exc

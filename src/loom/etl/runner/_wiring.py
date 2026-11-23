@@ -9,7 +9,8 @@ import logging
 from pathlib import Path
 from typing import Any, Final, Protocol, cast
 
-from loom.core.config import ConfigContext, ConfigKey
+from loom.core.config import ConfigContext, ConfigError, ConfigKey
+from loom.core.errors import InvalidUse
 from loom.core.plugins.optional import import_optional
 from loom.etl._uri import is_cloud_path
 from loom.etl.checkpoint import CheckpointStore, FsspecTempCleaner, TempCleaner
@@ -61,10 +62,10 @@ def make_backends(
         * ``spark is None`` -> Polars backends.
 
     Raises:
-        ValueError: If ``storage.engine='spark'`` but ``spark`` is not provided.
+        InvalidUse: If ``storage.engine='spark'`` but ``spark`` is not provided.
     """
     if config.engine == "spark" and spark is None:
-        raise ValueError(
+        raise InvalidUse(
             "A SparkSession is required when storage.engine='spark'. "
             "Pass spark=<session> to ETLRunner.from_yaml() or ETLRunner.from_config()."
         )
@@ -82,7 +83,7 @@ def make_checkpoint_store(
     if not config.checkpoint_root:
         return None
     if not is_cloud_path(config.checkpoint_root):
-        raise ValueError(
+        raise ConfigError(
             "checkpoint_root must be a cloud URI (s3://, gs://, abfss://, ...). "
             "Local checkpoint paths are not supported."
         )

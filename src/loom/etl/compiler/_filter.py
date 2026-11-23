@@ -9,6 +9,7 @@ from __future__ import annotations
 from collections.abc import Callable, Iterable
 from typing import Any
 
+from loom.core.errors import InvalidType
 from loom.etl.compiler._plan import (
     ParallelProcessGroup,
     ParallelStepGroup,
@@ -62,7 +63,7 @@ def filter_plan(plan: PipelinePlan, include: Iterable[str]) -> PipelinePlan:
         A new :class:`PipelinePlan`; *plan* is not modified.
 
     Raises:
-        TypeError: When *include* is a ``str``.
+        InvalidType: When *include* is a ``str``.
         InvalidStageError: When a name in *include* is neither a step nor a
             process of *plan*.
 
@@ -74,9 +75,9 @@ def filter_plan(plan: PipelinePlan, include: Iterable[str]) -> PipelinePlan:
         [step.step_type.__name__ for step in iter_all_steps(plan)]  # ["LoadStep"]
     """
     if isinstance(include, str):
-        raise TypeError(
-            f"filter_plan() takes an iterable of names, not the string {include!r}; "
-            f"wrap it, e.g. include={{{include!r}}}."
+        raise InvalidType(
+            "filter_plan() takes an iterable of names, not a string; "
+            "wrap it in a collection, e.g. include={'name'}."
         )
     names = frozenset(include)
     unknown = names - _collect_all_names(plan)

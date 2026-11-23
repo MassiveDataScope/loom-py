@@ -13,6 +13,7 @@ from dataclasses import dataclass, field
 from enum import StrEnum
 from typing import TYPE_CHECKING, Any
 
+from loom.core.errors import InvalidValue
 from loom.etl.declarative._format import Format
 from loom.etl.declarative._read_options import ReadOptions
 from loom.etl.declarative.expr._refs import TableRef
@@ -35,10 +36,10 @@ class ExtraFieldsMode(StrEnum):
         """Refuse a value that names no mode.
 
         Raises:
-            ValueError: Always, listing the valid modes.
+            InvalidValue: Always, listing the valid modes.
         """
-        raise ValueError(
-            f"on_extra_fields mode {value!r} is not valid. "
+        raise InvalidValue(
+            "on_extra_fields mode is not valid. "
             f"Choose one of: {sorted(mode.value for mode in cls)}"
         )
 
@@ -233,9 +234,7 @@ class MongoSourceSpec:
 
     def __post_init__(self) -> None:
         if not 1 <= self.batch_size <= 50_000:
-            raise ValueError(
-                f"MongoSourceSpec.batch_size must be between 1 and 50000, got {self.batch_size}"
-            )
+            raise InvalidValue("MongoSourceSpec.batch_size must be between 1 and 50000")
 
     @property
     def kind(self) -> SourceKind:
@@ -275,7 +274,7 @@ class DynamoDBSourceSpec:
                            ``TotalSegments`` (one worker thread per segment).
 
     Raises:
-        ValueError: When ``batch_size`` is outside 1..10 000 or
+        InvalidValue: When ``batch_size`` is outside 1..10 000 or
             ``total_segments`` is set outside 2..64.
     """
 
@@ -292,16 +291,11 @@ class DynamoDBSourceSpec:
 
     def __post_init__(self) -> None:
         if not 1 <= self.batch_size <= 10_000:
-            raise ValueError(
-                f"DynamoDBSourceSpec.batch_size must be between 1 and 10000, got {self.batch_size}"
-            )
+            raise InvalidValue("DynamoDBSourceSpec.batch_size must be between 1 and 10000")
         if self.total_segments is not None and not 2 <= self.total_segments <= 64:
-            raise ValueError(
-                f"DynamoDBSourceSpec.total_segments must be between 2 and 64, "
-                f"got {self.total_segments}"
-            )
+            raise InvalidValue("DynamoDBSourceSpec.total_segments must be between 2 and 64")
         if self.limit is not None and self.limit < 1:
-            raise ValueError(f"DynamoDBSourceSpec.limit must be >= 1, got {self.limit}")
+            raise InvalidValue("DynamoDBSourceSpec.limit must be >= 1")
 
     @property
     def kind(self) -> SourceKind:

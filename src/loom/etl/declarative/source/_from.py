@@ -35,6 +35,7 @@ from __future__ import annotations
 
 from typing import Any, Generic, TypeVar
 
+from loom.core.errors import InvalidType, InvalidValue
 from loom.core.routing import LogicalRef
 from loom.etl.declarative._format import Format
 from loom.etl.declarative._read_options import ReadOptions
@@ -205,7 +206,7 @@ class FromTable:
             New ``FromTable`` with column projection applied at scan time.
 
         Raises:
-            ValueError: When called with no column names.
+            InvalidValue: When called with no column names.
 
         Example::
 
@@ -214,7 +215,7 @@ class FromTable:
                 .columns("id", "amount", "status")
         """
         if not cols:
-            raise ValueError("FromTable.columns() requires at least one column name.")
+            raise InvalidValue("FromTable.columns() requires at least one column name.")
         new = _clone_slots(self, FromTable, FromTable.__slots__)
         object.__setattr__(new, "_columns", cols)
         return new
@@ -404,7 +405,7 @@ class FromFile:
             New ``FromFile`` with column projection applied at scan time.
 
         Raises:
-            ValueError: When called with no column names.
+            InvalidValue: When called with no column names.
 
         Example::
 
@@ -412,7 +413,7 @@ class FromFile:
                 .columns("order_id", "amount", "currency")
         """
         if not cols:
-            raise ValueError("FromFile.columns() requires at least one column name.")
+            raise InvalidValue("FromFile.columns() requires at least one column name.")
         new = _clone_slots(self, FromFile, FromFile.__slots__)
         object.__setattr__(new, "_columns", cols)
         return new
@@ -541,7 +542,7 @@ class SourceSet(Generic[ParamsT]):
             if base is SourceSet:
                 break
             if issubclass(base, SourceSet) and base is not SourceSet:
-                raise TypeError(
+                raise InvalidType(
                     f"{cls.__name__} subclasses {base.__name__} which is already a concrete "
                     "SourceSet. Subclassing a concrete SourceSet is not supported — use "
                     f"{base.__name__}.extended(...) to add sources."
@@ -559,11 +560,13 @@ class SourceSet(Generic[ParamsT]):
             New ``SourceSet`` with the combined sources.
 
         Raises:
-            ValueError: If any key in ``extra`` conflicts with an existing alias.
+            InvalidValue: If any key in ``extra`` conflicts with an existing alias.
         """
         conflicts = set(cls._sources) & set(extra)
         if conflicts:
-            raise ValueError(f"SourceSet.extended(): conflicting source names: {sorted(conflicts)}")
+            raise InvalidValue(
+                f"SourceSet.extended(): conflicting source names: {sorted(conflicts)}"
+            )
         merged: dict[str, _SourceEntryType] = {**cls._sources, **extra}
         instance = object.__new__(SourceSet)
         instance._sources = merged

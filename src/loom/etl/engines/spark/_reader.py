@@ -9,6 +9,7 @@ from typing import Any
 from pyspark.sql import DataFrame, SparkSession
 from pyspark.sql import functions as F
 
+from loom.core.errors import InvalidType, InvalidValue
 from loom.etl.declarative._format import Format
 from loom.etl.declarative._read_options import CsvReadOptions, JsonReadOptions
 from loom.etl.declarative.source import FileSourceSpec, SourceSpec, TableSourceSpec
@@ -62,7 +63,7 @@ class SparkSourceReader(SourceReader):
         if isinstance(spec, FileSourceSpec):
             return self._read_file(spec, params_instance)
 
-        raise TypeError(
+        raise InvalidType(
             f"SparkSourceReader does not support source kind {spec.kind!r}. "
             "TEMP sources are handled by CheckpointStore."
         )
@@ -122,7 +123,6 @@ class SparkSourceReader(SourceReader):
             Format.CSV: self._read_csv_file,
             Format.JSON: self._read_json_file,
             Format.PARQUET: self._read_parquet_file,
-            Format.XLSX: self._read_xlsx_file,
         }
         reader = resolve_format_handler(format, readers)
         return reader(path, options)
@@ -133,7 +133,7 @@ class SparkSourceReader(SourceReader):
     def _read_csv_file(self, path: str, options: Any) -> DataFrame:
         csv_opts = options if isinstance(options, CsvReadOptions) else CsvReadOptions()
         if csv_opts.skip_rows:
-            raise ValueError("Spark backend does not support skip_rows for CSV files.")
+            raise InvalidValue("Spark backend does not support skip_rows for CSV files.")
         reader = (
             self._spark.read.option("sep", csv_opts.separator)
             .option("header", str(csv_opts.has_header).lower())
@@ -155,10 +155,6 @@ class SparkSourceReader(SourceReader):
 
     def _read_parquet_file(self, path: str, _options: Any) -> DataFrame:
         return self._spark.read.parquet(path)
-
-    def _read_xlsx_file(self, path: str, _options: Any) -> DataFrame:
-        _ = path
-        raise TypeError("Spark backend does not support XLSX format.")
 
     def _apply_source_schema(self, df: DataFrame, schema: tuple[ColumnSchema, ...]) -> DataFrame:
         """Cast declared columns to their LoomDtype equivalents."""
@@ -184,7 +180,7 @@ def execute_sql(frames: dict[str, DataFrame], query: str) -> DataFrame:
     """Execute SQL query against temporary views created from Spark frames."""
     first = next(iter(frames.values()), None)
     if first is None:
-        raise ValueError("StepSQL requires at least one source frame.")
+        raise InvalidValue("StepSQL requires at least one source frame.")
 
     isolated = first.sparkSession.newSession()
     for name, frame in frames.items():

@@ -55,11 +55,11 @@ def _load_yaml(
     Raises:
         loom.core.config.ConfigError: When the file cannot be read or parsed,
             the ``storage:`` key is absent, a keyed collection holds a
-            duplicate key or mixes list and mapping forms, or the config
-            shape is invalid, including a profile with an unknown field.
-        ValueError: When a mapping entry carries a ``name`` different from
-            its key, a ``path.profile`` is not declared in ``storage.profiles``,
-            or a profile carries ``uri``.
+            duplicate key or mixes list and mapping forms, the config
+            shape is invalid, including a profile with an unknown field, a
+            mapping entry carries a ``name`` different from its key, a
+            ``path.profile`` is not declared in ``storage.profiles``, or a
+            profile carries ``uri``.
     """
     return _parse_sections(_load_context(path, resolvers=resolvers))
 
@@ -125,9 +125,9 @@ def _parse_sections(ctx: ConfigContext) -> tuple[StorageConfig, ETLObservability
     A declared ``storage.dynamodb`` takes every key it does not set from ``aws:``.
 
     Raises:
-        loom.core.config.ConfigError: When the ``storage:`` key is absent or
-            a section shape, ``aws:`` included, is invalid.
-        ValueError: When a keyed entry or a ``path.profile`` is invalid.
+        loom.core.config.ConfigError: When the ``storage:`` key is absent, a
+            section shape, ``aws:`` included, is invalid, or a keyed entry or a
+            ``path.profile`` is invalid.
     """
     raw = ctx.section(ConfigKey.STORAGE, dict)
     dynamodb = raw.get("dynamodb")

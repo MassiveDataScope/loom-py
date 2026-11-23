@@ -15,6 +15,7 @@ from __future__ import annotations
 import re
 from typing import Any
 
+from loom.core.errors import InvalidValue
 from loom.etl.engines._predicate import sql_literal
 
 _PLACEHOLDER = re.compile(r"\{\{([^{}]+)\}\}")
@@ -31,7 +32,7 @@ def resolve_sql(sql: str, params: Any) -> str:
         SQL string with all placeholders replaced by safe literal values.
 
     Raises:
-        ValueError:    If a placeholder is not a valid ``params.*`` chain.
+        InvalidValue:    If a placeholder is not a valid ``params.*`` chain.
         AttributeError: If an attribute in the chain does not exist on params.
 
     Example::
@@ -46,9 +47,9 @@ def resolve_sql(sql: str, params: Any) -> str:
 def _resolve_placeholder(expr: str, params: Any) -> str:
     parts = expr.split(".")
     if parts[0] != "params":
-        raise ValueError(f"resolve_sql: only 'params.x.y' expressions allowed, got: {expr!r}")
+        raise InvalidValue("resolve_sql: only 'params.x.y' expressions allowed")
     if not all(p.isidentifier() for p in parts):
-        raise ValueError(f"resolve_sql: invalid expression: {expr!r}")
+        raise InvalidValue("resolve_sql: invalid expression")
     value: Any = params
     for attr in parts[1:]:
         value = getattr(value, attr)

@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import pytest
 
+from loom.core.errors import InvalidValue
 from loom.core.model.redaction import Dsn
 from loom.etl.maintenance._builder import MaintainSchema, MaintainTable
 from loom.etl.maintenance._ops import CompactSpec, VacuumSpec, ZOrderSpec
@@ -50,7 +51,7 @@ class TestMaintainTable:
 
     def test_compact_and_z_order_mutually_exclusive(self) -> None:
         builder = MaintainTable("raw.events").compact().z_order_by(["date"])
-        with pytest.raises(TypeError, match="mutually exclusive"):
+        with pytest.raises(InvalidValue, match="mutually exclusive"):
             builder._to_spec()
 
     def test_chain_vacuum_and_compact(self) -> None:
@@ -149,7 +150,7 @@ class TestMaintainSchema:
             ),
         )
         builder = MaintainSchema("raw").compact().z_order_by(["date"])
-        with pytest.raises(TypeError, match="mutually exclusive"):
+        with pytest.raises(InvalidValue, match="mutually exclusive"):
             builder._expand(config)
 
     def test_repr(self) -> None:

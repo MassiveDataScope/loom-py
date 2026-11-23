@@ -14,6 +14,7 @@ from pyspark.sql import types as T
 from pyspark.sql.column import Column
 from pyspark.storagelevel import StorageLevel
 
+from loom.core.errors import InvalidType, InvalidValue
 from loom.etl.declarative._format import Format
 from loom.etl.declarative._write_options import (
     CsvWriteOptions,
@@ -97,11 +98,11 @@ class SparkTargetWriter(_WritePolicy[DataFrame, DataFrame, SparkPhysicalSchema])
     def to_frame(self, records: Sequence[LineageRecord], /) -> DataFrame:
         """Convert lineage records into a Spark DataFrame."""
         if not records:
-            raise ValueError("SparkTargetWriter.to_frame requires at least one record.")
+            raise InvalidValue("SparkTargetWriter.to_frame requires at least one record.")
         first = records[0]
         record_type = type(first)
         if any(type(record) is not record_type for record in records):
-            raise TypeError(
+            raise InvalidType(
                 "SparkTargetWriter.to_frame requires homogeneous record types per batch."
             )
         rows = [record.to_row() for record in records]
@@ -151,11 +152,11 @@ class SparkTargetWriter(_WritePolicy[DataFrame, DataFrame, SparkPhysicalSchema])
         other than the ones counted.
 
         Raises:
-            ValueError: When *frame* is a streaming DataFrame, whose rows
+            InvalidValue: When *frame* is a streaming DataFrame, whose rows
                 cannot be counted before the write.
         """
         if frame.isStreaming:
-            raise ValueError(
+            raise InvalidValue(
                 "replace(allow_empty=False) needs a batch DataFrame to check for rows, "
                 "but the frame to write is a streaming DataFrame. Read the source as a "
                 "batch DataFrame or declare replace() without allow_empty=False."

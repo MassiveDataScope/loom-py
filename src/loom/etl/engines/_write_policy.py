@@ -12,6 +12,7 @@ from abc import abstractmethod
 from dataclasses import dataclass
 from typing import TYPE_CHECKING, Any, Generic, TypeVar
 
+from loom.core.errors import InternalError, InvalidValue
 from loom.etl.declarative.target import (
     AppendSpec,
     ClientSpec,
@@ -141,12 +142,12 @@ class _WritePolicy(TargetWriter, Generic[InputFrameT, WriteFrameT, PhysicalSchem
             self._write_file(frame, spec, params_instance, streaming=streaming)
             return
         if isinstance(spec, (TempSpec, TempFanInSpec)):
-            raise TypeError(
+            raise InternalError(
                 f"{type(self).__name__} does not support temp targets; "
                 "TEMP writes are handled by CheckpointStore in ETLExecutor."
             )
         if isinstance(spec, ClientSpec):
-            raise TypeError(
+            raise InternalError(
                 f"{type(self).__name__} does not support client targets. "
                 "ClientStep execution is handled by ETLExecutor before write() is called. "
                 "This is an internal error — ClientSpec should never reach write()."
@@ -181,7 +182,7 @@ class _WritePolicy(TargetWriter, Generic[InputFrameT, WriteFrameT, PhysicalSchem
             case HistorifySpec():
                 self._do_historify(frame, target, spec, params_instance)
             case _:
-                raise TypeError(f"Unsupported target spec: {type(spec)!r}")
+                raise InternalError(f"Unsupported target spec: {type(spec)!r}")
 
     def _prepare_write(
         self,
@@ -349,15 +350,15 @@ class _WritePolicy(TargetWriter, Generic[InputFrameT, WriteFrameT, PhysicalSchem
     ) -> None:
         physical = self._physical_partition_columns(target)
         if physical is None:
-            raise ValueError(
-                f"replace_physical_partitions: backend cannot verify the physical "
-                f"partitioning of {target}. Use replace_partitions/replace_matching, "
-                f"or a backend that exposes partition metadata."
+            raise InvalidValue(
+                "replace_physical_partitions: backend cannot verify the physical "
+                "partitioning of the target. Use replace_partitions/replace_matching, "
+                "or a backend that exposes partition metadata."
             )
         missing = [col for col in partition_cols if col not in physical]
         if missing:
-            raise ValueError(
-                f"replace_physical_partitions: table {target} is partitioned by "
+            raise InvalidValue(
+                "replace_physical_partitions: the target table is partitioned by "
                 f"{list(physical) or 'nothing'} but the write asked for {list(partition_cols)} "
                 f"(missing: {missing}). For value-based replacement on these columns "
                 f"use replace_matching instead."
@@ -623,7 +624,7 @@ class _WritePolicy(TargetWriter, Generic[InputFrameT, WriteFrameT, PhysicalSchem
         counted.
 
         Raises:
-            ValueError: When the backend cannot count the rows of *frame*
+            InvalidValue: When the backend cannot count the rows of *frame*
                 before the write, such as a Spark streaming DataFrame.
         """
 
@@ -653,7 +654,7 @@ class _WritePolicy(TargetWriter, Generic[InputFrameT, WriteFrameT, PhysicalSchem
         Raises:
             EmptyReplaceError: When *allow_empty* is ``False`` and the
                 materialised frame has no rows.
-            ValueError: When *allow_empty* is ``False`` and the backend
+            InvalidValue: When *allow_empty* is ``False`` and the backend
                 cannot count the rows of the materialised frame.
         """
         materialized = self._materialize_for_write(frame, streaming)

@@ -4,6 +4,7 @@ from __future__ import annotations
 
 from typing import Any, cast
 
+from loom.core.errors import InvalidUse
 from loom.core.model.redaction import reveal_for_driver
 from loom.etl.engines.spark._reader import SparkSourceReader
 from loom.etl.engines.spark._writer import SparkTargetWriter
@@ -25,7 +26,7 @@ class SparkEtlEngine(EtlEngine):
         spark: Any = None,
     ) -> tuple[SourceReader, TargetWriter]:
         if spark is None:
-            raise ValueError(
+            raise InvalidUse(
                 "A SparkSession is required for the Spark ETL engine. "
                 "Pass spark=<session> to ETLRunner.from_yaml() or ETLRunner.from_config()."
             )
@@ -50,7 +51,7 @@ class SparkEtlEngine(EtlEngine):
     ) -> TargetLineageWriter:
         _ = config
         if spark is None:
-            raise ValueError(
+            raise InvalidUse(
                 "A SparkSession is required to configure observability.lineage "
                 "with storage.engine='spark'."
             )

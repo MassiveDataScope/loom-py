@@ -364,7 +364,7 @@ class TestExtraFieldsMode:
         docs = [{"order_id": "o1", "status": "active", "extra_col": "surprise"}]
         reader, _ = _reader(docs)
         frame = reader.read(_spec(schema=_ORDER_SCHEMA, extra_fields_mode="error"), None)
-        with pytest.raises((ValueError, pl.exceptions.ComputeError), match="extra_col"):
+        with pytest.raises((ValueError, pl.exceptions.ComputeError), match="not declared in"):
             frame.collect()
 
     def test_ignore_mode_drops_extra_field(self) -> None:

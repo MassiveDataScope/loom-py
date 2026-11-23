@@ -9,6 +9,7 @@ from typing import TYPE_CHECKING, Any, TypeAlias
 import polars as pl
 
 from loom.core.config import ConfigContext
+from loom.core.errors import InvalidUse, InvalidValue
 from loom.etl.checkpoint import CheckpointScope, CheckpointStore
 from loom.etl.checkpoint._io._memory import _InMemoryCheckpointIO
 from loom.etl.compiler import ETLCompiler
@@ -125,7 +126,7 @@ def _build_lazy_frame(
 def _require_known_columns(columns: Sequence[str], schema: SeedSchema | None) -> None:
     unknown = sorted(set(schema or ()) - set(columns))
     if unknown:
-        raise ValueError(f"schema names columns that are not seeded: {unknown}")
+        raise InvalidValue(f"schema names columns that are not seeded: {unknown}")
 
 
 def _temp_frame(
@@ -138,7 +139,7 @@ def _temp_frame(
     if isinstance(data, pl.LazyFrame):
         return _cast(data, schema)
     if columns is None:
-        raise ValueError("seed_temp with row tuples needs columns=.")
+        raise InvalidValue("seed_temp with row tuples needs columns=.")
     return _build_lazy_frame(data, columns, schema=schema)
 
 
@@ -278,18 +279,18 @@ class PolarsStepRunner:
             ``self`` for fluent chaining.
 
         Raises:
-            ValueError: When the result is not from an ``IntoTemp`` step, a
+            InvalidValue: When the result is not from an ``IntoTemp`` step, a
                 name comes without data, or row tuples come without *columns*.
         """
         if isinstance(name, StepResult):
             if name.temp_name is None:
-                raise ValueError(
+                raise InvalidValue(
                     "seed_temp needs a temp name: this StepResult is not from an IntoTemp step."
                 )
             data = name.to_polars()
             name = name.temp_name
         if data is None:
-            raise ValueError(f"seed_temp({name!r}) needs data.")
+            raise InvalidValue(f"seed_temp({name!r}) needs data.")
         self._temps.put(
             name,
             run_id=self._context.run_id,
@@ -331,7 +332,7 @@ class PolarsStepRunner:
             FileNotFoundError: When a ``FromTemp`` temp was neither seeded nor written.
             ETLCompilationError: When a ``FromConfig`` key is not in
                 :meth:`with_config`.
-            RuntimeError: When the step produced no output.
+            InvalidUse: When the step produced no output.
         """
         plan = ETLCompiler(config_context=self._config_context).compile_step(step_cls)
         reader, self._writer = self._io()
@@ -348,7 +349,7 @@ class PolarsStepRunner:
         written = self._temp_backend.probe_last()
         if isinstance(spec, (TempSpec, TempFanInSpec)) and written is not None:
             return StepResult(written.collect(), target=spec)
-        raise RuntimeError("Step produced no output — check that target is declared.")
+        raise InvalidUse("Step produced no output — check that target is declared.")
 
     def table(self, ref: str) -> StepResult:
         """Return the current content of the Delta table *ref*.
@@ -357,10 +358,10 @@ class PolarsStepRunner:
         upsert's ``delete_flag`` are gone and the flag column is not stored.
 
         Raises:
-            RuntimeError: When the runner was built without ``delta_root``.
+            InvalidUse: When the runner was built without ``delta_root``.
         """
         if self._delta is None:
-            raise RuntimeError("table() needs PolarsStepRunner(delta_root=...).")
+            raise InvalidUse("table() needs PolarsStepRunner(delta_root=...).")
         return StepResult(self._delta.read(ref))
 
     @property
@@ -368,10 +369,10 @@ class PolarsStepRunner:
         """Target spec from the last :meth:`run` call.
 
         Raises:
-            RuntimeError: When :meth:`run` has not been called yet.
+            InvalidUse: When :meth:`run` has not been called yet.
         """
         if self._writer.spec is None:
-            raise RuntimeError("No spec — call run() first.")
+            raise InvalidUse("No spec — call run() first.")
         return self._writer.spec
 
     @property

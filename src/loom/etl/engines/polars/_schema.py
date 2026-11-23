@@ -14,6 +14,7 @@ from deltalake import DeltaTable
 from deltalake.exceptions import TableNotFoundError
 from polars.datatypes import DataTypeClass
 
+from loom.core.errors import InvalidType, InvalidValue
 from loom.etl.declarative.target import SchemaMode
 from loom.etl.schema._schema import SchemaError
 
@@ -145,18 +146,18 @@ def _delta_schema_to_json(raw_schema: object) -> object:
 
     json_method = getattr(raw_schema, "json", None)
     if not callable(json_method):
-        raise TypeError(f"Unsupported Delta schema object: {type(raw_schema)!r}")
+        raise InvalidType(f"Unsupported Delta schema object: {type(raw_schema)!r}")
     return json_method()
 
 
 def _delta_json_to_polars_schema(raw_schema: object) -> pl.Schema:
     """Convert Delta JSON schema to Polars Schema."""
     if not isinstance(raw_schema, Mapping):
-        raise TypeError(f"Unsupported Delta schema payload: {type(raw_schema)!r}")
+        raise InvalidType(f"Unsupported Delta schema payload: {type(raw_schema)!r}")
 
     root_type = raw_schema.get("type")
     if root_type != "struct":
-        raise TypeError(f"Delta root schema must be struct, got {root_type!r}")
+        raise InvalidType("Delta root schema must be struct")
 
     fields = raw_schema.get("fields")
     return pl.Schema(_struct_fields_to_dict(fields))
@@ -165,7 +166,7 @@ def _delta_json_to_polars_schema(raw_schema: object) -> pl.Schema:
 def _struct_fields_to_dict(raw_fields: object) -> dict[str, pl.DataType]:
     """Convert Delta struct fields to Polars field dict."""
     if not _is_sequence(raw_fields):
-        raise TypeError(f"Delta struct fields must be a sequence, got {type(raw_fields)!r}")
+        raise InvalidType(f"Delta struct fields must be a sequence, got {type(raw_fields)!r}")
     field_nodes: Sequence[object] = tuple(raw_fields)
 
     fields: dict[str, pl.DataType] = {}
@@ -178,10 +179,12 @@ def _struct_fields_to_dict(raw_fields: object) -> dict[str, pl.DataType]:
 def _parse_field(raw_field: object) -> tuple[str, pl.DataType]:
     """Parse a single Delta field into (name, dtype)."""
     if not isinstance(raw_field, Mapping):
-        raise TypeError(f"Delta field must be a mapping, got {type(raw_field)!r}")
+        raise InvalidType(f"Delta field must be a mapping, got {type(raw_field)!r}")
     name = raw_field.get("name")
-    if not isinstance(name, str) or not name:
-        raise TypeError(f"Delta field name must be non-empty str, got {name!r}")
+    if not isinstance(name, str):
+        raise InvalidType("Delta field name must be a str")
+    if not name:
+        raise InvalidValue("Delta field name must not be empty")
     return name, _delta_type_to_polars(raw_field.get("type"))
 
 
@@ -196,10 +199,10 @@ def _delta_type_to_polars(raw_type: object) -> pl.DataType:
             precision = int(decimal_match.group("precision"))
             scale = int(decimal_match.group("scale"))
             return pl.Decimal(precision=precision, scale=scale)
-        raise TypeError(f"Unsupported Delta primitive type: {raw_type!r}")
+        raise InvalidType("Unsupported Delta primitive type")
 
     if not isinstance(raw_type, Mapping):
-        raise TypeError(f"Delta type node must be str or mapping, got {type(raw_type)!r}")
+        raise InvalidType(f"Delta type node must be str or mapping, got {type(raw_type)!r}")
 
     node_type = raw_type.get("type")
     if node_type == "array":
@@ -210,7 +213,7 @@ def _delta_type_to_polars(raw_type: object) -> pl.DataType:
         key_type = _delta_type_to_polars(raw_type.get("keyType"))
         value_type = _delta_type_to_polars(raw_type.get("valueType"))
         return pl.List(pl.Struct({"key": key_type, "value": value_type}))
-    raise TypeError(f"Unsupported Delta nested type node: {node_type!r}")
+    raise InvalidType("Unsupported Delta nested type node")
 
 
 def _is_sequence(value: object) -> TypeGuard[Sequence[object]]:

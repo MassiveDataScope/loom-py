@@ -10,6 +10,7 @@ from typing import Any
 import msgspec
 import pytest
 
+from loom.core.errors import InvalidUse
 from loom.core.model.redaction import Dsn
 from loom.core.observability.observability import Observability
 from loom.core.runner import SupportsFlush
@@ -185,7 +186,7 @@ class TestFilterPlan:
 
         with pytest.raises(
             TypeError,
-            match=r"not the string 'OrdersStagingAStep'.*include=\{'OrdersStagingAStep'\}",
+            match=r"takes an iterable of names, not a string",
         ):
             filter_plan(plan, "OrdersStagingAStep")
 
@@ -322,7 +323,7 @@ class TestRunnerRun:
 class TestRunnerFromConfig:
     def test_from_config_spark_engine_without_spark_raises(self) -> None:
         config = StorageConfig(engine="spark")
-        with pytest.raises(ValueError, match="SparkSession"):
+        with pytest.raises(InvalidUse, match="SparkSession"):
             ETLRunner.from_config(config)
 
     def test_from_config_spark_engine_with_spark_builds_spark_backends(self) -> None:
@@ -402,7 +403,7 @@ class TestRunnerFromDict:
     @pytest.mark.parametrize(
         "storage,error,match",
         [
-            ({"engine": "spark"}, ValueError, "SparkSession"),
+            ({"engine": "spark"}, InvalidUse, "SparkSession"),
             ({"engine": "unknown"}, msgspec.ValidationError, ""),
         ],
     )

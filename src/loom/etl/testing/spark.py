@@ -36,6 +36,8 @@ from pathlib import Path
 from types import TracebackType
 from typing import TYPE_CHECKING, Any
 
+from loom.core.errors import InternalError, InvalidUse, InvalidValue
+
 try:
     import pytest
 except ModuleNotFoundError as exc:  # pragma: no cover
@@ -184,7 +186,7 @@ class _SparkStubReader:
     def execute_sql(self, frames: dict[str, Any], query: str, /) -> Any:
         first = next(iter(frames.values()), None)
         if first is None:
-            raise ValueError("StepSQL requires at least one source frame.")
+            raise InvalidValue("StepSQL requires at least one source frame.")
         isolated = first.sparkSession.newSession()
         for name, frame in frames.items():
             isolated.createDataFrame(frame.rdd, frame.schema).createOrReplaceTempView(name)
@@ -292,7 +294,7 @@ class SparkStepRunner:
             KeyError:     When a source table was not seeded.
             ETLCompilationError: When a ``FromConfig`` key is not in
                 :meth:`with_config`.
-            RuntimeError: When the step produced no output.
+            InternalError: When the step produced no output.
         """
         frames = {
             ref: self._spark.createDataFrame(data, columns)
@@ -305,7 +307,7 @@ class SparkStepRunner:
         ).run_step(plan, params)
         raw = self._writer.frame
         if raw is None:
-            raise RuntimeError("Step produced no output — check that target is declared.")
+            raise InternalError("Step produced no output — check that target is declared.")
         return StepResult(_spark_frame_to_polars(raw))
 
     @property
@@ -313,10 +315,10 @@ class SparkStepRunner:
         """Target spec from the last :meth:`run` call.
 
         Raises:
-            RuntimeError: When :meth:`run` has not been called yet.
+            InvalidUse: When :meth:`run` has not been called yet.
         """
         if self._writer.spec is None:
-            raise RuntimeError("No spec — call run() first.")
+            raise InvalidUse("No spec — call run() first.")
         return self._writer.spec
 
 

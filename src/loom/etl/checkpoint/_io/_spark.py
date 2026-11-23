@@ -9,6 +9,7 @@ import logging
 import threading
 from typing import Any
 
+from loom.core.errors import InvalidType
 from loom.etl.checkpoint._cleaners import _join_path
 
 _log = logging.getLogger(__name__)
@@ -54,10 +55,10 @@ class _SparkCheckpointIO:
                     this name (fan-in).  When ``False``, overwrites.
 
         Raises:
-            TypeError: When *data* is not a ``pyspark.sql.DataFrame``.
+            InvalidType: When *data* is not a ``pyspark.sql.DataFrame``.
         """
         if not _is_spark_dataframe(data):
-            raise TypeError(
+            raise InvalidType(
                 f"Spark backend expects pyspark.sql.DataFrame, got {type(data).__qualname__!r}. "
                 "Verify that CheckpointStore was constructed with a SparkSession."
             )

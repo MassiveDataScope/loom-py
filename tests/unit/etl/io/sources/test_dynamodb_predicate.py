@@ -8,9 +8,11 @@ from typing import Any
 
 import pytest
 
+from loom.core.plugins.optional import MissingExtraError
 from loom.etl.declarative.expr import col, params
 from loom.etl.declarative.source import SourceRef
 from loom.etl.declarative.source._from import FromTemp
+from loom.etl.io.sources._dynamodb_items import normalize_dynamo_item
 from loom.etl.io.sources._dynamodb_predicate import (
     DynamoFilterExpression,
     _to_dynamo_value,
@@ -241,3 +243,26 @@ class TestUnsupportedNodeRaises:
     def test_raw_string_raises(self) -> None:
         with pytest.raises(TypeError, match="unsupported predicate node type"):
             predicate_to_dynamo("not_a_node", NO_PARAMS)
+
+
+class TestBoto3Missing:
+    def test_predicate_without_boto3_names_the_aws_extra(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        monkeypatch.setattr("loom.etl.io.sources._dynamodb_predicate._ddb_types", None)
+
+        with pytest.raises(MissingExtraError) as excinfo:
+            predicate_to_dynamo(col("status") == "active", NO_PARAMS)
+
+        assert excinfo.value.extra == "aws"
+        assert excinfo.value.missing == "boto3"
+
+    def test_item_normalizer_without_boto3_names_the_aws_extra(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        monkeypatch.setattr("loom.etl.io.sources._dynamodb_items._DESERIALIZER", None)
+
+        with pytest.raises(MissingExtraError) as excinfo:
+            normalize_dynamo_item({"id": {"S": "a"}})
+
+        assert excinfo.value.extra == "aws"

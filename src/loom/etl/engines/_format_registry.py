@@ -29,7 +29,7 @@ def resolve_format_handler(
         Registered handler for ``format_value``.
 
     Raises:
-        ValueError: If the format string is not a known
+        UnsupportedFormatError: If the format string is not a known
             :class:`~loom.etl.declarative._format.Format`.
         UnsupportedFormatError: If the format is not registered in *handlers*.
     """

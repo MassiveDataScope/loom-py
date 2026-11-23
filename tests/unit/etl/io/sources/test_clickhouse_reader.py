@@ -9,6 +9,7 @@ import polars as pl
 import pyarrow as pa
 import pytest
 
+from loom.core.errors import InvalidUse
 from loom.etl.declarative.expr import col
 from loom.etl.declarative.source import FromClickHouse
 from loom.etl.io.sources._clickhouse import ClickHouseSourceReader
@@ -118,7 +119,7 @@ class TestClickHouseReaderClientInit:
         reader = ClickHouseSourceReader()
         spec = FromClickHouse("t").unbounded()._to_spec("t")
 
-        with pytest.raises(ValueError, match="storage.clickhouse"):
+        with pytest.raises(InvalidUse, match="storage.clickhouse"):
             reader.read(spec, None)
 
     def test_unknown_client_interface_raises(self) -> None:

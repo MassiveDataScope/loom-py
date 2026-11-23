@@ -20,6 +20,7 @@ from decimal import Decimal
 from functools import singledispatch
 from typing import Any
 
+from loom.core.errors import InvalidType, InvalidValue
 from loom.core.expr.nodes import (
     AndExpr,
     EqExpr,
@@ -32,6 +33,7 @@ from loom.core.expr.nodes import (
     NotExpr,
     OrExpr,
 )
+from loom.core.plugins.optional import MissingExtraError
 from loom.etl.declarative.expr._params import ParamExpr, resolve_param_expr
 from loom.etl.declarative.expr._refs import UnboundColumnRef
 from loom.etl.declarative.source._from_mongo import SourceRef
@@ -79,8 +81,8 @@ def predicate_to_dynamo(node: Any, params_instance: Any) -> DynamoFilterExpressi
         A :class:`DynamoFilterExpression` ready to pass to ``client.scan()``.
 
     Raises:
-        TypeError:    On unsupported node types or unresolved ``SourceRef``.
-        RuntimeError: When boto3 is not installed.
+        InvalidType: On unsupported node types or unresolved ``SourceRef``.
+        MissingExtraError: When boto3 is not installed.
     """
     builder = _ExpressionBuilder(params_instance)
     expression = _to_dynamo(node, builder)
@@ -113,10 +115,7 @@ class _ExpressionBuilder:
 
     def __init__(self, params: Any) -> None:
         if _ddb_types is None:
-            raise RuntimeError(
-                "predicate_to_dynamo requires boto3. "
-                "Install it with: pip install 'loom-kernel[aws]'"
-            )
+            raise MissingExtraError(__name__, "aws", "boto3")
         self.names: dict[str, str] = {}
         self.values: dict[str, dict[str, Any]] = {}
         self.params = params
@@ -139,12 +138,12 @@ def _col(ref: Any) -> str:
         return ref.name
     if isinstance(ref, str):
         return ref
-    raise TypeError(f"predicate_to_dynamo: expected column reference, got {type(ref)!r}")
+    raise InvalidType(f"predicate_to_dynamo: expected column reference, got {type(ref)!r}")
 
 
 @singledispatch
 def _to_dynamo(node: object, builder: _ExpressionBuilder) -> str:
-    raise TypeError(
+    raise InvalidType(
         f"predicate_to_dynamo: unsupported predicate node type {type(node)!r}. "
         "Call materialize_filter() before predicate_to_dynamo() if the predicate "
         "contains SourceRef nodes."
@@ -189,7 +188,7 @@ def _(node: LeExpr, builder: _ExpressionBuilder) -> str:
 def _(node: InExpr, builder: _ExpressionBuilder) -> str:
     raw = node.values
     if isinstance(raw, SourceRef):
-        raise TypeError(
+        raise InvalidType(
             "predicate_to_dynamo: InExpr.values is a SourceRef — call "
             "materialize_filter() before predicate_to_dynamo()."
         )
@@ -197,7 +196,7 @@ def _(node: InExpr, builder: _ExpressionBuilder) -> str:
         list(resolve_param_expr(raw, builder.params)) if isinstance(raw, ParamExpr) else list(raw)
     )
     if not values:
-        raise ValueError("predicate_to_dynamo: IN requires at least one value.")
+        raise InvalidValue("predicate_to_dynamo: IN requires at least one value.")
     placeholders = ", ".join(builder.value(v) for v in values)
     return f"{builder.name(node.ref)} IN ({placeholders})"
 

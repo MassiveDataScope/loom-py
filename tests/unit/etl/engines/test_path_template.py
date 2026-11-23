@@ -9,6 +9,7 @@ import msgspec
 import polars as pl
 import pytest
 
+from loom.core.config import ConfigError
 from loom.etl.declarative._format import Format
 from loom.etl.declarative.source import FileSourceSpec
 from loom.etl.declarative.target._file import FileSpec
@@ -67,7 +68,7 @@ class TestResolvePathTemplate:
 
 class TestResolveFileUri:
     def test_alias_without_locator_names_the_declaration(self) -> None:
-        with pytest.raises(ValueError, match=r"IntoFile\.alias\('exports'\) requires"):
+        with pytest.raises(ConfigError, match=r"IntoFile\.alias\(\) requires"):
             resolve_file_uri(
                 "exports", is_alias=True, locator=None, params_instance=PARAMS, role="IntoFile"
             )

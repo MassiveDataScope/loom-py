@@ -10,6 +10,7 @@ from typing import Any, TypeGuard
 import fsspec.core
 import polars as pl
 
+from loom.core.errors import InvalidType
 from loom.etl._uri import is_cloud_path
 from loom.etl.checkpoint._cleaners import _join_path
 from loom.etl.checkpoint._options import CheckpointOptions, checkpoint_options
@@ -27,10 +28,10 @@ def _require_polars_lazy_frame(data: Any) -> pl.LazyFrame:
     """Return *data* as a LazyFrame, or raise the error every Polars backend raises.
 
     Raises:
-        TypeError: When *data* is not a :class:`polars.LazyFrame`.
+        InvalidType: When *data* is not a :class:`polars.LazyFrame`.
     """
     if not _is_polars_lazy_frame(data):
-        raise TypeError(
+        raise InvalidType(
             f"Polars backend expects polars.LazyFrame, got {type(data).__qualname__!r}. "
             "Verify that CheckpointStore was constructed without a SparkSession."
         )

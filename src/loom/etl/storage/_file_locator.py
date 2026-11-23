@@ -40,6 +40,8 @@ from __future__ import annotations
 from dataclasses import dataclass, field
 from typing import Protocol, runtime_checkable
 
+from loom.core.errors import UnknownKey
+
 
 @dataclass(frozen=True)
 class FileLocation:
@@ -83,7 +85,7 @@ class FileLocator(Protocol):
             :class:`FileLocation` with full URI template and credentials.
 
         Raises:
-            KeyError: When *name* is not registered.
+            UnknownKey: When *name* is not registered.
         """
         ...
 
@@ -99,7 +101,7 @@ class MappingFileLocator:
         mapping: ``alias → FileLocation`` dict.
 
     Raises:
-        KeyError: On :meth:`locate` when the alias is not in *mapping*.
+        UnknownKey: On :meth:`locate` when the alias is not in *mapping*.
 
     Example::
 
@@ -129,13 +131,13 @@ class MappingFileLocator:
             :class:`FileLocation` for the alias.
 
         Raises:
-            KeyError: When *name* is not registered.  The error message
+            UnknownKey: When *name* is not registered.  The error message
                 lists available aliases to aid debugging.
         """
         location = self._mapping.get(name)
         if location is None:
             available = sorted(self._mapping)
-            raise KeyError(
+            raise UnknownKey(
                 f"No file route configured for alias {name!r}. "
                 f"Available aliases: {available}. "
                 "Define it under storage.files in your config YAML."

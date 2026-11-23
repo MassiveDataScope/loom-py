@@ -29,6 +29,7 @@ from __future__ import annotations
 from dataclasses import dataclass, field
 from typing import Any, Protocol, runtime_checkable
 
+from loom.core.errors import UnknownKey
 from loom.etl.declarative.expr._refs import TableRef
 
 
@@ -211,7 +212,7 @@ class MappingLocator:
         default: Fallback :class:`TableLocation` for unmapped refs.
 
     Raises:
-        KeyError: On :meth:`locate` when the ref is not in *mapping* and no
+        UnknownKey: On :meth:`locate` when the ref is not in *mapping* and no
                   *default* is set.
 
     Example::
@@ -250,13 +251,13 @@ class MappingLocator:
             Matching :class:`TableLocation`.
 
         Raises:
-            KeyError: When *ref* is absent from the mapping and no default is set.
+            UnknownKey: When *ref* is absent from the mapping and no default is set.
         """
         loc = self._mapping.get(ref.ref)
         if loc is not None:
             return loc
         if self._default is None:
-            raise KeyError(f"No storage location configured for table {ref.ref!r}")
+            raise UnknownKey(f"No storage location configured for table {ref.ref!r}")
         suffix = "/".join(ref.ref.split("."))
         return TableLocation(
             uri=f"{self._default.uri.rstrip('/')}/{suffix}",

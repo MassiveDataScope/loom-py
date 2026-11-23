@@ -13,7 +13,9 @@ from tests.helpers.version_limited_extras import require_pyspark
 
 require_pyspark()
 
+from loom.core.config import ConfigError  # noqa: E402
 from loom.core.connections import ClickHouseConnection  # noqa: E402
+from loom.core.errors import InvalidUse  # noqa: E402
 from loom.core.model.redaction import Dsn, RedactedMap, Secret  # noqa: E402
 from loom.etl.checkpoint._io._polars import _PolarsCheckpointIO  # noqa: E402
 from loom.etl.engines.spark.engine import SparkEtlEngine  # noqa: E402
@@ -72,7 +74,7 @@ class TestMakeBackends:
 
     def test_make_backends_spark_without_session_raises(self) -> None:
         config = StorageConfig(engine="spark")
-        with pytest.raises(ValueError, match="SparkSession"):
+        with pytest.raises(InvalidUse, match="SparkSession"):
             make_backends(config, spark=None)
 
     def test_make_backends_prefers_spark_when_session_is_provided(self) -> None:
@@ -130,7 +132,7 @@ class TestMakeBackends:
         config = StorageConfig(
             tables=(TableRoute(name="raw.orders", ref="raw.orders"),),
         )
-        with pytest.raises(ValueError, match="2-part refs require route.catalog"):
+        with pytest.raises(ConfigError, match="2-part refs require route.catalog"):
             make_backends(config)
 
     def test_make_backends_spark_catalog_route_builds_backends(self) -> None:
@@ -159,12 +161,12 @@ class TestLoadEtlEngine:
         assert type(load_etl_engine("spark")).__name__ == "SparkEtlEngine"
 
     def test_load_backend_provider_rejects_unknown_engine(self) -> None:
-        with pytest.raises(ValueError, match="No ETL engine registered"):
+        with pytest.raises(ConfigError, match="No ETL engine registered"):
             load_etl_engine("duckdb")
 
     def test_load_backend_provider_names_the_registered_engines_when_rejecting(self) -> None:
         """The failure must tell the operator which engines it could have asked for."""
-        with pytest.raises(ValueError) as excinfo:
+        with pytest.raises(ConfigError) as excinfo:
             load_etl_engine("duckdb")
 
         message = str(excinfo.value)
@@ -180,7 +182,7 @@ class TestLineageWiring:
     def test_make_lineage_writer_rejects_database_destination_for_polars_engine(self) -> None:
         lineage = LineageConfig(enabled=True, database="ops")
         config = StorageConfig(engine="polars")
-        with pytest.raises(ValueError, match="observability.lineage.database"):
+        with pytest.raises(ConfigError, match="observability.lineage.database"):
             make_lineage_writer(config, lineage)
 
     def test_make_lineage_writer_polars_root_returns_writer(self) -> None:
@@ -192,7 +194,7 @@ class TestLineageWiring:
     def test_make_lineage_writer_spark_database_requires_session(self) -> None:
         lineage = LineageConfig(enabled=True, database="ops")
         config = StorageConfig(engine="spark")
-        with pytest.raises(ValueError, match="SparkSession"):
+        with pytest.raises(InvalidUse, match="SparkSession"):
             make_lineage_writer(config, lineage, spark=None)
 
     def test_spark_provider_lineage_writer_root_returns_target_writer_wrapper(self) -> None:

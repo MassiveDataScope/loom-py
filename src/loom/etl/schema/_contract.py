@@ -41,6 +41,7 @@ import types as _builtin_types
 import typing
 from typing import Any, TypeAlias
 
+from loom.core.errors import InvalidType
 from loom.etl.schema._schema import (
     ArrayType,
     CategoricalType,
@@ -97,13 +98,13 @@ def resolve_schema(contract: tuple[ColumnSchema, ...] | type[Any]) -> tuple[Colu
         Tuple of :class:`~loom.etl._schema.ColumnSchema` entries.
 
     Raises:
-        TypeError: If *contract* is not a supported schema contract form.
+        InvalidType: If *contract* is not a supported schema contract form.
     """
     if isinstance(contract, tuple):
         return contract
     if isinstance(contract, type):
         return _class_to_schema(contract)
-    raise TypeError(
+    raise InvalidType(
         f"Expected tuple[ColumnSchema, ...] or an annotated class, got {type(contract).__name__!r}."
     )
 
@@ -122,7 +123,7 @@ def resolve_json_type(contract: Any) -> LoomType:
         ``str.json_decode`` or Spark ``from_json``.
 
     Raises:
-        TypeError: If *contract* cannot be converted to a LoomType.
+        InvalidType: If *contract* cannot be converted to a LoomType.
     """
     if isinstance(contract, _LOOM_INSTANCES):
         return contract
@@ -132,9 +133,7 @@ def resolve_json_type(contract: Any) -> LoomType:
         return ListType(inner=inner)
     if isinstance(contract, type):
         return _class_to_struct_type(contract)
-    raise TypeError(
-        f"Expected a LoomType, an annotated class, or list[...] generic; got {contract!r}."
-    )
+    raise InvalidType("Expected a LoomType, an annotated class, or list[...] generic.")
 
 
 def annotation_to_loom_type(ann: Any) -> LoomType:
@@ -153,7 +152,7 @@ def annotation_to_loom_type(ann: Any) -> LoomType:
         The matching :data:`~loom.etl.schema.LoomType`.
 
     Raises:
-        TypeError: If *ann* has no Loom equivalent.
+        InvalidType: If *ann* has no Loom equivalent.
 
     Example::
 
@@ -174,8 +173,8 @@ def annotation_to_loom_type(ann: Any) -> LoomType:
         return ListType(inner=inner_type)
     if isinstance(ann, type) and hasattr(ann, "__annotations__"):
         return _class_to_struct_type(ann)
-    raise TypeError(
-        f"Cannot convert annotation {ann!r} to LoomType. "
+    raise InvalidType(
+        "Cannot convert annotation to LoomType. "
         "Supported: int, float, str, bool, bytes, datetime, date, list[X], "
         "LoomType instances, and annotated classes."
     )
@@ -200,9 +199,9 @@ def _get_type_hints(cls: type[Any]) -> dict[str, Any]:
     try:
         hints = typing.get_type_hints(cls)
     except (TypeError, NameError) as exc:
-        raise TypeError(f"Cannot introspect annotations of {cls.__name__!r}: {exc}") from exc
+        raise InvalidType(f"Cannot introspect annotations of {cls.__name__!r}") from exc
     if not hints:
-        raise TypeError(
+        raise InvalidType(
             f"Class {cls.__name__!r} has no type annotations. "
             "Add field annotations or pass an explicit tuple[ColumnSchema, ...] instead."
         )
