@@ -17,7 +17,7 @@ from loom.core.config import ConfigKey
 from loom.core.connections.aws import AwsClientConfig, aws_error_code
 from loom.core.engine.events import EventKind, ExecutionEvent
 from loom.core.engine.execution_observer import NullExecutionObserver
-from loom.core.engine.post_commit import log_never_ran
+from loom.core.engine.post_commit import ActionSubject, log_never_ran
 from loom.core.job.config import JobSettings
 from loom.core.job.context import add_pending_publish, pending_publish_group
 from loom.core.job.dispatch import JobDispatch
@@ -125,8 +125,8 @@ class _PendingSQSSend:
                 code=SQSErrorCode.SEND_FAILED,
             ) from None
 
-    def log_fields(self) -> tuple[dict[str, object]]:
-        return ({"job_name": self.task_name, "task_id": self.task_id},)
+    def subjects(self) -> tuple[ActionSubject]:
+        return (ActionSubject(job=self.task_name, task_id=self.task_id),)
 
     def log_failure(self, code: str) -> None:
         _log.error(
@@ -182,8 +182,8 @@ class _PendingSQSBatch:
             code=SQSErrorCode.BATCH_PARTIAL_FAILURE,
         )
 
-    def log_fields(self) -> list[dict[str, object]]:
-        return [fields for send in self.sends for fields in send.log_fields()]
+    def subjects(self) -> list[ActionSubject]:
+        return [subject for send in self.sends for subject in send.subjects()]
 
     async def _send_queue(
         self, sends: list[_PendingSQSSend], limit: asyncio.Semaphore

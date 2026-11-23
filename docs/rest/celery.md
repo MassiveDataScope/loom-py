@@ -622,7 +622,7 @@ sqs:
   `SQSDispatchError` (`code="sqs_batch_partial_failure"`) carrying the count
   and codes.
 - If the shielded send itself dies (the loop closing), each job not yet handed
-  to SQS is logged as `PostCommitShieldedActionNeverRan`.
+  to SQS is logged as `engine.post_commit_shielded_action_never_ran`.
 - Nothing waits for jobs from other requests: a batch never outlives the
   execution that committed it.
 

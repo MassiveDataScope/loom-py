@@ -16,8 +16,9 @@ import asyncio
 import collections
 import inspect
 import logging
-from collections.abc import Awaitable, Callable, Hashable, Iterable, Mapping
+from collections.abc import Awaitable, Callable, Hashable, Iterable
 from contextvars import ContextVar, Token
+from dataclasses import dataclass
 from typing import Protocol, TypeVar, cast, runtime_checkable
 
 from loom.core.concurrency import held_task
@@ -33,11 +34,24 @@ PostCommitAction = Callable[[], Awaitable[None] | None]
 ActionT = TypeVar("ActionT", bound=PostCommitAction)
 
 
+@dataclass(frozen=True, slots=True)
+class ActionSubject:
+    """What a log may name of a post-commit action: the job and task it sends, never its payload."""
+
+    job: str | None = None
+    task_id: str | None = None
+
+    def fields(self) -> dict[str, object]:
+        """The subject as log fields; what the action does not name is left out."""
+        named = {PostCommitKey.SENT_JOB: self.job, PostCommitKey.SENT_TASK_ID: self.task_id}
+        return {key: value for key, value in named.items() if value is not None}
+
+
 @runtime_checkable
 class LoggedAction(Protocol):
     """A post-commit action naming what it sends, for the logs: never its payload."""
 
-    def log_fields(self) -> Iterable[Mapping[str, object]]: ...
+    def subjects(self) -> Iterable[ActionSubject]: ...
 
 
 _channel: ContextVar[PostCommitChannel | None] = ContextVar(
@@ -51,12 +65,17 @@ class PostCommitEvent(LogEvent):
 
     PLAIN_ACTIONS_DROPPED = "engine.post_commit_plain_actions_dropped"
     DRAIN_FAILED_DURING_TEARDOWN = "engine.post_commit_drain_failed_during_teardown"
+    ACTION_FAILED = "engine.post_commit_action_failed"
+    ACTION_FAILED_AFTER_INTERRUPTION = "engine.post_commit_action_failed_after_interruption"
+    SHIELDED_ACTION_NEVER_RAN = "engine.post_commit_shielded_action_never_ran"
 
 
 class PostCommitKey(LogKey):
     """The fields of a post-commit record."""
 
     DROPPED_ACTIONS = "loom.post_commit.dropped_actions"
+    SENT_JOB = "loom.post_commit.sent_job"
+    SENT_TASK_ID = "loom.post_commit.sent_task_id"
 
 
 class PostCommitChannel:
@@ -202,12 +221,12 @@ class PostCommitChannel:
             shielded.add_done_callback(
                 lambda done: _log_unreported(done, shielded_pending, shielded_failures)
             )
-            _log_failures(plain_failures, _UNREPORTED_FAILURE)
+            _log_failures(plain_failures, PostCommitEvent.ACTION_FAILED_AFTER_INTERRUPTION)
             self._settle_interrupted(pending)
             raise
         failed = [*shielded_failures, *plain_failures]
         if failed:
-            _log_failures(failed, _FAILURE)
+            _log_failures(failed, PostCommitEvent.ACTION_FAILED)
             raise PostCommitError(committed=committed, failures=tuple(e for _, e in failed))
 
     def _settle_interrupted(self, pending: collections.deque[PostCommitAction]) -> None:
@@ -224,9 +243,6 @@ class PostCommitChannel:
 
 
 _Failure = tuple[PostCommitAction, Exception]
-_SHIELDED_UNSENT = "PostCommitShieldedActionNeverRan"
-_UNREPORTED_FAILURE = "PostCommitActionFailedAfterInterruption"
-_FAILURE = "PostCommitActionFailed"
 
 
 def _log_unreported(
@@ -239,7 +255,7 @@ def _log_unreported(
     The failures it collected, and, when the task itself died (the loop closing
     cancels it), every action it never ran.
     """
-    _log_failures(failures, _UNREPORTED_FAILURE)
+    _log_failures(failures, PostCommitEvent.ACTION_FAILED_AFTER_INTERRUPTION)
     if shielded.cancelled() or shielded.exception() is not None:
         for action in unsent:
             log_never_ran(action)
@@ -260,21 +276,21 @@ async def drain_after_failure(channel: PostCommitChannel) -> None:
 
 def log_never_ran(action: PostCommitAction) -> None:
     """Log a shielded action the interruption stopped, by job name and task id only."""
-    for fields in _describe(action):
-        _logger.error(_SHIELDED_UNSENT, extra={**fields})
+    for subject in _describe(action):
+        _logger.error(PostCommitEvent.SHIELDED_ACTION_NEVER_RAN, extra=subject.fields())
 
 
-def _log_failures(failures: list[_Failure], event: str) -> None:
+def _log_failures(failures: list[_Failure], event: PostCommitEvent) -> None:
     for action, error in failures:
-        for fields in _describe(action):
-            _logger.error(event, extra={**fields, **ErrorSummary.of(error).fields()})
+        for subject in _describe(action):
+            _logger.error(event, extra={**subject.fields(), **ErrorSummary.of(error).fields()})
 
 
-def _describe(action: PostCommitAction) -> Iterable[Mapping[str, object]]:
+def _describe(action: PostCommitAction) -> Iterable[ActionSubject]:
     """What a log may name of ``action``, never its repr: that would log the payload."""
     if isinstance(action, LoggedAction):
-        return action.log_fields()
-    return ({"job_name": None, "task_id": None},)
+        return action.subjects()
+    return (ActionSubject(),)
 
 
 async def _run_all(pending: collections.deque[PostCommitAction], failures: list[_Failure]) -> None:
