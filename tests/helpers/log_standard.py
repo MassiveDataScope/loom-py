@@ -9,7 +9,7 @@ already complies, or when one that does not is missing from it.
 The rest of the contract (the message is a :class:`~loom.core.logger.LogEvent`
 and carries no ``%`` arguments) runs in report mode: with
 ``LOOM_LOG_CONTRACT_REPORT`` set to a directory, each pytest process writes the
-breaches it saw there as JSON, and no test fails on them.
+breaches it saw there as ``<pid>.json``, and no test fails on them.
 """
 
 from __future__ import annotations
@@ -101,7 +101,7 @@ class Breach(StrEnum):
     FOREIGN_KEY = "foreign_key"
 
     @classmethod
-    def of(cls, record: logging.LogRecord) -> list[Breach]:
+    def broken_by(cls, record: logging.LogRecord) -> list[Breach]:
         """The rules *record* breaks."""
         checks = {
             cls.MESSAGE_NOT_EVENT: not isinstance(record.msg, LogEvent),
@@ -121,7 +121,7 @@ class LogContract(logging.Handler):
 
     def emit(self, record: logging.LogRecord) -> None:
         self.records.append(record)
-        self._breaches.update(f"{record.name}|{breach}" for breach in Breach.of(record))
+        self._breaches.update(f"{record.name}|{breach}" for breach in Breach.broken_by(record))
 
 
 def pytest_configure(config: pytest.Config) -> None:
@@ -132,12 +132,12 @@ def pytest_configure(config: pytest.Config) -> None:
 def pytest_sessionfinish(session: pytest.Session) -> None:
     """Write this process's breach count when a report directory is set."""
     directory = os.environ.get(REPORT_DIRECTORY_VARIABLE)
-    if not directory:
+    breaches = session.config.stash[_BREACHES]
+    if not directory or not breaches:
         return
-    worker = os.environ.get("PYTEST_XDIST_WORKER", "main")
-    target = Path(directory) / f"{worker}.json"
+    target = Path(directory) / f"{os.getpid()}.json"
     target.parent.mkdir(parents=True, exist_ok=True)
-    target.write_text(json.dumps(dict(session.config.stash[_BREACHES]), sort_keys=True))
+    target.write_text(json.dumps(dict(breaches), sort_keys=True))
 
 
 def foreign_keys(record: logging.LogRecord) -> set[str]:
