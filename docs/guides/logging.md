@@ -2,7 +2,7 @@
 
 Loom logs with the standard library. There is no loom logger to import: every
 module, yours and loom's, calls `logging.getLogger(__name__)`. What loom adds is
-a closed vocabulary, one filter and a choice of output format, so that every
+named events and fields, one filter and a choice of output format, so that every
 record says **which service emitted it** and lets you **follow one `trace_id`**
 across services.
 
@@ -25,8 +25,9 @@ filtered and grouped by a collector, a value inside the message cannot.
 
 A `LogEvent` class is optional for applications. It pays off when the same event
 is written in several places (no typo can split it) or when you want a catalogue
-of your events. loom's own code always uses `LogEvent` members and `LogField`
-keys; the tests enforce both on `loom.*` loggers only:
+of your events. loom's own code always logs a `LogEvent` member with `LogKey` fields; the tests
+enforce it on `loom.*` loggers only (see
+[What loom logs and what is yours](#what-loom-logs-and-what-is-yours)):
 
 ```python
 import logging
@@ -46,7 +47,7 @@ log.info(InvoiceEvent.ISSUED, extra={LogField.JOB: "SendInvoice"})
 - In loom's code, the message is the **event**: a `LogEvent` member named
   `<area>.<subject>_<fact>`, lowercase. It never holds a value: no f-string, no
   `%` format. Values go in the fields, where a collector can filter on them.
-- loom's field keys are `LogField` members: OpenTelemetry semantic conventions where one
+- loom's field keys are `LogKey` members (`LogField` for the ones the filter writes): OpenTelemetry semantic conventions where one
   exists (`service.name`, `code.function.name`, `exception.type`), `loom.*`
   otherwise. Event names and field keys are part of the public contract of a
   release.
@@ -135,6 +136,49 @@ failure field survives; under `JSON` the line carries the runtime's JSON frame.
 The root level is `observability.log.level`, as anywhere else. Loom never ships logs over the network; the destination is a deployment
 choice (CloudWatch Logs, or a log destination delivered to S3, which costs less and
 needs no CloudWatch Insights).
+
+## What loom logs and what is yours
+
+Loom guarantees **its own records**, the ones written by a `loom.*` logger. The
+test suite fails on any such record that breaks these rules; nothing else is checked.
+
+| Loom guarantees | In every `loom.*` record |
+|---|---|
+| Constant events | The message is a `LogEvent` member, never a sentence with values and never `%` arguments. |
+| Declared keys | Every field key is a `LogKey` member, and a key always carries one kind of value (text, number, boolean or list). |
+| No exception text | A record never copies `str(exc)` into a field. It writes `exception.type`, `loom.error.code` and, from ERROR up, the stack. |
+| One render | Values are rendered once, in the filter, before any handler: a `Secret` is masked, an object is its type name, a long value is cut. `json`, `lambda`, `text` and OpenTelemetry export write the same thing. |
+| Prefixes for open bags | A job's `meta` is written under `loom.meta.<key>`, and the format's own layout keys (`timestamp`, `level`, `message`, `logger`) under `loom.extra.<key>`. An `extra` key with a loom field name replaces loom's value: that is your choice. |
+
+| Yours | What it means |
+|---|---|
+| Your own loggers | Any logger outside `loom.*` is yours: loom does not check its messages, `%` arguments or keys. |
+| The values you pass | What you put in `meta`, in the attributes of a use case or job, in `log_context` and in the names and ids you choose reaches the log as you gave it. Do not put secrets there; wrap a sensitive string in `Secret` to have it masked. |
+| Your exceptions | Loom writes the stack of an exception it logs, and a stack holds the text of the exception, yours included. Keep secrets out of exception messages. |
+| Your handlers | The filter that stamps and renders records is attached to the handlers loom installs. A handler you add yourself without `ContextFilter` gets the record unrendered. |
+
+Declaring the events and keys of your own code is optional, and worth it when
+several places write the same event:
+
+```python
+import logging
+
+from loom.core.logger import LogEvent, LogKey
+
+log = logging.getLogger(__name__)
+
+
+class InvoiceEvent(LogEvent):
+    ISSUED = "billing.invoice_issued"
+
+
+class InvoiceKey(LogKey):
+    NUMBER = "billing.invoice.number"
+    TOTAL = "billing.invoice.total"
+
+
+log.info(InvoiceEvent.ISSUED, extra={InvoiceKey.NUMBER: "INV-2041", InvoiceKey.TOTAL: 129.9})
+```
 
 ## ETL: logging never triggers a computation
 

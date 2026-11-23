@@ -1,28 +1,16 @@
-"""The log contract: which records break it, and what it counts and reports."""
+"""The log contract: which records break it, and that a test that breaks it fails."""
 
 from __future__ import annotations
 
-import json
 import logging
-import os
-from collections import Counter
 from collections.abc import Callable
 from pathlib import Path
-from types import SimpleNamespace
-from typing import cast
 
 import pytest
 
 from loom.core.log_names import LogEvent, LogField, SubKey
 from loom.core.model.redaction import Secret
-from tests.helpers.log_standard import (
-    _BREACHES,
-    REPORT_DIRECTORY_VARIABLE,
-    Breach,
-    LogContract,
-    ValueKind,
-    pytest_sessionfinish,
-)
+from tests.helpers.log_standard import Breach, LogContract, ValueKind
 
 ATTEMPT = LogField.ATTEMPT.value
 JOB = LogField.JOB.value
@@ -47,11 +35,6 @@ def record() -> RecordFactory:
         )
 
     return build
-
-
-@pytest.fixture
-def breaches() -> Counter[str]:
-    return Counter()
 
 
 class TestBreach:
@@ -81,14 +64,16 @@ class TestBreach:
 
 
 class TestLogContract:
-    def test_counts_each_breach_under_its_module(
-        self, record: RecordFactory, breaches: Counter[str]
-    ) -> None:
-        LogContract(breaches, {}).emit(record("thing done", fields={"amount": 3}))
+    def test_lists_each_record_that_breaks_the_contract_once(self, record: RecordFactory) -> None:
+        contract = LogContract({})
 
-        assert breaches == Counter(
-            {"loom.acme|message_not_event": 1, "loom.acme|undeclared_key": 1}
-        )
+        contract.emit(record("thing done", fields={"amount": 3}))
+        contract.emit(record("thing done", fields={"amount": 3}))
+        contract.emit(record())
+
+        assert contract.offences() == [
+            "loom.acme: thing done breaks ['message_not_event', 'undeclared_key']"
+        ]
 
     @pytest.mark.parametrize(
         ("first", "second", "retyped"),
@@ -102,80 +87,37 @@ class TestLogContract:
         ],
     )
     def test_a_key_changes_kind_only_across_json_kinds(
-        self,
-        record: RecordFactory,
-        breaches: Counter[str],
-        first: object,
-        second: object,
-        retyped: bool,
+        self, record: RecordFactory, first: object, second: object, retyped: bool
     ) -> None:
-        contract = LogContract(breaches, {})
+        contract = LogContract({})
 
         contract.emit(record(fields={ATTEMPT: first}))
         contract.emit(record(fields={ATTEMPT: second}))
 
-        assert breaches == (Counter({"loom.acme|key_retyped": 1}) if retyped else Counter())
+        assert bool(contract.offences()) is retyped
 
-    def test_a_text_record_does_not_teach_a_key_its_kind(
-        self, record: RecordFactory, breaches: Counter[str]
+
+class TestStrictFixture:
+    def test_a_loom_record_outside_the_contract_fails_the_test(
+        self, pytester: pytest.Pytester
     ) -> None:
-        contract = LogContract(breaches, {})
+        repository = Path(__file__).parents[2]
+        pytester.makeconftest(
+            f"import sys\nsys.path[:0] = [{str(repository)!r}, {str(repository / 'src')!r}]\n"
+            'pytest_plugins = ["tests.helpers.log_standard"]'
+        )
+        pytester.makepyfile(
+            """
+            import logging
 
-        contract.emit(record("thing done", fields={LogField.NAME.value: 7}))
-        contract.emit(record(fields={LogField.NAME.value: "x"}))
+            def test_free_text():
+                logging.getLogger("loom.acme").warning("thing done")
 
-        assert "loom.acme|key_retyped" not in breaches
+            def test_other_logger():
+                logging.getLogger("acme").warning("thing done")
+            """
+        )
 
-    def test_a_record_of_a_non_loom_logger_never_reaches_it(self, breaches: Counter[str]) -> None:
-        handler = LogContract(breaches, {})
-        loom_logger = logging.getLogger("loom")
-        loom_logger.addHandler(handler)
-        try:
-            logging.getLogger("acme.other").warning("free text %s", "x", extra={"amount": 3})
-        finally:
-            loom_logger.removeHandler(handler)
+        result = pytester.runpytest_subprocess("-p", "no:cacheprovider")
 
-        assert breaches == Counter()
-
-
-class TestReport:
-    @pytest.fixture
-    def report_directory(self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Path:
-        monkeypatch.setenv(REPORT_DIRECTORY_VARIABLE, str(tmp_path))
-        return tmp_path
-
-    @pytest.fixture
-    def finish(self, report_directory: Path) -> Callable[[Counter[str]], None]:
-        def run(breaches: Counter[str]) -> None:
-            session = SimpleNamespace(config=SimpleNamespace(stash={_BREACHES: breaches}))
-            pytest_sessionfinish(cast("pytest.Session", session))
-
-        return run
-
-    def test_writes_the_process_count_into_the_report_directory(
-        self, finish: Callable[[Counter[str]], None], report_directory: Path
-    ) -> None:
-        finish(Counter({"loom.acme|undeclared_key": 2}))
-
-        report = report_directory / f"{os.getpid()}.json"
-        assert json.loads(report.read_text()) == {"loom.acme|undeclared_key": 2}
-
-    def test_writes_nothing_when_no_record_broke_the_contract(
-        self, finish: Callable[[Counter[str]], None], report_directory: Path
-    ) -> None:
-        finish(Counter())
-
-        assert list(report_directory.iterdir()) == []
-
-    def test_writes_nothing_without_a_report_directory(
-        self,
-        finish: Callable[[Counter[str]], None],
-        report_directory: Path,
-        monkeypatch: pytest.MonkeyPatch,
-    ) -> None:
-        monkeypatch.delenv(REPORT_DIRECTORY_VARIABLE)
-        monkeypatch.chdir(report_directory)
-
-        finish(Counter({"loom.acme|undeclared_key": 1}))
-
-        assert list(report_directory.iterdir()) == []
+        result.assert_outcomes(passed=2, errors=1)
