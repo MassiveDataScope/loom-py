@@ -70,7 +70,8 @@ class ContextFilter(logging.Filter):
     a record says about its exception: ``exception.type``, ``loom.error.code`` for a
     ``CodedError``, and from ERROR up ``exception.stacktrace``, never the message. It
     renders every field value once, before any handler, so each output writes the
-    same values; a handler without this filter sees the values as they were passed.
+    same values; a handler that runs before the one carrying this filter sees the values as
+    they were passed.
     It never drops a record.
 
     Args:

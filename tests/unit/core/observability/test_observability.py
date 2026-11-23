@@ -48,7 +48,7 @@ class TestEmit:
     def test_fans_out_to_all_observers(self) -> None:
         a, b = AcmeRuntimeRecordingObserver(), AcmeRuntimeRecordingObserver()
         runtime = Observability([a, b])
-        event = make(LifecycleEvent, scope=Scope.NODE, name="transform", kind=EventKind.START)
+        event = make(LifecycleEvent, scope=Scope.NODE, kind=EventKind.START)
 
         runtime.emit(event)
 

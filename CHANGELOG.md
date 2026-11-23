@@ -12,7 +12,7 @@
 
 ## 🐛 Fixes
 
-- **logging:** `ContextFilter` renders every field value once, before any handler, and the formatters only lay the values out, so the OpenTelemetry log export carries the values the JSON, Lambda and text outputs write: an object is its type name and a long string is cut, where the export used to receive the raw value. JSON, Lambda and text output are unchanged. A handler installed without the filter sees the values as they were passed.
+- **logging:** `ContextFilter` renders every field value once, before any handler, and the formatters only lay the values out, so the OpenTelemetry log export carries the values the JSON, Lambda and text outputs write: an object is its type name and a long string is cut, where the export used to receive the raw value. A `RedactedMap` reached the export with its contents unmasked; it is now masked. JSON, Lambda and text output are unchanged. A handler that runs before the one carrying the filter sees the values as they were passed.
 
 - **logging:** `ContextFilter` stamps a record without `dict.setdefault` on the record's dictionary, which crashed CPython 3.14.3 with a segmentation fault depending on test order (reproduced on the release with `tests/unit/core/logger` plus the Mongo plugin tests). The precedence is unchanged: a field on the record wins, then the trace id, the context, the identity and the code origin.
 
