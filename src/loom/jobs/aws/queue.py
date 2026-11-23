@@ -16,6 +16,7 @@ import msgspec
 
 from loom.core.config import ConfigError
 from loom.core.connections.aws import aws_error_code
+from loom.core.errors import InvalidValue
 from loom.core.job.config import ResolvedRetry, RetrySource
 from loom.core.job.job import Job
 from loom.core.job.policy import DEFAULT_RETRY, Countdown, Redelivery, RetryPolicy
@@ -54,10 +55,10 @@ class SQSArn:
         """
         parts = value.split(":")
         if len(parts) != 6 or parts[0] != "arn" or parts[2] != "sqs":
-            raise ValueError(f"not an SQS queue ARN: {value!r}")
+            raise InvalidValue("not an SQS queue ARN")
         _, _, _, region, account_id, queue_name = parts
         if not region or not account_id or not queue_name:
-            raise ValueError(f"not an SQS queue ARN: {value!r}")
+            raise InvalidValue("not an SQS queue ARN")
         return cls(region, account_id, queue_name)
 
 
@@ -611,7 +612,7 @@ class SQSQueue:
             arn = SQSArn.from_string(policy["deadLetterTargetArn"])
             limit = int(policy["maxReceiveCount"])
             if limit < 1:
-                raise ValueError("maxReceiveCount must be at least 1")
+                raise InvalidValue("maxReceiveCount must be at least 1")
         except (AttributeError, ValueError, KeyError, TypeError) as exc:
             raise SQSQueueConfigError(
                 f"queue {self.name!r} has a RedrivePolicy loom cannot read "

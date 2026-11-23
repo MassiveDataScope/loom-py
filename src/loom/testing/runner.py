@@ -21,6 +21,7 @@ from loom.core.di import LoomContainer
 from loom.core.engine.compiler import UseCaseCompiler
 from loom.core.engine.executor import UseCaseExecutor
 from loom.core.engine.plan import ExecutionPlan
+from loom.core.errors import InvalidUse
 from loom.core.execution import current_execution, execution_identity
 from loom.core.identity import Identity
 from loom.core.stores.repository import RepoFor
@@ -597,7 +598,7 @@ class _Doubles(Generic[_DoubleT]):
             execution_identity()
         double = self._doubles.get(key)
         if double is None:
-            raise RuntimeError(
+            raise InvalidUse(
                 f"{self._declarer} declares {spelling} but no double was registered; "
                 f"call {self._harness}.{method}({key!r}, ...) before running it."
             )

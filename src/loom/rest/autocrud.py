@@ -26,7 +26,7 @@ from typing import Any, cast, get_type_hints
 import msgspec
 
 from loom.core.command import Command
-from loom.core.errors import NotFound
+from loom.core.errors import InvalidValue, NotFound
 from loom.core.model.introspection import get_column_fields, get_id_attributes
 from loom.core.stores.repository.capabilities import (
     Creatable,
@@ -490,13 +490,13 @@ def crud_op_of(use_case_type: type[Any]) -> CrudOp:
     """
     key = get_use_case_key(use_case_type)
     if key is None:
-        raise ValueError(f"{use_case_type.__qualname__} is not a generated CRUD use case")
+        raise InvalidValue(f"{use_case_type.__qualname__} is not a generated CRUD use case")
     _entity, _separator, operation = key.rpartition(KEY_SEPARATOR)
     try:
         return CrudOp(operation)
     except ValueError as exc:
-        raise ValueError(
-            f"{use_case_type.__qualname__} is not a generated CRUD use case (key {key!r})"
+        raise InvalidValue(
+            f"{use_case_type.__qualname__} is not a generated CRUD use case"
         ) from exc
 
 
@@ -533,7 +533,7 @@ def build_auto_routes(
     key = _composite_key(model)
     by_id = [str(op) for op in include if op in _BY_ID_OPS]
     if key is not None and by_id:
-        raise ValueError(
+        raise InvalidValue(
             f"{model.__name__} has the composite primary key ({', '.join(key)}); "
             f"the /{{id}} path cannot address one row, so {', '.join(by_id)} cannot be generated"
         )

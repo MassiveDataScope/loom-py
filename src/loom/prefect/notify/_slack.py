@@ -9,6 +9,7 @@ import urllib.request
 from collections.abc import Callable
 from typing import Any
 
+from loom.core.errors import InvalidUse
 from loom.core.model.redaction import Dsn
 from loom.prefect.notify._event import NotifyEvent
 from loom.prefect.notify._format import FAILURE_STATES, run_details, should_notify
@@ -98,7 +99,7 @@ def _default_http_post(url: str, *, json: dict[str, Any], timeout: float) -> Non
         with urllib.request.urlopen(req, timeout=timeout) as resp:  # noqa: S310
             resp.read()
     except urllib.error.URLError as exc:
-        raise RuntimeError(f"Slack webhook POST failed: {exc}") from exc
+        raise InvalidUse("Slack webhook POST failed") from exc
 
 
 __all__ = ["SlackNotifier"]

@@ -37,6 +37,7 @@ from fastapi import FastAPI
 
 from loom.core.bootstrap.kernel import Kernel
 from loom.core.engine.executor import UseCaseExecutor
+from loom.core.errors import InvalidType
 from loom.core.observability.observability import Observability
 from loom.core.stores.repository import CursorCodec
 from loom.core.stores.repository.cursor import CURSORS_SECTION
@@ -66,7 +67,7 @@ def _require_route_sources(routes: object) -> RouteSources:
         TypeError: If *routes* is not a ``RouteSources`` instance.
     """
     if not isinstance(routes, RouteSources):
-        raise TypeError(
+        raise InvalidType(
             "create_fastapi_app()'s 'routes' must be a RouteSources, "
             f"got {type(routes).__name__}. Pass RouteSources(python=[...])."
         )

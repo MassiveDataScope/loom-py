@@ -129,7 +129,7 @@ def _declaration(name: str, body: Any, uri: str) -> EtlDeclaration:
     try:
         settings = flow_settings_from_mapping(body)
         check_inherited_params(settings.trigger, params_type, name=name)
-    except (TypeError, ValueError) as exc:
+    except (ConfigError, KeyError, TypeError, ValueError) as exc:
         raise ConfigError(f"{uri}: ETL {name!r}: {exc}") from exc
     _reject_reserved_env(name, settings, uri)
     return EtlDeclaration(

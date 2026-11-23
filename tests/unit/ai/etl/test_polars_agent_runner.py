@@ -227,7 +227,7 @@ class TestColumns:
         frame = pl.DataFrame({key: ["k"], "text": ["hola"]})
         runner = _runner(tmp_path)
 
-        with pytest.raises(ValueError, match=key):
+        with pytest.raises(ValueError, match="key columns share"):
             runner.map(
                 "seller_reply", frame, keys=(key,), prompt="text", output_type=Reply, max_usd=None
             )

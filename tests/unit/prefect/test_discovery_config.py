@@ -288,7 +288,7 @@ class TestDiscoverAndDeployEtls:
             encoding="utf-8",
         )
 
-        with pytest.raises(ValueError, match="gone.py is not an importable Python file"):
+        with pytest.raises(ValueError, match="not an importable Python file"):
             discover_and_deploy_etls(flows_package=package)
 
         assert recorder.calls == []

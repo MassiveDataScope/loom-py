@@ -6,6 +6,7 @@ from datetime import date
 from decimal import Decimal
 from typing import Final
 
+from loom.core.errors import InvalidValue
 from loom.core.model import LoomFrozenStruct
 
 __all__ = ["ModelPrice"]
@@ -45,7 +46,7 @@ class ModelPrice(LoomFrozenStruct, frozen=True, kw_only=True):
     def __post_init__(self) -> None:
         rates = (self.input, self.output, self.cache_read, self.cache_write)
         if any(rate is not None and rate < 0 for rate in rates):
-            raise ValueError("a model price cannot be negative")
+            raise InvalidValue("a model price cannot be negative")
 
     def cost(
         self,

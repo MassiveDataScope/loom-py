@@ -8,6 +8,9 @@ from typing import Any
 import msgspec
 import yaml
 
+from loom.core.config.errors import ConfigError
+from loom.core.errors import InvalidType
+
 
 class FlowConfig(msgspec.Struct, frozen=True, kw_only=True, forbid_unknown_fields=True):
     """Retry and execution policy for a single ETL flow.
@@ -41,17 +44,17 @@ def _coerce_retry_delay(value: Any) -> int:
 
     Raises:
         TypeError: When *value* is a sequence of delays.
-        ValueError: When *value* is negative.
+        ConfigError: When *value* is negative.
     """
     if isinstance(value, (list, tuple)):
-        raise TypeError(
+        raise InvalidType(
             "flow_retry_delay_seconds must be a single number: Prefect's "
             "FlowRunPolicy rejects a list of delays. Staggered delays are a "
             "task-level feature."
         )
     delay = int(value)
     if delay < 0:
-        raise ValueError("flow_retry_delay_seconds must not be negative")
+        raise ConfigError("flow_retry_delay_seconds must not be negative")
     return delay
 
 

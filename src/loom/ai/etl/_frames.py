@@ -9,6 +9,7 @@ import polars as pl
 
 from loom.ai.etl._batch import RowOutcome
 from loom.ai.etl._columns import Column
+from loom.core.errors import InvalidType, InvalidValue
 
 STATUS_OK: Final = "ok"
 STATUS_ERROR: Final = "error"
@@ -51,8 +52,8 @@ def require_free_keys(keys: Sequence[str], columns: Mapping[str, Column]) -> Non
     """
     clashes = [key for key in keys if key in columns] + metadata_clashes(keys)
     if clashes:
-        raise ValueError(
-            f"key column(s) {clashes} share their name with a column the agent writes; "
+        raise InvalidValue(
+            "key columns share their name with a column the agent writes; "
             "rename them before mapping"
         )
 
@@ -140,7 +141,7 @@ def _lazy(frame: object) -> pl.LazyFrame:
         return frame
     if isinstance(frame, pl.DataFrame):
         return frame.lazy()
-    raise TypeError(f"an agent maps a Polars frame, got {type(frame).__name__}")
+    raise InvalidType(f"an agent maps a Polars frame, got {type(frame).__name__}")
 
 
 def _expression(prompt: object) -> pl.Expr:
@@ -148,7 +149,7 @@ def _expression(prompt: object) -> pl.Expr:
         return pl.col(prompt)
     if isinstance(prompt, pl.Expr):
         return prompt
-    raise TypeError(f"an agent prompt is a Polars expression or a column name, got {prompt!r}")
+    raise InvalidType("an agent prompt must be a Polars expression or a column name")
 
 
 def _field(output: Mapping[str, Any] | None, field: str) -> Any:

@@ -40,7 +40,7 @@ class TestLambdaEvent:
         assert not hasattr(LambdaEvent.sqs_record("{}"), "via_sqs")
 
     def test_an_http_request_takes_one_body(self) -> None:
-        with pytest.raises(TypeError, match="json_body= or body=, not both"):
+        with pytest.raises(ValueError, match="json_body= or body=, not both"):
             LambdaEvent.http("POST", "/x", json_body={"a": 1}, body="{}")
 
     def test_an_http_json_body_is_typed_unless_the_caller_typed_it(self) -> None:

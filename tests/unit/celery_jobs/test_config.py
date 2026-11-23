@@ -166,5 +166,5 @@ class TestCreateCeleryApp:
             task_default_queue="default",
         )
 
-        with pytest.raises(ValueError, match="task_default_queue='default' is not declared"):
+        with pytest.raises(ValueError, match="task_default_queue is not declared"):
             create_celery_app(cfg)

@@ -29,7 +29,7 @@ from typing import Any, Generic, TypeVar
 
 import msgspec
 
-from loom.core.errors import Conflict
+from loom.core.errors import Conflict, InvalidValue
 from loom.core.model.convert import to_struct
 from loom.core.model.introspection import business_key_of, get_id_attributes, get_projections
 from loom.core.projection.loaders import (
@@ -415,7 +415,7 @@ class InMemoryRepository(
             if is_projection_descriptor(loader):
                 rel_name = find_relation_name_for_loader(loader, self._entity_type)
                 if rel_name is None:
-                    raise ValueError(
+                    raise InvalidValue(
                         f"InMemoryRepository: cannot resolve '{name}' loader "
                         f"({type(loader).__name__}(model={loader.model.__name__})). "
                         "Provide 'via' on the loader or annotate the relation with the target type."

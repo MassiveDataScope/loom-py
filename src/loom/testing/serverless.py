@@ -15,6 +15,7 @@ from collections.abc import Mapping, Sequence
 from typing import TYPE_CHECKING, Any, Final, NotRequired, TypedDict
 from urllib.parse import quote_plus
 
+from loom.core.errors import InvalidValue
 from loom.core.job.envelope import encode_job_message
 from loom.jobs.aws import FIFO_SUFFIX
 from loom.testing.gateway import EventFormat, api_gateway_event
@@ -74,10 +75,10 @@ class LambdaEvent(dict[str, Any]):
         """An API Gateway request; ``json_body`` is serialised and typed ``application/json``.
 
         Raises:
-            TypeError: When both ``json_body`` and ``body`` are given.
+            ValueError: When both ``json_body`` and ``body`` are given.
         """
         if json_body is not None and body is not None:
-            raise TypeError("an HTTP request takes json_body= or body=, not both")
+            raise InvalidValue("an HTTP request takes json_body= or body=, not both")
         written = {name.lower(): value for name, value in (headers or {}).items()}
         if json_body is not None:
             body = json.dumps(json_body)

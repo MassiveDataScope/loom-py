@@ -103,7 +103,7 @@ class TestFailureCallbackFromTheWorker:
         stored, calls = served.settle(task_id, notified=1)
 
         assert stored.state == "FAILURE"
-        assert [(call["exc_type"], call["exc_code"]) for call in calls] == [("RuntimeError", None)]
+        assert [(call["exc_type"], call["exc_code"]) for call in calls] == [("InvalidUse", None)]
 
     @pytest.mark.parametrize("job", [RejectingTaskJob, IgnoringTaskJob])
     def test_a_task_rejected_or_ignored_by_celery_notifies_no_one(

@@ -13,6 +13,7 @@ from loom.ai.abc import AgentUsage
 from loom.ai.errors import AgentRunError
 from loom.ai.etl._ledger import SpendLedger
 from loom.ai.execution import AgentHost
+from loom.core.errors import InternalError
 from loom.core.identity import Identity
 
 PROMPT_MISSING: Final = "PROMPT_MISSING"
@@ -74,9 +75,9 @@ class Batch:
             for _ in range(min(self.limit, len(prompts))):
                 workers.create_task(self._work(pending, outcomes, identity))
         if None in outcomes:
-            raise RuntimeError(
-                f"agent {self.name!r} left {outcomes.count(None)} row(s) without an outcome, the "
-                f"first row {outcomes.index(None)}: a run was cancelled while the batch was not"
+            raise InternalError(
+                f"agent {self.name!r} left rows without an outcome: "
+                "a run was cancelled while the batch was not"
             )
         return [outcome for outcome in outcomes if outcome is not None]
 

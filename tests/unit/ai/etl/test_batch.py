@@ -110,5 +110,5 @@ class TestBatchOutcomes:
         host = _Failing("0", asyncio.CancelledError())
         inputs = [str(row) for row in range(rows)]
 
-        with pytest.raises(RuntimeError, match=r"labeller.*1 row\(s\).*first row 0"):
+        with pytest.raises(RuntimeError, match=r"labeller.*rows without an outcome"):
             _answer_all(host, inputs)

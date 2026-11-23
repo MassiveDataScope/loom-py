@@ -47,6 +47,7 @@ from loom.ai.engines.pydantic_ai._spec import build_agent_spec, build_output_typ
 from loom.ai.errors import AgentCompilationError, AgentErrorCode
 from loom.ai.inference import InferenceTarget
 from loom.core.di import LoomContainer
+from loom.core.errors import InvalidType
 from loom.core.model import LoomType
 
 if TYPE_CHECKING:
@@ -161,7 +162,7 @@ class PydanticAIEnginePlugin:
                 overrides ``wrap_run_event_stream``.
         """
         if not isinstance(plan, AgentPlan):
-            raise TypeError(f"expected an AgentPlan, got {type(plan).__name__}")
+            raise InvalidType(f"expected an AgentPlan, got {type(plan).__name__}")
         ensure_templating_available(plan)
         model = _with_price(self._resolve_model(plan.inference), plan)
         toolsets = build_toolsets(plan, container, mcp=self._mcp)

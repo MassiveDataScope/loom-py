@@ -13,6 +13,7 @@ import time
 from dataclasses import dataclass
 from typing import Any, Final
 
+from loom.core.errors import InvalidValue
 from loom.core.model.redaction import Secret
 from loom.rest.auth.config import JwtAuthConfig
 
@@ -78,7 +79,7 @@ def jwt_test_auth(**overrides: Any) -> JwtTestAuth:
     """
     owned = {"secret", "secret_path", "public_keys", "algorithms"} & overrides.keys()
     if owned:
-        raise TypeError(f"jwt_test_auth writes its own {sorted(owned)}; do not override them")
+        raise InvalidValue(f"jwt_test_auth writes its own {sorted(owned)}; do not override them")
     secret = secrets.token_hex(32)
     settings: dict[str, Any] = {
         "secret": Secret(secret),

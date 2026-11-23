@@ -24,6 +24,7 @@ from loom.ai.etl._ledger import SpendLedger
 from loom.ai.etl._validation import validation_issues
 from loom.ai.execution import AgentHost
 from loom.ai.registry import resolve_engine_plugin
+from loom.core.errors import InvalidValue, UnknownKey
 from loom.core.model import loom_type
 from loom.etl.ports.contracts import AgentIssue
 
@@ -154,7 +155,7 @@ class PolarsAgentRunner:
 
 def _only_plan(plans: tuple[AgentPlan, ...], name: str) -> AgentPlan:
     if not plans:
-        raise LookupError(f"no agent artifact declares an agent named {name!r}")
+        raise UnknownKey("no agent artifact declares the agent asked for")
     return plans[0]
 
 
@@ -167,7 +168,7 @@ def _reservation(plan: AgentPlan, max_usd: Decimal | None) -> Decimal:
     if plan.policies.max_usd is not None:
         return plan.policies.max_usd
     if max_usd is not None:
-        raise ValueError(
+        raise InvalidValue(
             f"agent {plan.name!r} has a step budget but no 'policies.max_usd' to reserve per run"
         )
     return Decimal(0)

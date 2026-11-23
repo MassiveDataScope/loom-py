@@ -34,6 +34,7 @@ from loom.connections.aws import AwsClients
 from loom.core.config import ConfigContext
 from loom.core.di.container import LoomContainer
 from loom.core.environment import resolve_environment
+from loom.core.errors import InvalidUse
 from loom.core.job.service import JobService
 from loom.core.observability.config import ObservabilityConfig
 from loom.core.observability.observability import Observability
@@ -185,7 +186,7 @@ class HttpTestHarness:
             ResolutionError: As :meth:`Override.apply` raises it.
         """
         if self.application is None:
-            raise RuntimeError("Build the harness application before overriding dependencies")
+            raise InvalidUse("Build the harness application before overriding dependencies")
         with Override.apply_all(self.application.kernel.container, overrides):
             yield self
 

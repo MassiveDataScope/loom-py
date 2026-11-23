@@ -26,6 +26,8 @@ from pathlib import Path
 from types import MappingProxyType
 from typing import Any, Final
 
+from loom.core.errors import InvalidValue
+
 from ._envelope import LATEST_SPEC_VERSION
 from ._v1 import (
     AGENT_NAME_PATTERN,
@@ -622,9 +624,7 @@ def agent_spec_json_schema(spec_version: int = LATEST_SPEC_VERSION) -> dict[str,
     builder = _SCHEMA_BUILDERS.get(spec_version)
     if builder is None:
         known = ", ".join(str(version) for version in sorted(_SCHEMA_BUILDERS))
-        raise ValueError(
-            f"no JSON Schema published for spec version {spec_version}; known: {known}"
-        )
+        raise InvalidValue(f"no JSON Schema is published for that spec version; known: {known}")
     return builder()
 
 
@@ -660,9 +660,7 @@ def agent_spec_schema_path(spec_version: int = LATEST_SPEC_VERSION) -> Path:
     filename = SCHEMA_FILENAMES.get(spec_version)
     if filename is None:
         known = ", ".join(str(version) for version in sorted(SCHEMA_FILENAMES))
-        raise ValueError(
-            f"no JSON Schema published for spec version {spec_version}; known: {known}"
-        )
+        raise InvalidValue(f"no JSON Schema is published for that spec version; known: {known}")
     path = _SCHEMA_DIRECTORY / filename
     if not path.is_file():
         raise FileNotFoundError(

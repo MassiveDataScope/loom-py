@@ -120,7 +120,7 @@ class TestReadYaml:
         self, write_yaml: Callable[[str, str], Path], tmp_path: Path
     ) -> None:
         cfg = write_yaml("list.yaml", "- item1\n- item2\n")
-        with pytest.raises(ValueError, match="mapping"):
+        with pytest.raises(ConfigError, match="mapping"):
             read_yaml(str(cfg))
 
     def test_duplicate_key_raises_config_error_naming_the_file(self, tmp_path: Path) -> None:

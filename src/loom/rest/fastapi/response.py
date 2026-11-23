@@ -29,7 +29,7 @@ from typing import Any
 import msgspec
 from starlette.responses import Response
 
-from loom.core.errors import UnsupportedBoundaryType
+from loom.core.errors import InvalidType, UnsupportedBoundaryType
 from loom.core.model import loom_type_of
 from loom.core.use_case.outcome import Created
 from loom.rest.constants import LOCATION_HEADER
@@ -92,7 +92,7 @@ def _to_builtins(obj: Any) -> Any:
     try:
         return loom_type_of(type(obj)).to_builtins(obj)
     except UnsupportedBoundaryType as exc:
-        raise TypeError(str(exc)) from exc
+        raise InvalidType(str(exc)) from exc
 
 
 def created_response(created: Created[Any]) -> MsgspecJSONResponse:

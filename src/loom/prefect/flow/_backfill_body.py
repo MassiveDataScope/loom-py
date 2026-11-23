@@ -18,6 +18,7 @@ from loom.core.environment import (
     confirm_environment,
     loom_variable,
 )
+from loom.core.errors import InvalidValue
 from loom.etl.pipeline import ETLPipeline
 from loom.etl.runner import ETLRunner
 from loom.prefect._placeholders import resolve_placeholder
@@ -266,12 +267,11 @@ def _resolve_start_from(value: Any, anchor: datetime | None) -> datetime | None:
     try:
         resolved = resolve_placeholder(value, anchor=anchor)
     except ValueError as exc:
-        raise ValueError(f"start_from: {exc}") from exc
+        raise InvalidValue(f"start_from: {exc}") from exc
     coerced = coerce_to_utc(resolved)
     if not isinstance(coerced, datetime):
-        raise ValueError(
-            "start_from: expected a datetime, a date, an ISO string or a placeholder, "
-            f"got {value!r}"
+        raise InvalidValue(
+            "start_from: expected a datetime, a date, an ISO string or a placeholder"
         )
     return coerced
 

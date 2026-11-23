@@ -642,7 +642,7 @@ class TestLoaderFailures:
         ]
         assert len(records) == 1
         assert records[0].exc_text is not None
-        assert "2049" in records[0].exc_text
+        assert "more bytes than max_history_bytes" in records[0].exc_text
         assert "2048" in records[0].exc_text
         assert "2049" not in str(error)
         assert "2048" not in str(error)

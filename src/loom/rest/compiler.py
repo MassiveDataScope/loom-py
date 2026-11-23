@@ -47,7 +47,7 @@ import msgspec
 from loom.core.engine.compiler import UseCaseCompiler
 from loom.core.engine.execution_observer import ExecutionObserver
 from loom.core.engine.plan import ExecutionPlan
-from loom.core.errors import UnsupportedBoundaryType
+from loom.core.errors import InvalidValue, UnsupportedBoundaryType
 from loom.core.model import get_column_fields, is_pydantic_model, loom_type, msgspec_type
 from loom.core.model._json_schema import DEFS, DEFS_PREFIX, REF, definition, without_null
 from loom.core.model.introspection import scalar_column_annotations
@@ -343,7 +343,7 @@ def _query_field(
     schema = without_null(prop)
     target = definition(schema, definitions)
     if "enum" not in target and target.get("type") not in _SCALAR_TYPES:
-        raise ValueError(
+        raise InvalidValue(
             f"query field {name!r} must be a string (UUID, date-time and other string "
             "formats included), integer, number, boolean, enum or Literal, optionally None."
         )

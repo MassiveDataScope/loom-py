@@ -35,6 +35,7 @@ from loom.core.config.errors import ConfigError
 from loom.core.config.loader import convert_section
 from loom.core.discovery._utils import infer_model_from_use_case
 from loom.core.discovery.base import DiscoveryResult
+from loom.core.errors import InvalidUse, InvalidValue
 from loom.core.introspection import (
     INTROSPECTION_STATE_ATTR,
     AppIntrospection,
@@ -186,7 +187,7 @@ def _reject_autocrud_without_model(
     for interface in interfaces:
         model = interface.auto_crud_model
         if model is not None and model not in known:
-            raise RuntimeError(
+            raise InvalidUse(
                 f"{interface.__name__} generates CRUD routes over "
                 f"{model.__name__}, which discovery did not find. Add its package to "
                 "app.packages so its "
@@ -241,7 +242,7 @@ def _gate_interface(
     backend_name = backend.name
     repository_type = _serving_repository_type(model, backend)
     if repository_type is None:
-        raise RuntimeError(
+        raise InvalidUse(
             f"{interface.__name__} generates CRUD routes over {model.__name__}, but "
             f"stores.{key}.backend {backend_name!r} serves no repositories."
         )
@@ -252,7 +253,7 @@ def _gate_interface(
     generated = build_auto_routes(model, ())
     interface.routes = tuple(r for r in generated if crud_op_of(r.use_case) in supported)
     if not interface.routes:
-        raise RuntimeError(
+        raise InvalidUse(
             f"{interface.__name__} generates CRUD routes over {model.__name__}, but "
             f"backend {backend_name!r} ({repository_type.__name__}) supports none of "
             f"{sorted(op.value for op in CRUD_OP_CAPABILITY)}."
@@ -282,7 +283,7 @@ def _reject_unsupported_include(
 ) -> None:
     missing = [op for op in interface.include if op in CRUD_OP_CAPABILITY and op not in supported]
     if missing:
-        raise RuntimeError(
+        raise InvalidUse(
             f"{interface.__name__} includes {missing[0]!r} over {model.__name__}, which "
             f"backend {backend_name!r} does not support (missing: {missing})."
         )
@@ -298,7 +299,7 @@ def _discover_components(project: Project) -> DiscoveryResult:
     discovered = project.discovered
     interfaces = interfaces_in(discovered)
     if not discovered.use_cases and not interfaces and not discovered.agent_specs:
-        raise RuntimeError(
+        raise InvalidUse(
             "Nothing discovered: no UseCase, no RestInterface and no agents. "
             "Set app.packages or app.agents."
         )
@@ -426,7 +427,7 @@ def _mount_metrics(
     """
     path = _metrics_path(cfg)
     if "{" in path:
-        raise ValueError(f"metrics.path must not contain path parameters, got: {path!r}")
+        raise InvalidValue("metrics.path must not contain path parameters")
     app.add_middleware(PrometheusMiddleware, registry=registry)
     scrape_registry = registry or prometheus_client.REGISTRY
 
