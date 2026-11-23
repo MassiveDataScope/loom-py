@@ -90,17 +90,18 @@ class ContextFilter(logging.Filter):
         A field already on the record wins; among the rest the trace id wins over
         the context, the context over the identity, and the identity over the code origin.
         """
-        fields = record.__dict__
+        stamped: dict[str, object] = {
+            LogField.CODE_FUNCTION: record.funcName,
+            LogField.CODE_LINE: record.lineno,
+            LogField.CODE_FILE: record.pathname,
+            **self._identity_fields,
+            **current_log_fields(),
+        }
         trace_id = get_trace_id()
         if trace_id is not None:
-            fields.setdefault(LogField.TRACE_ID, trace_id)
-        for key, value in current_log_fields().items():
-            fields.setdefault(key, value)
-        for key, value in self._identity_fields.items():
-            fields.setdefault(key, value)
-        fields.setdefault(LogField.CODE_FUNCTION, record.funcName)
-        fields.setdefault(LogField.CODE_LINE, record.lineno)
-        fields.setdefault(LogField.CODE_FILE, record.pathname)
+            stamped[LogField.TRACE_ID] = trace_id
+        fields = record.__dict__
+        fields.update({key: value for key, value in stamped.items() if key not in fields})
         self._stamp_failure(record)
         return True
 
