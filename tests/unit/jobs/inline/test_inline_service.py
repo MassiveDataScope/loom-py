@@ -64,7 +64,7 @@ class RecordingCallback(Hooks):
     def on_success(self, job_id: str, result: Any, **ctx: Any) -> None:
         self.calls.append(("success", job_id))
 
-    def on_failure(self, job_id: str, exc_type: str, exc_msg: str, **ctx: Any) -> None:
+    def on_failure(self, job_id: str, exc_type: str, exc_code: str | None, **ctx: Any) -> None:
         self.calls.append(("failure", exc_type))
 
 

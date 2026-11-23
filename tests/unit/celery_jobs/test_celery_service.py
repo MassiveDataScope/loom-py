@@ -177,7 +177,7 @@ class TestCallbacks:
 
 
 class TestFailureCallbackSend:
-    def test_the_worker_sends_the_callback_task_with_the_link_the_class_and_the_message(
+    def test_the_worker_sends_the_callback_task_with_the_link_and_the_class_but_no_message(
         self,
     ) -> None:
         broker = CeleryBroker([DEFAULT_QUEUE])
@@ -194,7 +194,7 @@ class TestFailureCallbackSend:
                 "trace_id": "acme-trace",
                 "identity": None,
                 "exc_type": "ValueError",
-                "exc_msg": "bad input",
+                "exc_code": None,
             },
         )
 

@@ -127,7 +127,7 @@ class TestNotify:
                 CallbackOutcome.FAILURE,
                 job_id="acme-job",
                 exc_type="LookupError",
-                exc_msg="acme",
+                exc_code="acme",
             )
             assert current_execution() is None
 

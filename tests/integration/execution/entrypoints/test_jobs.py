@@ -328,7 +328,9 @@ class TestADispatchWithNoCaller:
         failures: list[str] = []
 
         class AcmeFailureNoted(AcmeCallback):
-            def on_failure(self, job_id: str, exc_type: str, exc_msg: str, **context: Any) -> None:
+            def on_failure(
+                self, job_id: str, exc_type: str, exc_code: str | None, **context: Any
+            ) -> None:
                 failures.append(exc_type)
 
         async def dispatch() -> None:

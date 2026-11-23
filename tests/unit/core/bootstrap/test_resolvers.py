@@ -79,7 +79,7 @@ class TestKernelResolvers:
         config = AcmeResolverConfig()
         modules = (_binds(Scope.APPLICATION),)
 
-        with pytest.raises(BootstrapError, match=r"resolve\(declaration, annotation\)") as caught:
+        with pytest.raises(BootstrapError) as caught:
             create_kernel(
                 config=config,
                 use_cases=(),
@@ -88,3 +88,4 @@ class TestKernelResolvers:
             )
 
         assert isinstance(caught.value.__cause__, TypeError)
+        assert "resolve(declaration, annotation)" in str(caught.value.__cause__)

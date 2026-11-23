@@ -218,9 +218,7 @@ class TestSqlEndpointErrorBodies:
         self,
     ) -> None:
         """A backend SqlExecutionError responds 422 with the rule_violation code."""
-        client = _client(
-            FakeSqlExecutor(error=SqlExecutionError("Code: 62. DB::Exception: Syntax error"))
-        )
+        client = _client(FakeSqlExecutor(error=SqlExecutionError("ClickHouse error 62")))
         response = client.post("/sql/analytics", json={"sql": "SELEC 1"})
         detail = response.json()["detail"]
         assert (response.status_code, detail["code"]) == (422, "rule_violation")

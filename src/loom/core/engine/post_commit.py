@@ -23,6 +23,7 @@ from typing import Protocol, TypeVar, cast, runtime_checkable
 from loom.core.concurrency import held_task
 from loom.core.errors import PostCommitError
 from loom.core.execution import execution_ended
+from loom.core.logger.field import ErrorSummary
 from loom.core.stores.catalog import StoreKey
 from loom.core.stores.uow.scope import current_scope, refuse_write_under_read_only
 
@@ -250,7 +251,7 @@ def log_never_ran(action: PostCommitAction) -> None:
 def _log_failures(failures: list[_Failure], event: str) -> None:
     for action, error in failures:
         for fields in _describe(action):
-            _logger.error(event, extra={**fields, "error": repr(error)})
+            _logger.error(event, extra={**fields, **ErrorSummary.of(error).fields()})
 
 
 def _describe(action: PostCommitAction) -> Iterable[Mapping[str, object]]:

@@ -46,18 +46,19 @@ class JobCallback:
             **context: Original dispatch payload forwarded as keyword args.
         """
 
-    def on_failure(self, job_id: str, exc_type: str, exc_msg: str, **context: Any) -> Any:
+    def on_failure(self, job_id: str, exc_type: str, exc_code: str | None, **context: Any) -> Any:
         """Called when the job raises an unrecoverable exception.
 
         Args:
             job_id: UUID of the failed job.
             exc_type: The exception's ``__qualname__``.
-            exc_msg: String representation of the exception.
+            exc_code: The error's loom code, ``None`` for an error that is not
+                a :class:`~loom.core.errors.LoomError`. Never its message.
             **context: Original dispatch payload forwarded as keyword args.
         """
 
 
-_HOOK_ARGUMENTS = frozenset({"job_id", "result", "exc_type", "exc_msg"})
+_HOOK_ARGUMENTS = frozenset({"job_id", "result", "exc_type", "exc_code"})
 
 
 class CallbackOutcome(StrEnum):
@@ -100,7 +101,7 @@ class DispatchableCallbacks:
         """Refuse a dispatch attaching an undiscovered callback or a payload naming a hook argument.
 
         The payload reaches the hooks as keyword arguments beside ``job_id``,
-        ``result``, ``exc_type`` and ``exc_msg``.
+        ``result``, ``exc_type`` and ``exc_code``.
 
         Args:
             payload: The payload of the dispatch.
@@ -154,7 +155,7 @@ async def notify(
         callback_type: The :class:`JobCallback` class to build.
         outcome: How the job ended.
         **arguments: The hook's keyword arguments: ``job_id``, then
-            ``result`` or ``exc_type`` and ``exc_msg``, then the dispatch
+            ``result`` or ``exc_type`` and ``exc_code``, then the dispatch
             payload.
 
     Raises:

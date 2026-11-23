@@ -27,6 +27,7 @@ from loom.core.engine.executor import UseCaseExecutor
 from loom.core.environment import Environment, resolve_environment
 from loom.core.execution import ExecutionResolver
 from loom.core.logger import LogEvent, LogField
+from loom.core.logger.field import ErrorSummary
 from loom.core.stores.repository.registration import classify_key
 from loom.core.stores.uow.coordinator import Coordinator
 from loom.core.use_case.factory import UseCaseFactory, main_repository
@@ -207,7 +208,7 @@ def seeded_container(
     except BootstrapError:
         raise
     except Exception as exc:
-        raise BootstrapError(f"Bootstrap failed: {exc}") from exc
+        raise BootstrapError(f"Bootstrap failed: {ErrorSummary.cite(exc)}") from exc
 
 
 @dataclass(frozen=True)

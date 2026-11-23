@@ -45,8 +45,7 @@ __all__ = [
     "supports_repeated_query_params",
 ]
 
-_CODE_LINE_RE = re.compile(r"Code:\s*\d+[^\n]*")
-_URL_RE = re.compile(r"https?://\S+")
+_CODE_RE = re.compile(r"Code:\s*(\d+)")
 
 _MULTI_ROLE_PROBE: Mapping[str, Any] = {"role": ("loom_probe_a", "loom_probe_b")}
 _MULTI_ROLE_PROBE_ENCODED = "role=loom_probe_a&role=loom_probe_b"
@@ -195,21 +194,9 @@ async def create_driver_client(**kwargs: Any) -> AsyncClickHouseClient:
 
 
 def sanitize_backend_error(message: str) -> str:
-    """Reduce a driver error message to a single sanitized line.
+    """Reduce a driver error to ClickHouse's error code, which names no value.
 
-    Keeps the ``Code: NNN`` line when present (first line otherwise) and
-    redacts any URL so host or DSN details never leak to callers.
-
-    Args:
-        message: Raw driver exception message.
-
-    Returns:
-        One line carrying the ClickHouse error code, safe to expose.
+    The rest of the message can quote the values a query failed to parse or cast.
     """
-    match = _CODE_LINE_RE.search(message)
-    if match is not None:
-        line = match.group(0)
-    else:
-        lines = message.splitlines()
-        line = lines[0] if lines else "unknown backend error"
-    return _URL_RE.sub("<redacted>", line).strip()
+    code = _CODE_RE.search(message)
+    return "ClickHouse error" if code is None else f"ClickHouse error {code.group(1)}"

@@ -39,6 +39,7 @@ from loom.core.job.callback import CallbackOutcome
 from loom.core.job.context import add_pending_publish
 from loom.core.job.dispatch import JobDispatch
 from loom.core.job.handle import JobHandle
+from loom.core.logger.field import ErrorSummary
 from loom.core.observability.event import Scope
 from loom.core.observability.observability import Observability
 
@@ -144,7 +145,7 @@ class CallbackLink(msgspec.Struct, frozen=True):
                 kwargs={
                     **msgspec.structs.asdict(self),
                     "exc_type": type(error).__qualname__,
-                    "exc_msg": str(error),
+                    "exc_code": ErrorSummary.of(error).code,
                 },
             )
         except Exception:

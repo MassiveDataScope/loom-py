@@ -81,6 +81,13 @@ def _type(qualified: str) -> str:
     return qualified.rsplit(".", 1)[1]
 
 
+def _cited(cause: dict[str, str]) -> str:
+    """How the wrapper cites *cause*: a loom error by its message, any other by its type."""
+    if cause["type"].startswith("loom."):
+        return cause["message"]
+    return _type(cause["type"])
+
+
 def _failing_repositories(monkeypatch: pytest.MonkeyPatch) -> None:
     build_stores = phases.build_stores
 
@@ -114,7 +121,7 @@ class TestStartupErrors:
             cause = recorded["cause"]
             assert recorded["wrapped"], path
             assert _type(cause["type"]) == _WRAPPED[refusal], path
-            assert recorded["message"] == f"Bootstrap failed: {cause['message']}", path
+            assert recorded["message"] == f"Bootstrap failed: {_cited(cause)}", path
 
     @pytest.mark.parametrize("refusal", list(_RAW))
     def test_a_raw_refusal_keeps_its_type(self, refusal: str) -> None:
@@ -150,11 +157,13 @@ class TestStartupErrors:
     ) -> None:
         setup(monkeypatch)
 
-        with pytest.raises(BootstrapError, match="Bootstrap failed: acme module failed") as caught:
+        with pytest.raises(BootstrapError) as caught:
             overridden(*overrides)
 
         assert type(caught.value) is BootstrapError
+        assert str(caught.value) == "Bootstrap failed: RuntimeError"
         assert isinstance(caught.value.__cause__, RuntimeError)
+        assert str(caught.value.__cause__) == "acme module failed"
 
     def test_seal_validates_the_container_it_seals(self, project: Project) -> None:
         adapter = Serving(AcmeRecord, use_cases=(AcmePing,), jobs=(AcmeJob,))

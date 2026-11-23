@@ -1,4 +1,4 @@
-"""Every terminal failure of a job task sends its failure callback once, with the real error."""
+"""Every terminal failure of a job task sends its failure callback once, with its type and code."""
 
 from __future__ import annotations
 
@@ -13,12 +13,11 @@ from loom.core.errors import (
     RuleViolationError,
     RuleViolationsError,
 )
+from loom.core.errors.codes import ErrorCode
 from tests.helpers.loggers import logged_events
 from tests.integration.celery_jobs.conftest import JSON, Workbench
 from tests.integration.celery_jobs.doubles import (
-    ABANDONMENT,
     FAILURE_CALLBACK,
-    SOFT_LIMIT,
     AbandonedJob,
     AcmeKeywordError,
     BridgeDownJob,
@@ -35,21 +34,24 @@ from tests.integration.celery_jobs.doubles import (
 class TestFailureCallbackAcrossSerializers:
     @pytest.mark.parametrize("served", ["json", "pickle"], indirect=True)
     @pytest.mark.parametrize(
-        "error",
+        ("error", "code"),
         [
             pytest.param(
                 PostCommitError(committed=True, failures=(ConnectionError("broker down"),)),
+                ErrorCode.POST_COMMIT_FAILURE,
                 id="post-commit",
             ),
-            pytest.param(JobTimeoutError("job-1", 2.0), id="job-timeout"),
+            pytest.param(JobTimeoutError("job-1", 2.0), ErrorCode.JOB_TIMEOUT, id="job-timeout"),
             pytest.param(
-                RuleViolationsError([RuleViolationError("name", "required")]), id="rule-violations"
+                RuleViolationsError([RuleViolationError("name", "required")]),
+                ErrorCode.RULE_VIOLATIONS,
+                id="rule-violations",
             ),
-            pytest.param(AcmeKeywordError("acme", reason="deleted"), id="keyword-error"),
+            pytest.param(AcmeKeywordError("acme", reason="deleted"), None, id="keyword-error"),
         ],
     )
-    def test_an_abandoned_job_notifies_once_with_the_error_class_and_message(
-        self, served: Workbench, error: Exception
+    def test_an_abandoned_job_notifies_once_with_the_error_class_and_code(
+        self, served: Workbench, error: Exception, code: ErrorCode | None
     ) -> None:
         RaisingJob.error = error
 
@@ -57,19 +59,21 @@ class TestFailureCallbackAcrossSerializers:
         stored, calls = served.settle(task_id, notified=1)
 
         assert stored.state == "FAILURE"
-        assert [(call["exc_type"], call["exc_msg"]) for call in calls] == [
-            (type(error).__qualname__, str(error))
+        assert [(call["exc_type"], call["exc_code"]) for call in calls] == [
+            (type(error).__qualname__, code)
         ]
 
 
 @JSON
 class TestFailureCallbackFromTheWorker:
-    def test_a_job_abandonment_notifies_once_with_its_reason(self, served: Workbench) -> None:
+    def test_a_job_abandonment_notifies_once_with_its_type_and_no_code(
+        self, served: Workbench
+    ) -> None:
         task_id = served.send(served.tasks[AbandonedJob], failure_callback=FAILURE_CALLBACK)
         _, calls = served.settle(task_id, notified=1)
 
-        assert [(call["exc_type"], call["exc_msg"]) for call in calls] == [
-            ("JobAbandonment", ABANDONMENT)
+        assert [(call["exc_type"], call["exc_code"]) for call in calls] == [
+            ("JobAbandonment", None)
         ]
 
     def test_a_worker_that_could_not_open_its_application_notifies_once(
@@ -79,25 +83,27 @@ class TestFailureCallbackFromTheWorker:
         stored, calls = served.settle(task_id, notified=1)
 
         assert stored.state == "FAILURE"
-        assert [call["exc_type"] for call in calls] == ["WorkerNotOpenError"]
-        assert "ConnectionError: database down" in calls[0]["exc_msg"]
+        assert [(call["exc_type"], call["exc_code"]) for call in calls] == [
+            ("WorkerNotOpenError", ErrorCode.SYSTEM_ERROR)
+        ]
 
     def test_a_soft_time_limit_notifies_once(self, served: Workbench) -> None:
         task_id = served.send(served.tasks[SoftLimitJob], failure_callback=FAILURE_CALLBACK)
         stored, calls = served.settle(task_id, notified=1)
 
         assert stored.state == "FAILURE"
-        assert [(call["exc_type"], call["exc_msg"]) for call in calls] == [
-            ("SoftTimeLimitExceeded", str(SOFT_LIMIT))
+        assert [(call["exc_type"], call["exc_code"]) for call in calls] == [
+            ("SoftTimeLimitExceeded", None)
         ]
 
-    def test_a_bridge_error_notifies_once_with_the_bridge_message(self, served: Workbench) -> None:
+    def test_a_bridge_error_notifies_once_with_its_type_and_no_code(
+        self, served: Workbench
+    ) -> None:
         task_id = served.send(served.tasks[BridgeDownJob], failure_callback=FAILURE_CALLBACK)
         stored, calls = served.settle(task_id, notified=1)
 
         assert stored.state == "FAILURE"
-        assert [call["exc_type"] for call in calls] == ["RuntimeError"]
-        assert "async bridge is not initialized" in calls[0]["exc_msg"]
+        assert [(call["exc_type"], call["exc_code"]) for call in calls] == [("RuntimeError", None)]
 
     @pytest.mark.parametrize("job", [RejectingTaskJob, IgnoringTaskJob])
     def test_a_task_rejected_or_ignored_by_celery_notifies_no_one(

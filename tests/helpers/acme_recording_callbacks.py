@@ -30,5 +30,5 @@ class AcmeRecordFailureCallback(JobCallback):
     def __init__(self, sink: AcmeCallbackSink) -> None:
         self._sink = sink
 
-    def on_failure(self, job_id: str, exc_type: str, exc_msg: str, **context: Any) -> None:
-        self._sink.failures.append(f"{job_id}:{exc_type}:{context.get('name', '')}:{exc_msg}")
+    def on_failure(self, job_id: str, exc_type: str, exc_code: str | None, **context: Any) -> None:
+        self._sink.failures.append(f"{job_id}:{exc_type}:{context.get('name', '')}:{exc_code}")

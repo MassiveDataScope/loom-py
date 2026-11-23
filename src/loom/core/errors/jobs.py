@@ -61,10 +61,7 @@ class JobFailedError(SystemError):
     """
 
     def __init__(self, job_id: str, cause: BaseException | None = None) -> None:
-        msg = f"Job {job_id!r} failed"
-        if cause is not None:
-            msg += f": {cause}"
-        super().__init__(msg, code=ErrorCode.JOB_FAILED)
+        super().__init__(f"Job {job_id!r} failed", code=ErrorCode.JOB_FAILED)
         self.job_id = job_id
         self.cause = cause
         self.__cause__ = cause

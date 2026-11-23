@@ -195,7 +195,7 @@ class TestClickHouseExecutor:
         )
 
     async def test_backend_error_is_sanitized_into_sql_execution_error(self) -> None:
-        """A DatabaseError becomes SqlExecutionError with the CH code and no stacktrace."""
+        """A DatabaseError becomes SqlExecutionError naming only the CH code."""
         client = FakeClickHouseClient(
             error=DatabaseError(
                 "Code: 62. DB::Exception: Syntax error: failed at position 8\n"
@@ -206,10 +206,7 @@ class TestClickHouseExecutor:
         options = _options()
         with pytest.raises(SqlExecutionError) as exc_info:
             await executor.execute("SELEC 1", options=options)
-        assert ("62" in str(exc_info.value), "Stack trace" not in str(exc_info.value)) == (
-            True,
-            True,
-        )
+        assert str(exc_info.value) == "sql: ClickHouse error 62"
 
     async def test_unreachable_backend_does_not_leak_the_url_in_the_error(self) -> None:
         """A network failure becomes a generic system error without host or DSN."""

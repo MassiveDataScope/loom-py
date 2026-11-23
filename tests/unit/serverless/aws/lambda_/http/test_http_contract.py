@@ -13,6 +13,8 @@ import json
 
 import pytest
 
+from loom.core.logger.formats import record_fields
+from tests.helpers.loggers import logged_text
 from tests.unit.serverless.aws.lambda_.http._clients import TRACE_ID, Client
 from tests.unit.serverless.aws.lambda_.http._contract_app import (
     MAX_BODY_BYTES,
@@ -285,7 +287,9 @@ class TestHttpContract:
             status,
             {"detail": {"trace_id": TRACE_ID, "code": code, "message": message}},
         )
-        assert secret in caplog.text
+        logged_codes = {record_fields(record).get("loom.error.code") for record in caplog.records}
+        assert code in logged_codes
+        assert secret not in logged_text(caplog)
 
     def test_a_cors_preflight_is_answered_without_a_token(self, served: Client) -> None:
         preflight = {"origin": ORIGIN, "access-control-request-method": "POST"}

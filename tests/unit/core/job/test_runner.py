@@ -177,8 +177,7 @@ class TestJobRunnerAbandonmentLog:
             "loom.attempt": 3,
             "postponements": 2,
             "reason": "attempts_exhausted",
-            "error_type": "ValueError",
-            "error_message": "boom",
+            "exception.type": "ValueError",
             "loom.task_id": delivery.task_id,
         }
 
@@ -202,7 +201,7 @@ class TestJobRunnerAbandonmentLog:
         )
 
         (logged,) = self._abandonments(caplog)
-        assert (logged["reason"], logged["error_type"], logged["loom.task_id"]) == (
+        assert (logged["reason"], logged["exception.type"], logged["loom.task_id"]) == (
             "not_retryable",
             "UnretryableError",
             "m-1",

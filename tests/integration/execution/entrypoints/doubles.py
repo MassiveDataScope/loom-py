@@ -198,7 +198,7 @@ class AcmeCallback(JobCallback):
     def on_success(self, job_id: str, result: Any, **context: Any) -> None:
         self.log.append(("on_success", seen_now()))
 
-    def on_failure(self, job_id: str, exc_type: str, exc_msg: str, **context: Any) -> None:
+    def on_failure(self, job_id: str, exc_type: str, exc_code: str | None, **context: Any) -> None:
         self.log.append(("on_failure", seen_now()))
 
 
@@ -207,7 +207,7 @@ class AcmeAsyncCallback(AcmeCallback):
         self.log.append(("on_success", seen_now()))
 
     async def on_failure(  # type: ignore[override]
-        self, job_id: str, exc_type: str, exc_msg: str, **context: Any
+        self, job_id: str, exc_type: str, exc_code: str | None, **context: Any
     ) -> None:
         self.log.append(("on_failure", seen_now()))
 
@@ -238,7 +238,9 @@ class AcmeCallerCallback(JobCallback):
 
     def on_success(self, job_id: str, result: Any, **context: Any) -> None: ...
 
-    def on_failure(self, job_id: str, exc_type: str, exc_msg: str, **context: Any) -> None: ...
+    def on_failure(
+        self, job_id: str, exc_type: str, exc_code: str | None, **context: Any
+    ) -> None: ...
 
 
 class AcmeRecordingFactory:

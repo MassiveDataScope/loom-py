@@ -56,6 +56,17 @@ class ErrorSummary(msgspec.Struct, frozen=True, kw_only=True):
         code = str(exc.code) if isinstance(exc, LoomError) else None
         return cls(type=type(exc).__qualname__, code=code)
 
+    @staticmethod
+    def cite(exc: BaseException) -> str:
+        """The text a loom message may repeat about *exc*, its cause.
+
+        Loom's own exceptions carry text loom wrote, so their message is repeated;
+        any other exception is named by its summary, since its text can hold values.
+        """
+        if type(exc).__module__.startswith("loom."):
+            return str(exc)
+        return ErrorSummary.of(exc).describe()
+
     def describe(self) -> str:
         """The type, followed by the code when there is one: ``DomainError (not_found)``."""
         return self.type if self.code is None else f"{self.type} ({self.code})"

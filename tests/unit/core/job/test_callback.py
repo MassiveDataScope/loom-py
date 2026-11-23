@@ -24,7 +24,9 @@ class _AsyncHooks(JobCallback):
     async def on_success(self, job_id: str, result: Any, **ctx: Any) -> None:
         await asyncio.sleep(0)
 
-    async def on_failure(self, job_id: str, exc_type: str, exc_msg: str, **ctx: Any) -> None:
+    async def on_failure(
+        self, job_id: str, exc_type: str, exc_code: str | None, **ctx: Any
+    ) -> None:
         await asyncio.sleep(0)
 
 
@@ -33,7 +35,7 @@ class TestJobCallback:
         assert JobCallback().on_success("j", result=42, user_id=99) is None
 
     def test_the_base_on_failure_returns_none(self) -> None:
-        assert JobCallback().on_failure("j", exc_type="E", exc_msg="m", user_id=99) is None
+        assert JobCallback().on_failure("j", exc_type="E", exc_code="m", user_id=99) is None
 
     @pytest.mark.parametrize("outcome", list(CallbackOutcome))
     def test_the_base_hooks_are_plain_functions_so_they_cost_no_executor_hop(
@@ -47,7 +49,7 @@ class TestJobCallback:
         callback.on_success("j1", result=1)
 
         assert callback.calls == ["success:j1"]
-        assert callback.on_failure("j2", exc_type="E", exc_msg="m") is None
+        assert callback.on_failure("j2", exc_type="E", exc_code="m") is None
 
     @pytest.mark.parametrize(
         ("callback_type", "outcome", "is_async"),
@@ -88,7 +90,7 @@ def jobs() -> JobService:
 class TestReservedCallbackArguments:
     """A payload naming an argument a callback hook receives is refused at dispatch."""
 
-    @pytest.mark.parametrize("key", ["job_id", "result", "exc_type", "exc_msg"])
+    @pytest.mark.parametrize("key", ["job_id", "result", "exc_type", "exc_code"])
     @pytest.mark.parametrize("hook", ["on_success", "on_failure"])
     def test_a_dispatch_with_a_callback_refuses_the_key(
         self, jobs: JobService, key: str, hook: str
@@ -117,5 +119,5 @@ class TestUndiscoveredCallbacks:
 
 class TestRefuseReserved:
     def test_names_every_reserved_key_the_payload_holds(self) -> None:
-        with pytest.raises(ValueError, match="cannot hold exc_msg, job_id: "):
-            _DISCOVERED.refuse({"job_id": 1, "exc_msg": "m", "acme": 2}, _AcmeCallback)
+        with pytest.raises(ValueError, match="cannot hold exc_code, job_id: "):
+            _DISCOVERED.refuse({"job_id": 1, "exc_code": "m", "acme": 2}, _AcmeCallback)

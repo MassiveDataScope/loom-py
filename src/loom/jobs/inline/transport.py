@@ -17,6 +17,7 @@ from loom.core.job.outcome import Abandoned, Failed, JobOutcome, Postponed, Succ
 from loom.core.job.policy import Countdown, Redelivery
 from loom.core.job.runner import JobRunner
 from loom.core.job.timer import JobDelayRefusedError, JobTimer
+from loom.core.logger.field import ErrorSummary
 
 if TYPE_CHECKING:
     from loom.core.engine.execution_observer import ExecutionObserver
@@ -201,6 +202,6 @@ class InlineJobTransport:
                 CallbackOutcome.FAILURE,
                 job_id=pending.dispatch.envelope.task_id,
                 exc_type=type(error).__qualname__,
-                exc_msg=str(error),
+                exc_code=ErrorSummary.of(error).code,
                 **(pending.dispatch.envelope.payload or {}),
             )

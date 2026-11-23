@@ -65,7 +65,7 @@ def celery_app() -> Celery:
     return app
 
 
-FAILURE = {"exc_type": "LookupError", "exc_msg": "acme"}
+FAILURE = {"exc_type": "LookupError", "exc_code": "acme"}
 """What a worker sends the failure callback task when a job task ends with an error."""
 
 
@@ -309,7 +309,9 @@ class AcmeAsyncCallerCallback:
     async def on_success(self, job_id: str, result: Any, **context: Any) -> None:
         self.log.append(("on_success", seen_now()))
 
-    async def on_failure(self, job_id: str, exc_type: str, exc_msg: str, **context: Any) -> None:
+    async def on_failure(
+        self, job_id: str, exc_type: str, exc_code: str | None, **context: Any
+    ) -> None:
         self.log.append(("on_failure", seen_now()))
 
 

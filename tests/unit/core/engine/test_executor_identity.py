@@ -22,6 +22,7 @@ from loom.core.identity import (
     set_identity,
 )
 from loom.core.job.job import Job
+from loom.core.logger.formats import record_fields
 from loom.core.stores.catalog import DEFAULT_STORE
 from loom.core.stores.uow.coordinator import OrderedCommits
 from loom.core.stores.uow.scope import invocation
@@ -215,7 +216,9 @@ class TestNestedIdentity:
         await executor.execute(parent, identity=ANA)
 
         refusals = [
-            rendered(record) for record in caplog.records if REFUSED_JOIN in rendered(record)
+            rendered(record)
+            for record in caplog.records
+            if record_fields(record).get("exception.type") == "NestedIdentityMismatch"
         ]
         assert refusals
         assert all(BOB.subject not in refusal for refusal in refusals)

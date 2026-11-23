@@ -26,6 +26,7 @@ from loom.core.job.outcome import (
 )
 from loom.core.job.policy import Redelivery, RetryPolicy
 from loom.core.logger import LogField, log_context
+from loom.core.logger.field import ErrorSummary
 
 _log = logging.getLogger(__name__)
 
@@ -81,8 +82,7 @@ class _Whereabouts:
             "Job abandoned",
             extra={
                 "reason": outcome.reason.value,
-                "error_type": type(error).__qualname__,
-                "error_message": str(error),
+                **ErrorSummary.of(error).fields(),
                 **self.log_fields(),
                 **failure_log_fields(error),
             },

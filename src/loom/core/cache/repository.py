@@ -32,6 +32,7 @@ from loom.core.cache.result_codec import (
 )
 from loom.core.engine.post_commit import store_channel
 from loom.core.errors import BoundaryValidationError
+from loom.core.logger.field import ErrorSummary
 from loom.core.model import LoomType, is_pydantic_model, loom_type_of
 from loom.core.model.convert import to_struct
 from loom.core.model.enums import Cardinality
@@ -618,7 +619,9 @@ class CachedRepository(
         return codecs
 
     def _log_abandoned_load(self, key: str, error: BaseException) -> None:
-        self._log.warning("CacheLoadAbandoned", extra={"key": key, "error": repr(error)})
+        self._log.warning(
+            "CacheLoadAbandoned", extra={"key": key, **ErrorSummary.of(error).fields()}
+        )
 
     async def _publish_invalidation(self, event: MutationEvent) -> None:
         """Defer the bump past the commit of the model's store, or bump right away.

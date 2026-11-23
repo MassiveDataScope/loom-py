@@ -302,7 +302,8 @@ class TestFailedChildOpen:
         for failure in failures:
             assert isinstance(failure, WorkerNotOpenError)
             assert isinstance(failure.__cause__, RuntimeError)
-            assert "RuntimeError: clickhouse unreachable" in str(failure)
+            assert "(RuntimeError)" in str(failure)
+            assert "clickhouse unreachable" not in str(failure)
         opening = [r for r in caplog.records if "failed to open its application" in r.message]
         assert len(opening) == 1
 
