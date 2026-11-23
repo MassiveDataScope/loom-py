@@ -10,6 +10,7 @@ from typing import Final
 from loom.core.errors.summary import ErrorSummary
 from loom.core.log_names import LogField
 from loom.core.logger.context import current_log_fields
+from loom.core.logger.formats import render_fields
 from loom.core.tracing.context import get_trace_id
 
 MAX_STACK_LENGTH: Final = 16_384
@@ -68,7 +69,9 @@ class ContextFilter(logging.Filter):
     already on the record, passed as ``extra``, is kept. It is the one owner of what
     a record says about its exception: ``exception.type``, ``loom.error.code`` for a
     ``CodedError``, and from ERROR up ``exception.stacktrace``, never the message. It
-    never drops a record.
+    renders every field value once, before any handler, so each output writes the
+    same values; a handler without this filter sees the values as they were passed.
+    It never drops a record.
 
     Args:
         identity: The service and process the records come from.
@@ -102,6 +105,7 @@ class ContextFilter(logging.Filter):
             stamped[LogField.TRACE_ID] = trace_id
         fields = record.__dict__
         fields.update({key: value for key, value in stamped.items() if key not in fields})
+        render_fields(record)
         self._stamp_failure(record)
         return True
 

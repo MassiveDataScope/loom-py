@@ -193,6 +193,12 @@ class TestValuesRendered:
         assert CANARY not in output.read_fields()
         assert MASK in output.read_fields()
 
+    @pytest.mark.parametrize("output", OUTPUTS, indirect=True)
+    def test_an_object_is_not_written_as_its_repr(self, output: Output) -> None:
+        _LOGGER.info("order_accepted", extra={LogField.ATTEMPT: object()})
+
+        assert "0x" not in output.read_fields()
+
 
 class TestFailureIdentity:
     """Requirement 2: a failure's type and code are written."""

@@ -27,6 +27,7 @@ from loom.core.observability.event import EventKind, LifecycleEvent, LifecycleSt
 from loom.core.observability.observability import Observability
 from loom.core.observability.observer.otel import OtelSpanFilter
 from loom.core.tracing.context import active_trace_id
+from loom.testing import make
 from tests.unit.core.observability.conftest import LogExport
 
 
@@ -47,7 +48,7 @@ class TestEmit:
     def test_fans_out_to_all_observers(self) -> None:
         a, b = AcmeRuntimeRecordingObserver(), AcmeRuntimeRecordingObserver()
         runtime = Observability([a, b])
-        event = LifecycleEvent(scope=Scope.NODE, name="transform", kind=EventKind.START)
+        event = make(LifecycleEvent, scope=Scope.NODE, name="transform", kind=EventKind.START)
 
         runtime.emit(event)
 
@@ -58,7 +59,7 @@ class TestEmit:
         broken = _BrokenObserver()
         good = AcmeRuntimeRecordingObserver()
         runtime = Observability([broken, good])
-        event = LifecycleEvent(scope=Scope.NODE, name="x", kind=EventKind.START)
+        event = make(LifecycleEvent, scope=Scope.NODE, kind=EventKind.START)
 
         runtime.emit(event)
 
@@ -66,7 +67,7 @@ class TestEmit:
 
     def test_empty_observers_is_safe(self) -> None:
         runtime = Observability([])
-        runtime.emit(LifecycleEvent(scope=Scope.NODE, name="x", kind=EventKind.START))
+        runtime.emit(make(LifecycleEvent, scope=Scope.NODE, kind=EventKind.START))
 
 
 class TestSpan:
@@ -145,7 +146,7 @@ class TestNoop:
 
     def test_noop_emit_is_safe(self) -> None:
         runtime = Observability.noop()
-        runtime.emit(LifecycleEvent(scope=Scope.NODE, name="x", kind=EventKind.END))
+        runtime.emit(make(LifecycleEvent, scope=Scope.NODE, kind=EventKind.END))
 
 
 _OTEL = OtelObservabilityConfig(
