@@ -170,13 +170,6 @@ class TestGrantA2A:
         async with _host(plan) as host:
             assert host.has_agent(_AGENT)
 
-    async def test_the_agent_declares_the_a2a_capability_once_started(self) -> None:
-        """The started agent reports the kind, so the mount announces it too."""
-        plan = _compile(A2ACapability(agent=_REMOTE))
-
-        async with _host(plan) as host:
-            assert host.capability_kinds(_AGENT) == ("a2a",)
-
 
 class TestGrantMcp:
     """An ``mcp`` grant reaches a start-up client instead of aborting."""
@@ -229,6 +222,4 @@ class TestCombinedGrants:
         plan = _compile(McpCapability(server=_SERVER), A2ACapability(agent=_REMOTE))
 
         async with _host(plan) as host:
-            kinds = set(host.capability_kinds(_AGENT))
-
-        assert kinds == {"mcp", "a2a"}
+            assert host.has_agent(_AGENT)

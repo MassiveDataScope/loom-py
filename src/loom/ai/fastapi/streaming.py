@@ -30,6 +30,7 @@ from loom.ai.abc import (
     ToolCallEvent,
     ToolResultEvent,
 )
+from loom.ai.event import AiEvent
 from loom.ai.fastapi.response import ENCODER, result_payload
 
 __all__ = ["HEARTBEAT_FRAME", "encode_sse_event", "stream_sse"]
@@ -105,7 +106,7 @@ async def _encoded_events(events: AsyncIterator[AgentEvent]) -> AsyncIterator[by
             if event.__class__ in _TERMINAL_TYPES:
                 return
     except Exception as exc:
-        _logger.warning("agent stream failed after the first byte", exc_info=exc)
+        _logger.warning(AiEvent.STREAM_FAILED, exc_info=exc)
         yield encode_sse_event(failure_event(exc))
 
 

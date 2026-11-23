@@ -43,6 +43,7 @@ from loom.ai.abc import (
 from loom.ai.compiler._plan import AgentPlan
 from loom.ai.config import A2AConfig, AgentEndpointConfig
 from loom.ai.errors import AgentCompilationError, AgentErrorCode, AgentRunErrorCode
+from loom.ai.event import AiEvent, AiKey
 from loom.ai.execution import AgentHost
 from loom.ai.fastapi.endpoints import mount_agent_endpoints
 from loom.core.config.errors import ConfigError
@@ -54,6 +55,7 @@ from loom.core.observability.event import EventKind, Scope
 from loom.core.observability.observability import Observability
 from loom.rest.auth.abc import RequestCredentials
 from loom.rest.auth.middleware import AuthenticationMiddleware
+from tests.helpers.loggers import CapturedLog
 from tests.integration.ai.conftest import (
     DEFAULT_OUTPUT,
     DEFAULT_USAGE,
@@ -92,6 +94,15 @@ _SECRET_SUMMARY = "17 rows from internal_pricing"
 _FAILING_CODE = AgentRunErrorCode.TOOL_TIMEOUT
 _RUN_CANARY = "tool 'usecase_pricing.recalculate' exceeded tool_timeout_ms (5000)"
 _CATCH_ALL_CANARY = "/srv/loom/secrets.yaml: clickhouse://root:hunter2@analytics.internal"
+
+
+_PUBLISH_EVENTS = frozenset(
+    {
+        AiEvent.A2A_AGENT_PUBLISHED,
+        AiEvent.A2A_AGENT_PUBLISHED_ANONYMOUS,
+        AiEvent.A2A_AGENT_PUBLISHED_ANONYMOUS_CONVERSATIONAL,
+    }
+)
 
 
 class ExplodingEngine:
@@ -1134,64 +1145,42 @@ class TestAnonymousOptOut:
 class TestPublicationAnnouncement:
     """Start-up says exactly which agents are reachable from outside."""
 
-    @staticmethod
-    async def _publication_warning(
-        *,
-        deps: DepsFactory,
+    @pytest.mark.parametrize(
+        ("anonymous", "enabled", "conversational", "event"),
+        [
+            (False, True, False, AiEvent.A2A_AGENT_PUBLISHED),
+            (True, True, False, AiEvent.A2A_AGENT_PUBLISHED_ANONYMOUS),
+            (True, True, True, AiEvent.A2A_AGENT_PUBLISHED_ANONYMOUS_CONVERSATIONAL),
+            (True, False, False, AiEvent.A2A_AGENT_PUBLISHED),
+        ],
+        ids=["authenticated", "anonymous", "anonymous-conversational", "disabled-stanza"],
+    )
+    async def test_the_one_event_names_the_route_and_how_callers_are_admitted(
+        self,
+        deps: StubDepsFactory,
         container: LoomContainer,
         caplog: pytest.LogCaptureFixture,
-        endpoints: Mapping[str, AgentEndpointConfig] | None = None,
-        plans: Sequence[AgentPlan] | None = None,
-    ) -> str:
-        """Return the WARNING text emitted while publishing one agent."""
+        request: pytest.FixtureRequest,
+        anonymous: bool,
+        enabled: bool,
+        conversational: bool,
+        event: AiEvent,
+    ) -> None:
+        """A disabled stanza is not anonymous; a conversation makes the id the credential."""
+        endpoints = {_AGENT: make_endpoint(enabled=enabled, allow_anonymous=anonymous)}
+        plans = (conversational_plan(_AGENT, loader=True),) if conversational else None
+        serving_deps = request.getfixturevalue("conversation_deps" if conversational else "deps")
         with caplog.at_level(logging.WARNING):
             async with _serving(
-                deps=deps, container=container, endpoints=endpoints, plans=plans
-            ) as (_app, _client):
+                deps=serving_deps, container=container, endpoints=endpoints, plans=plans
+            ):
                 pass
-        return caplog.text
 
-    async def test_names_the_agent_when_publishing_it(
-        self, deps: StubDepsFactory, container: LoomContainer, caplog: pytest.LogCaptureFixture
-    ) -> None:
-        """The announcement names the agent and the URL a stranger reaches."""
-        text = await self._publication_warning(deps=deps, container=container, caplog=caplog)
-
-        assert _AGENT in text
-        assert f"{_BASE_URL}{_PREFIX}/{_AGENT}" in text
-        assert card_path(_AGENT, prefix=_PREFIX) in text
-
-    async def test_does_not_announce_anonymity_when_the_stanza_is_disabled(
-        self, deps: StubDepsFactory, container: LoomContainer, caplog: pytest.LogCaptureFixture
-    ) -> None:
-        """A disabled stanza is announced as what it is: not an anonymous mount."""
-        endpoints = {_AGENT: make_endpoint(enabled=False, allow_anonymous=True)}
-        text = await self._publication_warning(
-            deps=deps, container=container, caplog=caplog, endpoints=endpoints
-        )
-
-        assert "allow_anonymous=False" in text
-        assert "NOT authenticated" not in text
-
-    async def test_warns_the_context_id_is_the_credential_when_an_anonymous_mount_converses(
-        self,
-        conversation_deps: RecordingDepsFactory,
-        container: LoomContainer,
-        caplog: pytest.LogCaptureFixture,
-    ) -> None:
-        """AC6: an anonymous mount of a conversational agent says the id is the credential."""
-        endpoints = {_AGENT: make_endpoint(allow_anonymous=True)}
-        text = await self._publication_warning(
-            deps=conversation_deps,
-            container=container,
-            caplog=caplog,
-            endpoints=endpoints,
-            plans=(conversational_plan(_AGENT, loader=True),),
-        )
-
-        assert "allow_anonymous=True" in text
-        assert "contextId" in text
-        assert "credential" in text
+        published = [name for name in CapturedLog(caplog).messages if name in _PUBLISH_EVENTS]
+        assert published == [event]
+        assert CapturedLog(caplog).named(event) == [
+            {AiKey.AGENT: _AGENT, AiKey.ROUTE: f"{_PREFIX}/{_AGENT}"}
+        ]
 
 
 class TestBodyLimit:

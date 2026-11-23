@@ -21,7 +21,7 @@ they are properties of an agent transport, not of this wire protocol.
 from __future__ import annotations
 
 import logging
-from collections.abc import AsyncIterator, Callable, Mapping, Sequence
+from collections.abc import AsyncIterator, Callable, Mapping
 from types import MappingProxyType
 from typing import Annotated, Any, Final
 
@@ -52,12 +52,14 @@ from loom.ai.abc import (
 )
 from loom.ai.config import AgentEndpointConfig, AiConfig
 from loom.ai.errors import AgentRunError, AgentRunErrorCode
+from loom.ai.event import AiEvent, AiKey
 from loom.ai.execution import AgentHost
 from loom.ai.fastapi.response import AgentJSONResponse, error_response, result_payload
 from loom.ai.fastapi.streaming import encode_sse_event, stream_sse
 from loom.core.config.errors import ConfigError
 from loom.core.errors import BoundaryValidationError
 from loom.core.identity import Identity, current_identity
+from loom.core.log_names import LogField
 from loom.core.model import LoomFrozenStruct
 from loom.core.observability.event import Scope
 from loom.core.observability.observability import Observability
@@ -124,10 +126,8 @@ def _run_error_response(error: AgentRunError) -> Response:
     status = _STATUS_BY_CODE.get(error.code, 500)
     if status >= 500:
         _logger.error(
-            "Agent run failed (code=%s interaction_id=%s trace_id=%s)",
-            error.code,
-            error.interaction_id,
-            get_trace_id(),
+            AiEvent.RUN_FAILED,
+            extra={AiKey.INTERACTION: error.interaction_id, LogField.ERROR_CODE: error.code.value},
             exc_info=error,
         )
     return error_response(
@@ -332,7 +332,7 @@ def _make_run_handler(
         except AgentRunError as exc:
             return _run_error_response(exc)
         except Exception:
-            _logger.exception("Unhandled error in the run endpoint of agent %r", name)
+            _logger.exception(AiEvent.ENDPOINT_FAILED, extra={AiKey.AGENT: name})
             return error_response(500, "INTERNAL_ERROR", _INTERNAL_ERROR_MESSAGE)
 
     return run_agent
@@ -523,69 +523,15 @@ def _announce_mount(
 ) -> None:
     """Emit the startup WARNING carrying the security state of one mount."""
     if not host.has_agent(name):
-        _logger.warning(
-            "Agent endpoint configured for agent=%s but no compiled agent has that name: "
-            "its routes answer 404",
-            name,
-        )
+        _logger.warning(AiEvent.ENDPOINT_AGENT_NOT_COMPILED, extra={AiKey.AGENT: name})
         return
-    kinds = host.capability_kinds(name)
-    _logger.warning(
-        "Agent endpoints mounted: path=%s/%s/{run,stream,health} agent=%s auth=%s "
-        "allow_anonymous=%s capabilities=%s. %s",
-        prefix,
-        name,
-        name,
-        endpoint.auth,
-        endpoint.allow_anonymous,
-        ",".join(kinds) or "none",
-        _identity_notice(endpoint, kinds, conversational=host.has_conversation(name)),
-    )
-
-
-_DEPLOYMENT_CREDENTIAL_KINDS = frozenset({"mcp", "a2a"})
-"""Capability kinds reached with the deployment's credential, not the caller's."""
-
-
-def _identity_notice(
-    endpoint: AgentEndpointConfig, kinds: Sequence[str], *, conversational: bool = False
-) -> str:
-    """State plainly which identity the capability calls of this mount run as.
-
-    ``allow_anonymous`` is not a relaxation of the caller check on top of an
-    otherwise verified identity: it removes the identity altogether, so the
-    reassuring sentence of an authenticated mount would be false next to it.
-
-    Remote kinds are named separately because their authorisation does not
-    depend on who calls: a remote server sees the credential the deployment
-    configured for it, shared by every caller of every agent granted it.
-    """
-    if endpoint.allow_anonymous:
-        notice = (
-            "allow_anonymous is set, so callers are NOT authenticated: every capability "
-            "call runs with no verified identity, and every run spends model tokens on "
-            "behalf of an unidentified caller — only 'max_concurrent_runs' and "
-            "'run_timeout_ms' bound that cost, there is no rate limit"
-        )
-        if conversational:
-            notice += (
-                "; 'conversation' is declared, and every anonymous caller shares one "
-                "subject, so threads are separated by 'conversation_id' alone: the id is "
-                "the credential"
-            )
-        return notice
-    remote = sorted(_DEPLOYMENT_CREDENTIAL_KINDS.intersection(kinds))
-    if not remote:
-        return (
-            "'auth' only authenticates the caller; every capability call then runs as that "
-            "verified identity"
-        )
-    return (
-        "'auth' only authenticates the caller; local capability calls then run as that "
-        f"verified identity, but {', '.join(remote)} reach their remote endpoint with the "
-        "credential this deployment configured for it, shared by every caller: who calls "
-        "does not bound what the remote side allows"
-    )
+    if not endpoint.allow_anonymous:
+        event = AiEvent.ENDPOINT_MOUNTED
+    elif host.has_conversation(name):
+        event = AiEvent.ENDPOINT_MOUNTED_ANONYMOUS_CONVERSATIONAL
+    else:
+        event = AiEvent.ENDPOINT_MOUNTED_ANONYMOUS
+    _logger.warning(event, extra={AiKey.AGENT: name, AiKey.ROUTE: f"{prefix}/{name}"})
 
 
 def mount_agent_endpoints(

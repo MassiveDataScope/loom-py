@@ -60,6 +60,7 @@ from loom.ai.a2a._rpc import (
 from loom.ai.a2a.card import DEFAULT_A2A_PREFIX, card_path
 from loom.ai.compiler import AgentPlan
 from loom.ai.config import AiConfig
+from loom.ai.event import AiEvent, AiKey
 from loom.ai.execution import AgentHost
 from loom.ai.fastapi.response import error_response as flat_error_response
 from loom.core.identity import Identity
@@ -101,7 +102,7 @@ def _make_rpc_handler(
         except RpcFault as exc:
             return error_response(request_id, exc.error)
         except Exception:
-            _logger.exception("Unhandled error in the a2a endpoint of agent %r", agent.name)
+            _logger.exception(AiEvent.ENDPOINT_FAILED, extra={AiKey.AGENT: agent.name})
             return error_response(request_id, unexpected_error())
 
     async def serve_rpc(request: Request) -> Response:
@@ -208,9 +209,4 @@ def mount_a2a_endpoints(
             _make_rpc_handler(agent, handlers, max_prompt_bytes=config.max_prompt_bytes),
             methods=["POST"],
         )
-        announce_publication(
-            agent,
-            base_url=str(config.a2a.base_url),
-            mechanism=mechanism,
-            prefix=prefix,
-        )
+        announce_publication(agent, prefix=prefix)

@@ -20,6 +20,7 @@ from loom.ai.compiler import CompiledMcpCapability
 from loom.ai.engines.pydantic_ai._failures import McpCallInterrupted
 from loom.ai.engines.pydantic_ai._mcp import _entered, _OpenToolset, _ToolsetSession
 from loom.ai.errors import AgentRunError, AgentRunErrorCode
+from loom.ai.event import AiEvent
 from loom.ai.execution._grants import McpGrantView
 from loom.core.execution import ExecutionScope
 from loom.core.identity import Identity
@@ -581,7 +582,7 @@ class TestBoundedSessions:
         await session.aclose()
 
         assert (first.closes, first.pool.released) == (1, 1)
-        assert "did not close cleanly" in caplog.text
+        assert AiEvent.MCP_POOL_CLOSE_FAILED in caplog.text
 
     @_bounded
     async def test_a_healthy_session_once_closed_sends_nothing(self) -> None:
@@ -606,7 +607,7 @@ class TestBoundedSessions:
         await session.aclose()
 
         assert (first.closes, first.pool.released) == (1, 1)
-        assert "did not close cleanly" in caplog.text
+        assert AiEvent.MCP_SESSION_CLOSE_FAILED in caplog.text
 
     @_bounded
     async def test_a_force_close_that_raises_still_releases_the_entry(
@@ -625,7 +626,7 @@ class TestBoundedSessions:
             await slow
         assert (first.closes, first.over_exits, first.pool.released) == (1, 0, 1)
         assert not any(toolset.is_open for toolset in ledger.toolsets)
-        assert "did not close cleanly" in caplog.text
+        assert AiEvent.MCP_SESSION_CLOSE_FAILED in caplog.text
 
     @_bounded
     async def test_a_renewal_waits_for_an_earlier_close_still_running(self) -> None:

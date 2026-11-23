@@ -36,6 +36,7 @@ from loom.ai.errors import (
     AgentRunErrorCode,
     require_authenticated,
 )
+from loom.ai.event import AiEvent, AiKey
 from loom.core.di import LoomContainer
 from loom.core.identity import Identity
 from loom.core.observability.event import Scope
@@ -193,7 +194,7 @@ async def guarded(
             AgentRunErrorCode.UNAUTHORIZED, f"tool '{tool}': {DENIED_MESSAGE}"
         ) from exc
     except Exception:
-        _logger.exception("capability tool '%s' failed", tool)
+        _logger.exception(AiEvent.TOOL_FAILED, extra={AiKey.TOOL: tool})
         return refusal(f"tool '{tool}' could not complete: {_FAILED_MESSAGE}")
 
 

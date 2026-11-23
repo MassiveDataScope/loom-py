@@ -26,9 +26,12 @@ import pytest
 
 from loom.ai.compiler._plan import AgentPlan, CompiledA2ACapability
 from loom.ai.errors import AgentCompilationError, AgentErrorCode
+from loom.ai.event import AiEvent, AiKey
 from loom.ai.execution import AgentHost
 from loom.core.di import LoomContainer
 from loom.core.identity import Identity
+from loom.core.log_names import LogField
+from tests.helpers.loggers import CapturedLog, logged_text
 from tests.integration.ai.conftest import (
     CountingEngineProvider,
     RecordingMcpSession,
@@ -236,11 +239,15 @@ class TestOptionalStartup:
             async with host:
                 pass
 
-        warnings = [record.getMessage() for record in caplog.records if record.levelno >= 30]
-        assert any(
-            _SERVER_A in message and AgentErrorCode.MCP_SERVER_UNREACHABLE in message
-            for message in warnings
-        )
+        assert CapturedLog(caplog).calls == [
+            (
+                AiEvent.REMOTE_CLIENT_SKIPPED,
+                {
+                    AiKey.CONFIG_PATH: _SERVER_A,
+                    LogField.ERROR_CODE: AgentErrorCode.MCP_SERVER_UNREACHABLE,
+                },
+            )
+        ]
 
     async def test_does_not_log_the_address_in_the_warning_when_tolerating_the_failure(
         self,
@@ -249,31 +256,7 @@ class TestOptionalStartup:
         container: LoomContainer,
         caplog: pytest.LogCaptureFixture,
     ) -> None:
-        """The transport's reason can carry a URL, so it stays out of WARNING."""
-        host = _host(
-            plans=(make_plan(_AGENT, capabilities=(make_mcp_capability(_SERVER_A),)),),
-            clients={_SERVER_A: _refusing_client(_SERVER_A, lifecycle_log)},
-            deps=deps,
-            container=container,
-            remote_clients="optional",
-        )
-
-        with caplog.at_level(logging.WARNING, logger=_LOGGER):
-            async with host:
-                pass
-
-        assert not [record for record in caplog.records if _REFUSED in record.getMessage()], (
-            "the transport's reason reached routine logs"
-        )
-
-    async def test_logs_the_reason_type_at_debug_when_tolerating_the_failure(
-        self,
-        lifecycle_log: list[str],
-        deps: StubDepsFactory,
-        container: LoomContainer,
-        caplog: pytest.LogCaptureFixture,
-    ) -> None:
-        """An operator who asks for DEBUG sees the reason's type, never its URL-bearing text."""
+        """The transport's reason can carry a URL, so no record at any level repeats it."""
         host = _host(
             plans=(make_plan(_AGENT, capabilities=(make_mcp_capability(_SERVER_A),)),),
             clients={_SERVER_A: _refusing_client(_SERVER_A, lifecycle_log)},
@@ -286,9 +269,7 @@ class TestOptionalStartup:
             async with host:
                 pass
 
-        messages = [record.getMessage() for record in caplog.records]
-        assert any("ConnectionError" in message for message in messages)
-        assert not any(_REFUSED in message for message in messages)
+        assert _REFUSED not in logged_text(caplog), "the transport's reason reached the logs"
 
     async def test_reports_the_dependency_unavailable_after_the_first_probe(
         self, lifecycle_log: list[str], deps: StubDepsFactory, container: LoomContainer

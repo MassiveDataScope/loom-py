@@ -28,6 +28,7 @@ from loom.ai.config import (
     McpServerConfig,
 )
 from loom.ai.errors import AgentCompilationError, AgentErrorCode
+from loom.ai.event import AiEvent
 from loom.ai.inference import OUTPUT_MODES, InferenceTarget, OutputMode
 from loom.core.model.redaction import Dsn, RedactedMap, Secret
 
@@ -347,7 +348,7 @@ class TestMcpServerRegistry:
             config = _config_with(mcp_servers={"gateway": server})
 
         assert config.mcp_servers["gateway"] is server
-        assert "allow_private_plaintext" in caplog.text
+        assert AiEvent.REMOTE_PLAINTEXT_PRIVATE in caplog.text
 
     @pytest.mark.parametrize(
         "url",

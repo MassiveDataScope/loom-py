@@ -15,6 +15,7 @@ import pytest
 
 from loom.ai.config import A2AConfig
 from loom.ai.errors import AgentCompilationError
+from loom.ai.event import AiEvent
 from loom.core.model.redaction import Dsn
 
 
@@ -37,7 +38,7 @@ class TestPlaintextIsOnlyAcceptedOnLoopback:
         """An exception nobody hears is how a local-only config reaches staging."""
         with caplog.at_level(logging.WARNING):
             A2AConfig(base_url=Dsn("http://localhost:8000"), expose=("triage",))
-        assert "local-only" in caplog.text
+        assert AiEvent.REMOTE_PLAINTEXT_LOOPBACK in caplog.text
 
     def test_https_warns_about_nothing(self, caplog: pytest.LogCaptureFixture) -> None:
         """The warning marks the exception, so the normal case must stay quiet."""

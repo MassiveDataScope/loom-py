@@ -29,6 +29,7 @@ from loom.ai.abc import ConcurrentMcpSession, McpSession, McpToolCallResult, Mcp
 from loom.ai.compiler import CompiledMcpCapability, mcp_connection
 from loom.ai.engines.pydantic_ai._failures import McpCallInterrupted, Outcome
 from loom.ai.errors import AgentCompilationError, AgentErrorCode
+from loom.ai.event import AiEvent
 from loom.ai.registry import require_provider_sdk
 from loom.ai.remote_auth import headers_from_ref, shared_mcp_auth
 from loom.core.config.errors import ConfigError
@@ -117,7 +118,7 @@ class _OpenToolset:
                 if self.held:
                     await self.toolset.__aexit__(None, None, None)
         except Exception:
-            _logger.warning("an mcp session did not close cleanly", exc_info=True)
+            _logger.warning(AiEvent.MCP_SESSION_CLOSE_FAILED, exc_info=True)
         await self._release()
 
     @classmethod
@@ -147,7 +148,7 @@ class _OpenToolset:
         try:
             await self.pool.release()
         except Exception:
-            _logger.warning("an mcp connection pool did not close cleanly", exc_info=True)
+            _logger.warning(AiEvent.MCP_POOL_CLOSE_FAILED, exc_info=True)
 
 
 class _ToolsetSession(ConcurrentMcpSession):
@@ -228,7 +229,7 @@ class _ToolsetSession(ConcurrentMcpSession):
             self._retired = held
         else:
             await asyncio.shield(self._close(held))
-        _logger.warning("mcp session renewed after a failed call")
+        _logger.warning(AiEvent.MCP_SESSION_RENEWED)
 
     async def _listed(self, toolset: MCPToolset[Any]) -> _OpenToolset:
         """Enter *toolset* and list its tools; one that cannot is closed again."""

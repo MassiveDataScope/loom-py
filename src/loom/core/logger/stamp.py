@@ -115,15 +115,15 @@ class ContextFilter(logging.Filter):
         """Write the type, code and stack of *record*'s exception; nothing else writes them.
 
         The stack is the filter's alone: an ``extra`` of its name is always dropped,
-        since the formats write it unrendered. With an exception, its type and code
-        replace any ``extra`` of their names. The stack is formatted once per record
-        into the standard ``exc_text`` cache, which every handler then reuses.
+        since the formats write it unrendered. With an exception, its type and its own code
+        replace any ``extra`` of their names; an ``extra`` code stays when it has none.
+        The stack is formatted once per record into the standard ``exc_text`` cache,
+        which every handler then reuses.
         """
         fields = record.__dict__
         fields.pop(LogField.EXCEPTION_STACKTRACE, None)
         if record.exc_info is None or record.exc_info[1] is None:
             return
-        fields.pop(LogField.ERROR_CODE, None)
         fields.update(ErrorSummary.of(record.exc_info[1]).fields())
         if record.levelno >= logging.ERROR:
             record.exc_text = record.exc_text or _STACK_FORMATTER.formatException(record.exc_info)

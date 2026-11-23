@@ -29,6 +29,7 @@ from pydantic_ai.settings import ModelSettings
 from pydantic_ai.usage import RequestUsage, RunUsage, UsageLimits
 
 from loom.ai.declarative import PolicySpec
+from loom.ai.event import AiEvent, AiKey
 from loom.ai.pricing import ModelPrice
 
 __all__ = ["PricedModel", "is_priceable", "usage_limits", "warn_if_model_not_priceable"]
@@ -134,7 +135,7 @@ def is_priceable(model_name: str, provider_name: str | None) -> bool:
 
 
 def warn_if_model_not_priceable(
-    model_name: str, provider_name: str | None, policies: PolicySpec, component: str
+    model_name: str, provider_name: str | None, policies: PolicySpec, agent: str
 ) -> None:
     """Log a start-up notice when ``policies.max_usd`` may not be enforceable.
 
@@ -152,17 +153,8 @@ def warn_if_model_not_priceable(
         provider_name: ``name`` of the built model's provider, or ``None``
             when the model carries none (a test double, for instance).
         policies: Validated execution limits carried by the compiled plan.
-        component: Artifact path or agent name the notice points at.
+        agent: Name of the agent the notice points at.
     """
     if policies.max_usd is None or is_priceable(model_name, provider_name):
         return
-    _logger.warning(
-        "%s: bound model %r on provider %r cannot be priced by genai-prices "
-        "ahead of any run; 'policies.max_usd' may not be enforceable for some "
-        "responses, and this deployment's 'policies.on_unpriced_spend' (%r) "
-        "governs what a run does when that happens",
-        component,
-        model_name,
-        provider_name or "unknown",
-        policies.on_unpriced_spend,
-    )
+    _logger.warning(AiEvent.MODEL_UNPRICEABLE, extra={AiKey.AGENT: agent, AiKey.MODEL: model_name})
