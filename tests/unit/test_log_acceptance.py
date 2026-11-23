@@ -44,7 +44,7 @@ CANARY = "CANARY-ROW-VALUE-4711"
 
 STACK_HEAD = "Traceback (most recent call last)"
 
-_LOGGER = logging.getLogger("loom.acceptance")
+_LOGGER = logging.getLogger("acceptance")
 
 
 @dataclass(frozen=True, slots=True)

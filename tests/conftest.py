@@ -26,7 +26,7 @@ from tests.helpers.aws_island import FakeAwsIsland
 from tests.helpers.extras import BOTO3_ISLAND, without_extra
 from tests.helpers.jobs import JobActivity
 
-pytest_plugins = ["tests.helpers.delegation", "tests.helpers.log_standard"]
+pytest_plugins = ["pytester", "tests.helpers.delegation", "tests.helpers.log_standard"]
 
 settings.register_profile("default", derandomize=True, max_examples=25, database=None)
 settings.register_profile("ci", derandomize=True, max_examples=100, database=None)

@@ -1,23 +1,17 @@
-"""The logging contract, enforced across the whole suite on the ``loom`` logger.
+"""The logging contract, enforced across the whole suite on every ``loom.*`` logger.
 
-A record whose message is a :class:`~loom.core.log_names.LogEvent` must follow
-it: no ``%`` arguments, every field key declared by a
+A record of a ``loom`` logger must follow it: a :class:`~loom.core.log_names.LogEvent`
+as message, no ``%`` arguments, every field key declared by a
 :class:`~loom.core.log_names.LogKey` (or made by :meth:`~loom.core.log_names.LogKey.of`),
-every value one the formats can write, and one kind of value per key. Such a
-record that breaks it fails its test. A record with a text message is only
-counted: with ``LOOM_LOG_CONTRACT_REPORT`` set to a directory, each pytest
-process writes the breaches it saw there as ``<pid>.json``.
+every value one the formats can write, and one kind of value per key. A record
+that breaks it fails its test. Records of any other logger are never checked.
 """
 
 from __future__ import annotations
 
-import json
 import logging
-import os
-from collections import Counter
 from collections.abc import Iterator
 from enum import StrEnum
-from pathlib import Path
 from typing import Final, TypeVar
 
 import pytest
@@ -26,9 +20,6 @@ from loom.core.log_names import LogEvent, LogKey, SubKey
 from loom.core.logger.formats import TextFormatter, is_opaque, record_fields, render_value
 
 _Name = TypeVar("_Name", LogEvent, LogKey)
-
-REPORT_DIRECTORY_VARIABLE: Final = "LOOM_LOG_CONTRACT_REPORT"
-_BREACHES: Final = pytest.StashKey[Counter[str]]()
 
 _KEY_KINDS: Final = pytest.StashKey[dict[str, "ValueKind"]]()
 
@@ -102,59 +93,45 @@ class Breach(StrEnum):
 
 
 class LogContract(logging.Handler):
-    """Keeps the records of one test and counts every breach by module."""
+    """Keeps the records of one test with the contract rules each one breaks."""
 
-    def __init__(self, breaches: Counter[str], kinds: dict[str, ValueKind]) -> None:
+    def __init__(self, kinds: dict[str, ValueKind]) -> None:
         super().__init__()
         self.records: list[tuple[logging.LogRecord, list[Breach]]] = []
-        self._breaches = breaches
         self._kinds = kinds
 
     def emit(self, record: logging.LogRecord) -> None:
-        broken = Breach.broken_by(record, self._kinds)
-        self.records.append((record, broken))
-        self._breaches.update(f"{record.name}|{breach}" for breach in broken)
-        if not isinstance(record.msg, LogEvent):
-            return
+        self.records.append((record, Breach.broken_by(record, self._kinds)))
         for key, value in record_fields(record).items():
             kind = ValueKind.of(value)
             if kind is not None and not isinstance(key, SubKey):
                 self._kinds.setdefault(key, kind)
 
+    def offences(self) -> list[str]:
+        """One line per distinct record that broke the contract."""
+        return sorted(
+            {
+                f"{record.name}: {record.msg} breaks {[str(breach) for breach in broken]}"
+                for record, broken in self.records
+                if broken
+            }
+        )
+
 
 def pytest_configure(config: pytest.Config) -> None:
-    """Start the session's breach count."""
-    config.stash[_BREACHES] = Counter()
+    """Start the session's record of the kind each key carries."""
     config.stash[_KEY_KINDS] = {}
 
 
-def pytest_sessionfinish(session: pytest.Session) -> None:
-    """Write this process's breach count when a report directory is set."""
-    directory = os.environ.get(REPORT_DIRECTORY_VARIABLE)
-    breaches = session.config.stash[_BREACHES]
-    if not directory or not breaches:
-        return
-    target = Path(directory) / f"{os.getpid()}.json"
-    target.parent.mkdir(parents=True, exist_ok=True)
-    target.write_text(json.dumps(dict(breaches), sort_keys=True))
-
-
 @pytest.fixture(autouse=True)
-def loom_events_follow_the_contract(request: pytest.FixtureRequest) -> Iterator[None]:
-    """Fail a test when a ``loom`` record whose message is a ``LogEvent`` breaks the contract."""
-    seen = LogContract(request.config.stash[_BREACHES], request.config.stash[_KEY_KINDS])
+def loom_records_follow_the_contract(request: pytest.FixtureRequest) -> Iterator[None]:
+    """Fail a test when a record of a ``loom`` logger breaks the contract."""
+    seen = LogContract(request.config.stash[_KEY_KINDS])
     loom_logger = logging.getLogger("loom")
     loom_logger.addHandler(seen)
     yield
     loom_logger.removeHandler(seen)
-    offences = sorted(
-        {
-            f"{record.name}: {record.msg} breaks {[str(breach) for breach in broken]}"
-            for record, broken in seen.records
-            if isinstance(record.msg, LogEvent) and broken
-        }
-    )
-    if offences:
+    if offences := seen.offences():
         pytest.fail("records outside the log contract:\n" + "\n".join(offences))
 
 
