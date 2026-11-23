@@ -4,7 +4,9 @@ from __future__ import annotations
 
 import pytest
 
-from loom.core.errors import NotFound
+from loom.core.config.errors import ConfigError
+from loom.core.errors import DomainError, NotFound
+from loom.core.errors.codes import ErrorCode
 from loom.core.logger import ErrorSummary, LogField
 
 
@@ -43,3 +45,32 @@ class TestErrorSummary:
     ) -> None:
         assert summary.describe() == described
         assert summary.fields() == fields
+
+
+class _UserDomainError(DomainError):
+    """An application's own subclass of a loom error."""
+
+
+class TestCite:
+    @pytest.mark.parametrize(
+        ("cause", "cited"),
+        [
+            (
+                ConfigError("observability.log.format is unknown"),
+                "observability.log.format is unknown",
+            ),
+            (NotFound("Order", id=7), str(NotFound("Order", id=7))),
+            (TypeError("resolver must take a declaration"), "TypeError"),
+            (ValueError("card 4111"), "ValueError"),
+            (
+                _UserDomainError("card 4111", code=ErrorCode.SYSTEM_ERROR),
+                "_UserDomainError (system_error)",
+            ),
+            (ExceptionGroup("batch", [ValueError("card 4111")]), "ExceptionGroup"),
+        ],
+        ids=["loom-config", "loom-domain", "builtin", "foreign", "user-subclass", "group"],
+    )
+    def test_it_repeats_loom_text_and_names_anything_else_by_its_summary(
+        self, cause: BaseException, cited: str
+    ) -> None:
+        assert ErrorSummary.cite(cause) == cited

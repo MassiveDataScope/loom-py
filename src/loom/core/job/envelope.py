@@ -11,6 +11,7 @@ import msgspec
 from loom.core.errors import MalformedJobMessage
 from loom.core.identity import Delegation, Identity, reset_identity, set_identity
 from loom.core.job.job import Job
+from loom.core.logger.field import ErrorSummary
 from loom.core.tracing import active_trace_id
 
 TASK_JOB_PREFIX = "loom.job"
@@ -90,7 +91,7 @@ def decode_job_envelope(body: str) -> JobEnvelope:
     try:
         return msgspec.json.decode(body, type=JobEnvelope)
     except (msgspec.DecodeError, msgspec.ValidationError, TypeError) as exc:
-        raise MalformedJobMessage(str(exc)) from exc
+        raise MalformedJobMessage(ErrorSummary.of(exc).describe()) from exc
 
 
 @contextmanager

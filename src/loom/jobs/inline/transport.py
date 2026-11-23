@@ -196,12 +196,13 @@ class InlineJobTransport:
         pending.outcome.fail(error)
         callback = pending.dispatch.on_failure
         if callback is not None:
+            summary = ErrorSummary.of(error)
             await notify(
                 self._factory,
                 callback,
                 CallbackOutcome.FAILURE,
                 job_id=pending.dispatch.envelope.task_id,
-                exc_type=type(error).__qualname__,
-                exc_code=ErrorSummary.of(error).code,
+                exc_type=summary.type,
+                exc_code=summary.code,
                 **(pending.dispatch.envelope.payload or {}),
             )

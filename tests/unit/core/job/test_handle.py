@@ -90,4 +90,4 @@ class TestJobHandle:
         err = JobFailedError("xyz", cause=cause)
         assert err.cause is cause
         assert err.code == "job_failed"
-        assert "xyz" in str(err)
+        assert str(err) == "Job 'xyz' failed"

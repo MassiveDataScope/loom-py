@@ -78,8 +78,7 @@ class RolesNotBoundError(Forbidden):
 class SqlExecutionError(RuleViolationError):
     """Raised when the backend rejects a SQL statement.
 
-    Carries a sanitized message (backend error code plus first line, without
-    host, DSN or stack trace).
+    Carries the backend's error code only: the rest of its text can quote values.
 
     Args:
         message: Sanitized backend rejection message.

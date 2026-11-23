@@ -420,7 +420,9 @@ class TestOutcome:
     def test_commit_uncertain_carries_the_driver_error(self) -> None:
         cause = ConnectionError("ack lost")
 
-        assert CommitUncertain(cause).cause is cause
+        uncertain = CommitUncertain(cause)
+
+        assert (uncertain.cause, str(uncertain)) == (cause, "commit result unknown")
 
     async def test_a_non_transactional_store_that_never_wrote_says_so(self) -> None:
         coordinator, scope = _coordinator(NonTransactionalStore(S0, Ledger())), Scope()

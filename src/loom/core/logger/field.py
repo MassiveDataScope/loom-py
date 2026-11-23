@@ -1,7 +1,8 @@
-"""The keys of a log record's fields, written once.
+"""The keys of a log record's fields, and what loom may say about a failure.
 
 A key is an OpenTelemetry semantic convention when one exists
 (``service.name``, ``code.function.name``) and ``loom.*`` otherwise.
+:class:`ErrorSummary` is the one owner of what loom repeats about an exception.
 """
 
 from __future__ import annotations

@@ -139,13 +139,14 @@ class CallbackLink(msgspec.Struct, frozen=True):
             task_name: The name of the callback task (:func:`callback_task_name`).
             error: The error that ended the job, as the worker raised it.
         """
+        summary = ErrorSummary.of(error)
         try:
             celery_app.send_task(
                 task_name,
                 kwargs={
                     **msgspec.structs.asdict(self),
-                    "exc_type": type(error).__qualname__,
-                    "exc_code": ErrorSummary.of(error).code,
+                    "exc_type": summary.type,
+                    "exc_code": summary.code,
                 },
             )
         except Exception:
