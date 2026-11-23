@@ -259,10 +259,7 @@ class PolarsHistorifyOps:
         return result.with_columns(pl.lit(None, dtype=boundary_dtype).alias(spec.deleted_at))
 
     def duplicate_keys(self, frame: pl.DataFrame, keys: list[str]) -> str | None:
-        if len(frame) == frame.select(keys).n_unique():
-            return None
-        dupes = frame.filter(frame.select(keys).is_duplicated()).select(keys).head(5)
-        return str(dupes.to_dicts())
+        return None if len(frame) == frame.select(keys).n_unique() else str(keys)
 
     def assert_no_date_collisions(
         self,
@@ -276,8 +273,7 @@ class PolarsHistorifyOps:
         combo_key = keys + [eff_col]
         if len(frame) == frame.select(combo_key).n_unique():
             return
-        dupes = frame.filter(frame.select(combo_key).is_duplicated()).select(combo_key).head(5)
-        raise HistorifyDateCollisionError(str(dupes.to_dicts()))
+        raise HistorifyDateCollisionError(str(combo_key))
 
     def temporal_conflict_min_date(
         self,

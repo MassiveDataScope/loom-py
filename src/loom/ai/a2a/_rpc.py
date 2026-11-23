@@ -32,6 +32,7 @@ from starlette.responses import Response
 
 from loom.ai.errors import AgentRunErrorCode
 from loom.ai.fastapi.response import AgentJSONResponse
+from loom.core.model._loom_type import _msgspec_error
 from loom.rest.errors import _INTERNAL_ERROR_MESSAGE
 
 _JSONRPC_VERSION: Final = "2.0"
@@ -180,7 +181,7 @@ def decode_envelope(body: bytes) -> RpcEnvelope:
     try:
         return _ENVELOPE_DECODER.decode(body)
     except msgspec.ValidationError as exc:
-        raise RpcFault(_invalid_request_error(str(exc))) from exc
+        raise RpcFault(_invalid_request_error(_msgspec_error(exc).message)) from exc
     except msgspec.DecodeError as exc:
         raise RpcFault(_parse_error()) from exc
 

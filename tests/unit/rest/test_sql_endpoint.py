@@ -400,6 +400,15 @@ class TestSqlEndpointRequestBody:
             [],
         )
 
+    def test_a_wrong_typed_field_is_named_and_its_value_is_not_echoed(self) -> None:
+        """The 422 names the field msgspec refused, never the value the caller sent."""
+        canary = "card 4111"
+        client = _client(FakeSqlExecutor())
+        response = client.post("/sql/analytics", json={"sql": "SELECT 1", "limit": canary})
+        assert response.status_code == HTTPStatus.UNPROCESSABLE_ENTITY
+        assert "limit" in response.text
+        assert canary not in response.text
+
     def test_rejects_body_with_settings_without_executing_it(
         self,
     ) -> None:

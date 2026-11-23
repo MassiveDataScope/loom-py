@@ -101,7 +101,7 @@ class HistorifyOps(Protocol[F]):
     def ensure_soft_delete_col(self, result: F, spec: HistorifySpec) -> F: ...
 
     def duplicate_keys(self, frame: F, keys: list[str]) -> str | None:
-        """Describe up to five ``keys`` combinations repeated in ``frame``, or ``None``."""
+        """Name the ``keys`` columns when a combination repeats in ``frame``, else ``None``."""
         ...
 
     def assert_no_date_collisions(

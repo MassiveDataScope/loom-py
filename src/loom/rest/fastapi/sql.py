@@ -35,6 +35,7 @@ from loom.core.config.errors import ConfigError
 from loom.core.errors import BODY_FIELD, LoomError, RuleViolationError
 from loom.core.identity import current_identity
 from loom.core.model import LoomFrozenStruct
+from loom.core.model._loom_type import _msgspec_error
 from loom.core.observability.event import Scope
 from loom.core.observability.observability import Observability
 from loom.core.stores.sql.config import SqlConfig, SqlConnectionConfig, roles_need_identity_binding
@@ -185,7 +186,7 @@ def _decode_request(body: bytes, *, max_sql_bytes: int) -> _SqlQueryRequest:
     try:
         query = _REQUEST_DECODER.decode(body)
     except msgspec.ValidationError as exc:
-        raise _invalid_request(BODY_FIELD, str(exc)) from exc
+        raise _invalid_request(BODY_FIELD, _msgspec_error(exc).message) from exc
     except MALFORMED_BODY_ERRORS as exc:
         raise malformed_body_error() from exc
     if len(query.sql.encode("utf-8")) > max_sql_bytes:

@@ -266,14 +266,14 @@ class TestOptionalStartup:
             "the transport's reason reached routine logs"
         )
 
-    async def test_logs_the_reason_at_debug_when_tolerating_the_failure(
+    async def test_logs_the_reason_type_at_debug_when_tolerating_the_failure(
         self,
         lifecycle_log: list[str],
         deps: StubDepsFactory,
         container: LoomContainer,
         caplog: pytest.LogCaptureFixture,
     ) -> None:
-        """The reason stays available to an operator who asks for DEBUG."""
+        """An operator who asks for DEBUG sees the reason's type, never its URL-bearing text."""
         host = _host(
             plans=(make_plan(_AGENT, capabilities=(make_mcp_capability(_SERVER_A),)),),
             clients={_SERVER_A: _refusing_client(_SERVER_A, lifecycle_log)},
@@ -286,7 +286,9 @@ class TestOptionalStartup:
             async with host:
                 pass
 
-        assert any(_REFUSED in record.getMessage() for record in caplog.records)
+        messages = [record.getMessage() for record in caplog.records]
+        assert any("ConnectionError" in message for message in messages)
+        assert not any(_REFUSED in message for message in messages)
 
     async def test_reports_the_dependency_unavailable_after_the_first_probe(
         self, lifecycle_log: list[str], deps: StubDepsFactory, container: LoomContainer

@@ -97,6 +97,9 @@ def _stamp_new_rows(frame: DataFrame, spec: HistorifySpec, eff_date: Any) -> Dat
     return ops.stamp_col(frame, spec.valid_to, None, dtype)
 
 
+_CANARY = "card 4111"
+
+
 class TestDuplicateKeys:
     def test_unique_frame_has_none(self, spark: SparkSession) -> None:
         frame = spark.createDataFrame(
@@ -104,13 +107,14 @@ class TestDuplicateKeys:
         )
         assert SparkHistorifyOps().duplicate_keys(frame, ["player_id", "team_id"]) is None
 
-    def test_duplicates_are_described(self, spark: SparkSession) -> None:
+    def test_duplicates_name_the_key_columns_and_never_their_values(
+        self, spark: SparkSession
+    ) -> None:
         frame = spark.createDataFrame(
-            [{"player_id": 1, "team_id": "RM"}, {"player_id": 1, "team_id": "RM"}]
+            [{"player_id": 1, "team_id": _CANARY}, {"player_id": 1, "team_id": _CANARY}]
         )
         described = SparkHistorifyOps().duplicate_keys(frame, ["player_id", "team_id"])
-        assert described is not None
-        assert "'player_id': 1" in described
+        assert described == "['player_id', 'team_id']"
 
 
 class TestAssertNoDateCollisions:
@@ -125,19 +129,23 @@ class TestAssertNoDateCollisions:
             frame, ["subscription_id", "plan"], "event_date", _log_spec()
         )
 
-    def test_same_date_same_key_raises(self, spark: SparkSession) -> None:
+    def test_same_date_same_key_raises_naming_the_columns_and_never_their_values(
+        self, spark: SparkSession
+    ) -> None:
         frame = spark.createDataFrame(
             [
-                {"subscription_id": 1, "plan": "pro", "event_date": date(2024, 1, 1)},
-                {"subscription_id": 1, "plan": "pro", "event_date": date(2024, 1, 1)},
+                {"subscription_id": 1, "plan": _CANARY, "event_date": date(2024, 1, 1)},
+                {"subscription_id": 1, "plan": _CANARY, "event_date": date(2024, 1, 1)},
             ]
         )
         backend = SparkHistorifyOps()
         spec = _log_spec()
-        with pytest.raises(HistorifyDateCollisionError):
+        with pytest.raises(HistorifyDateCollisionError) as raised:
             backend.assert_no_date_collisions(
                 frame, ["subscription_id", "plan"], "event_date", spec
             )
+        assert _CANARY not in str(raised.value)
+        assert "['subscription_id', 'plan', 'event_date']" in str(raised.value)
 
     def test_skipped_for_timestamp(self, spark: SparkSession) -> None:
         frame = spark.createDataFrame(

@@ -3,12 +3,15 @@
 from __future__ import annotations
 
 import json
+from types import SimpleNamespace
 from typing import Any
 from unittest.mock import MagicMock
 
+import msgspec
 import pytest
 from botocore.exceptions import ClientError
 
+from loom.prefect.flow._hooks import make_notification_hooks
 from loom.prefect.notify import (
     NotifyEvent,
     SlackNotifier,
@@ -262,3 +265,27 @@ class TestSnsNotifierOnMoto:
         SnsNotifier(topic_arn=_TOPIC).notify(_make_event(state="Failed"))
 
         assert _publish_failures(caplog) == [{"flow": "etl-x", "run": "run-1", "state": "Failed"}]
+
+
+class _RecordingNotifier:
+    def __init__(self) -> None:
+        self.events: list[NotifyEvent] = []
+
+    def notify(self, event: NotifyEvent) -> None:
+        self.events.append(event)
+
+
+class TestFailureHookNotification:
+    def test_the_notification_names_the_state_and_never_the_failure_text(self) -> None:
+        """Prefect's state message quotes the exception, so loom never forwards it."""
+        canary = "card 4111"
+        notifier = _RecordingNotifier()
+        on_failure, _ = make_notification_hooks("etl-x", [notifier])
+        state = SimpleNamespace(message=f"Flow run encountered an exception: ValueError: {canary}")
+        flow_run = SimpleNamespace(name="run-1", parameters={})
+
+        on_failure[0](None, flow_run, state)
+
+        (event,) = notifier.events
+        assert event.state == "Failed"
+        assert canary not in msgspec.json.encode(event).decode()
