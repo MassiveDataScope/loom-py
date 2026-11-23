@@ -11,11 +11,10 @@ import pytest
 
 from loom.composition import AppConfig, Application
 from loom.core.config import ConfigContext, ConfigError
-from loom.core.job.event import JobKey
+from loom.core.job.event import JobEvent, JobKey
 from loom.core.job.job import Job
 from loom.jobs.aws.errors import SQSQueueConfigError
 from loom.serverless.aws.lambda_ import LambdaRuntime
-from loom.serverless.event import ServerlessEvent, ServerlessKey
 from tests.helpers.aws import ACCOUNT, OTHER_REGION
 from tests.helpers.aws_island import FakeAwsIsland, FakeSdkError
 from tests.helpers.composition import composition_project
@@ -143,9 +142,13 @@ class TestConsumedQueue:
 
         mount(tmp_path, probe, FakeSqs(_POLICY), jobs=jobs)
 
-        (logged,) = _logged(caplog, ServerlessEvent.SQS_RETRY_POLICIES_RESOLVED)
+        (logged,) = [
+            line
+            for line in _logged(caplog, JobEvent.RETRY_POLICIES_DESCRIBED)
+            if JobKey.QUEUE in line
+        ]
         assert logged[JobKey.QUEUE] == "jobs"
-        assert "max_attempts=4 (RedrivePolicy maxReceiveCount)" in logged[ServerlessKey.RETRIES][0]
+        assert "max_attempts=4 (RedrivePolicy maxReceiveCount)" in logged[JobKey.RETRY_POLICIES][0]
 
     def test_a_queue_that_cannot_be_read_at_start_up_fails_naming_it(
         self, tmp_path: Path, probe: tuple[type[Job[None]], Probe], mocked_aws: None, mount: Mount

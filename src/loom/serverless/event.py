@@ -14,7 +14,6 @@ class ServerlessEvent(LogEvent):
     S3_TEST_EVENT_ACKNOWLEDGED = "serverless.s3_test_event_acknowledged"
     AUTOCRUD_IGNORED = "serverless.autocrud_ignored"
     JOB_TRANSPORT_SELECTED = "serverless.job_transport_selected"
-    SQS_RETRY_POLICIES_RESOLVED = "serverless.sqs_retry_policies_resolved"
     AGENT_ENDPOINT_IGNORED = "serverless.agent_endpoint_ignored"
 
 
@@ -23,5 +22,4 @@ class ServerlessKey(LogKey):
 
     MESSAGE_ID = "loom.serverless.message_id"
     TRANSPORT = "loom.serverless.transport"
-    RETRIES = "loom.serverless.retries"
     CONFIG_KEY = "loom.serverless.config_key"

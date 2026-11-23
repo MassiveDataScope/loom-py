@@ -19,7 +19,7 @@ from loom.core.config import ConfigError
 from loom.core.discovery.worker import resolve_worker_components
 from loom.core.job.config import JobSettings
 from loom.core.job.envelope import JobEnvelope
-from loom.core.job.event import JobKey
+from loom.core.job.event import JobEvent, JobKey
 from loom.core.job.outcome import JobOutcome
 from loom.core.job.policy import Redelivery, RetryPolicy
 from loom.core.job.run import EnvelopeInvocation
@@ -171,12 +171,11 @@ class QueueConsumer(JobConsumer):
         )
         redelivery = queue.redelivery
         if served:
-            policies = settings.describe_retries(redelivery, served)
             _log.info(
-                ServerlessEvent.SQS_RETRY_POLICIES_RESOLVED,
+                JobEvent.RETRY_POLICIES_DESCRIBED,
                 extra={
                     JobKey.QUEUE: queue_name,
-                    ServerlessKey.RETRIES: [f"{p['job']}: {p['retry']}" for p in policies],
+                    JobKey.RETRY_POLICIES: settings.describe_retries(redelivery, served),
                 },
             )
         return cls(
