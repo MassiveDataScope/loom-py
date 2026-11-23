@@ -28,6 +28,8 @@ from typing import TypeVar
 
 from confluent_kafka import KafkaError, KafkaException
 
+from loom.streaming.kafka.client._failure import broker_error
+
 T = TypeVar("T")
 
 _COORDINATOR_RETRIABLE_CODES: frozenset[int] = frozenset(
@@ -77,12 +79,8 @@ DEFAULT_COORDINATOR_RETRY = CoordinatorRetryPolicy()
 
 def is_coordinator_error(exc: KafkaException) -> bool:
     """Report whether a Kafka exception is a transient coordinator error."""
-    if not exc.args:
-        return False
-    error = exc.args[0]
-    if not isinstance(error, KafkaError):
-        return False
-    return error.code() in _COORDINATOR_RETRIABLE_CODES
+    error = broker_error(exc)
+    return error is not None and error.code() in _COORDINATOR_RETRIABLE_CODES
 
 
 def with_coordinator_retry(

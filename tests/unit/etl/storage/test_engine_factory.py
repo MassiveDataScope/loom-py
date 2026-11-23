@@ -292,7 +292,6 @@ class TestLineageWiring:
             started_at=datetime.now(UTC),
             status=RunStatus.SUCCESS,
             duration_ms=1,
-            error=None,
         )
 
         writer.write_record(record, TableRef("ops.pipeline_runs"))

@@ -7,6 +7,7 @@ from typing import Any, ClassVar
 import msgspec
 import pytest
 
+from loom.core.logger import ErrorSummary
 from tests.helpers.version_limited_extras import require_bytewax
 
 require_bytewax()
@@ -403,7 +404,7 @@ class TestRunFlowSpan:
         # OTEL span carries the exception.
         assert poll_cycle[1].kind is EventKind.ERROR
         assert poll_cycle[1].status is LifecycleStatus.FAILURE
-        assert poll_cycle[1].error == "prep failed"
+        assert poll_cycle[1].failure == ErrorSummary(type="RuntimeError")
 
 
 class TestPrepareRunErrorSinks:

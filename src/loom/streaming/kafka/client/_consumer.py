@@ -7,8 +7,8 @@ from collections.abc import Iterable, Mapping
 from typing import Any, Literal, Protocol, cast
 
 from confluent_kafka import Consumer as _Consumer
+from confluent_kafka import KafkaError, TopicPartition
 from confluent_kafka import Message as _RawMessage
-from confluent_kafka import TopicPartition
 
 from loom.core.observability.event import Scope
 from loom.core.observability.observability import Observability
@@ -16,6 +16,7 @@ from loom.streaming.kafka._config import ConsumerSettings
 from loom.streaming.kafka._errors import KafkaCommitError, KafkaPollError
 from loom.streaming.kafka._message import HEADER_CORRELATION_ID, HEADER_TRACE_ID
 from loom.streaming.kafka._record import KafkaRecord
+from loom.streaming.kafka.client._failure import cite_failure
 from loom.streaming.kafka.client._retry import (
     DEFAULT_COORDINATOR_RETRY,
     CoordinatorRetryPolicy,
@@ -126,12 +127,12 @@ class KafkaConsumerClient:
                 policy=self._retry_policy,
             )
         except Exception as exc:
-            raise KafkaCommitError(str(exc)) from exc
+            raise KafkaCommitError(cite_failure(exc)) from exc
         if not results:
             return None
         result = results[0]
         if result.error is not None:
-            raise KafkaCommitError(str(result.error))
+            raise KafkaCommitError(cite_failure(result.error))
         offset = result.offset
         if offset is None or offset < 0:
             return None
@@ -153,7 +154,7 @@ class KafkaConsumerClient:
         try:
             message = self._consumer.poll(timeout_ms / 1000)
         except Exception as exc:
-            raise KafkaPollError(str(exc)) from exc
+            raise KafkaPollError(cite_failure(exc)) from exc
         if message is None:
             return None
         record = _checked_record(message)
@@ -183,12 +184,12 @@ class KafkaConsumerClient:
         try:
             messages = self._consumer.consume(max_records, timeout=0.001)
         except Exception as exc:
-            raise KafkaPollError(str(exc)) from exc
+            raise KafkaPollError(cite_failure(exc)) from exc
         records: list[KafkaRecord[bytes]] = []
         for message in messages:
             error = message.error()
             if error is not None:
-                raise KafkaPollError(str(error))
+                raise KafkaPollError(cite_failure(error))
             if message.value() is None:
                 continue
             record = _to_record(message)
@@ -234,7 +235,7 @@ class KafkaConsumerClient:
                 policy=self._retry_policy,
             )
         except Exception as exc:
-            raise KafkaCommitError(str(exc)) from exc
+            raise KafkaCommitError(cite_failure(exc)) from exc
 
     def commit_offset(
         self,
@@ -261,9 +262,9 @@ class KafkaConsumerClient:
                 policy=self._retry_policy,
             )
         except Exception as exc:
-            raise KafkaCommitError(str(exc)) from exc
+            raise KafkaCommitError(cite_failure(exc)) from exc
 
-    def _on_commit(self, error: object | None, partitions: list[TopicPartition]) -> None:
+    def _on_commit(self, error: KafkaError | None, partitions: list[TopicPartition]) -> None:
         """Report the outcome of an asynchronous offset commit.
 
         Asynchronous commits return before the broker answers, so a rejection
@@ -282,7 +283,7 @@ class KafkaConsumerClient:
         logger.error(
             "kafka asynchronous offset commit failed: %s (partitions: %s); the group "
             "offset did not advance, so these records will be reprocessed on restart",
-            error,
+            cite_failure(error),
             ", ".join(f"{part.topic}:{part.partition}@{part.offset}" for part in partitions),
         )
 
@@ -308,7 +309,7 @@ def _checked_record(message: _RawMessage) -> KafkaRecord[bytes]:
     """Translate one confluent message, raising on broker-reported errors."""
     error = message.error()
     if error is not None:
-        raise KafkaPollError(str(error))
+        raise KafkaPollError(cite_failure(error))
     return _to_record(message)
 
 

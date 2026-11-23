@@ -79,7 +79,7 @@ class TestBytewaxFlowExamples:
         envelope = errors[0]
         assert isinstance(envelope, ErrorEnvelope)
         assert envelope.kind is ErrorKind.TASK
-        assert envelope.reason == "boom"
+        assert envelope.reason == "ValueError"
         assert envelope.original_message is not None
         assert envelope.original_message.payload == AcmeAmountOrder(order_id="o-1", amount=10)
 

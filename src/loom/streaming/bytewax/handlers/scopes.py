@@ -10,6 +10,7 @@ import anyio
 from bytewax.operators import branch, flat_map
 from bytewax.operators import map as bw_map
 
+from loom.core.logger.field import ErrorSummary
 from loom.core.observability.event import Scope
 from loom.core.observability.observability import Observability
 from loom.core.observability.span import LoomSpan
@@ -141,8 +142,9 @@ def _apply_with_async_process(
             _emit_node_batch_spans(
                 observer, flow_name, idx, node_type, batch, BatchWindow.since(started_ns), exc
             )
+            reason = ErrorSummary.cite(exc)
             return [
-                _build_error_envelope(ErrorKind.TASK, str(exc), message, boundary)
+                _build_error_envelope(ErrorKind.TASK, reason, message, boundary)
                 for message in batch
             ]
         _emit_node_batch_spans(
@@ -216,7 +218,7 @@ async def _execute_with_async_message(
         )
         return current
     except Exception as exc:
-        return _build_error_envelope(_classify_task(exc), str(exc), message, boundary)
+        return _build_error_envelope(_classify_task(exc), ErrorSummary.cite(exc), message, boundary)
 
 
 async def _execute_with_async_batch(

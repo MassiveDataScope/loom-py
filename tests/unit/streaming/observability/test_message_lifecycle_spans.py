@@ -154,7 +154,7 @@ class TestDeathByError:
         assert span.attributes is not None
         assert span.attributes["terminal.reason"] == TerminalReason.ERROR_ENVELOPE.value
         assert span.attributes["error.kind"] == ErrorKind.TASK.value
-        assert span.attributes["error.reason"] == "kaboom"
+        assert span.attributes["error.reason"] == "ValueError"
         # The envelope's onward journey is the envelope's life, not the
         # original continuing: exactly one death for the original.
         assert recorder.name_counts()["terminal:error_envelope"] == 1
@@ -417,7 +417,7 @@ class TestFailedBatch:
         assert len(recorder.spans()) == 3
         for span in recorder.spans():
             assert span.status.is_ok is False
-            assert span.status.description == "sink down"
+            assert span.status.description == "RuntimeError"
             assert [event.name for event in span.events] == ["exception"]
 
 
