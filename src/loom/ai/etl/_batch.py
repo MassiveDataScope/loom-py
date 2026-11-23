@@ -12,8 +12,10 @@ from typing import Any, Final
 from loom.ai.abc import AgentUsage
 from loom.ai.errors import AgentRunError
 from loom.ai.etl._ledger import SpendLedger
+from loom.ai.event import AiEvent, AiKey
 from loom.ai.execution import AgentHost
 from loom.core.errors import InternalError
+from loom.core.errors.summary import ErrorSummary
 from loom.core.identity import Identity
 
 PROMPT_MISSING: Final = "PROMPT_MISSING"
@@ -107,7 +109,8 @@ class Batch:
             return self._failed(error.code.value, error.usage)
         except Exception as error:
             _log.warning(
-                "agent %r failed a row with an unexpected %s", self.name, type(error).__qualname__
+                AiEvent.ROW_FAILED,
+                extra={AiKey.AGENT: self.name, **ErrorSummary.of(error).fields()},
             )
             return self._failed(UNEXPECTED_ERROR, usage)
         self._settle(usage)

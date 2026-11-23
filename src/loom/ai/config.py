@@ -21,6 +21,7 @@ from urllib.parse import SplitResult, urlsplit
 from msgspec import field
 
 from loom.ai.errors import AgentCompilationError, AgentCompilationIssue, AgentErrorCode
+from loom.ai.event import AiEvent, AiKey
 from loom.ai.inference import OUTPUT_MODES, InferenceTarget
 from loom.ai.pricing import ModelPrice
 from loom.ai.remote_auth import is_strategy_registered, registered_strategy_names
@@ -101,14 +102,13 @@ class _RemoteUrl:
     announces them at start-up. Whatever the scheme, the URL must declare a host and carry
     no userinfo and no query string.
 
-    The URL is judged once, when built: ``fault`` is the verdict, ``warn_plaintext`` reads
+    The URL is judged once, when built: ``fault`` is the verdict, ``warn_plaintext`` names
     why a plaintext URL was let through.
     """
 
     def __init__(self, url: str, *, private_plaintext: bool = False) -> None:
         """Judge *url*; *private_plaintext* is the server's ``allow_private_plaintext``."""
-        self._host: str | None = None
-        self._plaintext_reason: str | None = None
+        self._plaintext_event: AiEvent | None = None
         self.fault: str | None = self._judge(url, private_plaintext)
         """Why the URL is unsafe, or ``None`` when it is acceptable."""
 
@@ -118,24 +118,21 @@ class _RemoteUrl:
         Args:
             component: Configuration path the URL came from.
         """
-        if self._plaintext_reason is not None:
-            _logger.warning(
-                "%s uses plaintext http at %s. %s", component, self._host, self._plaintext_reason
-            )
+        if self._plaintext_event is not None:
+            _logger.warning(self._plaintext_event, extra={AiKey.COMPONENT: component})
 
     def _judge(self, url: str, private_plaintext: bool) -> str | None:
         try:
             parts: SplitResult = urlsplit(url)
         except ValueError:
             return "the URL is malformed"
-        self._host = parts.hostname
         if parts.scheme == "http":
             if _is_loopback(parts.hostname):
-                self._plaintext_reason = _LOOPBACK_PLAINTEXT
+                self._plaintext_event = AiEvent.REMOTE_PLAINTEXT_LOOPBACK
             elif not private_plaintext:
                 return "the scheme must be https"
             elif _is_private(parts.hostname):
-                self._plaintext_reason = _PRIVATE_PLAINTEXT
+                self._plaintext_event = AiEvent.REMOTE_PLAINTEXT_PRIVATE
             else:
                 return "allow_private_plaintext admits only a private host"
         elif parts.scheme != "https":
@@ -147,16 +144,6 @@ class _RemoteUrl:
         if parts.query:
             return "the URL carries a query string, which may embed credentials"
         return None
-
-
-_LOOPBACK_PLAINTEXT = (
-    "Allowed because the traffic cannot leave this machine; the same URL on any other "
-    "host is refused, so this configuration is local-only."
-)
-_PRIVATE_PLAINTEXT = (
-    "Allowed by allow_private_plaintext: the host is only reachable inside a private "
-    "network, which must be trusted."
-)
 
 
 def _is_loopback(hostname: str | None) -> bool:
@@ -490,9 +477,7 @@ def _warn_unused_prices(
 ) -> None:
     bound = {target.model for target in models.values()}
     for model in sorted(prices.keys() - bound):
-        _logger.warning(
-            "ai.prices[%r] names no model of ai.models; no run is priced with it", model
-        )
+        _logger.warning(AiEvent.PRICE_MODEL_UNUSED, extra={AiKey.MODEL: model})
 
 
 def _validate_remote_url(

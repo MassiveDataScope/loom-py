@@ -17,10 +17,11 @@ from typing import Final, cast
 from fastapi import FastAPI
 from starlette.middleware import Middleware
 
-from loom.ai.a2a.card import build_agent_card, card_path
+from loom.ai.a2a.card import build_agent_card
 from loom.ai.compiler import AgentPlan
 from loom.ai.config import AgentEndpointConfig, AiConfig
 from loom.ai.errors import AgentCompilationError, AgentErrorCode
+from loom.ai.event import AiEvent, AiKey
 from loom.ai.execution import AgentHost
 from loom.ai.fastapi.response import ENCODER
 from loom.core.config.errors import ConfigError
@@ -70,11 +71,7 @@ def published_agents(
     for name in a2a.expose:
         plan = plans.get(name)
         if plan is None or not host.has_agent(name):
-            _logger.warning(
-                "Agent %s is listed in 'ai.a2a.expose' but no compiled agent has that name: "
-                "it is not published over A2A",
-                name,
-            )
+            _logger.warning(AiEvent.A2A_AGENT_NOT_COMPILED, extra={AiKey.AGENT: name})
             continue
         if plan.state is not None:
             raise AgentCompilationError(
@@ -227,46 +224,11 @@ def register_card_exclusions(app: FastAPI, card_paths: Sequence[str]) -> None:
         entry.kwargs["exclude_paths"] = (*_declared_exclusions(entry), *card_paths)
 
 
-def announce_publication(
-    agent: PublishedAgent, *, base_url: str, mechanism: str | None, prefix: str
-) -> None:
+def announce_publication(agent: PublishedAgent, *, mechanism: str | None) -> None:
     """Emit the startup WARNING naming exactly what is now reachable from outside."""
-    allow_anonymous = _allows_anonymous(agent)
-    _logger.warning(
-        "A2A agent published to the public internet: url=%s%s/%s card=%s agent=%s auth=%s "
-        "allow_anonymous=%s. %s",
-        base_url.rstrip("/"),
-        prefix,
-        agent.name,
-        card_path(agent.name, prefix=prefix),
-        agent.name,
-        mechanism or "none",
-        allow_anonymous,
-        _identity_notice(allow_anonymous, conversational=agent.conversational),
+    event = (
+        AiEvent.A2A_AGENT_PUBLISHED_ANONYMOUS
+        if _allows_anonymous(agent)
+        else AiEvent.A2A_AGENT_PUBLISHED
     )
-
-
-def _identity_notice(allow_anonymous: bool, *, conversational: bool = False) -> str:
-    """State plainly which identity an external A2A caller's run executes as.
-
-    Anonymous callers share one subject, so when the agent declares a
-    ``conversation`` loader nothing but the A2A ``contextId`` separates their
-    threads: whoever presents an id reads that thread.
-    """
-    if allow_anonymous:
-        notice = (
-            "allow_anonymous is set, so external callers are NOT authenticated: every run "
-            "spends model tokens on behalf of an unidentified stranger, and only "
-            "'max_concurrent_runs' and 'run_timeout_ms' bound that cost"
-        )
-        if conversational:
-            notice += (
-                "; 'conversation' is declared, and every anonymous caller shares one "
-                "subject, so threads are separated by the A2A 'contextId' alone: the id is "
-                "the credential"
-            )
-        return notice
-    return (
-        "the card is served anonymously; every invocation requires a verified caller, and "
-        "each capability call then runs as that identity"
-    )
+    _logger.warning(event, extra={AiKey.AGENT: agent.name, AiKey.AUTH: mechanism or "none"})

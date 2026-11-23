@@ -31,9 +31,11 @@ from loom.ai.engines.pydantic_ai import _limits
 from loom.ai.engines.pydantic_ai._limits import usage_limits, warn_if_model_not_priceable
 from loom.ai.engines.pydantic_ai._models import ModelResolver
 from loom.ai.engines.pydantic_ai.plugin import PydanticAIEnginePlugin
+from loom.ai.event import AiEvent, AiKey
 from loom.ai.inference import InferenceTarget
 from loom.core.di import LoomContainer
 from loom.core.model.redaction import Dsn
+from tests.helpers.loggers import CapturedLog
 from tests.helpers.pydantic_ai_engine import NullDeps, make_plan
 
 _COMPONENT = "agent 'appraiser'"
@@ -142,7 +144,7 @@ class TestPricingProbe:
         assert caplog.records == []
 
     def test_warns_when_the_model_cannot_be_priced(self, caplog: pytest.LogCaptureFixture) -> None:
-        """An unknown model logs a notice naming the artifact, the model and the provider."""
+        """An unknown model logs a notice naming the artifact and the model."""
         with caplog.at_level(logging.WARNING, logger=_LIMITS_LOGGER):
             warn_if_model_not_priceable(
                 "totally-unknown-model-xyz",
@@ -151,11 +153,12 @@ class TestPricingProbe:
                 _COMPONENT,
             )
 
-        assert len(caplog.records) == 1
-        message = caplog.records[0].getMessage()
-        assert _COMPONENT in message
-        assert "totally-unknown-model-xyz" in message
-        assert "openai" in message
+        assert CapturedLog(caplog).calls == [
+            (
+                AiEvent.MODEL_UNPRICEABLE,
+                {AiKey.COMPONENT: _COMPONENT, AiKey.MODEL: "totally-unknown-model-xyz"},
+            )
+        ]
 
     def test_warns_when_the_reported_provider_is_unknown_to_genai_prices(
         self, caplog: pytest.LogCaptureFixture
@@ -180,7 +183,7 @@ class TestPricingProbe:
                 "totally-unknown-model-xyz", None, PolicySpec(max_usd=Decimal("2.00")), _COMPONENT
             )
 
-        assert "unknown" in caplog.records[0].getMessage()
+        assert CapturedLog(caplog).messages == [AiEvent.MODEL_UNPRICEABLE]
 
     def test_warns_when_the_probe_raises_value_error(
         self, monkeypatch: pytest.MonkeyPatch, caplog: pytest.LogCaptureFixture
@@ -229,8 +232,8 @@ class TestCreateEngineWiring:
         with caplog.at_level(logging.WARNING, logger=_LIMITS_LOGGER):
             _create_engine(PolicySpec(max_usd=Decimal("2.00")), inference=unpriceable)
 
-        assert len(caplog.records) == 1
-        assert "totally-unknown-model-xyz" in caplog.records[0].getMessage()
+        [fields] = CapturedLog(caplog).named(AiEvent.MODEL_UNPRICEABLE)
+        assert fields[AiKey.MODEL] == "totally-unknown-model-xyz"
 
     def test_builds_clean_when_max_usd_is_absent(self) -> None:
         _create_engine(PolicySpec())

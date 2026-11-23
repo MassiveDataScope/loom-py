@@ -22,6 +22,7 @@ from loom.ai.engines.pydantic_ai._engine import PydanticAIEngine
 from loom.ai.engines.pydantic_ai._errors import classify
 from loom.ai.engines.pydantic_ai._events import IGNORED_EVENT_KINDS, MAPPED_EVENT_KINDS
 from loom.ai.errors import AgentRunErrorClass, AgentRunErrorCode, is_retriable, run_error_class
+from loom.ai.event import AiEvent
 from loom.ai.execution import AgentRunError
 from loom.core.di import LoomContainer
 from loom.core.identity import Identity
@@ -219,7 +220,9 @@ class TestASchemaBreakingAnswerIsLogged:
 
 
 def _assert_cause_logged_without(canary: str, caplog: pytest.LogCaptureFixture) -> None:
-    causes = [record for record in caplog.records if "raised from its cause" in record.getMessage()]
+    causes = [
+        record for record in caplog.records if record.getMessage() == AiEvent.RUN_FAILED_FROM_CAUSE
+    ]
     assert causes
     assert all(record.exc_info is not None for record in causes)
     assert all(canary not in f"{event} {fields}" for event, fields in CapturedLog(caplog).calls)

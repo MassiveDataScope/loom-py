@@ -56,6 +56,7 @@ from loom.ai.errors import (
     AgentRunErrorCode,
     require_authenticated,
 )
+from loom.ai.event import AiEvent, AiKey
 from loom.ai.execution._chain import enter_agent_call, exit_agent_call
 from loom.ai.execution._grants import AgentGrants, McpGrant
 from loom.ai.execution._limits import cancel_task, supervised_events
@@ -74,6 +75,7 @@ from loom.core.errors import InvalidUse, InvalidValue, UnknownKey
 from loom.core.errors.summary import ErrorSummary
 from loom.core.execution import ExecutionScope
 from loom.core.identity import Identity
+from loom.core.log_names import LogField
 from loom.core.model import LoomFrozenStruct, LoomType
 from loom.core.stores.sql.config import SqlConfig
 from loom.core.use_case.invoker import ApplicationInvoker
@@ -824,7 +826,7 @@ class AgentHost:
         try:
             return await self._probe(name)
         except Exception:
-            _logger.exception("Health probe of agent %r failed", name)
+            _logger.exception(AiEvent.HEALTH_PROBE_FAILED, extra={AiKey.AGENT: name})
             return AgentHealth(status=HealthState.UNAVAILABLE, detail=_PROBE_FAILED)
 
     async def _probe(self, name: str) -> AgentHealth:
@@ -1228,9 +1230,9 @@ def _log_tolerated(issues: Iterable[AgentCompilationIssue]) -> None:
     """
     for issue in issues:
         _logger.warning(
-            "start-up continued without a remote client: %s (%s)", issue.code, issue.component
+            AiEvent.REMOTE_CLIENT_SKIPPED,
+            extra={AiKey.COMPONENT: issue.component, LogField.ERROR_CODE: str(issue.code)},
         )
-        _logger.debug("remote client %r was not opened: %s", issue.component, issue.message)
 
 
 def _remote_capabilities(

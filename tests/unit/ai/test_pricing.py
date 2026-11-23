@@ -12,9 +12,11 @@ import pytest
 from loom.ai.compiler import AgentCompiler
 from loom.ai.config import AiConfig
 from loom.ai.declarative import AgentSpecV1, JsonSchemaOutput
+from loom.ai.event import AiEvent, AiKey
 from loom.ai.inference import InferenceTarget
 from loom.ai.pricing import ModelPrice
 from loom.core.use_case.registry import UseCaseRegistry
+from tests.helpers.loggers import CapturedLog
 
 _HAIKU = "eu.anthropic.claude-haiku-5-5"
 _PRICE = ModelPrice(
@@ -124,9 +126,8 @@ class TestUnusedPrice:
         with caplog.at_level(logging.WARNING, logger="loom.ai.config"):
             _config({_HAIKU: _PRICE, "eu.anthropic.claude-sonet-5-5": _PRICE})
 
-        assert [record.getMessage() for record in caplog.records] == [
-            "ai.prices['eu.anthropic.claude-sonet-5-5'] names no model of ai.models; "
-            "no run is priced with it"
+        assert CapturedLog(caplog).calls == [
+            (AiEvent.PRICE_MODEL_UNUSED, {AiKey.MODEL: "eu.anthropic.claude-sonet-5-5"})
         ]
 
     def test_a_price_its_binding_names_is_not_announced(

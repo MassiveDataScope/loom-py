@@ -44,8 +44,10 @@ from loom.ai.a2a.events import A2AEventProjector, TaskState
 from loom.ai.abc import CONVERSATION_ID_MAX_LENGTH, AgentResult
 from loom.ai.config import AiConfig
 from loom.ai.errors import AgentRunError
+from loom.ai.event import AiEvent, AiKey
 from loom.ai.execution import AgentHost
 from loom.ai.fastapi.response import ENCODER, AgentJSONResponse
+from loom.core.errors.summary import ErrorSummary
 from loom.core.identity import Identity
 from loom.core.observability.event import Scope
 from loom.core.observability.observability import Observability
@@ -268,7 +270,10 @@ def _make_send_handler(
                     host, span, name, prompt, call.identity, conversation_id=context_id
                 )
         except AgentRunError as exc:
-            _logger.warning("a2a run of agent %r failed: %s", name, exc)
+            _logger.warning(
+                AiEvent.RUN_FAILED,
+                extra={AiKey.AGENT: name, **ErrorSummary.of(exc).fields()},
+            )
             return error_response(call.request_id, internal_error(exc.code))
         result = project_output(result, host.output_type(name))
         task = _completed_task(uuid4().hex, context_id, result.output)
@@ -308,7 +313,7 @@ def _run_frames(
                 ):
                     yield frame
         except Exception as exc:
-            _logger.warning("a2a stream failed after the first byte", exc_info=exc)
+            _logger.warning(AiEvent.STREAM_FAILED, exc_info=exc)
             for projected in projector.project(failure_event(exc)):
                 yield _sse_frame(call.request_id, projected)
 

@@ -22,6 +22,7 @@ from types import ModuleType
 
 from loom.ai.abc import AgentEnginePlugin, NativeToolSupport
 from loom.ai.errors import AgentCompilationError, AgentErrorCode
+from loom.ai.event import AiEvent, AiKey
 from loom.ai.inference import InferenceTarget
 from loom.core.plugins.entrypoints import (
     ApiVersionMismatchError,
@@ -165,11 +166,7 @@ def engine_supported_kinds(provider: object, engine: str) -> frozenset[str]:
     """
     kinds = cast("AgentEnginePlugin", provider).supported_capability_kinds()
     if "native" in kinds and engine_native_tool_support(provider) is None:
-        _logger.warning(
-            "engine %r serves 'native' grants but supplies no native_tool_support: "
-            "the kind is refused until it does.",
-            engine,
-        )
+        _logger.warning(AiEvent.ENGINE_NATIVE_SUPPORT_MISSING, extra={AiKey.COMPONENT: engine})
         return kinds - {"native"}
     return kinds
 

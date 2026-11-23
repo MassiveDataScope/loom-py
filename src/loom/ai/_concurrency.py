@@ -16,6 +16,7 @@ import logging
 from collections.abc import Coroutine
 from typing import Any, TypeVar
 
+from loom.ai.event import AiEvent, AiKey
 from loom.core.concurrency import discard_outcome
 
 _logger = logging.getLogger(__name__)
@@ -43,7 +44,7 @@ async def shield_and_drain(call: Coroutine[Any, Any, _T], *, label: str) -> _T:
     try:
         return await asyncio.shield(in_flight)
     except asyncio.CancelledError:
-        _logger.debug("%r: draining a cancelled call", label)
+        _logger.debug(AiEvent.CANCELLED_CALL_DRAINED, extra={AiKey.COMPONENT: label})
         await asyncio.wait([in_flight])
         discard_outcome(in_flight)
         raise

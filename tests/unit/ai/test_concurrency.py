@@ -89,7 +89,7 @@ class TestShieldAndDrainDrainsOnCancel:
         gate.release()
         await await_cancelled(task)
 
-        assert any("inventory-mcp" in record.message for record in caplog.records)
+        assert "inventory-mcp" in caplog.text
 
 
 class TestTheDrainedResultIsNotLeftUnretrieved:

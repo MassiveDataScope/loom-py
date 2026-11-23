@@ -43,6 +43,7 @@ from loom.ai.abc import (
 from loom.ai.compiler._plan import AgentPlan
 from loom.ai.config import A2AConfig, AgentEndpointConfig
 from loom.ai.errors import AgentCompilationError, AgentErrorCode, AgentRunErrorCode
+from loom.ai.event import AiEvent, AiKey
 from loom.ai.execution import AgentHost
 from loom.ai.fastapi.endpoints import mount_agent_endpoints
 from loom.core.config.errors import ConfigError
@@ -54,6 +55,7 @@ from loom.core.observability.event import EventKind, Scope
 from loom.core.observability.observability import Observability
 from loom.rest.auth.abc import RequestCredentials
 from loom.rest.auth.middleware import AuthenticationMiddleware
+from tests.helpers.loggers import CapturedLog
 from tests.integration.ai.conftest import (
     DEFAULT_OUTPUT,
     DEFAULT_USAGE,
@@ -1134,64 +1136,33 @@ class TestAnonymousOptOut:
 class TestPublicationAnnouncement:
     """Start-up says exactly which agents are reachable from outside."""
 
-    @staticmethod
-    async def _publication_warning(
-        *,
-        deps: DepsFactory,
-        container: LoomContainer,
-        caplog: pytest.LogCaptureFixture,
-        endpoints: Mapping[str, AgentEndpointConfig] | None = None,
-        plans: Sequence[AgentPlan] | None = None,
-    ) -> str:
-        """Return the WARNING text emitted while publishing one agent."""
-        with caplog.at_level(logging.WARNING):
-            async with _serving(
-                deps=deps, container=container, endpoints=endpoints, plans=plans
-            ) as (_app, _client):
-                pass
-        return caplog.text
-
-    async def test_names_the_agent_when_publishing_it(
-        self, deps: StubDepsFactory, container: LoomContainer, caplog: pytest.LogCaptureFixture
-    ) -> None:
-        """The announcement names the agent and the URL a stranger reaches."""
-        text = await self._publication_warning(deps=deps, container=container, caplog=caplog)
-
-        assert _AGENT in text
-        assert f"{_BASE_URL}{_PREFIX}/{_AGENT}" in text
-        assert card_path(_AGENT, prefix=_PREFIX) in text
-
-    async def test_does_not_announce_anonymity_when_the_stanza_is_disabled(
-        self, deps: StubDepsFactory, container: LoomContainer, caplog: pytest.LogCaptureFixture
-    ) -> None:
-        """A disabled stanza is announced as what it is: not an anonymous mount."""
-        endpoints = {_AGENT: make_endpoint(enabled=False, allow_anonymous=True)}
-        text = await self._publication_warning(
-            deps=deps, container=container, caplog=caplog, endpoints=endpoints
-        )
-
-        assert "allow_anonymous=False" in text
-        assert "NOT authenticated" not in text
-
-    async def test_warns_the_context_id_is_the_credential_when_an_anonymous_mount_converses(
+    @pytest.mark.parametrize(
+        ("endpoints", "event"),
+        [
+            (None, AiEvent.A2A_AGENT_PUBLISHED),
+            ({_AGENT: make_endpoint(allow_anonymous=True)}, AiEvent.A2A_AGENT_PUBLISHED_ANONYMOUS),
+            (
+                {_AGENT: make_endpoint(enabled=False, allow_anonymous=True)},
+                AiEvent.A2A_AGENT_PUBLISHED,
+            ),
+        ],
+        ids=["authenticated", "anonymous", "disabled-stanza-is-not-anonymous"],
+    )
+    async def test_names_the_agent_and_whether_it_is_anonymous(
         self,
-        conversation_deps: RecordingDepsFactory,
+        deps: StubDepsFactory,
         container: LoomContainer,
         caplog: pytest.LogCaptureFixture,
+        endpoints: Mapping[str, AgentEndpointConfig] | None,
+        event: AiEvent,
     ) -> None:
-        """AC6: an anonymous mount of a conversational agent says the id is the credential."""
-        endpoints = {_AGENT: make_endpoint(allow_anonymous=True)}
-        text = await self._publication_warning(
-            deps=conversation_deps,
-            container=container,
-            caplog=caplog,
-            endpoints=endpoints,
-            plans=(conversational_plan(_AGENT, loader=True),),
-        )
+        """The announcement names the agent; a disabled stanza is not an anonymous mount."""
+        with caplog.at_level(logging.WARNING):
+            async with _serving(deps=deps, container=container, endpoints=endpoints):
+                pass
 
-        assert "allow_anonymous=True" in text
-        assert "contextId" in text
-        assert "credential" in text
+        [fields] = CapturedLog(caplog).named(event)
+        assert fields[AiKey.AGENT] == _AGENT
 
 
 class TestBodyLimit:

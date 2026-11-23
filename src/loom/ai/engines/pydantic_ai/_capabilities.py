@@ -74,6 +74,7 @@ from loom.ai.errors import (
     AgentRunErrorCode,
     require_authenticated,
 )
+from loom.ai.event import AiEvent, AiKey
 from loom.ai.registry import require_provider_sdk
 from loom.core.di import LoomContainer
 from loom.core.engine.compilable import Compilable
@@ -426,7 +427,9 @@ async def _delegate(capability: CompiledA2ACapability, prompt: str, tool: str) -
     except AgentRunError:
         raise
     except Exception as exc:
-        _logger.warning("a2a tool '%s' could not reach the remote agent", tool, exc_info=True)
+        _logger.warning(
+            AiEvent.TOOL_REMOTE_AGENT_UNREACHABLE, extra={AiKey.TOOL: tool}, exc_info=True
+        )
         raise AgentRunError(
             AgentRunErrorCode.TOOL_UNAVAILABLE,
             f"tool '{tool}': the remote agent is unavailable",

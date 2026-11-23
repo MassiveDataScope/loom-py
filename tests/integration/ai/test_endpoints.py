@@ -47,6 +47,7 @@ from loom.ai.errors import (
     AgentErrorCode,
     AgentRunErrorCode,
 )
+from loom.ai.event import AiEvent
 from loom.ai.execution import AgentHost
 from loom.ai.fastapi.endpoints import mount_agent_endpoints
 from loom.core.config.errors import ConfigError
@@ -58,6 +59,7 @@ from loom.core.model.redaction import Dsn
 from loom.core.observability.event import EventKind, LifecycleEvent, Scope
 from loom.core.observability.observability import Observability
 from loom.rest.auth.middleware import AuthenticationMiddleware
+from tests.helpers.loggers import CapturedLog
 from tests.integration.ai.conftest import (
     DEFAULT_OUTPUT,
     DEFAULT_USAGE,
@@ -388,65 +390,25 @@ class TestMounting:
 
         assert _AGENT in caplog.text
 
-    @staticmethod
-    async def _mount_warning(
-        *,
+    @pytest.mark.parametrize(
+        ("allow_anonymous", "event"),
+        [(True, AiEvent.ENDPOINT_MOUNTED_ANONYMOUS), (False, AiEvent.ENDPOINT_MOUNTED)],
+    )
+    async def test_the_event_tells_whether_the_mount_is_anonymous(
+        self,
         deps: StubDepsFactory,
         container: LoomContainer,
         caplog: pytest.LogCaptureFixture,
         allow_anonymous: bool,
-    ) -> str:
-        """Return the mount WARNING emitted for one endpoint configuration."""
+        event: AiEvent,
+    ) -> None:
+        """``allow_anonymous`` removes the identity: the event must say so."""
         endpoints = {_AGENT: make_endpoint(allow_anonymous=allow_anonymous)}
         with caplog.at_level(logging.WARNING):
-            async with _serving(deps=deps, container=container, endpoints=endpoints) as (
-                _app,
-                _client,
-            ):
+            async with _serving(deps=deps, container=container, endpoints=endpoints):
                 pass
-        return caplog.text
 
-    async def test_does_not_claim_a_verified_identity_when_the_mount_is_anonymous(
-        self,
-        deps: StubDepsFactory,
-        container: LoomContainer,
-        caplog: pytest.LogCaptureFixture,
-    ) -> None:
-        """``allow_anonymous`` removes the identity: the warning must not claim one."""
-        text = await self._mount_warning(
-            deps=deps, container=container, caplog=caplog, allow_anonymous=True
-        )
-
-        assert "runs as that verified identity" not in text
-        assert "NOT authenticated" in text
-
-    async def test_warns_about_spend_without_identity_when_the_mount_is_anonymous(
-        self,
-        deps: StubDepsFactory,
-        container: LoomContainer,
-        caplog: pytest.LogCaptureFixture,
-    ) -> None:
-        """An anonymous mount spends model tokens for an unidentified caller: say so."""
-        text = await self._mount_warning(
-            deps=deps, container=container, caplog=caplog, allow_anonymous=True
-        )
-
-        assert "no verified identity" in text
-        assert "max_concurrent_runs" in text
-        assert "rate limit" in text
-
-    async def test_claims_a_verified_identity_when_the_mount_requires_auth(
-        self,
-        deps: StubDepsFactory,
-        container: LoomContainer,
-        caplog: pytest.LogCaptureFixture,
-    ) -> None:
-        """An authenticated mount keeps the sentence that is true for it."""
-        text = await self._mount_warning(
-            deps=deps, container=container, caplog=caplog, allow_anonymous=False
-        )
-
-        assert "runs as that verified identity" in text
+        assert event in CapturedLog(caplog).messages
 
 
 class TestAuthenticationBeforeExistence:

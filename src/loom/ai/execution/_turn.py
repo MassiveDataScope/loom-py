@@ -29,6 +29,7 @@ from loom.ai.errors import (
     AgentRunError,
     AgentRunErrorCode,
 )
+from loom.ai.event import AiEvent, AiKey
 from loom.core.concurrency import discard_outcome
 from loom.core.errors import InternalError, InvalidType, InvalidUse, InvalidValue
 from loom.core.identity import Identity
@@ -260,13 +261,15 @@ class TurnCallbacks:
             return AgentRunError(
                 AgentRunErrorCode.UNAUTHORIZED, DENIED_MESSAGE, interaction_id=self.interaction_id
             )
-        _logger.exception(
-            "%s of agent %r failed (interaction %s)",
-            call.step,
-            self.plan.name,
-            self.interaction_id,
-        )
+        _logger.exception(AiEvent.STEP_FAILED, extra=self._step_fields(call))
         return AgentRunError(code, message, interaction_id=self.interaction_id)
+
+    def _step_fields(self, call: CompiledUseCaseCall) -> dict[str, str]:
+        return {
+            AiKey.STEP: call.step,
+            AiKey.AGENT: self.plan.name,
+            AiKey.INTERACTION: self.interaction_id,
+        }
 
     def history(self, loader: CompiledConversation, value: object) -> bytes | None:
         """Accept the loader's ``None`` or ``bytes`` within ``max_history_bytes``.
@@ -312,28 +315,15 @@ class TurnCallbacks:
         if not task.done():
             task.cancel()
             task.add_done_callback(discard_outcome)
-            _logger.warning(
-                "%s of agent %r still running at its bound after the consumer "
-                "left; cancelled (interaction %s)",
-                call.step,
-                self.plan.name,
-                self.interaction_id,
-            )
+            _logger.warning(AiEvent.STEP_CANCELLED_AT_BOUND, extra=self._step_fields(call))
             return
         if task.cancelled():
             return
         if task.exception() is not None:
             _logger.error(
-                "%s of agent %r failed after the consumer left (interaction %s)",
-                call.step,
-                self.plan.name,
-                self.interaction_id,
+                AiEvent.STEP_FAILED_AFTER_CONSUMER_LEFT,
+                extra=self._step_fields(call),
                 exc_info=task.exception(),
             )
             return
-        _logger.info(
-            "%s of agent %r completed after the consumer left (interaction %s)",
-            call.step,
-            self.plan.name,
-            self.interaction_id,
-        )
+        _logger.info(AiEvent.STEP_COMPLETED_AFTER_CONSUMER_LEFT, extra=self._step_fields(call))

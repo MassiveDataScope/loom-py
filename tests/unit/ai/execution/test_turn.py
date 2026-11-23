@@ -21,12 +21,14 @@ from loom.ai.compiler._plan import (
 )
 from loom.ai.declarative import PolicySpec
 from loom.ai.errors import DENIED_MESSAGE, AgentRunError, AgentRunErrorCode
+from loom.ai.event import AiEvent, AiKey
 from loom.ai.execution._turn import TurnCallbacks
 from loom.core.command import Command
 from loom.core.errors import Forbidden
 from loom.core.identity import Identity
 from loom.core.model import loom_type
 from tests.helpers.ai import DEFAULT_USAGE
+from tests.helpers.loggers import CapturedLog
 from tests.unit.ai.execution.doubles import incident_triage_plan
 
 _ALL_HOOK_NAMES = frozenset({HOOK_OUTPUT_FIELD, HOOK_MESSAGES_FIELD, *HOOK_CONTEXT_FIELDS})
@@ -279,10 +281,16 @@ class TestFailure:
         assert str(error) == "fixed"
         assert error.interaction_id == "int-1"
         assert "secret detail" not in str(error)
-        assert any(
-            "conversation loader" in record.getMessage() and "int-1" in record.getMessage()
-            for record in caplog.records
-        )
+        assert CapturedLog(caplog).calls == [
+            (
+                AiEvent.STEP_FAILED,
+                {
+                    AiKey.STEP: _LOADER.step,
+                    AiKey.AGENT: turn.plan.name,
+                    AiKey.INTERACTION: "int-1",
+                },
+            )
+        ]
 
 
 class TestHistory:

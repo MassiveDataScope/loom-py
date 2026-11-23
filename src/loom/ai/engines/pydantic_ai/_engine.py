@@ -58,6 +58,7 @@ from loom.ai.engines.pydantic_ai._history import (
 )
 from loom.ai.engines.pydantic_ai._output import decode_output
 from loom.ai.errors import AgentRunError, AgentRunErrorCode, is_retriable
+from loom.ai.event import AiEvent, AiKey
 from loom.core.di import LoomContainer
 from loom.core.identity import Identity
 
@@ -439,9 +440,8 @@ class PydanticAIEngine:
         """Log the cause the published failure cannot carry, as the record's exception."""
         if exc.__cause__ is not None:
             _logger.warning(
-                "agent %s failed with %s, raised from its cause",
-                self._plan.name,
-                error.code.value,
+                AiEvent.RUN_FAILED_FROM_CAUSE,
+                extra={AiKey.AGENT: self._plan.name},
                 exc_info=exc.__cause__,
             )
 
