@@ -351,7 +351,6 @@ class TestStableRuntimeContracts:
             started_at=now,
             status=RunStatus.SUCCESS,
             duration_ms=100,
-            error=None,
         )
         process = ProcessRunRecord(
             event=EventName.PROCESS_END,
@@ -363,7 +362,6 @@ class TestStableRuntimeContracts:
             started_at=now,
             status=RunStatus.SUCCESS,
             duration_ms=50,
-            error=None,
         )
         step = StepRunRecord(
             event=EventName.STEP_END,
@@ -375,7 +373,6 @@ class TestStableRuntimeContracts:
             started_at=now,
             status=RunStatus.SUCCESS,
             duration_ms=10,
-            error=None,
         )
         assert pipeline.pipeline == "MyPipeline"
         assert process.process_run_id == "proc-1"

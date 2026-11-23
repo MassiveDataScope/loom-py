@@ -141,7 +141,7 @@ class TestRecordingRunObserver:
                 name="MyStep",
                 id="step-1",
                 correlation_id=ctx.correlation_id,
-                error="boom",
+                error=ValueError(),
                 meta={
                     "run_id": ctx.run_id,
                     "attempt": ctx.attempt,

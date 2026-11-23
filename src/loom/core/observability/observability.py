@@ -297,7 +297,6 @@ class Observability:
                 try:
                     yield
                 except Exception as exc:
-                    otel_span.record_exception(exc)
                     self._close_span(otel_span, identity.error_event(exc, elapsed_ms(started)))
                     raise
                 else:

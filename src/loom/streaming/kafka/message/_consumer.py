@@ -73,7 +73,7 @@ class KafkaMessageConsumer(Generic[PayloadT]):
                         name="kafka_decode",
                         trace_id=_header_trace_id(record.headers),
                         correlation_id=_header_correlation_id(record.headers),
-                        error=str(exc),
+                        error=exc,
                         meta={"topic": record.topic},
                     )
                 )

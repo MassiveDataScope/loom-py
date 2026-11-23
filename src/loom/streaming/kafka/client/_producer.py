@@ -84,7 +84,7 @@ class KafkaProducerClient:
                         name="kafka_produce",
                         trace_id=_header_trace_id(record.headers),
                         correlation_id=_header_correlation_id(record.headers),
-                        error=str(exc),
+                        error=exc,
                         meta={"topic": record.topic},
                     )
                 )
@@ -159,7 +159,7 @@ class KafkaProducerClient:
                             name="kafka_produce",
                             trace_id=_header_trace_id(record.headers),
                             correlation_id=_header_correlation_id(record.headers),
-                            error=str(delivery_error),
+                            error=delivery_error,
                             meta={"topic": record.topic},
                         )
                     )

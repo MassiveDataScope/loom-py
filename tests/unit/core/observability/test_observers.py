@@ -8,6 +8,7 @@ import pytest
 from opentelemetry.sdk.trace import TracerProvider
 
 from loom.core.config.observability import OtelConfig
+from loom.core.logger import ErrorSummary
 from loom.core.observability.event import EventKind, LifecycleEvent, LifecycleStatus, Scope
 from loom.core.observability.observer.log import LogLifecycleObserver
 from loom.core.observability.observer.noop import NoopObserver
@@ -30,7 +31,7 @@ class TestLifecycleEventHelpers:
     def test_start_end_and_error_builders_set_expected_kinds(self) -> None:
         start = LifecycleEvent.start(scope=Scope.NODE, name="step")
         end = LifecycleEvent.end(scope=Scope.NODE, name="step")
-        error = LifecycleEvent.exception(scope=Scope.NODE, name="step", error="boom")
+        error = LifecycleEvent.exception(scope=Scope.NODE, name="step", error=ValueError())
 
         assert start.kind is EventKind.START
         assert end.kind is EventKind.END
@@ -135,7 +136,12 @@ class TestLogLifecycleObserver:
                 id="end",
             ),
             pytest.param(
-                LifecycleEvent(scope=Scope.NODE, name="x", kind=EventKind.ERROR, error="boom"),
+                LifecycleEvent(
+                    scope=Scope.NODE,
+                    name="x",
+                    kind=EventKind.ERROR,
+                    failure=ErrorSummary(type="ValueError"),
+                ),
                 "ERROR",
                 "observability.lifecycle_failed",
                 id="error",
@@ -147,7 +153,12 @@ class TestLogLifecycleObserver:
                 id="transport-end",
             ),
             pytest.param(
-                LifecycleEvent(scope=Scope.TRANSPORT, name="x", kind=EventKind.ERROR, error="e"),
+                LifecycleEvent(
+                    scope=Scope.TRANSPORT,
+                    name="x",
+                    kind=EventKind.ERROR,
+                    failure=ErrorSummary(type="ValueError"),
+                ),
                 "WARNING",
                 "observability.lifecycle_failed",
                 id="transport-error",

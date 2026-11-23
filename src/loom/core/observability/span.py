@@ -123,8 +123,8 @@ class SpanIdentity:
             correlation_id=self.correlation_id,
             id=self.event_id,
             duration_ms=duration_ms,
-            error=str(exc),
-            meta={**self.meta, "error_type": type(exc).__name__},
+            error=exc,
+            meta=self.meta,
         )
 
 
@@ -140,7 +140,11 @@ def apply_terminal_state(span: Span, event: LifecycleEvent) -> None:
     if event.duration_ms is not None:
         span.set_attribute("duration_ms", event.duration_ms)
     if event.kind is EventKind.ERROR:
-        span.set_status(StatusCode.ERROR, event.error or "")
+        if event.failure is None:
+            span.set_status(StatusCode.ERROR)
+            return
+        span.set_status(StatusCode.ERROR, event.failure.describe())
+        span.add_event("exception", dict(event.failure.fields()))
         return
     span.set_status(StatusCode.OK)
 
@@ -331,7 +335,6 @@ class LoomSpan:
         """
         if self._closed:
             return
-        self._span.record_exception(exc)
         self._close(
             self._closing_identity().error_event(exc, self._duration(duration_ms)),
             end_time_ns=end_time_ns,

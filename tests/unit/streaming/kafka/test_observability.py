@@ -46,20 +46,20 @@ class TestKafkaPrometheusMetrics:
         [
             pytest.param(
                 "kafka_produce",
-                "timeout",
+                RuntimeError("timeout"),
                 'streaming_kafka_produced_total{status="delivery_error",topic="orders"}',
                 id="produce_error_increments_produced_total_with_delivery_error",
             ),
             pytest.param(
                 "kafka_decode",
-                "bad bytes",
+                ValueError("bad bytes"),
                 'streaming_kafka_consumed_total{status="decode_error",topic="orders"}',
                 id="decode_error_increments_consumed_total_with_decode_error",
             ),
         ],
     )
     def test_error_increments_its_total_with_the_error_status(
-        self, name: str, error: str, expected: str, kafka_registry: CollectorRegistry
+        self, name: str, error: Exception, expected: str, kafka_registry: CollectorRegistry
     ) -> None:
         obs, _ = _make_obs(kafka_registry)
 

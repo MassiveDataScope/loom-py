@@ -19,7 +19,7 @@ class LifecycleObserver(Protocol):
         class MyObserver:
             def on_event(self, event: LifecycleEvent) -> None:
                 if event.kind is EventKind.ERROR:
-                    alert(event.error)
+                    alert(event.failure)
     """
 
     def on_event(self, event: LifecycleEvent) -> None:

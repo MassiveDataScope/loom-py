@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+from loom.core.logger import ErrorSummary
 from loom.core.observability.event import EventKind, LifecycleEvent, LifecycleStatus, Scope
 from loom.core.observability.observability import Observability
 from loom.core.observability.observer.log import LogLifecycleObserver
@@ -66,7 +67,7 @@ class TestObservability:
                 scope=Scope.NODE,
                 name="test:0",
                 kind=EventKind.ERROR,
-                error="ValueError('bad')",
+                failure=ErrorSummary(type="ValueError"),
                 meta={},
             )
         )

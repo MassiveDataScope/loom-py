@@ -8,6 +8,10 @@ from __future__ import annotations
 
 from enum import StrEnum
 
+import msgspec
+
+from loom.core.errors.base import LoomError
+
 
 class LogField(StrEnum):
     """A field key of a log record."""
@@ -31,7 +35,6 @@ class LogField(StrEnum):
     CORRELATION_ID = "loom.correlation_id"
     DURATION_MS = "loom.duration_ms"
     STATUS = "loom.status"
-    ERROR_MESSAGE = "error.message"
     BOOTSTRAP_MODULE = "loom.bootstrap.module"
     OBSERVER = "loom.observer"
     EVENT_KIND = "loom.event_kind"
@@ -39,3 +42,26 @@ class LogField(StrEnum):
     EXCEPTION_TYPE = "exception.type"
     EXCEPTION_STACKTRACE = "exception.stacktrace"
     ERROR_CODE = "loom.error.code"
+
+
+class ErrorSummary(msgspec.Struct, frozen=True, kw_only=True):
+    """What a failure is, without its message: its type and, for a :class:`LoomError`, its code."""
+
+    type: str
+    code: str | None = None
+
+    @classmethod
+    def of(cls, exc: BaseException) -> ErrorSummary:
+        """Summarise *exc*."""
+        code = str(exc.code) if isinstance(exc, LoomError) else None
+        return cls(type=type(exc).__qualname__, code=code)
+
+    def describe(self) -> str:
+        """The type, followed by the code when there is one: ``DomainError (not_found)``."""
+        return self.type if self.code is None else f"{self.type} ({self.code})"
+
+    def fields(self) -> dict[str, str]:
+        """The record fields: ``exception.type`` and, with a code, ``loom.error.code``."""
+        if self.code is None:
+            return {LogField.EXCEPTION_TYPE: self.type}
+        return {LogField.EXCEPTION_TYPE: self.type, LogField.ERROR_CODE: self.code}

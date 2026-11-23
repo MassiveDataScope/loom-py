@@ -205,7 +205,7 @@ class RecordingRunObserver(LifecycleObserver):
             "id": event.id,
             "status": _run_status(event),
             "duration_ms": event.duration_ms,
-            "error": event.error,
+            "error": event.failure.describe() if event.failure else None,
             "meta": event.meta,
         }
         if event.scope is Scope.PIPELINE and event.kind is EventKind.START:
