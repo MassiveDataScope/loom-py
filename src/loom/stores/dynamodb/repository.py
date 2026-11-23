@@ -30,7 +30,7 @@ import msgspec
 from loom.core.concurrency import run_in_executor
 from loom.core.config import ConfigError
 from loom.core.connections.aws import aws_error_code
-from loom.core.errors import Conflict
+from loom.core.errors import Conflict, InternalError
 from loom.core.model.convert import to_struct
 from loom.core.model.introspection import (
     business_key_of,
@@ -360,7 +360,7 @@ class DynamoDBRepository(
         """Serialize a struct to a dict keyed by internal (snake_case) field names."""
         builtins = msgspec.to_builtins(data)
         if not isinstance(builtins, dict):
-            raise TypeError("Struct payload must serialize to a dict")
+            raise InternalError("Struct payload must serialize to a dict")
         encoded_to_internal: dict[str, str] = {
             field.encode_name: field.name for field in msgspec.structs.fields(type(data))
         }

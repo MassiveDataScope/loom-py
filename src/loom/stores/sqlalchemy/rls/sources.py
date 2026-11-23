@@ -13,6 +13,7 @@ import re
 from collections.abc import Callable, Mapping
 
 from loom.core.config import ConfigError
+from loom.core.errors import InvalidValue
 from loom.core.identity import current_identity
 
 ScopeSource = Callable[[], object | None]
@@ -24,7 +25,7 @@ _sources: dict[str, ScopeSource] = {}
 def register_scope_source(name: str, source: ScopeSource) -> None:
     """Publish ``request.<name>``; registering a name twice is an error."""
     if name in _sources:
-        raise ValueError(f"scope source {name!r} is already registered")
+        raise InvalidValue("scope source name is already registered")
     _sources[name] = source
 
 

@@ -14,7 +14,7 @@ import pytest
 from sqlalchemy import and_, bindparam, func, select, text
 
 from loom.core.command import Command
-from loom.core.errors import BoundaryValidationError
+from loom.core.errors import BoundaryValidationError, UnknownKey
 from loom.core.model import JSON, BaseModel, ColumnField, ColumnType, LoomStruct, String
 from loom.core.model.enums import Cardinality
 from loom.core.model.relation import RelationField
@@ -593,7 +593,7 @@ class TestLookupValues:
             cursor_codec=_CODEC,
         )
 
-        with pytest.raises(ValueError, match=f"Unknown field '{field}'"):
+        with pytest.raises(UnknownKey):
             await _lookup(repo, lookup, field, 1)
 
 

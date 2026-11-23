@@ -34,7 +34,7 @@ from pymongo.asynchronous.client_session import AsyncClientSession
 from pymongo.errors import BulkWriteError, DuplicateKeyError, PyMongoError
 from pymongo.results import DeleteResult, InsertManyResult, InsertOneResult
 
-from loom.core.errors import Conflict
+from loom.core.errors import Conflict, InternalError
 from loom.core.model.convert import to_struct
 from loom.core.model.introspection import (
     column_annotations,
@@ -648,7 +648,7 @@ class MongoRepository(
         """Serialize a struct to its column fields, keyed by internal name, in storage form."""
         builtins = msgspec.to_builtins(data, builtin_types=_NATIVE_TYPES)
         if not isinstance(builtins, dict):
-            raise TypeError("Struct payload must serialize to a dict")
+            raise InternalError("Struct payload must serialize to a dict")
         encoded_to_internal = {
             field.encode_name: field.name for field in msgspec.structs.fields(type(data))
         }

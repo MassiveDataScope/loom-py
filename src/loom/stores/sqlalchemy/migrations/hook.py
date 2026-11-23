@@ -18,6 +18,7 @@ from typing import TYPE_CHECKING, Any
 
 from alembic.operations import ops
 
+from loom.core.errors import InvalidValue
 from loom.core.model.introspection import declared_privileges, get_table_name, is_row_scoped
 from loom.core.model.privilege import Privilege
 from loom.core.model.scoped import ScopedTable
@@ -117,7 +118,7 @@ class _Rewriter:
     def _protect(self, table_name: str) -> ProtectScopedTableOp:
         scoped = self._scoped.get(table_name)
         if scoped is None:
-            raise ValueError(f"{table_name!r} is not a scoped table of this application")
+            raise InvalidValue("table_name is not a scoped table of this application")
         return ProtectScopedTableOp(
             table_name, scope_documents(scoped), privilege_names(scoped.privileges)
         )

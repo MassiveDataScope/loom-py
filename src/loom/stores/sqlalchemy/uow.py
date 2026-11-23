@@ -33,6 +33,7 @@ from sqlalchemy.exc import DBAPIError, InterfaceError, OperationalError
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from loom.core.concurrency import held_task
+from loom.core.errors import InvalidUse
 from loom.core.stores.uow.abc import UnitOfWork, UowEvent
 from loom.core.stores.uow.alone import EntersAlone
 from loom.core.stores.uow.coordinator import CommitUncertain, PhysicalStore
@@ -75,11 +76,11 @@ class SQLAlchemyUnitOfWork(EntersAlone):
         """Open a new ``AsyncSession``.
 
         Raises:
-            RuntimeError: If :meth:`begin` has already been called without
+            InvalidUse: If :meth:`begin` has already been called without
                 a matching :meth:`commit` or :meth:`rollback`.
         """
         if self._session is not None:
-            raise RuntimeError("SQLAlchemyUnitOfWork.begin() called twice without commit/rollback")
+            raise InvalidUse("SQLAlchemyUnitOfWork.begin() called twice without commit/rollback")
 
         self._session_cm = self._session_manager.session()
         self._session = await self._session_cm.__aenter__()
@@ -106,10 +107,10 @@ class SQLAlchemyUnitOfWork(EntersAlone):
         """Send pending changes to the database without committing them.
 
         Raises:
-            RuntimeError: If :meth:`begin` has not been called.
+            InvalidUse: If :meth:`begin` has not been called.
         """
         if self._session is None:
-            raise RuntimeError("SQLAlchemyUnitOfWork.flush() called before begin()")
+            raise InvalidUse("SQLAlchemyUnitOfWork.flush() called before begin()")
         await self._session.flush()
 
     async def commit(self) -> None:
@@ -118,7 +119,7 @@ class SQLAlchemyUnitOfWork(EntersAlone):
         The session stays open; closing it is the job of :meth:`close`.
 
         Raises:
-            RuntimeError: If :meth:`begin` has not been called.
+            InvalidUse: If :meth:`begin` has not been called.
             CommitUncertain: If the connection failed during ``COMMIT``
                 (``OperationalError``, ``InterfaceError``, an invalidated
                 connection, or an ``OSError`` such as a timeout): the commit
@@ -126,7 +127,7 @@ class SQLAlchemyUnitOfWork(EntersAlone):
                 so it never returns to the pool.
         """
         if self._session is None:
-            raise RuntimeError("SQLAlchemyUnitOfWork.commit() called before begin()")
+            raise InvalidUse("SQLAlchemyUnitOfWork.commit() called before begin()")
         try:
             await self._session.commit()
         except (DBAPIError, OSError) as exc:
@@ -151,10 +152,10 @@ class SQLAlchemyUnitOfWork(EntersAlone):
         The session stays open; closing it is the job of :meth:`close`.
 
         Raises:
-            RuntimeError: If :meth:`begin` has not been called.
+            InvalidUse: If :meth:`begin` has not been called.
         """
         if self._session is None:
-            raise RuntimeError("SQLAlchemyUnitOfWork.rollback() called before begin()")
+            raise InvalidUse("SQLAlchemyUnitOfWork.rollback() called before begin()")
         await self._session.rollback()
         _log.debug(UowEvent.ROLLBACK)
 

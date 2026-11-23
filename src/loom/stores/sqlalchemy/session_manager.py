@@ -17,6 +17,7 @@ from sqlalchemy.ext.asyncio import (
 from sqlalchemy.orm import Session
 from sqlalchemy.pool import Pool, QueuePool
 
+from loom.core.errors import InvalidValue
 from loom.core.identity import Acting
 from loom.core.model.redaction import reveal_for_driver
 from loom.core.stores.catalog import StoreKey
@@ -87,18 +88,16 @@ class SessionManager:
             **engine_kwargs: Additional keyword arguments forwarded to ``create_async_engine``.
 
         Raises:
-            ValueError: If ``session_settings`` is given and ``url`` is not a
+            InvalidValue: If ``session_settings`` is given and ``url`` is not a
                 Postgres URL, or the engine is configured with
                 ``isolation_level="AUTOCOMMIT"``.
         """
         if session_settings is not None:
             backend = make_url(url).get_backend_name()
             if backend != "postgresql":
-                raise ValueError(
-                    f"session_settings requires a postgresql URL, got backend {backend!r}"
-                )
+                raise InvalidValue("session_settings requires a postgresql URL")
             if _autocommit(engine_kwargs):
-                raise ValueError(
+                raise InvalidValue(
                     "session_settings is incompatible with isolation_level='AUTOCOMMIT'"
                 )
         engine_config: dict[str, object] = {

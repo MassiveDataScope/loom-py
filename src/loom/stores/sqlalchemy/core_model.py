@@ -25,6 +25,7 @@ from typing import TYPE_CHECKING, Any
 
 from sqlalchemy import Column, Select, Table, select
 
+from loom.core.errors import UnknownKey
 from loom.core.model.convert import to_struct
 from loom.core.model.enums import Cardinality
 from loom.core.projection.plan import ProjectionPlan, execute_projection_plan
@@ -134,9 +135,7 @@ class CoreModel:
     def _get_plan(self, profile: str) -> CoreProfilePlan:
         plan = self._profiles.get(profile)
         if plan is None:
-            raise KeyError(
-                f"Profile '{profile}' is not defined for {self._struct_cls.__name__}Core."
-            )
+            raise UnknownKey(f"profile is not defined for {self._struct_cls.__name__}Core.")
         return plan
 
     def select(self, profile: str = "default") -> Select:  # type: ignore[type-arg]

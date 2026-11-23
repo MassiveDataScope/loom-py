@@ -32,6 +32,7 @@ from pymongo.asynchronous.client_session import AsyncClientSession
 from pymongo.errors import PyMongoError
 
 from loom.core.concurrency import held_task
+from loom.core.errors import InvalidUse
 from loom.core.stores.catalog import StoreKey
 from loom.core.stores.uow.abc import UnitOfWork, UowEvent
 from loom.core.stores.uow.alone import EntersAlone
@@ -175,10 +176,10 @@ class MongoUnitOfWork(EntersAlone):
         leaks on a server that cannot open one.
 
         Raises:
-            RuntimeError: If called twice without a ``commit`` or ``rollback``.
+            InvalidUse: If called twice without a ``commit`` or ``rollback``.
         """
         if self._session is not None:
-            raise RuntimeError("MongoUnitOfWork.begin() called twice without commit/rollback")
+            raise InvalidUse("MongoUnitOfWork.begin() called twice without commit/rollback")
         session = self._client.start_session()
         try:
             await session.start_transaction()
@@ -192,7 +193,7 @@ class MongoUnitOfWork(EntersAlone):
         """Nothing to flush: every write already reached the server inside the transaction.
 
         Raises:
-            RuntimeError: If ``begin`` has not been called.
+            InvalidUse: If ``begin`` has not been called.
         """
         self._require_session("flush")
 
@@ -200,7 +201,7 @@ class MongoUnitOfWork(EntersAlone):
         """Commit the transaction.
 
         Raises:
-            RuntimeError: If ``begin`` has not been called.
+            InvalidUse: If ``begin`` has not been called.
             CommitUncertain: If the error carries the
                 ``UnknownTransactionCommitResult`` label: the commit may
                 have been applied.
@@ -223,7 +224,7 @@ class MongoUnitOfWork(EntersAlone):
         commit, as :meth:`__aexit__` never did.
 
         Raises:
-            RuntimeError: If ``begin`` has not been called.
+            InvalidUse: If ``begin`` has not been called.
         """
         session = self._require_session("rollback")
         if not session.in_transaction:
@@ -254,7 +255,7 @@ class MongoUnitOfWork(EntersAlone):
 
     def _require_session(self, operation: str) -> AsyncClientSession:
         if self._session is None:
-            raise RuntimeError(f"MongoUnitOfWork.{operation}() called before begin()")
+            raise InvalidUse(f"MongoUnitOfWork.{operation}() called before begin()")
         return self._session
 
 

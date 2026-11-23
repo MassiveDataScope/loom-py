@@ -17,6 +17,7 @@ from typing import Any, Final, get_args
 from sqlalchemy import Connection, Table, event, text
 
 from loom.core.config import ConfigError
+from loom.core.errors import InvalidValue
 from loom.core.model.field import Reach
 from loom.core.model.partition import PartitionRange
 from loom.core.model.privilege import Privilege
@@ -91,7 +92,7 @@ def scope_documents(scoped: ScopedTable) -> list[dict[str, Any]]:
     for scope in scoped.scopes:
         sql_identifier(scope.column)
         if scope.on not in get_args(Reach):
-            raise ValueError(
+            raise InvalidValue(
                 f"scope {scope.scope!r} has reach {scope.on!r}; expected one of {get_args(Reach)}"
             )
     return [
@@ -172,7 +173,7 @@ def table_parameters(schema: str, table: str) -> Parameters:
 def validate_timeout(value: str) -> str:
     """Accept a Postgres duration literal such as ``5s``, ``250ms`` or ``2min``."""
     if not _TIMEOUT.fullmatch(value):
-        raise ValueError(f"timeout must be a Postgres duration like '5s', got {value!r}")
+        raise InvalidValue("timeout must be a Postgres duration like '5s'")
     return value
 
 

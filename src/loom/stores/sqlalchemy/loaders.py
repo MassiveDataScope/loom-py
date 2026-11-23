@@ -15,6 +15,7 @@ from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.sql.selectable import FromClause
 
+from loom.core.errors import InternalError
 from loom.core.projection.loaders import (
     CountLoader,
     ExistsLoader,
@@ -143,13 +144,13 @@ def build_sql_loader(loader: Any, rel_step: Any) -> Any:
         when it is a custom loader.
 
     Raises:
-        ValueError: When *loader* is a registered descriptor with no SQL-path factory.
+        InternalError: When *loader* is a registered descriptor with no SQL-path factory.
     """
     factory = _find_sql_loader_factory(type(loader))
     if factory is not None:
         return factory(loader, rel_step.target_table, rel_step.fk_col)
     if is_projection_descriptor(loader):
-        raise ValueError(
+        raise InternalError(
             f"Projection descriptor {type(loader).__name__} has no SQL-path loader "
             "factory registered; add one to _SQL_LOADER_FACTORIES in "
             "loom.stores.sqlalchemy.loaders."

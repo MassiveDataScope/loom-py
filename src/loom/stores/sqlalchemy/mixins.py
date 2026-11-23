@@ -11,7 +11,7 @@ from sqlalchemy import update as sa_update
 from sqlalchemy.dialects import postgresql, sqlite
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from loom.core.errors import UnsupportedQuery
+from loom.core.errors import InternalError, InvalidUse, UnknownKey, UnsupportedQuery
 from loom.core.errors.codes import ErrorCode
 from loom.core.model.convert import to_column_value, to_struct
 from loom.core.model.introspection import (
@@ -79,7 +79,7 @@ class SQLAlchemyContextMixin(Generic[OutputT, IdT]):
         metadata = self.session_manager.metadata
         sa = get_compiled(self.model, metadata=metadata)
         if sa is None:
-            raise RuntimeError(
+            raise InvalidUse(
                 f"Model {self.model.__name__} has not been compiled. "
                 f"Call compile_model() or compile_all() before creating a repository."
             )
@@ -95,7 +95,7 @@ class SQLAlchemyContextMixin(Generic[OutputT, IdT]):
         self._relations_cache = get_relations(self.model)
         self._core_model = get_compiled_core(self.model, metadata=metadata)
         if self._core_model is None:
-            raise RuntimeError(
+            raise InvalidUse(
                 f"Model {self.model.__name__} core read artifact was not compiled. "
                 "Call compile_all() before creating a repository."
             )
@@ -129,7 +129,7 @@ class SQLAlchemyContextMixin(Generic[OutputT, IdT]):
     def _effective_core_model(self) -> Any:
         if self._core_model is not None:
             return self._core_model
-        raise RuntimeError("Core model metadata is not initialized")
+        raise InvalidUse("Core model metadata is not initialized")
 
     def create_object(self, data: msgspec.Struct) -> Any:
         """Create a model instance from a struct without persisting it."""
@@ -173,12 +173,12 @@ class SQLAlchemyContextMixin(Generic[OutputT, IdT]):
         what the caller sent. A mapping is returned unchanged.
 
         Raises:
-            TypeError: If a struct does not serialize to a mapping.
+            InternalError: If a struct does not serialize to a mapping.
         """
         if isinstance(data, msgspec.Struct):
             builtins = to_column_value(data)
             if not isinstance(builtins, dict):
-                raise TypeError("Struct payload must serialize to dict")
+                raise InternalError("Struct payload must serialize to dict")
             return self._checked_columns(_to_internal_field_names(type(data), builtins))
         return data
 
@@ -213,12 +213,12 @@ class SQLAlchemyContextMixin(Generic[OutputT, IdT]):
         """Resolve a model column attribute by field name.
 
         Raises:
-            ValueError: If ``field`` is not a mapped column of the SQLAlchemy
+            UnknownKey: If ``field`` is not a mapped column of the SQLAlchemy
                 model.
         """
         sa_model = self._effective_sa_model
         if field not in inspect(sa_model).column_attrs:
-            raise ValueError(f"Unknown field '{field}' for model '{self.model.__name__}'")
+            raise UnknownKey(f"field is not a mapped column of model '{self.model.__name__}'")
         return getattr(sa_model, field)
 
     def _apply_offset_page_filters(

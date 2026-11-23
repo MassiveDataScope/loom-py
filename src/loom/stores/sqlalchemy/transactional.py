@@ -16,6 +16,7 @@ from typing import (
 from loom.core.engine.post_commit import PostCommitChannel
 from loom.core.errors import (
     ForeignSessionError,
+    InvalidType,
     PostCommitError,
     StoresNotCommittedError,
     UndeclaredStoreWrite,
@@ -74,7 +75,7 @@ def transactional(
         The wrapped method.
 
     Raises:
-        TypeError: If applied to a repository method or the owner has no
+        InvalidType: If applied to a repository method or the owner has no
             ``session_manager`` with a ``session()`` context manager.
         ScopeOwnershipError: Inside a scope this task does not own (a
             ``gather`` child).
@@ -129,7 +130,7 @@ def _reject_repository_owner(owner: Any) -> None:
     from loom.stores.sqlalchemy.repository import SQLAlchemyRepository
 
     if isinstance(owner, SQLAlchemyRepository):
-        raise TypeError(
+        raise InvalidType(
             "@transactional is intended for service/orchestrator boundaries, "
             "not repository methods.",
         )
@@ -138,7 +139,7 @@ def _reject_repository_owner(owner: Any) -> None:
 def _require_session_manager(owner: Any) -> Any:
     session_manager = getattr(owner, "session_manager", None)
     if session_manager is None or not callable(getattr(session_manager, "session", None)):
-        raise TypeError(
+        raise InvalidType(
             f"{owner.__class__.__name__} must have a 'session_manager' attribute "
             f"with a .session() context manager to use @transactional.",
         )

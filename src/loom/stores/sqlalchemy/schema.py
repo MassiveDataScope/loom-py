@@ -45,6 +45,7 @@ from sqlalchemy.sql.naming import conv
 from sqlalchemy.sql.schema import DEFAULT_NAMING_CONVENTION
 
 from loom.core.config import ConfigError
+from loom.core.errors import InvalidType, InvalidValue
 from loom.core.model.audited import AuditedTable, AuditedTables, audited_table, is_audited
 from loom.core.model.enums import Cardinality, OnDelete, ServerDefault, ServerOnUpdate
 from loom.core.model.field import ColumnType, Field
@@ -176,15 +177,15 @@ def audited_tables(metadata: MetaData | None = None) -> AuditedTables:
 def _build_sa_column_type(col_type: ColumnType) -> Any:
     if col_type.type_name == "Postgres.ARRAY":
         if len(col_type.args) != 1:
-            raise ValueError("Postgres.ARRAY expects one inner ColumnType")
+            raise InvalidValue("Postgres.ARRAY expects one inner ColumnType")
         inner = col_type.args[0]
         if not isinstance(inner, ColumnType):
-            raise ValueError("Postgres.ARRAY inner type must be ColumnType")
+            raise InvalidType("Postgres.ARRAY inner type must be ColumnType")
         return PG_ARRAY(_build_sa_column_type(inner))
 
     sa_type_cls = _SA_TYPE_MAP.get(col_type.type_name)
     if sa_type_cls is None:
-        raise ValueError(f"Unsupported column type: {col_type.type_name}")
+        raise InvalidValue(f"Unsupported column type: {col_type.type_name}")
     return sa_type_cls(*col_type.args, **dict(col_type.kwargs))
 
 
@@ -341,7 +342,7 @@ def _refuse_undeclared_column_types(
     """
     for name, info in column_fields.items():
         if info.needs_declared_type:
-            raise ValueError(
+            raise InvalidValue(
                 f"{struct_cls.__name__}.{name}: no column type is inferred from a Decimal, "
                 "plain Enum or Literal annotation; declare it, e.g. "
                 "`Annotated[Decimal, Numeric(precision=12, scale=2)]` for a Decimal, "
@@ -359,7 +360,7 @@ def sa_table_for(struct_cls: type, name: str) -> Table:
     nowhere.
 
     Raises:
-        ValueError: If a ``Decimal``, plain enum or ``Literal`` field declares no
+        InvalidValue: If a ``Decimal``, plain enum or ``Literal`` field declares no
             column type.
     """
     column_fields = get_column_fields(struct_cls)
@@ -423,7 +424,7 @@ def _check_distinct_names(struct_cls: type, table: Table) -> None:
             continue
         name = str(item.name)
         if name in seen:
-            raise ValueError(
+            raise InvalidValue(
                 f"{struct_cls.__name__}: table {table.name} has two constraints named {name!r}; "
                 "name them apart, for FKs with fk_%(table_name)s_%(column_0_N_name)s"
             )
@@ -469,7 +470,7 @@ def _check_declared_name_lengths(struct_cls: type, constraints: list[Constraint 
         attr, rule = declared
         name = str(constraint.name)
         if len(name.encode()) > MAX_IDENTIFIER_LENGTH:
-            raise ValueError(
+            raise InvalidValue(
                 f"{struct_cls.__name__}: {attr} rule {rule!r} is named {name!r}, longer than "
                 f"the {MAX_IDENTIFIER_LENGTH} bytes Postgres keeps; shorten it"
             )
@@ -518,7 +519,7 @@ def _constraint_for_field(
     target = _target_model(target_table, models_by_table, comp)
     if target is None:
         if boundary is not None:
-            raise ValueError(
+            raise InvalidValue(
                 f"{get_table_name(struct_cls)}.{name} references {target_table}, which is "
                 "not compiled with it; compile both models together so C6, C7 and C9 apply"
             )
@@ -535,17 +536,17 @@ def _constraint_for_field(
 
 def _check_c7(struct_cls: type, target_table: str, target_boundary: ScopeColumn | None) -> None:
     if target_boundary is not None:
-        raise ValueError(
+        raise InvalidValue(
             f"C7: {struct_cls.__name__} is unscoped and cannot reference scoped {target_table}"
         )
 
 
 def _check_c9(struct_cls: type, action: OnDelete | None, target: type) -> None:
     if action is not None and action not in (OnDelete.RESTRICT, OnDelete.NO_ACTION):
-        raise ValueError(f"C9: {struct_cls.__name__} references a global table with {action}")
+        raise InvalidValue(f"C9: {struct_cls.__name__} references a global table with {action}")
     for group, privileges in declared_privileges(target).items():
         if privileges & {Privilege.UPDATE, Privilege.DELETE}:
-            raise ValueError(
+            raise InvalidValue(
                 f"C9: {struct_cls.__name__} references {target.__name__}, writable by group {group}"
             )
 
@@ -561,9 +562,9 @@ def _composite_fk(
 ) -> ForeignKeyConstraint:
     action = column_field.on_delete
     if action in (OnDelete.SET_NULL, OnDelete.SET_DEFAULT):
-        raise ValueError(f"C6: {struct_cls.__name__}.{column} cannot use {action}")
+        raise InvalidValue(f"C6: {struct_cls.__name__}.{column} cannot use {action}")
     if target_boundary.scope != boundary.scope:
-        raise ValueError(
+        raise InvalidValue(
             f"C6: {struct_cls.__name__}.{column} references a table scoped by "
             f"{target_boundary.scope!r}, not {boundary.scope!r}"
         )
@@ -583,7 +584,7 @@ def _check_c6_target_key(
     keys = [tuple(name for name, info in fields.items() if info.field.primary_key)]
     keys += list(declared_unique(target))
     if not any({target_boundary, ref} == set(key) for key in keys):
-        raise ValueError(
+        raise InvalidValue(
             f"C6: {struct_cls.__name__}.{column} needs a key on "
             f"({target_boundary}, {ref}) in {target.__name__}"
         )
@@ -996,7 +997,7 @@ def _refuse_composite_key_loads(struct_cls: type, plans: dict[str, CoreProfilePl
         return
     loads = _fields_loaded_by_key(plans)
     if loads:
-        raise ValueError(
+        raise InvalidValue(
             f"{struct_cls.__name__} has the composite primary key ({', '.join(key)}); the "
             f"backend loads {', '.join(loads)} by its first key column only, so drop "
             "them from the model and load them by hand"
@@ -1103,7 +1104,7 @@ def _resolve_descriptor_loader(
         ``(resolved_loader, prefer_memory)`` tuple.
 
     Raises:
-        ValueError: When no matching relation is found via compiled steps or type hints.
+        InvalidValue: When no matching relation is found via compiled steps or type hints.
     """
     from loom.core.projection.loaders import build_memory_loader, find_relation_name_for_loader
     from loom.stores.sqlalchemy.loaders import build_sql_loader
@@ -1112,7 +1113,7 @@ def _resolve_descriptor_loader(
     if rel_step is None:
         rel_name = find_relation_name_for_loader(loader, struct_cls)
         if rel_name is None:
-            raise ValueError(
+            raise InvalidValue(
                 f"Projection '{name}': no relation found for "
                 f"{type(loader).__name__}(model={loader.model.__name__}) "
                 f"on {struct_cls.__name__}. "
@@ -1149,7 +1150,7 @@ def _resolve_projection_steps(
         Mapping of field name to resolved :class:`ProjectionStep`.
 
     Raises:
-        ValueError: If a descriptor loader cannot be matched to a relation step.
+        InvalidValue: If a descriptor loader cannot be matched to a relation step.
     """
     from loom.core.projection.loaders import is_projection_descriptor
 

@@ -6,6 +6,7 @@ from typing import Any
 
 from loom.core.di.container import LoomContainer
 from loom.core.di.scope import Scope
+from loom.core.errors import InvalidType
 from loom.core.model import BaseModel
 from loom.core.stores.catalog import store_binding
 from loom.core.stores.repository import (
@@ -58,7 +59,7 @@ class SQLAlchemyDefaultRepositoryBuilder:
 
     def __call__(self, context: RepositoryBuildContext) -> Any:
         if not issubclass(context.model, BaseModel):
-            raise RuntimeError(
+            raise InvalidType(
                 f"SQLAlchemyDefaultRepositoryBuilder cannot build a repository "
                 f"for non-persistible type {context.model.__qualname__}"
             )
@@ -109,13 +110,13 @@ def build_sqlalchemy_repository_registration_module(
             return registration.builder(context)
         repository_type = registration.repository_type
         if not isinstance(repository_type, type):
-            raise RuntimeError(
+            raise InvalidType(
                 "Repository registration for "
                 f"{registration.model.__qualname__} must use a class type."
             )
         if issubclass(repository_type, SQLAlchemyRepository):
             if not issubclass(context.model, BaseModel):
-                raise RuntimeError(
+                raise InvalidType(
                     f"{repository_type.__qualname__} requires BaseModel-compatible registrations."
                 )
             return repository_type(

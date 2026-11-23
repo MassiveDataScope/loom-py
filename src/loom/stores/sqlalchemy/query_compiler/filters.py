@@ -8,6 +8,7 @@ from typing import Any
 from sqlalchemy import and_, or_
 from sqlalchemy.sql.expression import ClauseElement
 
+from loom.core.errors import InvalidValue
 from loom.core.stores.repository.query import FilterGroup, FilterOp, FilterSpec
 from loom.stores.sqlalchemy.query_compiler.errors import UnsafeFilterError
 from loom.stores.sqlalchemy.query_compiler.paths import resolve_column
@@ -86,12 +87,12 @@ def _apply_op(col: Any, op: FilterOp, value: Any) -> Any:
     are.
 
     Raises:
-        ValueError: If *op* is not a supported operator.
+        InvalidValue: If *op* is not a supported operator.
         BoundaryValidationError: ``query_validation``, for a refused ``time``.
     """
     handler = _SIMPLE_OPS.get(op)
     if handler is None:
-        raise ValueError(f"Unsupported FilterOp: {op!r}")
+        raise InvalidValue("op is not a supported FilterOp")
     if isinstance(value, ClauseElement):
         return handler(col, value)
     if op is not FilterOp.IN:
