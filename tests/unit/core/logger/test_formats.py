@@ -9,6 +9,7 @@ import pytest
 
 from loom.core.logger import LogField
 from loom.core.logger.formats import (
+    MAX_LIST_ITEMS,
     MAX_VALUE_LENGTH,
     TRUNCATION_MARKER,
     JsonFormatter,
@@ -146,10 +147,15 @@ class TestValueRendering:
 
         assert entry["field"] == value
 
+    def test_a_long_list_of_scalars_keeps_its_first_items(self) -> None:
+        entry, _ = _both(field=list(range(MAX_LIST_ITEMS + 5)))
+
+        assert entry["field"] == list(range(MAX_LIST_ITEMS))
+
     @pytest.mark.parametrize(
         ("value", "type_name"),
-        [(_Invoice(), "_Invoice"), ({"a": 1}, "dict"), ([[1]], "list"), (list(range(21)), "list")],
-        ids=["object", "mapping", "nested-list", "long-list"],
+        [(_Invoice(), "_Invoice"), ({"a": 1}, "dict"), ([[1]], "list")],
+        ids=["object", "mapping", "nested-list"],
     )
     def test_anything_else_is_written_as_its_type_name_never_its_repr(
         self, value: object, type_name: str
