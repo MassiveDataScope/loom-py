@@ -167,7 +167,8 @@ class TestAsyncCommitVisibility:
             )
 
         [message] = [record.getMessage() for record in caplog.records]
-        assert ("orders:3@91" in message, "REQUEST_TIMED_OUT" in message) == (True, True)
+        assert "orders:3@91" in message
+        assert "REQUEST_TIMED_OUT" in message
         assert "b1.internal" not in message
 
     def test_successful_async_commit_is_silent(

@@ -42,7 +42,6 @@ class TestSparkWriterToFrame:
             started_at=datetime.now(tz=UTC),
             status=RunStatus.SUCCESS,
             duration_ms=17,
-            error=None,
         )
 
         frame = writer.to_frame([record])
@@ -62,10 +61,9 @@ class TestSparkWriterToFrame:
             "started_at",
             "status",
             "duration_ms",
-            "error",
             "process_run_id",
             "error_type",
-            "error_message",
+            "error_code",
         ]
 
     def test_to_frame_rejects_empty_batch(self, tmp_path: Path) -> None:
@@ -85,7 +83,6 @@ class TestSparkWriterToFrame:
             started_at=datetime.now(tz=UTC),
             status=RunStatus.SUCCESS,
             duration_ms=17,
-            error=None,
         )
         pipeline = PipelineRunRecord(
             event=EventName.PIPELINE_END,
@@ -96,7 +93,6 @@ class TestSparkWriterToFrame:
             started_at=datetime.now(tz=UTC),
             status=RunStatus.SUCCESS,
             duration_ms=23,
-            error=None,
         )
         with pytest.raises(TypeError, match="homogeneous record types"):
             writer.to_frame([step, pipeline])

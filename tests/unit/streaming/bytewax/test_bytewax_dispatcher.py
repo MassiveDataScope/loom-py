@@ -100,9 +100,7 @@ class RecordingNodeEventObserver:
                 )
             )
         elif event.scope is Scope.NODE and event.kind is EventKind.ERROR:
-            # ``error_type`` is a structured meta field now; the error text is
-            # ``str(exc)``, which no longer starts with the exception class.
-            error_type = str(event.meta.get("error_type", "Exception"))
+            error_type = event.failure.type if event.failure is not None else None
             node_idx = cast(int, event.meta.get("node_idx", 0))
             self.events.append(
                 (
