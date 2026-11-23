@@ -18,7 +18,6 @@ from loom.etl.engines._path_template import resolve_file_uri
 from loom.etl.engines._predicate import predicate_to_sql
 from loom.etl.engines.spark._dtype import loom_type_to_spark
 from loom.etl.ports.contracts import SourceReader
-from loom.etl.runner.errors import UnsupportedFormatError
 from loom.etl.schema._schema import ColumnSchema
 from loom.etl.storage._file_locator import FileLocator
 from loom.etl.storage._locator import TableLocator, _as_locator
@@ -124,7 +123,6 @@ class SparkSourceReader(SourceReader):
             Format.CSV: self._read_csv_file,
             Format.JSON: self._read_json_file,
             Format.PARQUET: self._read_parquet_file,
-            Format.XLSX: self._read_xlsx_file,
         }
         reader = resolve_format_handler(format, readers)
         return reader(path, options)
@@ -157,10 +155,6 @@ class SparkSourceReader(SourceReader):
 
     def _read_parquet_file(self, path: str, _options: Any) -> DataFrame:
         return self._spark.read.parquet(path)
-
-    def _read_xlsx_file(self, path: str, _options: Any) -> DataFrame:
-        _ = path
-        raise UnsupportedFormatError(Format.XLSX, (Format.CSV, Format.JSON, Format.PARQUET))
 
     def _apply_source_schema(self, df: DataFrame, schema: tuple[ColumnSchema, ...]) -> DataFrame:
         """Cast declared columns to their LoomDtype equivalents."""

@@ -350,3 +350,15 @@ class TestProfileEntryPoints:
 
         with pytest.raises(msgspec.ValidationError):
             ETLRunner.from_dict(raw)
+
+
+class TestMessagesOmitTheReceivedValue:
+    def test_unknown_profile_error_does_not_echo_the_profile_name(self) -> None:
+        raw = _with_profiles(
+            tables={"orders": {"path": {"uri": "/lake/orders", "profile": "secret_name"}}}
+        )
+
+        with pytest.raises(ConfigError, match="is not defined in storage.profiles") as excinfo:
+            normalise_storage_section(raw)
+
+        assert "secret_name" not in str(excinfo.value)

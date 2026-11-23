@@ -305,3 +305,11 @@ class TestETLStepIntegration:
             orders = FromDynamoDB("orders")
 
         assert "orders" in OrderSources._sources
+
+
+class TestMessagesOmitTheReceivedValue:
+    def test_batch_size_error_does_not_echo_the_value(self) -> None:
+        with pytest.raises(ValueError, match="between 1 and 10000") as excinfo:
+            FromDynamoDB("orders").batch_size(54321)
+
+        assert "54321" not in str(excinfo.value)

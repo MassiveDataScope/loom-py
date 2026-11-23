@@ -111,8 +111,10 @@ def resolve_file_uri(
                          (``"FromFile"`` / ``"IntoFile"``).
 
     Raises:
-        ConfigError: When the alias has no configured locator, or template
-            resolution fails (see :func:`resolve_path_template`).
+        ConfigError: When the alias has no configured locator.
+        UnknownKey: When the alias is not registered in the locator.
+        InvalidValue: When template resolution fails (see
+            :func:`resolve_path_template`).
     """
     if is_alias:
         if locator is None:
