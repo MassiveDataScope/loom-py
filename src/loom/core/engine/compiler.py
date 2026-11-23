@@ -23,7 +23,7 @@ from loom.core.engine.plan import (
 from loom.core.errors import UnsupportedBoundaryType
 from loom.core.execution import ExecutionBinding
 from loom.core.job.job import Job
-from loom.core.logger import LogEvent, LogField
+from loom.core.logger import LogEvent, LogField, LogKey
 from loom.core.model import BaseModel, loom_type
 from loom.core.model.introspection import resolve_type_hints
 from loom.core.stores.catalog import StoreKey, store_of
@@ -61,6 +61,15 @@ class CompilerEvent(LogEvent):
     """What the compiler logs."""
 
     USE_CASE_COMPILED = "compiler.use_case_compiled"
+
+
+class CompilerKey(LogKey):
+    """The fields of a compiler record."""
+
+    DETECTED = "loom.compiler.detected"
+    COMPUTES = "loom.compiler.computes"
+    RULES = "loom.compiler.rules"
+    STEPS = "loom.compiler.steps"
 
 
 class CompilationError(Exception):
@@ -172,10 +181,10 @@ class UseCaseCompiler:
             CompilerEvent.USE_CASE_COMPILED,
             extra={
                 LogField.USE_CASE: uc_name,
-                "detected": bindings.detected,
-                "computes": len(compute_steps),
-                "rules": len(rule_steps),
-                "steps": total,
+                CompilerKey.DETECTED: bindings.detected,
+                CompilerKey.COMPUTES: len(compute_steps),
+                CompilerKey.RULES: len(rule_steps),
+                CompilerKey.STEPS: total,
             },
         )
         self._execution_observer.on_event(

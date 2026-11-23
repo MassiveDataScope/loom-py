@@ -8,7 +8,7 @@ import math
 from datetime import UTC, datetime
 from typing import Final
 
-from loom.core.logger.field import LogField
+from loom.core.log_names import LogField, SubKey
 from loom.core.model.redaction import MASK, Dsn, RedactedMap, Secret
 
 _STANDARD_ATTRIBUTES: Final = frozenset(logging.makeLogRecord({}).__dict__) | {"message", "asctime"}
@@ -38,9 +38,12 @@ EXTRA_PREFIX: Final = "loom.extra."
 
 
 def record_fields(record: logging.LogRecord) -> dict[str, object]:
-    """The fields of *record*: what was passed as ``extra`` and what a filter stamped."""
+    """The fields of *record*: what was passed as ``extra`` and what a filter stamped.
+
+    A key is a plain string, except a :class:`~loom.core.log_names.SubKey`, which stays one.
+    """
     return {
-        str(key): value
+        (key if isinstance(key, SubKey) else str(key)): value
         for key, value in record.__dict__.items()
         if key not in _STANDARD_ATTRIBUTES and not key.startswith("_")
     }
@@ -65,6 +68,24 @@ def _scalar(value: object) -> object:
     return value
 
 
+_OPAQUE: Final = object()
+
+
+def _rendered_or_opaque(value: object) -> object:
+    if value is None or isinstance(value, bool | int | float | str | Secret | RedactedMap | Dsn):
+        return _scalar(value)
+    if isinstance(value, list | tuple) and len(value) <= MAX_LIST_ITEMS:
+        items = [_scalar(item) for item in value]
+        if all(item is None or isinstance(item, bool | int | float | str) for item in items):
+            return items
+    return _OPAQUE
+
+
+def is_opaque(value: object) -> bool:
+    """Whether :func:`render_value` can only write *value* as its type name."""
+    return _rendered_or_opaque(value) is _OPAQUE
+
+
 def render_value(value: object) -> object:
     """What a formatter writes for a field *value*.
 
@@ -72,13 +93,8 @@ def render_value(value: object) -> object:
     short list of scalars is written as a list; a ``Secret`` is masked; any
     other object is written as its type name, never its ``repr``.
     """
-    if value is None or isinstance(value, bool | int | float | str | Secret | RedactedMap | Dsn):
-        return _scalar(value)
-    if isinstance(value, list | tuple) and len(value) <= MAX_LIST_ITEMS:
-        items = [_scalar(item) for item in value]
-        if all(item is None or isinstance(item, bool | int | float | str) for item in items):
-            return items
-    return type(value).__name__
+    rendered = _rendered_or_opaque(value)
+    return type(value).__name__ if rendered is _OPAQUE else rendered
 
 
 def _rendered_fields(record: logging.LogRecord) -> dict[str, object]:

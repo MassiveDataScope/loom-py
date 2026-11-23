@@ -130,7 +130,7 @@ class TestLogLifecycleObserver:
                 id="pipeline-start",
             ),
             pytest.param(
-                LifecycleEvent(scope=Scope.USE_CASE, name="x", kind=EventKind.END, duration_ms=1),
+                LifecycleEvent(scope=Scope.USE_CASE, name="x", kind=EventKind.END, duration_ms=1.0),
                 "INFO",
                 "observability.lifecycle_ended",
                 id="end",

@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import logging
 
-from loom.core.logger import LogEvent, LogField
+from loom.core.logger import LogEvent, LogField, LogKey
 from loom.core.observability.event import EventKind, LifecycleEvent, Scope
 
 _log = logging.getLogger(__name__)
@@ -18,12 +18,17 @@ class LifecycleLog(LogEvent):
     FAILED = "observability.lifecycle_failed"
 
 
+class LifecycleKey(LogKey):
+    """The bag a lifecycle record writes the event's ``meta`` into."""
+
+    META = "loom.meta"
+
+
 _EVENTS = {
     EventKind.START: LifecycleLog.STARTED,
     EventKind.END: LifecycleLog.ENDED,
     EventKind.ERROR: LifecycleLog.FAILED,
 }
-_META_PREFIX = "loom.meta."
 
 
 class LogLifecycleObserver:
@@ -63,7 +68,7 @@ class LogLifecycleObserver:
             fields[LogField.STATUS] = event.status.value
         if event.failure is not None:
             fields |= event.failure.fields()
-        fields |= {f"{_META_PREFIX}{key}": value for key, value in event.meta.items()}
+        fields |= {LifecycleKey.META.of(key): value for key, value in event.meta.items()}
         _log.log(level, _EVENTS[event.kind], extra=fields)
 
 
