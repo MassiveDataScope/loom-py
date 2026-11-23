@@ -13,6 +13,7 @@ from __future__ import annotations
 from dataclasses import dataclass
 from typing import Protocol, runtime_checkable
 
+from loom.core.errors import InvalidUse, UnknownKey
 from loom.core.model.redaction import reveal_for_driver
 from loom.etl.declarative.expr._refs import TableRef
 from loom.etl.ports.contracts import TableDiscovery
@@ -114,7 +115,7 @@ class _MissingRouteResolver:
     """Resolver that always fails for unconfigured logical refs."""
 
     def resolve(self, logical_ref: TableRef) -> ResolvedTarget:
-        raise KeyError(
+        raise UnknownKey(
             f"No storage route configured for logical table {logical_ref.ref!r}. "
             "Define storage.defaults.table_path or add an explicit storage.tables entry."
         )
@@ -181,7 +182,7 @@ class RoutedCatalog:
 
     def _require_path_catalog(self, ref: TableRef) -> None:
         if self._path is None:
-            raise RuntimeError(
+            raise InvalidUse(
                 f"Table {ref.ref!r} resolved to path mode but no path catalog is configured."
             )
 

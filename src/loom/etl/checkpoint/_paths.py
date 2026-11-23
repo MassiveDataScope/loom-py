@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+from loom.core.errors import InternalError
 from loom.etl.checkpoint._cleaners import _join_path
 from loom.etl.checkpoint._scope import CheckpointScope
 
@@ -35,11 +36,11 @@ def scope_base(
         Base directory where checkpoint artifacts for this scope are stored.
 
     Raises:
-        RuntimeError: If ``scope`` is CORRELATION and ``correlation_id`` is missing.
+        InternalError: If ``scope`` is CORRELATION and ``correlation_id`` is missing.
     """
     if scope is CheckpointScope.CORRELATION:
         if correlation_id is None:
-            raise RuntimeError(
+            raise InternalError(
                 "scope_base called with scope=CORRELATION but correlation_id=None. "
                 "This is a framework bug — please report it."
             )

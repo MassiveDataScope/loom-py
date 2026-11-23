@@ -5,6 +5,7 @@ from __future__ import annotations
 from functools import singledispatch
 from typing import Any, Protocol, TypeVar
 
+from loom.core.errors import InvalidType
 from loom.etl.declarative.expr._params import ParamExpr, resolve_param_expr
 from loom.etl.declarative.expr._predicate import (
     AndPred,
@@ -59,7 +60,7 @@ def fold_predicate(node: PredicateNode, params_instance: Any, dialect: Predicate
 
 @singledispatch
 def _fold(node: object, params_instance: Any, dialect: PredicateDialect[T]) -> T:
-    raise TypeError(f"fold_predicate: unsupported node type {type(node)!r}")
+    raise InvalidType(f"fold_predicate: unsupported node type {type(node)!r}")
 
 
 def _term(value: Any, params_instance: Any, dialect: PredicateDialect[T]) -> T:
@@ -91,7 +92,7 @@ def _binary(
         return dialect.lt(lhs, rhs)
     if op == "le":
         return dialect.le(lhs, rhs)
-    raise TypeError(f"fold_predicate: unsupported binary operator {op!r}")
+    raise InvalidType("fold_predicate: unsupported binary operator")
 
 
 @_fold.register(EqPred)

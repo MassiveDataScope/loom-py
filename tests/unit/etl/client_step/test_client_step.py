@@ -8,6 +8,7 @@ from unittest.mock import MagicMock
 
 import pytest
 
+from loom.core.errors import InternalError, InvalidUse
 from loom.core.model.redaction import Dsn
 from loom.etl import ETLParams, ETLPipeline, ETLProcess
 from loom.etl.compiler import ETLCompiler
@@ -241,7 +242,7 @@ class TestClientStepExecution:
         plan = ETLCompiler().compile_step(_ConcreteClientStep)
 
         params = SimpleParams(value=1)
-        with pytest.raises(TypeError, match="ClientCommandExecutor"):
+        with pytest.raises(InvalidUse, match="ClientCommandExecutor"):
             executor.run_step(plan, params)
 
     def test_from_config_runner_runs_client_step_without_missing_executor_error(
@@ -303,7 +304,7 @@ class TestClickHouseClientExecutor:
 
     def test_no_url_and_no_client_raises_on_command(self) -> None:
         executor = ClickHouseClientExecutor()
-        with pytest.raises(ValueError, match="url.*client"):
+        with pytest.raises(InvalidUse, match="url.*client"):
             executor.command(lambda _: None)
 
     def test_implements_client_command_executor_protocol(self) -> None:
@@ -336,5 +337,5 @@ class TestClientSpecWriteGuards:
 
         spec = ClientSpec()
         params = SimpleParams(value=1)
-        with pytest.raises(TypeError, match="ClientSpec"):
+        with pytest.raises(InternalError, match="ClientSpec"):
             writer.write(object(), spec, params)

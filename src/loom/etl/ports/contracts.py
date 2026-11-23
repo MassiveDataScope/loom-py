@@ -130,7 +130,7 @@ class StreamingSourceReader(Protocol):
             ``collect(engine="streaming")`` consumes the source incrementally.
 
         Raises:
-            TypeError: When the underlying client cannot stream this spec.
+            InvalidType: When the underlying client cannot stream this spec.
         """
         ...
 
@@ -212,7 +212,7 @@ class ClientCommandExecutor(Protocol):
                 and the current params.
 
         Raises:
-            RuntimeError: When the underlying client cannot be obtained.
+            InvalidUse: When the underlying client cannot be obtained.
         """
         ...
 

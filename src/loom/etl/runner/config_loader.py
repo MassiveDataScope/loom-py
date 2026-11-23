@@ -57,7 +57,7 @@ def _load_yaml(
             the ``storage:`` key is absent, a keyed collection holds a
             duplicate key or mixes list and mapping forms, or the config
             shape is invalid, including a profile with an unknown field.
-        ValueError: When a mapping entry carries a ``name`` different from
+        ConfigError: When a mapping entry carries a ``name`` different from
             its key, a ``path.profile`` is not declared in ``storage.profiles``,
             or a profile carries ``uri``.
     """
@@ -127,7 +127,7 @@ def _parse_sections(ctx: ConfigContext) -> tuple[StorageConfig, ETLObservability
     Raises:
         loom.core.config.ConfigError: When the ``storage:`` key is absent or
             a section shape, ``aws:`` included, is invalid.
-        ValueError: When a keyed entry or a ``path.profile`` is invalid.
+        ConfigError: When a keyed entry or a ``path.profile`` is invalid.
     """
     raw = ctx.section(ConfigKey.STORAGE, dict)
     dynamodb = raw.get("dynamodb")

@@ -22,6 +22,7 @@ from __future__ import annotations
 
 from typing import Any
 
+from loom.core.errors import InvalidValue
 from loom.core.routing import LogicalRef
 from loom.core.schema import SchemaMode
 from loom.etl.checkpoint import CheckpointScope
@@ -178,14 +179,16 @@ class IntoTable:
             New ``IntoTable`` with REPLACE_PARTITIONS mode.
 
         Raises:
-            ValueError: If no column names are provided.
+            InvalidValue: If no column names are provided.
 
         Example::
 
             target = IntoTable("staging.orders").replace_partitions("year", "month")
         """
         if not cols:
-            raise ValueError("replace_partitions: at least one partition column name is required.")
+            raise InvalidValue(
+                "replace_partitions: at least one partition column name is required."
+            )
         return self._with(
             ReplacePartitionsSpec(
                 table_ref=self._ref,
@@ -219,14 +222,14 @@ class IntoTable:
             New ``IntoTable`` with REPLACE_PARTITIONS mode.
 
         Raises:
-            ValueError: If no column names are provided.
+            InvalidValue: If no column names are provided.
 
         Example::
 
             target = IntoTable("mg.fact_family_matriculation").replace_matching("day")
         """
         if not cols:
-            raise ValueError("replace_matching: at least one column name is required.")
+            raise InvalidValue("replace_matching: at least one column name is required.")
         return self.replace_partitions(*cols, schema=schema, streaming=streaming)
 
     def replace_physical_partitions(
@@ -253,7 +256,7 @@ class IntoTable:
             New ``IntoTable`` with REPLACE_PARTITIONS mode (physical check on).
 
         Raises:
-            ValueError: If no column names are provided.
+            InvalidValue: If no column names are provided.
 
         Example::
 
@@ -262,7 +265,7 @@ class IntoTable:
             )
         """
         if not cols:
-            raise ValueError(
+            raise InvalidValue(
                 "replace_physical_partitions: at least one partition column name is required."
             )
         return self._with(
@@ -303,7 +306,7 @@ class IntoTable:
             New ``IntoTable`` with REPLACE_WHERE mode.
 
         Raises:
-            ValueError: If no column=value pairs are provided.
+            InvalidValue: If no column=value pairs are provided.
 
         Example::
 
@@ -313,7 +316,7 @@ class IntoTable:
             )
         """
         if not partition:
-            raise ValueError("replace_partition: at least one column=value pair is required.")
+            raise InvalidValue("replace_partition: at least one column=value pair is required.")
         predicate = _build_eq_predicate(partition)
         return self._with(
             ReplaceWhereSpec(

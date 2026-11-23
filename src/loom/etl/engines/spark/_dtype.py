@@ -7,6 +7,7 @@ from __future__ import annotations
 
 from pyspark.sql import types as T
 
+from loom.core.errors import InvalidType
 from loom.etl.schema._schema import (
     ArrayType,
     DatetimeType,
@@ -102,7 +103,7 @@ def loom_type_to_spark(lt: LoomType) -> T.DataType:
         Concrete PySpark DataType instance.
 
     Raises:
-        TypeError: When *lt* is not a recognized :data:`~loom.etl._schema.LoomType`.
+        InvalidType: When *lt* is not a recognized :data:`~loom.etl._schema.LoomType`.
     """
     if isinstance(lt, LoomDtype):
         return loom_to_spark(lt)
@@ -118,4 +119,4 @@ def loom_type_to_spark(lt: LoomType) -> T.DataType:
         return T.TimestampType()
     if isinstance(lt, DurationType):
         return T.LongType()
-    raise TypeError(f"No Spark mapping for LoomType {type(lt).__name__!r}")
+    raise InvalidType(f"No Spark mapping for LoomType {type(lt).__name__!r}")

@@ -8,6 +8,8 @@ import logging
 from collections.abc import Callable, Iterable
 from typing import TYPE_CHECKING, Any
 
+from loom.core.errors import InvalidType, InvalidUse
+
 if TYPE_CHECKING:
     from loom.etl.io.sources._clickhouse import ClickHouseSourceReader
     from loom.etl.io.sources._dynamodb import DynamoDBSourceReader
@@ -196,7 +198,7 @@ class PolarsSourceReader(SourceReader):
             return self._read_clickhouse(spec, params_instance)
         if isinstance(spec, DynamoDBSourceSpec):
             return self._read_dynamodb(spec, params_instance)
-        raise TypeError(
+        raise InvalidType(
             f"PolarsSourceReader does not support source kind {spec.kind!r}. "
             "TEMP sources are handled by CheckpointStore."
         )
@@ -217,19 +219,19 @@ class PolarsSourceReader(SourceReader):
             Lazy frame whose ``collect(engine="streaming")`` is memory-bounded.
 
         Raises:
-            TypeError: When *spec* is not a ClickHouse spec, or the matching
+            InvalidType: When *spec* is not a ClickHouse spec, or the matching
                 sub-reader was not configured at construction time.
         """
         if isinstance(spec, ClickHouseSourceSpec):
             return self._read_clickhouse_streaming(spec, params_instance)
-        raise TypeError(
+        raise InvalidType(
             f"PolarsSourceReader does not support streaming for source kind "
             f"{spec.kind!r}. Streaming is only available for ClickHouse sources."
         )
 
     def _read_mongo(self, spec: MongoSourceSpec, params_instance: Any) -> pl.LazyFrame:
         if self._mongo_reader is None:
-            raise TypeError(
+            raise InvalidUse(
                 "MongoSourceSpec requires a MongoSourceReader injected at construction time. "
                 "Set mongo_reader= when constructing PolarsSourceReader."
             )
@@ -238,7 +240,7 @@ class PolarsSourceReader(SourceReader):
 
     def _read_dynamodb(self, spec: DynamoDBSourceSpec, params_instance: Any) -> pl.LazyFrame:
         if self._dynamodb_reader is None:
-            raise TypeError(
+            raise InvalidUse(
                 "DynamoDBSourceSpec requires a DynamoDBSourceReader injected at "
                 "construction time. "
                 "Set dynamodb_reader= when constructing PolarsSourceReader."
@@ -252,7 +254,7 @@ class PolarsSourceReader(SourceReader):
         params_instance: Any,
     ) -> pl.LazyFrame:
         if self._clickhouse_reader is None:
-            raise TypeError(
+            raise InvalidUse(
                 "ClickHouseSourceSpec requires a ClickHouseSourceReader "
                 "injected at construction time. "
                 "Set clickhouse_reader= when constructing PolarsSourceReader."
@@ -266,7 +268,7 @@ class PolarsSourceReader(SourceReader):
         params_instance: Any,
     ) -> pl.LazyFrame:
         if self._clickhouse_reader is None:
-            raise TypeError(
+            raise InvalidUse(
                 "ClickHouseSourceSpec requires a ClickHouseSourceReader "
                 "injected at construction time. "
                 "Set clickhouse_reader= when constructing PolarsSourceReader."
@@ -282,7 +284,7 @@ class PolarsSourceReader(SourceReader):
         """Read Delta table."""
         target = self._resolver.resolve(spec.table_ref)
         if not isinstance(target, PathTarget):
-            raise TypeError(
+            raise InvalidType(
                 "PolarsSourceReader requires path routing; "
                 f"got {type(target).__name__} for {spec.table_ref.ref!r}."
             )

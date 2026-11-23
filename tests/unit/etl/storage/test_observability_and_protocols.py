@@ -4,6 +4,7 @@ from __future__ import annotations
 
 from typing import Any
 
+from loom.core.config import ConfigError
 from loom.core.config.convert import convert_config
 from loom.core.model.redaction import Dsn
 from loom.etl.declarative.expr._refs import TableRef
@@ -56,17 +57,17 @@ class TestObservabilityConfig:
 
         try:
             LineageConfig(enabled=True).validate()
-        except ValueError as exc:
+        except ConfigError as exc:
             assert "exactly one destination" in str(exc)
         else:  # pragma: no cover - defensive branch
-            raise AssertionError("Expected ValueError for empty destination")
+            raise AssertionError("Expected ConfigError for empty destination")
 
         try:
             LineageConfig(enabled=True, root=Dsn("s3://lake/runs"), database="ops").validate()
-        except ValueError as exc:
+        except ConfigError as exc:
             assert "exactly one destination" in str(exc)
         else:  # pragma: no cover - defensive branch
-            raise AssertionError("Expected ValueError for conflicting destinations")
+            raise AssertionError("Expected ConfigError for conflicting destinations")
 
     def test_protocol_method_bodies_are_callable(self) -> None:
         src_spec = TableSourceSpec(alias="orders", table_ref=TableRef("raw.orders"))

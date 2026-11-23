@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+from loom.core.errors import InvalidType
 from loom.etl.declarative.expr._refs import TableRef
 from loom.etl.lineage._records import LineageRecord, get_lineage_table_name
 from loom.etl.lineage.sinks._protocol import LineageWriter
@@ -19,7 +20,7 @@ class TableLineageStore:
         try:
             table_name = get_lineage_table_name(type(record))
         except KeyError as exc:
-            raise TypeError(
+            raise InvalidType(
                 f"TableLineageStore: unrecognised record type {type(record)!r}"
             ) from exc
         self._writer.write_record(record, _table_ref(self._database, table_name))

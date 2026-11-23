@@ -11,6 +11,7 @@ from deltalake import CommitProperties, DeltaTable, WriterProperties, write_delt
 from deltalake.exceptions import TableNotFoundError
 from deltalake.table import TableMerger
 
+from loom.core.errors import InvalidType, InvalidValue
 from loom.etl.declarative.target import SchemaMode, UpsertDeleteFlagError
 from loom.etl.declarative.target._file import FileSpec
 from loom.etl.declarative.target._history import HistorifySpec
@@ -224,11 +225,11 @@ def _require_path_target(target: ResolvedTarget) -> PathTarget:
     """Narrow a resolved target to the path target Polars writes to.
 
     Raises:
-        TypeError: When the target resolved to a catalog table.
+        InvalidType: When the target resolved to a catalog table.
     """
     if isinstance(target, PathTarget):
         return target
-    raise TypeError(
+    raise InvalidType(
         "PolarsTargetWriter requires path-resolved targets. "
         "Configure routing so catalog refs resolve to PathTarget "
         "(e.g. uc://catalog.schema.table)."
@@ -303,11 +304,11 @@ class PolarsTargetWriter(_WritePolicy[pl.LazyFrame, pl.DataFrame, PolarsPhysical
     def to_frame(self, records: Sequence[LineageRecord], /) -> pl.LazyFrame:
         """Convert lineage records into a Polars LazyFrame."""
         if not records:
-            raise ValueError("PolarsTargetWriter.to_frame requires at least one record.")
+            raise InvalidValue("PolarsTargetWriter.to_frame requires at least one record.")
         first = records[0]
         record_type = type(first)
         if any(type(record) is not record_type for record in records):
-            raise TypeError(
+            raise InvalidType(
                 "PolarsTargetWriter.to_frame requires homogeneous record types per batch."
             )
         rows = [record.to_row() for record in records]
@@ -383,18 +384,11 @@ class PolarsTargetWriter(_WritePolicy[pl.LazyFrame, pl.DataFrame, PolarsPhysical
                 return
             null_rows = [r for r in partition_rows if any(v is None for v in r.values())]
             if null_rows:
-                sample = null_rows[:5]
-                more = (
-                    f" (+{len(null_rows) - len(sample)} more)"
-                    if len(null_rows) > len(sample)
-                    else ""
-                )
-                raise ValueError(
+                raise InvalidValue(
                     f"replace_partitions: null values in partition columns "
-                    f"{spec.partition_cols} for table {path_target}. Null partition "
+                    f"{spec.partition_cols}. Null partition "
                     f"values cannot be used as a replace predicate. Ensure all "
-                    f"partition columns are non-null before writing. "
-                    f"Offending rows: {sample}{more}"
+                    f"partition columns are non-null before writing."
                 )
             predicate = _build_partition_predicate(iter(partition_rows), spec.partition_cols)
             _log.info(
@@ -443,10 +437,9 @@ class PolarsTargetWriter(_WritePolicy[pl.LazyFrame, pl.DataFrame, PolarsPhysical
                         extra={"table": location.uri, "missing": list(missing)},
                     )
                     return
-                raise ValueError(
+                raise InvalidValue(
                     f"_create: partition columns not found in frame schema: "
-                    f"{list(missing)}. Frame columns: {frame.columns}. Cannot "
-                    f"create partitioned Delta table at {location.uri!r}."
+                    f"{list(missing)}. Cannot create a partitioned Delta table."
                 )
         if location.uri.lower().startswith("uc://"):
             _log.warning(
@@ -544,11 +537,10 @@ class PolarsTargetWriter(_WritePolicy[pl.LazyFrame, pl.DataFrame, PolarsPhysical
         )
         null_rows = [r for r in partition_rows if any(v is None for v in r.values())]
         if null_rows:
-            raise ValueError(
-                f"replace_partitions: null values in partition columns {partition_cols} for "
-                f"table {path_target}. Null partition values cannot be used as a replace "
-                f"predicate. Ensure all partition columns are non-null before writing. "
-                f"Offending rows: {null_rows}"
+            raise InvalidValue(
+                f"replace_partitions: null values in partition columns {partition_cols}. "
+                "Null partition values cannot be used as a replace predicate. "
+                "Ensure all partition columns are non-null before writing."
             )
         predicate = _build_partition_predicate(
             iter(partition_rows),

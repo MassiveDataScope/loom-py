@@ -7,6 +7,7 @@ import time
 from dataclasses import dataclass, field
 from typing import TYPE_CHECKING, Any, Literal
 
+from loom.core.config import ConfigError
 from loom.core.errors.summary import ErrorSummary
 
 if TYPE_CHECKING:
@@ -107,7 +108,7 @@ class MaintenanceRunner:
         the Polars ETL backend — no private helpers crossed.
 
         Raises:
-            ValueError: If *config* has no path routes configured
+            ConfigError: If *config* has no path routes configured
                 (only catalog/UC refs, which delta-rs cannot resolve directly).
         """
         from loom.etl.maintenance.backends._delta_rs import DeltaRsMaintainer  # noqa: PLC0415
@@ -171,7 +172,7 @@ class MaintenanceRunner:
         )
 
         if compact_spec is not None and z_order_spec is not None:
-            raise ValueError(
+            raise ConfigError(
                 "StorageConfig.maintenance: compact and z_order_by are mutually exclusive"
             )
 

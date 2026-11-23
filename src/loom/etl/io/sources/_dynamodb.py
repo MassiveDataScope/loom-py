@@ -13,6 +13,7 @@ from typing import Any
 
 import polars as pl
 
+from loom.core.errors import InvalidUse
 from loom.core.errors.summary import ErrorSummary
 from loom.etl.declarative.source._from_dynamodb import FromDynamoDB
 from loom.etl.declarative.source._specs import DynamoDBSourceSpec, ExtraFieldsMode
@@ -58,7 +59,7 @@ class DynamoDBSourceReader:
         from polars.io.plugins import register_io_source
 
         if self._client is None:
-            raise RuntimeError(
+            raise InvalidUse(
                 "DynamoDBSourceReader: no client configured. "
                 "Pass a boto3 dynamodb client at construction time."
             )

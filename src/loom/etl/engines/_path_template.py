@@ -16,6 +16,9 @@ from __future__ import annotations
 import string
 from typing import TYPE_CHECKING, Any
 
+from loom.core.config import ConfigError
+from loom.core.errors import InvalidValue
+
 if TYPE_CHECKING:
     from loom.etl.storage._file_locator import FileLocator
 
@@ -31,7 +34,7 @@ def extract_template_fields(path: str) -> tuple[str, ...]:
         the path has no placeholders.
 
     Raises:
-        ValueError: When a placeholder is positional (``{}`` / ``{0}``) —
+        InvalidValue: When a placeholder is positional (``{}`` / ``{0}``) —
             only named params fields can be resolved.
     """
     fields: dict[str, None] = {}
@@ -40,8 +43,8 @@ def extract_template_fields(path: str) -> tuple[str, ...]:
             continue
         root = field_name.split(".")[0].split("[")[0]
         if root == "" or root.isdigit():
-            raise ValueError(
-                f"File path template {path!r} uses a positional placeholder; "
+            raise InvalidValue(
+                "File path template uses a positional placeholder; "
                 "only named placeholders matching params fields are supported "
                 "(e.g. '{run_date}')."
             )
@@ -62,7 +65,7 @@ def resolve_path_template(path: str, params_instance: Any) -> str:
         placeholders are returned unchanged.
 
     Raises:
-        ValueError: When a placeholder has no matching attribute on the
+        InvalidValue: When a placeholder has no matching attribute on the
             params instance, or *params_instance* is ``None`` while the
             path contains placeholders.
     """
@@ -70,15 +73,15 @@ def resolve_path_template(path: str, params_instance: Any) -> str:
     if not fields:
         return path
     if params_instance is None:
-        raise ValueError(
-            f"File path template {path!r} requires params to resolve "
+        raise InvalidValue(
+            "File path template requires params to resolve "
             f"{list(fields)!r}, but no params instance was provided."
         )
     missing = [name for name in fields if not hasattr(params_instance, name)]
     if missing:
         available = sorted(name for name in dir(params_instance) if not name.startswith("_"))
-        raise ValueError(
-            f"File path template {path!r} references unknown params "
+        raise InvalidValue(
+            "File path template references unknown params "
             f"field(s) {missing!r}. Available fields: {available!r}."
         )
     mapping = {name: getattr(params_instance, name) for name in fields}
@@ -108,13 +111,13 @@ def resolve_file_uri(
                          (``"FromFile"`` / ``"IntoFile"``).
 
     Raises:
-        ValueError: When the alias has no configured locator, or template
+        ConfigError: When the alias has no configured locator, or template
             resolution fails (see :func:`resolve_path_template`).
     """
     if is_alias:
         if locator is None:
-            raise ValueError(
-                f"{role}.alias({path!r}) requires storage.files to be configured. "
+            raise ConfigError(
+                f"{role}.alias() requires storage.files to be configured. "
                 "Set storage.files in your config YAML."
             )
         path = locator.locate(path).uri_template

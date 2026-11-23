@@ -358,7 +358,7 @@ class TestSchemaPaths:
         frame = reader.read(_spec(schema=_ORDER_SCHEMA, extra_fields_mode="error"), None)
         with pytest.raises(
             (ValueError, pl.exceptions.ComputeError),
-            match=r"DynamoDBSourceReader.*extra_col",
+            match=r"DynamoDBSourceReader.*not declared in",
         ):
             frame.collect()
 

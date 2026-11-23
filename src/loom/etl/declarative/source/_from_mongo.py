@@ -6,6 +6,7 @@ import re
 from dataclasses import dataclass
 from typing import Any
 
+from loom.core.errors import InvalidValue
 from loom.core.expr.nodes import AndExpr, ExprNode
 from loom.etl.declarative.source._specs import ExtraFieldsMode, MongoSourceSpec
 from loom.etl.schema._contract import SchemaContract, resolve_schema
@@ -81,8 +82,8 @@ class FromMongo:
 
     def __init__(self, collection: str) -> None:
         if not _COLLECTION_RE.match(collection):
-            raise ValueError(
-                f"Invalid MongoDB collection name {collection!r}. "
+            raise InvalidValue(
+                "Invalid MongoDB collection name. "
                 "Only letters, digits, underscores and hyphens are allowed."
             )
         self._collection: str = collection
@@ -112,8 +113,8 @@ class FromMongo:
         """
         for f in fields:
             if "$" in f:
-                raise ValueError(
-                    f"Projection field {f!r} contains '$' — operator expressions "
+                raise InvalidValue(
+                    "Projection fields must not contain '$' — operator expressions "
                     "are not allowed in projection."
                 )
         return self._clone(_projection=fields)
@@ -152,13 +153,13 @@ class FromMongo:
     def batch_size(self, n: int) -> FromMongo:
         """Override the pymongo cursor batch size (1–50 000)."""
         if not 1 <= n <= 50_000:
-            raise ValueError(f"batch_size must be between 1 and 50000, got {n}")
+            raise InvalidValue("batch_size must be between 1 and 50000")
         return self._clone(_batch_size=n)
 
     def limit(self, n: int) -> FromMongo:
         """Limit the number of documents returned — for dev/CI only."""
         if n < 1:
-            raise ValueError(f"limit must be >= 1, got {n}")
+            raise InvalidValue("limit must be >= 1")
         return self._clone(_limit=n)
 
     def _to_spec(self, alias: str) -> MongoSourceSpec:

@@ -12,6 +12,8 @@ from typing import Any
 
 import polars as pl
 
+from loom.core.errors import InternalError, InvalidType, InvalidUse, InvalidValue
+
 try:
     import pyarrow as _pa
 except ImportError:
@@ -102,7 +104,7 @@ class ClickHouseSourceReader(SourceReader, ClientCommandExecutor):
                     client is managed externally.
 
     Raises:
-        ValueError: When both *url* and *connection* are given.
+        InvalidValue: When both *url* and *connection* are given.
     """
 
     def __init__(
@@ -166,7 +168,7 @@ class ClickHouseSourceReader(SourceReader, ClientCommandExecutor):
             Lazy Polars frame backed by the spooled IPC file.
 
         Raises:
-            TypeError: When the underlying client does not expose
+            InvalidType: When the underlying client does not expose
                 ``query_arrow_stream()``.
         """
         client = self._client or self._get_client()
@@ -198,7 +200,7 @@ class ClickHouseSourceReader(SourceReader, ClientCommandExecutor):
             fn: Callable that receives the raw ``clickhouse_connect`` client.
 
         Raises:
-            ValueError: If neither a connection nor a pre-built client was provided.
+            InvalidUse: If neither a connection nor a pre-built client was provided.
             ImportError: If ``clickhouse-connect`` is not installed.
         """
         fn(self._client or self._get_client())
@@ -208,7 +210,7 @@ class ClickHouseSourceReader(SourceReader, ClientCommandExecutor):
             if self._client is not None:
                 return self._client
             if self._connection is None:
-                raise ValueError(
+                raise InvalidUse(
                     "ClickHouseSourceReader requires storage.clickhouse to be configured "
                     "or an explicit client injected at construction time."
                 )
@@ -234,7 +236,7 @@ class ClickHouseSourceReader(SourceReader, ClientCommandExecutor):
     def _quote_identifier(name: str) -> str:
         parts = [part for part in name.split(".") if part]
         if not parts:
-            raise ValueError("ClickHouse identifiers must not be empty.")
+            raise InvalidValue("ClickHouse identifiers must not be empty.")
         return ".".join(f"`{part.replace('`', '``')}`" for part in parts)
 
     @staticmethod
@@ -242,19 +244,21 @@ class ClickHouseSourceReader(SourceReader, ClientCommandExecutor):
         if hasattr(client, "query_arrow"):
             result = pl.from_arrow(client.query_arrow(query))
             if not isinstance(result, pl.DataFrame):
-                raise TypeError("Expected a PyArrow Table from query_arrow(), not a scalar array.")
+                raise InternalError(
+                    "Expected a PyArrow Table from query_arrow(), not a scalar array."
+                )
             return result.lazy(), result.height
         if hasattr(client, "query_df"):
             df = pl.from_pandas(client.query_df(query))
             return df.lazy(), df.height
-        raise TypeError(
+        raise InvalidType(
             "ClickHouse client must expose query_arrow() or query_df() to read sources."
         )
 
     @staticmethod
     def _stream_query_to_frame(client: Any, query: str) -> tuple[pl.LazyFrame, int, int]:
         if not hasattr(client, "query_arrow_stream"):
-            raise TypeError(
+            raise InvalidType(
                 "ClickHouse client must expose query_arrow_stream() to read in streaming mode."
             )
         if _pa is None:

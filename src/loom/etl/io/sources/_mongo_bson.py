@@ -32,6 +32,7 @@ from collections.abc import Callable, Mapping, Sequence
 from datetime import UTC, datetime
 from typing import Any
 
+from loom.core.errors import InvalidType, InvalidValue
 from loom.etl.io.sources._serialization import _record_serialization_failure
 
 _log = logging.getLogger(__name__)
@@ -63,10 +64,10 @@ def normalize_bson_doc(
         New dict safe to pass to ``pl.from_dicts()``.
 
     Raises:
-        ValueError: When document nesting exceeds :data:`_MAX_DEPTH`.
+        InvalidValue: When document nesting exceeds :data:`_MAX_DEPTH`.
     """
     if _depth > _MAX_DEPTH:
-        raise ValueError(
+        raise InvalidValue(
             f"normalize_bson_doc: document exceeds maximum nesting depth of {_MAX_DEPTH}."
         )
     return {str(k): _normalize(v, _depth + 1, extended_json) for k, v in doc.items()}
@@ -205,7 +206,9 @@ def _normalize_unknown(value: object) -> object:
 
 def _normalize(value: object, depth: int, extjson: bool = False) -> object:
     if depth > _MAX_DEPTH:
-        raise ValueError(f"normalize_bson_doc: nested value exceeds maximum depth of {_MAX_DEPTH}.")
+        raise InvalidValue(
+            f"normalize_bson_doc: nested value exceeds maximum depth of {_MAX_DEPTH}."
+        )
     if value is None or isinstance(value, (bool, int, float, str, bytes)):
         return value
     if isinstance(value, datetime):
@@ -236,7 +239,7 @@ def _normalize_decimal128(value: object) -> float:
 def _normalize_binary(value: object) -> bytes:
     if isinstance(value, (bytes, bytearray)):
         return bytes(value)
-    raise TypeError(f"Expected bytes-like BSON Binary, got {type(value)!r}")
+    raise InvalidType(f"Expected bytes-like BSON Binary, got {type(value)!r}")
 
 
 def _normalize_timestamp(value: object) -> int:

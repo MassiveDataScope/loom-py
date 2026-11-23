@@ -415,7 +415,7 @@ class TestSparkReaderWriterTypeGuards:
         input_path = tmp_path / "data.xlsx"
         output_path = tmp_path / "out.xlsx"
         read_spec = FileSourceSpec(alias="data", path=str(input_path), format=Format.XLSX)
-        with pytest.raises(TypeError, match="XLSX"):
+        with pytest.raises(UnsupportedFormatError, match="Unsupported format: xlsx"):
             spark_reader.read(read_spec, None)
 
         write_spec = FileSpec(path=str(output_path), format=Format.XLSX)

@@ -10,6 +10,7 @@ from typing import Any, Protocol, runtime_checkable
 
 import polars as pl
 
+from loom.core.errors import InvalidValue
 from loom.etl.declarative.source._specs import ExtraFieldsMode
 from loom.etl.io.sources._mongo_bson import _is_bson_type, deep_normalize_for_json
 from loom.etl.io.sources._serialization import _record_serialization_failure
@@ -598,7 +599,8 @@ def apply_declared_schema(
         source_label: Reader name used as prefix in emitted messages.
 
     Raises:
-        ValueError: When *mode* is :attr:`ExtraFieldsMode.ERROR` and undeclared fields are present.
+        InvalidValue: When *mode* is :attr:`ExtraFieldsMode.ERROR` and undeclared fields
+            are present.
     """
     missing = [
         pl.lit(None, dtype=dtype).alias(name)
@@ -611,9 +613,9 @@ def apply_declared_schema(
     extra_cols = [c for c in df.columns if c not in declared]
     if extra_cols:
         if mode == ExtraFieldsMode.ERROR:
-            raise ValueError(
+            raise InvalidValue(
                 f"{source_label}: documents contain fields not declared in "
-                f"{schema_name}: {extra_cols}. "
+                f"{schema_name}. "
                 "Use on_extra_fields('ignore'), ('warn'), or ('capture') to suppress."
             )
         if mode == ExtraFieldsMode.WARN:

@@ -6,6 +6,7 @@ from collections.abc import Sequence
 from dataclasses import dataclass
 from typing import Any, Literal, Protocol, TypeVar, runtime_checkable
 
+from loom.core.errors import InvalidType
 from loom.etl.testing._result import StepResult
 from loom.etl.testing._runners import PolarsStepRunner, SeedSchema, TempData
 
@@ -117,7 +118,7 @@ class _AfterStep:
             upstream = ETLScenario(self._prefix).apply(PolarsStepRunner())
             result = upstream.run(self._step_cls, self._params)
             if result.temp_name is None:
-                raise TypeError(
+                raise InvalidType(
                     f"ETLScenario.after() needs a step whose target is IntoTemp; "
                     f"{self.name} writes a table."
                 )
@@ -226,7 +227,7 @@ class ETLScenario:
             A new :class:`ETLScenario`.
 
         Raises:
-            TypeError: On first application, when the step does not write a temp.
+            InvalidType: On first application, when the step does not write a temp.
         """
         return self._with(_AfterStep(self._ops, step_cls, params))
 

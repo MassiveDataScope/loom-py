@@ -18,6 +18,7 @@ from __future__ import annotations
 from enum import Enum
 from typing import Any, ClassVar, Generic, TypeVar
 
+from loom.core.errors import InvalidType, InvalidValue
 from loom.etl.declarative._with_agent import WithAgent
 from loom.etl.declarative.source import (
     FromConfig,
@@ -151,7 +152,7 @@ def _validate_and_classify_sources(cls: type[Any]) -> None:
     has_grouped = isinstance(cls.__dict__.get("sources"), (Sources, SourceSet))
 
     if inline and has_grouped:
-        raise TypeError(
+        raise InvalidValue(
             f"{cls.__qualname__}: cannot mix inline source attributes with "
             f"sources=Sources(...) or sources=SourceSet — use one form only."
         )
@@ -178,6 +179,6 @@ def _validate_streaming_flag(cls: type[Any]) -> None:
     """Enforce that ``streaming`` is explicitly boolean at class definition time."""
     streaming = getattr(cls, "streaming", False)
     if not isinstance(streaming, bool):
-        raise TypeError(
+        raise InvalidType(
             f"{cls.__qualname__}: 'streaming' must be bool, got {type(streaming).__name__}"
         )

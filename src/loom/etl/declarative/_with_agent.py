@@ -14,6 +14,7 @@ import operator
 from decimal import Decimal
 from typing import Any
 
+from loom.core.errors import InvalidType, InvalidValue
 from loom.etl.declarative.source._from_config import type_label
 
 
@@ -31,9 +32,9 @@ class WithAgent:
             beyond each run's own ``policies.max_usd``.
 
     Raises:
-        TypeError: When *max_usd* is not ``None``, a :class:`~decimal.Decimal`
+        InvalidType: When *max_usd* is not ``None``, a :class:`~decimal.Decimal`
             or an integral number; a ``bool`` and a ``float`` are refused.
-        ValueError: When *name* is empty or *max_usd* is not a finite
+        InvalidValue: When *name* is empty or *max_usd* is not a finite
             amount greater than zero.
 
     Example::
@@ -57,7 +58,7 @@ class WithAgent:
         max_usd: Decimal | int | None = None,
     ) -> None:
         if not name:
-            raise ValueError("WithAgent name must not be empty")
+            raise InvalidValue("WithAgent name must not be empty")
         self._name = name
         self._output = output
         self._max_usd = None if max_usd is None else _budget(max_usd)
@@ -86,13 +87,13 @@ def _budget(max_usd: object) -> Decimal:
     if isinstance(max_usd, Decimal):
         amount = max_usd
     elif isinstance(max_usd, bool):
-        raise TypeError("WithAgent max_usd must be a Decimal or an int, got bool")
+        raise InvalidType("WithAgent max_usd must be a Decimal or an int, got bool")
     elif isinstance(max_usd, numbers.Integral):
         amount = Decimal(operator.index(max_usd))
     else:
-        raise TypeError(
+        raise InvalidType(
             f"WithAgent max_usd must be a Decimal or an int, got {type(max_usd).__name__}"
         )
     if not amount.is_finite() or amount <= 0:
-        raise ValueError(f"WithAgent max_usd must be a finite amount above zero, got {max_usd}")
+        raise InvalidValue("WithAgent max_usd must be a finite amount above zero")
     return amount

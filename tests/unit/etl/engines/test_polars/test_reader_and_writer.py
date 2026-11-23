@@ -10,6 +10,7 @@ import polars as pl
 import pytest
 from deltalake import DeltaTable, write_deltalake
 
+from loom.core.config import ConfigError
 from loom.etl import col
 from loom.etl.declarative._format import Format
 from loom.etl.declarative.expr._params import params as p
@@ -626,7 +627,7 @@ class TestFileLocatorAliasResolution:
         spec = FileSourceSpec(
             alias="events_raw", path="events_raw", format=Format.CSV, is_alias=True
         )
-        with pytest.raises(ValueError, match="storage.files"):
+        with pytest.raises(ConfigError, match="storage.files"):
             reader.read(spec, None)
 
     def test_writer_resolves_alias_to_physical_path(self, tmp_path: Path) -> None:
@@ -646,7 +647,7 @@ class TestFileLocatorAliasResolution:
         writer = PolarsTargetWriter(tmp_path)
         frame = pl.DataFrame({"id": [1]}).lazy()
         spec = FileSpec(path="exports_daily", format=Format.CSV, is_alias=True)
-        with pytest.raises(ValueError, match="storage.files"):
+        with pytest.raises(ConfigError, match="storage.files"):
             writer.write(frame, spec, None)
 
 

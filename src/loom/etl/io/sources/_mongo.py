@@ -8,6 +8,7 @@ from typing import Any
 
 import polars as pl
 
+from loom.core.errors import InvalidUse
 from loom.etl.declarative.source._from_mongo import FromMongo, SourceRef
 from loom.etl.declarative.source._specs import ExtraFieldsMode, MongoSourceSpec
 from loom.etl.engines.polars._dtype import loom_type_to_polars
@@ -51,7 +52,7 @@ class MongoSourceReader:
         from polars.io.plugins import register_io_source
 
         if self._client is None:
-            raise RuntimeError(
+            raise InvalidUse(
                 "MongoSourceReader: no client configured. "
                 "Pass a pymongo MongoClient and database name at construction time."
             )

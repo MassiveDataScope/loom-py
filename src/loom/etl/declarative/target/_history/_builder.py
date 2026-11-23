@@ -4,6 +4,7 @@ from __future__ import annotations
 
 from typing import Literal
 
+from loom.core.errors import InvalidValue
 from loom.core.schema import SchemaMode
 from loom.etl.declarative.expr._params import ParamExpr
 from loom.etl.declarative.expr._refs import TableRef
@@ -131,11 +132,11 @@ class IntoHistory:
             :class:`~loom.etl.HistorifyTemporalConflictError`.
 
     Raises:
-        ValueError: If ``keys`` is empty.
-        ValueError: If ``track`` overlaps with ``keys``.
-        ValueError: If ``overwrite`` overlaps with ``keys``, ``track``, or boundary columns.
-        ValueError: If ``valid_from`` and ``valid_to`` share the same name.
-        ValueError: If ``delete_marker`` is set outside LOG mode or names a key,
+        InvalidValue: If ``keys`` is empty.
+        InvalidValue: If ``track`` overlaps with ``keys``.
+        InvalidValue: If ``overwrite`` overlaps with ``keys``, ``track``, or boundary columns.
+        InvalidValue: If ``valid_from`` and ``valid_to`` share the same name.
+        InvalidValue: If ``delete_marker`` is set outside LOG mode or names a key,
             ``track``, ``overwrite``, ``effective_date``, boundary or
             ``partition_scope`` column.
 
@@ -245,15 +246,15 @@ def _validate_history_args(
         deleted_at: Soft-delete audit column name.
 
     Raises:
-        ValueError: On any violated constraint.
+        InvalidValue: On any violated constraint.
     """
     if not keys:
-        raise ValueError("IntoHistory: 'keys' must contain at least one column name.")
+        raise InvalidValue("IntoHistory: 'keys' must contain at least one column name.")
 
     if track is not None:
         overlap = set(keys) & set(track)
         if overlap:
-            raise ValueError(
+            raise InvalidValue(
                 f"IntoHistory: columns cannot appear in both 'keys' and 'track'. "
                 f"Overlap: {sorted(overlap)}"
             )
@@ -261,27 +262,27 @@ def _validate_history_args(
     if overwrite is not None:
         overlap_keys = set(keys) & set(overwrite)
         if overlap_keys:
-            raise ValueError(
+            raise InvalidValue(
                 f"IntoHistory: 'overwrite' cannot overlap with 'keys'. "
                 f"Overlap: {sorted(overlap_keys)}"
             )
         if track is not None:
             overlap_track = set(track) & set(overwrite)
             if overlap_track:
-                raise ValueError(
+                raise InvalidValue(
                     f"IntoHistory: 'overwrite' cannot overlap with 'track'. "
                     f"Overlap: {sorted(overlap_track)}"
                 )
         boundary_overlap = {valid_from, valid_to, deleted_at} & set(overwrite)
         if boundary_overlap:
-            raise ValueError(
+            raise InvalidValue(
                 f"IntoHistory: 'overwrite' cannot contain boundary columns. "
                 f"Overlap: {sorted(boundary_overlap)}"
             )
 
     boundary_names = {valid_from, valid_to, deleted_at}
     if len(boundary_names) < 3:
-        raise ValueError(
+        raise InvalidValue(
             f"IntoHistory: 'valid_from', 'valid_to' and 'deleted_at' must be distinct. "
             f"Got valid_from={valid_from!r}, valid_to={valid_to!r}, deleted_at={deleted_at!r}."
         )
@@ -306,13 +307,13 @@ def _validate_log_effective_date(
         mode: ``\"log\"`` or ``\"snapshot\"``.
 
     Raises:
-        ValueError: When LOG mode effective_date conflicts with a boundary col.
+        InvalidValue: When LOG mode effective_date conflicts with a boundary col.
     """
     if mode != "log":
         return
     eff_col = str(effective_date)
     if eff_col in (valid_from, valid_to):
-        raise ValueError(
+        raise InvalidValue(
             f"IntoHistory (LOG mode): effective_date={eff_col!r} must not match "
             f"valid_from={valid_from!r} or valid_to={valid_to!r}. "
             "The engine drops the effective_date column after building history boundaries; "
@@ -334,17 +335,17 @@ def _validate_delete_marker(
             partition columns.
 
     Raises:
-        ValueError: On any violated constraint.
+        InvalidValue: On any violated constraint.
     """
     if delete_marker is None:
         return
     if mode != "log":
-        raise ValueError(
+        raise InvalidValue(
             "IntoHistory: 'delete_marker' requires mode='log'. "
             "SNAPSHOT deletions are governed by 'delete_policy'."
         )
     if delete_marker in declared_cols:
-        raise ValueError(
+        raise InvalidValue(
             f"IntoHistory: 'delete_marker'={delete_marker!r} must not name a key, track, "
             "overwrite, effective_date, boundary or partition_scope column."
         )

@@ -5,6 +5,7 @@ from __future__ import annotations
 import re
 from typing import Any
 
+from loom.core.errors import InvalidValue
 from loom.core.expr.nodes import AndExpr, ExprNode
 from loom.etl.declarative.source._specs import DynamoDBSourceSpec, ExtraFieldsMode
 from loom.etl.schema._contract import SchemaContract, resolve_schema
@@ -56,8 +57,8 @@ class FromDynamoDB:
 
     def __init__(self, table: str) -> None:
         if not _TABLE_RE.match(table):
-            raise ValueError(
-                f"Invalid DynamoDB table name {table!r}. "
+            raise InvalidValue(
+                "Invalid DynamoDB table name. "
                 "Only letters, digits, underscores, dots and hyphens are allowed "
                 "(3-255 characters)."
             )
@@ -92,7 +93,7 @@ class FromDynamoDB:
         """
         for f in fields:
             if not f.strip():
-                raise ValueError("Projection field names must be non-empty.")
+                raise InvalidValue("Projection field names must be non-empty.")
         return self._clone(_projection=fields)
 
     def with_schema(self, schema: SchemaContract) -> FromDynamoDB:
@@ -117,13 +118,13 @@ class FromDynamoDB:
     def batch_size(self, n: int) -> FromDynamoDB:
         """Override the DynamoDB scan page size (``Limit`` per page, 1–10 000)."""
         if not 1 <= n <= 10_000:
-            raise ValueError(f"batch_size must be between 1 and 10000, got {n}")
+            raise InvalidValue("batch_size must be between 1 and 10000")
         return self._clone(_batch_size=n)
 
     def limit(self, n: int) -> FromDynamoDB:
         """Limit the number of items returned — for dev/CI only."""
         if n < 1:
-            raise ValueError(f"limit must be >= 1, got {n}")
+            raise InvalidValue("limit must be >= 1")
         return self._clone(_limit=n)
 
     def consistent_read(self, enabled: bool = True) -> FromDynamoDB:  # noqa: FBT001, FBT002
@@ -145,9 +146,7 @@ class FromDynamoDB:
         correctness: the global limit is still enforced across all segments.
         """
         if not 2 <= total_segments <= 64:
-            raise ValueError(
-                f"parallel_scan total_segments must be between 2 and 64, got {total_segments}"
-            )
+            raise InvalidValue("parallel_scan total_segments must be between 2 and 64")
         return self._clone(_total_segments=total_segments)
 
     def _to_spec(self, alias: str) -> DynamoDBSourceSpec:

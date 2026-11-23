@@ -6,6 +6,7 @@ from typing import Any, cast
 
 from loom.connections.aws import AwsClients
 from loom.connections.mongo import mongo_island
+from loom.core.config import ConfigError
 from loom.core.connections.mongo import MongoConnection
 from loom.core.model.redaction import reveal_for_driver
 from loom.etl.engines.polars._reader import PolarsSourceReader
@@ -84,7 +85,7 @@ class PolarsEtlEngine(EtlEngine):
     ) -> TargetLineageWriter:
         _ = (config, spark)
         if lineage.database:
-            raise ValueError(
+            raise ConfigError(
                 "observability.lineage.database is only supported "
                 "with storage.engine='spark'. "
                 "For storage.engine='polars', configure observability.lineage.root."
@@ -150,7 +151,7 @@ def _build_polars_locator(config: StorageConfig) -> TableLocator:
             delta_config=default_path.delta_config or None,
             commit=default_path.commit or None,
         )
-    raise ValueError(
+    raise ConfigError(
         "storage.to_path_locator: no path routes configured. "
         "Define storage.defaults.table_path or add explicit storage.tables entries."
     )
@@ -168,14 +169,12 @@ def _qualify_polars_catalog_ref(
     if len(parts) == 2:
         key = catalog_key or ("default" if "default" in config.catalogs else "")
         if not key:
-            raise ValueError(
+            raise ConfigError(
                 "Polars UC routes with 2-part refs require route.catalog or "
                 "storage.catalogs.default to build uc://catalog.schema.table."
             )
         return f"{key}.{ref}", key
-    raise ValueError(
-        f"Invalid catalog ref {ref!r}: expected 'schema.table' or 'catalog.schema.table'."
-    )
+    raise ConfigError("Invalid catalog ref: expected 'schema.table' or 'catalog.schema.table'.")
 
 
 def _unity_storage_options(config: StorageConfig, catalog_key: str) -> dict[str, str]:

@@ -20,6 +20,7 @@ from unittest.mock import MagicMock
 
 import pytest
 
+from loom.core.errors import InternalError
 from loom.core.schema import SchemaMode
 from loom.etl import col
 from loom.etl.declarative.expr._params import params
@@ -310,7 +311,7 @@ class TestHistorifyDoesNotAffectTempDispatch:
 
         writer = _StubWritePolicy()
         temp = TempSpec(temp_name="x", temp_scope=CheckpointScope.RUN)
-        with pytest.raises(TypeError, match="temp targets"):
+        with pytest.raises(InternalError, match="temp targets"):
             writer.write([1], temp, None)  # type: ignore[arg-type]
 
 
@@ -459,7 +460,7 @@ class TestWriteModeRouting:
     def test_a_spec_that_is_not_a_table_write_mode_raises(self) -> None:
         writer = _StubWritePolicy(schema_exists=True)
         spec = MagicMock()
-        with pytest.raises(TypeError, match="Unsupported target spec"):
+        with pytest.raises(InternalError, match="Unsupported target spec"):
             writer.write([1], spec, None)
 
 

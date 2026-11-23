@@ -116,7 +116,7 @@ class TestUnknownConnectionKeys:
 
 class TestRetiredConnectionSections:
     def test_storage_dynamodb_enabled_names_its_replacement(self) -> None:
-        with pytest.raises(ValueError, match=r"storage\.dynamodb\.enabled was removed"):
+        with pytest.raises(ConfigError, match=r"storage\.dynamodb\.enabled was removed"):
             _storage(dynamodb={"enabled": True, "region": "eu-west-1"})
 
     @pytest.mark.parametrize(

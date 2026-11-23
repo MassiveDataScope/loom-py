@@ -7,6 +7,8 @@ import uuid
 from collections.abc import Sequence
 from typing import TYPE_CHECKING, Any
 
+from loom.core.errors import InvalidUse
+
 if TYPE_CHECKING:
     from pyspark.sql import SparkSession
 
@@ -290,7 +292,7 @@ class ETLRunner:
         not set itself.
 
         Raises:
-            ValueError: When a mapping entry carries a ``name`` different from
+            ConfigError: When a mapping entry carries a ``name`` different from
                 its key, a ``path.profile`` is not declared in
                 ``storage.profiles``, or a profile carries ``uri``.
             msgspec.ValidationError: When the storage shape is invalid,
@@ -372,7 +374,7 @@ class ETLRunner:
     def cleanup_correlation(self, correlation_id: str) -> None:
         """Remove all CORRELATION-scope intermediates for *correlation_id*."""
         if self._checkpoint_store is None:
-            raise RuntimeError(
+            raise InvalidUse(
                 "cleanup_correlation() requires checkpoint_root (storage.temp.root) "
                 "to be configured in storage YAML."
             )

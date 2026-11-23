@@ -37,6 +37,7 @@ from collections.abc import Callable
 from typing import Any
 
 from loom.core.config import ConfigContext
+from loom.core.errors import InvalidType, InvalidUse
 from loom.core.observability.event import Scope
 from loom.core.observability.observability import Observability
 from loom.core.runner import SupportsFlush
@@ -330,7 +331,7 @@ class ETLExecutor:
         """Return the agent runner, or raise if unconfigured."""
         if self._agents is not None:
             return self._agents
-        raise RuntimeError(
+        raise InvalidUse(
             f"Step {step_type.__qualname__!r} declares WithAgent values "
             f"{[b.alias for b in bindings]} but no agent runner was configured. "
             "Declare an 'ai:' section and build the runner with ETLRunner.from_yaml(), "
@@ -343,7 +344,7 @@ class ETLExecutor:
         """Return the config context, or raise if unconfigured."""
         if self._config_context is not None:
             return self._config_context
-        raise RuntimeError(
+        raise InvalidUse(
             f"Step {step_type.__qualname__!r} declares FromConfig values "
             f"{[b.alias for b in bindings]} but no config_context was configured. "
             "Build the runner with ETLRunner.from_yaml(), or pass config_context= "
@@ -353,7 +354,7 @@ class ETLExecutor:
     def _require_checkpoint_store(self, name: str) -> CheckpointStore:
         """Return the checkpoint store, or raise if unconfigured."""
         if self._checkpoint_store is None:
-            raise RuntimeError(
+            raise InvalidUse(
                 f"Step uses checkpoint intermediate {name!r} but no checkpoint store is "
                 "configured. Set 'checkpoint:' in your storage config."
             )
@@ -363,7 +364,7 @@ class ETLExecutor:
         """Return reader as SQLExecutor, or raise a clear configuration error."""
         if isinstance(self._reader, SQLExecutor):
             return self._reader
-        raise TypeError(
+        raise InvalidType(
             f"Step {type(step).__qualname__!r} is SQL-based but configured reader "
             f"{type(self._reader).__qualname__!r} does not implement SQLExecutor."
         )
@@ -372,7 +373,7 @@ class ETLExecutor:
         """Return the injected ClientCommandExecutor, or raise a clear configuration error."""
         if self._client_executor is not None:
             return self._client_executor
-        raise TypeError(
+        raise InvalidUse(
             f"Step {type(step).__qualname__!r} is a ClientStep but no "
             "ClientCommandExecutor was configured. "
             "Pass client_executor= to ETLExecutor (or ETLRunner) to enable client steps. "
@@ -397,7 +398,7 @@ class ETLExecutor:
         )
         if streaming:
             if not isinstance(self._reader, StreamingSourceReader):
-                raise TypeError(
+                raise InvalidType(
                     f"Step opts into streaming=True but reader "
                     f"{type(self._reader).__qualname__!r} does not implement "
                     "StreamingSourceReader. Falling back to a non-streaming read "
@@ -528,12 +529,12 @@ def _render_sql_query(step: Any, params: Any) -> str:
     """Render SQL query from a StepSQL-like step instance."""
     render = getattr(step, "render_sql", None)
     if not callable(render):
-        raise TypeError(
+        raise InvalidType(
             f"{type(step).__qualname__} is marked as SQL step but has no callable render_sql()."
         )
     query = render(params)
     if not isinstance(query, str):
-        raise TypeError(
+        raise InvalidType(
             f"{type(step).__qualname__}.render_sql() must return str, got {type(query)!r}."
         )
     return query

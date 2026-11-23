@@ -47,6 +47,7 @@ from __future__ import annotations
 import logging
 from typing import Any, Protocol, runtime_checkable
 
+from loom.core.errors import InvalidValue
 from loom.etl.checkpoint._cleaners import FsspecTempCleaner, TempCleaner
 from loom.etl.checkpoint._io._polars import _PolarsCheckpointIO
 from loom.etl.checkpoint._paths import correlation_scope_base, run_scope_base, scope_base
@@ -142,12 +143,12 @@ class CheckpointStore:
                             any prior content for this name is overwritten.
 
         Raises:
-            ValueError: When *scope* is ``CORRELATION`` and *correlation_id*
+            InvalidValue: When *scope* is ``CORRELATION`` and *correlation_id*
                         is ``None``.
-            TypeError:  When *data* type does not match the configured backend.
+            InvalidType: When *data* type does not match the configured backend.
         """
         if scope is CheckpointScope.CORRELATION and not correlation_id:
-            raise ValueError(
+            raise InvalidValue(
                 f"IntoTemp({name!r}, scope=CORRELATION) requires a correlation_id. "
                 "Pass correlation_id= to ETLRunner.run()."
             )

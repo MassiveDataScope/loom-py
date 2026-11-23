@@ -7,6 +7,7 @@ from typing import Any, ClassVar, get_args, get_origin, get_type_hints
 
 import pytest
 
+from loom.core.errors import InvalidValue
 from loom.etl import (
     ETLParams,
     ETLStep,
@@ -90,7 +91,7 @@ class TestStepDeclaration:
         grouped_sources = Sources(customers=FromTable("raw.customers"))
         out_target = IntoTable("staging.out").replace()
 
-        with pytest.raises(TypeError, match="cannot mix inline source attributes"):
+        with pytest.raises(InvalidValue, match="cannot mix inline source attributes"):
 
             class _BadStep(ETLStep[RunDateCountriesStepParams]):  # NOSONAR
                 orders = inline_source

@@ -198,13 +198,13 @@ class TestLoadYamlMappingForm:
         with pytest.raises(ConfigError, match="loom.yaml"):
             _load_yaml(str(tmp_path / "loom.yaml"))
 
-    def test_load_yaml_conflicting_inner_name_raises_value_error(self, tmp_path: Path) -> None:
+    def test_load_yaml_conflicting_inner_name_raises_config_error(self, tmp_path: Path) -> None:
         _write_tree(
             tmp_path,
             {"loom.yaml": "storage:\n  tables:\n    sales.orders: {name: other, ref: main.a.b}\n"},
         )
 
-        with pytest.raises(ValueError, match=r"storage\.tables\['sales\.orders'\]"):
+        with pytest.raises(ConfigError, match=r"storage\.tables entries must not declare a name"):
             _load_yaml(str(tmp_path / "loom.yaml"))
 
     def test_load_yaml_target_file_size_from_env_interpolation(

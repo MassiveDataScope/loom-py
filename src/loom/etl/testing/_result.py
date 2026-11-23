@@ -6,6 +6,7 @@ from dataclasses import dataclass
 
 import polars as pl
 
+from loom.core.errors import InvalidUse
 from loom.etl.declarative.target import TargetSpec
 from loom.etl.declarative.target._table import UpsertSpec
 from loom.etl.declarative.target._temp import TempFanInSpec, TempSpec
@@ -89,13 +90,13 @@ class StepResult:
         for that.
 
         Raises:
-            RuntimeError: When the target is not an upsert with ``delete_flag``.
+            InvalidUse: When the target is not an upsert with ``delete_flag``.
             UpsertDeleteFlagError: When the output has no flag column, or it
                 is not boolean.
         """
         flag = self.delete_flag
         if flag is None:
-            raise RuntimeError(
+            raise InvalidUse(
                 "deletes needs a step whose target is IntoTable(...).upsert(delete_flag=...)."
             )
         _require_boolean_flag_column(self._frame.schema, flag)
@@ -106,12 +107,12 @@ class StepResult:
         """Rows the MERGE applied to the target table.
 
         Raises:
-            RuntimeError: When the runner has no ``delta_root``, the target is
+            InvalidUse: When the runner has no ``delta_root``, the target is
                 not an upsert or update, or the target table did not exist and
                 was created by this write instead of merged.
         """
         if self.merge_metrics is None:
-            raise RuntimeError(
+            raise InvalidUse(
                 "merged is unavailable: no MERGE ran because the runner has no "
                 "delta_root, the target is not an upsert or update, "
                 "or the target table did not exist and was created by this write. "

@@ -4,6 +4,7 @@ from __future__ import annotations
 
 from typing import Any, Protocol, cast, runtime_checkable
 
+from loom.core.config import ConfigError
 from loom.core.plugins.entrypoints import EntryPointNotFoundError, load_entry_point
 from loom.etl.lineage._config import LineageConfig
 from loom.etl.lineage.sinks import LineageWriter
@@ -62,7 +63,7 @@ def load_etl_engine(engine: str) -> EtlEngine:
         An engine built from the registered class.
 
     Raises:
-        ValueError: When no ETL engine is registered for ``engine``; the message
+        ConfigError: When no ETL engine is registered for ``engine``; the message
             names the engines that are.
     """
     provider_cls = cast(type[EtlEngine], _load_backend_class(engine))
@@ -75,8 +76,8 @@ def _load_backend_class(engine: str) -> object:
         return load_entry_point(_ENGINE_ENTRY_POINT_GROUP, engine, on_duplicate="warn_first")
     except EntryPointNotFoundError as exc:
         available = ", ".join(exc.available) if exc.available else "none"
-        raise ValueError(
-            f"Unsupported storage.engine={engine!r}. "
+        raise ConfigError(
+            "Unsupported storage.engine. "
             f"No ETL engine registered in entry point group "
             f"'{_ENGINE_ENTRY_POINT_GROUP}'. Registered engines: {available}."
         ) from exc
