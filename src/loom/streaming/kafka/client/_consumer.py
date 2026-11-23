@@ -11,8 +11,10 @@ from confluent_kafka import KafkaError, TopicPartition
 from confluent_kafka import Message as _RawMessage
 
 from loom.core.errors import InternalError
+from loom.core.log_names import LogField
 from loom.core.observability.event import Scope
 from loom.core.observability.observability import Observability
+from loom.streaming.event import StreamingEvent, StreamingKey
 from loom.streaming.kafka._config import ConsumerSettings
 from loom.streaming.kafka._errors import KafkaCommitError, KafkaPollError
 from loom.streaming.kafka._message import HEADER_CORRELATION_ID, HEADER_TRACE_ID
@@ -282,10 +284,13 @@ class KafkaConsumerClient:
         if error is None:
             return
         logger.error(
-            "kafka asynchronous offset commit failed: %s (partitions: %s); the group "
-            "offset did not advance, so these records will be reprocessed on restart",
-            failure_message(error),
-            ", ".join(f"{part.topic}:{part.partition}@{part.offset}" for part in partitions),
+            StreamingEvent.OFFSET_COMMIT_FAILED,
+            extra={
+                LogField.ERROR_CODE: error.name(),
+                StreamingKey.PARTITIONS: [
+                    f"{part.topic}:{part.partition}@{part.offset}" for part in partitions
+                ],
+            },
         )
 
     def close(self) -> None:

@@ -34,6 +34,7 @@ from loom.streaming.core._errors import ErrorEnvelope, ErrorKind
 from loom.streaming.core._message import Message, MessageMeta
 from loom.streaming.core._tracing import open_terminal_span
 from loom.streaming.core._typing import StreamPayload
+from loom.streaming.event import StreamingEvent, StreamingKey
 from loom.streaming.kafka._codec import MsgspecCodec
 from loom.streaming.kafka._config import ConsumerSettings
 from loom.streaming.kafka._errors import KafkaDeliveryError, KafkaPollError
@@ -227,14 +228,13 @@ def _warn_on_stale_resume_state(
     if resume_state is None or committed is None or resume_state >= committed:
         return
     logger.warning(
-        "resume state %d is behind the committed group offset %d for %s:%d "
-        "(distance %d): replaying from the recovery snapshot; commits below "
-        "the floor are suppressed",
-        resume_state,
-        committed,
-        topic,
-        partition,
-        committed - resume_state,
+        StreamingEvent.RESUME_STATE_BEHIND,
+        extra={
+            StreamingKey.TOPIC: topic,
+            StreamingKey.PARTITION: partition,
+            StreamingKey.OFFSET: committed,
+            StreamingKey.REPLAYED_OFFSETS: committed - resume_state,
+        },
     )
 
 
@@ -302,13 +302,7 @@ class KafkaPartitionedSource(FixedPartitionedSource[KafkaRecord[bytes], "int | N
                     f"{_METADATA_VISIBILITY_TIMEOUT_S:g}s: {reason}"
                 )
             if not warned:
-                logger.warning(
-                    "kafka topic '%s' is not visible in cluster metadata yet: %s; "
-                    "retrying until %gs elapse",
-                    topic,
-                    reason,
-                    _METADATA_VISIBILITY_TIMEOUT_S,
-                )
+                logger.warning(StreamingEvent.TOPIC_NOT_VISIBLE, extra={StreamingKey.TOPIC: topic})
                 warned = True
             sleep(_METADATA_RETRY_INTERVAL_S)
 

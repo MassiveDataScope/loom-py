@@ -85,6 +85,7 @@ from loom.streaming.compiler import (  # noqa: E402
     compile_flow,
 )
 from loom.streaming.core._message import Message, MessageMeta  # noqa: E402
+from loom.streaming.event import StreamingEvent  # noqa: E402
 from loom.streaming.kafka import MessageDescriptor, MsgspecCodec, build_message  # noqa: E402
 from loom.streaming.kafka._record import KafkaRecord  # noqa: E402
 from tests.unit.streaming.bytewax.cases import (  # noqa: E402
@@ -1549,7 +1550,7 @@ class TestStorageCompletesAfterItsFlush:
         sink.close()
 
         assert tracker.flush_partition(TOPIC, PARTITION) == []
-        assert "storage_sink_closed_with_pending_events" in caplog.text
+        assert StreamingEvent.STORAGE_SINK_CLOSED_PENDING in [r.msg for r in caplog.records]
 
     def test_a_bad_count_from_close_completes_nothing_and_does_not_raise(
         self, caplog: pytest.LogCaptureFixture
@@ -1566,7 +1567,7 @@ class TestStorageCompletesAfterItsFlush:
         sink.close()
 
         assert tracker.flush_partition(TOPIC, PARTITION) == []
-        assert "storage_sink_close_count_invalid" in caplog.text
+        assert StreamingEvent.STORAGE_SINK_COUNT_INVALID in [r.msg for r in caplog.records]
 
     @pytest.mark.parametrize("count", [None, True])
     def test_a_partition_that_does_not_report_durability_is_refused(self, count: object) -> None:

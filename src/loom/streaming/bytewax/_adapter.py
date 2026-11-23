@@ -58,6 +58,7 @@ from loom.streaming.core._errors import ErrorKind
 from loom.streaming.core._exceptions import MissingSinkError
 from loom.streaming.core._message import Message
 from loom.streaming.core._typing import StreamPayload
+from loom.streaming.event import StreamingEvent, StreamingKey
 from loom.streaming.kafka._codec import MsgspecCodec
 from loom.streaming.kafka._record import KafkaRecord
 from loom.streaming.kafka._wire import (
@@ -391,8 +392,12 @@ class _BuildContext:
             bw_output(f"{step_id}_{kind.value}_errors", stream, sink)
             return
         logger.warning(
-            "unrouted_error_drop_sink",
-            extra={"flow": self.plan.name, "kind": kind.value, "step_id": step_id},
+            StreamingEvent.UNROUTED_ERRORS_DROPPED,
+            extra={
+                StreamingKey.FLOW: self.plan.name,
+                StreamingKey.KIND: kind.value,
+                StreamingKey.STEP: step_id,
+            },
         )
         bw_output(f"{step_id}_{kind.value}_dropped", stream, _DropSink(self.commit_tracker))
 

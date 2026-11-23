@@ -38,6 +38,7 @@ from loom.streaming.compiler._plan import CompiledStorageSink
 from loom.streaming.core._exceptions import MissingBridgeError, UnsupportedNodeError
 from loom.streaming.core._message import Message, MessageMeta
 from loom.streaming.core._tracing import open_terminal_span
+from loom.streaming.event import StreamingEvent, StreamingKey
 from loom.streaming.nodes._sink import IntoSink, SinkPartition
 from loom.streaming.nodes._table import IntoTable, TableEngine
 
@@ -208,12 +209,11 @@ class _StorageSinkPartition(StatelessSinkPartition[Message[Any]]):
             return
         if not self._is_durable_count(durable):
             logger.error(
-                "storage_sink_close_count_invalid",
+                StreamingEvent.STORAGE_SINK_COUNT_INVALID,
                 extra={
-                    "sink": self._node_name,
-                    "flow": self._flow_name,
-                    "pending": len(self._pending),
-                    "got": repr(durable),
+                    StreamingKey.STEP: self._node_name,
+                    StreamingKey.FLOW: self._flow_name,
+                    StreamingKey.RECORDS: len(self._pending),
                 },
             )
             self._pending.clear()
@@ -221,11 +221,11 @@ class _StorageSinkPartition(StatelessSinkPartition[Message[Any]]):
         self._finish(durable, BatchWindow.since(started_ns))
         if self._pending:
             logger.warning(
-                "storage_sink_closed_with_pending_events",
+                StreamingEvent.STORAGE_SINK_CLOSED_PENDING,
                 extra={
-                    "sink": self._node_name,
-                    "flow": self._flow_name,
-                    "pending": len(self._pending),
+                    StreamingKey.STEP: self._node_name,
+                    StreamingKey.FLOW: self._flow_name,
+                    StreamingKey.RECORDS: len(self._pending),
                 },
             )
             self._pending.clear()
