@@ -28,7 +28,7 @@ ATTEMPT = LogField.ATTEMPT.value
 JOB = LogField.JOB.value
 SUBKEY = SubKey("loom.acme.bag.tenant")
 RecordFactory = Callable[..., logging.LogRecord]
-KINDS = {ATTEMPT: ValueKind.NUMBER, SUBKEY: "int"}
+KINDS: dict[str, ValueKind] = {ATTEMPT: ValueKind.NUMBER, SUBKEY: ValueKind.NUMBER}
 
 
 class _AcmeEvent(LogEvent):
