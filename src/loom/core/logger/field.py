@@ -31,7 +31,6 @@ class LogField(StrEnum):
     CORRELATION_ID = "loom.correlation_id"
     DURATION_MS = "loom.duration_ms"
     STATUS = "loom.status"
-    ERROR_MESSAGE = "error.message"
     BOOTSTRAP_MODULE = "loom.bootstrap.module"
     OBSERVER = "loom.observer"
     EVENT_KIND = "loom.event_kind"

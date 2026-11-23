@@ -276,7 +276,6 @@ def _fail_a_scope(observability: Observability) -> None:
 class TestScopeFailure:
     """Requirements 2 and 3 for the record and the span a failing scope writes."""
 
-    @pytest.mark.xfail(strict=True, reason="backlog: PR 4: the observer writes error.message")
     def test_the_scope_record_does_not_carry_the_message(
         self, traced: tuple[Observability, InMemorySpanExporter], stdout_json: Output
     ) -> None:
@@ -284,7 +283,6 @@ class TestScopeFailure:
 
         assert CANARY not in stdout_json.read_fields()
 
-    @pytest.mark.xfail(strict=True, reason="backlog: PR 4: the observer passes no exception")
     def test_the_scope_record_carries_type_and_code(
         self, traced: tuple[Observability, InMemorySpanExporter], stdout_json: Output
     ) -> None:
@@ -294,7 +292,6 @@ class TestScopeFailure:
         assert "DomainError" in fields
         assert ErrorCode.NOT_FOUND.value in fields
 
-    @pytest.mark.xfail(strict=True, reason="backlog: PR 4: span status and event carry the message")
     def test_the_span_does_not_carry_the_message(
         self, traced: tuple[Observability, InMemorySpanExporter]
     ) -> None:

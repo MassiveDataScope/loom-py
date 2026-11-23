@@ -53,7 +53,7 @@ class PrefectObserver:
                     "[%s] ERROR %s: %s",
                     event.scope,
                     event.name,
-                    event.error,
+                    event.failure.describe() if event.failure else "",
                 )
 
 

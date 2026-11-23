@@ -32,7 +32,6 @@ class TestLineageRecords:
             started_at=started_at,
             status=RunStatus.SUCCESS,
             duration_ms=12,
-            error=None,
         )
         process = ProcessRunRecord(
             event=EventName.PROCESS_END,
@@ -44,9 +43,8 @@ class TestLineageRecords:
             started_at=started_at,
             status=RunStatus.FAILED,
             duration_ms=7,
-            error="boom",
             error_type="RuntimeError",
-            error_message="boom",
+            error_code="not_found",
             failed_step_run_id="step-1",
             failed_step="Transform",
         )
@@ -60,7 +58,6 @@ class TestLineageRecords:
             started_at=started_at,
             status=RunStatus.SUCCESS,
             duration_ms=5,
-            error=None,
             process_run_id="proc-1",
         )
 

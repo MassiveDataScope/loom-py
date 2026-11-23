@@ -5,6 +5,7 @@ from __future__ import annotations
 from datetime import UTC, datetime
 from typing import Any
 
+from loom.core.errors.base import ErrorSummary
 from loom.core.observability.event import LifecycleEvent, LifecycleStatus, Scope
 from loom.etl.declarative.expr._refs import TableRef
 from loom.etl.declarative.source import TableSourceSpec
@@ -141,7 +142,7 @@ class TestRecordingRunObserver:
                 name="MyStep",
                 id="step-1",
                 correlation_id=ctx.correlation_id,
-                error="boom",
+                failure=ErrorSummary(type="ValueError"),
                 meta={
                     "run_id": ctx.run_id,
                     "attempt": ctx.attempt,

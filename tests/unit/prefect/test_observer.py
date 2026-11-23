@@ -12,6 +12,7 @@ import logging
 
 import pytest
 
+from loom.core.errors.base import ErrorSummary
 from loom.core.observability.event import LifecycleEvent, LifecycleStatus, Scope
 from loom.prefect.observer import PrefectObserver
 
@@ -46,7 +47,7 @@ def _error_event(name: str = "MyStep") -> LifecycleEvent:
         trace_id="trace-1",
         correlation_id="corr-1",
         duration_ms=5.0,
-        error="something went wrong",
+        failure=ErrorSummary(type="ValueError"),
     )
 
 
@@ -80,7 +81,7 @@ class TestPrefectObserver:
         [
             (_start_event(), logging.INFO, "[pipeline] START MyPipeline"),
             (_end_event(), logging.INFO, "[pipeline] END MyPipeline 123.0ms"),
-            (_error_event(), logging.ERROR, "[step] ERROR MyStep: something went wrong"),
+            (_error_event(), logging.ERROR, "[step] ERROR MyStep: ValueError"),
             (
                 LifecycleEvent.start(scope=Scope.STEP, name="TransformStep"),
                 logging.INFO,
@@ -126,7 +127,7 @@ class TestPrefectObserver:
             (
                 _error_event("FailedStep"),
                 logging.ERROR,
-                "[step] ERROR FailedStep: something went wrong",
+                "[step] ERROR FailedStep: ValueError",
             ),
         ],
         ids=["start", "error"],

@@ -30,14 +30,13 @@ class TestWriterToFrame:
             started_at=datetime.now(tz=UTC),
             status=RunStatus.SUCCESS,
             duration_ms=17,
-            error=None,
         )
 
         frame = writer.to_frame([record]).collect()
 
-        assert frame.shape == (1, 12)
+        assert frame.shape == (1, 11)
         assert frame.schema["status"] == pl.String
-        assert frame.schema["error"] == pl.String
+        assert frame.schema["error_code"] == pl.String
         assert frame.select("status").item() == "success"
 
     def test_to_frame_rejects_empty_batch(self, tmp_path: Path) -> None:
@@ -57,7 +56,6 @@ class TestWriterToFrame:
             started_at=datetime.now(tz=UTC),
             status=RunStatus.SUCCESS,
             duration_ms=17,
-            error=None,
         )
         pipeline = PipelineRunRecord(
             event=EventName.PIPELINE_END,
@@ -68,7 +66,6 @@ class TestWriterToFrame:
             started_at=datetime.now(tz=UTC),
             status=RunStatus.SUCCESS,
             duration_ms=23,
-            error=None,
         )
         with pytest.raises(TypeError, match="homogeneous record types"):
             writer.to_frame([step, pipeline])

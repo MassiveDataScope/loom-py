@@ -61,8 +61,10 @@ class LogLifecycleObserver:
             fields[LogField.DURATION_MS] = event.duration_ms
         if event.kind is EventKind.END and event.status is not None:
             fields[LogField.STATUS] = event.status.value
-        if event.kind is EventKind.ERROR:
-            fields[LogField.ERROR_MESSAGE] = event.error
+        if event.failure is not None:
+            fields[LogField.EXCEPTION_TYPE] = event.failure.type
+            if event.failure.code is not None:
+                fields[LogField.ERROR_CODE] = event.failure.code
         fields |= {f"{_META_PREFIX}{key}": value for key, value in event.meta.items()}
         _log.log(level, _EVENTS[event.kind], extra=fields)
 

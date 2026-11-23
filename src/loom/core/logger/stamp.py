@@ -7,7 +7,7 @@ from dataclasses import dataclass, replace
 from enum import StrEnum
 from typing import Final
 
-from loom.core.errors.base import LoomError
+from loom.core.errors.base import ErrorSummary
 from loom.core.logger.context import current_log_fields
 from loom.core.logger.field import LogField
 from loom.core.tracing.context import get_trace_id
@@ -118,11 +118,11 @@ class ContextFilter(logging.Filter):
         fields.pop(LogField.EXCEPTION_STACKTRACE, None)
         if record.exc_info is None or record.exc_info[1] is None:
             return
-        failure = record.exc_info[1]
-        fields[LogField.EXCEPTION_TYPE] = type(failure).__qualname__
+        summary = ErrorSummary.of(record.exc_info[1])
+        fields[LogField.EXCEPTION_TYPE] = summary.type
         fields.pop(LogField.ERROR_CODE, None)
-        if isinstance(failure, LoomError):
-            fields[LogField.ERROR_CODE] = failure.code.value
+        if summary.code is not None:
+            fields[LogField.ERROR_CODE] = summary.code
         if record.levelno >= logging.ERROR:
             record.exc_text = record.exc_text or _STACK_FORMATTER.formatException(record.exc_info)
             fields[LogField.EXCEPTION_STACKTRACE] = ContextFilter._kept_end(record.exc_text)

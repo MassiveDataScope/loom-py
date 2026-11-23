@@ -88,7 +88,8 @@ class PrefectTaskRunObserver:
         task_run_id = self._task_runs.pop(event.id, None) if event.id else None
         if task_run_id is None:
             return
-        self._set_state(task_run_id, completed=False, message=event.error)
+        message = event.failure.describe() if event.failure else None
+        self._set_state(task_run_id, completed=False, message=message)
 
     def _reset_log_binding(self, step_run_id: str | None) -> None:
         if step_run_id is None:

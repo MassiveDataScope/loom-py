@@ -10,6 +10,7 @@ import pytest
 
 from loom.core.config.observability import OtelConfig
 from loom.core.environment import Environment
+from loom.core.errors.base import ErrorSummary
 from loom.core.logger import ContextFilter, LogRuntime
 from loom.core.logger.install import HANDLER_NAME
 from loom.core.logger.settings import LogFormatName
@@ -89,7 +90,7 @@ class TestSpan:
 
         assert obs.events[0].kind is EventKind.START
         assert obs.events[1].kind is EventKind.ERROR
-        assert obs.events[1].error == "bad input"
+        assert obs.events[1].failure == ErrorSummary(type="ValueError")
 
     def test_error_event_reraises_exception(self) -> None:
         runtime = Observability([AcmeRuntimeRecordingObserver()])

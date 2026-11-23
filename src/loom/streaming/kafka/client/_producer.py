@@ -9,6 +9,7 @@ from typing import Literal
 from confluent_kafka import Message as _RawMessage
 from confluent_kafka import Producer as _Producer
 
+from loom.core.errors.base import ErrorSummary
 from loom.core.observability.event import LifecycleEvent, Scope
 from loom.core.observability.observability import Observability
 from loom.streaming.kafka._config import ProducerSettings
@@ -84,7 +85,7 @@ class KafkaProducerClient:
                         name="kafka_produce",
                         trace_id=_header_trace_id(record.headers),
                         correlation_id=_header_correlation_id(record.headers),
-                        error=str(exc),
+                        failure=ErrorSummary.of(exc),
                         meta={"topic": record.topic},
                     )
                 )
@@ -159,7 +160,7 @@ class KafkaProducerClient:
                             name="kafka_produce",
                             trace_id=_header_trace_id(record.headers),
                             correlation_id=_header_correlation_id(record.headers),
-                            error=str(delivery_error),
+                            failure=ErrorSummary.of(delivery_error),
                             meta={"topic": record.topic},
                         )
                     )

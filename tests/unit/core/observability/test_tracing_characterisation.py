@@ -33,6 +33,7 @@ from opentelemetry.trace import StatusCode
 
 from loom.ai._transport import always_closed
 from loom.core.config.observability import OtelConfig
+from loom.core.errors.base import ErrorSummary
 from loom.core.model.redaction import Dsn
 from loom.core.observability.config import ObservabilityConfig, OtelObservabilityConfig
 from loom.core.observability.event import EventKind, LifecycleEvent, Scope
@@ -185,7 +186,7 @@ class TestSpanTreeIsExported:
         assert len(spans) == 1
         step = spans[0]
         assert step.status.status_code is StatusCode.ERROR
-        assert step.status.description == "boom"
+        assert step.status.description == "ValueError"
         # ``record_exception=False`` on the span: exactly one exception event,
         # recorded by the runtime, not a second one added by the SDK's own
         # exit handler.
@@ -409,7 +410,7 @@ class TestSpanAcrossAsendBoundaries:
         spans = exporter.get_finished_spans()
         assert len(spans) == 1
         assert spans[0].status.status_code is StatusCode.ERROR
-        assert spans[0].status.description == "stream broke"
+        assert spans[0].status.description == "RuntimeError"
 
     @pytest.mark.asyncio
     async def test_an_abandoned_stream_closes_the_span_exactly_once(
@@ -619,7 +620,7 @@ class TestEventStreamIsUnchanged:
             event.correlation_id,
             event.id,
             event.status,
-            event.error,
+            event.failure,
             dict(event.meta),
             event.duration_ms is not None,
         )
@@ -723,8 +724,8 @@ class TestEventStreamIsUnchanged:
                 None,
                 "step-1",
                 "failure",
-                "boom",
-                {"error_type": "ValueError"},
+                ErrorSummary(type="ValueError"),
+                {},
                 True,
             ),
         ]
