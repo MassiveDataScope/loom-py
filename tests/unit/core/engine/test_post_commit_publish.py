@@ -15,6 +15,7 @@ from loom.core.engine import post_commit
 from loom.core.engine.compiler import UseCaseCompiler
 from loom.core.engine.executor import UseCaseExecutor
 from loom.core.engine.post_commit import (
+    ActionSubject,
     PostCommitChannel,
     PostCommitEvent,
     PostCommitKey,
@@ -23,6 +24,7 @@ from loom.core.engine.post_commit import (
 from loom.core.errors import PostCommitError
 from loom.core.job.context import add_pending_dispatch, flush_pending_dispatches
 from loom.core.job.job import Job
+from loom.core.log_names import LogField
 from loom.core.stores.catalog import DEFAULT_STORE
 from loom.core.stores.uow.coordinator import OrderedCommits
 from loom.core.use_case.use_case import UseCase
@@ -34,8 +36,8 @@ from ._lifecycle_doubles import Log, StubUnitOfWorkFactory
 pytestmark = pytest.mark.timeout(3)
 
 _DROPPED = PostCommitEvent.PLAIN_ACTIONS_DROPPED
-_FAILED = "PostCommitActionFailedAfterInterruption"
-_NEVER_RAN = "PostCommitShieldedActionNeverRan"
+_FAILED = PostCommitEvent.ACTION_FAILED_AFTER_INTERRUPTION
+_NEVER_RAN = PostCommitEvent.SHIELDED_ACTION_NEVER_RAN
 _COMMITTED = "uow.commit"
 
 
@@ -80,8 +82,8 @@ class _Send:
         if self._error is not None:
             raise self._error
 
-    def log_fields(self) -> tuple[dict[str, object]]:
-        return ({"job_name": self.task_name, "task_id": self.task_id},)
+    def subjects(self) -> tuple[ActionSubject]:
+        return (ActionSubject(job=self.task_name, task_id=self.task_id),)
 
 
 @pytest.fixture
@@ -281,7 +283,7 @@ class TestPostCommitPublish:
         await failure_logged.wait()
 
         fields = _event(caplog, _FAILED)
-        assert (fields["job_name"], fields["task_id"]) == (_Send.task_name, _Send.task_id)
+        assert (fields[LogField.JOB], fields[LogField.TASK_ID]) == (_Send.task_name, _Send.task_id)
         assert fields["exception.type"] == "ConnectionError"
         assert "broker down" not in str(fields)
 
@@ -301,7 +303,7 @@ class TestPostCommitPublish:
             shielded.cancel()
         await never_ran.wait()
 
-        assert _event(caplog, _NEVER_RAN)["task_id"] == _Send.task_id
+        assert _event(caplog, _NEVER_RAN)[LogField.TASK_ID] == _Send.task_id
 
     async def test_without_a_cancellation_one_error_carries_every_failure_by_lane(self) -> None:
         channel = PostCommitChannel()
@@ -330,8 +332,8 @@ class TestPostCommitPublish:
         with pytest.raises(PostCommitError):
             await drained
 
-        fields = _event(caplog, "PostCommitActionFailed")
-        assert (fields["job_name"], fields["task_id"]) == (_Send.task_name, _Send.task_id)
+        fields = _event(caplog, PostCommitEvent.ACTION_FAILED)
+        assert (fields[LogField.JOB], fields[LogField.TASK_ID]) == (_Send.task_name, _Send.task_id)
         assert fields["exception.type"] == "ConnectionError"
         assert "broker down" not in str(fields)
 

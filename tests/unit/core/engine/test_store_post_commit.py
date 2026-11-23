@@ -22,13 +22,14 @@ from loom.core.command import Command
 from loom.core.engine.compiler import UseCaseCompiler
 from loom.core.engine.events import EventKind, ExecutionEvent
 from loom.core.engine.executor import UseCaseExecutor
-from loom.core.engine.post_commit import store_channel
+from loom.core.engine.post_commit import ActionSubject, PostCommitEvent, store_channel
 from loom.core.errors import StoresNotCommittedError
 from loom.core.job.context import (
     add_pending_dispatch,
     add_pending_publish,
     clear_pending_dispatches,
 )
+from loom.core.log_names import LogField
 from loom.core.model import BaseModel, ColumnField
 from loom.core.stores.catalog import DEFAULT_STORE, StoreKey
 from loom.core.stores.repository import CursorCodec, RepoFor
@@ -47,7 +48,7 @@ from tests.unit.core.cache._doubles import CountingCacheStore
 pytestmark = pytest.mark.timeout(30)
 
 AUDIT, EVENTS = StoreKey("audit"), StoreKey("events")
-_NEVER_RAN = "PostCommitShieldedActionNeverRan"
+_NEVER_RAN = PostCommitEvent.SHIELDED_ACTION_NEVER_RAN
 Step = Callable[[], Awaitable[object]]
 
 FAILURES: dict[StoreKey, BaseException] = {}
@@ -264,8 +265,8 @@ class _Send:
     def __call__(self) -> None:
         raise AssertionError("an uncertain store's send must not run")
 
-    def log_fields(self) -> list[dict[str, object]]:
-        return [{"job_name": "EmailJob", "task_id": "task-1"}]
+    def subjects(self) -> list[ActionSubject]:
+        return [ActionSubject(job="EmailJob", task_id="task-1")]
 
 
 class TestStorePostCommit:
@@ -593,4 +594,4 @@ class TestStorePostCommit:
             await stores.executor.execute(use_case)
 
         (fields,) = [entry for entry in logged_events(caplog) if entry["event"] == _NEVER_RAN]
-        assert (fields["job_name"], fields["task_id"]) == ("EmailJob", "task-1")
+        assert (fields[LogField.JOB], fields[LogField.TASK_ID]) == ("EmailJob", "task-1")

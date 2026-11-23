@@ -35,6 +35,7 @@ from celery import Celery  # type: ignore[import-untyped]
 from loom.celery.constants import callback_task_name
 from loom.core.engine.events import EventKind, ExecutionEvent
 from loom.core.engine.execution_observer import NullExecutionObserver
+from loom.core.engine.post_commit import ActionSubject
 from loom.core.errors.summary import ErrorSummary
 from loom.core.job.callback import CallbackOutcome
 from loom.core.job.context import add_pending_publish
@@ -98,8 +99,8 @@ class _PendingCeleryDispatch:
                 link=self.link,
             )
 
-    def log_fields(self) -> tuple[dict[str, object]]:
-        return ({"job_name": self.task_name, "task_id": self.task_id},)
+    def subjects(self) -> tuple[ActionSubject]:
+        return (ActionSubject(job=self.task_name, task_id=self.task_id),)
 
 
 class CallbackLink(msgspec.Struct, frozen=True):
