@@ -56,6 +56,7 @@ from loom.core.stores.repository.query import CursorResult, PageResult, QuerySpe
 from loom.core.use_case.field_ref import FieldRef
 from loom.core.use_case.outcome import Created
 from loom.rest.constants import QueryParam
+from loom.rest.event import RestEvent, RestKey
 from loom.rest.model import (
     ALL,
     DeclaredFields,
@@ -532,13 +533,7 @@ class _ColumnPolicy:
             )
         columns = scalar_column_annotations(self.model)
         if declared is ALL:
-            _logger.warning(
-                "%s makes every scalar column of %s %s (ALL), columns its response does not "
-                "show included; declare the columns instead.",
-                self.where,
-                self.model.__name__,
-                kind,
-            )
+            _logger.warning(RestEvent.COLUMNS_ALL_EXPOSED, extra={RestKey.ROUTE: self.where})
             return columns
         resolved: dict[str, Any] = {}
         for entry in declared:

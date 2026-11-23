@@ -8,6 +8,7 @@ from typing import TYPE_CHECKING
 
 from loom.core.config import ConfigKey
 from loom.core.config.errors import ConfigError
+from loom.serverless.event import ServerlessEvent, ServerlessKey
 
 if TYPE_CHECKING:
     from loom.ai.config import AiConfig
@@ -74,9 +75,7 @@ def check_resolved_ai(config: AiConfig | None) -> None:
         return
     _refuse_stdio({name: server.transport for name, server in config.mcp_servers.items()})
     for key in _endpoint_keys(config):
-        _log.warning(
-            f"{key} is ignored on Lambda: {COMPONENT} serves no agent endpoint", extra={"key": key}
-        )
+        _log.warning(ServerlessEvent.AGENT_ENDPOINT_IGNORED, extra={ServerlessKey.CONFIG_KEY: key})
 
 
 def _written_transports(servers: object) -> dict[str, object]:

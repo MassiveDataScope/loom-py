@@ -33,9 +33,10 @@ from loom.serverless.aws.lambda_ import (
     LambdaRuntime,
     LambdaUnservedConfigError,
 )
+from loom.serverless.event import ServerlessEvent
 from loom.testing import RecordingJobTransport
 from tests.helpers.composition import composition_project
-from tests.helpers.loggers import rendered
+from tests.helpers.loggers import exception_text, rendered
 from tests.helpers.loops import RecordedLoops
 from tests.unit.serverless.aws.lambda_._probe import Probe
 from tests.unit.serverless.aws.lambda_._records import WORKER, RecordFactory, with_worker
@@ -315,7 +316,7 @@ print([name for name in loaded if name in sys.modules])
         assert result["batchItemFailures"] == [{"itemIdentifier": item} for item in expected]
         assert [item[0] for item in seen] == ran
         error_class = "MalformedJobMessage" if poison == "body" else "UnknownJob"
-        assert any(error_class in message for message in _logged(caplog))
+        assert error_class in exception_text(caplog) + " ".join(_logged(caplog))
 
     def test_timeout_marks_remaining_records_failed(
         self,
@@ -612,7 +613,7 @@ print([name for name in loaded if name in sys.modules])
         adapter.mount(application)
         try:
             assert any(
-                "through the configured job transport" in message
+                ServerlessEvent.JOB_TRANSPORT_SELECTED in message
                 and "_OtherJobTransport" in message
                 for message in _logged(caplog)
             )
@@ -636,7 +637,7 @@ print([name for name in loaded if name in sys.modules])
         )
         configured = _manifest_project(project, "acme_jobs")
         LambdaRuntime(jobs=[probe[0]]).recipe(configured)
-        assert any("ignores AutoCRUD" in message for message in _logged(caplog))
+        assert any(ServerlessEvent.AUTOCRUD_IGNORED in message for message in _logged(caplog))
 
     def test_committed_failure_logs_final_outcome(
         self,

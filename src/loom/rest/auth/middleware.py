@@ -25,6 +25,7 @@ from loom.rest.auth.abc import AuthenticationUnavailable, Authenticator, Request
 from loom.rest.auth.config import JwtAuthConfig
 from loom.rest.auth.jwt import JwtAuthenticator
 from loom.rest.constants import BEARER_CHALLENGE
+from loom.rest.event import RestEvent, RestKey
 
 _Scope = dict[str, Any]
 _Receive = Callable[[], Awaitable[dict[str, Any]]]
@@ -100,9 +101,8 @@ class AuthenticationMiddleware:
             identity = await self._authenticator.authenticate(_credentials(scope))
         except AuthenticationUnavailable:
             _logger.warning(
-                "authentication unavailable method=%s path=%s",
-                scope.get("method", _UNKNOWN_CLIENT),
-                scope.get("path", _UNKNOWN_CLIENT),
+                RestEvent.AUTHENTICATION_UNAVAILABLE,
+                extra={RestKey.ROUTE: scope.get("path", _UNKNOWN_CLIENT)},
                 exc_info=True,
             )
             await _send_error(
@@ -115,10 +115,11 @@ class AuthenticationMiddleware:
 
         if identity is None:
             _logger.info(
-                "authentication refused method=%s path=%s client=%s",
-                scope.get("method", _UNKNOWN_CLIENT),
-                scope.get("path", _UNKNOWN_CLIENT),
-                _client_host(scope),
+                RestEvent.AUTHENTICATION_REFUSED,
+                extra={
+                    RestKey.ROUTE: scope.get("path", _UNKNOWN_CLIENT),
+                    RestKey.CLIENT: _client_host(scope),
+                },
             )
             await send_unauthorized(send)
             return

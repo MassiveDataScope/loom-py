@@ -24,6 +24,7 @@ from loom.core.errors import (
 from loom.core.errors.codes import ErrorCode
 from loom.core.tracing import get_trace_id
 from loom.rest.constants import BEARER_CHALLENGE, RETRY_AFTER_HEADER, WWW_AUTHENTICATE_HEADER
+from loom.rest.event import RestEvent, RestKey
 
 _DESCRIPTION_MAX_LENGTH = 256
 _INTERNAL_ERROR_MESSAGE = "An unexpected error occurred"
@@ -163,12 +164,10 @@ class HttpErrorMapper:
         """
         try:
             return _convert(self, error)
-        except _Misdeclared as failure:
+        except _Misdeclared:
             _logger.error(
-                "Misdeclared HTTP error %s: %s (trace_id=%s)",
-                type(error).__name__,
-                failure.problem,
-                get_trace_id(),
+                RestEvent.HTTP_ERROR_MISDECLARED,
+                extra={RestKey.ERROR_CLASS: type(error).__name__},
                 exc_info=True,
             )
             return _internal_fallback(error)

@@ -19,10 +19,12 @@ from typing import Any
 
 from loom.core.config.errors import ConfigError
 from loom.core.errors import InternalError, InvalidValue
+from loom.core.errors.summary import ErrorSummary
 from loom.core.identity import Identity
 from loom.core.identity.issuer import IssuedToken
 from loom.rest.auth.config import ATTRIBUTE_CLAIM_PREFIX, JwtIssuerConfig
 from loom.rest.auth.keys import load_pyjwt
+from loom.rest.event import RestEvent, RestKey
 
 _logger = logging.getLogger(__name__)
 
@@ -110,15 +112,7 @@ class JwtIssuer:
         token = self._sign(claims)
         if token is None:
             raise InternalError("JWT issuing failed")
-        _logger.info(
-            "issued token jti=%s sub=%s roles=%s aud=%s kid=%s exp=%s",
-            jti,
-            identity.subject,
-            list(identity.roles),
-            self._config.audience,
-            self._config.kid,
-            int(expires_at.timestamp()),
-        )
+        _logger.info(RestEvent.TOKEN_ISSUED, extra={RestKey.SUBJECT: identity.subject})
         return IssuedToken(token=token, expires_at=expires_at, jti=jti)
 
     def _sign(self, claims: dict[str, Any]) -> str | None:
@@ -140,8 +134,8 @@ class JwtIssuer:
                 )
             )
         except Exception as exc:  # noqa: BLE001
-            failure = type(exc).__name__
-        _logger.error("JWT issuing failed: %s with %s", failure, self._config.algorithm)
+            failure = ErrorSummary.of(exc).fields()
+        _logger.error(RestEvent.TOKEN_SIGNING_FAILED, extra=failure)
         return None
 
     def _checked_lifetime(self, ttl: timedelta | None) -> timedelta:

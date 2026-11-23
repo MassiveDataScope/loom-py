@@ -18,6 +18,7 @@ from loom.core.use_case import Created, Query
 from loom.core.use_case.field_ref import F
 from loom.core.use_case.use_case import UseCase
 from loom.rest.compiler import InterfaceCompilationError, RestInterfaceCompiler, RouteSources
+from loom.rest.event import RestEvent, RestKey
 from loom.rest.model import ALL, PaginationMode, RestApiDefaults, RestInterface, RestRoute
 from tests.unit.rest.doubles import CreateUserUseCase, ListUsersUseCase
 
@@ -1127,7 +1128,7 @@ class TestDeclaredColumns:
 
         assert "pages" in dict(route.filter_fields)
         (record,) = caplog.records
-        assert "does not show" in record.getMessage()
+        assert record.msg == RestEvent.COLUMNS_ALL_EXPOSED
 
     def test_a_sortable_column_the_response_shows_compiles(self) -> None:
         class IFace(RestInterface[_Book]):
@@ -1152,7 +1153,7 @@ class TestDeclaredColumns:
 
         assert "pages" in route.sort_fields
         (record,) = caplog.records
-        assert "does not show" in record.getMessage()
+        assert record.msg == RestEvent.COLUMNS_ALL_EXPOSED
 
     def test_all_resolves_the_root_scalar_columns_and_warns_naming_the_route(
         self, caplog: pytest.LogCaptureFixture
@@ -1168,7 +1169,7 @@ class TestDeclaredColumns:
         assert dict(route.filter_fields) == {"id": int, "title": str, "pages": int, "shelf_id": int}
         (record,) = caplog.records
         assert record.levelno == logging.WARNING
-        assert "IFace: route (GET, '/')" in record.getMessage()
+        assert getattr(record, RestKey.ROUTE).endswith("IFace: route (GET, '/')")
 
     def test_a_uuid_column_is_filterable_sortable_and_in_all(self) -> None:
         class Declared(RestInterface[_Pass]):
@@ -1225,7 +1226,7 @@ class TestCursorCapableRoutes:
 
         assert "id" in route.sort_fields
         (record,) = caplog.records
-        assert "(ALL), columns its response does not show included" in record.getMessage()
+        assert record.msg == RestEvent.COLUMNS_ALL_EXPOSED
 
     def test_a_primary_key_a_token_cannot_carry_fails_compilation(self) -> None:
         class IFace(RestInterface[_Blobbed]):

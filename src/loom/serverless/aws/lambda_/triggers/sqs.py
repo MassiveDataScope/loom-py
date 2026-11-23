@@ -25,6 +25,7 @@ from loom.core.job.outcome import (
     Succeeded,
     failure_log_fields,
 )
+from loom.core.log_names import LogField
 from loom.jobs.aws.queue import SQSRecord
 from loom.serverless.aws.lambda_._jobs import (
     TIMEOUT_SAFETY_MARGIN_MS,
@@ -33,6 +34,7 @@ from loom.serverless.aws.lambda_._jobs import (
     fail_in_span,
     remaining_ms,
 )
+from loom.serverless.event import ServerlessEvent, ServerlessKey
 
 if TYPE_CHECKING:
     from loom.composition import Application, LoopHost
@@ -195,25 +197,23 @@ class SQSBatch:
         match outcome:
             case Succeeded():
                 return
-            case Postponed(reason=reason, delay=delay):
+            case Postponed(reason=reason):
                 _log.info(
-                    "SQS job postponed",
+                    ServerlessEvent.SQS_JOB_POSTPONED,
                     extra={
-                        "job": job,
-                        "message_id": record.message_id,
-                        "reason": reason,
-                        "delay_s": delay.seconds,
+                        LogField.JOB: job,
+                        ServerlessKey.MESSAGE_ID: record.message_id,
+                        LogField.REASON: reason,
                     },
                 )
             case Failed():
                 error = outcome.as_exception()
                 _log.exception(
-                    "SQS job failed",
+                    ServerlessEvent.SQS_JOB_FAILED,
                     extra={
-                        "job": job,
-                        "message_id": record.message_id,
-                        "attempt": record.receive_count,
-                        "error_class": type(error).__name__,
+                        LogField.JOB: job,
+                        ServerlessKey.MESSAGE_ID: record.message_id,
+                        LogField.ATTEMPT: record.receive_count,
                         **failure_log_fields(error),
                     },
                     exc_info=error,

@@ -44,6 +44,7 @@ from loom.core.tracing import get_trace_id
 from loom.rest._body import MALFORMED_BODY_ERRORS, payload_too_large_detail
 from loom.rest.auth.abc import Authenticator
 from loom.rest.errors import HttpErrorMapper
+from loom.rest.event import RestEvent, RestKey
 from loom.rest.fastapi._errors import internal_error_response, malformed_body_error
 from loom.rest.fastapi.response import MsgspecJSONResponse
 
@@ -259,15 +260,13 @@ def _make_sql_handler(
             http_error = _error_mapper.to_http(exc)
             if http_error.status_code >= HTTPStatus.INTERNAL_SERVER_ERROR:
                 _logger.error(
-                    "SQL endpoint failed for connection %r (code=%s trace_id=%s)",
-                    name,
-                    exc.code,
-                    get_trace_id(),
+                    RestEvent.SQL_ENDPOINT_FAILED,
+                    extra={RestKey.CONNECTION: name},
                     exc_info=exc,
                 )
             raise http_error from exc
         except Exception:
-            _logger.exception("Unhandled error in SQL endpoint for connection %r", name)
+            _logger.exception(RestEvent.SQL_ENDPOINT_UNHANDLED, extra={RestKey.CONNECTION: name})
             return internal_error_response()
 
     _handler.__name__ = handler_name
@@ -330,17 +329,12 @@ def _mount_endpoint(
         methods=["POST"],
         include_in_schema=endpoint.include_in_schema,
     )
-    _logger.warning(
-        "SQL endpoint mounted: path=%s connection=%s readonly=%s auth=%s allowed_roles=%d. "
-        "'auth' only authenticates the caller; the roles it may use come from the "
-        "identity binding: %s",
-        path,
-        name,
-        connection.readonly,
-        endpoint.auth,
-        len(connection.allowed_roles),
-        _role_exposure_notice(bound_mechanism, len(connection.allowed_roles)),
+    mounted = (
+        RestEvent.SQL_ENDPOINT_MOUNTED_SHARED_ROLE
+        if bound_mechanism is None
+        else RestEvent.SQL_ENDPOINT_MOUNTED_ROLES_BOUND
     )
+    _logger.warning(mounted, extra={RestKey.ROUTE: path, RestKey.CONNECTION: name})
 
 
 def mounted_sql_endpoints(config: SqlConfig) -> tuple[str, ...]:

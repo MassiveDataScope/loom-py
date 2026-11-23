@@ -26,6 +26,7 @@ from loom.core.job.job import Job
 from loom.rest.fastapi import FastAPIRuntime
 from loom.serverless.aws.lambda_ import LambdaRuntime, LambdaUnservedConfigError
 from loom.serverless.aws.lambda_.triggers.http import LambdaHTTPHandler
+from loom.serverless.event import ServerlessEvent, ServerlessKey
 from tests.helpers.ai import CountingEngineProvider
 from tests.helpers.composition import composition_project
 from tests.unit.serverless.aws.lambda_._probe import Probe
@@ -290,7 +291,9 @@ class TestLambdaAiRefusals:
             )
         adapter.close()
 
-        ignored = [message for message in caplog.messages if "ignored on Lambda" in message]
-        assert len(ignored) == len(keys)
-        for key in keys:
-            assert sum(key in message for message in ignored) == 1
+        ignored = [
+            getattr(record, ServerlessKey.CONFIG_KEY)
+            for record in caplog.records
+            if record.msg == ServerlessEvent.AGENT_ENDPOINT_IGNORED
+        ]
+        assert sorted(ignored) == sorted(keys)

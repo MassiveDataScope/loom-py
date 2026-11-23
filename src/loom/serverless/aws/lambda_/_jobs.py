@@ -19,6 +19,7 @@ from loom.core.config import ConfigError
 from loom.core.discovery.worker import resolve_worker_components
 from loom.core.job.config import JobSettings
 from loom.core.job.envelope import JobEnvelope
+from loom.core.job.event import JobKey
 from loom.core.job.outcome import JobOutcome
 from loom.core.job.policy import Redelivery, RetryPolicy
 from loom.core.job.run import EnvelopeInvocation
@@ -30,6 +31,7 @@ from loom.core.stores import LAMBDA_PROFILE
 from loom.jobs.aws.queue import AbandonedMessage, SQSRecord
 from loom.jobs.aws.settlement import SQSJobSettlement
 from loom.jobs.aws.sqs import SQSConfig
+from loom.serverless.event import ServerlessEvent, ServerlessKey
 
 if TYPE_CHECKING:
     from loom.composition import Application, Project
@@ -58,10 +60,7 @@ def jobs_recipe(
     """
     resolved = resolve_worker_components(project.discovered, jobs, use_cases)
     if resolved.models:
-        _log.warning(
-            "Lambda ignores AutoCRUD use cases for discovered models",
-            extra={"models": len(resolved.models)},
-        )
+        _log.warning(ServerlessEvent.AUTOCRUD_IGNORED)
     recipe = Recipe(
         profile=LAMBDA_PROFILE,
         discovered=project.discovered.with_changes(
@@ -89,8 +88,8 @@ def open_host(application: Application) -> LoopHost:
     host = LoopHost(application)
     host.start()
     _log.info(
-        "Lambda dispatched jobs go through the configured job transport",
-        extra={"job_transport": type(service.default_transport).__qualname__},
+        ServerlessEvent.JOB_TRANSPORT_SELECTED,
+        extra={ServerlessKey.TRANSPORT: type(service.default_transport).__qualname__},
     )
     return host
 
@@ -172,12 +171,12 @@ class QueueConsumer(JobConsumer):
         )
         redelivery = queue.redelivery
         if served:
+            policies = settings.describe_retries(redelivery, served)
             _log.info(
-                "Job retry policies",
+                ServerlessEvent.SQS_RETRY_POLICIES_RESOLVED,
                 extra={
-                    "transport": "sqs",
-                    "queue": queue_name,
-                    "jobs": settings.describe_retries(redelivery, served),
+                    JobKey.QUEUE: queue_name,
+                    ServerlessKey.RETRIES: [f"{p['job']}: {p['retry']}" for p in policies],
                 },
             )
         return cls(

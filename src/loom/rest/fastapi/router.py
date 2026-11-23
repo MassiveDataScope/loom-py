@@ -47,6 +47,7 @@ from loom.core.engine.executor import UseCaseExecutor
 from loom.core.errors import BODY_FIELD, BoundaryValidationError, CodedError, Forbidden
 from loom.core.errors.codes import ErrorCode
 from loom.core.identity import Identity, current_identity
+from loom.core.log_names import LogField
 from loom.core.model import LoomType, loom_type, msgspec_type
 from loom.core.observability.event import Scope
 from loom.core.observability.observability import Observability
@@ -65,6 +66,7 @@ from loom.rest._body import MALFORMED_BODY_ERRORS, BodyTooLarge
 from loom.rest.compiler import CompiledRoute, names_query_spec
 from loom.rest.constants import LIMIT_DEFAULT, QueryParam
 from loom.rest.errors import HttpErrorMapper
+from loom.rest.event import RestEvent, RestKey
 from loom.rest.fastapi._errors import internal_error_response, malformed_body_error
 from loom.rest.fastapi.openapi import (
     QUERY_SPEC_PARAMETER_NAMES,
@@ -121,11 +123,8 @@ def _authorize_route(identity: Identity, required_roles: tuple[str, ...], route:
     if not required_roles or any(identity.has_role(role) for role in required_roles):
         return
     _logger.warning(
-        "Route authorization denied: route=%s subject=%s mechanism=%s required_roles=%s",
-        route,
-        identity.subject,
-        identity.mechanism,
-        ",".join(required_roles),
+        RestEvent.AUTHORIZATION_DENIED,
+        extra={RestKey.ROUTE: route, RestKey.SUBJECT: identity.subject},
     )
     raise Forbidden(_NOT_AUTHORIZED_MESSAGE)
 
@@ -667,12 +666,12 @@ class _RouteHandler:
             )
             if refusal is not None:
                 raise _error_mapper.to_http(refusal) from exc
-            trace_id = get_trace_id() or ""
             _logger.exception(
-                "Unhandled error in %s (route=%s trace_id=%s)",
-                self._runtime.use_case_type.__name__,
-                self._runtime.compiled_route.full_path,
-                trace_id,
+                RestEvent.REQUEST_UNHANDLED,
+                extra={
+                    LogField.USE_CASE: self._runtime.use_case_type.__name__,
+                    RestKey.ROUTE: self._runtime.compiled_route.full_path,
+                },
             )
             return internal_error_response()
 
