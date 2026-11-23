@@ -122,6 +122,7 @@ class _SQLAlchemyTablePartition:
         statement = _sa_insert(self._table)
         trace_id = uuid4().hex
         correlation_id = uuid4().hex
+        batch = self._buffer_records
         n = 0
         async with self._session_manager.session() as session:
             try:
@@ -151,7 +152,7 @@ class _SQLAlchemyTablePartition:
                 await session.rollback()
                 _log.error(
                     StreamingEvent.SINK_FLUSH_FAILED,
-                    extra={StreamingKey.TARGET: self._table.name, StreamingKey.RECORDS: n},
+                    extra={StreamingKey.TARGET: self._table.name, StreamingKey.RECORDS: batch},
                 )
                 raise
         self._buffer_started_at = None
