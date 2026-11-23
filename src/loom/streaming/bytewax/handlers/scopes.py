@@ -142,8 +142,9 @@ def _apply_with_async_process(
             _emit_node_batch_spans(
                 observer, flow_name, idx, node_type, batch, BatchWindow.since(started_ns), exc
             )
+            reason = ErrorSummary.cite(exc)
             return [
-                _build_error_envelope(ErrorKind.TASK, ErrorSummary.cite(exc), message, boundary)
+                _build_error_envelope(ErrorKind.TASK, reason, message, boundary)
                 for message in batch
             ]
         _emit_node_batch_spans(

@@ -114,10 +114,8 @@ def _execute_batch_in_boundary(
         kind = classify(exc)
         if originals:
             _log_boundary_error(kind, exc, originals[0], batch_size=len(originals))
-        return [
-            _build_error_envelope(kind, ErrorSummary.cite(exc), message, boundary)
-            for message in originals
-        ]
+        reason = ErrorSummary.cite(exc)
+        return [_build_error_envelope(kind, reason, message, boundary) for message in originals]
 
 
 def _split_node_result(

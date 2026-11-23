@@ -122,7 +122,8 @@ def _write_kafka_batch(
     except KafkaDeliveryError as exc:
         if sink.dlq_topic is None:
             raise
-        dlq_error = ErrorSummary.cite(exc).encode("utf-8")
+        sink_error = ErrorSummary.cite(exc)
+        dlq_error = sink_error.encode("utf-8")
         try:
             for item in items:
                 request = item_to_send(item)
@@ -134,7 +135,7 @@ def _write_kafka_batch(
         except KafkaDeliveryError as dlq_exc:
             raise KafkaDeliveryError(
                 f"delivery failed after diverting the batch to DLQ topic {sink.dlq_topic!r} "
-                f"(sink delivery error: {ErrorSummary.cite(exc)})"
+                f"(sink delivery error: {sink_error})"
             ) from dlq_exc
         _commit_runtime_items(items, item_to_commit, commit_tracker)
         return _BatchOutcome(error=exc, dlq_topic=sink.dlq_topic)
