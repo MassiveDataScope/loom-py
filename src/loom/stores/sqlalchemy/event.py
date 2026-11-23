@@ -30,11 +30,10 @@ class SqlalchemyKey(LogKey):
     """The fields of a relational store record."""
 
     STORE = "loom.sqlalchemy.store"
-    PATH = "loom.sqlalchemy.path"
     BACKEND = "loom.sqlalchemy.backend"
     DRIVER = "loom.sqlalchemy.driver"
     INJECT_TRACE_ID = "loom.sqlalchemy.inject_trace_id"
-    SESSION_SETTINGS = "loom.sqlalchemy.session_settings"
+    HAS_SESSION_SETTINGS = "loom.sqlalchemy.has_session_settings"
     SKIPPED_STORES = "loom.sqlalchemy.skipped_stores"
     OWNER = "loom.sqlalchemy.owner"
     METHOD = "loom.sqlalchemy.method"

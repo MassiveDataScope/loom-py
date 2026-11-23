@@ -457,7 +457,7 @@ class MongoRepository(
             _log.error(
                 MongoEvent.BULK_UNDO_FAILED,
                 extra={
-                    MongoKey.DOCUMENT_IDS: [str(key) for key in keys],
+                    MongoKey.DOCUMENT_COUNT: len(keys),
                     **ErrorSummary.of(exc).fields(),
                 },
             )

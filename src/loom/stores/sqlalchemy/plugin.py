@@ -79,11 +79,13 @@ class _Store:
     """One SQLAlchemy store, as its startup checks and its model preparation see it.
 
     Args:
+        key: The store's name, for log records.
         path: Dotted path of the store's section, for error messages.
         schema: The store's ``schema`` section.
         session_manager: Its engine, and the metadata its models compile into.
     """
 
+    key: StoreKey
     path: str
     schema: SchemaConfig
     session_manager: SessionManager
@@ -162,14 +164,16 @@ class SQLAlchemyStorePlugin:
             )
             prepare = functools.partial(
                 _prepare_models,
-                path=spec.path,
+                store=spec.key,
                 metadata=session_manager.metadata,
                 settings=settings,
             )
             check = _run_startup_checks
             if settings is not None:
                 elevation = SQLAlchemyStoreElevation(session_manager)
-        store = _Store(path=spec.path, schema=db_cfg.schema, session_manager=session_manager)
+        store = _Store(
+            key=spec.key, path=spec.path, schema=db_cfg.schema, session_manager=session_manager
+        )
         return StoreWiring(
             uow_factory=SQLAlchemyUnitOfWorkFactory(session_manager),
             repo_registration_module=module,
@@ -205,7 +209,7 @@ def _open_session_manager(
 def _prepare_models(
     models: Sequence[type[BaseModel]],
     *,
-    path: str,
+    store: StoreKey,
     metadata: MetaData,
     settings: DeferredScopedSettings | None,
 ) -> None:
@@ -215,7 +219,7 @@ def _prepare_models(
     or verifies the schema, from the scoped tables this compilation captured.
     """
     if not models:
-        _logger.warning(SqlalchemyEvent.NO_MODELS_DISCOVERED, extra={SqlalchemyKey.PATH: path})
+        _logger.warning(SqlalchemyEvent.NO_MODELS_DISCOVERED, extra={SqlalchemyKey.STORE: store})
     compile_all(*models, metadata=metadata)
     if settings is None:
         return
@@ -460,10 +464,10 @@ async def _check_guard(
             f"the guard {guard} or the scoped tables differ from what this release of loom "
             f"ships: {details}"
         )
-    _warn_audit_horizon(store.path, await audit_months_covered(connection))
+    _warn_audit_horizon(store.key, await audit_months_covered(connection))
 
 
-def _warn_audit_horizon(path: str, covered: int | None) -> None:
+def _warn_audit_horizon(store: StoreKey, covered: int | None) -> None:
     """Log when the audit log's partitions run out soon; never refuse to start.
 
     The application role cannot create partitions, so startup only raises the
@@ -473,11 +477,11 @@ def _warn_audit_horizon(path: str, covered: int | None) -> None:
     if covered is None or covered >= AUDIT_HORIZON_WARNING_MONTHS:
         return
     if covered == 0:
-        _logger.error(SqlalchemyEvent.AUDIT_PARTITION_MISSING, extra={SqlalchemyKey.PATH: path})
+        _logger.error(SqlalchemyEvent.AUDIT_PARTITION_MISSING, extra={SqlalchemyKey.STORE: store})
     else:
         _logger.warning(
             SqlalchemyEvent.AUDIT_PARTITIONS_RUNNING_OUT,
-            extra={SqlalchemyKey.PATH: path, SqlalchemyKey.MONTHS_COVERED: covered},
+            extra={SqlalchemyKey.STORE: store, SqlalchemyKey.MONTHS_COVERED: covered},
         )
 
 

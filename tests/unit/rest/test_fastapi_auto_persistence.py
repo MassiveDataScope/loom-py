@@ -309,7 +309,7 @@ class TestBuildBootstrapModelRules:
         assert runtime is not None
         assert factory is not None
         empty = next(r for r in caplog.records if r.msg == SqlalchemyEvent.NO_MODELS_DISCOVERED)
-        assert empty.__dict__[SqlalchemyKey.PATH] == "stores.default"
+        assert empty.__dict__[SqlalchemyKey.STORE] == "default"
 
     @pytest.mark.parametrize(
         "store",

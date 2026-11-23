@@ -55,6 +55,15 @@ class TestDbPoolMetrics:
         finally:
             await manager.close()
 
+    async def test_the_instrumented_pool_logs_under_sqlalchemys_namespace(
+        self, tmp_path: Path
+    ) -> None:
+        manager = _manager(tmp_path, CollectorRegistry())
+        try:
+            assert not manager.engine.sync_engine.pool.logger.name.startswith("loom.")
+        finally:
+            await manager.close()
+
     async def test_each_checkout_is_timed(self, tmp_path: Path) -> None:
         registry = CollectorRegistry()
         manager = _manager(tmp_path, registry)

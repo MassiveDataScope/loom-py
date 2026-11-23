@@ -21,12 +21,14 @@ from sqlalchemy.pool import QueuePool
 
 from loom.core.command import Command
 from loom.core.errors import ForeignSessionError, ScopeOwnershipError, UndeclaredStoreWrite
+from loom.core.log_names import LogField
 from loom.core.model import BaseModel, ColumnField
 from loom.core.stores.catalog import DEFAULT_STORE, StoreKey
 from loom.core.stores.elevation import ScopedElevationSink
 from loom.core.stores.repository import CursorCodec, PageParams
 from loom.core.stores.uow.coordinator import ROLLBACK_TIMEOUT_S, OrderedCommits
 from loom.core.stores.uow.scope import Frame, InvocationScope, invocation
+from loom.stores.sqlalchemy.event import SqlalchemyEvent
 from loom.stores.sqlalchemy.repository import SQLAlchemyRepository, with_session_scope
 from loom.stores.sqlalchemy.rls import SQLAlchemyStoreElevation
 from loom.stores.sqlalchemy.schema import compile_all, get_compiled
@@ -477,7 +479,7 @@ class TestOperationSession:
         assert instance.name == "kept"
 
     async def test_outside_an_invocation_it_persists_nothing_on_error(
-        self, stores: _Stores, audit_rows: _AuditRows
+        self, stores: _Stores, audit_rows: _AuditRows, caplog: pytest.LogCaptureFixture
     ) -> None:
         async def write_then_fail() -> None:
             async with stores.audit.operation_session(write=True) as session:
@@ -487,7 +489,15 @@ class TestOperationSession:
         with pytest.raises(_InvocationFailed):
             await write_then_fail()
 
+        rolled_back = [
+            record
+            for record in caplog.records
+            if record.msg == SqlalchemyEvent.OPERATION_SESSION_ROLLED_BACK
+        ]
         assert await audit_rows.count() == 0
+        assert [record.__dict__[LogField.EXCEPTION_TYPE] for record in rolled_back] == [
+            "_InvocationFailed"
+        ]
 
     async def test_a_cancelled_write_persists_nothing_and_returns_its_connection(
         self, tmp_path: Path

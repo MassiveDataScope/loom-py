@@ -140,7 +140,7 @@ class SessionManager:
                 SqlalchemyKey.BACKEND: self._engine.url.get_backend_name(),
                 SqlalchemyKey.DRIVER: self._engine.url.get_driver_name(),
                 SqlalchemyKey.INJECT_TRACE_ID: inject_trace_id,
-                SqlalchemyKey.SESSION_SETTINGS: session_settings is not None,
+                SqlalchemyKey.HAS_SESSION_SETTINGS: session_settings is not None,
             },
         )
 

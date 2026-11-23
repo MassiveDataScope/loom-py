@@ -17,4 +17,4 @@ class MongoKey(LogKey):
     """The fields of a Mongo store record."""
 
     TRANSACTIONS = "loom.mongo.transactions"
-    DOCUMENT_IDS = "loom.mongo.document_ids"
+    DOCUMENT_COUNT = "loom.mongo.document_count"
