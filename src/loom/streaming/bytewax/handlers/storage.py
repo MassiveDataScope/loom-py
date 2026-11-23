@@ -121,13 +121,14 @@ class _StorageSinkPartition(StatelessSinkPartition[Message[Any]]):
         if self._failed:
             self._pending.clear()
             return
+        if not isinstance(durable, int) or isinstance(durable, bool):
+            self._failed = True
+            raise InvalidType(
+                f"{self._node_name}: SinkPartition.write_batch and close must return "
+                "an int count of the pending items they made durable."
+            )
         if not self._is_durable_count(durable):
             self._failed = True
-            if not isinstance(durable, int) or isinstance(durable, bool):
-                raise InvalidType(
-                    f"{self._node_name}: SinkPartition.write_batch and close must return "
-                    "an int count of the pending items they made durable."
-                )
             raise InvalidValue(
                 f"{self._node_name}: SinkPartition.write_batch and close must return a "
                 "count between zero and the number of pending items."

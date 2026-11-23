@@ -316,6 +316,9 @@ class StreamingRunner:
         Returns:
             A bundle containing the assembled :class:`~bytewax.dataflow.Dataflow`
             and a shutdown callable that releases adapter-owned resources.
+
+        Raises:
+            InvalidUse: If the runner has no compiled plan.
         """
         if self._plan is None:
             raise InvalidUse(
@@ -377,6 +380,7 @@ class StreamingRunner:
             InvalidValue: If ``resolvers`` is given together with ``config``
                 instead of ``config_path``; ``config`` is already resolved
                 and ``resolvers`` would never be applied.
+            InvalidUse: If the runner has no compiled plan.
         """
         if config is not None and resolvers:
             raise InvalidValue(

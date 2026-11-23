@@ -2,8 +2,10 @@
 
 from __future__ import annotations
 
+from loom.core.errors import LoomError
 
-class LoomStreamingError(Exception):
+
+class LoomStreamingError(LoomError):
     """Base class for explicit streaming-layer errors."""
 
 

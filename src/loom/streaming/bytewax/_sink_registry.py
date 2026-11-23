@@ -81,7 +81,8 @@ class SinkRegistry:
         """
         if not isinstance(cls, RegisteredSink):
             raise InvalidType(
-                f"{cls!r} does not satisfy the RegisteredSink protocol. "
+                f"{getattr(cls, '__qualname__', type(cls).__qualname__)} does not satisfy "
+                "the RegisteredSink protocol. "
                 "Required class attributes: sink_type (str), config_type (type), "
                 "and classmethod build_binding(cfg, ctx)."
             )
