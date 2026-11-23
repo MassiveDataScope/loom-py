@@ -59,8 +59,8 @@ class _ComputeSpec:
         if self.param_names:
             if context is None:
                 raise InvalidUse("Compute.from_params(...) requires runtime context.")
-            if any(n not in context for n in self.param_names):
-                raise UnknownKey("Missing runtime context keys for compute")
+            if missing := [n for n in self.param_names if n not in context]:
+                raise UnknownKey(f"Missing runtime context keys for compute: {', '.join(missing)}")
             args.extend(context[n] for n in self.param_names)
 
         if self.via is None:

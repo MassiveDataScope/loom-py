@@ -31,10 +31,6 @@ if TYPE_CHECKING:
     from opentelemetry.sdk._logs.export import LogRecordExporter
 
 _OTEL_EXTRA = "etl-otel"
-_GRPC_SPAN_EXPORTER = "opentelemetry.exporter.otlp.proto.grpc.trace_exporter"
-_HTTP_SPAN_EXPORTER = "opentelemetry.exporter.otlp.proto.http.trace_exporter"
-_GRPC_LOG_EXPORTER = "opentelemetry.exporter.otlp.proto.grpc._log_exporter"
-_HTTP_LOG_EXPORTER = "opentelemetry.exporter.otlp.proto.http._log_exporter"
 _ERR_MISSING_SDK = (
     "OTEL span and log export requires 'opentelemetry-sdk'. "
     "Install it with: pip install 'loom-py[etl-otel]'"
@@ -62,14 +58,14 @@ def _load_span_exporter_cls(protocol: str) -> type[Any]:
         try:
             from opentelemetry.exporter.otlp.proto.grpc.trace_exporter import OTLPSpanExporter
         except ImportError as exc:
-            raise MissingExtraError(_GRPC_SPAN_EXPORTER, _OTEL_EXTRA, exc.name) from exc
+            raise MissingExtraError(__name__, _OTEL_EXTRA, exc.name) from exc
         return OTLPSpanExporter
     try:
         from opentelemetry.exporter.otlp.proto.http.trace_exporter import (
             OTLPSpanExporter as HttpSpanExporter,
         )
     except ImportError as exc:
-        raise MissingExtraError(_HTTP_SPAN_EXPORTER, _OTEL_EXTRA, exc.name) from exc
+        raise MissingExtraError(__name__, _OTEL_EXTRA, exc.name) from exc
     return HttpSpanExporter
 
 
@@ -90,7 +86,7 @@ def _load_log_exporter_cls(protocol: str) -> type[Any]:
         try:
             from opentelemetry.exporter.otlp.proto.grpc._log_exporter import OTLPLogExporter
         except ImportError as exc:
-            raise MissingExtraError(_GRPC_LOG_EXPORTER, _OTEL_EXTRA, exc.name) from exc
+            raise MissingExtraError(__name__, _OTEL_EXTRA, exc.name) from exc
         return OTLPLogExporter
     if protocol != "http/protobuf":
         raise InvalidValue("OTLP protocol must be 'http/protobuf' or 'grpc'.")
@@ -99,7 +95,7 @@ def _load_log_exporter_cls(protocol: str) -> type[Any]:
             OTLPLogExporter as HttpLogExporter,
         )
     except ImportError as exc:
-        raise MissingExtraError(_HTTP_LOG_EXPORTER, _OTEL_EXTRA, exc.name) from exc
+        raise MissingExtraError(__name__, _OTEL_EXTRA, exc.name) from exc
     return HttpLogExporter
 
 

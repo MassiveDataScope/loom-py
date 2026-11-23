@@ -66,7 +66,7 @@ class TestRowScopePrivileges:
             key: int = ScopedField(Integer, primary_key=True, scope="holder")
             viewer: str = ScopedField(Text, scope="viewer", on="read", elevable=True)
 
-        with pytest.raises(ValueError, match=r"C2.*ReadElevable.*elevable scope"):
+        with pytest.raises(ValueError, match=r"C2.*ReadElevable.*viewer"):
             scope_columns(ReadElevable)
 
     @pytest.mark.parametrize("name", ["Holder", "my-scope", "1st", ""])
@@ -75,7 +75,7 @@ class TestRowScopePrivileges:
             __tablename__ = "bad_name"
             key: int = ScopedField(Integer, primary_key=True, scope=name)
 
-        with pytest.raises(ValueError, match=r"C3.*BadName.*not an identifier"):
+        with pytest.raises(ValueError, match=r"C3.*BadName.*key"):
             scope_columns(BadName)
 
     def test_c3_a_scope_name_cannot_repeat_within_a_table(self) -> None:
@@ -84,7 +84,7 @@ class TestRowScopePrivileges:
             key: int = ScopedField(Integer, primary_key=True, scope="holder")
             other: int = ScopedField(Integer, scope="holder", on="write")
 
-        with pytest.raises(ValueError, match=r"C3.*Repeated.*repeats a scope"):
+        with pytest.raises(ValueError, match=r"C3.*Repeated.*other"):
             scope_columns(Repeated)
 
     def test_c4_scope_options_on_an_unmarked_model_are_rejected(self) -> None:
@@ -92,7 +92,7 @@ class TestRowScopePrivileges:
             __tablename__ = "unmarked"
             key: int = ScopedField(Integer, primary_key=True, scope="holder")
 
-        with pytest.raises(ValueError, match=r"C4.*Unmarked.*unmarked model"):
+        with pytest.raises(ValueError, match=r"C4.*Unmarked.*key"):
             scope_columns(Unmarked)
 
 
@@ -107,7 +107,7 @@ class TestRowScopeReach:
             key: int = ScopedField(Integer, primary_key=True, scope="holder")
             loose: Annotated[str, Text, WRITE_ONLY]
 
-        with pytest.raises(ValueError, match=r"C4.*WriteOnly.*without a scope"):
+        with pytest.raises(ValueError, match=r"C4.*WriteOnly.*loose"):
             scope_columns(WriteOnly)
 
     def test_c4_elevable_without_a_scope_is_rejected(self) -> None:
@@ -116,7 +116,7 @@ class TestRowScopeReach:
             key: int = ScopedField(Integer, primary_key=True, scope="holder")
             loose: Annotated[str, Text, ELEVABLE]
 
-        with pytest.raises(ValueError, match=r"C4.*Elevable.*without a scope"):
+        with pytest.raises(ValueError, match=r"C4.*Elevable.*loose"):
             scope_columns(Elevable)
 
     def test_c5_the_primary_key_must_contain_the_boundary_column(self) -> None:
@@ -125,7 +125,7 @@ class TestRowScopeReach:
             id: int = ColumnField(Integer, primary_key=True)
             key: int = ScopedField(Integer, scope="holder")
 
-        with pytest.raises(ValueError, match=r"C5.*PkWithoutBoundary.*lacks the boundary"):
+        with pytest.raises(ValueError, match=r"C5.*PkWithoutBoundary.*id"):
             scope_columns(PkWithoutBoundary)
 
     def test_c5_a_single_column_unique_without_the_boundary_is_rejected(self) -> None:
@@ -134,7 +134,7 @@ class TestRowScopeReach:
             key: int = ScopedField(Integer, primary_key=True, scope="holder")
             reference: str = ColumnField(Text, unique=True)
 
-        with pytest.raises(ValueError, match=r"C5.*UniqueWithoutBoundary.*lacks the boundary"):
+        with pytest.raises(ValueError, match=r"C5.*UniqueWithoutBoundary.*reference"):
             scope_columns(UniqueWithoutBoundary)
 
     def test_c8_the_boundary_column_cannot_be_nullable(self) -> None:
@@ -142,7 +142,7 @@ class TestRowScopeReach:
             __tablename__ = "nullable_boundary"
             key: int | None = ScopedField(Integer, primary_key=True, nullable=True, scope="holder")
 
-        with pytest.raises(ValueError, match=r"C8.*NullableBoundary.*cannot be nullable"):
+        with pytest.raises(ValueError, match=r"C8.*NullableBoundary.*key"):
             scope_columns(NullableBoundary)
 
     def test_c8_an_optional_boundary_in_the_primary_key_is_not_null_and_accepted(self) -> None:

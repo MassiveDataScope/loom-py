@@ -58,13 +58,13 @@ class TestSpanExporterLoader:
     def test_names_the_grpc_package_when_grpc_is_absent(self) -> None:
         with _without(_GRPC), pytest.raises(MissingExtraError) as excinfo:
             otel._load_span_exporter_cls("grpc")
-        assert "grpc" in str(excinfo.value)
+        assert "etl-otel" in str(excinfo.value)
         assert isinstance(excinfo.value.__cause__, ImportError)
 
     def test_names_the_http_package_when_http_is_absent(self) -> None:
         with _without(_HTTP), pytest.raises(MissingExtraError) as excinfo:
             otel._load_span_exporter_cls("http/protobuf")
-        assert "http" in str(excinfo.value)
+        assert "etl-otel" in str(excinfo.value)
         assert isinstance(excinfo.value.__cause__, ImportError)
 
     @pytest.mark.parametrize("protocol", ["grpc", "http/protobuf"])
@@ -76,12 +76,12 @@ class TestLogExporterLoader:
     def test_names_the_grpc_package_when_grpc_is_absent(self) -> None:
         with _without(_GRPC), pytest.raises(MissingExtraError) as excinfo:
             otel._load_log_exporter_cls("grpc")
-        assert "grpc" in str(excinfo.value)
+        assert "etl-otel" in str(excinfo.value)
 
     def test_names_the_http_package_when_http_is_absent(self) -> None:
         with _without(_HTTP), pytest.raises(MissingExtraError) as excinfo:
             otel._load_log_exporter_cls("http/protobuf")
-        assert "http" in str(excinfo.value)
+        assert "etl-otel" in str(excinfo.value)
 
     def test_rejects_an_unsupported_protocol_without_importing(self) -> None:
         with pytest.raises(InvalidValue):
@@ -104,7 +104,7 @@ class TestBuildTracerSdkGuard:
         config = OtelConfig(endpoint=Dsn("http://collector:4318/v1/traces"))
         with _without(_HTTP, "opentelemetry.sdk"), pytest.raises(MissingExtraError) as excinfo:
             otel.build_tracer(config)
-        assert "http" in str(excinfo.value)
+        assert "etl-otel" in str(excinfo.value)
 
     def test_names_the_missing_sdk_when_the_exporter_is_present(self) -> None:
         config = OtelConfig(endpoint=Dsn("http://collector:4318/v1/traces"))

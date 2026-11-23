@@ -267,7 +267,7 @@ class TestMongoClientOptions:
     ) -> None:
         wiring = _wiring(monkeypatch, FakeMongoClient(), _SECTION, (AcmeMongoDerived,))
 
-        with pytest.raises(ValueError, match="AcmeMongoDerived: derived key field needs"):
+        with pytest.raises(ValueError, match="AcmeMongoDerived: derived key 'id' needs"):
             wiring.prepare_models((AcmeMongoDerived,))
 
     def test_prepare_models_accepts_models_with_a_client_or_generated_key(

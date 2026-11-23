@@ -213,7 +213,7 @@ class UseCaseExecutor:
             The result produced by ``execute()``.
 
         Raises:
-            InvalidType: When neither ``factory`` nor the executor's ``builder``
+            InvalidUse: When neither ``factory`` nor the executor's ``builder``
                 is given.
         """
         build = self._builder if factory is None else factory.build

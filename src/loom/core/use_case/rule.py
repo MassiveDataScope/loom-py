@@ -151,6 +151,7 @@ class Rule:
             RuleViolationError: When the evaluator reports a violation.
             InvalidType: When the evaluator returns anything else than a message,
                 a ``RuleViolationError`` or ``None``.
+            InvalidUse: When the rule reads runtime context and none is given.
             UnknownKey: When a runtime context key the rule reads is missing.
         """
         if self.predicate is not None and not _predicate_is_present(
@@ -169,8 +170,8 @@ class Rule:
         if self.param_names:
             if context is None:
                 raise InvalidUse("Rule.from_params(...) requires runtime context.")
-            if any(n not in context for n in self.param_names):
-                raise UnknownKey("Missing runtime context keys for rule")
+            if missing := [n for n in self.param_names if n not in context]:
+                raise UnknownKey(f"Missing runtime context keys for rule: {', '.join(missing)}")
             args.extend(context[n] for n in self.param_names)
 
         result = self.evaluator(*args)
@@ -183,7 +184,7 @@ class Rule:
         if isinstance(result, str):
             raise RuleViolationError(self._resolved_field(command), result)
         raise InvalidType(
-            f"Rule.check: the evaluator "
+            f"Rule.check on field '{self._resolved_field(command)}': the evaluator "
             f"returned {type(result).__name__}; return the violation message (str), "
             "a RuleViolationError, or None when the value is valid."
         )

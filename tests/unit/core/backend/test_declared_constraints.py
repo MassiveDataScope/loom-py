@@ -92,7 +92,7 @@ class TestDeclaredConstraints:
             is_owner: bool = ColumnField(Boolean)
 
         metadata = MetaData()
-        with pytest.raises(ValueError, match=r"C5: LooseSeat partial unique lacks the boundary"):
+        with pytest.raises(ValueError, match=r"C5: LooseSeat partial unique owner"):
             compile_all(LooseSeat, metadata=metadata)
 
     def test_without_a_naming_convention_names_are_unchanged(self) -> None:

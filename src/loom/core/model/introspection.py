@@ -568,17 +568,17 @@ def _checked_business_key(cls: type) -> BusinessKey | None:
         return None
     prefix = f"{cls.__name__}: __business_key__"
     if not isinstance(key, BusinessKey):
-        raise InvalidType(f"{prefix} must be a BusinessKey")
+        raise InvalidType(f"{prefix} must be a BusinessKey, got {key!r}")
     known = get_column_fields(cls)
     for name in key.fields:
         info = known.get(name)
         if info is None:
-            raise InvalidValue(f"{prefix} names an unknown column")
+            raise InvalidValue(f"{prefix} names unknown column {name!r}")
         if info.field.nullable:
-            raise InvalidValue(f"{prefix} has a nullable field; a business key never has one")
+            raise InvalidValue(f"{prefix} field {name!r} is nullable; a business key never is")
         if not is_canonical_type(info.python_type):
             raise InvalidValue(
-                f"{prefix} has a field of type {info.python_type.__name__}, "
+                f"{prefix} field {name!r} is {info.python_type.__name__}, "
                 "which has no canonical form"
             )
     return key
@@ -613,16 +613,16 @@ def _checked_derived_key(cls: type) -> DerivedKey | None:
     key = business_key_of(cls)
     prefix = f"{cls.__name__}: derived key"
     if len(derived) > 1:
-        raise InvalidValue(f"{prefix} is declared on more than one field; only one field derives")
+        raise InvalidValue(f"{prefix} is declared on {', '.join(derived)}; only one field derives")
     ((name, info),) = derived.items()
     if get_id_attributes(cls) != (name,):
-        raise InvalidValue(f"{prefix} field must be the model's single primary-key field")
+        raise InvalidValue(f"{prefix} {name!r} must be the model's single primary-key field")
     if info.python_type is not str:
-        raise InvalidType(f"{prefix} field must be annotated str")
+        raise InvalidType(f"{prefix} {name!r} must be annotated str")
     if key is None:
-        raise InvalidValue(f"{prefix} field needs a __business_key__ to derive from")
+        raise InvalidValue(f"{prefix} {name!r} needs a __business_key__ to derive from")
     if name in key.fields:
-        raise InvalidValue(f"{prefix} field cannot be part of its own business key")
+        raise InvalidValue(f"{prefix} {name!r} cannot be part of its own business key")
     return DerivedKey(cls.__name__, name, key, cast(Any, info.field.derived))
 
 
@@ -681,9 +681,11 @@ def declared_checks(cls: type) -> Mapping[str, str]:
     for rule, expression in raw.items():
         name = _rule_identifier(cls, "__checks__", rule)
         if not isinstance(expression, str):
-            raise InvalidType(f"{cls.__name__}: __checks__ rule expression must be a str")
+            raise InvalidType(f"{cls.__name__}: __checks__ rule {rule!r} expression must be a str")
         if not expression.strip():
-            raise InvalidValue(f"{cls.__name__}: __checks__ rule needs a non-empty SQL expression")
+            raise InvalidValue(
+                f"{cls.__name__}: __checks__ rule {rule!r} needs a non-empty SQL expression"
+            )
         result[name] = expression
     return result
 
@@ -703,7 +705,7 @@ def _partial_unique(
     cls: type, rule: object, entry: object, known: Mapping[str, ColumnFieldInfo]
 ) -> PartialUnique:
     name = _rule_identifier(cls, "__partial_unique__", rule)
-    prefix = f"{cls.__name__}: __partial_unique__"
+    prefix = f"{cls.__name__}: __partial_unique__ rule {rule!r}"
     if not isinstance(entry, tuple):
         raise InvalidType(f"{prefix} must be a tuple")
     if len(entry) != 2:
@@ -719,7 +721,7 @@ def _partial_unique(
         raise InvalidValue(f"{prefix} needs a non-empty SQL predicate")
     for column in columns:
         if column not in known:
-            raise InvalidValue(f"{prefix} names an unknown column")
+            raise InvalidValue(f"{prefix} names unknown column {column!r}")
     return PartialUnique(rule=name, columns=columns, where=where)
 
 
@@ -747,14 +749,16 @@ def declared_partition(cls: type) -> RangePartition | None:
     if not is_row_scoped(cls):
         raise InvalidValue(f"{prefix} is only for row-scoped models")
     if not isinstance(raw, tuple):
-        raise InvalidType(f"{prefix} must be a tuple ('RANGE', <column>)")
+        raise InvalidType(f"{prefix} must be a tuple ('RANGE', <column>), got {raw!r}")
     if len(raw) != 2:
-        raise InvalidValue(f"{prefix} must be ('RANGE', <column>)")
+        raise InvalidValue(f"{prefix} must be ('RANGE', <column>), got {raw!r}")
     if not all(isinstance(x, str) for x in raw):
-        raise InvalidType(f"{prefix} entries must be strings")
+        raise InvalidType(f"{prefix} entries must be strings, got {raw!r}")
     strategy, column = raw
     if strategy != _RANGE:
-        raise InvalidValue(f"{prefix} strategy is not supported; only RANGE partitioning is")
+        raise InvalidValue(
+            f"{prefix} strategy {strategy!r} is not supported; only RANGE partitioning is"
+        )
     fields = get_column_fields(cls)
     _check_partition_column(cls, prefix, column, fields)
     _check_unique_keys_hold_partition_column(cls, prefix, column, fields)
@@ -766,12 +770,12 @@ def _check_partition_column(
 ) -> None:
     info = fields.get(column)
     if info is None:
-        raise InvalidValue(f"{prefix} names an unknown column")
+        raise InvalidValue(f"{prefix} names unknown column {column!r}")
     _rule_identifier(cls, _PARTITION_ATTR, column)
     if info.column_type.type_name not in _PARTITION_TYPES:
-        raise InvalidValue(f"{prefix} column must be a DateTime column")
+        raise InvalidValue(f"{prefix} column {column!r} must be a DateTime column")
     if not info.field.primary_key:
-        raise InvalidValue(f"{prefix} column must be part of the primary key")
+        raise InvalidValue(f"{prefix} column {column!r} must be part of the primary key")
 
 
 def _check_unique_keys_hold_partition_column(
@@ -780,7 +784,9 @@ def _check_unique_keys_hold_partition_column(
     partials = [partial.columns for partial in declared_partial_unique(cls)]
     for key in [*_unique_keys(cls, fields), *partials]:
         if column not in key:
-            raise InvalidValue(f"{prefix} has a unique key that lacks the partition column")
+            raise InvalidValue(
+                f"{prefix} unique key ({', '.join(key)}) lacks the partition column {column!r}"
+            )
 
 
 def _unique_keys(cls: type, fields: Mapping[str, ColumnFieldInfo]) -> list[tuple[str, ...]]:
@@ -799,11 +805,11 @@ def _declared_mapping(cls: type, attr: str) -> Mapping[object, object]:
 
 def _rule_identifier(cls: type, attr: str, rule: object) -> str:
     if not isinstance(rule, str):
-        raise InvalidType(f"{cls.__name__}: {attr} rule must be a string")
+        raise InvalidType(f"{cls.__name__}: {attr} rule {rule!r} must be a string")
     try:
         return sql_identifier(rule)
     except ValueError as exc:
-        raise InvalidValue(f"{cls.__name__}: {attr} rule: {exc}") from exc
+        raise InvalidValue(f"{cls.__name__}: {attr} rule {rule!r}: {exc}") from exc
 
 
 def declared_privileges(cls: type) -> Mapping[str, frozenset[Privilege]]:
@@ -816,7 +822,7 @@ def declared_privileges(cls: type) -> Mapping[str, frozenset[Privilege]]:
     result: dict[str, frozenset[Privilege]] = {}
     for group, privileges in raw.items():
         if group not in _GROUPS:
-            raise InvalidValue(f"{cls.__name__}: unknown privilege group")
+            raise InvalidValue(f"{cls.__name__}: unknown privilege group {group!r}")
         result[group] = frozenset(_as_privilege(cls, item) for item in privileges)
     return result
 
@@ -826,7 +832,7 @@ def _as_privilege(cls: type, item: object) -> Privilege:
         return item
     if isinstance(item, str) and item in Privilege.__members__:
         return Privilege[item]
-    raise InvalidValue(f"{cls.__name__}: __privileges__ holds an item that is not a row privilege")
+    raise InvalidValue(f"{cls.__name__}: {item!r} is not a row privilege")
 
 
 def _declared_column_tuples(cls: type, attr: str) -> tuple[tuple[str, ...], ...]:
@@ -835,33 +841,37 @@ def _declared_column_tuples(cls: type, attr: str) -> tuple[tuple[str, ...], ...]
     for entry in declared:
         for column in entry:
             if column not in known:
-                raise InvalidValue(f"{cls.__name__}: {attr} names an unknown column")
+                raise InvalidValue(f"{cls.__name__}: {attr} names unknown column {column!r}")
     return declared
 
 
 def _check_c4(cls: type, fields: dict[str, ColumnFieldInfo], marked: bool) -> None:
-    for info in fields.values():
+    for name, info in fields.items():
         field = info.field
         if field.scope is not None and not marked:
-            raise InvalidValue(f"C4: {cls.__name__} declares a scope on an unmarked model")
+            raise InvalidValue(f"C4: {cls.__name__}.{name} declares a scope on an unmarked model")
         if field.scope is None and (field.on != "both" or field.elevable):
-            raise InvalidValue(f"C4: {cls.__name__} declares reach or elevable without a scope")
+            raise InvalidValue(
+                f"C4: {cls.__name__}.{name} declares reach or elevable without a scope"
+            )
 
 
 def _check_c3(cls: type, scopes: tuple[ScopeColumn, ...]) -> None:
     seen: set[str] = set()
     for scope in scopes:
         if not _SCOPE_NAME.fullmatch(scope.scope):
-            raise InvalidValue(f"C3: {cls.__name__} declares a scope that is not an identifier")
+            raise InvalidValue(
+                f"C3: {cls.__name__}.{scope.column} scope {scope.scope!r} is not an identifier"
+            )
         if scope.scope in seen:
-            raise InvalidValue(f"C3: {cls.__name__} repeats a scope")
+            raise InvalidValue(f"C3: {cls.__name__}.{scope.column} repeats scope {scope.scope!r}")
         seen.add(scope.scope)
 
 
 def _check_c2(cls: type, scopes: tuple[ScopeColumn, ...]) -> None:
     for scope in scopes:
         if scope.elevable and scope.on != "write":
-            raise InvalidValue(f"C2: {cls.__name__} has an elevable scope that is not write-only")
+            raise InvalidValue(f"C2: {cls.__name__}.{scope.column} is elevable but not write-only")
 
 
 def _check_c1(cls: type, scopes: tuple[ScopeColumn, ...]) -> ScopeColumn:
@@ -875,14 +885,23 @@ def _check_c1(cls: type, scopes: tuple[ScopeColumn, ...]) -> ScopeColumn:
 
 def _check_c8(cls: type, fields: dict[str, ColumnFieldInfo], boundary: ScopeColumn) -> None:
     if fields[boundary.column].field.nullable:
-        raise InvalidValue(f"C8: {cls.__name__} boundary column cannot be nullable")
+        raise InvalidValue(
+            f"C8: {cls.__name__}.{boundary.column} boundary column cannot be nullable"
+        )
 
 
 def _check_c5(cls: type, fields: dict[str, ColumnFieldInfo], boundary: ScopeColumn) -> None:
     primary_key = tuple(name for name, info in fields.items() if info.field.primary_key)
     for key in [primary_key, *_unique_keys(cls, fields)]:
         if boundary.column not in key:
-            raise InvalidValue(f"C5: {cls.__name__} key lacks the boundary column")
+            columns = ", ".join(key)
+            raise InvalidValue(
+                f"C5: {cls.__name__} key {columns} lacks the boundary column {boundary.column}"
+            )
     for partial in declared_partial_unique(cls):
         if boundary.column not in partial.columns:
-            raise InvalidValue(f"C5: {cls.__name__} partial unique lacks the boundary column")
+            columns = ", ".join(partial.columns)
+            raise InvalidValue(
+                f"C5: {cls.__name__} partial unique {partial.rule} ({columns}) "
+                f"lacks the boundary column {boundary.column}"
+            )

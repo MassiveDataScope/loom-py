@@ -50,7 +50,7 @@ class TestPartitionDeclaration:
     def test_list_and_hash_are_refused_by_name(self, strategy: str) -> None:
         model = _model((strategy, "at"))
         with pytest.raises(
-            InvalidValue, match=r"Bad: __partition_by__ strategy is not supported.*RANGE"
+            InvalidValue, match=rf"Bad: __partition_by__ strategy {strategy!r}.*RANGE"
         ):
             declared_partition(model)
 
@@ -72,25 +72,25 @@ class TestPartitionDeclaration:
 
     def test_an_unknown_column_is_refused(self) -> None:
         model = _model(("RANGE", "when"))
-        with pytest.raises(ValueError, match="names an unknown column"):
+        with pytest.raises(ValueError, match="names unknown column 'when'"):
             declared_partition(model)
 
     def test_a_column_outside_the_primary_key_is_refused(self) -> None:
         model = _model(("RANGE", "at"), at=ColumnField(DateTime()))
 
-        with pytest.raises(ValueError, match="column must be part of the primary key"):
+        with pytest.raises(ValueError, match="'at' must be part of the primary key"):
             declared_partition(model)
 
     def test_a_column_that_is_not_a_timestamp_is_refused(self) -> None:
         model = _model(("RANGE", "n"), n=ColumnField(Integer, primary_key=True))
 
-        with pytest.raises(ValueError, match="column must be a DateTime column"):
+        with pytest.raises(ValueError, match="'n' must be a DateTime column"):
             declared_partition(model)
 
     def test_a_unique_key_without_the_partition_column_is_refused(self) -> None:
         model = _model(("RANGE", "at"), __unique__=(("owner_id", "code"),))
 
-        with pytest.raises(ValueError, match="has a unique key that lacks the partition column"):
+        with pytest.raises(ValueError, match=r"unique key \(owner_id, code\) lacks .* 'at'"):
             declared_partition(model)
 
     def test_a_partial_unique_without_the_partition_column_is_refused(self) -> None:
@@ -98,7 +98,7 @@ class TestPartitionDeclaration:
             ("RANGE", "at"), __partial_unique__={"live": (("owner_id", "code"), "n > 0")}
         )
 
-        with pytest.raises(ValueError, match="has a unique key that lacks the partition column"):
+        with pytest.raises(ValueError, match=r"unique key \(owner_id, code\) lacks .* 'at'"):
             declared_partition(model)
 
     def test_an_unscoped_model_cannot_be_partitioned(self) -> None:

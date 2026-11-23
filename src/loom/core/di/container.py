@@ -152,7 +152,7 @@ class LoomContainer:
         built singleton is kept.
 
         Raises:
-            InvalidValue: When constructors are already read another way.
+            InvalidUse: When constructors are already read another way.
             ContainerSealed: When the container is sealed on the default reading.
         """
         with STRUCTURE_LOCK:

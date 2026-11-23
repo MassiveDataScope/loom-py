@@ -244,7 +244,7 @@ class TestBusinessKeyDeclaration:
             __business_key__=BusinessKey("ghost"),
         )
 
-        with pytest.raises(ValueError, match="AcmeDraft: __business_key__ names an unknown column"):
+        with pytest.raises(ValueError, match="AcmeDraft: __business_key__ names unknown column"):
             business_key_of(model)
 
     def test_a_nullable_field_is_refused(self) -> None:
@@ -255,7 +255,7 @@ class TestBusinessKeyDeclaration:
             __business_key__=BusinessKey("portal"),
         )
 
-        with pytest.raises(ValueError, match="has a nullable field"):
+        with pytest.raises(ValueError, match="'portal' is nullable"):
             business_key_of(model)
 
     def test_a_field_type_without_a_canonical_form_is_refused(self) -> None:
@@ -266,9 +266,7 @@ class TestBusinessKeyDeclaration:
             __business_key__=BusinessKey("ratio"),
         )
 
-        with pytest.raises(
-            ValueError, match="has a field of type float, which has no canonical form"
-        ):
+        with pytest.raises(ValueError, match="'ratio' is float, which has no canonical form"):
             business_key_of(model)
 
     def test_a_declaration_that_is_not_a_business_key_is_refused(self) -> None:
@@ -325,7 +323,7 @@ class TestDerivedDeclaration:
             __business_key__=BusinessKey("portal"),
         )
 
-        with pytest.raises(ValueError, match="field must be the model's single primary-key"):
+        with pytest.raises(ValueError, match="'code' must be the model's single primary-key"):
             derived_key_of(model)
 
     def test_deriving_a_composite_primary_key_is_refused(self) -> None:
@@ -337,7 +335,7 @@ class TestDerivedDeclaration:
             __business_key__=BusinessKey("portal"),
         )
 
-        with pytest.raises(ValueError, match="field must be the model's single primary-key"):
+        with pytest.raises(ValueError, match="'id' must be the model's single primary-key"):
             derived_key_of(model)
 
     def test_deriving_a_key_that_is_not_text_is_refused(self) -> None:

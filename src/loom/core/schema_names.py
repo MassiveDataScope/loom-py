@@ -141,7 +141,7 @@ def sql_identifier(name: str, *, max_length: int = MAX_IDENTIFIER_LENGTH) -> str
     ``pg_`` name.
 
     Raises:
-        InvalidValue: Naming the offending identifier.
+        InvalidValue: When the name is not a usable SQL identifier.
     """
     if (
         not _IDENTIFIER.fullmatch(name)
@@ -151,7 +151,7 @@ def sql_identifier(name: str, *, max_length: int = MAX_IDENTIFIER_LENGTH) -> str
         or name.startswith("pg_")
     ):
         raise InvalidValue(
-            f"a name is not a usable SQL identifier: lowercase letters, digits and '_', "
+            "a name is not a usable SQL identifier: lowercase letters, digits and '_', "
             f"at most {max_length} characters, not a reserved word, special role or pg_ name"
         )
     return name
@@ -170,7 +170,7 @@ def naming_convention(value: Mapping[str, str] | None) -> dict[str, str] | None:
     this function, so they compile the same names.
 
     Raises:
-        InvalidValue: Naming the first key that is not ``pk``, ``fk``, ``uq``, ``ck`` or ``ix``.
+        InvalidValue: When a key is not ``pk``, ``fk``, ``uq``, ``ck`` or ``ix``.
     """
     if value is None:
         return None
