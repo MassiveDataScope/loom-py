@@ -18,6 +18,8 @@ from loom.core.plugins.entrypoints import (
     DuplicateEntryPointError,
     DuplicatePolicy,
     EntryPointError,
+    EntryPointEvent,
+    EntryPointKey,
     EntryPointNotFoundError,
     check_api_version,
     list_entry_points,
@@ -157,7 +159,7 @@ class TestDuplicatePolicyWarnFirst:
 
         assert [record.levelno for record in caplog.records] == [logging.WARNING]
 
-    def test_warning_names_all_distributions_and_the_chosen_one(
+    def test_warning_names_the_group_the_entry_point_and_every_distribution(
         self,
         monkeypatch: pytest.MonkeyPatch,
         caplog: pytest.LogCaptureFixture,
@@ -167,10 +169,14 @@ class TestDuplicatePolicyWarnFirst:
         with caplog.at_level(logging.WARNING, logger=_LOGGER_NAME):
             select_entry_point(_GROUP, _NAME, on_duplicate="warn_first")
 
-        message = caplog.text
-        assert all(
-            token in message for token in ("loom-engine-alpha", "loom-engine-beta", _GROUP, _NAME)
-        )
+        (record,) = caplog.records
+        assert record.msg == EntryPointEvent.ENTRY_POINT_DUPLICATED
+        assert record.__dict__[EntryPointKey.GROUP] == _GROUP
+        assert record.__dict__[EntryPointKey.ENTRY_POINT] == _NAME
+        assert record.__dict__[EntryPointKey.DISTRIBUTIONS] == [
+            "loom-engine-alpha",
+            "loom-engine-beta",
+        ]
 
     def test_load_entry_point_returns_the_first_objects_value_when_duplicates_exist(
         self,

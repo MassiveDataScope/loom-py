@@ -37,6 +37,7 @@ def _is_allowed(name: str) -> bool:
     return (
         name == "__future__"
         or name == _OWN
+        or name == "loom.core.log_names"
         or name.startswith(f"{_OWN}.")
         or name.split(".")[0] in sys.stdlib_module_names
     )
@@ -67,6 +68,8 @@ class TestAuthorisationImportContainment:
             ("from ..model import LoomType", False),
             ("from loom.core.authzx import thing", False),
             ("import pydantic", False),
+            ("from loom.core.log_names import LogEvent", True),
+            ("from loom.core.logger import x", False),
         ],
     )
     def test_the_import_rule_itself(self, source: str, allowed: bool) -> None:
