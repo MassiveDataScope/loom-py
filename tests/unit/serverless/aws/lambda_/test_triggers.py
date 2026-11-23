@@ -14,7 +14,7 @@ from loom.core.command import Command
 from loom.core.config import ConfigContext, ConfigError
 from loom.core.engine.events import EventKind as RuntimeEventKind
 from loom.core.engine.events import ExecutionEvent
-from loom.core.errors import BoundaryValidationError, LoomError, MalformedJobMessage
+from loom.core.errors import BoundaryValidationError, CodedError, MalformedJobMessage
 from loom.core.identity import Identity, current_identity
 from loom.core.job.job import Job
 from loom.core.job.outcome import JobPostponement
@@ -46,7 +46,7 @@ class Invoice(Command, frozen=True, kw_only=True):
     note: str = ""
 
 
-class _Final(LoomError):
+class _Final(CodedError):
     is_retryable = False
 
 

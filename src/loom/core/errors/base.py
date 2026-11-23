@@ -10,7 +10,28 @@ from loom.core.errors.codes import ErrorCode
 
 
 class LoomError(Exception):
-    """Base class for all framework errors.
+    """The base of loom's own errors: a marker with no code and no transport meaning.
+
+    :class:`CodedError` adds the code transports translate.
+    """
+
+
+class InvalidValue(LoomError, ValueError):
+    """A loom API was given a value of the right type that it cannot accept.
+
+    The message names the parameter and the rule, never the value it was given.
+    """
+
+
+class InvalidType(LoomError, TypeError):
+    """A loom API was given a value of a type it does not accept.
+
+    The message names the parameter and the expected type, never the value it was given.
+    """
+
+
+class CodedError(LoomError):
+    """A failure transports translate into an answer.
 
     Carries a machine-readable ``code`` used by transport adapters to
     produce appropriate responses (HTTP status, dead-letter routing, etc.)
@@ -84,7 +105,7 @@ class LoomError(Exception):
         return {}
 
 
-class DomainError(LoomError):
+class DomainError(CodedError):
     """Base class for all business-logic errors.
 
     Raised inside UseCase execution. Transport adapters catch and convert
@@ -96,7 +117,7 @@ class DomainError(LoomError):
     is_retryable: bool = False
 
 
-class SystemError(LoomError):
+class SystemError(CodedError):
     """Base class for infrastructure and unexpected errors.
 
     Raised when a repository, external service, or internal subsystem

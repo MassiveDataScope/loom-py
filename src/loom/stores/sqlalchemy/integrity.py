@@ -1,7 +1,7 @@
 """SQLAlchemy IntegrityError classification and handling decorator.
 
 Converts low-level database constraint violations into domain
-:class:`~loom.core.errors.LoomError` subclasses so the application layer
+:class:`~loom.core.errors.CodedError` subclasses so the application layer
 never sees driver-specific exception types.
 
 Supports two detection strategies in priority order:
@@ -33,7 +33,7 @@ from typing import Any, TypeVar
 
 from sqlalchemy.exc import IntegrityError
 
-from loom.core.errors import Conflict, LoomError, SystemError
+from loom.core.errors import CodedError, Conflict, SystemError
 
 R = TypeVar("R")
 
@@ -44,7 +44,7 @@ _PG_NOT_NULL = "23502"
 _PG_CHECK = "23514"
 
 
-_SqliteFactory = Callable[[re.Match[str]], LoomError]
+_SqliteFactory = Callable[[re.Match[str]], CodedError]
 
 _SQLITE_PATTERNS: list[tuple[re.Pattern[str], _SqliteFactory]] = [
     (
@@ -96,7 +96,7 @@ def _not_null_column(exc: IntegrityError) -> str:
     return str(column or "")
 
 
-def _from_pgcode(code: str, exc: IntegrityError) -> LoomError:
+def _from_pgcode(code: str, exc: IntegrityError) -> CodedError:
     constraint = _diag(exc, "constraint_name")
     detail = _diag(exc, "message_detail")
 
@@ -119,7 +119,7 @@ def _from_pgcode(code: str, exc: IntegrityError) -> LoomError:
     return SystemError(f"Database integrity violation (SQLSTATE {code})")
 
 
-def _from_message(msg: str) -> LoomError:
+def _from_message(msg: str) -> CodedError:
     for pattern, factory in _SQLITE_PATTERNS:
         match = pattern.search(msg)
         if match:
@@ -127,8 +127,8 @@ def _from_message(msg: str) -> LoomError:
     return SystemError("Database integrity violation")
 
 
-def classify_integrity_error(exc: IntegrityError) -> LoomError:
-    """Convert a SQLAlchemy ``IntegrityError`` to a domain :class:`~loom.core.errors.LoomError`.
+def classify_integrity_error(exc: IntegrityError) -> CodedError:
+    """Convert a SQLAlchemy ``IntegrityError`` to a domain :class:`~loom.core.errors.CodedError`.
 
     Tries SQLSTATE-based classification first (PostgreSQL / asyncpg), then
     falls back to message-pattern matching (SQLite and other drivers).

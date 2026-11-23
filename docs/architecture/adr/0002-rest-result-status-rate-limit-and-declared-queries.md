@@ -62,7 +62,7 @@ A use case that refuses a caller for exceeding a budget therefore answers 500.
   ceiling is clamped, not refused (`router_runtime.py:299-301`).
 - The SQLAlchemy query compiler raises `FilterPathError`/`UnsafeFilterError`,
   both `ValueError` (`src/loom/stores/sqlalchemy/query_compiler/errors.py:6-30`),
-  and `_dispatch_route` answers any non-`LoomError` with 500
+  and `_dispatch_route` answers any non-`CodedError` with 500
   (`router_runtime.py:489-500`). Read in the code, not run end to end.
 
 The consumer's `GET /v1/orders` needs typed equality filters (`customerId`,
@@ -430,7 +430,7 @@ All three fit 2.21.0, on one branch `feat/rest-result-status-rate-limit-declared
 - `Created` and `Query()` are opt-in, and `QuerySpec` routes keep their
   parameters, filters and clamp.
 - Five observable changes, all acceptable in a minor:
-  - a custom `LoomError` already using code `rate_limited` now answers 429
+  - a custom `CodedError` already using code `rate_limited` now answers 429
     instead of 500;
   - one coded `query_validation` now answers 400, and one coded
     `insufficient_authentication` 401;

@@ -9,6 +9,7 @@ import pytest
 
 from loom.core.errors import (
     BoundaryValidationError,
+    CodedError,
     Conflict,
     DelegationExpired,
     Forbidden,
@@ -16,7 +17,6 @@ from loom.core.errors import (
     InsufficientAuthentication,
     JobFailedError,
     JobTimeoutError,
-    LoomError,
     MissingCaller,
     NotFound,
     PostCommitError,
@@ -32,7 +32,7 @@ from loom.core.errors import (
 from loom.core.errors.codes import ErrorCode
 
 
-class SlottedError(LoomError):
+class SlottedError(CodedError):
     __slots__ = ("extra",)
 
     def __init__(self, *, extra: int) -> None:

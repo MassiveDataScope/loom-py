@@ -29,7 +29,7 @@ import msgspec
 
 @unique
 class ErrorCode(StrEnum):
-    """Canonical error discriminators used by :class:`~loom.core.errors.LoomError` subclasses.
+    """Canonical error discriminators used by :class:`~loom.core.errors.CodedError` subclasses.
 
     The REST adapter maps these to HTTP status codes via
     :class:`~loom.rest.errors.HttpErrorMapper`.

@@ -16,7 +16,7 @@ branch where marked.
 
 ### Run-time errors
 
-**Hierarchy.** Seven classes subclass `LoomError` directly instead of
+**Hierarchy.** Seven classes subclass `CodedError` directly instead of
 `DomainError` or `SystemError` (`src/loom/core/errors/base.py`):
 
 | Class | Location |
@@ -28,12 +28,12 @@ branch where marked.
 | `AuthenticationUnavailable` | `rest/auth/abc.py:64` |
 | `UnsupportedFormatError` | `etl/backends/_format_registry.py:18` |
 
-The 2.21.0 branch also raises a bare `LoomError(..., code=UNSUPPORTED_QUERY)` in
+The 2.21.0 branch also raises a bare `CodedError(..., code=UNSUPPORTED_QUERY)` in
 `_DeclaredQuery.decode`, because `UnsupportedQuery` requires a backend and a
 model. `SystemError.__init__` hard-codes `SYSTEM_ERROR`
 (`core/errors/base.py`).
 
-**Codes.** `LoomError.code` is a plain `str` (`core/errors/base.py`). Four raw codes
+**Codes.** `CodedError.code` is a plain `str` (`core/errors/base.py`). Four raw codes
 sit outside `ErrorCode` (`core/errors/codes.py:20-38`):
 
 - `boundary_type_unsupported` (`_loom_type.py:116`);
@@ -132,7 +132,7 @@ Status: Proposed.
 
 - `ErrorCode` is decorated with `@enum.unique` and is the only catalogue of
   client-facing codes.
-- `LoomError.code` is typed as a catalogue member (`StrEnum`): `ErrorCode`
+- `CodedError.code` is typed as a catalogue member (`StrEnum`): `ErrorCode`
   for the errors core raises and maps, or an adapter's own catalogue for the
   failures only it reports (`loom.jobs.aws.errors.SQSErrorCode` holds the
   eleven `sqs_*` codes, so core carries no AWS vocabulary). A literal string
@@ -152,9 +152,9 @@ Status: Proposed.
 
 - A run-time error that a transport maps is either a `DomainError` (4xx, never
   retried) or a `SystemError(code=…)` (5xx, may be retried).
-- No class subclasses `LoomError` directly, apart from those two.
-- Nothing raises a bare `LoomError` or `DomainError`.
-- Compile and startup errors are not `LoomError`s.
+- No class subclasses `CodedError` directly, apart from those two.
+- Nothing raises a bare `CodedError` or `DomainError`.
+- Compile and startup errors are not `CodedError`s.
 
 The seven classes rebase without changing any status (done 2026-11, with
 `DomainError.is_retryable = False`, so Celery and the SQS consumers stop retrying
@@ -171,7 +171,7 @@ the model and the reason, never the backend):
 `FilterPathError` and `UnsafeFilterError` subclass `DomainError` and keep
 `ValueError` as a second base.
 
-**R3. Where `LoomError` classes live.**
+**R3. Where `CodedError` classes live.**
 
 - A class raised or caught by more than one pillar lives in
   `loom/core/errors/<area>.py` (base, domain, auth, model, jobs, stores;
@@ -220,7 +220,7 @@ REST:
 - `HttpErrorMapper` gets one method returning `(status, headers, detail)`;
   `to_http` wraps it.
 - The ASGI middlewares send what that method returns, so they stay pure ASGI.
-- The router and the SQL endpoint raise `LoomError`s:
+- The router and the SQL endpoint raise `CodedError`s:
   - `UnsupportedQuery` for an unknown or forbidden parameter;
   - `BoundaryValidationError(code=QUERY_VALIDATION)` for a bad value.
 - An unexpected exception is answered as a `SystemError`.
@@ -242,7 +242,7 @@ A 5xx body carries a fixed text per status ("An unexpected error occurred",
 time"). It keeps `code`, `trace_id` and `committed`. The original message goes
 to the log under the same `trace_id`.
 
-An application `LoomError` may declare that answer on the class or the
+An application `CodedError` may declare that answer on the class or the
 instance, so domain code does not raise `HTTPException`. `http_status` is a
 registered 4xx or 5xx `HTTPStatus` or its int, or `None` to keep the code
 table. Each of these is a misdeclaration:
@@ -275,7 +275,7 @@ R2 and R4-REST wait for the R2 rebases.
 | Check | Walks | Fails when |
 |---|---|---|
 | R1 | `code=` keywords of `__init__` calls inside error classes in `src/loom` | the value is not `<Catalogue>ErrorCode.<MEMBER>` and not the `code` parameter the class received |
-| R2 | class bases | a class other than `DomainError`/`SystemError` names `LoomError` as a base; any call to `LoomError(` or `DomainError(`; a class whose name ends in `CompilationError`, `ConfigError` or is `BootstrapError` names a `LoomError` family base |
+| R2 | class bases | a class other than `DomainError`/`SystemError` names `CodedError` as a base; any call to `CodedError(` or `DomainError(`; a class whose name ends in `CompilationError`, `ConfigError` or is `BootstrapError` names a `CodedError` family base |
 | R3 | classes whose bases name anything in `loom.core.errors.__all__` | the defining module is not under `loom/core/errors/` and is not a module named `errors.py`/`_errors.py` |
 | R4-REST (pending) | `src/loom/rest` | `HTTPException(` or a response built with a status of 400 or more, outside `rest/errors.py`. Two exceptions are named in the test because they are not error mapping: the readiness 503 (`rest/fastapi/health.py:117`) and the metrics trailing-slash 404 (`rest/fastapi/auto.py:1435`) |
 | R5 | `src/loom/core` | an import of `http`, `fastapi` or `starlette` |
@@ -720,3 +720,16 @@ What the hotfix did where this ADR left a choice, and what it found:
    gets its own code in the 2.x hotfix.
 
 > Renamed in 12.0.0: modules rest/fastapi/router_runtime.py → rest/fastapi/router.py, ai/runtime/ → ai/execution/, etl/backends/ → etl/engines/.
+
+
+## Amendment (spec 022): the marker base
+
+`LoomError` is the empty base of loom's own errors, with no code and no transport
+meaning, as a library base is in `requests` or SQLAlchemy. The coded failure that
+transports translate (code, `http_status`, `is_retryable`, `public_*`) is
+`CodedError`; `DomainError` and `SystemError` derive from it, and REST, the job
+runner and `ErrorSummary` ask `CodedError`. A misuse of a loom API raises
+`InvalidValue(LoomError, ValueError)` or `InvalidType(LoomError, TypeError)`,
+whose message names the parameter, never the value. `ConfigError` and
+`BootstrapError` derive from `LoomError`. Packages move their plain built-in
+raises under `LoomError` one by one.

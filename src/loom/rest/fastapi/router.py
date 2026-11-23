@@ -44,7 +44,7 @@ from starlette.requests import Request
 from starlette.responses import Response
 
 from loom.core.engine.executor import UseCaseExecutor
-from loom.core.errors import BODY_FIELD, BoundaryValidationError, Forbidden, LoomError
+from loom.core.errors import BODY_FIELD, BoundaryValidationError, CodedError, Forbidden
 from loom.core.errors.codes import ErrorCode
 from loom.core.identity import Identity, current_identity
 from loom.core.model import LoomType, loom_type, msgspec_type
@@ -91,13 +91,13 @@ _NOT_AN_OBJECT_MESSAGE = "Request body must be a JSON object"
 
 @runtime_checkable
 class _CallerRefusal(Protocol):
-    """A failure outside :class:`LoomError` that may stand for a denial of its caller.
+    """A failure outside :class:`CodedError` that may stand for a denial of its caller.
 
     :class:`~loom.ai.errors.AgentRunError` is one, matched by shape so a
     route never imports the AI pillar.
     """
 
-    def refusal_for(self, caller: Identity) -> LoomError | None:
+    def refusal_for(self, caller: Identity) -> CodedError | None:
         """Return the core denial this failure stands for, or ``None``."""
         ...
 
@@ -213,7 +213,7 @@ class _FilterValues:
         """Return the filter value of *op* on *field*, typed by the field.
 
         Raises:
-            LoomError: ``unsupported_query`` when the route does not declare
+            CodedError: ``unsupported_query`` when the route does not declare
                 *field* filterable, for ``exists`` and ``not_exists``, and for
                 ``like`` or ``ilike`` on a column that is not text.
             BoundaryValidationError: ``query_validation`` when a value does
@@ -245,8 +245,8 @@ _TYPED_OPS = frozenset(
 )
 
 
-def _unsupported_query(message: str) -> LoomError:
-    return LoomError(message, code=ErrorCode.UNSUPPORTED_QUERY)
+def _unsupported_query(message: str) -> CodedError:
+    return CodedError(message, code=ErrorCode.UNSUPPORTED_QUERY)
 
 
 def _is_text(annotation: Any) -> bool:
@@ -425,7 +425,7 @@ class _DeclaredQuery:
         :meth:`_ResolvedRoute._profile` then selects it.
 
         Raises:
-            LoomError: ``unsupported_query`` for an unknown or repeated key.
+            CodedError: ``unsupported_query`` for an unknown or repeated key.
             BoundaryValidationError: ``query_validation`` when a value does
                 not satisfy its field.
         """
@@ -659,7 +659,7 @@ class _RouteHandler:
             raise
         except BodyTooLarge:
             raise
-        except LoomError as exc:
+        except CodedError as exc:
             raise _error_mapper.to_http(exc) from exc
         except Exception as exc:
             refusal = (

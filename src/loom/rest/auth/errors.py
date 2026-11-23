@@ -21,7 +21,7 @@ class AuthenticationUnavailable(SystemError):
     The message goes to the server log, never to the caller, so it may name
     the unreachable dependency; raised outside an authenticator,
     :class:`~loom.rest.errors.HttpErrorMapper` answers ``503``, like any
-    ``5xx`` :class:`~loom.core.errors.LoomError`.  It must never carry the
+    ``5xx`` :class:`~loom.core.errors.CodedError`.  It must never carry the
     credential.  Chain the underlying error with ``raise ... from exc`` to keep
     its traceback.
 

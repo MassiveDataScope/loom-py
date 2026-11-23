@@ -53,7 +53,7 @@ class JobCallback:
             job_id: UUID of the failed job.
             exc_type: The exception's ``__qualname__``.
             exc_code: The error's loom code, ``None`` for an error that is not
-                a :class:`~loom.core.errors.LoomError`. Never its message.
+                a :class:`~loom.core.errors.CodedError`. Never its message.
             **context: Original dispatch payload forwarded as keyword args.
         """
 

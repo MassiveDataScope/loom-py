@@ -8,7 +8,14 @@ from loom.core.errors.auth import (
     MissingCaller,
     Unauthenticated,
 )
-from loom.core.errors.base import DomainError, LoomError, SystemError
+from loom.core.errors.base import (
+    CodedError,
+    DomainError,
+    InvalidType,
+    InvalidValue,
+    LoomError,
+    SystemError,
+)
 from loom.core.errors.container import ContainerSealed, ResolutionError
 from loom.core.errors.domain import (
     BODY_FIELD,
@@ -41,14 +48,17 @@ from loom.core.errors.stores import (
 __all__ = [
     "BODY_FIELD",
     "BoundaryValidationError",
+    "CodedError",
     "Conflict",
     "ContainerSealed",
     "DelegationExpired",
     "DomainError",
     "Forbidden",
-    "IdentityFixed",
     "ForeignSessionError",
+    "IdentityFixed",
     "InsufficientAuthentication",
+    "InvalidType",
+    "InvalidValue",
     "JobFailedError",
     "JobTimeoutError",
     "LoomError",
@@ -57,9 +67,9 @@ __all__ = [
     "NestedElevation",
     "NestedIdentityMismatch",
     "NotFound",
-    "ResolutionError",
     "PostCommitError",
     "RateLimited",
+    "ResolutionError",
     "RuleViolationError",
     "RuleViolationsError",
     "ScopeOwnershipError",
