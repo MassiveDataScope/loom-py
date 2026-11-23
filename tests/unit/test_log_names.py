@@ -15,7 +15,8 @@ _SRC = Path(__file__).resolve().parents[2] / "src"
 _DECLARATIONS = ("(LogEvent)", "(LogKey)")
 
 
-def _import_declaring_modules() -> None:
+@pytest.fixture(scope="module")
+def declared_names() -> None:
     for path in source_files():
         if any(marker in path.read_text() for marker in _DECLARATIONS):
             module = ".".join(path.relative_to(_SRC).with_suffix("").parts)
@@ -25,44 +26,27 @@ def _import_declaring_modules() -> None:
                 pytest.skip(f"{module} needs {missing.name}")
 
 
-def _loom_events() -> list[LogEvent]:
-    _import_declaring_modules()
-    return loom_members(LogEvent)
+@pytest.mark.usefixtures("declared_names")
+class TestLoomLogNames:
+    @pytest.mark.parametrize("root", [LogEvent, LogKey])
+    def test_loom_declares_members(self, root: type[LogEvent | LogKey]) -> None:
+        assert loom_members(root)
 
+    @pytest.mark.parametrize("root", [LogEvent, LogKey])
+    def test_no_value_names_two_members(self, root: type[LogEvent | LogKey]) -> None:
+        values = [member.value for member in loom_members(root)]
 
-def _loom_keys() -> list[LogKey]:
-    _import_declaring_modules()
-    return loom_members(LogKey)
+        assert len(values) == len(set(values))
 
-
-class TestLoomLogEvents:
-    def test_loom_declares_events(self) -> None:
-        assert _loom_events()
-
-    def test_every_member_follows_area_subject_fact(self) -> None:
-        misnamed = [event for event in _loom_events() if not event.is_well_formed]
+    def test_every_event_follows_area_subject_fact(self) -> None:
+        misnamed = [event for event in loom_members(LogEvent) if not event.is_well_formed]
 
         assert misnamed == []
-
-    def test_no_value_names_two_events(self) -> None:
-        values = [event.value for event in _loom_events()]
-
-        assert len(values) == len(set(values))
-
-
-class TestLoomLogKeys:
-    def test_loom_declares_keys(self) -> None:
-        assert _loom_keys()
-
-    def test_no_value_names_two_keys(self) -> None:
-        values = [key.value for key in _loom_keys()]
-
-        assert len(values) == len(set(values))
 
     def test_an_area_key_starts_with_loom(self) -> None:
         outside = [
             key
-            for key in _loom_keys()
+            for key in loom_members(LogKey)
             if not isinstance(key, LogField) and not key.startswith("loom.")
         ]
 
@@ -79,20 +63,20 @@ class TestSubKey:
 
 class TestEventForm:
     @pytest.mark.parametrize(
-        "value", ["job.delivery_abandoned", "observability.lifecycle_started", "a.b_c_d"]
+        ("value", "well_formed"),
+        [
+            ("job.delivery_abandoned", True),
+            ("observability.lifecycle_started", True),
+            ("a.b_c_d", True),
+            ("JobAbandoned", False),
+            ("job_abandoned", False),
+            ("job.abandoned", False),
+            ("Job.delivery_abandoned", False),
+            ("[BOOT] x", False),
+        ],
     )
-    def test_a_name_in_the_form_is_well_formed(self, value: str) -> None:
+    def test_only_a_name_in_the_form_is_well_formed(self, value: str, well_formed: bool) -> None:
         class Sample(LogEvent):
             EVENT = value
 
-        assert Sample.EVENT.is_well_formed
-
-    @pytest.mark.parametrize(
-        "value",
-        ["JobAbandoned", "job_abandoned", "job.abandoned", "Job.delivery_abandoned", "[BOOT] x"],
-    )
-    def test_a_name_outside_the_form_is_not(self, value: str) -> None:
-        class Sample(LogEvent):
-            EVENT = value
-
-        assert not Sample.EVENT.is_well_formed
+        assert Sample.EVENT.is_well_formed is well_formed
