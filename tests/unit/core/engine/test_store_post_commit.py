@@ -22,8 +22,12 @@ from loom.core.command import Command
 from loom.core.engine.compiler import UseCaseCompiler
 from loom.core.engine.events import EventKind, ExecutionEvent
 from loom.core.engine.executor import UseCaseExecutor
-from loom.core.engine.post_commit import ActionSubject, PostCommitEvent, store_channel
-from loom.core.engine.post_commit import PostCommitKey as _Key
+from loom.core.engine.post_commit import (
+    ActionSubject,
+    PostCommitEvent,
+    PostCommitKey,
+    store_channel,
+)
 from loom.core.errors import StoresNotCommittedError
 from loom.core.job.context import (
     add_pending_dispatch,
@@ -594,4 +598,7 @@ class TestStorePostCommit:
             await stores.executor.execute(use_case)
 
         (fields,) = [entry for entry in logged_events(caplog) if entry["event"] == _NEVER_RAN]
-        assert (fields[_Key.SENT_JOB], fields[_Key.SENT_TASK_ID]) == ("EmailJob", "task-1")
+        assert (fields[PostCommitKey.SENT_JOB], fields[PostCommitKey.SENT_TASK_ID]) == (
+            "EmailJob",
+            "task-1",
+        )

@@ -19,12 +19,10 @@ from loom.core.engine.executor import UseCaseExecutor
 from loom.core.engine.post_commit import (
     PostCommitChannel,
     PostCommitEvent,
+    PostCommitKey,
     active_channel,
     bind_channel,
     reset_channel,
-)
-from loom.core.engine.post_commit import (
-    PostCommitKey as _Key,
 )
 from loom.core.errors import PostCommitError
 from loom.core.job.context import clear_pending_dispatches, flush_pending_dispatches
@@ -57,7 +55,6 @@ pytestmark = pytest.mark.timeout(10)
 
 _UNREPORTED = PostCommitEvent.ACTION_FAILED_AFTER_INTERRUPTION
 _NEVER_RAN = PostCommitEvent.SHIELDED_ACTION_NEVER_RAN
-_JOB, _TASK = _Key.SENT_JOB, _Key.SENT_TASK_ID
 
 _URL, _FIFO_URL = SQS_URL, SQS_FIFO_URL
 _SEND_FAILED = "SQS send failed"
@@ -569,7 +566,10 @@ class TestSQSDispatch:
         bump.release.set()
         await _until_logged(caplog, _UNREPORTED)
 
-        logged = [(f[_JOB], f[_TASK]) for f in _logged(caplog, _UNREPORTED)]
+        logged = [
+            (f[PostCommitKey.SENT_JOB], f[PostCommitKey.SENT_TASK_ID])
+            for f in _logged(caplog, _UNREPORTED)
+        ]
         assert logged == [("loom.job.EmailJob", task) for task in ids]
         assert "hunter2" not in caplog.text
 
@@ -588,7 +588,9 @@ class TestSQSDispatch:
         client.hold.set()
         await _until_logged(caplog, _NEVER_RAN)
 
-        assert [fields[_TASK] for fields in _logged(caplog, _NEVER_RAN)] == [unsent]
+        assert [fields[PostCommitKey.SENT_TASK_ID] for fields in _logged(caplog, _NEVER_RAN)] == [
+            unsent
+        ]
         assert client.batches == [(_URL, [sent])]
         assert "hunter2" not in caplog.text
 
@@ -612,5 +614,7 @@ class TestSQSDispatch:
         thread_free.set()
         await asyncio.gather(*shielded, return_exceptions=True)
 
-        assert [fields[_TASK] for fields in _logged(caplog, _NEVER_RAN)] == [queued]
+        assert [fields[PostCommitKey.SENT_TASK_ID] for fields in _logged(caplog, _NEVER_RAN)] == [
+            queued
+        ]
         assert (client.entered.is_set(), client.batches) == (False, [])
