@@ -12,9 +12,11 @@ from pymongo.errors import OperationFailure
 from loom.connections.mongo import mongo_island
 from loom.core.errors import InvalidType, InvalidUse, UnknownKey
 from loom.core.errors.summary import ErrorSummary
+from loom.core.log_names import LogField
 from loom.core.model.redaction import reveal_for_driver
 from loom.streaming.compiler._plan import CompiledMongoCDCSource
 from loom.streaming.core._message import Message
+from loom.streaming.event import StreamingEvent
 from loom.streaming.mongo._event import MongoCDCEvent
 from loom.streaming.mongo._normalize import build_mongo_cdc_message
 
@@ -88,9 +90,7 @@ class MongoCDCPartition(StatefulSourcePartition[Message[MongoCDCEvent], dict[str
                 change = self._restart_from_now()
             except Exception as exc:
                 _logger.warning(
-                    "mongo_cdc_event_skipped resume_token=%s error_type=%s",
-                    self._resume_token,
-                    ErrorSummary.of(exc).describe(),
+                    StreamingEvent.MONGO_CDC_EVENT_SKIPPED, extra=ErrorSummary.of(exc).fields()
                 )
                 self._skip_count += 1
                 break
@@ -102,9 +102,7 @@ class MongoCDCPartition(StatefulSourcePartition[Message[MongoCDCEvent], dict[str
                 message = build_mongo_cdc_message(change)
             except Exception as exc:
                 _logger.warning(
-                    "mongo_cdc_message_build_skipped resume_token=%s error_type=%s",
-                    self._resume_token,
-                    ErrorSummary.of(exc).describe(),
+                    StreamingEvent.MONGO_CDC_MESSAGE_SKIPPED, extra=ErrorSummary.of(exc).fields()
                 )
                 self._skip_count += 1
                 continue
@@ -123,9 +121,7 @@ class MongoCDCPartition(StatefulSourcePartition[Message[MongoCDCEvent], dict[str
     def _restart_from_now(self) -> object | None:
         self._restart_count += 1
         _logger.error(
-            "Mongo CDC oplog expired; restarting from now (attempt %d/%d)",
-            self._restart_count,
-            _MAX_RESTART_ATTEMPTS,
+            StreamingEvent.MONGO_CDC_OPLOG_EXPIRED, extra={LogField.ATTEMPT: self._restart_count}
         )
         if self._restart_count > _MAX_RESTART_ATTEMPTS:
             raise InvalidUse(

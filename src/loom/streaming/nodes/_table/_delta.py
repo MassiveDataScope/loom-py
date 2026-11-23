@@ -14,7 +14,9 @@ import pyarrow as _pa
 import pyarrow.ipc as _pa_ipc
 from deltalake.writer import WriterProperties, write_deltalake
 
+from loom.core.log_names import LogField
 from loom.core.model.redaction import reveal_for_driver
+from loom.streaming.event import StreamingEvent, StreamingKey
 from loom.streaming.nodes._table.common import (
     DeltaSinkConfig,
     _column_names,
@@ -123,21 +125,8 @@ class _DeltaTablePartition:
         if self._ipc_writer is None:
             options = _pa_ipc.IpcWriteOptions(compression=self._ipc_compression())
             self._ipc_writer = _pa_ipc.new_stream(self._spool, batch.schema, options=options)
-            _log.debug(
-                "delta_staging_stream_opened",
-                extra={
-                    "uri": self._uri,
-                    "schema_fields": len(batch.schema),
-                    "compression": self._staging_compression,
-                },
-            )
         self._ipc_writer.write_batch(batch)
-        pos = self._spool.tell()
-        self._staged_bytes = pos
-        _log.debug(
-            "delta_mini_batch_written",
-            extra={"uri": self._uri, "batch_rows": len(self._mini_batch), "spool_bytes": pos},
-        )
+        self._staged_bytes = self._spool.tell()
         self._mini_batch.clear()
 
     def _should_flush(self) -> bool:
@@ -147,12 +136,8 @@ class _DeltaTablePartition:
             return True
         if self._staged_bytes >= self._buffer_policy.max_bytes:
             _log.warning(
-                "delta_staging_max_bytes_reached",
-                extra={
-                    "uri": self._uri,
-                    "staged_bytes": self._staged_bytes,
-                    "max_bytes": self._buffer_policy.max_bytes,
-                },
+                StreamingEvent.DELTA_STAGING_LIMIT_REACHED,
+                extra={StreamingKey.TARGET: self._uri},
             )
             return True
         if self._buffer_started_at is None:
@@ -181,7 +166,8 @@ class _DeltaTablePartition:
             self._write_to_delta(reader, n, trace_id, correlation_id, t0)
         except Exception:
             _log.error(
-                "sink_flush_error", extra={"backend": "delta", "uri": self._uri, "records": n}
+                StreamingEvent.SINK_FLUSH_FAILED,
+                extra={StreamingKey.TARGET: self._uri, StreamingKey.RECORDS: n},
             )
             raise
         finally:
@@ -206,17 +192,15 @@ class _DeltaTablePartition:
             kwargs["target_file_size"] = self._target_file_size
         if self._writer_properties is not None:
             kwargs["writer_properties"] = self._writer_properties
-        _log.debug("delta_write_start", extra={"uri": self._uri, "records": n, "mode": self._mode})
         write_deltalake(self._uri.reveal(), reader, **kwargs)
         _log.info(
-            "sink_flush",
+            StreamingEvent.SINK_FLUSHED,
             extra={
-                "trace_id": trace_id,
-                "correlation_id": correlation_id,
-                "backend": "delta",
-                "uri": self._uri,
-                "records": n,
-                "duration_ms": round((monotonic() - t0) * 1000, 1),
+                LogField.TRACE_ID: trace_id,
+                LogField.CORRELATION_ID: correlation_id,
+                StreamingKey.TARGET: self._uri,
+                StreamingKey.RECORDS: n,
+                LogField.DURATION_MS: round((monotonic() - t0) * 1000, 1),
             },
         )
 
@@ -234,8 +218,11 @@ class _DeltaTablePartition:
                 return self._flush()
             if self._staged_records:
                 _log.warning(
-                    "delta_staged_records_discarded_on_close",
-                    extra={"uri": self._uri, "records": self._staged_records},
+                    StreamingEvent.DELTA_STAGED_RECORDS_DISCARDED,
+                    extra={
+                        StreamingKey.TARGET: self._uri,
+                        StreamingKey.RECORDS: self._staged_records,
+                    },
                 )
             return 0
         finally:

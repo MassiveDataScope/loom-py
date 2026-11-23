@@ -17,6 +17,7 @@ from loom.streaming.core._errors import ErrorEnvelope, ErrorKind, snapshot_messa
 from loom.streaming.core._message import Message
 from loom.streaming.core._tracing import open_terminal_span
 from loom.streaming.core._typing import StreamPayload
+from loom.streaming.event import StreamingEvent, StreamingKey
 
 Stream: TypeAlias = Any
 NodeResult: TypeAlias = Message[StreamPayload] | ErrorEnvelope[StreamPayload]
@@ -169,16 +170,18 @@ def _log_boundary_error(
     batch_size: int = 1,
 ) -> None:
     payload_type = original.payload.__class__.loom_message_type()
-    context = {
-        "kind": kind.value,
-        "payload_type": payload_type,
-        "message_id": original.meta.message_id,
-        "topic": original.meta.topic,
-        "partition": original.meta.partition,
-        "offset": original.meta.offset,
-        "batch_size": batch_size,
+    context: dict[str, Any] = {
+        StreamingKey.KIND: kind.value,
+        StreamingKey.MESSAGE_TYPE: payload_type,
+        StreamingKey.TOPIC: original.meta.topic,
+        StreamingKey.PARTITION: original.meta.partition,
+        StreamingKey.OFFSET: original.meta.offset,
+        StreamingKey.RECORDS: batch_size,
     }
     if isinstance(exc, DomainError):
-        logger.warning("managed_boundary_error", extra={**context, **ErrorSummary.of(exc).fields()})
+        logger.warning(
+            StreamingEvent.BOUNDARY_ERROR_MANAGED,
+            extra={**context, **ErrorSummary.of(exc).fields()},
+        )
         return
-    logger.exception("unhandled_boundary_error", extra=context)
+    logger.exception(StreamingEvent.BOUNDARY_ERROR_UNHANDLED, extra=context)

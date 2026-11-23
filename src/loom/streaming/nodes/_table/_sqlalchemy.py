@@ -12,8 +12,10 @@ from uuid import uuid4
 from sqlalchemy import insert as _sa_insert
 
 from loom.core.async_bridge import AsyncBridge
+from loom.core.log_names import LogField
 from loom.stores.sqlalchemy.schema import sa_table_for
 from loom.stores.sqlalchemy.values import to_column_row
+from loom.streaming.event import StreamingEvent, StreamingKey
 from loom.streaming.nodes._table.common import (
     SqlAlchemySinkConfig,
     _row_size_bytes,
@@ -136,14 +138,13 @@ class _SQLAlchemyTablePartition:
                     n += len(rows)
                 await session.commit()
                 _log.info(
-                    "sink_flush",
+                    StreamingEvent.SINK_FLUSHED,
                     extra={
-                        "trace_id": trace_id,
-                        "correlation_id": correlation_id,
-                        "backend": "sqlalchemy",
-                        "table": self._table.name,
-                        "records": n,
-                        "duration_ms": round((monotonic() - t0) * 1000, 1),
+                        LogField.TRACE_ID: trace_id,
+                        LogField.CORRELATION_ID: correlation_id,
+                        StreamingKey.TARGET: self._table.name,
+                        StreamingKey.RECORDS: n,
+                        LogField.DURATION_MS: round((monotonic() - t0) * 1000, 1),
                     },
                 )
             except Exception:

@@ -48,6 +48,7 @@ from loom.streaming.compiler import (
 )
 from loom.streaming.compiler._errors import StreamingErrorCode
 from loom.streaming.core._errors import ErrorKind
+from loom.streaming.event import StreamingEvent
 from loom.streaming.graph._flow import StreamFlow
 from loom.streaming.nodes._shape import CollectBatch
 
@@ -438,7 +439,7 @@ class StreamingRunner:
     def shutdown(self) -> None:
         """Release adapter resources after a run or failed build."""
         if self._shutdown is not None:
-            self._log.debug("shutting_down")
+            self._log.debug(StreamingEvent.RUNNER_SHUTTING_DOWN)
             self._shutdown()
             self._shutdown = None
 

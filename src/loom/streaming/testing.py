@@ -34,6 +34,7 @@ from loom.streaming.bytewax.runner import _prepare_run
 from loom.streaming.compiler import CompiledPlan, compile_flow
 from loom.streaming.compiler._plan import CompiledMultiSource, CompiledSingleSource
 from loom.streaming.core._errors import ErrorKind
+from loom.streaming.event import StreamingEvent
 from loom.streaming.graph._flow import StreamFlow
 
 logger = logging.getLogger(__name__)
@@ -189,7 +190,7 @@ class StreamingTestRunner:
                     epoch_interval=timedelta(milliseconds=1),
                 )
         finally:
-            logger.debug("shutting_down_test_runner")
+            logger.debug(StreamingEvent.RUNNER_SHUTTING_DOWN)
             prepared.shutdown()
 
 

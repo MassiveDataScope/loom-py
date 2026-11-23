@@ -16,6 +16,7 @@ from loom.core.observability.observability import Observability  # noqa: E402
 from loom.streaming.bytewax import _error_boundary  # noqa: E402
 from loom.streaming.core._errors import ErrorEnvelope, ErrorKind  # noqa: E402
 from loom.streaming.core._message import Message, MessageMeta  # noqa: E402
+from loom.streaming.event import StreamingEvent  # noqa: E402
 from tests.unit.streaming.doubles import AcmePayload  # noqa: E402
 
 pytestmark = pytest.mark.bytewax
@@ -118,7 +119,7 @@ class TestExecuteInBoundary:
             _boundary(),
         )
 
-        assert ("warning", "managed_boundary_error") in logger.calls
+        assert ("warning", StreamingEvent.BOUNDARY_ERROR_MANAGED) in logger.calls
 
     def test_execute_in_boundary_logs_unhandled_runtime_error(
         self, monkeypatch: pytest.MonkeyPatch
@@ -132,7 +133,7 @@ class TestExecuteInBoundary:
             _boundary(),
         )
 
-        assert ("exception", "unhandled_boundary_error") in logger.calls
+        assert ("exception", StreamingEvent.BOUNDARY_ERROR_UNHANDLED) in logger.calls
 
 
 class TestExecuteBatchInBoundary:

@@ -13,6 +13,8 @@ import msgspec
 
 from loom.connections.clickhouse.client import build_clickhouse_client
 from loom.core.connections import ClickHouseConnection
+from loom.core.log_names import LogField
+from loom.streaming.event import StreamingEvent, StreamingKey
 from loom.streaming.nodes._table.common import (
     ClickHouseSinkConfig,
     _column_names,
@@ -181,8 +183,8 @@ class _ClickHouseTablePartition:
             )
         except Exception:
             _log.error(
-                "sink_flush_error",
-                extra={"backend": "clickhouse", "table": self._table, "records": n},
+                StreamingEvent.SINK_FLUSH_FAILED,
+                extra={StreamingKey.TARGET: self._table, StreamingKey.RECORDS: n},
             )
             raise
         self._buffer = [[] for _ in self._column_names]
@@ -190,14 +192,13 @@ class _ClickHouseTablePartition:
         self._buffer_bytes = 0
         self._buffer_started_at = None
         _log.info(
-            "sink_flush",
+            StreamingEvent.SINK_FLUSHED,
             extra={
-                "trace_id": trace_id,
-                "correlation_id": correlation_id,
-                "backend": "clickhouse",
-                "table": self._table,
-                "records": n,
-                "duration_ms": round((monotonic() - t0) * 1000, 1),
+                LogField.TRACE_ID: trace_id,
+                LogField.CORRELATION_ID: correlation_id,
+                StreamingKey.TARGET: self._table,
+                StreamingKey.RECORDS: n,
+                LogField.DURATION_MS: round((monotonic() - t0) * 1000, 1),
             },
         )
         return n
