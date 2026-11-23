@@ -13,23 +13,20 @@ from typing import cast
 
 import pytest
 
-from loom.core.log_names import LogEvent, LogField, LogKey
+from loom.core.log_names import LogEvent, LogField, SubKey
+from loom.core.model.redaction import Secret
 from tests.helpers.log_standard import (
     _BREACHES,
     REPORT_DIRECTORY_VARIABLE,
     Breach,
     LogContract,
+    ValueKind,
     pytest_sessionfinish,
 )
 
 
 class _AcmeEvent(LogEvent):
     THING_DONE = "acme.thing_done"
-
-
-class _AcmeKey(LogKey):
-    AMOUNT = "loom.acme.amount"
-    BAG = "loom.acme.bag"
 
 
 def _record(
@@ -49,7 +46,7 @@ class TestBreach:
         [
             pytest.param(_record(), [], id="event-alone"),
             pytest.param(
-                _record(**{_AcmeKey.AMOUNT.value: 3, LogField.JOB.value: "x"}),
+                _record(**{LogField.ATTEMPT.value: 3, LogField.JOB.value: "x"}),
                 [],
                 id="declared-keys",
             ),
@@ -61,11 +58,11 @@ class TestBreach:
             ),
             pytest.param(_record(amount=3), [Breach.UNDECLARED_KEY], id="undeclared-key"),
             pytest.param(
-                _record(**{_AcmeKey.AMOUNT.value: object()}),
+                _record(**{LogField.ATTEMPT.value: object()}),
                 [Breach.OPAQUE_VALUE],
                 id="opaque-value",
             ),
-            pytest.param(_record(**{_AcmeKey.AMOUNT.value: ["a", "b"]}), [], id="list-of-scalars"),
+            pytest.param(_record(**{LogField.ATTEMPT.value: ["a", "b"]}), [], id="list-of-scalars"),
         ],
     )
     def test_a_record_breaks_the_rules_it_does_not_follow(
@@ -74,20 +71,22 @@ class TestBreach:
         assert Breach.broken_by(record, {}) == expected
 
     def test_a_key_carrying_another_kind_of_value_is_retyped(self) -> None:
-        record = _record(**{_AcmeKey.AMOUNT.value: "3"})
+        record = _record(**{LogField.ATTEMPT.value: "3"})
 
-        assert Breach.broken_by(record, {_AcmeKey.AMOUNT.value: "int"}) == [Breach.KEY_RETYPED]
+        assert Breach.broken_by(record, {LogField.ATTEMPT.value: ValueKind.NUMBER}) == [
+            Breach.KEY_RETYPED
+        ]
 
     def test_a_missing_value_does_not_retype_a_key(self) -> None:
-        record = _record(**{_AcmeKey.AMOUNT.value: None})
+        record = _record(**{LogField.ATTEMPT.value: None})
 
-        assert Breach.broken_by(record, {_AcmeKey.AMOUNT.value: "int"}) == []
+        assert Breach.broken_by(record, {LogField.ATTEMPT.value: ValueKind.NUMBER}) == []
 
     def test_a_subkey_is_never_checked(self) -> None:
         record = _record()
-        record.__dict__[_AcmeKey.BAG.of("tenant")] = object()
+        record.__dict__[SubKey("loom.acme.bag.tenant")] = object()
 
-        assert Breach.broken_by(record, {_AcmeKey.BAG.of("tenant"): "int"}) == []
+        assert Breach.broken_by(record, {SubKey("loom.acme.bag.tenant"): "int"}) == []
 
 
 class TestLogContract:
@@ -100,14 +99,36 @@ class TestLogContract:
             {"loom.acme|message_not_event": 1, "loom.acme|undeclared_key": 1}
         )
 
-    def test_a_key_keeps_the_kind_of_its_first_value(self) -> None:
+    @pytest.mark.parametrize(
+        ("first", "second", "retyped"),
+        [
+            pytest.param(1, 12.5, False, id="int-then-float"),
+            pytest.param(12.5, 1, False, id="float-then-int"),
+            pytest.param(Secret("a"), "b", False, id="secret-is-a-string"),
+            pytest.param("3", 3, True, id="string-then-int"),
+            pytest.param(True, 1, True, id="boolean-then-int"),
+            pytest.param("a", ["a"], True, id="string-then-array"),
+        ],
+    )
+    def test_a_key_changes_kind_only_across_json_kinds(
+        self, first: object, second: object, retyped: bool
+    ) -> None:
         breaches: Counter[str] = Counter()
         contract = LogContract(breaches, {})
 
-        contract.emit(_record(**{_AcmeKey.AMOUNT.value: 3}))
-        contract.emit(_record(**{_AcmeKey.AMOUNT.value: "3"}))
+        contract.emit(_record(**{LogField.ATTEMPT.value: first}))
+        contract.emit(_record(**{LogField.ATTEMPT.value: second}))
 
-        assert breaches == Counter({"loom.acme|key_retyped": 1})
+        assert breaches == (Counter({"loom.acme|key_retyped": 1}) if retyped else Counter())
+
+    def test_a_text_record_does_not_teach_a_key_its_kind(self) -> None:
+        breaches: Counter[str] = Counter()
+        contract = LogContract(breaches, {})
+
+        contract.emit(_record("thing done", **{LogField.NAME.value: 7}))
+        contract.emit(_record(**{LogField.NAME.value: "x"}))
+
+        assert "loom.acme|key_retyped" not in breaches
 
     def test_a_record_of_a_non_loom_logger_never_reaches_it(self) -> None:
         breaches: Counter[str] = Counter()

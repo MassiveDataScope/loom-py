@@ -18,32 +18,56 @@ from collections import Counter
 from collections.abc import Iterator
 from enum import StrEnum
 from pathlib import Path
-from typing import Final
+from typing import Final, TypeVar
 
 import pytest
 
 from loom.core.log_names import LogEvent, LogKey, SubKey
-from loom.core.logger.formats import TextFormatter, is_opaque, record_fields
+from loom.core.logger.formats import TextFormatter, is_opaque, record_fields, render_value
+
+_Name = TypeVar("_Name", LogEvent, LogKey)
 
 REPORT_DIRECTORY_VARIABLE: Final = "LOOM_LOG_CONTRACT_REPORT"
 _BREACHES: Final = pytest.StashKey[Counter[str]]()
 
+_KEY_KINDS: Final = pytest.StashKey[dict[str, "ValueKind"]]()
 
-_KEY_KINDS: Final = pytest.StashKey[dict[str, str]]()
 
+def loom_members(root: type[_Name]) -> list[_Name]:
+    """The members of every subclass of *root* that loom declares, once imported.
 
-def declared_keys() -> frozenset[str]:
-    """The values of every member of every :class:`LogKey` subclass imported so far."""
-    pending, keys = [LogKey], set()
+    A subclass defined outside ``loom`` (a test's own) never counts.
+    """
+    pending, found = [root], []
     while pending:
         base = pending.pop()
         pending.extend(base.__subclasses__())
-        keys.update(member.value for member in base)
-    return frozenset(keys)
+        if base.__module__.startswith("loom."):
+            found.extend(base)
+    return found
 
 
-def _kind_of(value: object) -> str:
-    return type(value).__name__
+class ValueKind(StrEnum):
+    """The JSON kind a formatter writes for a field value."""
+
+    BOOLEAN = "boolean"
+    NUMBER = "number"
+    STRING = "string"
+    ARRAY = "array"
+
+    @classmethod
+    def of(cls, value: object) -> ValueKind | None:
+        """The kind of ``render_value(value)``; ``None`` for a missing value."""
+        rendered = render_value(value)
+        if rendered is None:
+            return None
+        if isinstance(rendered, bool):
+            return cls.BOOLEAN
+        if isinstance(rendered, int | float):
+            return cls.NUMBER
+        if isinstance(rendered, list):
+            return cls.ARRAY
+        return cls.STRING
 
 
 class Breach(StrEnum):
@@ -56,9 +80,9 @@ class Breach(StrEnum):
     KEY_RETYPED = "key_retyped"
 
     @classmethod
-    def broken_by(cls, record: logging.LogRecord, kinds: dict[str, str]) -> list[Breach]:
+    def broken_by(cls, record: logging.LogRecord, kinds: dict[str, ValueKind]) -> list[Breach]:
         """The rules *record* breaks, given the kind of value each key carried so far."""
-        declared = declared_keys()
+        declared = {key.value for key in loom_members(LogKey)}
         fields = {
             key: value
             for key, value in record_fields(record).items()
@@ -70,7 +94,7 @@ class Breach(StrEnum):
             cls.UNDECLARED_KEY: any(key not in declared for key in fields),
             cls.OPAQUE_VALUE: any(is_opaque(value) for value in fields.values()),
             cls.KEY_RETYPED: any(
-                value is not None and kinds.get(key, _kind_of(value)) != _kind_of(value)
+                (kind := ValueKind.of(value)) is not None and kinds.get(key, kind) != kind
                 for key, value in fields.items()
             ),
         }
@@ -80,7 +104,7 @@ class Breach(StrEnum):
 class LogContract(logging.Handler):
     """Keeps the records of one test and counts every breach by module."""
 
-    def __init__(self, breaches: Counter[str], kinds: dict[str, str]) -> None:
+    def __init__(self, breaches: Counter[str], kinds: dict[str, ValueKind]) -> None:
         super().__init__()
         self.records: list[tuple[logging.LogRecord, list[Breach]]] = []
         self._breaches = breaches
@@ -90,9 +114,12 @@ class LogContract(logging.Handler):
         broken = Breach.broken_by(record, self._kinds)
         self.records.append((record, broken))
         self._breaches.update(f"{record.name}|{breach}" for breach in broken)
+        if not isinstance(record.msg, LogEvent):
+            return
         for key, value in record_fields(record).items():
-            if value is not None and not isinstance(key, SubKey):
-                self._kinds.setdefault(key, _kind_of(value))
+            kind = ValueKind.of(value)
+            if kind is not None and not isinstance(key, SubKey):
+                self._kinds.setdefault(key, kind)
 
 
 def pytest_configure(config: pytest.Config) -> None:

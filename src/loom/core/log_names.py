@@ -47,9 +47,9 @@ class SubKey(str):
 class LogKey(StrEnum):
     """Base of an area's field keys, declared next to its :class:`LogEvent`.
 
-    A key is an OpenTelemetry semantic convention when one exists and
-    ``loom.<area>.<name>`` otherwise. A bag whose names are the developer's takes
-    its keys from a member through :meth:`of`.
+    An area key is ``loom.<area>.<name>``; the OpenTelemetry semantic-convention
+    names belong in :class:`LogField` only. A bag whose names are the developer's
+    takes its keys from a member through :meth:`of`.
     """
 
     def of(self, name: str) -> SubKey:

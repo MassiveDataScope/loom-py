@@ -4,15 +4,14 @@ from __future__ import annotations
 
 import importlib
 from pathlib import Path
-from typing import TypeVar
 
 import pytest
 
 from loom.core.log_names import LogEvent, LogField, LogKey
+from tests.helpers.log_standard import loom_members
 from tests.helpers.source_tree import source_files
 
 _SRC = Path(__file__).resolve().parents[2] / "src"
-_Name = TypeVar("_Name", LogEvent, LogKey)
 _DECLARATIONS = ("(LogEvent)", "(LogKey)")
 
 
@@ -26,24 +25,14 @@ def _import_declaring_modules() -> None:
                 pytest.skip(f"{module} needs {missing.name}")
 
 
-def _members_of_subclasses(root: type[_Name]) -> list[_Name]:
-    pending, found = [root], []
-    while pending:
-        base = pending.pop()
-        pending.extend(base.__subclasses__())
-        if base.__module__.startswith("loom."):
-            found.extend(base)
-    return found
-
-
 def _loom_events() -> list[LogEvent]:
     _import_declaring_modules()
-    return _members_of_subclasses(LogEvent)
+    return loom_members(LogEvent)
 
 
 def _loom_keys() -> list[LogKey]:
     _import_declaring_modules()
-    return _members_of_subclasses(LogKey)
+    return loom_members(LogKey)
 
 
 class TestLoomLogEvents:
