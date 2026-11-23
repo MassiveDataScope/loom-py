@@ -39,6 +39,7 @@ from loom.core.job.callback import CallbackOutcome
 from loom.core.job.context import add_pending_publish
 from loom.core.job.dispatch import JobDispatch
 from loom.core.job.handle import JobHandle
+from loom.core.logger.field import ErrorSummary
 from loom.core.observability.event import Scope
 from loom.core.observability.observability import Observability
 
@@ -138,13 +139,14 @@ class CallbackLink(msgspec.Struct, frozen=True):
             task_name: The name of the callback task (:func:`callback_task_name`).
             error: The error that ended the job, as the worker raised it.
         """
+        summary = ErrorSummary.of(error)
         try:
             celery_app.send_task(
                 task_name,
                 kwargs={
                     **msgspec.structs.asdict(self),
-                    "exc_type": type(error).__qualname__,
-                    "exc_msg": str(error),
+                    "exc_type": summary.type,
+                    "exc_code": summary.code,
                 },
             )
         except Exception:

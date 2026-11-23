@@ -210,7 +210,8 @@ class TestBuildFailure:
         ((event, fields),) = logger.errors
         assert event == "[FAIL] AcmeBroken"
         assert fields["error_kind"] == "build"
-        assert fields["error"] == "acme constructor failed"
+        assert fields["exception.type"] == "LookupError"
+        assert "acme constructor failed" not in str(fields)
 
     @pytest.mark.parametrize("on_failure", [None, AcmeOnFailure], ids=["no-callback", "callback"])
     async def test_an_inline_job_that_fails_to_build_is_reported_like_one_that_fails_to_run(
@@ -230,7 +231,7 @@ class TestBuildFailure:
 
         assert [event for event, _ in logger.errors] == ["[FAIL] AcmeBrokenJob"]
         assert AcmeOnFailure.calls == (
-            [] if on_failure is None else ["acme job constructor failed"]
+            [] if on_failure is None else [("AcmeUnrecoverableError", None)]
         )
 
 

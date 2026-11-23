@@ -82,7 +82,7 @@ class SpinningJob(Counted):
 class Notify(JobCallback):
     failures: ClassVar[list[str]] = []
 
-    def on_failure(self, job_id: str, exc_type: str, exc_msg: str, **ctx: Any) -> None:
+    def on_failure(self, job_id: str, exc_type: str, exc_code: str | None, **ctx: Any) -> None:
         self.failures.append(exc_type)
 
 

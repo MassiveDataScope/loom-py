@@ -278,7 +278,7 @@ Errors use the standard framework body (`detail.code`, `detail.message`,
 | 401 | Missing, expired or otherwise invalid token (emitted by the JWT middleware, before the endpoint) |
 | 404 | Unknown connection name |
 | 403 | The verified identity grants no allowed role, the body asks for a role the identity does not hold, or the role is outside the allowlist |
-| 422 | SQL rejected by the backend (sanitized first line, no host/DSN), well-formed body that does not fit the schema, or SQL larger than `max_sql_bytes` |
+| 422 | SQL rejected by the backend (its error code only), well-formed body that does not fit the schema, or SQL larger than `max_sql_bytes` |
 | 500 | Backend unreachable — generic message, no URL leaked |
 
 Every 403 caused by identity binding carries the same generic message on purpose (no

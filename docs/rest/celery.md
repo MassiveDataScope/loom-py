@@ -292,7 +292,7 @@ class RestockEmailSuccessCallback(JobCallback):
                 payload={"category": f"{product.category}-restock-notified"},
             )
 
-    def on_failure(self, job_id: str, exc_type: str, exc_msg: str, **context: Any) -> None:
+    def on_failure(self, job_id: str, exc_type: str, exc_code: str | None, **context: Any) -> None:
         pass  # log or send alert
 
 
@@ -305,7 +305,7 @@ class RestockEmailFailureCallback(JobCallback):
     def on_success(self, job_id: str, result: Any, **context: Any) -> None:
         pass
 
-    async def on_failure(self, job_id: str, exc_type: str, exc_msg: str, **context: Any) -> None:
+    async def on_failure(self, job_id: str, exc_type: str, exc_code: str | None, **context: Any) -> None:
         product_id = context.get("product_id")
         entity = self._app.entity(Product)
         product = await entity.get(params={"id": product_id})
@@ -323,8 +323,8 @@ class RestockEmailFailureCallback(JobCallback):
 async def on_success(self, job_id: str, result: Any, **context: Any) -> None: ...
 
 
-# called on task failure — exc_type / exc_msg describe the exception
-async def on_failure(self, job_id: str, exc_type: str, exc_msg: str, **context: Any) -> None: ...
+# called on task failure — exc_type / exc_code describe the exception
+async def on_failure(self, job_id: str, exc_type: str, exc_code: str | None, **context: Any) -> None: ...
 ```
 
 `**context` contains the raw `payload` dict passed to `dispatch_after_commit()` — use it to

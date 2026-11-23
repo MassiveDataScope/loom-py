@@ -440,8 +440,8 @@ class TestParallelScanFailures:
         scanner.close()  # early stop (e.g. limit satisfied) — must not raise nor hang
 
         [failure_fields] = CapturedLog(caplog).named("dynamodb segment failed")
-        assert failure_fields["segment"] == 0
-        assert "throttled" in failure_fields["error"]
+        assert (failure_fields["segment"], failure_fields["exception.type"]) == (0, "RuntimeError")
+        assert "throttled" not in str(failure_fields)
 
     def test_error_not_double_logged_when_raised(self, caplog: pytest.LogCaptureFixture) -> None:
         client = _FailingSegmentClient(pages_per_segment=1)

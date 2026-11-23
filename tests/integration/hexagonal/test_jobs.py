@@ -8,15 +8,18 @@ runs, and the job a caller-less dispatch runs failing closed.
 from __future__ import annotations
 
 import asyncio
+from typing import Any
 
 import pytest
 
 from loom.composition import Application
+from loom.core.errors.codes import ErrorCode
 from loom.core.execution import ExecutionRequired
 from loom.core.identity import Identity, reset_identity, set_identity
 from loom.core.job import JobService
 from loom.core.job.context import flush_pending_dispatches
 from loom.core.job.handle import JobFailedError, JobHandle
+from loom.core.logger import LogField
 from tests.helpers.loggers import logged_events
 from tests.integration.hexagonal.conftest import (
     ANA,
@@ -55,9 +58,9 @@ async def _run_as(application: Application, caller: Identity, shipment_id: str) 
     return await service.run(TrackShipmentJob, params={"shipment_id": shipment_id})
 
 
-def _failed_jobs(caplog: pytest.LogCaptureFixture) -> list[str]:
+def _failed_jobs(caplog: pytest.LogCaptureFixture) -> list[dict[str, Any]]:
     return [
-        str(entry["error"])
+        entry
         for entry in logged_events(caplog)
         if entry.get("usecase") == TrackShipmentJob.__name__ and entry.get("status") == "failure"
     ]
@@ -96,7 +99,11 @@ class TestACallerlessDispatch:
             await _dispatched_by(application, None)
 
         (failure,) = _failed_jobs(caplog)
-        assert failure.startswith("Authentication required")
+        assert (failure[LogField.EXCEPTION_TYPE], failure[LogField.ERROR_CODE]) == (
+            "Unauthenticated",
+            ErrorCode.UNAUTHENTICATED,
+        )
+        assert "error" not in failure
         assert seen.calls == []
 
     async def test_waits_into_job_failed_error(self, application: Application) -> None:

@@ -275,7 +275,8 @@ class TestPostCommitPublish:
 
         fields = _event(caplog, _FAILED)
         assert (fields["job_name"], fields["task_id"]) == (_Send.task_name, _Send.task_id)
-        assert "broker down" in fields["error"]
+        assert fields["exception.type"] == "ConnectionError"
+        assert "broker down" not in str(fields)
 
     async def test_sends_a_dead_shield_never_ran_are_logged(
         self, caplog: pytest.LogCaptureFixture, logged: Callable[[str], asyncio.Event]
@@ -324,7 +325,8 @@ class TestPostCommitPublish:
 
         fields = _event(caplog, "PostCommitActionFailed")
         assert (fields["job_name"], fields["task_id"]) == (_Send.task_name, _Send.task_id)
-        assert "broker down" in fields["error"]
+        assert fields["exception.type"] == "ConnectionError"
+        assert "broker down" not in str(fields)
 
     async def test_a_publish_runs_before_an_inline_job_queued_earlier(self) -> None:
         calls: list[str] = []

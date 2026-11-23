@@ -137,7 +137,7 @@ class CommitUncertain(Exception):
     """
 
     def __init__(self, cause: BaseException) -> None:
-        super().__init__(f"commit result unknown: {cause!r}")
+        super().__init__("commit result unknown")
         self.cause = cause
 
 

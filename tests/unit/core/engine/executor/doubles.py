@@ -135,12 +135,12 @@ class AcmeBrokenJob(Job[None]):
 
 
 class AcmeOnFailure:
-    """A job failure callback recording each message it is given."""
+    """A job failure callback recording the type and code of each failure it is given."""
 
-    calls: list[str] = []
+    calls: list[tuple[str, str | None]] = []
 
-    def on_failure(self, job_id: str, exc_type: str, exc_msg: str, **context: Any) -> None:
-        self.calls.append(exc_msg)
+    def on_failure(self, job_id: str, exc_type: str, exc_code: str | None, **context: Any) -> None:
+        self.calls.append((exc_type, exc_code))
 
 
 def serves_session(container: LoomContainer) -> None:

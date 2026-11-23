@@ -16,8 +16,8 @@ class AcmePingCallback(JobCallback):
     def on_success(self, job_id: str, result: Any, **context: Any) -> None:
         del job_id, result, context
 
-    def on_failure(self, job_id: str, exc_type: str, exc_msg: str, **context: Any) -> None:
-        del job_id, exc_type, exc_msg, context
+    def on_failure(self, job_id: str, exc_type: str, exc_code: str | None, **context: Any) -> None:
+        del job_id, exc_type, exc_code, context
 
 
 class AcmeSyncCallback(JobCallback):
@@ -28,5 +28,5 @@ class AcmeSyncCallback(JobCallback):
     def on_success(self, job_id: str, result: Any, **context: Any) -> None:
         self.calls.append("success")
 
-    def on_failure(self, job_id: str, exc_type: str, exc_msg: str, **context: Any) -> None:
+    def on_failure(self, job_id: str, exc_type: str, exc_code: str | None, **context: Any) -> None:
         self.calls.append("failure")

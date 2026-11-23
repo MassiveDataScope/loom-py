@@ -13,6 +13,7 @@ from typing import Any
 
 import polars as pl
 
+from loom.core.logger.field import ErrorSummary
 from loom.etl.declarative.source._from_dynamodb import FromDynamoDB
 from loom.etl.declarative.source._specs import DynamoDBSourceSpec, ExtraFieldsMode
 from loom.etl.engines.polars._dtype import loom_type_to_polars
@@ -276,7 +277,7 @@ class _ParallelSegmentScanner:
             if exc is not None:
                 _log.warning(
                     "dynamodb segment failed",
-                    extra={"segment": segment, "error": f"{type(exc).__name__}: {exc}"},
+                    extra={"segment": segment, **ErrorSummary.of(exc).fields()},
                 )
 
     def close(self) -> None:

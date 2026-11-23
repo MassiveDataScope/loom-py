@@ -80,9 +80,10 @@ class TestSqlRegistryLifecycle:
         error = DatabaseError("Code: 241. DB::Exception: Memory limit exceeded: would use 511 MiB")
         factory = RecordingClientFactory(FakeClickHouseClient(error=error))
         registry = _registry(factory, analytics=make_connection_config())
-        with pytest.raises(ConfigError, match="probe failed unexpectedly"):
+        with pytest.raises(ConfigError, match="probe failed unexpectedly") as caught:
             async with registry:
                 pass
+        assert str(caught.value).endswith("probe failed unexpectedly: ClickHouse error 241")
 
     async def test_startup_probe_sends_a_sentinel_role_in_settings(self) -> None:
         """The startup probe runs a query carrying a nonexistent sentinel role."""

@@ -356,7 +356,7 @@ def _make_callback_task(
 
     A success link is mutable: Celery passes the job's return value as the
     first positional argument. A failure callback is sent by the worker on every
-    terminal failure of the job task, with the error's ``exc_type`` and ``exc_msg`` as keyword
+    terminal failure of the job task, with the error's ``exc_type`` and ``exc_code`` as keyword
     arguments, so no result backend is read. The link's ``job_id`` and
     ``context`` arrive as keyword arguments.
 
@@ -381,11 +381,11 @@ def _make_callback_task(
     name = callback_type.__qualname__
     hook_is_async = inspect.iscoroutinefunction(outcome.hook(callback_type))
 
-    def details(job_result: tuple[Any, ...], exc_type: str, exc_msg: str) -> dict[str, Any]:
+    def details(job_result: tuple[Any, ...], exc_type: str, exc_code: str | None) -> dict[str, Any]:
         if outcome is CallbackOutcome.SUCCESS:
             return {"result": job_result[0]}
         Acting.current().refuse_expired()
-        return {"exc_type": exc_type, "exc_msg": exc_msg}
+        return {"exc_type": exc_type, "exc_code": exc_code}
 
     async def notified(
         job_id: str,
@@ -394,7 +394,7 @@ def _make_callback_task(
         identity: dict[str, Any] | None,
         context: dict[str, Any],
         exc_type: str,
-        exc_msg: str,
+        exc_code: str | None,
     ) -> None:
         with (
             job_context(trace_id, identity),
@@ -404,7 +404,7 @@ def _make_callback_task(
                 factory,
                 callback_type,
                 outcome,
-                **{**context, "job_id": job_id, **details(job_result, exc_type, exc_msg)},
+                **{**context, "job_id": job_id, **details(job_result, exc_type, exc_code)},
             )
 
     @celery_app.task(  # type: ignore[untyped-decorator]
@@ -418,12 +418,12 @@ def _make_callback_task(
         trace_id: str | None = None,
         identity: dict[str, Any] | None = None,
         exc_type: str = "Unknown",
-        exc_msg: str = "",
+        exc_code: str | None = None,
     ) -> None:
         process_bridge.ensure_open()
         if hook_is_async:
             process_bridge.run(
-                notified(job_id, job_result, trace_id, identity, context, exc_type, exc_msg),
+                notified(job_id, job_result, trace_id, identity, context, exc_type, exc_code),
                 eager_fallback=_is_eager_request(self),
             )
             return
@@ -434,7 +434,7 @@ def _make_callback_task(
             arguments = {
                 **context,
                 "job_id": job_id,
-                **details(job_result, exc_type, exc_msg),
+                **details(job_result, exc_type, exc_code),
             }
             with ExecutionScope(current_caller(), what=name):
                 reply = outcome.hook(factory.build(callback_type))(**arguments)

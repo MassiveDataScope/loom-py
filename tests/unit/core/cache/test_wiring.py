@@ -33,6 +33,7 @@ from loom.core.cache.keys import call_key
 from loom.core.cache.wiring import CacheGateways, cache_module, cache_module_for
 from loom.core.config import ConfigContext
 from loom.core.di.container import LoomContainer, ResolutionError
+from loom.core.logger.formats import record_fields
 from loom.core.model.redaction import RedactedMap
 from loom.core.stores.catalog import DEFAULT_STORE
 from loom.core.stores.repository import (
@@ -265,8 +266,8 @@ class TestIncompleteRepository:
         assert "create" in str(info.value)
         assert "list_paginated" in str(info.value)
 
-    def test_boot_validation_names_the_offending_repository(self) -> None:
-        """``validate()`` wraps the refusal, so the aborted boot still names the class."""
+    def test_boot_validation_keeps_the_refusal_naming_the_offending_repository(self) -> None:
+        """``validate()`` chains the refusal, so the aborted boot still names the class."""
         with registered_repository(AcmeCacheWidget, ReadOnlyWidgetRepository):
             module = build_repository_registration_module(
                 models=(),
@@ -277,11 +278,13 @@ class TestIncompleteRepository:
             )
             container = _container(module, cache_module(_single_alias()))
 
-            with pytest.raises(ResolutionError, match="ReadOnlyWidgetRepository") as info:
+            with pytest.raises(ResolutionError) as info:
                 container.validate()
 
-        assert "create" in str(info.value)
-        assert "list_paginated" in str(info.value)
+        refusal = str(info.value.__cause__)
+        assert "ReadOnlyWidgetRepository" in refusal
+        assert "create" in refusal
+        assert "list_paginated" in refusal
 
 
 class TestInvalidationThroughTheContainer:
@@ -554,7 +557,8 @@ class TestTheBinderReportsAnAbandonedLoad:
 
         records = _abandoned_warnings(caplog)
         assert len(records) == 1
-        assert "upstream down" in rendered(records[0])
+        assert record_fields(records[0])["exception.type"] == "RuntimeError"
+        assert "upstream down" not in rendered(records[0])
 
 
 def _abandoned_warnings(caplog: pytest.LogCaptureFixture) -> list[logging.LogRecord]:

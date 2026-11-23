@@ -7,6 +7,8 @@ import time
 from dataclasses import dataclass, field
 from typing import TYPE_CHECKING, Any, Literal
 
+from loom.core.logger.field import ErrorSummary
+
 if TYPE_CHECKING:
     from loom.etl.maintenance._protocol import DeltaTableMaintainer, OptimizeResult, VacuumResult
     from loom.etl.maintenance._step import MaintenanceStep
@@ -196,7 +198,8 @@ class MaintenanceRunner:
             return self._locator.locate(TableRef(table_ref))
         except Exception as exc:
             if self._missing_table_policy == "skip":
-                _log.warning("maintenance skip", extra={"table": table_ref, "reason": repr(exc)})
+                failure = ErrorSummary.of(exc).fields()
+                _log.warning("maintenance skip", extra={"table": table_ref, **failure})
                 return None
             raise
 

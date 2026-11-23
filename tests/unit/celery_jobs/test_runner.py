@@ -343,7 +343,7 @@ class TestRetry:
 class TestFailureCallback:
     CALLBACK = "loom.callback_error.AcmeCallback"
 
-    def test_an_abandoned_job_sends_the_callback_once_with_the_error_class_and_message(
+    def test_an_abandoned_job_sends_the_callback_once_with_the_error_class_and_no_message(
         self, worker: CeleryWorker
     ) -> None:
         with pytest.raises(ValueError):
@@ -362,17 +362,19 @@ class TestFailureCallback:
             "trace_id": "acme-trace",
             "identity": None,
             "exc_type": "ValueError",
-            "exc_msg": "err",
+            "exc_code": None,
         }
 
-    def test_a_job_abandonment_names_its_own_class_and_reason(self, worker: CeleryWorker) -> None:
+    def test_a_job_abandonment_names_its_own_class_without_its_reason(
+        self, worker: CeleryWorker
+    ) -> None:
         with pytest.raises(JobAbandonment):
             worker.run(AbandoningJob, failure_callback=self.CALLBACK)
 
         (message,) = worker.published(self.CALLBACK)
-        assert (message.kwargs["exc_type"], message.kwargs["exc_msg"]) == (
+        assert (message.kwargs["exc_type"], message.kwargs["exc_code"]) == (
             "JobAbandonment",
-            "never",
+            None,
         )
 
     def test_a_failure_that_is_retried_sends_nothing(self, worker: CeleryWorker) -> None:
@@ -449,8 +451,10 @@ class Hooks:
     def on_success(self, job_id: str, result: object, **context: object) -> None:
         self.seen.append((job_id, {"result": result, **context}))
 
-    def on_failure(self, job_id: str, exc_type: str, exc_msg: str, **context: object) -> None:
-        self.seen.append((job_id, {"exc_type": exc_type, "exc_msg": exc_msg, **context}))
+    def on_failure(
+        self, job_id: str, exc_type: str, exc_code: str | None, **context: object
+    ) -> None:
+        self.seen.append((job_id, {"exc_type": exc_type, "exc_code": exc_code, **context}))
 
 
 class AsyncHooks(Hooks):
@@ -458,9 +462,9 @@ class AsyncHooks(Hooks):
         super().on_success(job_id, result, **context)
 
     async def on_failure(  # type: ignore[override]
-        self, job_id: str, exc_type: str, exc_msg: str, **context: object
+        self, job_id: str, exc_type: str, exc_code: str | None, **context: object
     ) -> None:
-        super().on_failure(job_id, exc_type, exc_msg, **context)
+        super().on_failure(job_id, exc_type, exc_code, **context)
 
 
 class CoroutineFromDef(Hooks):
@@ -472,7 +476,7 @@ class CoroutineFromDef(Hooks):
         return asyncio.sleep(0)
 
     def on_failure(  # type: ignore[override]
-        self, job_id: str, exc_type: str, exc_msg: str, **context: object
+        self, job_id: str, exc_type: str, exc_code: str | None, **context: object
     ) -> Coroutine[Any, Any, None]:
         return asyncio.sleep(0)
 
@@ -484,8 +488,8 @@ OUTCOMES = pytest.mark.parametrize(
         (
             CallbackOutcome.FAILURE,
             (),
-            {"exc_type": "ValueError", "exc_msg": "bad input"},
-            {"exc_type": "ValueError", "exc_msg": "bad input"},
+            {"exc_type": "AcmeError", "exc_code": "acme_failed"},
+            {"exc_type": "AcmeError", "exc_code": "acme_failed"},
         ),
     ],
     ids=["success", "failure"],
@@ -613,7 +617,9 @@ class SyncSeen:
     def on_success(self, job_id: str, result: object, **context: object) -> None:
         self.seen.append((job_id, result))
 
-    def on_failure(self, job_id: str, exc_type: str, exc_msg: str, **context: object) -> None:
+    def on_failure(
+        self, job_id: str, exc_type: str, exc_code: str | None, **context: object
+    ) -> None:
         raise AssertionError
 
 

@@ -24,6 +24,7 @@ from loom.core.engine.events import EventKind, ExecutionEvent, Phase, Status
 from loom.core.engine.execution_observer import ExecutionObserver, NullExecutionObserver
 from loom.core.errors import PostCommitError, RuleViolationError, RuleViolationsError
 from loom.core.job.outcome import JobSignal, failure_log_fields
+from loom.core.logger.field import ErrorSummary
 from loom.core.stores.uow.coordinator import InvocationOutcome
 from loom.core.stores.uow.scope import InvocationScope
 from loom.core.tracing import get_trace_id
@@ -218,7 +219,10 @@ class StartedExecution:
             fields["broken_rules"] = [rule._asdict() for rule in broken]
             _log.warning(message, extra={**fields})
             return
-        _log.error(message, extra={**fields, **failure_log_fields(error), "error": str(error)})
+        _log.error(
+            message,
+            extra={**fields, **failure_log_fields(error), **ErrorSummary.of(error).fields()},
+        )
 
     @staticmethod
     def _status(error: BaseException) -> Status:

@@ -120,10 +120,10 @@ class RecordingCallback(JobCallback):
         with self.lock:
             self.seen.append({"job_id": job_id, "hook": "on_success", "result": result})
 
-    def on_failure(self, job_id: str, exc_type: str, exc_msg: str, **context: Any) -> None:
+    def on_failure(self, job_id: str, exc_type: str, exc_code: str | None, **context: Any) -> None:
         with self.lock:
             self.seen.append(
-                {"job_id": job_id, "hook": "on_failure", "exc_type": exc_type, "exc_msg": exc_msg}
+                {"job_id": job_id, "hook": "on_failure", "exc_type": exc_type, "exc_code": exc_code}
             )
 
 

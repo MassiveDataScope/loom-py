@@ -6,7 +6,6 @@ from loom.core.job.callback import DispatchableCallbacks
 from tests.helpers.jobs import CeleryServiceFixture
 from tests.integration.celery_jobs.conftest import JSON, Workbench
 from tests.integration.celery_jobs.doubles import (
-    ABANDONMENT,
     AbandonedJob,
     RecordingCallback,
     SucceedingJob,
@@ -54,6 +53,6 @@ class TestDispatchThroughTheService:
                 "job_id": handle.job_id,
                 "hook": "on_failure",
                 "exc_type": "JobAbandonment",
-                "exc_msg": ABANDONMENT,
+                "exc_code": None,
             }
         ]
