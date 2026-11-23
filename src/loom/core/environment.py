@@ -12,7 +12,8 @@ the selector, the ``LOOM__SECTION__KEY`` configuration overrides (see
 :mod:`loom.core.config.overrides`) and every other ``LOOM_*`` variable, which
 the rest of loom reads through :func:`loom_variable`. It also reads, through
 :func:`configured_variable`, a variable a configuration names to hold a
-value. A containment test enforces it. Every other module receives the
+value, and the two variables the AWS Lambda runtime sets about the function.
+A containment test enforces it. Every other module receives the
 resolved :class:`Environment` through configuration or the container; the
 entry points resolve it once and pass it on.
 
@@ -54,6 +55,9 @@ SPARK_IVY_DIR_VARIABLE: Final = "LOOM_SPARK_IVY_DIR"
 
 SPARK_OFFLINE_VARIABLE: Final = "LOOM_SPARK_OFFLINE"
 """``1`` makes the Spark test session use only cached jars."""
+
+LAMBDA_FUNCTION_VARIABLE: Final = "AWS_LAMBDA_FUNCTION_NAME"
+LAMBDA_LOG_FORMAT_VARIABLE: Final = "AWS_LAMBDA_LOG_FORMAT"
 
 SUPERUSER_URL_VARIABLE: Final = "LOOM_SUPERUSER_URL"
 """Database URL ``loom schema bootstrap`` installs the guard with."""
@@ -177,6 +181,16 @@ def loom_variable(name: str) -> str | None:
     """
     _require_loom_variable(name)
     return os.environ.get(name)
+
+
+def is_inside_lambda() -> bool:
+    """Whether the process runs as an AWS Lambda function."""
+    return os.environ.get(LAMBDA_FUNCTION_VARIABLE) is not None
+
+
+def lambda_writes_json_logs() -> bool:
+    """Whether the Lambda function's log format is JSON; it is ``Text`` when unset."""
+    return os.environ.get(LAMBDA_LOG_FORMAT_VARIABLE, "").upper() == "JSON"
 
 
 def configured_variable(name: str) -> str | None:

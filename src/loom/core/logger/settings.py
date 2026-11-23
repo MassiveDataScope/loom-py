@@ -3,17 +3,20 @@
 from __future__ import annotations
 
 import logging
-import os
-from typing import Final
+from enum import StrEnum
 
 import msgspec
 
-from loom.core.environment import Environment
+from loom.core.environment import Environment, is_inside_lambda
 from loom.core.model import LoomFrozenStruct
 
-LAMBDA_FORMAT: Final = "lambda"
-JSON_FORMAT: Final = "json"
-TEXT_FORMAT: Final = "text"
+
+class LogFormatName(StrEnum):
+    """The formats loom writes its records in."""
+
+    LAMBDA = "lambda"
+    JSON = "json"
+    TEXT = "text"
 
 
 def is_log_level(name: str) -> bool:
@@ -25,17 +28,14 @@ class LogSettings(LoomFrozenStruct, frozen=True, kw_only=True, forbid_unknown_fi
     """How the process writes its log records.
 
     Attributes:
-        format: Name of a format registered under the ``loom.logging.formats``
-            entry-point group: ``lambda``, ``json`` or ``text`` ship with loom.
-            ``None`` picks ``lambda`` inside AWS Lambda, ``json`` in a deployed
-            environment and ``text`` anywhere else.
-        level: Minimum level of the root logger. The ``lambda`` format leaves
-            it to the function configuration.
+        format: ``lambda``, ``json`` or ``text``. ``None`` picks ``lambda`` inside
+            AWS Lambda, ``json`` in a deployed environment and ``text`` anywhere else.
+        level: Minimum level of the root logger, in Lambda too.
         named_levels: Minimum level of the named loggers, to quiet a noisy
             library: ``{"botocore": "WARNING"}``.
     """
 
-    format: str | None = None
+    format: LogFormatName | None = None
     level: str = "INFO"
     named_levels: dict[str, str] = msgspec.field(default_factory=dict)
 
@@ -45,10 +45,10 @@ class LogSettings(LoomFrozenStruct, frozen=True, kw_only=True, forbid_unknown_fi
             if not is_log_level(name):
                 raise ValueError(f"unsupported log level {name!r}")
 
-    def format_for(self, environment: Environment) -> str:
+    def format_for(self, environment: Environment) -> LogFormatName:
         """The format name in effect for a process running in *environment*."""
         if self.format is not None:
             return self.format
-        if os.environ.get("AWS_LAMBDA_FUNCTION_NAME") is not None:
-            return LAMBDA_FORMAT
-        return JSON_FORMAT if environment.is_deployed else TEXT_FORMAT
+        if is_inside_lambda():
+            return LogFormatName.LAMBDA
+        return LogFormatName.JSON if environment.is_deployed else LogFormatName.TEXT

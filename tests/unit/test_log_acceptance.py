@@ -26,15 +26,17 @@ from opentelemetry.sdk.trace import TracerProvider
 from opentelemetry.sdk.trace.export import SimpleSpanProcessor
 from opentelemetry.sdk.trace.export.in_memory_span_exporter import InMemorySpanExporter
 
-from loom.core.environment import Environment
+from loom.core.environment import LAMBDA_LOG_FORMAT_VARIABLE, Environment
 from loom.core.errors.base import DomainError
 from loom.core.errors.codes import ErrorCode
 from loom.core.logger.field import LogField
 from loom.core.logger.install import HANDLER_NAME, configure_logging
-from loom.core.logger.settings import LogSettings
+from loom.core.logger.settings import LogFormatName, LogSettings
+from loom.core.model.redaction import MASK, Secret
 from loom.core.observability.event import Scope
 from loom.core.observability.observability import Observability
 from loom.core.observability.observer.log import LogLifecycleObserver
+from tests.helpers.loggers import LambdaLoggerHandler
 
 CANARY = "CANARY-ROW-VALUE-4711"
 """Data a driver puts in an exception message: it must not become a field loom writes."""
@@ -42,14 +44,6 @@ CANARY = "CANARY-ROW-VALUE-4711"
 STACK_HEAD = "Traceback (most recent call last)"
 
 _LOGGER = logging.getLogger("loom.acceptance")
-
-
-class LambdaLoggerHandler(logging.StreamHandler[io.StringIO]):
-    """Stand-in for the Lambda runtime's handler: its class name and Text layout."""
-
-    def __init__(self, stream: io.StringIO) -> None:
-        super().__init__(stream)
-        self.setFormatter(logging.Formatter("[%(levelname)s]\t%(asctime)s\t%(message)s"))
 
 
 def _failure() -> DomainError:
@@ -86,11 +80,6 @@ def _text_fields(text: str) -> str:
     return "\n".join(line for line in text.splitlines() if not line.startswith("  | "))
 
 
-def _runtime_text_fields(text: str) -> str:
-    """The record lines of the runtime's layout: each starts with ``[LEVEL]``."""
-    return "\n".join(line for line in text.splitlines() if line.startswith("["))
-
-
 def _loom_stream() -> io.StringIO:
     """Point loom's stdout handler at a buffer the test reads."""
     stream = io.StringIO()
@@ -102,28 +91,46 @@ def _loom_stream() -> io.StringIO:
 
 @pytest.fixture
 def stdout_json() -> Output:
-    configure_logging(LogSettings(format="json"), environment=Environment.PRODUCTION)
+    configure_logging(LogSettings(format=LogFormatName.JSON), environment=Environment.PRODUCTION)
     stream = _loom_stream()
     return Output(stream.getvalue, lambda: _json_fields(stream.getvalue()))
 
 
 @pytest.fixture
 def stdout_text() -> Output:
-    configure_logging(LogSettings(format="text"), environment=Environment.DEVELOPMENT)
+    configure_logging(LogSettings(format=LogFormatName.TEXT), environment=Environment.DEVELOPMENT)
     stream = _loom_stream()
     return Output(stream.getvalue, lambda: _text_fields(stream.getvalue()))
 
 
 @pytest.fixture
-def lambda_text() -> Iterator[Output]:
-    stream = io.StringIO()
-    runtime = LambdaLoggerHandler(stream)
+def runtime() -> Iterator[LambdaLoggerHandler]:
+    handler = LambdaLoggerHandler()
     root = logging.getLogger()
-    root.addHandler(runtime)
-    root.setLevel(logging.INFO)
-    configure_logging(LogSettings(format="lambda"), environment=Environment.PRODUCTION)
-    yield Output(stream.getvalue, lambda: _runtime_text_fields(stream.getvalue()))
-    root.removeHandler(runtime)
+    root.addHandler(handler)
+    yield handler
+    root.removeHandler(handler)
+
+
+def _lambda_output(runtime: LambdaLoggerHandler) -> Output:
+    configure_logging(LogSettings(format=LogFormatName.LAMBDA), environment=Environment.PRODUCTION)
+
+    def read() -> str:
+        return "".join(runtime.lines)
+
+    return Output(read, lambda: _json_fields(read()))
+
+
+@pytest.fixture
+def lambda_text(runtime: LambdaLoggerHandler, monkeypatch: pytest.MonkeyPatch) -> Output:
+    monkeypatch.setenv(LAMBDA_LOG_FORMAT_VARIABLE, "Text")
+    return _lambda_output(runtime)
+
+
+@pytest.fixture
+def lambda_json(runtime: LambdaLoggerHandler, monkeypatch: pytest.MonkeyPatch) -> Output:
+    monkeypatch.setenv(LAMBDA_LOG_FORMAT_VARIABLE, "JSON")
+    return _lambda_output(runtime)
 
 
 @pytest.fixture
@@ -133,7 +140,7 @@ def otel_export() -> Iterator[Output]:
     provider.add_log_record_processor(SimpleLogRecordProcessor(exporter))
     handler = LoggingHandler(level=logging.NOTSET, logger_provider=provider)
     configure_logging(
-        LogSettings(format="json"),
+        LogSettings(format=LogFormatName.JSON),
         environment=Environment.PRODUCTION,
         extra_handlers=[handler],
     )
@@ -157,7 +164,7 @@ def otel_export() -> Iterator[Output]:
     provider.shutdown()
 
 
-OUTPUTS = ("stdout_json", "stdout_text", "lambda_text", "otel_export")
+OUTPUTS = ("stdout_json", "stdout_text", "lambda_text", "lambda_json", "otel_export")
 
 
 @pytest.fixture
@@ -176,33 +183,58 @@ def _cells(owner: str, *red: str) -> list[object]:
 class TestFieldsSurvive:
     """Requirement 1: a record's fields reach every output."""
 
-    @pytest.mark.parametrize(
-        "output", _cells("PR 2: Lambda gets loom's JSON", "lambda_text"), indirect=True
-    )
+    @pytest.mark.parametrize("output", OUTPUTS, indirect=True)
     def test_a_field_reaches_the_output(self, output: Output) -> None:
         _LOGGER.info("order_accepted", extra={LogField.ATTEMPT: 3})
 
         assert LogField.ATTEMPT.value in output.read_fields()
 
 
+class TestValuesRendered:
+    """Requirement 1: a value reaches every output rendered, a secret masked."""
+
+    @pytest.mark.parametrize("output", OUTPUTS, indirect=True)
+    def test_a_secret_is_masked(self, output: Output) -> None:
+        _LOGGER.info("order_accepted", extra={LogField.ATTEMPT: Secret(CANARY)})
+
+        assert CANARY not in output.read_fields()
+        assert MASK in output.read_fields()
+
+
 class TestFailureIdentity:
     """Requirement 2: a failure's type and code are written."""
 
-    @pytest.mark.parametrize(
-        "output", _cells("PR 2: Lambda gets loom's JSON", "lambda_text"), indirect=True
-    )
+    @pytest.mark.parametrize("output", OUTPUTS, indirect=True)
     def test_the_type_of_a_failure_is_written(self, output: Output) -> None:
         _LOGGER.error("order_failed", exc_info=_failure())
 
         assert "DomainError" in output.read_fields()
 
-    @pytest.mark.parametrize(
-        "output", _cells("PR 2: Lambda gets loom's JSON", "lambda_text"), indirect=True
-    )
+    @pytest.mark.parametrize("output", OUTPUTS, indirect=True)
     def test_the_code_of_a_loom_error_is_written(self, output: Output) -> None:
         _LOGGER.error("order_failed", exc_info=_failure())
 
         assert ErrorCode.NOT_FOUND.value in output.read_fields()
+
+
+class TestLambdaFrames:
+    """Under the JSON log format the runtime's handler frames each record as JSON."""
+
+    def test_every_record_states_the_json_frame_of_its_level(
+        self, runtime: LambdaLoggerHandler, lambda_json: Output
+    ) -> None:
+        _LOGGER.info("order_accepted")
+        _LOGGER.error("order_failed", exc_info=_failure())
+
+        assert runtime.frames == [bytes.fromhex("a55a000e"), bytes.fromhex("a55a0016")]
+        assert all(line.endswith("}\n") for line in runtime.lines)
+
+    def test_under_text_the_runtime_keeps_its_text_frames(
+        self, runtime: LambdaLoggerHandler, lambda_text: Output
+    ) -> None:
+        _LOGGER.info("order_accepted")
+
+        assert runtime.frames == [None]
 
 
 class TestStackOnce:

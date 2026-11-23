@@ -59,8 +59,8 @@ log.info(InvoiceEvent.ISSUED, extra={LogField.JOB: "SendInvoice"})
   error, and from ERROR up `exception.stacktrace` (the standard traceback, its last
   16 384 characters). The message is never a field of its own. Pass `exc_info` once
   per failure, where your code stops the exception, so one failure is one record
-  and one stack. With the `lambda` format loom installs no formatter, so the
-  runtime renders the record; the filter's fields are on it all the same.
+  and one stack. With the `lambda` format
+  the runtime's handler writes loom's JSON line too, so no field is lost.
 - Reserved keys: `timestamp`, `level`, `message` and `logger` belong to the record;
   the `json` and `text` formats write an `extra` of one of those names as
   `loom.extra.<key>`. The exception fields belong to the filter, which drops an
@@ -119,25 +119,20 @@ observability:
 
 | Format | Output | Default when |
 |---|---|---|
-| `lambda` | Nothing installed: the Lambda runtime renders the JSON and sets the level | `AWS_LAMBDA_FUNCTION_NAME` is set |
+| `lambda` | The Lambda runtime's handler, given loom's JSON line under both log formats (`Text` and `JSON`); loom sets the level | `AWS_LAMBDA_FUNCTION_NAME` is set |
 | `json` | One JSON object per line on stdout; fields at the top level; `exception.type`, `loom.error.code`, `exception.stacktrace` | a deployed environment (`production`, `staging`) |
 | `text` | A readable line with `key=value` fields; line breaks in values are escaped | any other environment |
 
 The settings are validated at startup and by `loom check` as written
-(`loom.logger.E001` for an unregistered format, `loom.logger.E002` for an unknown
+(`loom.logger.E001` for a format other than `lambda`, `json` or `text`, `loom.logger.E002` for an unknown
 level; a value that holds a placeholder is not judged).
-
-An extra or an application adds a format by registering a callable from the
-settings to the handler (or `None`) under the `loom.logging.formats` entry-point
-group.
 
 ### AWS Lambda
 
-Set the function's log format to JSON (`LoggingConfig: {LogFormat: JSON,
-ApplicationLogLevel: INFO}`). The runtime then renders every `logging` record as
-JSON, with each `extra` key at the top level, and sets the level from the function
-configuration: loom installs no handler and puts only its filter on the runtime's
-handler. Loom never ships logs over the network; the destination is a deployment
+Inside Lambda the `lambda` format gives the runtime's handler loom's JSON line,
+under the function's `Text` and `JSON` log formats alike, so every field, mask and
+failure field survives; under `JSON` the line carries the runtime's JSON frame.
+The root level is `observability.log.level`, as anywhere else. Loom never ships logs over the network; the destination is a deployment
 choice (CloudWatch Logs, or a log destination delivered to S3, which costs less and
 needs no CloudWatch Insights).
 

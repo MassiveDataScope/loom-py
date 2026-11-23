@@ -1,22 +1,14 @@
-"""The formats loom ships: what a record looks like on the console or the collector.
-
-A format is a callable from the :class:`~loom.core.logger.settings.LogSettings`
-to the handler that writes the records, or to ``None`` when something else
-already does. An extra or an application adds its own under the
-``loom.logging.formats`` entry-point group.
-"""
+"""The formatters loom ships: what a record looks like on the console or the collector."""
 
 from __future__ import annotations
 
 import json
 import logging
 import math
-import sys
 from datetime import UTC, datetime
 from typing import Final
 
 from loom.core.logger.field import LogField
-from loom.core.logger.settings import LogSettings
 from loom.core.model.redaction import MASK, Dsn, RedactedMap, Secret
 
 _STANDARD_ATTRIBUTES: Final = frozenset(logging.makeLogRecord({}).__dict__) | {"message", "asctime"}
@@ -168,24 +160,33 @@ class TextFormatter(logging.Formatter):
         return "\n".join([line, *(f"{_CONTINUATION}{row}" for row in stack.splitlines())])
 
 
-def _stdout_handler(formatter: logging.Formatter) -> logging.Handler:
-    handler = logging.StreamHandler(sys.stdout)
-    handler.setFormatter(formatter)
-    return handler
+_LAMBDA_JSON_FRAMES: Final = {
+    logging.NOTSET: bytes.fromhex("a55a0002"),
+    logging.DEBUG: bytes.fromhex("a55a000a"),
+    logging.INFO: bytes.fromhex("a55a000e"),
+    logging.WARNING: bytes.fromhex("a55a0012"),
+    logging.ERROR: bytes.fromhex("a55a0016"),
+    logging.CRITICAL: bytes.fromhex("a55a001a"),
+}
+"""The frame type the Lambda runtime gives a JSON record of each level (awslambdaric 4.2.3)."""
 
 
-def json_format(settings: LogSettings) -> logging.Handler:
-    """Write JSON lines to stdout: services, containers and workers."""
-    del settings
-    return _stdout_handler(JsonFormatter())
+class LambdaFormatter(JsonFormatter):
+    """Loom's JSON line for the Lambda runtime's handler, ended by a line break as the runtime's.
 
+    Args:
+        json_frames: Whether the function uses the ``JSON`` log format, under which
+            the runtime's handler reads the record's frame type; under ``Text`` it
+            frames the line as text.
+    """
 
-def text_format(settings: LogSettings) -> logging.Handler:
-    """Write readable lines to stdout: development."""
-    del settings
-    return _stdout_handler(TextFormatter())
+    def __init__(self, *, json_frames: bool) -> None:
+        super().__init__()
+        self._json_frames = json_frames
 
-
-def lambda_format(settings: LogSettings) -> None:
-    """Install nothing: the Lambda runtime renders the records and sets the level."""
-    del settings
+    def format(self, record: logging.LogRecord) -> str:
+        """Render *record* as a JSON object on one line, ended by a line break."""
+        if self._json_frames:
+            level = min(max(record.levelno, 0), logging.CRITICAL) // 10 * 10
+            record.__dict__["_frame_type"] = _LAMBDA_JSON_FRAMES[level]
+        return super().format(record) + "\n"

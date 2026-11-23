@@ -4,7 +4,7 @@ import msgspec
 import pytest
 
 from loom.core.environment import Environment
-from loom.core.logger.settings import LogSettings
+from loom.core.logger.settings import LogFormatName, LogSettings
 
 _LAMBDA = "AWS_LAMBDA_FUNCTION_NAME"
 
@@ -59,4 +59,4 @@ class TestFormatFor:
     def test_a_written_format_wins_over_lambda(self, monkeypatch: pytest.MonkeyPatch) -> None:
         monkeypatch.setenv(_LAMBDA, "billing-handler")
 
-        assert LogSettings(format="json").format_for(Environment.PRODUCTION) == "json"
+        assert LogSettings(format=LogFormatName.JSON).format_for(Environment.PRODUCTION) == "json"

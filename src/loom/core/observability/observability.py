@@ -26,8 +26,8 @@ from prometheus_client import start_http_server
 
 from loom.core.config.observability import OtelConfig
 from loom.core.environment import Environment, resolve_environment
-from loom.core.logger.install import LogInstallation, configure_logging
-from loom.core.logger.stamp import LogRuntime
+from loom.core.logger.install import configure_logging
+from loom.core.logger.stamp import ContextFilter, LogRuntime
 from loom.core.observability.config import (
     ObservabilityConfig,
     OtelObservabilityConfig,
@@ -76,7 +76,7 @@ def _configure_logging(
     service_name: str | None,
     service_version: str | None,
     export: OtelConfig | None,
-) -> LogInstallation:
+) -> ContextFilter:
     """Install the log format and, when *export* is given, the OTEL log export beside it."""
     filters: tuple[logging.Filter, ...] = ()
     extra_handlers: tuple[logging.Handler, ...] = ()
@@ -158,7 +158,7 @@ class Observability:
         _scrape_addr: str = "127.0.0.1",
         _span_flusher: SpanFlusher | None = None,
         _max_span_links: int = 128,
-        _logging: LogInstallation | None = None,
+        _logging: ContextFilter | None = None,
     ) -> None:
         self._observers = tuple(observers)
         self._logging = _logging
@@ -173,7 +173,7 @@ class Observability:
     def running_as(self, runtime: LogRuntime) -> None:
         """Stamp the log records of this process as emitted by *runtime*."""
         if self._logging is not None:
-            self._logging.running_as(runtime)
+            self._logging.use_runtime(runtime)
 
     @property
     def observers(self) -> tuple[LifecycleObserver, ...]:
@@ -418,7 +418,6 @@ class Observability:
         Raises:
             ValueError: If OTEL config is invalid (wrong protocol, missing exporter).
             ValueError: If OTEL log export is enabled while the log backend is not.
-            ConfigError: If ``observability.log.format`` is not registered.
         """
         if config.otel.enabled and config.otel.export_logs and not config.log.enabled:
             raise ValueError(
