@@ -8,9 +8,10 @@ import uuid
 from contextvars import Token
 from typing import Any
 
+from loom.core.log_names import LogField
 from loom.core.observability.event import EventKind, LifecycleEvent, Scope
 from loom.prefect._async import run_sync
-from loom.prefect.event import PrefectEvent, PrefectKey
+from loom.prefect.event import PrefectEvent
 from loom.prefect.observer._logging_bridge import _current_task_run_id
 
 _log = logging.getLogger(__name__)
@@ -48,7 +49,7 @@ class PrefectTaskRunObserver:
             return
         _log.debug(
             PrefectEvent.STEP_EVENT_RECEIVED,
-            extra={PrefectKey.STEP: event.name, PrefectKey.STATE: event.kind},
+            extra={LogField.NAME: event.name, LogField.EVENT_KIND: event.kind},
         )
         try:
             match event.kind:
@@ -61,7 +62,7 @@ class PrefectTaskRunObserver:
         except Exception:  # noqa: BLE001
             _log.warning(
                 PrefectEvent.STEP_EVENT_FAILED,
-                extra={PrefectKey.STEP: event.name, PrefectKey.STATE: event.kind},
+                extra={LogField.NAME: event.name, LogField.EVENT_KIND: event.kind},
                 exc_info=True,
             )
 

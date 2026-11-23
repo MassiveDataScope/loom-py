@@ -23,6 +23,7 @@ from loom.core.cache.gateway import CacheGateway
 from loom.core.checks import CheckScope
 from loom.core.config import ConfigContext, ConfigError
 from loom.core.job.callback import JobCallback
+from loom.core.job.event import JobEvent, JobKey
 from loom.core.job.job import Job
 from loom.core.job.service import JobService
 from loom.core.stores import WORKER_PROFILE
@@ -30,7 +31,6 @@ from loom.core.stores.catalog import DEFAULT_STORE
 from loom.core.stores.sql import CallerBoundSql, SqlQueryService
 from loom.core.use_case import Agent, Mcp
 from loom.core.use_case.use_case import UseCase
-from loom.jobs.event import JobsEvent, JobsKey
 from tests.helpers import acme_callbacks
 from tests.helpers.acme_callbacks import AcmePingCallback
 from tests.helpers.aws import OTHER_REGION
@@ -212,8 +212,8 @@ class TestBind:
 
         adapter.mount(_application(tmp_path, {}, adapter))
 
-        (line,) = CapturedLog(caplog).named(JobsEvent.RETRY_POLICIES_DESCRIBED)
-        policies = line[JobsKey.RETRY_POLICIES]
+        (line,) = CapturedLog(caplog).named(JobEvent.RETRY_POLICIES_DESCRIBED)
+        policies = line[JobKey.RETRY_POLICIES]
         assert [policy.split(":")[0] for policy in policies] == [
             _PingJob.__qualname__,
             _SecondJob.__qualname__,

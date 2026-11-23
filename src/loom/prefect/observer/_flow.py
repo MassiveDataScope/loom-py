@@ -2,12 +2,13 @@
 
 from __future__ import annotations
 
-import logging
-
 import prefect
 from prefect.exceptions import MissingContextError
 
 from loom.core.observability.event import EventKind, LifecycleEvent, Scope
+from loom.core.observability.observer.log import LogLifecycleObserver
+
+_OUTSIDE_A_RUN = LogLifecycleObserver()
 
 
 class PrefectObserver:
@@ -17,7 +18,7 @@ class PrefectObserver:
     - ``PrefectObserver`` → Prefect UI logs and artifacts.
     - ``LineageObserver`` → loom lineage tables (permanent audit trail).
 
-    Degrades gracefully to ``logging.getLogger()`` when no Prefect run context
+    Degrades to the core ``LogLifecycleObserver`` when no Prefect run context
     is active (unit tests, local dry-run).  Never raises from ``on_event``.
 
     Example::
@@ -34,7 +35,8 @@ class PrefectObserver:
         try:
             logger = prefect.get_run_logger()
         except MissingContextError:
-            logger = logging.getLogger(__name__)
+            _OUTSIDE_A_RUN.on_event(event)
+            return
 
         match event.kind:
             case EventKind.START:

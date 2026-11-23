@@ -78,10 +78,10 @@ from loom.core.discovery.worker import (
 )
 from loom.core.engine.compilable import Compilable
 from loom.core.job.callback import CallbackOutcome
+from loom.core.job.event import JobEvent, JobKey
 from loom.core.logger import LogRuntime
 from loom.core.runner import shutdown_runner
 from loom.core.stores import WORKER_PROFILE
-from loom.jobs.event import log_retry_policies
 
 if TYPE_CHECKING:
     from loom.core.engine.execution_observer import ExecutionObserver
@@ -286,7 +286,14 @@ def _register_tasks(
     """Register one task per job and one per callback class and outcome."""
     kernel, observability = application.kernel, application.observability
     if declared.jobs:
-        log_retry_policies(application.job_settings, REDELIVERY, declared.jobs)
+        _log.info(
+            JobEvent.RETRY_POLICIES_DESCRIBED,
+            extra={
+                JobKey.RETRY_POLICIES: application.job_settings.describe_retries(
+                    REDELIVERY, declared.jobs
+                )
+            },
+        )
     for job_type in declared.jobs:
         _make_job_task(
             celery_app,

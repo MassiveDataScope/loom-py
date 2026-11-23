@@ -28,13 +28,12 @@ from loom.core.config.overrides import load_application_config
 from loom.core.discovery.scanner import PackageScanner
 from loom.core.environment import Environment, resolve_environment, select_config_paths
 from loom.core.locator import DEFAULT_CODE_PATH, add_code_path
-from loom.core.logger import LogField
+from loom.core.log_names import LogField
 from loom.core.observability.config import ObservabilityConfig
 from loom.core.observability.observability import Observability
 from loom.core.resources import Resource, ResourceKind, closing
 from loom.core.stores import resolve_store_plugin
 from loom.core.stores.catalog import StoreCatalog, StoreKey, load_catalog
-from loom.jobs.event import JobsKey
 
 if TYPE_CHECKING:
     from loom.composition.recipe import Runtime
@@ -342,8 +341,7 @@ class Project:
             CompositionEvent.APPLICATION_COMPOSED,
             extra={
                 LogField.USE_CASE_COUNT: len(discovered.use_cases),
-                JobsKey.COUNT: len(discovered.jobs),
-                CompositionKey.PHASES: clock.laps,
+                **{CompositionKey.PHASE_MS.of(phase): ms for phase, ms in clock.ms.items()},
                 LogField.DURATION_MS: clock.total_ms,
             },
         )

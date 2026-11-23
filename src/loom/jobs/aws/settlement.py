@@ -116,7 +116,7 @@ class SQSJobSettlement:
         for arn in {record.queue_arn for record in strays}:
             _log.error(
                 JobsEvent.SETTLEMENT_QUEUE_UNREACHABLE,
-                extra={JobKey.QUEUE: arn},
+                extra={JobKey.QUEUE: arn.rsplit(":", 1)[-1]},
             )
         return strays + self._settle_queue(queue, consumed)
 
@@ -124,24 +124,22 @@ class SQSJobSettlement:
         self, queue: SQSQueue, group: Sequence[tuple[SQSRecord, JobOutcome]]
     ) -> list[SQSRecord]:
         plan = _Plan.from_outcomes(queue, group)
-        for record, reason in plan.discards:
+        for _, reason in plan.discards:
             _log.error(
                 JobsEvent.SETTLEMENT_MESSAGE_DISCARDED,
                 extra={
                     JobKey.QUEUE: queue.name,
-                    LogField.TASK_ID: record.message_id,
                     LogField.REASON: reason,
                 },
             )
-        self._settle(queue, "change_visibility", plan.retries, queue.change_visibility_batch)
-        unsent = self._settle(queue, "abandon", plan.abandonments, queue.abandon_batch)
-        unsent += self._settle(queue, "postpone", plan.postponements, queue.postpone_batch)
+        self._settle(queue, plan.retries, queue.change_visibility_batch)
+        unsent = self._settle(queue, plan.abandonments, queue.abandon_batch)
+        unsent += self._settle(queue, plan.postponements, queue.postpone_batch)
         return [record for record, _ in plan.retries] + unsent
 
     @staticmethod
     def _settle(
         queue: SQSQueue,
-        action: str,
         entries: Sequence[tuple[SQSRecord, _EntryT]],
         send: Callable[[Sequence[tuple[SQSRecord, _EntryT]]], BatchResult],
     ) -> list[SQSRecord]:
@@ -152,7 +150,7 @@ class SQSJobSettlement:
         except Exception as exc:
             _log.exception(
                 JobsEvent.SETTLEMENT_CALL_RAISED,
-                extra={JobKey.QUEUE: queue.name, JobsKey.ACTION: action},
+                extra={JobKey.QUEUE: queue.name},
             )
             code = aws_error_code(exc)
             result = BatchResult(failed={record.message_id: code for record, _ in entries})
@@ -162,7 +160,6 @@ class SQSJobSettlement:
                     JobsEvent.SETTLEMENT_ENTRIES_FAILED,
                     extra={
                         JobKey.QUEUE: queue.name,
-                        JobsKey.ACTION: action,
                         JobsKey.FAILED_ENTRIES: [
                             f"{message_id}:{code}" for message_id, code in result.failed.items()
                         ],

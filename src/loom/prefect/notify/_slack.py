@@ -11,7 +11,7 @@ from typing import Any
 
 from loom.core.errors import InvalidUse
 from loom.core.model.redaction import Dsn
-from loom.prefect.event import PrefectEvent, PrefectKey
+from loom.prefect.event import PrefectEvent
 from loom.prefect.notify._event import NotifyEvent
 from loom.prefect.notify._format import FAILURE_STATES, run_details, should_notify
 
@@ -64,11 +64,7 @@ class SlackNotifier:
         except (urllib.error.URLError, TimeoutError, RuntimeError):
             _log.warning(
                 PrefectEvent.NOTIFICATION_FAILED,
-                extra={
-                    PrefectKey.FLOW: event.flow_name,
-                    PrefectKey.RUN: event.flow_run_name,
-                    PrefectKey.STATE: event.state,
-                },
+                extra=event.log_fields(),
                 exc_info=True,
             )
 

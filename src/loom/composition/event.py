@@ -16,4 +16,4 @@ class CompositionEvent(LogEvent):
 class CompositionKey(LogKey):
     """The fields of a composition record."""
 
-    PHASES = "loom.composition.phases"
+    PHASE_MS = "loom.composition.phase_ms"

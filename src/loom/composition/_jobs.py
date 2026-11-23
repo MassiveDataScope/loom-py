@@ -18,6 +18,7 @@ from loom.core.config import ConfigContext, ConfigKey
 from loom.core.di.scope import Scope
 from loom.core.job.callback import DispatchableCallbacks, JobCallback
 from loom.core.job.config import JobSettings
+from loom.core.job.event import JobEvent, JobKey
 from loom.core.job.job import Job
 from loom.core.job.service import JobService
 from loom.core.job.timer import JobTimer
@@ -26,7 +27,6 @@ from loom.core.observability.observability import Observability
 from loom.core.plugins.optional import MissingExtraError
 from loom.core.resources import Resource, ResourceKind, closing
 from loom.core.symbols import import_symbol
-from loom.jobs.event import log_retry_policies
 from loom.jobs.inline import AsyncioJobTimer, InlineJobTransport
 
 if TYPE_CHECKING:
@@ -116,7 +116,14 @@ def _inline(context: JobTransportContext) -> _Built:
     )
     resources = (Resource(kind=ResourceKind.TIMER, name="jobs", manager=closing(timer.close)),)
     if context.jobs:
-        log_retry_policies(context.settings, service.redelivery, context.jobs)
+        _log.info(
+            JobEvent.RETRY_POLICIES_DESCRIBED,
+            extra={
+                JobKey.RETRY_POLICIES: context.settings.describe_retries(
+                    service.redelivery, context.jobs
+                )
+            },
+        )
     return service, resources
 
 

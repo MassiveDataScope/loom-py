@@ -24,6 +24,7 @@ def pause_schedule_on_failure(flow: Any, flow_run: Any, state: Any) -> None:  # 
     if not deployment_id:
         return
 
+    fields: dict[str, object] = {PrefectKey.DEPLOYMENT: str(deployment_id)}
     try:
         from prefect.client.orchestration import get_client  # noqa: PLC0415
 
@@ -34,15 +35,9 @@ def pause_schedule_on_failure(flow: Any, flow_run: Any, state: Any) -> None:  # 
                     await client.update_deployment_schedule(deployment_id, sched.id, active=False)
 
         run_sync(_pause())
-        _log.warning(
-            PrefectEvent.SCHEDULES_PAUSED, extra={PrefectKey.DEPLOYMENT: str(deployment_id)}
-        )
+        _log.warning(PrefectEvent.SCHEDULES_PAUSED, extra=fields)
     except Exception:  # noqa: BLE001
-        _log.warning(
-            PrefectEvent.SCHEDULES_PAUSE_FAILED,
-            extra={PrefectKey.DEPLOYMENT: str(deployment_id)},
-            exc_info=True,
-        )
+        _log.warning(PrefectEvent.SCHEDULES_PAUSE_FAILED, extra=fields, exc_info=True)
 
 
 def make_notification_hooks(
@@ -62,7 +57,9 @@ def make_notification_hooks(
                 try:
                     n.notify(event)
                 except Exception:  # noqa: BLE001
-                    _log.warning(PrefectEvent.NOTIFICATION_FAILED, exc_info=True)
+                    _log.warning(
+                        PrefectEvent.NOTIFICATION_FAILED, extra=event.log_fields(), exc_info=True
+                    )
 
         return _hook
 

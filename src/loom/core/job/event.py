@@ -9,6 +9,7 @@ class JobEvent(LogEvent):
     """What the job runner logs."""
 
     DELIVERY_ABANDONED = "job.delivery_abandoned"
+    RETRY_POLICIES_DESCRIBED = "job.retry_policies_described"
 
 
 class JobKey(LogKey):
@@ -18,3 +19,4 @@ class JobKey(LogKey):
     POSTPONEMENTS = "loom.job.postponements"
     COMMITTED = "loom.job.committed"
     FAILURES = "loom.job.failures"
+    RETRY_POLICIES = "loom.job.retry_policies"

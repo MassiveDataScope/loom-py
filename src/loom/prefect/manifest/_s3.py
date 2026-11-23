@@ -10,7 +10,7 @@ import fsspec
 import msgspec
 
 from loom.core.errors import InvalidValue
-from loom.core.logger import LogField
+from loom.core.log_names import LogField
 from loom.prefect.event import PrefectEvent
 from loom.prefect.manifest._model import RunManifest
 

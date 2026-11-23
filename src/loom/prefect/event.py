@@ -25,8 +25,6 @@ class PrefectKey(LogKey):
     """The fields of a Prefect record."""
 
     FLOW = "loom.prefect.flow"
-    STATE = "loom.prefect.state"
-    STEP = "loom.prefect.step"
     RUN = "loom.prefect.run"
     DEPLOYMENT = "loom.prefect.deployment"
     WINDOW = "loom.prefect.window"

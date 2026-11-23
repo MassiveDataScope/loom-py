@@ -254,7 +254,9 @@ class TestSQSJobSettlement:
 
         redelivered = sqs.settle_all(stray)
 
-        errors = _logged(caplog, JobsEvent.SETTLEMENT_QUEUE_UNREACHABLE, **{JobKey.QUEUE: foreign})
+        errors = _logged(
+            caplog, JobsEvent.SETTLEMENT_QUEUE_UNREACHABLE, **{JobKey.QUEUE: "elsewhere"}
+        )
         assert (_ids(redelivered), len(errors)) == (["a", "b"], 1)
 
     def test_the_calls_are_grouped_by_action_in_batches_of_ten_and_nothing_is_deleted(

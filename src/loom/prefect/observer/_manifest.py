@@ -5,8 +5,9 @@ from __future__ import annotations
 import logging
 from typing import Any
 
+from loom.core.log_names import LogField
 from loom.etl.lineage._records import RunStatus
-from loom.prefect.event import PrefectEvent, PrefectKey
+from loom.prefect.event import PrefectEvent
 from loom.prefect.manifest import ManifestStore, RunManifest, mark_step
 
 _log = logging.getLogger(__name__)
@@ -57,7 +58,7 @@ class ManifestObserver:
         except Exception:  # noqa: BLE001
             _log.warning(
                 PrefectEvent.MANIFEST_SAVE_FAILED,
-                extra={PrefectKey.STEP: event.name, PrefectKey.STATE: status},
+                extra={LogField.NAME: event.name, LogField.STATUS: status},
                 exc_info=True,
             )
 

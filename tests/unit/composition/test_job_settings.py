@@ -15,9 +15,9 @@ import pytest
 from loom.composition import Application
 from loom.core.config import ConfigError
 from loom.core.job.context import flush_pending_dispatches
+from loom.core.job.event import JobEvent, JobKey
 from loom.core.job.job import Job
 from loom.core.job.service import JobService
-from loom.jobs.event import JobsEvent, JobsKey
 from tests.helpers.celery import CeleryBroker
 from tests.helpers.jobs import BROKER, JobsAdapter, job_project
 from tests.helpers.loggers import CapturedLog
@@ -133,8 +133,8 @@ class TestJobSettings:
         with caplog.at_level("INFO"):
             project.compose(JobsAdapter(_ReportJob))
 
-        [fields] = CapturedLog(caplog).named(JobsEvent.RETRY_POLICIES_DESCRIBED)
-        described = str(fields[JobsKey.RETRY_POLICIES])
+        [fields] = CapturedLog(caplog).named(JobEvent.RETRY_POLICIES_DESCRIBED)
+        described = str(fields[JobKey.RETRY_POLICIES])
         assert "_ReportJob" in described
         assert "jobs.<Job>.retry" in described
         assert "max_attempts=5 (jobs.<Job>.retry)" in described

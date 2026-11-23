@@ -11,6 +11,7 @@ import msgspec
 import pytest
 from botocore.exceptions import ClientError
 
+from loom.core.log_names import LogField
 from loom.prefect.event import PrefectEvent, PrefectKey
 from loom.prefect.flow._hooks import make_notification_hooks
 from loom.prefect.notify import (
@@ -30,8 +31,8 @@ def _publish_failures(caplog: pytest.LogCaptureFixture) -> list[dict[str, Any]]:
 
 _FAILURE_FIELDS = {
     PrefectKey.FLOW: "etl-x",
-    PrefectKey.RUN: "run-1",
-    PrefectKey.STATE: "Failed",
+    LogField.STATUS: "Failed",
+    LogField.CORRELATION_ID: "corr-1",
 }
 _TOPIC = f"arn:aws:sns:{OTHER_REGION}:{ACCOUNT}:etl-failures"
 

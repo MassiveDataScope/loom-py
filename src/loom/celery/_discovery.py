@@ -12,7 +12,6 @@ from loom.core.discovery.worker import WorkerComponents, resolve_worker_componen
 from loom.core.engine.compilable import Compilable
 from loom.core.job.job import Job
 from loom.core.log_names import LogField
-from loom.jobs.event import JobsKey
 from loom.rest.autocrud import build_auto_routes
 
 
@@ -41,7 +40,6 @@ def _emit_worker_init_graph(components: WorkerComponents) -> None:
     logging.getLogger(__name__).info(
         CeleryEvent.WORKER_GRAPH_INITIALIZED,
         extra={
-            JobsKey.COUNT: len(components.jobs),
             LogField.USE_CASE_COUNT: len(components.compilables) - len(components.jobs),
         },
     )
