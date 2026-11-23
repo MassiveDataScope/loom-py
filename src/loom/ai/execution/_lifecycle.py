@@ -338,26 +338,6 @@ class AgentHost:
         """
         return self._require_plan(name).conversation is not None
 
-    def capability_kinds(self, name: str) -> tuple[str, ...]:
-        """Return the capability kinds one agent was granted.
-
-        Lets a transport state what a route exposes without reaching into the
-        compiled plan, which carries resolved handles and instructions.
-
-        Args:
-            name: Agent to describe.
-
-        Returns:
-            The distinct ``kind`` identifiers of the agent's capabilities, in
-            declaration order.
-
-        Raises:
-            KeyError: When no agent is named *name*.
-        """
-        plan = self._require_plan(name)
-        kinds = {capability.kind: None for capability in plan.capabilities}
-        return tuple(kinds)
-
     async def run(
         self,
         name: str,
@@ -1222,8 +1202,7 @@ def _log_tolerated(issues: Iterable[AgentCompilationIssue]) -> None:
     Only the stable code and the registered name reach WARNING: the issue's
     message carries a reason built from ``str(exc)`` of an arbitrary transport,
     which can name a URL, and under ``ai.remote_clients: optional`` it would
-    otherwise land in routine logs on every boot. The reason stays available at
-    DEBUG, where an operator asks for it deliberately.
+    otherwise land in routine logs on every boot. The reason is not logged.
 
     Args:
         issues: The tolerated connection failures, one per client.
@@ -1231,7 +1210,7 @@ def _log_tolerated(issues: Iterable[AgentCompilationIssue]) -> None:
     for issue in issues:
         _logger.warning(
             AiEvent.REMOTE_CLIENT_SKIPPED,
-            extra={AiKey.COMPONENT: issue.component, LogField.ERROR_CODE: str(issue.code)},
+            extra={AiKey.CONFIG_PATH: issue.component, LogField.ERROR_CODE: str(issue.code)},
         )
 
 

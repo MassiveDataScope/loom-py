@@ -166,7 +166,7 @@ def engine_supported_kinds(provider: object, engine: str) -> frozenset[str]:
     """
     kinds = cast("AgentEnginePlugin", provider).supported_capability_kinds()
     if "native" in kinds and engine_native_tool_support(provider) is None:
-        _logger.warning(AiEvent.ENGINE_NATIVE_SUPPORT_MISSING, extra={AiKey.COMPONENT: engine})
+        _logger.warning(AiEvent.ENGINE_NATIVE_SUPPORT_MISSING, extra={AiKey.ENGINE: engine})
         return kinds - {"native"}
     return kinds
 

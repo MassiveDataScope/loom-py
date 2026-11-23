@@ -209,4 +209,4 @@ def mount_a2a_endpoints(
             _make_rpc_handler(agent, handlers, max_prompt_bytes=config.max_prompt_bytes),
             methods=["POST"],
         )
-        announce_publication(agent, mechanism=mechanism)
+        announce_publication(agent, prefix=prefix)

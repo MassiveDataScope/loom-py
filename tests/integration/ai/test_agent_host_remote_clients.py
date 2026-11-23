@@ -31,7 +31,7 @@ from loom.ai.execution import AgentHost
 from loom.core.di import LoomContainer
 from loom.core.identity import Identity
 from loom.core.log_names import LogField
-from tests.helpers.loggers import CapturedLog
+from tests.helpers.loggers import CapturedLog, logged_text
 from tests.integration.ai.conftest import (
     CountingEngineProvider,
     RecordingMcpSession,
@@ -243,7 +243,7 @@ class TestOptionalStartup:
             (
                 AiEvent.REMOTE_CLIENT_SKIPPED,
                 {
-                    AiKey.COMPONENT: _SERVER_A,
+                    AiKey.CONFIG_PATH: _SERVER_A,
                     LogField.ERROR_CODE: AgentErrorCode.MCP_SERVER_UNREACHABLE,
                 },
             )
@@ -256,7 +256,7 @@ class TestOptionalStartup:
         container: LoomContainer,
         caplog: pytest.LogCaptureFixture,
     ) -> None:
-        """The transport's reason can carry a URL, so it stays out of WARNING."""
+        """The transport's reason can carry a URL, so no record at any level repeats it."""
         host = _host(
             plans=(make_plan(_AGENT, capabilities=(make_mcp_capability(_SERVER_A),)),),
             clients={_SERVER_A: _refusing_client(_SERVER_A, lifecycle_log)},
@@ -265,13 +265,11 @@ class TestOptionalStartup:
             remote_clients="optional",
         )
 
-        with caplog.at_level(logging.WARNING, logger=_LOGGER):
+        with caplog.at_level(logging.DEBUG, logger=_LOGGER):
             async with host:
                 pass
 
-        assert not [record for record in caplog.records if _REFUSED in record.getMessage()], (
-            "the transport's reason reached routine logs"
-        )
+        assert _REFUSED not in logged_text(caplog), "the transport's reason reached the logs"
 
     async def test_reports_the_dependency_unavailable_after_the_first_probe(
         self, lifecycle_log: list[str], deps: StubDepsFactory, container: LoomContainer

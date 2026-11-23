@@ -164,6 +164,18 @@ class TestFailureFields:
 
         assert _only(stamped).__dict__[LogField.ERROR_CODE] == "not_found"
 
+    @pytest.mark.parametrize(
+        ("error", "expected"),
+        [(ValueError("boom"), "given"), (NotFound("Invoice", id=7), "not_found")],
+        ids=["exception-without-code", "loom-error-code-wins"],
+    )
+    def test_an_extra_code_stays_only_when_the_exception_has_none(
+        self, stamped: CapturingHandler, error: Exception, expected: str
+    ) -> None:
+        _log_failure(logging.WARNING, error, **{LogField.ERROR_CODE.value: "given"})
+
+        assert _only(stamped).__dict__[LogField.ERROR_CODE] == expected
+
     def test_from_error_up_the_stack_is_written(self, stamped: CapturingHandler) -> None:
         _log_failure(logging.ERROR, ValueError("amount below zero"))
 
@@ -223,7 +235,6 @@ class TestFailureFields:
     ) -> None:
         forged = {
             LogField.EXCEPTION_TYPE.value: "Forged",
-            LogField.ERROR_CODE.value: "forged",
             LogField.EXCEPTION_STACKTRACE.value: "forged",
         }
 
@@ -231,7 +242,6 @@ class TestFailureFields:
 
         record = _only(stamped).__dict__
         assert record[LogField.EXCEPTION_TYPE] == "ValueError"
-        assert LogField.ERROR_CODE.value not in record
         assert record.get(LogField.EXCEPTION_STACKTRACE) != "forged"
 
     def test_a_record_without_an_exception_cannot_carry_a_stack(

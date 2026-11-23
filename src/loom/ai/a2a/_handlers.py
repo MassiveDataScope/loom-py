@@ -49,6 +49,7 @@ from loom.ai.execution import AgentHost
 from loom.ai.fastapi.response import ENCODER, AgentJSONResponse
 from loom.core.errors.summary import ErrorSummary
 from loom.core.identity import Identity
+from loom.core.log_names import LogField
 from loom.core.observability.event import Scope
 from loom.core.observability.observability import Observability
 from loom.core.observability.span import LoomSpan
@@ -272,7 +273,11 @@ def _make_send_handler(
         except AgentRunError as exc:
             _logger.warning(
                 AiEvent.RUN_FAILED,
-                extra={AiKey.AGENT: name, **ErrorSummary.of(exc).fields()},
+                extra={
+                    AiKey.AGENT: name,
+                    **ErrorSummary.of(exc).fields(),
+                    LogField.ERROR_CODE: exc.code.value,
+                },
             )
             return error_response(call.request_id, internal_error(exc.code))
         result = project_output(result, host.output_type(name))

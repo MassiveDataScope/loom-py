@@ -61,6 +61,7 @@ from loom.ai.errors import AgentRunError, AgentRunErrorCode, is_retriable
 from loom.ai.event import AiEvent, AiKey
 from loom.core.di import LoomContainer
 from loom.core.identity import Identity
+from loom.core.log_names import LogField
 
 _logger = logging.getLogger(__name__)
 
@@ -441,7 +442,7 @@ class PydanticAIEngine:
         if exc.__cause__ is not None:
             _logger.warning(
                 AiEvent.RUN_FAILED_FROM_CAUSE,
-                extra={AiKey.AGENT: self._plan.name},
+                extra={AiKey.AGENT: self._plan.name, LogField.ERROR_CODE: error.code.value},
                 exc_info=exc.__cause__,
             )
 

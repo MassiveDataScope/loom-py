@@ -96,6 +96,15 @@ _RUN_CANARY = "tool 'usecase_pricing.recalculate' exceeded tool_timeout_ms (5000
 _CATCH_ALL_CANARY = "/srv/loom/secrets.yaml: clickhouse://root:hunter2@analytics.internal"
 
 
+_PUBLISH_EVENTS = frozenset(
+    {
+        AiEvent.A2A_AGENT_PUBLISHED,
+        AiEvent.A2A_AGENT_PUBLISHED_ANONYMOUS,
+        AiEvent.A2A_AGENT_PUBLISHED_ANONYMOUS_CONVERSATIONAL,
+    }
+)
+
+
 class ExplodingEngine:
     """Engine double whose stream fails with an exception nothing anticipates.
 
@@ -1137,32 +1146,41 @@ class TestPublicationAnnouncement:
     """Start-up says exactly which agents are reachable from outside."""
 
     @pytest.mark.parametrize(
-        ("endpoints", "event"),
+        ("anonymous", "enabled", "conversational", "event"),
         [
-            (None, AiEvent.A2A_AGENT_PUBLISHED),
-            ({_AGENT: make_endpoint(allow_anonymous=True)}, AiEvent.A2A_AGENT_PUBLISHED_ANONYMOUS),
-            (
-                {_AGENT: make_endpoint(enabled=False, allow_anonymous=True)},
-                AiEvent.A2A_AGENT_PUBLISHED,
-            ),
+            (False, True, False, AiEvent.A2A_AGENT_PUBLISHED),
+            (True, True, False, AiEvent.A2A_AGENT_PUBLISHED_ANONYMOUS),
+            (True, True, True, AiEvent.A2A_AGENT_PUBLISHED_ANONYMOUS_CONVERSATIONAL),
+            (True, False, False, AiEvent.A2A_AGENT_PUBLISHED),
         ],
-        ids=["authenticated", "anonymous", "disabled-stanza-is-not-anonymous"],
+        ids=["authenticated", "anonymous", "anonymous-conversational", "disabled-stanza"],
     )
-    async def test_names_the_agent_and_whether_it_is_anonymous(
+    async def test_the_one_event_names_the_route_and_how_callers_are_admitted(
         self,
         deps: StubDepsFactory,
         container: LoomContainer,
         caplog: pytest.LogCaptureFixture,
-        endpoints: Mapping[str, AgentEndpointConfig] | None,
+        request: pytest.FixtureRequest,
+        anonymous: bool,
+        enabled: bool,
+        conversational: bool,
         event: AiEvent,
     ) -> None:
-        """The announcement names the agent; a disabled stanza is not an anonymous mount."""
+        """A disabled stanza is not anonymous; a conversation makes the id the credential."""
+        endpoints = {_AGENT: make_endpoint(enabled=enabled, allow_anonymous=anonymous)}
+        plans = (conversational_plan(_AGENT, loader=True),) if conversational else None
+        serving_deps = request.getfixturevalue("conversation_deps" if conversational else "deps")
         with caplog.at_level(logging.WARNING):
-            async with _serving(deps=deps, container=container, endpoints=endpoints):
+            async with _serving(
+                deps=serving_deps, container=container, endpoints=endpoints, plans=plans
+            ):
                 pass
 
-        [fields] = CapturedLog(caplog).named(event)
-        assert fields[AiKey.AGENT] == _AGENT
+        published = [name for name in CapturedLog(caplog).messages if name in _PUBLISH_EVENTS]
+        assert published == [event]
+        assert CapturedLog(caplog).named(event) == [
+            {AiKey.AGENT: _AGENT, AiKey.ROUTE: f"{_PREFIX}/{_AGENT}"}
+        ]
 
 
 class TestBodyLimit:

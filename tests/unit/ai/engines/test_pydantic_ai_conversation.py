@@ -24,7 +24,7 @@ from loom.ai.abc import AgentEngine, AgentEvent, Conversation, ErrorEvent, Final
 from loom.ai.declarative import PolicySpec
 from loom.ai.declarative._v1 import MAX_HISTORY_BYTES_MIN
 from loom.ai.errors import CONVERSATION_LOAD_FAILED_MESSAGE, AgentRunError, AgentRunErrorCode
-from loom.ai.event import AiEvent
+from loom.ai.event import AiEvent, AiKey
 from loom.core.identity import Identity
 from tests.helpers.loggers import CapturedLog
 from tests.helpers.pydantic_ai_engine import (
@@ -183,7 +183,7 @@ class TestSingleShot:
 
 
 class TestOverBound:
-    async def test_gives_none_and_logs_the_agent_size_and_bound_when_messages_exceed_it(
+    async def test_gives_none_and_logs_the_agent_when_messages_exceed_the_bound(
         self, caplog: pytest.LogCaptureFixture
     ) -> None:
         """L19: over ``max_history_bytes`` the hook gets ``None`` and the run logs why (T901)."""
@@ -197,7 +197,7 @@ class TestOverBound:
             result = await engine.run(_PROMPT, identity=_IDENTITY, conversation=None)
 
         assert result.messages is None
-        assert CapturedLog(caplog).messages == [AiEvent.HISTORY_TOO_LARGE]
+        assert CapturedLog(caplog).calls == [(AiEvent.HISTORY_TOO_LARGE, {AiKey.AGENT: "contract"})]
 
     async def test_gives_none_when_the_stream_carries_messages_over_the_bound(self) -> None:
         """The streamed terminal event is bounded the same way as the non-streaming run."""

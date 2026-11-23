@@ -259,9 +259,7 @@ def _with_price(model: Model, plan: AgentPlan) -> Model:
     """Price *model* with the plan's configured rates, or warn when it may stay unpriced."""
     if plan.price is not None:
         return PricedModel(model, plan.price)
-    warn_if_model_not_priceable(
-        model.model_name, _provider_name(model), plan.policies, f"agent '{plan.name}'"
-    )
+    warn_if_model_not_priceable(model.model_name, _provider_name(model), plan.policies, plan.name)
     return model
 
 

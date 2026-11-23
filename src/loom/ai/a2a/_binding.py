@@ -224,11 +224,17 @@ def register_card_exclusions(app: FastAPI, card_paths: Sequence[str]) -> None:
         entry.kwargs["exclude_paths"] = (*_declared_exclusions(entry), *card_paths)
 
 
-def announce_publication(agent: PublishedAgent, *, mechanism: str | None) -> None:
-    """Emit the startup WARNING naming exactly what is now reachable from outside."""
-    event = (
-        AiEvent.A2A_AGENT_PUBLISHED_ANONYMOUS
-        if _allows_anonymous(agent)
-        else AiEvent.A2A_AGENT_PUBLISHED
-    )
-    _logger.warning(event, extra={AiKey.AGENT: agent.name, AiKey.AUTH: mechanism or "none"})
+def announce_publication(agent: PublishedAgent, *, prefix: str) -> None:
+    """Emit the startup WARNING naming the route now reachable from outside.
+
+    The event tells how callers are admitted: with a verified identity, anonymously,
+    or anonymously with a conversation loader, where the ``contextId`` is the only
+    credential of a thread.
+    """
+    if not _allows_anonymous(agent):
+        event = AiEvent.A2A_AGENT_PUBLISHED
+    elif agent.conversational:
+        event = AiEvent.A2A_AGENT_PUBLISHED_ANONYMOUS_CONVERSATIONAL
+    else:
+        event = AiEvent.A2A_AGENT_PUBLISHED_ANONYMOUS
+    _logger.warning(event, extra={AiKey.AGENT: agent.name, AiKey.ROUTE: f"{prefix}/{agent.name}"})

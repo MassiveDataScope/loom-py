@@ -59,6 +59,7 @@ from loom.ai.fastapi.streaming import encode_sse_event, stream_sse
 from loom.core.config.errors import ConfigError
 from loom.core.errors import BoundaryValidationError
 from loom.core.identity import Identity, current_identity
+from loom.core.log_names import LogField
 from loom.core.model import LoomFrozenStruct
 from loom.core.observability.event import Scope
 from loom.core.observability.observability import Observability
@@ -125,7 +126,9 @@ def _run_error_response(error: AgentRunError) -> Response:
     status = _STATUS_BY_CODE.get(error.code, 500)
     if status >= 500:
         _logger.error(
-            AiEvent.RUN_FAILED, extra={AiKey.INTERACTION: error.interaction_id}, exc_info=error
+            AiEvent.RUN_FAILED,
+            extra={AiKey.INTERACTION: error.interaction_id, LogField.ERROR_CODE: error.code.value},
+            exc_info=error,
         )
     return error_response(
         status,
@@ -515,15 +518,20 @@ def _announce_mount(
     host: AgentHost,
     name: str,
     endpoint: AgentEndpointConfig,
+    *,
+    prefix: str,
 ) -> None:
     """Emit the startup WARNING carrying the security state of one mount."""
     if not host.has_agent(name):
         _logger.warning(AiEvent.ENDPOINT_AGENT_NOT_COMPILED, extra={AiKey.AGENT: name})
         return
-    event = (
-        AiEvent.ENDPOINT_MOUNTED_ANONYMOUS if endpoint.allow_anonymous else AiEvent.ENDPOINT_MOUNTED
-    )
-    _logger.warning(event, extra={AiKey.AGENT: name, AiKey.AUTH: endpoint.auth})
+    if not endpoint.allow_anonymous:
+        event = AiEvent.ENDPOINT_MOUNTED
+    elif host.has_conversation(name):
+        event = AiEvent.ENDPOINT_MOUNTED_ANONYMOUS_CONVERSATIONAL
+    else:
+        event = AiEvent.ENDPOINT_MOUNTED_ANONYMOUS
+    _logger.warning(event, extra={AiKey.AGENT: name, AiKey.ROUTE: f"{prefix}/{name}"})
 
 
 def mount_agent_endpoints(
@@ -585,4 +593,4 @@ def mount_agent_endpoints(
         methods=["GET"],
     )
     for name, endpoint in exposed.items():
-        _announce_mount(host, name, endpoint)
+        _announce_mount(host, name, endpoint, prefix=prefix)

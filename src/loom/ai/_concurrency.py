@@ -44,7 +44,7 @@ async def shield_and_drain(call: Coroutine[Any, Any, _T], *, label: str) -> _T:
     try:
         return await asyncio.shield(in_flight)
     except asyncio.CancelledError:
-        _logger.debug(AiEvent.CANCELLED_CALL_DRAINED, extra={AiKey.COMPONENT: label})
+        _logger.debug(AiEvent.CANCELLED_CALL_DRAINED, extra={AiKey.TOOL: label})
         await asyncio.wait([in_flight])
         discard_outcome(in_flight)
         raise

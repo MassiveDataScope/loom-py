@@ -119,7 +119,7 @@ class _RemoteUrl:
             component: Configuration path the URL came from.
         """
         if self._plaintext_event is not None:
-            _logger.warning(self._plaintext_event, extra={AiKey.COMPONENT: component})
+            _logger.warning(self._plaintext_event, extra={AiKey.CONFIG_PATH: component})
 
     def _judge(self, url: str, private_plaintext: bool) -> str | None:
         try:
