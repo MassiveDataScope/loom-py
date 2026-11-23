@@ -15,6 +15,7 @@ from loom.core.engine.execution_observer import ExecutionObserver, NullExecution
 from loom.core.errors import CodedError
 from loom.core.errors.summary import ErrorSummary
 from loom.core.job.delivery import JobDelivery
+from loom.core.job.event import JobEvent, JobKey
 from loom.core.job.outcome import (
     Abandoned,
     Failed,
@@ -69,7 +70,7 @@ class _Whereabouts:
 
     def log_fields(self) -> dict[str, object]:
         """The fields of the abandonment record."""
-        known = {"queue": self.queue, "postponements": self.postponements}
+        known = {JobKey.QUEUE: self.queue, JobKey.POSTPONEMENTS: self.postponements}
         return {
             **self.run_fields(),
             **{key: value for key, value in known.items() if value is not None},
@@ -79,9 +80,9 @@ class _Whereabouts:
         """Write the one WARNING that says why *outcome* ended this message."""
         error = outcome.as_exception()
         _log.warning(
-            "Job abandoned",
+            JobEvent.DELIVERY_ABANDONED,
             extra={
-                "reason": outcome.reason.value,
+                LogField.REASON: outcome.reason.value,
                 **ErrorSummary.of(error).fields(),
                 **self.log_fields(),
                 **failure_log_fields(error),

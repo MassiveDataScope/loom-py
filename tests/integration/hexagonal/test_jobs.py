@@ -62,7 +62,8 @@ def _failed_jobs(caplog: pytest.LogCaptureFixture) -> list[dict[str, Any]]:
     return [
         entry
         for entry in logged_events(caplog)
-        if entry.get("usecase") == TrackShipmentJob.__name__ and entry.get("status") == "failure"
+        if entry.get(LogField.USE_CASE) == TrackShipmentJob.__name__
+        and entry.get(LogField.STATUS) == "failure"
     ]
 
 

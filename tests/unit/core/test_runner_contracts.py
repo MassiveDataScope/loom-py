@@ -7,7 +7,13 @@ import logging
 import pytest
 
 import loom.core.runner as runner_module
-from loom.core.runner import SupportsFlush, SupportsShutdown, flush_runner, shutdown_runner
+from loom.core.runner import (
+    RunnerEvent,
+    SupportsFlush,
+    SupportsShutdown,
+    flush_runner,
+    shutdown_runner,
+)
 
 
 class _ShutdownCapable:
@@ -83,7 +89,7 @@ class TestRunnerExceptionSafety:
         with caplog.at_level(logging.WARNING, logger="loom.core.runner"):
             shutdown_runner(_BrokenShutdown())  # must not raise
 
-        assert "shutdown()" in caplog.text
+        assert RunnerEvent.SHUTDOWN_FAILED in caplog.text
         assert "_BrokenShutdown" in caplog.text
 
     def test_flush_runner_suppresses_exception_and_logs_warning(
@@ -93,7 +99,7 @@ class TestRunnerExceptionSafety:
         with caplog.at_level(logging.WARNING, logger="loom.core.runner"):
             flush_runner(_BrokenFlush())  # must not raise
 
-        assert "flush()" in caplog.text
+        assert RunnerEvent.FLUSH_FAILED in caplog.text
         assert "_BrokenFlush" in caplog.text
 
     def test_original_exception_is_preserved_when_shutdown_raises_in_finally(self) -> None:

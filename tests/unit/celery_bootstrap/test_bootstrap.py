@@ -17,7 +17,7 @@ from loom.celery.config import CeleryRuntimeConfig
 from loom.celery.constants import TASK_CALLBACK_ERROR_PREFIX, TASK_CALLBACK_PREFIX, TASK_JOB_PREFIX
 from loom.core.config import ConfigContext
 from loom.core.discovery.base import DiscoveryResult
-from loom.core.discovery.worker import DuplicateJobName
+from loom.core.discovery.worker import DiscoveryEvent, DuplicateJobName
 from loom.core.job.envelope import wire_job_name
 from loom.core.job.job import Job
 from loom.core.model import BaseModel, ColumnField
@@ -251,7 +251,7 @@ class TestBootstrapWorkerTaskRegistration:
             result = self._run(tmp_path, jobs=None)
 
         assert result.celery_app is not None
-        assert "no Job classes discovered" in caplog.text
+        assert DiscoveryEvent.NO_JOBS_DISCOVERED in caplog.text
 
     def test_discovers_jobs_from_package_when_jobs_not_passed(self, tmp_path: Any) -> None:
         result = self._run(
@@ -326,5 +326,5 @@ class TestBootstrapWorkerTaskRegistration:
         with caplog.at_level(logging.WARNING, logger="loom.core.discovery.worker"):
             result = self._run(tmp_path, jobs=None)
 
-        assert "no Job classes discovered" in caplog.text
+        assert DiscoveryEvent.NO_JOBS_DISCOVERED in caplog.text
         assert f"{TASK_JOB_PREFIX}.{_SyncJob.__qualname__}" not in result.celery_app.tasks

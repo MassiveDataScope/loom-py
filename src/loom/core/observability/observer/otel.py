@@ -24,6 +24,7 @@ from opentelemetry.trace import Tracer
 from loom.core.config.observability import OtelConfig
 from loom.core.errors import InvalidValue
 from loom.core.model.redaction import reveal_for_driver
+from loom.core.observability.diagnostic import ObservabilityEvent, ObservabilityKey
 from loom.core.observability.protocol import SpanFlusher
 from loom.core.plugins.optional import MissingExtraError
 
@@ -162,15 +163,8 @@ def _host_tracer(config: OtelConfig) -> Tracer:
     provider = trace.get_tracer_provider()
     if not config.adopt_host_id_generator:
         _log.info(
-            "otel_host_provider_random_trace_ids",
-            extra={
-                "setting": "observability.otel.config.adopt_host_id_generator",
-                "provider": type(provider).__name__,
-                "consequence": (
-                    "spans are emitted with random trace ids; a streaming message "
-                    "cannot be followed from ingestion to death under one trace"
-                ),
-            },
+            ObservabilityEvent.HOST_PROVIDER_RANDOM_TRACE_IDS,
+            extra={ObservabilityKey.PROVIDER: type(provider).__name__},
         )
         return trace.get_tracer(config.tracer_name, config.tracer_version or None)
 

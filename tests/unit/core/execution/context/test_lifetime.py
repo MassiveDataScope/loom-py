@@ -28,12 +28,15 @@ from loom.core.execution import (
     execution_identity,
     per_execution,
 )
+from loom.core.execution.context import ExecutionContextEvent, ExecutionContextKey
 from loom.core.identity import (
     Identity,
     IdentityFixed,
     current_caller,
     set_identity,
 )
+from loom.core.identity.context import IdentityEvent, IdentityKey
+from loom.core.log_names import LogField
 from tests.helpers.loggers import CapturedLog
 from tests.unit.core.execution.context.doubles import ACME_ALICE, ACME_BOB, AcmePerExecutionValue
 
@@ -92,8 +95,12 @@ class TestATaskOutlivingItsExecution:
         task = await outliving(as_bob)
 
         assert await task is ACME_BOB
-        [switch] = switches.named("identity_switched")
-        assert (switch["from_subject"], switch["to_subject"], switch["use_case"]) == (
+        [switch] = switches.named(IdentityEvent.CALLER_SWITCHED)
+        assert (
+            switch[IdentityKey.SWITCHED_FROM],
+            switch[IdentityKey.SWITCHED_TO],
+            switch[LogField.USE_CASE],
+        ) == (
             ACME_ALICE.subject,
             ACME_BOB.subject,
             "ExecutionScope",
@@ -128,7 +135,7 @@ class TestATaskOutlivingItsExecution:
         with pytest.raises(Unauthenticated, match="system identity"):
             await task
         [(event, fields)] = recorded.calls
-        assert event == "delegation_expired"
+        assert event == IdentityEvent.DELEGATION_EXPIRED
         assert ACME_ALICE.subject not in repr(fields)
 
     async def test_a_per_execution_value_built_before_the_end_raises_execution_closed(
@@ -181,9 +188,10 @@ class TestATaskOutlivingItsExecution:
             await task
 
         [(event, fields)] = recorded.calls
-        assert (event, fields["read"]) == ("execution_closed", "per-execution value")
-        assert "dispatch a job" in fields["guidance"]
-        assert "executor.run(UseCase)" in fields["guidance"]
+        assert (event, fields[ExecutionContextKey.READ]) == (
+            ExecutionContextEvent.CLOSED,
+            "per-execution value",
+        )
         assert ACME_ALICE.subject not in repr(recorded.calls)
 
     async def test_execution_closed_is_an_execution_required(self, outliving: Outliving) -> None:
@@ -368,8 +376,11 @@ class TestANestedExecutionEnding:
                 assert execution_identity() is ACME_BOB
             assert current_caller() is (None if from_subject is None else ACME_ALICE)
 
-        [switch] = switches.named("identity_switched")
-        assert (switch["from_subject"], switch["to_subject"]) == (from_subject, ACME_BOB.subject)
+        [switch] = switches.named(IdentityEvent.CALLER_SWITCHED)
+        assert (switch[IdentityKey.SWITCHED_FROM], switch[IdentityKey.SWITCHED_TO]) == (
+            from_subject,
+            ACME_BOB.subject,
+        )
 
     def test_the_enclosing_execution_keeps_its_cache(self) -> None:
         session = per_execution(AcmePerExecutionValue, AcmePerExecutionValue)

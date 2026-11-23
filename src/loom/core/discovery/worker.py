@@ -11,9 +11,18 @@ from loom.core.config import ConfigError
 from loom.core.discovery.base import DiscoveryResult
 from loom.core.engine.compilable import Compilable
 from loom.core.job.job import Job
+from loom.core.log_names import LogEvent
 from loom.core.model import BaseModel
 
 _logger = logging.getLogger(__name__)
+
+
+class DiscoveryEvent(LogEvent):
+    """What worker discovery logs."""
+
+    NO_JOBS_DISCOVERED = "discovery.no_jobs_discovered"
+
+
 AutoCRUDUseCases = Callable[[Sequence[type[Any]]], tuple[type[Compilable], ...]]
 
 
@@ -62,7 +71,7 @@ def resolve_worker_components(
         dict.fromkeys((*explicit_use_cases, *discovered.use_cases, *generated, *jobs))
     )
     if not jobs:
-        _logger.warning("no Job classes discovered in app.packages")
+        _logger.warning(DiscoveryEvent.NO_JOBS_DISCOVERED)
     return WorkerComponents(
         compilables=compilables,
         jobs=jobs,

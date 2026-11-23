@@ -14,6 +14,7 @@ from collections.abc import Iterator
 import pytest
 
 from loom.core.identity import Identity, current_caller
+from loom.core.job.event import JobEvent
 from loom.core.logger import LogField
 from loom.serverless.aws.lambda_ import LambdaHandler
 from loom.testing import LambdaEvent, LambdaTestClient
@@ -51,7 +52,7 @@ def _failures(caplog: pytest.LogCaptureFixture) -> list[tuple[str, str]]:
     return [
         (str(entry["event"]), str(entry[LogField.EXCEPTION_TYPE]))
         for entry in logged_events(caplog)
-        if "reason" in entry and LogField.EXCEPTION_TYPE in entry
+        if LogField.REASON in entry and LogField.EXCEPTION_TYPE in entry
     ]
 
 
@@ -59,7 +60,7 @@ def _reported(event: LambdaEvent) -> dict[str, list[dict[str, str]]]:
     return {"batchItemFailures": [{"itemIdentifier": event["Records"][0]["messageId"]}]}
 
 
-FAILED_FINALLY = "Job abandoned"
+FAILED_FINALLY = JobEvent.DELIVERY_ABANDONED
 
 
 class TestTheJobsFunction:

@@ -26,6 +26,8 @@ from loom.core.identity import (
     set_identity,
 )
 from loom.core.identity import context as identity_context
+from loom.core.identity.context import IdentityEvent, IdentityKey
+from loom.core.log_names import LogField
 from tests.helpers.delegation import acting_as, assert_new_delegation
 from tests.helpers.loggers import CapturedLog
 
@@ -41,9 +43,13 @@ _WORK = object()
 
 def _switched(switches: CapturedLog) -> list[tuple[object, object, object]]:
     return [
-        (fields["from_subject"], fields["to_subject"], fields["use_case"])
+        (
+            fields[IdentityKey.SWITCHED_FROM],
+            fields[IdentityKey.SWITCHED_TO],
+            fields[LogField.USE_CASE],
+        )
         for event, fields in switches.calls
-        if event == "identity_switched"
+        if event == IdentityEvent.CALLER_SWITCHED
     ]
 
 
@@ -222,7 +228,7 @@ class TestPinnedFor:
             with pytest.raises(DelegationExpired, match="system identity"):
                 acting.pinned_for(given, _WORK, "AcmeUseCase")
 
-        assert [event for event, _ in switches.calls] == ["delegation_expired"]
+        assert [event for event, _ in switches.calls] == [IdentityEvent.DELEGATION_EXPIRED]
 
     def test_another_subject_is_a_logged_switch_with_a_new_delegation(
         self, switches: CapturedLog, window: float
@@ -325,9 +331,7 @@ class TestRefuseExpired:
             with pytest.raises(DelegationExpired, match="system identity"):
                 acting.refuse_expired()
 
-        assert switches.calls == [
-            ("delegation_expired", {"guidance": DelegationExpired.default_message})
-        ]
+        assert switches.calls == [(IdentityEvent.DELEGATION_EXPIRED, {})]
 
 
 class TestResumed:

@@ -28,6 +28,7 @@ from loom.core.cache.calls import (
 )
 from loom.core.cache.decorators import declares_cache_policy
 from loom.core.cache.dependency import GenerationalDependencyResolver
+from loom.core.cache.event import CacheEvent, CacheKey
 from loom.core.cache.gateway import CacheGateway
 from loom.core.cache.repository import CachedRepository
 from loom.core.config import ConfigContext, ConfigKey
@@ -71,26 +72,24 @@ class _CacheSlot:
     Attributes:
         key: The key claimed.
         kept: The event logged when a binding is already there.
-        log_field: The log field naming the kept binding's type.
     """
 
     key: object
-    kept: str
-    log_field: str
+    kept: CacheEvent
 
     def claim(self, container: LoomContainer, instance: object) -> None:
         """Bind *instance* under :attr:`key`, or log :attr:`kept` naming the binding kept."""
         existing = container.resolve_or_none(self.key)
         if existing is not None:
             logging.getLogger(__name__).warning(
-                self.kept, extra={self.log_field: type(existing).__qualname__}
+                self.kept, extra={CacheKey.TYPE: type(existing).__qualname__}
             )
             return
         container.register_instance(self.key, instance)
 
 
-_CALLS_SLOT = _CacheSlot(CachedCalls, "CacheCallsAlreadyRegistered", "calls")
-_DECORATOR_SLOT = _CacheSlot(RepositoryDecorator, "CacheDecoratorAlreadyRegistered", "decorator")
+_CALLS_SLOT = _CacheSlot(CachedCalls, CacheEvent.CALLS_ALREADY_REGISTERED)
+_DECORATOR_SLOT = _CacheSlot(RepositoryDecorator, CacheEvent.DECORATOR_ALREADY_REGISTERED)
 
 
 def cache_module(config: CacheConfig) -> Callable[[LoomContainer], None]:
@@ -154,7 +153,8 @@ def _announce_uncached(repository: Any) -> Any:
     """
     if declares_cache_policy(type(repository)):
         logging.getLogger(__name__).warning(
-            "CacheNotConfigured", extra={"repository": type(repository).__qualname__}
+            CacheEvent.REPOSITORY_NOT_CONFIGURED,
+            extra={CacheKey.TYPE: type(repository).__qualname__},
         )
     return repository
 

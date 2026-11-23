@@ -17,6 +17,7 @@ from loom.core.cache import (
     cache_query,
     cached,
 )
+from loom.core.cache.event import CacheEvent
 from loom.core.cache.keys import entity_key
 from loom.core.cache.repository import _DELEGATED_METHODS
 from loom.core.engine.post_commit import PostCommitChannel, bind_channel, reset_channel
@@ -921,7 +922,7 @@ class TestPostCommitDeferral:
         assert resolver.events != []
 
     @pytest.mark.asyncio
-    async def test_a_failing_deferred_bump_logs_the_entity_and_ids_and_still_raises(
+    async def test_a_failing_deferred_bump_logs_the_entity_and_still_raises(
         self,
         cache_config: CacheConfig,
         caplog: pytest.LogCaptureFixture,
@@ -933,16 +934,15 @@ class TestPostCommitDeferral:
 
         resolver.bump_from_events = _boom  # type: ignore[method-assign]
         async with enlisted_write() as channel:
-            created = await wrapped.create(_Create(name="entity-1"))
+            await wrapped.create(_Create(name="entity-1"))
 
         with caplog.at_level("ERROR"), pytest.raises(PostCommitError) as excinfo:
             await channel.drain(committed=True)
 
         assert isinstance(excinfo.value.failures[0], RuntimeError)
         text = logged_text(caplog)
-        assert "CachePostCommitBumpFailed" in text
+        assert CacheEvent.POST_COMMIT_BUMP_FAILED in text
         assert wrapped.entity_name in text
-        assert str(created.id) in text
 
 
 class TestPrimaryKeyByName:

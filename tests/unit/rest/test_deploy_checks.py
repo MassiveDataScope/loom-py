@@ -19,7 +19,7 @@ import pytest
 import yaml
 from fastapi.testclient import TestClient
 
-from loom.core.checks import DeployCheckError, run_deploy_checks
+from loom.core.checks import ChecksEvent, DeployCheckError, run_deploy_checks
 from loom.core.config import ConfigContext
 from loom.core.config.errors import ConfigError
 from loom.core.config.overrides import load_application_config
@@ -30,6 +30,7 @@ from loom.rest.auth import RequestCredentials
 from loom.rest.checks import AUTHENTICATION_CHECK, SCHEMA_CHECK
 from loom.rest.fastapi.auto import create_app
 from tests.helpers.deploy_checks import write_failing_check_module
+from tests.helpers.loggers import rendered
 from tests.unit.rest._fixture_app import write_project
 
 _NO_DOCS: dict[str, Any] = {"docs_url": None, "redoc_url": None, "openapi_url": None}
@@ -188,7 +189,7 @@ class TestCreateAppInADeployedEnvironment:
         with caplog.at_level(logging.WARNING, logger=_CHECKS_LOGGER):
             create_app(config, environment="staging", authenticator=AcmeCodeHeaderAuthenticator())
 
-        assert any(SCHEMA_CHECK in r.getMessage() for r in caplog.records)
+        assert any(SCHEMA_CHECK in rendered(r) for r in caplog.records)
 
     def test_a_silenced_error_lets_the_app_start_and_is_logged(
         self, tmp_path: Path, caplog: pytest.LogCaptureFixture
@@ -200,7 +201,7 @@ class TestCreateAppInADeployedEnvironment:
             create_app(config, environment=_PRODUCTION)
 
         assert any(
-            "silenced" in r.getMessage() and AUTHENTICATION_CHECK in r.getMessage()
+            r.getMessage() == ChecksEvent.DEPLOY_SILENCED and AUTHENTICATION_CHECK in rendered(r)
             for r in caplog.records
         )
 
@@ -228,7 +229,7 @@ class TestCursorSigningCheck:
             create_app(config, environment=_PRODUCTION, authenticator=AcmeCodeHeaderAuthenticator())
 
         assert any(
-            "silenced" in r.getMessage() and CURSOR_SIGNING_CHECK in r.getMessage()
+            r.getMessage() == ChecksEvent.DEPLOY_SILENCED and CURSOR_SIGNING_CHECK in rendered(r)
             for r in caplog.records
         )
 

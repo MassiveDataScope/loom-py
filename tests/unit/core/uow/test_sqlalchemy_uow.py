@@ -13,7 +13,7 @@ from sqlalchemy.exc import DBAPIError, IntegrityError, InterfaceError, Operation
 from loom.core.concurrency import run_to_completion
 from loom.core.errors import StoresNotCommittedError
 from loom.core.stores.catalog import DEFAULT_STORE
-from loom.core.stores.uow.abc import UnitOfWork, UnitOfWorkFactory
+from loom.core.stores.uow.abc import UnitOfWork, UnitOfWorkFactory, UowEvent
 from loom.core.stores.uow.alone import single_store
 from loom.core.stores.uow.coordinator import InvocationOutcome, PhysicalStore, RolledBack, Uncertain
 from loom.core.stores.uow.scope import current_scope
@@ -189,7 +189,7 @@ class TestSqlAlchemyUnitOfWorkContextManager:
 
         assert session.count("rollback") == 1
         assert sm.exits == 1
-        assert "UoWCloseFailed" in caplog.text
+        assert UowEvent.CLOSE_FAILED in caplog.text
         assert current_scope() is None
 
     async def test_close_failure_after_commit_is_logged_not_raised(
@@ -206,7 +206,7 @@ class TestSqlAlchemyUnitOfWorkContextManager:
                 pass
 
         assert session.count("commit") == 1
-        assert "UoWCloseFailed" in caplog.text
+        assert UowEvent.CLOSE_FAILED in caplog.text
         assert current_scope() is None
 
         assert session.count("commit") == 1
@@ -273,7 +273,7 @@ class TestRollbackFailure:
 
         assert broken_rollback.session.count("rollback") == 1
         assert broken_rollback.manager.exits == 1
-        assert "UoWRollbackFailed" in caplog.text
+        assert UowEvent.ROLLBACK_FAILED in caplog.text
         assert current_scope() is None
 
 

@@ -14,7 +14,12 @@ from loom.core import concurrency
 from loom.core.engine import post_commit
 from loom.core.engine.compiler import UseCaseCompiler
 from loom.core.engine.executor import UseCaseExecutor
-from loom.core.engine.post_commit import PostCommitChannel, active_channel
+from loom.core.engine.post_commit import (
+    PostCommitChannel,
+    PostCommitEvent,
+    PostCommitKey,
+    active_channel,
+)
 from loom.core.errors import PostCommitError
 from loom.core.job.context import add_pending_dispatch, flush_pending_dispatches
 from loom.core.job.job import Job
@@ -28,7 +33,7 @@ from ._lifecycle_doubles import Log, StubUnitOfWorkFactory
 
 pytestmark = pytest.mark.timeout(3)
 
-_DROPPED = "PostCommitPlainActionsDropped"
+_DROPPED = PostCommitEvent.PLAIN_ACTIONS_DROPPED
 _FAILED = "PostCommitActionFailedAfterInterruption"
 _NEVER_RAN = "PostCommitShieldedActionNeverRan"
 _COMMITTED = "uow.commit"
@@ -231,7 +236,9 @@ class TestPostCommitPublish:
         await hang.cancelled.wait()
 
         assert calls == []
-        assert {"event": _DROPPED, "count": 1}.items() <= _event(caplog, _DROPPED).items()
+        assert {"event": _DROPPED, PostCommitKey.COUNT: 1}.items() <= _event(
+            caplog, _DROPPED
+        ).items()
 
     @pytest.mark.parametrize(
         ("requeue", "ran_later", "warned"),

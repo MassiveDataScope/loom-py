@@ -37,6 +37,7 @@ from loom.core.cache import CacheConfig, CachedCalls, CacheGateway, CacheWriteEr
 from loom.core.cache._single_flight import SingleFlight
 from loom.core.cache.calls import _ConfiguredCalls, _render, _UnconfiguredCalls
 from loom.core.cache.decorators import cache_call
+from loom.core.cache.event import CacheEvent
 from loom.core.cache.result_codec import EncodedResult
 from loom.core.di.container import LoomContainer
 from loom.core.model.redaction import RedactedMap
@@ -223,7 +224,7 @@ class TestWrappingIsIdempotent:
         assert calls.wrap(fetch) is fetch
         calls.wrap(fetch)
 
-        assert len(_warnings(caplog, "CacheCallNotCacheable")) == 1
+        assert len(_warnings(caplog, CacheEvent.CALL_NOT_CACHEABLE)) == 1
 
 
 class TestTheKeyIsTheArguments:
@@ -917,7 +918,7 @@ class TestAnOverrideThatIsNotACoroutine:
         calls.wrap_methods(_SyncOverride())
 
         assert bound == []
-        records = _warnings(caplog, "CacheCallOverriddenBySync")
+        records = _warnings(caplog, CacheEvent.CALL_OVERRIDDEN_BY_SYNC)
         assert len(records) == 1
         assert "_SyncOverride.search" in rendered(records[0])
 
@@ -1100,7 +1101,7 @@ class TestWithoutASection:
         await wrapped("q")
 
         assert runs == 2
-        records = _warnings(caplog, "CacheCallNotConfigured")
+        records = _warnings(caplog, CacheEvent.CALL_NOT_CONFIGURED)
         assert len(records) == 1
         assert f"{fetch.__module__}.{fetch.__qualname__}" in rendered(records[0])
 
@@ -1111,7 +1112,7 @@ class TestWithoutASection:
             return AcmeCallDoc(title=query)
 
         assert _UnconfiguredCalls().wrap(fetch) is fetch
-        assert _warnings(caplog, "CacheCallNotConfigured") == []
+        assert _warnings(caplog, CacheEvent.CALL_NOT_CONFIGURED) == []
 
     def test_a_bare_container_answers_with_the_pass_through(self) -> None:
         """``cached_calls`` must not raise for a container built outside the bootstraps."""
@@ -1156,12 +1157,12 @@ class TestAFailedWriteNeverFailsTheCall:
         assert await wrapped("q") == AcmeCallDoc(title="q")
         assert await wrapped("q") == AcmeCallDoc(title="q")
 
-        records = _warnings(caplog, "CacheCallWriteFailed")
+        records = _warnings(caplog, CacheEvent.CALL_WRITE_FAILED)
         assert len(records) == 1
         message = rendered(records[0])
-        assert f"'function': '{fetch.__module__}.{fetch.__qualname__}'" in message
-        assert f"'key': '{_expected_key(fetch)}'" in message
-        assert "'value_type': 'AcmeCallDoc'" in message
+        assert f"'loom.cache.function': '{fetch.__module__}.{fetch.__qualname__}'" in message
+        assert f"'loom.cache.key': '{_expected_key(fetch)}'" in message
+        assert "'loom.cache.type': 'AcmeCallDoc'" in message
 
     async def test_an_error_from_the_body_propagates_and_stores_nothing(self) -> None:
         @cache_call()
@@ -1216,12 +1217,12 @@ class TestABackendOutageDegradesToAnUncachedCall:
         assert await wrapped("q") == AcmeCallDoc(title="q")
 
         assert runs == 2
-        records = _warnings(caplog, "CacheCallReadFailed")
+        records = _warnings(caplog, CacheEvent.CALL_READ_FAILED)
         assert len(records) == 1
         message = rendered(records[0])
-        assert f"'function': '{fetch.__module__}.{fetch.__qualname__}'" in message
-        assert f"'key': '{_expected_key(fetch)}'" in message
-        assert "'error': 'ConnectionError'" in message
+        assert f"'loom.cache.function': '{fetch.__module__}.{fetch.__qualname__}'" in message
+        assert f"'loom.cache.key': '{_expected_key(fetch)}'" in message
+        assert "'exception.type': 'ConnectionError'" in message
 
     async def test_a_failing_write_returns_the_value_and_logs_once(
         self, caplog: pytest.LogCaptureFixture, _capture_call_warnings: None
@@ -1235,10 +1236,10 @@ class TestABackendOutageDegradesToAnUncachedCall:
         assert await wrapped("q") == AcmeCallDoc(title="q")
         assert await wrapped("q") == AcmeCallDoc(title="q")
 
-        records = _warnings(caplog, "CacheCallWriteFailed")
+        records = _warnings(caplog, CacheEvent.CALL_WRITE_FAILED)
         assert len(records) == 1
         message = rendered(records[0])
-        assert f"'key': '{_expected_key(fetch)}'" in message
+        assert f"'loom.cache.key': '{_expected_key(fetch)}'" in message
         assert "ConnectionError" in message
 
     async def test_an_error_from_the_body_still_propagates_under_an_outage(self) -> None:
@@ -1271,8 +1272,8 @@ class TestTheWarningMemo:
         await wrapped(float("nan"))
         await wrapped(1.0)
 
-        assert len(_warnings(caplog, "CacheCallKeyUnrenderable")) == 1
-        assert len(_warnings(caplog, "CacheCallWriteFailed")) == 1
+        assert len(_warnings(caplog, CacheEvent.CALL_KEY_UNRENDERABLE)) == 1
+        assert len(_warnings(caplog, CacheEvent.CALL_WRITE_FAILED)) == 1
 
     def test_one_event_about_two_functions_is_logged_twice(
         self, caplog: pytest.LogCaptureFixture, _capture_call_warnings: None
@@ -1291,7 +1292,7 @@ class TestTheWarningMemo:
         calls.wrap(first)
         calls.wrap(second)
 
-        assert len(_warnings(caplog, "CacheCallNotCacheable")) == 2
+        assert len(_warnings(caplog, CacheEvent.CALL_NOT_CACHEABLE)) == 2
 
     def test_a_second_binder_warns_again(
         self, caplog: pytest.LogCaptureFixture, _capture_call_warnings: None
@@ -1305,7 +1306,7 @@ class TestTheWarningMemo:
         _calls(CountingCacheStore()).wrap(fetch)
         _calls(CountingCacheStore()).wrap(fetch)
 
-        assert len(_warnings(caplog, "CacheCallNotCacheable")) == 2
+        assert len(_warnings(caplog, CacheEvent.CALL_NOT_CACHEABLE)) == 2
 
 
 class _ExplodingCodec:
@@ -1340,7 +1341,7 @@ class TestTheDecodeGuardIsNotACatchAll:
         with pytest.raises(RuntimeError, match="the codec is broken"):
             await wrapped("q")
 
-        assert _warnings(caplog, "CacheCallPayloadMismatch") == []
+        assert _warnings(caplog, CacheEvent.CALL_PAYLOAD_MISMATCHED) == []
 
 
 class Point(msgspec.Struct):
@@ -1421,7 +1422,7 @@ class TestAnArgumentWithoutACanonicalRendering:
 
         assert runs == 2
         assert backend.data == {}
-        assert len(_warnings(caplog, "CacheCallKeyUnrenderable")) == 1
+        assert len(_warnings(caplog, CacheEvent.CALL_KEY_UNRENDERABLE)) == 1
 
     async def test_an_open_socket_runs_the_call_uncached(
         self, caplog: pytest.LogCaptureFixture, _capture_call_warnings: None
@@ -1443,7 +1444,7 @@ class TestAnArgumentWithoutACanonicalRendering:
 
         assert runs == 2
         assert backend.data == {}
-        assert len(_warnings(caplog, "CacheCallKeyUnrenderable")) == 1
+        assert len(_warnings(caplog, CacheEvent.CALL_KEY_UNRENDERABLE)) == 1
 
     async def test_a_self_referential_list_runs_the_call_uncached(
         self, caplog: pytest.LogCaptureFixture, _capture_call_warnings: None
@@ -1453,7 +1454,7 @@ class TestAnArgumentWithoutACanonicalRendering:
         cyclic.append(cyclic)
 
         assert await _runs_and_entries(cyclic, cyclic) == (2, 0)
-        assert len(_warnings(caplog, "CacheCallKeyUnrenderable")) == 1
+        assert len(_warnings(caplog, CacheEvent.CALL_KEY_UNRENDERABLE)) == 1
 
     async def test_a_self_referential_mapping_runs_the_call_uncached(
         self, caplog: pytest.LogCaptureFixture, _capture_call_warnings: None
@@ -1462,7 +1463,7 @@ class TestAnArgumentWithoutACanonicalRendering:
         cyclic["self"] = cyclic
 
         assert await _runs_and_entries(cyclic, cyclic) == (2, 0)
-        assert len(_warnings(caplog, "CacheCallKeyUnrenderable")) == 1
+        assert len(_warnings(caplog, CacheEvent.CALL_KEY_UNRENDERABLE)) == 1
 
     async def test_an_unassigned_dataclass_field_runs_the_call_uncached(
         self, caplog: pytest.LogCaptureFixture, _capture_call_warnings: None
@@ -1471,7 +1472,7 @@ class TestAnArgumentWithoutACanonicalRendering:
         pending = Pending(name="a")
 
         assert await _runs_and_entries(pending, pending) == (2, 0)
-        assert len(_warnings(caplog, "CacheCallKeyUnrenderable")) == 1
+        assert len(_warnings(caplog, CacheEvent.CALL_KEY_UNRENDERABLE)) == 1
 
     async def test_a_dataclass_class_runs_the_call_uncached(
         self, caplog: pytest.LogCaptureFixture, _capture_call_warnings: None
@@ -1482,7 +1483,7 @@ class TestAnArgumentWithoutACanonicalRendering:
         distinct classes with the same defaults would share one entry.
         """
         assert await _runs_and_entries(Threshold, Threshold) == (2, 0)
-        assert len(_warnings(caplog, "CacheCallKeyUnrenderable")) == 1
+        assert len(_warnings(caplog, CacheEvent.CALL_KEY_UNRENDERABLE)) == 1
 
     async def test_a_mapping_keyed_by_none_is_cached(
         self, caplog: pytest.LogCaptureFixture, _capture_call_warnings: None
@@ -1509,7 +1510,7 @@ class TestAnArgumentWithoutACanonicalRendering:
 
         assert runs == 1
         assert len(backend.data) == 1
-        assert _warnings(caplog, "CacheCallKeyUnrenderable") == []
+        assert _warnings(caplog, CacheEvent.CALL_KEY_UNRENDERABLE) == []
 
     async def test_a_finite_enum_float_is_cached(self) -> None:
         """The control: the refusal is about the value, not about the ``Enum``."""
@@ -1639,7 +1640,7 @@ class TestAPayloadThatNoLongerFits:
 
         assert first == second == NewDoc(title="q", author="ada")
         assert len(backend.set_ttls) == 2
-        records = _warnings(caplog, "CacheCallPayloadMismatch")
+        records = _warnings(caplog, CacheEvent.CALL_PAYLOAD_MISMATCHED)
         assert len(records) == 1
         assert "call:" in rendered(records[0])
 
@@ -1664,7 +1665,7 @@ class TestAPayloadThatNoLongerFits:
         await calls.wrap(read)("q")
         await calls.wrap(read_new)("q")
 
-        records = _warnings(caplog, "CacheCallPayloadMismatch")
+        records = _warnings(caplog, CacheEvent.CALL_PAYLOAD_MISMATCHED)
         assert len(records) == 1
         message = rendered(records[0])
         assert "call:" in message

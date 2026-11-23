@@ -22,6 +22,8 @@ from collections.abc import Sequence
 from typing import NoReturn
 
 from loom.core.identity import Identity
+from loom.core.log_names import LogField
+from loom.core.stores.event import StoresEvent, StoresKey
 from loom.core.stores.sql.abc.errors import RoleNotAllowedError, RolesNotBoundError
 
 _logger = logging.getLogger(__name__)
@@ -100,10 +102,12 @@ def _deny(connection: str, identity: Identity, reason: str) -> NoReturn:
     of the credentials failed); the precise reason is only recorded server-side.
     """
     _logger.warning(
-        "SQL role authorization denied: connection=%s subject=%s mechanism=%s reason=%s",
-        connection,
-        identity.subject,
-        identity.mechanism,
-        reason,
+        StoresEvent.ROLE_AUTHORIZATION_DENIED,
+        extra={
+            StoresKey.CONNECTION: connection,
+            StoresKey.SUBJECT: identity.subject,
+            StoresKey.MECHANISM: identity.mechanism,
+            LogField.REASON: reason,
+        },
     )
     raise RolesNotBoundError(connection)

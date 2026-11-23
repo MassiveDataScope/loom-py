@@ -18,6 +18,7 @@ from loom.core.cache.abc.config import CacheConfig
 from loom.core.cache.abc.dependency import BatchFingerprintResolver, DependencyResolver
 from loom.core.cache.abc.store import CacheStore
 from loom.core.cache.decorators import declares_cache_policy
+from loom.core.cache.event import CacheEvent, CacheKey
 from loom.core.cache.keys import (
     custom_query_key,
     entity_key,
@@ -324,10 +325,10 @@ class CachedRepository(
 
         cached_payload = await self._cache.get_value(key)
         if cached_payload is not None:
-            self._log.debug("CacheHitEntity", extra={"key": key})
+            self._log.debug(CacheEvent.ENTRY_HIT, extra={CacheKey.KEY: key})
             return self._to_output_from_cache(cached_payload)
 
-        self._log.debug("CacheMissEntity", extra={"key": key})
+        self._log.debug(CacheEvent.ENTRY_MISSED, extra={CacheKey.KEY: key})
         return await self._single_flight.run(
             key,
             lambda: self._load_and_store_entity(key, obj_id, profile, scope),
@@ -396,7 +397,7 @@ class CachedRepository(
             total_count = cached_index.total_count
             items = await self._load_items_from_index(entity_ids, profile=profile, scope=scope)
             if len(items) == len(entity_ids):
-                self._log.debug("CacheHitList", extra={"key": index_key})
+                self._log.debug(CacheEvent.ENTRY_HIT, extra={CacheKey.KEY: index_key})
                 return PageResult(
                     items=tuple(items),
                     total_count=total_count,
@@ -405,7 +406,7 @@ class CachedRepository(
                     has_next=(page_params.offset + len(items)) < total_count,
                 )
 
-        self._log.debug("CacheMissList", extra={"key": index_key})
+        self._log.debug(CacheEvent.ENTRY_MISSED, extra={CacheKey.KEY: index_key})
         page = await self._repository.list_paginated(
             page_params,
             filter_params=filter_params,
@@ -451,7 +452,7 @@ class CachedRepository(
         if cached_index is not None and entity_ids is not None:
             items = await self._load_items_from_index(entity_ids, profile=profile, scope=scope)
             if len(items) == len(entity_ids):
-                self._log.debug("CacheHitQuery", extra={"key": query_key})
+                self._log.debug(CacheEvent.ENTRY_HIT, extra={CacheKey.KEY: query_key})
                 if is_cursor:
                     return CursorResult(
                         items=tuple(items),
@@ -466,7 +467,7 @@ class CachedRepository(
                     has_next=cached_index.has_next,
                 )
 
-        self._log.debug("CacheMissQuery", extra={"key": query_key})
+        self._log.debug(CacheEvent.ENTRY_MISSED, extra={CacheKey.KEY: query_key})
         loaded = await self._repository.list_with_query(query, profile=profile)
         await self._store_query_page(query_key, loaded, profile, scope)
         return loaded
@@ -620,7 +621,7 @@ class CachedRepository(
 
     def _log_abandoned_load(self, key: str, error: BaseException) -> None:
         self._log.warning(
-            "CacheLoadAbandoned", extra={"key": key, **ErrorSummary.of(error).fields()}
+            CacheEvent.LOAD_ABANDONED, extra={CacheKey.KEY: key, **ErrorSummary.of(error).fields()}
         )
 
     async def _publish_invalidation(self, event: MutationEvent) -> None:
@@ -650,13 +651,12 @@ class CachedRepository(
         channel.enqueue_priority(partial(self._bump_logging_failure, (event,)))
 
     async def _bump_logging_failure(self, events: tuple[MutationEvent, ...]) -> None:
-        """Bump ``events``, logging entity and ids first: the write already committed."""
+        """Bump ``events``, logging the entity first: the write already committed."""
         try:
             await self._resolver.bump_from_events(events)
         except Exception:
             self._log.exception(
-                "CachePostCommitBumpFailed",
-                extra={"entity": self.entity_name, "ids": tuple(event.ids for event in events)},
+                CacheEvent.POST_COMMIT_BUMP_FAILED, extra={CacheKey.ENTITY: self.entity_name}
             )
             raise
 
@@ -779,11 +779,14 @@ class CachedRepository(
                 decoded = self._decode_cached_result(codec, method_name, key, cached_payload)
                 if decoded is not _UNDECODABLE:
                     self._log.debug(
-                        "CacheHitCustomMethod", extra={"key": key, "method": method_name}
+                        CacheEvent.ENTRY_HIT,
+                        extra={CacheKey.KEY: key, CacheKey.FUNCTION: method_name},
                     )
                     return decoded
 
-            self._log.debug("CacheMissCustomMethod", extra={"key": key, "method": method_name})
+            self._log.debug(
+                CacheEvent.ENTRY_MISSED, extra={CacheKey.KEY: key, CacheKey.FUNCTION: method_name}
+            )
 
             async def load() -> Any:
                 result = await method(*args, **kwargs)
@@ -825,8 +828,12 @@ class CachedRepository(
             return codec.decode(payload)
         except BoundaryValidationError as error:
             self._log.warning(
-                "CacheCustomPayloadMismatch",
-                extra={"key": key, "method": method_name, "error": repr(error)},
+                CacheEvent.CUSTOM_PAYLOAD_MISMATCHED,
+                extra={
+                    CacheKey.KEY: key,
+                    CacheKey.FUNCTION: method_name,
+                    **ErrorSummary.of(error).fields(),
+                },
             )
             return _UNDECODABLE
 
@@ -1080,7 +1087,9 @@ class CachedRepository(
         try:
             return [cast(IdT, msgspec.convert(value, id_type)) for value in raw_ids]
         except msgspec.ValidationError:
-            self._log.debug("CacheIndexIdTypeMismatch", extra={"entity": self.entity_name})
+            self._log.debug(
+                CacheEvent.INDEX_ID_TYPE_MISMATCHED, extra={CacheKey.ENTITY: self.entity_name}
+            )
             return None
 
     def _list_dependency_tags(self) -> list[str]:
@@ -1156,7 +1165,9 @@ class CachedRepository(
         """
         if self.cache_scope() == scope:
             return True
-        self._log.warning("CacheScopeChangedWriteSkipped", extra={"entity": self.entity_name})
+        self._log.warning(
+            CacheEvent.SCOPE_CHANGED_WRITE_SKIPPED, extra={CacheKey.ENTITY: self.entity_name}
+        )
         return False
 
     def _serialize_query(self, query: QuerySpec) -> dict[str, Any]:

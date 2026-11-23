@@ -2,12 +2,12 @@
 
 Every attempted run logs exactly one terminal line. A run whose use case was
 built starts a :class:`StartedExecution` (``EXEC_START`` event) and ends it
-once, either way: ``[DONE]`` and ``EXEC_DONE``, or ``[FAIL]`` and
-``EXEC_ERROR`` with the ``error_kind`` of the phase that failed. A run that
-never started (its plan, identity, read-only check or constructor failed)
-logs ``[FAIL]`` with ``error_kind`` ``begin`` or ``build`` and emits no
-event. A rule failure's ``[FAIL]`` lists the rules broken; in debug mode the
-terminal line lists the steps run.
+once, either way: ``engine.use_case_done`` and ``EXEC_DONE``, or
+``engine.use_case_failed`` and ``EXEC_ERROR`` with the phase that failed. A run
+that never started (its plan, identity, read-only check or constructor failed)
+logs ``engine.use_case_failed`` with the phase ``begin`` or ``build`` and emits
+no event. A rule failure's record lists the rules broken; in debug mode the
+terminal record lists the steps run.
 """
 
 from __future__ import annotations
@@ -25,6 +25,7 @@ from loom.core.engine.execution_observer import ExecutionObserver, NullExecution
 from loom.core.errors import PostCommitError, RuleViolationError, RuleViolationsError
 from loom.core.errors.summary import ErrorSummary
 from loom.core.job.outcome import JobSignal, failure_log_fields
+from loom.core.log_names import LogEvent, LogField, LogKey
 from loom.core.stores.uow.coordinator import InvocationOutcome
 from loom.core.stores.uow.scope import InvocationScope
 from loom.core.tracing import get_trace_id
@@ -35,12 +36,33 @@ _NO_FIELDS: Mapping[str, Any] = MappingProxyType({})
 _log = logging.getLogger(__name__)
 
 
+class UseCaseEvent(LogEvent):
+    """How a use case execution ends, as the executor logs it."""
+
+    DONE = "engine.use_case_done"
+    SIGNALLED = "engine.use_case_signalled"
+    FAILED = "engine.use_case_failed"
+
+
+class UseCaseKey(LogKey):
+    """The fields of a use case execution record."""
+
+    STEPS = "loom.use_case.steps"
+    PHASE = "loom.use_case.phase"
+    BROKEN_RULES = "loom.use_case.broken_rules"
+
+
 class BrokenRule(NamedTuple):
     """One rule a command broke: the rule's name (``None`` when unknown), the field, why."""
 
     rule: str | None
     field: str
     message: str
+
+    @property
+    def label(self) -> str:
+        """``rule:field``, or the field alone when the rule is unknown."""
+        return self.field if self.rule is None else f"{self.rule}:{self.field}"
 
 
 class ExecutionReporter:
@@ -116,7 +138,7 @@ class StartedExecution:
             self.steps.append(label)
 
     def rule_failed(self, rule: str, violation: RuleViolationError) -> None:
-        """Record one rule broken; the terminal ``[FAIL]`` lists them all."""
+        """Record one rule broken; the terminal record lists them all."""
         self.broken_rules += (BrokenRule(rule, violation.field, violation.message),)
 
     async def business(self, call: Awaitable[ResultT]) -> ResultT:
@@ -142,15 +164,16 @@ class StartedExecution:
             self.commit_ms = (time.perf_counter() - started) * 1000
 
     def succeeded(self) -> None:
-        """Report the execution's success: ``[DONE]`` and ``EXEC_DONE``."""
+        """Report the execution's success: its log record and ``EXEC_DONE``."""
         elapsed_ms = (time.perf_counter() - self.start) * 1000
-        ran = _NO_FIELDS if self.steps is None else {"steps": self.steps}
+        ran: Mapping[str, Any] = (
+            _NO_FIELDS if self.steps is None else {UseCaseKey.STEPS: self.steps}
+        )
         _log.info(
-            f"[DONE] {elapsed_ms:.1f}ms",
+            UseCaseEvent.DONE,
             extra={
-                "usecase": self.use_case_name,
-                "duration_ms": elapsed_ms,
-                "status": Status.SUCCESS,
+                LogField.USE_CASE: self.use_case_name,
+                LogField.DURATION_MS: elapsed_ms,
                 **ran,
             },
         )
@@ -167,11 +190,11 @@ class StartedExecution:
         )
 
     def failed(self, error: BaseException) -> None:
-        """Report the execution's failure: ``[FAIL]`` and ``EXEC_ERROR``."""
+        """Report the execution's failure: its log record and ``EXEC_ERROR``."""
         elapsed_ms = (time.perf_counter() - self.start) * 1000
         error_kind = self._error_kind(error)
         status = self._status(error)
-        self.log_failure(error, status, error_kind, duration_ms=elapsed_ms)
+        self.log_failure(error, status, error_kind, elapsed_ms)
         self.execution_observer.on_event(
             ExecutionEvent(
                 kind=EventKind.EXEC_ERROR,
@@ -187,40 +210,46 @@ class StartedExecution:
         )
 
     def log_failure(
-        self, error: BaseException, status: Status, error_kind: Phase, **timing: Any
+        self,
+        error: BaseException,
+        status: Status,
+        error_kind: Phase,
+        duration_ms: float | None = None,
     ) -> None:
-        """Log the terminal ``[FAIL]``: a broken rule is a warning, anything else an error."""
+        """Log how the execution ended: a broken rule is a warning, anything else an error."""
+        timing: dict[str, object] = (
+            {} if duration_ms is None else {LogField.DURATION_MS: duration_ms}
+        )
         if isinstance(error, JobSignal):
             _log.info(
-                f"[SIGNAL] {self.use_case_name}",
+                UseCaseEvent.SIGNALLED,
                 extra={
-                    "usecase": self.use_case_name,
+                    LogField.USE_CASE: self.use_case_name,
                     **timing,
-                    "status": status,
-                    "signal": type(error).__name__,
-                    "reason": str(error),
+                    LogField.STATUS: status,
+                    LogField.REASON: str(error),
+                    **ErrorSummary.of(error).fields(),
                 },
             )
             return
-        message = f"[FAIL] {self.use_case_name}"
         fields: dict[str, Any] = {
-            "usecase": self.use_case_name,
+            LogField.USE_CASE: self.use_case_name,
             **timing,
-            "status": status,
-            "error_kind": error_kind,
+            LogField.STATUS: status,
+            UseCaseKey.PHASE: error_kind,
         }
         if self.steps is not None:
-            fields["steps"] = self.steps
+            fields[UseCaseKey.STEPS] = self.steps
         if isinstance(error, RuleViolationsError):
             broken = self.broken_rules or tuple(
                 BrokenRule(None, violation.field, violation.message)
                 for violation in error.violations
             )
-            fields["broken_rules"] = [rule._asdict() for rule in broken]
-            _log.warning(message, extra={**fields})
+            fields[UseCaseKey.BROKEN_RULES] = [rule.label for rule in broken]
+            _log.warning(UseCaseEvent.FAILED, extra=fields)
             return
         _log.error(
-            message,
+            UseCaseEvent.FAILED,
             extra={**fields, **failure_log_fields(error), **ErrorSummary.of(error).fields()},
         )
 

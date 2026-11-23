@@ -46,10 +46,28 @@ from loom.core.config.errors import ConfigError
 from loom.core.errors import DelegationExpired, IdentityFixed
 from loom.core.identity.identity import ANONYMOUS, Identity
 from loom.core.identity.wire import NO_DELEGATION, Delegation
+from loom.core.log_names import LogEvent, LogField, LogKey
 from loom.core.model.types import PositiveSeconds
 from loom.core.tracing import get_trace_id
 
 _log = logging.getLogger(__name__)
+
+
+class IdentityEvent(LogEvent):
+    """What the acting identity logs."""
+
+    DELEGATION_EXPIRED = "identity.delegation_expired"
+    CALLER_SWITCHED = "identity.caller_switched"
+
+
+class IdentityKey(LogKey):
+    """The fields of an identity record, and the span attributes of a switch."""
+
+    SWITCHED_FROM = "loom.identity.switched_from"
+    SWITCHED_TO = "loom.identity.switched_to"
+    ROLES_FROM = "loom.identity.roles_from"
+    ROLES_TO = "loom.identity.roles_to"
+    ATTRIBUTES_CHANGED = "loom.identity.attributes_changed"
 
 
 class Acting(msgspec.Struct, frozen=True, gc=False):
@@ -162,7 +180,7 @@ class Acting(msgspec.Struct, frozen=True, gc=False):
         )
 
     def refuse_expired(self) -> None:
-        """Refuse acting as this caller past its deadline, logging ``delegation_expired``.
+        """Refuse acting as this caller past its deadline, logging ``identity.delegation_expired``.
 
         Raises:
             DelegationExpired: When a caller acts past its deadline.
@@ -170,7 +188,7 @@ class Acting(msgspec.Struct, frozen=True, gc=False):
         in_time = time.time() <= self.deadline
         if not in_time:
             error = DelegationExpired()
-            _log.warning("delegation_expired", extra={"guidance": str(error)})
+            _log.warning(IdentityEvent.DELEGATION_EXPIRED)
             raise error
 
     def report_switch(self, identity: Identity | None, what: str) -> None:
@@ -193,23 +211,23 @@ class Acting(msgspec.Struct, frozen=True, gc=False):
         from_subject = getattr(previous, "subject", None)
         to_subject = getattr(identity, "subject", None)
         _log.warning(
-            "identity_switched",
+            IdentityEvent.CALLER_SWITCHED,
             extra={
-                "from_subject": from_subject,
-                "to_subject": to_subject,
-                "from_roles": getattr(previous, "roles", None),
-                "to_roles": getattr(identity, "roles", None),
-                "attributes_changed": previous is not None
+                IdentityKey.SWITCHED_FROM: from_subject,
+                IdentityKey.SWITCHED_TO: to_subject,
+                IdentityKey.ROLES_FROM: getattr(previous, "roles", None),
+                IdentityKey.ROLES_TO: getattr(identity, "roles", None),
+                IdentityKey.ATTRIBUTES_CHANGED: previous is not None
                 and identity is not None
                 and previous.attributes != identity.attributes,
-                "use_case": what,
-                "trace_id": get_trace_id(),
+                LogField.USE_CASE: what,
+                LogField.TRACE_ID: get_trace_id(),
             },
         )
         annotate_current_span(
             {
-                "loom.identity.switched_from": from_subject or "",
-                "loom.identity.switched_to": to_subject or "",
+                IdentityKey.SWITCHED_FROM: from_subject or "",
+                IdentityKey.SWITCHED_TO: to_subject or "",
             }
         )
 

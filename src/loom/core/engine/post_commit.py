@@ -24,6 +24,7 @@ from loom.core.concurrency import held_task
 from loom.core.errors import PostCommitError
 from loom.core.errors.summary import ErrorSummary
 from loom.core.execution import execution_ended
+from loom.core.log_names import LogEvent, LogKey
 from loom.core.stores.catalog import StoreKey
 from loom.core.stores.uow.scope import current_scope, refuse_write_under_read_only
 
@@ -43,6 +44,19 @@ _channel: ContextVar[PostCommitChannel | None] = ContextVar(
     "_loom_post_commit_channel", default=None
 )
 _logger = logging.getLogger(__name__)
+
+
+class PostCommitEvent(LogEvent):
+    """What the post-commit channel logs."""
+
+    PLAIN_ACTIONS_DROPPED = "engine.post_commit_plain_actions_dropped"
+    DRAIN_FAILED_DURING_TEARDOWN = "engine.post_commit_drain_failed_during_teardown"
+
+
+class PostCommitKey(LogKey):
+    """The fields of a post-commit record."""
+
+    COUNT = "loom.post_commit.count"
 
 
 class PostCommitChannel:
@@ -203,11 +217,12 @@ class PostCommitChannel:
             return
         self._actions = []
         if remaining:
-            _logger.warning(_PLAIN_DROPPED, extra={"count": len(remaining)})
+            _logger.warning(
+                PostCommitEvent.PLAIN_ACTIONS_DROPPED, extra={PostCommitKey.COUNT: len(remaining)}
+            )
 
 
 _Failure = tuple[PostCommitAction, Exception]
-_PLAIN_DROPPED = "PostCommitPlainActionsDropped"
 _SHIELDED_UNSENT = "PostCommitShieldedActionNeverRan"
 _UNREPORTED_FAILURE = "PostCommitActionFailedAfterInterruption"
 _FAILURE = "PostCommitActionFailed"
@@ -239,7 +254,7 @@ async def drain_after_failure(channel: PostCommitChannel) -> None:
     try:
         await channel.drain(committed=True)
     except Exception:
-        _logger.exception("PostCommitDrainFailedDuringTeardown")
+        _logger.exception(PostCommitEvent.DRAIN_FAILED_DURING_TEARDOWN)
 
 
 def log_never_ran(action: PostCommitAction) -> None:

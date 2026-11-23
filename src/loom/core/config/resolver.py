@@ -37,6 +37,7 @@ from collections.abc import Sequence
 from typing import Protocol, runtime_checkable
 
 from loom.core.config._interpolations import referenced
+from loom.core.config.event import ConfigEvent, ConfigLogKey
 from loom.core.config.resolution import _split_resolver_key
 
 logger = logging.getLogger(__name__)
@@ -135,7 +136,7 @@ def merge_resolvers(
             continue
         if OmegaConf.has_resolver(resolver.name):
             logger.debug(
-                "config resolver %r already registered; loom default skipped", resolver.name
+                ConfigEvent.RESOLVER_DEFAULT_SKIPPED, extra={ConfigLogKey.RESOLVER: resolver.name}
             )
             continue
         kept.append(resolver)

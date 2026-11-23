@@ -10,7 +10,22 @@ from __future__ import annotations
 import logging
 from typing import Protocol, runtime_checkable
 
+from loom.core.log_names import LogEvent, LogKey
+
 _log = logging.getLogger(__name__)
+
+
+class RunnerEvent(LogEvent):
+    """What the runner helpers log."""
+
+    SHUTDOWN_FAILED = "runner.shutdown_failed"
+    FLUSH_FAILED = "runner.flush_failed"
+
+
+class RunnerKey(LogKey):
+    """The fields of a runner record."""
+
+    TYPE = "loom.runner.type"
 
 
 @runtime_checkable
@@ -49,8 +64,8 @@ def shutdown_runner(runner: object) -> None:
         runner.shutdown()
     except Exception:
         _log.warning(
-            "shutdown() raised for %s — suppressed to preserve caller exception",
-            type(runner).__name__,
+            RunnerEvent.SHUTDOWN_FAILED,
+            extra={RunnerKey.TYPE: type(runner).__name__},
             exc_info=True,
         )
 
@@ -73,8 +88,8 @@ def flush_runner(runner: object) -> None:
         runner.flush()
     except Exception:
         _log.warning(
-            "flush() raised for %s — suppressed to preserve caller exception",
-            type(runner).__name__,
+            RunnerEvent.FLUSH_FAILED,
+            extra={RunnerKey.TYPE: type(runner).__name__},
             exc_info=True,
         )
 

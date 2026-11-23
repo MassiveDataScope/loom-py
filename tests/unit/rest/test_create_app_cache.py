@@ -16,6 +16,7 @@ from typing import Any
 import pytest
 from fastapi.testclient import TestClient
 
+from loom.core.cache.event import CacheEvent
 from loom.core.cache.gateway import CacheGateway
 from loom.rest.fastapi.auto import create_app
 from tests.helpers.loggers import rendered
@@ -82,7 +83,9 @@ class TestReadsThroughTheCache:
         assert first == second
         assert CACHED_READS.calls == 2
         warnings = [
-            record for record in caplog.records if "CacheNotConfigured" in record.getMessage()
+            record
+            for record in caplog.records
+            if CacheEvent.REPOSITORY_NOT_CONFIGURED in record.getMessage()
         ]
         assert len(warnings) == 1
         assert warnings[0].levelno == logging.WARNING

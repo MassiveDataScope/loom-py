@@ -49,6 +49,7 @@ from loom.core.config.keys import ConfigKey
 from loom.core.environment import Environment, configured_variable, resolve_environment
 from loom.core.errors import InvalidType, InvalidValue, UnsupportedQuery
 from loom.core.model.struct import LoomFrozenStruct
+from loom.core.stores.event import StoresEvent
 from loom.core.stores.repository.query import FilterSpec, QuerySpec
 
 if TYPE_CHECKING:
@@ -236,19 +237,12 @@ class CursorCodec:
         elif signing == _EPHEMERAL:
             self._current = _EPHEMERAL_KEY_ID
             self._keys = {_EPHEMERAL_KEY_ID: secrets.token_bytes(MIN_KEY_BYTES)}
-            _logger.warning(
-                "cursor signing is ephemeral: a random key generated for this process signs "
-                "cursors, so they do not survive a restart and other instances refuse them. "
-                f"Configure {CURSORS_SECTION} keys outside development."
-            )
+            _logger.warning(StoresEvent.CURSOR_SIGNING_EPHEMERAL)
         else:
             self._current = b""
             self._keys = {}
             if signing == _UNSIGNED:
-                _logger.warning(
-                    "cursor signing is unsigned: cursors carry no signature, so any client can "
-                    "forge one. Use it only for tests and debugging, never in production."
-                )
+                _logger.warning(StoresEvent.CURSOR_SIGNING_UNSIGNED)
 
     @classmethod
     def from_context(cls, ctx: ConfigContext) -> CursorCodec:
