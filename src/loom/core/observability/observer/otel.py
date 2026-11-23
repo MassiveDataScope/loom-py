@@ -209,17 +209,14 @@ class OtelSpanFilter(logging.Filter):
 
 
 class OtelLogHandler(logging.Handler):
-    """Hand each record to the SDK's log handler with no exception attached.
+    """Hand each record to the SDK's ``LoggingHandler`` with no exception attached.
 
     The SDK turns ``exc_info`` into ``exception.message`` and a stack of its own; the
     context filter has already put the type, the code and the stack on the record.
-
-    Args:
-        sdk_handler: The SDK's ``LoggingHandler``.
     """
 
     def __init__(self, sdk_handler: logging.Handler) -> None:
-        super().__init__(level=logging.NOTSET)
+        super().__init__()
         self._sdk_handler = sdk_handler
 
     def emit(self, record: logging.LogRecord) -> None:
@@ -331,8 +328,8 @@ def _resolve_log_protocol(config: OtelConfig) -> str:
 
 
 __all__ = [
+    "OtelLogHandler",
     "OtelSpanFilter",
     "build_tracer",
-    "OtelLogHandler",
     "install_otel_log_export",
 ]
