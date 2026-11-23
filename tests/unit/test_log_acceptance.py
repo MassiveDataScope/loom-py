@@ -32,9 +32,11 @@ from loom.core.errors.codes import ErrorCode
 from loom.core.logger.field import LogField
 from loom.core.logger.install import HANDLER_NAME, configure_logging
 from loom.core.logger.settings import LogSettings
+from loom.core.model.redaction import MASK, Secret
 from loom.core.observability.event import Scope
 from loom.core.observability.observability import Observability
 from loom.core.observability.observer.log import LogLifecycleObserver
+from tests.helpers.loggers import LambdaLoggerHandler
 
 CANARY = "CANARY-ROW-VALUE-4711"
 """Data a driver puts in an exception message: it must not become a field loom writes."""
@@ -42,23 +44,6 @@ CANARY = "CANARY-ROW-VALUE-4711"
 STACK_HEAD = "Traceback (most recent call last)"
 
 _LOGGER = logging.getLogger("loom.acceptance")
-
-
-class LambdaLoggerHandler(logging.StreamHandler[io.StringIO]):
-    """Stand-in for the Lambda runtime's handler (awslambdaric 4.2.3).
-
-    It starts with the runtime's Text layout and keeps the frame type each record
-    states, which the runtime's framed handler sends to the platform.
-    """
-
-    def __init__(self, stream: io.StringIO) -> None:
-        super().__init__(stream)
-        self.setFormatter(logging.Formatter("[%(levelname)s]\t%(asctime)s\t%(message)s\n"))
-        self.frames: list[bytes | None] = []
-
-    def emit(self, record: logging.LogRecord) -> None:
-        self.stream.write(self.format(record))
-        self.frames.append(getattr(record, "_frame_type", None))
 
 
 def _failure() -> DomainError:
@@ -120,7 +105,7 @@ def stdout_text() -> Output:
 
 @pytest.fixture
 def runtime() -> Iterator[LambdaLoggerHandler]:
-    handler = LambdaLoggerHandler(io.StringIO())
+    handler = LambdaLoggerHandler()
     root = logging.getLogger()
     root.addHandler(handler)
     yield handler
@@ -129,8 +114,11 @@ def runtime() -> Iterator[LambdaLoggerHandler]:
 
 def _lambda_output(runtime: LambdaLoggerHandler) -> Output:
     configure_logging(LogSettings(format="lambda"), environment=Environment.PRODUCTION)
-    stream = runtime.stream
-    return Output(stream.getvalue, lambda: _json_fields(stream.getvalue()))
+
+    def read() -> str:
+        return "".join(runtime.lines)
+
+    return Output(read, lambda: _json_fields(read()))
 
 
 @pytest.fixture
@@ -202,6 +190,17 @@ class TestFieldsSurvive:
         assert LogField.ATTEMPT.value in output.read_fields()
 
 
+class TestValuesRendered:
+    """Requirement 1: a value reaches every output rendered, a secret masked."""
+
+    @pytest.mark.parametrize("output", OUTPUTS, indirect=True)
+    def test_a_secret_is_masked(self, output: Output) -> None:
+        _LOGGER.info("order_accepted", extra={LogField.ATTEMPT: Secret(CANARY)})
+
+        assert CANARY not in output.read_fields()
+        assert MASK in output.read_fields()
+
+
 class TestFailureIdentity:
     """Requirement 2: a failure's type and code are written."""
 
@@ -228,6 +227,7 @@ class TestLambdaFrames:
         _LOGGER.error("order_failed", exc_info=_failure())
 
         assert runtime.frames == [bytes.fromhex("a55a000e"), bytes.fromhex("a55a0016")]
+        assert all(line.endswith("}\n") for line in runtime.lines)
 
     def test_under_text_the_runtime_keeps_its_text_frames(
         self, runtime: LambdaLoggerHandler, lambda_text: Output

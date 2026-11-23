@@ -18,9 +18,6 @@ from loom.core.logger.install import HANDLER_NAME, configure_logging, resolve_fo
 from loom.core.logger.settings import LogSettings
 from tests.helpers.loggers import CapturingHandler, LambdaLoggerHandler
 
-_LAMBDA = LAMBDA_FUNCTION_VARIABLE
-_LAMBDA_LOG_FORMAT = LAMBDA_LOG_FORMAT_VARIABLE
-
 
 def _stamping(handler: logging.Handler) -> list[ContextFilter]:
     return [f for f in handler.filters if isinstance(f, ContextFilter)]
@@ -108,7 +105,7 @@ class TestLambdaInstallation:
     def runtime_handler(
         self, pristine_root_logger: logging.Logger, monkeypatch: pytest.MonkeyPatch
     ) -> Iterator[LambdaLoggerHandler]:
-        monkeypatch.setenv(_LAMBDA, "billing-handler")
+        monkeypatch.setenv(LAMBDA_FUNCTION_VARIABLE, "billing-handler")
         runtime = LambdaLoggerHandler()
         pristine_root_logger.addHandler(runtime)
         yield runtime
@@ -124,7 +121,7 @@ class TestLambdaInstallation:
     def test_without_a_runtime_handler_loom_writes_json_to_stdout(
         self, pristine_root_logger: logging.Logger, monkeypatch: pytest.MonkeyPatch
     ) -> None:
-        monkeypatch.setenv(_LAMBDA, "billing-handler")
+        monkeypatch.setenv(LAMBDA_FUNCTION_VARIABLE, "billing-handler")
 
         configure_logging(LogSettings(), environment=Environment.PRODUCTION)
 
@@ -149,18 +146,26 @@ class TestLambdaInstallation:
 
         assert pristine_root_logger.level == logging.DEBUG
 
-    @pytest.mark.parametrize("log_format", ["Text", "JSON"])
+    @pytest.mark.parametrize(
+        ("log_format", "frame"),
+        [("Text", None), ("JSON", bytes.fromhex("a55a0016"))],
+        ids=["text", "json"],
+    )
     def test_the_runtime_handler_gets_loom_json_for_the_function_log_format(
         self,
         runtime_handler: LambdaLoggerHandler,
         monkeypatch: pytest.MonkeyPatch,
         log_format: str,
+        frame: bytes | None,
     ) -> None:
-        monkeypatch.setenv(_LAMBDA_LOG_FORMAT, log_format)
+        monkeypatch.setenv(LAMBDA_LOG_FORMAT_VARIABLE, log_format)
 
         configure_logging(LogSettings(), environment=Environment.PRODUCTION)
 
+        logging.getLogger("tests.lambda").error("billing.invoice_failed")
+
         assert isinstance(runtime_handler.formatter, LambdaFormatter)
+        assert runtime_handler.frames == [frame]
 
     def test_the_context_filter_goes_on_the_handler_of_the_runtime(
         self, runtime_handler: LambdaLoggerHandler
@@ -185,6 +190,3 @@ class TestResolveFormat:
     def test_an_unregistered_format_lists_the_registered_ones(self) -> None:
         with pytest.raises(ConfigError, match=r"unknown log format 'xml'.*json.*lambda.*text"):
             resolve_format("xml")
-
-    def test_a_registered_format_is_a_callable_of_the_settings(self) -> None:
-        assert callable(resolve_format("lambda"))

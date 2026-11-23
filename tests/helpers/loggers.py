@@ -23,7 +23,22 @@ class CapturingHandler(logging.Handler):
 
 
 class LambdaLoggerHandler(CapturingHandler):
-    """Named like the Lambda runtime's handler, which loom recognises by its class name."""
+    """Stand-in for the Lambda runtime's handler (awslambdaric 4.2.3), named like it.
+
+    As the runtime's framed handler does, it formats each record, then reads the
+    frame type the record states. It starts with the runtime's Text layout.
+    """
+
+    def __init__(self) -> None:
+        super().__init__()
+        self.setFormatter(logging.Formatter("[%(levelname)s]\t%(message)s\n"))
+        self.lines: list[str] = []
+        self.frames: list[bytes | None] = []
+
+    def emit(self, record: logging.LogRecord) -> None:
+        self.lines.append(self.format(record))
+        self.frames.append(getattr(record, "_frame_type", None))
+        super().emit(record)
 
 
 class CapturedLog:

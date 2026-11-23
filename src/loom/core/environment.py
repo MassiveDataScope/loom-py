@@ -57,10 +57,7 @@ SPARK_OFFLINE_VARIABLE: Final = "LOOM_SPARK_OFFLINE"
 """``1`` makes the Spark test session use only cached jars."""
 
 LAMBDA_FUNCTION_VARIABLE: Final = "AWS_LAMBDA_FUNCTION_NAME"
-"""Set by the Lambda runtime: the process runs as a Lambda function."""
-
 LAMBDA_LOG_FORMAT_VARIABLE: Final = "AWS_LAMBDA_LOG_FORMAT"
-"""Set by the Lambda runtime: the function's log format, ``Text`` or ``JSON``."""
 
 SUPERUSER_URL_VARIABLE: Final = "LOOM_SUPERUSER_URL"
 """Database URL ``loom schema bootstrap`` installs the guard with."""
