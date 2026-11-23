@@ -5,18 +5,28 @@ Every record a ``loom.*`` logger emits during a test may carry only
 migrated are tolerated through :data:`UNMIGRATED_MODULES`, an explicit list that
 only shrinks: ``tests/unit/test_log_standard.py`` fails when a module on it
 already complies, or when one that does not is missing from it.
+
+The rest of the contract (the message is a :class:`~loom.core.logger.LogEvent`
+and carries no ``%`` arguments) runs in report mode: with
+``LOOM_LOG_CONTRACT_REPORT`` set to a directory, each pytest process writes the
+breaches it saw there as JSON, and no test fails on them.
 """
 
 from __future__ import annotations
 
 import ast
+import json
 import logging
+import os
+from collections import Counter
 from collections.abc import Iterator
+from enum import StrEnum
+from pathlib import Path
 from typing import Final
 
 import pytest
 
-from loom.core.logger import LogField
+from loom.core.logger import LogEvent, LogField
 from loom.core.logger.formats import TextFormatter, record_fields
 from tests.helpers.source_tree import SRC, parsed, source_files
 
@@ -79,13 +89,55 @@ UNMIGRATED_MODULES: Final[tuple[str, ...]] = (
 """Modules whose ``extra`` still carries keys outside ``LogField``; shrinks until empty."""
 
 
-class _Seen(logging.Handler):
-    def __init__(self) -> None:
+REPORT_DIRECTORY_VARIABLE: Final = "LOOM_LOG_CONTRACT_REPORT"
+_BREACHES: Final = pytest.StashKey[Counter[str]]()
+
+
+class Breach(StrEnum):
+    """A rule of the log contract a record can break."""
+
+    MESSAGE_NOT_EVENT = "message_not_event"
+    MESSAGE_ARGUMENTS = "message_arguments"
+    FOREIGN_KEY = "foreign_key"
+
+    @classmethod
+    def of(cls, record: logging.LogRecord) -> list[Breach]:
+        """The rules *record* breaks."""
+        checks = {
+            cls.MESSAGE_NOT_EVENT: not isinstance(record.msg, LogEvent),
+            cls.MESSAGE_ARGUMENTS: bool(record.args),
+            cls.FOREIGN_KEY: bool(foreign_keys(record)),
+        }
+        return [breach for breach, broken in checks.items() if broken]
+
+
+class LogContract(logging.Handler):
+    """Keeps the records of one test and counts every breach by module."""
+
+    def __init__(self, breaches: Counter[str]) -> None:
         super().__init__()
         self.records: list[logging.LogRecord] = []
+        self._breaches = breaches
 
     def emit(self, record: logging.LogRecord) -> None:
         self.records.append(record)
+        self._breaches.update(f"{record.name}|{breach}" for breach in Breach.of(record))
+
+
+def pytest_configure(config: pytest.Config) -> None:
+    """Start the session's breach count."""
+    config.stash[_BREACHES] = Counter()
+
+
+def pytest_sessionfinish(session: pytest.Session) -> None:
+    """Write this process's breach count when a report directory is set."""
+    directory = os.environ.get(REPORT_DIRECTORY_VARIABLE)
+    if not directory:
+        return
+    worker = os.environ.get("PYTEST_XDIST_WORKER", "main")
+    target = Path(directory) / f"{worker}.json"
+    target.parent.mkdir(parents=True, exist_ok=True)
+    target.write_text(json.dumps(dict(session.config.stash[_BREACHES]), sort_keys=True))
 
 
 def foreign_keys(record: logging.LogRecord) -> set[str]:
@@ -94,9 +146,9 @@ def foreign_keys(record: logging.LogRecord) -> set[str]:
 
 
 @pytest.fixture(autouse=True)
-def loom_records_use_log_fields() -> Iterator[None]:
+def loom_records_use_log_fields(request: pytest.FixtureRequest) -> Iterator[None]:
     """Fail a test when a ``loom.*`` record carries a key outside ``LogField``."""
-    seen = _Seen()
+    seen = LogContract(request.config.stash[_BREACHES])
     loom_logger = logging.getLogger("loom")
     loom_logger.addHandler(seen)
     yield
