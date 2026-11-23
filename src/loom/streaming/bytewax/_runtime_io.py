@@ -232,6 +232,7 @@ def _warn_on_stale_resume_state(
         extra={
             StreamingKey.TOPIC: topic,
             StreamingKey.PARTITION: partition,
+            StreamingKey.OFFSET: committed,
             StreamingKey.REPLAYED_OFFSETS: committed - resume_state,
         },
     )

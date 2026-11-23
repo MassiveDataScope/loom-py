@@ -122,9 +122,9 @@ class _SQLAlchemyTablePartition:
         statement = _sa_insert(self._table)
         trace_id = uuid4().hex
         correlation_id = uuid4().hex
+        n = 0
         async with self._session_manager.session() as session:
             try:
-                n = 0
                 t0 = monotonic()
                 while self._buffer:
                     rows: list[dict[str, Any]] = []
@@ -149,6 +149,10 @@ class _SQLAlchemyTablePartition:
                 )
             except Exception:
                 await session.rollback()
+                _log.error(
+                    StreamingEvent.SINK_FLUSH_FAILED,
+                    extra={StreamingKey.TARGET: self._table.name, StreamingKey.RECORDS: n},
+                )
                 raise
         self._buffer_started_at = None
         return n

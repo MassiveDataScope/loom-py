@@ -392,7 +392,7 @@ class _BuildContext:
             bw_output(f"{step_id}_{kind.value}_errors", stream, sink)
             return
         logger.warning(
-            StreamingEvent.ERROR_ROUTE_MISSING,
+            StreamingEvent.UNROUTED_ERRORS_DROPPED,
             extra={
                 StreamingKey.FLOW: self.plan.name,
                 StreamingKey.KIND: kind.value,

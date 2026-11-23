@@ -11,6 +11,7 @@ from confluent_kafka import KafkaError, TopicPartition
 from confluent_kafka import Message as _RawMessage
 
 from loom.core.errors import InternalError
+from loom.core.log_names import LogField
 from loom.core.observability.event import Scope
 from loom.core.observability.observability import Observability
 from loom.streaming.event import StreamingEvent, StreamingKey
@@ -285,9 +286,10 @@ class KafkaConsumerClient:
         logger.error(
             StreamingEvent.OFFSET_COMMIT_FAILED,
             extra={
+                LogField.ERROR_CODE: error.name(),
                 StreamingKey.PARTITIONS: [
                     f"{part.topic}:{part.partition}@{part.offset}" for part in partitions
-                ]
+                ],
             },
         )
 

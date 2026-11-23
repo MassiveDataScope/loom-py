@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import logging
+from collections.abc import Mapping
 from typing import Any, Generic, TypeAlias, TypeVar
 
 import msgspec
@@ -161,7 +162,9 @@ def try_decode_record(
     try:
         envelope = codec.decode(record.value, payload_type)
     except Exception as exc:
-        return _wire_error(ErrorSummary.message_for(exc), record)
+        return _wire_error(
+            ErrorSummary.message_for(exc), record, fields=ErrorSummary.of(exc).fields()
+        )
     return DecodeOk(message=envelope_to_message(envelope, record))
 
 
@@ -207,7 +210,12 @@ def try_decode_multi_record(
         wire_payload_type = dispatch.wire.get(outer_message_type)
         if wire_payload_type is not None:
             return try_decode_record(record, wire_payload_type, codec)
-        return _wire_error(f"unknown message_type: {outer_message_type!r}", record)
+        return _wire_error(
+            f"unknown message_type: {outer_message_type!r}",
+            record,
+            event=StreamingEvent.RECORD_TYPE_UNKNOWN,
+            fields={StreamingKey.MESSAGE_TYPE: outer_message_type},
+        )
     return try_decode_record(record, payload_type, codec)
 
 
@@ -225,7 +233,12 @@ def _decode_error_envelope(
 
     target_type = dispatch.error.get(inner_payload_type)
     if target_type is None:
-        return _wire_error(f"unknown error payload_type: {inner_payload_type!r}", record)
+        return _wire_error(
+            f"unknown error payload_type: {inner_payload_type!r}",
+            record,
+            event=StreamingEvent.RECORD_TYPE_UNKNOWN,
+            fields={StreamingKey.MESSAGE_TYPE: inner_payload_type},
+        )
     return try_decode_record(record, target_type, codec)
 
 
@@ -245,8 +258,13 @@ def _probe_error_payload_type(raw: bytes) -> str | None:
         return None
 
 
-def _wire_error(reason: str, record: KafkaRecord[bytes]) -> DecodeError:
-    logger.warning(StreamingEvent.RECORD_UNDECODABLE, extra=_record_ctx(record))
+def _wire_error(
+    reason: str,
+    record: KafkaRecord[bytes],
+    event: StreamingEvent = StreamingEvent.RECORD_UNDECODABLE,
+    fields: Mapping[str, object] | None = None,
+) -> DecodeError:
+    logger.warning(event, extra={**_record_ctx(record), **(fields or {})})
     return DecodeError(
         error=ErrorEnvelope(kind=ErrorKind.WIRE, reason=reason, original_message=None),
         raw=record.value,

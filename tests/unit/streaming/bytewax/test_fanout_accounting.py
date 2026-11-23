@@ -1550,7 +1550,7 @@ class TestStorageCompletesAfterItsFlush:
         sink.close()
 
         assert tracker.flush_partition(TOPIC, PARTITION) == []
-        assert caplog.records[-1].msg == StreamingEvent.STORAGE_SINK_CLOSED_PENDING
+        assert StreamingEvent.STORAGE_SINK_CLOSED_PENDING in [r.msg for r in caplog.records]
 
     def test_a_bad_count_from_close_completes_nothing_and_does_not_raise(
         self, caplog: pytest.LogCaptureFixture
@@ -1567,7 +1567,7 @@ class TestStorageCompletesAfterItsFlush:
         sink.close()
 
         assert tracker.flush_partition(TOPIC, PARTITION) == []
-        assert caplog.records[-1].msg == StreamingEvent.STORAGE_SINK_COUNT_INVALID
+        assert StreamingEvent.STORAGE_SINK_COUNT_INVALID in [r.msg for r in caplog.records]
 
     @pytest.mark.parametrize("count", [None, True])
     def test_a_partition_that_does_not_report_durability_is_refused(self, count: object) -> None:
