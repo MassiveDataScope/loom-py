@@ -25,7 +25,7 @@ from loom.core.concurrency import held_task
 from loom.core.errors import PostCommitError
 from loom.core.errors.summary import ErrorSummary
 from loom.core.execution import execution_ended
-from loom.core.log_names import LogEvent, LogField, LogKey
+from loom.core.log_names import LogEvent, LogKey
 from loom.core.stores.catalog import StoreKey
 from loom.core.stores.uow.scope import current_scope, refuse_write_under_read_only
 
@@ -34,7 +34,7 @@ PostCommitAction = Callable[[], Awaitable[None] | None]
 ActionT = TypeVar("ActionT", bound=PostCommitAction)
 
 
-@dataclass(frozen=True)
+@dataclass(frozen=True, slots=True)
 class ActionSubject:
     """What a log may name of a post-commit action: the job and task it sends, never its payload."""
 
@@ -42,8 +42,9 @@ class ActionSubject:
     task_id: str | None = None
 
     def fields(self) -> dict[str, object]:
-        """The subject as log fields, ``None`` for what the action does not name."""
-        return {LogField.JOB: self.job, LogField.TASK_ID: self.task_id}
+        """The subject as log fields; what the action does not name is left out."""
+        named = {PostCommitKey.SENT_JOB: self.job, PostCommitKey.SENT_TASK_ID: self.task_id}
+        return {key: value for key, value in named.items() if value is not None}
 
 
 @runtime_checkable
@@ -73,6 +74,8 @@ class PostCommitKey(LogKey):
     """The fields of a post-commit record."""
 
     DROPPED_ACTIONS = "loom.post_commit.dropped_actions"
+    SENT_JOB = "loom.post_commit.sent_job"
+    SENT_TASK_ID = "loom.post_commit.sent_task_id"
 
 
 class PostCommitChannel:

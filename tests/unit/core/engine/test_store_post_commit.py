@@ -23,13 +23,13 @@ from loom.core.engine.compiler import UseCaseCompiler
 from loom.core.engine.events import EventKind, ExecutionEvent
 from loom.core.engine.executor import UseCaseExecutor
 from loom.core.engine.post_commit import ActionSubject, PostCommitEvent, store_channel
+from loom.core.engine.post_commit import PostCommitKey as _Key
 from loom.core.errors import StoresNotCommittedError
 from loom.core.job.context import (
     add_pending_dispatch,
     add_pending_publish,
     clear_pending_dispatches,
 )
-from loom.core.log_names import LogField
 from loom.core.model import BaseModel, ColumnField
 from loom.core.stores.catalog import DEFAULT_STORE, StoreKey
 from loom.core.stores.repository import CursorCodec, RepoFor
@@ -594,4 +594,4 @@ class TestStorePostCommit:
             await stores.executor.execute(use_case)
 
         (fields,) = [entry for entry in logged_events(caplog) if entry["event"] == _NEVER_RAN]
-        assert (fields[LogField.JOB], fields[LogField.TASK_ID]) == ("EmailJob", "task-1")
+        assert (fields[_Key.SENT_JOB], fields[_Key.SENT_TASK_ID]) == ("EmailJob", "task-1")
