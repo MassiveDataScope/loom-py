@@ -17,6 +17,7 @@ if TYPE_CHECKING:
     from loom.etl.storage._locator import TableLocation, TableLocator
 
 from loom.etl.declarative.expr._refs import TableRef
+from loom.etl.event import EtlEvent, EtlKey
 from loom.etl.maintenance._builder import _expand_for_schemas
 from loom.etl.maintenance._ops import CompactSpec, MaintenanceSpec, VacuumSpec, ZOrderSpec
 from loom.etl.maintenance._protocol import TableMaintenanceResult
@@ -154,7 +155,7 @@ class MaintenanceRunner:
         """
         mc = self._config.maintenance
         if not mc.schemas and not mc.vacuum and not mc.compact and not mc.z_order_by:
-            _log.debug("run_from_config: no maintenance config — skipping")
+            _log.debug(EtlEvent.MAINTENANCE_NOT_CONFIGURED)
             return MaintenanceReport()
 
         vacuum_spec = (
@@ -200,7 +201,9 @@ class MaintenanceRunner:
         except Exception as exc:
             if self._missing_table_policy == "skip":
                 failure = ErrorSummary.of(exc).fields()
-                _log.warning("maintenance skip", extra={"table": table_ref, **failure})
+                _log.warning(
+                    EtlEvent.MAINTENANCE_TABLE_SKIPPED, extra={EtlKey.TABLE: table_ref, **failure}
+                )
                 return None
             raise
 
@@ -219,7 +222,7 @@ class MaintenanceRunner:
                 op_results[op.name] = op.execute(self._maintainer, location.uri, location)
         except Exception as exc:
             error = exc
-            _log.exception("maintenance failed", extra={"table": spec.table_ref})
+            _log.exception(EtlEvent.MAINTENANCE_FAILED, extra={EtlKey.TABLE: spec.table_ref})
 
         return TableMaintenanceResult(
             table_ref=spec.table_ref,

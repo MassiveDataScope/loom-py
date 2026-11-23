@@ -44,7 +44,6 @@ Cleanup
 
 from __future__ import annotations
 
-import logging
 from typing import Any, Protocol, runtime_checkable
 
 from loom.core.errors import InvalidValue
@@ -52,8 +51,6 @@ from loom.etl.checkpoint._cleaners import FsspecTempCleaner, TempCleaner
 from loom.etl.checkpoint._io._polars import _PolarsCheckpointIO
 from loom.etl.checkpoint._paths import correlation_scope_base, run_scope_base, scope_base
 from loom.etl.checkpoint._scope import CheckpointScope
-
-_log = logging.getLogger(__name__)
 
 
 @runtime_checkable
@@ -152,7 +149,6 @@ class CheckpointStore:
                 f"IntoTemp({name!r}, scope=CORRELATION) requires a correlation_id. "
                 "Pass correlation_id= to ETLRunner.run()."
             )
-        _log.debug("checkpoint put name=%r scope=%s append=%s", name, scope, append)
         base = scope_base(
             self._root,
             run_id=run_id,
@@ -188,13 +184,11 @@ class CheckpointStore:
         run_base = run_scope_base(self._root, run_id)
         result = self._backend.probe(name, run_base)
         if result is not None:
-            _log.debug("checkpoint get name=%r scope=run", name)
             return result
         if correlation_id is not None:
             corr_base = correlation_scope_base(self._root, correlation_id)
             result = self._backend.probe(name, corr_base)
             if result is not None:
-                _log.debug("checkpoint get name=%r scope=correlation", name)
                 return result
         raise FileNotFoundError(
             f"Intermediate {name!r} not found. "
@@ -210,7 +204,6 @@ class CheckpointStore:
             run_id: UUID of the pipeline run to clean.
         """
         path = run_scope_base(self._root, run_id)
-        _log.debug("checkpoint cleanup run path=%s", path)
         self._cleaner.delete_tree(path)
 
     def cleanup_correlation(self, correlation_id: str) -> None:
@@ -223,5 +216,4 @@ class CheckpointStore:
             correlation_id: Logical job ID whose intermediates to purge.
         """
         path = correlation_scope_base(self._root, correlation_id)
-        _log.debug("checkpoint cleanup correlation path=%s", path)
         self._cleaner.delete_tree(path)

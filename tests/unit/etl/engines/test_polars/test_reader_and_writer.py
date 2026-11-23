@@ -22,6 +22,7 @@ from loom.etl.declarative.target._file import FileSpec
 from loom.etl.declarative.target._table import AppendSpec, ReplacePartitionsSpec, ReplaceSpec
 from loom.etl.engines.polars import PolarsSourceReader, PolarsTargetWriter
 from loom.etl.engines.polars._schema import PolarsPhysicalSchema
+from loom.etl.event import EtlEvent
 from loom.etl.lineage._records import WriteContext
 from loom.etl.schema import SchemaNotFoundError
 from loom.etl.schema._schema import ColumnSchema, LoomDtype, SchemaError
@@ -353,7 +354,7 @@ class TestPolarsAppend:
         writer.append(pl.DataFrame({"id": [1]}).lazy(), TableRef("raw.uc_orders"), None)
 
         assert writes == [("uc://main.raw.orders", "overwrite")]
-        assert any("catalog registration is not guaranteed" in event for event, _ in warnings)
+        assert [event for event, _ in warnings] == [EtlEvent.UNITY_CATALOG_CREATE_UNREGISTERED]
 
 
 class TestPolarsWriteKwargs:

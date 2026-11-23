@@ -8,7 +8,9 @@ from typing import Protocol, runtime_checkable
 
 import fsspec.core
 
+from loom.core.errors.summary import ErrorSummary
 from loom.etl.checkpoint._options import checkpoint_options
+from loom.etl.event import EtlEvent, EtlKey
 
 _log = logging.getLogger(__name__)
 
@@ -41,10 +43,13 @@ class FsspecTempCleaner:
         try:
             fs, fpath = fsspec.core.url_to_fs(path, **self._storage_options)
             if fs.exists(fpath):
-                _log.debug("checkpoint cleanup path=%s", path)
                 fs.rm(fpath, recursive=True)
+                _log.debug(EtlEvent.CHECKPOINT_CLEANED, extra={EtlKey.URI: path})
         except Exception as exc:
-            _log.warning("checkpoint cleanup skipped path=%r reason=%s", path, exc)
+            _log.warning(
+                EtlEvent.CHECKPOINT_CLEANUP_SKIPPED,
+                extra={EtlKey.URI: path, **ErrorSummary.of(exc).fields()},
+            )
 
 
 def _join_path(base: str, *parts: str) -> str:

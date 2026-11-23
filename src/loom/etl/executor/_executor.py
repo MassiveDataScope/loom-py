@@ -38,6 +38,7 @@ from typing import Any
 
 from loom.core.config import ConfigContext
 from loom.core.errors import InvalidType, InvalidUse
+from loom.core.log_names import LogField
 from loom.core.observability.event import Scope
 from loom.core.observability.observability import Observability
 from loom.core.runner import SupportsFlush
@@ -56,6 +57,7 @@ from loom.etl.compiler._plan import (
 from loom.etl.declarative.source import TempSourceSpec
 from loom.etl.declarative.target._client import ClientSpec
 from loom.etl.declarative.target._temp import TempFanInSpec, TempSpec
+from loom.etl.event import EtlEvent, EtlKey
 from loom.etl.executor._agents import AgentMapper
 from loom.etl.executor._dispatcher import ParallelDispatcher, ThreadDispatcher
 from loom.etl.lineage._records import RunContext, RunStatus, WriteContext
@@ -161,11 +163,8 @@ class ETLExecutor:
         """
         ctx = ctx or RunContext(run_id=_new_run_id())
         _log.info(
-            "pipeline start pipeline=%s run_id=%s nodes=%d attempt=%d",
-            plan.pipeline_type.__name__,
-            ctx.run_id,
-            len(plan.nodes),
-            ctx.attempt,
+            EtlEvent.PIPELINE_STARTED,
+            extra={EtlKey.PIPELINE: plan.pipeline_type.__name__, EtlKey.RUN_ID: ctx.run_id},
         )
         status = RunStatus.SUCCESS
         try:
@@ -211,10 +210,8 @@ class ETLExecutor:
         ctx = ctx or RunContext(run_id=_new_run_id())
         process_run_id = _new_run_id()
         _log.info(
-            "process start process=%s process_run_id=%s nodes=%d",
-            plan.process_type.__name__,
-            process_run_id,
-            len(plan.nodes),
+            EtlEvent.PROCESS_STARTED,
+            extra={EtlKey.PROCESS: plan.process_type.__name__, EtlKey.RUN_ID: ctx.run_id},
         )
         process_ctx = ctx.for_process(process_run_id)
         with self._observability.span(
@@ -257,10 +254,8 @@ class ETLExecutor:
         ctx = ctx or RunContext(run_id=_new_run_id())
         step_run_id = _new_run_id()
         _log.info(
-            "step start step=%s step_run_id=%s sources=%s",
-            plan.step_type.__name__,
-            step_run_id,
-            [b.alias for b in plan.source_bindings],
+            EtlEvent.STEP_STARTED,
+            extra={EtlKey.STEP: plan.step_type.__name__, EtlKey.RUN_ID: ctx.run_id},
         )
         with self._observability.span(
             Scope.STEP,
@@ -384,17 +379,15 @@ class ETLExecutor:
         self, spec: Any, params: Any, ctx: RunContext, *, streaming: bool = False
     ) -> Any:
         if isinstance(spec, TempSourceSpec):
-            _log.info("read source kind=TEMP name=%s", spec.temp_name)
+            _log.info(EtlEvent.TEMP_SOURCE_READ_STARTED, extra={EtlKey.CHECKPOINT: spec.temp_name})
             return self._require_checkpoint_store(spec.temp_name).get(
                 spec.temp_name,
                 run_id=ctx.run_id,
                 correlation_id=ctx.correlation_id,
             )
         _log.info(
-            "read source kind=%s ref=%s streaming=%s",
-            spec.kind,
-            getattr(spec, "table_ref", None) or getattr(spec, "path", None),
-            streaming,
+            EtlEvent.SOURCE_READ_STARTED,
+            extra={EtlKey.KIND: spec.kind, **_location_fields(spec)},
         )
         if streaming:
             if not isinstance(self._reader, StreamingSourceReader):
@@ -418,7 +411,10 @@ class ETLExecutor:
         write_ctx: WriteContext | None = None,
     ) -> None:
         if isinstance(spec, (TempSpec, TempFanInSpec)):
-            _log.info("write target kind=TEMP name=%s scope=%s", spec.temp_name, spec.temp_scope)
+            _log.info(
+                EtlEvent.TEMP_TARGET_WRITE_STARTED,
+                extra={EtlKey.CHECKPOINT: spec.temp_name, EtlKey.SCOPE: spec.temp_scope},
+            )
             self._require_checkpoint_store(spec.temp_name).put(
                 spec.temp_name,
                 run_id=ctx.run_id,
@@ -428,10 +424,7 @@ class ETLExecutor:
                 append=isinstance(spec, TempFanInSpec),
             )
         else:
-            _log.info(
-                "write target ref=%s",
-                getattr(spec, "table_ref", None) or getattr(spec, "path", None),
-            )
+            _log.info(EtlEvent.TARGET_WRITE_STARTED, extra=_location_fields(spec))
             self._writer.write(result, spec, params, streaming=streaming, write_ctx=write_ctx)
 
     def _cleanup_temps(self, ctx: RunContext, status: RunStatus) -> None:
@@ -441,8 +434,7 @@ class ETLExecutor:
             self._checkpoint_store.cleanup_run(ctx.run_id)
         except CheckpointCleanupError:
             _log.exception(
-                "checkpoint RUN cleanup FAILED run_id=%s — temps may accumulate",
-                ctx.run_id,
+                EtlEvent.CHECKPOINT_RUN_CLEANUP_FAILED, extra={EtlKey.RUN_ID: ctx.run_id}
             )
         if ctx.correlation_id is None:
             return
@@ -451,16 +443,13 @@ class ETLExecutor:
                 self._checkpoint_store.cleanup_correlation(ctx.correlation_id)
             except CheckpointCleanupError:
                 _log.exception(
-                    "checkpoint CORRELATION cleanup FAILED correlation_id=%s — "
-                    "call cleanup_correlation(%r) manually",
-                    ctx.correlation_id,
-                    ctx.correlation_id,
+                    EtlEvent.CHECKPOINT_CORRELATION_CLEANUP_FAILED,
+                    extra={LogField.CORRELATION_ID: ctx.correlation_id},
                 )
         elif status is RunStatus.FAILED and ctx.last_attempt:
             _log.warning(
-                "CORRELATION intermediates were NOT cleaned — pipeline failed on last attempt. "
-                "Call runner.cleanup_correlation(%r) to reclaim storage.",
-                ctx.correlation_id,
+                EtlEvent.CORRELATION_NOT_CLEANED,
+                extra={LogField.CORRELATION_ID: ctx.correlation_id},
             )
 
     def _dispatch_parallel(
@@ -492,6 +481,15 @@ class ETLExecutor:
 def _new_run_id() -> str:
     """Generate a fresh UUID4 run identifier."""
     return str(uuid.uuid4())
+
+
+def _location_fields(spec: Any) -> dict[str, str]:
+    """The log fields naming where *spec* reads or writes: a table, a path, or nothing."""
+    table_ref = getattr(spec, "table_ref", None)
+    if table_ref is not None:
+        return {EtlKey.TABLE: table_ref.ref}
+    path = getattr(spec, "path", None)
+    return {} if path is None else {EtlKey.URI: str(path)}
 
 
 def _span_target_label(spec: Any) -> str:

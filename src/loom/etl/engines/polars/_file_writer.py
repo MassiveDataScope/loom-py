@@ -16,6 +16,7 @@ from loom.etl.declarative._write_options import (
 )
 from loom.etl.declarative.target._file import FileSpec
 from loom.etl.engines._format_registry import resolve_format_handler, write_options_or_default
+from loom.etl.event import EtlEvent, EtlKey
 
 _log = logging.getLogger(__name__)
 
@@ -26,7 +27,10 @@ class PolarsFileWriter:
     def write(self, frame: pl.LazyFrame, spec: FileSpec, *, streaming: bool = False) -> None:
         """Write *frame* to the path declared in *spec*."""
         if streaming:
-            _log.debug("streaming write: sink_%s path=%s", spec.format, spec.path)
+            _log.debug(
+                EtlEvent.FILE_STREAM_WRITE_STARTED,
+                extra={EtlKey.URI: spec.path},
+            )
             sink = resolve_format_handler(spec.format, _STREAMING_WRITERS)
             sink(frame, spec.path, spec.write_options)
         else:

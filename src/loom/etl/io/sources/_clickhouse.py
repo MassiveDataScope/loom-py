@@ -23,6 +23,7 @@ from loom.core.connections import ClickHouseConnection
 from loom.etl.declarative.expr._predicate_dialect import PredicateDialect, fold_predicate
 from loom.etl.declarative.source._specs import ClickHouseSourceSpec
 from loom.etl.engines.polars._dtype import loom_type_to_polars
+from loom.etl.event import EtlEvent, EtlKey
 from loom.etl.io._clickhouse_connection import open_client, resolve_connection
 from loom.etl.ports.contracts import ClientCommandExecutor, SourceReader
 from loom.etl.schema._schema import ColumnSchema
@@ -134,15 +135,15 @@ class ClickHouseSourceReader(SourceReader, ClientCommandExecutor):
         """
         client = self._client or self._get_client()
         query = self._build_query(spec, params_instance)
-        _log_query_start(spec, query, streaming=False)
+        _log_query_start(spec, query)
         started = time.monotonic()
         frame, rows = self._query_to_frame(client, query)
         _log.info(
-            "clickhouse read complete",
+            EtlEvent.SOURCE_READ_COMPLETED,
             extra={
-                "table": spec.table_ref.ref,
-                "rows": rows,
-                "duration_s": round(time.monotonic() - started, 3),
+                EtlKey.TABLE: spec.table_ref.ref,
+                EtlKey.ROWS: rows,
+                EtlKey.DURATION_S: round(time.monotonic() - started, 3),
             },
         )
         if spec.schema:
@@ -173,16 +174,16 @@ class ClickHouseSourceReader(SourceReader, ClientCommandExecutor):
         """
         client = self._client or self._get_client()
         query = self._build_query(spec, params_instance)
-        _log_query_start(spec, query, streaming=True)
+        _log_query_start(spec, query)
         started = time.monotonic()
         frame, rows, batches = self._stream_query_to_frame(client, query)
         _log.info(
-            "clickhouse stream spooled",
+            EtlEvent.SOURCE_READ_COMPLETED,
             extra={
-                "table": spec.table_ref.ref,
-                "rows": rows,
-                "batches": batches,
-                "duration_s": round(time.monotonic() - started, 3),
+                EtlKey.TABLE: spec.table_ref.ref,
+                EtlKey.ROWS: rows,
+                EtlKey.BATCHES: batches,
+                EtlKey.DURATION_S: round(time.monotonic() - started, 3),
             },
         )
         if spec.schema:
@@ -310,15 +311,13 @@ class ClickHouseSourceReader(SourceReader, ClientCommandExecutor):
         return frame.with_columns(exprs)
 
 
-def _log_query_start(spec: ClickHouseSourceSpec, query: str, *, streaming: bool) -> None:
-    _log.info(
-        "clickhouse query",
+def _log_query_start(spec: ClickHouseSourceSpec, query: str) -> None:
+    _log.debug(
+        EtlEvent.SOURCE_QUERY_STARTED,
         extra={
-            "table": spec.table_ref.ref,
-            "columns": list(spec.columns) if spec.columns else None,
-            "predicates": len(spec.predicates),
-            "sql": query,
-            "streaming": streaming,
+            EtlKey.TABLE: spec.table_ref.ref,
+            EtlKey.COLUMNS: list(spec.columns) if spec.columns else None,
+            EtlKey.SQL: query,
         },
     )
 

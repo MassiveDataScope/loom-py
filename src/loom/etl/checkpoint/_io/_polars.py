@@ -14,6 +14,7 @@ from loom.core.errors import InvalidType
 from loom.etl._uri import is_cloud_path
 from loom.etl.checkpoint._cleaners import _join_path
 from loom.etl.checkpoint._options import CheckpointOptions, checkpoint_options
+from loom.etl.event import EtlEvent, EtlKey
 
 _log = logging.getLogger(__name__)
 _WRITING = ".writing"
@@ -50,13 +51,13 @@ class _PolarsCheckpointIO:
         """Return LazyFrame scanning *name* under *base*, or None if absent."""
         scan_path = self._find_arrow(name, base)
         if scan_path is None:
-            _log.info("checkpoint READ MISS name=%s base=%s", name, base)
+            _log.info(EtlEvent.CHECKPOINT_MISSED, extra={EtlKey.CHECKPOINT: name, EtlKey.URI: base})
             return None
         kwargs: dict[str, Any] = {"memory_map": not is_cloud_path(base)}
         read_opts = self._options.object_store_read
         if read_opts:
             kwargs["storage_options"] = read_opts
-        _log.info("checkpoint READ HIT  name=%s path=%s", name, scan_path)
+        _log.info(EtlEvent.CHECKPOINT_HIT, extra={EtlKey.CHECKPOINT: name, EtlKey.URI: scan_path})
         return pl.scan_ipc(scan_path, **kwargs)
 
     def write(self, name: str, base: str, data: Any, *, append: bool) -> None:
@@ -75,8 +76,8 @@ class _PolarsCheckpointIO:
         final = _arrow_part(name, base) if append else _arrow_path(name, base)
         tmp = f"{final}{_WRITING}"
 
-        _log.info("checkpoint WRITE     name=%s path=%s", name, final)
         _write_atomic(frame, tmp, final, self._options)
+        _log.info(EtlEvent.CHECKPOINT_WRITTEN, extra={EtlKey.CHECKPOINT: name, EtlKey.URI: final})
 
     def _find_arrow(self, name: str, base: str) -> str | None:
         """Return scan path for *name* under *base*, or None if absent."""

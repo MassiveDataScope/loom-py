@@ -33,6 +33,8 @@ from datetime import UTC, datetime
 from typing import Any
 
 from loom.core.errors import InvalidType, InvalidValue
+from loom.core.errors.summary import ErrorSummary
+from loom.etl.event import EtlEvent, EtlKey
 from loom.etl.io.sources._serialization import _record_serialization_failure
 
 _log = logging.getLogger(__name__)
@@ -79,25 +81,17 @@ def _normalize_bson_type(value: object, depth: int, extjson: bool) -> object:
     if callable(getattr(value, "items", None)):
         if type_name not in _warned_bson_types:
             _warned_bson_types.add(type_name)
-            _log.warning(
-                "normalize_bson_doc: unknown bson dict-like %s"
-                " — normalizing via .items(); add handler to _NORMALIZERS if frequent",
-                type_name,
-            )
+            _log.warning(EtlEvent.BSON_MAPPING_UNKNOWN, extra={EtlKey.VALUE_TYPE: type_name})
         try:
             return {str(k): _normalize(v, depth + 1, extjson) for k, v in value.items()}  # type: ignore[attr-defined]
         except (TypeError, AttributeError, ValueError) as exc:
             _log.warning(
-                "normalize_bson_doc: .items() failed for %s: %s — replacing with null",
-                type_name,
-                exc,
+                EtlEvent.BSON_MAPPING_FAILED,
+                extra={EtlKey.VALUE_TYPE: type_name, **ErrorSummary.of(exc).fields()},
             )
     elif type_name not in _warned_bson_types:
         _warned_bson_types.add(type_name)
-        _log.warning(
-            "normalize_bson_doc: unknown bson type %s — cannot normalize, replacing with null",
-            type_name,
-        )
+        _log.warning(EtlEvent.BSON_TYPE_UNKNOWN, extra={EtlKey.VALUE_TYPE: type_name})
     return None
 
 
@@ -193,10 +187,7 @@ def _normalize_mapping(value: Mapping[str, Any], depth: int, extjson: bool) -> o
 
 def _normalize_unknown(value: object) -> object:
     """Non-bson unknown type: str() fallback preserved (avoids Polars Object dtype columns)."""
-    _log.warning(
-        "normalize_bson_doc: unknown non-bson type %s — using str() fallback",
-        type(value).__name__,
-    )
+    _log.warning(EtlEvent.SOURCE_TYPE_STRINGIFIED, extra={EtlKey.VALUE_TYPE: type(value).__name__})
     try:
         return str(value)
     except Exception as exc:  # noqa: BLE001

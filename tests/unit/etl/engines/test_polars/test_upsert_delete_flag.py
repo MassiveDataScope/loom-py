@@ -20,8 +20,10 @@ from deltalake.table import TableMerger
 from loom.etl.declarative.expr._refs import TableRef
 from loom.etl.declarative.target import SchemaMode, UpsertDeleteFlagError
 from loom.etl.declarative.target._table import UpsertSpec
+from loom.etl.event import EtlEvent
 from loom.etl.schema._schema import SchemaNotFoundError
 from loom.etl.storage._config import MissingTablePolicy
+from tests.helpers.loggers import CapturedLog
 
 from .conftest import table_path
 from .doubles import make_polars_writer
@@ -289,7 +291,7 @@ class TestUpsertDeleteFlagFirstWrite:
         result = _read_table(tmp_path)
         assert result.is_empty()
         assert result.columns == ["id", "status"]
-        assert "write_produced_no_rows" in " ".join(r.getMessage() for r in caplog.records)
+        assert EtlEvent.WRITE_PRODUCED_NO_ROWS in CapturedLog(caplog).messages
 
     def test_upsert_delete_flag_first_write_keeps_rows_whose_flag_is_null(
         self, tmp_path: Path
