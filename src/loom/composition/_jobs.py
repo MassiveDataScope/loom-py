@@ -11,6 +11,7 @@ from dataclasses import dataclass, field, replace
 from typing import TYPE_CHECKING, Any, Final, cast
 
 from loom.composition.errors import JobTransportError
+from loom.composition.event import CompositionEvent
 from loom.connections.aws import AwsClients
 from loom.core.bootstrap import Kernel
 from loom.core.config import ConfigContext, ConfigKey
@@ -25,6 +26,7 @@ from loom.core.observability.observability import Observability
 from loom.core.plugins.optional import MissingExtraError
 from loom.core.resources import Resource, ResourceKind, closing
 from loom.core.symbols import import_symbol
+from loom.jobs.event import log_retry_policies
 from loom.jobs.inline import AsyncioJobTimer, InlineJobTransport
 
 if TYPE_CHECKING:
@@ -104,10 +106,7 @@ def _inline(context: JobTransportContext) -> _Built:
             context.settings.shutdown, execution_observer=context.execution_observer
         )
         if can_wait and not context.settings.shutdown.is_waiting:
-            _log.warning(
-                "Inline jobs wait in process memory: a delayed job is lost when the process "
-                "stops; use Celery or SQS in production, or jobs.shutdown.mode: wait"
-            )
+            _log.warning(CompositionEvent.INLINE_JOBS_WAIT_IN_MEMORY)
     service = InlineJobTransport(
         context.factory,
         context.executor,
@@ -117,13 +116,7 @@ def _inline(context: JobTransportContext) -> _Built:
     )
     resources = (Resource(kind=ResourceKind.TIMER, name="jobs", manager=closing(timer.close)),)
     if context.jobs:
-        _log.info(
-            "Job retry policies",
-            extra={
-                "transport": "inline",
-                "jobs": context.settings.describe_retries(service.redelivery, context.jobs),
-            },
-        )
+        log_retry_policies(context.settings, service.redelivery, context.jobs)
     return service, resources
 
 

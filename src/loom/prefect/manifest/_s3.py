@@ -10,6 +10,8 @@ import fsspec
 import msgspec
 
 from loom.core.errors import InvalidValue
+from loom.core.logger import LogField
+from loom.prefect.event import PrefectEvent
 from loom.prefect.manifest._model import RunManifest
 
 _log = logging.getLogger(__name__)
@@ -75,7 +77,11 @@ class S3JsonManifestStore:
         except FileNotFoundError:
             return None
         except Exception:
-            _log.warning("manifest load failed for %s", correlation_id, exc_info=True)
+            _log.warning(
+                PrefectEvent.MANIFEST_LOAD_FAILED,
+                extra={LogField.CORRELATION_ID: correlation_id},
+                exc_info=True,
+            )
             return None
 
     def save(self, manifest: RunManifest) -> None:
@@ -111,7 +117,11 @@ class S3JsonManifestStore:
         except FileNotFoundError:
             pass
         except Exception:
-            _log.warning("manifest delete failed for %s", correlation_id, exc_info=True)
+            _log.warning(
+                PrefectEvent.MANIFEST_DELETE_FAILED,
+                extra={LogField.CORRELATION_ID: correlation_id},
+                exc_info=True,
+            )
 
 
 __all__ = ["S3JsonManifestStore"]

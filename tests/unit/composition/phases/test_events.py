@@ -8,7 +8,10 @@ from collections.abc import Callable
 import pytest
 
 from loom.composition import Application
+from loom.composition.event import CompositionEvent, CompositionKey
 from loom.core.di.container import LoomContainer
+from loom.core.log_names import LogField
+from loom.jobs.event import JobsKey
 from tests.helpers.loggers import CapturedLog
 
 _PHASES = ("scan", "plan", "build_stores", "register", "analysed", "wire_ai", "seal")
@@ -26,23 +29,9 @@ class TestComposedEvent:
 
         overridden(modules=(_acme_module,))
 
-        [(event, fields)] = [
-            call for call in CapturedLog(caplog).calls if call[0].startswith("loom.composition.")
-        ]
-        assert event == "loom.composition.composed"
-        phase_ms = fields.pop("phase_ms")
-        total = fields.pop("duration_ms")
-        assert tuple(phase_ms) == _PHASES
-        assert all(isinstance(ms, float) for ms in phase_ms.values())
-        assert total >= sum(phase_ms.values())
-        assert fields.pop("keys") > 10
-        assert fields == {
-            "runtime": "Serving",
-            "use_cases": 1,
-            "jobs": 1,
-            "store_plugins": {"default": "sqlalchemy"},
-            "installers": 0,
-            "overrides": 1,
-            "agents": 0,
-            "mcp_servers": 0,
-        }
+        [fields] = CapturedLog(caplog).named(CompositionEvent.APPLICATION_COMPOSED)
+        phases = [lap.split("=") for lap in fields.pop(CompositionKey.PHASES)]
+        total = fields.pop(LogField.DURATION_MS)
+        assert tuple(name for name, _ in phases) == _PHASES
+        assert total >= sum(float(ms) for _, ms in phases) - 0.1 * len(phases)
+        assert fields == {LogField.USE_CASE_COUNT: 1, JobsKey.COUNT: 1}

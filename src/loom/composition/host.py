@@ -8,14 +8,13 @@ from collections.abc import Coroutine
 from typing import TYPE_CHECKING, Any, TypeVar
 
 from loom.composition.errors import CompositionErrorCode, CompositionStateError
+from loom.composition.event import CompositionEvent
 
 if TYPE_CHECKING:
     from loom.composition.application import Application
 
 _logger = logging.getLogger(__name__)
 _T = TypeVar("_T")
-
-_FAILED_TO_CLOSE = "application failed to close"
 
 
 class ApplicationHost:
@@ -105,7 +104,7 @@ class ApplicationHost:
             return
         failure = self._take_close_failure()
         if isinstance(failure, asyncio.CancelledError):
-            _logger.warning(_FAILED_TO_CLOSE, exc_info=failure)
+            _logger.warning(CompositionEvent.APPLICATION_CLOSE_FAILED, exc_info=failure)
         elif failure is not None:
             raise failure
 
@@ -146,7 +145,7 @@ class ApplicationHost:
         """Log the owner's failure to close, unless it was already reported."""
         failure = self._take_close_failure()
         if failure is not None:
-            _logger.warning(_FAILED_TO_CLOSE, exc_info=failure)
+            _logger.warning(CompositionEvent.APPLICATION_CLOSE_FAILED, exc_info=failure)
 
 
 class LoopHost:

@@ -22,6 +22,7 @@ from loom.core.identity import ANONYMOUS, Delegation, IdentityFixed, captured_de
 from loom.core.identity.wire import encode_identity
 from loom.core.job.context import flush_pending_dispatches
 from loom.core.job.envelope import JobEnvelope, job_context
+from loom.core.job.event import JobEvent
 from loom.core.job.handle import JobHandle
 from loom.core.job.run import EnvelopeInvocation
 from loom.core.observability.observability import Observability
@@ -155,7 +156,9 @@ def _refusals(caplog: pytest.LogCaptureFixture) -> list[BaseException]:
     return [
         record.exc_info[1]
         for record in caplog.records
-        if record.getMessage() == "Job abandoned" and record.exc_info and record.exc_info[1]
+        if record.getMessage() == JobEvent.DELIVERY_ABANDONED
+        and record.exc_info
+        and record.exc_info[1]
     ]
 
 

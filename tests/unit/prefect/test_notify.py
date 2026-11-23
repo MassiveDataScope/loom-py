@@ -11,6 +11,7 @@ import msgspec
 import pytest
 from botocore.exceptions import ClientError
 
+from loom.prefect.event import PrefectEvent, PrefectKey
 from loom.prefect.flow._hooks import make_notification_hooks
 from loom.prefect.notify import (
     NotifyEvent,
@@ -24,9 +25,14 @@ from tests.helpers.loggers import CapturedLog
 
 
 def _publish_failures(caplog: pytest.LogCaptureFixture) -> list[dict[str, Any]]:
-    return CapturedLog(caplog).named("SNS publish failed")
+    return CapturedLog(caplog).named(PrefectEvent.NOTIFICATION_FAILED)
 
 
+_FAILURE_FIELDS = {
+    PrefectKey.FLOW: "etl-x",
+    PrefectKey.RUN: "run-1",
+    PrefectKey.STATE: "Failed",
+}
 _TOPIC = f"arn:aws:sns:{OTHER_REGION}:{ACCOUNT}:etl-failures"
 
 
@@ -212,7 +218,7 @@ class TestSnsNotifier:
             {"Error": {"Code": "AuthorizationError"}}, "Publish"
         )
         SnsNotifier(topic_arn=_TOPIC, client=client).notify(_make_event(state="Failed"))
-        assert _publish_failures(caplog) == [{"flow": "etl-x", "run": "run-1", "state": "Failed"}]
+        assert _publish_failures(caplog) == [_FAILURE_FIELDS]
 
     def test_default_client_uses_the_topic_region(self, island: FakeAwsIsland) -> None:
         SnsNotifier(topic_arn=_TOPIC)
@@ -264,7 +270,7 @@ class TestSnsNotifierOnMoto:
     ) -> None:
         SnsNotifier(topic_arn=_TOPIC).notify(_make_event(state="Failed"))
 
-        assert _publish_failures(caplog) == [{"flow": "etl-x", "run": "run-1", "state": "Failed"}]
+        assert _publish_failures(caplog) == [_FAILURE_FIELDS]
 
 
 class _RecordingNotifier:

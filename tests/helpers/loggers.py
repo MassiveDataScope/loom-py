@@ -48,12 +48,12 @@ class CapturedLog:
 
     Args:
         caplog: The fixture that captured the records.
-        logger: The name of the logger whose events are read; every logger when ``None``.
+        loggers: The names of the loggers whose events are read; every logger when none.
     """
 
-    def __init__(self, caplog: pytest.LogCaptureFixture, logger: str | None = None) -> None:
+    def __init__(self, caplog: pytest.LogCaptureFixture, *loggers: str) -> None:
         self._caplog = caplog
-        self._logger = logger
+        self._loggers = loggers
 
     @property
     def calls(self) -> list[tuple[str, dict[str, Any]]]:
@@ -61,7 +61,7 @@ class CapturedLog:
         return [
             (record.getMessage(), record_fields(record))
             for record in self._caplog.records
-            if self._logger is None or record.name == self._logger
+            if not self._loggers or record.name in self._loggers
         ]
 
     @property
@@ -76,7 +76,7 @@ class CapturedLog:
             (record.getMessage(), record_fields(record))
             for record in self._caplog.records
             if record.levelno >= logging.ERROR
-            and (self._logger is None or record.name == self._logger)
+            and (not self._loggers or record.name in self._loggers)
         ]
 
     def named(self, event: str) -> list[dict[str, Any]]:

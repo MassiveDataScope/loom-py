@@ -12,6 +12,7 @@ from loom.connections.aws import AwsClients
 from loom.core.config import ConfigContext
 from loom.core.config.keys import ConfigKey
 from loom.core.connections.aws import AwsClientConfig
+from loom.prefect.event import PrefectEvent, PrefectKey
 from loom.prefect.notify._event import NotifyEvent
 from loom.prefect.notify._format import run_details, should_notify
 
@@ -68,8 +69,12 @@ class SnsNotifier:
             )
         except (BotoCoreError, ClientError):
             _log.warning(
-                "SNS publish failed",
-                extra={"flow": event.flow_name, "run": event.flow_run_name, "state": event.state},
+                PrefectEvent.NOTIFICATION_FAILED,
+                extra={
+                    PrefectKey.FLOW: event.flow_name,
+                    PrefectKey.RUN: event.flow_run_name,
+                    PrefectKey.STATE: event.state,
+                },
                 exc_info=True,
             )
 

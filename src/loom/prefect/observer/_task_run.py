@@ -10,6 +10,7 @@ from typing import Any
 
 from loom.core.observability.event import EventKind, LifecycleEvent, Scope
 from loom.prefect._async import run_sync
+from loom.prefect.event import PrefectEvent, PrefectKey
 from loom.prefect.observer._logging_bridge import _current_task_run_id
 
 _log = logging.getLogger(__name__)
@@ -46,10 +47,8 @@ class PrefectTaskRunObserver:
         if event.scope is not Scope.STEP:
             return
         _log.debug(
-            "PrefectTaskRunObserver event step=%s kind=%s step_run_id=%s",
-            event.name,
-            event.kind,
-            event.id,
+            PrefectEvent.STEP_EVENT_RECEIVED,
+            extra={PrefectKey.STEP: event.name, PrefectKey.STATE: event.kind},
         )
         try:
             match event.kind:
@@ -61,9 +60,8 @@ class PrefectTaskRunObserver:
                     self._on_error(event)
         except Exception:  # noqa: BLE001
             _log.warning(
-                "PrefectTaskRunObserver swallowed exception (step=%s, kind=%s)",
-                event.name,
-                event.kind,
+                PrefectEvent.STEP_EVENT_FAILED,
+                extra={PrefectKey.STEP: event.name, PrefectKey.STATE: event.kind},
                 exc_info=True,
             )
 

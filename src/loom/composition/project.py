@@ -14,6 +14,7 @@ import msgspec
 
 from loom.composition import phases
 from loom.composition.application import Application
+from loom.composition.event import CompositionEvent, CompositionKey
 from loom.connections.resolvers import with_built_in_resolvers
 from loom.core.cache.wiring import CacheGateways
 from loom.core.config import (
@@ -27,11 +28,13 @@ from loom.core.config.overrides import load_application_config
 from loom.core.discovery.scanner import PackageScanner
 from loom.core.environment import Environment, resolve_environment, select_config_paths
 from loom.core.locator import DEFAULT_CODE_PATH, add_code_path
+from loom.core.logger import LogField
 from loom.core.observability.config import ObservabilityConfig
 from loom.core.observability.observability import Observability
 from loom.core.resources import Resource, ResourceKind, closing
 from loom.core.stores import resolve_store_plugin
 from loom.core.stores.catalog import StoreCatalog, StoreKey, load_catalog
+from loom.jobs.event import JobsKey
 
 if TYPE_CHECKING:
     from loom.composition.recipe import Runtime
@@ -336,19 +339,12 @@ class Project:
             resources=roster.resources,
         )
         _log.info(
-            "loom.composition.composed",
+            CompositionEvent.APPLICATION_COMPOSED,
             extra={
-                "runtime": type(runtime).__qualname__,
-                "use_cases": len(discovered.use_cases),
-                "jobs": len(discovered.jobs),
-                "store_plugins": stores.store_plugins,
-                "keys": len(kernel.container.bindings()),
-                "installers": len(discovered.installers),
-                "overrides": len(recipe.overrides),
-                "agents": len(ai.plans),
-                "mcp_servers": len(ai.mcp_servers),
-                "phase_ms": clock.ms,
-                "duration_ms": clock.total_ms,
+                LogField.USE_CASE_COUNT: len(discovered.use_cases),
+                JobsKey.COUNT: len(discovered.jobs),
+                CompositionKey.PHASES: clock.laps,
+                LogField.DURATION_MS: clock.total_ms,
             },
         )
         return application

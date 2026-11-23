@@ -9,6 +9,7 @@ import pytest
 
 from loom.connections.aws import AwsClients
 from loom.core.engine.events import AbandonReason
+from loom.core.job.event import JobKey
 from loom.core.job.outcome import (
     Abandoned,
     Failed,
@@ -27,6 +28,7 @@ from loom.jobs.aws.queue import (
 )
 from loom.jobs.aws.settlement import SETTLEMENT_TIMEOUT_S, SQSJobSettlement
 from loom.jobs.aws.sqs import SQSConfig
+from loom.jobs.event import JobsEvent, JobsKey
 from tests.helpers.aws import ACCOUNT, OTHER_REGION
 from tests.helpers.aws_island import FakeAwsIsland
 from tests.helpers.loggers import logged_events
@@ -136,7 +138,7 @@ class TestSQSJobSettlement:
         redelivered = sqs.settle_all([(_record("a"), _abandoned())])
 
         assert (redelivered, sum(sqs.client.calls.values())) == ([], 0)
-        assert len(_logged(caplog, outcome="discarded")) == 1
+        assert len(_logged(caplog, JobsEvent.SETTLEMENT_MESSAGE_DISCARDED)) == 1
 
     def test_a_postponed_message_is_sent_again_with_its_delay_and_one_postponement_more(
         self, settling: Callable[..., Settling]
@@ -185,8 +187,8 @@ class TestSQSJobSettlement:
 
         redelivered = sqs.settle_all([(_record("a"), _failed()), (_record("b"), _failed())])
 
-        (line,) = _logged(caplog, "SQS settlement entries failed")
-        assert (_ids(redelivered), line["entries"]) == (["a", "b"], {"a": "Throttled"})
+        (line,) = _logged(caplog, JobsEvent.SETTLEMENT_ENTRIES_FAILED)
+        assert (_ids(redelivered), line[JobsKey.FAILED_ENTRIES]) == (["a", "b"], ["a:Throttled"])
 
     def test_a_call_that_raises_reports_every_message_of_it(
         self, settling: Callable[..., Settling]
@@ -230,8 +232,8 @@ class TestSQSJobSettlement:
         redelivered = sqs.settle_all([(_record(name), _abandoned("no")) for name in "ab"])
 
         assert (_ids(redelivered), sqs.client.batches) == (["a", "b"], [])
-        assert len([r for r in caplog.records if "settlement call raised" in str(r.msg)]) == 1
-        assert not _logged(caplog, "SQS settlement entries failed")
+        assert len(_logged(caplog, JobsEvent.SETTLEMENT_CALL_RAISED)) == 1
+        assert not _logged(caplog, JobsEvent.SETTLEMENT_ENTRIES_FAILED)
 
     def test_a_message_of_no_configured_queue_is_reported_and_nothing_is_sent(
         self, settling: Callable[..., Settling]
@@ -252,9 +254,8 @@ class TestSQSJobSettlement:
 
         redelivered = sqs.settle_all(stray)
 
-        errors = _logged(caplog, queue_arn=foreign)
+        errors = _logged(caplog, JobsEvent.SETTLEMENT_QUEUE_UNREACHABLE, **{JobKey.QUEUE: foreign})
         assert (_ids(redelivered), len(errors)) == (["a", "b"], 1)
-        assert "not the one this function consumes" in str(errors[0]["event"])
 
     def test_the_calls_are_grouped_by_action_in_batches_of_ten_and_nothing_is_deleted(
         self, settling: Callable[..., Settling]

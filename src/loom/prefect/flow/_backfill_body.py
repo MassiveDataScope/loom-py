@@ -23,6 +23,7 @@ from loom.etl.pipeline import ETLPipeline
 from loom.etl.runner import ETLRunner
 from loom.prefect._placeholders import resolve_placeholder
 from loom.prefect._summary import set_run_summary
+from loom.prefect.event import PrefectEvent, PrefectKey
 from loom.prefect.flow._common import prefect_flow_run_id, prefect_run_anchor
 from loom.prefect.flow._params import record_run_params, resolve_run_params
 from loom.prefect.flow._runtime import (
@@ -145,19 +146,17 @@ def build_backfill_body(
 
         actual_path = loom_variable(STORAGE_CONFIG_VARIABLE) or storage_config_path
         run_id_base = f"{flow_name}-{uuid4().hex[:8]}"
-        for index, (chunk_start, chunk_end) in enumerate(windows, start=1):
+        for chunk_start, chunk_end in windows:
             chunk_params = msgspec.structs.replace(
                 params, **{window_start_field: chunk_start, window_end_field: chunk_end}
             )
             label = format(chunk_start, _CHUNK_ALGEBRA[chunk].label)
             _log.info(
-                "backfill %s env=%s chunk %d/%d window=[%s, %s)",
-                flow_name,
-                environment,
-                index,
-                len(windows),
-                chunk_start.isoformat(),
-                chunk_end.isoformat(),
+                PrefectEvent.BACKFILL_CHUNK_STARTED,
+                extra={
+                    PrefectKey.FLOW: flow_name,
+                    PrefectKey.WINDOW: f"{chunk_start.isoformat()}/{chunk_end.isoformat()}",
+                },
             )
             _run_slice(
                 actual_path,
@@ -174,9 +173,7 @@ def build_backfill_body(
         finalize_params = msgspec.structs.replace(
             params, **{window_end_field: _floor_chunk(_now_utc(), chunk)}
         )
-        _log.info(
-            "backfill %s env=%s finalize include=%s", flow_name, environment, finalize_processes
-        )
+        _log.info(PrefectEvent.BACKFILL_FINALIZE_STARTED, extra={PrefectKey.FLOW: flow_name})
         _run_slice(
             actual_path,
             pipeline,

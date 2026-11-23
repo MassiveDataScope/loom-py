@@ -11,6 +11,7 @@ from loom.core.config.errors import ConfigError
 from loom.core.environment import resolve_environment
 from loom.prefect._async import run_sync
 from loom.prefect._summary import get_run_summary
+from loom.prefect.event import PrefectEvent, PrefectKey
 from loom.prefect.notify import Notifier, NotifyEvent
 
 _log = logging.getLogger(__name__)
@@ -34,10 +35,14 @@ def pause_schedule_on_failure(flow: Any, flow_run: Any, state: Any) -> None:  # 
 
         run_sync(_pause())
         _log.warning(
-            "pause-on-failure: deactivated schedules", extra={"deployment_id": str(deployment_id)}
+            PrefectEvent.SCHEDULES_PAUSED, extra={PrefectKey.DEPLOYMENT: str(deployment_id)}
         )
     except Exception:  # noqa: BLE001
-        _log.warning("pause-on-failure hook failed", exc_info=True)
+        _log.warning(
+            PrefectEvent.SCHEDULES_PAUSE_FAILED,
+            extra={PrefectKey.DEPLOYMENT: str(deployment_id)},
+            exc_info=True,
+        )
 
 
 def make_notification_hooks(
@@ -57,7 +62,7 @@ def make_notification_hooks(
                 try:
                     n.notify(event)
                 except Exception:  # noqa: BLE001
-                    _log.warning("notifier raised — swallowed", exc_info=True)
+                    _log.warning(PrefectEvent.NOTIFICATION_FAILED, exc_info=True)
 
         return _hook
 

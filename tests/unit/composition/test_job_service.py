@@ -23,6 +23,7 @@ from celery import current_app
 from loom.celery.runtime import CeleryRuntime
 from loom.celery.service import CeleryJobTransport
 from loom.composition import Application, Project, Recipe
+from loom.composition.event import CompositionEvent
 from loom.core.di.container import LoomContainer
 from loom.core.di.scope import Scope
 from loom.core.errors import JobTimeoutError
@@ -36,6 +37,7 @@ from loom.core.job.timer import JobDelayRefusedError, JobTimer
 from loom.core.resources import ResourceKind
 from loom.core.stores.profile import LAMBDA_PROFILE
 from loom.core.use_case import Delivery
+from loom.jobs.event import JobsEvent, JobsKey
 from loom.jobs.inline import InlineJobTransport
 from loom.rest.fastapi.runtime import FastAPIRuntime
 from loom.testing import ManualTimer, Override
@@ -159,7 +161,7 @@ class _LambdaJobsAdapter(JobsAdapter):
 @pytest.fixture
 def warnings_logged(caplog: pytest.LogCaptureFixture) -> CapturedLog:
     caplog.set_level(logging.INFO)
-    return CapturedLog(caplog, "loom.composition._jobs")
+    return CapturedLog(caplog, "loom.composition._jobs", "loom.jobs.event")
 
 
 class TestInlineTimer:
@@ -173,10 +175,8 @@ class TestInlineTimer:
 
         assert [resource.kind for resource in application.resources].count(ResourceKind.TIMER) == 1
         warning, policies = warnings_logged.calls
-        assert "wait in process memory" in warning[0]
-        assert "Celery or SQS" in warning[0]
-        assert policies[1]["transport"] == "inline"
-        assert "max_attempts=3" in policies[1]["jobs"][0]["retry"]
+        assert warning[0] == CompositionEvent.INLINE_JOBS_WAIT_IN_MEMORY
+        assert "max_attempts=3" in policies[1][JobsKey.RETRY_POLICIES][0]
 
     def test_waiting_at_shutdown_does_not_warn_that_delayed_jobs_are_lost(
         self, tmp_path: Path, warnings_logged: CapturedLog
@@ -223,7 +223,7 @@ class TestInlineTimer:
 
         assert timer.pending == 1
         assert [resource.kind for resource in application.resources].count(ResourceKind.TIMER) == 1
-        assert [event for event, _ in warnings_logged.calls] == ["Job retry policies"]
+        assert [event for event, _ in warnings_logged.calls] == [JobsEvent.RETRY_POLICIES_DESCRIBED]
 
     async def test_lambda_runs_jobs_on_a_timer_that_refuses_a_delay(
         self, tmp_path: Path, warnings_logged: CapturedLog
@@ -235,8 +235,8 @@ class TestInlineTimer:
             service.dispatch_after_commit(AcmePingJob, countdown=60)
         assert [resource.kind for resource in application.resources].count(ResourceKind.TIMER) == 1
         ((event, fields),) = warnings_logged.calls
-        assert (event, fields["transport"]) == ("Job retry policies", "inline")
-        assert "max_attempts=1 (no redelivery)" in fields["jobs"][0]["retry"]
+        assert event == JobsEvent.RETRY_POLICIES_DESCRIBED
+        assert "max_attempts=1 (no redelivery)" in fields[JobsKey.RETRY_POLICIES][0]
 
     def test_a_celery_application_has_no_timer(self, tmp_path: Path) -> None:
         application = job_project(tmp_path, _CELERY, "celery").compose(JobsAdapter(AcmePingJob))
@@ -409,7 +409,7 @@ class TestRetryPolicyLog:
     ) -> None:
         job_project(tmp_path, _CELERY, "celery").compose(JobsAdapter(AcmePingJob))
 
-        assert warnings_logged.named("Job retry policies") == []
+        assert warnings_logged.named(JobsEvent.RETRY_POLICIES_DESCRIBED) == []
 
     def test_an_inline_line_lists_only_the_jobs_the_inline_runner_serves(
         self, tmp_path: Path, warnings_logged: CapturedLog
@@ -418,9 +418,8 @@ class TestRetryPolicyLog:
 
         job_project(tmp_path, config, "inline").compose(JobsAdapter(AcmePingJob, AcmeEmailJob))
 
-        (line,) = warnings_logged.named("Job retry policies")
-        assert line["transport"] == "inline"
-        assert [entry["job"] for entry in line["jobs"]] == ["AcmePingJob"]
+        (line,) = warnings_logged.named(JobsEvent.RETRY_POLICIES_DESCRIBED)
+        assert [policy.split(":")[0] for policy in line[JobsKey.RETRY_POLICIES]] == ["AcmePingJob"]
 
     def test_an_app_whose_jobs_all_go_to_celery_logs_no_inline_line(
         self, tmp_path: Path, warnings_logged: CapturedLog
@@ -429,4 +428,4 @@ class TestRetryPolicyLog:
 
         job_project(tmp_path, config, "inline").compose(JobsAdapter(AcmeEmailJob))
 
-        assert warnings_logged.named("Job retry policies") == []
+        assert warnings_logged.named(JobsEvent.RETRY_POLICIES_DESCRIBED) == []

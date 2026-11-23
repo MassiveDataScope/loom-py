@@ -83,6 +83,11 @@ class PhaseClock:
         return result
 
     @property
+    def laps(self) -> list[str]:
+        """Each phase as ``name=milliseconds``, in the order they ran."""
+        return [f"{phase}={ms:.1f}" for phase, ms in self.ms.items()]
+
+    @property
     def total_ms(self) -> float:
         """The milliseconds since the clock started."""
         return (time.perf_counter() - self.started) * 1000

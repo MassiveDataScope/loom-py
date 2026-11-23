@@ -7,6 +7,7 @@ from typing import Any
 
 import pytest
 
+from loom.celery.event import CeleryEvent
 from loom.core.errors import (
     JobTimeoutError,
     PostCommitError,
@@ -165,5 +166,5 @@ class TestBrokenFailureCallbackSend:
         assert [
             entry["event"]
             for entry in logged_events(caplog)
-            if "not sent" in entry.get("event", "")
-        ] == ["Failure callback not sent"]
+            if entry["event"] == CeleryEvent.FAILURE_CALLBACK_NOT_SENT
+        ] == [CeleryEvent.FAILURE_CALLBACK_NOT_SENT]

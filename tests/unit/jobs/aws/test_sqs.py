@@ -27,13 +27,16 @@ from loom.core.engine.post_commit import (
 from loom.core.errors import PostCommitError
 from loom.core.job.context import clear_pending_dispatches, flush_pending_dispatches
 from loom.core.job.envelope import decode_job_envelope
+from loom.core.job.event import JobKey
 from loom.core.job.job import Job
 from loom.core.job.service import JobService
+from loom.core.log_names import LogField
 from loom.core.stores.catalog import DEFAULT_STORE
 from loom.core.stores.uow.coordinator import OrderedCommits
 from loom.core.use_case.use_case import UseCase
 from loom.jobs.aws.errors import SQSDispatchError, SQSQueueConfigError
 from loom.jobs.aws.sqs import MAX_MESSAGE_BYTES
+from loom.jobs.event import JobsEvent
 from tests.helpers.aws import OTHER_REGION, REGION
 from tests.helpers.aws_island import FakeAwsIsland
 from tests.helpers.jobs import (
@@ -57,7 +60,7 @@ _UNREPORTED = PostCommitEvent.ACTION_FAILED_AFTER_INTERRUPTION
 _NEVER_RAN = PostCommitEvent.SHIELDED_ACTION_NEVER_RAN
 
 _URL, _FIFO_URL = SQS_URL, SQS_FIFO_URL
-_SEND_FAILED = "SQS send failed"
+_SEND_FAILED = JobsEvent.SEND_FAILED
 _CONFIG = {
     "aws": {"region": OTHER_REGION},
     "sqs": {"queues": {"emails": {"url": _URL}, "orders": {"url": _FIFO_URL}}},
@@ -146,7 +149,12 @@ def _logged(caplog: pytest.LogCaptureFixture, event: str) -> list[dict[str, Any]
 
 def _failed_sends(caplog: pytest.LogCaptureFixture) -> list[tuple[str, str, str, str]]:
     return [
-        (fields["job"], fields["task_id"], fields["queue"], fields["error_code"])
+        (
+            fields[PostCommitKey.SENT_JOB],
+            fields[PostCommitKey.SENT_TASK_ID],
+            fields[JobKey.QUEUE],
+            fields[LogField.ERROR_CODE],
+        )
         for fields in _logged(caplog, _SEND_FAILED)
     ]
 

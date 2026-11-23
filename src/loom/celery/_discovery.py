@@ -6,10 +6,13 @@ import logging
 from collections.abc import Sequence
 from typing import Any
 
+from loom.celery.event import CeleryEvent
 from loom.core.discovery.base import DiscoveryResult
 from loom.core.discovery.worker import WorkerComponents, resolve_worker_components
 from loom.core.engine.compilable import Compilable
 from loom.core.job.job import Job
+from loom.core.log_names import LogField
+from loom.jobs.event import JobsKey
 from loom.rest.autocrud import build_auto_routes
 
 
@@ -36,10 +39,9 @@ def _resolve_compilables_and_jobs(
 def _emit_worker_init_graph(components: WorkerComponents) -> None:
     """Emit the Celery worker graph at startup."""
     logging.getLogger(__name__).info(
-        "[BOOT] Worker init graph",
+        CeleryEvent.WORKER_GRAPH_INITIALIZED,
         extra={
-            "jobs": len(components.jobs),
-            "use_cases": len(components.compilables) - len(components.jobs),
-            "models": len(components.models),
+            JobsKey.COUNT: len(components.jobs),
+            LogField.USE_CASE_COUNT: len(components.compilables) - len(components.jobs),
         },
     )

@@ -30,6 +30,7 @@ from loom.core.stores.catalog import DEFAULT_STORE
 from loom.core.stores.sql import CallerBoundSql, SqlQueryService
 from loom.core.use_case import Agent, Mcp
 from loom.core.use_case.use_case import UseCase
+from loom.jobs.event import JobsEvent, JobsKey
 from tests.helpers import acme_callbacks
 from tests.helpers.acme_callbacks import AcmePingCallback
 from tests.helpers.aws import OTHER_REGION
@@ -211,13 +212,13 @@ class TestBind:
 
         adapter.mount(_application(tmp_path, {}, adapter))
 
-        (line,) = CapturedLog(caplog).named("Job retry policies")
-        assert line["transport"] == "celery"
-        assert [entry["job"] for entry in line["jobs"]] == [
+        (line,) = CapturedLog(caplog).named(JobsEvent.RETRY_POLICIES_DESCRIBED)
+        policies = line[JobsKey.RETRY_POLICIES]
+        assert [policy.split(":")[0] for policy in policies] == [
             _PingJob.__qualname__,
             _SecondJob.__qualname__,
         ]
-        assert "max_attempts=3" in line["jobs"][0]["retry"]
+        assert "max_attempts=3" in policies[0]
 
     def test_mount_without_recipe_is_refused(self, tmp_path: Path) -> None:
         adapter = CeleryRuntime(jobs=[_PingJob])
