@@ -26,6 +26,7 @@ from loom.core.stores.catalog import StoreCapabilities, StoreKey, StoreSpec, sto
 from loom.core.stores.database import PoolConfig
 from loom.core.stores.plugin import StoreWiring
 from loom.core.stores.profile import PoolDefaults, RuntimeProfile, StorePluginContext
+from loom.stores.mongo.event import MongoEvent, MongoKey
 from loom.stores.mongo.ids import (
     IdPolicy,
     ObjectIdPolicy,
@@ -154,7 +155,9 @@ class MongoStorePlugin:
 def _unit_of_work_factory(
     client: AsyncMongoClient[Any], store: StoreKey, mongo_cfg: MongoRepositoryConfig
 ) -> MongoUnitOfWorkFactory:
-    _logger.info("mongo unit of work: transactions=%s", mongo_cfg.transactions)
+    _logger.info(
+        MongoEvent.UNIT_OF_WORK_CHOSEN, extra={MongoKey.TRANSACTIONS: mongo_cfg.transactions}
+    )
     if mongo_cfg.transactions:
         return MongoUnitOfWorkFactory.transactional(client, store)
     return MongoUnitOfWorkFactory.without_transactions()
@@ -188,7 +191,7 @@ async def _readiness(client: AsyncMongoClient[Any]) -> bool:
     try:
         await client.admin.command("ping")
     except Exception:
-        _logger.warning("mongo readiness probe failed", exc_info=True)
+        _logger.warning(MongoEvent.READINESS_PROBE_FAILED, exc_info=True)
         return False
     return True
 

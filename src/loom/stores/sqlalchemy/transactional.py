@@ -24,6 +24,7 @@ from loom.core.errors import (
 from loom.core.stores.repository.mutation import MutationEvent
 from loom.core.stores.uow.alone import single_store
 from loom.core.stores.uow.scope import InvocationScope, current_scope
+from loom.stores.sqlalchemy.event import SqlalchemyEvent, SqlalchemyKey
 from loom.stores.sqlalchemy.session_manager import SessionManager
 from loom.stores.sqlalchemy.uow import SQLAlchemyUnitOfWork
 
@@ -94,8 +95,11 @@ def transactional(
         if scope is not None and not scope.closed:
             _require_enlisted(scope, session_manager)
             _log.debug(
-                "TransactionalSessionReused",
-                extra={"owner": self.__class__.__name__, "method": method.__name__},
+                SqlalchemyEvent.TRANSACTION_SESSION_REUSED,
+                extra={
+                    SqlalchemyKey.OWNER: self.__class__.__name__,
+                    SqlalchemyKey.METHOD: method.__name__,
+                },
             )
             return await method(self, *args, **kwargs)
 
@@ -166,16 +170,19 @@ async def _run_in_own_invocation(
         raise
     except Exception:
         _log.exception(
-            "TransactionRolledBack",
-            extra={"owner": owner.__class__.__name__, "method": method.__name__},
+            SqlalchemyEvent.TRANSACTION_ROLLED_BACK,
+            extra={
+                SqlalchemyKey.OWNER: owner.__class__.__name__,
+                SqlalchemyKey.METHOD: method.__name__,
+            },
         )
         raise
     _log.info(
-        "TransactionCommitted",
+        SqlalchemyEvent.TRANSACTION_COMMITTED,
         extra={
-            "owner": owner.__class__.__name__,
-            "method": method.__name__,
-            "mutation_count": len(pending),
+            SqlalchemyKey.OWNER: owner.__class__.__name__,
+            SqlalchemyKey.METHOD: method.__name__,
+            SqlalchemyKey.MUTATION_COUNT: len(pending),
         },
     )
     return result

@@ -13,6 +13,7 @@ from loom.core.concurrency import run_in_executor
 from loom.core.config import ConfigContext
 from loom.core.connections.aws import AwsClientConfig
 from loom.core.errors import InvalidValue
+from loom.core.log_names import LogEvent, LogKey
 from loom.core.model import BaseModel
 from loom.core.stores.catalog import MODELS_ONLY, StoreCapabilities, StoreSpec
 from loom.core.stores.plugin import StoreWiring
@@ -32,6 +33,18 @@ _P = ParamSpec("_P")
 _T = TypeVar("_T")
 
 _logger = logging.getLogger(__name__)
+
+
+class DynamodbEvent(LogEvent):
+    """The events the DynamoDB store logs."""
+
+    READINESS_PROBE_FAILED = "dynamodb.readiness_probe_failed"
+
+
+class DynamodbKey(LogKey):
+    """The fields of a DynamoDB store record."""
+
+    TABLE = "loom.dynamodb.table"
 
 
 class DynamoDBRepositoryConfig(AwsClientConfig, frozen=True, kw_only=True):
@@ -162,7 +175,11 @@ async def _readiness(client: Any, table: str, executor: Executor) -> bool:
         response = await run_in_executor(executor, client.describe_table, TableName=table)
         status = response["Table"]["TableStatus"]
     except Exception:
-        _logger.warning("dynamodb readiness probe failed for table %r", table, exc_info=True)
+        _logger.warning(
+            DynamodbEvent.READINESS_PROBE_FAILED,
+            extra={DynamodbKey.TABLE: table},
+            exc_info=True,
+        )
         return False
     return status in _READY_TABLE_STATUSES
 

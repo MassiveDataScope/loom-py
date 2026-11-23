@@ -31,6 +31,7 @@ from loom.rest.fastapi.runtime import _discover_components
 from loom.rest.model import RestInterface, RestRoute
 from loom.stores.dynamodb.uow import DynamoDBUnitOfWorkFactory
 from loom.stores.mongo.uow import MongoUnitOfWorkFactory
+from loom.stores.sqlalchemy.event import SqlalchemyEvent, SqlalchemyKey
 from loom.stores.sqlalchemy.uow import SQLAlchemyUnitOfWorkFactory
 from tests.helpers.composition import composition_project
 from tests.unit.core.repository.mongo._fake import FakeMongoClient
@@ -307,8 +308,8 @@ class TestBuildBootstrapModelRules:
         assert discovered.models == ()
         assert runtime is not None
         assert factory is not None
-        assert "no BaseModel classes discovered" in caplog.text
-        assert "stores.default.backend: none" in caplog.text
+        empty = next(r for r in caplog.records if r.msg == SqlalchemyEvent.NO_MODELS_DISCOVERED)
+        assert empty.__dict__[SqlalchemyKey.STORE] == "default"
 
     @pytest.mark.parametrize(
         "store",

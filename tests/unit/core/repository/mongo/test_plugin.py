@@ -23,6 +23,7 @@ from loom.core.stores.profile import SERVER_PROFILE, WORKER_PROFILE, RuntimeProf
 from loom.core.stores.repository import Creatable
 from loom.core.stores.uow.coordinator import OrderedCommits
 from loom.core.stores.uow.scope import Frame, invocation
+from loom.stores.mongo.event import MongoEvent, MongoKey
 from loom.stores.mongo.plugin import MongoStorePlugin
 from loom.stores.mongo.repository import MongoRepository
 from loom.stores.mongo.uow import MongoSessions, MongoUnitOfWorkFactory
@@ -241,7 +242,9 @@ class TestMongoClientOptions:
         with caplog.at_level(logging.INFO, logger=backend_module.__name__):
             _wiring(monkeypatch, FakeMongoClient(), {**_SECTION, "transactions": transactions})
 
-        assert f"mongo unit of work: transactions={transactions}" in caplog.text
+        chosen = caplog.records[-1]
+        assert chosen.msg == MongoEvent.UNIT_OF_WORK_CHOSEN
+        assert chosen.__dict__[MongoKey.TRANSACTIONS] is transactions
 
     def test_prepare_models_rejects_autoincrement_naming_the_model(
         self,
@@ -298,7 +301,7 @@ class TestMongoClientOptions:
             assert await wiring.readiness() is False
 
         failure = caplog.records[-1]
-        assert failure.getMessage() == "mongo readiness probe failed"
+        assert failure.msg == MongoEvent.READINESS_PROBE_FAILED
         assert failure.exc_info is not None
         assert failure.exc_info[0] is ConnectionError
 

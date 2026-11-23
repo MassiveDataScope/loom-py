@@ -22,6 +22,7 @@ from loom.connections.clickhouse.client import async_client_options
 from loom.core.config.convert import convert_config
 from loom.core.config.errors import ConfigError
 from loom.core.errors import InvalidUse
+from loom.core.log_names import LogEvent, LogKey
 from loom.core.stores.sql.abc import UnknownConnectionError
 from loom.core.stores.sql.config import SqlConfig, SqlConnectionConfig, reject_retired_sql_keys
 from loom.stores.clickhouse._client import (
@@ -36,6 +37,19 @@ from loom.stores.clickhouse._client import (
 from loom.stores.clickhouse.executor import ClickHouseSqlExecutor
 
 _logger = logging.getLogger(__name__)
+
+
+class ClickhouseEvent(LogEvent):
+    """The events the ClickHouse store logs."""
+
+    CLIENT_CLOSE_FAILED = "clickhouse.client_close_failed"
+
+
+class ClickhouseKey(LogKey):
+    """The fields of a ClickHouse store record."""
+
+    CONNECTION = "loom.clickhouse.connection"
+
 
 _PROBE_SQL = "SELECT 1"
 _SENTINEL_ROLE = "loom_probe_sentinel_role_does_not_exist"
@@ -202,7 +216,9 @@ async def _aclose_all(clients: dict[str, AsyncClickHouseClient]) -> None:
             await client.close()
         except Exception:
             _logger.warning(
-                "Failed to close ClickHouse client for connection %r", name, exc_info=True
+                ClickhouseEvent.CLIENT_CLOSE_FAILED,
+                extra={ClickhouseKey.CONNECTION: name},
+                exc_info=True,
             )
     clients.clear()
 

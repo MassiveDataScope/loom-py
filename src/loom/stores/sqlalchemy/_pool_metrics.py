@@ -34,6 +34,7 @@ def instrumented_pool_class(base: type[Pool], sink: PoolMetricsSink, database: s
             sink.observe_checkout(database, time.perf_counter() - started)
             return connection
 
+    _InstrumentedPool.__module__ = base.__module__
     _InstrumentedPool.__name__ = f"Instrumented{base.__name__}"
     _InstrumentedPool.__qualname__ = _InstrumentedPool.__name__
     return _InstrumentedPool

@@ -17,6 +17,7 @@ from loom.core.model.types import Integer, Text
 from loom.core.stores.catalog import DEFAULT_STORE
 from loom.core.stores.database import DatabaseConfig, SchemaConfig
 from loom.core.stores.profile import SERVER_PROFILE
+from loom.stores.sqlalchemy.event import SqlalchemyEvent, SqlalchemyKey
 from loom.stores.sqlalchemy.plugin import (
     SQLAlchemyStorePlugin,
     check_time_zone_columns,
@@ -177,7 +178,11 @@ class TestSchemaMode:
         async with wiring.lifespan_init():
             pass
 
-        assert any("scoped_items" in record.getMessage() for record in caplog.records)
+        assert [
+            record.__dict__[SqlalchemyKey.TABLES]
+            for record in caplog.records
+            if record.msg == SqlalchemyEvent.SCOPED_TABLES_UNPROTECTED
+        ] == [["scoped_items"]]
 
     async def test_external_mode_fails_at_startup_when_a_table_is_missing(self) -> None:
         wiring = _wiring("sqlite+aiosqlite://", Plain, mode="external")

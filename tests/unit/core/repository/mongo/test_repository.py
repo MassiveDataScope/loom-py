@@ -15,6 +15,7 @@ from pymongo.errors import AutoReconnect, BulkWriteError
 from pymongo.results import DeleteResult, InsertManyResult
 
 from loom.core.errors import Conflict, UnsupportedQuery
+from loom.core.log_names import LogField
 from loom.core.model import BaseModel, ColumnField, DateTime, TimestampedModel
 from loom.core.model.enums import ServerDefault
 from loom.core.stores.repository import (
@@ -33,6 +34,7 @@ from loom.core.stores.repository import (
     SortSpec,
 )
 from loom.stores.mongo import repository as repository_module
+from loom.stores.mongo.event import MongoEvent, MongoKey
 from loom.stores.mongo.ids import ObjectIdPolicy, Uuid4IdPolicy
 from loom.stores.mongo.repository import MongoRepository, SessionProvider
 from loom.testing import make
@@ -532,7 +534,10 @@ class TestConflicts:
             await repo.create_many(payload)
 
         assert "Article with slug='a' already exists" in "".join(info.value.__notes__)
-        assert "MongoBulkUndoFailed" in caplog.text
+        undo_failed = caplog.records[-1]
+        assert undo_failed.msg == MongoEvent.BULK_UNDO_FAILED
+        assert undo_failed.__dict__[MongoKey.DOCUMENT_COUNT] == 1
+        assert undo_failed.__dict__[LogField.EXCEPTION_TYPE] == "AutoReconnect"
         assert set(collection.documents) == {"a"}
 
     async def test_other_bulk_write_errors_propagate(self) -> None:

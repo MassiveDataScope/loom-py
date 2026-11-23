@@ -23,6 +23,7 @@ from loom.core.stores.repository import (
     Updatable,
 )
 from loom.core.stores.repository.mutation import MutationEvent
+from loom.stores.sqlalchemy.event import SqlalchemyEvent, SqlalchemyKey
 from loom.stores.sqlalchemy.mixins import (
     SQLAlchemyBulkCreateMixin,
     SQLAlchemyCreateMixin,
@@ -149,7 +150,10 @@ class SQLAlchemyRepository(  # type: ignore[misc]
 
     async def on_transaction_committed(self, events: tuple[MutationEvent, ...]) -> None:
         """Handle post-commit mutation events (cache invalidation hook)."""
-        _log.debug("RepositoryTransactionCommitted", extra={"mutation_count": len(events)})
+        _log.debug(
+            SqlalchemyEvent.REPOSITORY_TRANSACTION_COMMITTED,
+            extra={SqlalchemyKey.MUTATION_COUNT: len(events)},
+        )
 
     def _require_own(self, session: AsyncSession, joined: AsyncSession | None) -> None:
         """Refuse *session* unless it is *joined*, or, with no participant, runs on this engine."""

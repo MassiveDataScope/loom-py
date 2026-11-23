@@ -35,6 +35,7 @@ from pymongo.errors import BulkWriteError, DuplicateKeyError, PyMongoError
 from pymongo.results import DeleteResult, InsertManyResult, InsertOneResult
 
 from loom.core.errors import Conflict, InternalError
+from loom.core.errors.summary import ErrorSummary
 from loom.core.model.convert import to_struct
 from loom.core.model.introspection import (
     column_annotations,
@@ -74,6 +75,7 @@ from loom.core.stores.repository.record import (
     refuse_key_change,
     single_id_attribute,
 )
+from loom.stores.mongo.event import MongoEvent, MongoKey
 from loom.stores.mongo.ids import IdPolicy, Uuid4IdPolicy
 from loom.stores.mongo.query_compiler import MongoFilter, MongoQueryCompiler, MongoSort
 from loom.stores.mongo.values import to_storage_datetime, to_storage_value
@@ -452,7 +454,13 @@ class MongoRepository(
         try:
             await self._collection.delete_many({_ID: {"$in": keys}})
         except PyMongoError as exc:
-            _log.error("MongoBulkUndoFailed", extra={"keys": keys, "conflict": str(conflict)})
+            _log.error(
+                MongoEvent.BULK_UNDO_FAILED,
+                extra={
+                    MongoKey.DOCUMENT_COUNT: len(keys),
+                    **ErrorSummary.of(exc).fields(),
+                },
+            )
             exc.add_note(f"while undoing a partial create_many after: {conflict}")
             raise
 
