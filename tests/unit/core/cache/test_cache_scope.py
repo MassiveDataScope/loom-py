@@ -17,6 +17,7 @@ from loom.core.cache.keys import (
     list_index_key,
     query_index_key,
 )
+from loom.core.errors import InvalidType
 from loom.core.stores.repository import PageParams
 from loom.core.stores.repository.query import QuerySpec
 from loom.stores.sqlalchemy.repository import with_session_scope
@@ -324,7 +325,7 @@ class TestTheScopeIsNeverLost:
         repository = SettingsRepository(has_session_settings=True)
         backend = CountingCacheStore()
 
-        with pytest.raises(RuntimeError, match="cache_scope"):
+        with pytest.raises(InvalidType, match="cache_scope"):
             _wrap(repository, backend)
 
     def test_a_repository_without_session_settings_needs_no_scope(self) -> None:

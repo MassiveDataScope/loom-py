@@ -28,7 +28,12 @@ from typing import Any, Literal, Protocol
 
 import msgspec
 
-from loom.core.errors import BODY_FIELD, BoundaryValidationError, UnsupportedBoundaryType
+from loom.core.errors import (
+    BODY_FIELD,
+    BoundaryValidationError,
+    InvalidValue,
+    UnsupportedBoundaryType,
+)
 from loom.core.model._json_schema import DEFS, definition, without_null
 
 _LAX_TYPE_REASON = (
@@ -367,7 +372,7 @@ def _to_bool(text: str) -> Any:
 
 def _refuse_number(text: str) -> str:
     if _LOOSE_NUMBER.fullmatch(text):
-        raise ValueError(_NOT_RFC3339)
+        raise InvalidValue(_NOT_RFC3339)
     return text
 
 

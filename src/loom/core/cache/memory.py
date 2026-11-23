@@ -15,6 +15,8 @@ from typing import Any
 
 from aiocache import SimpleMemoryCache  # type: ignore[import-untyped]
 
+from loom.core.errors import InvalidValue
+
 __all__ = ["BoundedMemoryCache"]
 
 
@@ -108,7 +110,7 @@ class BoundedMemoryCache(SimpleMemoryCache):  # type: ignore[misc]
     ) -> None:
         for name, bound in (("max_size", max_size), ("max_bytes", max_bytes)):
             if bound is not None and bound < 1:
-                raise ValueError(f"{name} must be at least 1, got {bound}")
+                raise InvalidValue(f"{name} must be at least 1")
         super().__init__(**kwargs)
         self.max_size = max_size
         self.max_bytes = max_bytes

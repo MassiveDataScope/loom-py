@@ -10,6 +10,7 @@ from typing import Any, ClassVar
 import msgspec
 
 from loom.core.config import ConfigError
+from loom.core.errors import InvalidValue
 from loom.core.model.enums import ServerDefault, ServerOnUpdate
 from loom.core.model.introspection import derived_key_of, get_column_fields, get_id_attributes
 
@@ -158,7 +159,7 @@ def single_id_attribute(model: type, *, why_single: str) -> str:
             message ("Mongo stores one key value in _id").
 
     Raises:
-        ValueError: If the model declares no primary-key field.
+        InvalidValue: If the model declares no primary-key field.
         ConfigError: If the primary key is composite.
     """
     names = get_id_attributes(model)
@@ -191,16 +192,16 @@ class PrimaryKey:
         """Return the key values *obj_id* names, one per key field.
 
         Raises:
-            ValueError: If the key is composite and *obj_id* is not a tuple of
+            InvalidValue: If the key is composite and *obj_id* is not a tuple of
                 one value per key field.
         """
         if len(self.names) == 1:
             return (obj_id,)
         if isinstance(obj_id, tuple) and len(obj_id) == len(self.names):
             return obj_id
-        raise ValueError(
+        raise InvalidValue(
             f"{self.model_name} has the composite primary key ({', '.join(self.names)}); "
-            f"pass a tuple of {len(self.names)} values in that order, not {obj_id!r}"
+            f"pass a tuple of {len(self.names)} values in that order"
         )
 
     def values_in(self, row: Any) -> tuple[Any, ...]:

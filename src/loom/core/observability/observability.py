@@ -24,6 +24,7 @@ from typing import Self
 from opentelemetry.trace import Link, NoOpTracer, Span, Tracer
 from prometheus_client import start_http_server
 
+from loom.core.config.errors import ConfigError
 from loom.core.config.observability import OtelConfig
 from loom.core.environment import Environment, resolve_environment
 from loom.core.logger.install import configure_logging
@@ -415,15 +416,15 @@ class Observability:
             Configured ``Observability`` ready for use.
 
         Raises:
-            ValueError: If OTEL config is invalid (wrong protocol, missing exporter).
-            ValueError: If OTEL log export is enabled while the log backend is not.
+            ConfigError: If OTEL config is invalid (wrong protocol, missing exporter).
+            ConfigError: If OTEL log export is enabled while the log backend is not.
         """
         if config.otel.enabled and config.otel.export_logs and not config.log.enabled:
-            raise ValueError(
+            raise ConfigError(
                 "observability.otel.export_logs requires observability.log.enabled=True."
             )
         if config.otel.enabled and config.otel.export_logs and config.otel.config is None:
-            raise ValueError(
+            raise ConfigError(
                 "observability.otel.export_logs requires observability.otel.config to be provided."
             )
 

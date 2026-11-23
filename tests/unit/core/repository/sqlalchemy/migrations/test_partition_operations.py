@@ -141,5 +141,5 @@ class TestPartitionOperations:
             ensure.reverse()
 
     def test_an_unknown_interval_is_refused_when_the_operation_is_built(self) -> None:
-        with pytest.raises(ValueError, match="interval 'week'"):
+        with pytest.raises(ValueError, match="interval is not one of"):
             EnsureRangePartitionsOp("events", "2026-01-01", "2026-03-01", "week")  # type: ignore[arg-type]

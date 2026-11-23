@@ -31,7 +31,7 @@ from loom.core.cache.result_codec import (
     to_payload,
 )
 from loom.core.engine.post_commit import store_channel
-from loom.core.errors import BoundaryValidationError
+from loom.core.errors import BoundaryValidationError, InvalidType, InvalidValue
 from loom.core.errors.summary import ErrorSummary
 from loom.core.model import LoomType, is_pydantic_model, loom_type_of
 from loom.core.model.convert import to_struct
@@ -245,7 +245,7 @@ class CachedRepository(
         _require_reported_scope(repository)
         model = getattr(repository, "model", None)
         if not isinstance(model, type):
-            raise TypeError(
+            raise InvalidType(
                 f"{type(repository).__qualname__} cannot be wrapped in CachedRepository: "
                 "it has no model, so the store its invalidations depend on is unknown"
             )
@@ -602,7 +602,7 @@ class CachedRepository(
         use that codec, but it would still refuse the base annotation.
 
         Raises:
-            RuntimeError: If a cached read declares a return type no codec can
+            InvalidType: If a cached read declares a return type no codec can
                 be built from.
         """
         owner = type(repository)
@@ -760,7 +760,7 @@ class CachedRepository(
     ) -> Callable[..., Awaitable[Any]]:
         codec = self._result_codecs.get(method_name)
         if codec is None:
-            raise RuntimeError(
+            raise InvalidType(
                 f"{type(self._repository).__qualname__}.{method_name} is decorated with "
                 "@cache_query but is not defined on the repository class, so CachedRepository "
                 "built no codec for it when the repository was wrapped. Define it as a method "
@@ -873,10 +873,10 @@ class CachedRepository(
         ``delete`` are typed ``IdT`` and stay unchecked.
 
         Raises:
-            TypeError: When the key is missing, ``None``, or of another type.
+            InvalidType: When the key is missing, ``None``, or of another type.
         """
         if not args or args[0] is None:
-            raise TypeError(
+            raise InvalidType(
                 f"{method_name}: @cache_query(scope='entity') needs the primary key"
                 " as first positional argument"
             )
@@ -888,7 +888,7 @@ class CachedRepository(
             for value, expected in zip(values, types, strict=True)
         ):
             names = ", ".join("Any" if t is None else t.__name__ for t in types)
-            raise TypeError(
+            raise InvalidType(
                 f"{method_name}: @cache_query(scope='entity') received a"
                 f" {type(args[0]).__name__} as primary key,"
                 f" expected {f'tuple[{names}]' if composite else names}"
@@ -1105,13 +1105,13 @@ class CachedRepository(
         deps: list[_DependencySpec] = []
         for spec in specs:
             if ":" not in spec:
-                msg = f"Invalid dependency spec '{spec}'. Expected '<entity>:<fk_field>'"
-                raise ValueError(msg)
+                msg = "A dependency spec must look like '<entity>:<fk_field>'"
+                raise InvalidValue(msg)
             entity_name, fk_field = spec.split(":", 1)
             entity = entity_name.strip()
             field = fk_field.strip()
             if not entity or not field:
-                raise ValueError(f"Invalid dependency spec '{spec}'. Empty entity or fk field")
+                raise InvalidValue("A dependency spec needs an entity and a fk field")
             deps.append(_DependencySpec(entity=entity, fk_field=field))
         return deps
 
@@ -1240,14 +1240,14 @@ def _require_full_repository(repository: object) -> None:
         repository: The instance about to be wrapped.
 
     Raises:
-        RuntimeError: If the class is marked ``@cached`` and a delegated method
+        InvalidType: If the class is marked ``@cached`` and a delegated method
             is missing.
     """
     if not declares_cache_policy(type(repository)):
         return
     missing = [name for name in _DELEGATED_METHODS if not callable(getattr(repository, name, None))]
     if missing:
-        raise RuntimeError(
+        raise InvalidType(
             f"{type(repository).__qualname__} cannot be wrapped in CachedRepository: "
             f"it does not implement {', '.join(missing)}. A @cached repository must "
             f"implement the full Repository protocol."
@@ -1272,12 +1272,12 @@ def _codec_for(
         The codec built from the annotation.
 
     Raises:
-        RuntimeError: If the annotation is missing, unresolvable, or outside
+        InvalidType: If the annotation is missing, unresolvable, or outside
             the supported grammar.
     """
     codec = build_result_codec(method, model=model)
     if codec is None:
-        raise RuntimeError(
+        raise InvalidType(
             f"{owner_name} cannot be wrapped in CachedRepository: {owner_name}.{method_name} "
             "is decorated with @cache_query but its return annotation is missing, "
             "unresolvable, or outside the supported grammar. Annotate its return type with "
@@ -1299,14 +1299,14 @@ def _require_reported_scope(repository: object) -> None:
         repository: The instance about to be wrapped.
 
     Raises:
-        RuntimeError: If the repository's session manager has session settings
+        InvalidType: If the repository's session manager has session settings
             and the repository does not implement ``cache_scope``.
     """
     if isinstance(repository, SupportsCacheScope):
         return
     session_manager = getattr(repository, "session_manager", None)
     if getattr(session_manager, "has_session_settings", False) is True:
-        raise RuntimeError(
+        raise InvalidType(
             f"{type(repository).__qualname__} cannot be wrapped in CachedRepository: "
             "its sessions carry session settings but it does not implement cache_scope(), "
             "so its cache entries could not be kept apart by scope."

@@ -22,6 +22,7 @@ from contextvars import ContextVar
 from typing import Any
 
 from loom.core.engine.post_commit import ActionT, PostCommitChannel, active_channel, store_channel
+from loom.core.errors import InvalidUse
 from loom.core.execution import execution_ended
 from loom.core.stores.uow.scope import current_scope
 
@@ -74,14 +75,14 @@ async def flush_pending_dispatches() -> None:
     the failures are reported as ``committed=False``.
 
     Raises:
-        RuntimeError: If called inside an execution.  The executor owns the
+        InvalidUse: If called inside an execution.  The executor owns the
             drain of its post-commit channel and runs it once the unit of
             work has closed.
         loom.core.errors.PostCommitError: If any dispatch raised;
             the remaining dispatches still run.
     """
     if active_channel() is not None and not execution_ended():
-        raise RuntimeError(
+        raise InvalidUse(
             "flush_pending_dispatches() cannot run inside an execution: "
             "UseCaseExecutor owns the post-commit channel and drains it "
             "after the unit of work closes."

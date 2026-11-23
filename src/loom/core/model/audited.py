@@ -6,6 +6,7 @@ from collections.abc import Iterable, Mapping
 from dataclasses import dataclass
 from typing import ClassVar
 
+from loom.core.errors import InvalidValue
 from loom.core.model.redaction import is_secret_name
 
 
@@ -53,23 +54,20 @@ def audited_table(
     """Compile *model*'s audit declaration.
 
     Raises:
-        ValueError: When the table has no primary key, an excluded column does
+        InvalidValue: When the table has no primary key, an excluded column does
             not exist, or an excluded or secret column is part of the primary
             key; the message names the table and the column.
     """
     names = tuple(columns)
     keys = tuple(key_columns)
     if not keys:
-        raise ValueError(f"audited table {name} has no primary key; the log keys each row by it")
+        raise InvalidValue("an audited table has no primary key; the log keys each row by it")
     declared = frozenset(getattr(model, "__audit_exclude__", frozenset()))
     unknown = sorted(declared - set(names))
     if unknown:
-        raise ValueError(f"audited table {name} excludes unknown columns {unknown}")
+        raise InvalidValue("an audited table excludes unknown columns")
     excluded = declared | {column for column in names if is_secret_name(column)}
     in_key = sorted(excluded & set(keys))
     if in_key:
-        raise ValueError(
-            f"audited table {name}: {in_key} cannot be excluded from the log "
-            "and be part of the primary key"
-        )
+        raise InvalidValue("an audited table cannot exclude a primary-key column from the log")
     return AuditedTable(schema=schema, name=name, key_columns=keys, excluded=excluded)

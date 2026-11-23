@@ -7,6 +7,7 @@ from typing import Any
 
 import pytest
 
+from loom.core.errors import InvalidType
 from loom.core.projection.loaders import (
     _MemoryCountLoader,
     _MemoryExistsLoader,
@@ -85,7 +86,7 @@ class TestMemoryLoadersSafetyCheck:
             pass
 
         bare = _Bare()
-        with pytest.raises(RuntimeError, match="relation 'notes' on _Bare"):
+        with pytest.raises(InvalidType, match="relation 'notes' on _Bare"):
             loader.load_from_object(bare)
 
     def test_error_includes_model_class_name(self) -> None:
@@ -95,7 +96,7 @@ class TestMemoryLoadersSafetyCheck:
             pass
 
         entity = MyEntity()
-        with pytest.raises(RuntimeError, match="MyEntity"):
+        with pytest.raises(InvalidType, match="MyEntity"):
             loader.load_from_object(entity)
 
     def test_error_includes_relation_name(self) -> None:
@@ -105,5 +106,5 @@ class TestMemoryLoadersSafetyCheck:
             pass
 
         model = SomeModel()
-        with pytest.raises(RuntimeError, match="attachments"):
+        with pytest.raises(InvalidType, match="attachments"):
             loader.load_from_object(model)

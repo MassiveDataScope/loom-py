@@ -11,6 +11,7 @@ from typing import Any
 
 from loom.core.command.base import Command
 from loom.core.command.introspection import get_patch_fields
+from loom.core.errors import InvalidValue
 from loom.core.use_case.field_ref import FieldExpr, FieldRef, PredicateOp
 
 
@@ -58,4 +59,4 @@ def predicate_is_present(
         return predicate_is_present(command, fields_set, predicate.left) and predicate_is_present(
             command, fields_set, predicate.right
         )
-    raise ValueError(f"Unsupported predicate op: {predicate.op}")
+    raise InvalidValue("Unsupported predicate op")

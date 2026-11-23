@@ -4,6 +4,7 @@ from __future__ import annotations
 
 from typing import Any
 
+from loom.core.errors import InvalidValue
 from loom.core.expr.nodes import (
     AndExpr,
     BetweenExpr,
@@ -86,7 +87,7 @@ class RootRef:
 
     def __init__(self, root: str) -> None:
         if not root.strip():
-            raise ValueError("RootRef.root must be a non-empty string.")
+            raise InvalidValue("RootRef.root must be a non-empty string.")
         self._root = root
 
     @property

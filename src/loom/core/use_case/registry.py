@@ -7,6 +7,7 @@ from dataclasses import dataclass
 from typing import Any
 
 from loom.core.engine.compilable import Compilable
+from loom.core.errors import InvalidValue, UnknownKey
 from loom.core.use_case.keys import get_use_case_key
 
 _CAMEL_BOUNDARY = re.compile(r"(?<!^)(?=[A-Z])")
@@ -42,7 +43,7 @@ class UseCaseRegistry:
         """Build a registry from compiled use cases.
 
         Raises:
-            ValueError: If duplicate keys are detected.
+            InvalidValue: If duplicate keys are detected.
         """
         by_name: dict[str, type[Compilable]] = {}
         by_type: dict[type[Compilable], str] = {}
@@ -52,8 +53,8 @@ class UseCaseRegistry:
                 continue
             existing = by_name.get(key)
             if existing is not None and existing is not use_case_type:
-                raise ValueError(
-                    f"Duplicate use-case key {key!r}: "
+                raise InvalidValue(
+                    "Duplicate use-case key: "
                     f"{existing.__qualname__} and {use_case_type.__qualname__}"
                 )
             by_name[key] = use_case_type
@@ -64,12 +65,12 @@ class UseCaseRegistry:
         """Return use-case type for ``key``.
 
         Raises:
-            KeyError: If key is not registered.
+            UnknownKey: If key is not registered.
         """
         use_case_type = self._by_name.get(key)
         if use_case_type is None:
-            raise KeyError(
-                f"Use-case key {key!r} is not registered. "
+            raise UnknownKey(
+                "Use-case key is not registered. "
                 "If a callback uses ApplicationInvoker with explicit jobs= bootstrap, "
                 "pass the required UseCase classes via use_cases= in bootstrap_worker()."
             )

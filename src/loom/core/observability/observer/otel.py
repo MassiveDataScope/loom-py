@@ -22,16 +22,15 @@ from opentelemetry import trace
 from opentelemetry.trace import Tracer
 
 from loom.core.config.observability import OtelConfig
+from loom.core.errors import InvalidValue
 from loom.core.model.redaction import reveal_for_driver
 from loom.core.observability.protocol import SpanFlusher
+from loom.core.plugins.optional import MissingExtraError
 
 if TYPE_CHECKING:
     from opentelemetry.sdk._logs.export import LogRecordExporter
 
-_ERR_MISSING_GRPC = "OTel protocol='grpc' requires 'opentelemetry-exporter-otlp-proto-grpc'."
-_ERR_MISSING_HTTP = (
-    "OTel protocol='http/protobuf' requires 'opentelemetry-exporter-otlp-proto-http'."
-)
+_OTEL_EXTRA = "etl-otel"
 _ERR_MISSING_SDK = (
     "OTEL span and log export requires 'opentelemetry-sdk'. "
     "Install it with: pip install 'loom-py[etl-otel]'"
@@ -53,20 +52,20 @@ def _load_span_exporter_cls(protocol: str) -> type[Any]:
         The OTLP span exporter class for the protocol.
 
     Raises:
-        ValueError: If the matching exporter package is not installed.
+        MissingExtraError: If the matching exporter package is not installed.
     """
     if protocol == "grpc":
         try:
             from opentelemetry.exporter.otlp.proto.grpc.trace_exporter import OTLPSpanExporter
         except ImportError as exc:
-            raise ValueError(_ERR_MISSING_GRPC) from exc
+            raise MissingExtraError(__name__, _OTEL_EXTRA, exc.name) from exc
         return OTLPSpanExporter
     try:
         from opentelemetry.exporter.otlp.proto.http.trace_exporter import (
             OTLPSpanExporter as HttpSpanExporter,
         )
     except ImportError as exc:
-        raise ValueError(_ERR_MISSING_HTTP) from exc
+        raise MissingExtraError(__name__, _OTEL_EXTRA, exc.name) from exc
     return HttpSpanExporter
 
 
@@ -80,23 +79,23 @@ def _load_log_exporter_cls(protocol: str) -> type[Any]:
         The OTLP log exporter class for the protocol.
 
     Raises:
-        ValueError: If the protocol is unsupported or its exporter package
-            is not installed.
+        InvalidValue: If the protocol is unsupported.
+        MissingExtraError: If its exporter package is not installed.
     """
     if protocol == "grpc":
         try:
             from opentelemetry.exporter.otlp.proto.grpc._log_exporter import OTLPLogExporter
         except ImportError as exc:
-            raise ValueError(_ERR_MISSING_GRPC) from exc
+            raise MissingExtraError(__name__, _OTEL_EXTRA, exc.name) from exc
         return OTLPLogExporter
     if protocol != "http/protobuf":
-        raise ValueError(_ERR_MISSING_HTTP)
+        raise InvalidValue("OTLP protocol must be 'http/protobuf' or 'grpc'.")
     try:
         from opentelemetry.exporter.otlp.proto.http._log_exporter import (
             OTLPLogExporter as HttpLogExporter,
         )
     except ImportError as exc:
-        raise ValueError(_ERR_MISSING_HTTP) from exc
+        raise MissingExtraError(__name__, _OTEL_EXTRA, exc.name) from exc
     return HttpLogExporter
 
 
@@ -121,8 +120,8 @@ def build_tracer(config: OtelConfig) -> tuple[Tracer, SpanFlusher | None]:
         The tracer, and the provider to force-flush when Loom owns one.
 
     Raises:
-        ValueError: If the protocol is unsupported or its OTLP exporter
-            package is not installed.
+        ConfigError: If the protocol is unsupported.
+        MissingExtraError: If its OTLP exporter package is not installed.
         ImportError: If ``opentelemetry-sdk`` is not installed.
     """
     config.validate()
@@ -257,7 +256,8 @@ def install_otel_log_export(
 
     Raises:
         ImportError: If ``opentelemetry-sdk`` is not installed.
-        ValueError: If the configured protocol has no installed OTLP exporter.
+        ConfigError: If the configured protocol is unsupported.
+        MissingExtraError: If its OTLP exporter package is not installed.
     """
     global _LOG_EXPORT_STATE
     config.validate()

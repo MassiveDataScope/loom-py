@@ -6,6 +6,7 @@ from dataclasses import dataclass
 from graphlib import TopologicalSorter
 from typing import Any, Protocol
 
+from loom.core.errors import InternalError, InvalidType, InvalidValue
 from loom.core.model.projection import (
     PROJECTION_DEFAULT_MISSING,
     Projection,
@@ -80,8 +81,8 @@ def build_projection_plan(projections: Mapping[str, Projection]) -> ProjectionPl
         :class:`ProjectionPlan` with topologically ordered levels.
 
     Raises:
-        ValueError: If a dependency cycle is detected.
-        TypeError: If a loader exposes neither ``load_from_object`` nor ``load_many``.
+        InvalidValue: If a dependency cycle is detected.
+        InvalidType: If a loader exposes neither ``load_from_object`` nor ``load_many``.
     """
     if not projections:
         return ProjectionPlan(levels=())
@@ -96,7 +97,7 @@ def build_projection_plan(projections: Mapping[str, Projection]) -> ProjectionPl
     while sorter.is_active():
         ready = tuple(sorter.get_ready())
         if not ready:
-            raise ValueError("Projection dependency cycle detected")
+            raise InvalidValue("Projection dependency cycle detected")
         level = tuple(
             _build_projection_step(name=name, projection=projections[name]) for name in ready
         )
@@ -119,7 +120,7 @@ def build_projection_plan_from_steps(steps: Mapping[str, ProjectionStep]) -> Pro
         :class:`ProjectionPlan` with topologically ordered levels.
 
     Raises:
-        ValueError: If a dependency cycle is detected.
+        InvalidValue: If a dependency cycle is detected.
     """
     if not steps:
         return ProjectionPlan(levels=())
@@ -134,7 +135,7 @@ def build_projection_plan_from_steps(steps: Mapping[str, ProjectionStep]) -> Pro
     while sorter.is_active():
         ready = tuple(sorter.get_ready())
         if not ready:
-            raise ValueError("Projection dependency cycle detected")
+            raise InvalidValue("Projection dependency cycle detected")
         levels.append(tuple(steps[name] for name in ready))
         sorter.done(*ready)
 
@@ -215,7 +216,7 @@ def _partition_execution_steps(
             memory_steps.append(step)
         else:
             if backend_context is None:
-                raise RuntimeError(f"Projection '{step.name}' requires backend context")
+                raise InternalError(f"Projection '{step.name}' requires backend context")
             backend_steps.append(step)
     return _ExecutionBuckets(
         backend=tuple(backend_steps),
@@ -263,7 +264,7 @@ def _build_projection_step(
     loader = projection.loader
     prefer_memory = _has_declared_callable(loader, "load_from_object")
     if not prefer_memory and not _has_declared_callable(loader, "load_many"):
-        raise TypeError(
+        raise InvalidType(
             f"Projection '{name}': loader must implement 'load_from_object' or 'load_many'. "
             f"Got {type(loader).__name__}. Use CountLoader/ExistsLoader/JoinFieldsLoader "
             f"and call compile_all() before creating a repository."

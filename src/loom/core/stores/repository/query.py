@@ -5,6 +5,7 @@ from typing import Annotated, Any, Generic, Literal, TypeVar
 
 import msgspec
 
+from loom.core.errors import InvalidValue
 from loom.core.model import LoomFrozenStruct
 
 OutputT = TypeVar("OutputT", bound=msgspec.Struct, covariant=True)
@@ -184,9 +185,9 @@ class PageParams(LoomFrozenStruct, frozen=True, kw_only=True):
 
     def __post_init__(self) -> None:
         if self.page < FIRST_PAGE:
-            raise ValueError(f"page must be >= {FIRST_PAGE}")
+            raise InvalidValue(f"page must be >= {FIRST_PAGE}")
         if not (MIN_PAGE_LIMIT <= self.limit <= MAX_PAGE_LIMIT):
-            raise ValueError(f"limit must be in [{MIN_PAGE_LIMIT}, {MAX_PAGE_LIMIT}]")
+            raise InvalidValue(f"limit must be in [{MIN_PAGE_LIMIT}, {MAX_PAGE_LIMIT}]")
 
     @property
     def offset(self) -> int:

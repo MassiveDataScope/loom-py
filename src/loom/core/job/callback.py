@@ -5,6 +5,7 @@ from collections.abc import Callable, Collection, Mapping, Sequence
 from enum import StrEnum
 from typing import TYPE_CHECKING, Any
 
+from loom.core.errors import InvalidValue
 from loom.core.execution import ExecutionScope
 from loom.core.identity import current_caller
 
@@ -108,7 +109,7 @@ class DispatchableCallbacks:
             *callback_types: The callbacks the dispatch attaches; ``None`` for none.
 
         Raises:
-            ValueError: Naming a callback the scan did not find, or each reserved
+            InvalidValue: Naming a callback the scan did not find, or each reserved
                 key the payload holds when a callback is attached.
         """
         attached = [callback_type for callback_type in callback_types if callback_type is not None]
@@ -117,7 +118,7 @@ class DispatchableCallbacks:
         self._refuse_undiscovered(attached)
         reserved = sorted(_HOOK_ARGUMENTS.intersection(payload))
         if reserved:
-            raise ValueError(
+            raise InvalidValue(
                 f"A job payload with a callback cannot hold {', '.join(reserved)}: "
                 "the callback hooks receive these arguments"
             )
@@ -125,7 +126,7 @@ class DispatchableCallbacks:
     def _refuse_undiscovered(self, attached: Sequence[type[JobCallback]]) -> None:
         for callback_type in attached:
             if callback_type not in self._discovered:
-                raise ValueError(
+                raise InvalidValue(
                     f"Job callback {callback_type.__module__}.{callback_type.__qualname__} was "
                     "not discovered: inherit from JobCallback in a package listed in app.packages"
                 )

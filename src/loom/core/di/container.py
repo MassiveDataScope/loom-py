@@ -47,6 +47,7 @@ from loom.core.di.introspection import (
     plain_key,
 )
 from loom.core.di.scope import Scope
+from loom.core.errors import InvalidUse, InvalidValue
 from loom.core.errors.summary import ErrorSummary
 from loom.core.execution import ExecutionKinds, Kind, NoExecution
 
@@ -151,7 +152,7 @@ class LoomContainer:
         built singleton is kept.
 
         Raises:
-            ValueError: When constructors are already read another way.
+            InvalidUse: When constructors are already read another way.
             ContainerSealed: When the container is sealed on the default reading.
         """
         with STRUCTURE_LOCK:
@@ -159,7 +160,7 @@ class LoomContainer:
             if reader.classify_key is classify_key and reader.implicit is implicit:
                 return False
             if reader != SignatureReader(self.kinds):
-                raise ValueError("the container already reads constructors another way")
+                raise InvalidUse("the container already reads constructors another way")
             self._refuse_if_sealed(DependencyGraph)
             self._install_reader(SignatureReader(self.kinds, classify_key, implicit))
             self._drop_compiled()
@@ -440,7 +441,7 @@ class LoomContainer:
         declaring a kind on :attr:`kinds` or binding its resolver.
 
         Raises:
-            ValueError: When *analysis* analysed another dependency graph
+            InvalidValue: When *analysis* analysed another dependency graph
                 than :attr:`graph`.
             DependencyGraphError: A reached singleton declaring an unbound
                 kind, with the path from its root.
@@ -467,7 +468,7 @@ class LoomContainer:
     def _reached(self, analysis: GraphAnalysis, deferred: Collection[Kind]) -> frozenset[Node]:
         """What *analysis* reaches from its roots once every kind is bound, *deferred* skipped."""
         if analysis.graph is not self._graph:
-            raise ValueError("seal() was given the analysis of another dependency graph")
+            raise InvalidValue("seal() was given the analysis of another dependency graph")
         self._graph.analyse(analysis.roots, (refuse_unbound(self.kinds, skip=deferred),))
         return analysis.reachable
 

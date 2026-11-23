@@ -131,7 +131,7 @@ class TestDeclaredConstraints:
     def test_a_configured_naming_convention_with_an_unknown_kind_names_the_setting(self) -> None:
         with pytest.raises(
             ConfigError,
-            match=r"^stores\.default\.schema\.naming_convention: unknown kind 'primary'",
+            match=r"^stores\.default\.schema\.naming_convention: unknown kind;",
         ):
             configured_naming_convention({"primary": "pk_%(table_name)s"}, path="stores.default")
 

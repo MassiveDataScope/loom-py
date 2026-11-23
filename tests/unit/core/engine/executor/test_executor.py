@@ -16,7 +16,7 @@ import pytest
 from loom.core.bootstrap.kernel import create_kernel
 from loom.core.engine.compiler import UseCaseCompiler
 from loom.core.engine.executor import UseCaseExecutor
-from loom.core.errors import UndeclaredStoreWrite
+from loom.core.errors import InvalidUse, UndeclaredStoreWrite
 from loom.core.execution import ExecutionContext, current_execution
 from loom.core.identity import ANONYMOUS
 from loom.core.stores.catalog import DEFAULT_STORE
@@ -64,7 +64,7 @@ class TestRun:
         assert probe.session.caller is ALICE
 
     async def test_with_neither_run_names_both(self, executor: UseCaseExecutor) -> None:
-        with pytest.raises(TypeError, match=r"factory=.*builder="):
+        with pytest.raises(InvalidUse, match=r"factory=.*builder="):
             await executor.run(AcmeProbe, identity=ALICE)
 
         assert JOURNAL.entries == []

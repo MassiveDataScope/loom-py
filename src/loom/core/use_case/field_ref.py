@@ -5,6 +5,7 @@ from enum import StrEnum
 from typing import Any
 
 from loom.core.command.base import Command
+from loom.core.errors import InvalidValue
 from loom.core.model.base import BaseModel
 
 FieldRoot = type[Command] | type[BaseModel] | str
@@ -37,7 +38,7 @@ class FieldRef:
     def leaf(self) -> str:
         leaf = next(reversed(self.path), None)
         if leaf is None:
-            raise ValueError("FieldRef.path cannot be empty.")
+            raise InvalidValue("FieldRef.path cannot be empty.")
         return leaf
 
 

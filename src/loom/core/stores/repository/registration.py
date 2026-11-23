@@ -8,6 +8,7 @@ from loom.core.config import ConfigError
 from loom.core.di.container import LoomContainer
 from loom.core.di.introspection import KeyDependency, RepoDependency
 from loom.core.di.scope import Scope
+from loom.core.errors import InvalidType
 from loom.core.model import BaseModel, LoomStruct
 from loom.core.model.introspection import generic_type_arg
 from loom.core.stores.catalog import StoreKey, store_binding
@@ -242,7 +243,7 @@ def _build_repository_provider(
         if registration is not None:
             repository = build_registered_repository(context, registration)
         elif not issubclass(model, BaseModel):
-            raise RuntimeError(
+            raise InvalidType(
                 f"No default repository can be built for non-persistible type {model.__qualname__}"
             )
         else:

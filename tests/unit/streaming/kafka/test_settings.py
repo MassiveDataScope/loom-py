@@ -232,10 +232,10 @@ class TestKafkaSettingsResolution:
     def test_kafka_settings_raise_when_no_specific_or_default_config_exists(self) -> None:
         settings = KafkaSettings()
 
-        with pytest.raises(KeyError, match="missing-output"):
+        with pytest.raises(KeyError, match="route not found"):
             settings.producer_for("missing-output")
 
-        with pytest.raises(KeyError, match="missing-input"):
+        with pytest.raises(KeyError, match="route not found"):
             settings.consumer_for("missing-input")
 
 

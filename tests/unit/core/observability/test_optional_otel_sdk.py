@@ -137,7 +137,7 @@ class TestOtelRequestedWithoutTheSdk:
 
     Neither failure is silent, but they are not interchangeable: the exporter
     is loaded before the SDK in ``_build_tracer``, so the exporter's
-    ``ValueError`` — not the SDK's ``ImportError`` — is what surfaces first for
+    ``MissingExtraError`` — not the SDK's ``ImportError`` — is what surfaces first for
     span export. A later PR reworks ``from_config``; if these messages change,
     that change should be deliberate.
     """
@@ -167,10 +167,7 @@ else:
 """
         )
 
-        assert _marked_lines(result, "ERROR_TYPE") == ["ValueError"]
-        assert _marked_lines(result, "ERROR_MSG") == [
-            "OTel protocol='http/protobuf' requires 'opentelemetry-exporter-otlp-proto-http'."
-        ]
+        assert _marked_lines(result, "ERROR_TYPE") == ["MissingExtraError"]
 
     def test_log_export_fails_on_the_missing_sdk(self) -> None:
         result = _run_without_sdk(

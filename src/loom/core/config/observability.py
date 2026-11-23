@@ -7,6 +7,7 @@ from urllib.parse import urlparse
 
 import msgspec
 
+from loom.core.config.errors import ConfigError
 from loom.core.model import LoomFrozenStruct
 from loom.core.model.redaction import Dsn, RedactedMap
 
@@ -80,29 +81,22 @@ class OtelConfig(LoomFrozenStruct, frozen=True, forbid_unknown_fields=True):
         """Validate the transport protocol, the sampler, and the link bound.
 
         Raises:
-            ValueError: If protocol is unsupported.
-            ValueError: If the sampler name is unknown, the sampled ratio is
+            ConfigError: If protocol is unsupported.
+            ConfigError: If the sampler name is unknown, the sampled ratio is
                 outside ``[0.0, 1.0]``, or the link bound is not positive.
         """
         if self.protocol not in {"http/protobuf", "grpc"}:
-            raise ValueError(
+            raise ConfigError(
                 "observability.otel_config.protocol must be either 'http/protobuf' or 'grpc'."
             )
         if self.sampler not in SAMPLERS:
-            raise ValueError(
-                "observability.otel_config.sampler must be one of "
-                f"{sorted(SAMPLERS)}, got {self.sampler!r}."
+            raise ConfigError(
+                f"observability.otel_config.sampler must be one of {sorted(SAMPLERS)}."
             )
         if not 0.0 <= self.sampler_ratio <= 1.0:
-            raise ValueError(
-                "observability.otel_config.sampler_ratio must be within [0.0, 1.0], "
-                f"got {self.sampler_ratio!r}."
-            )
+            raise ConfigError("observability.otel_config.sampler_ratio must be within [0.0, 1.0].")
         if self.max_span_links < 1:
-            raise ValueError(
-                "observability.otel_config.max_span_links must be >= 1, "
-                f"got {self.max_span_links!r}."
-            )
+            raise ConfigError("observability.otel_config.max_span_links must be >= 1.")
         if (
             self.insecure
             and self.endpoint is not None

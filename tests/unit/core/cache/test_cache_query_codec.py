@@ -25,7 +25,7 @@ from hypothesis import strategies as st
 from loom.core.cache import CacheConfig, CachedRepository
 from loom.core.cache.decorators import cache_query
 from loom.core.cache.result_codec import build_result_codec
-from loom.core.errors import BoundaryValidationError
+from loom.core.errors import BoundaryValidationError, InvalidType
 
 from ._doubles import (
     AcmeCacheWidget,
@@ -214,7 +214,7 @@ class TestUnusableAnnotations:
     ) -> None:
         repository = OutOfGrammarReadRepository(_widgets(ROW_COUNT), AcmeCacheWidget)
 
-        with pytest.raises(RuntimeError) as excinfo:
+        with pytest.raises(InvalidType) as excinfo:
             wrap_with_cache(repository, cache_config)
 
         message = str(excinfo.value)
@@ -233,7 +233,7 @@ class TestUnusableAnnotations:
 
         codec_env.repository.attached = attached  # type: ignore[attr-defined]
 
-        with pytest.raises(RuntimeError, match="attached"):
+        with pytest.raises(InvalidType, match="attached"):
             _ = codec_env.wrapper.attached
 
 

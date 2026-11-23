@@ -71,9 +71,7 @@ def _check_now(now: datetime | None) -> None:
 def _require_now_for_expiring(grants: tuple[Grant, ...], now: datetime | None) -> None:
     expiry = next((grant.expires_at for grant in grants if grant.expires_at is not None), None)
     if now is None and expiry is not None:
-        raise ValueError(
-            f"A grant expires at {expiry.isoformat()}; pass now= to decide whether it is alive."
-        )
+        raise ValueError("A grant that expires needs now= to decide whether it is alive.")
 
 
 def _alive(grant: Grant, now: datetime | None) -> bool:

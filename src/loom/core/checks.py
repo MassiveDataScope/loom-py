@@ -49,6 +49,7 @@ import msgspec
 from loom.core.config.errors import ConfigError
 from loom.core.config.keys import FASTAPI_ENTRY, INTERPOLATION, ConfigKey
 from loom.core.environment import ENVIRONMENT_VARIABLE, Environment
+from loom.core.errors import InvalidValue
 from loom.core.plugins.entrypoints import MissingDependency, list_entry_points
 
 if TYPE_CHECKING:
@@ -221,11 +222,11 @@ class CheckSet:
         """Return a decorator registering a check under *check_id*.
 
         Raises:
-            ValueError: When *check_id* is outside the id scheme or taken.
+            InvalidValue: When *check_id* is outside the id scheme or taken.
         """
         _require_id(check_id)
         if check_id in self._checks:
-            raise ValueError(f"deploy check {check_id!r} is already registered")
+            raise InvalidValue("a deploy check id is already registered")
 
         def _register(check: DeployCheck) -> DeployCheck:
             self._checks[check_id] = check
@@ -241,11 +242,11 @@ class CheckSet:
         """Merge this set's checks into *checks*.
 
         Raises:
-            ValueError: When an id is already in *checks*, registered by another set.
+            InvalidValue: When an id is already in *checks*, registered by another set.
         """
         for check_id, check in self._checks.items():
             if check_id in checks:
-                raise ValueError(f"deploy check {check_id!r} is registered by two check sets")
+                raise InvalidValue("a deploy check id is registered by two check sets")
             checks[check_id] = check
 
 
@@ -339,7 +340,7 @@ class _Selection:
         Raises:
             ModuleNotFoundError: When a used set misses a module of loom.
             ConfigError: When a used set misses a third-party module.
-            ValueError: When two sets register one check id.
+            InvalidValue: When two sets register one check id.
         """
         checks: dict[str, DeployCheck] = {}
         checked: list[str] = []
@@ -406,7 +407,7 @@ def run_deploy_checks(
             ``checks.modules`` fails at import; or when a used set needs a
             third-party module that is not installed.
         ModuleNotFoundError: When a used set misses a module of loom itself.
-        ValueError: When two sets register one check id.
+        InvalidValue: When two sets register one check id.
     """
     section = _checks_section(config)
     _import_modules(section.modules)
@@ -487,9 +488,7 @@ def enforce_deploy_checks(
 
 def _require_id(check_id: str) -> None:
     if CHECK_ID.fullmatch(check_id) is None:
-        raise ValueError(
-            f"check id {check_id!r} must look like '<area>.<E|W><nnn>', e.g. 'loom.rest.E001'"
-        )
+        raise InvalidValue("a check id must look like '<area>.<E|W><nnn>', e.g. 'loom.rest.E001'")
 
 
 def _checks_section(config: ConfigContext) -> _ChecksConfig:

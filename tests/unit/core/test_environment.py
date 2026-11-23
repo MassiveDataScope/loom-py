@@ -223,7 +223,7 @@ class TestLoomVariable:
         assert loom_variable(CONFIG_DIR_VARIABLE) is None
 
     def test_only_loom_variables_are_read(self) -> None:
-        with pytest.raises(ValueError, match="HOME"):
+        with pytest.raises(ValueError, match="not a loom variable"):
             loom_variable("HOME")
 
 
@@ -249,5 +249,5 @@ class TestScopedLoomVariable:
     def test_only_loom_variables_are_set(self) -> None:
         scope = scoped_loom_variable("HOME", "/tmp")
 
-        with pytest.raises(ValueError, match="HOME"):
+        with pytest.raises(ValueError, match="not a loom variable"):
             scope.__enter__()

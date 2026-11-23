@@ -33,6 +33,7 @@ from loom.core.cache.keys import call_key
 from loom.core.cache.wiring import CacheGateways, cache_module, cache_module_for
 from loom.core.config import ConfigContext
 from loom.core.di.container import LoomContainer, ResolutionError
+from loom.core.errors import InvalidType
 from loom.core.logger.formats import record_fields
 from loom.core.model.redaction import RedactedMap
 from loom.core.stores.catalog import DEFAULT_STORE
@@ -260,7 +261,7 @@ class TestIncompleteRepository:
             )
             container = _container(module, cache_module(_single_alias()))
 
-            with pytest.raises(RuntimeError, match="ReadOnlyWidgetRepository") as info:
+            with pytest.raises(InvalidType, match="ReadOnlyWidgetRepository") as info:
                 container.resolve_repo(AcmeCacheWidget)
 
         assert "create" in str(info.value)

@@ -12,7 +12,7 @@ import msgspec
 import pytest
 
 from loom.core.config import ConfigError
-from loom.core.errors import BoundaryValidationError
+from loom.core.errors import BoundaryValidationError, InvalidType
 from loom.core.model import (
     BaseModel,
     BusinessKey,
@@ -198,7 +198,7 @@ class TestKeyFor:
         assert derived_id(other, v="x") != derived_id(UUID5, v="x")
 
     def test_a_model_that_derives_no_key_refuses_the_call(self) -> None:
-        with pytest.raises(ValueError, match="AcmeSlot derives no key"):
+        with pytest.raises(InvalidType, match="derives no key"):
             AcmeSlot.key_for({"portal": "p", "slot": 1})
 
     @pytest.mark.parametrize(
@@ -276,7 +276,7 @@ class TestBusinessKeyDeclaration:
             __business_key__=("portal",),
         )
 
-        with pytest.raises(ValueError, match="must be a BusinessKey"):
+        with pytest.raises(InvalidType, match="must be a BusinessKey"):
             business_key_of(model)
 
     def test_it_is_a_unique_constraint(self) -> None:
@@ -346,7 +346,7 @@ class TestDerivedDeclaration:
             __business_key__=BusinessKey("portal"),
         )
 
-        with pytest.raises(ValueError, match="must be annotated str"):
+        with pytest.raises(InvalidType, match="must be annotated str"):
             derived_key_of(model)
 
     def test_a_key_containing_its_own_derived_field_is_refused(self) -> None:
@@ -428,7 +428,7 @@ class TestVerifyKeys:
         assert [(m.row, m.expected) for m in mismatches] == [(bad, good["id"])]
 
     def test_a_model_that_derives_no_key_has_nothing_to_verify(self) -> None:
-        with pytest.raises(ValueError, match="AcmeSlot derives no key"):
+        with pytest.raises(InvalidType, match="derives no key"):
             verify_keys(AcmeSlot, [])
 
 

@@ -4,7 +4,7 @@ from collections.abc import Sequence
 from enum import StrEnum
 from typing import Any, ClassVar, Generic, NoReturn, TypeVar
 
-from loom.core.errors import NotFound
+from loom.core.errors import InvalidType, InvalidValue, NotFound
 from loom.core.execution.errors import MarkerNotResolved
 
 EntityT = TypeVar("EntityT")
@@ -429,8 +429,8 @@ def Mcp(server: str, *, include: Sequence[str]) -> Any:
             single-character glob patterns at runtime.
 
     Raises:
-        ValueError: If *include* is empty, or is a single string instead of
-            a sequence of patterns.
+        InvalidValue: If *include* is empty.
+        InvalidType: If *include* is a single string instead of a sequence of patterns.
 
     Example::
 
@@ -443,14 +443,13 @@ def Mcp(server: str, *, include: Sequence[str]) -> Any:
             ...
     """
     if isinstance(include, str):
-        raise ValueError(
+        raise InvalidType(
             "Mcp() include must be a sequence of glob patterns, not a single "
-            f"string; got include={include!r}. Wrap it in a list: "
-            f"include=[{include!r}]."
+            "string. Wrap it in a list."
         )
     normalized = tuple(include)
     if not normalized:
-        raise ValueError("Mcp() requires a non-empty include")
+        raise InvalidValue("Mcp() requires a non-empty include")
     return _McpMarker(server, normalized)
 
 
@@ -495,7 +494,7 @@ def Load(
     """Factory returning marker for preloaded entity parameters by field."""
 
     if (from_param is None) == (from_command is None):
-        raise ValueError("Load() requires exactly one of from_param or from_command")
+        raise InvalidValue("Load() requires exactly one of from_param or from_command")
 
     if from_param is not None:
         return _LoadMarker(
@@ -527,7 +526,7 @@ def Exists(
 ) -> Any:
     """Factory returning marker for boolean existence checks."""
     if (from_param is None) == (from_command is None):
-        raise ValueError("Exists() requires exactly one of from_param or from_command")
+        raise InvalidValue("Exists() requires exactly one of from_param or from_command")
 
     if from_param is not None:
         return _ExistsMarker(

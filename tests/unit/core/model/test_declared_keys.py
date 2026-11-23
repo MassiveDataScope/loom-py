@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import pytest
 
+from loom.core.errors import InvalidType, InvalidValue
 from loom.core.model import BaseModel, ColumnField, ScopedField
 from loom.core.model.introspection import (
     PartialUnique,
@@ -119,14 +120,18 @@ class TestDeclaredChecks:
         with pytest.raises(ValueError, match=r"Odd: __checks__ rule"):
             declared_checks(Odd)
 
-    @pytest.mark.parametrize("expression", ["", "   ", 42])
-    def test_a_check_without_an_sql_expression_is_rejected(self, expression: object) -> None:
+    @pytest.mark.parametrize(
+        ("expression", "error"), [("", InvalidValue), ("   ", InvalidValue), (42, InvalidType)]
+    )
+    def test_a_check_without_an_sql_expression_is_rejected(
+        self, expression: object, error: type[Exception]
+    ) -> None:
         class Blank(BaseModel):
             __tablename__ = "blank"
             __checks__ = {"positive": expression}
             id: int = ColumnField(Integer, primary_key=True)
 
-        with pytest.raises(ValueError, match=r"Blank: __checks__ rule 'positive'"):
+        with pytest.raises(error, match=r"Blank: __checks__ rule 'positive'"):
             declared_checks(Blank)
 
     @pytest.mark.parametrize("declared", [[("positive", "id > 0")], "id > 0", ("id > 0",)])
@@ -136,7 +141,7 @@ class TestDeclaredChecks:
             __checks__ = declared
             id: int = ColumnField(Integer, primary_key=True)
 
-        with pytest.raises(ValueError, match=r"Listed: __checks__ must be a mapping"):
+        with pytest.raises(InvalidType, match=r"Listed: __checks__ must be a mapping"):
             declared_checks(Listed)
 
     def test_a_check_rule_that_is_not_a_string_is_rejected(self) -> None:
@@ -145,7 +150,7 @@ class TestDeclaredChecks:
             __checks__ = {1: "id > 0"}
             id: int = ColumnField(Integer, primary_key=True)
 
-        with pytest.raises(ValueError, match=r"Numbered: __checks__ rule 1 must be a string"):
+        with pytest.raises(InvalidType, match=r"Numbered: __checks__ rule 1 must be a string"):
             declared_checks(Numbered)
 
     def test_partial_unique_that_is_not_a_mapping_is_rejected(self) -> None:
@@ -155,7 +160,7 @@ class TestDeclaredChecks:
             id: int = ColumnField(Integer, primary_key=True)
             is_owner: bool = ColumnField(Boolean)
 
-        with pytest.raises(ValueError, match=r"Listed: __partial_unique__ must be a mapping"):
+        with pytest.raises(InvalidType, match=r"Listed: __partial_unique__ must be a mapping"):
             declared_partial_unique(Listed)
 
     def test_partial_unique_indexes_are_read_from_the_model(self) -> None:
@@ -175,17 +180,25 @@ class TestDeclaredChecks:
             declared_partial_unique(Typo)
 
     @pytest.mark.parametrize(
-        "entry",
-        [((), "is_owner"), (("id",), ""), (("id",), None), ("id", "is_owner"), (("id",),)],
+        ("entry", "error"),
+        [
+            (((), "is_owner"), InvalidValue),
+            ((("id",), ""), InvalidValue),
+            ((("id",), None), InvalidType),
+            (("id", "is_owner"), InvalidType),
+            ((("id",),), InvalidValue),
+        ],
     )
-    def test_a_malformed_partial_unique_is_rejected(self, entry: object) -> None:
+    def test_a_malformed_partial_unique_is_rejected(
+        self, entry: object, error: type[Exception]
+    ) -> None:
         class Malformed(BaseModel):
             __tablename__ = "malformed"
             __partial_unique__ = {"owner": entry}
             id: int = ColumnField(Integer, primary_key=True)
             is_owner: bool = ColumnField(Boolean)
 
-        with pytest.raises(ValueError, match=r"Malformed: __partial_unique__ rule 'owner'"):
+        with pytest.raises(error, match=r"Malformed: __partial_unique__ rule 'owner'"):
             declared_partial_unique(Malformed)
 
     def test_a_partial_unique_rule_that_is_not_an_identifier_is_rejected(self) -> None:

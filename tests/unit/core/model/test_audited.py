@@ -10,5 +10,5 @@ from tests.unit.core.doubles import Note
 
 class TestAuditedWithoutPrimaryKey:
     def test_an_audited_table_without_a_primary_key_is_refused(self) -> None:
-        with pytest.raises(ValueError, match=r"events.*no primary key"):
+        with pytest.raises(ValueError, match=r"audited table has no primary key"):
             audited_table(Note, schema=None, name="events", columns=("body",), key_columns=())

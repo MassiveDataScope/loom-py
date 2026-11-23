@@ -25,11 +25,11 @@ class TestRoleCatalog:
             catalog.role("ghost")
 
     def test_rejects_an_undeclared_permission(self) -> None:
-        with pytest.raises(ValueError, match="etl.operate"):
+        with pytest.raises(ValueError, match="undeclared permission"):
             RoleCatalog([READ], [Role("operator", {READ, OPERATE})])
 
     def test_rejects_a_duplicate_role(self) -> None:
-        with pytest.raises(ValueError, match="viewer"):
+        with pytest.raises(ValueError, match="declared twice"):
             RoleCatalog([READ], [Role("viewer", {READ}), Role("viewer", set())])
 
     @pytest.mark.parametrize("name", ["", "has space", " lead", "tab\tname"])

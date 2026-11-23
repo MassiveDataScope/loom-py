@@ -74,7 +74,7 @@ class TestRegistry:
     def test_an_id_registered_twice_is_refused(self) -> None:
         registry = _registry()
 
-        with pytest.raises(ValueError, match=_ERROR_ID):
+        with pytest.raises(ValueError, match="already registered"):
             registry.register(_ERROR_ID)
 
     def test_an_application_registers_under_its_own_area(self) -> None:
@@ -252,7 +252,7 @@ class TestInstalledSetsRun:
             _Entry("shipping", lambda: _set_of(_ERROR_ID)),
         )
 
-        with pytest.raises(ValueError, match=_ERROR_ID):
+        with pytest.raises(ValueError, match="registered by two check sets"):
             run_deploy_checks(_config(billing={}, shipping={}), application=CheckSet())
 
     def test_each_run_scopes_its_own_configuration(self, monkeypatch: pytest.MonkeyPatch) -> None:

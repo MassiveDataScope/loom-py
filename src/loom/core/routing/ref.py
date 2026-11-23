@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+from loom.core.errors import InvalidValue
 from loom.core.model import LoomFrozenStruct
 
 
@@ -17,7 +18,7 @@ class LogicalRef(LoomFrozenStruct, frozen=True):
     def __post_init__(self) -> None:
         """Validate reference value."""
         if not self.value.strip():
-            raise ValueError("LogicalRef.value must be a non-empty string.")
+            raise InvalidValue("LogicalRef.value must be a non-empty string.")
 
     @property
     def ref(self) -> str:
