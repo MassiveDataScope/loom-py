@@ -6,9 +6,11 @@ import threading
 from collections.abc import Callable
 from typing import Literal
 
+from confluent_kafka import KafkaError
 from confluent_kafka import Message as _RawMessage
 from confluent_kafka import Producer as _Producer
 
+from loom.core.logger.field import ErrorSummary
 from loom.core.observability.event import LifecycleEvent, Scope
 from loom.core.observability.observability import Observability
 from loom.streaming.kafka._config import ProducerSettings
@@ -76,7 +78,7 @@ class KafkaProducerClient:
                 )
             self._producer.poll(0.0)
         except Exception as exc:
-            error = KafkaDeliveryError(str(exc))
+            error = KafkaDeliveryError(ErrorSummary.cite(exc))
             if self._obs is not None:
                 self._obs.emit(
                     LifecycleEvent.exception(
@@ -108,7 +110,7 @@ class KafkaProducerClient:
             else:
                 self._producer.flush(timeout_ms / 1000)
         except Exception as exc:
-            raise KafkaDeliveryError(str(exc)) from exc
+            raise KafkaDeliveryError(ErrorSummary.cite(exc)) from exc
         self._raise_pending_delivery_error()
 
     def close(self) -> None:
@@ -135,9 +137,9 @@ class KafkaProducerClient:
     def _build_delivery_callback(
         self,
         record: KafkaRecord[bytes],
-    ) -> Callable[[object | None, _RawMessage | None], None]:
-        def _callback(error: object | None, _: _RawMessage | None) -> None:
-            delivery_error = None if error is None else KafkaDeliveryError(str(error))
+    ) -> Callable[[KafkaError | None, _RawMessage | None], None]:
+        def _callback(error: KafkaError | None, _: _RawMessage | None) -> None:
+            delivery_error = None if error is None else KafkaDeliveryError(error.name())
             if delivery_error is not None:
                 with self._delivery_error_lock:
                     self._pending_delivery_error = delivery_error

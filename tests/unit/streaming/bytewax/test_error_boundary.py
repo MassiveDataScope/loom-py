@@ -92,6 +92,19 @@ class TestExecuteInBoundary:
         payload = cast(AcmePayload, original.payload)
         assert payload.value == "v"
 
+    def test_a_foreign_failure_is_named_by_its_type_without_its_text(self) -> None:
+        canary = "order 42 for alice@example.com"
+
+        result = _error_boundary._execute_in_boundary(
+            _error_boundary._classify_task,
+            _message(),
+            lambda: _raise(ValueError(canary)),
+            _boundary(),
+        )
+
+        assert isinstance(result, ErrorEnvelope)
+        assert result.reason == "ValueError"
+
     def test_execute_in_boundary_logs_managed_domain_error(
         self, monkeypatch: pytest.MonkeyPatch
     ) -> None:
@@ -144,6 +157,7 @@ class TestExecuteBatchInBoundary:
         ]
         assert original_payloads == [item.payload for item in originals]
         assert all(item.kind is ErrorKind.ROUTING for item in envelopes)
+        assert all(item.reason == "RuntimeError" for item in envelopes)
 
 
 class TestSplitNodeResult:

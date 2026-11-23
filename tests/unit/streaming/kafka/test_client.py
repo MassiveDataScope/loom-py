@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 import pytest
-from confluent_kafka import TopicPartition
+from confluent_kafka import KafkaError, TopicPartition
 from prometheus_client import CollectorRegistry, generate_latest
 
 from loom.core.observability.event import LifecycleEvent
@@ -21,7 +21,6 @@ from loom.streaming.kafka import (
 )
 from tests.unit.streaming.kafka.doubles import (
     ConsumerBackendStub,
-    FakeDeliveryError,
     FakeKafkaMessage,
     ProducerBackendStub,
     install_raw_consumer_stub,
@@ -31,9 +30,10 @@ from tests.unit.streaming.kafka.doubles import (
 pytestmark = pytest.mark.kafka
 
 
-class _FakeError:
-    def __str__(self) -> str:
-        return "boom"
+CANARY = "order 42 for alice@example.com"
+"""Broker or backend text that may carry values; no loom error repeats it."""
+
+TIMED_OUT = KafkaError(KafkaError._MSG_TIMED_OUT, CANARY)
 
 
 class TestKafkaProducerClient:
@@ -83,10 +83,11 @@ class TestKafkaProducerClient:
         callback = fake.produced[0]["on_delivery"]
         assert callback is not None
 
-        callback(FakeDeliveryError(), None)
+        callback(TIMED_OUT, None)
 
-        with pytest.raises(KafkaDeliveryError, match="delivery-boom"):
+        with pytest.raises(KafkaDeliveryError, match="_MSG_TIMED_OUT") as raised:
             producer.flush()
+        assert CANARY not in str(raised.value)
         assert seen[-1] is not None
 
     def test_raw_producer_flush_consumes_pending_delivery_error(
@@ -98,9 +99,9 @@ class TestKafkaProducerClient:
         producer.send(KafkaRecord(topic="orders", key=b"k", value=b"payload"))
         fake = installer.stub
         assert fake is not None
-        fake.produced[0]["on_delivery"](FakeDeliveryError(), None)
+        fake.produced[0]["on_delivery"](TIMED_OUT, None)
 
-        with pytest.raises(KafkaDeliveryError, match="delivery-boom"):
+        with pytest.raises(KafkaDeliveryError, match="_MSG_TIMED_OUT"):
             producer.flush()
         producer.flush()
 
@@ -272,14 +273,15 @@ class TestKafkaConsumerClient:
         installer = install_raw_consumer_stub(monkeypatch)
         fake = installer.stub
         assert fake is not None
-        fake.next_message = FakeKafkaMessage(error=_FakeError())
+        fake.next_message = FakeKafkaMessage(error=TIMED_OUT)
         consumer = KafkaConsumerClient(
             ConsumerSettings(
                 brokers=("k1:9092",), group_id="g1", topics=("orders",), delivery="at_most_once"
             ),
         )
-        with pytest.raises(KafkaPollError, match="boom"):
+        with pytest.raises(KafkaPollError, match="_MSG_TIMED_OUT") as raised:
             consumer.poll(100)
+        assert CANARY not in str(raised.value)
 
     def test_raw_consumer_commit_delegates(self, monkeypatch: pytest.MonkeyPatch) -> None:
         installer = install_raw_consumer_stub(monkeypatch)
@@ -322,7 +324,7 @@ class TestKafkaConsumerClient:
         installer = install_raw_consumer_stub(monkeypatch)
         fake = installer.stub
         assert fake is not None
-        fake.commit_error = RuntimeError("commit-boom")
+        fake.commit_error = RuntimeError(CANARY)
         consumer = KafkaConsumerClient(
             ConsumerSettings(
                 brokers=("k1:9092",), group_id="g1", topics=("orders",), delivery="at_most_once"
@@ -330,22 +332,24 @@ class TestKafkaConsumerClient:
         )
 
         partitions = [TopicPartition("orders", 1, 12)]
-        with pytest.raises(KafkaCommitError, match="commit-boom"):
+        with pytest.raises(KafkaCommitError, match="^RuntimeError$") as raised:
             consumer.commit_offset(partitions)
+        assert isinstance(raised.value.__cause__, RuntimeError)
 
     def test_raw_consumer_commit_wraps_backend_error(self, monkeypatch: pytest.MonkeyPatch) -> None:
         installer = install_raw_consumer_stub(monkeypatch)
         fake = installer.stub
         assert fake is not None
-        fake.commit_error = RuntimeError("commit-boom")
+        fake.commit_error = RuntimeError(CANARY)
         consumer = KafkaConsumerClient(
             ConsumerSettings(
                 brokers=("k1:9092",), group_id="g1", topics=("orders",), delivery="at_most_once"
             ),
         )
 
-        with pytest.raises(KafkaCommitError, match="commit-boom"):
+        with pytest.raises(KafkaCommitError, match="^RuntimeError$") as raised:
             consumer.commit()
+        assert isinstance(raised.value.__cause__, RuntimeError)
 
     def test_raw_consumer_poll_does_not_wrap_keyboard_interrupt(
         self,
@@ -449,15 +453,16 @@ class TestKafkaConsumerClient:
         installer = install_raw_consumer_stub(monkeypatch)
         fake = installer.stub
         assert fake is not None
-        fake.queued_messages = [FakeKafkaMessage(error=_FakeError())]
+        fake.queued_messages = [FakeKafkaMessage(error=TIMED_OUT)]
         consumer = KafkaConsumerClient(
             ConsumerSettings(
                 brokers=("k1:9092",), group_id="g1", topics=("orders",), delivery="at_most_once"
             ),
         )
 
-        with pytest.raises(KafkaPollError, match="boom"):
+        with pytest.raises(KafkaPollError, match="_MSG_TIMED_OUT") as raised:
             consumer.consume_batch(5)
+        assert CANARY not in str(raised.value)
 
     def test_raw_consumer_context_manager_does_not_mask_body_exception(
         self,
@@ -510,18 +515,21 @@ class TestCommittedOffset:
 
     def test_per_partition_error_is_a_hard_failure(self, monkeypatch: pytest.MonkeyPatch) -> None:
         installer = install_raw_consumer_stub(monkeypatch)
-        installer.stub.committed_partition_errors[("orders", 2)] = "COORDINATOR_LOAD_IN_PROGRESS"
+        installer.stub.committed_partition_errors[("orders", 2)] = KafkaError(
+            KafkaError.COORDINATOR_LOAD_IN_PROGRESS, CANARY
+        )
         client = KafkaConsumerClient.unassigned(_consumer_settings())
 
-        with pytest.raises(KafkaCommitError, match="COORDINATOR_LOAD_IN_PROGRESS"):
+        with pytest.raises(KafkaCommitError, match="COORDINATOR_LOAD_IN_PROGRESS") as raised:
             client.committed_offset("orders", 2, timeout_ms=5_000)
+        assert CANARY not in str(raised.value)
 
     def test_backend_failure_is_a_hard_failure(self, monkeypatch: pytest.MonkeyPatch) -> None:
         installer = install_raw_consumer_stub(monkeypatch)
-        installer.stub.committed_error = RuntimeError("coordinator-timeout")
+        installer.stub.committed_error = RuntimeError(CANARY)
         client = KafkaConsumerClient.unassigned(_consumer_settings())
 
-        with pytest.raises(KafkaCommitError, match="coordinator-timeout"):
+        with pytest.raises(KafkaCommitError, match="^RuntimeError$"):
             client.committed_offset("orders", 2, timeout_ms=5_000)
 
 

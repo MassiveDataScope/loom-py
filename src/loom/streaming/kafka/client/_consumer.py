@@ -10,6 +10,7 @@ from confluent_kafka import Consumer as _Consumer
 from confluent_kafka import Message as _RawMessage
 from confluent_kafka import TopicPartition
 
+from loom.core.logger.field import ErrorSummary
 from loom.core.observability.event import Scope
 from loom.core.observability.observability import Observability
 from loom.streaming.kafka._config import ConsumerSettings
@@ -126,12 +127,12 @@ class KafkaConsumerClient:
                 policy=self._retry_policy,
             )
         except Exception as exc:
-            raise KafkaCommitError(str(exc)) from exc
+            raise KafkaCommitError(ErrorSummary.cite(exc)) from exc
         if not results:
             return None
         result = results[0]
         if result.error is not None:
-            raise KafkaCommitError(str(result.error))
+            raise KafkaCommitError(result.error.name())
         offset = result.offset
         if offset is None or offset < 0:
             return None
@@ -153,7 +154,7 @@ class KafkaConsumerClient:
         try:
             message = self._consumer.poll(timeout_ms / 1000)
         except Exception as exc:
-            raise KafkaPollError(str(exc)) from exc
+            raise KafkaPollError(ErrorSummary.cite(exc)) from exc
         if message is None:
             return None
         record = _checked_record(message)
@@ -183,12 +184,12 @@ class KafkaConsumerClient:
         try:
             messages = self._consumer.consume(max_records, timeout=0.001)
         except Exception as exc:
-            raise KafkaPollError(str(exc)) from exc
+            raise KafkaPollError(ErrorSummary.cite(exc)) from exc
         records: list[KafkaRecord[bytes]] = []
         for message in messages:
             error = message.error()
             if error is not None:
-                raise KafkaPollError(str(error))
+                raise KafkaPollError(error.name())
             if message.value() is None:
                 continue
             record = _to_record(message)
@@ -234,7 +235,7 @@ class KafkaConsumerClient:
                 policy=self._retry_policy,
             )
         except Exception as exc:
-            raise KafkaCommitError(str(exc)) from exc
+            raise KafkaCommitError(ErrorSummary.cite(exc)) from exc
 
     def commit_offset(
         self,
@@ -261,7 +262,7 @@ class KafkaConsumerClient:
                 policy=self._retry_policy,
             )
         except Exception as exc:
-            raise KafkaCommitError(str(exc)) from exc
+            raise KafkaCommitError(ErrorSummary.cite(exc)) from exc
 
     def _on_commit(self, error: object | None, partitions: list[TopicPartition]) -> None:
         """Report the outcome of an asynchronous offset commit.
@@ -308,7 +309,7 @@ def _checked_record(message: _RawMessage) -> KafkaRecord[bytes]:
     """Translate one confluent message, raising on broker-reported errors."""
     error = message.error()
     if error is not None:
-        raise KafkaPollError(str(error))
+        raise KafkaPollError(error.name())
     return _to_record(message)
 
 
