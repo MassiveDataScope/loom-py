@@ -1,8 +1,8 @@
 """Shared entry-point loader for Loom plugin groups.
 
-This module is a stdlib-only leaf: it must never import from ``loom`` or from
-any third-party package, so that ETL-only deployments can rely on it without
-pulling optional dependencies into the process.
+This module is a stdlib-only leaf: it imports only ``loom.core.log_names``
+(itself stdlib-only) from ``loom`` and nothing from any third-party package, so that
+ETL-only deployments can rely on it without pulling optional dependencies into the process.
 
 It centralises the plugin resolution policy used across pillars: duplicate
 handling, missing-plugin reporting and the optional API-version handshake.
@@ -17,7 +17,24 @@ from dataclasses import dataclass
 from importlib.metadata import EntryPoint, entry_points
 from typing import Literal
 
+from loom.core.log_names import LogEvent, LogKey
+
 _log = logging.getLogger(__name__)
+
+
+class EntryPointEvent(LogEvent):
+    """What the entry-point loader logs while it resolves a plugin."""
+
+    DUPLICATE_REGISTERED = "plugins.entry_point_duplicated"
+
+
+class EntryPointKey(LogKey):
+    """The fields of an entry-point record."""
+
+    GROUP = "loom.plugins.group"
+    ENTRY_POINT = "loom.plugins.entry_point"
+    DISTRIBUTIONS = "loom.plugins.distributions"
+
 
 _UNKNOWN_DISTRIBUTION = "<unknown distribution>"
 _REQUIREMENT_NAME = re.compile(r"[A-Za-z0-9][A-Za-z0-9._-]*")
@@ -284,12 +301,12 @@ def _resolve_conflict(
         raise DuplicateEntryPointError(group, name, distributions)
     first = matches[0]
     _log.warning(
-        "Entry point %r in group %r is registered by several distributions: %s. "
-        "Using the first one, from %s.",
-        name,
-        group,
-        distributions,
-        _distribution_name(first),
+        EntryPointEvent.DUPLICATE_REGISTERED,
+        extra={
+            EntryPointKey.GROUP: group,
+            EntryPointKey.ENTRY_POINT: name,
+            EntryPointKey.DISTRIBUTIONS: list(distributions),
+        },
     )
     return first
 
@@ -312,6 +329,8 @@ __all__ = [
     "DuplicateEntryPointError",
     "DuplicatePolicy",
     "EntryPointError",
+    "EntryPointEvent",
+    "EntryPointKey",
     "EntryPointNotFoundError",
     "MissingDependency",
     "check_api_version",

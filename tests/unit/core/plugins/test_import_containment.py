@@ -23,6 +23,7 @@ _ALLOWED_LOOM_MODULES: frozenset[str] = frozenset(
         "loom.core",
         "loom.core.plugins",
         "loom.core.plugins.entrypoints",
+        "loom.core.log_names",
     }
 )
 

@@ -37,6 +37,7 @@ def _is_allowed(name: str) -> bool:
     return (
         name == "__future__"
         or name == _OWN
+        or name == "loom.core.log_names"
         or name.startswith(f"{_OWN}.")
         or name.split(".")[0] in sys.stdlib_module_names
     )

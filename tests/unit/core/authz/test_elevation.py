@@ -5,7 +5,13 @@ import asyncio
 import pytest
 
 from loom.core.authz import Decision, Grant, Permission, Role, RoleCatalog, Scope
-from loom.core.authz.elevation import elevate_scope, elevated_scopes, elevation_scope
+from loom.core.authz.elevation import (
+    ElevationEvent,
+    ElevationKey,
+    elevate_scope,
+    elevated_scopes,
+    elevation_scope,
+)
 from tests.unit.core.authz._elevation_doubles import FakeSink
 
 WRITE = Permission("rows.write")
@@ -237,7 +243,11 @@ class TestElevationFailure:
             await _nested_elevation(sink)
 
         assert isinstance(raised.value.__cause__, RuntimeError)
-        assert "could not be invalidated" in caplog.text
+        assert [record.msg for record in caplog.records] == [
+            ElevationEvent.FLAGS_MAY_REMAIN,
+            ElevationEvent.INVALIDATION_FAILED,
+        ]
+        assert caplog.records[0].__dict__[ElevationKey.SCOPES] == ["editor"]
         assert elevated_scopes() == frozenset()
 
     async def test_a_failed_invalidation_is_raised_over_a_cancellation(self) -> None:
