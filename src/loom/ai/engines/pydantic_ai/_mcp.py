@@ -32,6 +32,7 @@ from loom.ai.errors import AgentCompilationError, AgentErrorCode
 from loom.ai.registry import require_provider_sdk
 from loom.ai.remote_auth import headers_from_ref, shared_mcp_auth
 from loom.core.config.errors import ConfigError
+from loom.core.errors import InvalidUse
 from loom.core.model.redaction import Secret
 
 if TYPE_CHECKING:
@@ -197,7 +198,7 @@ class _ToolsetSession(ConcurrentMcpSession):
             if not self._closed and self._current is held and self._rebuild is not None:
                 await self._renew(held, self._rebuild())
             if self._closed:
-                raise RuntimeError("the mcp session is closed")
+                raise InvalidUse("the mcp session is closed")
             return self._current
 
     async def _renew(self, held: _OpenToolset, toolset: MCPToolset[Any]) -> None:

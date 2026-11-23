@@ -6,6 +6,7 @@ from collections.abc import Callable, Iterable, Mapping
 from typing import Any
 
 from loom.connections.aws import AwsClients
+from loom.core.errors import InvalidValue
 from loom.core.model.redaction import Dsn
 from loom.prefect.notify._port import Notifier
 from loom.prefect.notify._slack import SlackNotifier
@@ -74,11 +75,11 @@ def build_notifiers(
     for entry in block:
         kind = entry.get("kind")
         if not kind:
-            raise ValueError("notifications: every entry must declare 'kind'")
+            raise InvalidValue("notifications: every entry must declare 'kind'")
         builder = _BUILDERS.get(kind)
         if builder is None:
-            raise ValueError(
-                f"notifications: unknown notifier kind {kind!r}. Available: {sorted(_BUILDERS)}"
+            raise InvalidValue(
+                f"notifications: unknown notifier kind. Available: {sorted(_BUILDERS)}"
             )
         instance = _build_sns(entry, aws, clients) if builder is _build_sns else builder(entry)
         if instance is not None:

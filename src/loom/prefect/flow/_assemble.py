@@ -20,6 +20,7 @@ import msgspec
 import prefect
 
 from loom.core.environment import Environment
+from loom.core.errors import InvalidValue, UnknownKey
 from loom.prefect._config import FlowConfig, flow_config_from_mapping
 from loom.prefect._flow_yaml import (
     extract_pool_config,
@@ -130,8 +131,10 @@ def assemble_flow(
         attached at :data:`~loom.prefect._meta.LOOM_ETL_META_ATTR`.
 
     Raises:
-        ValueError: When the trigger inherits a parameter *params_type* does
+        KeyError: When the trigger inherits a parameter *params_type* does
             not declare.
+        ValueError: When an inherited parameter is not ``str``, ``date`` or
+            ``datetime``.
     """
     check_inherited_params(settings.trigger, params_type, name=name)
     safe_name = flow_attribute_name(name)
@@ -188,9 +191,9 @@ def check_inherited_params(
         name: Flow name, quoted in the error message.
 
     Raises:
-        ValueError: When an entry of ``trigger.inherit_params`` is not a field
-            of *params_type*, or is not declared ``str``, ``date`` or
-            ``datetime``.
+        KeyError: When an entry of ``trigger.inherit_params`` is not a field of
+            *params_type*.
+        ValueError: When an entry is not declared ``str``, ``date`` or ``datetime``.
     """
     if trigger is None:
         return
@@ -198,12 +201,12 @@ def check_inherited_params(
     hints = get_type_hints(params_type)
     for param in trigger.inherit_params:
         if param not in fields:
-            raise ValueError(
+            raise UnknownKey(
                 f"flow {name!r}: trigger.inherit_params names {param!r}, "
                 f"not a field of {params_type.__name__}"
             )
         if hints.get(param) not in _INHERITABLE_TYPES:
-            raise ValueError(
+            raise InvalidValue(
                 f"flow {name!r}: trigger.inherit_params names {param!r}, declared "
                 f"{hints.get(param)!r}; the trigger passes values as text, so only "
                 "str, date and datetime fields can be inherited"

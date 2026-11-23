@@ -21,6 +21,7 @@ import msgspec
 
 from loom.core.config import ConfigError, expand_config_glob
 from loom.core.environment import ETL_CONFIG_VARIABLE
+from loom.core.errors import UnknownKey
 from loom.etl import ETLPipeline
 from loom.prefect._flow_yaml import read_yaml, resolve_config_uri
 from loom.prefect._meta import DEFAULT_STORAGE_CONFIG_PATH
@@ -129,7 +130,7 @@ def _declaration(name: str, body: Any, uri: str) -> EtlDeclaration:
     try:
         settings = flow_settings_from_mapping(body)
         check_inherited_params(settings.trigger, params_type, name=name)
-    except (TypeError, ValueError) as exc:
+    except (ConfigError, UnknownKey, TypeError, ValueError) as exc:
         raise ConfigError(f"{uri}: ETL {name!r}: {exc}") from exc
     _reject_reserved_env(name, settings, uri)
     return EtlDeclaration(

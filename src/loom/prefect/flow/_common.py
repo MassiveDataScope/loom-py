@@ -6,6 +6,7 @@ import uuid
 from datetime import datetime
 from typing import Any, cast
 
+from loom.core.errors import InvalidType
 from loom.prefect._placeholders import utc_datetime
 
 
@@ -14,10 +15,10 @@ def coerce_tags(raw: Any) -> tuple[str, ...]:
     if raw is None:
         return ()
     if not isinstance(raw, list):
-        raise TypeError(f"tags: expected a list of strings, got {type(raw).__name__}")
+        raise InvalidType(f"tags: expected a list of strings, got {type(raw).__name__}")
     for value in raw:
         if not isinstance(value, str):
-            raise TypeError(f"tags: every entry must be str, got {type(value).__name__}")
+            raise InvalidType(f"tags: every entry must be str, got {type(value).__name__}")
     return tuple(raw)
 
 

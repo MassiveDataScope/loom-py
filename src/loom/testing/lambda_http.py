@@ -24,6 +24,7 @@ import httpx
 
 from loom.composition import Application, Project
 from loom.connections.aws import AwsClients
+from loom.core.errors import InvalidUse, InvalidValue
 from loom.serverless.aws.lambda_.handler import LambdaHandler, LambdaRuntime
 from loom.testing.overrides import Override, OverrideRuntime
 from loom.testing.serverless import EventFormat, LambdaEvent
@@ -52,7 +53,7 @@ class LambdaTestClient(httpx.Client):
             reach its container; ``None`` for a handler built elsewhere.
 
     Raises:
-        TypeError: When *function*, *aws* or *options* come with a handler.
+        ValueError: When *function*, *aws* or *options* come with a handler.
     """
 
     def __init__(
@@ -76,7 +77,7 @@ class LambdaTestClient(httpx.Client):
             owned = runtime.mount(self.application)
             app = cast(HttpHandler, owned)
         elif function is not None or options or aws is not None:
-            raise TypeError("function, aws and create_app options need a configuration path")
+            raise InvalidValue("function, aws and create_app options need a configuration path")
         transport = _LambdaTransport(app, event_format, owned)
         super().__init__(transport=transport, base_url="http://testserver")
 
@@ -95,7 +96,7 @@ class LambdaTestClient(httpx.Client):
             ResolutionError: As :meth:`Override.apply` raises it.
         """
         if self.application is None:
-            raise RuntimeError("A composed application is required for overrides")
+            raise InvalidUse("A composed application is required for overrides")
         with Override.apply_all(self.application.kernel.container, overrides):
             yield self
 

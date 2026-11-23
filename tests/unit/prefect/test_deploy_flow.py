@@ -269,7 +269,7 @@ class TestDeployFlow:
         )
         from_source, _ = _stub_prefect(flow)
 
-        with pytest.raises(TypeError, match=r"discover_and_deploy_etls\(config=\.\.\.\)"):
+        with pytest.raises(ValueError, match=r"discover_and_deploy_etls\(config=\.\.\.\)"):
             deploy_flow(flow, env="production")
 
         from_source.assert_not_called()
@@ -366,7 +366,7 @@ class TestDeployFlow:
         monkeypatch.setattr(sys, "path", list(sys.path))
         from_source, _ = _stub_prefect(flow)
 
-        with pytest.raises(ValueError, match="on_demand_missing"):
+        with pytest.raises(ValueError, match="not an importable Python file"):
             deploy_flow(flow, env="production")
 
         from_source.assert_not_called()

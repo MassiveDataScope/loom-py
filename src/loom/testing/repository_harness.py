@@ -6,6 +6,7 @@ from typing import Any
 
 import msgspec
 
+from loom.core.errors import UnknownKey
 from loom.core.stores.repository import CursorCodec, get_repository_registration
 from loom.core.stores.repository.registry import RepositoryBuildContext
 from loom.stores.sqlalchemy.repository import SQLAlchemyRepository
@@ -49,8 +50,9 @@ class RepositoryIntegrationHarness:
         for entity_name in execution_order:
             entity_context = self._entities.get(entity_name)
             if entity_context is None:
-                raise ValueError(
-                    f"Entity '{entity_name}' is not registered in RepositoryIntegrationHarness"
+                raise UnknownKey(
+                    "an entity in the execution order is not registered in "
+                    "RepositoryIntegrationHarness"
                 )
             for contract in scenario.get(entity_name, []):
                 await entity_context.repository.create(contract)

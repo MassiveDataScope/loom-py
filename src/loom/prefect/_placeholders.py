@@ -30,6 +30,7 @@ from datetime import UTC, datetime, timedelta
 from typing import Any
 
 from loom.core.config.keys import INTERPOLATION
+from loom.core.errors import InvalidValue
 
 _TODAY_RE = re.compile(r"^\$\{today(?:([+-])(\d+)d)?\}$")
 _YESTERDAY_RE = re.compile(r"^\$\{yesterday\}$")
@@ -121,7 +122,9 @@ def resolve_placeholder(value: Any, *, anchor: datetime | None = None) -> Any:
         return _resolve_now(now_match, base)
 
     if _ANY_DOLLAR.match(value) is not None:
-        raise ValueError(f"invalid placeholder: {value!r}")
+        raise InvalidValue(
+            "invalid placeholder: a value starting with $ must be a loom placeholder"
+        )
     return value
 
 

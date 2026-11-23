@@ -292,7 +292,7 @@ class TestIssuedType:
 
 class TestTestingHelperOwnsItsKey:
     def test_it_refuses_to_override_its_own_key(self) -> None:
-        with pytest.raises(TypeError, match="algorithms"):
+        with pytest.raises(ValueError, match="algorithms"):
             jwt_test_auth(algorithms=("HS512",))
 
 

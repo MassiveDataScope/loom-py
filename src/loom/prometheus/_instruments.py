@@ -22,6 +22,8 @@ from weakref import WeakKeyDictionary
 from prometheus_client import REGISTRY, CollectorRegistry, Counter, Histogram
 from prometheus_client.metrics import MetricWrapperBase
 
+from loom.core.errors import InvalidValue
+
 if TYPE_CHECKING:
     from collections.abc import Mapping, Sequence
 
@@ -192,7 +194,7 @@ def _reject_mismatch(cached: MetricWrapperBase, spec: InstrumentSpec[Any]) -> No
         f"with labels {labelnames}, cannot build it as {spec.kind.value} "
         f"with labels {spec.labelnames}."
     )
-    raise ValueError(message)
+    raise InvalidValue(message)
 
 
 def _build_instrument(

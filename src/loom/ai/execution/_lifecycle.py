@@ -70,6 +70,7 @@ from loom.ai.execution._mcp import (
 )
 from loom.ai.execution._turn import TurnCallbacks
 from loom.core.di import LoomContainer
+from loom.core.errors import InvalidUse, InvalidValue, UnknownKey
 from loom.core.errors.summary import ErrorSummary
 from loom.core.execution import ExecutionScope
 from loom.core.identity import Identity
@@ -242,7 +243,7 @@ class AgentHost:
                 client opened so far is closed before the error propagates.
         """
         if self._stack is not None:
-            raise RuntimeError("AgentHost is already entered")
+            raise InvalidUse("AgentHost is already entered")
         stack = AsyncExitStack()
         self._stack = stack
         self._owner = asyncio.current_task()
@@ -280,9 +281,9 @@ class AgentHost:
         """
         stack = self._stack
         if stack is None:
-            raise RuntimeError("AgentHost was not entered")
+            raise InvalidUse("AgentHost was not entered")
         if asyncio.current_task() is not self._owner:
-            raise RuntimeError(
+            raise InvalidUse(
                 "AgentHost must be exited by the task that entered it: the live "
                 "clients are session-affine and closing them from another task "
                 "corrupts them"
@@ -1068,7 +1069,7 @@ class AgentHost:
                 declaration reached at startup names *server*.
         """
         if self._stack is None:
-            raise RuntimeError(
+            raise InvalidUse(
                 "AgentHost must be entered before use: wrap it in "
                 "'async with host:' to open its clients and build its engines"
             )
@@ -1120,14 +1121,14 @@ class AgentHost:
     def _require_plan(self, name: str) -> AgentPlan:
         plan = self._plans.get(name)
         if plan is None:
-            raise KeyError(name)
+            raise UnknownKey("the host declares no agent with that name")
         return plan
 
     def _require_slot(self, name: str) -> _AgentSlot:
         self._require_plan(name)
         slot = self._slots.get(name)
         if slot is None:
-            raise RuntimeError(
+            raise InvalidUse(
                 "AgentHost must be entered before use: wrap it in "
                 "'async with host:' to open its clients and build its engines"
             )
@@ -1208,9 +1209,8 @@ def _check_conversation_id(conversation_id: str | None) -> None:
     if conversation_id is None:
         return
     if not 1 <= len(conversation_id) <= CONVERSATION_ID_MAX_LENGTH:
-        raise ValueError(
-            f"conversation_id must be between 1 and {CONVERSATION_ID_MAX_LENGTH} "
-            f"characters long, got {len(conversation_id)}"
+        raise InvalidValue(
+            f"conversation_id must be between 1 and {CONVERSATION_ID_MAX_LENGTH} characters long"
         )
 
 

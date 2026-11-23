@@ -30,6 +30,7 @@ from loom.ai.errors import (
     AgentRunErrorCode,
 )
 from loom.core.concurrency import discard_outcome
+from loom.core.errors import InternalError, InvalidType, InvalidUse, InvalidValue
 from loom.core.identity import Identity
 from loom.core.use_case.invoker import ApplicationInvoker
 
@@ -207,7 +208,7 @@ class TurnCallbacks:
                 once the use case settled within the remaining bound.
             RuntimeError: When the use case ended cancelled without the
                 consumer being cancelled.
-            LookupError: When the host holds no application invoker.
+            InvalidUse: When the host holds no application invoker.
             Exception: Whatever the use case raised.
         """
         loop = asyncio.get_running_loop()
@@ -228,7 +229,7 @@ class TurnCallbacks:
             await self._settle(task, _CANCEL_GRACE_S, call)
             raise
         if task.cancelled():
-            raise RuntimeError(f"the {call.step} was cancelled internally")
+            raise InternalError(f"the {call.step} was cancelled internally")
         return task.result()
 
     def failure(
@@ -284,19 +285,19 @@ class TurnCallbacks:
         if value is None:
             return None
         if not isinstance(value, bytes):
-            raise TypeError(
+            raise InvalidType(
                 f"{loader.step} returned {type(value).__name__}, expected bytes or None"
             )
         bound = self.plan.policies.max_history_bytes
         if len(value) > bound:
-            raise ValueError(
-                f"{loader.step} returned {len(value)} bytes, above max_history_bytes ({bound})"
+            raise InvalidValue(
+                f"{loader.step} returned more bytes than max_history_bytes ({bound}) allows"
             )
         return value
 
     async def _invoke(self, call: CompiledUseCaseCall, command: dict[str, Any]) -> object:
         if self.invoker is None:
-            raise LookupError("the container holds no ApplicationInvoker")
+            raise InvalidUse("the container holds no ApplicationInvoker")
         return await self.invoker.invoke(call.use_case, params=None, payload=command)
 
     async def _settle(

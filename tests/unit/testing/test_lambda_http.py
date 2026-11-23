@@ -163,7 +163,7 @@ class TestLambdaTestClient:
         assert served == 200
 
     def test_a_handler_takes_no_create_app_options(self, handler: LambdaHTTPHandler) -> None:
-        with pytest.raises(TypeError, match="need a configuration path"):
+        with pytest.raises(ValueError, match="need a configuration path"):
             LambdaTestClient(handler, function="items")
 
     def test_closing_a_client_leaves_a_handler_passed_in_open(

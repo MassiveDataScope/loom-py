@@ -71,7 +71,7 @@ def init(
             typer.echo(yaml.safe_dump(document, sort_keys=False), nl=False)
             return
         _write(config, block)
-    except (ValueError, yaml.YAMLError) as exc:
+    except (ConfigError, ValueError, yaml.YAMLError) as exc:
         typer.echo(str(exc), err=True)
         raise typer.Exit(1) from exc
 
@@ -81,14 +81,13 @@ def _write(config: Path, block: dict[str, Any]) -> None:
     store = _section(_section(document, _STORES, _STORES), DEFAULT_STORE, _STORE_PATH)
     backend = store.setdefault(BACKEND_KEY, SQLALCHEMY_BACKEND)
     if backend != SQLALCHEMY_BACKEND:
-        raise ValueError(
-            f"{_STORE_PATH}.{BACKEND_KEY} is {backend!r}; "
-            f"a row-scoped schema needs {SQLALCHEMY_BACKEND}"
+        raise ConfigError(
+            f"{_STORE_PATH}.{BACKEND_KEY} must be {SQLALCHEMY_BACKEND} for a row-scoped schema"
         )
     schema = _section(store, "schema", f"{_STORE_PATH}.schema")
     conflicts = _merge(schema, block, f"{_STORE_PATH}.schema")
     if conflicts:
-        raise ValueError(
+        raise ConfigError(
             "these names differ from the derived ones and were kept: " + ", ".join(conflicts)
         )
     config.write_text(yaml.safe_dump(document, sort_keys=False))
@@ -101,7 +100,7 @@ def _load(config: Path) -> dict[str, Any]:
     if loaded is None:
         return {}
     if not isinstance(loaded, dict):
-        raise ValueError(f"{config} must hold a mapping at its top level")
+        raise ConfigError("the config file must hold a mapping at its top level")
     return loaded
 
 
@@ -110,7 +109,7 @@ def _section(parent: dict[str, Any], key: str, path: str) -> dict[str, Any]:
     if current is None:
         current = parent[key] = {}
     if not isinstance(current, dict):
-        raise ValueError(f"{path} must be a mapping")
+        raise ConfigError(f"{path} must be a mapping")
     return current
 
 

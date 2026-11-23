@@ -14,6 +14,7 @@ from cryptography.hazmat.primitives.asymmetric import ed25519, rsa
 
 from loom.core.config.convert import convert_config, dump_config
 from loom.core.config.errors import ConfigError
+from loom.core.errors import InternalError
 from loom.core.identity import Identity
 from loom.core.identity.issuer import IssuedToken, TokenIssuer
 from loom.core.model.redaction import Secret
@@ -328,7 +329,7 @@ class TestIssuerRefusesUnsafeIdentities:
 
         roleless = _identity(roles=())
 
-        with pytest.raises(ValueError, match="roles"):
+        with pytest.raises(InternalError, match="roles"):
             issuer.issue(roleless)
 
     def test_an_anonymous_identity_is_rejected(

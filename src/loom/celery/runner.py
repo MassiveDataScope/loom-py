@@ -36,6 +36,7 @@ from loom.celery.constants import callback_task_name
 from loom.celery.errors import WorkerNotOpenError
 from loom.celery.service import CallbackLink
 from loom.core.async_bridge import AsyncBridge
+from loom.core.errors import InvalidType, InvalidUse
 from loom.core.execution import ExecutionScope
 from loom.core.identity import Acting, current_caller
 from loom.core.job.callback import CallbackOutcome, notify
@@ -135,7 +136,7 @@ class _CeleryProcessBridge:
             return asyncio.run(self._run_eagerly(coro, timeout))
 
         _close_unrun(coro)
-        raise RuntimeError(
+        raise InvalidUse(
             "Celery async bridge is not initialized and eager fallback is disabled. "
             "Use a Celery worker process or enable task_always_eager."
         )
@@ -440,7 +441,7 @@ def _make_callback_task(
                 reply = outcome.hook(factory.build(callback_type))(**arguments)
                 if reply is not None and inspect.isawaitable(reply):
                     _close_unrun(reply)
-                    raise TypeError(
+                    raise InvalidType(
                         f"{name}.on_{outcome} returned an awaitable from a plain def: "
                         "declare it async def"
                     )

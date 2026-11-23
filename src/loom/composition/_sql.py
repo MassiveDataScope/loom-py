@@ -9,6 +9,7 @@ from typing import TYPE_CHECKING, cast
 from loom.core.config import ConfigContext, ConfigKey
 from loom.core.di.container import LoomContainer
 from loom.core.di.scope import Scope
+from loom.core.errors import UnknownKey
 from loom.core.observability.observability import Observability
 from loom.core.plugins.optional import import_optional
 from loom.core.resources import Resource, ResourceKind
@@ -69,7 +70,7 @@ class RegistryExecutors(Mapping[str, SqlExecutor]):
 
     def __getitem__(self, name: str) -> SqlExecutor:
         if name not in self._names:
-            raise KeyError(name)
+            raise UnknownKey("no ClickHouse connection is declared under that name")
         return self._registry.executor(name)
 
     def __contains__(self, name: object) -> bool:

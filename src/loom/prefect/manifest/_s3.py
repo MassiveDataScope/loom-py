@@ -9,6 +9,7 @@ from typing import IO, cast
 import fsspec
 import msgspec
 
+from loom.core.errors import InvalidValue
 from loom.prefect.manifest._model import RunManifest
 
 _log = logging.getLogger(__name__)
@@ -19,8 +20,8 @@ _SAFE_CORR_ID = re.compile(r"^[a-zA-Z0-9_\-]{1,256}$")
 def _validate_correlation_id(correlation_id: str) -> None:
     """Raise ValueError if correlation_id is not safe to embed in an S3 key."""
     if not _SAFE_CORR_ID.match(correlation_id):
-        raise ValueError(
-            f"correlation_id contains invalid characters: {correlation_id!r}. "
+        raise InvalidValue(
+            "correlation_id contains invalid characters. "
             "Only alphanumerics, hyphens, and underscores are allowed."
         )
 

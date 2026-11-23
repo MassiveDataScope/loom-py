@@ -18,6 +18,7 @@ from datetime import UTC, datetime, timedelta
 from typing import Any
 
 from loom.core.config.errors import ConfigError
+from loom.core.errors import InternalError, InvalidValue
 from loom.core.identity import Identity
 from loom.core.identity.issuer import IssuedToken
 from loom.rest.auth.config import ATTRIBUTE_CLAIM_PREFIX, JwtIssuerConfig
@@ -95,11 +96,11 @@ class JwtIssuer:
             The token, its expiry and its ``jti``.
 
         Raises:
-            ValueError: If the identity is anonymous, carries no role while a
-                roles claim is configured, holds an attribute that would be
-                unreadable once encoded, or *ttl* is out of bounds.
-            RuntimeError: If signing fails. The cause is not chained, so the
-                caller learns nothing about the key or the algorithm.
+            ValueError: If the identity is anonymous, holds an attribute that would
+                be unreadable once encoded, or *ttl* is out of bounds.
+            RuntimeError: If the identity carries no role (a translation bug), or
+                signing fails (the cause is then not chained, so the caller learns
+                nothing about the key or the algorithm).
         """
         lifetime = self._checked_lifetime(ttl)
         issued_at = datetime.now(tz=UTC)
@@ -108,7 +109,7 @@ class JwtIssuer:
         claims = self._claims(identity, issued_at=issued_at, expires_at=expires_at, jti=jti)
         token = self._sign(claims)
         if token is None:
-            raise RuntimeError("JWT issuing failed")
+            raise InternalError("JWT issuing failed")
         _logger.info(
             "issued token jti=%s sub=%s roles=%s aud=%s kid=%s exp=%s",
             jti,
@@ -147,11 +148,10 @@ class JwtIssuer:
         if ttl is None:
             return self._max_ttl
         if ttl <= timedelta(0):
-            raise ValueError("ttl must be positive")
+            raise InvalidValue("ttl must be positive")
         if ttl > self._max_ttl:
-            raise ValueError(
-                f"ttl {ttl} exceeds the configured lifetime {self._max_ttl}: "
-                "the configured value is the ceiling"
+            raise InvalidValue(
+                "ttl exceeds the configured lifetime: the configured value is the ceiling"
             )
         return ttl
 
@@ -164,10 +164,10 @@ class JwtIssuer:
         jti: str,
     ) -> dict[str, Any]:
         if not identity.subject:
-            raise ValueError("cannot issue a token for an identity with no subject")
+            raise InvalidValue("cannot issue a token for an identity with no subject")
         roles_claim = self._config.roles_claim
         if not identity.roles:
-            raise ValueError(
+            raise InternalError(
                 f"cannot issue a token with an empty {roles_claim!r}: "
                 "an identity with no roles is a translation bug"
             )
@@ -211,9 +211,9 @@ def _require_unnamespaced(attributes: Mapping[str, Any]) -> None:
     """Refuse an attribute name that already carries the namespace the issuer adds."""
     prefixed = sorted(name for name in attributes if name.startswith(ATTRIBUTE_CLAIM_PREFIX))
     if prefixed:
-        raise ValueError(
-            f"identity attributes {prefixed} already carry the "
-            f"{ATTRIBUTE_CLAIM_PREFIX!r} namespace: the issuer adds it"
+        raise InvalidValue(
+            f"identity attributes already carry the {ATTRIBUTE_CLAIM_PREFIX!r} namespace: "
+            "the issuer adds it"
         )
 
 
@@ -221,4 +221,4 @@ def _require_string_values(attributes: Mapping[str, Any]) -> None:
     """Refuse a non-string value: it would be encoded, then dropped by the reader."""
     unstringly = sorted(name for name, value in attributes.items() if not isinstance(value, str))
     if unstringly:
-        raise ValueError(f"identity attributes {unstringly} must hold string values")
+        raise InvalidValue("identity attributes must hold string values")
