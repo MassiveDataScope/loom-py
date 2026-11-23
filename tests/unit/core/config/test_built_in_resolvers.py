@@ -140,7 +140,6 @@ class TestDefaultResolvers:
         assert merge_resolvers([a, b], ()) == (a, b)
 
     def test_built_in_resolvers_construct_without_boto3(self, absent_boto3: None) -> None:
-
         resolvers = built_in_resolvers()
 
         assert _names(resolvers) == ("secrets", "ssm", "file")
@@ -151,7 +150,6 @@ class TestDefaultResolvers:
     def test_no_client_created_without_placeholders(
         self, plain_yaml: str, island: FakeAwsIsland
     ) -> None:
-
         cfg = load_config(plain_yaml, resolvers=built_in_resolvers())
 
         assert cfg.app.name == "demo"

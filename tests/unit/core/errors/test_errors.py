@@ -19,6 +19,7 @@ from loom.core.errors import (
     ForeignSessionError,
     InsufficientAuthentication,
     InvalidType,
+    InvalidUse,
     InvalidValue,
     LoomError,
     NotFound,
@@ -27,6 +28,7 @@ from loom.core.errors import (
     RuleViolationsError,
     SystemError,
     Unauthenticated,
+    UnknownKey,
 )
 from loom.core.errors.codes import ErrorCode
 from loom.core.use_case import rule as rule_module
@@ -79,6 +81,10 @@ class TestErrorHierarchy:
             (InvalidValue, ValueError),
             (InvalidType, LoomError),
             (InvalidType, TypeError),
+            (InvalidUse, LoomError),
+            (InvalidUse, RuntimeError),
+            (UnknownKey, LoomError),
+            (UnknownKey, KeyError),
             (ConfigError, LoomError),
             (BootstrapError, LoomError),
             (NotFound, DomainError),
@@ -92,6 +98,9 @@ class TestErrorHierarchy:
     )
     def test_error_hierarchy(self, subclass: type, base: type) -> None:
         assert issubclass(subclass, base)
+
+    def test_an_unknown_key_reads_as_written(self) -> None:
+        assert str(UnknownKey("no store named 'orders'")) == "no store named 'orders'"
 
     def test_domain_error_not_system_error(self) -> None:
         assert not issubclass(DomainError, SystemError)
@@ -406,8 +415,15 @@ class TestForeignSessionError:
 class TestMarkerBase:
     @pytest.mark.parametrize(
         "error",
-        [InvalidValue("bad"), InvalidType("bad"), ConfigError("bad"), BootstrapError("bad")],
-        ids=["invalid-value", "invalid-type", "config", "bootstrap"],
+        [
+            InvalidValue("bad"),
+            InvalidType("bad"),
+            InvalidUse("bad"),
+            UnknownKey("bad"),
+            ConfigError("bad"),
+            BootstrapError("bad"),
+        ],
+        ids=["invalid-value", "invalid-type", "invalid-use", "unknown-key", "config", "bootstrap"],
     )
     def test_a_loom_error_without_a_code_is_not_a_coded_error(self, error: LoomError) -> None:
         assert (isinstance(error, LoomError), isinstance(error, CodedError)) == (True, False)

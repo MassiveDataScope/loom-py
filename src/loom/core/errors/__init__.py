@@ -12,9 +12,11 @@ from loom.core.errors.base import (
     CodedError,
     DomainError,
     InvalidType,
+    InvalidUse,
     InvalidValue,
     LoomError,
     SystemError,
+    UnknownKey,
 )
 from loom.core.errors.container import ContainerSealed, ResolutionError
 from loom.core.errors.domain import (
@@ -58,6 +60,7 @@ __all__ = [
     "IdentityFixed",
     "InsufficientAuthentication",
     "InvalidType",
+    "InvalidUse",
     "InvalidValue",
     "JobFailedError",
     "JobTimeoutError",
@@ -80,6 +83,7 @@ __all__ = [
     "UndeclaredStoreWrite",
     "UnitOfWorkInsideScope",
     "UnknownJob",
+    "UnknownKey",
     "UnsupportedBoundaryType",
     "UnsupportedQuery",
 ]
