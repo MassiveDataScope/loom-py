@@ -9,6 +9,7 @@ from sqlalchemy import Engine, create_engine, text
 from sqlalchemy.exc import OperationalError
 from sqlalchemy.orm import Session
 
+from loom.core.errors import InvalidType
 from loom.core.model.redaction import Dsn
 from loom.core.stores.catalog import DEFAULT_STORE
 from loom.core.stores.database import DatabaseConfig
@@ -65,8 +66,8 @@ class TestSessionSettings:
         with pytest.raises(ValueError, match="session setting key"):
             settings_statement({key: "acme"})
 
-    def test_a_non_str_key_raises_value_error(self) -> None:
-        with pytest.raises(ValueError, match="session setting key"):
+    def test_a_non_str_key_raises_invalid_type(self) -> None:
+        with pytest.raises(InvalidType, match="session setting key"):
             settings_statement({1: "acme"})  # type: ignore[dict-item]
 
     @pytest.mark.parametrize("value", [1, None, b"acme", ["acme"]])

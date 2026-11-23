@@ -8,6 +8,7 @@ from typing import Any
 
 import pytest
 
+from loom.core.errors import InternalError
 from loom.core.projection.loaders import (
     _DESCRIPTOR_TYPES,
     CountLoader,
@@ -201,5 +202,5 @@ class TestUnbackedDescriptor:
         loader = unbacked_descriptor(model=AcmeNote)
         step = _FakeRelationStep()
 
-        with pytest.raises(ValueError, match="no SQL-path loader factory"):
+        with pytest.raises(InternalError, match="no SQL-path loader factory"):
             build_sql_loader(loader, step)

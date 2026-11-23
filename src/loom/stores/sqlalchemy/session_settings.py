@@ -8,6 +8,8 @@ from typing import Any, Final
 from sqlalchemy import TextClause, event, text
 from sqlalchemy.orm import Session
 
+from loom.core.errors import InvalidType, InvalidValue
+
 SessionSettings = Callable[[], Mapping[str, str] | None]
 """Returns the settings to apply to the transaction about to start, or ``None`` to apply none.
 
@@ -50,20 +52,18 @@ def settings_parameters(values: Mapping[str, str] | None) -> dict[str, str] | No
         The one bound JSON document, or ``None`` when there is nothing to set.
 
     Raises:
-        ValueError: If a key is not a dotted string of two or more identifiers.
-        TypeError: If a value is not a ``str``.
+        InvalidType: If a key or a value is not a ``str``.
+        InvalidValue: If a key is not a dotted string of two or more identifiers.
     """
     if not values:
         return None
     for key, value in values.items():
-        if not isinstance(key, str) or _KEY.fullmatch(key) is None:
-            raise ValueError(
-                f"session setting key must be a dotted str such as 'prefix.name', got {key!r}"
-            )
+        if not isinstance(key, str):
+            raise InvalidType("session setting key must be a str")
+        if _KEY.fullmatch(key) is None:
+            raise InvalidValue("session setting key must be a dotted str such as 'prefix.name'")
         if not isinstance(value, str):
-            raise TypeError(
-                f"session setting value for {key!r} must be str, got {type(value).__name__}"
-            )
+            raise InvalidType("session setting value must be a str")
     return {"settings": json.dumps(dict(values))}
 
 

@@ -21,6 +21,7 @@ import msgspec
 from loom.connections.clickhouse.client import async_client_options
 from loom.core.config.convert import convert_config
 from loom.core.config.errors import ConfigError
+from loom.core.errors import InvalidUse
 from loom.core.stores.sql.abc import UnknownConnectionError
 from loom.core.stores.sql.config import SqlConfig, SqlConnectionConfig, reject_retired_sql_keys
 from loom.stores.clickhouse._client import (
@@ -161,11 +162,11 @@ class ClickHouseConnectionRegistry:
             The executor bound to that connection.
 
         Raises:
-            RuntimeError: When the registry was not entered as a context.
+            InvalidUse: When the registry was not entered as a context.
             UnknownConnectionError: When *name* is not configured.
         """
         if not self._entered:
-            raise RuntimeError(
+            raise InvalidUse(
                 "ClickHouseConnectionRegistry must be entered before use: "
                 "wrap it in 'async with registry:' to open the connections"
             )

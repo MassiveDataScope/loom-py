@@ -6,6 +6,7 @@ from collections.abc import Mapping
 from dataclasses import dataclass
 from typing import Final, Literal
 
+from loom.core.errors import InvalidValue
 from loom.core.schema_names import SchemaNames, schema_identifier, sql_identifier
 
 Access = Literal["read", "write", "bypass"]
@@ -68,7 +69,7 @@ class BootstrapConfig:
         """Return ``self`` after checking every name Postgres will see.
 
         Raises:
-            ValueError: Naming the first identifier Postgres would fold,
+            InvalidValue: Naming the first identifier Postgres would fold,
                 truncate or resolve to something else, or two roles sharing a name.
         """
         self._check_names()
@@ -91,22 +92,18 @@ class BootstrapConfig:
         )
         for name in roles:
             sql_identifier(name)
-        if len(set(roles)) != len(roles):
-            raise ValueError(f"database roles must have distinct names, got {sorted(roles)}")
+        repeated = sorted({name for name in roles if roles.count(name) > 1})
+        if repeated:
+            raise InvalidValue(f"database roles must have distinct names; repeated: {repeated}")
 
     def _check_settings(self) -> None:
         """The retention, the version tables and the SCRAM iterations are usable."""
         if self.audit_retention_months is not None and self.audit_retention_months < 1:
-            raise ValueError(
-                f"audit retention_months must be at least 1, got {self.audit_retention_months}"
-            )
+            raise InvalidValue("audit retention_months must be at least 1")
         if self.names.version_table == self.names.data_version_table:
-            raise ValueError("the structural and the data version tables must differ")
+            raise InvalidValue("the structural and the data version tables must differ")
         if self.scram_iterations < POSTGRES_SCRAM_ITERATIONS:
-            raise ValueError(
-                f"scram_iterations must be at least {POSTGRES_SCRAM_ITERATIONS}, "
-                f"got {self.scram_iterations}"
-            )
+            raise InvalidValue(f"scram_iterations must be at least {POSTGRES_SCRAM_ITERATIONS}")
 
     def document(self) -> dict[str, object]:
         """The bound JSON document the guard's ``configure`` consumes."""

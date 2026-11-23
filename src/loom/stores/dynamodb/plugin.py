@@ -12,6 +12,7 @@ from typing import Any, ClassVar, ParamSpec, TypeVar
 from loom.core.concurrency import run_in_executor
 from loom.core.config import ConfigContext
 from loom.core.connections.aws import AwsClientConfig
+from loom.core.errors import InvalidValue
 from loom.core.model import BaseModel
 from loom.core.stores.catalog import MODELS_ONLY, StoreCapabilities, StoreSpec
 from loom.core.stores.plugin import StoreWiring
@@ -45,14 +46,14 @@ class DynamoDBRepositoryConfig(AwsClientConfig, frozen=True, kw_only=True):
         table: Table backing every model.
 
     Raises:
-        ValueError: When *region* is not set: the table lives in one region.
+        InvalidValue: When *region* is not set: the table lives in one region.
     """
 
     table: str
 
     def __post_init__(self) -> None:
         if self.region is None:
-            raise ValueError("region is required: the table lives in one region")
+            raise InvalidValue("region is required: the table lives in one region")
 
 
 class DynamoDBStorePlugin:

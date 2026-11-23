@@ -23,6 +23,7 @@ from sqlalchemy.ext.asyncio import AsyncEngine
 
 from loom.core.authz.elevation import elevated_scopes
 from loom.core.config import ConfigError
+from loom.core.errors import InvalidUse, InvalidValue
 from loom.core.identity.context import current_identity
 from loom.core.identity.identity import ON_BEHALF_OF_ATTRIBUTE
 from loom.core.model.scoped import ScopedTables, declared_scopes
@@ -59,7 +60,7 @@ def rls_session_settings(
 
     Raises:
         ConfigError: When a scope binding is missing, malformed or unregistered.
-        ValueError: At call time, when the product emits a key under ``loom.``.
+        InvalidValue: At call time, when the product emits a key under ``loom.``.
     """
     return scoped_session_settings(schema.scope_sources, schema.scoped, product, path=schema.path)
 
@@ -143,7 +144,7 @@ class DeferredScopedSettings:
 
     def __call__(self) -> Mapping[str, str]:
         if self._provide is None:
-            raise RuntimeError("scoped session settings were used before startup attached them")
+            raise InvalidUse("scoped session settings were used before startup attached them")
         return self._provide()
 
 
@@ -174,7 +175,5 @@ def _product_settings(product: SessionSettings | None) -> Mapping[str, str]:
         return {}
     intruding = sorted(key for key in values if key.lower().startswith(SETTING_NAMESPACE))
     if intruding:
-        raise ValueError(
-            f"product settings may not use the {SETTING_NAMESPACE} namespace: {intruding}"
-        )
+        raise InvalidValue(f"product settings may not use the {SETTING_NAMESPACE} namespace")
     return values

@@ -7,6 +7,7 @@ import pytest
 from sqlalchemy import MetaData
 
 from loom.core.config import ConfigError
+from loom.core.errors import InvalidValue
 from loom.core.identity import Identity, reset_identity, set_identity
 from loom.core.model import BaseModel, ColumnField, RowScoped, ScopedField
 from loom.core.model.redaction import Dsn
@@ -69,7 +70,7 @@ class TestScopeSources:
         register_scope_source("editor", lambda: "ana")
 
         assert bind_sources({"editor": "request.editor"}, path="p")["editor"]() == "ana"
-        with pytest.raises(ValueError, match="editor"):
+        with pytest.raises(InvalidValue, match="editor"):
             register_scope_source("editor", lambda: "bob")
 
     def test_identity_bindings_read_the_subject_and_the_verified_attributes(self) -> None:

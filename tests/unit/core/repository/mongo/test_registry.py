@@ -7,6 +7,7 @@ from typing import Any, cast
 import pytest
 
 from loom.core.di.container import LoomContainer
+from loom.core.errors import InvalidType
 from loom.core.model.introspection import scalar_column_annotations
 from loom.core.stores.catalog import DEFAULT_STORE
 from loom.core.stores.repository import (
@@ -117,7 +118,7 @@ class TestMongoRegistry:
 
         context = RepositoryBuildContext(model=cast(Any, NotAModel))
 
-        with pytest.raises(RuntimeError, match="NotAModel"):
+        with pytest.raises(InvalidType, match="NotAModel"):
             builder(context)
 
     @pytest.mark.asyncio

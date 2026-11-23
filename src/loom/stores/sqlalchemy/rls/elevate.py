@@ -12,6 +12,7 @@ from loom.core.authz import Decision, RoleCatalog, Scope
 from loom.core.authz.elevation import elevate_scope, in_execution_frame
 from loom.core.authz.product import load_authz_product
 from loom.core.config import ConfigError
+from loom.core.errors import InvalidUse
 from loom.core.stores.elevation import ScopedTables
 from loom.stores.sqlalchemy.rls.provider import elevation_setting
 from loom.stores.sqlalchemy.schema import scoped_tables
@@ -69,13 +70,13 @@ async def elevate(
     """Elevate ``scope`` for the current execution after checking ``decision``.
 
     Raises:
-        RuntimeError: Outside an execution frame.
+        InvalidUse: Outside an execution frame.
         ConfigError: Without a product, or when the product did not map ``scope``.
         ReadOnlyElevation: In a read-only execution.
         PermissionError: When the decision does not justify the elevation.
     """
     if not in_execution_frame():
-        raise RuntimeError("elevate requires an open execution frame")
+        raise InvalidUse("elevate requires an open execution frame")
     product = load_authz_product()
     if product is None:
         raise ConfigError("no authorization product is registered under the loom.authz entry point")

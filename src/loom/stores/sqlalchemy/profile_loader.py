@@ -5,6 +5,8 @@ from typing import Any, cast
 from sqlalchemy import inspect as sa_inspect
 from sqlalchemy.orm import Load, RelationshipProperty, selectinload
 
+from loom.core.errors import InvalidValue
+
 
 class ProfileLoader:
     """Resolve model relationship profiles into SQLAlchemy load options."""
@@ -19,7 +21,7 @@ class ProfileLoader:
             ProfileLoader._cache[entity_class] = by_profile
 
         if profile not in by_profile:
-            raise ValueError(f"Profile '{profile}' not found for {entity_class.__name__}")
+            raise InvalidValue(f"profile is not defined for {entity_class.__name__}")
         return by_profile[profile]
 
     @staticmethod
