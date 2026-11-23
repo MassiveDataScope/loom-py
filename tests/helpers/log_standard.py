@@ -1,20 +1,16 @@
-"""The logging standard, enforced across the whole suite.
+"""The logging contract, enforced across the whole suite on the ``loom`` logger.
 
-Every record a ``loom.*`` logger emits during a test may carry only
-:class:`~loom.core.logger.LogField` keys in its ``extra``. Modules not yet
-migrated are tolerated through :data:`UNMIGRATED_MODULES`, an explicit list that
-only shrinks: ``tests/unit/test_log_standard.py`` fails when a module on it
-already complies, or when one that does not is missing from it.
-
-The rest of the contract (the message is a :class:`~loom.core.logger.LogEvent`
-and carries no ``%`` arguments) runs in report mode: with
-``LOOM_LOG_CONTRACT_REPORT`` set to a directory, each pytest process writes the
-breaches it saw there as ``<pid>.json``, and no test fails on them.
+A record whose message is a :class:`~loom.core.log_names.LogEvent` must follow
+it: no ``%`` arguments, every field key declared by a
+:class:`~loom.core.log_names.LogKey` (or made by :meth:`~loom.core.log_names.LogKey.of`),
+every value one the formats can write, and one kind of value per key. Such a
+record that breaks it fails its test. A record with a text message is only
+counted: with ``LOOM_LOG_CONTRACT_REPORT`` set to a directory, each pytest
+process writes the breaches it saw there as ``<pid>.json``.
 """
 
 from __future__ import annotations
 
-import ast
 import json
 import logging
 import os
@@ -22,75 +18,56 @@ from collections import Counter
 from collections.abc import Iterator
 from enum import StrEnum
 from pathlib import Path
-from typing import Final
+from typing import Final, TypeVar
 
 import pytest
 
-from loom.core.logger import LogEvent, LogField
-from loom.core.logger.formats import TextFormatter, record_fields
-from tests.helpers.source_tree import SRC, parsed, source_files
+from loom.core.log_names import LogEvent, LogKey, SubKey
+from loom.core.logger.formats import TextFormatter, is_opaque, record_fields, render_value
 
-_LOGGING_METHODS: Final = frozenset(
-    {"debug", "info", "warning", "error", "exception", "critical", "log"}
-)
-ALLOWED_KEYS: Final = frozenset(field.value for field in LogField)
-
-UNMIGRATED_MODULES: Final[tuple[str, ...]] = (
-    "loom.celery._discovery",
-    "loom.celery.runtime",
-    "loom.celery.service",
-    "loom.composition._jobs",
-    "loom.composition.project",
-    "loom.core.async_bridge",
-    "loom.core.cache.calls",
-    "loom.core.cache.repository",
-    "loom.core.cache.wiring",
-    "loom.core.engine.compiler",
-    "loom.core.engine.observation",
-    "loom.core.engine.post_commit",
-    "loom.core.execution.context",
-    "loom.core.identity.context",
-    "loom.core.job.runner",
-    "loom.core.observability.observability",
-    "loom.core.observability.observer.log",
-    "loom.core.observability.observer.otel",
-    "loom.core.observability.otel_ids",
-    "loom.core.stores.uow.coordinator",
-    "loom.etl.engines._write_policy",
-    "loom.etl.engines.polars._writer",
-    "loom.etl.io.sources._clickhouse",
-    "loom.etl.io.sources._dynamodb",
-    "loom.etl.io.sources._mongo",
-    "loom.etl.io.targets._clickhouse",
-    "loom.etl.maintenance._runner",
-    "loom.etl.maintenance.backends._delta_rs",
-    "loom.jobs.aws.settlement",
-    "loom.jobs.aws.sqs",
-    "loom.prefect.flow._hooks",
-    "loom.prefect.notify._slack",
-    "loom.prefect.notify._sns",
-    "loom.serverless.aws.lambda_._jobs",
-    "loom.serverless.aws.lambda_._refusals",
-    "loom.serverless.aws.lambda_.handler",
-    "loom.serverless.aws.lambda_.triggers.sqs",
-    "loom.stores.mongo.repository",
-    "loom.stores.sqlalchemy.alembic",
-    "loom.stores.sqlalchemy.repository",
-    "loom.stores.sqlalchemy.session_manager",
-    "loom.stores.sqlalchemy.transactional",
-    "loom.streaming.bytewax._adapter",
-    "loom.streaming.bytewax._error_boundary",
-    "loom.streaming.bytewax.handlers.storage",
-    "loom.streaming.kafka._wire",
-    "loom.streaming.nodes._table._clickhouse",
-    "loom.streaming.nodes._table._delta",
-    "loom.streaming.nodes._table._sqlalchemy",
-)
-"""Modules whose ``extra`` still carries keys outside ``LogField``; shrinks until empty."""
-
+_Name = TypeVar("_Name", LogEvent, LogKey)
 
 REPORT_DIRECTORY_VARIABLE: Final = "LOOM_LOG_CONTRACT_REPORT"
 _BREACHES: Final = pytest.StashKey[Counter[str]]()
+
+_KEY_KINDS: Final = pytest.StashKey[dict[str, "ValueKind"]]()
+
+
+def loom_members(root: type[_Name]) -> list[_Name]:
+    """The members of every subclass of *root* that loom declares, once imported.
+
+    A subclass defined outside ``loom`` (a test's own) never counts.
+    """
+    pending, found = [root], []
+    while pending:
+        base = pending.pop()
+        pending.extend(base.__subclasses__())
+        if base.__module__.startswith("loom."):
+            found.extend(base)
+    return found
+
+
+class ValueKind(StrEnum):
+    """The JSON kind a formatter writes for a field value."""
+
+    BOOLEAN = "boolean"
+    NUMBER = "number"
+    STRING = "string"
+    ARRAY = "array"
+
+    @classmethod
+    def of(cls, value: object) -> ValueKind | None:
+        """The kind of ``render_value(value)``; ``None`` for a missing value."""
+        rendered = render_value(value)
+        if rendered is None:
+            return None
+        if isinstance(rendered, bool):
+            return cls.BOOLEAN
+        if isinstance(rendered, int | float):
+            return cls.NUMBER
+        if isinstance(rendered, list):
+            return cls.ARRAY
+        return cls.STRING
 
 
 class Breach(StrEnum):
@@ -98,15 +75,28 @@ class Breach(StrEnum):
 
     MESSAGE_NOT_EVENT = "message_not_event"
     MESSAGE_ARGUMENTS = "message_arguments"
-    FOREIGN_KEY = "foreign_key"
+    UNDECLARED_KEY = "undeclared_key"
+    OPAQUE_VALUE = "opaque_value"
+    KEY_RETYPED = "key_retyped"
 
     @classmethod
-    def broken_by(cls, record: logging.LogRecord) -> list[Breach]:
-        """The rules *record* breaks."""
+    def broken_by(cls, record: logging.LogRecord, kinds: dict[str, ValueKind]) -> list[Breach]:
+        """The rules *record* breaks, given the kind of value each key carried so far."""
+        declared = {key.value for key in loom_members(LogKey)}
+        fields = {
+            key: value
+            for key, value in record_fields(record).items()
+            if not isinstance(key, SubKey)
+        }
         checks = {
             cls.MESSAGE_NOT_EVENT: not isinstance(record.msg, LogEvent),
             cls.MESSAGE_ARGUMENTS: bool(record.args),
-            cls.FOREIGN_KEY: bool(foreign_keys(record)),
+            cls.UNDECLARED_KEY: any(key not in declared for key in fields),
+            cls.OPAQUE_VALUE: any(is_opaque(value) for value in fields.values()),
+            cls.KEY_RETYPED: any(
+                (kind := ValueKind.of(value)) is not None and kinds.get(key, kind) != kind
+                for key, value in fields.items()
+            ),
         }
         return [breach for breach, broken in checks.items() if broken]
 
@@ -114,19 +104,28 @@ class Breach(StrEnum):
 class LogContract(logging.Handler):
     """Keeps the records of one test and counts every breach by module."""
 
-    def __init__(self, breaches: Counter[str]) -> None:
+    def __init__(self, breaches: Counter[str], kinds: dict[str, ValueKind]) -> None:
         super().__init__()
-        self.records: list[logging.LogRecord] = []
+        self.records: list[tuple[logging.LogRecord, list[Breach]]] = []
         self._breaches = breaches
+        self._kinds = kinds
 
     def emit(self, record: logging.LogRecord) -> None:
-        self.records.append(record)
-        self._breaches.update(f"{record.name}|{breach}" for breach in Breach.broken_by(record))
+        broken = Breach.broken_by(record, self._kinds)
+        self.records.append((record, broken))
+        self._breaches.update(f"{record.name}|{breach}" for breach in broken)
+        if not isinstance(record.msg, LogEvent):
+            return
+        for key, value in record_fields(record).items():
+            kind = ValueKind.of(value)
+            if kind is not None and not isinstance(key, SubKey):
+                self._kinds.setdefault(key, kind)
 
 
 def pytest_configure(config: pytest.Config) -> None:
     """Start the session's breach count."""
     config.stash[_BREACHES] = Counter()
+    config.stash[_KEY_KINDS] = {}
 
 
 def pytest_sessionfinish(session: pytest.Session) -> None:
@@ -140,28 +139,23 @@ def pytest_sessionfinish(session: pytest.Session) -> None:
     target.write_text(json.dumps(dict(breaches), sort_keys=True))
 
 
-def foreign_keys(record: logging.LogRecord) -> set[str]:
-    """The ``extra`` keys of *record* that are not a ``LogField`` member."""
-    return set(record_fields(record)) - ALLOWED_KEYS
-
-
 @pytest.fixture(autouse=True)
-def loom_records_use_log_fields(request: pytest.FixtureRequest) -> Iterator[None]:
-    """Fail a test when a ``loom.*`` record carries a key outside ``LogField``."""
-    seen = LogContract(request.config.stash[_BREACHES])
+def loom_events_follow_the_contract(request: pytest.FixtureRequest) -> Iterator[None]:
+    """Fail a test when a ``loom`` record whose message is a ``LogEvent`` breaks the contract."""
+    seen = LogContract(request.config.stash[_BREACHES], request.config.stash[_KEY_KINDS])
     loom_logger = logging.getLogger("loom")
     loom_logger.addHandler(seen)
     yield
     loom_logger.removeHandler(seen)
     offences = sorted(
         {
-            f"{record.name}: {sorted(foreign_keys(record))}"
-            for record in seen.records
-            if foreign_keys(record) and record.name not in UNMIGRATED_MODULES
+            f"{record.name}: {record.msg} breaks {[str(breach) for breach in broken]}"
+            for record, broken in seen.records
+            if isinstance(record.msg, LogEvent) and broken
         }
     )
     if offences:
-        pytest.fail("records outside the LogField standard:\n" + "\n".join(offences))
+        pytest.fail("records outside the log contract:\n" + "\n".join(offences))
 
 
 @pytest.fixture(autouse=True)
@@ -169,32 +163,3 @@ def caplog_shows_fields(request: pytest.FixtureRequest) -> None:
     """Make ``caplog.text`` show each record with its fields, as the text format writes it."""
     if "caplog" in request.fixturenames:
         request.getfixturevalue("caplog").handler.setFormatter(TextFormatter())
-
-
-def _is_log_field(node: ast.expr | None) -> bool:
-    return (
-        isinstance(node, ast.Attribute)
-        and isinstance(node.value, ast.Name)
-        and node.value.id == "LogField"
-    )
-
-
-def _extra_is_standard(value: ast.expr) -> bool:
-    return isinstance(value, ast.Dict) and all(_is_log_field(key) for key in value.keys)
-
-
-def _is_logging_call(call: ast.Call) -> bool:
-    return isinstance(call.func, ast.Attribute) and call.func.attr in _LOGGING_METHODS
-
-
-def modules_with_foreign_extra() -> tuple[str, ...]:
-    """The modules of ``src/loom`` that pass an ``extra`` the standard does not allow."""
-    found: set[str] = set()
-    for path in source_files():
-        for node in ast.walk(parsed(path)):
-            if not (isinstance(node, ast.Call) and _is_logging_call(node)):
-                continue
-            extras = [keyword.value for keyword in node.keywords if keyword.arg == "extra"]
-            if any(not _extra_is_standard(extra) for extra in extras):
-                found.add(".".join(path.relative_to(SRC.parent).with_suffix("").parts))
-    return tuple(sorted(found))

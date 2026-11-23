@@ -2,14 +2,10 @@
 
 from __future__ import annotations
 
-from typing import Final
-
 import msgspec
 
 from loom.core.errors.base import CodedError
-
-EXCEPTION_TYPE_FIELD: Final = "exception.type"
-ERROR_CODE_FIELD: Final = "loom.error.code"
+from loom.core.log_names import LogField
 
 
 class ErrorSummary(msgspec.Struct, frozen=True, kw_only=True):
@@ -42,5 +38,8 @@ class ErrorSummary(msgspec.Struct, frozen=True, kw_only=True):
     def fields(self) -> dict[str, str]:
         """The record fields: ``exception.type`` and, with a code, ``loom.error.code``."""
         if self.code is None:
-            return {EXCEPTION_TYPE_FIELD: self.type}
-        return {EXCEPTION_TYPE_FIELD: self.type, ERROR_CODE_FIELD: self.code}
+            return {LogField.EXCEPTION_TYPE.value: self.type}
+        return {
+            LogField.EXCEPTION_TYPE.value: self.type,
+            LogField.ERROR_CODE.value: self.code,
+        }

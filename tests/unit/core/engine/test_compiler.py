@@ -6,7 +6,7 @@ from typing import Any
 import pytest
 
 from loom.core.command import Command
-from loom.core.engine.compiler import CompilationError, UseCaseCompiler
+from loom.core.engine.compiler import CompilationError, CompilerKey, UseCaseCompiler
 from loom.core.engine.plan import ExecutionPlan
 from loom.core.use_case.markers import Exists, Input, Load, LoadById, SourceKind
 from loom.core.use_case.use_case import UseCase
@@ -402,12 +402,16 @@ class TestCompilerLogging:
     ) -> None:
         UseCaseCompiler().compile(use_case)
         [(_, fields)] = log.calls
-        assert detected in fields["detected"]
+        assert detected in fields[CompilerKey.DETECTED]
 
     def test_counts_the_computes_rules_and_steps(self, log: CapturedLog) -> None:
         UseCaseCompiler().compile(_WithAllUseCase)
         [(_, fields)] = log.calls
-        assert (fields["computes"], fields["rules"], fields["steps"]) == (1, 1, 3)
+        assert (
+            fields[CompilerKey.COMPUTES],
+            fields[CompilerKey.RULES],
+            fields[CompilerKey.STEPS],
+        ) == (1, 1, 3)
 
     def test_no_logs_on_cache_hit(self, log: CapturedLog) -> None:
         compiler = UseCaseCompiler()

@@ -8,7 +8,7 @@ from loom.core.config.errors import ConfigError
 from loom.core.errors import DomainError, NotFound
 from loom.core.errors.codes import ErrorCode
 from loom.core.errors.summary import ErrorSummary
-from loom.core.logger.field import LogField
+from loom.core.log_names import LogField
 
 
 class TestErrorSummary:

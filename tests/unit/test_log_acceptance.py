@@ -29,7 +29,7 @@ from opentelemetry.sdk.trace.export.in_memory_span_exporter import InMemorySpanE
 from loom.core.environment import LAMBDA_LOG_FORMAT_VARIABLE, Environment
 from loom.core.errors.base import DomainError
 from loom.core.errors.codes import ErrorCode
-from loom.core.logger.field import LogField
+from loom.core.log_names import LogField
 from loom.core.logger.install import HANDLER_NAME, configure_logging
 from loom.core.logger.settings import LogFormatName, LogSettings
 from loom.core.model.redaction import MASK, Secret

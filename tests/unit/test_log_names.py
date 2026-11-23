@@ -1,4 +1,4 @@
-"""Every log event loom declares is named ``<area>.<subject>_<fact>`` and names one thing."""
+"""Every log event and key loom declares is well formed and names one thing."""
 
 from __future__ import annotations
 
@@ -7,27 +7,32 @@ from pathlib import Path
 
 import pytest
 
-from loom.core.logger import LogEvent
+from loom.core.log_names import LogEvent, LogField, LogKey
+from tests.helpers.log_standard import loom_members
 from tests.helpers.source_tree import source_files
 
 _SRC = Path(__file__).resolve().parents[2] / "src"
+_DECLARATIONS = ("(LogEvent)", "(LogKey)")
 
 
-def _loom_events() -> list[LogEvent]:
+def _import_declaring_modules() -> None:
     for path in source_files():
-        if "(LogEvent)" in path.read_text():
+        if any(marker in path.read_text() for marker in _DECLARATIONS):
             module = ".".join(path.relative_to(_SRC).with_suffix("").parts)
             try:
                 importlib.import_module(module)
             except ModuleNotFoundError as missing:
                 pytest.skip(f"{module} needs {missing.name}")
-    pending, found = [LogEvent], []
-    while pending:
-        base = pending.pop()
-        pending.extend(base.__subclasses__())
-        if base.__module__.startswith("loom."):
-            found.extend(base)
-    return found
+
+
+def _loom_events() -> list[LogEvent]:
+    _import_declaring_modules()
+    return loom_members(LogEvent)
+
+
+def _loom_keys() -> list[LogKey]:
+    _import_declaring_modules()
+    return loom_members(LogKey)
 
 
 class TestLoomLogEvents:
@@ -43,6 +48,33 @@ class TestLoomLogEvents:
         values = [event.value for event in _loom_events()]
 
         assert len(values) == len(set(values))
+
+
+class TestLoomLogKeys:
+    def test_loom_declares_keys(self) -> None:
+        assert _loom_keys()
+
+    def test_no_value_names_two_keys(self) -> None:
+        values = [key.value for key in _loom_keys()]
+
+        assert len(values) == len(set(values))
+
+    def test_an_area_key_starts_with_loom(self) -> None:
+        outside = [
+            key
+            for key in _loom_keys()
+            if not isinstance(key, LogField) and not key.startswith("loom.")
+        ]
+
+        assert outside == []
+
+
+class TestSubKey:
+    def test_a_member_makes_the_key_of_a_name_inside_its_bag(self) -> None:
+        class Sample(LogKey):
+            META = "loom.meta"
+
+        assert Sample.META.of("tenant") == "loom.meta.tenant"
 
 
 class TestEventForm:
