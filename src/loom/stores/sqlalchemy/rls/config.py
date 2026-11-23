@@ -92,8 +92,9 @@ class BootstrapConfig:
         )
         for name in roles:
             sql_identifier(name)
-        if len(set(roles)) != len(roles):
-            raise InvalidValue("database roles must have distinct names")
+        repeated = sorted({name for name in roles if roles.count(name) > 1})
+        if repeated:
+            raise InvalidValue(f"database roles must have distinct names; repeated: {repeated}")
 
     def _check_settings(self) -> None:
         """The retention, the version tables and the SCRAM iterations are usable."""

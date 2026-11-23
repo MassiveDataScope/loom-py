@@ -70,7 +70,7 @@ class TestScopeSources:
         register_scope_source("editor", lambda: "ana")
 
         assert bind_sources({"editor": "request.editor"}, path="p")["editor"]() == "ana"
-        with pytest.raises(InvalidValue):
+        with pytest.raises(InvalidValue, match="editor"):
             register_scope_source("editor", lambda: "bob")
 
     def test_identity_bindings_read_the_subject_and_the_verified_attributes(self) -> None:

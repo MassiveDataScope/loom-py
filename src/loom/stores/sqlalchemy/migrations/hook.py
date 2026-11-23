@@ -118,7 +118,7 @@ class _Rewriter:
     def _protect(self, table_name: str) -> ProtectScopedTableOp:
         scoped = self._scoped.get(table_name)
         if scoped is None:
-            raise InvalidValue("table_name is not a scoped table of this application")
+            raise InvalidValue(f"{table_name!r} is not a scoped table of this application")
         return ProtectScopedTableOp(
             table_name, scope_documents(scoped), privilege_names(scoped.privileges)
         )
