@@ -11,6 +11,7 @@ from typing import Any
 
 from loom.core.errors import InvalidUse
 from loom.core.model.redaction import Dsn
+from loom.prefect.event import PrefectEvent
 from loom.prefect.notify._event import NotifyEvent
 from loom.prefect.notify._format import FAILURE_STATES, run_details, should_notify
 
@@ -62,8 +63,8 @@ class SlackNotifier:
             self._http_post(webhook, json=payload, timeout=5.0)
         except (urllib.error.URLError, TimeoutError, RuntimeError):
             _log.warning(
-                "Slack post failed",
-                extra={"flow": event.flow_name, "run": event.flow_run_name, "state": event.state},
+                PrefectEvent.NOTIFICATION_FAILED,
+                extra=event.log_fields(),
                 exc_info=True,
             )
 

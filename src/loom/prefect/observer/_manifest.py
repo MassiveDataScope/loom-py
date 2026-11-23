@@ -5,7 +5,9 @@ from __future__ import annotations
 import logging
 from typing import Any
 
+from loom.core.log_names import LogField
 from loom.etl.lineage._records import RunStatus
+from loom.prefect.event import PrefectEvent
 from loom.prefect.manifest import ManifestStore, RunManifest, mark_step
 
 _log = logging.getLogger(__name__)
@@ -55,9 +57,8 @@ class ManifestObserver:
             self._store.save(self._manifest)
         except Exception:  # noqa: BLE001
             _log.warning(
-                "manifest save failed for step=%s status=%s",
-                event.name,
-                status,
+                PrefectEvent.MANIFEST_SAVE_FAILED,
+                extra={LogField.NAME: event.name, LogField.STATUS: status},
                 exc_info=True,
             )
 

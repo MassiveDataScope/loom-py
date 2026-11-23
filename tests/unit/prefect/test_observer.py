@@ -13,9 +13,10 @@ import logging
 import pytest
 
 from loom.core.observability.event import LifecycleEvent, LifecycleStatus, Scope
+from loom.core.observability.observer.log import LifecycleLog
 from loom.prefect.observer import PrefectObserver
 
-_STDLIB_LOGGER = "loom.prefect.observer._flow"
+_STDLIB_LOGGER = "loom.core.observability.observer.log"
 _RUN_LOGGER = "prefect.flow_runs"
 
 
@@ -78,13 +79,13 @@ class TestPrefectObserver:
     @pytest.mark.parametrize(
         ("event", "level", "message"),
         [
-            (_start_event(), logging.INFO, "[pipeline] START MyPipeline"),
-            (_end_event(), logging.INFO, "[pipeline] END MyPipeline 123.0ms"),
-            (_error_event(), logging.ERROR, "[step] ERROR MyStep: ValueError"),
+            (_start_event(), logging.INFO, LifecycleLog.STARTED),
+            (_end_event(), logging.INFO, LifecycleLog.ENDED),
+            (_error_event(), logging.ERROR, LifecycleLog.FAILED),
             (
                 LifecycleEvent.start(scope=Scope.STEP, name="TransformStep"),
-                logging.INFO,
-                "[step] START TransformStep",
+                logging.DEBUG,
+                LifecycleLog.STARTED,
             ),
             (
                 LifecycleEvent.end(
@@ -94,7 +95,7 @@ class TestPrefectObserver:
                     status=LifecycleStatus.SUCCESS,
                 ),
                 logging.INFO,
-                "[step] END TransformStep 10.0ms",
+                LifecycleLog.ENDED,
             ),
         ],
         ids=["pipeline-start", "pipeline-end", "step-error", "step-start", "step-end"],
@@ -107,7 +108,7 @@ class TestPrefectObserver:
         caplog: pytest.LogCaptureFixture,
     ) -> None:
         """Each lifecycle kind is logged on the stdlib logger when no run is active."""
-        caplog.set_level(logging.INFO)
+        caplog.set_level(logging.DEBUG)
         observer = PrefectObserver()
 
         observer.on_event(event)

@@ -23,6 +23,7 @@ from loom.core.cache.gateway import CacheGateway
 from loom.core.checks import CheckScope
 from loom.core.config import ConfigContext, ConfigError
 from loom.core.job.callback import JobCallback
+from loom.core.job.event import JobEvent, JobKey
 from loom.core.job.job import Job
 from loom.core.job.service import JobService
 from loom.core.stores import WORKER_PROFILE
@@ -211,13 +212,13 @@ class TestBind:
 
         adapter.mount(_application(tmp_path, {}, adapter))
 
-        (line,) = CapturedLog(caplog).named("Job retry policies")
-        assert line["transport"] == "celery"
-        assert [entry["job"] for entry in line["jobs"]] == [
+        (line,) = CapturedLog(caplog).named(JobEvent.RETRY_POLICIES_DESCRIBED)
+        policies = line[JobKey.RETRY_POLICIES]
+        assert [policy.split(":")[0] for policy in policies] == [
             _PingJob.__qualname__,
             _SecondJob.__qualname__,
         ]
-        assert "max_attempts=3" in line["jobs"][0]["retry"]
+        assert "max_attempts=3" in policies[0]
 
     def test_mount_without_recipe_is_refused(self, tmp_path: Path) -> None:
         adapter = CeleryRuntime(jobs=[_PingJob])

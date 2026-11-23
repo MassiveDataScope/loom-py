@@ -9,6 +9,7 @@ import logging
 from loom.core.engine.events import AbandonReason
 from loom.core.engine.execution_observer import ExecutionObserver, NullExecutionObserver
 from loom.core.job.config import CANCEL_AT_SHUTDOWN, JobShutdown
+from loom.core.job.event import JobEvent
 from loom.core.job.policy import Countdown
 from loom.core.job.timer import DelayedJob, Step
 from loom.core.logger import LogField
@@ -91,7 +92,7 @@ class AsyncioJobTimer:
     ) -> None:
         self._execution_observer.on_event(delayed.abandoned(reason, error))
         _log.error(
-            "Job abandoned",
+            JobEvent.DELIVERY_ABANDONED,
             extra={
                 LogField.JOB: delayed.job,
                 LogField.TASK_ID: delayed.task_id,

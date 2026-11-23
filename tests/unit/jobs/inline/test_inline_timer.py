@@ -18,6 +18,7 @@ from loom.core.job.callback import JobCallback
 from loom.core.job.config import JobShutdown, ShutdownMode
 from loom.core.job.context import clear_pending_dispatches, flush_pending_dispatches
 from loom.core.job.delivery import JobDelivery
+from loom.core.job.event import JobEvent
 from loom.core.job.job import Job
 from loom.core.job.outcome import JobPostponement
 from loom.core.job.policy import Backoff, Countdown
@@ -32,7 +33,7 @@ pytestmark = pytest.mark.timeout(10)
 
 STEADY = Backoff(first_s=4, factor=2, max_s=100, jitter=False)
 SPINS = 5
-ABANDONED = "Job abandoned"
+ABANDONED = JobEvent.DELIVERY_ABANDONED
 
 
 class AcmeError(Exception):

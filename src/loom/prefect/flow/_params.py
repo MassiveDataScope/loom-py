@@ -14,6 +14,7 @@ from prefect.context import FlowRunContext
 from prefect.settings import PREFECT_CLIENT_MAX_RETRIES, temporary_settings
 
 from loom.prefect._placeholders import is_placeholder, resolve_placeholder
+from loom.prefect.event import PrefectEvent, PrefectKey
 from loom.prefect.flow._signature import normalize_datetime_fields
 
 _log = logging.getLogger(__name__)
@@ -61,7 +62,9 @@ def record_run_params(values: Mapping[str, Any]) -> None:
     try:
         _update_stored_params(flow_run_id, stored, values)
     except Exception:
-        _log.exception("could not record the resolved parameters of flow run %s", flow_run_id)
+        _log.exception(
+            PrefectEvent.PARAMETERS_RECORD_FAILED, extra={PrefectKey.RUN: str(flow_run_id)}
+        )
 
 
 def _update_stored_params(

@@ -55,6 +55,7 @@ from loom.celery._discovery import (
     _resolve_compilables_and_jobs,
 )
 from loom.celery.config import CeleryConfig, CeleryRuntimeConfig, create_celery_app
+from loom.celery.event import CeleryEvent
 from loom.celery.runner import (
     REDELIVERY,
     _CeleryProcessBridge,
@@ -77,6 +78,7 @@ from loom.core.discovery.worker import (
 )
 from loom.core.engine.compilable import Compilable
 from loom.core.job.callback import CallbackOutcome
+from loom.core.job.event import JobEvent, JobKey
 from loom.core.logger import LogRuntime
 from loom.core.runner import shutdown_runner
 from loom.core.stores import WORKER_PROFILE
@@ -176,7 +178,7 @@ class _WorkerLifecycle:
             else:
                 self._open(check=True)
         except Exception as exc:
-            _log.exception("worker application failed to start")
+            _log.exception(CeleryEvent.WORKER_START_FAILED)
             raise WorkerTerminate(_EX_FAILURE) from exc
 
     @staticmethod
@@ -207,7 +209,7 @@ class _WorkerLifecycle:
         try:
             self._open(check=False)
         except Exception as exc:
-            _log.exception("worker process failed to open its application")
+            _log.exception(CeleryEvent.WORKER_PROCESS_OPEN_FAILED)
             self._runtime.refuse(exc)
 
     def close(self) -> None:
@@ -219,7 +221,7 @@ class _WorkerLifecycle:
                 stop_coroutine = stop()
                 self._runtime.run(stop_coroutine, eager_fallback=False)
         except Exception:
-            _log.warning("worker application failed to close", exc_info=True)
+            _log.warning(CeleryEvent.WORKER_CLOSE_FAILED, exc_info=True)
             if stop_coroutine is not None:
                 stop_coroutine.close()
         finally:
@@ -284,13 +286,8 @@ def _register_tasks(
     """Register one task per job and one per callback class and outcome."""
     kernel, observability = application.kernel, application.observability
     if declared.jobs:
-        _log.info(
-            "Job retry policies",
-            extra={
-                "transport": "celery",
-                "jobs": application.job_settings.describe_retries(REDELIVERY, declared.jobs),
-            },
-        )
+        policies = application.job_settings.describe_retries(REDELIVERY, declared.jobs)
+        _log.info(JobEvent.RETRY_POLICIES_DESCRIBED, extra={JobKey.RETRY_POLICIES: policies})
     for job_type in declared.jobs:
         _make_job_task(
             celery_app,

@@ -34,6 +34,7 @@ from loom.celery.constants import (
     TASK_JOB_PREFIX,
 )
 from loom.celery.errors import WorkerNotOpenError
+from loom.celery.event import CeleryEvent
 from loom.celery.runner import _CeleryProcessBridge
 from loom.celery.runtime import CeleryRuntime, _connect_lifecycle_signals, _WorkerLifecycle
 from loom.composition import AppConfig, Application, ApplicationHost
@@ -304,7 +305,7 @@ class TestFailedChildOpen:
             assert isinstance(failure.__cause__, RuntimeError)
             assert "(RuntimeError)" in str(failure)
             assert "clickhouse unreachable" not in str(failure)
-        opening = [r for r in caplog.records if "failed to open its application" in r.message]
+        opening = [r for r in caplog.records if r.message == CeleryEvent.WORKER_PROCESS_OPEN_FAILED]
         assert len(opening) == 1
 
     @pytest.mark.parametrize(
@@ -393,7 +394,7 @@ class TestTaskAffineResources:
 
         assert affine.exited_in is not None
         assert not application.is_open
-        assert "failed to close" not in caplog.text
+        assert CeleryEvent.WORKER_CLOSE_FAILED not in caplog.text
         assert bridge._bridge is None
 
 

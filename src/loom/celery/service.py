@@ -33,6 +33,7 @@ import msgspec
 from celery import Celery  # type: ignore[import-untyped]
 
 from loom.celery.constants import callback_task_name
+from loom.celery.event import CeleryEvent
 from loom.core.engine.events import EventKind, ExecutionEvent
 from loom.core.engine.execution_observer import NullExecutionObserver
 from loom.core.engine.post_commit import ActionSubject
@@ -41,6 +42,7 @@ from loom.core.job.callback import CallbackOutcome
 from loom.core.job.context import add_pending_publish
 from loom.core.job.dispatch import JobDispatch
 from loom.core.job.handle import JobHandle
+from loom.core.log_names import LogField
 from loom.core.observability.event import Scope
 from loom.core.observability.observability import Observability
 
@@ -152,7 +154,7 @@ class CallbackLink(msgspec.Struct, frozen=True):
             )
         except Exception:
             _log.exception(
-                "Failure callback not sent", extra={"job_id": self.job_id, "task": task_name}
+                CeleryEvent.FAILURE_CALLBACK_NOT_SENT, extra={LogField.TASK_ID: self.job_id}
             )
 
 

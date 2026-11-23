@@ -122,10 +122,7 @@ class TestRetryDescription:
     def test_a_policy_from_one_layer_names_it_once(self) -> None:
         settings = _settings({}, PlainJob)
         assert settings.describe_retries(Redelivery.DELAYED, [PlainJob]) == [
-            {
-                "job": "PlainJob",
-                "retry": "first_s=5 factor=2 max_s=300 jitter=True max_attempts=3 (loom default)",
-            }
+            "PlainJob: first_s=5 factor=2 max_s=300 jitter=True max_attempts=3 (loom default)"
         ]
 
     def test_only_the_jobs_it_is_given_are_described(self) -> None:
@@ -133,14 +130,14 @@ class TestRetryDescription:
 
         lines = settings.describe_retries(Redelivery.DELAYED, [ClassBackoffJob])
 
-        assert [line["job"] for line in lines] == ["ClassBackoffJob"]
+        assert [line.split(":")[0] for line in lines] == ["ClassBackoffJob"]
 
     def test_a_transport_that_retries_nothing_shows_one_attempt_and_why(self) -> None:
         settings = _settings({}, PlainJob)
         [line] = settings.describe_retries(Redelivery.NONE, [PlainJob])
-        assert line["retry"] == (
-            "first_s=5 (loom default), factor=2 (loom default), max_s=300 (loom default), "
-            "jitter=True (loom default), max_attempts=1 (no redelivery)"
+        assert line == (
+            "PlainJob: first_s=5 (loom default), factor=2 (loom default), "
+            "max_s=300 (loom default), jitter=True (loom default), max_attempts=1 (no redelivery)"
         )
 
     def test_a_transport_that_brings_the_message_back_keeps_the_policy(self) -> None:
@@ -158,7 +155,7 @@ class TestRetryDescription:
             ClassBackoffJob,
         )
         [line] = settings.describe_retries(Redelivery.DELAYED, [ClassBackoffJob])
-        assert line["retry"] == (
-            "first_s=7 (jobs.<Job>.retry), factor=3 (__retry__), max_s=600 (__retry__), "
-            "jitter=False (__retry__), max_attempts=5 (jobs.defaults.retry)"
+        assert line == (
+            "ClassBackoffJob: first_s=7 (jobs.<Job>.retry), factor=3 (__retry__), "
+            "max_s=600 (__retry__), jitter=False (__retry__), max_attempts=5 (jobs.defaults.retry)"
         )

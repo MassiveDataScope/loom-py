@@ -21,8 +21,10 @@ from loom.core.engine.post_commit import ActionSubject, log_never_ran
 from loom.core.job.config import JobSettings
 from loom.core.job.context import add_pending_publish, pending_publish_group
 from loom.core.job.dispatch import JobDispatch
+from loom.core.job.event import JobKey
 from loom.core.job.handle import JobHandle
 from loom.core.job.job import Job
+from loom.core.log_names import LogField
 from loom.core.model.types import PositiveInt
 from loom.jobs.aws.errors import SQSDispatchError, SQSErrorCode, SQSQueueConfigError
 from loom.jobs.aws.queue import (
@@ -33,6 +35,7 @@ from loom.jobs.aws.queue import (
     SQSQueue,
     SQSQueues,
 )
+from loom.jobs.event import JobsEvent
 
 if TYPE_CHECKING:
     from loom.composition import JobTransportContext
@@ -130,12 +133,11 @@ class _PendingSQSSend:
 
     def log_failure(self, code: str) -> None:
         _log.error(
-            "SQS send failed",
+            JobsEvent.SEND_FAILED,
             extra={
-                "job": self.task_name,
-                "task_id": self.task_id,
-                "queue": self.queue.name,
-                "error_code": code,
+                **self.subjects()[0].fields(),
+                JobKey.QUEUE: self.queue.name,
+                LogField.ERROR_CODE: code,
             },
         )
 
