@@ -66,6 +66,7 @@ class MongoSourceReader:
         batch_processor: BatchProcessorProtocol = MongoBatchProcessor(
             schema_str_fields=schema_str_fields,
             declared_schema=declared_schema or None,
+            table=spec.collection,
         )
 
         registered_schema = self._prepare_scan(
@@ -160,19 +161,14 @@ def _infer_schema_from_first_batch(
         cursor.close()
     if not docs:
         _log.info(
-            EtlEvent.MONGO_SCHEMA_INFERRED,
-            extra={EtlKey.COLLECTION: collection.name, EtlKey.SAMPLED: 0, EtlKey.COLUMN_COUNT: 0},
+            EtlEvent.SOURCE_SCHEMA_INFERRED, extra={EtlKey.TABLE: collection.name, EtlKey.ROWS: 0}
         )
         return {}
     frame = batch_processor.build_frame(docs)
     schema = _normalize_null_dtypes(dict(zip(frame.columns, frame.dtypes, strict=True)))
     _log.info(
-        EtlEvent.MONGO_SCHEMA_INFERRED,
-        extra={
-            EtlKey.COLLECTION: collection.name,
-            EtlKey.SAMPLED: len(docs),
-            EtlKey.COLUMN_COUNT: len(schema),
-        },
+        EtlEvent.SOURCE_SCHEMA_INFERRED,
+        extra={EtlKey.TABLE: collection.name, EtlKey.ROWS: len(docs)},
     )
     return schema  # noqa: RET504
 
@@ -191,14 +187,10 @@ def _open_cursor(
     if effective_limit is not None:
         cursor = cursor.limit(effective_limit)
     _log.info(
-        EtlEvent.MONGO_QUERY_STARTED,
+        EtlEvent.SOURCE_QUERY_STARTED,
         extra={
-            EtlKey.COLLECTION: collection.name,
-            EtlKey.DATABASE: getattr(collection.database, "name", None),
-            EtlKey.FILTER_FIELDS: list(filter_dict),
-            EtlKey.PROJECTION_FIELDS: list(projection) if projection else None,
-            EtlKey.BATCH_SIZE: spec.batch_size,
-            EtlKey.LIMIT: effective_limit,
+            EtlKey.TABLE: collection.name,
+            EtlKey.COLUMNS: list(projection) if projection else None,
         },
     )
     return cursor
@@ -302,18 +294,17 @@ def _scan(
         serialization_failures = _serialization_stats.failures - serialization_failures_mark
         if serialization_failures:
             _log.warning(
-                EtlEvent.MONGO_READ_DEGRADED,
+                EtlEvent.SOURCE_READ_DEGRADED,
                 extra={
-                    EtlKey.COLLECTION: collection.name,
+                    EtlKey.TABLE: collection.name,
                     EtlKey.SERIALIZATION_FAILURES: serialization_failures,
-                    EtlKey.LAST_ERROR: _serialization_stats.last_error,
                 },
             )
         _log.info(
-            EtlEvent.MONGO_READ_COMPLETED,
+            EtlEvent.SOURCE_READ_COMPLETED,
             extra={
-                EtlKey.COLLECTION: collection.name,
-                EtlKey.ITEMS: total_rows,
+                EtlKey.TABLE: collection.name,
+                EtlKey.ROWS: total_rows,
                 EtlKey.BATCHES: batches_yielded,
                 EtlKey.SERIALIZATION_FAILURES: serialization_failures,
                 EtlKey.DURATION_S: round(time.monotonic() - started, 3),
@@ -325,16 +316,15 @@ def _log_batch(
     collection: str, batch_index: int, rows: int, total_rows: int, elapsed_s: float
 ) -> None:
     payload: dict[str, object] = {
-        EtlKey.COLLECTION: collection,
-        EtlKey.BATCH: batch_index,
+        EtlKey.TABLE: collection,
+        EtlKey.BATCHES: batch_index,
         EtlKey.ROWS: rows,
-        EtlKey.TOTAL_ROWS: total_rows,
         EtlKey.DURATION_S: round(elapsed_s, 3),
     }
     if batch_index == 1:
-        _log.info(EtlEvent.MONGO_FIRST_BATCH_READ, extra=payload)
+        _log.info(EtlEvent.SOURCE_BATCH_READ, extra=payload)
     else:
-        _log.debug(EtlEvent.MONGO_BATCH_READ, extra=payload)
+        _log.debug(EtlEvent.SOURCE_BATCH_READ, extra=payload)
 
 
 __all__ = ["FromMongo", "MongoSourceReader", "MongoSourceSpec", "SourceRef"]

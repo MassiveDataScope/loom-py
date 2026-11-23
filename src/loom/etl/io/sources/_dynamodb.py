@@ -71,7 +71,7 @@ class DynamoDBSourceReader:
         batch_processor: BatchProcessorProtocol = MongoBatchProcessor(
             schema_str_fields=schema_str_fields,
             declared_schema=declared_schema or None,
-            source_label=_SOURCE_LABEL,
+            table=spec.table,
         )
         registered_schema = self._prepare_scan(
             spec, client, scan_kwargs, declared_schema, batch_processor
@@ -298,18 +298,7 @@ def _open_item_source(
     spec: DynamoDBSourceSpec,
     effective_limit: int | None,
 ) -> Generator[dict[str, Any], None, None] | _ParallelSegmentScanner:
-    _log.info(
-        EtlEvent.DYNAMODB_SCAN_STARTED,
-        extra={
-            EtlKey.TABLE: spec.table,
-            EtlKey.FILTER: scan_kwargs.get("FilterExpression"),
-            EtlKey.PROJECTION: scan_kwargs.get("ProjectionExpression"),
-            EtlKey.BATCH_SIZE: spec.batch_size,
-            EtlKey.LIMIT: effective_limit,
-            EtlKey.CONSISTENT_READ: spec.consistent_read,
-            EtlKey.TOTAL_SEGMENTS: spec.total_segments,
-        },
-    )
+    _log.info(EtlEvent.SOURCE_QUERY_STARTED, extra={EtlKey.TABLE: spec.table})
     if spec.total_segments is not None:
         return _ParallelSegmentScanner(client, scan_kwargs, spec.total_segments)
     return _sequential_items(client, scan_kwargs, effective_limit)
@@ -346,20 +335,13 @@ def _infer_schema_from_sample(
     finally:
         source.close()
     if not items:
-        _log.info(
-            EtlEvent.DYNAMODB_SCHEMA_INFERRED,
-            extra={EtlKey.TABLE: spec.table, EtlKey.SAMPLED: 0, EtlKey.COLUMN_COUNT: 0},
-        )
+        _log.info(EtlEvent.SOURCE_SCHEMA_INFERRED, extra={EtlKey.TABLE: spec.table, EtlKey.ROWS: 0})
         return {}
     frame = batch_processor.build_frame(items)
     schema = _normalize_null_dtypes(dict(zip(frame.columns, frame.dtypes, strict=True)))
     _log.info(
-        EtlEvent.DYNAMODB_SCHEMA_INFERRED,
-        extra={
-            EtlKey.TABLE: spec.table,
-            EtlKey.SAMPLED: len(items),
-            EtlKey.COLUMN_COUNT: len(schema),
-        },
+        EtlEvent.SOURCE_SCHEMA_INFERRED,
+        extra={EtlKey.TABLE: spec.table, EtlKey.ROWS: len(items)},
     )
     return schema  # noqa: RET504
 
@@ -384,7 +366,7 @@ def _finalize_batch(
             frame, declared_schema, extra_fields_mode, schema_name, source_label=_SOURCE_LABEL
         )
     else:
-        frame = align_to_schema(frame, registered_schema, source_label=_SOURCE_LABEL)
+        frame = align_to_schema(frame, registered_schema)
     if with_columns:
         present = [c for c in with_columns if c in frame.columns]
         frame = frame.select(present) if present else frame.head(0)
@@ -409,33 +391,31 @@ class _ScanTracker:
         self._batches += 1
         payload: dict[str, object] = {
             EtlKey.TABLE: self._table,
-            EtlKey.BATCH: self._batches,
+            EtlKey.BATCHES: self._batches,
             EtlKey.ROWS: rows,
-            EtlKey.TOTAL_ROWS: self._rows,
             EtlKey.DURATION_S: round(time.monotonic() - self._started, 3),
         }
         if self._batches == 1:
-            _log.info(EtlEvent.DYNAMODB_FIRST_BATCH_READ, extra=payload)
+            _log.info(EtlEvent.SOURCE_BATCH_READ, extra=payload)
         else:
-            _log.debug(EtlEvent.DYNAMODB_BATCH_READ, extra=payload)
+            _log.debug(EtlEvent.SOURCE_BATCH_READ, extra=payload)
         return remaining - rows if remaining is not None else None
 
     def log_complete(self) -> None:
         serialization_failures = _serialization_stats.failures - self._failures_mark
         if serialization_failures:
             _log.warning(
-                EtlEvent.DYNAMODB_READ_DEGRADED,
+                EtlEvent.SOURCE_READ_DEGRADED,
                 extra={
                     EtlKey.TABLE: self._table,
                     EtlKey.SERIALIZATION_FAILURES: serialization_failures,
-                    EtlKey.LAST_ERROR: _serialization_stats.last_error,
                 },
             )
         _log.info(
-            EtlEvent.DYNAMODB_READ_COMPLETED,
+            EtlEvent.SOURCE_READ_COMPLETED,
             extra={
                 EtlKey.TABLE: self._table,
-                EtlKey.ITEMS: self._rows,
+                EtlKey.ROWS: self._rows,
                 EtlKey.BATCHES: self._batches,
                 EtlKey.SERIALIZATION_FAILURES: serialization_failures,
                 EtlKey.DURATION_S: round(time.monotonic() - self._started, 3),

@@ -153,7 +153,7 @@ class ClickHouseTargetWriter:
             frame.collect(engine=engine) if isinstance(frame, pl.LazyFrame) else frame
         )
         if df.is_empty():
-            _log.warning(EtlEvent.WRITE_PRODUCED_NO_ROWS, extra={EtlKey.TARGET: spec.table})
+            _log.warning(EtlEvent.WRITE_PRODUCED_NO_ROWS, extra={EtlKey.TABLE: spec.table})
             return
 
         qualified = f"{spec.database}.{spec.table}" if spec.database else spec.table
@@ -168,7 +168,6 @@ class ClickHouseTargetWriter:
             EtlEvent.CLICKHOUSE_INSERT_STARTED,
             extra={
                 EtlKey.ROWS: len(df),
-                EtlKey.COLUMN_COUNT: len(column_names),
                 EtlKey.TABLE: qualified,
             },
         )

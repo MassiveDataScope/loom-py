@@ -51,13 +51,13 @@ class _PolarsCheckpointIO:
         """Return LazyFrame scanning *name* under *base*, or None if absent."""
         scan_path = self._find_arrow(name, base)
         if scan_path is None:
-            _log.info(EtlEvent.CHECKPOINT_MISSED, extra={EtlKey.NAME: name, EtlKey.BASE: base})
+            _log.info(EtlEvent.CHECKPOINT_MISSED, extra={EtlKey.CHECKPOINT: name, EtlKey.URI: base})
             return None
         kwargs: dict[str, Any] = {"memory_map": not is_cloud_path(base)}
         read_opts = self._options.object_store_read
         if read_opts:
             kwargs["storage_options"] = read_opts
-        _log.info(EtlEvent.CHECKPOINT_HIT, extra={EtlKey.NAME: name, EtlKey.PATH: scan_path})
+        _log.info(EtlEvent.CHECKPOINT_HIT, extra={EtlKey.CHECKPOINT: name, EtlKey.URI: scan_path})
         return pl.scan_ipc(scan_path, **kwargs)
 
     def write(self, name: str, base: str, data: Any, *, append: bool) -> None:
@@ -76,7 +76,7 @@ class _PolarsCheckpointIO:
         final = _arrow_part(name, base) if append else _arrow_path(name, base)
         tmp = f"{final}{_WRITING}"
 
-        _log.info(EtlEvent.CHECKPOINT_WRITTEN, extra={EtlKey.NAME: name, EtlKey.PATH: final})
+        _log.info(EtlEvent.CHECKPOINT_WRITTEN, extra={EtlKey.CHECKPOINT: name, EtlKey.URI: final})
         _write_atomic(frame, tmp, final, self._options)
 
     def _find_arrow(self, name: str, base: str) -> str | None:

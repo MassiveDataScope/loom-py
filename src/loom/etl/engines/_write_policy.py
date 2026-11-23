@@ -514,10 +514,8 @@ class _WritePolicy(TargetWriter, Generic[InputFrameT, WriteFrameT, PhysicalSchem
             _log.warning(
                 EtlEvent.HISTORIFY_RERUN_REQUIRED,
                 extra={
-                    EtlKey.TARGET: target.logical_ref.ref,
-                    EtlKey.AFFECTED_KEYS: len(report.affected_keys),
+                    EtlKey.TABLE: target.logical_ref.ref,
                     EtlKey.RERUN_DATES: [str(d) for d in report.dates_requiring_rerun],
-                    EtlKey.WARNINGS: list(report.warnings),
                 },
             )
         self._write_history(result, target, spec=spec, create=create)
@@ -663,7 +661,7 @@ class _WritePolicy(TargetWriter, Generic[InputFrameT, WriteFrameT, PhysicalSchem
         if allow_empty:
             if self._row_count_if_cheap(materialized) == 0:
                 _log.warning(
-                    EtlEvent.WRITE_PRODUCED_NO_ROWS, extra={EtlKey.TARGET: target.logical_ref.ref}
+                    EtlEvent.WRITE_PRODUCED_NO_ROWS, extra={EtlKey.TABLE: target.logical_ref.ref}
                 )
             return materialized
         pinned, empty = self._pin_rows(materialized)

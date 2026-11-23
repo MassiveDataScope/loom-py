@@ -124,10 +124,7 @@ class ETLCompiler:
         params_type = _require_params_type(pipeline_type, "ETLPipeline")
         _log.debug(
             EtlEvent.PIPELINE_COMPILING,
-            extra={
-                EtlKey.PIPELINE: pipeline_type.__name__,
-                EtlKey.PROCESSES: len(pipeline_type.processes),
-            },
+            extra={EtlKey.PIPELINE: pipeline_type.__name__},
         )
         nodes = tuple(
             self._compile_pipeline_item(item, pipeline_type, params_type)
@@ -267,7 +264,7 @@ class ETLCompiler:
         agent_bindings = resolve_agent_bindings(step_type)
         _log.debug(
             EtlEvent.STEP_COMPILING,
-            extra={EtlKey.STEP: step_type.__name__, EtlKey.SOURCE_COUNT: len(source_bindings)},
+            extra={EtlKey.STEP: step_type.__name__},
         )
         validate_step(
             StepCompilationContext(
@@ -320,9 +317,5 @@ def _warn_append_target(step_type: type[Any], spec: object) -> None:
     if isinstance(spec, AppendSpec):
         _log.warning(
             EtlEvent.APPEND_TARGET_COMPILED,
-            extra={
-                EtlKey.STEP: step_type.__name__,
-                EtlKey.TABLE: spec.table_ref.ref,
-                EtlKey.SCHEMA_MODE: spec.schema_mode.value,
-            },
+            extra={EtlKey.STEP: step_type.__name__, EtlKey.TABLE: spec.table_ref.ref},
         )

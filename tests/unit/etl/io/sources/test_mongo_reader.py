@@ -382,7 +382,7 @@ class TestExtraFieldsMode:
         with caplog.at_level(logging.WARNING):
             df = reader.read(_spec(schema=_ORDER_SCHEMA, extra_fields_mode="warn"), None).collect()
         assert "extra_col" not in df.columns
-        assert EtlEvent.MONGO_UNDECLARED_FIELDS_DROPPED in CapturedLog(caplog).messages
+        assert EtlEvent.SOURCE_UNDECLARED_FIELDS_DROPPED in CapturedLog(caplog).messages
         assert "extra_col" in logged_text(caplog)
 
     def test_no_extra_fields_no_error(self) -> None:
@@ -436,7 +436,7 @@ class TestHeterogeneousTypesWithinBatch:
         assert df["year"].dtype == pl.String
         int_row = df.filter(pl.col("id") == 1)["year"][0]
         assert json.loads(int_row) == 2020
-        assert EtlEvent.MONGO_TYPES_CONFLICTED in CapturedLog(caplog).messages
+        assert EtlEvent.SOURCE_TYPES_CONFLICTED in CapturedLog(caplog).messages
         assert "year" in logged_text(caplog)
 
     def test_list_of_strings_vs_list_of_dicts(self) -> None:
@@ -481,7 +481,7 @@ class TestHeterogeneousTypesWithinBatch:
         reader, _ = _reader(docs)
         with caplog.at_level(logging.WARNING):
             reader.read(_spec(), None)
-        assert EtlEvent.MONGO_TYPES_CONFLICTED in CapturedLog(caplog).messages
+        assert EtlEvent.SOURCE_TYPES_CONFLICTED in CapturedLog(caplog).messages
         assert "attributes" in logged_text(caplog)
 
 
@@ -519,7 +519,7 @@ class TestHeterogeneousTypesAcrossBatches:
         reader, _ = _reader(docs)
         with caplog.at_level(logging.WARNING):
             reader.read(_spec(batch_size=2), None).collect()
-        assert EtlEvent.MONGO_TYPES_CONFLICTED in CapturedLog(caplog).messages
+        assert EtlEvent.SOURCE_TYPES_CONFLICTED in CapturedLog(caplog).messages
         assert "attributes" in logged_text(caplog)
 
 
@@ -552,7 +552,7 @@ class TestSchemaGuidedCoercion:
         schema = (ColumnSchema("label", LoomDtype.UTF8),)
         with caplog.at_level(logging.DEBUG):
             reader.read(_spec(schema=schema), None).collect()
-        assert EtlEvent.MONGO_STRING_FIELDS_SERIALISED in CapturedLog(caplog).messages
+        assert EtlEvent.SOURCE_STRING_FIELDS_SERIALISED in CapturedLog(caplog).messages
         assert "label" in logged_text(caplog)
 
     def test_recursive_schema_materialises_nested_empty_lists(self) -> None:
@@ -783,7 +783,7 @@ class TestNestedHeterogeneousTypes:
         reader, _ = _reader(docs)
         with caplog.at_level(logging.WARNING):
             reader.read(_spec(), None)
-        assert EtlEvent.MONGO_NESTED_TYPES_CONFLICTED in CapturedLog(caplog).messages
+        assert EtlEvent.SOURCE_NESTED_TYPES_CONFLICTED in CapturedLog(caplog).messages
         assert "ad" in logged_text(caplog)
 
     def test_non_conflicting_nested_dict_stays_as_struct(self) -> None:
@@ -907,7 +907,7 @@ class TestNestedHeterogeneousTypes:
         assert row0["amount"] == pytest.approx(100.0)
         assert row0["currency"] == "EUR"
         assert "extra_fee" not in row0
-        assert EtlEvent.MONGO_SUBFIELDS_DROPPED in CapturedLog(caplog).messages
+        assert EtlEvent.SOURCE_SUBFIELDS_DROPPED in CapturedLog(caplog).messages
         assert "extra_fee" in logged_text(caplog)
 
     def test_declared_list_of_struct_with_nested_conflict_stays_list(
@@ -937,7 +937,7 @@ class TestNestedHeterogeneousTypes:
             df = reader.read(_spec(schema=schema), None).collect()
 
         assert df["tags"].dtype == pl.List(pl.Struct({"name": pl.String, "weight": pl.Int64}))
-        assert EtlEvent.MONGO_CONFLICT_DEFERRED in CapturedLog(caplog).messages
+        assert EtlEvent.SOURCE_CONFLICT_DEFERRED in CapturedLog(caplog).messages
 
 
 # ---------------------------------------------------------------------------
@@ -1283,7 +1283,7 @@ class TestSafeDumpsDegradation:
         assert df.height == 2
         assert df["ref"][0] == '{"at": null}'
         assert _serialization_stats.failures > mark
-        assert EtlEvent.MONGO_VALUE_UNSERIALISABLE in CapturedLog(caplog).messages
+        assert EtlEvent.SOURCE_VALUE_UNSERIALISABLE in CapturedLog(caplog).messages
 
 
 # ---------------------------------------------------------------------------
@@ -1352,7 +1352,7 @@ class TestSchemaDrift:
         with caplog.at_level(logging.WARNING):
             processor.build_frame(batch2)
 
-        assert EtlEvent.MONGO_SCHEMA_FIELDS_APPEARED in CapturedLog(caplog).messages
+        assert EtlEvent.SOURCE_SCHEMA_FIELDS_APPEARED in CapturedLog(caplog).messages
         assert "extra" in logged_text(caplog)
 
     def test_dropped_field_in_second_batch_emits_warning(
@@ -1368,7 +1368,7 @@ class TestSchemaDrift:
         with caplog.at_level(logging.WARNING):
             processor.build_frame(batch2)
 
-        assert EtlEvent.MONGO_SCHEMA_FIELDS_ABSENT in CapturedLog(caplog).messages
+        assert EtlEvent.SOURCE_SCHEMA_FIELDS_ABSENT in CapturedLog(caplog).messages
         assert "score" in logged_text(caplog)
 
     def test_dropped_field_warning_persists_in_subsequent_batches(
@@ -1383,7 +1383,7 @@ class TestSchemaDrift:
         with caplog.at_level(logging.WARNING):
             processor.build_frame([{"id": 3}])  # still no score
 
-        assert EtlEvent.MONGO_SCHEMA_FIELDS_ABSENT in CapturedLog(caplog).messages
+        assert EtlEvent.SOURCE_SCHEMA_FIELDS_ABSENT in CapturedLog(caplog).messages
         assert "score" in logged_text(caplog)
 
     def test_stable_schema_emits_no_drift_warning(self, caplog: pytest.LogCaptureFixture) -> None:
@@ -1520,7 +1520,7 @@ class TestPhase2Improvements:
         ):
             _build_frame_fallback(batch, {"score": pl.Int64})
 
-        assert EtlEvent.MONGO_CAST_SKIPPED in CapturedLog(caplog).messages
+        assert EtlEvent.SOURCE_CAST_SKIPPED in CapturedLog(caplog).messages
         assert "score" in logged_text(caplog)
 
     # ------------------------------------------------------------------

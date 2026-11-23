@@ -29,7 +29,7 @@ class PolarsFileWriter:
         if streaming:
             _log.debug(
                 EtlEvent.FILE_STREAM_WRITE_STARTED,
-                extra={EtlKey.KIND: spec.format, EtlKey.PATH: spec.path},
+                extra={EtlKey.URI: spec.path},
             )
             sink = resolve_format_handler(spec.format, _STREAMING_WRITERS)
             sink(frame, spec.path, spec.write_options)

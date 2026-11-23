@@ -228,7 +228,7 @@ class ETLRunner:
             environment: Environment of the run; overrides ``LOOM_ENV``. Picks
                 the overlay of a config directory.
         """
-        _log.debug(EtlEvent.YAML_LOADING, extra={EtlKey.PATH: path})
+        _log.debug(EtlEvent.YAML_LOADING, extra={EtlKey.URI: path})
         resolved_environment = resolve_environment(environment)
         context = _load_context(path, resolvers=resolvers, environment=resolved_environment)
         storage_config, obs_config = _parse_sections(context)
@@ -343,10 +343,9 @@ class ETLRunner:
             attempt: Current attempt number (1-based).
             last_attempt: Whether this is the final allowed attempt.
         """
-        _log.info(EtlEvent.PIPELINE_RUN_REQUESTED, extra={EtlKey.PIPELINE: pipeline.__name__})
         plan = self._compiler.compile(pipeline)
         if include is not None:
-            _log.debug(EtlEvent.PLAN_FILTERED, extra={EtlKey.INCLUDE: sorted(include)})
+            _log.debug(EtlEvent.PLAN_FILTERED)
             plan = filter_plan(plan, include)
         ctx = RunContext(
             run_id=run_id if run_id is not None else str(uuid.uuid4()),

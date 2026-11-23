@@ -47,12 +47,7 @@ class DeltaRsMaintainer:
         )
         _log.info(
             EtlEvent.TABLE_VACUUMED,
-            extra={
-                EtlKey.URI: uri,
-                EtlKey.DRY_RUN: spec.dry_run,
-                EtlKey.FULL: spec.full,
-                EtlKey.FILES: len(deleted),
-            },
+            extra={EtlKey.URI: uri, EtlKey.FILES: len(deleted)},
         )
         return VacuumResult(files_deleted=deleted)
 
@@ -71,11 +66,7 @@ class DeltaRsMaintainer:
         )
         _log.info(
             EtlEvent.TABLE_COMPACTED,
-            extra={
-                EtlKey.URI: uri,
-                EtlKey.ADDED_FILES: result["numFilesAdded"],
-                EtlKey.REMOVED_FILES: result["numFilesRemoved"],
-            },
+            extra={EtlKey.URI: uri},
         )
         return OptimizeResult(
             num_files_added=result["numFilesAdded"],
@@ -98,12 +89,7 @@ class DeltaRsMaintainer:
         )
         _log.info(
             EtlEvent.TABLE_Z_ORDERED,
-            extra={
-                EtlKey.URI: uri,
-                EtlKey.COLUMNS: spec.columns,
-                EtlKey.ADDED_FILES: result["numFilesAdded"],
-                EtlKey.REMOVED_FILES: result["numFilesRemoved"],
-            },
+            extra={EtlKey.URI: uri, EtlKey.COLUMNS: spec.columns},
         )
         return OptimizeResult(
             num_files_added=result["numFilesAdded"],

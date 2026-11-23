@@ -187,9 +187,7 @@ def _normalize_mapping(value: Mapping[str, Any], depth: int, extjson: bool) -> o
 
 def _normalize_unknown(value: object) -> object:
     """Non-bson unknown type: str() fallback preserved (avoids Polars Object dtype columns)."""
-    _log.warning(
-        EtlEvent.NON_BSON_TYPE_STRINGIFIED, extra={EtlKey.VALUE_TYPE: type(value).__name__}
-    )
+    _log.warning(EtlEvent.SOURCE_TYPE_STRINGIFIED, extra={EtlKey.VALUE_TYPE: type(value).__name__})
     try:
         return str(value)
     except Exception as exc:  # noqa: BLE001

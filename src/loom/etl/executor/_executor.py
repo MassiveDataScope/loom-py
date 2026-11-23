@@ -38,6 +38,7 @@ from typing import Any
 
 from loom.core.config import ConfigContext
 from loom.core.errors import InvalidType, InvalidUse
+from loom.core.log_names import LogField
 from loom.core.observability.event import Scope
 from loom.core.observability.observability import Observability
 from loom.core.runner import SupportsFlush
@@ -163,12 +164,7 @@ class ETLExecutor:
         ctx = ctx or RunContext(run_id=_new_run_id())
         _log.info(
             EtlEvent.PIPELINE_STARTED,
-            extra={
-                EtlKey.PIPELINE: plan.pipeline_type.__name__,
-                EtlKey.RUN_ID: ctx.run_id,
-                EtlKey.NODES: len(plan.nodes),
-                EtlKey.ATTEMPT: ctx.attempt,
-            },
+            extra={EtlKey.PIPELINE: plan.pipeline_type.__name__, EtlKey.RUN_ID: ctx.run_id},
         )
         status = RunStatus.SUCCESS
         try:
@@ -215,11 +211,7 @@ class ETLExecutor:
         process_run_id = _new_run_id()
         _log.info(
             EtlEvent.PROCESS_STARTED,
-            extra={
-                EtlKey.PROCESS: plan.process_type.__name__,
-                EtlKey.PROCESS_RUN_ID: process_run_id,
-                EtlKey.NODES: len(plan.nodes),
-            },
+            extra={EtlKey.PROCESS: plan.process_type.__name__, EtlKey.RUN_ID: ctx.run_id},
         )
         process_ctx = ctx.for_process(process_run_id)
         with self._observability.span(
@@ -263,11 +255,7 @@ class ETLExecutor:
         step_run_id = _new_run_id()
         _log.info(
             EtlEvent.STEP_STARTED,
-            extra={
-                EtlKey.STEP: plan.step_type.__name__,
-                EtlKey.STEP_RUN_ID: step_run_id,
-                EtlKey.SOURCES: [b.alias for b in plan.source_bindings],
-            },
+            extra={EtlKey.STEP: plan.step_type.__name__, EtlKey.RUN_ID: ctx.run_id},
         )
         with self._observability.span(
             Scope.STEP,
@@ -391,7 +379,7 @@ class ETLExecutor:
         self, spec: Any, params: Any, ctx: RunContext, *, streaming: bool = False
     ) -> Any:
         if isinstance(spec, TempSourceSpec):
-            _log.info(EtlEvent.TEMP_SOURCE_READ_STARTED, extra={EtlKey.NAME: spec.temp_name})
+            _log.info(EtlEvent.TEMP_SOURCE_READ_STARTED, extra={EtlKey.CHECKPOINT: spec.temp_name})
             return self._require_checkpoint_store(spec.temp_name).get(
                 spec.temp_name,
                 run_id=ctx.run_id,
@@ -399,11 +387,7 @@ class ETLExecutor:
             )
         _log.info(
             EtlEvent.SOURCE_READ_STARTED,
-            extra={
-                EtlKey.KIND: spec.kind,
-                EtlKey.REF: _span_target_label(spec),
-                EtlKey.STREAMING: streaming,
-            },
+            extra={EtlKey.KIND: spec.kind, EtlKey.TABLE: _span_target_label(spec)},
         )
         if streaming:
             if not isinstance(self._reader, StreamingSourceReader):
@@ -429,7 +413,7 @@ class ETLExecutor:
         if isinstance(spec, (TempSpec, TempFanInSpec)):
             _log.info(
                 EtlEvent.TEMP_TARGET_WRITE_STARTED,
-                extra={EtlKey.NAME: spec.temp_name, EtlKey.SCOPE: spec.temp_scope},
+                extra={EtlKey.CHECKPOINT: spec.temp_name, EtlKey.SCOPE: spec.temp_scope},
             )
             self._require_checkpoint_store(spec.temp_name).put(
                 spec.temp_name,
@@ -440,7 +424,7 @@ class ETLExecutor:
                 append=isinstance(spec, TempFanInSpec),
             )
         else:
-            _log.info(EtlEvent.TARGET_WRITE_STARTED, extra={EtlKey.REF: _span_target_label(spec)})
+            _log.info(EtlEvent.TARGET_WRITE_STARTED, extra={EtlKey.TABLE: _span_target_label(spec)})
             self._writer.write(result, spec, params, streaming=streaming, write_ctx=write_ctx)
 
     def _cleanup_temps(self, ctx: RunContext, status: RunStatus) -> None:
@@ -460,11 +444,12 @@ class ETLExecutor:
             except CheckpointCleanupError:
                 _log.exception(
                     EtlEvent.CHECKPOINT_CORRELATION_CLEANUP_FAILED,
-                    extra={EtlKey.CORRELATION_ID: ctx.correlation_id},
+                    extra={LogField.CORRELATION_ID: ctx.correlation_id},
                 )
         elif status is RunStatus.FAILED and ctx.last_attempt:
             _log.warning(
-                EtlEvent.CORRELATION_NOT_CLEANED, extra={EtlKey.CORRELATION_ID: ctx.correlation_id}
+                EtlEvent.CORRELATION_NOT_CLEANED,
+                extra={LogField.CORRELATION_ID: ctx.correlation_id},
             )
 
     def _dispatch_parallel(

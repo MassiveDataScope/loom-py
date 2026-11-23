@@ -34,6 +34,6 @@ def _record_serialization_failure(exc: BaseException, value: object) -> None:
     count = _serialization_stats.record(exc)
     log = _log.warning if count <= _FAILURE_WARNINGS_LIMIT else _log.debug
     log(
-        EtlEvent.MONGO_VALUE_UNSERIALISABLE,
+        EtlEvent.SOURCE_VALUE_UNSERIALISABLE,
         extra={EtlKey.VALUE_TYPE: type(value).__name__, **ErrorSummary.of(exc).fields()},
     )

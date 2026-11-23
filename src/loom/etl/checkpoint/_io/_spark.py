@@ -75,7 +75,7 @@ class _SparkCheckpointIO:
         if append and existing_schema is not None:
             frame = _align_spark_to_existing(frame, existing_schema)
 
-        _log.debug(EtlEvent.CHECKPOINT_WRITTEN, extra={EtlKey.PATH: path, EtlKey.APPEND: append})
+        _log.debug(EtlEvent.CHECKPOINT_WRITTEN, extra={EtlKey.URI: path})
         frame.write.mode("append" if append else "overwrite").parquet(path)
 
 

@@ -46,6 +46,7 @@ from loom.etl.event import EtlEvent, EtlKey
 from loom.etl.schema._schema import SchemaError, SchemaNotFoundError
 from loom.etl.storage._config import MissingTablePolicy
 from loom.etl.storage.routing import ResolvedTarget
+from loom.testing import make
 from tests.helpers.loggers import CapturedLog
 
 # ---------------------------------------------------------------------------
@@ -330,11 +331,7 @@ class TestHistorifyRepairReportPassthrough:
     def test_repair_report_returned_and_logged_when_transform_reports(
         self, fake_scd2_transform: None, caplog: pytest.LogCaptureFixture
     ) -> None:
-        report = HistorifyRepairReport(
-            affected_keys=frozenset({("player_id", 42)}),
-            dates_requiring_rerun=("2025-01-01",),
-            warnings=("rewove 1 record",),
-        )
+        report = make(HistorifyRepairReport, dates_requiring_rerun=("2025-01-01",))
         writer = _StubWritePolicy(schema_exists=True)
         writer.historify.report = report
         target = MagicMock()
@@ -344,8 +341,7 @@ class TestHistorifyRepairReportPassthrough:
 
         assert result is report
         [fields] = CapturedLog(caplog).named(EtlEvent.HISTORIFY_RERUN_REQUIRED)
-        assert fields[EtlKey.TARGET] == "wh.dim_players"
-        assert fields[EtlKey.AFFECTED_KEYS] == 1
+        assert fields[EtlKey.TABLE] == "wh.dim_players"
         assert fields[EtlKey.RERUN_DATES] == ["2025-01-01"]
 
 

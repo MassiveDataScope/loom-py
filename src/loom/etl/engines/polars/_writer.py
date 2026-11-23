@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import contextlib
 import logging
 from collections.abc import Sequence
 from typing import Any, Literal
@@ -81,8 +82,6 @@ def _log_write_start(
             EtlKey.MODE: mode,
             EtlKey.URI: location.uri,
             EtlKey.ROWS: frame.height,
-            EtlKey.COLUMN_COUNT: len(frame.columns),
-            EtlKey.PARTITION_COLUMNS: list(partition_cols) or None,
             EtlKey.PREDICATE: predicate,
         },
     )
@@ -103,33 +102,20 @@ def _last_commit(table: DeltaTable) -> tuple[int, dict[str, Any]]:
 
 
 def _log_write_commit(mode: str, location: TableLocation) -> None:
-    try:
+    event = EtlEvent.DELTA_COMMIT_METRICS_UNAVAILABLE
+    fields: dict[str, object] = {EtlKey.MODE: mode, EtlKey.URI: location.uri}
+    with contextlib.suppress(Exception):
         dt = _open_delta_table(location)
-        if dt is None:
-            _log_commit_metrics_unavailable(mode, location)
-            return
-        version, entry = _last_commit(dt)
-        metrics = entry.get("operationMetrics") or {}
-        _log.info(
-            EtlEvent.DELTA_WRITE_COMMITTED,
-            extra={
-                EtlKey.MODE: mode,
-                EtlKey.URI: location.uri,
+        if dt is not None:
+            version, entry = _last_commit(dt)
+            metrics = entry.get("operationMetrics") or {}
+            fields |= {
                 EtlKey.VERSION: version,
                 EtlKey.ROWS: int(metrics.get("numOutputRows", 0)) or None,
-                EtlKey.BYTES: int(metrics.get("numOutputBytes", 0)) or None,
                 EtlKey.FILES: int(metrics.get("numAddedFiles", 0)) or None,
-            },
-        )
-    except Exception:  # noqa: BLE001
-        _log_commit_metrics_unavailable(mode, location)
-
-
-def _log_commit_metrics_unavailable(mode: str, location: TableLocation) -> None:
-    _log.info(
-        EtlEvent.DELTA_COMMIT_METRICS_UNAVAILABLE,
-        extra={EtlKey.MODE: mode, EtlKey.URI: location.uri},
-    )
+            }
+            event = EtlEvent.DELTA_WRITE_COMMITTED
+    _log.info(event, extra=fields)
 
 
 def _check_null_dtype_columns_lazy(frame: pl.LazyFrame) -> None:
@@ -399,8 +385,6 @@ class PolarsTargetWriter(_WritePolicy[pl.LazyFrame, pl.DataFrame, PolarsPhysical
                 extra={
                     EtlKey.MODE: "replace_partitions",
                     EtlKey.URI: location.uri,
-                    EtlKey.STREAMING: True,
-                    EtlKey.PARTITION_COLUMNS: list(spec.partition_cols),
                     EtlKey.PREDICATE: predicate,
                 },
             )
@@ -436,7 +420,7 @@ class PolarsTargetWriter(_WritePolicy[pl.LazyFrame, pl.DataFrame, PolarsPhysical
                 if frame.is_empty():
                     _log.warning(
                         EtlEvent.CREATE_SKIPPED_EMPTY,
-                        extra={EtlKey.URI: location.uri, EtlKey.MISSING_COLUMNS: list(missing)},
+                        extra={EtlKey.URI: location.uri, EtlKey.COLUMNS: list(missing)},
                     )
                     return
                 raise InvalidValue(
@@ -446,7 +430,7 @@ class PolarsTargetWriter(_WritePolicy[pl.LazyFrame, pl.DataFrame, PolarsPhysical
         if location.uri.lower().startswith("uc://"):
             _log.warning(
                 EtlEvent.UNITY_CATALOG_CREATE_UNREGISTERED,
-                extra={EtlKey.REF: path_target.logical_ref.ref, EtlKey.URI: location.uri},
+                extra={EtlKey.TABLE: path_target.logical_ref.ref, EtlKey.URI: location.uri},
             )
         kwargs = _delta_write_kwargs(location)
 
