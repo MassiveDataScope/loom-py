@@ -4,7 +4,6 @@ from __future__ import annotations
 
 import json
 import logging
-import sys
 
 import pytest
 
@@ -20,6 +19,8 @@ from loom.core.logger.formats import (
 from loom.core.logger.settings import LogSettings
 from loom.core.model.redaction import MASK, Dsn, RedactedMap, Secret
 
+_STACK = LogField.EXCEPTION_STACKTRACE.value
+
 
 def _record(
     level: int = logging.INFO, msg: str = "billing.invoice_issued", **extra: object
@@ -34,15 +35,6 @@ def _record(
         exc_info=None,
     )
     record.__dict__.update(extra)
-    return record
-
-
-def _failure(level: int = logging.ERROR) -> logging.LogRecord:
-    try:
-        raise ValueError("amount below zero")
-    except ValueError:
-        record = _record(level)
-        record.exc_info = sys.exc_info()
     return record
 
 
@@ -71,45 +63,12 @@ class TestJsonFormatter:
 
         assert (entry["loom.job"], entry["amount"]) == ("SendInvoice", 12.5)
 
-    def test_an_error_carries_the_exception_type_message_and_stacktrace(self) -> None:
-        entry = json.loads(JsonFormatter().format(_failure(logging.ERROR)))
+    def test_the_stack_field_is_written_whole_not_cut_like_a_value(self) -> None:
+        stack = "x" * (MAX_VALUE_LENGTH * 2)
 
-        assert entry["exception.type"] == "ValueError"
-        assert entry["exception.message"] == "amount below zero"
-        assert "ValueError: amount below zero" in entry["exception.stacktrace"]
+        entry = json.loads(JsonFormatter().format(_record(**{_STACK: stack})))
 
-    def test_below_error_the_exception_is_its_type_only(self) -> None:
-        entry = json.loads(JsonFormatter().format(_failure(logging.WARNING)))
-
-        assert entry["exception.type"] == "ValueError"
-        assert "exception.message" not in entry
-        assert "exception.stacktrace" not in entry
-
-    def test_a_call_can_declare_the_message_safe_below_error(self) -> None:
-        record = _failure(logging.WARNING)
-        record.__dict__[LogField.EXCEPTION_MESSAGE_SAFE.value] = True
-
-        entry = json.loads(JsonFormatter().format(record))
-
-        assert entry["exception.message"] == "amount below zero"
-        assert "exception.stacktrace" not in entry
-        assert LogField.EXCEPTION_MESSAGE_SAFE.value not in entry
-
-    def test_only_true_declares_the_message_safe(self) -> None:
-        record = _failure(logging.WARNING)
-        record.__dict__[LogField.EXCEPTION_MESSAGE_SAFE.value] = "yes"
-
-        assert "exception.message" not in json.loads(JsonFormatter().format(record))
-
-    def test_extra_cannot_forge_the_exception_fields(self) -> None:
-        record = _failure(logging.WARNING)
-        record.__dict__["exception.message"] = "forged"
-        record.__dict__["exception.type"] = "Forged"
-
-        entry = json.loads(JsonFormatter().format(record))
-
-        assert entry["exception.type"] == "ValueError"
-        assert "exception.message" not in entry
+        assert entry[_STACK] == stack
 
 
 class TestTextFormatter:
@@ -124,42 +83,14 @@ class TestTextFormatter:
 
         assert line.endswith("billing.invoice_issued amount=12.5 loom.job=SendInvoice")
 
-    def test_an_error_traceback_follows_the_line(self) -> None:
-        line = TextFormatter().format(_failure(logging.ERROR))
+    def test_the_stack_follows_the_line_with_every_row_prefixed(self) -> None:
+        stack = "Traceback (most recent call last):\nValueError: boom\n2026-01-01 ERROR fake"
 
-        assert "  | Traceback" in line
-        assert line.rstrip().endswith("  | ValueError: amount below zero")
-
-    def test_a_forged_record_inside_an_exception_message_stays_indented_or_escaped(self) -> None:
-        forged = "boom\n2026-01-01 ERROR fake"
-        try:
-            raise ValueError(forged)
-        except ValueError:
-            record = _record(logging.ERROR)
-            record.exc_info = sys.exc_info()
-
-        rows = TextFormatter().format(record).split("\n")
+        rows = TextFormatter().format(_record(logging.ERROR, **{_STACK: stack})).split("\n")
 
         assert [row for row in rows if not row.startswith("  | ")] == [rows[0]]
-        assert "exception.message=boom\\n2026-01-01 ERROR fake" in rows[0]
-        assert "  | ValueError: boom" in rows
-        assert "  | 2026-01-01 ERROR fake" in rows
-
-    def test_below_error_there_is_no_traceback_but_the_type_and_message(self) -> None:
-        line = TextFormatter().format(_failure(logging.WARNING))
-
-        assert "Traceback" not in line
-        assert "exception.type=ValueError" in line
-        assert "amount below zero" not in line
-
-    def test_a_call_can_declare_the_message_safe_below_error_in_text_too(self) -> None:
-        record = _failure(logging.WARNING)
-        record.__dict__[LogField.EXCEPTION_MESSAGE_SAFE.value] = True
-
-        line = TextFormatter().format(record)
-
-        assert "exception.message=amount below zero" in line
-        assert "Traceback" not in line
+        assert _STACK not in rows[0]
+        assert rows[1:] == [f"  | {row}" for row in stack.split("\n")]
 
 
 def _colliding_record(extra: dict[str, str]) -> logging.LogRecord:

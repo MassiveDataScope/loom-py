@@ -29,9 +29,7 @@ MAX_LIST_ITEMS: Final = 20
 
 TRUNCATION_MARKER: Final = "...[truncated]"
 
-_STACKTRACE_LEVEL: Final = logging.ERROR
-
-_MESSAGE_SAFE: Final = LogField.EXCEPTION_MESSAGE_SAFE.value
+_STACKTRACE: Final = LogField.EXCEPTION_STACKTRACE.value
 
 RESERVED_KEYS: Final = frozenset(
     {
@@ -39,9 +37,6 @@ RESERVED_KEYS: Final = frozenset(
         "level",
         "message",
         "logger",
-        LogField.EXCEPTION_TYPE.value,
-        LogField.EXCEPTION_MESSAGE.value,
-        LogField.EXCEPTION_STACKTRACE.value,
     }
 )
 """Keys a format writes from the record itself; an ``extra`` key of that name cannot take them."""
@@ -94,55 +89,33 @@ def render_value(value: object) -> object:
     return type(value).__name__
 
 
-def _exception_fields(record: logging.LogRecord) -> dict[str, object]:
-    """What a format writes about the exception *record* carries: the one owner of the policy.
-
-    The type always. The message, which driver and application code fill with row
-    values, only from ERROR up or when the call declares it safe with
-    ``LogField.EXCEPTION_MESSAGE_SAFE``.
-    """
-    exc_info = record.exc_info
-    if exc_info is None or exc_info[0] is None:
-        return {}
-    fields: dict[str, object] = {LogField.EXCEPTION_TYPE.value: exc_info[0].__qualname__}
-    if record.levelno >= _STACKTRACE_LEVEL or record.__dict__.get(_MESSAGE_SAFE) is True:
-        fields[LogField.EXCEPTION_MESSAGE.value] = render_value(str(exc_info[1]))
-    return fields
-
-
 def _rendered_fields(record: logging.LogRecord) -> dict[str, object]:
     """The fields of *record* as a format writes them, in one pass.
 
     A key the format writes itself (:data:`RESERVED_KEYS`) is never taken from
-    ``extra``: it is written under ``loom.extra.<key>``, or dropped when the record's own
-    exception supplies it.
+    ``extra``: it is written under ``loom.extra.<key>``. The stack is left out: each
+    format writes it whole, in its own layout.
     """
-    derived = _exception_fields(record)
-    fields: dict[str, object] = {}
-    for key, value in record.__dict__.items():
-        if key in _STANDARD_ATTRIBUTES or key.startswith("_"):
-            continue
-        name = str(key)
-        if name == _MESSAGE_SAFE or name in derived:
-            continue
-        fields[EXTRA_PREFIX + name if name in RESERVED_KEYS else name] = render_value(value)
-    return fields | derived
+    return {
+        EXTRA_PREFIX + name if name in RESERVED_KEYS else name: render_value(value)
+        for name, value in record_fields(record).items()
+        if name != _STACKTRACE
+    }
 
 
-def _stacktrace(formatter: logging.Formatter, record: logging.LogRecord) -> str | None:
-    """The traceback of *record* when it is an error and carries one."""
-    if record.levelno < _STACKTRACE_LEVEL or record.exc_info is None or record.exc_info[0] is None:
-        return None
-    return _truncated(formatter.formatException(record.exc_info))
+def _stack_of(record: logging.LogRecord) -> str | None:
+    """The stack the context filter wrote on *record*, if any."""
+    stack = record.__dict__.get(_STACKTRACE)
+    return stack if isinstance(stack, str) else None
 
 
 class JsonFormatter(logging.Formatter):
     """One JSON object per record, fields at the top level.
 
     The keys of Lambda's JSON format (``timestamp``, ``level``, ``message``,
-    ``logger``) come first and cannot be overwritten by ``extra``. An exception is
-    written as ``exception.type``; from ERROR up also ``exception.message`` and
-    ``exception.stacktrace``. Values are rendered by :func:`render_value`.
+    ``logger``) come first and cannot be overwritten by ``extra``. Values are
+    rendered by :func:`render_value`; what the record says about its exception
+    comes from the context filter.
     """
 
     def format(self, record: logging.LogRecord) -> str:
@@ -156,9 +129,9 @@ class JsonFormatter(logging.Formatter):
             "logger": record.name,
             **_rendered_fields(record),
         }
-        stacktrace = _stacktrace(self, record)
-        if stacktrace is not None:
-            entry[LogField.EXCEPTION_STACKTRACE.value] = stacktrace
+        stack = _stack_of(record)
+        if stack is not None:
+            entry[_STACKTRACE] = stack
         return json.dumps(entry, default=str)
 
 
@@ -173,15 +146,15 @@ class TextFormatter(logging.Formatter):
     """A readable line: time, level, logger, the message, then ``key=value`` fields.
 
     A line break in the message or in a value is written escaped, so a value
-    cannot forge a second record. From ERROR up the traceback follows the line,
-    each of its rows prefixed so that the record's first line is the only unindented one.
+    cannot forge a second record. The stack the context filter wrote follows the
+    line, each of its rows prefixed so that the record's first line is the only unindented one.
     """
 
     def __init__(self) -> None:
         super().__init__("%(asctime)s %(levelname)-7s %(name)s %(message)s")
 
     def format(self, record: logging.LogRecord) -> str:
-        """Render *record* as one line, its traceback after it from ERROR up."""
+        """Render *record* as one line, its stack after it when it carries one."""
         head = f"{self.formatTime(record)} {record.levelname:<7} {record.name}"
         line = f"{head} {_one_line(_truncated(record.getMessage()))}"
         fields = " ".join(
@@ -189,10 +162,10 @@ class TextFormatter(logging.Formatter):
         )
         if fields:
             line = f"{line} {fields}"
-        stacktrace = _stacktrace(self, record)
-        if stacktrace is None:
+        stack = _stack_of(record)
+        if stack is None:
             return line
-        return "\n".join([line, *(f"{_CONTINUATION}{row}" for row in stacktrace.splitlines())])
+        return "\n".join([line, *(f"{_CONTINUATION}{row}" for row in stack.splitlines())])
 
 
 def _stdout_handler(formatter: logging.Formatter) -> logging.Handler:

@@ -18,6 +18,8 @@
 
 ## 💥 Breaking
 
+- **logging:** a record never carries an exception's message as a field. `ContextFilter` is the one owner of the exception fields on every handler loom owns, the OTEL log export included: `exception.type`, the new `loom.error.code` (`LogField.ERROR_CODE`) for a `LoomError`, and from ERROR up `exception.stacktrace`, the standard traceback keeping its last 16 384 characters after a marker (it was cut to its first 2 048), formatted once per record into `record.exc_text` and reused by every handler. An `extra` of one of those names is dropped. The formatters only render fields. `exception.message`, `LogField.EXCEPTION_MESSAGE` and `LogField.EXCEPTION_MESSAGE_SAFE` are removed. A stack is written once per record: pass `exc_info` where the exception is stopped.
+
 - **testing:** `InMemoryRepository` takes its key from the model alone. The `id_field` argument is removed: the store key is the primary key the model declares, single or composite, read as every other repository reads it, so a single key not named `id` is stored, numbered by `create` and advanced by `seed` under its own name. A type that declares no primary key, a plain `msgspec.Struct` or `LoomStruct` included, raises `ValueError` at construction, naming the type, where it used to be keyed by an `id` attribute.
   **Migration:** drop `id_field=`; a model with no declared key declares it, as a `BaseModel` with its `__tablename__` and `ColumnField(primary_key=True)` on the key field.
 

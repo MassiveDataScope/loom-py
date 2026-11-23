@@ -5,10 +5,19 @@ from __future__ import annotations
 import logging
 from dataclasses import dataclass, replace
 from enum import StrEnum
+from typing import Final
 
+from loom.core.errors.base import LoomError
 from loom.core.logger.context import current_log_fields
 from loom.core.logger.field import LogField
 from loom.core.tracing.context import get_trace_id
+
+MAX_STACK_LENGTH: Final = 16_384
+"""Characters of a written stack; a longer one keeps its end, where the failure is."""
+
+STACK_CUT_MARKER: Final = "[truncated]..."
+
+_STACK_FORMATTER: Final = logging.Formatter()
 
 
 class LogRuntime(StrEnum):
@@ -51,22 +60,15 @@ class LogIdentity:
         return {key: value for key, value in known.items() if value is not None}
 
 
-def exception_type_of(record: logging.LogRecord) -> str | None:
-    """The qualified name of the exception *record* carries, if any."""
-    exc_info = record.exc_info
-    if exc_info is None or exc_info[0] is None:
-        return None
-    return exc_info[0].__qualname__
-
-
 class ContextFilter(logging.Filter):
     """Stamp each record with the emitter's identity, its trace and the running work.
 
     Attach it to a handler, not to a logger, so the records of the
     application and of its libraries get the same fields as loom's. A field
-    already on the record, passed as ``extra``, is kept. A record that carries an
-    exception also gets ``exception.type``, so a format loom does not render, such
-    as ``lambda``, still says what failed. It never drops a record.
+    already on the record, passed as ``extra``, is kept. It is the one owner of what
+    a record says about its exception: ``exception.type``, ``loom.error.code`` for a
+    loom error, and from ERROR up ``exception.stacktrace``, never the message. It
+    never drops a record.
 
     Args:
         identity: The service and process the records come from.
@@ -99,7 +101,34 @@ class ContextFilter(logging.Filter):
         fields.setdefault(LogField.CODE_FUNCTION, record.funcName)
         fields.setdefault(LogField.CODE_LINE, record.lineno)
         fields.setdefault(LogField.CODE_FILE, record.pathname)
-        exception_type = exception_type_of(record)
-        if exception_type is not None:
-            fields.setdefault(LogField.EXCEPTION_TYPE, exception_type)
+        self._stamp_failure(record)
         return True
+
+    @staticmethod
+    def _stamp_failure(record: logging.LogRecord) -> None:
+        """Write the type, code and stack of *record*'s exception; nothing else writes them.
+
+        The stack is the filter's alone: an ``extra`` of its name is always dropped,
+        since the formats write it unrendered. With an exception, its type and code
+        replace any ``extra`` of their names. The stack is formatted once per record
+        into the standard ``exc_text`` cache, which every handler then reuses.
+        """
+        fields = record.__dict__
+        fields.pop(LogField.EXCEPTION_STACKTRACE, None)
+        if record.exc_info is None or record.exc_info[1] is None:
+            return
+        failure = record.exc_info[1]
+        fields[LogField.EXCEPTION_TYPE] = type(failure).__qualname__
+        fields.pop(LogField.ERROR_CODE, None)
+        if isinstance(failure, LoomError):
+            fields[LogField.ERROR_CODE] = failure.code.value
+        if record.levelno >= logging.ERROR:
+            record.exc_text = record.exc_text or _STACK_FORMATTER.formatException(record.exc_info)
+            fields[LogField.EXCEPTION_STACKTRACE] = ContextFilter._kept_end(record.exc_text)
+
+    @staticmethod
+    def _kept_end(stack: str) -> str:
+        """*stack*, or its last :data:`MAX_STACK_LENGTH` characters after a marker."""
+        if len(stack) <= MAX_STACK_LENGTH:
+            return stack
+        return STACK_CUT_MARKER + stack[len(STACK_CUT_MARKER) - MAX_STACK_LENGTH :]

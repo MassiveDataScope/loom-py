@@ -54,18 +54,17 @@ log.info(InvoiceEvent.ISSUED, extra={LogField.JOB: "SendInvoice"})
   of them. The formatters write any other object as its type name, never its
   `repr`; a `Secret` is masked; a value longer than 2048 characters is cut with a
   marker. Keep secrets and personal data out of fields anyway.
-- Exceptions: the message of a driver or of application code often carries row
-  values, so the `json` and `text` formats write **`exception.type` only** below
-  ERROR. From ERROR up they write `exception.type`, `exception.message` and
-  `exception.stacktrace`. A call opts into the message below ERROR, never by
-  default, with `extra={LogField.EXCEPTION_MESSAGE_SAFE: True}`, for an exception
-  whose message you know holds no data. With the `lambda` format loom installs no
-  formatter: the runtime renders the exception, including its message and stack
-  trace, and the filter cannot redact it. The filter does add `exception.type`
-  there, so the field exists in every format.
-- Reserved keys: `timestamp`, `level`, `message`, `logger` and `exception.*` belong
-  to the record. An `extra` key with one of those names does not overwrite it:
-  the `json` and `text` formats write it as `loom.extra.<key>`.
+- Exceptions: the context filter, on every handler loom owns, writes what a
+  record says about its exception: `exception.type`, `loom.error.code` for a loom
+  error, and from ERROR up `exception.stacktrace` (the standard traceback, its last
+  16 384 characters). The message is never a field of its own. Pass `exc_info` once
+  per failure, where your code stops the exception, so one failure is one record
+  and one stack. With the `lambda` format loom installs no formatter, so the
+  runtime renders the record; the filter's fields are on it all the same.
+- Reserved keys: `timestamp`, `level`, `message` and `logger` belong to the record;
+  the `json` and `text` formats write an `extra` of one of those names as
+  `loom.extra.<key>`. The exception fields belong to the filter, which drops an
+  `extra` of their name.
 - Levels: ERROR needs a human, WARNING is degraded but handled, INFO is lifecycle
   and business facts, DEBUG is diagnosis. One record per fact: batch the logs of a
   loop.
@@ -121,7 +120,7 @@ observability:
 | Format | Output | Default when |
 |---|---|---|
 | `lambda` | Nothing installed: the Lambda runtime renders the JSON and sets the level | `AWS_LAMBDA_FUNCTION_NAME` is set |
-| `json` | One JSON object per line on stdout; fields at the top level; `exception.type`, `exception.message`, `exception.stacktrace` | a deployed environment (`production`, `staging`) |
+| `json` | One JSON object per line on stdout; fields at the top level; `exception.type`, `loom.error.code`, `exception.stacktrace` | a deployed environment (`production`, `staging`) |
 | `text` | A readable line with `key=value` fields; line breaks in values are escaped | any other environment |
 
 The settings are validated at startup and by `loom check` as written
