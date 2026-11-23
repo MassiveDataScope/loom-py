@@ -76,7 +76,6 @@ class ChecksKey(LogKey):
     ID = "loom.checks.id"
     IDS = "loom.checks.ids"
     MESSAGE = "loom.checks.message"
-    HINT = "loom.checks.hint"
 
 
 CHECK_ID: Final = re.compile(r"[a-z][a-z0-9_]*(?:\.[a-z][a-z0-9_]*)*\.[EW]\d{3}")
@@ -495,11 +494,7 @@ def enforce_deploy_checks(
     for result in report.warnings:
         _logger.warning(
             ChecksEvent.DEPLOY_WARNED,
-            extra={
-                ChecksKey.ID: result.id,
-                ChecksKey.MESSAGE: result.message,
-                ChecksKey.HINT: result.hint,
-            },
+            extra={ChecksKey.ID: result.id, ChecksKey.MESSAGE: result.message},
         )
     if report.errors:
         raise DeployCheckError(environment, report.errors)

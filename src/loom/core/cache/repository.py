@@ -828,7 +828,7 @@ class CachedRepository(
             return codec.decode(payload)
         except BoundaryValidationError as error:
             self._log.warning(
-                CacheEvent.CUSTOM_PAYLOAD_MISMATCHED,
+                CacheEvent.PAYLOAD_MISMATCHED,
                 extra={
                     CacheKey.KEY: key,
                     CacheKey.FUNCTION: method_name,

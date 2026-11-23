@@ -56,7 +56,7 @@ class PostCommitEvent(LogEvent):
 class PostCommitKey(LogKey):
     """The fields of a post-commit record."""
 
-    COUNT = "loom.post_commit.count"
+    DROPPED_ACTIONS = "loom.post_commit.dropped_actions"
 
 
 class PostCommitChannel:
@@ -218,7 +218,8 @@ class PostCommitChannel:
         self._actions = []
         if remaining:
             _logger.warning(
-                PostCommitEvent.PLAIN_ACTIONS_DROPPED, extra={PostCommitKey.COUNT: len(remaining)}
+                PostCommitEvent.PLAIN_ACTIONS_DROPPED,
+                extra={PostCommitKey.DROPPED_ACTIONS: len(remaining)},
             )
 
 

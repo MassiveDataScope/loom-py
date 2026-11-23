@@ -110,7 +110,7 @@ class TestHostProviderWithoutAdoption:
             if r.message == ObservabilityEvent.HOST_PROVIDER_RANDOM_TRACE_IDS
         ]
         assert len(records) == 1
-        assert getattr(records[0], ObservabilityKey.PROVIDER)
+        assert getattr(records[0], ObservabilityKey.PROVIDER) == "TracerProvider"
 
 
 class TestHostProviderWithAdoption:

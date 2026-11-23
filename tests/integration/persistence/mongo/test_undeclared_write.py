@@ -24,6 +24,7 @@ from pymongo.monitoring import (
 from loom.core.errors import ForeignSessionError, UndeclaredStoreWrite
 from loom.core.stores.catalog import DEFAULT_STORE, StoreKey
 from loom.core.stores.repository import CursorCodec
+from loom.core.stores.uow.abc import UowEvent
 from loom.core.stores.uow.coordinator import (
     InvocationOutcome,
     OrderedCommits,
@@ -165,7 +166,7 @@ class TestUndeclaredWrite:
         assert _outcome_types(outcome) == [RolledBack]
         assert audit.commands.names[-1] == "commitTransaction"
         assert "abortTransaction" not in audit.commands.names
-        assert "UoWRollbackFailed" not in caplog.text
+        assert UowEvent.ROLLBACK_FAILED not in caplog.text
         assert await audit.orders.count() == 0
 
 

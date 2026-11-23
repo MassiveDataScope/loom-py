@@ -27,7 +27,7 @@ Rules:
     - Every explicit switch (``executor.run(..., identity=X)``,
       ``invoker.for_identity(X)``, ``ExecutionScope(X)``, a transport
       replacing the caller) and every refusal past a deadline is reported
-      here: an ``identity_switched`` or ``delegation_expired`` warning, and
+      here: an ``identity.caller_switched`` or ``identity.delegation_expired`` warning, and
       span attributes for a switch.
     - This module imports nothing from the execution, the engine, the
       container or the use cases.
@@ -48,7 +48,6 @@ from loom.core.identity.identity import ANONYMOUS, Identity
 from loom.core.identity.wire import NO_DELEGATION, Delegation
 from loom.core.log_names import LogEvent, LogField, LogKey
 from loom.core.model.types import PositiveSeconds
-from loom.core.tracing import get_trace_id
 
 _log = logging.getLogger(__name__)
 
@@ -221,7 +220,6 @@ class Acting(msgspec.Struct, frozen=True, gc=False):
                 and identity is not None
                 and previous.attributes != identity.attributes,
                 LogField.USE_CASE: what,
-                LogField.TRACE_ID: get_trace_id(),
             },
         )
         annotate_current_span(
@@ -287,7 +285,7 @@ def set_identity(identity: Identity | None, *, until: float | None = None) -> To
     """Install the caller a transport verified, for the current context.
 
     Replacing a different caller is a switch, logged
-    (``identity_switched``).
+    (``identity.caller_switched``).
 
     Args:
         identity: Verified identity produced by an authentication mechanism;

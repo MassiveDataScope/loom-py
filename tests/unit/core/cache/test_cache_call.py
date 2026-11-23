@@ -964,7 +964,7 @@ class _StaticTools:
 
     An ``async`` ``staticmethod`` reaches ``wrap_methods`` as a descriptor rather than
     as a function, so discovery that asks the raw class entry whether it is a
-    coroutine unpublishes it — the very silence ``CacheCallOverriddenBySync``
+    coroutine unpublishes it — the very silence ``cache.call_overridden_by_sync``
     exists to prevent.
     """
 
@@ -1162,7 +1162,7 @@ class TestAFailedWriteNeverFailsTheCall:
         message = rendered(records[0])
         assert f"'loom.cache.function': '{fetch.__module__}.{fetch.__qualname__}'" in message
         assert f"'loom.cache.key': '{_expected_key(fetch)}'" in message
-        assert "'loom.cache.type': 'AcmeCallDoc'" in message
+        assert "'loom.cache.result_type': 'AcmeCallDoc'" in message
 
     async def test_an_error_from_the_body_propagates_and_stores_nothing(self) -> None:
         @cache_call()
@@ -1341,7 +1341,7 @@ class TestTheDecodeGuardIsNotACatchAll:
         with pytest.raises(RuntimeError, match="the codec is broken"):
             await wrapped("q")
 
-        assert _warnings(caplog, CacheEvent.CALL_PAYLOAD_MISMATCHED) == []
+        assert _warnings(caplog, CacheEvent.PAYLOAD_MISMATCHED) == []
 
 
 class Point(msgspec.Struct):
@@ -1640,7 +1640,7 @@ class TestAPayloadThatNoLongerFits:
 
         assert first == second == NewDoc(title="q", author="ada")
         assert len(backend.set_ttls) == 2
-        records = _warnings(caplog, CacheEvent.CALL_PAYLOAD_MISMATCHED)
+        records = _warnings(caplog, CacheEvent.PAYLOAD_MISMATCHED)
         assert len(records) == 1
         assert "call:" in rendered(records[0])
 
@@ -1665,7 +1665,7 @@ class TestAPayloadThatNoLongerFits:
         await calls.wrap(read)("q")
         await calls.wrap(read_new)("q")
 
-        records = _warnings(caplog, CacheEvent.CALL_PAYLOAD_MISMATCHED)
+        records = _warnings(caplog, CacheEvent.PAYLOAD_MISMATCHED)
         assert len(records) == 1
         message = rendered(records[0])
         assert "call:" in message

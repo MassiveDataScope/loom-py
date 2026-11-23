@@ -326,7 +326,7 @@ def _log_abandoned_call(key: str, error: BaseException) -> None:
     single flight can hand to nobody would otherwise disappear entirely.
     """
     logging.getLogger(__name__).warning(
-        CacheEvent.CALL_LOAD_ABANDONED, extra={CacheKey.KEY: key, **ErrorSummary.of(error).fields()}
+        CacheEvent.LOAD_ABANDONED, extra={CacheKey.KEY: key, **ErrorSummary.of(error).fields()}
     )
 
 
@@ -366,7 +366,6 @@ def _coroutine_methods(obj: object, warn_once: _WarnOnce) -> list[AsyncCallable]
                 warn_once.emit(
                     CacheEvent.CALL_OVERRIDDEN_BY_SYNC,
                     f"{cls.__qualname__}.{name}",
-                    {CacheKey.TYPE: type(attribute).__name__},
                 )
     return [cast(AsyncCallable, getattr(obj, name)) for name in names]
 
@@ -542,7 +541,7 @@ class _ConfiguredCalls:
             return spec.codec.decode(payload)
         except (msgspec.ValidationError, ValueError, TypeError) as error:
             self._warn_once(
-                CacheEvent.CALL_PAYLOAD_MISMATCHED,
+                CacheEvent.PAYLOAD_MISMATCHED,
                 spec.func,
                 {CacheKey.KEY: key, **ErrorSummary.of(error).fields()},
             )
@@ -573,7 +572,7 @@ class _ConfiguredCalls:
                 spec.func,
                 {
                     CacheKey.KEY: key,
-                    CacheKey.TYPE: type(result).__name__,
+                    CacheKey.RESULT_TYPE: type(result).__name__,
                     **ErrorSummary.of(error).fields(),
                 },
             )

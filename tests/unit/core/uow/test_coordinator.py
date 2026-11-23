@@ -21,6 +21,7 @@ from loom.core.concurrency import run_to_completion
 from loom.core.errors import UncomposedStore
 from loom.core.errors.codes import ErrorCode
 from loom.core.stores.catalog import DEFAULT_STORE, StoreKey
+from loom.core.stores.event import StoresKey
 from loom.core.stores.uow import coordinator as coordinator_module
 from loom.core.stores.uow.abc import UnitOfWork, UowEvent
 from loom.core.stores.uow.coordinator import (
@@ -38,7 +39,6 @@ from loom.core.stores.uow.coordinator import (
 )
 from loom.stores.mongo.uow import MongoUnitOfWork
 from loom.stores.sqlalchemy.uow import SQLAlchemyUnitOfWork
-from tests.helpers.loggers import rendered
 
 from ..conftest import RecordingSessionManager, make_session
 from ..repository.mongo._fake import FakeMongoClient
@@ -842,7 +842,7 @@ class TestOutcomeLog:
 
         records = [r for r in caplog.records if r.getMessage() == UowEvent.INVOCATION_OUTCOME]
         assert [record.levelno for record in records] == [logging.WARNING]
-        assert "fake" in rendered(records[0])
+        assert getattr(records[0], StoresKey.OUTCOMES) == ["s0:RolledBack", "s1:RolledBack"]
 
     async def test_a_successful_invocation_logs_no_warning(
         self, caplog: pytest.LogCaptureFixture

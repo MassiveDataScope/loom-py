@@ -15,6 +15,7 @@ class JobSignal(Exception):
     """Raised by a job to steer its own delivery; not a failure."""
 
     status: ClassVar[Status]
+    reason: str
 
 
 class JobPostponement(JobSignal):

@@ -103,7 +103,7 @@ class AppInvoker:
 
     Binding an identity with :meth:`for_identity` is an explicit switch: an
     invocation acting as someone other than the identity acting where it is
-    called is logged by the executor (``identity_switched``) and never joins
+    called is logged by the executor (``identity.caller_switched``) and never joins
     the unit of work of the execution around it.
     """
 

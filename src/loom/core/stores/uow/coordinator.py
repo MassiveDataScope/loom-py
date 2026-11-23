@@ -55,7 +55,7 @@ deadline bounds every rollback of the invocation, however many stores it
 enlisted. Thirty seconds outlasts any rollback a live server answers, yet
 stays well under the minutes a TCP keepalive or driver socket timeout may
 take to give up. A rollback that times out is logged as
-``UoWRollbackFailed``, like any other failed rollback, and ``close`` runs
+``stores.uow_rollback_failed``, like any other failed rollback, and ``close`` runs
 next; the server discards the transaction once the connection is gone.
 """
 
@@ -675,10 +675,7 @@ class _Settlement:
 
 
 def _log_outcome(outcome: InvocationOutcome, participants: Mapping[StoreKey, Participant]) -> None:
-    stores = [
-        f"{store.key}:{type(store).__name__}:{participants[store.key].physical.backend}"
-        for store in outcome.stores
-    ]
+    stores = [f"{store.key}:{type(store).__name__}" for store in outcome.stores]
     if outcome.has_succeeded:
         _log.debug(UowEvent.INVOCATION_OUTCOME, extra={StoresKey.OUTCOMES: stores})
     else:

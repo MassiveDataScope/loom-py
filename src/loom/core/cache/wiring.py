@@ -82,7 +82,7 @@ class _CacheSlot:
         existing = container.resolve_or_none(self.key)
         if existing is not None:
             logging.getLogger(__name__).warning(
-                self.kept, extra={CacheKey.TYPE: type(existing).__qualname__}
+                self.kept, extra={CacheKey.KEPT_BINDING: type(existing).__qualname__}
             )
             return
         container.register_instance(self.key, instance)
@@ -99,7 +99,7 @@ def cache_module(config: CacheConfig) -> Callable[[LoomContainer], None]:
     gateway, opens the data and counter gateways, and registers them, the
     resolver, the :class:`~loom.core.cache.calls.CachedCalls` binder that
     caches ``@cache_call`` coroutines, and — unless one is already registered,
-    in which case it logs ``CacheDecoratorAlreadyRegistered`` and leaves the
+    in which case it logs ``cache.decorator_already_registered`` and leaves the
     slot alone — a
     :class:`~loom.core.stores.repository.registration.RepositoryDecorator` that wraps
     every ``@cached`` repository the registration module builds.  All of it
@@ -154,7 +154,7 @@ def _announce_uncached(repository: Any) -> Any:
     if declares_cache_policy(type(repository)):
         logging.getLogger(__name__).warning(
             CacheEvent.REPOSITORY_NOT_CONFIGURED,
-            extra={CacheKey.TYPE: type(repository).__qualname__},
+            extra={CacheKey.REPOSITORY: type(repository).__qualname__},
         )
     return repository
 
@@ -174,7 +174,7 @@ def cache_module_for(ctx: ConfigContext) -> Callable[[LoomContainer], None]:
     Returns:
         :func:`cache_module` over the section when it is present and enabled;
         otherwise a module whose decorator leaves every repository bare and
-        logs ``CacheNotConfigured`` for each marked class.
+        logs ``cache.repository_not_configured`` for each marked class.
     """
     config = ctx.section_optional(ConfigKey.CACHE, CacheConfig)
     if config is not None and config.enabled:

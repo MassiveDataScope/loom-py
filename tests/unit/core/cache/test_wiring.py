@@ -332,7 +332,7 @@ def _not_configured_warnings(caplog: pytest.LogCaptureFixture) -> list[logging.L
     ]
 
 
-class TestCacheNotConfigured:
+class TestRepositoryNotConfigured:
     @pytest.fixture
     def _capture_wiring_warnings(self, caplog: pytest.LogCaptureFixture) -> None:
         caplog.set_level(logging.WARNING, logger="loom.core.cache.wiring")
@@ -460,7 +460,7 @@ class TestCachedCallsBinding:
         no binding at all, so an ``isinstance`` check alone would pass with no
         registration whatsoever. The registration is what makes every factory
         in one container share a binder — and with it the once-set that keeps
-        ``CacheCallNotConfigured`` to one record per marked coroutine.
+        ``cache.call_not_configured`` to one record per marked coroutine.
         """
         container = _container(cache_module_for(ConfigContext.from_dict(raw)))
 
@@ -567,6 +567,4 @@ class TestTheBinderReportsAnAbandonedLoad:
 
 
 def _abandoned_warnings(caplog: pytest.LogCaptureFixture) -> list[logging.LogRecord]:
-    return [
-        record for record in caplog.records if CacheEvent.CALL_LOAD_ABANDONED in record.getMessage()
-    ]
+    return [record for record in caplog.records if CacheEvent.LOAD_ABANDONED in record.getMessage()]

@@ -236,7 +236,7 @@ class TestPostCommitPublish:
         await hang.cancelled.wait()
 
         assert calls == []
-        assert {"event": _DROPPED, PostCommitKey.COUNT: 1}.items() <= _event(
+        assert {"event": _DROPPED, PostCommitKey.DROPPED_ACTIONS: 1}.items() <= _event(
             caplog, _DROPPED
         ).items()
 

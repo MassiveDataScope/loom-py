@@ -227,7 +227,7 @@ class StartedExecution:
                     LogField.USE_CASE: self.use_case_name,
                     **timing,
                     LogField.STATUS: status,
-                    LogField.REASON: str(error),
+                    LogField.REASON: error.reason,
                     **ErrorSummary.of(error).fields(),
                 },
             )

@@ -934,7 +934,7 @@ class TestPostCommitDeferral:
 
         resolver.bump_from_events = _boom  # type: ignore[method-assign]
         async with enlisted_write() as channel:
-            await wrapped.create(_Create(name="entity-1"))
+            await wrapped.create(make(_Create))
 
         with caplog.at_level("ERROR"), pytest.raises(PostCommitError) as excinfo:
             await channel.drain(committed=True)

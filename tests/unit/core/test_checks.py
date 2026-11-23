@@ -360,9 +360,7 @@ class TestEnforceDeployChecks:
         assert report is not None
         assert [r.id for r in report.results] == [_WARNING_ID]
         assert any(
-            r.getMessage() == ChecksEvent.DEPLOY_WARNED
-            and _WARNING_ID in rendered(r)
-            and "quiet it" in rendered(r)
+            r.getMessage() == ChecksEvent.DEPLOY_WARNED and _WARNING_ID in rendered(r)
             for r in caplog.records
         )
 

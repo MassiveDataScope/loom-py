@@ -30,7 +30,6 @@ from loom.core.identity.context import IdentityEvent, IdentityKey
 from loom.core.job.context import add_pending_dispatch, flush_pending_dispatches
 from loom.core.log_names import LogField
 from loom.core.stores.uow.scope import current_scope
-from loom.core.tracing import active_trace_id
 from loom.core.use_case.invoker import AppInvoker
 from loom.core.use_case.registry import UseCaseRegistry
 from tests.helpers.delegation import acting_as
@@ -114,11 +113,10 @@ class TestExplicitSwitch:
 
         assert await executor.execute(outer, identity=ALICE) == (BOB,) * 3
 
-    async def test_it_is_logged_with_subjects_roles_the_use_case_and_the_trace(
+    async def test_it_is_logged_with_subjects_roles_and_the_use_case(
         self, executor: UseCaseExecutor, switches: CapturedLog
     ) -> None:
-        with active_trace_id("acme-trace"):
-            await executor.execute(AcmeNests(executor, AcmeWho(), BOB), identity=ALICE)
+        await executor.execute(AcmeNests(executor, AcmeWho(), BOB), identity=ALICE)
 
         assert switches.calls == [
             (
@@ -130,7 +128,6 @@ class TestExplicitSwitch:
                     IdentityKey.ROLES_TO: BOB.roles,
                     IdentityKey.ATTRIBUTES_CHANGED: False,
                     LogField.USE_CASE: "AcmeWho",
-                    "trace_id": "acme-trace",
                 },
             )
         ]
