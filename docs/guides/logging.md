@@ -61,9 +61,10 @@ log.info(InvoiceEvent.ISSUED, extra={LogField.JOB: "SendInvoice"})
   per failure, where your code stops the exception, so one failure is one record
   and one stack. With the `lambda` format loom installs no formatter, so the
   runtime renders the record; the filter's fields are on it all the same.
-- Reserved keys: `timestamp`, `level`, `message` and `logger` belong to the record,
-  and the filter writes the exception fields over any `extra` of that name. An `extra` key with one of those names does not overwrite it:
-  the `json` and `text` formats write it as `loom.extra.<key>`.
+- Reserved keys: `timestamp`, `level`, `message` and `logger` belong to the record;
+  the `json` and `text` formats write an `extra` of one of those names as
+  `loom.extra.<key>`. The exception fields belong to the filter, which drops an
+  `extra` of their name.
 - Levels: ERROR needs a human, WARNING is degraded but handled, INFO is lifecycle
   and business facts, DEBUG is diagnosis. One record per fact: batch the logs of a
   loop.
@@ -119,7 +120,7 @@ observability:
 | Format | Output | Default when |
 |---|---|---|
 | `lambda` | Nothing installed: the Lambda runtime renders the JSON and sets the level | `AWS_LAMBDA_FUNCTION_NAME` is set |
-| `json` | One JSON object per line on stdout; fields at the top level; `exception.type`, `exception.message`, `exception.stacktrace` | a deployed environment (`production`, `staging`) |
+| `json` | One JSON object per line on stdout; fields at the top level; `exception.type`, `loom.error.code`, `exception.stacktrace` | a deployed environment (`production`, `staging`) |
 | `text` | A readable line with `key=value` fields; line breaks in values are escaped | any other environment |
 
 The settings are validated at startup and by `loom check` as written

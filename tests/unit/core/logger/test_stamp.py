@@ -12,7 +12,7 @@ from loom.core.logger import (
     LogRuntime,
     log_context,
 )
-from loom.core.logger.stamp import MAX_STACK_LENGTH
+from loom.core.logger.stamp import MAX_STACK_LENGTH, STACK_CUT_MARKER
 from loom.core.tracing.context import active_trace_id
 from tests.helpers.loggers import CapturingHandler
 
@@ -176,13 +176,69 @@ class TestFailureFields:
 
         stack = _only(stamped).__dict__[LogField.EXCEPTION_STACKTRACE]
         assert len(stack) == MAX_STACK_LENGTH
+        assert stack.startswith(STACK_CUT_MARKER)
         assert stack.endswith("x" * 100)
 
-    def test_extra_cannot_forge_the_failure_fields(self, stamped: CapturingHandler) -> None:
-        forged = {LogField.EXCEPTION_TYPE.value: "Forged", LogField.ERROR_CODE.value: "forged"}
+    def test_a_chained_failure_is_one_stack_with_its_cause(self, stamped: CapturingHandler) -> None:
+        try:
+            try:
+                raise KeyError("row")
+            except KeyError as cause:
+                raise ValueError("invoice") from cause
+        except ValueError:
+            logging.getLogger("tests.stamp").error("billing.invoice_failed", exc_info=True)
 
-        _log_failure(logging.WARNING, ValueError("boom"), **forged)
+        stack = _only(stamped).__dict__[LogField.EXCEPTION_STACKTRACE]
+        assert "KeyError" in stack
+        assert stack.endswith("ValueError: invoice")
+
+    def test_every_handler_of_a_record_shares_one_formatted_stack(
+        self, stamped: CapturingHandler
+    ) -> None:
+        second = CapturingHandler()
+        second.addFilter(ContextFilter(_IDENTITY))
+        logger = logging.getLogger("tests.stamp")
+        logger.addHandler(second)
+        try:
+            _log_failure(logging.ERROR, ValueError("boom"))
+        finally:
+            logger.removeHandler(second)
+
+        record = _only(stamped)
+        assert record is second.records[0]
+        assert record.__dict__[LogField.EXCEPTION_STACKTRACE] == record.exc_text
+
+    def test_exc_info_with_no_active_exception_writes_nothing(
+        self, stamped: CapturingHandler
+    ) -> None:
+        logging.getLogger("tests.stamp").error("billing.invoice_failed", exc_info=True)
+
+        record = _only(stamped).__dict__
+        assert LogField.EXCEPTION_TYPE.value not in record
+        assert LogField.EXCEPTION_STACKTRACE.value not in record
+
+    @pytest.mark.parametrize("level", [logging.WARNING, logging.ERROR], ids=["warning", "error"])
+    def test_extra_cannot_forge_the_failure_fields(
+        self, stamped: CapturingHandler, level: int
+    ) -> None:
+        forged = {
+            LogField.EXCEPTION_TYPE.value: "Forged",
+            LogField.ERROR_CODE.value: "forged",
+            LogField.EXCEPTION_STACKTRACE.value: "forged",
+        }
+
+        _log_failure(level, ValueError("boom"), **forged)
 
         record = _only(stamped).__dict__
         assert record[LogField.EXCEPTION_TYPE] == "ValueError"
         assert LogField.ERROR_CODE.value not in record
+        assert record.get(LogField.EXCEPTION_STACKTRACE) != "forged"
+
+    def test_a_record_without_an_exception_cannot_carry_a_stack(
+        self, stamped: CapturingHandler
+    ) -> None:
+        stack = {LogField.EXCEPTION_STACKTRACE.value: "forged"}
+
+        logging.getLogger("tests.stamp").info("billing.invoice_issued", extra=stack)
+
+        assert LogField.EXCEPTION_STACKTRACE.value not in _only(stamped).__dict__

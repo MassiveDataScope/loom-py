@@ -3,7 +3,6 @@
 from __future__ import annotations
 
 import logging
-import traceback
 from dataclasses import dataclass, replace
 from enum import StrEnum
 from typing import Final
@@ -15,6 +14,10 @@ from loom.core.tracing.context import get_trace_id
 
 MAX_STACK_LENGTH: Final = 16_384
 """Characters of a written stack; a longer one keeps its end, where the failure is."""
+
+STACK_CUT_MARKER: Final = "[truncated]..."
+
+_STACK_FORMATTER: Final = logging.Formatter()
 
 
 class LogRuntime(StrEnum):
@@ -103,15 +106,29 @@ class ContextFilter(logging.Filter):
 
     @staticmethod
     def _stamp_failure(record: logging.LogRecord) -> None:
-        """Write the type, code and stack of *record*'s exception over any same-named ``extra``."""
-        failure = record.exc_info[1] if record.exc_info else None
-        if failure is None:
-            return
+        """Write the type, code and stack of *record*'s exception; nothing else writes them.
+
+        The stack is the filter's alone: an ``extra`` of its name is always dropped,
+        since the formats write it unrendered. With an exception, its type and code
+        replace any ``extra`` of their names. The stack is formatted once per record
+        into the standard ``exc_text`` cache, which every handler then reuses.
+        """
         fields = record.__dict__
+        fields.pop(LogField.EXCEPTION_STACKTRACE, None)
+        if record.exc_info is None or record.exc_info[1] is None:
+            return
+        failure = record.exc_info[1]
         fields[LogField.EXCEPTION_TYPE] = type(failure).__qualname__
         fields.pop(LogField.ERROR_CODE, None)
         if isinstance(failure, LoomError):
             fields[LogField.ERROR_CODE] = failure.code.value
         if record.levelno >= logging.ERROR:
-            stack = "".join(traceback.format_exception(failure)).rstrip("\n")
-            fields[LogField.EXCEPTION_STACKTRACE] = stack[-MAX_STACK_LENGTH:]
+            record.exc_text = record.exc_text or _STACK_FORMATTER.formatException(record.exc_info)
+            fields[LogField.EXCEPTION_STACKTRACE] = ContextFilter._kept_end(record.exc_text)
+
+    @staticmethod
+    def _kept_end(stack: str) -> str:
+        """*stack*, or its last :data:`MAX_STACK_LENGTH` characters after a marker."""
+        if len(stack) <= MAX_STACK_LENGTH:
+            return stack
+        return STACK_CUT_MARKER + stack[len(STACK_CUT_MARKER) - MAX_STACK_LENGTH :]

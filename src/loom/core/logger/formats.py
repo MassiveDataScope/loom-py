@@ -93,19 +93,20 @@ def _rendered_fields(record: logging.LogRecord) -> dict[str, object]:
     """The fields of *record* as a format writes them, in one pass.
 
     A key the format writes itself (:data:`RESERVED_KEYS`) is never taken from
-    ``extra``: it is written under ``loom.extra.<key>``. The stack the context
-    filter wrote is kept whole, not cut like a value.
+    ``extra``: it is written under ``loom.extra.<key>``. The stack is left out: each
+    format writes it whole, in its own layout.
     """
-    fields: dict[str, object] = {}
-    for key, value in record.__dict__.items():
-        if key in _STANDARD_ATTRIBUTES or key.startswith("_"):
-            continue
-        name = str(key)
-        if name == _STACKTRACE:
-            fields[name] = value
-            continue
-        fields[EXTRA_PREFIX + name if name in RESERVED_KEYS else name] = render_value(value)
-    return fields
+    return {
+        EXTRA_PREFIX + name if name in RESERVED_KEYS else name: render_value(value)
+        for name, value in record_fields(record).items()
+        if name != _STACKTRACE
+    }
+
+
+def _stack_of(record: logging.LogRecord) -> str | None:
+    """The stack the context filter wrote on *record*, if any."""
+    stack = record.__dict__.get(_STACKTRACE)
+    return stack if isinstance(stack, str) else None
 
 
 class JsonFormatter(logging.Formatter):
@@ -128,6 +129,9 @@ class JsonFormatter(logging.Formatter):
             "logger": record.name,
             **_rendered_fields(record),
         }
+        stack = _stack_of(record)
+        if stack is not None:
+            entry[_STACKTRACE] = stack
         return json.dumps(entry, default=str)
 
 
@@ -153,14 +157,15 @@ class TextFormatter(logging.Formatter):
         """Render *record* as one line, its stack after it when it carries one."""
         head = f"{self.formatTime(record)} {record.levelname:<7} {record.name}"
         line = f"{head} {_one_line(_truncated(record.getMessage()))}"
-        rendered = _rendered_fields(record)
-        stacktrace = rendered.pop(_STACKTRACE, None)
-        fields = " ".join(f"{key}={_one_line(str(value))}" for key, value in rendered.items())
+        fields = " ".join(
+            f"{key}={_one_line(str(value))}" for key, value in _rendered_fields(record).items()
+        )
         if fields:
             line = f"{line} {fields}"
-        if not isinstance(stacktrace, str):
+        stack = _stack_of(record)
+        if stack is None:
             return line
-        return "\n".join([line, *(f"{_CONTINUATION}{row}" for row in stacktrace.splitlines())])
+        return "\n".join([line, *(f"{_CONTINUATION}{row}" for row in stack.splitlines())])
 
 
 def _stdout_handler(formatter: logging.Formatter) -> logging.Handler:
