@@ -15,7 +15,7 @@ from tests.helpers.version_limited_extras import require_bytewax
 
 require_bytewax()
 
-from loom.core.errors import RuleViolationError  # noqa: E402
+from loom.core.errors import InvalidType, InvalidValue, RuleViolationError  # noqa: E402
 from loom.core.logger import current_log_fields  # noqa: E402
 from loom.core.observability.event import EventKind, LifecycleEvent, Scope  # noqa: E402
 from loom.core.observability.observability import Observability  # noqa: E402
@@ -359,14 +359,14 @@ class _ConditionalFailingSinkPartition:
 
 class TestRequireMessage:
     def test_require_message_rejects_non_message(self) -> None:
-        with pytest.raises(TypeError, match="Expected Message"):
+        with pytest.raises(InvalidType, match="Expected Message"):
             _shared._require_message(object())
 
 
 class TestReplacePayloads:
     def test_replace_payloads_rejects_mismatched_lengths(self) -> None:
         messages: list[Message[StreamPayload]] = [_message("a")]
-        with pytest.raises(RuntimeError, match="must match input length"):
+        with pytest.raises(InvalidValue, match="must match input length"):
             _shared._replace_payloads(messages, [])
 
 
@@ -534,7 +534,7 @@ class TestExecuteBatchStep:
         noop = Observability.noop()
         step = _InvalidBatchStep()
         messages: list[Message[StreamPayload]] = [_message("a"), _message("b")]
-        with pytest.raises(TypeError, match="UpperBatch must return a list of payloads."):
+        with pytest.raises(InvalidType, match="UpperBatch must return a list of payloads."):
             _steps._execute_batch_step(
                 noop,
                 "orders",
@@ -568,7 +568,7 @@ class TestExecuteExpandStep:
         noop = Observability.noop()
         step = _InvalidExpandStep()
         message = _message("ab")
-        with pytest.raises(TypeError, match="UpperExpand must return an iterable of payloads."):
+        with pytest.raises(InvalidType, match="UpperExpand must return an iterable of payloads."):
             _steps._execute_expand_step(
                 noop,
                 "orders",
@@ -664,13 +664,17 @@ class TestExecuteBatchExpandStep:
 
         assert result == []
 
+    def test_execute_batch_expand_step_rejects_a_result_shorter_than_the_batch(self) -> None:
+        messages: list[Message[StreamPayload]] = [_message("a"), _message("b"), _message("c")]
+        step = _ResultBatchExpandStep([[AcmePayload(value="a1")], [AcmePayload(value="b1")]])
+        with pytest.raises(InvalidValue, match="one list of payloads per message"):
+            _steps._execute_batch_expand_step(
+                Observability.noop(), "orders", 4, "UpperBatchExpand", step, messages
+            )
+
     @pytest.mark.parametrize(
         ("result", "error"),
         [
-            (
-                [[AcmePayload(value="a1")], [AcmePayload(value="b1")]],
-                "UpperBatchExpand returned 2 output lists for 3 messages",
-            ),
             (
                 [AcmePayload(value="a1"), AcmePayload(value="b1"), AcmePayload(value="c1")],
                 "UpperBatchExpand must return one list of payloads per message",
@@ -694,7 +698,6 @@ class TestExecuteBatchExpandStep:
             ),
         ],
         ids=[
-            "outer_length",
             "flat_payloads",
             "message_output",
             "str_list",
@@ -712,7 +715,7 @@ class TestExecuteBatchExpandStep:
         messages: list[Message[StreamPayload]] = [_message("a"), _message("b"), _message("c")]
         observability = Observability.noop()
         step = _ResultBatchExpandStep(result)
-        with pytest.raises(TypeError, match=error):
+        with pytest.raises(InvalidType, match=error):
             _steps._execute_batch_expand_step(
                 observability, "orders", 4, "UpperBatchExpand", step, messages
             )

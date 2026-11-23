@@ -10,6 +10,7 @@ from confluent_kafka import Consumer as _Consumer
 from confluent_kafka import KafkaError, TopicPartition
 from confluent_kafka import Message as _RawMessage
 
+from loom.core.errors import InternalError
 from loom.core.observability.event import Scope
 from loom.core.observability.observability import Observability
 from loom.streaming.kafka._config import ConsumerSettings
@@ -316,14 +317,14 @@ def _checked_record(message: _RawMessage) -> KafkaRecord[bytes]:
 def _to_record(message: _RawMessage) -> KafkaRecord[bytes]:
     value_bytes = message.value()
     if value_bytes is None:
-        raise TypeError("KafkaConsumerClient received a record without a value")
+        raise InternalError("KafkaConsumerClient received a record without a value")
     _, timestamp_ms = message.timestamp()
     headers = _normalize_headers(message.headers())
     key = message.key()
     normalized_key: bytes | str | None = None if key is None else key
     topic = message.topic()
     if topic is None:
-        raise TypeError("KafkaConsumerClient received a record without a topic")
+        raise InternalError("KafkaConsumerClient received a record without a topic")
     return KafkaRecord(
         topic=topic,
         key=normalized_key,

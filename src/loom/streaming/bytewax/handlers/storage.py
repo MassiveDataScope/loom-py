@@ -27,6 +27,7 @@ from typing import Any, TypeGuard
 from bytewax.operators import output as bw_output
 from bytewax.outputs import DynamicSink, StatelessSinkPartition
 
+from loom.core.errors import InternalError, InvalidType, InvalidUse, InvalidValue
 from loom.core.observability.event import Scope, TerminalReason
 from loom.core.observability.observability import Observability
 from loom.core.observability.span import LoomSpan
@@ -34,7 +35,7 @@ from loom.streaming.bytewax._batch_spans import BatchSpan, BatchWindow, emit_bat
 from loom.streaming.bytewax._commit_tracker import CommitCompletionPort
 from loom.streaming.bytewax.handlers._shared import _BuildContextProtocol, _step_id
 from loom.streaming.compiler._plan import CompiledStorageSink
-from loom.streaming.core._exceptions import UnsupportedNodeError
+from loom.streaming.core._exceptions import MissingBridgeError, UnsupportedNodeError
 from loom.streaming.core._message import Message, MessageMeta
 from loom.streaming.core._tracing import open_terminal_span
 from loom.streaming.nodes._sink import IntoSink, SinkPartition
@@ -114,17 +115,22 @@ class _StorageSinkPartition(StatelessSinkPartition[Message[Any]]):
         messages it covers.
 
         Raises:
-            TypeError: If the partition did not report a count of its pending items.
+            InvalidType: If the partition did not report an int count.
+            InvalidValue: If the count is negative or exceeds the pending items.
         """
         if self._failed:
             self._pending.clear()
             return
         if not self._is_durable_count(durable):
             self._failed = True
-            raise TypeError(
-                f"{self._node_name}: SinkPartition.write_batch and close must return how "
-                f"many of the {len(self._pending)} pending items they made durable; "
-                f"got {durable!r}."
+            if not isinstance(durable, int) or isinstance(durable, bool):
+                raise InvalidType(
+                    f"{self._node_name}: SinkPartition.write_batch and close must return "
+                    "an int count of the pending items they made durable."
+                )
+            raise InvalidValue(
+                f"{self._node_name}: SinkPartition.write_batch and close must return a "
+                "count between zero and the number of pending items."
             )
         if not durable:
             return
@@ -265,12 +271,12 @@ class _StorageDynamicSink(DynamicSink[Message[Any]]):
             session_manager = None
             if node.engine is TableEngine.SQLALCHEMY:
                 if self._ctx.bridge is None:
-                    raise RuntimeError(
+                    raise MissingBridgeError(
                         "IntoTable engine=sqlalchemy requires an AsyncBridge "
                         "from the Bytewax runtime."
                     )
                 if self._compiled.database_config is None:
-                    raise RuntimeError(
+                    raise InvalidUse(
                         "IntoTable engine=sqlalchemy requires a resolved database config."
                     )
                 session_manager = self._ctx.session_manager_for(self._compiled.database_config)
@@ -321,14 +327,14 @@ def _apply_into_sink(
 
     Raises:
         UnsupportedNodeError: If *raw* does not satisfy ``IntoSink``.
-        RuntimeError:         If no compiled storage sink exists for the path.
+        InternalError:        If no compiled storage sink exists for the path.
     """
     if not isinstance(raw, IntoSink):
         raise UnsupportedNodeError(f"Expected IntoSink, got {type(raw).__name__}.")
     path = ctx.current_path
     compiled = ctx.plan.terminal_storage_sinks.get(path)
     if compiled is None:
-        raise RuntimeError(
+        raise InternalError(
             f"IntoSink '{type(raw).__name__}' at path {path} has no compiled storage sink; "
             "ensure compile_flow ran before building the dataflow."
         )

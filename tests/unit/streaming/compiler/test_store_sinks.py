@@ -71,7 +71,7 @@ class TestStoreSinkCompilation:
 
         node = _node(TableEngine.CLICKHOUSE)
         catalog = load_catalog(ctx)
-        with pytest.raises(ValueError, match="'database' was renamed to 'store'"):
+        with pytest.raises(ConfigError, match="'database' was renamed to 'store'"):
             resolve_clickhouse_table_config(node, ctx, catalog)
 
     def test_a_flow_with_a_clickhouse_and_a_sqlalchemy_sink_compiles_from_a_file(

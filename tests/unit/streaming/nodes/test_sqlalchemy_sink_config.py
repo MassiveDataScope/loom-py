@@ -135,5 +135,5 @@ class TestSqlAlchemySinkConfig:
     def test_a_relational_sink_names_the_renamed_database_key(self) -> None:
         config = {"streaming": {"sinks": {"orders_sink": {"database": "warehouse"}}}}
 
-        with pytest.raises(ValueError, match="'database' was renamed to 'store'"):
+        with pytest.raises(ConfigError, match="'database' was renamed to 'store'"):
             _resolve(config)

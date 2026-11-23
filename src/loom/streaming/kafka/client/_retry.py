@@ -28,6 +28,7 @@ from typing import TypeVar
 
 from confluent_kafka import KafkaError, KafkaException
 
+from loom.core.errors import InvalidValue
 from loom.streaming.kafka.client._failure import broker_error
 
 T = TypeVar("T")
@@ -60,14 +61,14 @@ class CoordinatorRetryPolicy:
         """Validate the policy.
 
         Raises:
-            ValueError: If any field is outside its permitted range.
+            InvalidValue: If any field is outside its permitted range.
         """
         if self.attempts < 1:
-            raise ValueError("CoordinatorRetryPolicy.attempts must be at least 1.")
+            raise InvalidValue("CoordinatorRetryPolicy.attempts must be at least 1.")
         if self.initial_backoff_s <= 0:
-            raise ValueError("CoordinatorRetryPolicy.initial_backoff_s must be positive.")
+            raise InvalidValue("CoordinatorRetryPolicy.initial_backoff_s must be positive.")
         if self.backoff_multiplier < 1:
-            raise ValueError("CoordinatorRetryPolicy.backoff_multiplier must be at least 1.")
+            raise InvalidValue("CoordinatorRetryPolicy.backoff_multiplier must be at least 1.")
 
     def delay_before(self, retry_index: int) -> float:
         """Return the backoff delay preceding one zero-based retry."""

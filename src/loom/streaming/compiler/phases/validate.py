@@ -322,7 +322,7 @@ def _validate_storage_sink_resolution(
 ) -> list[CompilationIssue]:
     """Resolve one IntoTable config and return validation errors.
 
-    A sink section that is invalid (``ValueError``) or names a store the
+    A sink section that is invalid (``InvalidValue``) or names a store the
     catalog does not hold as it needs (``ConfigError``) is one issue.
     """
     try:

@@ -23,6 +23,7 @@ from loom.core.config import (
 )
 from loom.core.config.overrides import load_application_config
 from loom.core.environment import Environment, config_source_paths, resolve_environment
+from loom.core.errors import InvalidUse, InvalidValue
 from loom.core.model import LoomFrozenStruct
 from loom.core.model.types import PositiveInt
 from loom.core.observability.config import ObservabilityConfig
@@ -285,7 +286,7 @@ class StreamingRunner:
             sink_class: Class that satisfies the RegisteredSink protocol.
 
         Raises:
-            TypeError: If sink_class does not implement RegisteredSink.
+            InvalidType: If sink_class does not implement RegisteredSink.
         """
         self._sink_registry.register(sink_class)
 
@@ -317,7 +318,7 @@ class StreamingRunner:
             and a shutdown callable that releases adapter-owned resources.
         """
         if self._plan is None:
-            raise RuntimeError(
+            raise InvalidUse(
                 "StreamingRunner has no compiled plan. "
                 "Use run(flow=..., config_path=...) or a factory method "
                 "(from_yaml / from_context / from_dict) before calling prepare_run."
@@ -373,12 +374,12 @@ class StreamingRunner:
                 runner, as in :meth:`from_context`; overrides ``LOOM_ENV``.
 
         Raises:
-            ValueError: If ``resolvers`` is given together with ``config``
+            InvalidValue: If ``resolvers`` is given together with ``config``
                 instead of ``config_path``; ``config`` is already resolved
                 and ``resolvers`` would never be applied.
         """
         if config is not None and resolvers:
-            raise ValueError(
+            raise InvalidValue(
                 "resolvers apply only with config_path, not config: "
                 "config is already resolved, so resolvers would never be applied"
             )
@@ -395,7 +396,7 @@ class StreamingRunner:
         if error_sinks is not None:
             self._resolved_error_sinks = error_sinks  # type: ignore[assignment]
         if self._plan is None:
-            raise RuntimeError(
+            raise InvalidUse(
                 "StreamingRunner has no compiled plan. "
                 "Use run(flow=..., config_path=...) or a factory method "
                 "(from_yaml / from_context / from_dict) before calling run."

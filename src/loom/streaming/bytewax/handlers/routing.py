@@ -348,6 +348,6 @@ def _execute_router_node(node: object, message: Any) -> Any:
             message,
             _resolve_record_result(record_node.execute(message), "Router"),
         )
-    raise TypeError(
+    raise UnsupportedNodeError(
         f"Router branch node {type(node).__name__} is not supported by Bytewax adapter."
     )

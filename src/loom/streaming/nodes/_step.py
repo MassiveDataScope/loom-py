@@ -132,10 +132,11 @@ class BatchExpandStep(Step[InT, OutT], ABC):
     empty list filters the message out. The result and each of its lists are
     iterated once, so generators work.
 
-    These results raise ``TypeError`` and every message of the batch becomes
-    an error envelope: a result whose length differs from the batch, a flat
-    list of payloads, a ``Message`` among the outputs, and a ``str``,
-    ``bytes`` or mapping in place of the result or of one of its lists.
+    These results raise and every message of the batch becomes an error
+    envelope: ``InvalidValue`` for a result whose length differs from the
+    batch, ``InvalidType`` for a flat list of payloads, a ``Message`` among
+    the outputs, and a ``str``, ``bytes`` or mapping in place of the result
+    or of one of its lists.
     """
 
     router_branch_safe: ClassVar[bool] = True

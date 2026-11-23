@@ -8,6 +8,7 @@ from typing import Any, Literal, get_args, get_origin
 
 from loom.core.config import ConfigContext
 from loom.core.config.keys import ConfigKey
+from loom.core.errors import InternalError
 from loom.core.model.redaction import RedactedMap
 from loom.core.stores.catalog import StoreCatalog
 from loom.streaming.compiler._errors import StreamingErrorCode
@@ -88,7 +89,7 @@ def _node_needs_async_bridge(node: object) -> bool:
 def _build_mongo_source(flow: StreamFlow[Any, Any], ctx: ConfigContext) -> CompiledMongoCDCSource:
     source = flow.source
     if not isinstance(source, FromMongoCDC):
-        raise TypeError(f"Expected FromMongoCDC source, got {type(source).__name__}.")
+        raise InternalError(f"Expected FromMongoCDC source, got {type(source).__name__}.")
     mongo = load_mongo_config(ctx)
     settings = mongo.source_for(source.logical_ref)
     watch_options = RedactedMap({**settings.watch_options, **source.watch_options})

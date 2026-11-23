@@ -5,6 +5,7 @@ from __future__ import annotations
 from enum import StrEnum
 from typing import ClassVar, Generic, Protocol, TypeVar
 
+from loom.core.errors import InvalidValue
 from loom.core.model import LoomFrozenStruct, LoomStruct
 from loom.core.routing import LogicalRef, as_logical_ref
 from loom.streaming.core._message import Message
@@ -55,7 +56,7 @@ class FromMultiTypeTopic(LoomFrozenStruct, Generic[MultiPayloadT], frozen=True):
         payloads: Tuple of two or more expected payload types.
 
     Raises:
-        ValueError: When fewer than two payload types are declared.
+        InvalidValue: When fewer than two payload types are declared.
 
     Example:
         .. code-block:: python
@@ -71,7 +72,7 @@ class FromMultiTypeTopic(LoomFrozenStruct, Generic[MultiPayloadT], frozen=True):
 
     def __post_init__(self) -> None:
         if len(self.payloads) < 2:
-            raise ValueError(
+            raise InvalidValue(
                 "FromMultiTypeTopic requires at least two payload types. "
                 "Use FromTopic for a single-type source."
             )

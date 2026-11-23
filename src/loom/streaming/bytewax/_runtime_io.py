@@ -14,6 +14,7 @@ from bytewax.outputs import DynamicSink, StatelessSinkPartition
 from confluent_kafka import OFFSET_BEGINNING, OFFSET_END, KafkaError
 from confluent_kafka.admin import AdminClient
 
+from loom.core.errors import InvalidValue
 from loom.core.errors.summary import ErrorSummary
 from loom.core.observability.event import Scope, TerminalReason
 from loom.core.observability.observability import Observability
@@ -341,13 +342,13 @@ class KafkaPartitionedSource(FixedPartitionedSource[KafkaRecord[bytes], "int | N
         """Split a ``"{topic}:{index}"`` recovery key and reject foreign topics.
 
         Raises:
-            ValueError: If the key names a topic this flow does not read.
+            InvalidValue: If the key names a topic this flow does not read.
         """
         topic, _, raw_index = for_part.rpartition(":")
         if topic not in self._source.topics:
-            raise ValueError(
-                f"partition key '{for_part}' does not belong to this flow's topics "
-                f"{self._source.topics}; cannot resume from a different topic set"
+            raise InvalidValue(
+                f"partition key does not belong to this flow's topics {self._source.topics}; "
+                "cannot resume from a different topic set"
             )
         return topic, int(raw_index)
 

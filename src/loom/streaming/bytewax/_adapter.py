@@ -36,6 +36,7 @@ from bytewax.operators import output as bw_output
 from bytewax.outputs import DynamicSink, StatelessSinkPartition
 
 from loom.core.async_bridge import AsyncBridge
+from loom.core.errors import InternalError
 from loom.core.observability.observability import Observability
 from loom.core.tracing.context import generate_trace_id
 from loom.streaming.bytewax._commit_tracker import CommitCompletionPort
@@ -54,6 +55,7 @@ from loom.streaming.compiler._plan import (
     CompiledSource,
 )
 from loom.streaming.core._errors import ErrorKind
+from loom.streaming.core._exceptions import MissingSinkError
 from loom.streaming.core._message import Message
 from loom.streaming.core._typing import StreamPayload
 from loom.streaming.kafka._codec import MsgspecCodec
@@ -258,11 +260,11 @@ def _delivery_field(source: CompiledSource) -> str:
     """Config key of the ``delivery`` that asked for the commit tracker.
 
     Raises:
-        TypeError: If *source* is not a Kafka source; only a Kafka source
+        InternalError: If *source* is not a Kafka source; only a Kafka source
             builds a commit tracker.
     """
     if not isinstance(source, (CompiledSingleSource, CompiledMultiSource)):
-        raise TypeError(f"Expected a Kafka compiled source, got {type(source).__name__}.")
+        raise InternalError(f"Expected a Kafka compiled source, got {type(source).__name__}.")
     return f"{source.settings_key}.delivery"
 
 
@@ -274,7 +276,7 @@ def _assemble_dataflow(plan: CompiledPlan, ctx: _BuildContext) -> Any:
     ctx.wire_flow_output(stream)
     for kind in plan.error_routes:
         if kind not in ctx.error_sinks:
-            raise RuntimeError(f"Bytewax sink is required for error route {kind.value}.")
+            raise MissingSinkError(f"Bytewax sink is required for error route {kind.value}.")
     return flow
 
 
@@ -341,7 +343,7 @@ class _BuildContext:
         sink = self._runtime_sink_for(path)
         if stream is None:
             if sink is not None:
-                raise RuntimeError(
+                raise InternalError(
                     f"the output compiled for path {path} is never written: the branch "
                     "already ended the path of every message it received."
                 )
@@ -397,9 +399,9 @@ class _BuildContext:
     def wire_flow_output(self, stream: Any | None) -> None:
         """End the flow's live stream at the output sink, else complete it at a drop sink."""
         if self.sink is None and self.plan.output is not None:
-            raise RuntimeError("Bytewax sink is required for terminal output wiring.")
+            raise MissingSinkError("Bytewax sink is required for terminal output wiring.")
         if stream is None and self.plan.output is not None:
-            raise RuntimeError(
+            raise InternalError(
                 "flow.output is never written: the process already ended the path of every "
                 "message it received."
             )
@@ -412,7 +414,7 @@ class _BuildContext:
     def wire_decode_error(self, stream: Any) -> None:
         """Route undecodable records to the WIRE error sink, else complete them at a drop sink."""
         if ErrorKind.WIRE in self.plan.error_routes and ErrorKind.WIRE not in self.error_sinks:
-            raise RuntimeError("Bytewax sink is required for WIRE error routing.")
+            raise MissingSinkError("Bytewax sink is required for WIRE error routing.")
         self.wire_node_error(ErrorKind.WIRE, "decode", stream)
 
     def inline_sink_partition_for(
@@ -490,13 +492,15 @@ class _BuildContext:
 def _build_source_pipeline(flow: Any, ctx: _BuildContext) -> Stream:
     """Build the source-side pipeline up to the first decoded Message stream."""
     if ctx.source is None:
-        raise RuntimeError("Bytewax source is required to build a runtime dataflow.")
+        raise InternalError("Bytewax source is required to build a runtime dataflow.")
     source = ctx.source
     if not ctx.plan.source.needs_decode:
         return bw_input("source", flow, source)
     codec: MsgspecCodec[Any] = MsgspecCodec()
     if not isinstance(ctx.plan.source, (CompiledSingleSource, CompiledMultiSource)):
-        raise TypeError(f"Expected a Kafka compiled source, got {type(ctx.plan.source).__name__}.")
+        raise InternalError(
+            f"Expected a Kafka compiled source, got {type(ctx.plan.source).__name__}."
+        )
     strategy = ctx.plan.source.decode_strategy
     step_id = f"decode_{strategy}"
 
@@ -554,13 +558,15 @@ def _decode_source_record(
         record = cast(KafkaRecord[bytes], payload)
         source = ctx.plan.source
         if not source.needs_decode:
-            raise TypeError("Mongo CDC sources must emit Message values, not KafkaRecord items.")
+            raise InternalError(
+                "Mongo CDC sources must emit Message values, not KafkaRecord items."
+            )
         if isinstance(source, CompiledMultiSource):
             return try_decode_multi_record(record, source.dispatch, codec)
         if not isinstance(source, CompiledSingleSource):
-            raise TypeError(f"Expected CompiledSingleSource, got {type(source).__name__}.")
+            raise InternalError(f"Expected CompiledSingleSource, got {type(source).__name__}.")
         return try_decode_record(record, source.payload_type, codec)
-    raise TypeError(f"Expected Message or KafkaRecord, got {type(payload).__name__}.")
+    raise InternalError(f"Expected Message or KafkaRecord, got {type(payload).__name__}.")
 
 
 def _is_decode_ok(result: DecodeResult[StreamPayload]) -> bool:
@@ -572,4 +578,4 @@ def _decode_ok_message(result: DecodeResult[StreamPayload]) -> Message[StreamPay
     """Unwrap a successful source decode result."""
     if isinstance(result, DecodeOk):
         return result.message
-    raise TypeError(f"Expected DecodeOk, got {type(result).__name__}.")
+    raise InternalError(f"Expected DecodeOk, got {type(result).__name__}.")

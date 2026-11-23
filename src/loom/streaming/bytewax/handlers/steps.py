@@ -8,6 +8,7 @@ from typing import Any
 from bytewax.operators import flat_map
 from bytewax.operators import map as bw_map
 
+from loom.core.errors import InvalidType, InvalidValue
 from loom.core.observability.observability import Observability
 from loom.streaming.bytewax._error_boundary import (
     ErrorBoundary,
@@ -251,7 +252,7 @@ def _execute_batch_step(
     ):
         result = _resolve_batch_result(batch_step.execute(messages), name)
         if not isinstance(result, list):
-            raise TypeError(f"{name} must return a list of payloads.")
+            raise InvalidType(f"{name} must return a list of payloads.")
         return _replace_payloads(messages, result)
 
 
@@ -273,7 +274,7 @@ def _execute_expand_step(
     ):
         result = _resolve_expand_result(expand_step.execute(message), name)
         if not isinstance(result, Iterable):
-            raise TypeError(f"{name} must return an iterable of payloads.")
+            raise InvalidType(f"{name} must return an iterable of payloads.")
         return [_replace_payload(message, payload) for payload in result]
 
 
@@ -308,15 +309,15 @@ def _outputs_per_message(
     that message out.
     """
     if len(groups) != len(messages):
-        raise TypeError(
-            f"{name} returned {len(groups)} output lists for {len(messages)} messages; "
-            "return one list of payloads per message, in batch order."
+        raise InvalidValue(
+            f"{name} must return one list of payloads per message, in batch order, "
+            "so its output lists must match the input messages in number."
         )
     outputs: list[Message[StreamPayload]] = []
     for message, payloads in zip(messages, groups, strict=True):
         for payload in _result_list(payloads, name):
             if isinstance(payload, Message):
-                raise TypeError(
+                raise InvalidType(
                     f"{name} must return payloads, not messages: each output "
                     "takes the metadata of the message it came from."
                 )
@@ -330,7 +331,7 @@ def _result_list(value: object, name: str) -> list[Any]:
     ``str``, ``bytes`` and mappings are iterable but are not lists of results.
     """
     if not isinstance(value, Iterable) or isinstance(value, (str, bytes, bytearray, Mapping)):
-        raise TypeError(f"{name} must return one list of payloads per message.")
+        raise InvalidType(f"{name} must return one list of payloads per message.")
     return list(value)
 
 
@@ -352,11 +353,11 @@ def _execute_explode_step(
     ):
         result = explode_node.exploder.expand(message.payload)
         if not isinstance(result, dict):
-            raise TypeError(f"{name} must return a mapping of output types to payload lists.")
+            raise InvalidType(f"{name} must return a mapping of output types to payload lists.")
         outputs: list[Message[StreamPayload]] = []
         for payloads in result.values():
             if not isinstance(payloads, Iterable):
-                raise TypeError(f"{name} must return iterables of payloads.")
+                raise InvalidType(f"{name} must return iterables of payloads.")
             for payload in payloads:
                 outputs.append(_replace_payload(message, payload))
         return outputs

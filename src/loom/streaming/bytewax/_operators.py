@@ -13,7 +13,9 @@ from contextlib import (
 from typing import Any, Protocol, TypeVar, overload
 
 from loom.core.async_bridge import AsyncBridge
+from loom.core.errors import InvalidUse
 from loom.core.model import LoomFrozenStruct, LoomStruct
+from loom.streaming.core._exceptions import MissingBridgeError
 from loom.streaming.nodes._with import (
     ContextSupplier,
     ResourceScope,
@@ -242,7 +244,7 @@ class AsyncResourceLifecycle:
 
         async def _open_all() -> dict[str, object]:
             if self._stack is None:
-                raise RuntimeError("AsyncExitStack was not initialized.")
+                raise InvalidUse("AsyncExitStack was not initialized.")
             return {
                 name: await self._stack.enter_async_context(cm) for name, cm in contexts.items()
             }
@@ -316,7 +318,7 @@ def lifecycle_for(
     """
     if isinstance(node, WithAsync):
         if bridge is None:
-            raise ValueError("WithAsync dependencies require an AsyncBridge.")
+            raise MissingBridgeError("WithAsync dependencies require an AsyncBridge.")
         return AsyncResourceLifecycle(
             scope=node.scope,
             contexts=node.async_contexts,

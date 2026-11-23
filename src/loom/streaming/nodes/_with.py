@@ -9,6 +9,7 @@ from types import MappingProxyType
 from typing import TYPE_CHECKING, Any, Generic, TypeGuard, TypeVar
 
 from loom.core.config import Configurable
+from loom.core.errors import InvalidType, InvalidValue
 from loom.core.model import LoomFrozenStruct, LoomStruct
 
 if TYPE_CHECKING:
@@ -156,7 +157,7 @@ class With(_WithBase[InT, OutT]):
             values injected into step execution.
 
     Raises:
-        TypeError: If an async context manager is passed directly.
+        InvalidType: If an async context manager is passed directly.
 
     Example::
 
@@ -179,7 +180,7 @@ class With(_WithBase[InT, OutT]):
         super().__init__(scope=scope, process=process, **dependencies)
         if self._async_contexts:
             names = ", ".join(self._async_contexts.keys())
-            raise TypeError(
+            raise InvalidType(
                 f"With only accepts sync context managers. "
                 f"Async context manager(s) found: {names}. "
                 f"Use WithAsync for async context managers."
@@ -211,9 +212,9 @@ class WithAsync(_WithBase[InT, OutT]):
             values injected into step execution.
 
     Raises:
-        TypeError: If a sync context manager is passed directly.
-        ValueError: If *max_concurrency* is not positive.
-        ValueError: If *task_timeout_ms* is not positive when provided.
+        InvalidType: If a sync context manager is passed directly.
+        InvalidValue: If *max_concurrency* is not positive.
+        InvalidValue: If *task_timeout_ms* is not positive when provided.
 
     Example::
 
@@ -237,13 +238,13 @@ class WithAsync(_WithBase[InT, OutT]):
         **dependencies: object,
     ) -> None:
         if max_concurrency <= 0:
-            raise ValueError("max_concurrency must be greater than zero")
+            raise InvalidValue("max_concurrency must be greater than zero")
         if task_timeout_ms is not None and task_timeout_ms <= 0:
-            raise ValueError("task_timeout_ms must be greater than zero when provided")
+            raise InvalidValue("task_timeout_ms must be greater than zero when provided")
         super().__init__(scope=scope, process=process, **dependencies)
         if self._sync_contexts:
             names = ", ".join(self._sync_contexts.keys())
-            raise TypeError(
+            raise InvalidType(
                 f"WithAsync only accepts async context managers. "
                 f"Sync context manager(s) found: {names}. "
                 f"Use With for sync context managers."

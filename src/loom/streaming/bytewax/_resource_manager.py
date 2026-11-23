@@ -11,6 +11,7 @@ from loom.core.async_bridge import AsyncBridge
 from loom.core.stores.database import DatabaseConfig
 from loom.core.stores.profile import STREAMING_PROFILE, RuntimeProfile
 from loom.streaming.bytewax._operators import ResourceLifecycle, lifecycle_for
+from loom.streaming.core._exceptions import MissingBridgeError
 from loom.streaming.core._typing import StreamPayload
 from loom.streaming.nodes._with import With, WithAsync
 
@@ -64,7 +65,7 @@ class ResourceManager:
     def session_manager_for(self, config: DatabaseConfig) -> _SharedSessionManagerProtocol:
         """Get or create one shared SQLAlchemy session manager for a database section."""
         if self._bridge is None:
-            raise RuntimeError("SQLAlchemy session managers require an async bridge.")
+            raise MissingBridgeError("SQLAlchemy session managers require an async bridge.")
         key = _database_identity(config)
         if key not in self._session_managers:
             self._session_managers[key] = _session_manager_builder()(config, STREAMING_PROFILE)
