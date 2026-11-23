@@ -59,9 +59,8 @@ def scd2_transform(
         _assert_delete_marker(ops, frame, spec.delete_marker)
     is_log = spec.mode is HistorifyInputMode.LOG
     unique_key = [*spec.keys, str(spec.effective_date)] if is_log else join_key
-    duplicates = ops.duplicate_keys(frame, unique_key)
-    if duplicates is not None:
-        raise HistorifyKeyConflictError(duplicates, mode=spec.mode)
+    if ops.has_duplicates(frame, unique_key):
+        raise HistorifyKeyConflictError(str(unique_key), mode=spec.mode)
     if is_log:
         ops.assert_no_date_collisions(frame, join_key, str(spec.effective_date), spec)
 

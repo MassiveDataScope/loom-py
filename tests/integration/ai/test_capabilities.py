@@ -1023,7 +1023,7 @@ class TestSkillsCapability:
             deps=CapabilityDepsFactory(),
         )
 
-        with pytest.raises(AgentRunError, match="invented"), ExecutionScope(ANALYST):
+        with pytest.raises(AgentRunError, match="ValueError"), ExecutionScope(ANALYST):
             await engine.run("hello", identity=ANALYST)
 
     def test_builds_no_toolset_when_the_capability_is_skills(
@@ -1425,7 +1425,7 @@ class TestEngineSignalsSurviveTheGuard:
         with pytest.raises(AgentRunError) as failure, ExecutionScope(ANALYST):
             await engine.run("hello", identity=ANALYST)
 
-        assert "deferred" in str(failure.value).lower()
+        assert str(failure.value) == "UserError"
         assert "refused" not in model.shown
 
 

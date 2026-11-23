@@ -51,8 +51,8 @@ def make_notification_hooks(
 
     def _dispatch(state_name: str) -> Any:
         def _hook(flow: Any, flow_run: Any, state: Any) -> None:  # noqa: ARG001
-            del flow  # NOSONAR S1172
-            event = _event_from_run(flow_name, flow_run, state, state_name)
+            del flow, state  # NOSONAR S1172
+            event = _event_from_run(flow_name, flow_run, state_name)
             for n in notifiers_tuple:
                 try:
                     n.notify(event)
@@ -64,12 +64,7 @@ def make_notification_hooks(
     return [_dispatch("Failed")], [_dispatch("Completed")]
 
 
-def _event_from_run(
-    flow_name: str,
-    flow_run: Any,
-    state: Any,
-    state_name: str,
-) -> NotifyEvent:
+def _event_from_run(flow_name: str, flow_run: Any, state_name: str) -> NotifyEvent:
     return NotifyEvent(
         flow_name=flow_name,
         flow_run_name=getattr(flow_run, "name", "") or "",
@@ -78,7 +73,7 @@ def _event_from_run(
         correlation_id=_correlation_from_params(flow_run),
         duration_seconds=_duration_from_run(flow_run),
         env=_env_from_params(flow_run),
-        message=getattr(state, "message", None) or get_run_summary(),
+        message=get_run_summary(),
     )
 
 

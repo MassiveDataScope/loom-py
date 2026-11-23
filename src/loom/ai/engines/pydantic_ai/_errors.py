@@ -27,6 +27,7 @@ from pydantic_ai.exceptions import (
 )
 
 from loom.ai.errors import DENIALS, AgentRunError, AgentRunErrorCode
+from loom.core.errors.summary import ErrorSummary
 
 _UNMEASURED_SPEND_WARNINGS: tuple[type[Warning], ...] = tuple(
     warning
@@ -104,8 +105,9 @@ def as_run_error(error: BaseException) -> AgentRunError:
     Returns:
         The original error when it is already an
         :class:`~loom.ai.errors.AgentRunError`, otherwise a new one carrying
-        the classification and the original message.
+        the classification and what loom may say of the original
+        (:meth:`~loom.core.errors.summary.ErrorSummary.message_for`).
     """
     if isinstance(error, AgentRunError):
         return error
-    return AgentRunError(classify(error), f"{type(error).__name__}: {error}")
+    return AgentRunError(classify(error), ErrorSummary.message_for(error))

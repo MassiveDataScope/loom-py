@@ -70,6 +70,7 @@ from loom.ai.execution._mcp import (
 )
 from loom.ai.execution._turn import TurnCallbacks
 from loom.core.di import LoomContainer
+from loom.core.errors.summary import ErrorSummary
 from loom.core.execution import ExecutionScope
 from loom.core.identity import Identity
 from loom.core.model import LoomFrozenStruct, LoomType
@@ -650,7 +651,7 @@ class AgentHost:
         except Exception as exc:
             unreachable.append(
                 AgentErrorCode.MCP_SERVER_UNREACHABLE.issue(
-                    server=capability.server, reason=str(exc)
+                    server=capability.server, reason=ErrorSummary.message_for(exc)
                 )
             )
             return
@@ -676,7 +677,9 @@ class AgentHost:
             session = await client.__aenter__()
         except Exception as exc:
             unreachable.append(
-                AgentErrorCode.A2A_AGENT_UNREACHABLE.issue(agent=capability.agent, reason=str(exc))
+                AgentErrorCode.A2A_AGENT_UNREACHABLE.issue(
+                    agent=capability.agent, reason=ErrorSummary.message_for(exc)
+                )
             )
             return
         opened.append(_OpenedClient(key=capability.dependency_key, client=client, session=session))

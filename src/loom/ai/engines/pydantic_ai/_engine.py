@@ -70,9 +70,6 @@ A constant rather than a policy field: ``policies`` describes what the agent
 is allowed to spend, and no requirement asks the artifact to tune the wait.
 """
 
-MAX_LOGGED_CAUSE_CHARS = 500
-"""Cap on a logged failure cause: it is model-authored text, unbounded at the source."""
-
 _HEALTHY = HealthStatus(status=HealthState.OK)
 
 _NAMED_COUNTERS: frozenset[str] = frozenset(
@@ -439,14 +436,13 @@ class PydanticAIEngine:
         return error, not emitted and self._may_retry(error.code, attempt)
 
     def _log_cause(self, error: AgentRunError, exc: Exception) -> None:
-        """Log what the published failure cannot carry: the answer that caused it, truncated."""
+        """Log the cause the published failure cannot carry, as the record's exception."""
         if exc.__cause__ is not None:
-            cause = str(exc.__cause__)[:MAX_LOGGED_CAUSE_CHARS]
             _logger.warning(
-                "agent %s failed with %s, raised from: %s",
+                "agent %s failed with %s, raised from its cause",
                 self._plan.name,
                 error.code.value,
-                cause,
+                exc_info=exc.__cause__,
             )
 
     def _apply_unpriced_spend_policy(self, result: AgentRunResult[Any]) -> int:

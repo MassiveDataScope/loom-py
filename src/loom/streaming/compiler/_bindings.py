@@ -6,6 +6,7 @@ from collections.abc import Mapping
 from typing import Any, TypeGuard
 
 from loom.core.config import ConfigBinding, ConfigContext, ConfigError
+from loom.core.errors.summary import ErrorSummary
 from loom.streaming.compiler._errors import CompilationIssue, StreamingErrorCode
 from loom.streaming.graph._flow import Process, ProcessNode, StreamFlow
 from loom.streaming.nodes._boundary import IntoTopic
@@ -65,7 +66,9 @@ def _resolve_process_node(
             return node()
         except TypeError as exc:
             errors.append(
-                StreamingErrorCode.STEP_INSTANTIATION_FAILED.issue(component=node, exc=exc)
+                StreamingErrorCode.STEP_INSTANTIATION_FAILED.issue(
+                    component=node, exc=ErrorSummary.message_for(exc)
+                )
             )
             return node
     if isinstance(node, ConfigBinding):
@@ -100,7 +103,9 @@ def _resolve_binding(
     except (ConfigError, TypeError, ValueError) as exc:
         binding_name = binding.config_path or binding.target.__name__
         errors.append(
-            StreamingErrorCode.BINDING_RESOLUTION_FAILED.issue(component=binding_name, exc=exc)
+            StreamingErrorCode.BINDING_RESOLUTION_FAILED.issue(
+                component=binding_name, exc=ErrorSummary.message_for(exc)
+            )
         )
         return binding
 

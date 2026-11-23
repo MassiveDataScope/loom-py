@@ -27,6 +27,7 @@ from a2a.types.a2a_pb2 import AgentCard, Role, SendMessageRequest
 from loom.ai._filters import matches, select_names
 from loom.ai.compiler import CompiledA2ACapability
 from loom.ai.remote_auth import headers_from_ref, shared_a2a_auth
+from loom.core.config.errors import ConfigError
 
 __all__ = ["build_a2a_http_client", "create_a2a_client", "send_to_remote_agent"]
 
@@ -150,11 +151,11 @@ def _reject_ungranted_card(capability: CompiledA2ACapability, card: AgentCard) -
         pattern for pattern in capability.include if not _matches_any(pattern, advertised)
     )
     if unmatched:
-        raise ValueError(
+        raise ConfigError(
             f"the card advertises nothing matching the granted skills: {', '.join(unmatched)}"
         )
     if not select_names(advertised, include=capability.include, exclude=capability.exclude):
-        raise ValueError("the card advertises no skill matching the granted filter")
+        raise ConfigError("the card advertises no skill matching the granted filter")
 
 
 def _matches_any(pattern: str, names: Sequence[str]) -> bool:

@@ -566,9 +566,9 @@ class TestHistorifySpecDataclass:
 
 class TestHistorifyKeyConflictError:
     def test_is_value_error_with_context(self) -> None:
-        err = HistorifyKeyConflictError("(player_id=1, team_id=RM, role=OWNER) x2")
+        err = HistorifyKeyConflictError("['player_id', 'team_id', 'role']")
         assert isinstance(err, ValueError)
-        assert "player_id=1" in str(err)
+        assert "columns: ['player_id', 'team_id', 'role']" in str(err)
         assert "track" in str(err)
 
     def test_can_be_raised_as_value_error(self) -> None:
@@ -576,9 +576,9 @@ class TestHistorifyKeyConflictError:
             raise HistorifyKeyConflictError("dup")
 
     def test_log_mode_names_effective_date_key(self) -> None:
-        err = HistorifyKeyConflictError("[{'id': 1}]", mode=HistorifyInputMode.LOG)
+        err = HistorifyKeyConflictError("['id', 'event_date']", mode=HistorifyInputMode.LOG)
         assert "(keys + effective_date)" in str(err)
-        assert "[{'id': 1}]" in str(err)
+        assert "columns: ['id', 'event_date']" in str(err)
         assert str(HistorifyKeyConflictError("dup")) == str(
             HistorifyKeyConflictError("dup", mode=HistorifyInputMode.SNAPSHOT)
         )
@@ -594,10 +594,10 @@ class TestHistorifyDeleteMarkerError:
 
 class TestHistorifyDateCollisionError:
     def test_is_value_error_with_context(self) -> None:
-        err = HistorifyDateCollisionError("(sub_id=42, plan=PRO) on 2025-01-01")
+        err = HistorifyDateCollisionError("['sub_id', 'plan', 'event_date']")
         assert isinstance(err, ValueError)
         assert "timestamp" in str(err)
-        assert "sub_id=42" in str(err)
+        assert "columns: ['sub_id', 'plan', 'event_date']" in str(err)
 
     def test_can_be_raised_as_value_error(self) -> None:
         with pytest.raises(ValueError):

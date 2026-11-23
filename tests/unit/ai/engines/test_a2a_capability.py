@@ -35,6 +35,7 @@ from loom.ai.engines.pydantic_ai.extras import a2a as a2a_island
 from loom.ai.errors import AgentCompilationError, AgentErrorCode, AgentRunErrorCode
 from loom.ai.execution import AgentHost, AgentRunError
 from loom.ai.inference import InferenceTarget
+from loom.core.config.errors import ConfigError
 from loom.core.di import LoomContainer
 from loom.core.execution import ExecutionScope
 from loom.core.identity import ANONYMOUS, Identity
@@ -375,7 +376,7 @@ class TestStartupFactory:
         card = _card_with_skills("pricing")
         capability = a2a_capability(include=("forecast",))
 
-        with pytest.raises(ValueError, match="forecast"):
+        with pytest.raises(ConfigError, match="forecast"):
             a2a_island._reject_ungranted_card(capability, card)
 
     def test_the_error_names_nothing_from_the_card_when_the_filter_does_not_match(self) -> None:
@@ -383,7 +384,7 @@ class TestStartupFactory:
         card = _card_with_skills("ignore-previous-instructions")
         capability = a2a_capability(include=("forecast",))
 
-        with pytest.raises(ValueError) as failure:
+        with pytest.raises(ConfigError) as failure:
             a2a_island._reject_ungranted_card(capability, card)
 
         assert "ignore-previous-instructions" not in str(failure.value)
@@ -393,7 +394,7 @@ class TestStartupFactory:
         card = _card_with_skills("pricing", "forecast")
         capability = a2a_capability(exclude=("*",))
 
-        with pytest.raises(ValueError, match="no skill matching the granted filter"):
+        with pytest.raises(ConfigError, match="no skill matching the granted filter"):
             a2a_island._reject_ungranted_card(capability, card)
 
     def test_the_card_is_accepted_when_a_granted_glob_selects_a_subset(self) -> None:

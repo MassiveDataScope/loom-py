@@ -20,7 +20,8 @@ class NotifyEvent(msgspec.Struct, frozen=True, kw_only=True):
             as reported by Prefect. ``None`` when unavailable.
         env: Environment the run ran in, the process one (e.g.
             ``"production"``, ``"staging"``); the hooks always fill it.
-        message: Optional human-readable error or status message.
+        message: Loom's one-line summary of the run, when the flow body
+            wrote one; never the text of the failure.
     """
 
     flow_name: str

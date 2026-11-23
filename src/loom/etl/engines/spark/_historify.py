@@ -273,11 +273,8 @@ class SparkHistorifyOps:
         boundary_dtype = _history_boundary_dtype_sql(spec)
         return result.withColumn(spec.deleted_at, F.lit(None).cast(boundary_dtype))
 
-    def duplicate_keys(self, frame: DataFrame, keys: list[str]) -> str | None:
-        dupes = (
-            frame.groupBy(keys).count().filter(F.col("count") > 1).drop("count").limit(5).collect()
-        )
-        return str([row.asDict() for row in dupes]) if dupes else None
+    def has_duplicates(self, frame: DataFrame, keys: list[str]) -> bool:
+        return not frame.groupBy(keys).count().filter(F.col("count") > 1).isEmpty()
 
     def assert_no_date_collisions(
         self,
@@ -293,15 +290,7 @@ class SparkHistorifyOps:
         n_unique = frame.select(combo_key).distinct().count()
         if n_rows == n_unique:
             return
-        dupes = (
-            frame.groupBy(combo_key)
-            .count()
-            .filter(F.col("count") > 1)
-            .drop("count")
-            .limit(5)
-            .collect()
-        )
-        raise HistorifyDateCollisionError(str([row.asDict() for row in dupes]))
+        raise HistorifyDateCollisionError(str(combo_key))
 
     def temporal_conflict_min_date(
         self,
