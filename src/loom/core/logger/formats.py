@@ -17,7 +17,7 @@ MAX_VALUE_LENGTH: Final = 2048
 """Characters of a rendered message or text value; longer ones end in the marker."""
 
 MAX_LIST_ITEMS: Final = 20
-"""Items of a list value; a longer list is rendered as its type name."""
+"""Items a list value keeps; a longer list is cut to its first items."""
 
 TRUNCATION_MARKER: Final = "...[truncated]"
 
@@ -78,8 +78,8 @@ _OPAQUE: Final = object()
 def _rendered_or_opaque(value: object) -> object:
     if value is None or isinstance(value, bool | int | float | str | Secret | RedactedMap | Dsn):
         return _scalar(value)
-    if isinstance(value, list | tuple) and len(value) <= MAX_LIST_ITEMS:
-        items = [_scalar(item) for item in value]
+    if isinstance(value, list | tuple):
+        items = [_scalar(item) for item in value[:MAX_LIST_ITEMS]]
         if all(item is None or isinstance(item, bool | int | float | str) for item in items):
             return items
     return _OPAQUE
@@ -94,8 +94,9 @@ def render_value(value: object) -> object:
     """What a formatter writes for a field *value*.
 
     A scalar is written as it is, a string cut at :data:`MAX_VALUE_LENGTH`; a
-    short list of scalars is written as a list; a ``Secret`` is masked; any
-    other object is written as its type name, never its ``repr``.
+    list of scalars is written as a list of at most :data:`MAX_LIST_ITEMS`
+    items; a ``Secret`` is masked; any other object is written as its type
+    name, never its ``repr``.
     """
     rendered = _rendered_or_opaque(value)
     return type(value).__name__ if rendered is _OPAQUE else rendered
