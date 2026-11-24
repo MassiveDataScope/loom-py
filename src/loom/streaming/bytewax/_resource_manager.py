@@ -2,10 +2,8 @@
 
 from __future__ import annotations
 
-from collections.abc import Callable, Coroutine, Mapping
+from collections.abc import Callable, Coroutine
 from typing import Any, Protocol, cast, runtime_checkable
-
-import msgspec
 
 from loom.core.async_bridge import AsyncBridge
 from loom.core.stores.database import DatabaseConfig
@@ -50,7 +48,7 @@ class ResourceManager:
     def __init__(self, bridge: AsyncBridge | None) -> None:
         self._bridge = bridge
         self._managers: dict[int, ResourceLifecycle] = {}
-        self._session_managers: dict[tuple[object, ...], _SharedSessionManagerProtocol] = {}
+        self._session_managers: dict[DatabaseConfig, _SharedSessionManagerProtocol] = {}
 
     def manager_for(
         self,
@@ -66,10 +64,9 @@ class ResourceManager:
         """Get or create one shared SQLAlchemy session manager for a database section."""
         if self._bridge is None:
             raise MissingBridgeError("SQLAlchemy session managers require an async bridge.")
-        key = _database_identity(config)
-        if key not in self._session_managers:
-            self._session_managers[key] = _session_manager_builder()(config, STREAMING_PROFILE)
-        return self._session_managers[key]
+        if config not in self._session_managers:
+            self._session_managers[config] = _session_manager_builder()(config, STREAMING_PROFILE)
+        return self._session_managers[config]
 
     def shutdown_all(self) -> None:
         """Shutdown all managed resources and any associated bridge."""
@@ -115,38 +112,6 @@ def _session_manager_builder() -> Callable[
         Callable[[DatabaseConfig, RuntimeProfile], _SharedSessionManagerProtocol],
         build_session_manager,
     )
-
-
-def _database_identity(config: DatabaseConfig) -> tuple[object, ...]:
-    """Hashable identity of a database section. Its repr hides credentials."""
-    return (
-        config.url,
-        config.username,
-        config.password,
-        config.echo,
-        config.connect_timeout,
-        config.read_timeout,
-        config.connect_args.identity(),
-        _freeze_mapping(msgspec.to_builtins(config.pool)),
-        _freeze_mapping(msgspec.to_builtins(config.schema)),
-    )
-
-
-def _freeze_mapping(mapping: Mapping[str, object]) -> tuple[tuple[str, object], ...]:
-    """Convert a mapping into a hashable key for resource caching."""
-    return tuple(sorted((key, _freeze_value(value)) for key, value in mapping.items()))
-
-
-def _freeze_value(value: object) -> object:
-    if isinstance(value, Mapping):
-        return _freeze_mapping(value)
-    if isinstance(value, list):
-        return tuple(_freeze_value(item) for item in value)
-    if isinstance(value, tuple):
-        return tuple(_freeze_value(item) for item in value)
-    if isinstance(value, set):
-        return tuple(sorted((_freeze_value(item) for item in value), key=repr))
-    return value
 
 
 __all__ = ["ResourceManager", "_ResourceManagerProtocol"]

@@ -10,7 +10,7 @@ from sqlalchemy.pool import NullPool
 
 from loom.core.model.redaction import Dsn, RedactedMap
 from loom.core.stores.catalog import DEFAULT_STORE
-from loom.core.stores.database import DatabaseConfig, PoolConfig
+from loom.core.stores.database import DatabaseConfig, PoolConfig, decode_database_config
 from loom.core.stores.profile import (
     SERVER_PROFILE,
     WORKER_PROFILE,
@@ -98,6 +98,20 @@ class TestBuildSessionManager:
 
         assert seen["connect_args"] == {"command_timeout": 5}
         assert seen["echo"] is True
+
+    @pytest.mark.parametrize(
+        ("section", "hidden"),
+        [({}, False), ({"hide_parameters": True}, True)],
+        ids=["default", "set"],
+    )
+    def test_hide_parameters_reaches_the_engine(
+        self, section: dict[str, bool], hidden: bool
+    ) -> None:
+        config = decode_database_config({"url": _POSTGRES, **section}, path="stores.db")
+
+        manager = build_session_manager(config, SERVER_PROFILE, database=DEFAULT_STORE)
+
+        assert manager.engine.sync_engine.hide_parameters is hidden
 
     def test_manager_options_pass_through(self, monkeypatch: pytest.MonkeyPatch) -> None:
         seen: dict[str, Any] = {}

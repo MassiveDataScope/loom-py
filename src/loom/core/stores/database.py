@@ -147,6 +147,8 @@ class DatabaseConfig(ConnectionSettings, frozen=True, kw_only=True, forbid_unkno
         password: Driver password. Wins over the one in ``url`` and is never
             shown.
         echo: Log every statement.
+        hide_parameters: Passed to SQLAlchemy's engine: bound parameters are left
+            out of its error messages and logs.
         pool: Connection-pool keys; see :class:`PoolConfig`.
         connect_args: Passed to the driver's ``connect()`` as written. Secret
             names in it are hidden.
@@ -177,6 +179,7 @@ class DatabaseConfig(ConnectionSettings, frozen=True, kw_only=True, forbid_unkno
     username: str | None = None
     password: Secret[str] | None = None
     echo: bool = False
+    hide_parameters: bool = False
     pool: PoolConfig = msgspec.field(default_factory=PoolConfig)
     connect_args: RedactedMap = msgspec.field(default_factory=RedactedMap.empty)
     schema: SchemaConfig = msgspec.field(default_factory=SchemaConfig)

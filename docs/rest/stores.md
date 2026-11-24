@@ -527,6 +527,7 @@ stores:
   default:
     backend: sqlalchemy
     url: postgresql+asyncpg://app@db/app
+    hide_parameters: true
     connect_args:
       timeout: 5
       command_timeout: 10
@@ -540,6 +541,7 @@ stores:
 
 | Key | Meaning |
 |---|---|
+| `hide_parameters` | Passed to SQLAlchemy's engine: bound parameters are left out of its error messages and logs. Default `false`. The driver's own text, such as a Postgres `DETAIL:` line, is not affected. |
 | `connect_args` | Passed to the driver's `connect()` as written. |
 | `connect_args.timeout` | asyncpg: seconds to establish a connection. |
 | `connect_args.command_timeout` | asyncpg: seconds per statement. |
