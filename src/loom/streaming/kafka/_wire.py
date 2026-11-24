@@ -162,9 +162,7 @@ def try_decode_record(
     try:
         envelope = codec.decode(record.value, payload_type)
     except Exception as exc:
-        return _wire_error(
-            ErrorSummary.message_for(exc), record, fields=ErrorSummary.of(exc).fields()
-        )
+        return _wire_error(ErrorSummary.message_for(exc), record, failure=exc)
     return DecodeOk(message=envelope_to_message(envelope, record))
 
 
@@ -263,8 +261,9 @@ def _wire_error(
     record: KafkaRecord[bytes],
     event: StreamingEvent = StreamingEvent.RECORD_UNDECODABLE,
     fields: Mapping[str, object] | None = None,
+    failure: BaseException | None = None,
 ) -> DecodeError:
-    logger.warning(event, extra={**_record_ctx(record), **(fields or {})})
+    logger.warning(event, extra={**_record_ctx(record), **(fields or {})}, exc_info=failure)
     return DecodeError(
         error=ErrorEnvelope(kind=ErrorKind.WIRE, reason=reason, original_message=None),
         raw=record.value,

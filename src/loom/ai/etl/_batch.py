@@ -15,7 +15,6 @@ from loom.ai.etl._ledger import SpendLedger
 from loom.ai.event import AiEvent, AiKey
 from loom.ai.execution import AgentHost
 from loom.core.errors import InternalError
-from loom.core.errors.summary import ErrorSummary
 from loom.core.identity import Identity
 
 PROMPT_MISSING: Final = "PROMPT_MISSING"
@@ -110,7 +109,8 @@ class Batch:
         except Exception as error:
             _log.warning(
                 AiEvent.ROW_FAILED,
-                extra={AiKey.AGENT: self.name, **ErrorSummary.of(error).fields()},
+                extra={AiKey.AGENT: self.name},
+                exc_info=error,
             )
             return self._failed(UNEXPECTED_ERROR, usage)
         self._settle(usage)

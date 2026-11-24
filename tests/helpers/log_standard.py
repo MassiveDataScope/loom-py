@@ -3,7 +3,8 @@
 A record of a ``loom`` logger must follow it: a :class:`~loom.core.log_names.LogEvent`
 as message, no ``%`` arguments, every field key declared by a
 :class:`~loom.core.log_names.LogKey` (or made by :meth:`~loom.core.log_names.LogKey.of`),
-every value one the formats can write, and one kind of value per key. A record
+every value one the formats can write, one kind of value per key, and the text of
+the record's exception in no field. A record
 that breaks it fails its test. Records of any other logger are never checked.
 """
 
@@ -20,6 +21,9 @@ from loom.core.log_names import LogEvent, LogKey, SubKey
 from loom.core.logger.formats import RecordFields, TextFormatter, render_value
 
 _Name = TypeVar("_Name", LogEvent, LogKey)
+
+_QUOTED_TEXT_MIN: Final = 8
+"""Characters of exception text that count as quoted inside a longer field value."""
 
 _KEY_KINDS: Final = pytest.StashKey[dict[str, "ValueKind"]]()
 
@@ -69,6 +73,7 @@ class Breach(StrEnum):
     UNDECLARED_KEY = "undeclared_key"
     OPAQUE_VALUE = "opaque_value"
     KEY_RETYPED = "key_retyped"
+    EXCEPTION_TEXT_IN_FIELD = "exception_text_in_field"
 
     @classmethod
     def broken_by(cls, record: logging.LogRecord, kinds: dict[str, ValueKind]) -> list[Breach]:
@@ -79,6 +84,8 @@ class Breach(StrEnum):
             for key, value in RecordFields(record).raw.items()
             if not isinstance(key, SubKey)
         }
+        text = str(record.exc_info[1]) if record.exc_info and record.exc_info[1] else ""
+        quoting = len(text) >= _QUOTED_TEXT_MIN
         checks = {
             cls.MESSAGE_NOT_EVENT: not isinstance(record.msg, LogEvent),
             cls.MESSAGE_ARGUMENTS: bool(record.args),
@@ -90,6 +97,11 @@ class Breach(StrEnum):
             cls.KEY_RETYPED: any(
                 (kind := ValueKind.of(value)) is not None and kinds.get(key, kind) != kind
                 for key, value in fields.items()
+            ),
+            cls.EXCEPTION_TEXT_IN_FIELD: bool(text)
+            and any(
+                isinstance(value, str) and (value == text or (quoting and text in value))
+                for value in fields.values()
             ),
         }
         return [breach for breach, broken in checks.items() if broken]

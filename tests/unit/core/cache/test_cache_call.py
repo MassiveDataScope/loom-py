@@ -41,7 +41,8 @@ from loom.core.cache.event import CacheEvent
 from loom.core.cache.result_codec import EncodedResult
 from loom.core.di.container import LoomContainer
 from loom.core.model.redaction import RedactedMap
-from tests.helpers.loggers import rendered
+from loom.testing import make
+from tests.helpers.loggers import CapturedLog, rendered
 
 from ._doubles import SERIALIZED_BACKEND, CountingCacheStore
 
@@ -1209,7 +1210,7 @@ class TestABackendOutageDegradesToAnUncachedCall:
         async def fetch(query: str) -> AcmeCallDoc:
             nonlocal runs
             runs += 1
-            return AcmeCallDoc(title=query)
+            return make(AcmeCallDoc, title=query)
 
         wrapped = _calls(_ReadOutageBackend()).wrap(fetch)
 
@@ -1222,14 +1223,14 @@ class TestABackendOutageDegradesToAnUncachedCall:
         message = rendered(records[0])
         assert f"'loom.cache.function': '{fetch.__module__}.{fetch.__qualname__}'" in message
         assert f"'loom.cache.key': '{_expected_key(fetch)}'" in message
-        assert "'exception.type': 'ConnectionError'" in message
+        assert CapturedLog(caplog).exception_types(CacheEvent.CALL_READ_FAILED) == [ConnectionError]
 
     async def test_a_failing_write_returns_the_value_and_logs_once(
         self, caplog: pytest.LogCaptureFixture, _capture_call_warnings: None
     ) -> None:
         @cache_call()
         async def fetch(query: str) -> AcmeCallDoc:
-            return AcmeCallDoc(title=query)
+            return make(AcmeCallDoc, title=query)
 
         wrapped = _calls(_WriteOutageBackend()).wrap(fetch)
 
@@ -1238,9 +1239,10 @@ class TestABackendOutageDegradesToAnUncachedCall:
 
         records = _warnings(caplog, CacheEvent.CALL_WRITE_FAILED)
         assert len(records) == 1
-        message = rendered(records[0])
-        assert f"'loom.cache.key': '{_expected_key(fetch)}'" in message
-        assert "ConnectionError" in message
+        assert f"'loom.cache.key': '{_expected_key(fetch)}'" in rendered(records[0])
+        assert CapturedLog(caplog).exception_types(CacheEvent.CALL_WRITE_FAILED) == [
+            ConnectionError
+        ]
 
     async def test_an_error_from_the_body_still_propagates_under_an_outage(self) -> None:
         """The guards cover the two gateway calls, never the body between them."""

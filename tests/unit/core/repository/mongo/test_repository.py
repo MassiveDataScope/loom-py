@@ -15,7 +15,6 @@ from pymongo.errors import AutoReconnect, BulkWriteError
 from pymongo.results import DeleteResult, InsertManyResult
 
 from loom.core.errors import Conflict, UnsupportedQuery
-from loom.core.log_names import LogField
 from loom.core.model import BaseModel, ColumnField, DateTime, TimestampedModel
 from loom.core.model.enums import ServerDefault
 from loom.core.stores.repository import (
@@ -525,7 +524,7 @@ class TestConflicts:
 
         collection = BrokenUndoCollection()
         repo = _articles(collection)
-        payload = [ArticleCreate(slug="a", title="A"), ArticleCreate(slug="a", title="A")]
+        payload = [make(ArticleCreate, slug="a"), make(ArticleCreate, slug="a")]
 
         with (
             caplog.at_level(logging.ERROR, logger=repository_module.__name__),
@@ -537,7 +536,7 @@ class TestConflicts:
         undo_failed = caplog.records[-1]
         assert undo_failed.msg == MongoEvent.BULK_UNDO_FAILED
         assert undo_failed.__dict__[MongoKey.DOCUMENT_COUNT] == 1
-        assert undo_failed.__dict__[LogField.EXCEPTION_TYPE] == "AutoReconnect"
+        assert undo_failed.exc_info[1] is info.value
         assert set(collection.documents) == {"a"}
 
     async def test_other_bulk_write_errors_propagate(self) -> None:

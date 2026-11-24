@@ -33,7 +33,6 @@ from loom.core.cache.result_codec import (
 )
 from loom.core.engine.post_commit import store_channel
 from loom.core.errors import BoundaryValidationError, InvalidType, InvalidValue
-from loom.core.errors.summary import ErrorSummary
 from loom.core.model import LoomType, is_pydantic_model, loom_type_of
 from loom.core.model.convert import to_struct
 from loom.core.model.enums import Cardinality
@@ -620,9 +619,7 @@ class CachedRepository(
         return codecs
 
     def _log_abandoned_load(self, key: str, error: BaseException) -> None:
-        self._log.warning(
-            CacheEvent.LOAD_ABANDONED, extra={CacheKey.KEY: key, **ErrorSummary.of(error).fields()}
-        )
+        self._log.warning(CacheEvent.LOAD_ABANDONED, extra={CacheKey.KEY: key}, exc_info=error)
 
     async def _publish_invalidation(self, event: MutationEvent) -> None:
         """Defer the bump past the commit of the model's store, or bump right away.
@@ -829,11 +826,8 @@ class CachedRepository(
         except BoundaryValidationError as error:
             self._log.warning(
                 CacheEvent.PAYLOAD_MISMATCHED,
-                extra={
-                    CacheKey.KEY: key,
-                    CacheKey.FUNCTION: method_name,
-                    **ErrorSummary.of(error).fields(),
-                },
+                extra={CacheKey.KEY: key, CacheKey.FUNCTION: method_name},
+                exc_info=error,
             )
             return _UNDECODABLE
 

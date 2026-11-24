@@ -13,14 +13,15 @@ from typing import Any
 import pytest
 
 from loom.composition import Application
-from loom.core.errors.codes import ErrorCode
+from loom.core.engine.observation import UseCaseEvent
+from loom.core.errors import Unauthenticated
 from loom.core.execution import ExecutionRequired
 from loom.core.identity import Identity, reset_identity, set_identity
 from loom.core.job import JobService
 from loom.core.job.context import flush_pending_dispatches
 from loom.core.job.handle import JobFailedError, JobHandle
 from loom.core.logger import LogField
-from tests.helpers.loggers import logged_events
+from tests.helpers.loggers import CapturedLog, logged_events
 from tests.integration.hexagonal.conftest import (
     ANA,
     BO,
@@ -100,10 +101,7 @@ class TestACallerlessDispatch:
             await _dispatched_by(application, None)
 
         (failure,) = _failed_jobs(caplog)
-        assert (failure[LogField.EXCEPTION_TYPE], failure[LogField.ERROR_CODE]) == (
-            "Unauthenticated",
-            ErrorCode.UNAUTHENTICATED,
-        )
+        assert CapturedLog(caplog).exception_types(UseCaseEvent.FAILED) == [Unauthenticated] * 2
         assert "error" not in failure
         assert seen.calls == []
 

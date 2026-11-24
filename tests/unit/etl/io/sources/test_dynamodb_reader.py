@@ -440,12 +440,10 @@ class TestParallelScanFailures:
 
         scanner.close()  # early stop (e.g. limit satisfied) — must not raise nor hang
 
-        [failure_fields] = CapturedLog(caplog).named(EtlEvent.DYNAMODB_SEGMENT_FAILED)
-        assert (failure_fields[EtlKey.SEGMENT], failure_fields["exception.type"]) == (
-            0,
-            "RuntimeError",
-        )
-        assert "throttled" not in str(failure_fields)
+        log = CapturedLog(caplog)
+        [failure_fields] = log.named(EtlEvent.DYNAMODB_SEGMENT_FAILED)
+        assert failure_fields[EtlKey.SEGMENT] == 0
+        assert log.exception_types(EtlEvent.DYNAMODB_SEGMENT_FAILED) == [RuntimeError]
 
     def test_error_not_double_logged_when_raised(self, caplog: pytest.LogCaptureFixture) -> None:
         client = _FailingSegmentClient(pages_per_segment=1)

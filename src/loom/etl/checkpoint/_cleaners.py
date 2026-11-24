@@ -8,7 +8,6 @@ from typing import Protocol, runtime_checkable
 
 import fsspec.core
 
-from loom.core.errors.summary import ErrorSummary
 from loom.etl.checkpoint._options import checkpoint_options
 from loom.etl.event import EtlEvent, EtlKey
 
@@ -48,7 +47,8 @@ class FsspecTempCleaner:
         except Exception as exc:
             _log.warning(
                 EtlEvent.CHECKPOINT_CLEANUP_SKIPPED,
-                extra={EtlKey.URI: path, **ErrorSummary.of(exc).fields()},
+                extra={EtlKey.URI: path},
+                exc_info=exc,
             )
 
 

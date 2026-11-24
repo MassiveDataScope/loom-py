@@ -36,7 +36,13 @@ class ErrorSummary(msgspec.Struct, frozen=True, kw_only=True):
         return self.type if self.code is None else f"{self.type} ({self.code})"
 
     def fields(self) -> dict[str, str]:
-        """The record fields: ``exception.type`` and, with a code, ``loom.error.code``."""
+        """The record fields: ``exception.type`` and, with a code, ``loom.error.code``.
+
+        Only for a record that has no exception to carry: a lifecycle event that kept
+        the summary alone, or loom's own token code, whose frames hold the token and the
+        key. A record that logs a caught exception passes it as ``exc_info``, and the
+        context filter writes these fields from it.
+        """
         if self.code is None:
             return {LogField.EXCEPTION_TYPE.value: self.type}
         return {

@@ -37,7 +37,6 @@ from loom.core.cache.event import CacheEvent, CacheKey
 from loom.core.cache.keys import call_key
 from loom.core.cache.result_codec import ResultCodec, build_call_codec
 from loom.core.di.container import LoomContainer
-from loom.core.errors.summary import ErrorSummary
 from loom.core.model.introspection import resolve_type_hints
 
 AsyncCallable = Callable[..., Awaitable[Any]]
@@ -326,7 +325,7 @@ def _log_abandoned_call(key: str, error: BaseException) -> None:
     single flight can hand to nobody would otherwise disappear entirely.
     """
     logging.getLogger(__name__).warning(
-        CacheEvent.LOAD_ABANDONED, extra={CacheKey.KEY: key, **ErrorSummary.of(error).fields()}
+        CacheEvent.LOAD_ABANDONED, extra={CacheKey.KEY: key}, exc_info=error
     )
 
 
@@ -385,7 +384,12 @@ class _WarnOnce:
         self._seen: set[tuple[CacheEvent, str]] = set()
 
     def __call__(
-        self, event: CacheEvent, func: AsyncCallable, fields: Mapping[str, object] | None = None
+        self,
+        event: CacheEvent,
+        func: AsyncCallable,
+        fields: Mapping[str, object] | None = None,
+        *,
+        failure: BaseException | None = None,
     ) -> None:
         """Log *event* for *func* the first time it happens.
 
@@ -393,11 +397,17 @@ class _WarnOnce:
             event: Log event name.
             func: Declared coroutine the event is about.
             fields: Extra structured fields.
+            failure: The exception the event reports, written as the record's exception.
         """
-        self.emit(event, _function_name(func), fields)
+        self.emit(event, _function_name(func), fields, failure=failure)
 
     def emit(
-        self, event: CacheEvent, name: str, fields: Mapping[str, object] | None = None
+        self,
+        event: CacheEvent,
+        name: str,
+        fields: Mapping[str, object] | None = None,
+        *,
+        failure: BaseException | None = None,
     ) -> None:
         """Log *event* for the dotted *name* the first time it happens.
 
@@ -407,11 +417,14 @@ class _WarnOnce:
                 the pair, so two events about one name both get through and one
                 event about two names does too.
             fields: Extra structured fields.
+            failure: The exception the event reports, written as the record's exception.
         """
         if (event, name) in self._seen:
             return
         self._seen.add((event, name))
-        self._log.warning(event, extra={CacheKey.FUNCTION: name, **(fields or {})})
+        self._log.warning(
+            event, extra={CacheKey.FUNCTION: name, **(fields or {})}, exc_info=failure
+        )
 
 
 class _ConfiguredCalls:
@@ -490,9 +503,7 @@ class _ConfiguredCalls:
         try:
             key = spec.key(args, kwargs)
         except _Unrenderable as error:
-            self._warn_once(
-                CacheEvent.CALL_KEY_UNRENDERABLE, spec.func, ErrorSummary.of(error).fields()
-            )
+            self._warn_once(CacheEvent.CALL_KEY_UNRENDERABLE, spec.func, failure=error)
             return await spec.func(*args, **kwargs)
 
         payload = await self._read(spec, key)
@@ -519,9 +530,7 @@ class _ConfiguredCalls:
             return await self._cache.get_value(key)
         except Exception as error:
             self._warn_once(
-                CacheEvent.CALL_READ_FAILED,
-                spec.func,
-                {CacheKey.KEY: key, **ErrorSummary.of(error).fields()},
+                CacheEvent.CALL_READ_FAILED, spec.func, {CacheKey.KEY: key}, failure=error
             )
             return None
 
@@ -541,9 +550,7 @@ class _ConfiguredCalls:
             return spec.codec.decode(payload)
         except (msgspec.ValidationError, ValueError, TypeError) as error:
             self._warn_once(
-                CacheEvent.PAYLOAD_MISMATCHED,
-                spec.func,
-                {CacheKey.KEY: key, **ErrorSummary.of(error).fields()},
+                CacheEvent.PAYLOAD_MISMATCHED, spec.func, {CacheKey.KEY: key}, failure=error
             )
             return _UNDECODABLE
 
@@ -570,11 +577,8 @@ class _ConfiguredCalls:
             self._warn_once(
                 CacheEvent.CALL_WRITE_FAILED,
                 spec.func,
-                {
-                    CacheKey.KEY: key,
-                    CacheKey.RESULT_TYPE: type(result).__name__,
-                    **ErrorSummary.of(error).fields(),
-                },
+                {CacheKey.KEY: key, CacheKey.RESULT_TYPE: type(result).__name__},
+                failure=error,
             )
         return encoded.value
 

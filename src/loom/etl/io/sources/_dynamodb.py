@@ -14,7 +14,6 @@ from typing import Any
 import polars as pl
 
 from loom.core.errors import InvalidUse
-from loom.core.errors.summary import ErrorSummary
 from loom.etl.declarative.source._from_dynamodb import FromDynamoDB
 from loom.etl.declarative.source._specs import DynamoDBSourceSpec, ExtraFieldsMode
 from loom.etl.engines.polars._dtype import loom_type_to_polars
@@ -278,7 +277,8 @@ class _ParallelSegmentScanner:
             if exc is not None:
                 _log.warning(
                     EtlEvent.DYNAMODB_SEGMENT_FAILED,
-                    extra={EtlKey.SEGMENT: segment, **ErrorSummary.of(exc).fields()},
+                    extra={EtlKey.SEGMENT: segment},
+                    exc_info=exc,
                 )
 
     def close(self) -> None:

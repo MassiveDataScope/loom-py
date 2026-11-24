@@ -19,7 +19,6 @@ from loom.core.logger import LogField
 from loom.serverless.aws.lambda_ import LambdaHandler
 from loom.testing import LambdaEvent, LambdaTestClient
 from tests.helpers.aws_island import FakeAwsIsland
-from tests.helpers.loggers import logged_events
 from tests.integration.hexagonal.conftest import (
     ANA,
     BAD_IDENTITIES,
@@ -50,9 +49,9 @@ def _job(caller: Identity | None) -> LambdaEvent:
 
 def _failures(caplog: pytest.LogCaptureFixture) -> list[tuple[str, str]]:
     return [
-        (str(entry["event"]), str(entry[LogField.EXCEPTION_TYPE]))
-        for entry in logged_events(caplog)
-        if LogField.REASON in entry and LogField.EXCEPTION_TYPE in entry
+        (record.getMessage(), record.exc_info[0].__name__)
+        for record in caplog.records
+        if LogField.REASON in record.__dict__ and record.exc_info and record.exc_info[0]
     ]
 
 

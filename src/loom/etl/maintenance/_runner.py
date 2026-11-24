@@ -8,7 +8,6 @@ from dataclasses import dataclass, field
 from typing import TYPE_CHECKING, Any, Literal
 
 from loom.core.config import ConfigError
-from loom.core.errors.summary import ErrorSummary
 
 if TYPE_CHECKING:
     from loom.etl.maintenance._protocol import DeltaTableMaintainer, OptimizeResult, VacuumResult
@@ -200,9 +199,10 @@ class MaintenanceRunner:
             return self._locator.locate(TableRef(table_ref))
         except Exception as exc:
             if self._missing_table_policy == "skip":
-                failure = ErrorSummary.of(exc).fields()
                 _log.warning(
-                    EtlEvent.MAINTENANCE_TABLE_SKIPPED, extra={EtlKey.TABLE: table_ref, **failure}
+                    EtlEvent.MAINTENANCE_TABLE_SKIPPED,
+                    extra={EtlKey.TABLE: table_ref},
+                    exc_info=exc,
                 )
                 return None
             raise

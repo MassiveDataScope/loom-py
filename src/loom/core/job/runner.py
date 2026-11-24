@@ -13,7 +13,6 @@ from typing import Any
 from loom.core.engine.events import AbandonReason, EventKind, ExecutionEvent, Status
 from loom.core.engine.execution_observer import ExecutionObserver, NullExecutionObserver
 from loom.core.errors import CodedError
-from loom.core.errors.summary import ErrorSummary
 from loom.core.job.delivery import JobDelivery
 from loom.core.job.event import JobEvent, JobKey
 from loom.core.job.outcome import (
@@ -83,10 +82,10 @@ class _Whereabouts:
             JobEvent.DELIVERY_ABANDONED,
             extra={
                 LogField.REASON: outcome.reason.value,
-                **ErrorSummary.of(error).fields(),
                 **self.log_fields(),
                 **failure_log_fields(error),
             },
+            exc_info=error,
         )
 
 

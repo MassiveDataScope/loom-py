@@ -18,6 +18,7 @@ from loom.core.config import ConfigContext, ConfigError
 from loom.core.discovery.base import DiscoveryResult
 from loom.core.discovery.scanner import PackageScanner
 from loom.core.discovery.worker import DuplicateJobName
+from loom.core.errors import PostCommitError
 from loom.core.errors.summary import ErrorSummary
 from loom.core.identity import ANONYMOUS, current_identity
 from loom.core.job.event import JobEvent
@@ -38,7 +39,7 @@ from loom.serverless.aws.lambda_ import (
 from loom.serverless.event import ServerlessEvent
 from loom.testing import RecordingJobTransport
 from tests.helpers.composition import composition_project
-from tests.helpers.loggers import rendered
+from tests.helpers.loggers import CapturedLog, rendered
 from tests.helpers.loops import RecordedLoops
 from tests.unit.serverless.aws.lambda_._probe import Probe
 from tests.unit.serverless.aws.lambda_._records import WORKER, RecordFactory, with_worker
@@ -658,7 +659,7 @@ print([name for name in loaded if name in sys.modules])
             message for message in _logged(caplog) if JobEvent.DELIVERY_ABANDONED in message
         ]
         assert len(final_logs) == 1
-        assert "PostCommitError" in final_logs[0]
+        assert CapturedLog(caplog).exception_types(JobEvent.DELIVERY_ABANDONED) == [PostCommitError]
         assert "'loom.task_id': '42'" in final_logs[0]
         assert "'loom.job.committed': True" in final_logs[0]
 
