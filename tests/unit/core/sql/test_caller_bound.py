@@ -12,7 +12,7 @@ import pytest
 
 from loom.core.config.errors import ConfigError
 from loom.core.identity import ANONYMOUS, Identity
-from loom.core.identity.context import IdentityKey
+from loom.core.log_names import LogField
 from loom.core.observability.event import EventKind, LifecycleEvent, Scope
 from loom.core.observability.observability import Observability
 from loom.core.stores.event import StoresEvent
@@ -20,7 +20,7 @@ from loom.core.stores.sql.abc import RolesNotBoundError, UnknownConnectionError
 from loom.core.stores.sql.caller_bound import CallerBoundSql
 from loom.core.stores.sql.config import SqlConfig, SqlConnectionConfig
 from loom.core.stores.sql.service import NullSqlQueryService, SqlQueryService
-from tests.helpers.loggers import CapturedLog
+from tests.helpers.loggers import CapturedLog, install_subject_key, user_hash
 from tests.unit.core.sql._fakes import FakeSqlExecutor, make_connection_config, make_sql_config
 
 
@@ -76,13 +76,14 @@ class TestCallerBoundRoles:
         self, fake_executor: FakeSqlExecutor, caplog: pytest.LogCaptureFixture
     ) -> None:
         """The caller's entitlements decide before execution; the denial names the caller."""
+        install_subject_key()
         sql = _caller_bound(fake_executor, make_connection_config())
         identity = _identity("role_intruder")
         with pytest.raises(RolesNotBoundError):
             await sql.execute("SELECT 1", connection="analytics", identity=identity)
         assert fake_executor.calls == []
         denials = CapturedLog(caplog).named(StoresEvent.ROLE_AUTHORIZATION_DENIED)
-        assert [fields[IdentityKey.SUBJECT] for fields in denials] == [identity.subject]
+        assert [fields[LogField.USER_HASH] for fields in denials] == [user_hash(identity.subject)]
 
     async def test_rejects_an_identity_carrying_no_role(
         self, fake_executor: FakeSqlExecutor

@@ -10,6 +10,7 @@ import msgspec
 from loom.core.environment import Environment, is_inside_lambda
 from loom.core.errors import InvalidValue
 from loom.core.model import LoomFrozenStruct
+from loom.core.model.redaction import Secret
 
 
 class LogFormatName(StrEnum):
@@ -34,11 +35,14 @@ class LogSettings(LoomFrozenStruct, frozen=True, kw_only=True, forbid_unknown_fi
         level: Minimum level of the root logger, in Lambda too.
         named_levels: Minimum level of the named loggers, to quiet a noisy
             library: ``{"botocore": "WARNING"}``.
+        subject_key: The secret loom's security records key the caller's
+            ``user.hash`` with (HMAC-SHA256); ``None`` writes no caller at all.
     """
 
     format: LogFormatName | None = None
     level: str = "INFO"
     named_levels: dict[str, str] = msgspec.field(default_factory=dict)
+    subject_key: Secret[str] | None = None
 
     def __post_init__(self) -> None:
         """Refuse a level the standard library does not know."""

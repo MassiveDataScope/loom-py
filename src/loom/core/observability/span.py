@@ -31,7 +31,6 @@ from opentelemetry.trace import (
     SpanContext,
     StatusCode,
     Tracer,
-    get_current_span,
     use_span,
 )
 
@@ -372,13 +371,4 @@ class LoomSpan:
         self._on_closed()
 
 
-def annotate_current_span(attributes: Mapping[str, str]) -> None:
-    """Set *attributes* on the span current in this context, if any.
-
-    The one way a layer under observability (the acting identity) marks the
-    span it runs in without importing OpenTelemetry itself.
-    """
-    get_current_span().set_attributes(attributes)
-
-
-__all__ = ["LoomSpan", "annotate_current_span"]
+__all__ = ["LoomSpan"]

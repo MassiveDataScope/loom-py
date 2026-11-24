@@ -17,7 +17,6 @@ from contextlib import AbstractContextManager, nullcontext
 from typing import Any, cast
 
 import pytest
-from opentelemetry.sdk.trace import TracerProvider
 
 from loom.core.di.container import LoomContainer
 from loom.core.di.scope import Scope as DiScope
@@ -34,7 +33,7 @@ from loom.core.use_case.invoker import AppInvoker
 from loom.core.use_case.registry import UseCaseRegistry
 from tests.helpers.delegation import acting_as
 from tests.helpers.jobs import InlineServiceFixture
-from tests.helpers.loggers import CapturedLog
+from tests.helpers.loggers import CapturedLog, user_hash
 from tests.helpers.outliving import outlive
 
 from .._lifecycle_doubles import Run
@@ -113,7 +112,7 @@ class TestExplicitSwitch:
 
         assert await executor.execute(outer, identity=ALICE) == (BOB,) * 3
 
-    async def test_it_is_logged_with_subjects_roles_and_the_use_case(
+    async def test_it_is_logged_with_user_hashes_roles_and_the_use_case(
         self, executor: UseCaseExecutor, switches: CapturedLog
     ) -> None:
         await executor.execute(AcmeNests(executor, AcmeWho(), BOB), identity=ALICE)
@@ -122,8 +121,8 @@ class TestExplicitSwitch:
             (
                 IdentityEvent.CALLER_SWITCHED,
                 {
-                    IdentityKey.SWITCHED_FROM: ALICE.subject,
-                    IdentityKey.SWITCHED_TO: BOB.subject,
+                    IdentityKey.PREVIOUS_USER_HASH: user_hash(ALICE.subject),
+                    LogField.USER_HASH: user_hash(BOB.subject),
                     IdentityKey.ROLES_FROM: ALICE.roles,
                     IdentityKey.ROLES_TO: BOB.roles,
                     IdentityKey.ATTRIBUTES_CHANGED: False,
@@ -138,9 +137,9 @@ class TestExplicitSwitch:
         await executor.execute(AcmeNests(executor, AcmeWho(), PROMOTED_ALICE), identity=ALICE)
 
         [line] = switches.named(IdentityEvent.CALLER_SWITCHED)
-        assert (line[IdentityKey.SWITCHED_FROM], line[IdentityKey.SWITCHED_TO]) == (
-            ALICE.subject,
-            ALICE.subject,
+        assert (line[IdentityKey.PREVIOUS_USER_HASH], line[LogField.USER_HASH]) == (
+            user_hash(ALICE.subject),
+            user_hash(ALICE.subject),
         )
         assert (line[IdentityKey.ROLES_FROM], line[IdentityKey.ROLES_TO]) == (
             ALICE.roles,
@@ -181,9 +180,9 @@ class TestExplicitSwitch:
 
         assert await executor.execute(Run(invoke), identity=ALICE) == (BOB,) * 3
         [line] = switches.named(IdentityEvent.CALLER_SWITCHED)
-        assert (line[IdentityKey.SWITCHED_FROM], line[IdentityKey.SWITCHED_TO]) == (
-            ALICE.subject,
-            BOB.subject,
+        assert (line[IdentityKey.PREVIOUS_USER_HASH], line[LogField.USER_HASH]) == (
+            user_hash(ALICE.subject),
+            user_hash(BOB.subject),
         )
 
     async def test_an_execution_scope_acting_as_another_than_the_transport_is_logged(
@@ -194,23 +193,14 @@ class TestExplicitSwitch:
 
         [line] = switches.named(IdentityEvent.CALLER_SWITCHED)
         assert (
-            line[IdentityKey.SWITCHED_FROM],
-            line[IdentityKey.SWITCHED_TO],
+            line[IdentityKey.PREVIOUS_USER_HASH],
+            line[LogField.USER_HASH],
             line[LogField.USE_CASE],
         ) == (
-            ALICE.subject,
-            BOB.subject,
+            user_hash(ALICE.subject),
+            user_hash(BOB.subject),
             "ExecutionScope",
         )
-
-    async def test_it_annotates_the_current_span(self, executor: UseCaseExecutor) -> None:
-        with TracerProvider().get_tracer("acme").start_as_current_span("acme-request") as span:
-            await executor.execute(AcmeNests(executor, AcmeWho(), BOB), identity=ALICE)
-
-        assert dict(cast(Any, span).attributes or {}) == {
-            "loom.identity.switched_from": ALICE.subject,
-            "loom.identity.switched_to": BOB.subject,
-        }
 
     @pytest.mark.parametrize(
         "around",
