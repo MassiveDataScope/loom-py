@@ -22,7 +22,9 @@ from pydantic_ai.usage import RequestUsage
 from loom.ai import AgentResult, AiConfig, InferenceTarget, ModelPrice
 from loom.ai.engines.pydantic_ai import PydanticAIEnginePlugin
 from loom.ai.etl import PolarsAgentRunner
+from loom.ai.event import AiEvent
 from loom.ai.execution import AgentHost
+from tests.helpers.loggers import CapturedLog
 from tests.unit.ai.etl._types import Reply
 
 _AGENT = """\
@@ -172,13 +174,16 @@ class TestRows:
         assert out["answer"].to_list() == ["HOLA", None, "VALE"]
 
     @pytest.mark.usefixtures("crash_on_prompt")
-    def test_an_unexpected_exception_is_an_error_row(self, tmp_path: Path) -> None:
+    def test_an_unexpected_exception_is_an_error_row(
+        self, tmp_path: Path, caplog: pytest.LogCaptureFixture
+    ) -> None:
         out = _map(_runner(tmp_path), _messages("hola", "crash", "vale"))
 
         assert out["agent_status"].to_list() == ["ok", "error", "ok"]
         assert out["agent_error"].to_list() == [None, "UNEXPECTED_ERROR", None]
         assert out["answer"].to_list() == ["HOLA", None, "VALE"]
         assert out["agent_input_tokens"].to_list() == [10, 0, 10]
+        assert CapturedLog(caplog).exception_types(AiEvent.ROW_FAILED) == [_Crash]
 
     @pytest.mark.usefixtures("crash_on_prompt")
     def test_an_unexpected_exception_keeps_its_reservation_spent(self, tmp_path: Path) -> None:

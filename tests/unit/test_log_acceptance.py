@@ -345,7 +345,7 @@ class TestScopeFailure:
         _fail_a_scope(traced[0])
 
         fields = stdout_json.fields()
-        assert fields[LogField.EXCEPTION_TYPE] == "DomainError"
+        assert fields[LogField.ERROR_TYPE] == "DomainError"
         assert fields[LogField.ERROR_CODE] == ErrorCode.NOT_FOUND.value
 
     def test_the_span_names_the_type_and_the_code(

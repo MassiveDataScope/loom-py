@@ -9,14 +9,14 @@ from pathlib import Path
 import pytest
 
 from loom.core.checks import ChecksKey
-from loom.core.log_names import FailureForm, LogEvent, LogField, SubKey
+from loom.core.log_names import LogEvent, LogField
+from loom.core.logger import log_context
 from loom.core.model.redaction import Secret
 from loom.core.observability.observer.log import LifecycleKey
 from tests.helpers.log_standard import Breach, LogContract
 
-ATTEMPT = LogField.ATTEMPT.value
-JOB = LogField.JOB.value
-EXCEPTION_TYPE = LogField.EXCEPTION_TYPE.value
+ATTEMPT = LogField.ATTEMPT
+JOB = LogField.JOB
 SUBKEY = LifecycleKey.META.of("tenant")
 RecordFactory = Callable[..., logging.LogRecord]
 FAILURE = (ValueError, ValueError("card 4111"), None)
@@ -24,7 +24,6 @@ FAILURE = (ValueError, ValueError("card 4111"), None)
 
 class _AcmeEvent(LogEvent):
     THING_DONE = "acme.thing_done"
-    THING_REFUSED = "acme.thing_refused", FailureForm.SUMMARY_ONLY
 
 
 @pytest.fixture
@@ -54,6 +53,9 @@ class TestBreach:
                 id="percent-arguments",
             ),
             pytest.param({"fields": {"amount": 3}}, [Breach.UNDECLARED_KEY], id="undeclared-key"),
+            pytest.param(
+                {"fields": {JOB.value: "x"}}, [Breach.UNDECLARED_KEY], id="declared-key-as-text"
+            ),
             pytest.param({"fields": {JOB: object()}}, [Breach.OPAQUE_VALUE], id="opaque-value"),
             pytest.param({"fields": {ChecksKey.IDS: ["a", "b"]}}, [], id="list-of-scalars"),
             pytest.param({"fields": {ATTEMPT: 12.5}}, [], id="float-is-a-number"),
@@ -65,21 +67,11 @@ class TestBreach:
                 {"fields": {LifecycleKey.META: "x"}}, [Breach.WRONG_KIND], id="bag-as-value"
             ),
             pytest.param({"fields": {ATTEMPT: None}}, [], id="missing-value"),
-            pytest.param(
-                {"fields": {SubKey(f"{JOB}.tenant"): 3}},
-                [Breach.UNDECLARED_KEY],
-                id="subkey-of-a-value-key",
-            ),
             pytest.param({"fields": {SUBKEY: object()}}, [Breach.OPAQUE_VALUE], id="opaque-subkey"),
             pytest.param(
-                {"fields": {EXCEPTION_TYPE: "ValueError"}},
-                [Breach.EXCEPTION_TYPE_WITHOUT_STACK],
-                id="exception-type-without-its-exception",
-            ),
-            pytest.param(
-                {"msg": _AcmeEvent.THING_REFUSED, "fields": {EXCEPTION_TYPE: "ValueError"}},
-                [],
-                id="summary-only-event",
+                {"fields": {LogField.EXCEPTION_TYPE: "ValueError"}},
+                [Breach.EXCEPTION_TYPE_BY_HAND],
+                id="exception-type-by-hand",
             ),
             pytest.param(
                 {"fields": {JOB: "card 4111 refused", "exc_info": FAILURE}},
@@ -102,6 +94,14 @@ class TestBreach:
         self, record: RecordFactory, built: dict[str, object], expected: list[Breach]
     ) -> None:
         assert Breach.broken_by(record(**built)) == expected
+
+    def test_a_key_of_the_log_context_is_judged_like_one_of_the_record(
+        self, record: RecordFactory
+    ) -> None:
+        with log_context({"amount": 3, LogField.EXCEPTION_TYPE: "ValueError"}):
+            broken = Breach.broken_by(record())
+
+        assert broken == [Breach.UNDECLARED_KEY, Breach.EXCEPTION_TYPE_BY_HAND]
 
 
 class TestLogContract:

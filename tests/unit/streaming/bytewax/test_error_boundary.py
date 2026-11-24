@@ -17,6 +17,7 @@ from loom.streaming.bytewax import _error_boundary  # noqa: E402
 from loom.streaming.core._errors import ErrorEnvelope, ErrorKind  # noqa: E402
 from loom.streaming.core._message import Message, MessageMeta  # noqa: E402
 from loom.streaming.event import StreamingEvent  # noqa: E402
+from tests.helpers.loggers import CapturedLog  # noqa: E402
 from tests.unit.streaming.doubles import AcmePayload  # noqa: E402
 
 pytestmark = pytest.mark.bytewax
@@ -28,17 +29,6 @@ class _Context:
 
     def wire_node_error(self, kind: ErrorKind, step_id: str, stream: object) -> None:
         self.calls.append((kind, step_id, stream))
-
-
-class _LoggerProbe:
-    def __init__(self) -> None:
-        self.calls: list[tuple[str, str]] = []
-
-    def warning(self, event: str, **fields: object) -> None:
-        self.calls.append(("warning", event))
-
-    def exception(self, event: str, **fields: object) -> None:
-        self.calls.append(("exception", event))
 
 
 def _message(value: str = "v") -> Message[AcmePayload]:
@@ -107,11 +97,8 @@ class TestExecuteInBoundary:
         assert result.reason == "ValueError"
 
     def test_execute_in_boundary_logs_managed_domain_error(
-        self, monkeypatch: pytest.MonkeyPatch
+        self, caplog: pytest.LogCaptureFixture
     ) -> None:
-        logger = _LoggerProbe()
-        monkeypatch.setattr(_error_boundary, "logger", logger)
-
         _error_boundary._execute_in_boundary(
             _error_boundary._classify_task,
             _message(),
@@ -119,13 +106,13 @@ class TestExecuteInBoundary:
             _boundary(),
         )
 
-        assert ("warning", StreamingEvent.BOUNDARY_ERROR_MANAGED) in logger.calls
+        assert CapturedLog(caplog).exception_types(StreamingEvent.BOUNDARY_ERROR_MANAGED) == [
+            RuleViolationError
+        ]
 
     def test_execute_in_boundary_logs_unhandled_runtime_error(
-        self, monkeypatch: pytest.MonkeyPatch
+        self, caplog: pytest.LogCaptureFixture
     ) -> None:
-        logger = _LoggerProbe()
-        monkeypatch.setattr(_error_boundary, "logger", logger)
         _error_boundary._execute_in_boundary(
             _error_boundary._classify_task,
             _message(),
@@ -133,7 +120,9 @@ class TestExecuteInBoundary:
             _boundary(),
         )
 
-        assert ("exception", StreamingEvent.BOUNDARY_ERROR_UNHANDLED) in logger.calls
+        assert CapturedLog(caplog).exception_types(StreamingEvent.BOUNDARY_ERROR_UNHANDLED) == [
+            RuntimeError
+        ]
 
 
 class TestExecuteBatchInBoundary:

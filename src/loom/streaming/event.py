@@ -34,6 +34,8 @@ class StreamingKey(LogKey):
 
     FLOW = "loom.streaming.flow"
     STEP = "loom.streaming.step"
+    NODE_INDEX = "loom.streaming.node_index", ValueKind.NUMBER
+    NODE_TYPE = "loom.streaming.node_type"
     KIND = "loom.streaming.kind"
     TARGET = "loom.streaming.target"
     RECORDS = "loom.streaming.records", ValueKind.NUMBER

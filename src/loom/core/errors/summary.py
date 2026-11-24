@@ -35,17 +35,14 @@ class ErrorSummary(msgspec.Struct, frozen=True, kw_only=True):
         """The type, followed by the code when there is one: ``DomainError (not_found)``."""
         return self.type if self.code is None else f"{self.type} ({self.code})"
 
-    def fields(self) -> dict[str, str]:
-        """The record fields: ``exception.type`` and, with a code, ``loom.error.code``.
+    def fields(self, type_key: LogField = LogField.ERROR_TYPE) -> dict[str, str]:
+        """The record fields: the type under *type_key* and, with a code, ``loom.error.code``.
 
-        Only for a record that has no exception to carry: a lifecycle event that kept
-        the summary alone, or loom's own token code, whose frames hold the token and the
-        key. A record that logs a caught exception passes it as ``exc_info``, and the
-        context filter writes these fields from it.
+        A record with no exception to carry, such as a lifecycle event that kept the
+        summary alone or loom's own token failure, whose frames hold the token and the key,
+        writes ``error.type``. ``exception.type`` is the context filter's alone: it writes it
+        from the ``exc_info`` of a record that logs a caught exception.
         """
         if self.code is None:
-            return {LogField.EXCEPTION_TYPE.value: self.type}
-        return {
-            LogField.EXCEPTION_TYPE.value: self.type,
-            LogField.ERROR_CODE.value: self.code,
-        }
+            return {type_key: self.type}
+        return {type_key: self.type, LogField.ERROR_CODE: self.code}

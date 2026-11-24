@@ -126,7 +126,7 @@ class ContextFilter(logging.Filter):
         fields.pop(LogField.EXCEPTION_STACKTRACE, None)
         if record.exc_info is None or record.exc_info[1] is None:
             return
-        fields.update(ErrorSummary.of(record.exc_info[1]).fields())
+        fields.update(ErrorSummary.of(record.exc_info[1]).fields(LogField.EXCEPTION_TYPE))
         if record.levelno >= logging.ERROR:
             record.exc_text = record.exc_text or _STACK_FORMATTER.formatException(record.exc_info)
             fields[LogField.EXCEPTION_STACKTRACE] = truncated(

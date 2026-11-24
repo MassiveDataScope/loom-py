@@ -24,8 +24,10 @@ from hypothesis import strategies as st
 
 from loom.core.cache import CacheConfig, CachedRepository
 from loom.core.cache.decorators import cache_query
+from loom.core.cache.event import CacheEvent
 from loom.core.cache.result_codec import build_result_codec
 from loom.core.errors import BoundaryValidationError, InvalidType
+from tests.helpers.loggers import CapturedLog
 
 from ._doubles import (
     AcmeCacheWidget,
@@ -387,10 +389,14 @@ class TestPayloadWrittenByAnEarlierVersion:
         self,
         warm_env: CachedEnv[AcmeCacheWidget],
         cache_config: CacheConfig,
+        caplog: pytest.LogCaptureFixture,
     ) -> None:
         wrapper, _repository = self._evolved(warm_env, cache_config)
 
         assert await wrapper.stats() == EvolvedStats(total=ROW_COUNT, label="all", source="v2")
+        assert CapturedLog(caplog).exception_types(CacheEvent.PAYLOAD_MISMATCHED) == [
+            BoundaryValidationError
+        ]
 
     async def test_the_stale_entry_is_overwritten_so_the_next_call_hits(
         self,

@@ -364,7 +364,9 @@ class TestBsonTypes:
         assert df["_id"].dtype == pl.String
         assert df["amount"].dtype == pl.Float64
 
-    def test_a_mapping_that_cannot_be_read_becomes_null(self) -> None:
+    def test_a_mapping_that_cannot_be_read_becomes_null(
+        self, caplog: pytest.LogCaptureFixture
+    ) -> None:
         class _BrokenMapping:
             __module__ = "bson.acme"
 
@@ -372,6 +374,7 @@ class TestBsonTypes:
                 raise TypeError
 
         assert normalize_bson_doc({"broken": _BrokenMapping()}) == {"broken": None}
+        assert CapturedLog(caplog).exception_types(EtlEvent.BSON_MAPPING_FAILED) == [TypeError]
 
 
 # ---------------------------------------------------------------------------
@@ -1290,7 +1293,9 @@ class TestSafeDumpsDegradation:
         assert df.height == 2
         assert df["ref"][0] == '{"at": null}'
         assert _serialization_stats.failures > mark
-        assert EtlEvent.SOURCE_VALUE_UNSERIALISABLE in CapturedLog(caplog).messages
+        assert ZeroDivisionError in CapturedLog(caplog).exception_types(
+            EtlEvent.SOURCE_VALUE_UNSERIALISABLE
+        )
 
 
 # ---------------------------------------------------------------------------
@@ -1535,9 +1540,11 @@ class TestPhase2Improvements:
         ):
             _build_frame_fallback(batch, {"score": pl.Int64})
 
-        assert [r.levelno for r in caplog.records if r.msg == EtlEvent.SOURCE_CAST_SKIPPED] == [
-            logging.DEBUG
-        ]
+        assert [
+            (r.levelno, r.exc_info is not None)
+            for r in caplog.records
+            if r.msg == EtlEvent.SOURCE_CAST_SKIPPED
+        ] == [(logging.DEBUG, True)]
         assert CapturedLog(caplog).named(EtlEvent.SOURCE_CAST_SKIPPED)[0][EtlKey.COLUMNS] == [
             "score"
         ]
