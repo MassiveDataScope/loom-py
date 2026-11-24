@@ -14,7 +14,8 @@ from typing import Final, TypeVar
 import pytest
 
 from loom.core.log_names import FailureForm, LogEvent, LogField, LogKey, SubKey, ValueKind
-from loom.core.logger.formats import RecordFields, TextFormatter, render_value
+from loom.core.logger.formats import TextFormatter, render_value
+from tests.helpers.loggers import logged_fields
 
 _Name = TypeVar("_Name", LogEvent, LogKey)
 
@@ -53,7 +54,7 @@ class Breach(StrEnum):
         keys = loom_members(LogKey)
         declared = {key.value: key.kind for key in keys}
         bags = tuple(f"{key.value}." for key in keys if key.kind is ValueKind.OBJECT)
-        fields = RecordFields(record).raw
+        fields = logged_fields(record)
         failure = record.exc_info[1] if record.exc_info else None
         text = str(failure) if failure else ""
         quoting = len(text) >= _QUOTED_TEXT_MIN

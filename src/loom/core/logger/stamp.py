@@ -10,7 +10,7 @@ from typing import Final
 from loom.core.errors.summary import ErrorSummary
 from loom.core.log_names import LogField
 from loom.core.logger.context import current_log_fields
-from loom.core.logger.formats import truncated
+from loom.core.logger.formats import STAMP_MARKER, truncated
 from loom.core.tracing.context import get_trace_id
 
 MAX_STACK_LENGTH: Final = 16_384
@@ -68,7 +68,8 @@ class ContextFilter(logging.Filter):
     a record says about its exception: ``exception.type``, ``loom.error.code`` for a
     ``CodedError``, and from ERROR up ``exception.stacktrace``, never the message. It
     only adds fields and never changes a value: each of loom's outputs renders its own
-    copy, so any handler sees the values as they were passed.
+    copy, so any handler sees the values as they were passed. A record is stamped
+    once: the filter of a second loom handler lets it through as it is.
     It never drops a record.
 
     Args:
@@ -91,6 +92,9 @@ class ContextFilter(logging.Filter):
         A field already on the record wins; among the rest the trace id wins over
         the context, the context over the identity, and the identity over the code origin.
         """
+        fields = record.__dict__
+        if STAMP_MARKER in fields:
+            return True
         stamped: dict[str, object] = {
             LogField.CODE_FUNCTION: record.funcName,
             LogField.CODE_LINE: record.lineno,
@@ -101,9 +105,11 @@ class ContextFilter(logging.Filter):
         trace_id = get_trace_id()
         if trace_id is not None:
             stamped[LogField.TRACE_ID] = trace_id
-        fields = record.__dict__
-        fields.update({key: value for key, value in stamped.items() if key not in fields})
+        for key, value in stamped.items():
+            if key not in fields:
+                fields[key] = value
         self._stamp_failure(record)
+        fields[STAMP_MARKER] = True
         return True
 
     @staticmethod
