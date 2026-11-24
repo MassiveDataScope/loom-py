@@ -85,6 +85,16 @@ class ContextFilter(logging.Filter):
         self._identity = identity
         self._identity_fields = identity.fields()
 
+    @classmethod
+    def configured(cls) -> ContextFilter | None:
+        """The filter of the process: the last one installed, none before any."""
+        return _configured
+
+    def install(self) -> None:
+        """Make this the filter of the process, replacing the previous one."""
+        global _configured
+        _configured = self
+
     def use_runtime(self, runtime: LogRuntime) -> None:
         """Stamp the following records as emitted by *runtime*."""
         self._identity = self._identity.with_runtime(runtime)
@@ -139,3 +149,6 @@ class ContextFilter(logging.Filter):
             fields[LogField.EXCEPTION_STACKTRACE] = truncated(
                 record.exc_text, MAX_STACK_LENGTH, keep="end"
             )
+
+
+_configured: ContextFilter | None = None

@@ -62,7 +62,7 @@ class TestLogs:
         executor = make_executor()
         await executor.execute(AcmeNoMarkersUseCase(), params={"value": 1})
 
-        [(event, fields)] = logger.calls
+        [(event, fields)] = logger.events
         assert event == UseCaseEvent.DONE
         assert fields[LogField.USE_CASE] == "AcmeNoMarkersUseCase"
         assert fields[LogField.DURATION_MS] >= 0
@@ -73,7 +73,7 @@ class TestLogs:
         executor = make_executor(debug_execution=False)
         await executor.execute(AcmeInputOnlyUseCase(), payload={"email": "a@b.com", "name": "X"})
 
-        [(_, fields)] = logger.calls
+        [(_, fields)] = logger.events
         assert UseCaseKey.STEPS not in fields
 
     async def test_in_debug_mode_the_log_lists_every_step_in_order(
@@ -85,7 +85,7 @@ class TestLogs:
             AcmeWithLoadUseCase(), params={"user_id": 1}, dependencies={AcmeUser: fake_repo(user)}
         )
 
-        [(_, fields)] = logger.calls
+        [(_, fields)] = logger.events
         assert fields[UseCaseKey.STEPS] == ["Load AcmeUser", "Execute core logic"]
 
     async def test_in_debug_mode_the_log_lists_the_command_bind(
@@ -94,7 +94,7 @@ class TestLogs:
         executor = make_executor(debug_execution=True)
         await executor.execute(AcmeInputOnlyUseCase(), payload={"email": "a@b.com", "name": "X"})
 
-        [(_, fields)] = logger.calls
+        [(_, fields)] = logger.events
         assert fields[UseCaseKey.STEPS] == ["Bind Input", "Execute core logic"]
 
     async def test_a_rule_failure_is_one_warning_listing_every_broken_rule(
@@ -117,7 +117,7 @@ class TestLogs:
         with pytest.raises(RuleViolationsError):
             await executor.execute(use_case, payload={"email": "x@x.com", "name": "X"})
 
-        [(event, fields)] = logger.calls
+        [(event, fields)] = logger.events
         assert event == UseCaseEvent.FAILED
         assert fields[LogField.STATUS] == "rule_failure"
         assert fields[UseCaseKey.BROKEN_RULES] == ["bad_email:email", "bad_name:name"]
@@ -135,7 +135,7 @@ class TestLogs:
         with pytest.raises(RuleViolationsError):
             await executor.execute(use_case)
 
-        [(_, fields)] = logger.calls
+        [(_, fields)] = logger.events
         assert fields[LogField.STATUS] == "rule_failure"
         assert fields[UseCaseKey.BROKEN_RULES] == ["email"]
 
@@ -360,7 +360,7 @@ def _terminal_lines(logger: CapturedLog, use_case: str) -> list[tuple[str, str |
     """The event and phase of each terminal record *use_case* logged."""
     return [
         (event, fields.get(UseCaseKey.PHASE))
-        for event, fields in logger.calls
+        for event, fields in logger.events
         if fields.get(LogField.USE_CASE) == use_case and _outcome(event) is not None
     ]
 

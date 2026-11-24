@@ -25,7 +25,11 @@ from tests.helpers.aws import ACCOUNT, FAKE_KEY, REGION, is_moto_answering, scru
 from tests.helpers.aws_island import FakeAwsIsland
 from tests.helpers.extras import BOTO3_ISLAND, without_extra
 from tests.helpers.jobs import JobActivity
-from tests.helpers.loggers import keyless_subject_hasher, root_logger_kept  # noqa: F401
+from tests.helpers.loggers import (  # noqa: F401
+    keyless_subject_hasher,
+    root_logger_kept,
+    unconfigured_context_filter,
+)
 
 pytest_plugins = ["pytester", "tests.helpers.delegation", "tests.helpers.log_standard"]
 

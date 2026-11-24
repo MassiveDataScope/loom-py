@@ -225,7 +225,7 @@ def _assert_cause_logged_without(canary: str, caplog: pytest.LogCaptureFixture) 
     ]
     assert causes
     assert all(record.exc_info is not None for record in causes)
-    assert all(canary not in f"{event} {fields}" for event, fields in CapturedLog(caplog).calls)
+    assert all(canary not in f"{event} {fields}" for event, fields in CapturedLog(caplog).events)
 
 
 class _AttemptCounter:

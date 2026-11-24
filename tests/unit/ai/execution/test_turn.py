@@ -281,7 +281,7 @@ class TestFailure:
         assert str(error) == "fixed"
         assert error.interaction_id == "int-1"
         assert "secret detail" not in str(error)
-        assert CapturedLog(caplog).calls == [
+        assert CapturedLog(caplog).events == [
             (
                 AiEvent.STEP_FAILED,
                 {

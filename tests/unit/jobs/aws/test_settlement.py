@@ -97,7 +97,7 @@ def _logged(
     caplog: pytest.LogCaptureFixture, event: str | None = None, **fields: Any
 ) -> list[dict[str, Any]]:
     log = CapturedLog(caplog)
-    entries = log.named(event) if event else [logged for _, logged in log.calls]
+    entries = log.named(event) if event else [logged for _, logged in log.events]
     return [entry for entry in entries if fields.items() <= entry.items()]
 
 

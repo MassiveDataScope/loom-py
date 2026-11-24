@@ -2,14 +2,16 @@
 
 from __future__ import annotations
 
+from collections.abc import Callable
 from dataclasses import dataclass
-from typing import Annotated
+from typing import Annotated, Any
 
 import msgspec
 import pytest
 from polyfactory.fields import Use
 
 from loom.core.model import BigInteger, LoomFrozenStruct
+from loom.core.model.redaction import MASK, Secret
 from loom.core.stores.repository.query import MAX_PAGE_LIMIT, MIN_PAGE_LIMIT, PageParams
 from loom.testing import SampleFactory, make
 
@@ -151,3 +153,30 @@ class TestDeclaredFieldsWinOverDefaults:
 
     def test_a_given_value_wins_over_the_declared_field(self) -> None:
         assert make(_Laddered, ladder=("given",)).ladder == ("given",)
+
+
+class _Holder(msgspec.Struct):
+    token: Secret[str]
+    maybe: Secret[str] | None
+    count: Secret[int]
+
+
+class _Nesting(msgspec.Struct):
+    holder: _Holder
+
+
+class TestSecretFields:
+    @pytest.mark.parametrize(
+        ("model", "secrets"),
+        [
+            pytest.param(
+                _Holder, lambda built: [built.token, built.maybe, built.count], id="plain"
+            ),
+            pytest.param(_Nesting, lambda built: [built.holder.token], id="nested"),
+        ],
+    )
+    def test_a_secret_field_is_built_and_stays_masked(
+        self, model: type, secrets: Callable[[Any], list[Secret[Any]]]
+    ) -> None:
+        for secret in secrets(make(model)):
+            assert (isinstance(secret, Secret), repr(secret)) == (True, MASK)

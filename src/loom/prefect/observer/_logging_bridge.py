@@ -14,7 +14,9 @@ from contextvars import ContextVar
 from datetime import UTC, datetime
 from typing import Any
 
+from loom.core.log_names import LogField
 from loom.core.logger.formats import RecordFields
+from loom.core.logger.stamp import ContextFilter
 
 _current_task_run_id: ContextVar[uuid.UUID | None] = ContextVar(
     "loom_prefect_task_run_id",
@@ -57,11 +59,16 @@ def current_flow_run_id() -> uuid.UUID | None:
     return _current_flow_run_id.get()
 
 
+_CODE_ORIGIN = frozenset({LogField.CODE_FUNCTION, LogField.CODE_LINE, LogField.CODE_FILE})
+
+
 class PrefectLogBridgeHandler(logging.Handler):
     """logging.Handler that ships records to the Prefect logs API.
 
     Each record is sent as its event followed by its fields in logfmt, rendered as
     loom's formats render them, so Prefect UI shows them with secrets masked.
+    The fields are always those the configured context filter stamps, whichever
+    handler sees the record first, less where the call was made (``code.*``).
     Records carry the installed ``flow_run_id``, when there is one, and,
     inside a step, the active ``task_run_id`` from the ContextVar too.
     A daemon worker drains the queue and retries with exponential
@@ -92,6 +99,13 @@ class PrefectLogBridgeHandler(logging.Handler):
             daemon=True,
         )
         self._worker.start()
+
+    def filter(self, record: logging.LogRecord) -> bool:
+        """Stamp *record* with the configured context filter, then apply this handler's own."""
+        stamp = ContextFilter.configured()
+        if stamp is not None:
+            stamp.filter(record)
+        return bool(super().filter(record))
 
     def emit(self, record: logging.LogRecord) -> None:  # noqa: D401
         if self._closed:
@@ -125,7 +139,9 @@ class PrefectLogBridgeHandler(logging.Handler):
         payload: dict[str, Any] = {
             "name": record.name,
             "level": record.levelno,
-            "message": " ".join(filter(None, (fields.message, fields.logfmt()))),
+            "message": " ".join(
+                filter(None, (fields.message, fields.logfmt(without=_CODE_ORIGIN)))
+            ),
             "timestamp": datetime.fromtimestamp(record.created, tz=UTC),
         }
         if flow_run_id is not None:

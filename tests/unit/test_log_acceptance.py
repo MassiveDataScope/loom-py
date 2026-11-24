@@ -34,7 +34,7 @@ from loom.core.log_names import LogField
 from loom.core.logger import log_context
 from loom.core.logger.install import HANDLER_NAME, configure_logging
 from loom.core.logger.settings import LogFormatName, LogSettings
-from loom.core.model.redaction import Dsn, RedactedMap, Secret
+from loom.core.model.redaction import MASK, Dsn, RedactedMap, Secret
 from loom.core.observability.event import Scope
 from loom.core.observability.observability import Observability
 from loom.core.observability.observer.log import LogLifecycleObserver
@@ -214,18 +214,21 @@ class TestValuesRendered:
 
     @pytest.mark.parametrize("output", OUTPUTS, indirect=True)
     @pytest.mark.parametrize(
-        "secret",
+        ("secret", "shown"),
         [
-            Secret(CANARY),
-            Dsn(f"postgresql://app:{CANARY}@db/orders"),
-            RedactedMap({"password": CANARY}),
+            (Secret(CANARY), MASK),
+            (Dsn(f"postgresql://app:{CANARY}@db/orders"), f"postgresql://app:{MASK}@db/orders"),
+            (RedactedMap({"password": CANARY}), MASK),
         ],
         ids=["secret", "dsn", "config"],
     )
-    def test_a_secret_never_reaches_the_output(self, output: Output, secret: object) -> None:
+    def test_a_secret_never_reaches_the_output(
+        self, output: Output, secret: object, shown: str
+    ) -> None:
         with log_context({LogField.USE_CASE: secret}):
             _LOGGER.info("order_accepted", extra={LogField.ATTEMPT: secret})
 
+        assert output.fields()[LogField.ATTEMPT] == shown
         assert CANARY not in output.read()
 
     @pytest.mark.parametrize("output", OUTPUTS, indirect=True)
@@ -257,7 +260,12 @@ class TestSpanCorrelation:
         (item,) = log_exporter.get_finished_logs()
         assert item.log_record.span_id == span.get_span_context().span_id
 
-    def test_a_stdout_line_carries_the_span_id(self, stdout_json: Output) -> None:
+    def test_a_stdout_line_carries_the_span_id_only_inside_a_span(
+        self, stdout_json: Output
+    ) -> None:
+        _LOGGER.info("order_accepted")
+        assert LogField.SPAN_ID not in stdout_json.fields()
+
         with TracerProvider().get_tracer("acceptance").start_as_current_span("work") as span:
             _LOGGER.info("order_accepted")
 

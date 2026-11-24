@@ -44,7 +44,7 @@ from loom.core.stores.repository import (
     build_repository_registration_module,
 )
 from loom.core.stores.repository.capabilities import Listable, Readable
-from tests.helpers.loggers import CapturedLog, rendered
+from tests.helpers.loggers import CapturedLog
 
 from ._doubles import (
     MEMORY_BACKEND,
@@ -318,15 +318,6 @@ class TestInvalidationThroughTheContainer:
         assert not await _backend("data").exists("tag:widget:list")
 
 
-def _not_configured_warnings(caplog: pytest.LogCaptureFixture) -> list[logging.LogRecord]:
-    return [
-        record
-        for record in caplog.records
-        if record.levelno == logging.WARNING
-        and CacheEvent.REPOSITORY_NOT_CONFIGURED in record.getMessage()
-    ]
-
-
 class TestRepositoryNotConfigured:
     @pytest.fixture
     def _capture_wiring_warnings(self, caplog: pytest.LogCaptureFixture) -> None:
@@ -347,9 +338,9 @@ class TestRepositoryNotConfigured:
 
         container.validate()
 
-        warnings = _not_configured_warnings(caplog)
-        assert len(warnings) == 1
-        assert "CachedWidgetRepository" in rendered(warnings[0])
+        assert CapturedLog(caplog).levels(CacheEvent.REPOSITORY_NOT_CONFIGURED) == [logging.WARNING]
+        (text,) = CapturedLog(caplog).rendered(CacheEvent.REPOSITORY_NOT_CONFIGURED)
+        assert "CachedWidgetRepository" in text
         assert isinstance(container.resolve_repo(AcmeCacheWidget), CachedWidgetRepository)
 
     def test_resolving_after_validate_warns_no_further(
@@ -365,7 +356,7 @@ class TestRepositoryNotConfigured:
         container.resolve_repo(AcmeCacheWidget)
         container.resolve(Readable[AcmeCacheWidget])
 
-        assert _not_configured_warnings(caplog) == []
+        assert CapturedLog(caplog).levels(CacheEvent.REPOSITORY_NOT_CONFIGURED) == []
 
     def test_an_unmarked_class_is_never_announced(
         self,
@@ -376,10 +367,8 @@ class TestRepositoryNotConfigured:
         container = _container(repository_module, cache_module_for(ConfigContext.from_dict({})))
         container.validate()
 
-        assert all(
-            "PlainCodeWidgetRepository" not in record.getMessage()
-            for record in _not_configured_warnings(caplog)
-        )
+        announced = CapturedLog(caplog).rendered(CacheEvent.REPOSITORY_NOT_CONFIGURED)
+        assert all("PlainCodeWidgetRepository" not in text for text in announced)
 
     def test_an_enabled_section_wraps_and_stays_quiet(
         self,
@@ -395,7 +384,7 @@ class TestRepositoryNotConfigured:
         container.validate()
 
         assert isinstance(container.resolve_repo(AcmeCacheWidget), CachedRepository)
-        assert _not_configured_warnings(caplog) == []
+        assert CapturedLog(caplog).levels(CacheEvent.REPOSITORY_NOT_CONFIGURED) == []
 
 
 class Answer(msgspec.Struct):

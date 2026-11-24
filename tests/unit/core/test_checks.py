@@ -34,7 +34,7 @@ from loom.core.config.errors import ConfigError
 from loom.core.environment import Environment
 from loom.core.plugins.entrypoints import list_entry_points
 from tests.helpers.deploy_checks import write_failing_check_module
-from tests.helpers.loggers import rendered
+from tests.helpers.loggers import CapturedLog
 
 _ERROR_ID = "loom.sample.E001"
 _WARNING_ID = "loom.sample.W001"
@@ -326,10 +326,9 @@ class TestEnforceDeployChecks:
         with caplog.at_level(logging.WARNING, logger=_LOGGER):
             report = enforce_deploy_checks(_config(), environment, application=_registry())
 
-        skipped = [r for r in caplog.records if r.getMessage() == ChecksEvent.DEPLOY_SKIPPED]
+        (skipped,) = CapturedLog(caplog).rendered(ChecksEvent.DEPLOY_SKIPPED)
         assert report is None
-        assert len(skipped) == 1
-        assert str(environment) in rendered(skipped[0])
+        assert str(environment) in skipped
 
     @pytest.mark.parametrize("environment", [Environment.PRODUCTION, Environment.STAGING])
     def test_an_error_fails_startup_in_a_deployed_environment(
@@ -360,8 +359,7 @@ class TestEnforceDeployChecks:
         assert report is not None
         assert [r.id for r in report.results] == [_WARNING_ID]
         assert any(
-            r.getMessage() == ChecksEvent.DEPLOY_WARNED and _WARNING_ID in rendered(r)
-            for r in caplog.records
+            _WARNING_ID in text for text in CapturedLog(caplog).rendered(ChecksEvent.DEPLOY_WARNED)
         )
 
     def test_the_silenced_ids_are_logged_as_a_warning(
@@ -372,10 +370,9 @@ class TestEnforceDeployChecks:
         with caplog.at_level(logging.WARNING, logger=_LOGGER):
             enforce_deploy_checks(config, Environment.STAGING, application=_registry())
 
-        silenced = [r for r in caplog.records if r.getMessage() == ChecksEvent.DEPLOY_SILENCED]
-        assert len(silenced) == 1
-        assert silenced[0].levelno == logging.WARNING
-        assert _ERROR_ID in rendered(silenced[0])
+        log = CapturedLog(caplog)
+        assert log.levels(ChecksEvent.DEPLOY_SILENCED) == [logging.WARNING]
+        assert _ERROR_ID in log.rendered(ChecksEvent.DEPLOY_SILENCED)[0]
 
 
 class TestApplicationCheckModules:

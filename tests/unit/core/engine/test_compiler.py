@@ -388,7 +388,7 @@ class TestCompilerLogging:
     def test_logs_one_line_naming_the_use_case(self, log: CapturedLog) -> None:
         UseCaseCompiler().compile(_NoMarkersUseCase)
         assert log.messages == [CompilerEvent.USE_CASE_COMPILED]
-        assert log.calls[0][1]["loom.use_case.name"] == "_NoMarkersUseCase"
+        assert log.events[0][1]["loom.use_case.name"] == "_NoMarkersUseCase"
 
     @pytest.mark.parametrize(
         ("use_case", "detected"),
@@ -401,12 +401,12 @@ class TestCompilerLogging:
         self, log: CapturedLog, use_case: type[Any], detected: str
     ) -> None:
         UseCaseCompiler().compile(use_case)
-        [(_, fields)] = log.calls
+        [(_, fields)] = log.events
         assert detected in fields[CompilerKey.DETECTED]
 
     def test_counts_the_computes_rules_and_steps(self, log: CapturedLog) -> None:
         UseCaseCompiler().compile(_WithAllUseCase)
-        [(_, fields)] = log.calls
+        [(_, fields)] = log.events
         assert (
             fields[CompilerKey.COMPUTES],
             fields[CompilerKey.RULES],

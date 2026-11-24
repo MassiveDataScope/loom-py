@@ -39,15 +39,10 @@ from loom.serverless.aws.lambda_ import (
 from loom.serverless.event import ServerlessEvent
 from loom.testing import RecordingJobTransport
 from tests.helpers.composition import composition_project
-from tests.helpers.loggers import CapturedLog, rendered
+from tests.helpers.loggers import CapturedLog
 from tests.helpers.loops import RecordedLoops
 from tests.unit.serverless.aws.lambda_._probe import Probe
 from tests.unit.serverless.aws.lambda_._records import WORKER, RecordFactory, with_worker
-
-
-def _logged(caplog: pytest.LogCaptureFixture) -> list[str]:
-    """Each record of *caplog*, message and fields in one string."""
-    return [rendered(record) for record in caplog.records]
 
 
 class _OtherJobTransport(RecordingJobTransport):
@@ -600,7 +595,9 @@ print([name for name in loaded if name in sys.modules])
         adapter, application, _ = built
         adapter.mount(application)
         try:
-            assert any("InlineJobTransport" in message for message in _logged(caplog))
+            assert any(
+                "InlineJobTransport" in message for message in CapturedLog(caplog).rendered()
+            )
         finally:
             adapter.close()
 
@@ -626,7 +623,7 @@ print([name for name in loaded if name in sys.modules])
             assert any(
                 ServerlessEvent.JOB_TRANSPORT_SELECTED in message
                 and "_OtherJobTransport" in message
-                for message in _logged(caplog)
+                for message in CapturedLog(caplog).rendered()
             )
         finally:
             adapter.close()
@@ -648,7 +645,10 @@ print([name for name in loaded if name in sys.modules])
         )
         configured = _manifest_project(project, "acme_jobs")
         LambdaRuntime(jobs=[probe[0]]).recipe(configured)
-        assert any(ServerlessEvent.AUTOCRUD_IGNORED in message for message in _logged(caplog))
+        assert any(
+            ServerlessEvent.AUTOCRUD_IGNORED in message
+            for message in CapturedLog(caplog).rendered()
+        )
 
     def test_committed_failure_logs_final_outcome(
         self,
@@ -658,7 +658,9 @@ print([name for name in loaded if name in sys.modules])
     ) -> None:
         handler({"Records": [record("42", "committed")]}, None)
         final_logs = [
-            message for message in _logged(caplog) if JobEvent.DELIVERY_ABANDONED in message
+            message
+            for message in CapturedLog(caplog).rendered()
+            if JobEvent.DELIVERY_ABANDONED in message
         ]
         assert len(final_logs) == 1
         assert CapturedLog(caplog).exception_types(JobEvent.DELIVERY_ABANDONED) == [PostCommitError]

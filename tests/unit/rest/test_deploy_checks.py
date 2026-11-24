@@ -30,7 +30,7 @@ from loom.rest.auth import RequestCredentials
 from loom.rest.checks import AUTHENTICATION_CHECK, SCHEMA_CHECK
 from loom.rest.fastapi.auto import create_app
 from tests.helpers.deploy_checks import write_failing_check_module
-from tests.helpers.loggers import rendered
+from tests.helpers.loggers import CapturedLog
 from tests.unit.rest._fixture_app import write_project
 
 _NO_DOCS: dict[str, Any] = {"docs_url": None, "redoc_url": None, "openapi_url": None}
@@ -189,7 +189,7 @@ class TestCreateAppInADeployedEnvironment:
         with caplog.at_level(logging.WARNING, logger=_CHECKS_LOGGER):
             create_app(config, environment="staging", authenticator=AcmeCodeHeaderAuthenticator())
 
-        assert any(SCHEMA_CHECK in rendered(r) for r in caplog.records)
+        assert any(SCHEMA_CHECK in text for text in CapturedLog(caplog).rendered())
 
     def test_a_silenced_error_lets_the_app_start_and_is_logged(
         self, tmp_path: Path, caplog: pytest.LogCaptureFixture
@@ -200,10 +200,8 @@ class TestCreateAppInADeployedEnvironment:
         with caplog.at_level(logging.WARNING, logger=_CHECKS_LOGGER):
             create_app(config, environment=_PRODUCTION)
 
-        assert any(
-            r.getMessage() == ChecksEvent.DEPLOY_SILENCED and AUTHENTICATION_CHECK in rendered(r)
-            for r in caplog.records
-        )
+        silenced = CapturedLog(caplog).rendered(ChecksEvent.DEPLOY_SILENCED)
+        assert any(AUTHENTICATION_CHECK in text for text in silenced)
 
 
 class TestCursorSigningCheck:
@@ -228,10 +226,8 @@ class TestCursorSigningCheck:
         with caplog.at_level(logging.WARNING, logger=_CHECKS_LOGGER):
             create_app(config, environment=_PRODUCTION, authenticator=AcmeCodeHeaderAuthenticator())
 
-        assert any(
-            r.getMessage() == ChecksEvent.DEPLOY_SILENCED and CURSOR_SIGNING_CHECK in rendered(r)
-            for r in caplog.records
-        )
+        silenced = CapturedLog(caplog).rendered(ChecksEvent.DEPLOY_SILENCED)
+        assert any(CURSOR_SIGNING_CHECK in text for text in silenced)
 
 
 class TestAuthenticationSuppliedInCode:

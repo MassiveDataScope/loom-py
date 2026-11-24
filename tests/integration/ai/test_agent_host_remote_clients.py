@@ -239,7 +239,7 @@ class TestOptionalStartup:
             async with host:
                 pass
 
-        assert CapturedLog(caplog).calls == [
+        assert CapturedLog(caplog).events == [
             (
                 AiEvent.REMOTE_CLIENT_SKIPPED,
                 {
