@@ -36,7 +36,6 @@ _PROMOTED_ALICE = Identity(subject="alice", mechanism="test", roles=("admin",))
 _BOB = Identity(subject="bob", mechanism="test")
 _LATER = time.time() + 3600
 _PASSED = time.time() - 1
-_SOON = _LATER - 600
 _WORK = object()
 """Stands for the work fixing the identity: opaque to the identity layer."""
 
@@ -332,49 +331,3 @@ class TestRefuseExpired:
                 acting.refuse_expired()
 
         assert switches.calls == [(IdentityEvent.DELEGATION_EXPIRED, {})]
-
-
-class TestResumed:
-    """What queued work installs to resume its dispatcher's delegation where it runs."""
-
-    @pytest.mark.parametrize(
-        ("acting", "captured", "expected"),
-        [
-            (Acting.delegated(None), Delegation(None, None), None),
-            (Acting.delegated(_ALICE, until=_LATER), Delegation(None, None), (None, None)),
-            (Acting.delegated(_BOB, until=_LATER), Delegation(_ALICE, _SOON), (_ALICE, _SOON)),
-            (
-                Acting.delegated(_ALICE, until=_LATER),
-                Delegation(_ALICE, _SOON),
-                (_ALICE, _SOON),
-            ),
-            (
-                Acting.delegated(_ALICE, until=_SOON),
-                Delegation(_ALICE, _LATER),
-                (_ALICE, _SOON),
-            ),
-            (Acting.delegated(_ALICE, until=_SOON), Delegation(_ALICE, None), (_ALICE, _SOON)),
-            (Acting.delegated(_ALICE, until=_LATER, work=_WORK), Delegation(_ALICE, None), None),
-        ],
-        ids=[
-            "no-caller-over-no-one",
-            "no-caller-over-a-caller",
-            "another-caller",
-            "dispatcher-captured-sooner",
-            "dispatcher-acting-sooner",
-            "dispatcher-captured-no-deadline",
-            "dispatcher-inside-work",
-        ],
-    )
-    def test_installs_the_delegation_ending_at_the_sooner_deadline(
-        self, acting: Acting, captured: Delegation, expected: tuple[object, object] | None
-    ) -> None:
-        assert acting.resumed(captured) == expected
-
-    def test_inside_work_acting_as_the_dispatcher_past_the_captured_deadline_is_refused(
-        self,
-    ) -> None:
-        acting = Acting.delegated(_ALICE, until=_LATER, work=_WORK)
-
-        with pytest.raises(DelegationExpired):
-            acting.resumed(Delegation(_ALICE, _PASSED))

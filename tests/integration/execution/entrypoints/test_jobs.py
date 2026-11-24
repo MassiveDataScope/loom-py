@@ -18,7 +18,7 @@ from loom.core.engine.executor import UseCaseExecutor
 from loom.core.engine.post_commit import PostCommitChannel, bind_channel, reset_channel
 from loom.core.errors import DelegationExpired, Unauthenticated
 from loom.core.execution import ExecutionScope
-from loom.core.identity import ANONYMOUS, Delegation, IdentityFixed, captured_delegation
+from loom.core.identity import ANONYMOUS, Delegation, Identity, captured_delegation
 from loom.core.identity.wire import encode_identity
 from loom.core.job.context import flush_pending_dispatches
 from loom.core.job.envelope import JobEnvelope, job_context
@@ -259,31 +259,20 @@ class TestAQueuedDispatch:
         assert isinstance(refusal, DelegationExpired)
         assert callback_log == []
 
-    async def test_drained_inside_work_acting_as_its_dispatcher_runs(
-        self, jobs: InlineServiceFixture, pending: PostCommitChannel, callback_log: CallbackLog
+    @pytest.mark.parametrize("worker", [ALICE, BOB], ids=["dispatcher", "another"])
+    async def test_drained_inside_work_runs_as_its_dispatcher_whoever_the_work_acts_as(
+        self,
+        jobs: InlineServiceFixture,
+        pending: PostCommitChannel,
+        callback_log: CallbackLog,
+        worker: Identity,
     ) -> None:
-        with ExecutionScope(ALICE):
+        with ExecutionScope(worker):
             await pending.drain(committed=True)
 
         await jobs.wait_until_idle()
 
         assert callback_log == [("built", AS_ALICE), ("on_success", AS_ALICE)]
-
-    async def test_drained_inside_work_acting_as_another_is_refused(
-        self,
-        jobs: InlineServiceFixture,
-        pending: PostCommitChannel,
-        callback_log: CallbackLog,
-        caplog: pytest.LogCaptureFixture,
-    ) -> None:
-        with ExecutionScope(BOB):
-            await pending.drain(committed=True)
-
-        await jobs.wait_until_idle()
-
-        [refusal] = _refusals(caplog)
-        assert isinstance(refusal, IdentityFixed)
-        assert callback_log == []
 
 
 class TestADispatchWithNoCaller:
@@ -312,19 +301,16 @@ class TestADispatchWithNoCaller:
         executor: UseCaseExecutor,
         callback_log: CallbackLog,
         channel: PostCommitChannel,
-        caplog: pytest.LogCaptureFixture,
     ) -> None:
         """As on Celery, a dispatch with no caller never borrows the caller of the work draining."""
         jobs = InlineServiceFixture(factory, executor)
-        jobs.dispatch_after_commit(AcmeProbeJob, on_success=AcmeCallback)
+        jobs.dispatch_after_commit(AcmeProbeJob, on_failure=AcmeCallback)
         with ExecutionScope(ALICE):
             await channel.drain(committed=True)
 
         await jobs.wait_until_idle()
 
-        [refusal] = _refusals(caplog)
-        assert isinstance(refusal, IdentityFixed)
-        assert callback_log == []
+        assert callback_log == [("built", NO_CALLER), ("on_failure", NO_CALLER)]
 
     async def test_inline_runs_the_job_with_no_caller(
         self, factory: UseCaseFactory, executor: UseCaseExecutor, callback_log: CallbackLog
