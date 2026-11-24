@@ -34,7 +34,6 @@ from loom.ai.engines.pydantic_ai._mcp import SharedMcpToolsets, _OpenToolset, _T
 from loom.ai.errors import AgentCompilationError, AgentErrorCode, AgentRunError, AgentRunErrorCode
 from loom.ai.inference import InferenceTarget
 from loom.core.di import LoomContainer
-from loom.core.identity import Identity
 from tests.helpers.pydantic_ai_engine import (
     OPEN_OBJECT_SCHEMA,
     compiled_instructions,
@@ -402,7 +401,7 @@ class TestKindPythonRespectsToolTimeout:
 
         async def call_until_cut_off() -> None:
             """Run the lookup until the plan timeout cancels it."""
-            async with capability_call(context, "python", "lookup", Identity(subject="tester")):
+            async with capability_call(context, "python", "lookup"):
                 await session.call_tool("lookup", {})
 
         with pytest.raises(AgentRunError) as raised:

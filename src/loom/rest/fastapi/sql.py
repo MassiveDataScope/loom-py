@@ -244,7 +244,6 @@ def _make_sql_handler(
                 status_code=int(HTTPStatus.OK),
                 read_only=connection.readonly,
                 roles=_effective_roles_label(roles, connection),
-                subject=identity.subject,
                 mechanism=identity.mechanism,
             ):
                 result = await service.execute(

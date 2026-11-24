@@ -20,12 +20,9 @@ from loom.ai.engines.pydantic_ai._guards import BuildContext, capability_call
 from loom.ai.engines.pydantic_ai._mcp import SharedMcpToolsets
 from loom.ai.errors import AgentRunError, AgentRunErrorCode
 from loom.core.di import LoomContainer
-from loom.core.identity import Identity
 from loom.core.observability.event import Scope
 from loom.core.observability.span import LoomSpan
 from tests.unit.ai.doubles import tracing_runtime
-
-_IDENTITY = Identity(subject="tester")
 
 
 def _by_name(spans: tuple[ReadableSpan, ...], name: str) -> ReadableSpan:
@@ -68,7 +65,7 @@ class TestToolSpanNesting:
     ) -> None:
         exporter, context, agent = traced_run(timeout_s=5.0)
         with agent.as_current():
-            async with capability_call(context, "usecase", "create_order", _IDENTITY):
+            async with capability_call(context, "usecase", "create_order"):
                 await asyncio.sleep(0)
         agent.end()
 
@@ -80,7 +77,7 @@ class TestToolSpanNesting:
         assert tool_span.status.status_code is StatusCode.OK
         assert tool_span.attributes is not None
         assert tool_span.attributes["capability"] == "usecase"
-        assert tool_span.attributes["subject"] == "tester"
+        assert "subject" not in tool_span.attributes
 
     @pytest.mark.asyncio
     async def test_a_timed_out_tool_closes_its_span_as_an_error_under_the_agent_span(
@@ -90,7 +87,7 @@ class TestToolSpanNesting:
 
         async def overrun() -> None:
             """Wait until the plan timeout cancels the tool body."""
-            async with capability_call(context, "usecase", "create_order", _IDENTITY):
+            async with capability_call(context, "usecase", "create_order"):
                 await asyncio.Event().wait()
 
         with agent.as_current():  # noqa: SIM117 - separate blocks so only the call under test can raise

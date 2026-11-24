@@ -28,6 +28,7 @@ from loom.etl.schema import SchemaNotFoundError
 from loom.etl.schema._schema import ColumnSchema, LoomDtype, SchemaError
 from loom.etl.storage._config import AuditConfig, CustomColumnDef, MissingTablePolicy
 from loom.etl.storage._locator import MappingLocator, TableLocation
+from tests.helpers.loggers import laid_out_text
 from tests.unit.etl.doubles import RunDateETLParams
 
 from .conftest import table_path
@@ -591,6 +592,18 @@ class TestPolarsReplaceWhere:
         spec = replace(declared._to_spec(), schema_mode=SchemaMode.OVERWRITE)
         writer.write(new_data.lazy(), spec, RunDateETLParams(run_date=date(2024, 1, 1)))
         assert read_delta_table(tmp_path, "staging.fresh")["v"].to_list() == [99]
+
+
+class TestPolarsWriteLog:
+    def test_a_replace_where_logs_no_value_of_its_predicate(
+        self, tmp_path: Path, caplog: pytest.LogCaptureFixture
+    ) -> None:
+        seed_delta_table(tmp_path, "staging.regions", pl.DataFrame({"region": ["acme-42"]}))
+        spec = IntoTable("staging.regions").replace_where(col("region") == "acme-42")._to_spec()
+
+        PolarsTargetWriter(tmp_path).write(pl.DataFrame({"region": ["acme-42"]}).lazy(), spec, None)
+
+        assert "acme-42" not in laid_out_text(caplog)
 
 
 class TestPolarsPersistedSchema:

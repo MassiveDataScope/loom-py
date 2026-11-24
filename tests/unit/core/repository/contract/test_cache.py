@@ -6,6 +6,7 @@ from datetime import datetime
 from typing import Any, TypeVar
 
 from loom.core.cache import CacheConfig, CachedRepository, GenerationalDependencyResolver
+from loom.core.cache.keys import full_hash
 from loom.core.stores.repository import (
     BulkCreatable,
     Countable,
@@ -115,7 +116,7 @@ class TestContractCache:
 
         assert cached.entity_name == case.model.__tablename__
         assert cached.entity_name != type(seeded).__name__.lower()
-        entity_keys = [key for key in cache.data if f":{SEED[0].id}:" in key]
+        entity_keys = [key for key in cache.data if f":{full_hash(str(SEED[0].id))}:" in key]
         assert entity_keys
         assert all(key.startswith(f"{case.model.__tablename__}:") for key in entity_keys)
 

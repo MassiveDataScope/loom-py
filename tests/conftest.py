@@ -25,6 +25,7 @@ from tests.helpers.aws import ACCOUNT, FAKE_KEY, REGION, is_moto_answering, scru
 from tests.helpers.aws_island import FakeAwsIsland
 from tests.helpers.extras import BOTO3_ISLAND, without_extra
 from tests.helpers.jobs import JobActivity
+from tests.helpers.loggers import root_logger_kept
 
 pytest_plugins = ["pytester", "tests.helpers.delegation", "tests.helpers.log_standard"]
 
@@ -278,15 +279,16 @@ def _test_environment() -> Iterator[None]:
         yield
 
 
+@pytest.fixture(scope="module", autouse=True)
+def root_logger_kept_per_module() -> Iterator[None]:
+    """Keep a module's logging setup, such as an app a module fixture composes, in that module."""
+    with root_logger_kept():
+        yield
+
+
 @pytest.fixture(autouse=True)
 def restored_root_logger() -> Iterator[None]:
     """Give every test an INFO root logger and leave it as found."""
-    root = logging.getLogger()
-    handlers, level = list(root.handlers), root.level
-    root.setLevel(logging.INFO)
-    filters = {handler: list(handler.filters) for handler in handlers}
-    yield
-    root.handlers[:] = handlers
-    root.setLevel(level)
-    for handler, kept in filters.items():
-        handler.filters[:] = kept
+    with root_logger_kept() as root:
+        root.setLevel(logging.INFO)
+        yield

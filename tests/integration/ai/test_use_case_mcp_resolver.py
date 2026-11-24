@@ -219,10 +219,7 @@ class TestTheSpanDistinguishesTheUseCasePath:
             meta = event.meta or {}
             assert meta.get("mcp_server") == "alpha-tools"
             assert "agent" not in meta
-            # FR-09, and the only place the binding is observable: the span is
-            # where this path's identity surfaces, so without this the resolver
-            # could hand the view an anonymous identity and nothing would fail.
-            assert meta.get("subject") == identity.subject
+        assert observer.acting_at_start(Scope.TOOL) == [identity.subject]
 
 
 class TestTimeoutComesFromTheServersOwnDeadline:

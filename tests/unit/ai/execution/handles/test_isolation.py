@@ -17,7 +17,6 @@ from loom.core.engine.compiler import UseCaseCompiler
 from loom.core.engine.executor import UseCaseExecutor
 from loom.core.execution import ExecutionRequired
 from loom.core.identity import Identity
-from loom.core.observability.event import EventKind
 from loom.core.observability.event import Scope as SpanScope
 from loom.core.observability.observability import Observability
 from loom.core.use_case import Agent, Mcp, UseCase
@@ -165,13 +164,8 @@ class TestHandlesResolvedInEachExecution:
             await executor.execute(AcmeInterleavedUseCase(gates, first=False), identity=BOB)
             await first
 
-        subjects = [
-            event.meta["subject"]
-            for event in recorder.events
-            if event.scope is SpanScope.TOOL and event.kind is EventKind.START
-        ]
         assert engine.identities == [BOB, ALICE]
         assert engine.acting == [BOB, ALICE]
         assert sql_service.calls == [("auditor",), ("analyst",)]
-        assert subjects == [BOB.subject, ALICE.subject]
+        assert recorder.acting_at_start(SpanScope.TOOL) == [BOB.subject, ALICE.subject]
         assert len(session.calls) == 2

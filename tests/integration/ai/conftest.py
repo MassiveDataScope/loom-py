@@ -55,10 +55,10 @@ from loom.core.di import LoomContainer
 from loom.core.engine.compilable import Compilable
 from loom.core.engine.compiler import UseCaseCompiler
 from loom.core.engine.executor import UseCaseExecutor
-from loom.core.identity import Identity
+from loom.core.identity import Identity, current_identity
 from loom.core.model import loom_type, msgspec_type
 from loom.core.model.redaction import Dsn
-from loom.core.observability.event import LifecycleEvent
+from loom.core.observability.event import EventKind, LifecycleEvent, Scope
 from loom.core.stores.catalog import DEFAULT_STORE
 from loom.core.stores.repository.registration import classify_key
 from loom.core.stores.sql.config import SqlConfig, SqlConnectionConfig
@@ -80,18 +80,27 @@ from tests.helpers.ai import (
 
 
 class RecordingObserver:
-    """Lifecycle observer keeping every event a span emitted, in order.
-
-    Attributes:
-        events: Every event received, in arrival order.
-    """
+    """Lifecycle observer keeping every event a span emitted, in order, with who acted then."""
 
     def __init__(self) -> None:
-        self.events: list[LifecycleEvent] = []
+        self._acted: list[tuple[LifecycleEvent, str]] = []
 
     def on_event(self, event: LifecycleEvent) -> None:
-        """Record one lifecycle event."""
-        self.events.append(event)
+        """Record one lifecycle event with the subject acting when it was emitted."""
+        self._acted.append((event, current_identity().subject))
+
+    @property
+    def events(self) -> list[LifecycleEvent]:
+        """Every event received, in arrival order."""
+        return [event for event, _ in self._acted]
+
+    def acting_at_start(self, scope: Scope) -> list[str]:
+        """The subject acting when each span of *scope* started, in order."""
+        return [
+            subject
+            for event, subject in self._acted
+            if event.scope is scope and event.kind is EventKind.START
+        ]
 
 
 # ---------------------------------------------------------------------------

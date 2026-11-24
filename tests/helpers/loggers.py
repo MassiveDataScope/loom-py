@@ -4,6 +4,8 @@ from __future__ import annotations
 
 import logging
 import traceback
+from collections.abc import Iterator
+from contextlib import contextmanager
 from typing import Any
 
 import pytest
@@ -111,6 +113,11 @@ def logged_text(caplog: pytest.LogCaptureFixture) -> str:
     return "\n".join(rendered(record) for record in caplog.records)
 
 
+def laid_out_text(caplog: pytest.LogCaptureFixture) -> str:
+    """The fields of every record of *caplog* as loom's formats lay them out, stack left out."""
+    return str([RecordFields(record).laid_out for record in caplog.records])
+
+
 def exception_text(caplog: pytest.LogCaptureFixture) -> str:
     """The traceback of every record of *caplog* that carries an exception, one after another."""
     return "".join(
@@ -128,6 +135,21 @@ def logged_events(caplog: pytest.LogCaptureFixture) -> list[dict[str, Any]]:
     ]
 
 
+@contextmanager
+def root_logger_kept() -> Iterator[logging.Logger]:
+    """Lend the root logger, then give back its level, its handlers and their filters."""
+    root = logging.getLogger()
+    handlers, level = list(root.handlers), root.level
+    filters = {handler: list(handler.filters) for handler in handlers}
+    try:
+        yield root
+    finally:
+        root.handlers[:] = handlers
+        root.setLevel(level)
+        for handler, kept in filters.items():
+            handler.filters[:] = kept
+
+
 __all__ = [
     "CapturedLog",
     "CapturingHandler",
@@ -135,4 +157,5 @@ __all__ = [
     "logged_events",
     "logged_text",
     "rendered",
+    "root_logger_kept",
 ]

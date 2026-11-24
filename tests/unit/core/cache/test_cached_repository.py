@@ -32,7 +32,7 @@ from loom.core.stores.repository.query import (
     build_page_result,
 )
 from loom.testing import make
-from tests.helpers.loggers import logged_text
+from tests.helpers.loggers import CapturedLog, laid_out_text, logged_text
 from tests.unit.core.uow._coordinator_fakes import (
     NonTransactionalStore,
     StoreFactory,
@@ -409,6 +409,20 @@ class TestCachedRepository:
         repo = wrapped_repository._repository
         assert isinstance(repo, _FakeRepository)
         assert repo.get_calls == 1
+
+    @pytest.mark.asyncio
+    async def test_a_cached_read_logs_its_key_without_the_id(
+        self, cache_config: CacheConfig, caplog: pytest.LogCaptureFixture
+    ) -> None:
+        repository = _FakeRepository()
+        repository.storage[864209731] = make(_EntityOut, id=864209731)
+        wrapped, _ = _wrap(repository, cache_config)
+
+        await wrapped.get_by_id(864209731)
+        await wrapped.get_by_id(864209731)
+
+        assert CapturedLog(caplog).named(CacheEvent.ENTRY_HIT)
+        assert "864209731" not in laid_out_text(caplog)
 
     @pytest.mark.asyncio
     async def test_custom_method_cache_for_developer_function(

@@ -274,7 +274,6 @@ class _AgentHandle:
             Scope.AGENT,
             "agent_run",
             agent=self._name,
-            subject=caller.subject,
             mechanism=caller.mechanism,
         )
 

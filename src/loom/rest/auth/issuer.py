@@ -41,9 +41,8 @@ class JwtIssuer:
 
     The signing key stays a ``Secret`` on the config: only this issuer reveals it.
 
-    Every issuing is logged at INFO with the subject and the roles granted. That is
-    a deliberate audit trail, not diagnostics: without it an access is not
-    attributable to who asked for the token nor to the privileges it carried. The
+    Every issuing is logged at INFO with the subject: a security event, not
+    diagnostics, so an access is attributable to who asked for the token. The
     subject is usually personal data, so route these logs accordingly. The token and
     the key are never logged.
 

@@ -137,7 +137,7 @@ class ClickHouseSourceReader(SourceReader, ClientCommandExecutor):
         """
         client = self._client or self._get_client()
         query = self._build_query(spec, params_instance)
-        _log_query_start(spec, query)
+        _log_query_start(spec)
         started = time.perf_counter()
         frame, rows = self._query_to_frame(client, query)
         _log.info(
@@ -176,7 +176,7 @@ class ClickHouseSourceReader(SourceReader, ClientCommandExecutor):
         """
         client = self._client or self._get_client()
         query = self._build_query(spec, params_instance)
-        _log_query_start(spec, query)
+        _log_query_start(spec)
         started = time.perf_counter()
         frame, rows, batches = self._stream_query_to_frame(client, query)
         _log.info(
@@ -313,13 +313,13 @@ class ClickHouseSourceReader(SourceReader, ClientCommandExecutor):
         return frame.with_columns(exprs)
 
 
-def _log_query_start(spec: ClickHouseSourceSpec, query: str) -> None:
+def _log_query_start(spec: ClickHouseSourceSpec) -> None:
     _log.debug(
         EtlEvent.SOURCE_QUERY_STARTED,
         extra={
             EtlKey.TABLE: spec.table_ref.ref,
             EtlKey.COLUMNS: list(spec.columns) if spec.columns else None,
-            EtlKey.SQL: query,
+            EtlKey.PREDICATES: len(spec.predicates),
         },
     )
 
