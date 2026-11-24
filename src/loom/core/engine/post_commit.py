@@ -65,7 +65,6 @@ class PostCommitEvent(LogEvent):
     PLAIN_ACTIONS_DROPPED = "engine.post_commit_plain_actions_dropped"
     DRAIN_FAILED_DURING_TEARDOWN = "engine.post_commit_drain_failed_during_teardown"
     ACTION_FAILED = "engine.post_commit_action_failed"
-    ACTION_FAILED_AFTER_INTERRUPTION = "engine.post_commit_action_failed_after_interruption"
     SHIELDED_ACTION_NEVER_RAN = "engine.post_commit_shielded_action_never_ran"
 
 
@@ -75,6 +74,7 @@ class PostCommitKey(LogKey):
     DROPPED_ACTIONS = "loom.post_commit.dropped_actions", ValueKind.NUMBER
     SENT_JOB = "loom.post_commit.sent_job"
     SENT_TASK_ID = "loom.post_commit.sent_task_id"
+    INTERRUPTED = "loom.post_commit.interrupted", ValueKind.BOOLEAN
 
 
 class PostCommitChannel:
@@ -220,12 +220,12 @@ class PostCommitChannel:
             shielded.add_done_callback(
                 lambda done: _log_unreported(done, shielded_pending, shielded_failures)
             )
-            _log_failures(plain_failures, PostCommitEvent.ACTION_FAILED_AFTER_INTERRUPTION)
+            _log_failures(plain_failures, interrupted=True)
             self._settle_interrupted(pending)
             raise
         failed = [*shielded_failures, *plain_failures]
         if failed:
-            _log_failures(failed, PostCommitEvent.ACTION_FAILED)
+            _log_failures(failed, interrupted=False)
             raise PostCommitError(committed=committed, failures=tuple(e for _, e in failed))
 
     def _settle_interrupted(self, pending: collections.deque[PostCommitAction]) -> None:
@@ -254,7 +254,7 @@ def _log_unreported(
     The failures it collected, and, when the task itself died (the loop closing
     cancels it), every action it never ran.
     """
-    _log_failures(failures, PostCommitEvent.ACTION_FAILED_AFTER_INTERRUPTION)
+    _log_failures(failures, interrupted=True)
     if shielded.cancelled() or shielded.exception() is not None:
         for action in unsent:
             log_never_ran(action)
@@ -279,10 +279,14 @@ def log_never_ran(action: PostCommitAction) -> None:
         _logger.error(PostCommitEvent.SHIELDED_ACTION_NEVER_RAN, extra=subject.fields())
 
 
-def _log_failures(failures: list[_Failure], event: PostCommitEvent) -> None:
+def _log_failures(failures: list[_Failure], *, interrupted: bool) -> None:
     for action, error in failures:
         for subject in _describe(action):
-            _logger.error(event, extra=subject.fields(), exc_info=error)
+            _logger.error(
+                PostCommitEvent.ACTION_FAILED,
+                extra={**subject.fields(), PostCommitKey.INTERRUPTED: interrupted},
+                exc_info=error,
+            )
 
 
 def _describe(action: PostCommitAction) -> Iterable[ActionSubject]:

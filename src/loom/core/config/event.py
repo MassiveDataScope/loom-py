@@ -10,7 +10,7 @@ class ConfigEvent(LogEvent):
 
     KEYS_OVERRIDDEN = "config.keys_overridden"
     RESOLVER_DEFAULT_SKIPPED = "config.resolver_default_skipped"
-    RESOLVER_FETCHING = "config.resolver_fetching"
+    RESOLVER_FETCHED = "config.resolver_fetched"
 
 
 class ConfigLogKey(LogKey):

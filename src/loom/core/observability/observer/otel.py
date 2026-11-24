@@ -164,7 +164,7 @@ def _host_tracer(config: OtelConfig) -> Tracer:
     provider = trace.get_tracer_provider()
     if not config.adopt_host_id_generator:
         _log.info(
-            ObservabilityEvent.HOST_PROVIDER_RANDOM_TRACE_IDS,
+            ObservabilityEvent.HOST_ID_GENERATOR_KEPT,
             extra={ObservabilityKey.PROVIDER: type(provider).__name__},
         )
         return trace.get_tracer(config.tracer_name, config.tracer_version or None)

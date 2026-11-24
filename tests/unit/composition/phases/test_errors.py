@@ -114,7 +114,7 @@ class TestStartupErrors:
             cause = recorded["cause"]
             assert recorded["wrapped"], path
             assert _type(cause["type"]) == _WRAPPED[refusal], path
-            assert recorded["message"].startswith("Bootstrap failed: "), path
+            assert recorded["message"].startswith("Bootstrap failed"), path
             if not cause["type"].startswith("loom."):
                 assert cause["message"] not in recorded["message"], path
 
@@ -135,11 +135,11 @@ class TestStartupErrors:
             assert _type(compilation["type"]) == "CompilationError", path
 
     @pytest.mark.parametrize(
-        ("overrides", "setup"),
+        ("overrides", "setup", "message"),
         [
-            ((raises_at_registration,), _unchanged),
-            ((), _failing_repositories),
-            ((), _failing_cache),
+            ((raises_at_registration,), _unchanged, "failed in raises_at_registration"),
+            ((), _failing_repositories, "failed"),
+            ((), _failing_cache, "failed"),
         ],
         ids=["override", "repository-module", "cache-module"],
     )
@@ -147,6 +147,7 @@ class TestStartupErrors:
         self,
         overrides: tuple[Callable[..., None], ...],
         setup: Callable[[pytest.MonkeyPatch], None],
+        message: str,
         overridden: Callable[..., Application],
         monkeypatch: pytest.MonkeyPatch,
     ) -> None:
@@ -156,7 +157,7 @@ class TestStartupErrors:
             overridden(*overrides)
 
         assert type(caught.value) is BootstrapError
-        assert str(caught.value) == "Bootstrap failed: RuntimeError"
+        assert str(caught.value) == f"Bootstrap {message}: RuntimeError"
         assert isinstance(caught.value.__cause__, RuntimeError)
         assert str(caught.value.__cause__) == "acme module failed"
 

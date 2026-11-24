@@ -3,7 +3,7 @@
     "message": "acme module failed",
     "type": "builtins.RuntimeError"
   },
-  "message": "Bootstrap failed: RuntimeError",
+  "message": "Bootstrap failed in raises_at_registration: RuntimeError",
   "type": "loom.core.bootstrap.bootstrap.BootstrapError",
   "wrapped": true
 }

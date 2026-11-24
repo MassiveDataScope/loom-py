@@ -248,7 +248,7 @@ class TestElevationFailure:
             (record.msg, record.levelno, record.exc_info and record.exc_info[1])
             for record in caplog.records
         ] == [
-            (ElevationEvent.FLAGS_MAY_REMAIN, logging.ERROR, raised.value.__cause__),
+            (ElevationEvent.FLAGS_CLEAR_FAILED, logging.ERROR, raised.value.__cause__),
             (ElevationEvent.INVALIDATION_FAILED, logging.ERROR, raised.value),
         ]
         assert caplog.records[0].__dict__[ElevationKey.SCOPES] == ["editor"]

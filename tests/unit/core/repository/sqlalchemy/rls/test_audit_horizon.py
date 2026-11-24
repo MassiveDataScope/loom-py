@@ -40,7 +40,7 @@ class TestAuditHorizon:
         ("covered", "level", "event"),
         [
             (0, logging.ERROR, SqlalchemyEvent.AUDIT_PARTITION_MISSING),
-            (2, logging.WARNING, SqlalchemyEvent.AUDIT_PARTITIONS_RUNNING_OUT),
+            (2, logging.WARNING, SqlalchemyEvent.AUDIT_PARTITIONS_NEARLY_EXHAUSTED),
         ],
     )
     def test_startup_logs_a_short_horizon(

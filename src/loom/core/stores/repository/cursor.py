@@ -49,7 +49,7 @@ from loom.core.config.keys import ConfigKey
 from loom.core.environment import Environment, configured_variable, resolve_environment
 from loom.core.errors import InvalidType, InvalidValue, UnsupportedQuery
 from loom.core.model.struct import LoomFrozenStruct
-from loom.core.stores.event import StoresEvent
+from loom.core.stores.event import StoresEvent, StoresKey
 from loom.core.stores.repository.query import FilterSpec, QuerySpec
 
 if TYPE_CHECKING:
@@ -65,6 +65,7 @@ _EPHEMERAL: Final = "ephemeral"
 _UNSIGNED: Final = "unsigned"
 _DISABLED: Final = "disabled"
 _SIGNING_MODES: Final = frozenset({_SIGNED, _EPHEMERAL, _UNSIGNED, _DISABLED})
+_WEAKENED_MODES: Final = frozenset({_EPHEMERAL, _UNSIGNED})
 
 CURSOR_SIGNING_CHECK: Final = "loom.cursors.E001"
 """Id of the deploy check refusing cursors not signed with a configured key."""
@@ -237,12 +238,13 @@ class CursorCodec:
         elif signing == _EPHEMERAL:
             self._current = _EPHEMERAL_KEY_ID
             self._keys = {_EPHEMERAL_KEY_ID: secrets.token_bytes(MIN_KEY_BYTES)}
-            _logger.warning(StoresEvent.CURSOR_SIGNING_EPHEMERAL)
         else:
             self._current = b""
             self._keys = {}
-            if signing == _UNSIGNED:
-                _logger.warning(StoresEvent.CURSOR_SIGNING_UNSIGNED)
+        if signing in _WEAKENED_MODES:
+            _logger.warning(
+                StoresEvent.CURSOR_SIGNING_WEAKENED, extra={StoresKey.CURSOR_SIGNING: signing}
+            )
 
     @classmethod
     def from_context(cls, ctx: ConfigContext) -> CursorCodec:

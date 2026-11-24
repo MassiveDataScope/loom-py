@@ -21,7 +21,7 @@ from urllib.parse import SplitResult, urlsplit
 from msgspec import field
 
 from loom.ai.errors import AgentCompilationError, AgentCompilationIssue, AgentErrorCode
-from loom.ai.event import AiEvent, AiKey
+from loom.ai.event import AiEvent, AiKey, PlaintextHost
 from loom.ai.inference import OUTPUT_MODES, InferenceTarget
 from loom.ai.pricing import ModelPrice
 from loom.ai.remote_auth import is_strategy_registered, registered_strategy_names
@@ -108,7 +108,7 @@ class _RemoteUrl:
 
     def __init__(self, url: str, *, private_plaintext: bool = False) -> None:
         """Judge *url*; *private_plaintext* is the server's ``allow_private_plaintext``."""
-        self._plaintext_event: AiEvent | None = None
+        self._plaintext_host: PlaintextHost | None = None
         self.fault: str | None = self._judge(url, private_plaintext)
         """Why the URL is unsafe, or ``None`` when it is acceptable."""
 
@@ -118,8 +118,11 @@ class _RemoteUrl:
         Args:
             component: Configuration path the URL came from.
         """
-        if self._plaintext_event is not None:
-            _logger.warning(self._plaintext_event, extra={AiKey.CONFIG_PATH: component})
+        if self._plaintext_host is not None:
+            _logger.warning(
+                AiEvent.REMOTE_PLAINTEXT_ACCEPTED,
+                extra={AiKey.CONFIG_PATH: component, AiKey.PLAINTEXT_HOST: self._plaintext_host},
+            )
 
     def _judge(self, url: str, private_plaintext: bool) -> str | None:
         try:
@@ -128,11 +131,11 @@ class _RemoteUrl:
             return "the URL is malformed"
         if parts.scheme == "http":
             if _is_loopback(parts.hostname):
-                self._plaintext_event = AiEvent.REMOTE_PLAINTEXT_LOOPBACK
+                self._plaintext_host = PlaintextHost.LOOPBACK
             elif not private_plaintext:
                 return "the scheme must be https"
             elif _is_private(parts.hostname):
-                self._plaintext_event = AiEvent.REMOTE_PLAINTEXT_PRIVATE
+                self._plaintext_host = PlaintextHost.PRIVATE
             else:
                 return "allow_private_plaintext admits only a private host"
         elif parts.scheme != "https":

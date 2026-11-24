@@ -1,6 +1,8 @@
-"""What the ETL package logs: its events and the keys of their fields."""
+"""The names of what the ETL package logs: its events, their field keys and the schema drifts."""
 
 from __future__ import annotations
+
+from enum import StrEnum
 
 from loom.core.log_names import LogEvent, LogKey, ValueKind
 
@@ -19,15 +21,15 @@ class EtlEvent(LogEvent):
     CHECKPOINT_CORRELATION_CLEANUP_FAILED = "etl.checkpoint_correlation_cleanup_failed"
     CORRELATION_NOT_CLEANED = "etl.correlation_not_cleaned"
 
-    PIPELINE_COMPILING = "etl.pipeline_compiling"
-    STEP_COMPILING = "etl.step_compiling"
+    PIPELINE_COMPILED = "etl.pipeline_compiled"
+    STEP_COMPILED = "etl.step_compiled"
     COMPILE_CACHE_HIT = "etl.compile_cache_hit"
     APPEND_TARGET_COMPILED = "etl.append_target_compiled"
     HISTORIFY_SCOPE_MISSING = "etl.historify_scope_missing"
     HISTORIFY_RERUN_UNSCOPED = "etl.historify_rerun_unscoped"
     HISTORIFY_TRACK_INFERRED = "etl.historify_track_inferred"
 
-    YAML_LOADING = "etl.yaml_loading"
+    YAML_LOADED = "etl.yaml_loaded"
     PLAN_FILTERED = "etl.plan_filtered"
     PIPELINE_STARTED = "etl.pipeline_started"
     PROCESS_STARTED = "etl.process_started"
@@ -37,7 +39,7 @@ class EtlEvent(LogEvent):
     TARGET_WRITE_STARTED = "etl.target_write_started"
     TEMP_TARGET_WRITE_STARTED = "etl.temp_target_write_started"
 
-    MERGE_FULL_SCAN = "etl.merge_full_scan"
+    MERGE_PARTITIONS_UNDECLARED = "etl.merge_partitions_undeclared"
     MERGE_PARTITIONS_FOUND = "etl.merge_partitions_found"
     HISTORIFY_RERUN_REQUIRED = "etl.historify_rerun_required"
     WRITE_PRODUCED_NO_ROWS = "etl.write_produced_no_rows"
@@ -56,16 +58,11 @@ class EtlEvent(LogEvent):
     SOURCE_READ_DEGRADED = "etl.source_read_degraded"
     SOURCE_VALUE_UNSERIALISABLE = "etl.source_value_unserialisable"
     SOURCE_TYPE_STRINGIFIED = "etl.source_type_stringified"
-    SOURCE_RISKY_ROW = "etl.source_risky_row"
+    SOURCE_ROW_FLAGGED = "etl.source_row_flagged"
     SOURCE_SUBFIELDS_DROPPED = "etl.source_subfields_dropped"
     SOURCE_CAST_SKIPPED = "etl.source_cast_skipped"
-    SOURCE_SCHEMA_FIELDS_DROPPED = "etl.source_schema_fields_dropped"
-    SOURCE_UNDECLARED_FIELDS_DROPPED = "etl.source_undeclared_fields_dropped"
-    SOURCE_SCHEMA_FIELDS_APPEARED = "etl.source_schema_fields_appeared"
-    SOURCE_SCHEMA_FIELDS_ABSENT = "etl.source_schema_fields_absent"
+    SOURCE_SCHEMA_DRIFTED = "etl.source_schema_drifted"
     SOURCE_STRING_FIELDS_SERIALISED = "etl.source_string_fields_serialised"
-    SOURCE_TYPES_CONFLICTED = "etl.source_types_conflicted"
-    SOURCE_NESTED_TYPES_CONFLICTED = "etl.source_nested_types_conflicted"
     SOURCE_UNDECLARED_FIELDS_SERIALISED = "etl.source_undeclared_fields_serialised"
     SOURCE_CONFLICT_DEFERRED = "etl.source_conflict_deferred"
     SOURCE_FRAME_BUILD_FELL_BACK = "etl.source_frame_build_fell_back"
@@ -115,3 +112,15 @@ class EtlKey(LogKey):
     VALUE_TYPE = "loom.etl.value_type"
     ISSUES = "loom.etl.issues", ValueKind.ARRAY
     SHAPE = "loom.etl.shape", ValueKind.ARRAY
+    DRIFT = "loom.etl.drift"
+
+
+class SchemaDrift(StrEnum):
+    """How a source batch differed from its schema: the value of :attr:`EtlKey.DRIFT`."""
+
+    FIELDS_APPEARED = "fields_appeared"
+    FIELDS_ABSENT = "fields_absent"
+    FIELDS_DROPPED = "fields_dropped"
+    UNDECLARED_FIELDS_DROPPED = "undeclared_fields_dropped"
+    TYPES_CONFLICTED = "types_conflicted"
+    NESTED_TYPES_CONFLICTED = "nested_types_conflicted"

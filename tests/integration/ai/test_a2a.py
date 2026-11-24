@@ -102,15 +102,6 @@ _RUN_CANARY = "tool 'usecase_pricing.recalculate' exceeded tool_timeout_ms (5000
 _CATCH_ALL_CANARY = "/srv/loom/secrets.yaml: clickhouse://root:hunter2@analytics.internal"
 
 
-_PUBLISH_EVENTS = frozenset(
-    {
-        AiEvent.A2A_AGENT_PUBLISHED,
-        AiEvent.A2A_AGENT_PUBLISHED_ANONYMOUS,
-        AiEvent.A2A_AGENT_PUBLISHED_ANONYMOUS_CONVERSATIONAL,
-    }
-)
-
-
 class ExplodingEngine:
     """Engine double whose stream fails with an exception nothing anticipates.
 
@@ -1153,14 +1144,15 @@ class TestPublicationAnnouncement:
     """Start-up says exactly which agents are reachable from outside."""
 
     @pytest.mark.parametrize(
-        ("anonymous", "enabled", "conversational", "event"),
+        ("anonymous", "enabled", "conversational", "admitted_anonymously"),
         [
-            (False, True, False, AiEvent.A2A_AGENT_PUBLISHED),
-            (True, True, False, AiEvent.A2A_AGENT_PUBLISHED_ANONYMOUS),
-            (True, True, True, AiEvent.A2A_AGENT_PUBLISHED_ANONYMOUS_CONVERSATIONAL),
-            (True, False, False, AiEvent.A2A_AGENT_PUBLISHED),
+            (False, True, False, False),
+            (False, True, True, False),
+            (True, True, False, True),
+            (True, True, True, True),
+            (True, False, False, False),
         ],
-        ids=["authenticated", "anonymous", "anonymous-conversational", "disabled-stanza"],
+        ids=["authenticated", "authenticated-conv", "anonymous", "anonymous-conv", "disabled"],
     )
     async def test_the_one_event_names_the_route_and_how_callers_are_admitted(
         self,
@@ -1171,7 +1163,7 @@ class TestPublicationAnnouncement:
         anonymous: bool,
         enabled: bool,
         conversational: bool,
-        event: AiEvent,
+        admitted_anonymously: bool,
     ) -> None:
         """A disabled stanza is not anonymous; a conversation makes the id the credential."""
         endpoints = {_AGENT: make_endpoint(enabled=enabled, allow_anonymous=anonymous)}
@@ -1183,10 +1175,13 @@ class TestPublicationAnnouncement:
             ):
                 pass
 
-        published = [name for name in CapturedLog(caplog).messages if name in _PUBLISH_EVENTS]
-        assert published == [event]
-        assert CapturedLog(caplog).named(event) == [
-            {AiKey.AGENT: _AGENT, LogField.HTTP_ROUTE: f"{_PREFIX}/{_AGENT}"}
+        assert CapturedLog(caplog).named(AiEvent.A2A_AGENT_PUBLISHED) == [
+            {
+                AiKey.AGENT: _AGENT,
+                LogField.HTTP_ROUTE: f"{_PREFIX}/{_AGENT}",
+                AiKey.ANONYMOUS: admitted_anonymously,
+                AiKey.CONVERSATIONAL: conversational,
+            }
         ]
 
 

@@ -23,7 +23,7 @@ class StreamingEvent(LogEvent):
     UNROUTED_ERRORS_DROPPED = "streaming.unrouted_errors_dropped"
     BOUNDARY_ERROR_MANAGED = "streaming.boundary_error_managed"
     BOUNDARY_ERROR_UNHANDLED = "streaming.boundary_error_unhandled"
-    RUNNER_SHUTTING_DOWN = "streaming.runner_shutting_down"
+    RUNNER_SHUT_DOWN = "streaming.runner_shut_down"
     MONGO_CDC_EVENT_SKIPPED = "streaming.mongo_cdc_event_skipped"
     MONGO_CDC_MESSAGE_SKIPPED = "streaming.mongo_cdc_message_skipped"
     MONGO_CDC_OPLOG_EXPIRED = "streaming.mongo_cdc_oplog_expired"

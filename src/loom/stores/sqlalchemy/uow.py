@@ -84,7 +84,7 @@ class SQLAlchemyUnitOfWork(EntersAlone):
 
         self._session_cm = self._session_manager.session()
         self._session = await self._session_cm.__aenter__()
-        _log.debug(UowEvent.BEGIN)
+        _log.debug(UowEvent.TRANSACTION_BEGAN)
 
     @property
     def owner(self) -> SessionManager:
@@ -137,7 +137,7 @@ class SQLAlchemyUnitOfWork(EntersAlone):
                 await self._invalidate(self._session)
                 raise CommitUncertain(exc) from exc
             raise
-        _log.debug(UowEvent.COMMIT)
+        _log.debug(UowEvent.TRANSACTION_COMMITTED)
 
     @staticmethod
     async def _invalidate(session: AsyncSession) -> None:
@@ -157,7 +157,7 @@ class SQLAlchemyUnitOfWork(EntersAlone):
         if self._session is None:
             raise InvalidUse("SQLAlchemyUnitOfWork.rollback() called before begin()")
         await self._session.rollback()
-        _log.debug(UowEvent.ROLLBACK)
+        _log.debug(UowEvent.TRANSACTION_ROLLED_BACK)
 
     async def close(self) -> None:
         """Close the session, if any, under ``asyncio.shield``: a cancellation lets it finish."""

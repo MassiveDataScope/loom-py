@@ -22,7 +22,7 @@ from loom.core.log_names import LogEvent, LogKey, ValueKind
 _log = logging.getLogger(__name__)
 
 
-class EntryPointEvent(LogEvent):
+class PluginsEvent(LogEvent):
     """What the entry-point loader logs while it resolves a plugin.
 
     ``ENTRY_POINT_DUPLICATED`` lists the distributions in registration order; the
@@ -32,7 +32,7 @@ class EntryPointEvent(LogEvent):
     ENTRY_POINT_DUPLICATED = "plugins.entry_point_duplicated"
 
 
-class EntryPointKey(LogKey):
+class PluginsKey(LogKey):
     """The fields of an entry-point record."""
 
     GROUP = "loom.plugins.group"
@@ -305,11 +305,11 @@ def _resolve_conflict(
         raise DuplicateEntryPointError(group, name, distributions)
     first = matches[0]
     _log.warning(
-        EntryPointEvent.ENTRY_POINT_DUPLICATED,
+        PluginsEvent.ENTRY_POINT_DUPLICATED,
         extra={
-            EntryPointKey.GROUP: group,
-            EntryPointKey.ENTRY_POINT: name,
-            EntryPointKey.DISTRIBUTIONS: list(distributions),
+            PluginsKey.GROUP: group,
+            PluginsKey.ENTRY_POINT: name,
+            PluginsKey.DISTRIBUTIONS: list(distributions),
         },
     )
     return first
@@ -333,8 +333,8 @@ __all__ = [
     "DuplicateEntryPointError",
     "DuplicatePolicy",
     "EntryPointError",
-    "EntryPointEvent",
-    "EntryPointKey",
+    "PluginsEvent",
+    "PluginsKey",
     "EntryPointNotFoundError",
     "MissingDependency",
     "check_api_version",

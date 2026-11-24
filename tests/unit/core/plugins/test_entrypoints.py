@@ -18,9 +18,9 @@ from loom.core.plugins.entrypoints import (
     DuplicateEntryPointError,
     DuplicatePolicy,
     EntryPointError,
-    EntryPointEvent,
-    EntryPointKey,
     EntryPointNotFoundError,
+    PluginsEvent,
+    PluginsKey,
     check_api_version,
     list_entry_points,
     load_entry_point,
@@ -170,10 +170,10 @@ class TestDuplicatePolicyWarnFirst:
             select_entry_point(_GROUP, _NAME, on_duplicate="warn_first")
 
         (record,) = caplog.records
-        assert record.msg == EntryPointEvent.ENTRY_POINT_DUPLICATED
-        assert record.__dict__[EntryPointKey.GROUP] == _GROUP
-        assert record.__dict__[EntryPointKey.ENTRY_POINT] == _NAME
-        assert record.__dict__[EntryPointKey.DISTRIBUTIONS] == [
+        assert record.msg == PluginsEvent.ENTRY_POINT_DUPLICATED
+        assert record.__dict__[PluginsKey.GROUP] == _GROUP
+        assert record.__dict__[PluginsKey.ENTRY_POINT] == _NAME
+        assert record.__dict__[PluginsKey.DISTRIBUTIONS] == [
             "loom-engine-alpha",
             "loom-engine-beta",
         ]

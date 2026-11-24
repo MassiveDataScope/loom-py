@@ -190,8 +190,8 @@ class StreamingTestRunner:
                     epoch_interval=timedelta(milliseconds=1),
                 )
         finally:
-            logger.debug(StreamingEvent.RUNNER_SHUTTING_DOWN)
             prepared.shutdown()
+            logger.debug(StreamingEvent.RUNNER_SHUT_DOWN)
 
 
 __all__ = ["StreamingTestRunner"]

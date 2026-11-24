@@ -270,8 +270,8 @@ class SessionManager:
         Yields:
             An ``AsyncSession`` bound to the managed engine.
         """
-        _log.debug(SqlalchemyEvent.SESSION_OPENED)
         session = self._session_factory()
+        _log.debug(SqlalchemyEvent.SESSION_OPENED)
         try:
             yield session
         finally:

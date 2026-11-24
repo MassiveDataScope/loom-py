@@ -20,7 +20,7 @@ from bson.decimal128 import Decimal128
 from loom.etl.declarative.expr import col
 from loom.etl.declarative.source._specs import MongoSourceSpec
 from loom.etl.engines.polars._dtype import loom_type_to_polars
-from loom.etl.event import EtlEvent, EtlKey
+from loom.etl.event import EtlEvent, EtlKey, SchemaDrift
 from loom.etl.io.sources._mongo import MongoSourceReader
 from loom.etl.io.sources._mongo_batch import (
     MongoBatchProcessor,
@@ -35,6 +35,15 @@ from tests.helpers.loggers import CapturedLog
 
 def _logged_columns(caplog: pytest.LogCaptureFixture, event: EtlEvent) -> list[str]:
     return [name for fields in CapturedLog(caplog).named(event) for name in fields[EtlKey.COLUMNS]]
+
+
+def _drifted_columns(caplog: pytest.LogCaptureFixture, drift: SchemaDrift) -> list[str]:
+    return [
+        name
+        for fields in CapturedLog(caplog).named(EtlEvent.SOURCE_SCHEMA_DRIFTED)
+        if fields[EtlKey.DRIFT] == drift
+        for name in fields[EtlKey.COLUMNS]
+    ]
 
 
 # ---------------------------------------------------------------------------
@@ -403,7 +412,7 @@ class TestExtraFieldsMode:
         with caplog.at_level(logging.WARNING):
             df = reader.read(_spec(schema=_ORDER_SCHEMA, extra_fields_mode="warn"), None).collect()
         assert "extra_col" not in df.columns
-        assert "extra_col" in _logged_columns(caplog, EtlEvent.SOURCE_UNDECLARED_FIELDS_DROPPED)
+        assert "extra_col" in _drifted_columns(caplog, SchemaDrift.UNDECLARED_FIELDS_DROPPED)
 
     def test_no_extra_fields_no_error(self) -> None:
         docs = [{"order_id": "o1", "status": "active"}]
@@ -456,7 +465,7 @@ class TestHeterogeneousTypesWithinBatch:
         assert df["year"].dtype == pl.String
         int_row = df.filter(pl.col("id") == 1)["year"][0]
         assert json.loads(int_row) == 2020
-        assert "year" in _logged_columns(caplog, EtlEvent.SOURCE_TYPES_CONFLICTED)
+        assert "year" in _drifted_columns(caplog, SchemaDrift.TYPES_CONFLICTED)
 
     def test_list_of_strings_vs_list_of_dicts(self) -> None:
         import json
@@ -483,7 +492,7 @@ class TestHeterogeneousTypesWithinBatch:
             df = reader.read(_spec(), None).collect()
         assert df["attributes"].dtype == pl.Struct
         assert df["attributes"][1] is None
-        assert CapturedLog(caplog).named(EtlEvent.SOURCE_TYPES_CONFLICTED) == []
+        assert _drifted_columns(caplog, SchemaDrift.TYPES_CONFLICTED) == []
 
     def test_uniform_field_not_serialized(self) -> None:
         docs = [{"id": i, "price": 5000} for i in range(4)]
@@ -500,7 +509,7 @@ class TestHeterogeneousTypesWithinBatch:
         reader, _ = _reader(docs)
         with caplog.at_level(logging.WARNING):
             reader.read(_spec(), None)
-        assert "attributes" in _logged_columns(caplog, EtlEvent.SOURCE_TYPES_CONFLICTED)
+        assert "attributes" in _drifted_columns(caplog, SchemaDrift.TYPES_CONFLICTED)
 
 
 # ---------------------------------------------------------------------------
@@ -537,7 +546,7 @@ class TestHeterogeneousTypesAcrossBatches:
         reader, _ = _reader(docs)
         with caplog.at_level(logging.WARNING):
             reader.read(_spec(batch_size=2), None).collect()
-        assert "attributes" in _logged_columns(caplog, EtlEvent.SOURCE_TYPES_CONFLICTED)
+        assert "attributes" in _drifted_columns(caplog, SchemaDrift.TYPES_CONFLICTED)
 
 
 # ---------------------------------------------------------------------------
@@ -799,7 +808,7 @@ class TestNestedHeterogeneousTypes:
         reader, _ = _reader(docs)
         with caplog.at_level(logging.WARNING):
             reader.read(_spec(), None)
-        assert "ad" in _logged_columns(caplog, EtlEvent.SOURCE_NESTED_TYPES_CONFLICTED)
+        assert "ad" in _drifted_columns(caplog, SchemaDrift.NESTED_TYPES_CONFLICTED)
 
     def test_non_conflicting_nested_dict_stays_as_struct(self) -> None:
         docs = [
@@ -1375,7 +1384,7 @@ class TestSchemaDrift:
         with caplog.at_level(logging.WARNING):
             processor.build_frame(batch2)
 
-        assert "extra" in _logged_columns(caplog, EtlEvent.SOURCE_SCHEMA_FIELDS_APPEARED)
+        assert "extra" in _drifted_columns(caplog, SchemaDrift.FIELDS_APPEARED)
 
     def test_dropped_field_in_second_batch_emits_warning(
         self, caplog: pytest.LogCaptureFixture
@@ -1390,7 +1399,7 @@ class TestSchemaDrift:
         with caplog.at_level(logging.WARNING):
             processor.build_frame(batch2)
 
-        assert "score" in _logged_columns(caplog, EtlEvent.SOURCE_SCHEMA_FIELDS_ABSENT)
+        assert "score" in _drifted_columns(caplog, SchemaDrift.FIELDS_ABSENT)
 
     def test_dropped_field_warning_persists_in_subsequent_batches(
         self, caplog: pytest.LogCaptureFixture
@@ -1404,7 +1413,17 @@ class TestSchemaDrift:
         with caplog.at_level(logging.WARNING):
             processor.build_frame([{"id": 3}])  # still no score
 
-        assert "score" in _logged_columns(caplog, EtlEvent.SOURCE_SCHEMA_FIELDS_ABSENT)
+        assert "score" in _drifted_columns(caplog, SchemaDrift.FIELDS_ABSENT)
+
+    def test_a_column_outside_the_inferred_schema_is_dropped_and_logged(
+        self, caplog: pytest.LogCaptureFixture
+    ) -> None:
+        from loom.etl.io.sources._mongo_batch import align_to_schema
+
+        with caplog.at_level(logging.WARNING):
+            align_to_schema(pl.DataFrame([{"id": 1, "late": "x"}]), {"id": pl.Int64()}, "orders")
+
+        assert _drifted_columns(caplog, SchemaDrift.FIELDS_DROPPED) == ["late"]
 
     def test_stable_schema_emits_no_drift_warning(self, caplog: pytest.LogCaptureFixture) -> None:
         from loom.etl.io.sources._mongo_batch import MongoBatchProcessor

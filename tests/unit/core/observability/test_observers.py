@@ -10,8 +10,9 @@ from opentelemetry.sdk.trace import TracerProvider
 from loom.core.config.observability import OtelConfig
 from loom.core.errors.summary import ErrorSummary
 from loom.core.log_names import LogField
+from loom.core.observability.diagnostic import ObservabilityEvent
 from loom.core.observability.event import EventKind, LifecycleEvent, LifecycleStatus, Scope
-from loom.core.observability.observer.log import LifecycleLog, LogLifecycleObserver
+from loom.core.observability.observer.log import LogLifecycleObserver
 from loom.core.observability.observer.noop import NoopObserver
 from loom.core.observability.observer.otel import (
     OtelSpanFilter,
@@ -20,6 +21,10 @@ from loom.core.observability.observer.otel import (
 from loom.testing import make
 from tests.helpers.loggers import CapturedLog
 from tests.unit.core.observability.conftest import LogExport
+
+_STARTED = ObservabilityEvent.LIFECYCLE_STARTED
+_ENDED = ObservabilityEvent.LIFECYCLE_ENDED
+_FAILED = ObservabilityEvent.LIFECYCLE_FAILED
 
 
 class TestNoopObserver:
@@ -124,22 +129,16 @@ class TestLogLifecycleObserver:
     @pytest.mark.parametrize(
         ("scope", "kind", "level", "name"),
         [
-            pytest.param(
-                Scope.NODE, EventKind.START, "DEBUG", LifecycleLog.STARTED, id="node-start"
-            ),
-            pytest.param(
-                Scope.PIPELINE, EventKind.START, "INFO", LifecycleLog.STARTED, id="pipeline-start"
-            ),
-            pytest.param(Scope.USE_CASE, EventKind.END, "INFO", LifecycleLog.ENDED, id="end"),
-            pytest.param(Scope.NODE, EventKind.ERROR, "ERROR", LifecycleLog.FAILED, id="error"),
-            pytest.param(
-                Scope.TRANSPORT, EventKind.END, "DEBUG", LifecycleLog.ENDED, id="transport-end"
-            ),
+            pytest.param(Scope.NODE, EventKind.START, "DEBUG", _STARTED, id="node-start"),
+            pytest.param(Scope.PIPELINE, EventKind.START, "INFO", _STARTED, id="pipeline-start"),
+            pytest.param(Scope.USE_CASE, EventKind.END, "INFO", _ENDED, id="end"),
+            pytest.param(Scope.NODE, EventKind.ERROR, "ERROR", _FAILED, id="error"),
+            pytest.param(Scope.TRANSPORT, EventKind.END, "DEBUG", _ENDED, id="transport-end"),
             pytest.param(
                 Scope.TRANSPORT,
                 EventKind.ERROR,
                 "WARNING",
-                LifecycleLog.FAILED,
+                _FAILED,
                 id="transport-error",
             ),
         ],
@@ -149,7 +148,7 @@ class TestLogLifecycleObserver:
         scope: Scope,
         kind: EventKind,
         level: str,
-        name: LifecycleLog,
+        name: ObservabilityEvent,
         caplog: pytest.LogCaptureFixture,
         lifecycle_log: CapturedLog,
     ) -> None:
@@ -184,7 +183,7 @@ class TestLogLifecycleObserver:
 
         LogLifecycleObserver().on_event(_event(kind=EventKind.ERROR, failure=summary))
 
-        [fields] = lifecycle_log.named(LifecycleLog.FAILED)
+        [fields] = lifecycle_log.named(_FAILED)
         assert (fields[LogField.ERROR_TYPE], fields[LogField.ERROR_CODE]) == (
             summary.type,
             summary.code,
@@ -200,7 +199,8 @@ class TestLogLifecycleObserver:
         )
 
         [fields] = lifecycle_log.named("observability.lifecycle_started")
-        assert (fields["loom.meta.flow"], fields["loom.meta.node_index"]) == ("my_flow", 0)
+        assert fields["loom.lifecycle.meta.flow"] == "my_flow"
+        assert fields["loom.lifecycle.meta.node_index"] == 0
 
     def test_a_meta_key_that_is_a_record_attribute_does_not_break_logging(
         self, lifecycle_log: CapturedLog
@@ -215,7 +215,7 @@ class TestLogLifecycleObserver:
         )
 
         [fields] = lifecycle_log.named("observability.lifecycle_ended")
-        assert fields["loom.meta.name"] == "orders"
+        assert fields["loom.lifecycle.meta.name"] == "orders"
 
 
 class TestPrometheusLifecycleObserver:

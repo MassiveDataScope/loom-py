@@ -37,7 +37,7 @@ from ._lifecycle_doubles import Log, StubUnitOfWorkFactory
 pytestmark = pytest.mark.timeout(3)
 
 _DROPPED = PostCommitEvent.PLAIN_ACTIONS_DROPPED
-_FAILED = PostCommitEvent.ACTION_FAILED_AFTER_INTERRUPTION
+_FAILED = PostCommitEvent.ACTION_FAILED
 _NEVER_RAN = PostCommitEvent.SHIELDED_ACTION_NEVER_RAN
 _COMMITTED = "uow.commit"
 _ERROR = ConnectionError("broker down")
@@ -292,7 +292,7 @@ class TestPostCommitPublish:
         await failure_logged.wait()
 
         fields = _event(caplog, _FAILED)
-        assert _SENT.items() <= fields.items()
+        assert {**_SENT, PostCommitKey.INTERRUPTED: True}.items() <= fields.items()
         assert CapturedLog(caplog).exception_types(_FAILED) == [ConnectionError]
 
     async def test_sends_a_dead_shield_never_ran_are_logged(
@@ -345,7 +345,7 @@ class TestPostCommitPublish:
         named, plain = [
             e for e in logged_events(caplog) if e["event"] == PostCommitEvent.ACTION_FAILED
         ]
-        assert {**running, **_SENT}.items() <= named.items()
+        assert {**running, **_SENT, PostCommitKey.INTERRUPTED: False}.items() <= named.items()
         assert running.items() <= plain.items()
         assert not plain.keys() & _SENT.keys()
         failed = CapturedLog(caplog).exception_types(PostCommitEvent.ACTION_FAILED)

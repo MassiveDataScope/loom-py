@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from loom.core.log_names import LogEvent, LogKey
+from loom.core.log_names import LogEvent, LogKey, ValueKind
 
 
 class RestEvent(LogEvent):
@@ -21,8 +21,7 @@ class RestEvent(LogEvent):
     REQUEST_UNHANDLED = "rest.request_unhandled"
     HTTP_ERROR_SERVED = "rest.http_error_served"
     HTTP_ERROR_MISDECLARED = "rest.http_error_misdeclared"
-    SQL_ENDPOINT_MOUNTED_SHARED_ROLE = "rest.sql_endpoint_mounted_shared_role"
-    SQL_ENDPOINT_MOUNTED_ROLES_BOUND = "rest.sql_endpoint_mounted_roles_bound"
+    SQL_ENDPOINT_MOUNTED = "rest.sql_endpoint_mounted"
     SQL_ENDPOINT_FAILED = "rest.sql_endpoint_failed"
     SQL_ENDPOINT_UNHANDLED = "rest.sql_endpoint_unhandled"
 
@@ -31,3 +30,4 @@ class RestKey(LogKey):
     """The fields of a REST record."""
 
     ERROR_CLASS = "loom.rest.error_class"
+    ROLES_BOUND = "loom.rest.roles_bound", ValueKind.BOOLEAN

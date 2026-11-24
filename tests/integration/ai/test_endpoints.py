@@ -95,15 +95,6 @@ _RESULT_KEYS = {"output", "usage", "interaction_id", "hook_result"}
 """The only keys a completed run publishes, on ``/run`` and on the ``final`` frame."""
 
 
-_MOUNT_EVENTS = frozenset(
-    {
-        AiEvent.ENDPOINT_MOUNTED,
-        AiEvent.ENDPOINT_MOUNTED_ANONYMOUS,
-        AiEvent.ENDPOINT_MOUNTED_ANONYMOUS_CONVERSATIONAL,
-    }
-)
-
-
 class StubAuthenticator:
     """Authentication mechanism standing in for any configured one."""
 
@@ -388,12 +379,9 @@ class TestMounting:
                 )
 
     @pytest.mark.parametrize(
-        ("allow_anonymous", "conversational", "event"),
-        [
-            (False, False, AiEvent.ENDPOINT_MOUNTED),
-            (True, False, AiEvent.ENDPOINT_MOUNTED_ANONYMOUS),
-            (True, True, AiEvent.ENDPOINT_MOUNTED_ANONYMOUS_CONVERSATIONAL),
-        ],
+        ("allow_anonymous", "conversational"),
+        [(False, False), (False, True), (True, False), (True, True)],
+        ids=["authenticated", "authenticated-conv", "anonymous", "anonymous-conv"],
     )
     async def test_the_one_event_of_the_mount_tells_how_callers_are_admitted(
         self,
@@ -403,7 +391,6 @@ class TestMounting:
         request: pytest.FixtureRequest,
         allow_anonymous: bool,
         conversational: bool,
-        event: AiEvent,
     ) -> None:
         """Anonymity removes the identity and a conversation makes the id the credential."""
         plans = (conversational_plan(_AGENT, loader=True),) if conversational else None
@@ -415,10 +402,13 @@ class TestMounting:
             ):
                 pass
 
-        mounts = [name for name in CapturedLog(caplog).messages if name in _MOUNT_EVENTS]
-        assert mounts == [event]
-        assert CapturedLog(caplog).named(event) == [
-            {AiKey.AGENT: _AGENT, LogField.HTTP_ROUTE: f"{_PREFIX}/{_AGENT}"}
+        assert CapturedLog(caplog).named(AiEvent.ENDPOINT_MOUNTED) == [
+            {
+                AiKey.AGENT: _AGENT,
+                LogField.HTTP_ROUTE: f"{_PREFIX}/{_AGENT}",
+                AiKey.ANONYMOUS: allow_anonymous,
+                AiKey.CONVERSATIONAL: conversational,
+            }
         ]
 
 

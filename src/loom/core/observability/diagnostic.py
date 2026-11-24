@@ -1,4 +1,4 @@
-"""The records observability logs about itself, apart from the lifecycle it writes."""
+"""The records observability logs: the lifecycle it writes and what it logs about itself."""
 
 from __future__ import annotations
 
@@ -6,10 +6,13 @@ from loom.core.log_names import LogEvent, LogKey
 
 
 class ObservabilityEvent(LogEvent):
-    """What the observability runtime logs about its own observers and providers."""
+    """What the observability runtime logs: each lifecycle event, its observers and providers."""
 
+    LIFECYCLE_STARTED = "observability.lifecycle_started"
+    LIFECYCLE_ENDED = "observability.lifecycle_ended"
+    LIFECYCLE_FAILED = "observability.lifecycle_failed"
     OBSERVER_FAILED = "observability.observer_failed"
-    HOST_PROVIDER_RANDOM_TRACE_IDS = "observability.host_provider_random_trace_ids"
+    HOST_ID_GENERATOR_KEPT = "observability.host_id_generator_kept"
     HOST_ID_GENERATOR_UNAVAILABLE = "observability.host_id_generator_unavailable"
 
 

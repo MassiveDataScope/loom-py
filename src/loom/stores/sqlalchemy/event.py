@@ -23,7 +23,7 @@ class SqlalchemyEvent(LogEvent):
     READINESS_PROBE_FAILED = "sqlalchemy.readiness_probe_failed"
     SCOPED_TABLES_UNPROTECTED = "sqlalchemy.scoped_tables_unprotected"
     AUDIT_PARTITION_MISSING = "sqlalchemy.audit_partition_missing"
-    AUDIT_PARTITIONS_RUNNING_OUT = "sqlalchemy.audit_partitions_running_out"
+    AUDIT_PARTITIONS_NEARLY_EXHAUSTED = "sqlalchemy.audit_partitions_nearly_exhausted"
 
 
 class SqlalchemyKey(LogKey):

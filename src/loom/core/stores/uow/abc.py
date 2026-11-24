@@ -33,13 +33,13 @@ from loom.core.log_names import LogEvent
 class UowEvent(LogEvent):
     """Log events emitted by units of work and the commit coordinator."""
 
-    BEGIN = "stores.uow_transaction_began"
-    COMMIT = "stores.uow_transaction_committed"
-    ROLLBACK = "stores.uow_transaction_rolled_back"
+    TRANSACTION_BEGAN = "stores.uow_transaction_began"
+    TRANSACTION_COMMITTED = "stores.uow_transaction_committed"
+    TRANSACTION_ROLLED_BACK = "stores.uow_transaction_rolled_back"
     INVALIDATE_FAILED = "stores.uow_invalidate_failed"
     ROLLBACK_FAILED = "stores.uow_rollback_failed"
     CLOSE_FAILED = "stores.uow_close_failed"
-    INVOCATION_OUTCOME = "stores.uow_invocation_outcome"
+    INVOCATION_SETTLED = "stores.uow_invocation_settled"
 
 
 @runtime_checkable

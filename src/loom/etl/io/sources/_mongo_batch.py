@@ -12,7 +12,7 @@ import polars as pl
 
 from loom.core.errors import InvalidValue
 from loom.etl.declarative.source._specs import ExtraFieldsMode
-from loom.etl.event import EtlEvent, EtlKey
+from loom.etl.event import EtlEvent, EtlKey, SchemaDrift
 from loom.etl.io.sources._mongo_bson import _is_bson_type, deep_normalize_for_json
 from loom.etl.io.sources._serialization import _record_serialization_failure
 
@@ -321,7 +321,7 @@ def _log_risky_rows(
             continue
         reported += 1
         _log.warning(
-            EtlEvent.SOURCE_RISKY_ROW,
+            EtlEvent.SOURCE_ROW_FLAGGED,
             extra={
                 EtlKey.TABLE: table,
                 EtlKey.ISSUES: notes[:_MAX_RISKY_NOTES_PER_ROW],
@@ -561,8 +561,12 @@ def align_to_schema(
     new_cols = [c for c in df.columns if c not in schema]
     if new_cols:
         _log.warning(
-            EtlEvent.SOURCE_SCHEMA_FIELDS_DROPPED,
-            extra={EtlKey.TABLE: table, EtlKey.COLUMNS: sorted(new_cols)},
+            EtlEvent.SOURCE_SCHEMA_DRIFTED,
+            extra={
+                EtlKey.TABLE: table,
+                EtlKey.COLUMNS: sorted(new_cols),
+                EtlKey.DRIFT: SchemaDrift.FIELDS_DROPPED,
+            },
         )
         df = df.drop(new_cols)
     return df.select(list(schema.keys()))
@@ -603,8 +607,12 @@ def apply_declared_schema(
             )
         if mode == ExtraFieldsMode.WARN:
             _log.warning(
-                EtlEvent.SOURCE_UNDECLARED_FIELDS_DROPPED,
-                extra={EtlKey.TABLE: schema_name, EtlKey.COLUMNS: extra_cols},
+                EtlEvent.SOURCE_SCHEMA_DRIFTED,
+                extra={
+                    EtlKey.TABLE: schema_name,
+                    EtlKey.COLUMNS: extra_cols,
+                    EtlKey.DRIFT: SchemaDrift.UNDECLARED_FIELDS_DROPPED,
+                },
             )
         if mode == ExtraFieldsMode.CAPTURE:
             extra_struct = pl.struct([df[c] for c in extra_cols])
@@ -663,14 +671,22 @@ class MongoBatchProcessor:
         dropped_fields = self._observed_fields - current_fields
         if new_fields:
             _log.warning(
-                EtlEvent.SOURCE_SCHEMA_FIELDS_APPEARED,
-                extra={EtlKey.TABLE: self._table, EtlKey.COLUMNS: sorted(new_fields)},
+                EtlEvent.SOURCE_SCHEMA_DRIFTED,
+                extra={
+                    EtlKey.TABLE: self._table,
+                    EtlKey.COLUMNS: sorted(new_fields),
+                    EtlKey.DRIFT: SchemaDrift.FIELDS_APPEARED,
+                },
             )
             self._observed_fields = self._observed_fields | new_fields
         if dropped_fields:
             _log.warning(
-                EtlEvent.SOURCE_SCHEMA_FIELDS_ABSENT,
-                extra={EtlKey.TABLE: self._table, EtlKey.COLUMNS: sorted(dropped_fields)},
+                EtlEvent.SOURCE_SCHEMA_DRIFTED,
+                extra={
+                    EtlKey.TABLE: self._table,
+                    EtlKey.COLUMNS: sorted(dropped_fields),
+                    EtlKey.DRIFT: SchemaDrift.FIELDS_ABSENT,
+                },
             )
 
     def build_frame(
@@ -749,18 +765,20 @@ class MongoBatchProcessor:
 
         if to_serialize & all_conflicted:
             _log.warning(
-                EtlEvent.SOURCE_TYPES_CONFLICTED,
+                EtlEvent.SOURCE_SCHEMA_DRIFTED,
                 extra={
                     EtlKey.TABLE: self._table,
                     EtlKey.COLUMNS: sorted(to_serialize & all_conflicted),
+                    EtlKey.DRIFT: SchemaDrift.TYPES_CONFLICTED,
                 },
             )
         if to_serialize & all_nested:
             _log.warning(
-                EtlEvent.SOURCE_NESTED_TYPES_CONFLICTED,
+                EtlEvent.SOURCE_SCHEMA_DRIFTED,
                 extra={
                     EtlKey.TABLE: self._table,
                     EtlKey.COLUMNS: sorted(to_serialize & all_nested),
+                    EtlKey.DRIFT: SchemaDrift.NESTED_TYPES_CONFLICTED,
                 },
             )
         extras_only = (to_serialize & undeclared_complex) - all_conflicted - all_nested

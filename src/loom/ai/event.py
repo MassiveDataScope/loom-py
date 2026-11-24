@@ -2,26 +2,23 @@
 
 from __future__ import annotations
 
-from loom.core.log_names import LogEvent, LogKey
+from enum import StrEnum
+
+from loom.core.log_names import LogEvent, LogKey, ValueKind
 
 
 class AiEvent(LogEvent):
     """The events the AI runtime logs."""
 
-    REMOTE_PLAINTEXT_LOOPBACK = "ai.remote_plaintext_loopback"
-    REMOTE_PLAINTEXT_PRIVATE = "ai.remote_plaintext_private"
+    REMOTE_PLAINTEXT_ACCEPTED = "ai.remote_plaintext_accepted"
     REMOTE_CLIENT_SKIPPED = "ai.remote_client_skipped"
     PRICE_MODEL_UNUSED = "ai.price_model_unused"
     MODEL_UNPRICEABLE = "ai.model_unpriceable"
     ENGINE_NATIVE_SUPPORT_MISSING = "ai.engine_native_support_missing"
     A2A_AGENT_NOT_COMPILED = "ai.a2a_agent_not_compiled"
     A2A_AGENT_PUBLISHED = "ai.a2a_agent_published"
-    A2A_AGENT_PUBLISHED_ANONYMOUS = "ai.a2a_agent_published_anonymous"
-    A2A_AGENT_PUBLISHED_ANONYMOUS_CONVERSATIONAL = "ai.a2a_agent_published_anonymous_conversational"
     ENDPOINT_AGENT_NOT_COMPILED = "ai.endpoint_agent_not_compiled"
     ENDPOINT_MOUNTED = "ai.endpoint_mounted"
-    ENDPOINT_MOUNTED_ANONYMOUS = "ai.endpoint_mounted_anonymous"
-    ENDPOINT_MOUNTED_ANONYMOUS_CONVERSATIONAL = "ai.endpoint_mounted_anonymous_conversational"
     ENDPOINT_FAILED = "ai.endpoint_failed"
     RUN_FAILED = "ai.run_failed"
     RUN_FAILED_FROM_CAUSE = "ai.run_failed_from_cause"
@@ -52,3 +49,13 @@ class AiKey(LogKey):
     TOOL = "loom.ai.tool"
     STEP = "loom.ai.step"
     INTERACTION = "loom.ai.interaction"
+    PLAINTEXT_HOST = "loom.ai.plaintext_host"
+    ANONYMOUS = "loom.ai.anonymous", ValueKind.BOOLEAN
+    CONVERSATIONAL = "loom.ai.conversational", ValueKind.BOOLEAN
+
+
+class PlaintextHost(StrEnum):
+    """The host a plaintext URL was let through to: the value of :attr:`AiKey.PLAINTEXT_HOST`."""
+
+    LOOPBACK = "loopback"
+    PRIVATE = "private"
