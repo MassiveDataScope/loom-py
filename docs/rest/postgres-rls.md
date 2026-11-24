@@ -178,8 +178,9 @@ platform_sessions = SessionManager(PLATFORM_URL, store=DEFAULT_STORE)
   `execution_options(isolation_level="AUTOCOMMIT")` is outside what it can check; do
   not use one on a protected table.
 - The values travel as statement parameters, so `echo=True` and the text of a
-  `DBAPIError` include them. Pass `hide_parameters=True` to the engine when the boundary
-  or subject identifiers are sensitive.
+  `DBAPIError` include them. Set `stores.<name>.hide_parameters: true` when the boundary
+  or subject identifiers are sensitive. Admin and migration engines (the migrator, a
+  superuser URL) do not take this key.
 - On this level loom sets values and nothing else; the policies, roles and grants are
   yours. Row-scoped tables, below, are the level where loom creates and checks them.
 

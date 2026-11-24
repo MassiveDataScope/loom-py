@@ -17,6 +17,7 @@ from loom.core.stores.database import DatabaseConfig, PoolConfig  # noqa: E402
 from loom.core.stores.profile import STREAMING_PROFILE, RuntimeProfile  # noqa: E402
 from loom.stores.sqlalchemy import session_manager as session_manager_module  # noqa: E402
 from loom.streaming.bytewax._resource_manager import ResourceManager  # noqa: E402
+from loom.testing import make  # noqa: E402
 
 
 class _FakeManager:
@@ -49,17 +50,18 @@ class TestSessionManagerFor:
         assert first is second
         assert calls == [(config, STREAMING_PROFILE)]
 
-    def test_a_different_pool_gets_its_own_session_manager(
-        self, monkeypatch: pytest.MonkeyPatch
+    @pytest.mark.parametrize(
+        "change", [{"pool": PoolConfig(size=1)}, {"hide_parameters": True}], ids=["pool", "hidden"]
+    )
+    def test_a_different_section_gets_its_own_session_manager(
+        self, monkeypatch: pytest.MonkeyPatch, change: dict[str, object]
     ) -> None:
         monkeypatch.setattr(
             session_manager_module, "build_session_manager", lambda config, profile: _FakeManager()
         )
         manager = ResourceManager(cast(AsyncBridge, object()))
 
-        first = manager.session_manager_for(DatabaseConfig(url=Dsn("sqlite+aiosqlite:///")))
-        second = manager.session_manager_for(
-            DatabaseConfig(url=Dsn("sqlite+aiosqlite:///"), pool=PoolConfig(size=1))
-        )
+        first = manager.session_manager_for(make(DatabaseConfig))
+        second = manager.session_manager_for(make(DatabaseConfig, **change))
 
         assert first is not second

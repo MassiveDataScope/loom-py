@@ -154,7 +154,7 @@ test suite fails on any such record that breaks these rules; nothing else is che
 |---|---|
 | Your own loggers | Any logger outside `loom.*` is yours: loom does not check its messages, `%` arguments or keys. |
 | The values you pass | What you put in `meta`, in the attributes of a use case or job, in `log_context` and in the names and ids you choose reaches the log as you gave it. Do not put secrets there; wrap a sensitive string in `Secret` to have it masked. |
-| Your exceptions | Loom writes the stack of an exception it logs, and a stack holds the text of the exception, yours included. Keep secrets out of exception messages. |
+| Your exceptions | Loom writes the stack of an exception it logs, and a stack holds the text of the exception, yours included. Keep secrets out of exception messages. The text of a SQLAlchemy error includes its bound parameters; set `stores.<name>.hide_parameters: true` to leave them out. Postgres' own `DETAIL:` text from the driver is not affected. |
 | Your handlers | The filter that stamps records is attached to the handlers loom installs. Loom's formatters render on their own, even on a handler without `ContextFilter`, and any handler you add sees the raw record, before or after loom's. |
 
 Declaring the events and keys of your own code is optional, and worth it when

@@ -8,6 +8,10 @@ declaration.
 
 from __future__ import annotations
 
+from polyfactory import Use
+
+from loom.core.model.redaction import Dsn
+from loom.core.stores.database import DatabaseConfig
 from loom.core.stores.repository.query import FilterParams, PageParams, QuerySpec
 from loom.testing.data import SampleFactory
 
@@ -31,3 +35,11 @@ class QuerySpecFactory(SampleFactory[QuerySpec]):
 
     __set_as_default_factory_for_type__ = True
     __use_defaults__ = True
+
+
+class DatabaseConfigFactory(SampleFactory[DatabaseConfig]):
+    """An in-memory SQLite section with every other key at its default."""
+
+    __set_as_default_factory_for_type__ = True
+    __use_defaults__ = True
+    url = Use(lambda: Dsn("sqlite+aiosqlite:///:memory:"))

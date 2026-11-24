@@ -44,6 +44,7 @@ class SessionManager:
         url: str,
         *,
         echo: bool = False,
+        hide_parameters: bool = False,
         pool_pre_ping: bool = True,
         pool_size: int | None = 10,
         max_overflow: int | None = 20,
@@ -61,6 +62,8 @@ class SessionManager:
         Args:
             url: Database connection URL (e.g. ``"postgresql+asyncpg://..."``).
             echo: If ``True``, log all generated SQL statements.
+            hide_parameters: If ``True``, leave bound parameters out of
+                SQLAlchemy's error messages and logs.
             pool_pre_ping: Test connections before checkout to detect stale ones.
             pool_size: Number of permanent connections in the pool.
             max_overflow: Maximum additional connections beyond ``pool_size``.
@@ -103,6 +106,7 @@ class SessionManager:
                 )
         engine_config: dict[str, object] = {
             "echo": echo,
+            "hide_parameters": hide_parameters,
             "pool_pre_ping": pool_pre_ping,
             **engine_kwargs,
         }
@@ -337,6 +341,7 @@ def build_session_manager(
     manager = SessionManager(
         _engine_url(config),
         echo=config.echo,
+        hide_parameters=config.hide_parameters,
         pool_pre_ping=pool.pre_ping,
         pool_size=pool.size if queued else None,
         max_overflow=pool.max_overflow if queued else None,
