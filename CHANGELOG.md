@@ -12,6 +12,7 @@
 
 ## 🐛 Fixes
 
+- **jobs (inline):** `InlineJobTransport` runs each dispatch in a context of its own, detached from the sender: a job sent with `dispatch_now` from a writer no longer joins the sender's still-open invocation scope (`ScopeOwnershipError` on its first write) nor carries the sender's log fields, and it acts as the dispatch's delegation whatever execution drains it (`Acting.resumed` is gone).
 - **logging (keys):** every log key has one meaning and declares its kind (`ValueKind`: text by default, or `NUMBER`, `BOOLEAN`, `ARRAY`, `OBJECT` for a bag) where it is defined, and declaring a key that clashes with another (a second kind, or a value that is also the prefix of other keys) raises `ValueError`; renamed `loom.job` → `loom.job.name`, `loom.use_case` → `loom.use_case.name`, `loom.rest.route`/`loom.ai.route` → `http.route`, `loom.rest.subject`/`loom.stores.subject` → `loom.identity.subject`, `loom.rest.connection`/`loom.clickhouse.connection` → `loom.stores.connection`, `loom.sqlalchemy.store` → `loom.stores.store`, and `loom.etl.duration_s` → `loom.duration_ms` (milliseconds); `LogField.BOOTSTRAP_MODULE` and `LogField.EVENT_ID` move to `BootKey.MODULE` and `LifecycleKey.EVENT_ID` (`loom.lifecycle.event_id`).
 - **logging (debug):** the log contract checks every `loom.*` record at DEBUG too.
 - **logging (debug):** a cache entity key holds the SHA-256 digest of the entity id instead of the id, so `loom.cache.key` never writes it; existing cache entries miss once after upgrading.
