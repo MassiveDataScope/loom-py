@@ -23,7 +23,7 @@ from typing import NoReturn, Protocol
 from loom.core.authz._decide import Decision
 from loom.core.authz._roles import Permission, RoleCatalog
 from loom.core.authz._scope import Scope
-from loom.core.log_names import LogEvent, LogField, LogKey
+from loom.core.log_names import LogEvent, LogKey
 
 _logger = logging.getLogger(__name__)
 
@@ -231,18 +231,13 @@ async def _fail_closed(
     """
     _logger.error(
         ElevationEvent.FLAGS_MAY_REMAIN,
-        extra={
-            ElevationKey.SCOPES: sorted(scopes),
-            LogField.EXCEPTION_TYPE: type(failure).__qualname__,
-        },
+        extra={ElevationKey.SCOPES: sorted(scopes)},
+        exc_info=failure,
     )
     invalidation, cancelled_again = await _settle(lambda: sink.invalidate(scopes, failure))
     cancelled = cancelled or cancelled_again
     if invalidation is not None:
-        _logger.error(
-            ElevationEvent.INVALIDATION_FAILED,
-            extra={LogField.EXCEPTION_TYPE: type(invalidation).__qualname__},
-        )
+        _logger.error(ElevationEvent.INVALIDATION_FAILED, exc_info=invalidation)
     if cancelled is not None:
         raise cancelled
     if invalidation is not None:

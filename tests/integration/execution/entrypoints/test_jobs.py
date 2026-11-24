@@ -27,6 +27,7 @@ from loom.core.job.handle import JobHandle
 from loom.core.job.run import EnvelopeInvocation
 from loom.core.observability.observability import Observability
 from loom.core.use_case.factory import UseCaseFactory
+from loom.jobs.inline import timer as inline_timer
 from loom.testing import JobTestData, make
 from tests.helpers.celery import CeleryBroker
 from tests.helpers.delegation import acting_as, assert_new_delegation
@@ -157,6 +158,7 @@ def _refusals(caplog: pytest.LogCaptureFixture) -> list[BaseException]:
         record.exc_info[1]
         for record in caplog.records
         if record.getMessage() == JobEvent.DELIVERY_ABANDONED
+        and record.name == inline_timer.__name__
         and record.exc_info
         and record.exc_info[1]
     ]

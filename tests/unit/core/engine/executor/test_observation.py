@@ -210,8 +210,7 @@ class TestBuildFailure:
         assert event == UseCaseEvent.FAILED
         assert fields[LogField.USE_CASE] == "AcmeBroken"
         assert fields[UseCaseKey.PHASE] == "build"
-        assert fields["exception.type"] == "LookupError"
-        assert "acme constructor failed" not in str(fields)
+        assert logger.exception_types(UseCaseEvent.FAILED) == [LookupError]
 
     @pytest.mark.parametrize("on_failure", [None, AcmeOnFailure], ids=["no-callback", "callback"])
     async def test_an_inline_job_that_fails_to_build_is_reported_like_one_that_fails_to_run(

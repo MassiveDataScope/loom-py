@@ -181,7 +181,8 @@ def _log_boundary_error(
     if isinstance(exc, DomainError):
         logger.warning(
             StreamingEvent.BOUNDARY_ERROR_MANAGED,
-            extra={**context, **ErrorSummary.of(exc).fields()},
+            extra=context,
+            exc_info=exc,
         )
         return
     logger.exception(StreamingEvent.BOUNDARY_ERROR_UNHANDLED, extra=context)

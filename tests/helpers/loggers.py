@@ -58,8 +58,19 @@ class CapturedLog:
     @property
     def calls(self) -> list[tuple[str, dict[str, Any]]]:
         """Each event logged so far, in order, with the fields it carried."""
+        return [(record.getMessage(), RecordFields(record).raw) for record in self._records()]
+
+    def exception_types(self, event: str) -> list[type[BaseException] | None]:
+        """The type of the ``exc_info`` each record logged exactly as *event* carries, in order."""
         return [
-            (record.getMessage(), RecordFields(record).raw)
+            record.exc_info[0] if record.exc_info else None
+            for record in self._records()
+            if record.getMessage() == event
+        ]
+
+    def _records(self) -> list[logging.LogRecord]:
+        return [
+            record
             for record in self._caplog.records
             if self._logger is None or record.name == self._logger
         ]
@@ -74,9 +85,8 @@ class CapturedLog:
         """Each event logged at ERROR or above, in order, with the fields it carried."""
         return [
             (record.getMessage(), RecordFields(record).raw)
-            for record in self._caplog.records
+            for record in self._records()
             if record.levelno >= logging.ERROR
-            and (self._logger is None or record.name == self._logger)
         ]
 
     def named(self, event: str) -> list[dict[str, Any]]:

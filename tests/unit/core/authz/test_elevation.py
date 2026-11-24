@@ -13,7 +13,6 @@ from loom.core.authz.elevation import (
     elevated_scopes,
     elevation_scope,
 )
-from loom.core.log_names import LogField
 from tests.unit.core.authz._elevation_doubles import FakeSink
 
 WRITE = Permission("rows.write")
@@ -246,13 +245,12 @@ class TestElevationFailure:
 
         assert isinstance(raised.value.__cause__, RuntimeError)
         assert [
-            (record.msg, record.levelno, record.__dict__[LogField.EXCEPTION_TYPE])
+            (record.msg, record.levelno, record.exc_info and record.exc_info[1])
             for record in caplog.records
         ] == [
-            (ElevationEvent.FLAGS_MAY_REMAIN, logging.ERROR, "RuntimeError"),
-            (ElevationEvent.INVALIDATION_FAILED, logging.ERROR, "RuntimeError"),
+            (ElevationEvent.FLAGS_MAY_REMAIN, logging.ERROR, raised.value.__cause__),
+            (ElevationEvent.INVALIDATION_FAILED, logging.ERROR, raised.value),
         ]
-        assert all("database says no" not in str(record.__dict__) for record in caplog.records)
         assert caplog.records[0].__dict__[ElevationKey.SCOPES] == ["editor"]
         assert elevated_scopes() == frozenset()
 

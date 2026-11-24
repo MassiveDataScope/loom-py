@@ -18,7 +18,6 @@ from sqlalchemy.orm import Session
 from sqlalchemy.pool import Pool, QueuePool
 
 from loom.core.errors import InvalidValue
-from loom.core.errors.summary import ErrorSummary
 from loom.core.identity import Acting
 from loom.core.model.redaction import reveal_for_driver
 from loom.core.stores.catalog import StoreKey
@@ -250,7 +249,8 @@ class SessionManager:
             except Exception as exc:
                 _log.error(
                     SqlalchemyEvent.OPERATION_SESSION_ROLLED_BACK,
-                    extra={SqlalchemyKey.STORE: self.store, **ErrorSummary.of(exc).fields()},
+                    extra={SqlalchemyKey.STORE: self.store},
+                    exc_info=exc,
                 )
                 raise
 

@@ -33,7 +33,6 @@ from datetime import UTC, datetime
 from typing import Any
 
 from loom.core.errors import InvalidType, InvalidValue
-from loom.core.errors.summary import ErrorSummary
 from loom.etl.event import EtlEvent, EtlKey
 from loom.etl.io.sources._serialization import _record_serialization_failure
 
@@ -87,7 +86,8 @@ def _normalize_bson_type(value: object, depth: int, extjson: bool) -> object:
         except (TypeError, AttributeError, ValueError) as exc:
             _log.warning(
                 EtlEvent.BSON_MAPPING_FAILED,
-                extra={EtlKey.VALUE_TYPE: type_name, **ErrorSummary.of(exc).fields()},
+                extra={EtlKey.VALUE_TYPE: type_name},
+                exc_info=exc,
             )
     elif type_name not in _warned_bson_types:
         _warned_bson_types.add(type_name)

@@ -23,7 +23,6 @@ from typing import Any, NamedTuple, TypeVar
 from loom.core.engine.events import EventKind, ExecutionEvent, Phase, Status
 from loom.core.engine.execution_observer import ExecutionObserver, NullExecutionObserver
 from loom.core.errors import PostCommitError, RuleViolationError, RuleViolationsError
-from loom.core.errors.summary import ErrorSummary
 from loom.core.job.outcome import JobSignal, failure_log_fields
 from loom.core.log_names import LogEvent, LogField, LogKey
 from loom.core.stores.uow.coordinator import InvocationOutcome
@@ -228,7 +227,6 @@ class StartedExecution:
                     **timing,
                     LogField.STATUS: status,
                     LogField.REASON: error.reason,
-                    **ErrorSummary.of(error).fields(),
                 },
             )
             return
@@ -249,8 +247,7 @@ class StartedExecution:
             _log.warning(UseCaseEvent.FAILED, extra=fields)
             return
         _log.error(
-            UseCaseEvent.FAILED,
-            extra={**fields, **failure_log_fields(error), **ErrorSummary.of(error).fields()},
+            UseCaseEvent.FAILED, extra={**fields, **failure_log_fields(error)}, exc_info=error
         )
 
     @staticmethod

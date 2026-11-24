@@ -11,7 +11,6 @@ from typing import Any, Protocol, runtime_checkable
 import polars as pl
 
 from loom.core.errors import InvalidValue
-from loom.core.errors.summary import ErrorSummary
 from loom.etl.declarative.source._specs import ExtraFieldsMode
 from loom.etl.event import EtlEvent, EtlKey
 from loom.etl.io.sources._mongo_bson import _is_bson_type, deep_normalize_for_json
@@ -504,7 +503,8 @@ def _apply_series_override(
     except Exception as exc:
         _log.debug(
             EtlEvent.SOURCE_CAST_SKIPPED,
-            extra={EtlKey.COLUMNS: [k], **ErrorSummary.of(exc).fields()},
+            extra={EtlKey.COLUMNS: [k]},
+            exc_info=exc,
         )
         return s
 

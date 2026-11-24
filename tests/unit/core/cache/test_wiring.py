@@ -35,7 +35,6 @@ from loom.core.cache.wiring import CacheGateways, cache_module, cache_module_for
 from loom.core.config import ConfigContext
 from loom.core.di.container import LoomContainer, ResolutionError
 from loom.core.errors import InvalidType
-from loom.core.logger.formats import RecordFields
 from loom.core.model.redaction import RedactedMap
 from loom.core.stores.catalog import DEFAULT_STORE
 from loom.core.stores.repository import (
@@ -45,7 +44,7 @@ from loom.core.stores.repository import (
     build_repository_registration_module,
 )
 from loom.core.stores.repository.capabilities import Listable, Readable
-from tests.helpers.loggers import rendered
+from tests.helpers.loggers import CapturedLog, rendered
 
 from ._doubles import (
     MEMORY_BACKEND,
@@ -562,8 +561,7 @@ class TestTheBinderReportsAnAbandonedLoad:
 
         records = _abandoned_warnings(caplog)
         assert len(records) == 1
-        assert RecordFields(records[0]).raw["exception.type"] == "RuntimeError"
-        assert "upstream down" not in rendered(records[0])
+        assert CapturedLog(caplog).exception_types(CacheEvent.LOAD_ABANDONED) == [RuntimeError]
 
 
 def _abandoned_warnings(caplog: pytest.LogCaptureFixture) -> list[logging.LogRecord]:

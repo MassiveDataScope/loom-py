@@ -11,7 +11,6 @@ from pymongo.errors import OperationFailure
 
 from loom.connections.mongo import mongo_island
 from loom.core.errors import InvalidType, InvalidUse, UnknownKey
-from loom.core.errors.summary import ErrorSummary
 from loom.core.log_names import LogField
 from loom.core.model.redaction import reveal_for_driver
 from loom.streaming.compiler._plan import CompiledMongoCDCSource
@@ -89,9 +88,7 @@ class MongoCDCPartition(StatefulSourcePartition[Message[MongoCDCEvent], dict[str
                     raise
                 change = self._restart_from_now()
             except Exception as exc:
-                _logger.warning(
-                    StreamingEvent.MONGO_CDC_EVENT_SKIPPED, extra=ErrorSummary.of(exc).fields()
-                )
+                _logger.warning(StreamingEvent.MONGO_CDC_EVENT_SKIPPED, exc_info=exc)
                 self._skip_count += 1
                 break
             if change is None:
@@ -101,9 +98,7 @@ class MongoCDCPartition(StatefulSourcePartition[Message[MongoCDCEvent], dict[str
             try:
                 message = build_mongo_cdc_message(change)
             except Exception as exc:
-                _logger.warning(
-                    StreamingEvent.MONGO_CDC_MESSAGE_SKIPPED, extra=ErrorSummary.of(exc).fields()
-                )
+                _logger.warning(StreamingEvent.MONGO_CDC_MESSAGE_SKIPPED, exc_info=exc)
                 self._skip_count += 1
                 continue
             self._resume_token = message.payload.resume_token

@@ -35,7 +35,6 @@ from pymongo.errors import BulkWriteError, DuplicateKeyError, PyMongoError
 from pymongo.results import DeleteResult, InsertManyResult, InsertOneResult
 
 from loom.core.errors import Conflict, InternalError
-from loom.core.errors.summary import ErrorSummary
 from loom.core.model.convert import to_struct
 from loom.core.model.introspection import (
     column_annotations,
@@ -456,10 +455,8 @@ class MongoRepository(
         except PyMongoError as exc:
             _log.error(
                 MongoEvent.BULK_UNDO_FAILED,
-                extra={
-                    MongoKey.DOCUMENT_COUNT: len(keys),
-                    **ErrorSummary.of(exc).fields(),
-                },
+                extra={MongoKey.DOCUMENT_COUNT: len(keys)},
+                exc_info=exc,
             )
             exc.add_note(f"while undoing a partial create_many after: {conflict}")
             raise

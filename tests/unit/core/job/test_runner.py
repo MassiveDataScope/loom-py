@@ -24,7 +24,7 @@ from loom.core.job.policy import Backoff, Redelivery, RetryPolicy
 from loom.core.job.runner import JobRunner
 from loom.core.log_names import LogField
 from loom.testing import JobTestData
-from tests.helpers.loggers import logged_events
+from tests.helpers.loggers import CapturedLog, logged_events
 
 POLICY = RetryPolicy(Backoff(first_s=4, factor=2, max_s=100, jitter=False), max_attempts=3)
 
@@ -183,9 +183,9 @@ class TestJobRunnerAbandonmentLog:
             "loom.attempt": 3,
             JobKey.POSTPONEMENTS: 2,
             LogField.REASON: "attempts_exhausted",
-            "exception.type": "ValueError",
             "loom.task_id": delivery.task_id,
         }
+        assert CapturedLog(caplog).exception_types(JobEvent.DELIVERY_ABANDONED) == [ValueError]
 
     @pytest.mark.parametrize(
         "behaviour",
@@ -207,11 +207,10 @@ class TestJobRunnerAbandonmentLog:
         )
 
         (logged,) = self._abandonments(caplog)
-        assert (logged[LogField.REASON], logged["exception.type"], logged["loom.task_id"]) == (
-            "not_retryable",
-            "UnretryableError",
-            "m-1",
-        )
+        assert (logged[LogField.REASON], logged["loom.task_id"]) == ("not_retryable", "m-1")
+        assert CapturedLog(caplog).exception_types(JobEvent.DELIVERY_ABANDONED) == [
+            UnretryableError
+        ]
 
 
 class TestJobRunnerJitter:

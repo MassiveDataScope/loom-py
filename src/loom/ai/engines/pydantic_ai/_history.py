@@ -21,7 +21,6 @@ from pydantic_ai.messages import ModelMessage, ModelMessagesTypeAdapter
 from loom.ai.abc import Conversation
 from loom.ai.errors import CONVERSATION_LOAD_FAILED_MESSAGE, AgentRunError, AgentRunErrorCode
 from loom.ai.event import AiEvent, AiKey
-from loom.core.errors.summary import ErrorSummary
 
 _logger = logging.getLogger(__name__)
 
@@ -60,7 +59,7 @@ def decode_conversation(conversation: Conversation | None) -> RunConversation | 
     try:
         history = ModelMessagesTypeAdapter.validate_json(conversation.history)
     except pydantic.ValidationError as error:
-        _logger.error(AiEvent.HISTORY_INVALID, extra=ErrorSummary.of(error).fields())
+        _logger.error(AiEvent.HISTORY_INVALID, exc_info=error)
         raise AgentRunError(
             AgentRunErrorCode.CONVERSATION_LOAD_FAILED, CONVERSATION_LOAD_FAILED_MESSAGE
         ) from error

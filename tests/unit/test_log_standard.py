@@ -17,6 +17,7 @@ JOB = LogField.JOB.value
 SUBKEY = SubKey("loom.acme.bag.tenant")
 RecordFactory = Callable[..., logging.LogRecord]
 KINDS: dict[str, ValueKind] = {ATTEMPT: ValueKind.NUMBER, SUBKEY: ValueKind.NUMBER}
+FAILURE = (ValueError, ValueError("card 4111"), None)
 
 
 class _AcmeEvent(LogEvent):
@@ -55,6 +56,21 @@ class TestBreach:
             pytest.param({"fields": {ATTEMPT: "3"}}, [Breach.KEY_RETYPED], id="key-retyped"),
             pytest.param({"fields": {ATTEMPT: None}}, [], id="missing-value"),
             pytest.param({"fields": {SUBKEY: object()}}, [], id="subkey"),
+            pytest.param(
+                {"fields": {JOB: "card 4111 refused", "exc_info": FAILURE}},
+                [Breach.EXCEPTION_TEXT_IN_FIELD],
+                id="exception-text-in-field",
+            ),
+            pytest.param(
+                {
+                    "fields": {
+                        JOB: "billing-job",
+                        "exc_info": (ValueError, ValueError("bill"), None),
+                    }
+                },
+                [],
+                id="short-text-inside-a-field",
+            ),
         ],
     )
     def test_a_record_breaks_the_rules_it_does_not_follow(

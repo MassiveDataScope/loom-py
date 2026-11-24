@@ -30,7 +30,7 @@ from loom.core.stores.catalog import DEFAULT_STORE
 from loom.core.stores.uow.coordinator import OrderedCommits
 from loom.core.use_case.use_case import UseCase
 from tests.helpers.jobs import CeleryServiceFixture
-from tests.helpers.loggers import logged_events
+from tests.helpers.loggers import CapturedLog, logged_events
 
 from ._lifecycle_doubles import Log, StubUnitOfWorkFactory
 
@@ -293,8 +293,7 @@ class TestPostCommitPublish:
 
         fields = _event(caplog, _FAILED)
         assert _SENT.items() <= fields.items()
-        assert fields["exception.type"] == "ConnectionError"
-        assert "broker down" not in str(fields)
+        assert CapturedLog(caplog).exception_types(_FAILED) == [ConnectionError]
 
     async def test_sends_a_dead_shield_never_ran_are_logged(
         self, caplog: pytest.LogCaptureFixture, logged: Callable[[str], asyncio.Event]
@@ -349,8 +348,8 @@ class TestPostCommitPublish:
         assert {**running, **_SENT}.items() <= named.items()
         assert running.items() <= plain.items()
         assert not plain.keys() & _SENT.keys()
-        assert {named["exception.type"], plain["exception.type"]} == {"ConnectionError"}
-        assert "broker down" not in str((named, plain))
+        failed = CapturedLog(caplog).exception_types(PostCommitEvent.ACTION_FAILED)
+        assert failed == [ConnectionError] * 2
 
     async def test_a_publish_runs_before_an_inline_job_queued_earlier(self) -> None:
         calls: list[str] = []
