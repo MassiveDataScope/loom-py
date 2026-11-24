@@ -105,9 +105,21 @@ def job_context(trace_id: str | None, identity: dict[str, Any] | None) -> Iterat
     unreadable deadline has expired, so the job's execution is refused.
     """
     delegation = Delegation.decoded(identity)
+    with resumed_delegation(delegation, trace_id):
+        yield delegation.caller
+
+
+@contextmanager
+def resumed_delegation(delegation: Delegation, trace_id: str | None) -> Iterator[None]:
+    """Act as *delegation*'s caller until its deadline, in *trace_id*, restoring both after.
+
+    What every consumer of a job does before running it: the caller and the
+    trace are the dispatch's, never what the consumer's context held. No caller
+    acts as no one; no trace leaves the context's trace untouched.
+    """
     token = set_identity(delegation.caller, until=delegation.until)
     try:
         with active_trace_id(trace_id or None):
-            yield delegation.caller
+            yield
     finally:
         reset_identity(token)

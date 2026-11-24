@@ -2,14 +2,14 @@
 
 from __future__ import annotations
 
-from collections.abc import Awaitable, Callable
+from collections.abc import Callable, Coroutine
 from dataclasses import dataclass
-from typing import Protocol
+from typing import Any, Protocol
 
 from loom.core.engine.events import AbandonReason, EventKind, ExecutionEvent, Status
 from loom.core.job.policy import Countdown
 
-Step = Callable[[], Awaitable[None]]
+Step = Callable[[], Coroutine[Any, Any, None]]
 """What runs when a delay is over."""
 
 
@@ -65,7 +65,10 @@ class JobTimer(Protocol):
     """Runs a step once a delay is over; the inline job transport enqueues every run on it."""
 
     def schedule(self, delay: Countdown, step: Step, *, job: str, task_id: str) -> None:
-        """Run *step* after *delay*; return at once.
+        """Run *step* after *delay*, in a context of its own; return at once.
+
+        Nothing of the scheduling context reaches the step: it starts from an
+        empty :class:`contextvars.Context`, as a queue consumer would.
 
         Args:
             delay: How long to wait.

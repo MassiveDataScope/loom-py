@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import asyncio
 import contextlib
+import contextvars
 import logging
 
 from loom.core.engine.events import AbandonReason
@@ -46,7 +47,7 @@ class AsyncioJobTimer:
         )
 
     def schedule(self, delay: Countdown, step: Step, *, job: str, task_id: str) -> None:
-        """Run *step* on the running loop after *delay*.
+        """Run *step* on the running loop after *delay*, in an empty context.
 
         Args:
             delay: How long to wait.
@@ -55,7 +56,9 @@ class AsyncioJobTimer:
             task_id: The id of the job's dispatch.
         """
         delayed = DelayedJob(job, task_id)
-        task = asyncio.get_running_loop().create_task(self._after(delay, step, delayed))
+        task = asyncio.get_running_loop().create_task(
+            self._after(delay, step, delayed), context=contextvars.Context()
+        )
         self._tasks[task] = delayed
         task.add_done_callback(self._tasks.pop)
 
