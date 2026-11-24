@@ -17,6 +17,7 @@ import pytest
 
 from loom.core.log_names import LogField
 from loom.core.model.redaction import Secret
+from loom.core.observability.diagnostic import ObservabilityEvent
 from loom.prefect.observer._logging_bridge import (
     PrefectLogBridgeHandler,
     _current_flow_run_id,
@@ -60,13 +61,19 @@ class TestPrefectLogBridgeHandler:
     def test_the_message_carries_the_fields_as_loom_renders_them(self) -> None:
         handler = PrefectLogBridgeHandler()
         record = logging.makeLogRecord(
-            {"msg": "observability.lifecycle_failed", LogField.NAME: "Load step", "pw": Secret("x")}
+            {
+                "msg": ObservabilityEvent.LIFECYCLE_FAILED,
+                LogField.NAME: "Load step",
+                "pw": Secret("x"),
+            }
         )
         with bind_task_run(uuid.uuid4()):
             payload = handler._record_to_payload(record)
 
         assert payload is not None
-        assert payload["message"] == 'observability.lifecycle_failed loom.name="Load step" pw=***'
+        assert payload["message"] == (
+            f'{ObservabilityEvent.LIFECYCLE_FAILED} loom.name="Load step" pw=***'
+        )
 
     def test_emit_falls_back_to_flow_run_id_when_no_task_bound(self) -> None:
         handler = PrefectLogBridgeHandler()

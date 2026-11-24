@@ -16,6 +16,11 @@ _EVENT_FORM: Final = re.compile(
 _KEY_FORM: Final = re.compile(r"[a-z][a-z0-9]*(?:_[a-z0-9]+)*(?:\.[a-z][a-z0-9]*(?:_[a-z0-9]+)*)*")
 
 
+def _is_declared_by_loom(cls: type) -> bool:
+    """Whether *cls* is declared inside the ``loom`` package."""
+    return cls.__module__.partition(".")[0] == "loom"
+
+
 class _EventTable:
     """The events declared so far, each with the class that declared it.
 
@@ -57,8 +62,10 @@ class LogEvent(StrEnum):
     A record's message is the event, never a sentence with values in it: the
     values travel in the record's fields (a :class:`LogKey` each), so a collector
     can filter on both. Every member is named ``<area>.<subject>_<fact>`` in
-    lowercase, and one class alone declares each value: declaring a member out of
-    form, or a value another class or member already declared, raises ``ValueError``.
+    lowercase, and loom's are ``loom.<area>.<subject>_<fact>``: only loom declares a
+    ``loom.`` event, and loom declares no other. One class alone declares each value:
+    declaring a member out of form or outside its prefix, or a value another class or
+    member already declared, raises ``ValueError``.
     The same class declared again, as ``importlib.reload`` does, keeps its values.
 
     Example::
@@ -75,10 +82,16 @@ class LogEvent(StrEnum):
         """Declare the event *value*.
 
         Raises:
-            ValueError: *value* is out of form, or another class or member declared it.
+            ValueError: *value* is out of form, is a ``loom.`` event declared outside
+                the ``loom`` package, is loom's without ``loom.``, or another class or
+                member declared it.
         """
         if _EVENT_FORM.fullmatch(value) is None:
             raise ValueError(f"log event {value!r} is not named <area>.<subject>_<fact>")
+        if value.startswith("loom.") != _is_declared_by_loom(cls):
+            raise ValueError(
+                f"log event {value!r} is reserved to loom: only loom, and always loom.<area>.<name>"
+            )
         _DECLARED_EVENTS.declare(value, cls)
         member = str.__new__(cls, value)
         member._value_ = value
@@ -161,8 +174,7 @@ class LogKey(StrEnum):
         """
         if _KEY_FORM.fullmatch(value) is None:
             raise ValueError(f"log key {value!r} is not dotted lowercase snake_case")
-        declared_by_loom = cls.__module__.partition(".")[0] == "loom"
-        if value.startswith("loom.") != declared_by_loom and cls.__module__ != __name__:
+        if value.startswith("loom.") != _is_declared_by_loom(cls) and cls.__module__ != __name__:
             raise ValueError(
                 f"log key {value!r} is reserved to loom: only loom, and always loom.<area>.<name>"
             )

@@ -8,9 +8,9 @@ from loom.core.log_names import LogEvent, LogKey, ValueKind
 class ConfigEvent(LogEvent):
     """What loading and resolving configuration logs."""
 
-    KEYS_OVERRIDDEN = "config.keys_overridden"
-    RESOLVER_DEFAULT_SKIPPED = "config.resolver_default_skipped"
-    RESOLVER_FETCHED = "config.resolver_fetched"
+    KEYS_OVERRIDDEN = "loom.config.keys_overridden"
+    RESOLVER_DEFAULT_SKIPPED = "loom.config.resolver_default_skipped"
+    RESOLVER_FETCHED = "loom.config.resolver_fetched"
 
 
 class ConfigLogKey(LogKey):

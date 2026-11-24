@@ -65,9 +65,9 @@ _logger.setLevel(logging.WARNING)
 class ChecksEvent(LogEvent):
     """What the deploy checks log at startup."""
 
-    DEPLOY_SKIPPED = "checks.deploy_skipped"
-    DEPLOY_SILENCED = "checks.deploy_silenced"
-    DEPLOY_WARNED = "checks.deploy_warned"
+    DEPLOY_SKIPPED = "loom.checks.deploy_skipped"
+    DEPLOY_SILENCED = "loom.checks.deploy_silenced"
+    DEPLOY_WARNED = "loom.checks.deploy_warned"
 
 
 class ChecksKey(LogKey):

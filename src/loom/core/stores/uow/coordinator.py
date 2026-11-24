@@ -55,7 +55,7 @@ deadline bounds every rollback of the invocation, however many stores it
 enlisted. Thirty seconds outlasts any rollback a live server answers, yet
 stays well under the minutes a TCP keepalive or driver socket timeout may
 take to give up. A rollback that times out is logged as
-``stores.uow_rollback_failed``, like any other failed rollback, and ``close`` runs
+``loom.stores.uow_rollback_failed``, like any other failed rollback, and ``close`` runs
 next; the server discards the transaction once the connection is gone.
 """
 

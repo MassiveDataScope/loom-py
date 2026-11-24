@@ -57,7 +57,7 @@ _log = logging.getLogger(__name__)
 class ExecutionContextEvent(LogEvent):
     """What the execution context logs."""
 
-    CLOSED = "execution.context_closed"
+    CLOSED = "loom.execution.context_closed"
 
 
 class ExecutionContextKey(LogKey):

@@ -104,7 +104,7 @@ def cache_module(config: CacheConfig) -> Callable[[LoomContainer], None]:
     caches ``@cache_call`` coroutines, and a
     :class:`~loom.core.stores.repository.registration.RepositoryDecorator` that
     wraps every ``@cached`` repository the registration module builds. A binder
-    or decorator a deployment registered first is kept, and ``cache.binding_kept``
+    or decorator a deployment registered first is kept, and ``loom.cache.binding_kept``
     names it. All of it happens when the module runs against a container, so a
     boot that fails earlier has not touched the global aiocache registry.
 
@@ -176,7 +176,7 @@ def cache_module_for(ctx: ConfigContext) -> Callable[[LoomContainer], None]:
     Returns:
         :func:`cache_module` over the section when it is present and enabled;
         otherwise a module whose decorator leaves every repository bare and
-        logs ``cache.repository_not_configured`` for each marked class.
+        logs ``loom.cache.repository_not_configured`` for each marked class.
     """
     config = ctx.section_optional(ConfigKey.CACHE, CacheConfig)
     if config is not None and config.enabled:

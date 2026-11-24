@@ -60,7 +60,7 @@ _log = logging.getLogger(__name__)
 class CompilerEvent(LogEvent):
     """What the compiler logs."""
 
-    USE_CASE_COMPILED = "compiler.use_case_compiled"
+    USE_CASE_COMPILED = "loom.compiler.use_case_compiled"
 
 
 class CompilerKey(LogKey):

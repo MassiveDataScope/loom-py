@@ -8,9 +8,9 @@ from loom.core.log_names import LogEvent, LogKey, ValueKind
 class CompositionEvent(LogEvent):
     """The events composing and hosting an application log."""
 
-    APPLICATION_COMPOSED = "composition.application_composed"
-    APPLICATION_CLOSE_FAILED = "composition.application_close_failed"
-    INLINE_JOBS_HELD_IN_MEMORY = "composition.inline_jobs_held_in_memory"
+    APPLICATION_COMPOSED = "loom.composition.application_composed"
+    APPLICATION_CLOSE_FAILED = "loom.composition.application_close_failed"
+    INLINE_JOBS_HELD_IN_MEMORY = "loom.composition.inline_jobs_held_in_memory"
 
 
 class CompositionKey(LogKey):

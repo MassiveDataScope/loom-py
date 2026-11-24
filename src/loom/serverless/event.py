@@ -8,13 +8,13 @@ from loom.core.log_names import LogEvent, LogKey
 class ServerlessEvent(LogEvent):
     """The events the serverless runtimes log."""
 
-    EVENT_JOB_FAILED = "serverless.event_job_failed"
-    SQS_JOB_POSTPONED = "serverless.sqs_job_postponed"
-    SQS_JOB_FAILED = "serverless.sqs_job_failed"
-    S3_TEST_EVENT_ACKNOWLEDGED = "serverless.s3_test_event_acknowledged"
-    AUTOCRUD_IGNORED = "serverless.autocrud_ignored"
-    JOB_TRANSPORT_SELECTED = "serverless.job_transport_selected"
-    AGENT_ENDPOINT_IGNORED = "serverless.agent_endpoint_ignored"
+    EVENT_JOB_FAILED = "loom.serverless.event_job_failed"
+    SQS_JOB_POSTPONED = "loom.serverless.sqs_job_postponed"
+    SQS_JOB_FAILED = "loom.serverless.sqs_job_failed"
+    S3_TEST_EVENT_ACKNOWLEDGED = "loom.serverless.s3_test_event_acknowledged"
+    AUTOCRUD_IGNORED = "loom.serverless.autocrud_ignored"
+    JOB_TRANSPORT_SELECTED = "loom.serverless.job_transport_selected"
+    AGENT_ENDPOINT_IGNORED = "loom.serverless.agent_endpoint_ignored"
 
 
 class ServerlessKey(LogKey):

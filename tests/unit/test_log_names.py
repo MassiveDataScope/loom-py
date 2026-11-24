@@ -94,6 +94,18 @@ class TestEventDeclaration:
         with pytest.raises(ValueError, match="<area>.<subject>_<fact>"):
             LogEvent("Sample", {"EVENT": value})
 
+    @pytest.mark.parametrize(
+        ("value", "module"),
+        [
+            pytest.param("loom.acme.thing_done", __name__, id="loom-event-outside-loom"),
+            pytest.param("loom.acme.thing_done", "loomx.ext", id="loom-event-in-a-look-alike"),
+            pytest.param("acme.thing_done", "loom.acme.event", id="loom-area-event-without-prefix"),
+        ],
+    )
+    def test_an_event_on_the_wrong_side_of_loom_is_refused(self, value: str, module: str) -> None:
+        with pytest.raises(ValueError, match="reserved to loom"):
+            LogEvent("Sample", {"EVENT": value}, module=module)
+
     def test_an_event_another_class_declared_is_refused(self) -> None:
         LogEvent("First", {"EVENT": "acme.thing_shared"})
 
@@ -103,6 +115,11 @@ class TestEventDeclaration:
     def test_an_event_twice_in_one_class_is_refused(self) -> None:
         with pytest.raises(ValueError, match="already declared by Aliased"):
             LogEvent("Aliased", {"ONE": "acme.thing_aliased", "TWO": "acme.thing_aliased"})
+
+    def test_an_area_named_like_loom_outside_loom_is_accepted(self) -> None:
+        event = LogEvent("Sample", {"EVENT": "loomx.acme.thing_done"}, module="loomx.ext")
+
+        assert event.EVENT == "loomx.acme.thing_done"
 
     def test_a_class_declared_again_keeps_its_values(self) -> None:
         LogEvent("Again", {"EVENT": "acme.thing_again"})

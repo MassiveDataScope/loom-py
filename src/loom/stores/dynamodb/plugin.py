@@ -38,7 +38,7 @@ _logger = logging.getLogger(__name__)
 class DynamodbEvent(LogEvent):
     """The events the DynamoDB store logs."""
 
-    READINESS_PROBE_FAILED = "dynamodb.readiness_probe_failed"
+    READINESS_PROBE_FAILED = "loom.dynamodb.readiness_probe_failed"
 
 
 class DynamodbKey(LogKey):

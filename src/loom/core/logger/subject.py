@@ -20,7 +20,7 @@ _log = logging.getLogger(__name__)
 class LoggerEvent(LogEvent):
     """What the logging setup logs about itself."""
 
-    SUBJECT_HASH_DISABLED = "logging.subject_hash_disabled"
+    SUBJECT_HASH_DISABLED = "loom.logging.subject_hash_disabled"
 
 
 @dataclass(frozen=True, slots=True)
@@ -47,7 +47,7 @@ class SubjectHasher:
     def install(self) -> None:
         """Make this the hasher of the process.
 
-        Installing a keyless hasher logs ``logging.subject_hash_disabled`` once:
+        Installing a keyless hasher logs ``loom.logging.subject_hash_disabled`` once:
         not again while keyless ones replace each other.
         """
         global _installed

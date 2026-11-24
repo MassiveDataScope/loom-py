@@ -6,7 +6,7 @@ from typing import Any
 import pytest
 
 from loom.core.command import Command
-from loom.core.engine.compiler import CompilationError, CompilerKey, UseCaseCompiler
+from loom.core.engine.compiler import CompilationError, CompilerEvent, CompilerKey, UseCaseCompiler
 from loom.core.engine.plan import ExecutionPlan
 from loom.core.use_case.markers import Exists, Input, Load, LoadById, SourceKind
 from loom.core.use_case.use_case import UseCase
@@ -383,11 +383,11 @@ def log(caplog: pytest.LogCaptureFixture) -> CapturedLog:
 
 
 class TestCompilerLogging:
-    """Compiling a use case logs one ``compiler.use_case_compiled`` record with what it found."""
+    """Compiling a use case logs ``loom.compiler.use_case_compiled`` once, with what it found."""
 
     def test_logs_one_line_naming_the_use_case(self, log: CapturedLog) -> None:
         UseCaseCompiler().compile(_NoMarkersUseCase)
-        assert log.messages == ["compiler.use_case_compiled"]
+        assert log.messages == [CompilerEvent.USE_CASE_COMPILED]
         assert log.calls[0][1]["loom.use_case.name"] == "_NoMarkersUseCase"
 
     @pytest.mark.parametrize(

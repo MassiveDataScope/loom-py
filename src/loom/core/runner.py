@@ -18,8 +18,8 @@ _log = logging.getLogger(__name__)
 class RunnerEvent(LogEvent):
     """What the runner helpers log."""
 
-    SHUTDOWN_FAILED = "runner.shutdown_failed"
-    FLUSH_FAILED = "runner.flush_failed"
+    SHUTDOWN_FAILED = "loom.runner.shutdown_failed"
+    FLUSH_FAILED = "loom.runner.flush_failed"
 
 
 class RunnerKey(LogKey):

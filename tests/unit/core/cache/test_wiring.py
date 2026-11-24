@@ -447,7 +447,7 @@ class TestCachedCallsBinding:
         no binding at all, so an ``isinstance`` check alone would pass with no
         registration whatsoever. The registration is what makes every factory
         in one container share a binder — and with it the once-set that keeps
-        ``cache.call_not_configured`` to one record per marked coroutine.
+        ``loom.cache.call_not_configured`` to one record per marked coroutine.
         """
         container = _container(cache_module_for(ConfigContext.from_dict(raw)))
 

@@ -45,7 +45,7 @@ logger = logging.getLogger(__name__)
 class BridgeEvent(LogEvent):
     """What the async bridge logs."""
 
-    SHUTDOWN_TIMED_OUT = "bridge.shutdown_timed_out"
+    SHUTDOWN_TIMED_OUT = "loom.bridge.shutdown_timed_out"
 
 
 class BridgeKey(LogKey):

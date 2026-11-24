@@ -62,10 +62,10 @@ _logger = logging.getLogger(__name__)
 class PostCommitEvent(LogEvent):
     """What the post-commit channel logs."""
 
-    PLAIN_ACTIONS_DROPPED = "engine.post_commit_plain_actions_dropped"
-    DRAIN_FAILED_DURING_TEARDOWN = "engine.post_commit_drain_failed_during_teardown"
-    ACTION_FAILED = "engine.post_commit_action_failed"
-    SHIELDED_ACTION_NEVER_RAN = "engine.post_commit_shielded_action_never_ran"
+    PLAIN_ACTIONS_DROPPED = "loom.engine.post_commit_plain_actions_dropped"
+    DRAIN_FAILED_DURING_TEARDOWN = "loom.engine.post_commit_drain_failed_during_teardown"
+    ACTION_FAILED = "loom.engine.post_commit_action_failed"
+    SHIELDED_ACTION_NEVER_RAN = "loom.engine.post_commit_shielded_action_never_ran"
 
 
 class PostCommitKey(LogKey):

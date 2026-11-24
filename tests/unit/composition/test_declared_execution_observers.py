@@ -16,7 +16,7 @@ from loom.cli.app import app
 from loom.composition import Project, Recipe
 from loom.core.config import ConfigError
 from loom.core.engine.events import AbandonReason, EventKind, ExecutionEvent
-from loom.core.engine.execution_observer import ExecutionObserver
+from loom.core.engine.execution_observer import ExecutionObserver, ExecutionObserverEvent
 from loom.core.job.service import JobService
 from tests.helpers.execution_observers import (
     NOT_AN_OBSERVER,
@@ -105,7 +105,7 @@ class TestAbandonedJob:
 
         assert own.abandonments == [AbandonReason.JOB_ASKED]
         assert JobOutcomeRecorder.abandonments() == [AbandonReason.JOB_ASKED]
-        assert caplog.messages.count("engine.execution_observer_failed") == len(own.events)
+        assert caplog.messages.count(ExecutionObserverEvent.FAILED) == len(own.events)
 
     async def test_a_module_under_the_code_path_resolves(self, tmp_path: Path) -> None:
         module = f"acme_observers_{uuid.uuid4().hex}"

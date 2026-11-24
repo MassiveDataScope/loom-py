@@ -31,8 +31,8 @@ _logger = logging.getLogger(__name__)
 class ElevationEvent(LogEvent):
     """What elevation logs when it cannot be sure a scope flag was cleared."""
 
-    FLAGS_CLEAR_FAILED = "elevation.flags_clear_failed"
-    INVALIDATION_FAILED = "elevation.invalidation_failed"
+    FLAGS_CLEAR_FAILED = "loom.elevation.flags_clear_failed"
+    INVALIDATION_FAILED = "loom.elevation.invalidation_failed"
 
 
 class ElevationKey(LogKey):
