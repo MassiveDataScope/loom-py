@@ -507,7 +507,7 @@ class TestExecuteRecordStep:
 
         assert observer.events == [
             ("start", "orders", 1, "Boom"),
-            ("error", "orders", 1, "Boom:RuleViolationError"),
+            ("error", "orders", 1, "Boom:loom.core.errors.domain.RuleViolationError"),
         ]
 
 
