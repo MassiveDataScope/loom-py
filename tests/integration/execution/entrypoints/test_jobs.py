@@ -7,6 +7,7 @@ The job runner is the transport-neutral body the Celery worker and the Lambda
 from __future__ import annotations
 
 import asyncio
+import logging
 import math
 import time
 from collections.abc import Callable, Iterator
@@ -14,6 +15,7 @@ from typing import Any
 
 import pytest
 
+from loom.core.engine.compiler import UseCaseCompiler
 from loom.core.engine.executor import UseCaseExecutor
 from loom.core.engine.post_commit import PostCommitChannel, bind_channel, reset_channel
 from loom.core.errors import DelegationExpired, Unauthenticated
@@ -25,13 +27,22 @@ from loom.core.job.envelope import JobEnvelope, job_context
 from loom.core.job.event import JobEvent
 from loom.core.job.handle import JobHandle
 from loom.core.job.run import EnvelopeInvocation
+from loom.core.job.timer import JobTimer
+from loom.core.logger import LogField, log_context
+from loom.core.logger.stamp import ContextFilter, LogIdentity
 from loom.core.observability.observability import Observability
+from loom.core.stores.catalog import DEFAULT_STORE
+from loom.core.stores.uow.coordinator import OrderedCommits
+from loom.core.tracing import active_trace_id
 from loom.core.use_case.factory import UseCaseFactory
+from loom.jobs.inline import AsyncioJobTimer
 from loom.jobs.inline import timer as inline_timer
-from loom.testing import JobTestData, make
+from loom.testing import JobTestData, ManualTimer, make
 from tests.helpers.celery import CeleryBroker
 from tests.helpers.delegation import acting_as, assert_new_delegation
 from tests.helpers.jobs import CeleryServiceFixture, InlineServiceFixture
+from tests.helpers.loggers import logged_events
+from tests.unit.core.engine._lifecycle_doubles import Log, StubUnitOfWorkFactory
 
 from .doubles import (
     ALICE,
@@ -96,6 +107,40 @@ class TestInlineJobTransport:
         job = handles[0].wait()
         assert job.session.caller is ALICE
         assert job.session.execution is job.ran_in
+
+    async def test_a_dispatch_sent_now_runs_outside_the_scope_its_writer_still_holds(
+        self, factory: UseCaseFactory, compiler: UseCaseCompiler
+    ) -> None:
+        commits = OrderedCommits({DEFAULT_STORE: StubUnitOfWorkFactory(Log())})
+        executor = UseCaseExecutor(compiler, coordinator=commits)
+        jobs = InlineServiceFixture(factory, executor)
+        handles: list[JobHandle[AcmeProbeJob]] = []
+
+        async def dispatch_then_yield() -> None:
+            handles.append(await jobs.dispatch_now(AcmeProbeJob))
+            await asyncio.sleep(0)
+
+        await executor.execute(AcmeRun(dispatch_then_yield), identity=ALICE)
+        await jobs.wait_until_idle()
+
+        assert handles[0].wait().session.caller is ALICE
+
+    async def test_a_dispatch_carries_no_log_field_of_its_sender(
+        self, factory: UseCaseFactory, executor: UseCaseExecutor, caplog: pytest.LogCaptureFixture
+    ) -> None:
+        caplog.set_level(logging.DEBUG)
+        caplog.handler.addFilter(ContextFilter(LogIdentity(environment="test")))
+        jobs = InlineServiceFixture(factory, executor)
+
+        async def dispatch_for_an_order() -> None:
+            with log_context(order_id="o-1"):
+                await jobs.dispatch_now(AcmeProbeJob)
+
+        await executor.execute(AcmeRun(dispatch_for_an_order), identity=ALICE)
+        await jobs.wait_until_idle()
+
+        job_records = [entry for entry in logged_events(caplog) if LogField.JOB in entry]
+        assert {entry.get("order_id") for entry in job_records} == {None}
 
 
 class TestJobRunner:
@@ -185,6 +230,20 @@ class TestAQueuedDispatch:
         with acting_as(ALICE):
             jobs.dispatch_after_commit(AcmeProbeJob, on_success=AcmeCallback)
         return channel
+
+    @pytest.mark.parametrize("timer", [AsyncioJobTimer, ManualTimer], ids=["asyncio", "manual"])
+    async def test_runs_in_the_trace_of_its_dispatch_not_of_its_flush(
+        self, factory: UseCaseFactory, executor: UseCaseExecutor, timer: Callable[[], JobTimer]
+    ) -> None:
+        jobs = InlineServiceFixture(factory, executor, timer=timer())
+        with acting_as(ALICE), active_trace_id("trace-dispatched"):
+            queued = jobs.dispatch_after_commit(AcmeProbeJob)
+
+        with active_trace_id("trace-flushed"):
+            await flush_pending_dispatches()
+            await jobs.wait_until_idle()
+
+        assert queued.wait().session.trace_id == "trace-dispatched"
 
     async def test_runs_as_its_dispatcher_within_the_deadline(
         self, jobs: InlineServiceFixture, queued: JobHandle[Any], callback_log: CallbackLog

@@ -2,25 +2,22 @@
 
 from __future__ import annotations
 
-import asyncio
-import contextvars
 import functools
 from dataclasses import dataclass, replace
 from datetime import UTC, datetime
 from typing import TYPE_CHECKING, Any
 
 from loom.core.errors.summary import ErrorSummary
-from loom.core.identity import reset_identity, set_identity
 from loom.core.job.callback import CallbackOutcome, JobCallback, notify
 from loom.core.job.context import add_pending_dispatch
 from loom.core.job.delivery import JobDelivery
 from loom.core.job.dispatch import JobDispatch
+from loom.core.job.envelope import resumed_delegation
 from loom.core.job.handle import InlineOutcome, JobHandle
 from loom.core.job.outcome import Abandoned, Failed, JobOutcome, Postponed, Succeeded
 from loom.core.job.policy import Countdown, Redelivery
 from loom.core.job.runner import JobRunner
 from loom.core.job.timer import JobDelayRefusedError, JobTimer
-from loom.core.tracing import active_trace_id
 
 if TYPE_CHECKING:
     from loom.core.engine.execution_observer import ExecutionObserver
@@ -43,11 +40,10 @@ class InlineJobTransport:
     Every dispatch, sent now or after the commit, with a countdown or none, is
     handed to the timer and runs once the sending call has returned, whatever
     the sender then does. A job a running job dispatches is enqueued the same
-    way, so a chain of jobs never nests. Each run starts in a context of its
-    own, detached from the sending execution: no invocation scope, post-commit
-    channel or log field of the sender reaches it; it acts as the dispatch's
-    delegation and in its trace. :meth:`wait_until_idle` returns once the timer
-    holds nothing.
+    way, so a chain of jobs never nests. The timer runs each step in a context
+    of its own, so no invocation scope, post-commit channel or log field of the
+    sender reaches the run; it acts as the dispatch's delegation and in its
+    trace. :meth:`wait_until_idle` returns once the timer holds nothing.
 
     Args:
         factory: Builds job and callback instances.
@@ -133,7 +129,7 @@ class InlineJobTransport:
 
     def _schedule(self, pending: _PendingDispatch, delay: Countdown) -> None:
         async def step() -> None:
-            await asyncio.create_task(self._run(pending), context=contextvars.Context())
+            await self._run(pending)
 
         self._timer.schedule(
             delay,
@@ -144,12 +140,8 @@ class InlineJobTransport:
 
     async def _run(self, pending: _PendingDispatch) -> None:
         dispatch = pending.dispatch
-        token = set_identity(dispatch.delegation.caller, until=dispatch.delegation.until)
-        try:
-            with active_trace_id(dispatch.envelope.trace_id):
-                await self._settle(pending, await self._runner.run(pending.delivery))
-        finally:
-            reset_identity(token)
+        with resumed_delegation(dispatch.delegation, dispatch.envelope.trace_id):
+            await self._settle(pending, await self._runner.run(pending.delivery))
 
     async def _settle(self, pending: _PendingDispatch, outcome: JobOutcome) -> None:
         match outcome:

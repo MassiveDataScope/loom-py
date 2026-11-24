@@ -21,6 +21,7 @@ from loom.core.identity import (
 from loom.core.job.callback import JobCallback
 from loom.core.job.job import Job
 from loom.core.stores.repository.registration import classify_key
+from loom.core.tracing import get_trace_id
 from loom.core.use_case.factory import UseCaseFactory, main_repository
 from loom.core.use_case.kinds import declare_kinds
 from loom.core.use_case.markers import Caller
@@ -55,6 +56,7 @@ class AcmeSession:
     def __init__(self, caller: Identity = Caller()) -> None:
         self.caller = caller
         self.execution = current_execution()
+        self.trace_id = get_trace_id()
 
 
 class AcmeProbe(UseCase[Any, "AcmeProbe"]):

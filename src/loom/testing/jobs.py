@@ -9,6 +9,8 @@ the timer of the inline transport: ``Override.instance(JobTimer, ManualTimer())`
 
 from __future__ import annotations
 
+import asyncio
+import contextvars
 import copy
 import functools
 import heapq
@@ -155,11 +157,12 @@ class DispatchedJob:
 class ManualTimer:
     """A :class:`~loom.core.job.timer.JobTimer` whose clock moves only when a test says so.
 
-    Nothing waits: a scheduled step runs inside :meth:`advance`, once the
-    clock reaches its time, or inside :meth:`wait_until_idle` when it is due
-    already. An inline dispatch with no countdown is due at once, so a test
-    drives it with ``await application.jobs.wait_until_idle()``, and one with a
-    countdown with ``await timer.advance(seconds)``.
+    Nothing waits: a scheduled step runs, in a context of its own, inside
+    :meth:`advance` once the clock reaches its time, or inside
+    :meth:`wait_until_idle` when it is due already. An inline dispatch with no
+    countdown is due at once, so a test drives it with ``await
+    application.jobs.wait_until_idle()``, and one with a countdown with ``await
+    timer.advance(seconds)``.
 
     :meth:`close` rehearses the shutdown of the real timer on the same clock. Under
     ``cancel`` it drops every pending step. Under ``wait`` it runs the pending
@@ -246,7 +249,7 @@ class ManualTimer:
         while self._steps and (limit is None or self._steps[0][0] <= limit):
             due, _, step, _ = heapq.heappop(self._steps)
             self._now = due
-            await step()
+            await asyncio.create_task(step(), context=contextvars.Context())
 
 
 class RecordingJobTransport:
