@@ -122,7 +122,7 @@ observability:
 |---|---|---|
 | `lambda` | The Lambda runtime's handler, given loom's JSON line under both log formats (`Text` and `JSON`); loom sets the level | `AWS_LAMBDA_FUNCTION_NAME` is set |
 | `json` | One JSON object per line on stdout; fields at the top level; `exception.type`, `loom.error.code`, `exception.stacktrace` | a deployed environment (`production`, `staging`) |
-| `text` | A readable line with `key=value` fields; line breaks in values are escaped | any other environment |
+| `text` | A readable line with a UTC timestamp and logfmt `key=value` fields; a value holding a space, `=` or `"` is quoted, line breaks are escaped | any other environment |
 
 The settings are validated at startup and by `loom check` as written
 (`loom.logger.E001` for a format other than `lambda`, `json` or `text`, `loom.logger.E002` for an unknown
@@ -147,7 +147,7 @@ test suite fails on any such record that breaks these rules; nothing else is che
 | Constant events | The message is a `LogEvent` member, never a sentence with values and never `%` arguments. |
 | Declared keys | Every field key is a `LogKey` member, and a key always carries one kind of value (text, number, boolean or list). |
 | No exception text | A record never copies `str(exc)` into a field. It writes `exception.type`, `loom.error.code` and, from ERROR up, the stack. |
-| One render | Values are rendered once, in the filter, before any handler: a `Secret` is masked, an object is its type name, a long value is cut. `json`, `lambda`, `text` and OpenTelemetry export write the same thing. |
+| One render | Each of loom's outputs renders its own copy of the values: a `Secret` is masked, an object is its type name, a long value is cut. `json`, `lambda`, `text` and OpenTelemetry export write the same thing, and the record itself is never changed. |
 | Prefixes for open bags | A job's `meta` is written under `loom.meta.<key>`, and the format's own layout keys (`timestamp`, `level`, `message`, `logger`) under `loom.extra.<key>`. An `extra` key with a loom field name replaces loom's value: that is your choice. |
 
 | Yours | What it means |
@@ -155,7 +155,7 @@ test suite fails on any such record that breaks these rules; nothing else is che
 | Your own loggers | Any logger outside `loom.*` is yours: loom does not check its messages, `%` arguments or keys. |
 | The values you pass | What you put in `meta`, in the attributes of a use case or job, in `log_context` and in the names and ids you choose reaches the log as you gave it. Do not put secrets there; wrap a sensitive string in `Secret` to have it masked. |
 | Your exceptions | Loom writes the stack of an exception it logs, and a stack holds the text of the exception, yours included. Keep secrets out of exception messages. |
-| Your handlers | The filter that stamps and renders records is attached to the handlers loom installs. A handler you add yourself without `ContextFilter` gets the record unrendered. |
+| Your handlers | The filter that stamps records is attached to the handlers loom installs. Loom's formatters render on their own, even on a handler without `ContextFilter`, and any handler you add sees the raw record, before or after loom's. |
 
 Declaring the events and keys of your own code is optional, and worth it when
 several places write the same event:

@@ -17,7 +17,7 @@ from typing import Final, TypeVar
 import pytest
 
 from loom.core.log_names import LogEvent, LogKey, SubKey
-from loom.core.logger.formats import TextFormatter, is_opaque, record_fields, render_value
+from loom.core.logger.formats import RecordFields, TextFormatter, render_value
 
 _Name = TypeVar("_Name", LogEvent, LogKey)
 
@@ -76,14 +76,17 @@ class Breach(StrEnum):
         declared = {key.value for key in loom_members(LogKey)}
         fields = {
             key: value
-            for key, value in record_fields(record).items()
+            for key, value in RecordFields(record).raw.items()
             if not isinstance(key, SubKey)
         }
         checks = {
             cls.MESSAGE_NOT_EVENT: not isinstance(record.msg, LogEvent),
             cls.MESSAGE_ARGUMENTS: bool(record.args),
             cls.UNDECLARED_KEY: any(key not in declared for key in fields),
-            cls.OPAQUE_VALUE: any(is_opaque(value) for value in fields.values()),
+            cls.OPAQUE_VALUE: any(
+                render_value(value) == type(value).__name__ and not isinstance(value, str)
+                for value in fields.values()
+            ),
             cls.KEY_RETYPED: any(
                 (kind := ValueKind.of(value)) is not None and kinds.get(key, kind) != kind
                 for key, value in fields.items()
@@ -102,7 +105,7 @@ class LogContract(logging.Handler):
 
     def emit(self, record: logging.LogRecord) -> None:
         self.records.append((record, Breach.broken_by(record, self._kinds)))
-        for key, value in record_fields(record).items():
+        for key, value in RecordFields(record).raw.items():
             kind = ValueKind.of(value)
             if kind is not None and not isinstance(key, SubKey):
                 self._kinds.setdefault(key, kind)

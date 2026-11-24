@@ -14,7 +14,6 @@ from loom.core.logger.formats import (
     TRUNCATION_MARKER,
     JsonFormatter,
     TextFormatter,
-    render_fields,
 )
 from loom.core.model.redaction import MASK, Dsn, RedactedMap, Secret
 
@@ -34,7 +33,6 @@ def _record(
         exc_info=None,
     )
     record.__dict__.update(extra)
-    render_fields(record)
     return record
 
 
@@ -51,11 +49,6 @@ class TestJsonFormatter:
             "billing.invoices",
         )
 
-    def test_the_timestamp_is_utc_iso_8601(self) -> None:
-        entry = json.loads(JsonFormatter().format(_record()))
-
-        assert entry["timestamp"].endswith("+00:00")
-
     def test_extra_keys_are_top_level_and_keep_their_dots(self) -> None:
         entry = json.loads(
             JsonFormatter().format(_record(**{LogField.JOB.value: "SendInvoice", "amount": 12.5}))
@@ -69,6 +62,17 @@ class TestJsonFormatter:
         entry = json.loads(JsonFormatter().format(_record(**{_STACK: stack})))
 
         assert entry[_STACK] == stack
+
+
+class TestTimestamp:
+    @pytest.mark.parametrize("formatter", [JsonFormatter(), TextFormatter()], ids=["json", "text"])
+    def test_the_timestamp_is_utc_iso_8601(self, formatter: logging.Formatter) -> None:
+        record = _record()
+        record.created = 0.0
+
+        line = formatter.format(record)
+
+        assert "1970-01-01T00:00:00.000+00:00" in line
 
 
 class TestTextFormatter:
@@ -191,16 +195,16 @@ class TestValueRendering:
         entry, line = _both(field="x" * (MAX_VALUE_LENGTH + 500))
 
         assert len(entry["field"]) == MAX_VALUE_LENGTH  # type: ignore[arg-type]
-        assert entry["field"].endswith(TRUNCATION_MARKER)  # type: ignore[union-attr]
-        assert line.endswith(TRUNCATION_MARKER)
+        assert entry["field"].endswith("..." + TRUNCATION_MARKER)  # type: ignore[union-attr]
+        assert line.endswith("..." + TRUNCATION_MARKER)
 
     def test_a_long_message_is_cut_in_both_formats(self) -> None:
         record = _record(msg="y" * (MAX_VALUE_LENGTH + 10))
 
         entry = json.loads(JsonFormatter().format(record))
 
-        assert entry["message"].endswith(TRUNCATION_MARKER)
-        assert TextFormatter().format(record).endswith(TRUNCATION_MARKER)
+        assert entry["message"].endswith("..." + TRUNCATION_MARKER)
+        assert TextFormatter().format(record).endswith("..." + TRUNCATION_MARKER)
 
 
 class TestLogInjection:
@@ -216,7 +220,7 @@ class TestLogInjection:
         line = TextFormatter().format(_record(user=self.FORGED))
 
         assert "\n" not in line
-        assert "user=ok\\r\\n2026" in line
+        assert 'user="' + self.FORGED.replace("\r", "\\r").replace("\n", "\\n") + '"' in line
 
     def test_json_keeps_one_line_for_a_value_with_line_breaks(self) -> None:
         line = JsonFormatter().format(_record(user=self.FORGED))

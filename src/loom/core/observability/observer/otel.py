@@ -23,6 +23,8 @@ from opentelemetry.trace import Tracer
 
 from loom.core.config.observability import OtelConfig
 from loom.core.errors import InvalidValue
+from loom.core.log_names import LogField
+from loom.core.logger.formats import RecordFields
 from loom.core.model.redaction import reveal_for_driver
 from loom.core.observability.diagnostic import ObservabilityEvent, ObservabilityKey
 from loom.core.observability.protocol import SpanFlusher
@@ -202,10 +204,12 @@ class OtelSpanFilter(logging.Filter):
 
 
 class OtelLogHandler(logging.Handler):
-    """Hand each record to the SDK's ``LoggingHandler`` with no exception attached.
+    """Hand the SDK's ``LoggingHandler`` a rendered copy of each record, with no exception.
 
-    The SDK turns ``exc_info`` into ``exception.message`` and a stack of its own; the
-    context filter has already put the type, the code and the stack on the record.
+    The copy carries the values loom's formats write, so a ``Secret`` is masked and an
+    object is its type name. The SDK turns ``exc_info`` into ``exception.message`` and a
+    stack of its own; the context filter has already put the type, the code and the
+    stack on the record.
     """
 
     def __init__(self, sdk_handler: logging.Handler) -> None:
@@ -213,12 +217,13 @@ class OtelLogHandler(logging.Handler):
         self._sdk_handler = sdk_handler
 
     def emit(self, record: logging.LogRecord) -> None:
-        """Export *record*, or a copy of it without ``exc_info`` when it carries one."""
-        if record.exc_info is not None:
-            record = copy.copy(record)
-            record.exc_info = None
-            record.exc_text = None
-        self._sdk_handler.emit(record)
+        """Export a copy of *record* with its fields rendered and no ``exc_info``."""
+        exported = copy.copy(record)
+        exported.__dict__.pop(LogField.EXCEPTION_STACKTRACE, None)
+        exported.__dict__.update(RecordFields(record).rendered)
+        exported.exc_info = None
+        exported.exc_text = None
+        self._sdk_handler.emit(exported)
 
     def flush(self) -> None:
         """Flush the SDK's handler."""

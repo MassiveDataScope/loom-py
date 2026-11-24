@@ -10,13 +10,11 @@ from typing import Final
 from loom.core.errors.summary import ErrorSummary
 from loom.core.log_names import LogField
 from loom.core.logger.context import current_log_fields
-from loom.core.logger.formats import render_fields
+from loom.core.logger.formats import truncated
 from loom.core.tracing.context import get_trace_id
 
 MAX_STACK_LENGTH: Final = 16_384
 """Characters of a written stack; a longer one keeps its end, where the failure is."""
-
-STACK_CUT_MARKER: Final = "[truncated]..."
 
 _STACK_FORMATTER: Final = logging.Formatter()
 
@@ -69,9 +67,8 @@ class ContextFilter(logging.Filter):
     already on the record, passed as ``extra``, is kept. It is the one owner of what
     a record says about its exception: ``exception.type``, ``loom.error.code`` for a
     ``CodedError``, and from ERROR up ``exception.stacktrace``, never the message. It
-    renders every field value once, before any handler, so each output writes the
-    same values; a handler that runs before the one carrying this filter sees the values as
-    they were passed.
+    only adds fields and never changes a value: each of loom's outputs renders its own
+    copy, so any handler sees the values as they were passed.
     It never drops a record.
 
     Args:
@@ -106,7 +103,6 @@ class ContextFilter(logging.Filter):
             stamped[LogField.TRACE_ID] = trace_id
         fields = record.__dict__
         fields.update({key: value for key, value in stamped.items() if key not in fields})
-        render_fields(record)
         self._stamp_failure(record)
         return True
 
@@ -127,11 +123,6 @@ class ContextFilter(logging.Filter):
         fields.update(ErrorSummary.of(record.exc_info[1]).fields())
         if record.levelno >= logging.ERROR:
             record.exc_text = record.exc_text or _STACK_FORMATTER.formatException(record.exc_info)
-            fields[LogField.EXCEPTION_STACKTRACE] = ContextFilter._kept_end(record.exc_text)
-
-    @staticmethod
-    def _kept_end(stack: str) -> str:
-        """*stack*, or its last :data:`MAX_STACK_LENGTH` characters after a marker."""
-        if len(stack) <= MAX_STACK_LENGTH:
-            return stack
-        return STACK_CUT_MARKER + stack[len(STACK_CUT_MARKER) - MAX_STACK_LENGTH :]
+            fields[LogField.EXCEPTION_STACKTRACE] = truncated(
+                record.exc_text, MAX_STACK_LENGTH, keep="end"
+            )

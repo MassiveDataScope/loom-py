@@ -8,7 +8,7 @@ from typing import Any
 
 import pytest
 
-from loom.core.logger.formats import record_fields
+from loom.core.logger.formats import RecordFields
 
 
 class CapturingHandler(logging.Handler):
@@ -59,7 +59,7 @@ class CapturedLog:
     def calls(self) -> list[tuple[str, dict[str, Any]]]:
         """Each event logged so far, in order, with the fields it carried."""
         return [
-            (record.getMessage(), record_fields(record))
+            (record.getMessage(), RecordFields(record).raw)
             for record in self._caplog.records
             if self._logger is None or record.name == self._logger
         ]
@@ -73,7 +73,7 @@ class CapturedLog:
     def errors(self) -> list[tuple[str, dict[str, Any]]]:
         """Each event logged at ERROR or above, in order, with the fields it carried."""
         return [
-            (record.getMessage(), record_fields(record))
+            (record.getMessage(), RecordFields(record).raw)
             for record in self._caplog.records
             if record.levelno >= logging.ERROR
             and (self._logger is None or record.name == self._logger)
@@ -93,7 +93,7 @@ class CapturedLog:
 
 def rendered(record: logging.LogRecord) -> str:
     """The message of *record* followed by its fields, to look for a value in one string."""
-    return f"{record.getMessage()} {record_fields(record)}"
+    return f"{record.getMessage()} {RecordFields(record).raw}"
 
 
 def logged_text(caplog: pytest.LogCaptureFixture) -> str:
@@ -113,8 +113,8 @@ def exception_text(caplog: pytest.LogCaptureFixture) -> str:
 def logged_events(caplog: pytest.LogCaptureFixture) -> list[dict[str, Any]]:
     """Each record of *caplog* as ``{"event": message, **fields, "level": ...}``, in order."""
     return [
-        {"event": record.getMessage(), "level": record.levelname.lower(), **record_fields(record)}
-        for record in caplog.records
+        {"event": each.getMessage(), "level": each.levelname.lower(), **RecordFields(each).raw}
+        for each in caplog.records
     ]
 
 

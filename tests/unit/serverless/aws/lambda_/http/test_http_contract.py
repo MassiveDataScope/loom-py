@@ -13,7 +13,7 @@ import json
 
 import pytest
 
-from loom.core.logger.formats import record_fields
+from loom.core.logger.formats import RecordFields
 from tests.helpers.loggers import logged_text
 from tests.unit.serverless.aws.lambda_.http._clients import TRACE_ID, Client
 from tests.unit.serverless.aws.lambda_.http._contract_app import (
@@ -287,7 +287,7 @@ class TestHttpContract:
             status,
             {"detail": {"trace_id": TRACE_ID, "code": code, "message": message}},
         )
-        logged_codes = {record_fields(record).get("loom.error.code") for record in caplog.records}
+        logged_codes = {RecordFields(each).raw.get("loom.error.code") for each in caplog.records}
         assert code in logged_codes
         assert secret not in logged_text(caplog)
 
