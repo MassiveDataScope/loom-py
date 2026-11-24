@@ -29,6 +29,7 @@ from loom.streaming.bytewax.handlers import steps as _steps  # noqa: E402
 from loom.streaming.core._errors import ErrorEnvelope, ErrorKind  # noqa: E402
 from loom.streaming.core._message import Message, MessageMeta  # noqa: E402
 from loom.streaming.core._typing import StreamPayload  # noqa: E402
+from loom.streaming.event import StreamingKey  # noqa: E402
 from loom.streaming.graph._flow import Process  # noqa: E402
 from loom.streaming.nodes._boundary import IntoTopic  # noqa: E402
 from loom.streaming.nodes._broadcast import Broadcast, BroadcastRoute  # noqa: E402
@@ -79,34 +80,34 @@ class RecordingNodeEventObserver:
 
     def emit(self, event: LifecycleEvent) -> None:
         if event.scope is Scope.NODE and event.kind is EventKind.START:
-            node_idx = cast(int, event.meta.get("node_idx", 0))
+            node_index = cast(int, event.meta.get("node_index", 0))
             self.events.append(
                 (
                     "start",
                     str(event.meta.get("flow", "")),
-                    node_idx,
+                    node_index,
                     str(event.meta.get("node_type")),
                 )
             )
         elif event.scope is Scope.NODE and event.kind is EventKind.END:
-            node_idx = cast(int, event.meta.get("node_idx", 0))
+            node_index = cast(int, event.meta.get("node_index", 0))
             self.events.append(
                 (
                     "end",
                     str(event.meta.get("flow", "")),
-                    node_idx,
+                    node_index,
                     f"{event.meta.get('node_type')}:"
                     f"{event.status.value if event.status is not None else None}",
                 )
             )
         elif event.scope is Scope.NODE and event.kind is EventKind.ERROR:
             error_type = event.failure.type if event.failure is not None else None
-            node_idx = cast(int, event.meta.get("node_idx", 0))
+            node_index = cast(int, event.meta.get("node_index", 0))
             self.events.append(
                 (
                     "error",
                     str(event.meta.get("flow", "")),
-                    node_idx,
+                    node_index,
                     f"{event.meta.get('node_type')}:{error_type}",
                 )
             )
@@ -484,10 +485,9 @@ class TestExecuteRecordStep:
         )
 
         assert step.context == {
-            "flow_name": "orders",
-            "node_idx": 3,
-            "node_type": "ContextAware",
-            "method": "execute",
+            StreamingKey.FLOW: "orders",
+            StreamingKey.NODE_INDEX: 3,
+            StreamingKey.NODE_TYPE: "ContextAware",
         }
 
     def test_execute_record_step_propagates_business_error_and_observes(self) -> None:

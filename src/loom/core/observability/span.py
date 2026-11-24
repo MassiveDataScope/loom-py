@@ -35,6 +35,7 @@ from opentelemetry.trace import (
     use_span,
 )
 
+from loom.core.log_names import LogField
 from loom.core.observability.event import EventKind, LifecycleEvent, Scope
 
 
@@ -144,7 +145,7 @@ def apply_terminal_state(span: Span, event: LifecycleEvent) -> None:
             span.set_status(StatusCode.ERROR)
             return
         span.set_status(StatusCode.ERROR, event.failure.describe())
-        span.add_event("exception", dict(event.failure.fields()))
+        span.add_event("exception", dict(event.failure.fields(LogField.EXCEPTION_TYPE)))
         return
     span.set_status(StatusCode.OK)
 

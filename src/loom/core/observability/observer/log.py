@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import logging
 
-from loom.core.logger import FailureForm, LogEvent, LogField, LogKey, ValueKind
+from loom.core.logger import LogEvent, LogField, LogKey, ValueKind
 from loom.core.observability.event import EventKind, LifecycleEvent, Scope
 
 _log = logging.getLogger(__name__)
@@ -15,7 +15,7 @@ class LifecycleLog(LogEvent):
 
     STARTED = "observability.lifecycle_started"
     ENDED = "observability.lifecycle_ended"
-    FAILED = "observability.lifecycle_failed", FailureForm.SUMMARY_ONLY
+    FAILED = "observability.lifecycle_failed"
 
 
 class LifecycleKey(LogKey):

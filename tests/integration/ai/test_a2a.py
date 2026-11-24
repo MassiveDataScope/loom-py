@@ -42,7 +42,12 @@ from loom.ai.abc import (
 )
 from loom.ai.compiler._plan import AgentPlan
 from loom.ai.config import A2AConfig, AgentEndpointConfig
-from loom.ai.errors import AgentCompilationError, AgentErrorCode, AgentRunErrorCode
+from loom.ai.errors import (
+    AgentCompilationError,
+    AgentErrorCode,
+    AgentRunError,
+    AgentRunErrorCode,
+)
 from loom.ai.event import AiEvent, AiKey
 from loom.ai.execution import AgentHost
 from loom.ai.fastapi.endpoints import mount_agent_endpoints
@@ -794,7 +799,7 @@ class TestFailureRedaction:
         assert "usecase_pricing" not in response.text
 
     async def test_returns_the_stable_code_when_the_run_fails(
-        self, deps: StubDepsFactory, container: LoomContainer
+        self, deps: StubDepsFactory, container: LoomContainer, caplog: pytest.LogCaptureFixture
     ) -> None:
         """The caller still gets the code, plus a fixed catalogue detail."""
         engines = {_AGENT: ScriptedEngine(script=error_script(_FAILING_CODE, _RUN_CANARY))}
@@ -809,6 +814,7 @@ class TestFailureRedaction:
             "code": str(_FAILING_CODE),
             "detail": "a capability call exceeded its time limit",
         }
+        assert CapturedLog(caplog).exception_types(AiEvent.RUN_FAILED) == [AgentRunError]
 
     async def test_does_not_return_the_exception_text_when_the_failure_is_unexpected(
         self, deps: StubDepsFactory, container: LoomContainer

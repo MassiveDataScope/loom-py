@@ -113,7 +113,7 @@ class LifecycleEvent(LoomFrozenStruct, frozen=True, kw_only=True):
         failure: The failure's type and code, never its message. Set on ``ERROR`` only.
         meta: Domain-specific fields forwarded as top-level keys by all
             observer backends. Adapters use this to carry rich context
-            (``flow``, ``node_idx``, ``run_id``, …) without coupling
+            (``flow``, ``node_index``, ``run_id``, …) without coupling
             ``LifecycleEvent`` to domain types.
     """
 

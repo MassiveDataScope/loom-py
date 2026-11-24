@@ -743,7 +743,7 @@ class TestIssuingFailureLog:
 
         record = next(r for r in caplog.records if r.msg == RestEvent.TOKEN_SIGNING_FAILED)
         assert record.exc_info is None
-        assert getattr(record, LogField.EXCEPTION_TYPE) == "ValueError"
+        assert getattr(record, LogField.ERROR_TYPE) == "ValueError"
         assert "backend detail" not in caplog.text
 
 

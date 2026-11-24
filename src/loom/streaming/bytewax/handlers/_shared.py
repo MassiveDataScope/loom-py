@@ -30,6 +30,7 @@ from loom.streaming.core._errors import ErrorEnvelope, ErrorKind
 from loom.streaming.core._message import Message
 from loom.streaming.core._tracing import open_terminal_span
 from loom.streaming.core._typing import StreamPayload
+from loom.streaming.event import StreamingKey
 
 if TYPE_CHECKING:
     from loom.stores.sqlalchemy.session_manager import SessionManager
@@ -187,12 +188,18 @@ def _node_span_name(flow_name: str, idx: int) -> str:
 
 def _node_meta(flow_name: str, idx: int, node_type: str) -> dict[str, object]:
     """Return the fields every node span of one position carries."""
-    return {"flow": flow_name, "node_idx": idx, "node_type": node_type}
+    return {"flow": flow_name, "node_index": idx, "node_type": node_type}
 
 
 def _node_log_context(flow_name: str, idx: int, node_type: str) -> AbstractContextManager[None]:
     """Bind the node's identity onto the log context for the duration of its execution."""
-    return log_context(flow_name=flow_name, node_idx=idx, node_type=node_type, method="execute")
+    return log_context(
+        {
+            StreamingKey.FLOW: flow_name,
+            StreamingKey.NODE_INDEX: idx,
+            StreamingKey.NODE_TYPE: node_type,
+        }
+    )
 
 
 @contextmanager

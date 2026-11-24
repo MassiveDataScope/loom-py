@@ -31,12 +31,12 @@ class TestErrorSummary:
             (
                 ErrorSummary(type="NotFound", code="not_found"),
                 "NotFound (not_found)",
-                {LogField.EXCEPTION_TYPE: "NotFound", LogField.ERROR_CODE: "not_found"},
+                {LogField.ERROR_TYPE: "NotFound", LogField.ERROR_CODE: "not_found"},
             ),
             (
                 ErrorSummary(type="ValueError"),
                 "ValueError",
-                {LogField.EXCEPTION_TYPE: "ValueError"},
+                {LogField.ERROR_TYPE: "ValueError"},
             ),
         ],
         ids=["with-code", "without-code"],

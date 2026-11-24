@@ -9,6 +9,7 @@ from opentelemetry.sdk.trace import TracerProvider
 
 from loom.core.config.observability import OtelConfig
 from loom.core.errors.summary import ErrorSummary
+from loom.core.log_names import LogField
 from loom.core.observability.event import EventKind, LifecycleEvent, LifecycleStatus, Scope
 from loom.core.observability.observer.log import LifecycleLog, LogLifecycleObserver
 from loom.core.observability.observer.noop import NoopObserver
@@ -184,19 +185,22 @@ class TestLogLifecycleObserver:
         LogLifecycleObserver().on_event(_event(kind=EventKind.ERROR, failure=summary))
 
         [fields] = lifecycle_log.named(LifecycleLog.FAILED)
-        assert (fields["exception.type"], fields["loom.error.code"]) == (summary.type, summary.code)
+        assert (fields[LogField.ERROR_TYPE], fields[LogField.ERROR_CODE]) == (
+            summary.type,
+            summary.code,
+        )
 
     def test_meta_is_forwarded_under_its_own_prefix(self, lifecycle_log: CapturedLog) -> None:
         LogLifecycleObserver().on_event(
             _event(
                 scope=Scope.NODE,
                 kind=EventKind.START,
-                meta={"flow": "my_flow", "node_idx": 0},
+                meta={"flow": "my_flow", "node_index": 0},
             )
         )
 
         [fields] = lifecycle_log.named("observability.lifecycle_started")
-        assert (fields["loom.meta.flow"], fields["loom.meta.node_idx"]) == ("my_flow", 0)
+        assert (fields["loom.meta.flow"], fields["loom.meta.node_index"]) == ("my_flow", 0)
 
     def test_a_meta_key_that_is_a_record_attribute_does_not_break_logging(
         self, lifecycle_log: CapturedLog

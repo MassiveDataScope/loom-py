@@ -10,6 +10,7 @@ from __future__ import annotations
 
 import logging
 
+import pydantic
 import pytest
 from pydantic_ai.messages import (
     ModelMessage,
@@ -213,7 +214,9 @@ class TestOverBound:
 
 
 class TestMalformedHistory:
-    async def test_run_fails_without_calling_the_model_when_the_history_is_not_json(self) -> None:
+    async def test_run_fails_without_calling_the_model_when_the_history_is_not_json(
+        self, caplog: pytest.LogCaptureFixture
+    ) -> None:
         seen: list[list[ModelMessage]] = []
         engine = _engine(seen)
 
@@ -226,6 +229,9 @@ class TestMalformedHistory:
         assert str(failure.value) == CONVERSATION_LOAD_FAILED_MESSAGE
         assert failure.value.usage is None
         assert seen == []
+        assert CapturedLog(caplog).exception_types(AiEvent.HISTORY_INVALID) == [
+            pydantic.ValidationError
+        ]
 
     async def test_the_stream_emits_an_error_without_calling_the_model_when_the_history_is_not_json(
         self,

@@ -36,7 +36,7 @@ class TestObservability:
                 scope=Scope.NODE,
                 name="my_flow:0",
                 kind=EventKind.START,
-                meta={"flow": "my_flow", "node_idx": 0, "node_type": "Step"},
+                meta={"flow": "my_flow", "node_index": 0, "node_type": "Step"},
             )
         )
         runtime.emit(
@@ -46,7 +46,7 @@ class TestObservability:
                 kind=EventKind.END,
                 duration_ms=5,
                 status=LifecycleStatus.SUCCESS,
-                meta={"flow": "my_flow", "node_idx": 0, "node_type": "Step"},
+                meta={"flow": "my_flow", "node_index": 0, "node_type": "Step"},
             )
         )
         runtime.emit(LifecycleEvent(scope=Scope.POLL_CYCLE, name="my_flow", kind=EventKind.END))

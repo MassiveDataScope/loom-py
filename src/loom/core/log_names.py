@@ -10,20 +10,45 @@ import re
 from enum import StrEnum
 from typing import Final, Self
 
-EVENT_FORM: Final = re.compile(
+_EVENT_FORM: Final = re.compile(
     r"[a-z][a-z0-9]*(?:\.[a-z][a-z0-9]*)*\.[a-z][a-z0-9]*(?:_[a-z0-9]+)+"
 )
-"""``<area>.<subject>_<fact>``, lowercase: ``job.delivery_abandoned``."""
+_KEY_FORM: Final = re.compile(r"[a-z][a-z0-9]*(?:_[a-z0-9]+)*(?:\.[a-z][a-z0-9]*(?:_[a-z0-9]+)*)*")
 
 
-class FailureForm(StrEnum):
-    """How the records of a :class:`LogEvent` carry the failure they name."""
+class _EventTable:
+    """The events declared so far, each with the class that declared it.
 
-    ATTACHED = "attached"
-    """The record passes the exception as ``exc_info``; the context filter writes its fields."""
-    SUMMARY_ONLY = "summary_only"
-    """The record writes the exception's summary fields without ``exc_info``: its emitter
-    holds only the summary, or must not keep the frames."""
+    One class alone declares a value. A class declared again by ``importlib.reload``
+    is the same declaration, and keeps its values.
+    """
+
+    __slots__ = ("_declarers",)
+
+    def __init__(self) -> None:
+        self._declarers: dict[str, type] = {}
+
+    def declare(self, value: str, cls: type) -> None:
+        """Record that *cls* declares the event *value*.
+
+        Raises:
+            ValueError: Another class, or another member of *cls*, declared *value*.
+        """
+        declarer = self._declarers.get(value)
+        if declarer is not None and not self._is_reload_of(declarer, cls):
+            raise ValueError(f"log event {value!r} is already declared by {declarer.__qualname__}")
+        self._declarers[value] = cls
+
+    @staticmethod
+    def _is_reload_of(declarer: type, cls: type) -> bool:
+        """Whether *cls* is the class *declarer* was, declared again."""
+        return declarer is not cls and (declarer.__module__, declarer.__qualname__) == (
+            cls.__module__,
+            cls.__qualname__,
+        )
+
+
+_DECLARED_EVENTS: Final = _EventTable()
 
 
 class LogEvent(StrEnum):
@@ -31,34 +56,33 @@ class LogEvent(StrEnum):
 
     A record's message is the event, never a sentence with values in it: the
     values travel in the record's fields (a :class:`LogKey` each), so a collector
-    can filter on both. Every member of a subclass is named
-    ``<area>.<subject>_<fact>`` in lowercase; an architecture test enforces it.
-    A member names a failure :attr:`FailureForm.ATTACHED` unless it declares its
-    :class:`FailureForm` beside its name.
+    can filter on both. Every member is named ``<area>.<subject>_<fact>`` in
+    lowercase, and one class alone declares each value: declaring a member out of
+    form, or a value another class or member already declared, raises ``ValueError``.
+    The same class declared again, as ``importlib.reload`` does, keeps its values.
 
     Example::
 
         class InvoiceEvent(LogEvent):
             ISSUED = "billing.invoice_issued"
-            REFUSED = "billing.invoice_refused", FailureForm.SUMMARY_ONLY
 
-        log.info(InvoiceEvent.ISSUED, extra={"invoice.id": invoice_id})
+        log.info(InvoiceEvent.ISSUED, extra={InvoiceKey.ID: invoice_id})
     """
 
     _value_: str
-    failure_form: FailureForm
 
-    def __new__(cls, value: str, failure_form: FailureForm = FailureForm.ATTACHED) -> Self:
-        """Declare the event *value*, whose records carry a failure as *failure_form* says."""
+    def __new__(cls, value: str) -> Self:
+        """Declare the event *value*.
+
+        Raises:
+            ValueError: *value* is out of form, or another class or member declared it.
+        """
+        if _EVENT_FORM.fullmatch(value) is None:
+            raise ValueError(f"log event {value!r} is not named <area>.<subject>_<fact>")
+        _DECLARED_EVENTS.declare(value, cls)
         member = str.__new__(cls, value)
         member._value_ = value
-        member.failure_form = failure_form
         return member
-
-    @property
-    def is_well_formed(self) -> bool:
-        """Whether the value follows ``<area>.<subject>_<fact>``."""
-        return EVENT_FORM.fullmatch(self.value) is not None
 
 
 class ValueKind(StrEnum):
@@ -69,24 +93,6 @@ class ValueKind(StrEnum):
     BOOLEAN = "boolean"
     ARRAY = "array"
     OBJECT = "object"
-
-    @classmethod
-    def of(cls, rendered: object) -> ValueKind | None:
-        """The kind of a value :func:`~loom.core.logger.formats.render_value` wrote.
-
-        The inverse of ``render_value``: ``None`` for a missing value.
-        """
-        match rendered:
-            case None:
-                return None
-            case bool():
-                return cls.BOOLEAN
-            case int() | float():
-                return cls.NUMBER
-            case list():
-                return cls.ARRAY
-            case _:
-                return cls.STRING
 
 
 class SubKey(str):
@@ -135,16 +141,31 @@ class LogKey(StrEnum):
 
     An area key is ``loom.<area>.<name>``; the OpenTelemetry semantic-convention
     names belong in :class:`LogField` only. A member carries text unless it declares
-    its :class:`ValueKind` beside its name, ``ROWS = "loom.etl.rows", ValueKind.NUMBER``;
-    declaring a key that clashes with another raises ``ValueError``. A bag whose
-    names are the developer's is an ``OBJECT`` member, and takes its keys through :meth:`of`.
+    its :class:`ValueKind` beside its name, ``ROWS = "loom.etl.rows", ValueKind.NUMBER``.
+    A key is dotted lowercase ``snake_case`` and only loom declares a ``loom.`` key:
+    declaring one out of form, a ``loom.`` key elsewhere, or a key that clashes with
+    another raises ``ValueError``. A bag whose names are the developer's is an
+    ``OBJECT`` member, and takes its keys through :meth:`of`.
     """
 
     _value_: str
     kind: ValueKind
 
     def __new__(cls, value: str, kind: ValueKind = ValueKind.STRING) -> Self:
-        """Declare the key *value*, carrying *kind*."""
+        """Declare the key *value*, carrying *kind*.
+
+        Raises:
+            ValueError: *value* is not dotted lowercase ``snake_case``, is a ``loom.`` key
+                declared outside the ``loom`` package, is an area key of loom outside
+                ``loom.``, or clashes with a declared key.
+        """
+        if _KEY_FORM.fullmatch(value) is None:
+            raise ValueError(f"log key {value!r} is not dotted lowercase snake_case")
+        declared_by_loom = cls.__module__.partition(".")[0] == "loom"
+        if value.startswith("loom.") != declared_by_loom and cls.__module__ != __name__:
+            raise ValueError(
+                f"log key {value!r} is reserved to loom: only loom, and always loom.<area>.<name>"
+            )
         _DECLARED_KEYS.declare(value, kind)
         member = str.__new__(cls, value)
         member._value_ = value
@@ -187,6 +208,7 @@ class LogField(LogKey):
     EVENT_KIND = "loom.event_kind"
     USE_CASE_COUNT = "loom.use_case_count", ValueKind.NUMBER
     EXCEPTION_TYPE = "exception.type"
+    ERROR_TYPE = "error.type"
     EXCEPTION_STACKTRACE = "exception.stacktrace"
     ERROR_CODE = "loom.error.code"
     HTTP_REQUEST_METHOD = "http.request.method"

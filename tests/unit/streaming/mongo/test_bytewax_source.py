@@ -15,6 +15,7 @@ require_bytewax()
 from loom.core.model.redaction import Dsn  # noqa: E402
 from loom.core.plugins.optional import MissingExtraError  # noqa: E402
 from loom.streaming.compiler import CompiledMongoCDCSource  # noqa: E402
+from loom.streaming.event import StreamingEvent  # noqa: E402
 from loom.streaming.mongo import MongoSourceConfig  # noqa: E402
 from loom.streaming.mongo._bytewax_source import (  # noqa: E402
     MongoCDCPartition,
@@ -22,6 +23,7 @@ from loom.streaming.mongo._bytewax_source import (  # noqa: E402
     _build_pipeline,
     _resolve_watch_options,
 )
+from tests.helpers.loggers import CapturedLog  # noqa: E402
 
 
 class TestBuildPipeline:
@@ -216,7 +218,7 @@ class _FakeClient:
 
 class TestPartitionNextBatch:
     def test_partition_skips_batch_when_try_next_raises_unexpected_error(
-        self, monkeypatch: Any
+        self, monkeypatch: Any, caplog: pytest.LogCaptureFixture
     ) -> None:
         partition = _build_partition(
             monkeypatch,
@@ -227,9 +229,14 @@ class TestPartitionNextBatch:
         batch = partition.next_batch()
 
         assert batch == []
+        assert CapturedLog(caplog).exception_types(StreamingEvent.MONGO_CDC_EVENT_SKIPPED) == [
+            ValueError
+        ]
         partition.close()
 
-    def test_partition_skips_event_when_message_build_fails(self, monkeypatch: Any) -> None:
+    def test_partition_skips_event_when_message_build_fails(
+        self, monkeypatch: Any, caplog: pytest.LogCaptureFixture
+    ) -> None:
         docs = [
             {
                 "_id": {"_data": "resume-bad"},
@@ -267,6 +274,9 @@ class TestPartitionNextBatch:
 
         assert len(batch) == 1
         assert batch[0].payload.event_id == "resume-ok"
+        assert CapturedLog(caplog).exception_types(StreamingEvent.MONGO_CDC_MESSAGE_SKIPPED) == [
+            TypeError
+        ]
         partition.close()
 
     def test_partition_does_not_swallow_operation_failure_unexpired(self, monkeypatch: Any) -> None:

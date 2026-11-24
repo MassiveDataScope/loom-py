@@ -1,59 +1,13 @@
-"""Every log event and key loom declares is well formed and names one thing.
+"""A log event or key is checked when its class is declared, in production too.
 
-The key registry is process-wide: a key a test declares stays under its own ``acme.<test>.*`` name.
+The declarations are process-wide: a name a test declares stays under its own ``acme.*`` value.
 """
 
 from __future__ import annotations
 
-import importlib
-from pathlib import Path
-
 import pytest
 
-from loom.core.log_names import LogEvent, LogField, LogKey, ValueKind
-from tests.helpers.log_standard import loom_members
-from tests.helpers.source_tree import source_files
-
-_SRC = Path(__file__).resolve().parents[2] / "src"
-_DECLARATIONS = ("(LogEvent)", "(LogKey)")
-
-
-@pytest.fixture(scope="module")
-def declared_names() -> None:
-    for path in source_files():
-        if any(marker in path.read_text() for marker in _DECLARATIONS):
-            module = ".".join(path.relative_to(_SRC).with_suffix("").parts)
-            try:
-                importlib.import_module(module)
-            except ModuleNotFoundError as missing:
-                pytest.skip(f"{module} needs {missing.name}")
-
-
-@pytest.mark.usefixtures("declared_names")
-class TestLoomLogNames:
-    @pytest.mark.parametrize("root", [LogEvent, LogKey])
-    def test_loom_declares_members(self, root: type[LogEvent | LogKey]) -> None:
-        assert loom_members(root)
-
-    @pytest.mark.parametrize("root", [LogEvent, LogKey])
-    def test_no_value_names_two_members(self, root: type[LogEvent | LogKey]) -> None:
-        values = [member.value for member in loom_members(root)]
-
-        assert len(values) == len(set(values))
-
-    def test_every_event_follows_area_subject_fact(self) -> None:
-        misnamed = [event for event in loom_members(LogEvent) if not event.is_well_formed]
-
-        assert misnamed == []
-
-    def test_an_area_key_starts_with_loom(self) -> None:
-        outside = [
-            key
-            for key in loom_members(LogKey)
-            if not isinstance(key, LogField) and not key.startswith("loom.")
-        ]
-
-        assert outside == []
+from loom.core.log_names import LogEvent, LogKey, ValueKind
 
 
 class TestSubKey:
@@ -100,23 +54,57 @@ class TestKeyDeclaration:
 
         assert again.KEY.kind is ValueKind.ARRAY
 
-
-class TestEventForm:
     @pytest.mark.parametrize(
-        ("value", "well_formed"),
+        "value",
+        ["Acme.form.key", "acme..key", "acme.key_", "acme.key__name", "acme.key-name", ".acme"],
+        ids=["capital", "empty-segment", "trailing-underscore", "double-underscore", "dash", "dot"],
+    )
+    def test_a_key_out_of_form_is_refused(self, value: str) -> None:
+        with pytest.raises(ValueError, match="snake_case"):
+            LogKey("Sample", {"KEY": value})
+
+    @pytest.mark.parametrize(
+        ("value", "module"),
         [
-            ("job.delivery_abandoned", True),
-            ("observability.lifecycle_started", True),
-            ("a.b_c_d", True),
-            ("JobAbandoned", False),
-            ("job_abandoned", False),
-            ("job.abandoned", False),
-            ("Job.delivery_abandoned", False),
-            ("[BOOT] x", False),
+            pytest.param("loom.acme.key", __name__, id="loom-key-outside-loom"),
+            pytest.param("loom.acme.key", "loomx.ext", id="loom-key-in-a-look-alike-package"),
+            pytest.param("acme.key", "loom.acme.event", id="loom-area-key-outside-loom-prefix"),
         ],
     )
-    def test_only_a_name_in_the_form_is_well_formed(self, value: str, well_formed: bool) -> None:
-        class Sample(LogEvent):
-            EVENT = value
+    def test_a_key_on_the_wrong_side_of_loom_is_refused(self, value: str, module: str) -> None:
+        with pytest.raises(ValueError, match="reserved to loom"):
+            LogKey("Sample", {"KEY": value}, module=module)
 
-        assert Sample.EVENT.is_well_formed is well_formed
+
+class TestEventDeclaration:
+    @pytest.mark.parametrize(
+        "value",
+        [
+            pytest.param("AcmeThingDone", id="camel"),
+            pytest.param("acme_thing_done", id="no-area"),
+            pytest.param("acme.done", id="no-fact"),
+            pytest.param("Acme.thing_done", id="capital"),
+            pytest.param("acme.thing__done", id="double-underscore"),
+            pytest.param("acme.thing_done_", id="trailing-underscore"),
+            pytest.param("acme._thing_done", id="leading-underscore"),
+            pytest.param("[BOOT] x", id="sentence"),
+        ],
+    )
+    def test_an_event_out_of_form_is_refused(self, value: str) -> None:
+        with pytest.raises(ValueError, match="<area>.<subject>_<fact>"):
+            LogEvent("Sample", {"EVENT": value})
+
+    def test_an_event_another_class_declared_is_refused(self) -> None:
+        LogEvent("First", {"EVENT": "acme.thing_shared"})
+
+        with pytest.raises(ValueError, match="already declared by First"):
+            LogEvent("Second", {"EVENT": "acme.thing_shared"})
+
+    def test_an_event_twice_in_one_class_is_refused(self) -> None:
+        with pytest.raises(ValueError, match="already declared by Aliased"):
+            LogEvent("Aliased", {"ONE": "acme.thing_aliased", "TWO": "acme.thing_aliased"})
+
+    def test_a_class_declared_again_keeps_its_values(self) -> None:
+        LogEvent("Again", {"EVENT": "acme.thing_again"})
+
+        assert LogEvent("Again", {"EVENT": "acme.thing_again"}).EVENT == "acme.thing_again"

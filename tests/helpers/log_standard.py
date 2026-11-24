@@ -9,32 +9,31 @@ from __future__ import annotations
 import logging
 from collections.abc import Iterator
 from enum import StrEnum
-from typing import Final, TypeVar
+from typing import Final
 
 import pytest
 
-from loom.core.log_names import FailureForm, LogEvent, LogField, LogKey, SubKey, ValueKind
-from loom.core.logger.formats import TextFormatter, render_value
-from tests.helpers.loggers import logged_fields
-
-_Name = TypeVar("_Name", LogEvent, LogKey)
+from loom.core.log_names import LogEvent, LogField, LogKey, SubKey, ValueKind
+from loom.core.logger import current_log_fields
+from loom.core.logger.formats import RECORD_ATTRIBUTES, TextFormatter, render_value
 
 _QUOTED_TEXT_MIN: Final = 8
 """Characters of exception text that count as quoted inside a longer field value."""
 
 
-def loom_members(root: type[_Name]) -> list[_Name]:
-    """The members of every subclass of *root* that loom declares, once imported.
-
-    A subclass defined outside ``loom`` (a test's own) never counts.
-    """
-    pending, found = [root], []
-    while pending:
-        base = pending.pop()
-        pending.extend(base.__subclasses__())
-        if base.__module__.startswith("loom."):
-            found.extend(base)
-    return found
+def _kind_of(rendered: object) -> ValueKind | None:
+    """The kind of a value :func:`render_value` wrote, ``None`` for a missing one."""
+    match rendered:
+        case None:
+            return None
+        case bool():
+            return ValueKind.BOOLEAN
+        case int() | float():
+            return ValueKind.NUMBER
+        case list():
+            return ValueKind.ARRAY
+        case _:
+            return ValueKind.STRING
 
 
 class Breach(StrEnum):
@@ -46,44 +45,45 @@ class Breach(StrEnum):
     OPAQUE_VALUE = "opaque_value"
     WRONG_KIND = "wrong_kind"
     EXCEPTION_TEXT_IN_FIELD = "exception_text_in_field"
-    EXCEPTION_TYPE_WITHOUT_STACK = "exception_type_without_stack"
+    EXCEPTION_TYPE_BY_HAND = "exception_type_by_hand"
 
     @classmethod
     def broken_by(cls, record: logging.LogRecord) -> list[Breach]:
-        """The rules *record* breaks."""
-        keys = loom_members(LogKey)
-        declared = {key.value: key.kind for key in keys}
-        bags = tuple(f"{key.value}." for key in keys if key.kind is ValueKind.OBJECT)
-        fields = logged_fields(record)
+        """The rules *record* breaks, read from the record and the log context it runs in.
+
+        Each key is its own declaration. The contract handler sees the record before any
+        context filter, so ``exception.type`` on it was written by hand.
+        """
+        fields = {
+            **current_log_fields(),
+            **{
+                key: value
+                for key, value in record.__dict__.items()
+                if key not in RECORD_ATTRIBUTES and not str(key).startswith("_")
+            },
+        }
         failure = record.exc_info[1] if record.exc_info else None
         text = str(failure) if failure else ""
         quoting = len(text) >= _QUOTED_TEXT_MIN
         checks = {
             cls.MESSAGE_NOT_EVENT: not isinstance(record.msg, LogEvent),
             cls.MESSAGE_ARGUMENTS: bool(record.args),
-            cls.UNDECLARED_KEY: any(
-                key not in declared and not (isinstance(key, SubKey) and key.startswith(bags))
-                for key in fields
-            ),
+            cls.UNDECLARED_KEY: any(not isinstance(key, LogKey | SubKey) for key in fields),
             cls.OPAQUE_VALUE: any(
                 render_value(value) == type(value).__name__ and not isinstance(value, str)
                 for value in fields.values()
             ),
             cls.WRONG_KIND: any(
-                (kind := ValueKind.of(render_value(value))) is not None
-                and declared.get(key, kind) != kind
+                isinstance(key, LogKey)
+                and (kind := _kind_of(render_value(value))) is not None
+                and kind is not key.kind
                 for key, value in fields.items()
             ),
+            cls.EXCEPTION_TYPE_BY_HAND: LogField.EXCEPTION_TYPE in fields,
             cls.EXCEPTION_TEXT_IN_FIELD: bool(text)
             and any(
                 isinstance(value, str) and (value == text or (quoting and text in value))
                 for value in fields.values()
-            ),
-            cls.EXCEPTION_TYPE_WITHOUT_STACK: LogField.EXCEPTION_TYPE in fields
-            and failure is None
-            and not (
-                isinstance(record.msg, LogEvent)
-                and record.msg.failure_form is FailureForm.SUMMARY_ONLY
             ),
         }
         return [breach for breach, broken in checks.items() if broken]

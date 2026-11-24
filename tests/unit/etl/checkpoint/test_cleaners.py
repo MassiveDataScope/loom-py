@@ -41,9 +41,9 @@ class TestCheckpointCleaner:
 
         FsspecTempCleaner().delete_tree("nosuchproto://bucket/tmp")
 
-        assert CapturedLog(caplog, "loom.etl.checkpoint._cleaners").messages == [
+        assert CapturedLog(caplog, "loom.etl.checkpoint._cleaners").exception_types(
             EtlEvent.CHECKPOINT_CLEANUP_SKIPPED
-        ]
+        ) == [ValueError]
 
     # ---------------------------------------------------------------------------
     # CheckpointStore integration — cleaner is called on cleanup
