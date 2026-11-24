@@ -17,10 +17,12 @@ from opentelemetry.sdk.trace.export.in_memory_span_exporter import InMemorySpanE
 from opentelemetry.trace import StatusCode
 
 from loom.core.observability.observability import Observability
+from loom.core.observability.observer.log import LogLifecycleObserver
 from loom.etl import ETLParams, ETLPipeline, ETLProcess, ETLStep, FromTable, IntoTable
 from loom.etl.compiler import ETLCompiler
 from loom.etl.executor import ETLExecutor
 from loom.etl.testing import InMemorySourceReader, InMemoryTargetWriter
+from tests.helpers.loggers import laid_out_text
 
 
 class TracingParams(ETLParams):  # type: ignore[misc]
@@ -164,3 +166,18 @@ class TestExecutorTracing:
         assert _parent_span_id(_by_name(spans, "step:FailingLoad")) == _span_id(
             _by_name(spans, "process:FailingStaging")
         )
+
+
+class TestExecutorLog:
+    def test_a_run_logs_no_value_of_its_parameters(self, caplog: pytest.LogCaptureFixture) -> None:
+        executor = ETLExecutor(
+            InMemorySourceReader({"orders": object()}),
+            InMemoryTargetWriter(),
+            observability=Observability([LogLifecycleObserver()]),
+        )
+
+        executor.run_pipeline(
+            ETLCompiler().compile(DailySales), TracingParams(run_date=date(1987, 6, 5))
+        )
+
+        assert "1987" not in laid_out_text(caplog)

@@ -384,7 +384,7 @@ class TestTheHandlesSpan:
         spans = exporter.get_finished_spans()
         assert [span.name for span in spans] == ["agent:agent_run"]
         assert spans[0].attributes is not None
-        assert spans[0].attributes["subject"] == "ada"
+        assert "subject" not in spans[0].attributes
         assert spans[0].attributes["interaction_id"] == answer.interaction_id
 
     async def test_no_span_exists_without_observability(

@@ -16,6 +16,7 @@ from loom.core.config.convert import convert_config, dump_config
 from loom.core.config.errors import ConfigError
 from loom.core.errors import InternalError
 from loom.core.identity import Identity
+from loom.core.identity.context import IdentityKey
 from loom.core.identity.issuer import IssuedToken, TokenIssuer
 from loom.core.model.redaction import Secret
 from loom.rest.auth import (
@@ -27,6 +28,8 @@ from loom.rest.auth import (
 )
 from loom.rest.auth.abc import RequestCredentials
 from loom.rest.auth.jwt import ATTRIBUTE_CLAIM_PREFIX
+from loom.rest.event import RestEvent
+from tests.helpers.loggers import CapturedLog
 
 _AUDIENCE = "unit-test-api"
 _ISSUER = "unit-test-gateway"
@@ -214,6 +217,17 @@ class TestIssuerContract:
         assert issued.token.count(".") == 2
         assert issued.jti
         assert before + 900 <= issued.expires_at.timestamp() <= time.time() + 900
+
+    def test_issuing_is_a_security_event_naming_the_subject(
+        self, caplog: pytest.LogCaptureFixture
+    ) -> None:
+        private, _ = _keypair()
+        identity = _identity()
+
+        JwtIssuer(_issuer_config(private)).issue(identity)
+
+        issued = CapturedLog(caplog).named(RestEvent.TOKEN_ISSUED)
+        assert [fields[IdentityKey.SUBJECT] for fields in issued] == [identity.subject]
 
     def test_two_tokens_never_share_a_jti(
         self,

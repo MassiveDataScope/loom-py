@@ -38,7 +38,6 @@ from loom.ai.errors import (
 )
 from loom.ai.event import AiEvent, AiKey
 from loom.core.di import LoomContainer
-from loom.core.identity import Identity
 from loom.core.observability.event import Scope
 from loom.core.observability.observability import Observability
 
@@ -132,9 +131,7 @@ def bundle_container(run: RunContext[Any]) -> LoomContainer:
     return container
 
 
-def _span(
-    context: BuildContext, kind: str, tool: str, identity: Identity
-) -> AbstractContextManager[None]:
+def _span(context: BuildContext, kind: str, tool: str) -> AbstractContextManager[None]:
     """Open the ``Scope.TOOL`` span of one capability call, or a no-op."""
     if context.observability is None:
         return nullcontext()
@@ -143,16 +140,13 @@ def _span(
         tool,
         agent=context.agent,
         capability=kind,
-        subject=identity.subject,
     )
 
 
 @asynccontextmanager
-async def capability_call(
-    context: BuildContext, kind: str, tool: str, identity: Identity
-) -> AsyncIterator[None]:
+async def capability_call(context: BuildContext, kind: str, tool: str) -> AsyncIterator[None]:
     """Bound one capability call by the plan's tool timeout, inside its span."""
-    with _span(context, kind, tool, identity):
+    with _span(context, kind, tool):
         try:
             async with asyncio.timeout(context.timeout_s):
                 yield
@@ -222,8 +216,8 @@ class _GuardedToolset(WrapperToolset[Any]):
         tool: ToolsetTool[Any],
     ) -> Any:
         """Guard, then bound, one call to a tool of the wrapped toolset, through :func:`guarded`."""
-        identity = require_authenticated(f"tool '{name}'")
-        async with capability_call(self.context, self.kind, name, identity):
+        require_authenticated(f"tool '{name}'")
+        async with capability_call(self.context, self.kind, name):
             return await guarded(
                 name,
                 lambda: self.wrapped.call_tool(name, tool_args, ctx, tool),

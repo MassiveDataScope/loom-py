@@ -64,8 +64,8 @@ class CallerBoundSql:
     so :class:`~loom.core.stores.sql.abc.errors.RolesNotBoundError` is raised. Use
     :class:`~loom.core.stores.sql.service.SqlQueryService` for that unbound work.
 
-    Each accepted query opens one span labelled with the effective roles, the
-    caller subject and the authentication mechanism. Those labels match what
+    Each accepted query opens one span labelled with the effective roles and the
+    authentication mechanism, never the caller subject. Those labels match what
     the REST endpoint records, but the span is its own: a narrower scope and a
     different name, so the two are auditable on the same terms rather than
     being one record. Without observability there is no span and no
@@ -210,6 +210,5 @@ class CallerBoundSql:
             trace_id=get_trace_id(),
             connection=connection,
             roles=",".join(roles),
-            subject=identity.subject,
             mechanism=identity.mechanism,
         )

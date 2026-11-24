@@ -261,7 +261,6 @@ def _make_send_handler(
             method="POST",
             status_code=200,
             agent=name,
-            subject=call.identity.subject,
             mechanism=call.identity.mechanism,
         )
         try:
@@ -344,7 +343,6 @@ def _make_stream_handler(
                     route=f"{prefix}/{name}",
                     method="POST",
                     agent=name,
-                    subject=call.identity.subject,
                     mechanism=call.identity.mechanism,
                 )
             ):

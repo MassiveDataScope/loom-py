@@ -393,10 +393,10 @@ class TestNonJwtMechanismDerivesRoles:
         response = _header_client(executor).post(_SQL_PATH, json=_SELECT_ONE)
         assert (response.status_code, executor.calls) == (401, [])
 
-    def test_span_labels_the_effective_roles_the_subject_and_the_mechanism(
+    def test_span_labels_the_effective_roles_and_the_mechanism_never_the_subject(
         self,
     ) -> None:
-        """Auditability: the span states who ran the query, how, and with which privileges."""
+        """The span states how the query ran and with which privileges, never who ran it."""
         observer = RecordingLifecycleObserver()
         client = _client(
             FakeSqlExecutor(),
@@ -408,7 +408,7 @@ class TestNonJwtMechanismDerivesRoles:
 
         assert response.status_code == 200
         meta = observer.events[0].meta
-        assert (meta["roles"], meta["subject"], meta["mechanism"]) == (ROLE_B, "user-42", "test")
+        assert (meta["roles"], meta["mechanism"], "subject" in meta) == (ROLE_B, "test", False)
 
 
 class TestSingleRoleConnection:

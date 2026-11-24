@@ -16,6 +16,16 @@ EVENT_FORM: Final = re.compile(
 """``<area>.<subject>_<fact>``, lowercase: ``job.delivery_abandoned``."""
 
 
+class FailureForm(StrEnum):
+    """How the records of a :class:`LogEvent` carry the failure they name."""
+
+    ATTACHED = "attached"
+    """The record passes the exception as ``exc_info``; the context filter writes its fields."""
+    SUMMARY_ONLY = "summary_only"
+    """The record writes the exception's summary fields without ``exc_info``: its emitter
+    holds only the summary, or must not keep the frames."""
+
+
 class LogEvent(StrEnum):
     """Base of an area's log events.
 
@@ -23,14 +33,27 @@ class LogEvent(StrEnum):
     values travel in the record's fields (a :class:`LogKey` each), so a collector
     can filter on both. Every member of a subclass is named
     ``<area>.<subject>_<fact>`` in lowercase; an architecture test enforces it.
+    A member names a failure :attr:`FailureForm.ATTACHED` unless it declares its
+    :class:`FailureForm` beside its name.
 
     Example::
 
         class InvoiceEvent(LogEvent):
             ISSUED = "billing.invoice_issued"
+            REFUSED = "billing.invoice_refused", FailureForm.SUMMARY_ONLY
 
         log.info(InvoiceEvent.ISSUED, extra={"invoice.id": invoice_id})
     """
+
+    _value_: str
+    failure_form: FailureForm
+
+    def __new__(cls, value: str, failure_form: FailureForm = FailureForm.ATTACHED) -> Self:
+        """Declare the event *value*, whose records carry a failure as *failure_form* says."""
+        member = str.__new__(cls, value)
+        member._value_ = value
+        member.failure_form = failure_form
+        return member
 
     @property
     def is_well_formed(self) -> bool:

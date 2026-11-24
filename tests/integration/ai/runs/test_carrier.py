@@ -18,7 +18,7 @@ from loom.core.di import LoomContainer
 from loom.core.errors import Unauthenticated
 from loom.core.execution import ExecutionScope
 from loom.core.identity import Identity
-from loom.core.observability.event import EventKind, Scope
+from loom.core.observability.event import Scope
 from loom.core.observability.observability import Observability
 from loom.core.stores.repository.registration import classify_key
 from loom.core.stores.sql.service import SqlQueryService
@@ -99,14 +99,6 @@ def _drive(native: NativeAgent) -> Any:
     return native.agent.run("hello", deps=native.deps)
 
 
-def _tool_subjects(recorder: RecordingObserver) -> list[str]:
-    return [
-        event.meta["subject"]
-        for event in recorder.events
-        if event.scope is Scope.TOOL and event.kind is EventKind.START
-    ]
-
-
 def _leaf(error: BaseException) -> BaseException:
     while isinstance(error, BaseExceptionGroup) and len(error.exceptions) == 1:
         error = error.exceptions[0]
@@ -142,7 +134,7 @@ class TestARetainedCarrier:
             await _drive(native)
 
         assert len(calls) == 1
-        assert _tool_subjects(recorder) == [ALICE.subject]
+        assert recorder.acting_at_start(Scope.TOOL) == [ALICE.subject]
 
     @pytest.mark.parametrize("acting", [ALICE, BOB], ids=["its-caller", "another-caller"])
     async def test_runs_its_tools_as_the_identity_acting(
@@ -154,7 +146,7 @@ class TestARetainedCarrier:
             await _drive(native)
 
         assert len(calls) == 1
-        assert _tool_subjects(recorder) == [acting.subject]
+        assert recorder.acting_at_start(Scope.TOOL) == [acting.subject]
 
 
 @dataclass
@@ -241,7 +233,7 @@ class TestARetainedGovernedCarrier:
             await _drive(native)
 
         assert governed.reached == governed.reached_acting_as(ANALYST)
-        assert _tool_subjects(governed.recorder) == [ANALYST.subject]
+        assert governed.recorder.acting_at_start(Scope.TOOL) == [ANALYST.subject]
 
     async def test_a_query_acting_without_an_allowed_role_is_refused(self) -> None:
         governed = Governed("sql")

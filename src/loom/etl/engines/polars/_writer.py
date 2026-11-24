@@ -68,13 +68,7 @@ _DELTA_SCHEMA_MODES: dict[SchemaMode, Literal["merge", "overwrite"]] = {
 """delta-rs ``schema_mode`` per Loom mode; STRICT has no entry."""
 
 
-def _log_write_start(
-    mode: str,
-    location: TableLocation,
-    frame: pl.DataFrame | None = None,
-    *,
-    predicate: str | None = None,
-) -> None:
+def _log_write_start(mode: str, location: TableLocation, frame: pl.DataFrame | None = None) -> None:
     _log.info(
         EtlEvent.DELTA_WRITE_STARTED,
         extra={
@@ -83,11 +77,6 @@ def _log_write_start(
             EtlKey.ROWS: None if frame is None else frame.height,
         },
     )
-    if predicate is not None:
-        _log.debug(
-            EtlEvent.DELTA_WRITE_PREDICATE,
-            extra={EtlKey.URI: location.uri, EtlKey.PREDICATE: predicate},
-        )
 
 
 def _open_delta_table(location: TableLocation) -> DeltaTable | None:
@@ -381,7 +370,7 @@ class PolarsTargetWriter(_WritePolicy[pl.LazyFrame, pl.DataFrame, PolarsPhysical
                     f"partition columns are non-null before writing."
                 )
             predicate = _build_partition_predicate(iter(partition_rows), spec.partition_cols)
-            _log_write_start("replace_partitions", location, predicate=predicate)
+            _log_write_start("replace_partitions", location)
             write_deltalake(
                 location.uri,
                 spool.reader,
@@ -524,12 +513,7 @@ class PolarsTargetWriter(_WritePolicy[pl.LazyFrame, pl.DataFrame, PolarsPhysical
             iter(partition_rows),
             partition_cols,
         )
-        _log_write_start(
-            "replace_partitions",
-            location,
-            frame,
-            predicate=predicate,
-        )
+        _log_write_start("replace_partitions", location, frame)
         write_deltalake(
             location.uri,
             frame,
@@ -551,7 +535,7 @@ class PolarsTargetWriter(_WritePolicy[pl.LazyFrame, pl.DataFrame, PolarsPhysical
         """Overwrite rows matching SQL predicate."""
         path_target = _require_path_target(target)
         location = path_target.location
-        _log_write_start("replace_where", location, frame, predicate=predicate)
+        _log_write_start("replace_where", location, frame)
         write_deltalake(
             location.uri,
             frame,
@@ -679,12 +663,7 @@ class PolarsTargetWriter(_WritePolicy[pl.LazyFrame, pl.DataFrame, PolarsPhysical
         )
 
         dt = DeltaTable(location.uri, storage_options=location.storage_options or {})
-        _log_write_start(
-            mode,
-            location,
-            frame,
-            predicate=merge_plan.predicate,
-        )
+        _log_write_start(mode, location, frame)
         merger = dt.merge(
             source=frame,
             predicate=merge_plan.predicate,

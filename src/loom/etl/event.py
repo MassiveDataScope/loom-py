@@ -43,7 +43,6 @@ class EtlEvent(LogEvent):
     WRITE_PRODUCED_NO_ROWS = "etl.write_produced_no_rows"
     DELTA_WRITE_STARTED = "etl.delta_write_started"
     DELTA_WRITE_COMMITTED = "etl.delta_write_committed"
-    DELTA_WRITE_PREDICATE = "etl.delta_write_predicate"
     REPLACE_PARTITIONS_EMPTY = "etl.replace_partitions_empty"
     CREATE_SKIPPED_EMPTY = "etl.create_skipped_empty"
     UNITY_CATALOG_CREATE_UNREGISTERED = "etl.unity_catalog_create_unregistered"
@@ -102,8 +101,7 @@ class EtlKey(LogKey):
     MODE = "loom.etl.mode"
     KIND = "loom.etl.kind"
     VERSION = "loom.etl.version", ValueKind.NUMBER
-    PREDICATE = "loom.etl.predicate"
-    SQL = "loom.etl.sql"
+    PREDICATES = "loom.etl.predicates", ValueKind.NUMBER
     COLUMNS = "loom.etl.columns", ValueKind.ARRAY
     RERUN_DATES = "loom.etl.rerun_dates", ValueKind.ARRAY
 

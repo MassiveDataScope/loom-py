@@ -22,7 +22,6 @@ from loom.ai.abc import McpHandle, McpSession, McpToolInfo, SqlGrantHandle
 from loom.ai.compiler import CompiledMcpCapability, CompiledSqlCapability
 from loom.ai.errors import AgentRunError, AgentRunErrorCode, require_authenticated
 from loom.core.errors import BoundaryValidationError, UnsupportedBoundaryType
-from loom.core.identity import Identity
 from loom.core.model import loom_type_of
 from loom.core.observability.event import Scope
 from loom.core.observability.observability import Observability
@@ -160,7 +159,7 @@ class McpGrantView:
                 ``TOOL_RESULT_UNSTRUCTURED``, ``TOOL_DECODE_FAILED``,
                 ``TOOL_TIMEOUT`` or the call's own failure code.
         """
-        caller = require_authenticated(self._who)
+        require_authenticated(self._who)
         info = self._require_tool(tool)
         if not info.has_output_schema:
             raise AgentRunError(
@@ -170,7 +169,7 @@ class McpGrantView:
             )
         try:
             expect_type = loom_type_of(expect)
-            structured = await self._call(tool, arguments, caller)
+            structured = await self._call(tool, arguments)
             if structured is None:
                 raise AgentRunError(
                     AgentRunErrorCode.TOOL_RESULT_UNSTRUCTURED,
@@ -204,9 +203,9 @@ class McpGrantView:
                 subject; with ``TOOL_UNKNOWN``, ``TOOL_RESULT_UNSTRUCTURED``,
                 ``TOOL_TIMEOUT`` or the call's own failure code.
         """
-        caller = require_authenticated(self._who)
+        require_authenticated(self._who)
         self._require_tool(tool)
-        structured = await self._call(tool, arguments, caller)
+        structured = await self._call(tool, arguments)
         if structured is None:
             return {}
         if not isinstance(structured, Mapping):
@@ -217,10 +216,8 @@ class McpGrantView:
             )
         return structured
 
-    async def _call(
-        self, tool: str, arguments: Mapping[str, Any], caller: Identity
-    ) -> object | None:
-        async with self._guard(tool, caller):
+    async def _call(self, tool: str, arguments: Mapping[str, Any]) -> object | None:
+        async with self._guard(tool):
             result = await self._session.call_tool(tool, arguments)
         if not result.ok:
             raise AgentRunError(
@@ -241,9 +238,9 @@ class McpGrantView:
         return info
 
     @asynccontextmanager
-    async def _guard(self, tool: str, caller: Identity) -> AsyncIterator[None]:
+    async def _guard(self, tool: str) -> AsyncIterator[None]:
         """Bound one call by this view's own tool timeout, inside its own span."""
-        with self._span(tool, caller):
+        with self._span(tool):
             try:
                 async with asyncio.timeout(self._timeout_s):
                     yield
@@ -254,7 +251,7 @@ class McpGrantView:
                     f"the {self._timeout_s:.3f}s tool timeout",
                 ) from exc
 
-    def _span(self, tool: str, caller: Identity) -> AbstractContextManager[None]:
+    def _span(self, tool: str) -> AbstractContextManager[None]:
         if self._observability is None:
             return nullcontext()
         return self._observability.span(
@@ -262,7 +259,6 @@ class McpGrantView:
             tool,
             **self._span_attributes,
             capability="mcp",
-            subject=caller.subject,
         )
 
 
@@ -310,7 +306,7 @@ class SqlGrantView:
         """
         caller = require_authenticated(f"sql grant {self._capability.connection!r}")
         roles = self._capability.roles_of(caller)
-        with self._span(roles, caller):
+        with self._span(roles):
             result = await self._sql_query_service.execute(
                 statement,
                 connection=self._capability.connection,
@@ -320,7 +316,7 @@ class SqlGrantView:
             )
         return _bounded_rows(self._capability, result)
 
-    def _span(self, roles: tuple[str, ...], caller: Identity) -> AbstractContextManager[None]:
+    def _span(self, roles: tuple[str, ...]) -> AbstractContextManager[None]:
         if self._observability is None:
             return nullcontext()
         return self._observability.span(
@@ -329,7 +325,6 @@ class SqlGrantView:
             agent=self._agent,
             connection=self._capability.connection,
             roles=",".join(roles),
-            subject=caller.subject,
         )
 
 

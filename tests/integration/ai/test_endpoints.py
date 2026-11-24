@@ -1380,10 +1380,10 @@ class TestStreamTracing:
         assert agent_kinds[0] is EventKind.START
         assert agent_kinds[-1] in (EventKind.END, EventKind.ERROR)
 
-    async def test_attributes_the_subject_when_serving_a_stream(
+    async def test_attributes_the_agent_and_the_mechanism_when_serving_a_stream(
         self, deps: StubDepsFactory, container: LoomContainer, identity: Identity
     ) -> None:
-        """The span carries who ran what, over which route: an audit needs all of it."""
+        """The span carries what ran and over which route, never who ran it."""
         events = await self._stream_with_recorder(deps=deps, container=container, identity=identity)
 
         start = next(
@@ -1391,7 +1391,7 @@ class TestStreamTracing:
             for event in events
             if event.scope is Scope.AGENT and event.kind is EventKind.START
         )
-        assert start.meta["subject"] == identity.subject
+        assert "subject" not in start.meta
         assert start.meta["agent"] == _AGENT
         assert start.meta["mechanism"] == identity.mechanism
         assert start.meta["route"] == f"{_PREFIX}/{{name}}/stream"

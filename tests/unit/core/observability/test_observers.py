@@ -8,8 +8,9 @@ import pytest
 from opentelemetry.sdk.trace import TracerProvider
 
 from loom.core.config.observability import OtelConfig
+from loom.core.errors.summary import ErrorSummary
 from loom.core.observability.event import EventKind, LifecycleEvent, LifecycleStatus, Scope
-from loom.core.observability.observer.log import LogLifecycleObserver
+from loom.core.observability.observer.log import LifecycleLog, LogLifecycleObserver
 from loom.core.observability.observer.noop import NoopObserver
 from loom.core.observability.observer.otel import (
     OtelSpanFilter,
@@ -113,57 +114,45 @@ def _levels(caplog: pytest.LogCaptureFixture) -> list[str]:
     return [record.levelname for record in caplog.records]
 
 
+def _event(**fields: object) -> LifecycleEvent:
+    """A lifecycle event as loom builds one: meta and failure only when given."""
+    return make(LifecycleEvent, **{"meta": {}, "failure": None, **fields})
+
+
 class TestLogLifecycleObserver:
     @pytest.mark.parametrize(
-        ("event", "level", "name"),
+        ("scope", "kind", "level", "name"),
         [
             pytest.param(
-                make(LifecycleEvent, scope=Scope.NODE, kind=EventKind.START),
-                "DEBUG",
-                "observability.lifecycle_started",
-                id="node-start",
+                Scope.NODE, EventKind.START, "DEBUG", LifecycleLog.STARTED, id="node-start"
             ),
             pytest.param(
-                make(LifecycleEvent, scope=Scope.PIPELINE, kind=EventKind.START),
-                "INFO",
-                "observability.lifecycle_started",
-                id="pipeline-start",
+                Scope.PIPELINE, EventKind.START, "INFO", LifecycleLog.STARTED, id="pipeline-start"
+            ),
+            pytest.param(Scope.USE_CASE, EventKind.END, "INFO", LifecycleLog.ENDED, id="end"),
+            pytest.param(Scope.NODE, EventKind.ERROR, "ERROR", LifecycleLog.FAILED, id="error"),
+            pytest.param(
+                Scope.TRANSPORT, EventKind.END, "DEBUG", LifecycleLog.ENDED, id="transport-end"
             ),
             pytest.param(
-                make(LifecycleEvent, scope=Scope.USE_CASE, kind=EventKind.END, duration_ms=1),
-                "INFO",
-                "observability.lifecycle_ended",
-                id="end",
-            ),
-            pytest.param(
-                make(LifecycleEvent, scope=Scope.NODE, kind=EventKind.ERROR),
-                "ERROR",
-                "observability.lifecycle_failed",
-                id="error",
-            ),
-            pytest.param(
-                make(LifecycleEvent, scope=Scope.TRANSPORT, kind=EventKind.END),
-                "DEBUG",
-                "observability.lifecycle_ended",
-                id="transport-end",
-            ),
-            pytest.param(
-                make(LifecycleEvent, scope=Scope.TRANSPORT, kind=EventKind.ERROR),
+                Scope.TRANSPORT,
+                EventKind.ERROR,
                 "WARNING",
-                "observability.lifecycle_failed",
+                LifecycleLog.FAILED,
                 id="transport-error",
             ),
         ],
     )
     def test_each_kind_and_scope_logs_one_record_at_its_level(
         self,
-        event: LifecycleEvent,
+        scope: Scope,
+        kind: EventKind,
         level: str,
-        name: str,
+        name: LifecycleLog,
         caplog: pytest.LogCaptureFixture,
         lifecycle_log: CapturedLog,
     ) -> None:
-        LogLifecycleObserver().on_event(event)
+        LogLifecycleObserver().on_event(_event(scope=scope, kind=kind))
 
         assert (_levels(caplog), lifecycle_log.messages) == ([level], [name])
 
@@ -171,8 +160,7 @@ class TestLogLifecycleObserver:
         self, lifecycle_log: CapturedLog
     ) -> None:
         LogLifecycleObserver().on_event(
-            make(
-                LifecycleEvent,
+            _event(
                 scope=Scope.USE_CASE,
                 name="CreateOrder",
                 kind=EventKind.END,
@@ -190,10 +178,17 @@ class TestLogLifecycleObserver:
         )
         assert (fields["loom.duration_ms"], fields["loom.status"]) == (12.5, "success")
 
+    def test_a_failure_is_written_as_its_summary(self, lifecycle_log: CapturedLog) -> None:
+        summary = make(ErrorSummary, code="acme.refused")
+
+        LogLifecycleObserver().on_event(_event(kind=EventKind.ERROR, failure=summary))
+
+        [fields] = lifecycle_log.named(LifecycleLog.FAILED)
+        assert (fields["exception.type"], fields["loom.error.code"]) == (summary.type, summary.code)
+
     def test_meta_is_forwarded_under_its_own_prefix(self, lifecycle_log: CapturedLog) -> None:
         LogLifecycleObserver().on_event(
-            make(
-                LifecycleEvent,
+            _event(
                 scope=Scope.NODE,
                 kind=EventKind.START,
                 meta={"flow": "my_flow", "node_idx": 0},
@@ -207,8 +202,7 @@ class TestLogLifecycleObserver:
         self, lifecycle_log: CapturedLog
     ) -> None:
         LogLifecycleObserver().on_event(
-            make(
-                LifecycleEvent,
+            _event(
                 scope=Scope.FLOW,
                 name="ingest",
                 kind=EventKind.END,

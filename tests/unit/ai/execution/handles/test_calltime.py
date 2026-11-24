@@ -14,7 +14,7 @@ from loom.core.engine.compiler import UseCaseCompiler
 from loom.core.engine.executor import UseCaseExecutor
 from loom.core.errors import IdentityFixed
 from loom.core.execution import ExecutionRequired, ExecutionScope, NoExecution
-from loom.core.observability.event import EventKind, Scope
+from loom.core.observability.event import Scope
 from loom.core.observability.observability import Observability
 from loom.core.use_case import Agent, Mcp
 from tests.integration.ai.conftest import RecordingMcpSession, RecordingObserver
@@ -151,10 +151,5 @@ class TestEachCallReadsTheIdentity:
                 with ExecutionScope(caller):
                     assert await crm.call_untyped(TOOL, {}) == {"orders": 1}
 
-        subjects = [
-            event.meta["subject"]
-            for event in recorder.events
-            if event.scope is Scope.TOOL and event.kind is EventKind.START
-        ]
-        assert subjects == [ALICE.subject, BOB.subject]
+        assert recorder.acting_at_start(Scope.TOOL) == [ALICE.subject, BOB.subject]
         assert len(session.calls) == 2

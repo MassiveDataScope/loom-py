@@ -14,6 +14,7 @@ from loom.etl.declarative.expr import col
 from loom.etl.declarative.source import FromClickHouse
 from loom.etl.io.sources._clickhouse import ClickHouseSourceReader
 from loom.etl.schema._schema import ColumnSchema, LoomDtype
+from tests.helpers.loggers import laid_out_text
 
 _ARROW_SUFFIX = ".arrow"
 _TEMP_MARKER = "loom-clickhouse-"
@@ -92,6 +93,16 @@ class TestClickHouseReaderArrowPath:
             "SELECT * FROM `analytics`.`cdc_events`"
             " WHERE (source_time >= toDateTime64('2026-05-25 00:00:00', 3, 'UTC'))"
         ]
+
+    def test_the_query_record_carries_no_predicate_value(
+        self, caplog: pytest.LogCaptureFixture
+    ) -> None:
+        reader = ClickHouseSourceReader(client=_FakeArrowClient(pa.table({"id": ["1"]})))
+        spec = FromClickHouse("analytics.events").where(col("tenant") == "acme-42").unbounded()
+
+        reader.read(spec._to_spec("events"), object()).collect()
+
+        assert "acme-42" not in laid_out_text(caplog)
 
     def test_select_star_when_no_columns(self) -> None:
         table = pa.table({"x": [1], "y": [2]})

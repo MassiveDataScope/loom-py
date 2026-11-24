@@ -320,7 +320,6 @@ def _make_run_handler(
                 method="POST",
                 status_code=200,
                 agent=name,
-                subject=identity.subject,
                 mechanism=identity.mechanism,
             )
             with always_closed(span), span.as_current():
@@ -395,7 +394,6 @@ def _stream_frames(
             route=path,
             method="POST",
             agent=name,
-            subject=identity.subject,
             mechanism=identity.mechanism,
         )
         with always_closed(span):

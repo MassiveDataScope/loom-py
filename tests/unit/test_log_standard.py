@@ -9,20 +9,22 @@ from pathlib import Path
 import pytest
 
 from loom.core.checks import ChecksKey
-from loom.core.log_names import LogEvent, LogField, SubKey
+from loom.core.log_names import FailureForm, LogEvent, LogField, SubKey
 from loom.core.model.redaction import Secret
 from loom.core.observability.observer.log import LifecycleKey
 from tests.helpers.log_standard import Breach, LogContract
 
 ATTEMPT = LogField.ATTEMPT.value
 JOB = LogField.JOB.value
-SUBKEY = SubKey("loom.acme.bag.tenant")
+EXCEPTION_TYPE = LogField.EXCEPTION_TYPE.value
+SUBKEY = LifecycleKey.META.of("tenant")
 RecordFactory = Callable[..., logging.LogRecord]
 FAILURE = (ValueError, ValueError("card 4111"), None)
 
 
 class _AcmeEvent(LogEvent):
     THING_DONE = "acme.thing_done"
+    THING_REFUSED = "acme.thing_refused", FailureForm.SUMMARY_ONLY
 
 
 @pytest.fixture
@@ -63,7 +65,22 @@ class TestBreach:
                 {"fields": {LifecycleKey.META: "x"}}, [Breach.WRONG_KIND], id="bag-as-value"
             ),
             pytest.param({"fields": {ATTEMPT: None}}, [], id="missing-value"),
-            pytest.param({"fields": {SUBKEY: object()}}, [], id="subkey"),
+            pytest.param(
+                {"fields": {SubKey(f"{JOB}.tenant"): 3}},
+                [Breach.UNDECLARED_KEY],
+                id="subkey-of-a-value-key",
+            ),
+            pytest.param({"fields": {SUBKEY: object()}}, [Breach.OPAQUE_VALUE], id="opaque-subkey"),
+            pytest.param(
+                {"fields": {EXCEPTION_TYPE: "ValueError"}},
+                [Breach.EXCEPTION_TYPE_WITHOUT_STACK],
+                id="exception-type-without-its-exception",
+            ),
+            pytest.param(
+                {"msg": _AcmeEvent.THING_REFUSED, "fields": {EXCEPTION_TYPE: "ValueError"}},
+                [],
+                id="summary-only-event",
+            ),
             pytest.param(
                 {"fields": {JOB: "card 4111 refused", "exc_info": FAILURE}},
                 [Breach.EXCEPTION_TEXT_IN_FIELD],
@@ -116,6 +133,9 @@ class TestStrictFixture:
             def test_free_text():
                 logging.getLogger("loom.acme").warning("thing done")
 
+            def test_free_text_at_debug():
+                logging.getLogger("loom.acme").debug("thing done")
+
             def test_other_logger():
                 logging.getLogger("acme").warning("thing done")
             """
@@ -123,4 +143,4 @@ class TestStrictFixture:
 
         result = pytester.runpytest_subprocess("-p", "no:cacheprovider")
 
-        result.assert_outcomes(passed=2, errors=1)
+        result.assert_outcomes(passed=3, errors=2)

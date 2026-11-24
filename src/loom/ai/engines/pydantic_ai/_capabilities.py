@@ -175,8 +175,8 @@ def _usecase_toolset(
 def _usecase_tool(grant: _UsecaseGrant, context: BuildContext) -> Tool[Any]:
     async def call(run: RunContext[Any], **arguments: Any) -> ToolReturn:
         del run
-        caller = require_authenticated(f"tool '{grant.tool_name}'")
-        async with capability_call(context, "usecase", grant.tool_name, caller):
+        require_authenticated(f"tool '{grant.tool_name}'")
+        async with capability_call(context, "usecase", grant.tool_name):
             return await guarded(grant.tool_name, lambda: grant.invoke(arguments), ok_return)
 
     return Tool.from_schema(
@@ -199,7 +199,7 @@ def _sql_toolset(capability: CompiledSqlCapability, context: BuildContext) -> Ab
         if oversized is not None:
             return oversized
         roles = capability.roles_of(caller)
-        async with capability_call(context, "sql", name, caller):
+        async with capability_call(context, "sql", name):
             return await guarded(
                 name,
                 lambda: _query(capability, container, sql, roles),

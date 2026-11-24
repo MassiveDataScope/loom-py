@@ -364,6 +364,15 @@ class TestBsonTypes:
         assert df["_id"].dtype == pl.String
         assert df["amount"].dtype == pl.Float64
 
+    def test_a_mapping_that_cannot_be_read_becomes_null(self) -> None:
+        class _BrokenMapping:
+            __module__ = "bson.acme"
+
+            def items(self) -> object:
+                raise TypeError
+
+        assert normalize_bson_doc({"broken": _BrokenMapping()}) == {"broken": None}
+
 
 # ---------------------------------------------------------------------------
 # extra_fields_mode

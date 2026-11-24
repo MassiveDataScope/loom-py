@@ -13,7 +13,10 @@ import json
 
 import pytest
 
+from loom.core.identity.context import IdentityKey
 from loom.core.logger.formats import RecordFields
+from loom.rest.event import RestEvent
+from tests.helpers.loggers import CapturedLog
 from tests.unit.serverless.aws.lambda_.http._clients import TRACE_ID, Client
 from tests.unit.serverless.aws.lambda_.http._contract_app import (
     MAX_BODY_BYTES,
@@ -111,8 +114,8 @@ class TestHttpContract:
 
         assert (reply.status, reply.json()) == (200, {"subject": ""})
 
-    def test_a_caller_without_the_route_role_answers_403(
-        self, served: Client, alice: dict[str, str]
+    def test_a_caller_without_the_route_role_answers_403_and_the_denial_names_them(
+        self, served: Client, alice: dict[str, str], caplog: pytest.LogCaptureFixture
     ) -> None:
         reply = served("GET", "/ops/admin", headers=alice)
 
@@ -126,6 +129,8 @@ class TestHttpContract:
                 }
             },
         )
+        denials = CapturedLog(caplog).named(RestEvent.AUTHORIZATION_DENIED)
+        assert [fields[IdentityKey.SUBJECT] for fields in denials] == ["alice"]
 
     def test_a_caller_holding_the_route_role_is_served(
         self, served: Client, admin: dict[str, str]

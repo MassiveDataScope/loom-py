@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from loom.core.log_names import LogEvent, LogKey
+from loom.core.log_names import FailureForm, LogEvent, LogKey
 
 
 class RestEvent(LogEvent):
@@ -10,8 +10,8 @@ class RestEvent(LogEvent):
 
     COLUMNS_ALL_EXPOSED = "rest.columns_all_exposed"
     TOKEN_ISSUED = "rest.token_issued"
-    TOKEN_SIGNING_FAILED = "rest.token_signing_failed"
-    TOKEN_INVALID = "rest.token_invalid"
+    TOKEN_SIGNING_FAILED = "rest.token_signing_failed", FailureForm.SUMMARY_ONLY
+    TOKEN_INVALID = "rest.token_invalid", FailureForm.SUMMARY_ONLY
     TOKEN_TYPE_REFUSED = "rest.token_type_refused"
     TOKEN_KEY_UNKNOWN = "rest.token_key_unknown"
     TOKEN_ROLES_CLAIM_MISSING = "rest.token_roles_claim_missing"
