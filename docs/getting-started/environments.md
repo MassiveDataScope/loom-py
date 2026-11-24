@@ -433,8 +433,8 @@ check fails startup, a `W` check logs a warning.
 |---|---|
 | `loom.rest.E001` | The API authenticates no caller: neither a literal `app.rest.auth.jwt` mapping nor the literal `app.rest.auth.custom: true` is set, or the trigger `auth` of an http function of `lambda.functions`, which replaces it for that function, sets neither. A `jwt` given by a placeholder fails, since it may resolve to null. |
 | `loom.rest.W001` | The API publishes its documentation or schema: one of `app.rest.docs_url`, `redoc_url`, `openapi_url` is not `null`. |
-| `loom.logger.E001` | `observability.log.format` names no registered log format. |
-| `loom.logger.E002` | `observability.log.level` or a `named_levels` value is not a log level. |
+| `loom.logger.E001` | `observability.log.format` is not `lambda`, `json` or `text`. |
+| `loom.logger.E002` | `observability.log.level` or `named_levels` values are not a log level (`DEBUG`, `INFO`, `WARNING`, `ERROR`, `CRITICAL`, in capitals); one finding names every one. |
 | `loom.discovery.W001` | A required group of `app.entry_points` has no installed entry point: it adds nothing to the scan. A typo in the name shows here; declare a legitimately empty group as `{group: <name>, optional: true}` to leave it out of the check. |
 | `loom.cursors.E001` | `stores.settings.cursors` is configured and pagination cursors are not signed with a configured key (without that section no cursor is issued and nothing is checked): `stores.settings.cursors.signing` is set to anything but the literal `signed`, or `current_key_id` names no entry of `keys`. |
 

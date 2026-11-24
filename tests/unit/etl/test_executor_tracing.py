@@ -22,7 +22,7 @@ from loom.etl import ETLParams, ETLPipeline, ETLProcess, ETLStep, FromTable, Int
 from loom.etl.compiler import ETLCompiler
 from loom.etl.executor import ETLExecutor
 from loom.etl.testing import InMemorySourceReader, InMemoryTargetWriter
-from tests.helpers.loggers import laid_out_text
+from tests.helpers.loggers import CapturedLog
 
 
 class TracingParams(ETLParams):  # type: ignore[misc]
@@ -180,4 +180,4 @@ class TestExecutorLog:
             ETLCompiler().compile(DailySales), TracingParams(run_date=date(1987, 6, 5))
         )
 
-        assert "1987-06-05" not in laid_out_text(caplog)
+        assert "1987-06-05" not in CapturedLog(caplog).laid_out_text

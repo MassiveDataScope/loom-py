@@ -28,8 +28,10 @@ from loom.ai.abc import (
     ToolResultEvent,
 )
 from loom.ai.errors import AgentRunErrorCode
+from loom.ai.event import AiEvent
 from loom.ai.fastapi.streaming import HEARTBEAT_FRAME, encode_sse_event, stream_sse
 from loom.core.identity import Identity
+from tests.helpers.loggers import CapturedLog
 from tests.integration.ai.conftest import DEFAULT_USAGE, ScriptedEngine
 
 _USAGE = AgentUsage(
@@ -220,6 +222,13 @@ class TestInBandFailure:
         names = [_split_frame(frame)[0] for frame in frames]
 
         assert "final" not in names
+
+    async def test_logs_the_failure_with_its_exception(
+        self, caplog: pytest.LogCaptureFixture
+    ) -> None:
+        await _collect(stream_sse(self._failing_stream(), heartbeat_ms=1000))
+
+        assert CapturedLog(caplog).exception_types(AiEvent.STREAM_FAILED) == [RuntimeError]
 
 
 class TestDispatchWithoutReflection:

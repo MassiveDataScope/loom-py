@@ -318,7 +318,9 @@ print([name for name in loaded if name in sys.modules])
         result = handler({"Records": records}, None)
         assert result["batchItemFailures"] == [{"itemIdentifier": item} for item in expected]
         assert [item[0] for item in seen] == ran
-        error_class = "MalformedJobMessage" if poison == "body" else "UnknownJob"
+        error_class = "loom.core.errors.jobs." + (
+            "MalformedJobMessage" if poison == "body" else "UnknownJob"
+        )
         failure_types = {
             ErrorSummary.of(record.exc_info[1]).type
             if record.exc_info

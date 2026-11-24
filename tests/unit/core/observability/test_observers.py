@@ -5,7 +5,6 @@ from __future__ import annotations
 import logging
 
 import pytest
-from opentelemetry.sdk.trace import TracerProvider
 
 from loom.core.config.observability import OtelConfig
 from loom.core.errors.summary import ErrorSummary
@@ -15,7 +14,6 @@ from loom.core.observability.event import EventKind, LifecycleEvent, LifecycleSt
 from loom.core.observability.observer.log import LogLifecycleObserver
 from loom.core.observability.observer.noop import NoopObserver
 from loom.core.observability.observer.otel import (
-    OtelSpanFilter,
     install_otel_log_export,
 )
 from loom.testing import make
@@ -270,22 +268,3 @@ class TestPrometheusLifecycleObserver:
         adapter = PrometheusLifecycleObserver(registry=registry)
 
         adapter.on_event(make(LifecycleEvent, scope=Scope.NODE, kind=EventKind.START))
-
-
-class TestOtelSpanFilter:
-    def test_adds_trace_and_span_ids_when_span_is_recording(self) -> None:
-        tracer = TracerProvider().get_tracer("tests")
-        record = logging.makeLogRecord({})
-
-        with tracer.start_as_current_span("work") as span:
-            OtelSpanFilter().filter(record)
-            context = span.get_span_context()
-
-        assert record.__dict__["otel_trace_id"] == format(context.trace_id, "032x")
-        assert record.__dict__["otel_span_id"] == format(context.span_id, "016x")
-
-    def test_ignores_a_record_outside_any_span(self) -> None:
-        record = logging.makeLogRecord({})
-
-        assert OtelSpanFilter().filter(record) is True
-        assert "otel_trace_id" not in record.__dict__

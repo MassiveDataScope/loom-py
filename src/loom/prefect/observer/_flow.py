@@ -1,25 +1,24 @@
-"""PrefectObserver — forwards loom lifecycle events to Prefect UI."""
+"""PrefectObserver — loom's lifecycle records, plus the pipeline summary artifact for Prefect UI."""
 
 from __future__ import annotations
-
-import prefect
-from prefect.exceptions import MissingContextError
 
 from loom.core.observability.event import EventKind, LifecycleEvent, Scope
 from loom.core.observability.observer.log import LogLifecycleObserver
 
-_OUTSIDE_A_RUN = LogLifecycleObserver()
+_LIFECYCLE_LOG = LogLifecycleObserver()
 
 
 class PrefectObserver:
-    """``LifecycleObserver`` that forwards loom events to Prefect's run logger.
+    """``LifecycleObserver`` that writes loom's lifecycle records and a pipeline summary.
+
+    Each event is the record :class:`LogLifecycleObserver` writes on a ``loom.*``
+    logger, inside a run or not. Prefect UI shows it through loom's log bridge in a
+    loom flow, or through ``PREFECT_LOGGING_EXTRA_LOGGERS=loom`` in a flow of yours.
+    At the end of a pipeline inside a flow run it also publishes the summary artifact.
 
     Coexists with ``LineageObserver`` in the same ``Observability``:
-    - ``PrefectObserver`` → Prefect UI logs and artifacts.
+    - ``PrefectObserver`` → lifecycle records and the Prefect summary artifact.
     - ``LineageObserver`` → loom lineage tables (permanent audit trail).
-
-    Degrades to the core ``LogLifecycleObserver`` when no Prefect run context
-    is active (unit tests, local dry-run).  Never raises from ``on_event``.
 
     Example::
 
@@ -32,31 +31,9 @@ class PrefectObserver:
         Args:
             event: Immutable lifecycle event emitted by the runtime.
         """
-        try:
-            logger = prefect.get_run_logger()
-        except MissingContextError:
-            _OUTSIDE_A_RUN.on_event(event)
-            return
-
-        match event.kind:
-            case EventKind.START:
-                logger.info("[%s] START %s", event.scope, event.name)
-            case EventKind.END:
-                logger.info(
-                    "[%s] END %s %.1fms",
-                    event.scope,
-                    event.name,
-                    event.duration_ms if event.duration_ms is not None else 0.0,
-                )
-                if event.scope is Scope.PIPELINE:
-                    _publish_summary_artifact(event)
-            case EventKind.ERROR:
-                logger.error(
-                    "[%s] ERROR %s: %s",
-                    event.scope,
-                    event.name,
-                    event.failure.describe() if event.failure else "",
-                )
+        _LIFECYCLE_LOG.on_event(event)
+        if event.kind is EventKind.END and event.scope is Scope.PIPELINE:
+            _publish_summary_artifact(event)
 
 
 def _publish_summary_artifact(event: LifecycleEvent) -> None:

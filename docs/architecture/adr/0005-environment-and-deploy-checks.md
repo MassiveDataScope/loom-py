@@ -327,8 +327,8 @@ configuration name a mechanism supplied in code:
 |---|---|
 | `loom.rest.E001` | Neither a literal `app.rest.auth.jwt` mapping nor the literal `app.rest.auth.custom: true` is set: the API authenticates nobody. A placeholder `jwt` fails, since it may resolve to null. |
 | `loom.rest.W001` | `app.rest.docs_url`, `redoc_url` or `openapi_url` is not `null`: the schema is published. |
-| `loom.logger.E001` | `observability.log.format` names no registered log format. |
-| `loom.logger.E002` | `observability.log.level` or a `named_levels` value is not a log level. |
+| `loom.logger.E001` | `observability.log.format` is not `lambda`, `json` or `text`. |
+| `loom.logger.E002` | `observability.log.level` or `named_levels` values are not a log level (`DEBUG`, `INFO`, `WARNING`, `ERROR`, `CRITICAL`, in capitals); one finding names every one. |
 
 `app.rest.auth.custom: true` declares that `create_app` receives an
 `authenticator`. `create_app` refuses an `authenticator` without it, `custom:

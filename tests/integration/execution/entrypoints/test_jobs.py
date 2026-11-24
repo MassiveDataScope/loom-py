@@ -18,6 +18,7 @@ import pytest
 from loom.core.engine.compiler import UseCaseCompiler
 from loom.core.engine.executor import UseCaseExecutor
 from loom.core.engine.post_commit import PostCommitChannel, bind_channel, reset_channel
+from loom.core.environment import Environment
 from loom.core.errors import DelegationExpired, Unauthenticated
 from loom.core.execution import ExecutionScope
 from loom.core.identity import ANONYMOUS, Delegation, Identity, captured_delegation
@@ -28,7 +29,8 @@ from loom.core.job.event import JobEvent
 from loom.core.job.handle import JobHandle
 from loom.core.job.run import EnvelopeInvocation
 from loom.core.job.timer import JobTimer
-from loom.core.logger import LogField, log_context
+from loom.core.log_names import LogField
+from loom.core.logger import log_context
 from loom.core.logger.stamp import ContextFilter, LogIdentity
 from loom.core.observability.observability import Observability
 from loom.core.stores.catalog import DEFAULT_STORE
@@ -41,7 +43,7 @@ from loom.testing import JobTestData, ManualTimer, make
 from tests.helpers.celery import CeleryBroker
 from tests.helpers.delegation import acting_as, assert_new_delegation
 from tests.helpers.jobs import CeleryServiceFixture, InlineServiceFixture
-from tests.helpers.loggers import logged_events
+from tests.helpers.loggers import CapturedLog
 from tests.unit.core.engine._lifecycle_doubles import Log, StubUnitOfWorkFactory
 
 from .doubles import (
@@ -129,7 +131,7 @@ class TestInlineJobTransport:
         self, factory: UseCaseFactory, executor: UseCaseExecutor, caplog: pytest.LogCaptureFixture
     ) -> None:
         caplog.set_level(logging.DEBUG)
-        caplog.handler.addFilter(ContextFilter(LogIdentity(environment="test")))
+        caplog.handler.addFilter(ContextFilter(LogIdentity(environment=Environment.TEST)))
         jobs = InlineServiceFixture(factory, executor)
 
         async def dispatch_for_an_order() -> None:
@@ -139,7 +141,7 @@ class TestInlineJobTransport:
         await executor.execute(AcmeRun(dispatch_for_an_order), identity=ALICE)
         await jobs.wait_until_idle()
 
-        job_records = [entry for entry in logged_events(caplog) if LogField.JOB in entry]
+        job_records = [entry for _, entry in CapturedLog(caplog).calls if LogField.JOB in entry]
         assert {entry.get("order_id") for entry in job_records} == {None}
 
 
@@ -389,7 +391,7 @@ class TestADispatchWithNoCaller:
         await executor.execute(AcmeRun(dispatch))
         await jobs.wait_until_idle()
 
-        assert failures == ["Unauthenticated"]
+        assert failures == ["loom.core.errors.auth.Unauthenticated"]
 
     async def test_celery_runs_the_job_with_no_caller(
         self, factory: UseCaseFactory, executor: UseCaseExecutor

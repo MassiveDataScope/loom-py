@@ -81,13 +81,15 @@ def _configure_logging(
     service_version: str | None,
     export: OtelConfig | None,
 ) -> ContextFilter:
-    """Install the log format and, when *export* is given, the OTEL log export beside it."""
-    filters: tuple[logging.Filter, ...] = ()
+    """Install the log format and, when *export* is given, the OTEL log export beside it.
+
+    The export needs no filter of its own: the SDK's handler takes the active span's
+    trace and span ids from the context when it exports a record.
+    """
     extra_handlers: tuple[logging.Handler, ...] = ()
     if export is not None:
-        from loom.core.observability.observer.otel import OtelSpanFilter, install_otel_log_export
+        from loom.core.observability.observer.otel import install_otel_log_export
 
-        filters = (OtelSpanFilter(),)
         extra_handlers = (install_otel_log_export(export),)
     return configure_logging(
         config.log,
@@ -95,7 +97,6 @@ def _configure_logging(
         service_name=service_name,
         service_version=service_version,
         extra_handlers=extra_handlers,
-        filters=filters,
     )
 
 

@@ -4,7 +4,8 @@ import msgspec
 import pytest
 
 from loom.core.environment import Environment
-from loom.core.logger.settings import LogFormatName, LogSettings
+from loom.core.logger.settings import QUIET_LIBRARIES, LogFormatName, LogLevel, LogSettings
+from loom.testing import make
 
 _LAMBDA = "AWS_LAMBDA_FUNCTION_NAME"
 
@@ -15,17 +16,14 @@ class TestLogSettings:
 
         assert (settings.format, settings.level, settings.named_levels) == (None, "INFO", {})
 
-    @pytest.mark.parametrize("level", ["debug", "INFO", "Warning"])
-    def test_a_level_is_accepted_in_any_case(self, level: str) -> None:
-        assert LogSettings(level=level).level == level
+    def test_a_level_not_written_as_the_standard_library_names_it_is_refused(self) -> None:
+        with pytest.raises(msgspec.ValidationError, match="Invalid enum value 'info'"):
+            msgspec.convert({"named_levels": {"botocore": "info"}}, LogSettings)
 
-    def test_an_unknown_level_is_refused(self) -> None:
-        with pytest.raises(ValueError, match="unsupported log level"):
-            LogSettings(level="LOUD")
+    def test_a_written_logger_level_wins_over_a_quiet_library(self) -> None:
+        settings = make(LogSettings, named_levels={"botocore": LogLevel.DEBUG}, subject_key=None)
 
-    def test_an_unknown_named_level_is_refused_when_decoded(self) -> None:
-        with pytest.raises(msgspec.ValidationError, match="unsupported log level"):
-            msgspec.convert({"named_levels": {"botocore": "LOUD"}}, LogSettings)
+        assert settings.logger_levels() == {**QUIET_LIBRARIES, "botocore": LogLevel.DEBUG}
 
     def test_an_unknown_key_is_refused_when_decoded(self) -> None:
         with pytest.raises(msgspec.ValidationError, match="renderer"):

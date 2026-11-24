@@ -191,6 +191,7 @@ class LogField(LogKey):
     ENVIRONMENT = "deployment.environment.name"
     RUNTIME = "loom.runtime"
     TRACE_ID = "trace_id"
+    SPAN_ID = "span_id"
     USE_CASE = "loom.use_case.name"
     JOB = "loom.job.name"
     TASK_ID = "loom.task_id"

@@ -31,9 +31,10 @@ from loom.core.environment import LAMBDA_LOG_FORMAT_VARIABLE, Environment
 from loom.core.errors.base import DomainError
 from loom.core.errors.codes import ErrorCode
 from loom.core.log_names import LogField
+from loom.core.logger import log_context
 from loom.core.logger.install import HANDLER_NAME, configure_logging
 from loom.core.logger.settings import LogFormatName, LogSettings
-from loom.core.model.redaction import MASK, RedactedMap, Secret
+from loom.core.model.redaction import Dsn, RedactedMap, Secret
 from loom.core.observability.event import Scope
 from loom.core.observability.observability import Observability
 from loom.core.observability.observer.log import LogLifecycleObserver
@@ -45,6 +46,8 @@ CANARY = "CANARY-ROW-VALUE-4711"
 """Data a driver puts in an exception message: it must not become a field loom writes."""
 
 STACK_HEAD = "Traceback (most recent call last)"
+
+_DOMAIN_ERROR = "loom.core.errors.base.DomainError"
 
 _LOGGER = logging.getLogger("acceptance")
 
@@ -153,8 +156,13 @@ def lambda_json(runtime: LambdaLoggerHandler, monkeypatch: pytest.MonkeyPatch) -
 
 
 @pytest.fixture
-def otel_export() -> Iterator[Output]:
-    exporter = InMemoryLogExporter()
+def log_exporter() -> InMemoryLogExporter:
+    return InMemoryLogExporter()
+
+
+@pytest.fixture
+def otel_export(log_exporter: InMemoryLogExporter) -> Iterator[Output]:
+    exporter = log_exporter
     provider = LoggerProvider()
     provider.add_log_record_processor(SimpleLogRecordProcessor(exporter))
     handler = OtelLogHandler(LoggingHandler(level=logging.NOTSET, logger_provider=provider))
@@ -202,15 +210,23 @@ class TestFieldsSurvive:
 
 
 class TestValuesRendered:
-    """Requirement 1: a value reaches every output rendered, a secret masked."""
+    """Requirement 1: a value reaches every output rendered, a secret from any carrier none."""
 
     @pytest.mark.parametrize("output", OUTPUTS, indirect=True)
-    @pytest.mark.parametrize("secret", [Secret(CANARY), RedactedMap({"card": CANARY})])
-    def test_a_secret_is_masked(self, output: Output, secret: object) -> None:
-        _LOGGER.info("order_accepted", extra={LogField.ATTEMPT: secret})
+    @pytest.mark.parametrize(
+        "secret",
+        [
+            Secret(CANARY),
+            Dsn(f"postgresql://app:{CANARY}@db/orders"),
+            RedactedMap({"password": CANARY}),
+        ],
+        ids=["secret", "dsn", "config"],
+    )
+    def test_a_secret_never_reaches_the_output(self, output: Output, secret: object) -> None:
+        with log_context({LogField.USE_CASE: secret}):
+            _LOGGER.info("order_accepted", extra={LogField.ATTEMPT: secret})
 
-        assert CANARY not in output.read_fields()
-        assert output.fields()[LogField.ATTEMPT] == MASK
+        assert CANARY not in output.read()
 
     @pytest.mark.parametrize("output", OUTPUTS, indirect=True)
     def test_an_object_is_its_type_name_never_its_repr(self, output: Output) -> None:
@@ -227,6 +243,27 @@ class TestValuesRendered:
         fields = stdout_text.fields()
         assert fields[LogField.ATTEMPT] == forged
         assert {"w", "loom.forged"}.isdisjoint(fields)
+
+
+class TestSpanCorrelation:
+    """A record written inside a recording OpenTelemetry span names the span."""
+
+    def test_the_export_carries_the_active_span(
+        self, otel_export: Output, log_exporter: InMemoryLogExporter
+    ) -> None:
+        with TracerProvider().get_tracer("acceptance").start_as_current_span("work") as span:
+            _LOGGER.info("order_accepted")
+
+        (item,) = log_exporter.get_finished_logs()
+        assert item.log_record.span_id == span.get_span_context().span_id
+
+    def test_a_stdout_line_carries_the_span_id(self, stdout_json: Output) -> None:
+        with TracerProvider().get_tracer("acceptance").start_as_current_span("work") as span:
+            _LOGGER.info("order_accepted")
+
+        assert stdout_json.fields()[LogField.SPAN_ID] == format(
+            span.get_span_context().span_id, "016x"
+        )
 
 
 class TestDeveloperHandlers:
@@ -257,7 +294,7 @@ class TestFailureIdentity:
     def test_the_type_of_a_failure_is_written(self, output: Output) -> None:
         _LOGGER.error("order_failed", exc_info=_failure())
 
-        assert output.fields()[LogField.EXCEPTION_TYPE] == "DomainError"
+        assert output.fields()[LogField.EXCEPTION_TYPE] == _DOMAIN_ERROR
 
     @pytest.mark.parametrize("output", OUTPUTS, indirect=True)
     def test_the_code_of_a_loom_error_is_written(self, output: Output) -> None:
@@ -345,7 +382,7 @@ class TestScopeFailure:
         _fail_a_scope(traced[0])
 
         fields = stdout_json.fields()
-        assert fields[LogField.ERROR_TYPE] == "DomainError"
+        assert fields[LogField.ERROR_TYPE] == _DOMAIN_ERROR
         assert fields[LogField.ERROR_CODE] == ErrorCode.NOT_FOUND.value
 
     def test_the_span_names_the_type_and_the_code(
@@ -354,9 +391,9 @@ class TestScopeFailure:
         _fail_a_scope(traced[0])
 
         (span,) = traced[1].get_finished_spans()
-        assert span.status.description == f"DomainError ({ErrorCode.NOT_FOUND.value})"
+        assert span.status.description == f"{_DOMAIN_ERROR} ({ErrorCode.NOT_FOUND.value})"
         assert [dict(e.attributes or {}) for e in span.events] == [
-            {LogField.EXCEPTION_TYPE: "DomainError", LogField.ERROR_CODE: ErrorCode.NOT_FOUND.value}
+            {LogField.EXCEPTION_TYPE: _DOMAIN_ERROR, LogField.ERROR_CODE: ErrorCode.NOT_FOUND.value}
         ]
 
     def test_the_span_does_not_carry_the_message(

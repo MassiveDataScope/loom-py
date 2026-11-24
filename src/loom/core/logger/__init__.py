@@ -1,22 +1,16 @@
-"""Logging the Python way: stdlib loggers, the names of events and fields.
+"""Logging the Python way: stdlib loggers, the context every record carries, its stamp.
 
-Importing this package loads nothing third-party. Choosing a format and
-installing it is :mod:`loom.core.logger.install`.
+The names of events and fields live in :mod:`loom.core.log_names`. Choosing a
+format and installing it is :mod:`loom.core.logger.install`.
 """
 
-from loom.core.log_names import LogEvent, LogField, LogKey, SubKey, ValueKind
 from loom.core.logger.context import current_log_fields, log_context
 from loom.core.logger.stamp import ContextFilter, LogIdentity, LogRuntime
 
 __all__ = [
     "ContextFilter",
-    "LogEvent",
-    "LogField",
-    "LogKey",
     "LogIdentity",
     "LogRuntime",
-    "SubKey",
-    "ValueKind",
     "current_log_fields",
     "log_context",
 ]

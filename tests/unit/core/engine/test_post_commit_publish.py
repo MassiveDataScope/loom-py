@@ -21,6 +21,7 @@ from loom.core.engine.post_commit import (
     PostCommitKey,
     active_channel,
 )
+from loom.core.environment import Environment
 from loom.core.errors import PostCommitError
 from loom.core.job.context import add_pending_dispatch, flush_pending_dispatches
 from loom.core.job.job import Job
@@ -30,7 +31,7 @@ from loom.core.stores.catalog import DEFAULT_STORE
 from loom.core.stores.uow.coordinator import OrderedCommits
 from loom.core.use_case.use_case import UseCase
 from tests.helpers.jobs import CeleryServiceFixture
-from tests.helpers.loggers import CapturedLog, logged_events
+from tests.helpers.loggers import CapturedLog
 
 from ._lifecycle_doubles import Log, StubUnitOfWorkFactory
 
@@ -115,7 +116,7 @@ def logged() -> Iterator[Callable[[str], asyncio.Event]]:
 
 def _event(caplog: pytest.LogCaptureFixture, name: str) -> dict[str, Any]:
     """The structured fields of the one post-commit log record named *name*."""
-    (fields,) = [entry for entry in logged_events(caplog) if entry["event"] == name]
+    (fields,) = CapturedLog(caplog).named(name)
     return fields
 
 
@@ -247,9 +248,7 @@ class TestPostCommitPublish:
         await hang.cancelled.wait()
 
         assert calls == []
-        assert {"event": _DROPPED, PostCommitKey.DROPPED_ACTIONS: 1}.items() <= _event(
-            caplog, _DROPPED
-        ).items()
+        assert {PostCommitKey.DROPPED_ACTIONS: 1}.items() <= _event(caplog, _DROPPED).items()
 
     @pytest.mark.parametrize(
         ("requeue", "ran_later", "warned"),
@@ -333,7 +332,7 @@ class TestPostCommitPublish:
         self,
         caplog: pytest.LogCaptureFixture,
     ) -> None:
-        caplog.handler.addFilter(ContextFilter(LogIdentity(environment="test")))
+        caplog.handler.addFilter(ContextFilter(LogIdentity(environment=Environment.TEST)))
         running = {LogField.JOB: "Outer", LogField.TASK_ID: "t0"}
         channel = PostCommitChannel()
         channel.enqueue_publish(_Send(_ERROR))
@@ -342,9 +341,7 @@ class TestPostCommitPublish:
         with log_context(running), pytest.raises(PostCommitError):
             await channel.drain(committed=True)
 
-        named, plain = [
-            e for e in logged_events(caplog) if e["event"] == PostCommitEvent.ACTION_FAILED
-        ]
+        named, plain = CapturedLog(caplog).named(PostCommitEvent.ACTION_FAILED)
         assert {**running, **_SENT, PostCommitKey.INTERRUPTED: False}.items() <= named.items()
         assert running.items() <= plain.items()
         assert not plain.keys() & _SENT.keys()

@@ -20,8 +20,8 @@ from loom.core.identity import Identity, reset_identity, set_identity
 from loom.core.job import JobService
 from loom.core.job.context import flush_pending_dispatches
 from loom.core.job.handle import JobFailedError, JobHandle
-from loom.core.logger import LogField
-from tests.helpers.loggers import CapturedLog, logged_events
+from loom.core.log_names import LogField
+from tests.helpers.loggers import CapturedLog
 from tests.integration.hexagonal.conftest import (
     ANA,
     BO,
@@ -62,7 +62,7 @@ async def _run_as(application: Application, caller: Identity, shipment_id: str) 
 def _failed_jobs(caplog: pytest.LogCaptureFixture) -> list[dict[str, Any]]:
     return [
         entry
-        for entry in logged_events(caplog)
+        for _, entry in CapturedLog(caplog).calls
         if entry.get(LogField.USE_CASE) == TrackShipmentJob.__name__
         and entry.get(LogField.STATUS) == "failure"
     ]

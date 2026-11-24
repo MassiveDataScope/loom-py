@@ -251,7 +251,8 @@ class RestockEmailFailureCallback(JobCallback):
 async def on_success(self, job_id: str, result: Any, **context: Any) -> None: ...
 
 
-# called on task failure — exc_type / exc_code describe the exception
+# called on task failure — exc_type is the exception's fully qualified class name
+# (app.billing.PaymentDeclined; a builtin bare: ValueError), exc_code its loom code
 async def on_failure(self, job_id: str, exc_type: str, exc_code: str | None, **context: Any) -> None: ...
 ```
 

@@ -121,7 +121,7 @@ class TestLineageObserver:
         assert record.run_id == "run-1"
         assert record.attempt == 1
         assert record.status is RunStatus.FAILED
-        assert record.error_type == "NotFound"
+        assert record.error_type == "loom.core.errors.domain.NotFound"
         assert record.error_code == "not_found"
 
     def test_lineage_observer_handles_step_success_and_ignores_unknown_scope(self) -> None:

@@ -52,7 +52,7 @@ class TestDispatchThroughTheService:
             {
                 "job_id": handle.job_id,
                 "hook": "on_failure",
-                "exc_type": "JobAbandonment",
+                "exc_type": "loom.core.job.outcome.JobAbandonment",
                 "exc_code": None,
             }
         ]

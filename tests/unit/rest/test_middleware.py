@@ -7,6 +7,7 @@ from typing import Any
 
 import pytest
 
+from loom.core.environment import Environment
 from loom.core.logger import ContextFilter, LogIdentity
 from loom.core.tracing import get_trace_id
 from loom.rest.middleware import TraceIdMiddleware, _extract_header
@@ -176,7 +177,7 @@ class TestTraceIdMiddlewareLogs:
     @pytest.mark.asyncio
     async def test_a_record_emitted_during_the_request_carries_its_trace_id(self) -> None:
         stamped = CapturingHandler()
-        stamped.addFilter(ContextFilter(LogIdentity(environment="test")))
+        stamped.addFilter(ContextFilter(LogIdentity(environment=Environment.TEST)))
         root = logging.getLogger()
         root.addHandler(stamped)
         root.setLevel(logging.INFO)

@@ -27,15 +27,17 @@ def configure_logging(
     service_name: str | None = None,
     service_version: str | None = None,
     extra_handlers: Sequence[logging.Handler] = (),
-    filters: Sequence[logging.Filter] = (),
 ) -> ContextFilter:
     """Write records in the format *settings* choose and stamp every one on loom's handlers.
 
     ``json`` and ``text`` write to stdout through a handler named ``loom``, which
     replaces the one a previous call installed. ``lambda`` gives the runtime's
     handlers loom's JSON line, or writes JSON to stdout when there is none. The
-    root level is always the settings'. Every handler loom owns, *extra_handlers*
-    included, gets the context filter once, however often this runs.
+    root level is always the settings'. Each named logger of
+    :meth:`~loom.core.logger.settings.LogSettings.logger_levels`, the quiet libraries
+    included, gets its level set, whatever it was before. Every handler loom owns,
+    *extra_handlers* included, carries one context filter, this call's: a previous
+    call's is replaced, however often this runs.
 
     Args:
         settings: The ``observability.log`` settings.
@@ -43,7 +45,6 @@ def configure_logging(
         service_name: ``app.name``.
         service_version: ``app.version``.
         extra_handlers: Handlers loom owns beside the format's, such as the OTEL log export.
-        filters: Further filters for every owned handler, beside the context filter.
 
     Returns:
         The context filter, shared by every handler, to name the runtime once it is known.
@@ -54,7 +55,7 @@ def configure_logging(
             root.addHandler(extra)
     for stale in [h for h in root.handlers if h.get_name() == HANDLER_NAME]:
         root.removeHandler(stale)
-    root.setLevel(settings.level.upper())
+    root.setLevel(settings.level)
     match settings.format_for(environment):
         case LogFormatName.TEXT:
             written = [_stdout_handler(root, TextFormatter())]
@@ -68,16 +69,15 @@ def configure_logging(
             for handler in runtime:
                 handler.setFormatter(formatter)
             written = runtime or [_stdout_handler(root, JsonFormatter())]
-    for name, level in settings.named_levels.items():
-        logging.getLogger(name).setLevel(level.upper())
+    for name, level in settings.logger_levels().items():
+        logging.getLogger(name).setLevel(level)
     identity = LogIdentity(
-        environment=environment.value, service_name=service_name, service_version=service_version
+        environment=environment, service_name=service_name, service_version=service_version
     )
     stamp = ContextFilter(identity)
     for target in (*written, *extra_handlers):
         target.filters = [f for f in target.filters if not isinstance(f, ContextFilter)]
-        for each in (stamp, *filters):
-            target.addFilter(each)
+        target.addFilter(stamp)
     return stamp
 
 

@@ -7,6 +7,9 @@ from dataclasses import dataclass, replace
 from enum import StrEnum
 from typing import Final
 
+from opentelemetry import trace
+
+from loom.core.environment import Environment
 from loom.core.errors.summary import ErrorSummary
 from loom.core.log_names import LogField
 from loom.core.logger.context import current_log_fields
@@ -39,7 +42,7 @@ class LogIdentity:
         runtime: The kind of process.
     """
 
-    environment: str
+    environment: Environment
     runtime: LogRuntime = LogRuntime.CLI
     service_name: str | None = None
     service_version: str | None = None
@@ -53,7 +56,7 @@ class LogIdentity:
         known = {
             LogField.SERVICE_NAME: self.service_name,
             LogField.SERVICE_VERSION: self.service_version,
-            LogField.ENVIRONMENT: self.environment,
+            LogField.ENVIRONMENT: self.environment.value,
             LogField.RUNTIME: self.runtime.value,
         }
         return {key: value for key, value in known.items() if value is not None}
@@ -64,13 +67,14 @@ class ContextFilter(logging.Filter):
 
     Attach it to a handler, not to a logger, so the records of the
     application and of its libraries get the same fields as loom's. A field
-    already on the record, passed as ``extra``, is kept. It is the one owner of what
-    a record says about its exception: ``exception.type``, ``loom.error.code`` for a
-    ``CodedError``, and from ERROR up ``exception.stacktrace``, never the message. It
-    only adds fields and never changes a value: each of loom's outputs renders its own
-    copy, so any handler sees the values as they were passed. A record is stamped
-    once: the filter of a second loom handler lets it through as it is.
-    It never drops a record.
+    already on the record, passed as ``extra``, is kept. When the record carries an
+    exception, this filter alone writes ``exception.type``, ``loom.error.code`` for a
+    ``CodedError`` and, from ERROR up, ``exception.stacktrace``, never the message;
+    an ``extra`` of those names is replaced or dropped. Every other value stays as it
+    was passed, since each of loom's outputs renders its own copy. Inside a recording
+    OpenTelemetry span the record also gets ``span_id``, the span's id, beside loom's
+    ``trace_id``. A record is stamped once: the filter of a second loom handler lets
+    it through as it is. It never drops a record.
 
     Args:
         identity: The service and process the records come from.
@@ -105,6 +109,9 @@ class ContextFilter(logging.Filter):
         trace_id = get_trace_id()
         if trace_id is not None:
             stamped[LogField.TRACE_ID] = trace_id
+        span = trace.get_current_span()
+        if span.is_recording():
+            stamped[LogField.SPAN_ID] = format(span.get_span_context().span_id, "016x")
         for key, value in stamped.items():
             if key not in fields:
                 fields[key] = value

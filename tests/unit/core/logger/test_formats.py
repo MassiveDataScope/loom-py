@@ -8,7 +8,7 @@ from http import HTTPStatus
 
 import pytest
 
-from loom.core.logger import LogField, SubKey
+from loom.core.log_names import LogField, SubKey
 from loom.core.logger.formats import (
     MAX_LIST_ITEMS,
     MAX_VALUE_LENGTH,

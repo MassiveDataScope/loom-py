@@ -15,7 +15,7 @@ import pytest
 
 from loom.core.log_names import LogEvent, LogField, LogKey, SubKey, ValueKind
 from loom.core.logger import current_log_fields
-from loom.core.logger.formats import RECORD_ATTRIBUTES, TextFormatter, render_value
+from loom.core.logger.formats import RecordFields, TextFormatter, render_value
 
 _QUOTED_TEXT_MIN: Final = 8
 """Characters of exception text that count as quoted inside a longer field value."""
@@ -54,14 +54,7 @@ class Breach(StrEnum):
         Each key is its own declaration. The contract handler sees the record before any
         context filter, so ``exception.type`` on it was written by hand.
         """
-        fields = {
-            **current_log_fields(),
-            **{
-                key: value
-                for key, value in record.__dict__.items()
-                if key not in RECORD_ATTRIBUTES and not str(key).startswith("_")
-            },
-        }
+        fields = {**current_log_fields(), **dict(RecordFields(record).items())}
         failure = record.exc_info[1] if record.exc_info else None
         text = str(failure) if failure else ""
         quoting = len(text) >= _QUOTED_TEXT_MIN

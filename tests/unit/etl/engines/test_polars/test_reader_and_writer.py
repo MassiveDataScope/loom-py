@@ -28,7 +28,7 @@ from loom.etl.schema import SchemaNotFoundError
 from loom.etl.schema._schema import ColumnSchema, LoomDtype, SchemaError
 from loom.etl.storage._config import AuditConfig, CustomColumnDef, MissingTablePolicy
 from loom.etl.storage._locator import MappingLocator, TableLocation
-from tests.helpers.loggers import laid_out_text
+from tests.helpers.loggers import CapturedLog
 from tests.unit.etl.doubles import RunDateETLParams
 
 from .conftest import table_path
@@ -603,7 +603,7 @@ class TestPolarsWriteLog:
 
         PolarsTargetWriter(tmp_path).write(pl.DataFrame({"region": ["acme-42"]}).lazy(), spec, None)
 
-        assert "acme-42" not in laid_out_text(caplog)
+        assert "acme-42" not in CapturedLog(caplog).laid_out_text
 
 
 class TestPolarsPersistedSchema:

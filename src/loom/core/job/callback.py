@@ -52,7 +52,8 @@ class JobCallback:
 
         Args:
             job_id: UUID of the failed job.
-            exc_type: The exception's ``__qualname__``.
+            exc_type: The exception's fully qualified class name, ``module.QualName``;
+                a builtin's bare name, ``ValueError``.
             exc_code: The error's loom code, ``None`` for an error that is not
                 a :class:`~loom.core.errors.CodedError`. Never its message.
             **context: Original dispatch payload forwarded as keyword args.

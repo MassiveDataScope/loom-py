@@ -15,7 +15,7 @@ from loom.core.errors import (
     RuleViolationsError,
 )
 from loom.core.errors.codes import ErrorCode
-from tests.helpers.loggers import logged_events
+from tests.helpers.loggers import CapturedLog
 from tests.integration.celery_jobs.conftest import JSON, Workbench
 from tests.integration.celery_jobs.doubles import (
     FAILURE_CALLBACK,
@@ -61,7 +61,7 @@ class TestFailureCallbackAcrossSerializers:
 
         assert stored.state == "FAILURE"
         assert [(call["exc_type"], call["exc_code"]) for call in calls] == [
-            (type(error).__qualname__, code)
+            (f"{type(error).__module__}.{type(error).__qualname__}", code)
         ]
 
 
@@ -74,7 +74,7 @@ class TestFailureCallbackFromTheWorker:
         _, calls = served.settle(task_id, notified=1)
 
         assert [(call["exc_type"], call["exc_code"]) for call in calls] == [
-            ("JobAbandonment", None)
+            ("loom.core.job.outcome.JobAbandonment", None)
         ]
 
     def test_a_worker_that_could_not_open_its_application_notifies_once(
@@ -85,7 +85,7 @@ class TestFailureCallbackFromTheWorker:
 
         assert stored.state == "FAILURE"
         assert [(call["exc_type"], call["exc_code"]) for call in calls] == [
-            ("WorkerNotOpenError", ErrorCode.SYSTEM_ERROR)
+            ("loom.celery.errors.WorkerNotOpenError", ErrorCode.SYSTEM_ERROR)
         ]
 
     def test_a_soft_time_limit_notifies_once(self, served: Workbench) -> None:
@@ -94,7 +94,7 @@ class TestFailureCallbackFromTheWorker:
 
         assert stored.state == "FAILURE"
         assert [(call["exc_type"], call["exc_code"]) for call in calls] == [
-            ("SoftTimeLimitExceeded", None)
+            ("billiard.exceptions.SoftTimeLimitExceeded", None)
         ]
 
     def test_a_bridge_error_notifies_once_with_its_type_and_no_code(
@@ -104,7 +104,9 @@ class TestFailureCallbackFromTheWorker:
         stored, calls = served.settle(task_id, notified=1)
 
         assert stored.state == "FAILURE"
-        assert [(call["exc_type"], call["exc_code"]) for call in calls] == [("InvalidUse", None)]
+        assert [(call["exc_type"], call["exc_code"]) for call in calls] == [
+            ("loom.core.errors.base.InvalidUse", None)
+        ]
 
     @pytest.mark.parametrize("job", [RejectingTaskJob, IgnoringTaskJob])
     def test_a_task_rejected_or_ignored_by_celery_notifies_no_one(
@@ -163,8 +165,4 @@ class TestBrokenFailureCallbackSend:
 
         assert calls == []
         assert (stored.state, type(stored.result).__name__) == ("FAILURE", "JobAbandonment")
-        assert [
-            entry["event"]
-            for entry in logged_events(caplog)
-            if entry["event"] == CeleryEvent.FAILURE_CALLBACK_NOT_SENT
-        ] == [CeleryEvent.FAILURE_CALLBACK_NOT_SENT]
+        assert len(CapturedLog(caplog).named(CeleryEvent.FAILURE_CALLBACK_NOT_SENT)) == 1
