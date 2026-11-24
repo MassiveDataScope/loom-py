@@ -29,7 +29,7 @@ from loom.core.identity import context as identity_context
 from loom.core.identity.context import IdentityEvent, IdentityKey
 from loom.core.log_names import LogField
 from tests.helpers.delegation import acting_as, assert_new_delegation
-from tests.helpers.loggers import CapturedLog
+from tests.helpers.loggers import CapturedLog, user_hash
 
 _ALICE = Identity(subject="alice", mechanism="test")
 _PROMOTED_ALICE = Identity(subject="alice", mechanism="test", roles=("admin",))
@@ -41,10 +41,11 @@ _WORK = object()
 
 
 def _switched(switches: CapturedLog) -> list[tuple[object, object, object]]:
+    subject_of = {user_hash(subject): subject for subject in (_ALICE.subject, _BOB.subject)}
     return [
         (
-            fields[IdentityKey.SWITCHED_FROM],
-            fields[IdentityKey.SWITCHED_TO],
+            subject_of.get(fields.get(IdentityKey.PREVIOUS_USER_HASH)),
+            subject_of.get(fields.get(LogField.USER_HASH)),
             fields[LogField.USE_CASE],
         )
         for event, fields in switches.calls

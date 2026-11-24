@@ -27,8 +27,7 @@ Rules:
     - Every explicit switch (``executor.run(..., identity=X)``,
       ``invoker.for_identity(X)``, ``ExecutionScope(X)``, a transport
       replacing the caller) and every refusal past a deadline is reported
-      here: an ``identity.caller_switched`` or ``identity.delegation_expired`` warning, and
-      span attributes for a switch.
+      here: an ``identity.caller_switched`` or ``identity.delegation_expired`` warning.
     - This module imports nothing from the execution, the engine, the
       container or the use cases.
 """
@@ -47,6 +46,7 @@ from loom.core.errors import DelegationExpired, IdentityFixed
 from loom.core.identity.identity import ANONYMOUS, Identity
 from loom.core.identity.wire import Delegation
 from loom.core.log_names import LogEvent, LogField, LogKey, ValueKind
+from loom.core.logger.subject import SubjectHasher
 from loom.core.model.types import PositiveSeconds
 
 _log = logging.getLogger(__name__)
@@ -60,11 +60,9 @@ class IdentityEvent(LogEvent):
 
 
 class IdentityKey(LogKey):
-    """The fields of an identity record, and the span attributes of a switch."""
+    """The fields of an identity record."""
 
-    SUBJECT = "loom.identity.subject"
-    SWITCHED_FROM = "loom.identity.switched_from"
-    SWITCHED_TO = "loom.identity.switched_to"
+    PREVIOUS_USER_HASH = "loom.identity.previous_user.hash"
     ROLES_FROM = "loom.identity.roles_from", ValueKind.ARRAY
     ROLES_TO = "loom.identity.roles_to", ValueKind.ARRAY
     ATTRIBUTES_CHANGED = "loom.identity.attributes_changed", ValueKind.BOOLEAN
@@ -160,11 +158,12 @@ class Acting(msgspec.Struct, frozen=True, gc=False):
             raise error
 
     def report_switch(self, identity: Identity | None, what: str) -> None:
-        """Log that *what* acts as *identity* instead of this caller, and record it on the span.
+        """Log that *what* acts as *identity* instead of this caller.
 
-        Nothing is reported when *identity* equals this caller. Subjects and
-        roles only, never an identity's attributes or credentials:
-        ``attributes_changed`` flags two callers whose attributes differ.
+        Nothing is reported when *identity* equals this caller. The record names
+        both callers by their ``user.hash`` and their roles, never by subject,
+        attributes or credentials: ``attributes_changed`` flags two callers whose
+        attributes differ. The span is not annotated: spans never carry who acts.
 
         Args:
             identity: The identity acting from it on; ``None`` for no caller.
@@ -174,15 +173,14 @@ class Acting(msgspec.Struct, frozen=True, gc=False):
         previous = self.caller
         if identity == previous:
             return
-        from loom.core.observability.span import annotate_current_span
-
         from_subject = getattr(previous, "subject", None)
         to_subject = getattr(identity, "subject", None)
+        hasher = SubjectHasher.installed()
         _log.warning(
             IdentityEvent.CALLER_SWITCHED,
             extra={
-                IdentityKey.SWITCHED_FROM: from_subject,
-                IdentityKey.SWITCHED_TO: to_subject,
+                **hasher.fields(from_subject, IdentityKey.PREVIOUS_USER_HASH),
+                **hasher.fields(to_subject),
                 IdentityKey.ROLES_FROM: getattr(previous, "roles", None),
                 IdentityKey.ROLES_TO: getattr(identity, "roles", None),
                 IdentityKey.ATTRIBUTES_CHANGED: previous is not None
@@ -190,12 +188,6 @@ class Acting(msgspec.Struct, frozen=True, gc=False):
                 and previous.attributes != identity.attributes,
                 LogField.USE_CASE: what,
             },
-        )
-        annotate_current_span(
-            {
-                IdentityKey.SWITCHED_FROM: from_subject or "",
-                IdentityKey.SWITCHED_TO: to_subject or "",
-            }
         )
 
 

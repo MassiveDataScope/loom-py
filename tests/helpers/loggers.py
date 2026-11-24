@@ -1,7 +1,8 @@
-"""Stdlib logging doubles: a record-keeping handler and a view of caplog by event and fields."""
+"""Stdlib logging doubles: a handler that keeps records, a caplog view, the caller's key."""
 
 from __future__ import annotations
 
+import hmac
 import logging
 import traceback
 from collections.abc import Iterator
@@ -11,7 +12,30 @@ from typing import Any
 import pytest
 
 from loom.core.log_names import SubKey
+from loom.core.logger import subject as log_subject
 from loom.core.logger.formats import RECORD_ATTRIBUTES, RecordFields
+from loom.core.logger.subject import SubjectHasher
+from loom.core.model.redaction import Secret
+
+SUBJECT_KEY = "acme-subject-key"
+"""The ``observability.log.subject_key`` of the tests that key the caller."""
+
+
+def user_hash(subject: str) -> str:
+    """The ``user.hash`` of *subject* under :data:`SUBJECT_KEY`, computed apart from loom."""
+    subject_bytes = subject.encode("utf-8", "surrogatepass")
+    return hmac.new(SUBJECT_KEY.encode(), subject_bytes, "sha256").hexdigest()[:32]
+
+
+@pytest.fixture(autouse=True)
+def keyless_subject_hasher(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Start every test keyless and already warned, as a process configured without a key."""
+    monkeypatch.setattr(log_subject, "_installed", SubjectHasher())
+
+
+def install_subject_key() -> None:
+    """Key the caller of security records with :data:`SUBJECT_KEY` until the test ends."""
+    SubjectHasher(Secret(SUBJECT_KEY)).install()
 
 
 class CapturingHandler(logging.Handler):

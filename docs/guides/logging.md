@@ -120,7 +120,13 @@ observability:
     level: INFO
     named_levels:
       botocore: WARNING
+    subject_key: ${LOG_SUBJECT_KEY}  # keys user.hash on security events; omit to write no caller
 ```
+
+`subject_key` is a `Secret`: no log, repr or dump shows it. Use a random value of
+at least 32 bytes, the same in every service whose records you correlate, and keep it
+out of the configuration file through a placeholder. Changing it changes every
+`user.hash` from then on.
 
 | Format | Output | Default when |
 |---|---|---|
@@ -152,7 +158,7 @@ test suite fails on any such record, DEBUG included, that breaks these rules; no
 | Declared keys | Every field key is a `LogKey` member and carries the `ValueKind` its member declares: text unless it says number, boolean or list. An `OBJECT` key is a bag whose names are yours, read through `.of(name)`, which raises `ValueError` on any other key. A key is dotted lowercase `snake_case` and never names both a value and the prefix of other keys; declaring one out of form or one that would raises `ValueError`. Keys under `loom.` are loom's: declaring one outside the `loom` package raises `ValueError`, so an application's keys use their own prefix. The contract reads each key from the record: a declared key passed as plain text counts as undeclared. |
 | No exception text | Loom's fields never carry the text of an exception or the data in it: a record about a caught exception passes it as `exc_info`, and the filter writes `exception.type`, `loom.error.code` and, from ERROR up, the standard Python stack. That stack includes the exception messages, foreign ones too: driver and library text is yours (set `stores.<name>.hide_parameters: true` if bound parameters must not appear). Other handlers on the root logger receive `exc_info` as usual. The contract fails any loom record with `exc_info` whose fields hold `str(exc)`. `exception.type` is the filter's alone, and means that the record carries an exception: a loom record whose fields hold it breaks the contract. A failure with no exception to carry, loom's token code (which must not keep its frames) and the lifecycle observer (which only holds the summary), writes `error.type`, with `loom.error.code`, through `ErrorSummary.fields()`. |
 | No user values | Loom's own records, DEBUG included, carry the shape of the data they handle, never its values: a cache key holds the entity id as its digest, a ClickHouse query as its table, columns and `loom.etl.predicates` count, and a Delta write predicate is not logged. |
-| Who, only on security events | Following the OWASP Logging Cheat Sheet, security events name the caller's `loom.identity.subject`: a token issued (`rest.token_issued`), an authorization denied (`rest.authorization_denied`, `stores.role_authorization_denied`) and a caller switched (`identity.caller_switched`, with `loom.identity.switched_from`/`switched_to`). Operational records and spans never carry end-user identity, run parameters or other user values. RLS writes are also recorded in the `audit_log` table. |
+| Who, only on security events, as a keyed pseudonym | Following the OWASP Logging Cheat Sheet, security events say who acted without writing the subject: `user.hash` is the HMAC-SHA256 of the caller's subject under `observability.log.subject_key`, in hex, cut to 32 characters. They are a token issued (`rest.token_issued`), an authorization denied (`rest.authorization_denied`, `stores.role_authorization_denied`) and a caller switched (`identity.caller_switched`, with the previous caller in `loom.identity.previous_user.hash`). To find a known user's records, compute the HMAC of their subject with the same key and search for it; without the key a hash cannot be reversed or matched to a guess. Without a key no caller is written at all, never the subject or an unkeyed hash, and startup logs `logging.subject_hash_disabled` once. Operational records and spans never carry end-user identity, run parameters or other user values. RLS writes are also recorded in the `audit_log` table. |
 | One render | Each of loom's outputs renders its own copy of the values: a `Secret` is masked, an object is its type name, a long value is cut. `json`, `lambda`, `text` and OpenTelemetry export write the same thing, and the record itself is never changed. |
 | Prefixes for open bags | A job's `meta` is written under `loom.meta.<key>`, and the format's own layout keys (`timestamp`, `level`, `message`, `logger`) under `loom.extra.<key>`. An `extra` key with a loom field name replaces loom's value: that is your choice. |
 

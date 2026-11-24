@@ -37,7 +37,7 @@ from loom.core.identity import (
 )
 from loom.core.identity.context import IdentityEvent, IdentityKey
 from loom.core.log_names import LogField
-from tests.helpers.loggers import CapturedLog
+from tests.helpers.loggers import CapturedLog, user_hash
 from tests.unit.core.execution.context.doubles import ACME_ALICE, ACME_BOB, AcmePerExecutionValue
 
 Outliving = Callable[..., Awaitable["asyncio.Task[object]"]]
@@ -97,12 +97,12 @@ class TestATaskOutlivingItsExecution:
         assert await task is ACME_BOB
         [switch] = switches.named(IdentityEvent.CALLER_SWITCHED)
         assert (
-            switch[IdentityKey.SWITCHED_FROM],
-            switch[IdentityKey.SWITCHED_TO],
+            switch[IdentityKey.PREVIOUS_USER_HASH],
+            switch[LogField.USER_HASH],
             switch[LogField.USE_CASE],
         ) == (
-            ACME_ALICE.subject,
-            ACME_BOB.subject,
+            user_hash(ACME_ALICE.subject),
+            user_hash(ACME_BOB.subject),
             "ExecutionScope",
         )
 
@@ -360,26 +360,26 @@ class TestANestedExecutionEnding:
             assert execution_identity() is ACME_ALICE
 
     @pytest.mark.parametrize(
-        ("outer", "from_subject"),
-        [(ExecutionScope(ACME_ALICE), ACME_ALICE.subject), (NoExecution(), None)],
+        ("outer", "from_hash"),
+        [(ExecutionScope(ACME_ALICE), user_hash(ACME_ALICE.subject)), (NoExecution(), None)],
         ids=["inside-an-execution", "inside-no-execution"],
     )
     def test_another_identity_opened_inside_it_is_a_logged_switch(
         self,
         switches: CapturedLog,
         outer: ExecutionScope | NoExecution,
-        from_subject: str | None,
+        from_hash: str | None,
     ) -> None:
         """One switch policy, as ``executor.run(identity=)``; singletons are built in the second."""
         with outer:
             with ExecutionScope(ACME_BOB):
                 assert execution_identity() is ACME_BOB
-            assert current_caller() is (None if from_subject is None else ACME_ALICE)
+            assert current_caller() is (None if from_hash is None else ACME_ALICE)
 
         [switch] = switches.named(IdentityEvent.CALLER_SWITCHED)
-        assert (switch[IdentityKey.SWITCHED_FROM], switch[IdentityKey.SWITCHED_TO]) == (
-            from_subject,
-            ACME_BOB.subject,
+        assert (switch.get(IdentityKey.PREVIOUS_USER_HASH), switch[LogField.USER_HASH]) == (
+            from_hash,
+            user_hash(ACME_BOB.subject),
         )
 
     def test_the_enclosing_execution_keeps_its_cache(self) -> None:

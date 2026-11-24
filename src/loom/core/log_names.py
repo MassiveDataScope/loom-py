@@ -214,3 +214,4 @@ class LogField(LogKey):
     HTTP_REQUEST_METHOD = "http.request.method"
     HTTP_RESPONSE_STATUS_CODE = "http.response.status_code", ValueKind.NUMBER
     HTTP_ROUTE = "http.route"
+    USER_HASH = "user.hash"

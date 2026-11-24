@@ -30,6 +30,7 @@ from loom.core.environment import Environment, resolve_environment
 from loom.core.log_names import LogField
 from loom.core.logger.install import configure_logging
 from loom.core.logger.stamp import ContextFilter, LogRuntime
+from loom.core.logger.subject import SubjectHasher
 from loom.core.observability.config import (
     ObservabilityConfig,
     OtelObservabilityConfig,
@@ -405,6 +406,8 @@ class Observability:
 
         When ``log`` is enabled, the log format is installed from inside this
         method, so it is in place before any observer emits its first event.
+        ``log.subject_key`` keys the caller of loom's security records whether
+        or not ``log`` is enabled.
 
         Args:
             config: Unified observability configuration.
@@ -443,6 +446,7 @@ class Observability:
             if config.log.enabled
             else None
         )
+        SubjectHasher(config.log.subject_key).install()
         observers = _build_observers(config)
         tracer, flusher = _resolve_tracer(config.otel)
         scrape_port = _resolve_scrape_port(config.prometheus)

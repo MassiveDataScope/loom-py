@@ -21,8 +21,8 @@ from loom.core.config.errors import ConfigError
 from loom.core.errors import InternalError, InvalidValue
 from loom.core.errors.summary import ErrorSummary
 from loom.core.identity import Identity
-from loom.core.identity.context import IdentityKey
 from loom.core.identity.issuer import IssuedToken
+from loom.core.logger.subject import SubjectHasher
 from loom.rest.auth.config import ATTRIBUTE_CLAIM_PREFIX, JwtIssuerConfig
 from loom.rest.auth.keys import load_pyjwt
 from loom.rest.event import RestEvent
@@ -41,10 +41,9 @@ class JwtIssuer:
 
     The signing key stays a ``Secret`` on the config: only this issuer reveals it.
 
-    Every issuing is logged at INFO with the subject: a security event, not
-    diagnostics, so an access is attributable to who asked for the token. The
-    subject is usually personal data, so route these logs accordingly. The token and
-    the key are never logged.
+    Every issuing is logged at INFO with the caller's ``user.hash``: a security
+    event, not diagnostics, so an access is attributable to who asked for the
+    token without writing the subject. The token and the key are never logged.
 
     Args:
         config: Validated issuer settings.
@@ -112,7 +111,9 @@ class JwtIssuer:
         token = self._sign(claims)
         if token is None:
             raise InternalError("JWT issuing failed")
-        _logger.info(RestEvent.TOKEN_ISSUED, extra={IdentityKey.SUBJECT: identity.subject})
+        _logger.info(
+            RestEvent.TOKEN_ISSUED, extra=SubjectHasher.installed().fields(identity.subject)
+        )
         return IssuedToken(token=token, expires_at=expires_at, jti=jti)
 
     def _sign(self, claims: dict[str, Any]) -> str | None:

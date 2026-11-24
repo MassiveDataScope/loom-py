@@ -35,7 +35,7 @@ from loom.rest.compiler import RestInterfaceCompiler
 from loom.rest.dispatcher import RestUseCaseDispatcher
 from loom.rest.fastapi.router import mount_interfaces
 from tests.helpers.delegation import acting_as, assert_new_delegation
-from tests.helpers.loggers import CapturedLog
+from tests.helpers.loggers import CapturedLog, user_hash
 
 from .doubles import ALICE, BOB, CALLERS, AcmeAuthenticator, AcmeGreeting, AcmeRoutes, as_caller
 
@@ -131,12 +131,12 @@ class TestAuthenticationMiddleware:
         [(event, fields)] = switches.calls
         assert (
             event,
-            fields[IdentityKey.SWITCHED_FROM],
-            fields[IdentityKey.SWITCHED_TO],
+            fields[IdentityKey.PREVIOUS_USER_HASH],
+            fields[LogField.USER_HASH],
             fields[LogField.USE_CASE],
         ) == (
             IdentityEvent.CALLER_SWITCHED,
-            ALICE.subject,
-            BOB.subject,
+            user_hash(ALICE.subject),
+            user_hash(BOB.subject),
             "transport",
         )

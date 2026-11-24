@@ -47,8 +47,8 @@ from loom.core.engine.executor import UseCaseExecutor
 from loom.core.errors import BODY_FIELD, BoundaryValidationError, CodedError, Forbidden
 from loom.core.errors.codes import ErrorCode
 from loom.core.identity import Identity, current_identity
-from loom.core.identity.context import IdentityKey
 from loom.core.log_names import LogField
+from loom.core.logger.subject import SubjectHasher
 from loom.core.model import LoomType, loom_type, msgspec_type
 from loom.core.observability.event import Scope
 from loom.core.observability.observability import Observability
@@ -125,7 +125,7 @@ def _authorize_route(identity: Identity, required_roles: tuple[str, ...], route:
         return
     _logger.warning(
         RestEvent.AUTHORIZATION_DENIED,
-        extra={LogField.HTTP_ROUTE: route, IdentityKey.SUBJECT: identity.subject},
+        extra={LogField.HTTP_ROUTE: route, **SubjectHasher.installed().fields(identity.subject)},
     )
     raise Forbidden(_NOT_AUTHORIZED_MESSAGE)
 

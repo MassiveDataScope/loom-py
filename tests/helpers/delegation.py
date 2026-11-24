@@ -15,7 +15,7 @@ import pytest
 
 from loom.core.identity import Identity, configure_delegation, reset_identity, set_identity
 from loom.core.identity import context as identity_context
-from tests.helpers.loggers import CapturedLog
+from tests.helpers.loggers import CapturedLog, install_subject_key
 
 
 @pytest.fixture
@@ -45,7 +45,8 @@ def past_the_window(window: float, monkeypatch: pytest.MonkeyPatch) -> Callable[
 
 @pytest.fixture
 def switches(caplog: pytest.LogCaptureFixture) -> CapturedLog:
-    """Every identity switch reported during the test."""
+    """Every identity switch reported during the test, its callers keyed."""
+    install_subject_key()
     caplog.set_level(logging.DEBUG, logger=identity_context.__name__)
     return CapturedLog(caplog, identity_context.__name__)
 
