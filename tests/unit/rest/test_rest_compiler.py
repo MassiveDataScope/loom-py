@@ -12,13 +12,14 @@ import pydantic
 import pytest
 
 from loom.core.engine.compiler import UseCaseCompiler
+from loom.core.log_names import LogField
 from loom.core.model import JSON, BaseModel, Cardinality, ColumnField, RelationField, String
 from loom.core.stores.repository.query import CursorResult, PageResult, QuerySpec
 from loom.core.use_case import Created, Query
 from loom.core.use_case.field_ref import F
 from loom.core.use_case.use_case import UseCase
 from loom.rest.compiler import InterfaceCompilationError, RestInterfaceCompiler, RouteSources
-from loom.rest.event import RestEvent, RestKey
+from loom.rest.event import RestEvent
 from loom.rest.model import ALL, PaginationMode, RestApiDefaults, RestInterface, RestRoute
 from tests.unit.rest.doubles import CreateUserUseCase, ListUsersUseCase
 
@@ -1169,7 +1170,7 @@ class TestDeclaredColumns:
         assert dict(route.filter_fields) == {"id": int, "title": str, "pages": int, "shelf_id": int}
         (record,) = caplog.records
         assert record.levelno == logging.WARNING
-        assert getattr(record, RestKey.ROUTE) == "/books/"
+        assert getattr(record, LogField.HTTP_ROUTE) == "/books/"
 
     def test_a_uuid_column_is_filterable_sortable_and_in_all(self) -> None:
         class Declared(RestInterface[_Pass]):

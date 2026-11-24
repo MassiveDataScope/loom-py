@@ -17,7 +17,7 @@ from dataclasses import dataclass
 from importlib.metadata import EntryPoint, entry_points
 from typing import Literal
 
-from loom.core.log_names import LogEvent, LogKey
+from loom.core.log_names import LogEvent, LogKey, ValueKind
 
 _log = logging.getLogger(__name__)
 
@@ -37,7 +37,7 @@ class EntryPointKey(LogKey):
 
     GROUP = "loom.plugins.group"
     ENTRY_POINT = "loom.plugins.entry_point"
-    DISTRIBUTIONS = "loom.plugins.distributions"
+    DISTRIBUTIONS = "loom.plugins.distributions", ValueKind.ARRAY
 
 
 _UNKNOWN_DISTRIBUTION = "<unknown distribution>"

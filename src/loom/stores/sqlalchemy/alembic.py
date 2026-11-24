@@ -46,6 +46,7 @@ from loom.core.stores.database import (
     SchemaUser,
     require_schema_key,
 )
+from loom.core.stores.event import StoresKey
 from loom.stores.sqlalchemy.event import SqlalchemyEvent, SqlalchemyKey
 from loom.stores.sqlalchemy.rls.config import (
     Access,
@@ -153,7 +154,7 @@ def load_store_schema(
     if skipped:
         _log.info(
             SqlalchemyEvent.STORES_NOT_LOADED,
-            extra={SqlalchemyKey.STORE: store, SqlalchemyKey.SKIPPED_STORES: skipped},
+            extra={StoresKey.STORE: store, SqlalchemyKey.SKIPPED_STORES: skipped},
         )
     schema = database.schema
     metadata = _compiled_metadata(models, schema, spec.path)

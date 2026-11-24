@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from loom.core.log_names import LogEvent, LogKey
+from loom.core.log_names import LogEvent, LogKey, ValueKind
 
 
 class ConfigEvent(LogEvent):
@@ -17,5 +17,5 @@ class ConfigLogKey(LogKey):
     """The fields of a configuration record."""
 
     KEY = "loom.config.key"
-    KEYS = "loom.config.keys"
+    KEYS = "loom.config.keys", ValueKind.ARRAY
     RESOLVER = "loom.config.resolver"

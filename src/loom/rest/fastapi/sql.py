@@ -34,9 +34,11 @@ from starlette.responses import Response
 from loom.core.config.errors import ConfigError
 from loom.core.errors import BODY_FIELD, CodedError, RuleViolationError
 from loom.core.identity import current_identity
+from loom.core.log_names import LogField
 from loom.core.model import LoomFrozenStruct
 from loom.core.observability.event import Scope
 from loom.core.observability.observability import Observability
+from loom.core.stores.event import StoresKey
 from loom.core.stores.sql.config import SqlConfig, SqlConnectionConfig, roles_need_identity_binding
 from loom.core.stores.sql.roles import resolve_query_roles
 from loom.core.stores.sql.service import SqlQueryService
@@ -44,7 +46,7 @@ from loom.core.tracing import get_trace_id
 from loom.rest._body import MALFORMED_BODY_ERRORS, payload_too_large_detail
 from loom.rest.auth.abc import Authenticator
 from loom.rest.errors import HttpErrorMapper
-from loom.rest.event import RestEvent, RestKey
+from loom.rest.event import RestEvent
 from loom.rest.fastapi._errors import internal_error_response, malformed_body_error
 from loom.rest.fastapi.response import MsgspecJSONResponse
 
@@ -261,12 +263,12 @@ def _make_sql_handler(
             if http_error.status_code >= HTTPStatus.INTERNAL_SERVER_ERROR:
                 _logger.error(
                     RestEvent.SQL_ENDPOINT_FAILED,
-                    extra={RestKey.CONNECTION: name},
+                    extra={StoresKey.CONNECTION: name},
                     exc_info=exc,
                 )
             raise http_error from exc
         except Exception:
-            _logger.exception(RestEvent.SQL_ENDPOINT_UNHANDLED, extra={RestKey.CONNECTION: name})
+            _logger.exception(RestEvent.SQL_ENDPOINT_UNHANDLED, extra={StoresKey.CONNECTION: name})
             return internal_error_response()
 
     _handler.__name__ = handler_name
@@ -334,7 +336,7 @@ def _mount_endpoint(
         if bound_mechanism is None
         else RestEvent.SQL_ENDPOINT_MOUNTED_ROLES_BOUND
     )
-    _logger.warning(mounted, extra={RestKey.ROUTE: path, RestKey.CONNECTION: name})
+    _logger.warning(mounted, extra={LogField.HTTP_ROUTE: path, StoresKey.CONNECTION: name})
 
 
 def mounted_sql_endpoints(config: SqlConfig) -> tuple[str, ...]:

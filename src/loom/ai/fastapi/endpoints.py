@@ -531,7 +531,7 @@ def _announce_mount(
         event = AiEvent.ENDPOINT_MOUNTED_ANONYMOUS_CONVERSATIONAL
     else:
         event = AiEvent.ENDPOINT_MOUNTED_ANONYMOUS
-    _logger.warning(event, extra={AiKey.AGENT: name, AiKey.ROUTE: f"{prefix}/{name}"})
+    _logger.warning(event, extra={AiKey.AGENT: name, LogField.HTTP_ROUTE: f"{prefix}/{name}"})
 
 
 def mount_agent_endpoints(

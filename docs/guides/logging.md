@@ -87,8 +87,8 @@ it, whoever emitted it (loom, your code, a library):
 | `deployment.environment.name` | the resolved environment |
 | `loom.runtime` | `fastapi`, `celery`, `lambda` or `cli` |
 | `trace_id` | the active trace id (HTTP header, job envelope, flow) |
-| `loom.use_case` | the use case being executed |
-| `loom.job`, `loom.task_id`, `loom.attempt` | the job message being run |
+| `loom.use_case.name` | the use case being executed |
+| `loom.job.name`, `loom.task_id`, `loom.attempt` | the job message being run |
 | `code.function.name`, `code.line.number`, `code.file.path` | where the record was emitted |
 
 A field you pass as `extra` is kept as you gave it. Following one `trace_id` shows
@@ -145,7 +145,7 @@ test suite fails on any such record that breaks these rules; nothing else is che
 | Loom guarantees | In every `loom.*` record |
 |---|---|
 | Constant events | The message is a `LogEvent` member, never a sentence with values and never `%` arguments. |
-| Declared keys | Every field key is a `LogKey` member, and a key always carries one kind of value (text, number, boolean or list). |
+| Declared keys | Every field key is a `LogKey` member and carries the `ValueKind` its member declares: text unless it says number, boolean or list. An `OBJECT` key is a bag whose names are yours, read through `.of(name)`, which raises `ValueError` on any other key. A key never names both a value and the prefix of other keys, and declaring one that would raises `ValueError`. Keys under `loom.` are loom's: an application's keys use their own prefix. |
 | No exception text | Loom's fields never carry the text of an exception or the data in it: a record about a caught exception passes it as `exc_info`, and the filter writes `exception.type`, `loom.error.code` and, from ERROR up, the standard Python stack. That stack includes the exception messages, foreign ones too: driver and library text is yours (set `stores.<name>.hide_parameters: true` if bound parameters must not appear). Other handlers on the root logger receive `exc_info` as usual. The contract fails any loom record with `exc_info` whose fields hold `str(exc)`. |
 | One render | Each of loom's outputs renders its own copy of the values: a `Secret` is masked, an object is its type name, a long value is cut. `json`, `lambda`, `text` and OpenTelemetry export write the same thing, and the record itself is never changed. |
 | Prefixes for open bags | A job's `meta` is written under `loom.meta.<key>`, and the format's own layout keys (`timestamp`, `level`, `message`, `logger`) under `loom.extra.<key>`. An `extra` key with a loom field name replaces loom's value: that is your choice. |
@@ -163,7 +163,7 @@ several places write the same event:
 ```python
 import logging
 
-from loom.core.logger import LogEvent, LogKey
+from loom.core.logger import LogEvent, LogKey, ValueKind
 
 log = logging.getLogger(__name__)
 
@@ -174,7 +174,7 @@ class InvoiceEvent(LogEvent):
 
 class InvoiceKey(LogKey):
     NUMBER = "billing.invoice.number"
-    TOTAL = "billing.invoice.total"
+    TOTAL = "billing.invoice.total", ValueKind.NUMBER
 
 
 log.info(InvoiceEvent.ISSUED, extra={InvoiceKey.NUMBER: "INV-2041", InvoiceKey.TOTAL: 129.9})

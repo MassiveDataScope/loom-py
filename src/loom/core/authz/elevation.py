@@ -23,7 +23,7 @@ from typing import NoReturn, Protocol
 from loom.core.authz._decide import Decision
 from loom.core.authz._roles import Permission, RoleCatalog
 from loom.core.authz._scope import Scope
-from loom.core.log_names import LogEvent, LogKey
+from loom.core.log_names import LogEvent, LogKey, ValueKind
 
 _logger = logging.getLogger(__name__)
 
@@ -38,7 +38,7 @@ class ElevationEvent(LogEvent):
 class ElevationKey(LogKey):
     """The fields of an elevation record."""
 
-    SCOPES = "loom.elevation.scopes"
+    SCOPES = "loom.elevation.scopes", ValueKind.ARRAY
 
 
 _FLAG_STEP_TIMEOUT_S = 30.0

@@ -30,7 +30,4 @@ class RestEvent(LogEvent):
 class RestKey(LogKey):
     """The fields of a REST record."""
 
-    ROUTE = "loom.rest.route"
-    SUBJECT = "loom.rest.subject"
-    CONNECTION = "loom.rest.connection"
     ERROR_CLASS = "loom.rest.error_class"

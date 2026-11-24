@@ -282,7 +282,7 @@ class TestAsyncioTimer:
 
         assert ran == []
         assert [
-            (entry["level"], entry["loom.job"], entry["loom.task_id"], entry["loom.reason"])
+            (entry["level"], entry["loom.job.name"], entry["loom.task_id"], entry["loom.reason"])
             for entry in _abandonments(caplog)
         ] == [("error", "AcmeJob", f"t{n}", "shutdown") for n in range(3)]
 
@@ -314,7 +314,7 @@ def _abandonments(caplog: pytest.LogCaptureFixture) -> list[dict[str, Any]]:
 
 
 def _lost_jobs(caplog: pytest.LogCaptureFixture) -> list[str]:
-    return [f"{entry['loom.job']}:{entry['loom.task_id']}" for entry in _abandonments(caplog)]
+    return [f"{entry['loom.job.name']}:{entry['loom.task_id']}" for entry in _abandonments(caplog)]
 
 
 class TestAsyncioTimerShutdown:

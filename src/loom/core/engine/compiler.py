@@ -23,7 +23,7 @@ from loom.core.engine.plan import (
 from loom.core.errors import UnsupportedBoundaryType
 from loom.core.execution import ExecutionBinding
 from loom.core.job.job import Job
-from loom.core.logger import LogEvent, LogField, LogKey
+from loom.core.logger import LogEvent, LogField, LogKey, ValueKind
 from loom.core.model import BaseModel, loom_type
 from loom.core.model.introspection import resolve_type_hints
 from loom.core.stores.catalog import StoreKey, store_of
@@ -66,10 +66,10 @@ class CompilerEvent(LogEvent):
 class CompilerKey(LogKey):
     """The fields of a compiler record."""
 
-    DETECTED = "loom.compiler.detected"
-    COMPUTES = "loom.compiler.computes"
-    RULES = "loom.compiler.rules"
-    STEPS = "loom.compiler.steps"
+    DETECTED = "loom.compiler.detected", ValueKind.ARRAY
+    COMPUTES = "loom.compiler.computes", ValueKind.NUMBER
+    RULES = "loom.compiler.rules", ValueKind.NUMBER
+    STEPS = "loom.compiler.steps", ValueKind.NUMBER
 
 
 class CompilationError(Exception):

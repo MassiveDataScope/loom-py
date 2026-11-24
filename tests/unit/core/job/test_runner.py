@@ -178,7 +178,7 @@ class TestJobRunnerAbandonmentLog:
         assert logged == {
             "event": JobEvent.DELIVERY_ABANDONED,
             "level": "warning",
-            "loom.job": "AcmeJob",
+            "loom.job.name": "AcmeJob",
             JobKey.QUEUE: delivery.queue,
             "loom.attempt": 3,
             JobKey.POSTPONEMENTS: 2,

@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from loom.core.log_names import LogEvent, LogKey
+from loom.core.log_names import LogEvent, LogKey, ValueKind
 
 
 class CompositionEvent(LogEvent):
@@ -16,4 +16,4 @@ class CompositionEvent(LogEvent):
 class CompositionKey(LogKey):
     """The fields of a composition record."""
 
-    PHASE_MS = "loom.composition.phase_ms"
+    PHASE_MS = "loom.composition.phase_ms", ValueKind.OBJECT

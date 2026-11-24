@@ -50,7 +50,7 @@ from loom.core.config.errors import ConfigError
 from loom.core.config.keys import FASTAPI_ENTRY, INTERPOLATION, ConfigKey
 from loom.core.environment import ENVIRONMENT_VARIABLE, Environment
 from loom.core.errors import InvalidValue
-from loom.core.log_names import LogEvent, LogField, LogKey
+from loom.core.log_names import LogEvent, LogField, LogKey, ValueKind
 from loom.core.plugins.entrypoints import MissingDependency, list_entry_points
 
 if TYPE_CHECKING:
@@ -74,7 +74,7 @@ class ChecksKey(LogKey):
     """The fields of a deploy check record."""
 
     ID = "loom.checks.id"
-    IDS = "loom.checks.ids"
+    IDS = "loom.checks.ids", ValueKind.ARRAY
     MESSAGE = "loom.checks.message"
 
 

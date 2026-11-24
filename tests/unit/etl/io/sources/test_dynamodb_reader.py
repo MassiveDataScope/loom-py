@@ -15,6 +15,7 @@ from typing import Any
 import polars as pl
 import pytest
 
+from loom.core.log_names import LogField
 from loom.etl.declarative.expr import col
 from loom.etl.declarative.source._specs import DynamoDBSourceSpec
 from loom.etl.event import EtlEvent, EtlKey
@@ -35,12 +36,14 @@ class _FakeDynamoDBClient:
     records every ``scan()`` kwargs.  It does not evaluate filter expressions.
     """
 
-    def __init__(self, items: list[dict[str, Any]]) -> None:
+    def __init__(self, items: list[dict[str, Any]], page_delay_s: float = 0.0) -> None:
         self._items = items
+        self._page_delay_s = page_delay_s
         self.scan_calls: list[dict[str, Any]] = []
 
     def scan(self, **kwargs: Any) -> dict[str, Any]:
         self.scan_calls.append(dict(kwargs))
+        time.sleep(self._page_delay_s)
         total = kwargs.get("TotalSegments")
         items = self._items if total is None else self._items[kwargs["Segment"] :: total]
         start_key = kwargs.get("ExclusiveStartKey")
@@ -251,6 +254,16 @@ class TestPagination:
         reader.read(_spec(batch_size=2, schema=_page_schema()), None).collect()
         assert all(call["Limit"] == 2 for call in client.scan_calls)
         assert len(client.scan_calls) == 3  # ceil(5 / 2) pages
+
+    def test_the_completed_read_logs_its_duration_in_milliseconds(
+        self, caplog: pytest.LogCaptureFixture
+    ) -> None:
+        reader = DynamoDBSourceReader(_FakeDynamoDBClient(_numbered_items(2), page_delay_s=0.01))
+
+        reader.read(_spec(schema=_page_schema()), None).collect()
+
+        [completed] = CapturedLog(caplog).named(EtlEvent.SOURCE_READ_COMPLETED)
+        assert completed[LogField.DURATION_MS] >= 10
 
 
 def _page_schema() -> tuple[ColumnSchema, ...]:

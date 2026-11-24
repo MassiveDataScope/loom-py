@@ -3,8 +3,8 @@
 A record of a ``loom`` logger must follow it: a :class:`~loom.core.log_names.LogEvent`
 as message, no ``%`` arguments, every field key declared by a
 :class:`~loom.core.log_names.LogKey` (or made by :meth:`~loom.core.log_names.LogKey.of`),
-every value one the formats can write, one kind of value per key, and the text of
-the record's exception in no field. A record
+every value one the formats can write and of the kind its key declares, and the
+text of the record's exception in no field. A record
 that breaks it fails its test. Records of any other logger are never checked.
 """
 
@@ -17,15 +17,13 @@ from typing import Final, TypeVar
 
 import pytest
 
-from loom.core.log_names import LogEvent, LogKey, SubKey
+from loom.core.log_names import LogEvent, LogKey, SubKey, ValueKind
 from loom.core.logger.formats import RecordFields, TextFormatter, render_value
 
 _Name = TypeVar("_Name", LogEvent, LogKey)
 
 _QUOTED_TEXT_MIN: Final = 8
 """Characters of exception text that count as quoted inside a longer field value."""
-
-_KEY_KINDS: Final = pytest.StashKey[dict[str, "ValueKind"]]()
 
 
 def loom_members(root: type[_Name]) -> list[_Name]:
@@ -42,29 +40,6 @@ def loom_members(root: type[_Name]) -> list[_Name]:
     return found
 
 
-class ValueKind(StrEnum):
-    """The JSON kind a formatter writes for a field value."""
-
-    BOOLEAN = "boolean"
-    NUMBER = "number"
-    STRING = "string"
-    ARRAY = "array"
-
-    @classmethod
-    def of(cls, value: object) -> ValueKind | None:
-        """The kind of ``render_value(value)``; ``None`` for a missing value."""
-        rendered = render_value(value)
-        if rendered is None:
-            return None
-        if isinstance(rendered, bool):
-            return cls.BOOLEAN
-        if isinstance(rendered, int | float):
-            return cls.NUMBER
-        if isinstance(rendered, list):
-            return cls.ARRAY
-        return cls.STRING
-
-
 class Breach(StrEnum):
     """A rule of the log contract a record can break."""
 
@@ -72,13 +47,13 @@ class Breach(StrEnum):
     MESSAGE_ARGUMENTS = "message_arguments"
     UNDECLARED_KEY = "undeclared_key"
     OPAQUE_VALUE = "opaque_value"
-    KEY_RETYPED = "key_retyped"
+    WRONG_KIND = "wrong_kind"
     EXCEPTION_TEXT_IN_FIELD = "exception_text_in_field"
 
     @classmethod
-    def broken_by(cls, record: logging.LogRecord, kinds: dict[str, ValueKind]) -> list[Breach]:
-        """The rules *record* breaks, given the kind of value each key carried so far."""
-        declared = {key.value for key in loom_members(LogKey)}
+    def broken_by(cls, record: logging.LogRecord) -> list[Breach]:
+        """The rules *record* breaks."""
+        declared = {key.value: key.kind for key in loom_members(LogKey)}
         fields = {
             key: value
             for key, value in RecordFields(record).raw.items()
@@ -94,8 +69,9 @@ class Breach(StrEnum):
                 render_value(value) == type(value).__name__ and not isinstance(value, str)
                 for value in fields.values()
             ),
-            cls.KEY_RETYPED: any(
-                (kind := ValueKind.of(value)) is not None and kinds.get(key, kind) != kind
+            cls.WRONG_KIND: any(
+                (kind := ValueKind.of(render_value(value))) is not None
+                and declared.get(key, kind) != kind
                 for key, value in fields.items()
             ),
             cls.EXCEPTION_TEXT_IN_FIELD: bool(text)
@@ -110,17 +86,12 @@ class Breach(StrEnum):
 class LogContract(logging.Handler):
     """Keeps the records of one test with the contract rules each one breaks."""
 
-    def __init__(self, kinds: dict[str, ValueKind]) -> None:
+    def __init__(self) -> None:
         super().__init__()
         self.records: list[tuple[logging.LogRecord, list[Breach]]] = []
-        self._kinds = kinds
 
     def emit(self, record: logging.LogRecord) -> None:
-        self.records.append((record, Breach.broken_by(record, self._kinds)))
-        for key, value in RecordFields(record).raw.items():
-            kind = ValueKind.of(value)
-            if kind is not None and not isinstance(key, SubKey):
-                self._kinds.setdefault(key, kind)
+        self.records.append((record, Breach.broken_by(record)))
 
     def offences(self) -> list[str]:
         """One line per distinct record that broke the contract."""
@@ -133,15 +104,10 @@ class LogContract(logging.Handler):
         )
 
 
-def pytest_configure(config: pytest.Config) -> None:
-    """Start the session's record of the kind each key carries."""
-    config.stash[_KEY_KINDS] = {}
-
-
 @pytest.fixture(autouse=True)
-def loom_records_follow_the_contract(request: pytest.FixtureRequest) -> Iterator[None]:
+def loom_records_follow_the_contract() -> Iterator[None]:
     """Fail a test when a record of a ``loom`` logger breaks the contract."""
-    seen = LogContract(request.config.stash[_KEY_KINDS])
+    seen = LogContract()
     loom_logger = logging.getLogger("loom")
     loom_logger.addHandler(seen)
     yield

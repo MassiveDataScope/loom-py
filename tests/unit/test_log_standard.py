@@ -8,15 +8,16 @@ from pathlib import Path
 
 import pytest
 
+from loom.core.checks import ChecksKey
 from loom.core.log_names import LogEvent, LogField, SubKey
 from loom.core.model.redaction import Secret
-from tests.helpers.log_standard import Breach, LogContract, ValueKind
+from loom.core.observability.observer.log import LifecycleKey
+from tests.helpers.log_standard import Breach, LogContract
 
 ATTEMPT = LogField.ATTEMPT.value
 JOB = LogField.JOB.value
 SUBKEY = SubKey("loom.acme.bag.tenant")
 RecordFactory = Callable[..., logging.LogRecord]
-KINDS: dict[str, ValueKind] = {ATTEMPT: ValueKind.NUMBER, SUBKEY: ValueKind.NUMBER}
 FAILURE = (ValueError, ValueError("card 4111"), None)
 
 
@@ -52,8 +53,15 @@ class TestBreach:
             ),
             pytest.param({"fields": {"amount": 3}}, [Breach.UNDECLARED_KEY], id="undeclared-key"),
             pytest.param({"fields": {JOB: object()}}, [Breach.OPAQUE_VALUE], id="opaque-value"),
-            pytest.param({"fields": {JOB: ["a", "b"]}}, [], id="list-of-scalars"),
-            pytest.param({"fields": {ATTEMPT: "3"}}, [Breach.KEY_RETYPED], id="key-retyped"),
+            pytest.param({"fields": {ChecksKey.IDS: ["a", "b"]}}, [], id="list-of-scalars"),
+            pytest.param({"fields": {ATTEMPT: 12.5}}, [], id="float-is-a-number"),
+            pytest.param({"fields": {JOB: Secret("a")}}, [], id="secret-is-a-string"),
+            pytest.param({"fields": {ATTEMPT: "3"}}, [Breach.WRONG_KIND], id="text-for-number"),
+            pytest.param({"fields": {ATTEMPT: True}}, [Breach.WRONG_KIND], id="boolean-for-number"),
+            pytest.param({"fields": {JOB: ["a"]}}, [Breach.WRONG_KIND], id="array-for-text"),
+            pytest.param(
+                {"fields": {LifecycleKey.META: "x"}}, [Breach.WRONG_KIND], id="bag-as-value"
+            ),
             pytest.param({"fields": {ATTEMPT: None}}, [], id="missing-value"),
             pytest.param({"fields": {SUBKEY: object()}}, [], id="subkey"),
             pytest.param(
@@ -76,12 +84,12 @@ class TestBreach:
     def test_a_record_breaks_the_rules_it_does_not_follow(
         self, record: RecordFactory, built: dict[str, object], expected: list[Breach]
     ) -> None:
-        assert Breach.broken_by(record(**built), KINDS) == expected
+        assert Breach.broken_by(record(**built)) == expected
 
 
 class TestLogContract:
     def test_lists_each_record_that_breaks_the_contract_once(self, record: RecordFactory) -> None:
-        contract = LogContract({})
+        contract = LogContract()
 
         contract.emit(record("thing done", fields={"amount": 3}))
         contract.emit(record("thing done", fields={"amount": 3}))
@@ -90,27 +98,6 @@ class TestLogContract:
         assert contract.offences() == [
             "loom.acme: thing done breaks ['message_not_event', 'undeclared_key']"
         ]
-
-    @pytest.mark.parametrize(
-        ("first", "second", "retyped"),
-        [
-            pytest.param(1, 12.5, False, id="int-then-float"),
-            pytest.param(12.5, 1, False, id="float-then-int"),
-            pytest.param(Secret("a"), "b", False, id="secret-is-a-string"),
-            pytest.param("3", 3, True, id="string-then-int"),
-            pytest.param(True, 1, True, id="boolean-then-int"),
-            pytest.param("a", ["a"], True, id="string-then-array"),
-        ],
-    )
-    def test_a_key_changes_kind_only_across_json_kinds(
-        self, record: RecordFactory, first: object, second: object, retyped: bool
-    ) -> None:
-        contract = LogContract({})
-
-        contract.emit(record(fields={ATTEMPT: first}))
-        contract.emit(record(fields={ATTEMPT: second}))
-
-        assert bool(contract.offences()) is retyped
 
 
 class TestStrictFixture:

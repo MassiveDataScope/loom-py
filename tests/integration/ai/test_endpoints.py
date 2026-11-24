@@ -54,6 +54,7 @@ from loom.core.config.errors import ConfigError
 from loom.core.di import LoomContainer
 from loom.core.errors import Forbidden
 from loom.core.identity import ANONYMOUS, Identity, reset_identity, set_identity
+from loom.core.log_names import LogField
 from loom.core.model import loom_type, msgspec_type
 from loom.core.model.redaction import Dsn
 from loom.core.observability.event import EventKind, LifecycleEvent, Scope
@@ -417,7 +418,7 @@ class TestMounting:
         mounts = [name for name in CapturedLog(caplog).messages if name in _MOUNT_EVENTS]
         assert mounts == [event]
         assert CapturedLog(caplog).named(event) == [
-            {AiKey.AGENT: _AGENT, AiKey.ROUTE: f"{_PREFIX}/{_AGENT}"}
+            {AiKey.AGENT: _AGENT, LogField.HTTP_ROUTE: f"{_PREFIX}/{_AGENT}"}
         ]
 
 

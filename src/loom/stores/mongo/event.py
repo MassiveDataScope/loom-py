@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from loom.core.log_names import LogEvent, LogKey
+from loom.core.log_names import LogEvent, LogKey, ValueKind
 
 
 class MongoEvent(LogEvent):
@@ -16,5 +16,5 @@ class MongoEvent(LogEvent):
 class MongoKey(LogKey):
     """The fields of a Mongo store record."""
 
-    TRANSACTIONS = "loom.mongo.transactions"
-    DOCUMENT_COUNT = "loom.mongo.document_count"
+    TRANSACTIONS = "loom.mongo.transactions", ValueKind.BOOLEAN
+    DOCUMENT_COUNT = "loom.mongo.document_count", ValueKind.NUMBER

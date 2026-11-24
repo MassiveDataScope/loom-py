@@ -375,4 +375,4 @@ class TestStructuredLogs:
     async def test_compile_log_has_usecase_field(self, log: CapturedLog) -> None:
         UseCaseCompiler().compile(_SimpleUseCase)
         [fields] = log.named("compiler.use_case_compiled")
-        assert fields["loom.use_case"] == "_SimpleUseCase"
+        assert fields["loom.use_case.name"] == "_SimpleUseCase"

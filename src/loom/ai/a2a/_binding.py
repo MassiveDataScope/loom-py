@@ -25,6 +25,7 @@ from loom.ai.event import AiEvent, AiKey
 from loom.ai.execution import AgentHost
 from loom.ai.fastapi.response import ENCODER
 from loom.core.config.errors import ConfigError
+from loom.core.log_names import LogField
 from loom.rest.auth.abc import Authenticator
 from loom.rest.auth.middleware import AuthenticationMiddleware
 
@@ -237,4 +238,6 @@ def announce_publication(agent: PublishedAgent, *, prefix: str) -> None:
         event = AiEvent.A2A_AGENT_PUBLISHED_ANONYMOUS_CONVERSATIONAL
     else:
         event = AiEvent.A2A_AGENT_PUBLISHED_ANONYMOUS
-    _logger.warning(event, extra={AiKey.AGENT: agent.name, AiKey.ROUTE: f"{prefix}/{agent.name}"})
+    _logger.warning(
+        event, extra={AiKey.AGENT: agent.name, LogField.HTTP_ROUTE: f"{prefix}/{agent.name}"}
+    )

@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from loom.core.log_names import LogEvent, LogKey
+from loom.core.log_names import LogEvent, LogKey, ValueKind
 
 
 class SqlalchemyEvent(LogEvent):
@@ -29,14 +29,13 @@ class SqlalchemyEvent(LogEvent):
 class SqlalchemyKey(LogKey):
     """The fields of a relational store record."""
 
-    STORE = "loom.sqlalchemy.store"
     BACKEND = "loom.sqlalchemy.backend"
     DRIVER = "loom.sqlalchemy.driver"
-    INJECT_TRACE_ID = "loom.sqlalchemy.inject_trace_id"
-    HAS_SESSION_SETTINGS = "loom.sqlalchemy.has_session_settings"
-    SKIPPED_STORES = "loom.sqlalchemy.skipped_stores"
+    INJECT_TRACE_ID = "loom.sqlalchemy.inject_trace_id", ValueKind.BOOLEAN
+    HAS_SESSION_SETTINGS = "loom.sqlalchemy.has_session_settings", ValueKind.BOOLEAN
+    SKIPPED_STORES = "loom.sqlalchemy.skipped_stores", ValueKind.ARRAY
     OWNER = "loom.sqlalchemy.owner"
     METHOD = "loom.sqlalchemy.method"
-    MUTATION_COUNT = "loom.sqlalchemy.mutation_count"
-    TABLES = "loom.sqlalchemy.tables"
-    MONTHS_COVERED = "loom.sqlalchemy.months_covered"
+    MUTATION_COUNT = "loom.sqlalchemy.mutation_count", ValueKind.NUMBER
+    TABLES = "loom.sqlalchemy.tables", ValueKind.ARRAY
+    MONTHS_COVERED = "loom.sqlalchemy.months_covered", ValueKind.NUMBER

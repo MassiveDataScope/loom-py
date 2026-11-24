@@ -22,6 +22,7 @@ from loom.core.identity import Acting
 from loom.core.model.redaction import reveal_for_driver
 from loom.core.stores.catalog import StoreKey
 from loom.core.stores.database import DatabaseConfig
+from loom.core.stores.event import StoresKey
 from loom.core.stores.profile import PoolMetricsSink, RuntimeProfile
 from loom.core.stores.uow.scope import current_handle
 from loom.core.tracing import get_trace_id
@@ -253,7 +254,7 @@ class SessionManager:
             except Exception as exc:
                 _log.error(
                     SqlalchemyEvent.OPERATION_SESSION_ROLLED_BACK,
-                    extra={SqlalchemyKey.STORE: self.store},
+                    extra={StoresKey.STORE: self.store},
                     exc_info=exc,
                 )
                 raise

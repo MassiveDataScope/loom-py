@@ -13,6 +13,8 @@ from typing import Any
 import polars as pl
 
 from loom.core.errors import InternalError, InvalidType, InvalidUse, InvalidValue
+from loom.core.log_names import LogField
+from loom.core.observability.span import elapsed_ms
 
 try:
     import pyarrow as _pa
@@ -136,14 +138,14 @@ class ClickHouseSourceReader(SourceReader, ClientCommandExecutor):
         client = self._client or self._get_client()
         query = self._build_query(spec, params_instance)
         _log_query_start(spec, query)
-        started = time.monotonic()
+        started = time.perf_counter()
         frame, rows = self._query_to_frame(client, query)
         _log.info(
             EtlEvent.SOURCE_READ_COMPLETED,
             extra={
                 EtlKey.TABLE: spec.table_ref.ref,
                 EtlKey.ROWS: rows,
-                EtlKey.DURATION_S: round(time.monotonic() - started, 3),
+                LogField.DURATION_MS: elapsed_ms(started),
             },
         )
         if spec.schema:
@@ -175,7 +177,7 @@ class ClickHouseSourceReader(SourceReader, ClientCommandExecutor):
         client = self._client or self._get_client()
         query = self._build_query(spec, params_instance)
         _log_query_start(spec, query)
-        started = time.monotonic()
+        started = time.perf_counter()
         frame, rows, batches = self._stream_query_to_frame(client, query)
         _log.info(
             EtlEvent.SOURCE_READ_COMPLETED,
@@ -183,7 +185,7 @@ class ClickHouseSourceReader(SourceReader, ClientCommandExecutor):
                 EtlKey.TABLE: spec.table_ref.ref,
                 EtlKey.ROWS: rows,
                 EtlKey.BATCHES: batches,
-                EtlKey.DURATION_S: round(time.monotonic() - started, 3),
+                LogField.DURATION_MS: elapsed_ms(started),
             },
         )
         if spec.schema:

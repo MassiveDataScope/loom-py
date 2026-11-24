@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from loom.core.log_names import LogEvent, LogKey
+from loom.core.log_names import LogEvent, LogKey, ValueKind
 
 
 class JobsEvent(LogEvent):
@@ -20,4 +20,4 @@ class JobsKey(LogKey):
 
     QUEUE_ARN = "loom.jobs.queue_arn"
     ACTION = "loom.jobs.action"
-    FAILED_ENTRIES = "loom.jobs.failed_entries"
+    FAILED_ENTRIES = "loom.jobs.failed_entries", ValueKind.ARRAY

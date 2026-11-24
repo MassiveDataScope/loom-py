@@ -23,6 +23,7 @@ from enum import StrEnum
 from typing import NoReturn
 
 from loom.core.identity import Identity
+from loom.core.identity.context import IdentityKey
 from loom.core.log_names import LogField
 from loom.core.stores.event import StoresEvent, StoresKey
 from loom.core.stores.sql.abc.errors import RoleNotAllowedError, RolesNotBoundError
@@ -114,7 +115,7 @@ def _deny(connection: str, identity: Identity, reason: _Denial) -> NoReturn:
         StoresEvent.ROLE_AUTHORIZATION_DENIED,
         extra={
             StoresKey.CONNECTION: connection,
-            StoresKey.SUBJECT: identity.subject,
+            IdentityKey.SUBJECT: identity.subject,
             StoresKey.MECHANISM: identity.mechanism,
             LogField.REASON: reason,
         },
