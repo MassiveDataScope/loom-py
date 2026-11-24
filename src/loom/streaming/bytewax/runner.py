@@ -18,8 +18,8 @@ from loom.core.async_bridge import AsyncBridge, build_backend_options
 from loom.core.checks import CheckScope, enforce_deploy_checks
 from loom.core.config import (
     ConfigContext,
-    ConfigKey,
     ConfigResolver,
+    ConfigSection,
 )
 from loom.core.config.overrides import load_application_config
 from loom.core.environment import Environment, config_source_paths, resolve_environment
@@ -214,7 +214,7 @@ class StreamingRunner:
     ) -> None:
         resolved_environment = resolve_environment(environment)
         observability_cfg = config.section_or_default(
-            ConfigKey.OBSERVABILITY, ObservabilityConfig, ObservabilityConfig()
+            ConfigSection.OBSERVABILITY, ObservabilityConfig, ObservabilityConfig()
         )
         obs = observability or Observability.from_config(
             observability_cfg, environment=resolved_environment
@@ -222,7 +222,7 @@ class StreamingRunner:
         enforce_deploy_checks(config, resolved_environment, scope=CheckScope.without_rest())
         plan = compile_flow(flow, config=config)
         runtime = config.section_or_default(
-            ConfigKey.STREAMING_RUNTIME,
+            ConfigSection.STREAMING_RUNTIME,
             BytewaxRuntimeConfig,
             BytewaxRuntimeConfig(),
         )

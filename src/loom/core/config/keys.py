@@ -11,7 +11,7 @@ FASTAPI_ENTRY: Final = "fastapi"
 """Value of ``app.entry`` that serves the application over HTTP with FastAPI."""
 
 
-class ConfigKey(StrEnum):
+class ConfigSection(StrEnum):
     """Top-level YAML section keys consumed by :func:`~loom.core.config.loader.section`.
 
     Using ``StrEnum`` keeps references typo-proof while remaining compatible
@@ -19,7 +19,7 @@ class ConfigKey(StrEnum):
 
     Example::
 
-        cfg = section(raw, ConfigKey.CELERY, CeleryConfig)
+        cfg = section(raw, ConfigSection.CELERY, CeleryConfig)
     """
 
     APP = "app"

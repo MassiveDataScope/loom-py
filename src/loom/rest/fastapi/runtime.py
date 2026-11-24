@@ -29,7 +29,7 @@ from loom.composition import (
 from loom.core.checks import CheckScope
 from loom.core.config import (
     ConfigContext,
-    ConfigKey,
+    ConfigSection,
 )
 from loom.core.config.errors import ConfigError
 from loom.core.config.loader import convert_section
@@ -647,7 +647,7 @@ def compose_rest(
         profile=SERVER_PROFILE,
         discovered=discovered,
         default_store_plugin=SQLALCHEMY_BACKEND,
-        check_scope=CheckScope(required=frozenset({ConfigKey.APP_REST})),
+        check_scope=CheckScope(required=frozenset({ConfigSection.APP_REST})),
         agents=True,
         log_runtime=LogRuntime.FASTAPI,
         execution_observer=_build_metrics_adapter(metrics_cfg, metrics_registry),

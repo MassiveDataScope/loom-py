@@ -18,7 +18,7 @@ from loom.core.config.configurable import ConfigBinding, Configurable
 from loom.core.config.context import ConfigContext
 from loom.core.config.errors import ConfigError
 from loom.core.config.file import FileResolver
-from loom.core.config.keys import ConfigKey
+from loom.core.config.keys import ConfigSection
 from loom.core.config.loader import load_config, section
 from loom.core.config.observability import OtelConfig
 from loom.core.config.resolver import (
@@ -33,7 +33,7 @@ __all__ = [
     "ConfigBinding",
     "ConfigContext",
     "ConfigError",
-    "ConfigKey",
+    "ConfigSection",
     "ConfigResolver",
     "Configurable",
     "FileResolver",

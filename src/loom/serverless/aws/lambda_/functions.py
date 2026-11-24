@@ -15,7 +15,7 @@ from typing import Annotated, Any
 
 import msgspec
 
-from loom.core.config import ConfigContext, ConfigError, ConfigKey
+from loom.core.config import ConfigContext, ConfigError, ConfigSection
 from loom.core.config.keys import INTERPOLATION
 from loom.core.config.loader import convert_section
 from loom.core.identity import RESERVED_ATTRIBUTE_PREFIX
@@ -238,10 +238,10 @@ def _unresolved(ctx: ConfigContext) -> LambdaConfig:
 
     Only the function served resolves its own ``auth``, through its section path.
     """
-    raw = ctx.raw(ConfigKey.LAMBDA)
+    raw = ctx.raw(ConfigSection.LAMBDA)
     if raw is None:
         return LambdaConfig()
-    return convert_section(raw, ConfigKey.LAMBDA, LambdaConfig)
+    return convert_section(raw, ConfigSection.LAMBDA, LambdaConfig)
 
 
 def served_trigger(

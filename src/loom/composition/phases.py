@@ -26,7 +26,7 @@ from loom.core.bootstrap import BootstrapError, Kernel
 from loom.core.bootstrap.kernel import KernelRecipe, seeded_container
 from loom.core.cache.wiring import cache_module_for
 from loom.core.checks import enforce_deploy_checks
-from loom.core.config import ConfigContext, ConfigError, ConfigKey
+from loom.core.config import ConfigContext, ConfigError, ConfigSection
 from loom.core.di.container import ResolutionError
 from loom.core.di.graph import GraphAnalysis
 from loom.core.di.installer import Installer
@@ -175,7 +175,7 @@ def build_stores(project: Project, recipe: Recipe) -> Stores:
     default_label = backends[DEFAULT_STORE].name
     if default_label in stores:
         raise ConfigError(
-            f"{ConfigKey.STORES}.{default_label} would report its readiness under the "
+            f"{ConfigSection.STORES}.{default_label} would report its readiness under the "
             f"key of {DEFAULT_STORE_PATH}, named after its backend; rename the store"
         )
     cursor_codec = recipe.build_cursor_codec(ctx)

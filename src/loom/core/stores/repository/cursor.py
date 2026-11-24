@@ -45,7 +45,7 @@ import msgspec
 
 from loom.core.checks import silenced_checks
 from loom.core.config.errors import ConfigError
-from loom.core.config.keys import ConfigKey
+from loom.core.config.keys import ConfigSection
 from loom.core.environment import Environment, configured_variable, resolve_environment
 from loom.core.errors import InvalidType, InvalidValue, UnsupportedQuery
 from loom.core.model.struct import LoomFrozenStruct
@@ -81,7 +81,7 @@ _KEY_ID: Final = re.compile(r"[A-Za-z0-9._-]{1,64}")
 _BASE64URL: Final = re.compile(r"[A-Za-z0-9_-]*")
 _INVALID: Final = "cursor token is not valid"
 _NOT_ENABLED: Final = "cursor pagination is not enabled"
-CURSORS_SECTION: Final = f"{ConfigKey.STORES_SETTINGS}.cursors"
+CURSORS_SECTION: Final = f"{ConfigSection.STORES_SETTINGS}.cursors"
 """Dotted path of the cursor signing section."""
 
 _OPT_OUT: Final = f"{CURSORS_SECTION}.signing: ephemeral in development.yaml"

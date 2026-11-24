@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import warnings
 
-from loom.core.config import ConfigContext, ConfigKey
+from loom.core.config import ConfigContext, ConfigSection
 from loom.core.config.errors import ConfigError
 from loom.core.stores.sql import SqlConfig
 from loom.core.stores.sql.config import reject_retired_sql_keys, roles_need_identity_binding
@@ -15,8 +15,8 @@ from loom.rest.fastapi.sql import _connection_mechanism, _role_exposure_notice, 
 
 def _check_sql_section(ctx: ConfigContext, auth: _AuthWiring) -> None:
     """Refuse an ``sql:`` section whose endpoints the authentication cannot guard."""
-    reject_retired_sql_keys(ctx.raw(ConfigKey.SQL))
-    sql_cfg = ctx.section_optional(ConfigKey.SQL, SqlConfig)
+    reject_retired_sql_keys(ctx.raw(ConfigSection.SQL))
+    sql_cfg = ctx.section_optional(ConfigSection.SQL, SqlConfig)
     if sql_cfg is not None:
         _validate_sql_endpoint_auth(sql_cfg, auth)
 

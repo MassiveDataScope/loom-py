@@ -14,7 +14,7 @@ from loom.composition.errors import JobTransportError
 from loom.composition.event import CompositionEvent
 from loom.connections.aws import AwsClients
 from loom.core.bootstrap import Kernel
-from loom.core.config import ConfigContext, ConfigKey
+from loom.core.config import ConfigContext, ConfigSection
 from loom.core.di.scope import Scope
 from loom.core.job.callback import DispatchableCallbacks, JobCallback
 from loom.core.job.config import JobSettings
@@ -74,7 +74,7 @@ def _celery_config(ctx: ConfigContext) -> CeleryConfig:
         raise JobTransportError(
             "jobs are routed to celery, but the loom[celery] extra is not installed"
         ) from exc
-    return ctx.section(ConfigKey.CELERY, CeleryConfig)
+    return ctx.section(ConfigSection.CELERY, CeleryConfig)
 
 
 def _celery_transport(context: JobTransportContext, celery_cfg: CeleryConfig) -> _Built:
@@ -179,7 +179,7 @@ def _routed(
 def _implicit(context: JobTransportContext) -> _Built:
     """Today's rule without ``app.job_service``: Celery when configured and installed."""
     ctx = context.config
-    configured = ctx.has(ConfigKey.CELERY)
+    configured = ctx.has(ConfigSection.CELERY)
     installed = configured or importlib.util.find_spec("celery") is not None
     if installed:
         warnings.warn(

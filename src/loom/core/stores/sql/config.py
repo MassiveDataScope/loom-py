@@ -1,6 +1,6 @@
 """Typed configuration for the backend-agnostic ``sql:`` section.
 
-Parsed via ``ctx.section(ConfigKey.SQL, SqlConfig)``. Validation is fail-fast:
+Parsed via ``ctx.section(ConfigSection.SQL, SqlConfig)``. Validation is fail-fast:
 invalid values abort the parse and surface as
 :class:`~loom.core.config.errors.ConfigError` through the config loader.
 """

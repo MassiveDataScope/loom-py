@@ -20,8 +20,8 @@ from loom.core.cache.wiring import CacheGateways
 from loom.core.config import (
     ConfigContext,
     ConfigError,
-    ConfigKey,
     ConfigResolver,
+    ConfigSection,
 )
 from loom.core.config.entry_points import EntryPointGroup
 from loom.core.config.overrides import load_application_config
@@ -80,9 +80,9 @@ class AppConfig(msgspec.Struct, kw_only=True):
                 counts as written, none is resolved) or the removed ``app.discovery`` is
                 declared.
         """
-        if ctx.raw(f"{ConfigKey.APP}.name") is None:
+        if ctx.raw(f"{ConfigSection.APP}.name") is None:
             raise ConfigError(
-                f"{ConfigKey.APP}.name is required: name the application once in the YAML; "
+                f"{ConfigSection.APP}.name is required: name the application once in the YAML; "
                 "it labels the API, the worker and their metrics"
             )
         if ctx.raw("app.discovery") is not None:
@@ -103,7 +103,7 @@ class AppConfig(msgspec.Struct, kw_only=True):
                 does not resolve or fails validation.
         """
         cls.reject_misdeclared(ctx)
-        return ctx.section(ConfigKey.APP, cls)
+        return ctx.section(ConfigSection.APP, cls)
 
 
 @dataclass(frozen=True, kw_only=True)
@@ -207,7 +207,7 @@ class Project:
             caller=caller,
         )
         observability_config = loaded.config.section_or_default(
-            ConfigKey.OBSERVABILITY, ObservabilityConfig, ObservabilityConfig()
+            ConfigSection.OBSERVABILITY, ObservabilityConfig, ObservabilityConfig()
         )
         app_cfg = AppConfig.from_config(loaded.config)
         observability = Observability.from_config(

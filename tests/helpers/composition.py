@@ -14,7 +14,7 @@ import msgspec
 import pytest
 
 from loom.composition import AppConfig, Application, Project, Recipe
-from loom.core.config import ConfigContext, ConfigKey
+from loom.core.config import ConfigContext, ConfigSection
 from loom.core.di.container import LoomContainer
 from loom.core.discovery.base import DiscoveryResult
 from loom.core.engine.executor import UseCaseExecutor
@@ -52,10 +52,10 @@ def composition_project(
         environment=environment,
         code_path=code_path if code_path is not None else Path.cwd(),
         config_root=config_root if config_root is not None else Path.cwd(),
-        app=app if app is not None else ctx.section(ConfigKey.APP, AppConfig),
+        app=app if app is not None else ctx.section(ConfigSection.APP, AppConfig),
         observability=Observability.noop(),
         observability_config=ctx.section_or_default(
-            ConfigKey.OBSERVABILITY, ObservabilityConfig, ObservabilityConfig()
+            ConfigSection.OBSERVABILITY, ObservabilityConfig, ObservabilityConfig()
         ),
     )
 

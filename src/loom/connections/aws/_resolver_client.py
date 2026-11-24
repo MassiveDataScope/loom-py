@@ -6,7 +6,7 @@ from typing import Any, cast
 
 from loom.core.config.context import ConfigContext
 from loom.core.config.errors import ConfigError
-from loom.core.config.keys import INTERPOLATION, ConfigKey
+from loom.core.config.keys import INTERPOLATION, ConfigSection
 from loom.core.connections.aws import AwsClientConfig, AwsClientSource
 from loom.core.plugins.optional import MissingExtraError
 
@@ -39,18 +39,18 @@ def build_resolver_client(
     if root is not None:
         from omegaconf import OmegaConf
 
-        aws = OmegaConf.to_container(OmegaConf.masked_copy(root, ConfigKey.AWS), resolve=False)
-        written = cast("dict[str, object]", aws).get(ConfigKey.AWS)
+        aws = OmegaConf.to_container(OmegaConf.masked_copy(root, ConfigSection.AWS), resolve=False)
+        written = cast("dict[str, object]", aws).get(ConfigSection.AWS)
     for key, value in written.items() if isinstance(written, dict) else ():
         if isinstance(value, str) and INTERPOLATION in value:
             raise ConfigError(
-                f"{ConfigKey.AWS}.{key} is a placeholder, but {resolver} reads "
-                f"{ConfigKey.AWS} as written: write the value, or leave it out for boto3 "
+                f"{ConfigSection.AWS}.{key} is a placeholder, but {resolver} reads "
+                f"{ConfigSection.AWS} as written: write the value, or leave it out for boto3 "
                 "to read its environment (AWS_REGION, AWS_ENDPOINT_URL)"
             )
     overrides: dict[str, Any] = {} if region is None else {"region": region}
-    ctx = ConfigContext.from_dict({ConfigKey.AWS: written})
-    config = AwsClientConfig.from_config(ctx, ConfigKey.AWS, **overrides)
+    ctx = ConfigContext.from_dict({ConfigSection.AWS: written})
+    config = AwsClientConfig.from_config(ctx, ConfigSection.AWS, **overrides)
     try:
         return clients.client(service, config)
     except MissingExtraError as exc:

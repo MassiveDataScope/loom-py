@@ -29,7 +29,7 @@ from typing import TYPE_CHECKING, Any, Final, NewType, TypeVar
 from loom.core.config import (
     ConfigContext,
     ConfigError,
-    ConfigKey,
+    ConfigSection,
     reject_retired_keys,
     reject_retired_sections,
 )
@@ -53,7 +53,7 @@ StoreKey = NewType("StoreKey", str)
 DEFAULT_STORE: Final = StoreKey("default")
 """The store of every model that declares no ``__store__``."""
 
-DEFAULT_STORE_PATH: Final = f"{ConfigKey.STORES}.{DEFAULT_STORE}"
+DEFAULT_STORE_PATH: Final = f"{ConfigSection.STORES}.{DEFAULT_STORE}"
 """Dotted path of the default store's section, for messages about a store none names."""
 
 BACKEND_KEY: Final = "backend"
@@ -91,7 +91,7 @@ class StoreSetting(StrEnum):
     @property
     def path(self) -> str:
         """Dotted path of the key in the configuration."""
-        return f"{ConfigKey.STORES_SETTINGS}.{self.value}"
+        return f"{ConfigSection.STORES_SETTINGS}.{self.value}"
 
     @classmethod
     def check_section(cls, shared: object) -> None:
@@ -106,18 +106,18 @@ class StoreSetting(StrEnum):
         """
         if not isinstance(shared, Mapping):
             raise ConfigError(
-                f"{ConfigKey.STORES_SETTINGS} must map each store setting to its value"
+                f"{ConfigSection.STORES_SETTINGS} must map each store setting to its value"
             )
         known = {setting.value for setting in cls}
         for name in shared:
             if name == BACKEND_KEY:
                 raise ConfigError(
-                    f"{ConfigKey.STORES_SETTINGS} is reserved for the shared settings and "
+                    f"{ConfigSection.STORES_SETTINGS} is reserved for the shared settings and "
                     f"declares no store: remove {BACKEND_KEY!r}, or name the store otherwise"
                 )
             if name not in known:
                 raise ConfigError(
-                    f"{ConfigKey.STORES_SETTINGS}.{name} is not a store setting; "
+                    f"{ConfigSection.STORES_SETTINGS}.{name} is not a store setting; "
                     f"the keys are {', '.join(sorted(known))}"
                 )
 
@@ -390,18 +390,18 @@ def load_catalog(ctx: ConfigContext) -> StoreCatalog:
             setting, or a store declares its own ``settings``.
     """
     reject_retired_sections(ctx)
-    written = ctx.raw(ConfigKey.STORES)
+    written = ctx.raw(ConfigSection.STORES)
     if written is None:
         return StoreCatalog(specs=MappingProxyType({}))
     if not isinstance(written, Mapping):
-        raise ConfigError(f"{ConfigKey.STORES} must map each store name to its section")
+        raise ConfigError(f"{ConfigSection.STORES} must map each store name to its section")
     registered = registered_names(PLUGIN_ENTRY_POINT_GROUP)
     specs: dict[StoreKey, StoreSpec] = {}
     for name, section in written.items():
         if name == SETTINGS_KEY:
             StoreSetting.check_section(section)
             continue
-        key = _store_key(name, owner=f"{ConfigKey.STORES} key")
+        key = _store_key(name, owner=f"{ConfigSection.STORES} key")
         if not isinstance(section, Mapping):
             raise ConfigError(
                 f"{_path(key)} must be a mapping holding the store's backend and connection"
@@ -412,7 +412,7 @@ def load_catalog(ctx: ConfigContext) -> StoreCatalog:
 
 def _path(key: str) -> str:
     """Dotted path of the section of store *key*."""
-    return f"{ConfigKey.STORES}.{key}"
+    return f"{ConfigSection.STORES}.{key}"
 
 
 def _store_key(value: object, *, owner: str) -> StoreKey:
@@ -428,7 +428,7 @@ def _store_key(value: object, *, owner: str) -> StoreKey:
         )
     if value == SETTINGS_KEY:
         raise ConfigError(
-            f"{owner} {value!r} is reserved: {ConfigKey.STORES_SETTINGS} holds the shared "
+            f"{owner} {value!r} is reserved: {ConfigSection.STORES_SETTINGS} holds the shared "
             "settings, so no store can take that name"
         )
     return StoreKey(value)
@@ -445,7 +445,7 @@ def _spec(ctx: ConfigContext, key: StoreKey, registered: tuple[str, ...]) -> Sto
     if ctx.has(f"{path}.{SETTINGS_KEY}"):
         raise ConfigError(
             f"{path}.{SETTINGS_KEY} is not supported: a store takes no settings of its own, "
-            f"the shared ones live under {ConfigKey.STORES_SETTINGS}"
+            f"the shared ones live under {ConfigSection.STORES_SETTINGS}"
         )
     backend = ctx.section_or_default(f"{path}.{BACKEND_KEY}", str, "")
     if not backend:

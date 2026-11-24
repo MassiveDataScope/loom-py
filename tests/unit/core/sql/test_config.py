@@ -6,7 +6,7 @@ from typing import Any
 
 import pytest
 
-from loom.core.config import ConfigContext, ConfigKey
+from loom.core.config import ConfigContext, ConfigSection
 from loom.core.config.errors import ConfigError
 from loom.core.stores.sql.config import SqlConfig, SqlEndpointConfig
 
@@ -19,15 +19,15 @@ def _minimal(**overrides: Any) -> dict[str, Any]:
 
 
 def _parse(connection: dict[str, Any]) -> SqlConfig:
-    """Parse a single 'analytics' connection via ConfigContext + ConfigKey.SQL."""
+    """Parse a single 'analytics' connection via ConfigContext + ConfigSection.SQL."""
     ctx = ConfigContext.from_dict({"sql": {"connections": {"analytics": connection}}})
-    return ctx.section(ConfigKey.SQL, SqlConfig)
+    return ctx.section(ConfigSection.SQL, SqlConfig)
 
 
 class TestSqlConfig:
     def test_config_key_sql_points_at_the_sql_section(self) -> None:
-        """``ConfigKey.SQL`` exists and resolves to the 'sql' YAML path."""
-        assert str(ConfigKey.SQL) == "sql"
+        """``ConfigSection.SQL`` exists and resolves to the 'sql' YAML path."""
+        assert str(ConfigSection.SQL) == "sql"
 
     def test_parses_defaults_when_connection_is_minimal(self) -> None:
         """A connection with only backend+url adopts every default from spec §3."""
@@ -72,7 +72,7 @@ class TestSqlConfig:
         ctx = ConfigContext.from_dict(
             {"sql": {"connections": {"analytics": _minimal(), "reporting": _minimal()}}}
         )
-        config = ctx.section(ConfigKey.SQL, SqlConfig)
+        config = ctx.section(ConfigSection.SQL, SqlConfig)
         assert set(config.connections) == {"analytics", "reporting"}
 
     def test_fails_when_url_is_missing(self) -> None:

@@ -13,7 +13,7 @@ from loom.core.cache import CacheGateway
 from loom.core.cache.abc.config import CacheConfig
 from loom.core.config import ConfigContext, ConfigError
 from loom.core.config.convert import convert_config
-from loom.core.config.keys import ConfigKey
+from loom.core.config.keys import ConfigSection
 from loom.core.model.redaction import RedactedMap
 
 from ._doubles import MEMORY_BACKEND
@@ -102,11 +102,11 @@ class TestYamlSection:
     def test_the_section_decodes_when_every_key_is_a_field(self) -> None:
         ctx = ConfigContext.from_dict({"cache": {"default_ttl": 5}})
 
-        assert ctx.section_optional(ConfigKey.CACHE, CacheConfig) == CacheConfig(default_ttl=5)
+        assert ctx.section_optional(ConfigSection.CACHE, CacheConfig) == CacheConfig(default_ttl=5)
 
     @pytest.mark.parametrize("unknown", ["ttls", "aiocache"])
     def test_the_section_is_rejected_when_a_key_is_not_a_field(self, unknown: str) -> None:
         ctx = ConfigContext.from_dict({"cache": {unknown: {}}})
 
         with pytest.raises(ConfigError, match=unknown):
-            ctx.section_optional(ConfigKey.CACHE, CacheConfig)
+            ctx.section_optional(ConfigSection.CACHE, CacheConfig)

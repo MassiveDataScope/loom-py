@@ -9,7 +9,7 @@ from typing import Any
 
 from msgspec import structs
 
-from loom.core.config import ConfigContext, ConfigError, ConfigKey
+from loom.core.config import ConfigContext, ConfigError, ConfigSection
 from loom.core.config.keys import INTERPOLATION
 from loom.core.config.loader import config_strings, convert_section
 from loom.core.errors import InvalidValue
@@ -126,7 +126,7 @@ class JobShutdown(LoomFrozenStruct, frozen=True, kw_only=True, forbid_unknown_fi
         Raises:
             ConfigError: When the section is invalid as written.
         """
-        key = f"{ConfigKey.JOBS}.shutdown"
+        key = f"{ConfigSection.JOBS}.shutdown"
         written = ctx.raw(key)
         if written is None or any(INTERPOLATION in text for _, text in config_strings(written)):
             return
@@ -309,17 +309,19 @@ class JobSettings:
                 outside 0 to :attr:`~loom.core.job.policy.Countdown.MAX_SECONDS`
                 seconds.
         """
-        defaults = ctx.section_or_default(f"{ConfigKey.JOBS}.defaults", JobDefaults, _NO_DEFAULTS)
+        defaults = ctx.section_or_default(
+            f"{ConfigSection.JOBS}.defaults", JobDefaults, _NO_DEFAULTS
+        )
         resolved: dict[type[Job[Any]], JobOptions] = {}
         for job_type in jobs:
-            section = f"{ConfigKey.JOBS}.{job_type.__name__}"
+            section = f"{ConfigSection.JOBS}.{job_type.__name__}"
             config = ctx.section_or_default(section, JobConfig, _EMPTY)
             try:
                 resolved[job_type] = JobOptions.resolve(job_type, config, defaults)
             except ValueError as exc:
                 raise ConfigError(f"{section}.retry: {exc}") from exc
         shutdown = ctx.section_or_default(
-            f"{ConfigKey.JOBS}.shutdown", JobShutdown, CANCEL_AT_SHUTDOWN
+            f"{ConfigSection.JOBS}.shutdown", JobShutdown, CANCEL_AT_SHUTDOWN
         )
         return cls(resolved, shutdown)
 

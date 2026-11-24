@@ -13,7 +13,7 @@ from typing import TYPE_CHECKING, Annotated, Any, TypeVar
 
 import msgspec
 
-from loom.core.config import ConfigKey
+from loom.core.config import ConfigSection
 from loom.core.connections.aws import AwsClientConfig, aws_error_code
 from loom.core.engine.events import EventKind, ExecutionEvent
 from loom.core.engine.execution_observer import NullExecutionObserver
@@ -72,9 +72,9 @@ class SQSConfig(AwsClientConfig, frozen=True, kw_only=True):
         Raises:
             ConfigError: When the section is invalid, or a queue is written as a bare URL.
         """
-        written = ctx.section(ConfigKey.SQS, dict) if ctx.has(ConfigKey.SQS) else {}
+        written = ctx.section(ConfigSection.SQS, dict) if ctx.has(ConfigSection.SQS) else {}
         QueueConfig.check_written_shape(written.get("queues", {}), "sqs.queues")
-        return cls.from_config(ctx, ConfigKey.SQS, own=written)
+        return cls.from_config(ctx, ConfigSection.SQS, own=written)
 
 
 def check_queues(

@@ -54,6 +54,8 @@
 
 ## 💥 Breaking
 
+- **config:** `ConfigKey`, the enum of YAML section names in `loom.core.config.keys`, is renamed `ConfigSection` (values unchanged), and the log-key class `ConfigLogKey` of `loom.core.config.event` takes the free name `ConfigKey`, as every area names its log keys; a reference to the old `ConfigKey` now resolves to the log keys and fails on its first section name.
+
 - **logging:** every log event of loom now starts with `loom.`, as its field keys do (`cache.entry_hit` is `loom.cache.entry_hit`); `LogEvent` refuses a loom event without the prefix and a `loom.` event declared outside the `loom` package. Collector filters on event names must add the prefix.
 
 - **logging (security events):** `rest.token_issued`, `rest.authorization_denied`, `stores.role_authorization_denied` and `identity.caller_switched` no longer write the subject: they write `user.hash`, the HMAC-SHA256 of the subject under the new `observability.log.subject_key` (32 hex characters), and a switch names the previous caller in `loom.identity.previous_user.hash` instead of `loom.identity.switched_from`/`switched_to`; without a key no caller is written and startup logs `logging.subject_hash_disabled` once, even with `observability.log.enabled: false`. The span of a switch no longer carries `loom.identity.switched_from`/`switched_to`; `IdentityKey.SUBJECT`, `SWITCHED_FROM`, `SWITCHED_TO` and `annotate_current_span` are gone.

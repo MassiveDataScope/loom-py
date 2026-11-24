@@ -11,7 +11,7 @@ configuration already declares at that place, whatever its case; a level the
 configuration does not declare is added in lower case, and a section type
 that forbids unknown fields refuses it. The first level must name a section
 the configuration declares or loom reads
-(:class:`~loom.core.config.keys.ConfigKey`); anything else is a startup error
+(:class:`~loom.core.config.keys.ConfigSection`); anything else is a startup error
 naming the variable. Two variables for the same key, or for a key and one of
 its parents, are refused.
 
@@ -62,8 +62,8 @@ from typing import TYPE_CHECKING, Any, Final
 
 from loom.core.config.context import ConfigContext
 from loom.core.config.errors import ConfigError
-from loom.core.config.event import ConfigEvent, ConfigLogKey
-from loom.core.config.keys import INTERPOLATION, ConfigKey
+from loom.core.config.event import ConfigEvent, ConfigKey
+from loom.core.config.keys import INTERPOLATION, ConfigSection
 from loom.core.config.loader import config_strings, load_config
 from loom.core.config.retired import reject_retired_sections
 from loom.core.environment import (
@@ -137,8 +137,8 @@ OVERRIDABLE: Final = (
     "storage.dynamodb.max_attempts",
 )
 """Keys a ``LOOM__`` variable may set in production and staging; ``*`` is one level."""
-_SHARED_STORE_SETTINGS: Final = tuple(ConfigKey.STORES_SETTINGS.split("."))
-_KNOWN_SECTIONS: Final = frozenset(str(key).split(".", 1)[0] for key in ConfigKey)
+_SHARED_STORE_SETTINGS: Final = tuple(ConfigSection.STORES_SETTINGS.split("."))
+_KNOWN_SECTIONS: Final = frozenset(str(key).split(".", 1)[0] for key in ConfigSection)
 
 
 def load_application_config(
@@ -205,7 +205,7 @@ def _apply_overrides(
         if environment.is_deployed:
             _require_no_import(name, key, layer, environment)
         merged = _merged(merged, name, key, layer)
-    _logger.warning(ConfigEvent.KEYS_OVERRIDDEN, extra={ConfigLogKey.KEYS: sorted(keys.values())})
+    _logger.warning(ConfigEvent.KEYS_OVERRIDDEN, extra={ConfigKey.KEYS: sorted(keys.values())})
     result: DictConfig = merged
     return result
 
@@ -358,7 +358,7 @@ def _require_allowlisted(
                 continue
             return
     reason = (
-        f"; {ConfigKey.STORES_SETTINGS} holds the settings every store shares and is no "
+        f"; {ConfigSection.STORES_SETTINGS} holds the settings every store shares and is no "
         "store, so no 'stores.*' entry opens it"
         if shared
         else ""

@@ -27,7 +27,7 @@ from starlette.responses import Response
 from starlette.routing import Route
 
 from loom.composition import Application, LoopHost, Project, Recipe
-from loom.core.config import ConfigContext, ConfigKey
+from loom.core.config import ConfigContext, ConfigSection
 from loom.core.logger import LogRuntime
 from loom.core.observability.observability import Observability
 from loom.core.stores import LAMBDA_PROFILE
@@ -107,7 +107,7 @@ def _bind(declared: RestDeclaration, application: Application) -> LambdaHTTPHand
 
 
 def _refuse_sql_endpoints(ctx: ConfigContext) -> None:
-    sql = ctx.section_optional(ConfigKey.SQL, SqlConfig)
+    sql = ctx.section_optional(ConfigSection.SQL, SqlConfig)
     mounted = mounted_sql_endpoints(sql) if sql is not None else ()
     if mounted:
         raise LambdaUnservedConfigError(

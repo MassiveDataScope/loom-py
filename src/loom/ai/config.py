@@ -1,6 +1,6 @@
 """Typed configuration for the ``ai:`` deployment section.
 
-Parsed via ``ctx.section(ConfigKey.AI, AiConfig)`` through the existing
+Parsed via ``ctx.section(ConfigSection.AI, AiConfig)`` through the existing
 :mod:`loom.core.config` loader, so ``${oc.env:...}`` interpolations and the
 secret resolver apply before the decode, unchanged.  Validation is fail-fast
 per struct and every issue carries a stable

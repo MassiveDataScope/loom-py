@@ -13,7 +13,7 @@ from typing import Any, cast
 import msgspec
 
 from loom.core.config import ConfigContext, ConfigError
-from loom.core.config.keys import ConfigKey
+from loom.core.config.keys import ConfigSection
 from loom.core.errors import InvalidType
 from loom.core.stores.catalog import StoreCatalog
 from loom.streaming.compiler._errors import CompilationIssue, StreamingErrorCode
@@ -68,7 +68,7 @@ def validate_kafka(flow: StreamFlow[Any, Any], ctx: ConfigContext) -> list[Compi
     if not _uses_kafka(flow):
         return []
     try:
-        ctx.section(ConfigKey.KAFKA, KafkaSettings)
+        ctx.section(ConfigSection.KAFKA, KafkaSettings)
         return []
     except ConfigError as exc:
         return [StreamingErrorCode.KAFKA_CONFIG_INVALID.issue(exc=exc)]
@@ -166,7 +166,7 @@ def _resolve_consumer_settings(
 ) -> ConsumerSettings | None:
     """Resolve the consumer settings for one Kafka source, or None if unresolvable."""
     try:
-        kafka = ctx.section(ConfigKey.KAFKA, KafkaSettings)
+        kafka = ctx.section(ConfigSection.KAFKA, KafkaSettings)
         return kafka.consumer_for(source.logical_ref)
     except (ConfigError, KeyError):
         return None
