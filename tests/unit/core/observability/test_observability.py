@@ -25,7 +25,6 @@ from loom.core.observability.config import (
 )
 from loom.core.observability.event import EventKind, LifecycleEvent, LifecycleStatus, Scope
 from loom.core.observability.observability import Observability
-from loom.core.observability.observer.otel import OtelSpanFilter
 from loom.core.tracing.context import active_trace_id
 from loom.testing import make
 from tests.unit.core.observability.conftest import LogExport
@@ -166,7 +165,7 @@ class TestFromConfig:
         with pytest.raises(ConfigError, match="export_logs requires observability.log.enabled"):
             Observability.from_config(config)
 
-    def test_export_logs_attaches_the_export_handler_with_the_context_and_span_filters(
+    def test_export_logs_attaches_the_export_handler_with_the_context_filter(
         self, log_export: LogExport
     ) -> None:
         config = ObservabilityConfig(
@@ -176,8 +175,7 @@ class TestFromConfig:
         Observability.from_config(config, service_name="billing")
 
         for owned in (_loom_handler(), log_export.handler):
-            assert any(isinstance(f, ContextFilter) for f in owned.filters)
-            assert any(isinstance(f, OtelSpanFilter) for f in owned.filters)
+            assert [type(f) for f in owned.filters] == [ContextFilter]
         assert log_export.handler in logging.getLogger().handlers
 
     def test_configuring_twice_keeps_the_context_on_the_exported_logs(

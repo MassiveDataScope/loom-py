@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import logging
 
-from loom.core.logger import LogField, LogKey, ValueKind
+from loom.core.log_names import LogField, LogKey, ValueKind
 from loom.core.observability.diagnostic import ObservabilityEvent
 from loom.core.observability.event import EventKind, LifecycleEvent, Scope
 

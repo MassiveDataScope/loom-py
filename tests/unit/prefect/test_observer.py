@@ -1,15 +1,10 @@
-"""Tests for loom.prefect.observer.PrefectObserver.
-
-Verifies:
-- PrefectObserver implements the LifecycleObserver protocol (has on_event).
-- on_event() logs every event kind on the stdlib logger when no Prefect run is active.
-- on_event() logs on the Prefect run logger, at the event's level, inside a flow run.
-"""
+"""PrefectObserver writes loom's lifecycle records and the pipeline summary artifact."""
 
 from __future__ import annotations
 
 import logging
 
+import prefect.artifacts
 import pytest
 
 from loom.core.observability.diagnostic import ObservabilityEvent
@@ -58,24 +53,6 @@ def _records(caplog: pytest.LogCaptureFixture, logger_name: str) -> list[tuple[i
 
 
 class TestPrefectObserver:
-    # ---------------------------------------------------------------------------
-    # Construction
-    # ---------------------------------------------------------------------------
-
-    def test_can_be_instantiated(self) -> None:
-        """PrefectObserver can be constructed without arguments."""
-        observer = PrefectObserver()
-        assert observer is not None
-
-    def test_has_on_event_method(self) -> None:
-        """PrefectObserver exposes an on_event method."""
-        observer = PrefectObserver()
-        assert callable(getattr(observer, "on_event", None))
-
-    # ---------------------------------------------------------------------------
-    # No Prefect run context
-    # ---------------------------------------------------------------------------
-
     @pytest.mark.parametrize(
         ("event", "level", "message"),
         [
@@ -116,35 +93,28 @@ class TestPrefectObserver:
         assert _records(caplog, _STDLIB_LOGGER) == [(level, message)]
         assert _records(caplog, _RUN_LOGGER) == []
 
-    # ---------------------------------------------------------------------------
-    # With a Prefect flow-run context
-    # ---------------------------------------------------------------------------
-
-    @pytest.mark.parametrize(
-        ("event", "level", "message"),
-        [
-            (_start_event("SomePipeline"), logging.INFO, "[pipeline] START SomePipeline"),
-            (
-                _error_event("FailedStep"),
-                logging.ERROR,
-                "[step] ERROR FailedStep: ValueError",
-            ),
-        ],
-        ids=["start", "error"],
-    )
-    def test_on_event_logs_on_the_prefect_run_logger_inside_a_run(
-        self,
-        event: LifecycleEvent,
-        level: int,
-        message: str,
-        prefect_run_context: None,
-        caplog: pytest.LogCaptureFixture,
+    def test_inside_a_run_the_event_is_the_loom_record_not_a_run_logger_line(
+        self, prefect_run_context: None, caplog: pytest.LogCaptureFixture
     ) -> None:
-        """Events go to the Prefect run logger, at their level, when a flow run is active."""
         caplog.set_level(logging.INFO)
-        observer = PrefectObserver()
 
-        observer.on_event(event)
+        PrefectObserver().on_event(_error_event("FailedStep"))
 
-        assert _records(caplog, _RUN_LOGGER) == [(level, message)]
-        assert _records(caplog, _STDLIB_LOGGER) == []
+        assert _records(caplog, _STDLIB_LOGGER) == [
+            (logging.ERROR, ObservabilityEvent.LIFECYCLE_FAILED)
+        ]
+        assert _records(caplog, _RUN_LOGGER) == []
+
+    def test_a_pipeline_end_inside_a_flow_run_publishes_its_summary_artifact(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        published: list[dict[str, str]] = []
+        monkeypatch.setenv("PREFECT__FLOW_RUN_ID", "0b6c2f0e-6f43-4a39-9d4c-1d1e2f3a4b5c")
+        monkeypatch.setattr(
+            prefect.artifacts, "create_markdown_artifact", lambda **kw: published.append(kw)
+        )
+
+        PrefectObserver().on_event(_end_event("Nightly"))
+
+        summary = "## Nightly\n\n- Status: success\n- Duration: 123.0ms\n"
+        assert published == [{"key": "pipeline-summary", "markdown": summary}]

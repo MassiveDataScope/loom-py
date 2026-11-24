@@ -15,10 +15,13 @@ class TestErrorSummary:
     @pytest.mark.parametrize(
         ("error", "summary"),
         [
-            (NotFound("Order", id=7), ErrorSummary(type="NotFound", code="not_found")),
+            (
+                NotFound("Order", id=7),
+                ErrorSummary(type="loom.core.errors.domain.NotFound", code="not_found"),
+            ),
             (ValueError("card 4111"), ErrorSummary(type="ValueError")),
         ],
-        ids=["loom-error", "foreign"],
+        ids=["loom-error-by-module", "builtin-bare"],
     )
     def test_it_keeps_the_type_and_the_code_and_never_the_message(
         self, error: Exception, summary: ErrorSummary

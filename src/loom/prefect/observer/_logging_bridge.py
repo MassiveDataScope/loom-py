@@ -14,6 +14,8 @@ from contextvars import ContextVar
 from datetime import UTC, datetime
 from typing import Any
 
+from loom.core.logger.formats import RecordFields
+
 _current_task_run_id: ContextVar[uuid.UUID | None] = ContextVar(
     "loom_prefect_task_run_id",
     default=None,
@@ -58,6 +60,8 @@ def current_flow_run_id() -> uuid.UUID | None:
 class PrefectLogBridgeHandler(logging.Handler):
     """logging.Handler that ships records to the Prefect logs API.
 
+    Each record is sent as its event followed by its fields in logfmt, rendered as
+    loom's formats render them, so Prefect UI shows them with secrets masked.
     Records carry the installed ``flow_run_id``, when there is one, and,
     inside a step, the active ``task_run_id`` from the ContextVar too.
     A daemon worker drains the queue and retries with exponential
@@ -117,10 +121,11 @@ class PrefectLogBridgeHandler(logging.Handler):
         flow_run_id = _current_flow_run_id.get()
         if task_run_id is None and flow_run_id is None:
             return None
+        fields = RecordFields(record)
         payload: dict[str, Any] = {
             "name": record.name,
             "level": record.levelno,
-            "message": record.getMessage(),
+            "message": " ".join(filter(None, (fields.message, fields.logfmt()))),
             "timestamp": datetime.fromtimestamp(record.created, tz=UTC),
         }
         if flow_run_id is not None:

@@ -4,7 +4,8 @@ import asyncio
 
 import pytest
 
-from loom.core.logger import LogField, current_log_fields, log_context
+from loom.core.log_names import LogField
+from loom.core.logger import current_log_fields, log_context
 
 
 class TestLogContext:

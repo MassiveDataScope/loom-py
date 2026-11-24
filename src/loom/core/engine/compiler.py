@@ -23,7 +23,7 @@ from loom.core.engine.plan import (
 from loom.core.errors import UnsupportedBoundaryType
 from loom.core.execution import ExecutionBinding
 from loom.core.job.job import Job
-from loom.core.logger import LogEvent, LogField, LogKey, ValueKind
+from loom.core.log_names import LogEvent, LogField, LogKey, ValueKind
 from loom.core.model import BaseModel, loom_type
 from loom.core.model.introspection import resolve_type_hints
 from loom.core.stores.catalog import StoreKey, store_of

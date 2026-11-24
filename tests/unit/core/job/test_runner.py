@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import asyncio
+import logging
 import random
 from typing import Any
 
@@ -24,7 +25,7 @@ from loom.core.job.policy import Backoff, Redelivery, RetryPolicy
 from loom.core.job.runner import JobRunner
 from loom.core.log_names import LogField
 from loom.testing import JobTestData
-from tests.helpers.loggers import CapturedLog, logged_events
+from tests.helpers.loggers import CapturedLog
 
 POLICY = RetryPolicy(Backoff(first_s=4, factor=2, max_s=100, jitter=False), max_attempts=3)
 
@@ -161,11 +162,7 @@ class TestJobRunnerDelivery:
 class TestJobRunnerAbandonmentLog:
     @staticmethod
     def _abandonments(caplog: pytest.LogCaptureFixture) -> list[dict[str, Any]]:
-        return [
-            entry
-            for entry in logged_events(caplog)
-            if entry["event"] == JobEvent.DELIVERY_ABANDONED
-        ]
+        return CapturedLog(caplog).named(JobEvent.DELIVERY_ABANDONED)
 
     async def test_an_abandoned_run_logs_one_warning_naming_the_message_and_why(
         self, caplog: pytest.LogCaptureFixture
@@ -174,10 +171,10 @@ class TestJobRunnerAbandonmentLog:
 
         await _runner(_raising(ValueError("boom"))).run(delivery)
 
-        (logged,) = self._abandonments(caplog)
+        log = CapturedLog(caplog)
+        (logged,) = log.named(JobEvent.DELIVERY_ABANDONED)
+        assert log.levels(JobEvent.DELIVERY_ABANDONED) == [logging.WARNING]
         assert logged == {
-            "event": JobEvent.DELIVERY_ABANDONED,
-            "level": "warning",
             "loom.job.name": "AcmeJob",
             JobKey.QUEUE: delivery.queue,
             "loom.attempt": 3,

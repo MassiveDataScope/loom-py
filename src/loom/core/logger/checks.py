@@ -12,7 +12,7 @@ from typing import TYPE_CHECKING, Final
 
 from loom.core.checks import CheckSet, Finding
 from loom.core.config.keys import INTERPOLATION
-from loom.core.logger.settings import LogFormatName, is_log_level
+from loom.core.logger.settings import LogFormatName, LogLevel
 
 if TYPE_CHECKING:
     from loom.core.config.context import ConfigContext
@@ -57,11 +57,14 @@ def _known_levels(config: ConfigContext) -> Finding | None:
     declared = {f"{_PATH}.level": log.get("level")}
     if isinstance(named, dict):
         declared |= {f"{_PATH}.named_levels.{key}": value for key, value in named.items()}
-    for key, value in declared.items():
-        level = _literal(value)
-        if level is not None and not is_log_level(level):
-            return Finding(
-                message=f"{key} is {level!r}, which is not a log level.",
-                hint="use DEBUG, INFO, WARNING, ERROR or CRITICAL.",
-            )
-    return None
+    unknown = [
+        f"{key} is {level!r}"
+        for key, value in declared.items()
+        if (level := _literal(value)) is not None and level not in LogLevel.__members__.values()
+    ]
+    if not unknown:
+        return None
+    return Finding(
+        message=f"{'; '.join(unknown)}: not a log level.",
+        hint=f"use one of {', '.join(LogLevel)}, in capitals.",
+    )

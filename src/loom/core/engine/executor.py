@@ -20,7 +20,8 @@ from loom.core.execution import (
     Kind,
 )
 from loom.core.identity import Identity, current_caller
-from loom.core.logger import LogField, log_context
+from loom.core.log_names import LogField
+from loom.core.logger import log_context
 from loom.core.stores.uow.coordinator import Coordinator
 from loom.core.stores.uow.scope import current_scope, refuse_write_under_read_only
 from loom.core.use_case.kinds import AGENT, MCP

@@ -27,7 +27,7 @@ from loom.core.use_case import Delivery
 from loom.jobs.inline import AsyncioJobTimer
 from loom.testing.jobs import ManualTimer
 from tests.helpers.jobs import InlineServiceFixture, JobKernel, RecordingExecutionObserver
-from tests.helpers.loggers import logged_events
+from tests.helpers.loggers import CapturedLog
 
 pytestmark = pytest.mark.timeout(10)
 
@@ -155,7 +155,7 @@ class TestRetries:
 
         assert acme.runs == [(1, 0), (2, 0), (3, 0)]
         assert acme.timer.pending == 0
-        assert Notify.failures == ["AcmeError"]
+        assert Notify.failures == [f"{__name__}.AcmeError"]
         with pytest.raises(JobFailedError) as failed:
             handle.wait()
         assert str(failed.value.cause) == "attempt 3"
@@ -219,7 +219,7 @@ class TestWithoutATimer:
         await acme.service.wait_until_idle()
 
         assert acme.runs == [(1, 0)]
-        assert Notify.failures == ["AcmeError"]
+        assert Notify.failures == [f"{__name__}.AcmeError"]
         with pytest.raises(JobFailedError) as failed:
             handle.wait()
         assert type(failed.value.cause) is AcmeError
@@ -282,9 +282,9 @@ class TestAsyncioTimer:
 
         assert ran == []
         assert [
-            (entry["level"], entry["loom.job.name"], entry["loom.task_id"], entry["loom.reason"])
+            (entry["loom.job.name"], entry["loom.task_id"], entry["loom.reason"])
             for entry in _abandonments(caplog)
-        ] == [("error", "AcmeJob", f"t{n}", "shutdown") for n in range(3)]
+        ] == [("AcmeJob", f"t{n}", "shutdown") for n in range(3)]
 
     async def test_close_with_nothing_pending_logs_nothing(
         self, caplog: pytest.LogCaptureFixture
@@ -310,7 +310,7 @@ class TestAsyncioTimer:
 
 
 def _abandonments(caplog: pytest.LogCaptureFixture) -> list[dict[str, Any]]:
-    return [entry for entry in logged_events(caplog) if entry["event"] == ABANDONED]
+    return [fields for event, fields in CapturedLog(caplog).errors if event == ABANDONED]
 
 
 def _lost_jobs(caplog: pytest.LogCaptureFixture) -> list[str]:
@@ -471,4 +471,4 @@ class TestAsyncioTimerAbandonments:
             AcmeError,
         )
         (logged,) = _abandonments(caplog)
-        assert (logged["level"], logged["loom.reason"]) == ("error", "step_crashed")
+        assert logged["loom.reason"] == "step_crashed"

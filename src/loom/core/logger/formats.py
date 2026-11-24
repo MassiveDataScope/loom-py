@@ -6,6 +6,7 @@ import json
 import logging
 import math
 import re
+from collections.abc import Iterator
 from datetime import UTC, datetime
 from typing import Final, Literal
 
@@ -141,11 +142,24 @@ class RecordFields:
         """
         return self._rendered(RESERVED_KEYS)
 
+    def items(self) -> Iterator[tuple[str, object]]:
+        """Each field but the stack under the key it was passed with, its value unrendered."""
+        return (
+            (key, value)
+            for key, value in self._record.__dict__.items()
+            if key not in _NOT_FIELDS and not str(key).startswith("_")
+        )
+
+    def logfmt(self) -> str:
+        """The :meth:`laid_out` fields as logfmt ``key=value`` pairs, quoted where needed."""
+        return " ".join(
+            f"{key}={_logfmt_value(str(value))}" for key, value in self.laid_out().items()
+        )
+
     def _rendered(self, reserved: frozenset[str]) -> dict[str, object]:
         return {
-            EXTRA_PREFIX + name if name in reserved else name: render_value(value)
-            for key, value in self._record.__dict__.items()
-            if key not in _NOT_FIELDS and not (name := str(key)).startswith("_")
+            EXTRA_PREFIX + name if (name := str(key)) in reserved else name: render_value(value)
+            for key, value in self.items()
         }
 
     @property
@@ -211,9 +225,7 @@ class TextFormatter(logging.Formatter):
         fields = RecordFields(record)
         head = f"{fields.timestamp} {record.levelname:<7} {record.name}"
         line = f"{head} {_one_line(fields.message)}"
-        pairs = " ".join(
-            f"{key}={_logfmt_value(str(value))}" for key, value in fields.laid_out().items()
-        )
+        pairs = fields.logfmt()
         if pairs:
             line = f"{line} {pairs}"
         stack = fields.stack

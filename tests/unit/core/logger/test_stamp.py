@@ -4,14 +4,10 @@ import logging
 
 import pytest
 
+from loom.core.environment import Environment
 from loom.core.errors import NotFound
-from loom.core.logger import (
-    ContextFilter,
-    LogField,
-    LogIdentity,
-    LogRuntime,
-    log_context,
-)
+from loom.core.log_names import LogField
+from loom.core.logger import ContextFilter, LogIdentity, LogRuntime, log_context
 from loom.core.logger.formats import TRUNCATION_MARKER
 from loom.core.logger.stamp import MAX_STACK_LENGTH
 from loom.core.observability.observer.otel import OtelLogHandler
@@ -19,7 +15,7 @@ from loom.core.tracing.context import active_trace_id
 from tests.helpers.loggers import CapturingHandler
 
 _IDENTITY = LogIdentity(
-    environment="production",
+    environment=Environment.PRODUCTION,
     runtime=LogRuntime.FASTAPI,
     service_name="billing",
     service_version="2.4.0",
@@ -56,7 +52,7 @@ class TestContextFilter:
     def test_an_identity_without_a_version_stamps_no_version(
         self, handler: CapturingHandler
     ) -> None:
-        handler.addFilter(ContextFilter(LogIdentity(environment="test")))
+        handler.addFilter(ContextFilter(LogIdentity(environment=Environment.TEST)))
 
         logging.getLogger("tests.stamp").info("billing.invoice_issued")
 
@@ -143,7 +139,7 @@ class TestContextFilter:
     def test_the_first_loom_handler_stamps_and_the_export_carries_no_private_attribute(
         self, handler: CapturingHandler, pristine_root_logger: logging.Logger
     ) -> None:
-        first = LogIdentity(environment="other")
+        first = LogIdentity(environment=Environment.STAGING)
         handler.addFilter(ContextFilter(first))
         exported = CapturingHandler()
         otel = OtelLogHandler(exported)

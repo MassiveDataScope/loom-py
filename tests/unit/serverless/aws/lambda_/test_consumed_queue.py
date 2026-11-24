@@ -18,7 +18,7 @@ from loom.serverless.aws.lambda_ import LambdaRuntime
 from tests.helpers.aws import ACCOUNT, OTHER_REGION
 from tests.helpers.aws_island import FakeAwsIsland, FakeSdkError
 from tests.helpers.composition import composition_project
-from tests.helpers.loggers import logged_events
+from tests.helpers.loggers import CapturedLog
 from tests.helpers.sqs import FakeSqs, queue_url
 from tests.unit.serverless.aws.lambda_._probe import Probe
 from tests.unit.serverless.aws.lambda_._records import WORKER, with_worker
@@ -72,7 +72,7 @@ def mount(monkeypatch: pytest.MonkeyPatch) -> Mount:
 
 
 def _logged(caplog: pytest.LogCaptureFixture, event: str) -> list[dict[str, Any]]:
-    return [entry for entry in logged_events(caplog) if entry["event"] == event]
+    return CapturedLog(caplog).named(event)
 
 
 class TestConsumedQueue:

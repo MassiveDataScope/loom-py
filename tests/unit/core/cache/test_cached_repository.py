@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import asyncio
 import inspect
 from collections.abc import Sequence
 from datetime import date, datetime
@@ -32,7 +33,7 @@ from loom.core.stores.repository.query import (
     build_page_result,
 )
 from loom.testing import make
-from tests.helpers.loggers import CapturedLog, laid_out_text, logged_text
+from tests.helpers.loggers import CapturedLog
 from tests.unit.core.uow._coordinator_fakes import (
     NonTransactionalStore,
     StoreFactory,
@@ -422,7 +423,32 @@ class TestCachedRepository:
         await wrapped.get_by_id(864209731)
 
         assert CapturedLog(caplog).named(CacheEvent.ENTRY_HIT)
-        assert "864209731" not in laid_out_text(caplog)
+        assert "864209731" not in CapturedLog(caplog).laid_out_text
+
+    @pytest.mark.asyncio
+    async def test_a_load_that_fails_after_its_caller_left_is_logged(
+        self, cache_config: CacheConfig, caplog: pytest.LogCaptureFixture
+    ) -> None:
+        started, gate = asyncio.Event(), asyncio.Event()
+
+        class _FailingLater(_FakeRepository):
+            async def get_by_id(self, obj_id: int, profile: str = "default") -> _EntityOut | None:
+                started.set()
+                await gate.wait()
+                raise RuntimeError("store down")
+
+        wrapped, _ = _wrap(_FailingLater(), cache_config)
+        caller = asyncio.ensure_future(wrapped.get_by_id(7))
+        await started.wait()
+
+        caller.cancel()
+        gate.set()
+        log = CapturedLog(caplog)
+        async with asyncio.timeout(1):
+            while not log.named(CacheEvent.LOAD_ABANDONED):
+                await asyncio.sleep(0)
+
+        assert log.exception_types(CacheEvent.LOAD_ABANDONED) == [RuntimeError]
 
     @pytest.mark.asyncio
     async def test_custom_method_cache_for_developer_function(
@@ -954,7 +980,7 @@ class TestPostCommitDeferral:
             await channel.drain(committed=True)
 
         assert isinstance(excinfo.value.failures[0], RuntimeError)
-        text = logged_text(caplog)
+        text = CapturedLog(caplog).laid_out_text
         assert CacheEvent.POST_COMMIT_BUMP_FAILED in text
         assert wrapped.entity_name in text
 

@@ -11,10 +11,11 @@ from loom.core.environment import (
     LAMBDA_LOG_FORMAT_VARIABLE,
     Environment,
 )
-from loom.core.logger import ContextFilter, LogField, LogRuntime
+from loom.core.log_names import LogField
+from loom.core.logger import ContextFilter, LogRuntime
 from loom.core.logger.formats import JsonFormatter, LambdaFormatter, TextFormatter
 from loom.core.logger.install import HANDLER_NAME, configure_logging
-from loom.core.logger.settings import LogFormatName, LogSettings
+from loom.core.logger.settings import LogFormatName, LogLevel, LogSettings
 from tests.helpers.loggers import CapturingHandler, LambdaLoggerHandler
 
 
@@ -89,13 +90,16 @@ class TestJsonInstallation:
         self, pristine_root_logger: logging.Logger
     ) -> None:
         settings = LogSettings(
-            format=LogFormatName.TEXT, level="warning", named_levels={"acme_library": "ERROR"}
+            format=LogFormatName.TEXT,
+            level=LogLevel.WARNING,
+            named_levels={"acme_library": LogLevel.ERROR},
         )
 
         configure_logging(settings, environment=Environment.DEVELOPMENT)
 
         assert pristine_root_logger.level == logging.WARNING
         assert logging.getLogger("acme_library").level == logging.ERROR
+        assert logging.getLogger("botocore").level == logging.WARNING
 
     def test_the_runtime_is_named_after_the_composition(
         self, pristine_root_logger: logging.Logger
@@ -111,20 +115,17 @@ class TestJsonInstallation:
         _stamping(handler)[0].filter(record)
         assert record.__dict__[LogField.RUNTIME] == "celery"
 
-    def test_an_extra_filter_goes_on_the_handler_beside_the_context_filter(
+    def test_reconfiguring_leaves_an_owned_handler_this_call_filter_alone(
         self, pristine_root_logger: logging.Logger
     ) -> None:
-        extra = logging.Filter()
+        export, settings = CapturingHandler(), LogSettings(format=LogFormatName.JSON)
+        configure_logging(settings, environment=Environment.PRODUCTION, extra_handlers=(export,))
 
-        configure_logging(
-            LogSettings(format=LogFormatName.JSON),
-            environment=Environment.PRODUCTION,
-            filters=(extra,),
+        stamp = configure_logging(
+            settings, environment=Environment.PRODUCTION, extra_handlers=(export,)
         )
 
-        (handler,) = _installed(pristine_root_logger)
-        assert extra in handler.filters
-        assert len(_stamping(handler)) == 1
+        assert export.filters == [stamp]
 
 
 class TestLambdaInstallation:
@@ -169,7 +170,7 @@ class TestLambdaInstallation:
     ) -> None:
         pristine_root_logger.setLevel(logging.ERROR)
 
-        configure_logging(LogSettings(level="DEBUG"), environment=Environment.PRODUCTION)
+        configure_logging(LogSettings(level=LogLevel.DEBUG), environment=Environment.PRODUCTION)
 
         assert pristine_root_logger.level == logging.DEBUG
 

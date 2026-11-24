@@ -189,19 +189,6 @@ def _build_exporter(config: OtelConfig) -> Any:
     return exporter_cls(**kwargs)
 
 
-class OtelSpanFilter(logging.Filter):
-    """Stamp each record with the ids of the active recording OTEL span."""
-
-    def filter(self, record: logging.LogRecord) -> bool:
-        """Add ``otel_trace_id`` and ``otel_span_id`` to *record* and let it through."""
-        span = trace.get_current_span()
-        if span.is_recording():
-            ctx = span.get_span_context()
-            record.__dict__.setdefault("otel_trace_id", format(ctx.trace_id, "032x"))
-            record.__dict__.setdefault("otel_span_id", format(ctx.span_id, "016x"))
-        return True
-
-
 class OtelLogHandler(logging.Handler):
     """Hand the SDK's ``LoggingHandler`` a rendered copy of each record, with no exception.
 
@@ -334,7 +321,6 @@ def _resolve_log_protocol(config: OtelConfig) -> str:
 
 __all__ = [
     "OtelLogHandler",
-    "OtelSpanFilter",
     "build_tracer",
     "install_otel_log_export",
 ]

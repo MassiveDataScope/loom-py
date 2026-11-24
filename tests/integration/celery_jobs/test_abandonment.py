@@ -31,7 +31,10 @@ class TestEagerAbandonment:
         with pytest.raises(JobAbandonment, match=ABANDONMENT):
             result.get()
         (message,) = broker.sent()
-        assert (message.task, message.kwargs["exc_type"]) == ("on-error", "JobAbandonment")
+        assert (message.task, message.kwargs["exc_type"]) == (
+            "on-error",
+            "loom.core.job.outcome.JobAbandonment",
+        )
 
 
 @JSON

@@ -373,7 +373,7 @@ class TestFailureCallback:
 
         (message,) = worker.published(self.CALLBACK)
         assert (message.kwargs["exc_type"], message.kwargs["exc_code"]) == (
-            "JobAbandonment",
+            "loom.core.job.outcome.JobAbandonment",
             None,
         )
 

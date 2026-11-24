@@ -15,7 +15,7 @@ import pytest
 
 from loom.core.identity import Identity, current_caller
 from loom.core.job.event import JobEvent
-from loom.core.logger import LogField
+from loom.core.log_names import LogField
 from loom.serverless.aws.lambda_ import LambdaHandler
 from loom.testing import LambdaEvent, LambdaTestClient
 from tests.helpers.aws_island import FakeAwsIsland

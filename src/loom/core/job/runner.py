@@ -26,7 +26,8 @@ from loom.core.job.outcome import (
     failure_log_fields,
 )
 from loom.core.job.policy import Redelivery, RetryPolicy
-from loom.core.logger import LogField, log_context
+from loom.core.log_names import LogField
+from loom.core.logger import log_context
 
 _log = logging.getLogger(__name__)
 

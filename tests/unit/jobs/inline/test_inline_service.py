@@ -176,7 +176,7 @@ class TestCallbacks:
         await flush_pending_dispatches()
         await service.wait_until_idle()
 
-        assert Hooks.calls == [("failure", "FinalError")]
+        assert Hooks.calls == [("failure", f"{__name__}.FinalError")]
 
     async def test_a_failing_success_callback_keeps_the_job_result(
         self, service: InlineServiceFixture

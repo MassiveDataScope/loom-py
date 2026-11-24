@@ -824,6 +824,15 @@ class TestFailureRedaction:
         assert _CATCH_ALL_CANARY not in response.text
         assert response.json()["error"]["data"]["detail"] == "An unexpected error occurred"
 
+    async def test_logs_a_stream_that_fails_with_its_exception(
+        self, deps: StubDepsFactory, container: LoomContainer, caplog: pytest.LogCaptureFixture
+    ) -> None:
+        engines = cast("Mapping[str, ScriptedEngine]", {_AGENT: ExplodingEngine()})
+        async with _serving(deps=deps, container=container, engines=engines) as (_app, client):
+            await client.post(f"{_PREFIX}/{_AGENT}", json=_rpc("message/stream"), headers=_auth())
+
+        assert CapturedLog(caplog).exception_types(AiEvent.STREAM_FAILED) == [RuntimeError]
+
 
 class TestConversations:
     """``contextId`` is the ``conversation_id``, on both methods (008 AC1-AC5, AC9)."""

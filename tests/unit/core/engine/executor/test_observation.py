@@ -232,7 +232,9 @@ class TestBuildFailure:
             (UseCaseEvent.FAILED, "AcmeBrokenJob")
         ]
         assert AcmeOnFailure.calls == (
-            [] if on_failure is None else [("AcmeUnrecoverableError", None)]
+            []
+            if on_failure is None
+            else [(f"{AcmeBrokenJob.__module__}.AcmeUnrecoverableError", None)]
         )
 
 

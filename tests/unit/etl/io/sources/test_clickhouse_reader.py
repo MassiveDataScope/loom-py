@@ -14,7 +14,7 @@ from loom.etl.declarative.expr import col
 from loom.etl.declarative.source import FromClickHouse
 from loom.etl.io.sources._clickhouse import ClickHouseSourceReader
 from loom.etl.schema._schema import ColumnSchema, LoomDtype
-from tests.helpers.loggers import laid_out_text
+from tests.helpers.loggers import CapturedLog
 
 _ARROW_SUFFIX = ".arrow"
 _TEMP_MARKER = "loom-clickhouse-"
@@ -102,7 +102,7 @@ class TestClickHouseReaderArrowPath:
 
         reader.read(spec._to_spec("events"), object()).collect()
 
-        assert "acme-42" not in laid_out_text(caplog)
+        assert "acme-42" not in CapturedLog(caplog).laid_out_text
 
     def test_select_star_when_no_columns(self) -> None:
         table = pa.table({"x": [1], "y": [2]})

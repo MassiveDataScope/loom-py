@@ -50,7 +50,7 @@ from tests.helpers.jobs import (
     job_project,
     sqs_service,
 )
-from tests.helpers.loggers import CapturedLog, logged_events
+from tests.helpers.loggers import CapturedLog
 from tests.helpers.sqs import FakeSqs
 from tests.unit.core.engine._lifecycle_doubles import Log, StubUnitOfWorkFactory
 
@@ -143,7 +143,7 @@ async def _sent(
 
 
 def _logged(caplog: pytest.LogCaptureFixture, event: str) -> list[dict[str, Any]]:
-    return [entry for entry in logged_events(caplog) if entry["event"] == event]
+    return CapturedLog(caplog).named(event)
 
 
 def _failed_sends(caplog: pytest.LogCaptureFixture) -> list[tuple[str, str, str, str]]:

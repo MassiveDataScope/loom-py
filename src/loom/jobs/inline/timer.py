@@ -13,7 +13,7 @@ from loom.core.job.config import CANCEL_AT_SHUTDOWN, JobShutdown
 from loom.core.job.event import JobEvent
 from loom.core.job.policy import Countdown
 from loom.core.job.timer import DelayedJob, Step
-from loom.core.logger import LogField
+from loom.core.log_names import LogField
 
 _log = logging.getLogger(__name__)
 

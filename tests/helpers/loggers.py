@@ -13,7 +13,8 @@ import pytest
 
 from loom.core.log_names import SubKey
 from loom.core.logger import subject as log_subject
-from loom.core.logger.formats import RECORD_ATTRIBUTES, RecordFields
+from loom.core.logger.formats import RecordFields
+from loom.core.logger.settings import QUIET_LIBRARIES
 from loom.core.logger.subject import SubjectHasher
 from loom.core.model.redaction import Secret
 
@@ -116,40 +117,33 @@ class CapturedLog:
             if record.levelno >= logging.ERROR
         ]
 
+    def levels(self, event: str) -> list[int]:
+        """The level of every record logged exactly as *event*, in order."""
+        return [record.levelno for record in self._records() if record.getMessage() == event]
+
     def named(self, event: str) -> list[dict[str, Any]]:
         """The fields of every event logged exactly as *event*, in order."""
         return [fields for logged, fields in self.calls if logged == event]
 
-    def fields_for(self, substr: str) -> dict[str, Any]:
-        """The fields of the first event containing *substr*, or ``{}``."""
-        for event, fields in self.calls:
-            if substr in event:
-                return fields
-        return {}
+    @property
+    def laid_out_text(self) -> str:
+        """Each record's event and fields as loom's formats lay them out, one per line, no stack."""
+        return "\n".join(
+            f"{record.getMessage()} {RecordFields(record).laid_out()}" for record in self._records()
+        )
 
 
 def logged_fields(record: logging.LogRecord) -> dict[str, Any]:
     """Each field *record* carries as it is on the record, keys as text but a ``SubKey``."""
     return {
         (key if isinstance(key, SubKey) else str(key)): value
-        for key, value in record.__dict__.items()
-        if key not in RECORD_ATTRIBUTES and not str(key).startswith("_")
+        for key, value in RecordFields(record).items()
     }
 
 
 def rendered(record: logging.LogRecord) -> str:
     """The message of *record* followed by its fields, to look for a value in one string."""
     return f"{record.getMessage()} {logged_fields(record)}"
-
-
-def logged_text(caplog: pytest.LogCaptureFixture) -> str:
-    """Every record of *caplog* rendered by :func:`rendered`, one per line."""
-    return "\n".join(rendered(record) for record in caplog.records)
-
-
-def laid_out_text(caplog: pytest.LogCaptureFixture) -> str:
-    """The fields of every record of *caplog* as loom's formats lay them out, stack left out."""
-    return str([RecordFields(record).laid_out() for record in caplog.records])
 
 
 def exception_text(caplog: pytest.LogCaptureFixture) -> str:
@@ -161,20 +155,13 @@ def exception_text(caplog: pytest.LogCaptureFixture) -> str:
     )
 
 
-def logged_events(caplog: pytest.LogCaptureFixture) -> list[dict[str, Any]]:
-    """Each record of *caplog* as ``{"event": message, **fields, "level": ...}``, in order."""
-    return [
-        {"event": each.getMessage(), "level": each.levelname.lower(), **logged_fields(each)}
-        for each in caplog.records
-    ]
-
-
 @contextmanager
 def root_logger_kept() -> Iterator[logging.Logger]:
-    """Lend the root logger, then give back its level, its handlers and their filters."""
+    """Lend the root logger, then give back its level, handlers, filters and quiet libraries."""
     root = logging.getLogger()
     handlers, level = list(root.handlers), root.level
     filters = {handler: list(handler.filters) for handler in handlers}
+    libraries = {name: logging.getLogger(name).level for name in QUIET_LIBRARIES}
     try:
         yield root
     finally:
@@ -182,15 +169,15 @@ def root_logger_kept() -> Iterator[logging.Logger]:
         root.setLevel(level)
         for handler, kept in filters.items():
             handler.filters[:] = kept
+        for name, kept_level in libraries.items():
+            logging.getLogger(name).setLevel(kept_level)
 
 
 __all__ = [
     "CapturedLog",
     "CapturingHandler",
     "exception_text",
-    "logged_events",
     "logged_fields",
-    "logged_text",
     "rendered",
     "root_logger_kept",
 ]
