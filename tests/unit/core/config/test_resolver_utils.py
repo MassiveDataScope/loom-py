@@ -14,7 +14,7 @@ from collections.abc import Callable
 import pytest
 
 from loom.core.config.errors import ConfigError
-from loom.core.config.event import ConfigEvent, ConfigLogKey
+from loom.core.config.event import ConfigEvent, ConfigKey
 from loom.core.config.resolution import (
     _expand_env_vars,
     _navigate_json,
@@ -37,7 +37,7 @@ class TestResolveCached:
     @pytest.mark.parametrize(
         ("fetch", "fetched"),
         [
-            (_fetched, [{ConfigLogKey.RESOLVER: "ssm", ConfigLogKey.KEY: "/app/token"}]),
+            (_fetched, [{ConfigKey.RESOLVER: "ssm", ConfigKey.KEY: "/app/token"}]),
             (_refused, []),
         ],
         ids=["fetched", "refused"],

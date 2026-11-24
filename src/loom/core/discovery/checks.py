@@ -13,7 +13,7 @@ from typing import TYPE_CHECKING, Final
 
 from loom.core.checks import CheckSet, Finding
 from loom.core.config.entry_points import EntryPointGroup
-from loom.core.config.keys import INTERPOLATION, ConfigKey
+from loom.core.config.keys import INTERPOLATION, ConfigSection
 from loom.core.discovery.scanner import PackageScanner
 
 if TYPE_CHECKING:
@@ -25,7 +25,7 @@ EMPTY_ENTRY_POINT_GROUP_CHECK: Final = "loom.discovery.W001"
 CHECKS: Final = CheckSet()
 """Checks of ``app.entry_points``, run when the configuration declares it."""
 
-_ENTRY_POINTS_KEY: Final = f"{ConfigKey.APP}.entry_points"
+_ENTRY_POINTS_KEY: Final = f"{ConfigSection.APP}.entry_points"
 
 
 def _literal_groups(declared: list[object]) -> list[EntryPointGroup]:

@@ -72,7 +72,7 @@ from loom.composition import (
 )
 from loom.core.async_bridge import build_backend_options
 from loom.core.checks import CheckScope
-from loom.core.config import ConfigError, ConfigKey
+from loom.core.config import ConfigError, ConfigSection
 from loom.core.discovery.worker import (
     WorkerComponents,
 )
@@ -366,7 +366,7 @@ class CeleryRuntime:
                 CompositionErrorCode.RUNTIME_ALREADY_COMPOSED.issue(component="CeleryRuntime")
             )
         ctx = project.config
-        celery_cfg = ctx.section(ConfigKey.CELERY, CeleryConfig)
+        celery_cfg = ctx.section(ConfigSection.CELERY, CeleryConfig)
         resolved = _resolve_compilables_and_jobs(project.discovered, self._jobs, self._use_cases)
         compilables = tuple(
             dict.fromkeys(

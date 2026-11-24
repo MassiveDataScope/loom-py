@@ -20,7 +20,7 @@ from loom.core.config import (
     merge_resolvers,
     with_default_resolvers,
 )
-from loom.core.config.event import ConfigEvent, ConfigLogKey
+from loom.core.config.event import ConfigEvent, ConfigKey
 from tests.helpers.aws_island import FakeAwsIsland
 from tests.helpers.loggers import CapturedLog
 
@@ -96,7 +96,7 @@ class TestDefaultResolvers:
             merge_resolvers((), built_in_resolvers())
 
         assert CapturedLog(caplog).events == [
-            (ConfigEvent.RESOLVER_DEFAULT_SKIPPED, {ConfigLogKey.RESOLVER: "secrets"})
+            (ConfigEvent.RESOLVER_DEFAULT_SKIPPED, {ConfigKey.RESOLVER: "secrets"})
         ]
 
     def test_merge_resolvers_does_not_log_default_taken_by_explicit(

@@ -133,7 +133,7 @@ Within any file, its own values win over its `includes`.
   is letters, digits and underscores, and matches the declared key
   case-insensitively, walking the configuration as written so no placeholder
   is resolved; an undeclared level is added in lower case. The first level
-  must name a section the configuration declares or `ConfigKey` lists;
+  must name a section the configuration declares or `ConfigSection` lists;
   anything else is a startup error naming the variable. Two variables for the
   same key, or for a key and one of its parents, are refused naming both, and
   the merge follows the resolved keys. Deeper typos are refused by the section

@@ -21,7 +21,7 @@ from typing import get_args
 import msgspec
 from sqlalchemy import MetaData
 
-from loom.core.config import ConfigError, ConfigKey
+from loom.core.config import ConfigError, ConfigSection
 from loom.core.config.entry_points import EntryPointGroup
 from loom.core.config.overrides import load_application_config
 from loom.core.discovery.scanner import PackageScanner
@@ -104,7 +104,7 @@ class StoreSchema:
     @property
     def path(self) -> str:
         """Dotted path of the store section the declarations were read from, which messages name."""
-        return f"{ConfigKey.STORES}.{self.store}"
+        return f"{ConfigSection.STORES}.{self.store}"
 
     def require_bootstrap(self, purpose: str) -> BootstrapConfig:
         """Return the bootstrap declaration, which *purpose* (``"migrations"``, ...) needs.
@@ -141,7 +141,7 @@ def load_store_schema(
     environment = resolve_environment()
     paths = config_source_paths(path, environment)
     context = load_application_config(*paths, environment=environment)
-    app = context.section(ConfigKey.APP, _AppSection)
+    app = context.section(ConfigSection.APP, _AppSection)
     catalog = load_catalog(context)
     spec = catalog.require(store, backend=SQLALCHEMY_BACKEND, purpose="the application's schema")
     database = spec.decode(DatabaseConfig)

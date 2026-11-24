@@ -30,7 +30,7 @@ from dataclasses import dataclass
 from typing import TYPE_CHECKING, Any, Final
 
 from loom.core.checks import CheckSet, Finding
-from loom.core.config.keys import ConfigKey
+from loom.core.config.keys import ConfigSection
 
 if TYPE_CHECKING:
     from loom.core.config.context import ConfigContext
@@ -102,7 +102,7 @@ class _AuthSection:
 
 def _auth_sections(config: ConfigContext) -> list[_AuthSection]:
     """``app.rest.auth`` and the trigger ``auth`` of each function of ``lambda.functions``."""
-    keys = [_AUTH_KEY, *_trigger_auth_keys(config.raw(f"{ConfigKey.LAMBDA}.functions", {}))]
+    keys = [_AUTH_KEY, *_trigger_auth_keys(config.raw(f"{ConfigSection.LAMBDA}.functions", {}))]
     return [_AuthSection.read(key, config.raw(key)) for key in keys]
 
 
@@ -110,7 +110,7 @@ def _trigger_auth_keys(functions: object) -> list[str]:
     """The ``trigger.auth`` key of each function that declares one."""
     declared = functions.items() if isinstance(functions, dict) else ()
     return [
-        f"{ConfigKey.LAMBDA}.functions.{name}.trigger.auth"
+        f"{ConfigSection.LAMBDA}.functions.{name}.trigger.auth"
         for name, function in declared
         if _trigger_of(function).get("auth") is not None
     ]

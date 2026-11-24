@@ -36,16 +36,16 @@ class AwsInheritance:
     @classmethod
     def resolved(cls, ctx: ConfigContext) -> AwsInheritance:
         """The inheritance from the ``aws:`` section of *ctx*, its placeholders resolved."""
-        from loom.core.config.keys import ConfigKey
+        from loom.core.config.keys import ConfigSection
 
-        return cls(ctx.section(ConfigKey.AWS, dict) if ctx.has(ConfigKey.AWS) else {})
+        return cls(ctx.section(ConfigSection.AWS, dict) if ctx.has(ConfigSection.AWS) else {})
 
     @classmethod
     def as_written(cls, ctx: ConfigContext) -> AwsInheritance:
         """The inheritance from the ``aws:`` section of *ctx* as written, resolving nothing."""
-        from loom.core.config.keys import ConfigKey
+        from loom.core.config.keys import ConfigSection
 
-        written = ctx.raw(ConfigKey.AWS, {})
+        written = ctx.raw(ConfigSection.AWS, {})
         return cls(written if isinstance(written, dict) else {})
 
     def apply(self, target: Any, written: Any, path: str) -> Any:

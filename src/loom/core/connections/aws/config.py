@@ -88,9 +88,9 @@ class AwsClientConfig(ConnectionSettings, frozen=True, kw_only=True, forbid_unkn
             ConfigError: When ``aws:`` or *own* holds a retired key, or ``aws:`` holds a key
                 no client takes.
         """
-        from loom.core.config.keys import ConfigKey
+        from loom.core.config.keys import ConfigSection
 
-        aws = ctx.section(ConfigKey.AWS, dict) if ctx.has(ConfigKey.AWS) else {}
+        aws = ctx.section(ConfigSection.AWS, dict) if ctx.has(ConfigSection.AWS) else {}
         return cls.inherit_from(aws, own, path)
 
     @classmethod
@@ -115,14 +115,16 @@ class AwsClientConfig(ConnectionSettings, frozen=True, kw_only=True, forbid_unkn
                 no client takes.
         """
         from loom.core.config.errors import ConfigError
-        from loom.core.config.keys import ConfigKey
+        from loom.core.config.keys import ConfigSection
         from loom.core.config.retired import reject_retired_keys
 
-        reject_retired_keys(aws, ConfigKey.AWS, AwsClientConfig)
+        reject_retired_keys(aws, ConfigSection.AWS, AwsClientConfig)
         reject_retired_keys(own, path, cls)
         unknown = sorted(set(aws) - set(AwsClientConfig.__struct_encode_fields__))
         if unknown:
-            raise ConfigError(f"Config section {ConfigKey.AWS.value!r} takes no key {unknown[0]!r}")
+            raise ConfigError(
+                f"Config section {ConfigSection.AWS.value!r} takes no key {unknown[0]!r}"
+            )
         return {**aws, **own}
 
     @classmethod

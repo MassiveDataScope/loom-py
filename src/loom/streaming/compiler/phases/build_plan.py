@@ -7,7 +7,7 @@ from types import MappingProxyType
 from typing import Any, Literal, get_args, get_origin
 
 from loom.core.config import ConfigContext
-from loom.core.config.keys import ConfigKey
+from loom.core.config.keys import ConfigSection
 from loom.core.errors import InternalError
 from loom.core.model.redaction import RedactedMap
 from loom.core.stores.catalog import StoreCatalog
@@ -102,7 +102,7 @@ def _build_mongo_source(flow: StreamFlow[Any, Any], ctx: ConfigContext) -> Compi
 
 def _build_single_source(flow: StreamFlow[Any, Any], ctx: ConfigContext) -> CompiledSingleSource:
     source: FromTopic[Any] = flow.source  # type: ignore[assignment]
-    kafka = ctx.section(ConfigKey.KAFKA, KafkaSettings)
+    kafka = ctx.section(ConfigSection.KAFKA, KafkaSettings)
     consumer = kafka.consumer_for(source.logical_ref)
     decode_strategy: Literal["record", "batch"] = (
         "batch" if any(isinstance(n, CollectBatch) for n in flow.process.nodes) else "record"
@@ -112,13 +112,13 @@ def _build_single_source(flow: StreamFlow[Any, Any], ctx: ConfigContext) -> Comp
         topics=consumer.topics,
         payload_type=source.payload,
         decode_strategy=decode_strategy,
-        settings_key=f"{ConfigKey.KAFKA}.{kafka.consumer_key_for(source.logical_ref)}",
+        settings_key=f"{ConfigSection.KAFKA}.{kafka.consumer_key_for(source.logical_ref)}",
     )
 
 
 def _build_multi_source(flow: StreamFlow[Any, Any], ctx: ConfigContext) -> CompiledMultiSource:
     source: FromMultiTypeTopic[Any] = flow.source  # type: ignore[assignment]
-    kafka = ctx.section(ConfigKey.KAFKA, KafkaSettings)
+    kafka = ctx.section(ConfigSection.KAFKA, KafkaSettings)
     consumer = kafka.consumer_for(source.logical_ref)
     decode_strategy: Literal["record", "batch"] = (
         "batch" if any(isinstance(n, CollectBatch) for n in flow.process.nodes) else "record"
@@ -129,7 +129,7 @@ def _build_multi_source(flow: StreamFlow[Any, Any], ctx: ConfigContext) -> Compi
         topics=consumer.topics,
         dispatch=dispatch,
         decode_strategy=decode_strategy,
-        settings_key=f"{ConfigKey.KAFKA}.{kafka.consumer_key_for(source.logical_ref)}",
+        settings_key=f"{ConfigSection.KAFKA}.{kafka.consumer_key_for(source.logical_ref)}",
     )
 
 
@@ -257,7 +257,7 @@ def _build_branch_terminal_sinks(
 
 
 def _build_sink(topic: IntoTopic[Any], ctx: ConfigContext) -> CompiledSink:
-    kafka = ctx.section(ConfigKey.KAFKA, KafkaSettings)
+    kafka = ctx.section(ConfigSection.KAFKA, KafkaSettings)
     producer = kafka.producer_for(topic.logical_ref)
     return CompiledSink(
         settings=producer,

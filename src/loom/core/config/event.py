@@ -13,7 +13,7 @@ class ConfigEvent(LogEvent):
     RESOLVER_FETCHED = "loom.config.resolver_fetched"
 
 
-class ConfigLogKey(LogKey):
+class ConfigKey(LogKey):
     """The fields of a configuration record."""
 
     KEY = "loom.config.key"

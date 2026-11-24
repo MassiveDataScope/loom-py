@@ -11,7 +11,7 @@ import typer
 import yaml
 
 from loom.core.config.errors import ConfigError
-from loom.core.config.keys import ConfigKey
+from loom.core.config.keys import ConfigSection
 from loom.core.environment import (
     DB_PASSWORD_PREFIX,
     MIGRATOR_URL_VARIABLE,
@@ -30,7 +30,7 @@ if TYPE_CHECKING:
 
 
 _T = TypeVar("_T")
-_STORES = str(ConfigKey.STORES)
+_STORES = str(ConfigSection.STORES)
 _STORE_PATH = f"{_STORES}.{DEFAULT_STORE}"
 
 

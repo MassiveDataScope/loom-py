@@ -8,7 +8,7 @@ from dataclasses import dataclass
 from typing import TYPE_CHECKING, Any, ClassVar, get_args
 
 from loom.core.bootstrap import Kernel
-from loom.core.config import ConfigContext, ConfigKey
+from loom.core.config import ConfigContext, ConfigSection
 from loom.core.config.errors import ConfigError
 from loom.core.di.container import LoomContainer
 from loom.core.di.graph import ClassNode, DependencyGraph, DependencyPath, GraphAnalysis, Node
@@ -148,7 +148,7 @@ class AiWiring:
                 unknown server, the artifact sources conflict or are missing,
                 or an artifact does not compile.
         """
-        if not ctx.has(ConfigKey.AI):
+        if not ctx.has(ConfigSection.AI):
             if agent_specs:
                 raise ConfigError(
                     "app.agents declares artifacts but the configuration has no 'ai:' section: "
@@ -161,7 +161,7 @@ class AiWiring:
         from loom.ai.config import AiConfig
         from loom.ai.registry import resolve_engine_plugin
 
-        ai_cfg = ctx.section(ConfigKey.AI, AiConfig)
+        ai_cfg = ctx.section(ConfigSection.AI, AiConfig)
         grants = declared.mcp_grants(ai_cfg.mcp_servers)
         provider = resolve_engine_plugin(ai_cfg.engine)
         agent_host = build_agent_host(

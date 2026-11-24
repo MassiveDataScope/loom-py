@@ -7,7 +7,7 @@ from typing import Literal
 
 import msgspec
 
-from loom.core.config import ConfigContext, ConfigKey, reject_retired_keys
+from loom.core.config import ConfigContext, ConfigSection, reject_retired_keys
 from loom.core.connections.mongo import MongoConnection
 from loom.core.model import LoomFrozenStruct
 from loom.core.model.redaction import RedactedMap
@@ -54,7 +54,7 @@ def load_mongo_config(ctx: ConfigContext) -> MongoConfig:
         ConfigError: When the section is absent or invalid, or a source holds
             a retired key, naming its replacement.
     """
-    key = ConfigKey.MONGO.value
+    key = ConfigSection.MONGO.value
     raw = ctx.raw(key)
     if isinstance(raw, Mapping):
         reject_retired_keys(raw.get("source"), f"{key}.source", MongoSourceConfig)

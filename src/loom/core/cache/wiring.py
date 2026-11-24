@@ -31,7 +31,7 @@ from loom.core.cache.dependency import GenerationalDependencyResolver
 from loom.core.cache.event import CacheEvent, CacheKey
 from loom.core.cache.gateway import CacheGateway
 from loom.core.cache.repository import CachedRepository
-from loom.core.config import ConfigContext, ConfigKey
+from loom.core.config import ConfigContext, ConfigSection
 from loom.core.di.container import LoomContainer
 from loom.core.di.errors import describe_key
 from loom.core.stores.repository.registration import RepositoryDecorator
@@ -178,7 +178,7 @@ def cache_module_for(ctx: ConfigContext) -> Callable[[LoomContainer], None]:
         otherwise a module whose decorator leaves every repository bare and
         logs ``loom.cache.repository_not_configured`` for each marked class.
     """
-    config = ctx.section_optional(ConfigKey.CACHE, CacheConfig)
+    config = ctx.section_optional(ConfigSection.CACHE, CacheConfig)
     if config is not None and config.enabled:
         return cache_module(config)
     return _announcing_module

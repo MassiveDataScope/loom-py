@@ -19,7 +19,7 @@ from typing import Any
 
 from loom.composition import Application, Project
 from loom.connections.aws import AwsClients
-from loom.core.config import ConfigError, ConfigKey
+from loom.core.config import ConfigError, ConfigSection
 from loom.core.identity import Identity
 from loom.core.job.envelope import encode_job_message
 from loom.core.job.job import Job
@@ -104,7 +104,7 @@ class LambdaWorker:
         self._island = island
         self._region_setting = (
             "sqs.region"
-            if "region" in (project.config.raw(ConfigKey.SQS) or {})
+            if "region" in (project.config.raw(ConfigSection.SQS) or {})
             else "aws.region or AWS_DEFAULT_REGION"
         )
         self._runtime = LambdaRuntime(function=function)

@@ -12,12 +12,12 @@ from typing import Final
 
 from loom.ai.config import AiConfig
 from loom.ai.etl._runner import PolarsAgentRunner
-from loom.core.config import ConfigContext, ConfigKey
+from loom.core.config import ConfigContext, ConfigSection
 
 __all__ = ["PolarsAgentRunner", "agent_runner"]
 
 
-_SPECS_ROOT: Final = f"{ConfigKey.AI}.root"
+_SPECS_ROOT: Final = f"{ConfigSection.AI}.root"
 
 
 def agent_runner(context: ConfigContext, *, root: Path) -> PolarsAgentRunner:
@@ -36,6 +36,6 @@ def agent_runner(context: ConfigContext, *, root: Path) -> PolarsAgentRunner:
     """
     specs_root = context.section_optional(_SPECS_ROOT, str)
     return PolarsAgentRunner(
-        context.section(ConfigKey.AI, AiConfig),
+        context.section(ConfigSection.AI, AiConfig),
         root=root if specs_root is None else (root / specs_root).resolve(),
     )

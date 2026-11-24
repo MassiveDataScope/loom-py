@@ -6,7 +6,7 @@ from collections.abc import Iterator, Mapping
 from dataclasses import dataclass
 from typing import TYPE_CHECKING, cast
 
-from loom.core.config import ConfigContext, ConfigKey
+from loom.core.config import ConfigContext, ConfigSection
 from loom.core.di.container import LoomContainer
 from loom.core.di.scope import Scope
 from loom.core.errors import UnknownKey
@@ -92,8 +92,8 @@ def resolve_sql(ctx: ConfigContext) -> SqlWiring:
     application opens. Who serves the SQL endpoints checks their
     authentication; this function knows no transport.
     """
-    reject_retired_sql_keys(ctx.raw(ConfigKey.SQL))
-    sql_cfg = ctx.section_optional(ConfigKey.SQL, SqlConfig)
+    reject_retired_sql_keys(ctx.raw(ConfigSection.SQL))
+    sql_cfg = ctx.section_optional(ConfigSection.SQL, SqlConfig)
     if sql_cfg is None:
         return SqlWiring(config=None, registry=None, service=NullSqlQueryService())
     registry = build_sql_registry(sql_cfg)

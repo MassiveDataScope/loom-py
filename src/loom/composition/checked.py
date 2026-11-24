@@ -10,7 +10,7 @@ from pathlib import Path
 from loom.composition import phases
 from loom.composition.project import AppConfig, LoadedConfig, Project
 from loom.core.checks import CheckScope, DeployReport, run_deploy_checks
-from loom.core.config import ConfigContext, ConfigError, ConfigKey
+from loom.core.config import ConfigContext, ConfigError, ConfigSection
 from loom.core.config.keys import INTERPOLATION
 from loom.core.config.loader import convert_section
 from loom.core.discovery.base import DiscoveryResult
@@ -89,7 +89,7 @@ class CheckedProject:
         ctx = loaded.config
         AppConfig.reject_misdeclared(ctx)
         load_catalog(ctx).require_installed()
-        raw_code_path = ctx.raw(f"{ConfigKey.APP}.code_path", DEFAULT_CODE_PATH)
+        raw_code_path = ctx.raw(f"{ConfigSection.APP}.code_path", DEFAULT_CODE_PATH)
         if not isinstance(raw_code_path, str) or INTERPOLATION in raw_code_path:
             raise ConfigError(
                 "app.code_path must be a literal path for loom check: a placeholder or a "
@@ -125,7 +125,7 @@ class CheckedProject:
             environment=self.environment,
             code_path=self.code_path,
             config_root=self.config_root,
-            app=convert_section(self.config.raw(ConfigKey.APP), ConfigKey.APP, AppConfig),
+            app=convert_section(self.config.raw(ConfigSection.APP), ConfigSection.APP, AppConfig),
             observability=Observability.noop(),
             observability_config=ObservabilityConfig(),
         )

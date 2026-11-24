@@ -6,7 +6,7 @@ import logging
 from collections.abc import Iterator, Mapping
 from typing import TYPE_CHECKING
 
-from loom.core.config import ConfigKey
+from loom.core.config import ConfigSection
 from loom.core.config.errors import ConfigError
 from loom.serverless.event import ServerlessEvent, ServerlessKey
 
@@ -55,7 +55,7 @@ def refuse_unserved_config(project: Project) -> None:
             "observability.prometheus.enabled",
             "a Lambda function serves no metrics scrape. Disable it for this entry point.",
         )
-    _refuse_stdio(_written_transports(project.config.raw(f"{ConfigKey.AI}.mcp_servers")))
+    _refuse_stdio(_written_transports(project.config.raw(f"{ConfigSection.AI}.mcp_servers")))
 
 
 def check_resolved_ai(config: AiConfig | None) -> None:
@@ -94,7 +94,7 @@ def _refuse_stdio(transports: Mapping[str, object]) -> None:
     for name, transport in transports.items():
         if transport == _STDIO:
             raise LambdaUnservedConfigError(
-                f"{ConfigKey.AI}.mcp_servers.{name}.transport",
+                f"{ConfigSection.AI}.mcp_servers.{name}.transport",
                 f"{COMPONENT} cannot run an MCP server over stdio: a frozen function keeps "
                 "no subprocess. Reach the server over http, or serve it with FastAPIRuntime.",
             )
@@ -104,6 +104,6 @@ def _endpoint_keys(config: AiConfig) -> Iterator[str]:
     """The keys of *config* that would serve an agent over HTTP or A2A."""
     for name, endpoint in config.endpoints.items():
         if endpoint.enabled:
-            yield f"{ConfigKey.AI}.endpoints.{name}.enabled"
+            yield f"{ConfigSection.AI}.endpoints.{name}.enabled"
     if config.a2a is not None:
-        yield f"{ConfigKey.AI}.a2a.expose"
+        yield f"{ConfigSection.AI}.a2a.expose"

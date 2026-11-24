@@ -12,7 +12,7 @@ from __future__ import annotations
 from typing import TYPE_CHECKING, Final
 
 from loom.core.checks import CheckSet, Finding
-from loom.core.config.keys import ConfigKey
+from loom.core.config.keys import ConfigSection
 from loom.core.stores.catalog import SETTINGS_KEY
 
 if TYPE_CHECKING:
@@ -22,7 +22,7 @@ AUDIT_DISABLED_CHECK: Final = "loom.audit.W001"
 CHECKS: Final = CheckSet()
 """Checks of ``stores``, run when the process uses that path."""
 
-_STORES: Final = str(ConfigKey.STORES)
+_STORES: Final = str(ConfigSection.STORES)
 
 
 @CHECKS.register(AUDIT_DISABLED_CHECK)

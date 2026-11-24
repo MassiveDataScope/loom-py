@@ -47,7 +47,7 @@ from typing import TYPE_CHECKING, Final
 import msgspec
 
 from loom.core.config.errors import ConfigError
-from loom.core.config.keys import FASTAPI_ENTRY, INTERPOLATION, ConfigKey
+from loom.core.config.keys import FASTAPI_ENTRY, INTERPOLATION, ConfigSection
 from loom.core.environment import ENVIRONMENT_VARIABLE, Environment
 from loom.core.errors import InvalidValue
 from loom.core.log_names import LogEvent, LogField, LogKey, ValueKind
@@ -181,7 +181,7 @@ class CheckScope:
     @classmethod
     def without_rest(cls) -> CheckScope:
         """Return the scope of a process that serves no HTTP."""
-        return cls(excluded=frozenset({ConfigKey.APP_REST}))
+        return cls(excluded=frozenset({ConfigSection.APP_REST}))
 
     @classmethod
     def declared_by(cls, config: ConfigContext, *, excluded: Iterable[str] = ()) -> CheckScope:
@@ -195,7 +195,7 @@ class CheckScope:
             config: The configuration, read as written.
             excluded: Paths the caller leaves out.
         """
-        functions = config.raw(f"{ConfigKey.LAMBDA}.functions", {})
+        functions = config.raw(f"{ConfigSection.LAMBDA}.functions", {})
         declared = functions.values() if isinstance(functions, dict) else ()
         http_function = any(
             isinstance(function, dict)
@@ -203,9 +203,9 @@ class CheckScope:
             and function["trigger"].get("source") == _HTTP_SOURCE
             for function in declared
         )
-        serves = config.raw(f"{ConfigKey.APP}.entry") == FASTAPI_ENTRY or http_function
+        serves = config.raw(f"{ConfigSection.APP}.entry") == FASTAPI_ENTRY or http_function
         return cls(
-            required=frozenset({ConfigKey.APP_REST}) if serves else frozenset(),
+            required=frozenset({ConfigSection.APP_REST}) if serves else frozenset(),
             excluded=frozenset(excluded),
         )
 

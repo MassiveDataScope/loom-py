@@ -9,7 +9,7 @@ import logging
 from pathlib import Path
 from typing import Any, Final, Protocol, cast
 
-from loom.core.config import ConfigContext, ConfigError, ConfigKey
+from loom.core.config import ConfigContext, ConfigError, ConfigSection
 from loom.core.errors import InvalidUse
 from loom.core.plugins.optional import import_optional
 from loom.etl._uri import is_cloud_path
@@ -176,7 +176,7 @@ def make_agent_runner(
     Raises:
         MissingExtraError: When the ``etl-polars`` extra is not installed.
     """
-    if not context.has(ConfigKey.AI):
+    if not context.has(ConfigSection.AI):
         return None
     engine = _resolve_engine(config, spark)
     if engine != StorageEngine.POLARS:

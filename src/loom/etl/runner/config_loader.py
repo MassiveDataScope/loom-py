@@ -12,8 +12,8 @@ from loom.connections.resolvers import with_built_in_resolvers
 from loom.core.config import (
     ConfigContext,
     ConfigError,
-    ConfigKey,
     ConfigResolver,
+    ConfigSection,
 )
 from loom.core.config.convert import convert_config
 from loom.core.config.overrides import load_application_config
@@ -129,13 +129,13 @@ def _parse_sections(ctx: ConfigContext) -> tuple[StorageConfig, ETLObservability
             section shape, ``aws:`` included, is invalid, or a keyed entry or a
             ``path.profile`` is invalid.
     """
-    raw = ctx.section(ConfigKey.STORAGE, dict)
+    raw = ctx.section(ConfigSection.STORAGE, dict)
     dynamodb = raw.get("dynamodb")
     if isinstance(dynamodb, Mapping):
         raw["dynamodb"] = AwsClientConfig.inherit(ctx, dynamodb, "storage.dynamodb")
     storage_config = _convert_storage(normalise_storage_section(raw))
     obs_config = ctx.section_or_default(
-        ConfigKey.OBSERVABILITY,
+        ConfigSection.OBSERVABILITY,
         ETLObservabilityConfig,
         ETLObservabilityConfig(),
     )
@@ -159,6 +159,6 @@ def _convert_storage(raw: dict[str, Any]) -> StorageConfig:
         return convert_config(raw, StorageConfig, strict=False)
     except msgspec.ValidationError as exc:
         raise ConfigError(
-            f"Config section {ConfigKey.STORAGE.value!r} failed validation as "
+            f"Config section {ConfigSection.STORAGE.value!r} failed validation as "
             f"{StorageConfig.__name__!r}: {exc}"
         ) from exc

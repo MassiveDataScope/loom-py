@@ -429,7 +429,7 @@ class TestWithNoAiSectionStartupAbortsIfAUseCaseDeclaresTheMarker:
                 "settings": {"cursors": {"signing": "ephemeral"}},
             },
             # Deliberately no 'ai:' section: FR-08 / T501 item 6, the case
-            # 'ctx.has(ConfigKey.AI)' being false must still abort a
+            # 'ctx.has(ConfigSection.AI)' being false must still abort a
             # deployment whose use case declares 'Mcp()'.
         }
         config_path = tmp_path / "app.yaml"
