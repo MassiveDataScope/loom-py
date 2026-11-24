@@ -12,7 +12,8 @@ from loom.core.logger import (
     LogRuntime,
     log_context,
 )
-from loom.core.logger.stamp import MAX_STACK_LENGTH, STACK_CUT_MARKER
+from loom.core.logger.formats import TRUNCATION_MARKER
+from loom.core.logger.stamp import MAX_STACK_LENGTH
 from loom.core.tracing.context import active_trace_id
 from tests.helpers.loggers import CapturingHandler
 
@@ -188,7 +189,7 @@ class TestFailureFields:
 
         stack = _only(stamped).__dict__[LogField.EXCEPTION_STACKTRACE]
         assert len(stack) == MAX_STACK_LENGTH
-        assert stack.startswith(STACK_CUT_MARKER)
+        assert stack.startswith(TRUNCATION_MARKER + "...")
         assert stack.endswith("x" * 100)
 
     def test_a_chained_failure_is_one_stack_with_its_cause(self, stamped: CapturingHandler) -> None:

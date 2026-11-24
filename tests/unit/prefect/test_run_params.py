@@ -19,7 +19,7 @@ from prefect.runtime import flow_run as prefect_flow_run
 from prefect.settings import PREFECT_CLIENT_MAX_RETRIES
 from prefect.types import DateTime as PrefectDateTime
 
-from loom.core.logger.formats import record_fields
+from loom.core.logger.formats import RecordFields
 from loom.etl import ETLParams, ETLPipeline, ETLProcess, ETLStep, FromTable, IntoTable
 from loom.etl.maintenance._runner import MaintenanceReport
 from loom.etl.maintenance._step import MaintenanceStep
@@ -315,7 +315,7 @@ class TestEtlRunParams:
         [record] = [r for r in caplog.records if r.name == _params.__name__]
         assert record.levelno == logging.ERROR
         assert record.getMessage() == PrefectEvent.PARAMETERS_RECORD_FAILED
-        assert record_fields(record) == {PrefectKey.RUN: str(_RUN_ID)}
+        assert RecordFields(record).raw == {PrefectKey.RUN: str(_RUN_ID)}
         assert record.exc_info is not None
         assert "api down" in str(record.exc_info[1])
 

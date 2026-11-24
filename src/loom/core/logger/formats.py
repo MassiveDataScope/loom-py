@@ -5,8 +5,9 @@ from __future__ import annotations
 import json
 import logging
 import math
+import re
 from datetime import UTC, datetime
-from typing import Final
+from typing import Final, Literal
 
 from loom.core.log_names import LogField, SubKey
 from loom.core.model.redaction import MASK, Dsn, RedactedMap, Secret
@@ -19,7 +20,10 @@ MAX_VALUE_LENGTH: Final = 2048
 MAX_LIST_ITEMS: Final = 20
 """Items a list value keeps; a longer list is cut to its first items."""
 
-TRUNCATION_MARKER: Final = "...[truncated]"
+TRUNCATION_MARKER: Final = "[truncated]"
+"""What a cut text says on the side it lost, next to an ellipsis."""
+
+_ELLIPSIS: Final = "..."
 
 _STACKTRACE: Final = LogField.EXCEPTION_STACKTRACE.value
 
@@ -37,26 +41,18 @@ EXTRA_PREFIX: Final = "loom.extra."
 """Prefix under which a colliding ``extra`` key is written."""
 
 
-def record_fields(record: logging.LogRecord) -> dict[str, object]:
-    """The fields of *record*: what was passed as ``extra`` and what a filter stamped.
+def truncated(text: str, limit: int, *, keep: Literal["start", "end"] = "start") -> str:
+    """*text*, or *limit* characters of it marked on the side that was cut away.
 
-    A key is a plain string, except a :class:`~loom.core.log_names.SubKey`, which stays one.
+    Keeping the start ends the text in ``...[truncated]``; keeping the end, where a
+    stack says what failed, starts it with ``[truncated]...``.
     """
-    return {
-        (key if isinstance(key, SubKey) else str(key)): value
-        for key, value in record.__dict__.items()
-        if _is_field(key)
-    }
-
-
-def _is_field(key: str) -> bool:
-    return key not in _STANDARD_ATTRIBUTES and not key.startswith("_")
-
-
-def _truncated(text: str) -> str:
-    if len(text) <= MAX_VALUE_LENGTH:
+    if len(text) <= limit:
         return text
-    return text[: MAX_VALUE_LENGTH - len(TRUNCATION_MARKER)] + TRUNCATION_MARKER
+    room = limit - len(TRUNCATION_MARKER) - len(_ELLIPSIS)
+    if keep == "end":
+        return f"{TRUNCATION_MARKER}{_ELLIPSIS}{text[-room:]}"
+    return f"{text[:room]}{_ELLIPSIS}{TRUNCATION_MARKER}"
 
 
 def _scalar(value: object) -> object:
@@ -64,30 +60,12 @@ def _scalar(value: object) -> object:
     if isinstance(value, Secret | RedactedMap):
         return MASK
     if isinstance(value, Dsn):
-        return _truncated(str(value))
+        return truncated(str(value), MAX_VALUE_LENGTH)
     if isinstance(value, str):
-        return _truncated(value)
+        return truncated(value, MAX_VALUE_LENGTH)
     if isinstance(value, float) and not math.isfinite(value):
         return str(value)
     return value
-
-
-_OPAQUE: Final = object()
-
-
-def _rendered_or_opaque(value: object) -> object:
-    if value is None or isinstance(value, bool | int | float | str | Secret | RedactedMap | Dsn):
-        return _scalar(value)
-    if isinstance(value, list | tuple):
-        items = [_scalar(item) for item in value[:MAX_LIST_ITEMS]]
-        if all(item is None or isinstance(item, bool | int | float | str) for item in items):
-            return items
-    return _OPAQUE
-
-
-def is_opaque(value: object) -> bool:
-    """Whether :func:`render_value` can only write *value* as its type name."""
-    return _rendered_or_opaque(value) is _OPAQUE
 
 
 def render_value(value: object) -> object:
@@ -98,99 +76,139 @@ def render_value(value: object) -> object:
     items; a ``Secret`` is masked; any other object is written as its type
     name, never its ``repr``.
     """
-    rendered = _rendered_or_opaque(value)
-    return type(value).__name__ if rendered is _OPAQUE else rendered
+    if value is None or isinstance(value, bool | int | float | str | Secret | RedactedMap | Dsn):
+        return _scalar(value)
+    if isinstance(value, list | tuple):
+        items = [_scalar(item) for item in value[:MAX_LIST_ITEMS]]
+        if all(item is None or isinstance(item, bool | int | float | str) for item in items):
+            return items
+    return type(value).__name__
 
 
-def render_fields(record: logging.LogRecord) -> None:
-    """Replace each field of *record* with :func:`render_value` of it.
+class RecordFields:
+    """The fields of one record as loom's outputs write them, read without changing it.
 
-    Rendering a rendered value gives it back, so a record rendered twice is the
-    same as rendered once. The stack is left as it is: each format writes it whole.
+    The fields are what was passed as ``extra`` and what a filter stamped. A key is
+    a plain string, except a :class:`~loom.core.log_names.SubKey`, which stays one.
+    Each output renders its own copy, so every handler sees the record as it was logged.
     """
-    fields = record.__dict__
-    for key, value in list(fields.items()):
-        if _is_field(key) and key != _STACKTRACE:
-            fields[key] = render_value(value)
 
+    __slots__ = ("_record",)
 
-def _laid_out_fields(record: logging.LogRecord) -> dict[str, object]:
-    """The fields of *record* under the names a format writes them.
+    def __init__(self, record: logging.LogRecord) -> None:
+        self._record = record
 
-    A key the format writes itself (:data:`RESERVED_KEYS`) is never taken from
-    ``extra``: it is written under ``loom.extra.<key>``. The stack is left out: each
-    format writes it whole, in its own layout.
-    """
-    return {
-        EXTRA_PREFIX + name if name in RESERVED_KEYS else name: value
-        for name, value in record_fields(record).items()
-        if name != _STACKTRACE
-    }
+    @property
+    def timestamp(self) -> str:
+        """When the record was made, in UTC, ISO 8601 to the millisecond."""
+        return datetime.fromtimestamp(self._record.created, UTC).isoformat(timespec="milliseconds")
 
+    @property
+    def message(self) -> str:
+        """The record's message, cut at :data:`MAX_VALUE_LENGTH`."""
+        return truncated(self._record.getMessage(), MAX_VALUE_LENGTH)
 
-def _stack_of(record: logging.LogRecord) -> str | None:
-    """The stack the context filter wrote on *record*, if any."""
-    stack = record.__dict__.get(_STACKTRACE)
-    return stack if isinstance(stack, str) else None
+    @property
+    def raw(self) -> dict[str, object]:
+        """Each field as it is on the record."""
+        return {
+            (key if isinstance(key, SubKey) else str(key)): value
+            for key, value in self._record.__dict__.items()
+            if key not in _STANDARD_ATTRIBUTES and not str(key).startswith("_")
+        }
+
+    @property
+    def rendered(self) -> dict[str, object]:
+        """Each field as :func:`render_value` writes it, and the stack whole when it is text."""
+        fields = {key: render_value(value) for key, value in self.raw.items() if key != _STACKTRACE}
+        if self.stack is not None:
+            fields[_STACKTRACE] = self.stack
+        return fields
+
+    @property
+    def laid_out(self) -> dict[str, object]:
+        """The rendered fields under the names a format writes them, without the stack.
+
+        A key the format writes itself (:data:`RESERVED_KEYS`) is never taken from
+        ``extra``: it is written under ``loom.extra.<key>``. The stack is left out: each
+        format writes it whole, in its own layout.
+        """
+        return {
+            EXTRA_PREFIX + name if name in RESERVED_KEYS else name: value
+            for name, value in self.rendered.items()
+            if name != _STACKTRACE
+        }
+
+    @property
+    def stack(self) -> str | None:
+        """The stack the context filter wrote on the record, if any."""
+        stack = self._record.__dict__.get(_STACKTRACE)
+        return stack if isinstance(stack, str) else None
 
 
 class JsonFormatter(logging.Formatter):
     """One JSON object per record, fields at the top level.
 
     The keys of Lambda's JSON format (``timestamp``, ``level``, ``message``,
-    ``logger``) come first and cannot be overwritten by ``extra``. Values are
-    written as the context filter rendered them, and so is what the record says about
-    its exception.
+    ``logger``) come first and cannot be overwritten by ``extra``. The formatter
+    renders the values itself, so even on a handler without the context filter it
+    writes no ``repr`` and no secret.
     """
 
     def format(self, record: logging.LogRecord) -> str:
         """Render *record* as a JSON object on one line."""
+        fields = RecordFields(record)
         entry: dict[str, object] = {
-            "timestamp": datetime.fromtimestamp(record.created, UTC).isoformat(
-                timespec="milliseconds"
-            ),
+            "timestamp": fields.timestamp,
             "level": record.levelname,
-            "message": _truncated(record.getMessage()),
+            "message": fields.message,
             "logger": record.name,
-            **_laid_out_fields(record),
+            **fields.laid_out,
         }
-        stack = _stack_of(record)
-        if stack is not None:
-            entry[_STACKTRACE] = stack
-        return json.dumps(entry, default=str)
+        if fields.stack is not None:
+            entry[_STACKTRACE] = fields.stack
+        return json.dumps(entry)
 
 
 _CONTINUATION: Final = "  | "
+
+_NEEDS_QUOTES: Final = re.compile(r'[\s="]')
 
 
 def _one_line(text: str) -> str:
     return text.replace("\r", "\\r").replace("\n", "\\n")
 
 
+def _logfmt_value(text: str) -> str:
+    """*text* bare, or quoted when a space, ``=`` or ``"`` in it could forge a field."""
+    if _NEEDS_QUOTES.search(text) is None:
+        return text
+    escaped = text.replace("\\", "\\\\").replace('"', '\\"')
+    return f'"{_one_line(escaped)}"'
+
+
 class TextFormatter(logging.Formatter):
-    """A readable line: time, level, logger, the message, then ``key=value`` fields.
+    """A readable line: UTC time, level, logger, the message, then logfmt ``key=value`` fields.
 
-    A line break in the message or in a value is written escaped, so a value
-    cannot forge a second record. The stack the context filter wrote follows the
-    line, each of its rows prefixed so that the record's first line is the only unindented one.
+    A value holding a space, ``=`` or ``"`` is quoted, so it cannot forge a field; a
+    line break in the message or in a value is written escaped, so it cannot forge a
+    second record. The stack the context filter wrote follows the line, each of its
+    rows prefixed so that the record's first line is the only unindented one.
     """
-
-    def __init__(self) -> None:
-        super().__init__("%(asctime)s %(levelname)-7s %(name)s %(message)s")
 
     def format(self, record: logging.LogRecord) -> str:
         """Render *record* as one line, its stack after it when it carries one."""
-        head = f"{self.formatTime(record)} {record.levelname:<7} {record.name}"
-        line = f"{head} {_one_line(_truncated(record.getMessage()))}"
-        fields = " ".join(
-            f"{key}={_one_line(str(value))}" for key, value in _laid_out_fields(record).items()
+        fields = RecordFields(record)
+        head = f"{fields.timestamp} {record.levelname:<7} {record.name}"
+        line = f"{head} {_one_line(fields.message)}"
+        pairs = " ".join(
+            f"{key}={_logfmt_value(str(value))}" for key, value in fields.laid_out.items()
         )
-        if fields:
-            line = f"{line} {fields}"
-        stack = _stack_of(record)
-        if stack is None:
+        if pairs:
+            line = f"{line} {pairs}"
+        if fields.stack is None:
             return line
-        return "\n".join([line, *(f"{_CONTINUATION}{row}" for row in stack.splitlines())])
+        return "\n".join([line, *(f"{_CONTINUATION}{row}" for row in fields.stack.splitlines())])
 
 
 _LAMBDA_JSON_FRAMES: Final = {

@@ -16,6 +16,7 @@ from __future__ import annotations
 import io
 import json
 import logging
+import shlex
 from collections.abc import Callable, Iterator
 from dataclasses import dataclass
 
@@ -37,6 +38,7 @@ from loom.core.observability.event import Scope
 from loom.core.observability.observability import Observability
 from loom.core.observability.observer.log import LogLifecycleObserver
 from loom.core.observability.observer.otel import OtelLogHandler
+from loom.testing import make
 from tests.helpers.loggers import LambdaLoggerHandler
 
 CANARY = "CANARY-ROW-VALUE-4711"
@@ -49,7 +51,7 @@ _LOGGER = logging.getLogger("acceptance")
 
 @dataclass(frozen=True, slots=True)
 class _Card:
-    number: str = CANARY
+    number: str
 
 
 def _failure() -> DomainError:
@@ -60,6 +62,11 @@ def _failure() -> DomainError:
         return exc
 
 
+def _logfmt_fields(line: str) -> dict[str, object]:
+    """The ``key=value`` tokens of a text line after its time, level, logger and message."""
+    return dict(token.split("=", 1) for token in shlex.split(line)[4:])
+
+
 @dataclass(frozen=True, slots=True)
 class Output:
     """One place loom's records end up.
@@ -68,10 +75,16 @@ class Output:
         read: Everything written so far.
         read_fields: The same without the traceback, which (owner's option A) is the
             standard one and may quote the messages of a chain.
+        parse: Reads the fields back from one line of ``read_fields``.
     """
 
     read: Callable[[], str]
     read_fields: Callable[[], str]
+    parse: Callable[[str], dict[str, object]] = json.loads
+
+    def fields(self) -> dict[str, object]:
+        """The fields of the last record, parsed back from the output."""
+        return self.parse(self.read_fields().splitlines()[-1])
 
 
 def _json_fields(text: str) -> str:
@@ -106,7 +119,7 @@ def stdout_json() -> Output:
 def stdout_text() -> Output:
     configure_logging(LogSettings(format=LogFormatName.TEXT), environment=Environment.DEVELOPMENT)
     stream = _loom_stream()
-    return Output(stream.getvalue, lambda: _text_fields(stream.getvalue()))
+    return Output(stream.getvalue, lambda: _text_fields(stream.getvalue()), _logfmt_fields)
 
 
 @pytest.fixture
@@ -185,7 +198,7 @@ class TestFieldsSurvive:
     def test_a_field_reaches_the_output(self, output: Output) -> None:
         _LOGGER.info("order_accepted", extra={LogField.ATTEMPT: 3})
 
-        assert LogField.ATTEMPT.value in output.read_fields()
+        assert str(output.fields()[LogField.ATTEMPT]) == "3"
 
 
 class TestValuesRendered:
@@ -197,14 +210,44 @@ class TestValuesRendered:
         _LOGGER.info("order_accepted", extra={LogField.ATTEMPT: secret})
 
         assert CANARY not in output.read_fields()
-        assert MASK in output.read_fields()
+        assert output.fields()[LogField.ATTEMPT] == MASK
 
     @pytest.mark.parametrize("output", OUTPUTS, indirect=True)
     def test_an_object_is_its_type_name_never_its_repr(self, output: Output) -> None:
-        _LOGGER.info("order_accepted", extra={LogField.ATTEMPT: _Card()})
+        _LOGGER.info("order_accepted", extra={LogField.ATTEMPT: make(_Card, number=CANARY)})
 
-        assert "_Card" in output.read_fields()
+        assert output.fields()[LogField.ATTEMPT] == "_Card"
         assert CANARY not in output.read_fields()
+
+    def test_a_value_cannot_forge_a_text_field(self, stdout_text: Output) -> None:
+        forged = "v w=1 loom.forged=evil"
+
+        _LOGGER.info("order_accepted", extra={LogField.ATTEMPT: forged})
+
+        fields = stdout_text.fields()
+        assert fields[LogField.ATTEMPT] == forged
+        assert {"w", "loom.forged"}.isdisjoint(fields)
+
+
+class TestDeveloperHandlers:
+    """Any handler sees the raw record, before or after loom's."""
+
+    def test_a_handler_before_or_after_loom_sees_the_value_as_passed(self) -> None:
+        card = make(_Card, number=CANARY)
+        attempt_repr = logging.Formatter(f"%({LogField.ATTEMPT.value})r", validate=False)
+        before, after = logging.StreamHandler(io.StringIO()), logging.StreamHandler(io.StringIO())
+        before.setFormatter(attempt_repr)
+        after.setFormatter(attempt_repr)
+        logging.getLogger().addHandler(before)
+        configure_logging(
+            LogSettings(format=LogFormatName.JSON), environment=Environment.PRODUCTION
+        )
+        _loom_stream()
+        logging.getLogger().addHandler(after)
+
+        _LOGGER.info("order_accepted", extra={LogField.ATTEMPT: card})
+
+        assert before.stream.getvalue() == after.stream.getvalue() == f"{card!r}\n"
 
 
 class TestFailureIdentity:
@@ -214,13 +257,13 @@ class TestFailureIdentity:
     def test_the_type_of_a_failure_is_written(self, output: Output) -> None:
         _LOGGER.error("order_failed", exc_info=_failure())
 
-        assert "DomainError" in output.read_fields()
+        assert output.fields()[LogField.EXCEPTION_TYPE] == "DomainError"
 
     @pytest.mark.parametrize("output", OUTPUTS, indirect=True)
     def test_the_code_of_a_loom_error_is_written(self, output: Output) -> None:
         _LOGGER.error("order_failed", exc_info=_failure())
 
-        assert ErrorCode.NOT_FOUND.value in output.read_fields()
+        assert output.fields()[LogField.ERROR_CODE] == ErrorCode.NOT_FOUND.value
 
 
 class TestLambdaFrames:
@@ -301,9 +344,9 @@ class TestScopeFailure:
     ) -> None:
         _fail_a_scope(traced[0])
 
-        fields = stdout_json.read_fields()
-        assert "DomainError" in fields
-        assert ErrorCode.NOT_FOUND.value in fields
+        fields = stdout_json.fields()
+        assert fields[LogField.EXCEPTION_TYPE] == "DomainError"
+        assert fields[LogField.ERROR_CODE] == ErrorCode.NOT_FOUND.value
 
     def test_the_span_names_the_type_and_the_code(
         self, traced: tuple[Observability, InMemorySpanExporter]
