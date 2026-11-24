@@ -677,6 +677,6 @@ class _Settlement:
 def _log_outcome(outcome: InvocationOutcome, participants: Mapping[StoreKey, Participant]) -> None:
     stores = [f"{store.key}:{type(store).__name__}" for store in outcome.stores]
     if outcome.has_succeeded:
-        _log.debug(UowEvent.INVOCATION_OUTCOME, extra={StoresKey.OUTCOMES: stores})
+        _log.debug(UowEvent.INVOCATION_SETTLED, extra={StoresKey.OUTCOMES: stores})
     else:
-        _log.warning(UowEvent.INVOCATION_OUTCOME, extra={StoresKey.OUTCOMES: stores})
+        _log.warning(UowEvent.INVOCATION_SETTLED, extra={StoresKey.OUTCOMES: stores})

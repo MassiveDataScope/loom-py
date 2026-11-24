@@ -28,9 +28,10 @@ from loom.ai.config import (
     McpServerConfig,
 )
 from loom.ai.errors import AgentCompilationError, AgentErrorCode
-from loom.ai.event import AiEvent
+from loom.ai.event import AiEvent, AiKey, PlaintextHost
 from loom.ai.inference import OUTPUT_MODES, InferenceTarget, OutputMode
 from loom.core.model.redaction import Dsn, RedactedMap, Secret
+from tests.helpers.loggers import CapturedLog
 
 
 def _codes(error: AgentCompilationError) -> list[AgentErrorCode]:
@@ -348,7 +349,10 @@ class TestMcpServerRegistry:
             config = _config_with(mcp_servers={"gateway": server})
 
         assert config.mcp_servers["gateway"] is server
-        assert AiEvent.REMOTE_PLAINTEXT_PRIVATE in caplog.text
+        assert [
+            fields[AiKey.PLAINTEXT_HOST]
+            for fields in CapturedLog(caplog).named(AiEvent.REMOTE_PLAINTEXT_ACCEPTED)
+        ] == [PlaintextHost.PRIVATE]
 
     @pytest.mark.parametrize(
         "url",

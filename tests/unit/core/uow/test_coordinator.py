@@ -840,7 +840,7 @@ class TestOutcomeLog:
         with caplog.at_level(logging.WARNING):
             await coordinator.finish(scope, Boom("business"))
 
-        records = [r for r in caplog.records if r.getMessage() == UowEvent.INVOCATION_OUTCOME]
+        records = [r for r in caplog.records if r.getMessage() == UowEvent.INVOCATION_SETTLED]
         assert [record.levelno for record in records] == [logging.WARNING]
         assert getattr(records[0], StoresKey.OUTCOMES) == ["s0:RolledBack", "s1:RolledBack"]
 
@@ -853,7 +853,7 @@ class TestOutcomeLog:
         with caplog.at_level(logging.WARNING):
             await coordinator.finish(scope, None)
 
-        assert not [r for r in caplog.records if r.getMessage() == UowEvent.INVOCATION_OUTCOME]
+        assert not [r for r in caplog.records if r.getMessage() == UowEvent.INVOCATION_SETTLED]
 
 
 class TestUowEvent:
@@ -862,13 +862,13 @@ class TestUowEvent:
     @pytest.mark.parametrize(
         ("event", "name"),
         [
-            (UowEvent.BEGIN, "stores.uow_transaction_began"),
-            (UowEvent.COMMIT, "stores.uow_transaction_committed"),
-            (UowEvent.ROLLBACK, "stores.uow_transaction_rolled_back"),
+            (UowEvent.TRANSACTION_BEGAN, "stores.uow_transaction_began"),
+            (UowEvent.TRANSACTION_COMMITTED, "stores.uow_transaction_committed"),
+            (UowEvent.TRANSACTION_ROLLED_BACK, "stores.uow_transaction_rolled_back"),
             (UowEvent.INVALIDATE_FAILED, "stores.uow_invalidate_failed"),
             (UowEvent.ROLLBACK_FAILED, "stores.uow_rollback_failed"),
             (UowEvent.CLOSE_FAILED, "stores.uow_close_failed"),
-            (UowEvent.INVOCATION_OUTCOME, "stores.uow_invocation_outcome"),
+            (UowEvent.INVOCATION_SETTLED, "stores.uow_invocation_settled"),
         ],
     )
     def test_each_event_keeps_its_name(self, event: UowEvent, name: str) -> None:

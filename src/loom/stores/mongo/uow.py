@@ -187,7 +187,7 @@ class MongoUnitOfWork(EntersAlone):
             await session.end_session()
             raise
         self._session = session
-        _log.debug(UowEvent.BEGIN)
+        _log.debug(UowEvent.TRANSACTION_BEGAN)
 
     async def flush(self) -> None:  # NOSONAR S7503
         """Nothing to flush: every write already reached the server inside the transaction.
@@ -213,7 +213,7 @@ class MongoUnitOfWork(EntersAlone):
             if exc.has_error_label("UnknownTransactionCommitResult"):
                 raise CommitUncertain(exc) from exc
             raise
-        _log.debug(UowEvent.COMMIT)
+        _log.debug(UowEvent.TRANSACTION_COMMITTED)
 
     async def rollback(self) -> None:
         """Abort the transaction, unless the session no longer holds one.
@@ -230,7 +230,7 @@ class MongoUnitOfWork(EntersAlone):
         if not session.in_transaction:
             return
         await session.abort_transaction()
-        _log.debug(UowEvent.ROLLBACK)
+        _log.debug(UowEvent.TRANSACTION_ROLLED_BACK)
 
     async def close(self) -> None:
         """End the session under ``asyncio.shield``, so a cancellation lets it finish.

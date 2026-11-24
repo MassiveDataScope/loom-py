@@ -481,7 +481,7 @@ def _warn_audit_horizon(store: StoreKey, covered: int | None) -> None:
         _logger.error(SqlalchemyEvent.AUDIT_PARTITION_MISSING, extra={StoresKey.STORE: store})
     else:
         _logger.warning(
-            SqlalchemyEvent.AUDIT_PARTITIONS_RUNNING_OUT,
+            SqlalchemyEvent.AUDIT_PARTITIONS_NEARLY_EXHAUSTED,
             extra={StoresKey.STORE: store, SqlalchemyKey.MONTHS_COVERED: covered},
         )
 

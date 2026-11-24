@@ -46,7 +46,7 @@ from loom.core.tracing import get_trace_id
 from loom.rest._body import MALFORMED_BODY_ERRORS, payload_too_large_detail
 from loom.rest.auth.abc import Authenticator
 from loom.rest.errors import HttpErrorMapper
-from loom.rest.event import RestEvent
+from loom.rest.event import RestEvent, RestKey
 from loom.rest.fastapi._errors import internal_error_response, malformed_body_error
 from loom.rest.fastapi.response import MsgspecJSONResponse
 
@@ -330,12 +330,14 @@ def _mount_endpoint(
         methods=["POST"],
         include_in_schema=endpoint.include_in_schema,
     )
-    mounted = (
-        RestEvent.SQL_ENDPOINT_MOUNTED_SHARED_ROLE
-        if bound_mechanism is None
-        else RestEvent.SQL_ENDPOINT_MOUNTED_ROLES_BOUND
+    _logger.warning(
+        RestEvent.SQL_ENDPOINT_MOUNTED,
+        extra={
+            LogField.HTTP_ROUTE: path,
+            StoresKey.CONNECTION: name,
+            RestKey.ROLES_BOUND: bound_mechanism is not None,
+        },
     )
-    _logger.warning(mounted, extra={LogField.HTTP_ROUTE: path, StoresKey.CONNECTION: name})
 
 
 def mounted_sql_endpoints(config: SqlConfig) -> tuple[str, ...]:

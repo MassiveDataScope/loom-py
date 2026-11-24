@@ -33,6 +33,7 @@ from loom.core.cache.gateway import CacheGateway
 from loom.core.cache.repository import CachedRepository
 from loom.core.config import ConfigContext, ConfigKey
 from loom.core.di.container import LoomContainer
+from loom.core.di.errors import describe_key
 from loom.core.stores.repository.registration import RepositoryDecorator
 
 
@@ -71,25 +72,27 @@ class _CacheSlot:
 
     Attributes:
         key: The key claimed.
-        kept: The event logged when a binding is already there.
     """
 
     key: object
-    kept: CacheEvent
 
     def claim(self, container: LoomContainer, instance: object) -> None:
-        """Bind *instance* under :attr:`key`, or log :attr:`kept` naming the binding kept."""
+        """Bind *instance* under :attr:`key`, or log the binding kept there."""
         existing = container.resolve_or_none(self.key)
         if existing is not None:
             logging.getLogger(__name__).warning(
-                self.kept, extra={CacheKey.KEPT_BINDING: type(existing).__qualname__}
+                CacheEvent.BINDING_KEPT,
+                extra={
+                    CacheKey.SLOT: describe_key(self.key),
+                    CacheKey.KEPT_BINDING: type(existing).__qualname__,
+                },
             )
             return
         container.register_instance(self.key, instance)
 
 
-_CALLS_SLOT = _CacheSlot(CachedCalls, CacheEvent.CALLS_ALREADY_REGISTERED)
-_DECORATOR_SLOT = _CacheSlot(RepositoryDecorator, CacheEvent.DECORATOR_ALREADY_REGISTERED)
+_CALLS_SLOT = _CacheSlot(CachedCalls)
+_DECORATOR_SLOT = _CacheSlot(RepositoryDecorator)
 
 
 def cache_module(config: CacheConfig) -> Callable[[LoomContainer], None]:
@@ -98,13 +101,12 @@ def cache_module(config: CacheConfig) -> Callable[[LoomContainer], None]:
     The returned module applies *config* to aiocache before it builds any
     gateway, opens the data and counter gateways, and registers them, the
     resolver, the :class:`~loom.core.cache.calls.CachedCalls` binder that
-    caches ``@cache_call`` coroutines, and — unless one is already registered,
-    in which case it logs ``cache.decorator_already_registered`` and leaves the
-    slot alone — a
-    :class:`~loom.core.stores.repository.registration.RepositoryDecorator` that wraps
-    every ``@cached`` repository the registration module builds.  All of it
-    happens when the module runs against a container, so a boot that fails
-    earlier has not touched the global aiocache registry.
+    caches ``@cache_call`` coroutines, and a
+    :class:`~loom.core.stores.repository.registration.RepositoryDecorator` that
+    wraps every ``@cached`` repository the registration module builds. A binder
+    or decorator a deployment registered first is kept, and ``cache.binding_kept``
+    names it. All of it happens when the module runs against a container, so a
+    boot that fails earlier has not touched the global aiocache registry.
 
     Args:
         config: The decoded ``cache:`` section.

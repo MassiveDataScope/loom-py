@@ -2,12 +2,16 @@
 
 from __future__ import annotations
 
+import contextlib
+import logging
+from collections.abc import Callable
 from functools import partial
 from typing import Any
 
 import pytest
 
 from loom.core.bootstrap import BootstrapError, Kernel, create_kernel
+from loom.core.bootstrap.kernel import BootstrapEvent, BootstrapKey
 from loom.core.di.container import LoomContainer
 from loom.core.di.scope import Scope
 from loom.core.engine.compiler import UseCaseCompiler
@@ -18,6 +22,7 @@ from loom.core.stores.catalog import DEFAULT_STORE
 from loom.core.stores.uow.coordinator import InvocationOutcome, OrderedCommits, ParticipantScope
 from loom.core.use_case.factory import UseCaseFactory
 from loom.core.use_case.use_case import UseCase
+from tests.helpers.loggers import CapturedLog
 from tests.unit.core.doubles import FakeOrderRepo, IOrderRepo
 from tests.unit.core.engine._lifecycle_doubles import Log, StubUnitOfWorkFactory
 
@@ -175,6 +180,14 @@ class TestCreateKernel:
         assert runtime.container.resolve(Environment) is Environment.DEVELOPMENT
 
 
+def _noop_module(container: LoomContainer) -> None:
+    del container
+
+
+def _refused_module(container: LoomContainer) -> None:
+    raise RuntimeError("db connection refused")
+
+
 class TestCreateKernelFailures:
     def test_a_compilation_error_raises_bootstrap_error(self) -> None:
         class BrokenUseCase(UseCase[Any, str]):
@@ -183,12 +196,27 @@ class TestCreateKernelFailures:
         with pytest.raises(BootstrapError):
             create_kernel(config=AcmeKernelConfig(), use_cases=[BrokenUseCase])  # type: ignore[type-abstract]
 
-    def test_a_module_exception_raises_bootstrap_error(self) -> None:
-        def bad_module(container: LoomContainer) -> None:
-            raise RuntimeError("db connection refused")
+    def test_a_module_exception_raises_bootstrap_error_naming_the_module(self) -> None:
+        with pytest.raises(
+            BootstrapError, match=r"^Bootstrap failed in _refused_module: RuntimeError$"
+        ):
+            create_kernel(config=AcmeKernelConfig(), use_cases=[], modules=[_refused_module])
 
-        with pytest.raises(BootstrapError, match="Bootstrap failed"):
-            create_kernel(config=AcmeKernelConfig(), use_cases=[], modules=[bad_module])
+    @pytest.mark.parametrize(
+        ("module", "registered"),
+        [(_noop_module, [{BootstrapKey.MODULE: "_noop_module"}]), (_refused_module, [])],
+        ids=["ran", "raised"],
+    )
+    def test_a_module_is_logged_registered_only_once_it_ran(
+        self,
+        caplog: pytest.LogCaptureFixture,
+        module: Callable[[LoomContainer], None],
+        registered: list[dict[str, str]],
+    ) -> None:
+        with caplog.at_level(logging.INFO), contextlib.suppress(BootstrapError):
+            create_kernel(config=AcmeKernelConfig(), use_cases=[], modules=[module])
+
+        assert CapturedLog(caplog).named(BootstrapEvent.MODULE_REGISTERED) == registered
 
 
 class _Deployment:

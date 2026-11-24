@@ -10,7 +10,7 @@ class CompositionEvent(LogEvent):
 
     APPLICATION_COMPOSED = "composition.application_composed"
     APPLICATION_CLOSE_FAILED = "composition.application_close_failed"
-    INLINE_JOBS_WAIT_IN_MEMORY = "composition.inline_jobs_wait_in_memory"
+    INLINE_JOBS_HELD_IN_MEMORY = "composition.inline_jobs_held_in_memory"
 
 
 class CompositionKey(LogKey):

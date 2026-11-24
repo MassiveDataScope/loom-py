@@ -523,13 +523,15 @@ def _announce_mount(
     if not host.has_agent(name):
         _logger.warning(AiEvent.ENDPOINT_AGENT_NOT_COMPILED, extra={AiKey.AGENT: name})
         return
-    if not endpoint.allow_anonymous:
-        event = AiEvent.ENDPOINT_MOUNTED
-    elif host.has_conversation(name):
-        event = AiEvent.ENDPOINT_MOUNTED_ANONYMOUS_CONVERSATIONAL
-    else:
-        event = AiEvent.ENDPOINT_MOUNTED_ANONYMOUS
-    _logger.warning(event, extra={AiKey.AGENT: name, LogField.HTTP_ROUTE: f"{prefix}/{name}"})
+    _logger.warning(
+        AiEvent.ENDPOINT_MOUNTED,
+        extra={
+            AiKey.AGENT: name,
+            LogField.HTTP_ROUTE: f"{prefix}/{name}",
+            AiKey.ANONYMOUS: endpoint.allow_anonymous,
+            AiKey.CONVERSATIONAL: host.has_conversation(name),
+        },
+    )
 
 
 def mount_agent_endpoints(

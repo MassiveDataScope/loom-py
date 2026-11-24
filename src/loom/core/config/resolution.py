@@ -37,12 +37,12 @@ def resolve_cached(
         raise ConfigError(f"{label} key must not be empty")
     base, json_keys = _split_resolver_key(key)
     path = _expand_env_vars(base)
-    logging.getLogger(f"loom.core.config.{name}").info(
-        ConfigEvent.RESOLVER_FETCHING, extra={ConfigLogKey.RESOLVER: name, ConfigLogKey.KEY: key}
-    )
     if _CLIENT not in cache:
         cache[_CLIENT] = client()
     raw = fetch(cache[_CLIENT], path, label=key)
+    logging.getLogger(f"loom.core.config.{name}").info(
+        ConfigEvent.RESOLVER_FETCHED, extra={ConfigLogKey.RESOLVER: name, ConfigLogKey.KEY: key}
+    )
     cache[key] = _navigate_json(raw, json_keys, key) if json_keys else raw
     return cache[key]
 

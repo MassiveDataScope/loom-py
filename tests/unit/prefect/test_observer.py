@@ -12,8 +12,8 @@ import logging
 
 import pytest
 
+from loom.core.observability.diagnostic import ObservabilityEvent
 from loom.core.observability.event import LifecycleEvent, LifecycleStatus, Scope
-from loom.core.observability.observer.log import LifecycleLog
 from loom.prefect.observer import PrefectObserver
 
 _STDLIB_LOGGER = "loom.core.observability.observer.log"
@@ -79,13 +79,13 @@ class TestPrefectObserver:
     @pytest.mark.parametrize(
         ("event", "level", "message"),
         [
-            (_start_event(), logging.INFO, LifecycleLog.STARTED),
-            (_end_event(), logging.INFO, LifecycleLog.ENDED),
-            (_error_event(), logging.ERROR, LifecycleLog.FAILED),
+            (_start_event(), logging.INFO, ObservabilityEvent.LIFECYCLE_STARTED),
+            (_end_event(), logging.INFO, ObservabilityEvent.LIFECYCLE_ENDED),
+            (_error_event(), logging.ERROR, ObservabilityEvent.LIFECYCLE_FAILED),
             (
                 LifecycleEvent.start(scope=Scope.STEP, name="TransformStep"),
                 logging.DEBUG,
-                LifecycleLog.STARTED,
+                ObservabilityEvent.LIFECYCLE_STARTED,
             ),
             (
                 LifecycleEvent.end(
@@ -95,7 +95,7 @@ class TestPrefectObserver:
                     status=LifecycleStatus.SUCCESS,
                 ),
                 logging.INFO,
-                LifecycleLog.ENDED,
+                ObservabilityEvent.LIFECYCLE_ENDED,
             ),
         ],
         ids=["pipeline-start", "pipeline-end", "step-error", "step-start", "step-end"],

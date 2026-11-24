@@ -248,7 +248,7 @@ def _warn_no_partition_cols(table_ref: str) -> None:
     Args:
         table_ref: Logical table reference string (for the log message).
     """
-    _log.warning(EtlEvent.MERGE_FULL_SCAN, extra={EtlKey.TABLE: table_ref})
+    _log.warning(EtlEvent.MERGE_PARTITIONS_UNDECLARED, extra={EtlKey.TABLE: table_ref})
 
 
 def _log_partition_combos(

@@ -106,7 +106,7 @@ def _inline(context: JobTransportContext) -> _Built:
             context.settings.shutdown, execution_observer=context.execution_observer
         )
         if can_wait and not context.settings.shutdown.is_waiting:
-            _log.warning(CompositionEvent.INLINE_JOBS_WAIT_IN_MEMORY)
+            _log.warning(CompositionEvent.INLINE_JOBS_HELD_IN_MEMORY)
     service = InlineJobTransport(
         context.factory,
         context.executor,

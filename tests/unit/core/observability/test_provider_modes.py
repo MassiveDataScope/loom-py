@@ -105,9 +105,7 @@ class TestHostProviderWithoutAdoption:
         assert _hex_trace(spans[0]) != _TRACE_A
 
         records = [
-            r
-            for r in caplog.records
-            if r.message == ObservabilityEvent.HOST_PROVIDER_RANDOM_TRACE_IDS
+            r for r in caplog.records if r.message == ObservabilityEvent.HOST_ID_GENERATOR_KEPT
         ]
         assert len(records) == 1
         assert getattr(records[0], ObservabilityKey.PROVIDER) == "TracerProvider"

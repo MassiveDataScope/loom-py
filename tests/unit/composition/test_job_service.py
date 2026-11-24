@@ -175,7 +175,7 @@ class TestInlineTimer:
 
         assert [resource.kind for resource in application.resources].count(ResourceKind.TIMER) == 1
         warning, policies = warnings_logged.calls
-        assert warning[0] == CompositionEvent.INLINE_JOBS_WAIT_IN_MEMORY
+        assert warning[0] == CompositionEvent.INLINE_JOBS_HELD_IN_MEMORY
         assert "max_attempts=3" in policies[1][JobKey.RETRY_POLICIES][0]
 
     def test_waiting_at_shutdown_does_not_warn_that_delayed_jobs_are_lost(

@@ -4,31 +4,24 @@ from __future__ import annotations
 
 import logging
 
-from loom.core.logger import LogEvent, LogField, LogKey, ValueKind
+from loom.core.logger import LogField, LogKey, ValueKind
+from loom.core.observability.diagnostic import ObservabilityEvent
 from loom.core.observability.event import EventKind, LifecycleEvent, Scope
 
 _log = logging.getLogger(__name__)
-
-
-class LifecycleLog(LogEvent):
-    """The records :class:`LogLifecycleObserver` writes."""
-
-    STARTED = "observability.lifecycle_started"
-    ENDED = "observability.lifecycle_ended"
-    FAILED = "observability.lifecycle_failed"
 
 
 class LifecycleKey(LogKey):
     """The fields a lifecycle record writes beside the shared ones."""
 
     EVENT_ID = "loom.lifecycle.event_id"
-    META = "loom.meta", ValueKind.OBJECT
+    META = "loom.lifecycle.meta", ValueKind.OBJECT
 
 
 _EVENTS = {
-    EventKind.START: LifecycleLog.STARTED,
-    EventKind.END: LifecycleLog.ENDED,
-    EventKind.ERROR: LifecycleLog.FAILED,
+    EventKind.START: ObservabilityEvent.LIFECYCLE_STARTED,
+    EventKind.END: ObservabilityEvent.LIFECYCLE_ENDED,
+    EventKind.ERROR: ObservabilityEvent.LIFECYCLE_FAILED,
 }
 
 
@@ -83,4 +76,4 @@ def _level_of(event: LifecycleEvent) -> int:
     return logging.DEBUG
 
 
-__all__ = ["LifecycleLog", "LogLifecycleObserver"]
+__all__ = ["LogLifecycleObserver"]

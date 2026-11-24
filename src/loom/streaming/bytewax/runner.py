@@ -439,9 +439,9 @@ class StreamingRunner:
     def shutdown(self) -> None:
         """Release adapter resources after a run or failed build."""
         if self._shutdown is not None:
-            self._log.debug(StreamingEvent.RUNNER_SHUTTING_DOWN)
             self._shutdown()
             self._shutdown = None
+            self._log.debug(StreamingEvent.RUNNER_SHUT_DOWN)
 
 
 def _load_yaml(

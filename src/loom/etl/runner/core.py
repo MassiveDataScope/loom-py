@@ -228,9 +228,9 @@ class ETLRunner:
             environment: Environment of the run; overrides ``LOOM_ENV``. Picks
                 the overlay of a config directory.
         """
-        _log.debug(EtlEvent.YAML_LOADING, extra={EtlKey.URI: path})
         resolved_environment = resolve_environment(environment)
         context = _load_context(path, resolvers=resolvers, environment=resolved_environment)
+        _log.debug(EtlEvent.YAML_LOADED, extra={EtlKey.URI: path})
         storage_config, obs_config = _parse_sections(context)
         storage_config.validate()
         observability = Observability.from_config(obs_config, environment=resolved_environment)

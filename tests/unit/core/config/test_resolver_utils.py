@@ -7,77 +7,77 @@ SSM and Secrets Manager resolver test suites.
 
 from __future__ import annotations
 
+import contextlib
+import logging
+from collections.abc import Callable
+
 import pytest
 
 from loom.core.config.errors import ConfigError
+from loom.core.config.event import ConfigEvent, ConfigLogKey
 from loom.core.config.resolution import (
     _expand_env_vars,
     _navigate_json,
     _split_resolver_key,
+    resolve_cached,
 )
 from loom.core.connections.aws import aws_error_code
+from tests.helpers.loggers import CapturedLog
 
-# ---------------------------------------------------------------------------
-# _split_resolver_key
-# ---------------------------------------------------------------------------
+
+def _fetched(client: object, path: str, *, label: str) -> str:
+    return "value"
+
+
+def _refused(client: object, path: str, *, label: str) -> str:
+    raise ConfigError(f"{label} was refused")
+
+
+class TestResolveCached:
+    @pytest.mark.parametrize(
+        ("fetch", "fetched"),
+        [
+            (_fetched, [{ConfigLogKey.RESOLVER: "ssm", ConfigLogKey.KEY: "/app/token"}]),
+            (_refused, []),
+        ],
+        ids=["fetched", "refused"],
+    )
+    def test_a_key_is_logged_fetched_only_once_the_fetch_returned(
+        self,
+        caplog: pytest.LogCaptureFixture,
+        fetch: Callable[..., str],
+        fetched: list[dict[str, str]],
+    ) -> None:
+        with caplog.at_level(logging.INFO), contextlib.suppress(ConfigError):
+            resolve_cached(
+                "/app/token", None, name="ssm", label="ssm", unbound={}, client=object, fetch=fetch
+            )
+
+        assert CapturedLog(caplog).named(ConfigEvent.RESOLVER_FETCHED) == fetched
 
 
 class TestSplitResolverKey:
-    def test_empty_string_returns_empty_and_no_keys(self) -> None:
-        assert _split_resolver_key("") == ("", [])
-
-    def test_plain_path_no_dot_returns_path_and_empty_keys(self) -> None:
-        assert _split_resolver_key("/prod/token") == ("/prod/token", [])
-
     @pytest.mark.parametrize(
-        ("key", "expected", "field"),
+        ("key", "split"),
         [
-            pytest.param(
-                "/prod/db_config.host", "/prod/db_config", "host", id="single_dot_notation"
-            ),
-            pytest.param("param.key", "param", "key", id="no_slash_with_dot"),
-            pytest.param("/prod/db..host", "/prod/db", "host", id="consecutive_dots_filtered"),
+            pytest.param("", ("", []), id="empty"),
+            pytest.param("/prod/token", ("/prod/token", []), id="plain_path"),
+            pytest.param("simple", ("simple", []), id="no_slash_no_dot"),
+            pytest.param("/", ("/", []), id="only_slash"),
+            pytest.param("/prod/db_config.host", ("/prod/db_config", ["host"]), id="single_dot"),
+            pytest.param("param.key", ("param", ["key"]), id="no_slash_with_dot"),
+            pytest.param("/prod/db..host", ("/prod/db", ["host"]), id="consecutive_dots"),
+            pytest.param("/prod/db.a.host", ("/prod/db", ["a", "host"]), id="nested_dots"),
+            pytest.param("/app/db.prod/token", ("/app/db.prod/token", []), id="dot_not_last"),
+            pytest.param("/prod/db.", ("/prod/db", []), id="trailing_dot"),
+            pytest.param("/app/svc/%ENV%", ("/app/svc/%ENV%", []), id="env_token_last"),
+            pytest.param("/app/%ENV%/db.host", ("/app/%ENV%/db", ["host"]), id="env_token_base"),
         ],
     )
-    def test_splits_the_key_at_its_last_dot(self, key: str, expected: str, field: str) -> None:
-        path, keys = _split_resolver_key(key)
-        assert path == expected
-        assert keys == [field]
-
-    def test_nested_dot_notation(self) -> None:
-        path, keys = _split_resolver_key("/prod/db.connection.host")
-        assert path == "/prod/db"
-        assert keys == ["connection", "host"]
-
-    def test_no_slash_no_dot(self) -> None:
-        assert _split_resolver_key("simple") == ("simple", [])
-
-    def test_dot_only_in_first_segment_not_last(self) -> None:
-        # dot is in segment "db.prod" which is NOT the last segment
-        path, keys = _split_resolver_key("/app/db.prod/token")
-        assert path == "/app/db.prod/token"
-        assert keys == []
-
-    def test_trailing_dot_ignored(self) -> None:
-        # trailing dot produces an empty segment that is filtered out
-        path, keys = _split_resolver_key("/prod/db.")
-        assert path == "/prod/db"
-        assert keys == []
-
-    def test_env_token_in_last_segment_is_not_split(self) -> None:
-        """Keys are split unexpanded, so a ``%VAR%`` token stays in the base."""
-        assert _split_resolver_key("/app/svc/%ENV%") == ("/app/svc/%ENV%", [])
-
-    def test_env_token_in_base_segment_keeps_operator_written_tail(self) -> None:
-        assert _split_resolver_key("/app/%ENV%/db.host") == ("/app/%ENV%/db", ["host"])
-
-    def test_path_with_only_slash(self) -> None:
-        assert _split_resolver_key("/") == ("/", [])
-
-
-# ---------------------------------------------------------------------------
-# _expand_env_vars
-# ---------------------------------------------------------------------------
+    def test_splits_the_dotted_tail_of_the_last_segment(
+        self, key: str, split: tuple[str, list[str]]
+    ) -> None:
+        assert _split_resolver_key(key) == split
 
 
 class TestExpandEnvVars:
@@ -100,11 +100,6 @@ class TestExpandEnvVars:
 
     def test_lowercase_not_expanded(self) -> None:
         assert _expand_env_vars("/path/%env%/token") == "/path/%env%/token"
-
-
-# ---------------------------------------------------------------------------
-# _navigate_json
-# ---------------------------------------------------------------------------
 
 
 class TestNavigateJson:
@@ -159,11 +154,6 @@ class TestNavigateJson:
         assert exc_info.value.__cause__ is None
 
 
-# ---------------------------------------------------------------------------
-# aws_error_code
-# ---------------------------------------------------------------------------
-
-
 class _BotocoreShapedError(Exception):
     """Stand-in for ``botocore.exceptions.ClientError`` (not a test dep)."""
 
@@ -172,22 +162,21 @@ class _BotocoreShapedError(Exception):
         self.response = response
 
 
+_SHAPED = "_BotocoreShapedError"
+
+
 class TestAwsErrorCode:
-    def test_returns_code_from_botocore_shaped_response(self) -> None:
-        exc = _BotocoreShapedError({"Error": {"Code": "AccessDeniedException"}})
-        assert aws_error_code(exc) == "AccessDeniedException"
-
-    def test_falls_back_to_type_name_without_response(self) -> None:
-        assert aws_error_code(ValueError("boom")) == "ValueError"
-
-    def test_falls_back_to_type_name_when_response_is_not_a_dict(self) -> None:
-        assert aws_error_code(_BotocoreShapedError("not-a-dict")) == "_BotocoreShapedError"
-
-    def test_falls_back_to_type_name_when_code_is_absent(self) -> None:
-        exc = _BotocoreShapedError({"Error": {"Message": "no code here"}})
-        assert aws_error_code(exc) == "_BotocoreShapedError"
-
-    def test_falls_back_to_type_name_when_code_is_empty(self) -> None:
-        assert aws_error_code(_BotocoreShapedError({"Error": {"Code": ""}})) == (
-            "_BotocoreShapedError"
-        )
+    @pytest.mark.parametrize(
+        ("exc", "code"),
+        [
+            pytest.param(
+                _BotocoreShapedError({"Error": {"Code": "AccessDenied"}}), "AccessDenied", id="code"
+            ),
+            pytest.param(ValueError("boom"), "ValueError", id="no_response"),
+            pytest.param(_BotocoreShapedError("not-a-dict"), _SHAPED, id="response_not_a_dict"),
+            pytest.param(_BotocoreShapedError({"Error": {"Message": "m"}}), _SHAPED, id="no_code"),
+            pytest.param(_BotocoreShapedError({"Error": {"Code": ""}}), _SHAPED, id="empty_code"),
+        ],
+    )
+    def test_names_the_aws_error_code_or_else_the_type(self, exc: Exception, code: str) -> None:
+        assert aws_error_code(exc) == code

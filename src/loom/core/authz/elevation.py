@@ -31,7 +31,7 @@ _logger = logging.getLogger(__name__)
 class ElevationEvent(LogEvent):
     """What elevation logs when it cannot be sure a scope flag was cleared."""
 
-    FLAGS_MAY_REMAIN = "elevation.flags_may_remain"
+    FLAGS_CLEAR_FAILED = "elevation.flags_clear_failed"
     INVALIDATION_FAILED = "elevation.invalidation_failed"
 
 
@@ -230,7 +230,7 @@ async def _fail_closed(
             with, chained from it.
     """
     _logger.error(
-        ElevationEvent.FLAGS_MAY_REMAIN,
+        ElevationEvent.FLAGS_CLEAR_FAILED,
         extra={ElevationKey.SCOPES: sorted(scopes)},
         exc_info=failure,
     )

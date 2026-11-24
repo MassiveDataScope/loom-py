@@ -29,7 +29,7 @@ from loom.core.cache import (
 )
 from loom.core.cache.calls import AsyncCallable, _ConfiguredCalls, _UnconfiguredCalls
 from loom.core.cache.decorators import cached
-from loom.core.cache.event import CacheEvent
+from loom.core.cache.event import CacheEvent, CacheKey
 from loom.core.cache.keys import call_key
 from loom.core.cache.wiring import CacheGateways, cache_module, cache_module_for
 from loom.core.config import ConfigContext
@@ -219,13 +219,9 @@ class TestDecoration:
         with caplog.at_level(logging.WARNING, logger="loom.core.cache.wiring"):
             cache_module(_single_alias())(container)
 
-        warnings = [
-            record
-            for record in caplog.records
-            if CacheEvent.DECORATOR_ALREADY_REGISTERED in record.getMessage()
+        assert CapturedLog(caplog).named(CacheEvent.BINDING_KEPT) == [
+            {CacheKey.SLOT: "RepositoryDecorator", CacheKey.KEPT_BINDING: "_TaggingDecorator"}
         ]
-        assert len(warnings) == 1
-        assert "_TaggingDecorator" in rendered(warnings[0])
 
     def test_two_aliases_open_two_gateways(self) -> None:
         container = _container(cache_module(_two_aliases()))
@@ -432,14 +428,6 @@ class _UserCalls:
         return []
 
 
-def _already_registered_warnings(caplog: pytest.LogCaptureFixture) -> list[logging.LogRecord]:
-    return [
-        record
-        for record in caplog.records
-        if CacheEvent.CALLS_ALREADY_REGISTERED in record.getMessage()
-    ]
-
-
 class TestCachedCallsBinding:
     """AC14: which ``CachedCalls`` a container hands to a ``kind: python`` factory."""
 
@@ -478,9 +466,9 @@ class TestCachedCallsBinding:
             cache_module(_single_alias())(container)
 
         assert cached_calls(container) is user_calls
-        warnings = _already_registered_warnings(caplog)
-        assert len(warnings) == 1
-        assert "_UserCalls" in rendered(warnings[0])
+        assert CapturedLog(caplog).named(CacheEvent.BINDING_KEPT) == [
+            {CacheKey.SLOT: "CachedCalls", CacheKey.KEPT_BINDING: "_UserCalls"}
+        ]
 
     def test_a_container_holding_a_decorator_still_gets_the_configured_binder(self) -> None:
         """The decorator block returns early; the binder must be bound before it."""

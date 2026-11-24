@@ -56,7 +56,6 @@ from tests.unit.core.engine._lifecycle_doubles import Log, StubUnitOfWorkFactory
 
 pytestmark = pytest.mark.timeout(10)
 
-_UNREPORTED = PostCommitEvent.ACTION_FAILED_AFTER_INTERRUPTION
 _NEVER_RAN = PostCommitEvent.SHIELDED_ACTION_NEVER_RAN
 
 _URL, _FIFO_URL = SQS_URL, SQS_FIFO_URL
@@ -572,13 +571,13 @@ class TestSQSDispatch:
         with pytest.raises(asyncio.CancelledError):
             await task
         bump.release.set()
-        await _until_logged(caplog, _UNREPORTED)
+        await _until_logged(caplog, PostCommitEvent.ACTION_FAILED)
 
         logged = [
-            (f[PostCommitKey.SENT_JOB], f[PostCommitKey.SENT_TASK_ID])
-            for f in _logged(caplog, _UNREPORTED)
+            (f[PostCommitKey.SENT_JOB], f[PostCommitKey.SENT_TASK_ID], f[PostCommitKey.INTERRUPTED])
+            for f in _logged(caplog, PostCommitEvent.ACTION_FAILED)
         ]
-        assert logged == [("loom.job.EmailJob", task) for task in ids]
+        assert logged == [("loom.job.EmailJob", task, True) for task in ids]
         assert "hunter2" not in caplog.text
 
     async def test_a_dead_batch_holds_its_slot_until_the_running_call_returns(

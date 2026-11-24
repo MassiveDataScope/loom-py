@@ -16,7 +16,7 @@ from loom.core.di.container import LoomContainer
 from loom.core.environment import ENVIRONMENT_VARIABLE, Environment
 from loom.core.errors import UnsupportedQuery
 from loom.core.errors.codes import ErrorCode
-from loom.core.stores.event import StoresEvent
+from loom.core.stores.event import StoresEvent, StoresKey
 from loom.core.stores.repository import (
     CURSOR_SIGNING_CHECK,
     Cursor,
@@ -30,6 +30,7 @@ from loom.core.stores.repository import (
 )
 from loom.core.stores.repository.cursor import register_cursor_codec
 from loom.testing import make
+from tests.helpers.loggers import CapturedLog
 
 _BACKEND = "sqlalchemy"
 _MODEL = "billing.Invoice"
@@ -692,26 +693,20 @@ class TestModes:
 
         assert _decode(unsigned, token) == _at(3, tie_breaker=9)
 
-    def test_the_unsigned_mode_warns_when_built(self, caplog: pytest.LogCaptureFixture) -> None:
-        CursorCodec(signing="unsigned")
-
-        assert any(
-            record.levelname == "WARNING"
-            and record.getMessage() == StoresEvent.CURSOR_SIGNING_UNSIGNED
-            for record in caplog.records
-        )
-
-    def test_the_ephemeral_mode_round_trips_and_warns(
-        self, caplog: pytest.LogCaptureFixture
+    @pytest.mark.parametrize("signing", ["unsigned", "ephemeral"])
+    def test_a_weakened_mode_warns_when_built(
+        self, caplog: pytest.LogCaptureFixture, signing: Literal["unsigned", "ephemeral"]
     ) -> None:
+        CursorCodec(signing=signing)
+
+        assert CapturedLog(caplog).named(StoresEvent.CURSOR_SIGNING_WEAKENED) == [
+            {StoresKey.CURSOR_SIGNING: signing}
+        ]
+
+    def test_the_ephemeral_mode_round_trips(self) -> None:
         ephemeral = CursorCodec(signing="ephemeral")
 
         assert _decode(ephemeral, _encode(ephemeral, _at(1))) == _at(1)
-        assert any(
-            record.levelname == "WARNING"
-            and record.getMessage() == StoresEvent.CURSOR_SIGNING_EPHEMERAL
-            for record in caplog.records
-        )
 
     def test_two_ephemeral_codecs_do_not_share_a_key(self) -> None:
         token = _encode(CursorCodec(signing="ephemeral"), _at(1))

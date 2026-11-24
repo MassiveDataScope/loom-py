@@ -38,17 +38,17 @@ from loom.core.use_case.registry import UseCaseRegistry
 _log = logging.getLogger(__name__)
 
 
-class BootEvent(LogEvent):
+class BootstrapEvent(LogEvent):
     """What the bootstrap logs while it composes the container and the kernel."""
 
-    CONTAINER_INITIALISING = "bootstrap.container_initialising"
-    MODULE_REGISTERING = "bootstrap.module_registering"
-    USE_CASES_COMPILING = "bootstrap.use_cases_compiling"
-    CONTAINER_VALIDATING = "bootstrap.container_validating"
+    CONTAINER_BUILD_STARTED = "bootstrap.container_build_started"
+    MODULE_REGISTERED = "bootstrap.module_registered"
+    USE_CASES_COMPILED = "bootstrap.use_cases_compiled"
+    CONTAINER_VALIDATED = "bootstrap.container_validated"
     KERNEL_COMPLETED = "bootstrap.kernel_completed"
 
 
-class BootKey(LogKey):
+class BootstrapKey(LogKey):
     """The fields of a bootstrap record."""
 
     MODULE = "loom.bootstrap.module"
@@ -158,10 +158,10 @@ def create_kernel(
         KernelRecipe.container(), seeds, modules=modules, reserved=KERNEL_KEYS
     ) as container:
         kernel = recipe.install(container)
-        _log.info(BootEvent.CONTAINER_VALIDATING)
         container.validate()
         kernel.factory.verify()
-    _log.info(BootEvent.KERNEL_COMPLETED)
+        _log.info(BootstrapEvent.CONTAINER_VALIDATED)
+    _log.info(BootstrapEvent.KERNEL_COMPLETED)
     return kernel
 
 
@@ -194,22 +194,30 @@ def seeded_container(
 
     Raises:
         BootstrapError: Built by *error* when a module binds or replaces a
-            key of *reserved*; wrapping any other failure of a module or of
-            the ``with`` block, cause chained. A ``BootstrapError`` passes through.
+            key of *reserved*; wrapping any other failure of a module, naming
+            it, or of the ``with`` block, cause chained. A ``BootstrapError``
+            passes through.
     """
     try:
-        _log.info(BootEvent.CONTAINER_INITIALISING)
+        _log.info(BootstrapEvent.CONTAINER_BUILD_STARTED)
         for key, seed in seeds.items():
             container.register_instance(key, seed)
         view = container.bindings()
         for module in modules:
             name = getattr(module, "__qualname__", None) or repr(module)
-            _log.info(BootEvent.MODULE_REGISTERING, extra={BootKey.MODULE: name})
             before = {key: view.get(key) for key in reserved}
-            module(container)
+            try:
+                module(container)
+            except BootstrapError:
+                raise
+            except Exception as exc:
+                raise BootstrapError(
+                    f"Bootstrap failed in {name}: {ErrorSummary.message_for(exc)}"
+                ) from exc
             for key in reserved:
                 if view.get(key) is not before[key]:
                     raise error(module, key)
+            _log.info(BootstrapEvent.MODULE_REGISTERED, extra={BootstrapKey.MODULE: name})
         yield container
     except BootstrapError:
         raise
@@ -303,12 +311,13 @@ class KernelRecipe:
         Raises:
             CompilationError: When a use case does not compile.
         """
-        _log.info(
-            BootEvent.USE_CASES_COMPILING, extra={LogField.USE_CASE_COUNT: len(self.use_cases)}
-        )
         compiler = UseCaseCompiler(execution_observer=self.execution_observer)
         for use_case in self.use_cases:
             compiler.compile(use_case)
+        _log.info(
+            BootstrapEvent.USE_CASES_COMPILED,
+            extra={LogField.USE_CASE_COUNT: len(self.use_cases)},
+        )
         factory = UseCaseFactory(container)
         for use_case in self.use_cases:
             factory.register(use_case)

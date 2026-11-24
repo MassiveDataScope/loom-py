@@ -96,7 +96,7 @@ class ValueKind(StrEnum):
 
 
 class SubKey(str):
-    """A key made under an ``OBJECT`` :class:`LogKey` for an open bag: ``loom.meta.<name>``."""
+    """A key under an ``OBJECT`` :class:`LogKey` for an open bag, ``loom.lifecycle.meta.<name>``."""
 
     __slots__ = ()
 
