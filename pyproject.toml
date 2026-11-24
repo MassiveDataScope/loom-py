@@ -612,6 +612,7 @@ test-props = { cmd = "pytest -n 4 --dist worksteal -q -p no:cacheprovider -o tes
 test-cov = "pytest -n 4 --dist worksteal -q -p no:cacheprovider --cov=src/loom --cov-report=term-missing --cov-report=xml"
 test-logs = "pytest -n 0 -p no:cacheprovider -o log_cli=true -o log_cli_level=DEBUG"
 golden-update = "pytest -q -p no:cacheprovider --update-golden"
+log-contract = "python -m scripts.log_contract"
 gate = ["lint", "types", "test-fast", "test-int"]
 
 [tool.poe.tasks.types]
