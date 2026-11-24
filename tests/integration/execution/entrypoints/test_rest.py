@@ -128,7 +128,7 @@ class TestAuthenticationMiddleware:
         response = TestClient(served).get("/acme")  # type: ignore[arg-type]
 
         assert response.json() == {"caller": BOB.subject}
-        [(event, fields)] = switches.calls
+        [(event, fields)] = switches.events
         assert (
             event,
             fields[IdentityKey.PREVIOUS_USER_HASH],

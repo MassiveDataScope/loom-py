@@ -198,7 +198,9 @@ class TestOverBound:
             result = await engine.run(_PROMPT, identity=_IDENTITY, conversation=None)
 
         assert result.messages is None
-        assert CapturedLog(caplog).calls == [(AiEvent.HISTORY_TOO_LARGE, {AiKey.AGENT: "contract"})]
+        assert CapturedLog(caplog).events == [
+            (AiEvent.HISTORY_TOO_LARGE, {AiKey.AGENT: "contract"})
+        ]
 
     async def test_gives_none_when_the_stream_carries_messages_over_the_bound(self) -> None:
         """The streamed terminal event is bounded the same way as the non-streaming run."""

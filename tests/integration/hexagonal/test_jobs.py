@@ -62,7 +62,7 @@ async def _run_as(application: Application, caller: Identity, shipment_id: str) 
 def _failed_jobs(caplog: pytest.LogCaptureFixture) -> list[dict[str, Any]]:
     return [
         entry
-        for _, entry in CapturedLog(caplog).calls
+        for _, entry in CapturedLog(caplog).events
         if entry.get(LogField.USE_CASE) == TrackShipmentJob.__name__
         and entry.get(LogField.STATUS) == "failure"
     ]

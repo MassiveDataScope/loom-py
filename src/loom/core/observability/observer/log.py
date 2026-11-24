@@ -52,8 +52,9 @@ class LogLifecycleObserver:
             LogField.SCOPE: event.scope.value,
             LogField.NAME: event.name,
             LogField.CORRELATION_ID: event.correlation_id,
-            LifecycleKey.EVENT_ID: event.id,
         }
+        if event.id is not None:
+            fields[LifecycleKey.EVENT_ID] = event.id
         if event.trace_id is not None:
             fields[LogField.TRACE_ID] = event.trace_id
         if event.kind is not EventKind.START:

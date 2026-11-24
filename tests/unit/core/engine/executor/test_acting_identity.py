@@ -117,7 +117,7 @@ class TestExplicitSwitch:
     ) -> None:
         await executor.execute(AcmeNests(executor, AcmeWho(), BOB), identity=ALICE)
 
-        assert switches.calls == [
+        assert switches.events == [
             (
                 IdentityEvent.CALLER_SWITCHED,
                 {
@@ -216,7 +216,7 @@ class TestExplicitSwitch:
         with around():
             await executor.execute(AcmeWho(), identity=ALICE)
 
-        assert switches.calls == []
+        assert switches.events == []
 
 
 class TestInsideAnExecution:

@@ -11,7 +11,7 @@ from loom.core.errors.summary import ErrorSummary
 from loom.core.log_names import LogField
 from loom.core.observability.diagnostic import ObservabilityEvent
 from loom.core.observability.event import EventKind, LifecycleEvent, LifecycleStatus, Scope
-from loom.core.observability.observer.log import LogLifecycleObserver
+from loom.core.observability.observer.log import LifecycleKey, LogLifecycleObserver
 from loom.core.observability.observer.noop import NoopObserver
 from loom.core.observability.observer.otel import (
     install_otel_log_export,
@@ -175,6 +175,18 @@ class TestLogLifecycleObserver:
             "trace-1",
         )
         assert (fields["loom.duration_ms"], fields["loom.status"]) == (12.5, "success")
+
+    @pytest.mark.parametrize(
+        ("event_id", "written"),
+        [pytest.param("op-1", True, id="given"), pytest.param(None, False, id="absent")],
+    )
+    def test_the_event_id_is_written_only_when_the_event_has_one(
+        self, lifecycle_log: CapturedLog, event_id: str | None, written: bool
+    ) -> None:
+        LogLifecycleObserver().on_event(_event(kind=EventKind.END, id=event_id))
+
+        [fields] = lifecycle_log.named(_ENDED)
+        assert (LifecycleKey.EVENT_ID in fields) is written
 
     def test_a_failure_is_written_as_its_summary(self, lifecycle_log: CapturedLog) -> None:
         summary = make(ErrorSummary, code="acme.refused")

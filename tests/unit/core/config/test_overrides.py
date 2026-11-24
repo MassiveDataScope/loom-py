@@ -23,7 +23,7 @@ from loom.core.config import ConfigContext
 from loom.core.config.errors import ConfigError
 from loom.core.config.overrides import load_application_config
 from loom.core.environment import Environment
-from tests.helpers.loggers import rendered
+from tests.helpers.loggers import CapturedLog
 
 _LOGGER = "loom.core.config.overrides"
 
@@ -128,8 +128,7 @@ class TestConfigOverrideLogging:
         with caplog.at_level(logging.INFO, logger=_LOGGER):
             _load(config_file)
 
-        (record,) = [r for r in caplog.records if r.name == _LOGGER]
-        message = rendered(record)
+        (message,) = CapturedLog(caplog, _LOGGER).rendered()
         assert "app.name" in message
         assert "app.workers" in message
         assert "value-one" not in message

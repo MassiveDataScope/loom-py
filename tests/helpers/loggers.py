@@ -12,6 +12,7 @@ from typing import Any
 import pytest
 
 from loom.core.log_names import SubKey
+from loom.core.logger import stamp
 from loom.core.logger import subject as log_subject
 from loom.core.logger.formats import RecordFields
 from loom.core.logger.settings import QUIET_LIBRARIES
@@ -32,6 +33,12 @@ def user_hash(subject: str) -> str:
 def keyless_subject_hasher(monkeypatch: pytest.MonkeyPatch) -> None:
     """Start every test keyless and already warned, as a process configured without a key."""
     monkeypatch.setattr(log_subject, "_installed", SubjectHasher())
+
+
+@pytest.fixture(autouse=True)
+def unconfigured_context_filter(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Start every test as a process whose logging was never configured."""
+    monkeypatch.setattr(stamp, "_configured", None)
 
 
 def install_subject_key() -> None:
@@ -84,7 +91,7 @@ class CapturedLog:
         self._logger = logger
 
     @property
-    def calls(self) -> list[tuple[str, dict[str, Any]]]:
+    def events(self) -> list[tuple[str, dict[str, Any]]]:
         """Each event logged so far, in order, with the fields it carried."""
         return [(record.getMessage(), logged_fields(record)) for record in self._records()]
 
@@ -106,7 +113,7 @@ class CapturedLog:
     @property
     def messages(self) -> list[str]:
         """The event of each call so far, in order."""
-        return [event for event, _ in self.calls]
+        return [event for event, _ in self.events]
 
     @property
     def errors(self) -> list[tuple[str, dict[str, Any]]]:
@@ -123,7 +130,24 @@ class CapturedLog:
 
     def named(self, event: str) -> list[dict[str, Any]]:
         """The fields of every event logged exactly as *event*, in order."""
-        return [fields for logged, fields in self.calls if logged == event]
+        return [fields for logged, fields in self.events if logged == event]
+
+    def rendered(self, event: str | None = None) -> list[str]:
+        """Each record's event and fields as one string; only those of *event* when given."""
+        return [
+            f"{record.getMessage()} {logged_fields(record)}"
+            for record in self._records()
+            if event is None or record.getMessage() == event
+        ]
+
+    @property
+    def exception_text(self) -> str:
+        """The traceback of every record that carries an exception, one after another."""
+        return "".join(
+            "".join(traceback.format_exception(*record.exc_info))
+            for record in self._records()
+            if record.exc_info is not None and record.exc_info[0] is not None
+        )
 
     @property
     def laid_out_text(self) -> str:
@@ -139,20 +163,6 @@ def logged_fields(record: logging.LogRecord) -> dict[str, Any]:
         (key if isinstance(key, SubKey) else str(key)): value
         for key, value in RecordFields(record).items()
     }
-
-
-def rendered(record: logging.LogRecord) -> str:
-    """The message of *record* followed by its fields, to look for a value in one string."""
-    return f"{record.getMessage()} {logged_fields(record)}"
-
-
-def exception_text(caplog: pytest.LogCaptureFixture) -> str:
-    """The traceback of every record of *caplog* that carries an exception, one after another."""
-    return "".join(
-        "".join(traceback.format_exception(*record.exc_info))
-        for record in caplog.records
-        if record.exc_info is not None and record.exc_info[0] is not None
-    )
 
 
 @contextmanager
@@ -176,8 +186,6 @@ def root_logger_kept() -> Iterator[logging.Logger]:
 __all__ = [
     "CapturedLog",
     "CapturingHandler",
-    "exception_text",
     "logged_fields",
-    "rendered",
     "root_logger_kept",
 ]

@@ -3,12 +3,14 @@
 from __future__ import annotations
 
 from dataclasses import is_dataclass
-from typing import Any, Generic, TypeGuard, TypeVar
+from typing import Any, Generic, TypeGuard, TypeVar, get_args, get_origin
 
-from polyfactory.factories.base import BaseFactory
+from polyfactory.factories.base import BaseFactory, BuildContext
 from polyfactory.factories.dataclass_factory import DataclassFactory
 from polyfactory.factories.msgspec_factory import MsgspecFactory
 from polyfactory.field_meta import FieldMeta
+
+from loom.core.model.redaction import Secret
 
 T = TypeVar("T")
 
@@ -49,6 +51,20 @@ class SampleFactory(DataclassFactory[T], MsgspecFactory[T], Generic[T]):  # type
         if is_dataclass(cls.__model__):
             return super().get_model_fields()
         return super(DataclassFactory, cls).get_model_fields()
+
+    @classmethod
+    def get_field_value(
+        cls,
+        field_meta: FieldMeta,
+        field_build_parameters: Any | None = None,
+        build_context: BuildContext | None = None,
+    ) -> Any:
+        """Build a ``Secret[T]`` around a generated ``T``; any other field as polyfactory does."""
+        if get_origin(field_meta.annotation) is not Secret:
+            return super().get_field_value(field_meta, field_build_parameters, build_context)
+        (revealed,) = get_args(field_meta.annotation)
+        inner = FieldMeta.from_type(revealed, name=field_meta.name)
+        return Secret(super().get_field_value(inner, field_build_parameters, build_context))
 
     @classmethod
     def should_use_default_value(cls, field_meta: FieldMeta) -> bool:

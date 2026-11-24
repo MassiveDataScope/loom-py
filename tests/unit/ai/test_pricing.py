@@ -126,7 +126,7 @@ class TestUnusedPrice:
         with caplog.at_level(logging.WARNING, logger="loom.ai.config"):
             _config({_HAIKU: _PRICE, "eu.anthropic.claude-sonet-5-5": _PRICE})
 
-        assert CapturedLog(caplog).calls == [
+        assert CapturedLog(caplog).events == [
             (AiEvent.PRICE_MODEL_UNUSED, {AiKey.MODEL: "eu.anthropic.claude-sonet-5-5"})
         ]
 

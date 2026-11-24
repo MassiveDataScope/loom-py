@@ -95,7 +95,7 @@ class TestDefaultResolvers:
         with caplog.at_level(logging.DEBUG, logger="loom.core.config.resolver"):
             merge_resolvers((), built_in_resolvers())
 
-        assert CapturedLog(caplog).calls == [
+        assert CapturedLog(caplog).events == [
             (ConfigEvent.RESOLVER_DEFAULT_SKIPPED, {ConfigLogKey.RESOLVER: "secrets"})
         ]
 

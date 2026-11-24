@@ -13,6 +13,7 @@ from loom.core.authz import Decision, Grant, Permission, Role, RoleCatalog, Scop
 from loom.core.authz.elevation import ReadOnlyElevation, elevate_scope, elevated_scopes
 from loom.core.engine.compiler import UseCaseCompiler
 from loom.core.engine.executor import UseCaseExecutor
+from loom.core.engine.observation import UseCaseEvent
 from loom.core.errors import NestedElevation, NestedIdentityMismatch, UndeclaredStoreWrite
 from loom.core.identity import (
     Identity,
@@ -30,7 +31,7 @@ from loom.core.use_case.invoker import AppInvoker
 from loom.core.use_case.registry import UseCaseRegistry
 from tests.helpers.delegation import acting_as
 from tests.helpers.jobs import InlineServiceFixture
-from tests.helpers.loggers import rendered
+from tests.helpers.loggers import CapturedLog
 from tests.unit.core.authz._elevation_doubles import FakeSink
 from tests.unit.core.engine._lifecycle_doubles import Body, Log, Run, StubUnitOfWorkFactory
 
@@ -214,13 +215,9 @@ class TestNestedIdentity:
 
         await executor.execute(parent, identity=ANA)
 
-        refusals = [
-            rendered(record)
-            for record in caplog.records
-            if record.exc_info and isinstance(record.exc_info[1], NestedIdentityMismatch)
-        ]
-        assert refusals
-        assert all(BOB.subject not in refusal for refusal in refusals)
+        log = CapturedLog(caplog)
+        assert log.exception_types(UseCaseEvent.FAILED) == [NestedIdentityMismatch]
+        assert all(BOB.subject not in text for text in log.rendered(UseCaseEvent.FAILED))
 
     async def test_changing_the_ambient_identity_mid_execution_does_not_unlock_a_join(
         self,

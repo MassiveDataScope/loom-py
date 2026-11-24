@@ -44,7 +44,7 @@ from tests.helpers import acme_callbacks
 from tests.helpers.acme_callbacks import AcmeSyncCallback
 from tests.helpers.celery import WorkerDouble, isolated_signals
 from tests.helpers.composition import TaskAffine, application_of, composition_project
-from tests.helpers.loggers import exception_text
+from tests.helpers.loggers import CapturedLog
 
 _SIGNALS = (worker_init, worker_process_init, worker_process_shutdown, worker_shutdown)
 
@@ -352,7 +352,7 @@ class TestClosing:
         with caplog.at_level(logging.WARNING, logger="loom.celery.runtime"):
             worker_process_shutdown.send(sender=None)
 
-        assert "pool gone" in exception_text(caplog)
+        assert "pool gone" in CapturedLog(caplog).exception_text
         assert bridge._bridge is None
 
     def test_a_bridge_that_cannot_run_the_close_still_shuts_down(self) -> None:

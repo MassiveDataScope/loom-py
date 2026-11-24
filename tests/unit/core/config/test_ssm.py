@@ -16,7 +16,7 @@ from loom.core.config.errors import ConfigError
 from loom.core.config.resolver import ConfigResolver
 from tests.helpers.aws import OTHER_REGION, moto_client
 from tests.helpers.aws_island import FakeAwsIsland
-from tests.helpers.loggers import rendered
+from tests.helpers.loggers import CapturedLog
 from tests.unit.core.config.doubles import BotocoreClientError
 
 
@@ -198,7 +198,7 @@ class TestSsmResolverLogging:
         mock_client.get_parameter.return_value = {"Parameter": {"Value": '{"host": "db.internal"}'}}
         with caplog.at_level(logging.INFO, logger="loom.connections.aws.ssm"):
             SsmResolver().resolve("/prod/db_config.host")
-        messages = [rendered(r) for r in caplog.records]
+        messages = CapturedLog(caplog).rendered()
         assert any("/prod/db_config" in msg for msg in messages), (
             f"Expected a log record containing '/prod/db_config', got: {messages}"
         )
@@ -218,7 +218,7 @@ class TestSsmResolverLogging:
         mock_client.get_parameter.return_value = {"Parameter": {"Value": "some-value"}}
         with caplog.at_level(logging.INFO, logger="loom.connections.aws.ssm"):
             SsmResolver().resolve("/app/%STAGE%/db")
-        messages = [rendered(r) for r in caplog.records]
+        messages = CapturedLog(caplog).rendered()
         assert any("/app/%STAGE%/db" in msg for msg in messages), (
             f"Expected a log record containing '/app/%STAGE%/db', got: {messages}"
         )
@@ -242,7 +242,7 @@ class TestSsmResolverUnexpandedKey:
     ) -> None:
         with caplog.at_level(logging.INFO, logger="loom.connections.aws.ssm"):
             SsmResolver().resolve(self.KEY)
-        messages = [rendered(r) for r in caplog.records]
+        messages = CapturedLog(caplog).rendered()
         assert all("super-secret" not in msg for msg in messages), messages
         assert any(self.KEY in msg for msg in messages), messages
         mock_client.get_parameter.assert_called_once_with(Name=self.EXPANDED, WithDecryption=True)
@@ -276,7 +276,7 @@ class TestSsmResolverUnexpandedKey:
         mock_client.get_parameter.assert_called_once_with(
             Name="/app/svc/db.prod-secret", WithDecryption=True
         )
-        messages = [rendered(r) for r in caplog.records]
+        messages = CapturedLog(caplog).rendered()
         assert all("prod-secret" not in msg for msg in messages), messages
 
     def test_env_token_in_base_segment_still_expands_and_navigates(

@@ -141,7 +141,7 @@ class TestInlineJobTransport:
         await executor.execute(AcmeRun(dispatch_for_an_order), identity=ALICE)
         await jobs.wait_until_idle()
 
-        job_records = [entry for _, entry in CapturedLog(caplog).calls if LogField.JOB in entry]
+        job_records = [entry for _, entry in CapturedLog(caplog).events if LogField.JOB in entry]
         assert {entry.get("order_id") for entry in job_records} == {None}
 
 

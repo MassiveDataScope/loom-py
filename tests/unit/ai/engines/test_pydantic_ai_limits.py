@@ -151,7 +151,7 @@ class TestPricingProbe:
                 _AGENT,
             )
 
-        assert CapturedLog(caplog).calls == [
+        assert CapturedLog(caplog).events == [
             (
                 AiEvent.MODEL_UNPRICEABLE,
                 {AiKey.AGENT: _AGENT, AiKey.MODEL: "totally-unknown-model-xyz"},

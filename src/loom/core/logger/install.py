@@ -78,6 +78,7 @@ def configure_logging(
     for target in (*written, *extra_handlers):
         target.filters = [f for f in target.filters if not isinstance(f, ContextFilter)]
         target.addFilter(stamp)
+    stamp.install()
     return stamp
 
 

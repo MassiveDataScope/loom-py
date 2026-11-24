@@ -15,7 +15,10 @@ import uuid
 
 import pytest
 
+from loom.core.environment import Environment
 from loom.core.log_names import LogField
+from loom.core.logger.install import configure_logging
+from loom.core.logger.settings import LogFormatName, LogSettings
 from loom.core.model.redaction import Secret
 from loom.core.observability.diagnostic import ObservabilityEvent
 from loom.prefect.observer._logging_bridge import (
@@ -25,6 +28,7 @@ from loom.prefect.observer._logging_bridge import (
     install_log_bridge,
     uninstall_log_bridge,
 )
+from tests.helpers.loggers import root_logger_kept
 
 
 def _make_record(message: str = "hello") -> logging.LogRecord:
@@ -74,6 +78,40 @@ class TestPrefectLogBridgeHandler:
         assert payload["message"] == (
             f'{ObservabilityEvent.LIFECYCLE_FAILED} loom.name="Load step" pw=***'
         )
+
+    @pytest.mark.parametrize(
+        ("configured_as", "line"),
+        [
+            pytest.param([], "hello", id="never-configured"),
+            pytest.param(
+                ["acme"],
+                "hello service.name=acme deployment.environment.name=test loom.runtime=cli",
+                id="configured",
+            ),
+            pytest.param(
+                ["acme", "other"],
+                "hello service.name=other deployment.environment.name=test loom.runtime=cli",
+                id="reconfigured",
+            ),
+        ],
+    )
+    def test_the_line_has_the_configured_stamp_and_no_code_origin(
+        self, configured_as: list[str], line: str
+    ) -> None:
+        handler = PrefectLogBridgeHandler()
+        with root_logger_kept():
+            for service_name in configured_as:
+                configure_logging(
+                    LogSettings(format=LogFormatName.TEXT),
+                    environment=Environment.TEST,
+                    service_name=service_name,
+                )
+            with bind_task_run(uuid.uuid4()):
+                handler.handle(_make_record("hello"))
+        payload = handler._queue.get_nowait()
+        handler.close()
+
+        assert payload["message"] == line
 
     def test_emit_falls_back_to_flow_run_id_when_no_task_bound(self) -> None:
         handler = PrefectLogBridgeHandler()

@@ -179,7 +179,7 @@ class TestEmptyGroupWarnsAtStartupAndInCheck:
         discovered = project.discovered
 
         assert discovered.models == ()
-        assert CapturedLog(caplog, "loom.core.discovery.scanner").calls == []
+        assert CapturedLog(caplog, "loom.core.discovery.scanner").events == []
 
     def test_the_startup_deploy_checks_report_it(self) -> None:
         raw = {"app": {"name": "acme", "entry_points": ["acme.unknown"]}}
@@ -238,7 +238,7 @@ class TestEmptyGroupWarnsAtStartupAndInCheck:
 
         assert _empty_group_findings(checked) == []
         assert discovered.models == ()
-        assert CapturedLog(caplog, "loom.core.discovery.scanner").calls == []
+        assert CapturedLog(caplog, "loom.core.discovery.scanner").events == []
 
 
 _OPTIONAL_UNKNOWN = {"group": "acme.unknown", "optional": True}

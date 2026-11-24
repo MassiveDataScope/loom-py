@@ -174,7 +174,7 @@ class TestInlineTimer:
         application = self._compose(tmp_path, JobsAdapter(AcmePingJob))
 
         assert [resource.kind for resource in application.resources].count(ResourceKind.TIMER) == 1
-        warning, policies = warnings_logged.calls
+        warning, policies = warnings_logged.events
         assert warning[0] == CompositionEvent.INLINE_JOBS_HELD_IN_MEMORY
         assert "max_attempts=3" in policies[1][JobKey.RETRY_POLICIES][0]
 
@@ -185,7 +185,7 @@ class TestInlineTimer:
             JobsAdapter(AcmePingJob)
         )
 
-        assert not any("wait in process memory" in str(call[0]) for call in warnings_logged.calls)
+        assert not any("wait in process memory" in str(call[0]) for call in warnings_logged.events)
 
     async def test_a_countdown_runs_when_the_timer_of_the_application_reaches_it(
         self, tmp_path: Path
@@ -223,7 +223,7 @@ class TestInlineTimer:
 
         assert timer.pending == 1
         assert [resource.kind for resource in application.resources].count(ResourceKind.TIMER) == 1
-        assert [event for event, _ in warnings_logged.calls] == [JobEvent.RETRY_POLICIES_DESCRIBED]
+        assert [event for event, _ in warnings_logged.events] == [JobEvent.RETRY_POLICIES_DESCRIBED]
 
     async def test_lambda_runs_jobs_on_a_timer_that_refuses_a_delay(
         self, tmp_path: Path, warnings_logged: CapturedLog
@@ -234,7 +234,7 @@ class TestInlineTimer:
         with pytest.raises(JobDelayRefusedError):
             service.dispatch_after_commit(AcmePingJob, countdown=60)
         assert [resource.kind for resource in application.resources].count(ResourceKind.TIMER) == 1
-        ((event, fields),) = warnings_logged.calls
+        ((event, fields),) = warnings_logged.events
         assert event == JobEvent.RETRY_POLICIES_DESCRIBED
         assert "max_attempts=1 (no redelivery)" in fields[JobKey.RETRY_POLICIES][0]
 

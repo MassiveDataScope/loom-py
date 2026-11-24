@@ -134,7 +134,7 @@ class TestATaskOutlivingItsExecution:
 
         with pytest.raises(Unauthenticated, match="system identity"):
             await task
-        [(event, fields)] = recorded.calls
+        [(event, fields)] = recorded.events
         assert event == IdentityEvent.DELEGATION_EXPIRED
         assert ACME_ALICE.subject not in repr(fields)
 
@@ -187,12 +187,12 @@ class TestATaskOutlivingItsExecution:
         with pytest.raises(ExecutionClosed):
             await task
 
-        [(event, fields)] = recorded.calls
+        [(event, fields)] = recorded.events
         assert (event, fields[ExecutionContextKey.READ]) == (
             ExecutionContextEvent.CLOSED,
             "per-execution value",
         )
-        assert ACME_ALICE.subject not in repr(recorded.calls)
+        assert ACME_ALICE.subject not in repr(recorded.events)
 
     async def test_execution_closed_is_an_execution_required(self, outliving: Outliving) -> None:
         task = await outliving(per_execution(AcmePerExecutionValue, AcmePerExecutionValue))

@@ -16,12 +16,19 @@ class TestLogSettings:
 
         assert (settings.format, settings.level, settings.named_levels) == (None, "INFO", {})
 
-    def test_a_level_not_written_as_the_standard_library_names_it_is_refused(self) -> None:
+    @pytest.mark.parametrize(
+        "written",
+        [{"level": "info"}, {"named_levels": {"botocore": "info"}}],
+        ids=["root", "named"],
+    )
+    def test_a_level_not_written_as_the_standard_library_names_it_is_refused(
+        self, written: dict[str, object]
+    ) -> None:
         with pytest.raises(msgspec.ValidationError, match="Invalid enum value 'info'"):
-            msgspec.convert({"named_levels": {"botocore": "info"}}, LogSettings)
+            msgspec.convert(written, LogSettings)
 
     def test_a_written_logger_level_wins_over_a_quiet_library(self) -> None:
-        settings = make(LogSettings, named_levels={"botocore": LogLevel.DEBUG}, subject_key=None)
+        settings = make(LogSettings, named_levels={"botocore": LogLevel.DEBUG})
 
         assert settings.logger_levels() == {**QUIET_LIBRARIES, "botocore": LogLevel.DEBUG}
 

@@ -48,7 +48,7 @@ def _switched(switches: CapturedLog) -> list[tuple[object, object, object]]:
             subject_of.get(fields.get(LogField.USER_HASH)),
             fields[LogField.USE_CASE],
         )
-        for event, fields in switches.calls
+        for event, fields in switches.events
         if event == IdentityEvent.CALLER_SWITCHED
     ]
 
@@ -151,7 +151,7 @@ class TestATransportSwitch:
         finally:
             reset_identity(outer)
 
-        assert switches.calls == []
+        assert switches.events == []
 
     def test_a_failing_report_leaves_the_previous_caller_installed(
         self,
@@ -228,7 +228,7 @@ class TestPinnedFor:
             with pytest.raises(DelegationExpired, match="system identity"):
                 acting.pinned_for(given, _WORK, "AcmeUseCase")
 
-        assert [event for event, _ in switches.calls] == [IdentityEvent.DELEGATION_EXPIRED]
+        assert [event for event, _ in switches.events] == [IdentityEvent.DELEGATION_EXPIRED]
 
     def test_another_subject_is_a_logged_switch_with_a_new_delegation(
         self, switches: CapturedLog, window: float
@@ -257,7 +257,7 @@ class TestPinnedFor:
     ) -> None:
         Acting.current().pinned_for(_ALICE, _WORK, "AcmeUseCase")
 
-        assert switches.calls == []
+        assert switches.events == []
 
     def test_a_caller_given_inside_work_with_none_is_a_switch_from_no_one(
         self, switches: CapturedLog
@@ -331,4 +331,4 @@ class TestRefuseExpired:
             with pytest.raises(DelegationExpired, match="system identity"):
                 acting.refuse_expired()
 
-        assert switches.calls == [(IdentityEvent.DELEGATION_EXPIRED, {})]
+        assert switches.events == [(IdentityEvent.DELEGATION_EXPIRED, {})]

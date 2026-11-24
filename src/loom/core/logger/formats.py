@@ -6,7 +6,7 @@ import json
 import logging
 import math
 import re
-from collections.abc import Iterator
+from collections.abc import Collection, Iterator
 from datetime import UTC, datetime
 from typing import Final, Literal
 
@@ -150,10 +150,16 @@ class RecordFields:
             if key not in _NOT_FIELDS and not str(key).startswith("_")
         )
 
-    def logfmt(self) -> str:
-        """The :meth:`laid_out` fields as logfmt ``key=value`` pairs, quoted where needed."""
+    def logfmt(self, without: Collection[str] = ()) -> str:
+        """The :meth:`laid_out` fields as logfmt ``key=value`` pairs, quoted where needed.
+
+        Args:
+            without: Names of the fields to leave out.
+        """
         return " ".join(
-            f"{key}={_logfmt_value(str(value))}" for key, value in self.laid_out().items()
+            f"{key}={_logfmt_value(str(value))}"
+            for key, value in self.laid_out().items()
+            if key not in without
         )
 
     def _rendered(self, reserved: frozenset[str]) -> dict[str, object]:
