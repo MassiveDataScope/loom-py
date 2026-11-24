@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import logging
 
-from loom.core.logger import LogEvent, LogField, LogKey
+from loom.core.logger import LogEvent, LogField, LogKey, ValueKind
 from loom.core.observability.event import EventKind, LifecycleEvent, Scope
 
 _log = logging.getLogger(__name__)
@@ -19,9 +19,10 @@ class LifecycleLog(LogEvent):
 
 
 class LifecycleKey(LogKey):
-    """The bag a lifecycle record writes the event's ``meta`` into."""
+    """The fields a lifecycle record writes beside the shared ones."""
 
-    META = "loom.meta"
+    EVENT_ID = "loom.lifecycle.event_id"
+    META = "loom.meta", ValueKind.OBJECT
 
 
 _EVENTS = {
@@ -58,7 +59,7 @@ class LogLifecycleObserver:
             LogField.SCOPE: event.scope.value,
             LogField.NAME: event.name,
             LogField.CORRELATION_ID: event.correlation_id,
-            LogField.EVENT_ID: event.id,
+            LifecycleKey.EVENT_ID: event.id,
         }
         if event.trace_id is not None:
             fields[LogField.TRACE_ID] = event.trace_id

@@ -29,6 +29,7 @@ from loom.core.stores.database import (
     SchemaConfig,
     require_schema_key,
 )
+from loom.core.stores.event import StoresKey
 from loom.core.stores.plugin import StoreWiring, no_model_preparation
 from loom.core.stores.profile import StorePluginContext
 from loom.stores.sqlalchemy.event import SqlalchemyEvent, SqlalchemyKey
@@ -219,7 +220,7 @@ def _prepare_models(
     or verifies the schema, from the scoped tables this compilation captured.
     """
     if not models:
-        _logger.warning(SqlalchemyEvent.NO_MODELS_DISCOVERED, extra={SqlalchemyKey.STORE: store})
+        _logger.warning(SqlalchemyEvent.NO_MODELS_DISCOVERED, extra={StoresKey.STORE: store})
     compile_all(*models, metadata=metadata)
     if settings is None:
         return
@@ -477,11 +478,11 @@ def _warn_audit_horizon(store: StoreKey, covered: int | None) -> None:
     if covered is None or covered >= AUDIT_HORIZON_WARNING_MONTHS:
         return
     if covered == 0:
-        _logger.error(SqlalchemyEvent.AUDIT_PARTITION_MISSING, extra={SqlalchemyKey.STORE: store})
+        _logger.error(SqlalchemyEvent.AUDIT_PARTITION_MISSING, extra={StoresKey.STORE: store})
     else:
         _logger.warning(
             SqlalchemyEvent.AUDIT_PARTITIONS_RUNNING_OUT,
-            extra={SqlalchemyKey.STORE: store, SqlalchemyKey.MONTHS_COVERED: covered},
+            extra={StoresKey.STORE: store, SqlalchemyKey.MONTHS_COVERED: covered},
         )
 
 

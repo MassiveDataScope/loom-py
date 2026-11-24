@@ -388,7 +388,7 @@ class TestCompilerLogging:
     def test_logs_one_line_naming_the_use_case(self, log: CapturedLog) -> None:
         UseCaseCompiler().compile(_NoMarkersUseCase)
         assert log.messages == ["compiler.use_case_compiled"]
-        assert log.calls[0][1]["loom.use_case"] == "_NoMarkersUseCase"
+        assert log.calls[0][1]["loom.use_case.name"] == "_NoMarkersUseCase"
 
     @pytest.mark.parametrize(
         ("use_case", "detected"),

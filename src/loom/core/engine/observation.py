@@ -24,7 +24,7 @@ from loom.core.engine.events import EventKind, ExecutionEvent, Phase, Status
 from loom.core.engine.execution_observer import ExecutionObserver, NullExecutionObserver
 from loom.core.errors import PostCommitError, RuleViolationError, RuleViolationsError
 from loom.core.job.outcome import JobSignal, failure_log_fields
-from loom.core.log_names import LogEvent, LogField, LogKey
+from loom.core.log_names import LogEvent, LogField, LogKey, ValueKind
 from loom.core.stores.uow.coordinator import InvocationOutcome
 from loom.core.stores.uow.scope import InvocationScope
 from loom.core.tracing import get_trace_id
@@ -46,9 +46,9 @@ class UseCaseEvent(LogEvent):
 class UseCaseKey(LogKey):
     """The fields of a use case execution record."""
 
-    STEPS = "loom.use_case.steps"
+    STEPS = "loom.use_case.steps", ValueKind.ARRAY
     PHASE = "loom.use_case.phase"
-    BROKEN_RULES = "loom.use_case.broken_rules"
+    BROKEN_RULES = "loom.use_case.broken_rules", ValueKind.ARRAY
 
 
 class BrokenRule(NamedTuple):

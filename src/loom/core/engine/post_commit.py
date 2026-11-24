@@ -24,7 +24,7 @@ from typing import Protocol, TypeVar, cast, runtime_checkable
 from loom.core.concurrency import held_task
 from loom.core.errors import PostCommitError
 from loom.core.execution import execution_ended
-from loom.core.log_names import LogEvent, LogKey
+from loom.core.log_names import LogEvent, LogKey, ValueKind
 from loom.core.stores.catalog import StoreKey
 from loom.core.stores.uow.scope import current_scope, refuse_write_under_read_only
 
@@ -72,7 +72,7 @@ class PostCommitEvent(LogEvent):
 class PostCommitKey(LogKey):
     """The fields of a post-commit record."""
 
-    DROPPED_ACTIONS = "loom.post_commit.dropped_actions"
+    DROPPED_ACTIONS = "loom.post_commit.dropped_actions", ValueKind.NUMBER
     SENT_JOB = "loom.post_commit.sent_job"
     SENT_TASK_ID = "loom.post_commit.sent_task_id"
 

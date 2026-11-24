@@ -37,7 +37,7 @@ import anyio
 from anyio.from_thread import BlockingPortal, start_blocking_portal
 
 from loom.core.errors import InvalidUse
-from loom.core.log_names import LogEvent, LogKey
+from loom.core.log_names import LogEvent, LogKey, ValueKind
 
 logger = logging.getLogger(__name__)
 
@@ -51,7 +51,7 @@ class BridgeEvent(LogEvent):
 class BridgeKey(LogKey):
     """The fields of an async bridge record."""
 
-    TIMEOUT_MS = "loom.bridge.timeout_ms"
+    TIMEOUT_MS = "loom.bridge.timeout_ms", ValueKind.NUMBER
 
 
 T = TypeVar("T")

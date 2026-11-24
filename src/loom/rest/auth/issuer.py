@@ -21,10 +21,11 @@ from loom.core.config.errors import ConfigError
 from loom.core.errors import InternalError, InvalidValue
 from loom.core.errors.summary import ErrorSummary
 from loom.core.identity import Identity
+from loom.core.identity.context import IdentityKey
 from loom.core.identity.issuer import IssuedToken
 from loom.rest.auth.config import ATTRIBUTE_CLAIM_PREFIX, JwtIssuerConfig
 from loom.rest.auth.keys import load_pyjwt
-from loom.rest.event import RestEvent, RestKey
+from loom.rest.event import RestEvent
 
 _logger = logging.getLogger(__name__)
 
@@ -112,7 +113,7 @@ class JwtIssuer:
         token = self._sign(claims)
         if token is None:
             raise InternalError("JWT issuing failed")
-        _logger.info(RestEvent.TOKEN_ISSUED, extra={RestKey.SUBJECT: identity.subject})
+        _logger.info(RestEvent.TOKEN_ISSUED, extra={IdentityKey.SUBJECT: identity.subject})
         return IssuedToken(token=token, expires_at=expires_at, jti=jti)
 
     def _sign(self, claims: dict[str, Any]) -> str | None:

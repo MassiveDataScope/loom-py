@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from loom.core.log_names import LogEvent, LogKey
+from loom.core.log_names import LogEvent, LogKey, ValueKind
 
 
 class StreamingEvent(LogEvent):
@@ -36,10 +36,10 @@ class StreamingKey(LogKey):
     STEP = "loom.streaming.step"
     KIND = "loom.streaming.kind"
     TARGET = "loom.streaming.target"
-    RECORDS = "loom.streaming.records"
+    RECORDS = "loom.streaming.records", ValueKind.NUMBER
     TOPIC = "loom.streaming.topic"
-    PARTITION = "loom.streaming.partition"
-    PARTITIONS = "loom.streaming.partitions"
-    OFFSET = "loom.streaming.offset"
+    PARTITION = "loom.streaming.partition", ValueKind.NUMBER
+    PARTITIONS = "loom.streaming.partitions", ValueKind.ARRAY
+    OFFSET = "loom.streaming.offset", ValueKind.NUMBER
     MESSAGE_TYPE = "loom.streaming.message_type"
-    REPLAYED_OFFSETS = "loom.streaming.replayed_offsets"
+    REPLAYED_OFFSETS = "loom.streaming.replayed_offsets", ValueKind.NUMBER

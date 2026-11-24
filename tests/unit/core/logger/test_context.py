@@ -34,7 +34,7 @@ class TestLogContext:
         with log_context({LogField.JOB: "SendInvoice"}, attempt=2):
             inside = dict(current_log_fields())
 
-        assert inside == {"loom.job": "SendInvoice", "attempt": 2}
+        assert inside == {"loom.job.name": "SendInvoice", "attempt": 2}
 
     async def test_concurrent_tasks_do_not_see_each_other_fields(self) -> None:
         seen: dict[str, object] = {}

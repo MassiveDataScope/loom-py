@@ -11,6 +11,7 @@ from sqlalchemy import MetaData
 from loom.core.config.errors import ConfigError
 from loom.core.locator import DEFAULT_CODE_PATH, add_code_path
 from loom.core.stores.catalog import StoreKey
+from loom.core.stores.event import StoresKey
 from loom.stores.sqlalchemy.alembic import StoreSchema, load_store_schema
 from loom.stores.sqlalchemy.event import SqlalchemyEvent, SqlalchemyKey
 from loom.stores.sqlalchemy.rls import SchemaNames
@@ -402,7 +403,7 @@ class TestStoreSections:
         assert loaded == ({table}, store, f"stores.{store}")
         assert application.database.url == url
         assert len(left_out) == 1
-        assert left_out[0].__dict__[SqlalchemyKey.STORE] == store
+        assert left_out[0].__dict__[StoresKey.STORE] == store
         assert left_out[0].__dict__[SqlalchemyKey.SKIPPED_STORES] == [skipped]
 
 

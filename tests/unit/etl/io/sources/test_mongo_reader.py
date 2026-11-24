@@ -22,7 +22,11 @@ from loom.etl.declarative.source._specs import MongoSourceSpec
 from loom.etl.engines.polars._dtype import loom_type_to_polars
 from loom.etl.event import EtlEvent, EtlKey
 from loom.etl.io.sources._mongo import MongoSourceReader
-from loom.etl.io.sources._mongo_batch import _build_schema_plan, _canonicalize_batch
+from loom.etl.io.sources._mongo_batch import (
+    MongoBatchProcessor,
+    _build_schema_plan,
+    _canonicalize_batch,
+)
 from loom.etl.io.sources._mongo_bson import normalize_bson_doc
 from loom.etl.schema._contract import resolve_schema
 from loom.etl.schema._schema import ColumnSchema, ListType, LoomDtype, StructField, StructType
@@ -1323,6 +1327,17 @@ class TestNullTypeSafeguard:
 
         assert df["task"].dtype == task_dtype
         assert "Null" not in str(df["task"].dtype)
+
+    def test_a_batch_polars_refuses_logs_the_shape_it_falls_back_on(
+        self, caplog: pytest.LogCaptureFixture
+    ) -> None:
+        processor = MongoBatchProcessor(schema_str_fields=frozenset())
+
+        with caplog.at_level(logging.WARNING):
+            processor.build_frame([{"id": "x"}], {"id": pl.Int64})
+
+        [fell_back] = CapturedLog(caplog).named(EtlEvent.SOURCE_FRAME_BUILD_FELL_BACK)
+        assert fell_back[EtlKey.SHAPE] == ["$: dict keys=['id']", "$.id: str"]
 
 
 # ---------------------------------------------------------------------------

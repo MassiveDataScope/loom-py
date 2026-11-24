@@ -27,7 +27,7 @@ from loom.core.engine.executor import UseCaseExecutor
 from loom.core.environment import Environment, resolve_environment
 from loom.core.errors.summary import ErrorSummary
 from loom.core.execution import ExecutionResolver
-from loom.core.logger import LogEvent, LogField
+from loom.core.logger import LogEvent, LogField, LogKey
 from loom.core.stores.repository.registration import classify_key
 from loom.core.stores.uow.coordinator import Coordinator
 from loom.core.use_case.factory import UseCaseFactory, main_repository
@@ -46,6 +46,12 @@ class BootEvent(LogEvent):
     USE_CASES_COMPILING = "bootstrap.use_cases_compiling"
     CONTAINER_VALIDATING = "bootstrap.container_validating"
     KERNEL_COMPLETED = "bootstrap.kernel_completed"
+
+
+class BootKey(LogKey):
+    """The fields of a bootstrap record."""
+
+    MODULE = "loom.bootstrap.module"
 
 
 KERNEL_KEYS: tuple[BindingKey, ...] = (
@@ -198,7 +204,7 @@ def seeded_container(
         view = container.bindings()
         for module in modules:
             name = getattr(module, "__qualname__", None) or repr(module)
-            _log.info(BootEvent.MODULE_REGISTERING, extra={LogField.BOOTSTRAP_MODULE: name})
+            _log.info(BootEvent.MODULE_REGISTERING, extra={BootKey.MODULE: name})
             before = {key: view.get(key) for key in reserved}
             module(container)
             for key in reserved:

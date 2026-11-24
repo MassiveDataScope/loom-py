@@ -48,7 +48,6 @@ class AiKey(LogKey):
     AGENT = "loom.ai.agent"
     CONFIG_PATH = "loom.ai.config_path"
     ENGINE = "loom.ai.engine"
-    ROUTE = "loom.ai.route"
     MODEL = "loom.ai.model"
     TOOL = "loom.ai.tool"
     STEP = "loom.ai.step"

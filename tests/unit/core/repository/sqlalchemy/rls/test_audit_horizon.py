@@ -7,7 +7,8 @@ import logging
 import pytest
 
 from loom.core.stores.catalog import StoreKey
-from loom.stores.sqlalchemy.event import SqlalchemyEvent, SqlalchemyKey
+from loom.core.stores.event import StoresKey
+from loom.stores.sqlalchemy.event import SqlalchemyEvent
 from loom.stores.sqlalchemy.plugin import _warn_audit_horizon
 from loom.stores.sqlalchemy.rls.audit_verify import AuditState, audit_findings
 
@@ -53,7 +54,7 @@ class TestAuditHorizon:
             _warn_audit_horizon(StoreKey("default"), covered)
 
         assert [(record.levelno, record.msg) for record in caplog.records] == [(level, event)]
-        assert caplog.records[0].__dict__[SqlalchemyKey.STORE] == "default"
+        assert caplog.records[0].__dict__[StoresKey.STORE] == "default"
 
     @pytest.mark.parametrize("covered", [None, 3, 13])
     def test_startup_is_silent_without_a_log_or_with_margin(

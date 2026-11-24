@@ -46,7 +46,7 @@ from loom.core.config.errors import ConfigError
 from loom.core.errors import DelegationExpired, IdentityFixed
 from loom.core.identity.identity import ANONYMOUS, Identity
 from loom.core.identity.wire import NO_DELEGATION, Delegation
-from loom.core.log_names import LogEvent, LogField, LogKey
+from loom.core.log_names import LogEvent, LogField, LogKey, ValueKind
 from loom.core.model.types import PositiveSeconds
 
 _log = logging.getLogger(__name__)
@@ -62,11 +62,12 @@ class IdentityEvent(LogEvent):
 class IdentityKey(LogKey):
     """The fields of an identity record, and the span attributes of a switch."""
 
+    SUBJECT = "loom.identity.subject"
     SWITCHED_FROM = "loom.identity.switched_from"
     SWITCHED_TO = "loom.identity.switched_to"
-    ROLES_FROM = "loom.identity.roles_from"
-    ROLES_TO = "loom.identity.roles_to"
-    ATTRIBUTES_CHANGED = "loom.identity.attributes_changed"
+    ROLES_FROM = "loom.identity.roles_from", ValueKind.ARRAY
+    ROLES_TO = "loom.identity.roles_to", ValueKind.ARRAY
+    ATTRIBUTES_CHANGED = "loom.identity.attributes_changed", ValueKind.BOOLEAN
 
 
 class Acting(msgspec.Struct, frozen=True, gc=False):

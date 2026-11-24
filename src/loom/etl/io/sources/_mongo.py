@@ -9,6 +9,8 @@ from typing import Any
 import polars as pl
 
 from loom.core.errors import InvalidUse
+from loom.core.log_names import LogField
+from loom.core.observability.span import elapsed_ms
 from loom.etl.declarative.source._from_mongo import FromMongo, SourceRef
 from loom.etl.declarative.source._specs import ExtraFieldsMode, MongoSourceSpec
 from loom.etl.engines.polars._dtype import loom_type_to_polars
@@ -235,7 +237,7 @@ def _scan(
     batch: list[dict[str, Any]] = []
     batches_yielded = 0
     total_rows = 0
-    started = time.monotonic()
+    started = time.perf_counter()
     serialization_failures_mark = _serialization_stats.failures
     try:
         for doc in cursor:
@@ -261,7 +263,7 @@ def _scan(
                     batches_yielded,
                     rows,
                     total_rows,
-                    time.monotonic() - started,
+                    elapsed_ms(started),
                 )
                 yield frame
                 batch = []
@@ -286,7 +288,7 @@ def _scan(
                 batches_yielded,
                 rows,
                 total_rows,
-                time.monotonic() - started,
+                elapsed_ms(started),
             )
             yield frame
     finally:
@@ -307,19 +309,19 @@ def _scan(
                 EtlKey.ROWS: total_rows,
                 EtlKey.BATCHES: batches_yielded,
                 EtlKey.SERIALIZATION_FAILURES: serialization_failures,
-                EtlKey.DURATION_S: round(time.monotonic() - started, 3),
+                LogField.DURATION_MS: elapsed_ms(started),
             },
         )
 
 
 def _log_batch(
-    collection: str, batch_index: int, rows: int, total_rows: int, elapsed_s: float
+    collection: str, batch_index: int, rows: int, total_rows: int, duration_ms: float
 ) -> None:
     payload: dict[str, object] = {
         EtlKey.TABLE: collection,
         EtlKey.BATCHES: batch_index,
         EtlKey.ROWS: rows,
-        EtlKey.DURATION_S: round(elapsed_s, 3),
+        LogField.DURATION_MS: duration_ms,
     }
     if batch_index == 1:
         _log.info(EtlEvent.SOURCE_BATCH_READ, extra=payload)

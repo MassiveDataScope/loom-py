@@ -14,6 +14,8 @@ from typing import Any
 import polars as pl
 
 from loom.core.errors import InvalidUse
+from loom.core.log_names import LogField
+from loom.core.observability.span import elapsed_ms
 from loom.etl.declarative.source._from_dynamodb import FromDynamoDB
 from loom.etl.declarative.source._specs import DynamoDBSourceSpec, ExtraFieldsMode
 from loom.etl.engines.polars._dtype import loom_type_to_polars
@@ -379,7 +381,7 @@ class _ScanTracker:
         self._table = table
         self._batches = 0
         self._rows = 0
-        self._started = time.monotonic()
+        self._started = time.perf_counter()
         self._failures_mark = _serialization_stats.failures
 
     def record(self, frame: pl.DataFrame, remaining: int | None) -> int | None:
@@ -390,7 +392,7 @@ class _ScanTracker:
             EtlKey.TABLE: self._table,
             EtlKey.BATCHES: self._batches,
             EtlKey.ROWS: rows,
-            EtlKey.DURATION_S: round(time.monotonic() - self._started, 3),
+            LogField.DURATION_MS: elapsed_ms(self._started),
         }
         if self._batches == 1:
             _log.info(EtlEvent.SOURCE_BATCH_READ, extra=payload)
@@ -415,7 +417,7 @@ class _ScanTracker:
                 EtlKey.ROWS: self._rows,
                 EtlKey.BATCHES: self._batches,
                 EtlKey.SERIALIZATION_FAILURES: serialization_failures,
-                EtlKey.DURATION_S: round(time.monotonic() - self._started, 3),
+                LogField.DURATION_MS: elapsed_ms(self._started),
             },
         )
 

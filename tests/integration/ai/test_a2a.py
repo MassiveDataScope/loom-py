@@ -49,6 +49,7 @@ from loom.ai.fastapi.endpoints import mount_agent_endpoints
 from loom.core.config.errors import ConfigError
 from loom.core.di import LoomContainer
 from loom.core.identity import Identity
+from loom.core.log_names import LogField
 from loom.core.model import loom_type
 from loom.core.model.redaction import Dsn
 from loom.core.observability.event import EventKind, Scope
@@ -1179,7 +1180,7 @@ class TestPublicationAnnouncement:
         published = [name for name in CapturedLog(caplog).messages if name in _PUBLISH_EVENTS]
         assert published == [event]
         assert CapturedLog(caplog).named(event) == [
-            {AiKey.AGENT: _AGENT, AiKey.ROUTE: f"{_PREFIX}/{_AGENT}"}
+            {AiKey.AGENT: _AGENT, LogField.HTTP_ROUTE: f"{_PREFIX}/{_AGENT}"}
         ]
 
 

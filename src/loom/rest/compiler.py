@@ -48,6 +48,7 @@ from loom.core.engine.compiler import UseCaseCompiler
 from loom.core.engine.execution_observer import ExecutionObserver
 from loom.core.engine.plan import ExecutionPlan
 from loom.core.errors import InvalidValue, UnsupportedBoundaryType
+from loom.core.log_names import LogField
 from loom.core.model import get_column_fields, is_pydantic_model, loom_type, msgspec_type
 from loom.core.model._json_schema import DEFS, DEFS_PREFIX, REF, definition, without_null
 from loom.core.model.introspection import scalar_column_annotations
@@ -56,7 +57,7 @@ from loom.core.stores.repository.query import CursorResult, PageResult, QuerySpe
 from loom.core.use_case.field_ref import FieldRef
 from loom.core.use_case.outcome import Created
 from loom.rest.constants import QueryParam
-from loom.rest.event import RestEvent, RestKey
+from loom.rest.event import RestEvent
 from loom.rest.model import (
     ALL,
     DeclaredFields,
@@ -535,7 +536,7 @@ class _ColumnPolicy:
             )
         columns = scalar_column_annotations(self.model)
         if declared is ALL:
-            _logger.warning(RestEvent.COLUMNS_ALL_EXPOSED, extra={RestKey.ROUTE: self.path})
+            _logger.warning(RestEvent.COLUMNS_ALL_EXPOSED, extra={LogField.HTTP_ROUTE: self.path})
             return columns
         resolved: dict[str, Any] = {}
         for entry in declared:

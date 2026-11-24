@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from loom.core.log_names import LogEvent, LogKey
+from loom.core.log_names import LogEvent, LogKey, ValueKind
 
 
 class EtlEvent(LogEvent):
@@ -95,26 +95,25 @@ class EtlKey(LogKey):
     RUN_ID = "loom.etl.run_id"
     CHECKPOINT = "loom.etl.checkpoint"
     SCOPE = "loom.etl.scope"
-    OPTION_KEYS = "loom.etl.option_keys"
+    OPTION_KEYS = "loom.etl.option_keys", ValueKind.ARRAY
 
     TABLE = "loom.etl.table"
     URI = "loom.etl.uri"
     MODE = "loom.etl.mode"
     KIND = "loom.etl.kind"
-    VERSION = "loom.etl.version"
+    VERSION = "loom.etl.version", ValueKind.NUMBER
     PREDICATE = "loom.etl.predicate"
     SQL = "loom.etl.sql"
-    COLUMNS = "loom.etl.columns"
-    RERUN_DATES = "loom.etl.rerun_dates"
+    COLUMNS = "loom.etl.columns", ValueKind.ARRAY
+    RERUN_DATES = "loom.etl.rerun_dates", ValueKind.ARRAY
 
-    ROWS = "loom.etl.rows"
-    BATCHES = "loom.etl.batches"
-    FILES = "loom.etl.files"
-    PARTITIONS = "loom.etl.partitions"
-    DURATION_S = "loom.etl.duration_s"
-    SERIALIZATION_FAILURES = "loom.etl.serialization_failures"
-    SEGMENT = "loom.etl.segment"
+    ROWS = "loom.etl.rows", ValueKind.NUMBER
+    BATCHES = "loom.etl.batches", ValueKind.NUMBER
+    FILES = "loom.etl.files", ValueKind.NUMBER
+    PARTITIONS = "loom.etl.partitions", ValueKind.NUMBER
+    SERIALIZATION_FAILURES = "loom.etl.serialization_failures", ValueKind.NUMBER
+    SEGMENT = "loom.etl.segment", ValueKind.NUMBER
 
     VALUE_TYPE = "loom.etl.value_type"
-    ISSUES = "loom.etl.issues"
-    SHAPE = "loom.etl.shape"
+    ISSUES = "loom.etl.issues", ValueKind.ARRAY
+    SHAPE = "loom.etl.shape", ValueKind.ARRAY

@@ -24,6 +24,7 @@ from loom.core.discovery.base import DiscoveryResult
 from loom.core.model import BaseModel, ColumnField
 from loom.core.stores import NullStorePlugin, StoreWiring
 from loom.core.stores.catalog import MODELS_ONLY, StoreCapabilities, StoreSpec
+from loom.core.stores.event import StoresKey
 from loom.core.stores.profile import SERVER_PROFILE, StorePluginContext
 from loom.core.use_case.use_case import UseCase
 from loom.rest.fastapi.auto import create_app
@@ -31,7 +32,7 @@ from loom.rest.fastapi.runtime import _discover_components
 from loom.rest.model import RestInterface, RestRoute
 from loom.stores.dynamodb.uow import DynamoDBUnitOfWorkFactory
 from loom.stores.mongo.uow import MongoUnitOfWorkFactory
-from loom.stores.sqlalchemy.event import SqlalchemyEvent, SqlalchemyKey
+from loom.stores.sqlalchemy.event import SqlalchemyEvent
 from loom.stores.sqlalchemy.uow import SQLAlchemyUnitOfWorkFactory
 from tests.helpers.composition import composition_project
 from tests.unit.core.repository.mongo._fake import FakeMongoClient
@@ -309,7 +310,7 @@ class TestBuildBootstrapModelRules:
         assert runtime is not None
         assert factory is not None
         empty = next(r for r in caplog.records if r.msg == SqlalchemyEvent.NO_MODELS_DISCOVERED)
-        assert empty.__dict__[SqlalchemyKey.STORE] == "default"
+        assert empty.__dict__[StoresKey.STORE] == "default"
 
     @pytest.mark.parametrize(
         "store",

@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from loom.core.log_names import LogEvent, LogKey
+from loom.core.log_names import LogEvent, LogKey, ValueKind
 
 
 class StoresEvent(LogEvent):
@@ -17,7 +17,6 @@ class StoresKey(LogKey):
     """The fields of a stores record."""
 
     STORE = "loom.stores.store"
-    OUTCOMES = "loom.stores.outcomes"
+    OUTCOMES = "loom.stores.outcomes", ValueKind.ARRAY
     CONNECTION = "loom.stores.connection"
-    SUBJECT = "loom.stores.subject"
     MECHANISM = "loom.stores.mechanism"

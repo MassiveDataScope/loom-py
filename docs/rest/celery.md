@@ -235,7 +235,7 @@ jobs:
 | `cancel` (default) | Cancels every pending step and reports each job lost as `JOB_ABANDONED` with reason `shutdown`. |
 | `wait` | Waits until no step is pending, counting the steps scheduled meanwhile (retries, postponements, callbacks of running steps), for at most `timeout_s`. What is still pending then is cancelled and reported as in `cancel`. |
 
-Each job lost is also one `ERROR` record, `Job abandoned`, with `loom.job`,
+Each job lost is also one `ERROR` record, `Job abandoned`, with `loom.job.name`,
 `loom.task_id` and `loom.reason`. A delayed step that raises outside the run of its job
 (a failure callback that cannot notify, for example) is abandoned the same way with
 reason `step_crashed`. An application observer therefore sees every delayed job

@@ -54,7 +54,7 @@ class TestJsonFormatter:
             JsonFormatter().format(_record(**{LogField.JOB.value: "SendInvoice", "amount": 12.5}))
         )
 
-        assert (entry["loom.job"], entry["amount"]) == ("SendInvoice", 12.5)
+        assert (entry["loom.job.name"], entry["amount"]) == ("SendInvoice", 12.5)
 
     def test_the_stack_field_is_written_whole_not_cut_like_a_value(self) -> None:
         stack = "x" * (MAX_VALUE_LENGTH * 2)
@@ -85,7 +85,7 @@ class TestTextFormatter:
     def test_extra_keys_follow_the_message_as_key_value_pairs(self) -> None:
         line = TextFormatter().format(_record(amount=12.5, **{LogField.JOB.value: "SendInvoice"}))
 
-        assert line.endswith("billing.invoice_issued amount=12.5 loom.job=SendInvoice")
+        assert line.endswith("billing.invoice_issued amount=12.5 loom.job.name=SendInvoice")
 
     def test_the_stack_follows_the_line_with_every_row_prefixed(self) -> None:
         stack = "Traceback (most recent call last):\nValueError: boom\n2026-01-01 ERROR fake"
