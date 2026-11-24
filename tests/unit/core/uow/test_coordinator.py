@@ -862,13 +862,13 @@ class TestUowEvent:
     @pytest.mark.parametrize(
         ("event", "name"),
         [
-            (UowEvent.TRANSACTION_BEGAN, "stores.uow_transaction_began"),
-            (UowEvent.TRANSACTION_COMMITTED, "stores.uow_transaction_committed"),
-            (UowEvent.TRANSACTION_ROLLED_BACK, "stores.uow_transaction_rolled_back"),
-            (UowEvent.INVALIDATE_FAILED, "stores.uow_invalidate_failed"),
-            (UowEvent.ROLLBACK_FAILED, "stores.uow_rollback_failed"),
-            (UowEvent.CLOSE_FAILED, "stores.uow_close_failed"),
-            (UowEvent.INVOCATION_SETTLED, "stores.uow_invocation_settled"),
+            (UowEvent.TRANSACTION_BEGAN, "loom.stores.uow_transaction_began"),
+            (UowEvent.TRANSACTION_COMMITTED, "loom.stores.uow_transaction_committed"),
+            (UowEvent.TRANSACTION_ROLLED_BACK, "loom.stores.uow_transaction_rolled_back"),
+            (UowEvent.INVALIDATE_FAILED, "loom.stores.uow_invalidate_failed"),
+            (UowEvent.ROLLBACK_FAILED, "loom.stores.uow_rollback_failed"),
+            (UowEvent.CLOSE_FAILED, "loom.stores.uow_close_failed"),
+            (UowEvent.INVOCATION_SETTLED, "loom.stores.uow_invocation_settled"),
         ],
     )
     def test_each_event_keeps_its_name(self, event: UowEvent, name: str) -> None:

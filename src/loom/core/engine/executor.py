@@ -63,7 +63,7 @@ class UseCaseExecutor:
     and the tasks it starts, even those that outlive it, all act as the
     identity ``Caller()`` receives. Only an explicit switch changes it: given
     an identity other than the one acting, an execution logs
-    ``identity.caller_switched`` and acts as the given one, and so does everything
+    ``loom.identity.caller_switched`` and acts as the given one, and so does everything
     it causes. A caller acts within its delegation
     (``identity.max_delegation_seconds`` from the request's start): past it,
     a task that outlived the request can no longer act as that caller.
@@ -321,7 +321,7 @@ class UseCaseExecutor:
                 execution's, the transport's, or the one a task inherited),
                 else with no caller (``current_identity()`` then reads
                 ``ANONYMOUS``).  Another identity than the one acting is an
-                explicit switch: logged as ``identity.caller_switched``.
+                explicit switch: logged as ``loom.identity.caller_switched``.
                 Required, given or acting, when the plan declares a
                 ``Caller()``, ``Agent()`` or ``Mcp()`` parameter; pass
                 :data:`~loom.core.identity.identity.ANONYMOUS` explicitly to
@@ -379,7 +379,7 @@ class UseCaseExecutor:
         delegation, so the arguments, the acting identity and everything the
         execution causes see the same value. A run failing before it starts
         (its plan, its identity, the read-only check, its constructor) logs
-        its one ``engine.use_case_failed`` record and raises.
+        its one ``loom.engine.use_case_failed`` record and raises.
 
         An execution that ended is no execution: a task that outlived it,
         seen here by its closed invocation scope, runs as at top level, out

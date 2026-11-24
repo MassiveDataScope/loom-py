@@ -27,7 +27,7 @@ Rules:
     - Every explicit switch (``executor.run(..., identity=X)``,
       ``invoker.for_identity(X)``, ``ExecutionScope(X)``, a transport
       replacing the caller) and every refusal past a deadline is reported
-      here: an ``identity.caller_switched`` or ``identity.delegation_expired`` warning.
+      here: an ``loom.identity.caller_switched`` or ``loom.identity.delegation_expired`` warning.
     - This module imports nothing from the execution, the engine, the
       container or the use cases.
 """
@@ -55,8 +55,8 @@ _log = logging.getLogger(__name__)
 class IdentityEvent(LogEvent):
     """What the acting identity logs."""
 
-    DELEGATION_EXPIRED = "identity.delegation_expired"
-    CALLER_SWITCHED = "identity.caller_switched"
+    DELEGATION_EXPIRED = "loom.identity.delegation_expired"
+    CALLER_SWITCHED = "loom.identity.caller_switched"
 
 
 class IdentityKey(LogKey):
@@ -146,7 +146,7 @@ class Acting(msgspec.Struct, frozen=True, gc=False):
         return pinned
 
     def refuse_expired(self) -> None:
-        """Refuse acting as this caller past its deadline, logging ``identity.delegation_expired``.
+        """Refuse acting as this caller past its deadline, logging the expiry.
 
         Raises:
             DelegationExpired: When a caller acts past its deadline.
@@ -246,7 +246,7 @@ def set_identity(identity: Identity | None, *, until: float | None = None) -> To
     """Install the caller a transport verified, for the current context.
 
     Replacing a different caller is a switch, logged
-    (``identity.caller_switched``).
+    (``loom.identity.caller_switched``).
 
     Args:
         identity: Verified identity produced by an authentication mechanism;

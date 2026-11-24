@@ -8,8 +8,8 @@ from loom.core.log_names import LogEvent, LogKey, ValueKind
 class StoresEvent(LogEvent):
     """What the cursor codec and SQL role authorization log."""
 
-    CURSOR_SIGNING_WEAKENED = "stores.cursor_signing_weakened"
-    ROLE_AUTHORIZATION_DENIED = "stores.role_authorization_denied"
+    CURSOR_SIGNING_WEAKENED = "loom.stores.cursor_signing_weakened"
+    ROLE_AUTHORIZATION_DENIED = "loom.stores.role_authorization_denied"
 
 
 class StoresKey(LogKey):

@@ -7,7 +7,7 @@ from unittest.mock import AsyncMock
 import pytest
 
 from loom.core.command import Command
-from loom.core.engine.compiler import UseCaseCompiler
+from loom.core.engine.compiler import CompilerEvent, UseCaseCompiler
 from loom.core.engine.events import EventKind, ExecutionEvent
 from loom.core.engine.executor import UseCaseExecutor
 from loom.core.engine.observation import UseCaseEvent
@@ -374,5 +374,5 @@ class TestStructuredLogs:
 
     async def test_compile_log_has_usecase_field(self, log: CapturedLog) -> None:
         UseCaseCompiler().compile(_SimpleUseCase)
-        [fields] = log.named("compiler.use_case_compiled")
+        [fields] = log.named(CompilerEvent.USE_CASE_COMPILED)
         assert fields["loom.use_case.name"] == "_SimpleUseCase"

@@ -8,9 +8,9 @@ from loom.core.log_names import LogEvent, LogKey, ValueKind
 class MongoEvent(LogEvent):
     """The events the Mongo store logs."""
 
-    UNIT_OF_WORK_CHOSEN = "mongo.unit_of_work_chosen"
-    READINESS_PROBE_FAILED = "mongo.readiness_probe_failed"
-    BULK_UNDO_FAILED = "mongo.bulk_undo_failed"
+    UNIT_OF_WORK_CHOSEN = "loom.mongo.unit_of_work_chosen"
+    READINESS_PROBE_FAILED = "loom.mongo.readiness_probe_failed"
+    BULK_UNDO_FAILED = "loom.mongo.bulk_undo_failed"
 
 
 class MongoKey(LogKey):

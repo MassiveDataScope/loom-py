@@ -41,11 +41,11 @@ _log = logging.getLogger(__name__)
 class BootstrapEvent(LogEvent):
     """What the bootstrap logs while it composes the container and the kernel."""
 
-    CONTAINER_BUILD_STARTED = "bootstrap.container_build_started"
-    MODULE_REGISTERED = "bootstrap.module_registered"
-    USE_CASES_COMPILED = "bootstrap.use_cases_compiled"
-    CONTAINER_VALIDATED = "bootstrap.container_validated"
-    KERNEL_COMPLETED = "bootstrap.kernel_completed"
+    CONTAINER_BUILD_STARTED = "loom.bootstrap.container_build_started"
+    MODULE_REGISTERED = "loom.bootstrap.module_registered"
+    USE_CASES_COMPILED = "loom.bootstrap.use_cases_compiled"
+    CONTAINER_VALIDATED = "loom.bootstrap.container_validated"
+    KERNEL_COMPLETED = "loom.bootstrap.kernel_completed"
 
 
 class BootstrapKey(LogKey):

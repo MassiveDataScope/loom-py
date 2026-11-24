@@ -20,7 +20,7 @@ _logger = logging.getLogger(__name__)
 class DiscoveryEvent(LogEvent):
     """What worker discovery logs."""
 
-    NO_JOBS_DISCOVERED = "discovery.no_jobs_discovered"
+    NO_JOBS_DISCOVERED = "loom.discovery.no_jobs_discovered"
 
 
 AutoCRUDUseCases = Callable[[Sequence[type[Any]]], tuple[type[Compilable], ...]]

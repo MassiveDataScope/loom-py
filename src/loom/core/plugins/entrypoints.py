@@ -29,7 +29,7 @@ class PluginsEvent(LogEvent):
     first one listed is the one used.
     """
 
-    ENTRY_POINT_DUPLICATED = "plugins.entry_point_duplicated"
+    ENTRY_POINT_DUPLICATED = "loom.plugins.entry_point_duplicated"
 
 
 class PluginsKey(LogKey):

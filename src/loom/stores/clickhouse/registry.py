@@ -43,7 +43,7 @@ _logger = logging.getLogger(__name__)
 class ClickhouseEvent(LogEvent):
     """The events the ClickHouse store logs."""
 
-    CLIENT_CLOSE_FAILED = "clickhouse.client_close_failed"
+    CLIENT_CLOSE_FAILED = "loom.clickhouse.client_close_failed"
 
 
 _PROBE_SQL = "SELECT 1"

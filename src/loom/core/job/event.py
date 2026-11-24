@@ -8,8 +8,8 @@ from loom.core.log_names import LogEvent, LogKey, ValueKind
 class JobEvent(LogEvent):
     """What the job runner logs."""
 
-    DELIVERY_ABANDONED = "job.delivery_abandoned"
-    RETRY_POLICIES_DESCRIBED = "job.retry_policies_described"
+    DELIVERY_ABANDONED = "loom.job.delivery_abandoned"
+    RETRY_POLICIES_DESCRIBED = "loom.job.retry_policies_described"
 
 
 class JobKey(LogKey):

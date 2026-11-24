@@ -168,7 +168,7 @@ class TestLogLifecycleObserver:
             )
         )
 
-        [fields] = lifecycle_log.named("observability.lifecycle_ended")
+        [fields] = lifecycle_log.named(ObservabilityEvent.LIFECYCLE_ENDED)
         assert (fields["loom.scope"], fields["loom.name"], fields["trace_id"]) == (
             "use_case",
             "CreateOrder",
@@ -196,7 +196,7 @@ class TestLogLifecycleObserver:
             )
         )
 
-        [fields] = lifecycle_log.named("observability.lifecycle_started")
+        [fields] = lifecycle_log.named(ObservabilityEvent.LIFECYCLE_STARTED)
         assert fields["loom.lifecycle.meta.flow"] == "my_flow"
         assert fields["loom.lifecycle.meta.node_index"] == 0
 
@@ -212,7 +212,7 @@ class TestLogLifecycleObserver:
             )
         )
 
-        [fields] = lifecycle_log.named("observability.lifecycle_ended")
+        [fields] = lifecycle_log.named(ObservabilityEvent.LIFECYCLE_ENDED)
         assert fields["loom.lifecycle.meta.name"] == "orders"
 
 

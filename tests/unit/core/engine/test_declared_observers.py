@@ -14,7 +14,7 @@ from loom.core.engine.declared_observers import (
     resolve_execution_observer_class,
 )
 from loom.core.engine.events import EventKind, ExecutionEvent
-from loom.core.engine.execution_observer import FanOutExecutionObserver
+from loom.core.engine.execution_observer import ExecutionObserverEvent, FanOutExecutionObserver
 from tests.helpers.execution_observers import (
     NEEDS_ARGUMENTS,
     NOT_AN_OBSERVER,
@@ -93,9 +93,7 @@ class TestFanOut:
             fan_out.on_event(_EVENT)
 
         assert JobOutcomeRecorder.events == [_EVENT]
-        assert [record.getMessage() for record in caplog.records] == [
-            "engine.execution_observer_failed"
-        ]
+        assert [record.getMessage() for record in caplog.records] == [ExecutionObserverEvent.FAILED]
 
     def test_nothing_to_fan_out_is_returned_as_it_is(self) -> None:
         recorder = JobOutcomeRecorder()

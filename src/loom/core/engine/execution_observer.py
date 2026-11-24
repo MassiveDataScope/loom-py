@@ -44,7 +44,7 @@ _log = logging.getLogger(__name__)
 class ExecutionObserverEvent(LogEvent):
     """What the fan-out of execution observers logs."""
 
-    FAILED = "engine.execution_observer_failed"
+    FAILED = "loom.engine.execution_observer_failed"
 
 
 class NullExecutionObserver:

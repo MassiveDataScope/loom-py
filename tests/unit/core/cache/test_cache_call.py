@@ -965,7 +965,7 @@ class _StaticTools:
 
     An ``async`` ``staticmethod`` reaches ``wrap_methods`` as a descriptor rather than
     as a function, so discovery that asks the raw class entry whether it is a
-    coroutine unpublishes it — the very silence ``cache.call_overridden_by_sync``
+    coroutine unpublishes it — the very silence ``loom.cache.call_overridden_by_sync``
     exists to prevent.
     """
 

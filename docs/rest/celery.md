@@ -375,7 +375,7 @@ Loom builds each class with no arguments, after the observers it builds itself
   `on_event` is a `ConfigError` naming the entry, at start-up and in
   `loom check --deploy`. `loom check` imports the module from `app.code_path`,
   as it does for `checks.modules`; it does not build the class.
-- An observer that raises is logged (`engine.execution_observer_failed`) and
+- An observer that raises is logged (`loom.engine.execution_observer_failed`) and
   skipped: it breaks neither the run nor the other observers.
 - `on_event` may be called from any thread. Keep the observer thread-safe and quick.
 
@@ -623,7 +623,7 @@ sqs:
   `SQSDispatchError` (`code="sqs_batch_partial_failure"`) carrying the count
   and codes.
 - If the shielded send itself dies (the loop closing), each job not yet handed
-  to SQS is logged as `engine.post_commit_shielded_action_never_ran`.
+  to SQS is logged as `loom.engine.post_commit_shielded_action_never_ran`.
 - Nothing waits for jobs from other requests: a batch never outlives the
   execution that committed it.
 

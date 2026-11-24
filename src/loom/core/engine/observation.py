@@ -2,10 +2,10 @@
 
 Every attempted run logs exactly one terminal line. A run whose use case was
 built starts a :class:`StartedExecution` (``EXEC_START`` event) and ends it
-once, either way: ``engine.use_case_done`` and ``EXEC_DONE``, or
-``engine.use_case_failed`` and ``EXEC_ERROR`` with the phase that failed. A run
+once, either way: ``loom.engine.use_case_done`` and ``EXEC_DONE``, or
+``loom.engine.use_case_failed`` and ``EXEC_ERROR`` with the phase that failed. A run
 that never started (its plan, identity, read-only check or constructor failed)
-logs ``engine.use_case_failed`` with the phase ``begin`` or ``build`` and emits
+logs ``loom.engine.use_case_failed`` with the phase ``begin`` or ``build`` and emits
 no event. A rule failure's record lists the rules broken; in debug mode the
 terminal record lists the steps run.
 """
@@ -38,9 +38,9 @@ _log = logging.getLogger(__name__)
 class UseCaseEvent(LogEvent):
     """How a use case execution ends, as the executor logs it."""
 
-    DONE = "engine.use_case_done"
-    SIGNALLED = "engine.use_case_signalled"
-    FAILED = "engine.use_case_failed"
+    DONE = "loom.engine.use_case_done"
+    SIGNALLED = "loom.engine.use_case_signalled"
+    FAILED = "loom.engine.use_case_failed"
 
 
 class UseCaseKey(LogKey):
