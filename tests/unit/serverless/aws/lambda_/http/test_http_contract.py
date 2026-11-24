@@ -14,9 +14,8 @@ import json
 import pytest
 
 from loom.core.identity.context import IdentityKey
-from loom.core.logger.formats import RecordFields
 from loom.rest.event import RestEvent
-from tests.helpers.loggers import CapturedLog
+from tests.helpers.loggers import CapturedLog, logged_fields
 from tests.unit.serverless.aws.lambda_.http._clients import TRACE_ID, Client
 from tests.unit.serverless.aws.lambda_.http._contract_app import (
     MAX_BODY_BYTES,
@@ -289,7 +288,7 @@ class TestHttpContract:
             status,
             {"detail": {"trace_id": TRACE_ID, "code": code, "message": message}},
         )
-        logged_codes = {RecordFields(each).raw.get("loom.error.code") for each in caplog.records}
+        logged_codes = {logged_fields(each).get("loom.error.code") for each in caplog.records}
         assert code in logged_codes
 
     def test_a_cors_preflight_is_answered_without_a_token(self, served: Client) -> None:

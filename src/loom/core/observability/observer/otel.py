@@ -12,7 +12,6 @@ that owns one lexical scope covering both ends of a unit of work.
 from __future__ import annotations
 
 import atexit
-import copy
 import logging
 import os
 from typing import TYPE_CHECKING, Any, cast
@@ -24,7 +23,7 @@ from opentelemetry.trace import Tracer
 from loom.core.config.observability import OtelConfig
 from loom.core.errors import InvalidValue
 from loom.core.log_names import LogField
-from loom.core.logger.formats import RecordFields
+from loom.core.logger.formats import RECORD_ATTRIBUTES, RecordFields
 from loom.core.model.redaction import reveal_for_driver
 from loom.core.observability.diagnostic import ObservabilityEvent, ObservabilityKey
 from loom.core.observability.protocol import SpanFlusher
@@ -206,10 +205,11 @@ class OtelSpanFilter(logging.Filter):
 class OtelLogHandler(logging.Handler):
     """Hand the SDK's ``LoggingHandler`` a rendered copy of each record, with no exception.
 
-    The copy carries the values loom's formats write, so a ``Secret`` is masked and an
-    object is its type name. The SDK turns ``exc_info`` into ``exception.message`` and a
-    stack of its own; the context filter has already put the type, the code and the
-    stack on the record.
+    The copy carries the record's standard attributes and its fields as loom's formats
+    write them, under their own names: a ``Secret`` is masked, an object is its type
+    name, and no private attribute of the record is exported. The SDK turns ``exc_info``
+    into ``exception.message`` and a stack of its own; the context filter has already
+    put the type, the code and the stack on the record.
     """
 
     def __init__(self, sdk_handler: logging.Handler) -> None:
@@ -218,11 +218,17 @@ class OtelLogHandler(logging.Handler):
 
     def emit(self, record: logging.LogRecord) -> None:
         """Export a copy of *record* with its fields rendered and no ``exc_info``."""
-        exported = copy.copy(record)
-        exported.__dict__.pop(LogField.EXCEPTION_STACKTRACE, None)
-        exported.__dict__.update(RecordFields(record).rendered)
-        exported.exc_info = None
-        exported.exc_text = None
+        record_fields = RecordFields(record)
+        exported = object.__new__(type(record))
+        exported.__dict__ = {
+            **{key: value for key, value in record.__dict__.items() if key in RECORD_ATTRIBUTES},
+            **record_fields.fields(),
+            "exc_info": None,
+            "exc_text": None,
+        }
+        stack = record_fields.stack
+        if stack is not None:
+            exported.__dict__[LogField.EXCEPTION_STACKTRACE] = stack
         self._sdk_handler.emit(exported)
 
     def flush(self) -> None:

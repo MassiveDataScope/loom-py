@@ -4,15 +4,17 @@ from __future__ import annotations
 
 import json
 import logging
+from http import HTTPStatus
 
 import pytest
 
-from loom.core.logger import LogField
+from loom.core.logger import LogField, SubKey
 from loom.core.logger.formats import (
     MAX_LIST_ITEMS,
     MAX_VALUE_LENGTH,
     TRUNCATION_MARKER,
     JsonFormatter,
+    RecordFields,
     TextFormatter,
 )
 from loom.core.model.redaction import MASK, Dsn, RedactedMap, Secret
@@ -119,7 +121,14 @@ class TestReservedKeys:
             "billing.invoice_issued",
         )
         assert entry["timestamp"].endswith("+00:00")
-        assert {key: entry[f"loom.extra.{key}"] for key in self.COLLIDING} == self.COLLIDING
+
+    @pytest.mark.parametrize(("view", "prefix"), [("laid_out", "loom.extra."), ("fields", "")])
+    def test_the_formats_move_the_colliding_keys_and_otel_keeps_them(
+        self, view: str, prefix: str
+    ) -> None:
+        fields = getattr(RecordFields(_colliding_record(self.COLLIDING)), view)()
+
+        assert {key: fields[prefix + key] for key in self.COLLIDING} == self.COLLIDING
 
     def test_text_moves_the_colliding_keys_the_same_way(self) -> None:
         line = TextFormatter().format(_colliding_record(self.COLLIDING))
@@ -145,7 +154,7 @@ def _both(**extra: object) -> tuple[dict[str, object], str]:
 
 
 class TestValueRendering:
-    @pytest.mark.parametrize("value", ["text", 3, 2.5, True, None, ["a", 1, None]])
+    @pytest.mark.parametrize("value", ["text", 3, 2.5, True, None, ["a", 1, None], HTTPStatus.OK])
     def test_a_scalar_or_a_short_list_of_scalars_is_written_as_it_is(self, value: object) -> None:
         entry, _ = _both(field=value)
 
@@ -188,11 +197,12 @@ class TestValueRendering:
     def test_a_dsn_is_written_with_its_password_masked(self) -> None:
         entry, line = _both(address=Dsn("postgres://app:hunter2@db:5432/billing"))
 
-        assert "hunter2" not in str(entry["address"])
+        assert entry["address"] == "postgres://app:***@db:5432/billing"
         assert "hunter2" not in line
 
-    def test_a_long_value_is_cut_with_a_marker(self) -> None:
-        entry, line = _both(field="x" * (MAX_VALUE_LENGTH + 500))
+    @pytest.mark.parametrize("text", [str, SubKey], ids=["str", "str-subclass"])
+    def test_a_long_value_is_cut_with_a_marker(self, text: type[str]) -> None:
+        entry, line = _both(field=text("x" * (MAX_VALUE_LENGTH + 500)))
 
         assert len(entry["field"]) == MAX_VALUE_LENGTH  # type: ignore[arg-type]
         assert entry["field"].endswith("..." + TRUNCATION_MARKER)  # type: ignore[union-attr]
