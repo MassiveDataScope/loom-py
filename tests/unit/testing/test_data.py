@@ -5,6 +5,7 @@ from __future__ import annotations
 from collections.abc import Callable
 from dataclasses import dataclass
 from typing import Annotated, Any
+from urllib.parse import urlparse
 
 import msgspec
 import pytest
@@ -182,20 +183,21 @@ class TestSecretFields:
             assert (isinstance(secret, Secret), repr(secret)) == (True, MASK)
 
 
-class _Endpoints(msgspec.Struct):
+class _WithDsn(msgspec.Struct):
     dsn: Dsn
+
+
+class _WithHeaders(msgspec.Struct):
     headers: RedactedMap
 
 
 class TestLoomValueTypeFields:
-    @pytest.mark.parametrize(
-        ("field", "value_type"),
-        [
-            pytest.param("dsn", Dsn, id="dsn"),
-            pytest.param("headers", RedactedMap, id="redacted-map"),
-        ],
-    )
-    def test_a_field_of_a_loom_value_type_is_built_valid(
-        self, field: str, value_type: type
-    ) -> None:
-        assert isinstance(getattr(make(_Endpoints), field), value_type)
+    def test_a_dsn_field_is_a_parseable_https_address_with_a_host(self) -> None:
+        address = urlparse(make(_WithDsn).dsn.reveal())
+
+        assert (address.scheme, bool(address.hostname)) == ("https", True)
+
+    def test_a_redacted_map_field_holds_text_entries(self) -> None:
+        headers = make(_WithHeaders).headers.reveal()
+
+        assert (bool(headers), all(isinstance(v, str) for v in headers.values())) == (True, True)
