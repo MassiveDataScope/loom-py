@@ -310,7 +310,9 @@ class TestSpanCorrelation:
         otel_handler.handler.flush()
         (item,) = otel_handler.exporter.get_finished_logs()
         assert item.log_record.span_id == span.get_span_context().span_id
-        assert {LogField.TRACE_ID, LogField.SPAN_ID}.isdisjoint(item.log_record.attributes or {})
+        attributes = item.log_record.attributes or {}
+        assert {LogField.TRACE_ID, LogField.SPAN_ID, LogField.SERVICE_NAME}.isdisjoint(attributes)
+        assert item.resource.attributes["service.name"] == "billing"
 
     def test_a_stdout_line_carries_the_span_id_only_inside_a_span(
         self, stdout_json: Output

@@ -261,7 +261,7 @@ class OtelLogHandler(logging.Handler):
         self._provider.force_flush()
 
 
-_LOG_EXPORT_STATE: tuple[LoggerProvider, OtelLogHandler] | None = None
+_LOG_EXPORT_STATE: OtelLogHandler | None = None
 
 
 def install_otel_log_export(
@@ -295,9 +295,8 @@ def install_otel_log_export(
     global _LOG_EXPORT_STATE
     config.validate()
     if _LOG_EXPORT_STATE is not None:
-        handler = _LOG_EXPORT_STATE[1]
-        handler.identity = identity
-        return handler
+        _LOG_EXPORT_STATE.identity = identity
+        return _LOG_EXPORT_STATE
 
     try:
         from opentelemetry.sdk._logs import LoggerProvider
@@ -320,7 +319,7 @@ def install_otel_log_export(
 
     handler = OtelLogHandler(provider, identity)
     atexit.register(provider.shutdown)
-    _LOG_EXPORT_STATE = (provider, handler)
+    _LOG_EXPORT_STATE = handler
     return handler
 
 

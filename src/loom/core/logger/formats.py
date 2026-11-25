@@ -116,7 +116,7 @@ def render_value(value: object) -> object:
 
 
 class RecordFields:
-    """One record as loom's outputs write it, derived when it is written, never stored on it.
+    """One record as loom's outputs write it, derived when written; no context is stored on it.
 
     The fields are, later ones winning, where the call was made, the identity, the
     fields of the running :func:`~loom.core.logger.context.log_context`, the ids of the

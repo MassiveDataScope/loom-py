@@ -54,7 +54,7 @@ class Recipe:
             HTTP endpoints too, so it builds every declared agent. Without
             them, agents are reached only through ``Agent()`` and ``Mcp()``
             markers.
-        log_runtime: The kind of process the log records are stamped as
+        log_runtime: The kind of process the log records are written as
             coming from.
         execution_observer: Use-case and job execution observer, or ``None``.
         pool_metrics: Connection-pool metrics, only for an entry point that
