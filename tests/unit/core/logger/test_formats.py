@@ -18,6 +18,7 @@ from loom.core.logger.formats import (
     TextFormatter,
 )
 from loom.core.model.redaction import MASK, Dsn, RedactedMap, Secret
+from loom.core.observability.observer.log import LifecycleKey
 
 _STACK = LogField.EXCEPTION_STACKTRACE.value
 
@@ -237,3 +238,32 @@ class TestLogInjection:
 
         assert "\n" not in line
         assert json.loads(line)["user"] == self.FORGED
+
+    @pytest.mark.parametrize(
+        ("message", "extra", "written"),
+        [
+            ("m", {"a\nERROR forged": "x"}, 'm "a\\nERROR forged"=x'),
+            ("m", {"a b=c": 1}, 'm "a b=c"=1'),
+            ("m", {"user": "bell\x07esc\x1b"}, 'm user="bell\\x07esc\\x1b"'),
+            ("bell\x07\x85next", {}, "bell\\x07\\x85next"),
+            ("m", {"user": "a\u2028b"}, 'm user="a\\u2028b"'),
+            ("m", {"user": "p\\q"}, 'm user="p\\\\q"'),
+            ("m", {LifecycleKey.META.of("a b"): 1}, 'm "loom.lifecycle.meta.a b"=1'),
+        ],
+        ids=[
+            "newline-key",
+            "spaced-key",
+            "control-value",
+            "control-message",
+            "line-separator",
+            "backslash",
+            "meta-key",
+        ],
+    )
+    def test_the_text_line_is_one_line_and_each_key_and_value_reads_back(
+        self, message: str, extra: dict[str, object], written: str
+    ) -> None:
+        line = TextFormatter().format(_record(msg=message, **extra))
+
+        assert line.endswith(" " + written)
+        assert len(line.splitlines()) == 1

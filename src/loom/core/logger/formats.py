@@ -8,6 +8,7 @@ import math
 import re
 from collections.abc import Collection, Iterator
 from datetime import UTC, datetime
+from itertools import chain
 from typing import Final, Literal
 
 from loom.core.log_names import LogField
@@ -157,7 +158,7 @@ class RecordFields:
             without: Names of the fields to leave out.
         """
         return " ".join(
-            f"{key}={_logfmt_value(str(value))}"
+            f"{Logfmt(key).token()}={Logfmt(str(value)).token()}"
             for key, value in self.laid_out().items()
             if key not in without
         )
@@ -202,35 +203,54 @@ class JsonFormatter(logging.Formatter):
 
 _CONTINUATION: Final = "  | "
 
-_NEEDS_QUOTES: Final = re.compile(r'[\s="]')
 
+class Logfmt:
+    """A piece of text as the text formats write it, whichever side of ``=`` it is on.
 
-def _one_line(text: str) -> str:
-    return text.replace("\r", "\\r").replace("\n", "\\n")
+    Control characters and line breaks are always written escaped, so no text
+    can start a second record; a key or value holding a space, ``=``, ``"`` or a
+    backslash is quoted, so it cannot forge or merge fields.
+    """
 
+    __slots__ = ("_text",)
 
-def _logfmt_value(text: str) -> str:
-    """*text* bare, or quoted when a space, ``=`` or ``"`` in it could forge a field."""
-    if _NEEDS_QUOTES.search(text) is None:
-        return text
-    escaped = text.replace("\\", "\\\\").replace('"', '\\"')
-    return f'"{_one_line(escaped)}"'
+    _ONE_LINE: Final = {
+        code: f"\\x{code:02x}" if code <= 0xFF else f"\\u{code:04x}"
+        for code in chain(range(0x20), range(0x7F, 0xA0), (0x2028, 0x2029))
+    } | {ord("\n"): "\\n", ord("\r"): "\\r", ord("\t"): "\\t"}
+    _QUOTED: Final = _ONE_LINE | {ord("\\"): "\\\\", ord('"'): '\\"'}
+    _SPACE_OR_EQUALS: Final = re.compile(r"[\s=]")
+
+    def __init__(self, text: str) -> None:
+        self._text = text
+
+    def one_line(self) -> str:
+        """The text with control characters and line breaks escaped, otherwise as it is."""
+        return self._text.translate(self._ONE_LINE)
+
+    def token(self) -> str:
+        """The text bare when it is a plain token, otherwise quoted and escaped."""
+        escaped = self._text.translate(self._QUOTED)
+        if escaped == self._text and self._SPACE_OR_EQUALS.search(escaped) is None:
+            return escaped
+        return f'"{escaped}"'
 
 
 class TextFormatter(logging.Formatter):
     """A readable line: UTC time, level, logger, the message, then logfmt ``key=value`` fields.
 
-    A value holding a space, ``=`` or ``"`` is quoted, so it cannot forge a field; a
-    line break in the message or in a value is written escaped, so it cannot forge a
-    second record. The stack the context filter wrote follows the line, each of its
-    rows prefixed so that the record's first line is the only unindented one.
+    A key or value holding a space, ``=``, ``"`` or a backslash is quoted, so it
+    cannot forge a field; a line break or control character in the message, a key
+    or a value is written escaped, so it cannot forge a second record. The stack the
+    context filter wrote follows the line, each of its rows prefixed so that the
+    record's first line is the only unindented one.
     """
 
     def format(self, record: logging.LogRecord) -> str:
         """Render *record* as one line, its stack after it when it carries one."""
         fields = RecordFields(record)
         head = f"{fields.timestamp} {record.levelname:<7} {record.name}"
-        line = f"{head} {_one_line(fields.message)}"
+        line = f"{head} {Logfmt(fields.message).one_line()}"
         pairs = fields.logfmt()
         if pairs:
             line = f"{line} {pairs}"
