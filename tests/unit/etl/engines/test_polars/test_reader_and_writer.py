@@ -603,7 +603,7 @@ class TestPolarsWriteLog:
 
         PolarsTargetWriter(tmp_path).write(pl.DataFrame({"region": ["acme-42"]}).lazy(), spec, None)
 
-        assert "acme-42" not in CapturedLog(caplog).laid_out_text
+        assert "acme-42" not in CapturedLog(caplog).rendered_text
 
 
 class TestPolarsPersistedSchema:

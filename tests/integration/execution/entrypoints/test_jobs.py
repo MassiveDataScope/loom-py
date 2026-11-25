@@ -41,7 +41,7 @@ from loom.testing import JobTestData, ManualTimer, make
 from tests.helpers.celery import CeleryBroker
 from tests.helpers.delegation import acting_as, assert_new_delegation
 from tests.helpers.jobs import CeleryServiceFixture, InlineServiceFixture
-from tests.helpers.loggers import RenderingHandler
+from tests.helpers.loggers import CapturingHandler
 from tests.unit.core.engine._lifecycle_doubles import Log, StubUnitOfWorkFactory
 
 from .doubles import (
@@ -126,7 +126,7 @@ class TestInlineJobTransport:
         assert handles[0].wait().session.caller is ALICE
 
     async def test_a_dispatch_carries_no_log_field_of_its_sender(
-        self, factory: UseCaseFactory, executor: UseCaseExecutor, rendering: RenderingHandler
+        self, factory: UseCaseFactory, executor: UseCaseExecutor, rendering: CapturingHandler
     ) -> None:
         logging.getLogger().setLevel(logging.DEBUG)
         jobs = InlineServiceFixture(factory, executor)

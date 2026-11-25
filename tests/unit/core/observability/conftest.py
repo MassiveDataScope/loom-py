@@ -2,7 +2,8 @@
 
 from __future__ import annotations
 
-from collections.abc import Iterator
+import logging
+from collections.abc import Callable, Iterator
 from dataclasses import dataclass
 
 import pytest
@@ -11,8 +12,9 @@ from opentelemetry.sdk._logs.export import InMemoryLogRecordExporter
 from loom.core.config.observability import OtelConfig
 from loom.core.environment import Environment
 from loom.core.logger import LogIdentity
+from loom.core.logger.install import EXPORT_HANDLER_NAME
 from loom.core.observability.observer import otel as otel_module
-from loom.core.observability.observer.otel import OtelLogHandler, install_otel_log_export
+from loom.core.observability.observer.otel import OtelLogHandler, build_log_export
 
 
 @dataclass(frozen=True)
@@ -32,13 +34,36 @@ class LogExport:
 
 
 @pytest.fixture
-def log_export(monkeypatch: pytest.MonkeyPatch) -> Iterator[LogExport]:
-    """A fresh OTEL log export into memory; ``install_otel_log_export`` returns it as given."""
-    monkeypatch.setattr(otel_module, "_LOG_EXPORT_STATE", None)
+def log_export() -> Iterator[LogExport]:
+    """An OTEL log export into memory, shut down when the test ends."""
     exporter = InMemoryLogRecordExporter()
-    handler = install_otel_log_export(
-        OtelConfig(endpoint=None, service_name="loom-test"),
+    handler = build_log_export(
+        OtelConfig(endpoint=None),
         LogIdentity(environment=Environment.TEST),
+        service_name="loom-test",
         exporter=exporter,
     )
     yield LogExport(handler, exporter)
+    handler.close()
+
+
+@pytest.fixture
+def configured_log_export(monkeypatch: pytest.MonkeyPatch) -> Iterator[Callable[[], LogExport]]:
+    """The OTEL log export ``Observability.from_config`` installs, into memory."""
+    built: list[InMemoryLogRecordExporter] = []
+
+    def build(_config: OtelConfig) -> InMemoryLogRecordExporter:
+        built.append(InMemoryLogRecordExporter())
+        return built[-1]
+
+    monkeypatch.setattr(otel_module, "_build_log_exporter", build)
+
+    def installed() -> LogExport:
+        (handler,) = [
+            h for h in logging.getLogger().handlers if h.get_name() == EXPORT_HANDLER_NAME
+        ]
+        assert isinstance(handler, OtelLogHandler)
+        return LogExport(handler, built[-1])
+
+    yield installed
+    installed().handler.close()

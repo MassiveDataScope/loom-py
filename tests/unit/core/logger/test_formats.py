@@ -148,20 +148,19 @@ class TestReservedKeys:
         )
         assert entry["timestamp"].endswith("+00:00")
 
-    @pytest.mark.parametrize(("view", "prefix"), [("laid_out", "loom.extra."), ("fields", "")])
-    def test_the_formats_move_the_colliding_keys_and_otel_keeps_them(
-        self, view: str, prefix: str
-    ) -> None:
-        fields = getattr(RecordFields(_colliding_record(self.COLLIDING)), view)()
+    def test_json_moves_the_colliding_keys_and_the_fields_keep_them(self) -> None:
+        record = _colliding_record(self.COLLIDING)
 
-        assert {key: fields[prefix + key] for key in self.COLLIDING} == self.COLLIDING
+        entry = json.loads(JsonFormatter().format(record))
 
-    def test_text_moves_the_colliding_keys_the_same_way(self) -> None:
+        assert {key: entry["loom.extra." + key] for key in self.COLLIDING} == self.COLLIDING
+        assert RecordFields(record).fields().items() >= self.COLLIDING.items()
+
+    def test_text_writes_the_colliding_keys_as_given_after_its_own(self) -> None:
         line = TextFormatter().format(_colliding_record(self.COLLIDING))
 
-        assert "loom.extra.level=FATAL" in line
-        assert "loom.extra.logger=forged.logger" in line
-        assert line.count(" level=") == 0
+        assert " level=FATAL" in line
+        assert " logger=forged.logger" in line
 
     def test_a_key_that_does_not_collide_is_written_as_given(self) -> None:
         entry = json.loads(JsonFormatter().format(_record(levels="x")))

@@ -25,7 +25,7 @@ from opentelemetry.trace import Link, NoOpTracer, Span, Tracer
 from prometheus_client import start_http_server
 
 from loom.core.config.errors import ConfigError
-from loom.core.config.observability import OtelConfig
+from loom.core.config.observability import DEFAULT_SERVICE_NAME
 from loom.core.environment import Environment, resolve_environment
 from loom.core.log_names import LogField
 from loom.core.logger.identity import LogIdentity, LogRuntime
@@ -74,20 +74,19 @@ def _resolve_scrape_addr(cfg: PrometheusObservabilityConfig) -> str:
     return cfg.config.bind_address
 
 
-def _configure_logging(
-    config: ObservabilityConfig, identity: LogIdentity, export: OtelConfig | None
-) -> None:
-    """Install the log format and, when *export* is given, the OTEL log export beside it."""
-    extra_handlers: tuple[logging.Handler, ...] = ()
-    if export is not None:
-        from loom.core.observability.observer.otel import install_otel_log_export
+def _log_export(
+    config: OtelObservabilityConfig, identity: LogIdentity, service_name: str
+) -> tuple[logging.Handler, ...]:
+    """The OTEL log export handler, when the configuration asks for it."""
+    if not config.exports_logs or config.config is None:
+        return ()
+    from loom.core.observability.observer.otel import build_log_export
 
-        extra_handlers = (install_otel_log_export(export, identity),)
-    configure_logging(config.log, identity, extra_handlers=extra_handlers)
+    return (build_log_export(config.config, identity, service_name=service_name),)
 
 
 def _resolve_tracer(
-    config: OtelObservabilityConfig, app_name: str | None
+    config: OtelObservabilityConfig, service_name: str
 ) -> tuple[Tracer, SpanFlusher | None]:
     """Resolve the tracer spans are opened on, and the exporter to flush.
 
@@ -100,7 +99,7 @@ def _resolve_tracer(
         return NoOpTracer(), None
     from loom.core.observability.observer.otel import build_tracer
 
-    return build_tracer(config.config, app_name=app_name)
+    return build_tracer(config.config, service_name=service_name)
 
 
 def _build_observers(config: ObservabilityConfig) -> list[LifecycleObserver]:
@@ -154,7 +153,7 @@ class Observability:
         _log_identity: LogIdentity | None = None,
     ) -> None:
         self._observers = tuple(observers)
-        self._log_identity = _log_identity
+        self._log_identity = _log_identity or LogIdentity(environment=Environment.TEST)
         self._tracer: Tracer = tracer if tracer is not None else NoOpTracer()
         self._scrape_port = _scrape_port
         self._scrape_addr = _scrape_addr
@@ -165,8 +164,7 @@ class Observability:
 
     def running_as(self, runtime: LogRuntime) -> None:
         """Write the log records of this process as emitted by *runtime*."""
-        if self._log_identity is not None:
-            self._log_identity.run_as(runtime)
+        self._log_identity.run_as(runtime)
 
     @property
     def observers(self) -> tuple[LifecycleObserver, ...]:
@@ -414,11 +412,11 @@ class Observability:
             ConfigError: If OTEL config is invalid (wrong protocol, missing exporter).
             ConfigError: If OTEL log export is enabled while the log backend is not.
         """
-        if config.otel.enabled and config.otel.export_logs and not config.log.enabled:
+        if config.otel.exports_logs and not config.log.enabled:
             raise ConfigError(
                 "observability.otel.export_logs requires observability.log.enabled=True."
             )
-        if config.otel.enabled and config.otel.export_logs and config.otel.config is None:
+        if config.otel.exports_logs and config.otel.config is None:
             raise ConfigError(
                 "observability.otel.export_logs requires observability.otel.config to be provided."
             )
@@ -428,12 +426,21 @@ class Observability:
             service_name=service_name,
             service_version=service_version,
         )
-        exporting = config.otel.enabled and config.otel.export_logs
+        otel_config = config.otel.config
+        otel_service = (
+            DEFAULT_SERVICE_NAME
+            if otel_config is None
+            else otel_config.resolve_service_name(service_name)
+        )
         if config.log.enabled:
-            _configure_logging(config, identity, config.otel.config if exporting else None)
+            configure_logging(
+                config.log,
+                identity,
+                extra_handlers=_log_export(config.otel, identity, otel_service),
+            )
         SubjectHasher(config.log.subject_key).install()
         observers = _build_observers(config)
-        tracer, flusher = _resolve_tracer(config.otel, service_name)
+        tracer, flusher = _resolve_tracer(config.otel, otel_service)
         scrape_port = _resolve_scrape_port(config.prometheus)
         scrape_addr = _resolve_scrape_addr(config.prometheus)
         return cls(
@@ -445,7 +452,7 @@ class Observability:
             _max_span_links=(
                 config.otel.config.max_span_links if config.otel.config is not None else 128
             ),
-            _log_identity=identity if config.log.enabled else None,
+            _log_identity=identity,
         )
 
     @classmethod

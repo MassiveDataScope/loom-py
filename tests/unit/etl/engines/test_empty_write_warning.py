@@ -57,7 +57,7 @@ class TestMaterializeChecked:
         with caplog.at_level(logging.WARNING):
             writer._materialize_checked(empty, target, streaming=False)
 
-        emitted = CapturedLog(caplog).laid_out_text
+        emitted = CapturedLog(caplog).rendered_text
         assert _WARNING_EVENT in emitted
         assert "silver.players" in emitted
 
@@ -69,7 +69,7 @@ class TestMaterializeChecked:
         with caplog.at_level(logging.WARNING):
             writer._materialize_checked(populated, target, streaming=False)
 
-        assert _WARNING_EVENT not in CapturedLog(caplog).laid_out_text
+        assert _WARNING_EVENT not in CapturedLog(caplog).rendered_text
 
     def test_the_frame_is_returned_unchanged(
         self, writer: PolarsTargetWriter, target: PathTarget

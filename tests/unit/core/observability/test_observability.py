@@ -4,16 +4,18 @@ from __future__ import annotations
 
 import json
 import logging
+from collections.abc import Callable
 
 import msgspec
 import pytest
+from opentelemetry.sdk._logs.export import LogRecordExportResult
 
 from loom.core.config import ConfigError
 from loom.core.config.observability import OtelConfig
 from loom.core.environment import Environment
 from loom.core.errors.summary import ErrorSummary
 from loom.core.logger import LogRuntime
-from loom.core.logger.install import HANDLER_NAME
+from loom.core.logger.install import EXPORT_HANDLER_NAME, HANDLER_NAME
 from loom.core.logger.settings import LogFormatName
 from loom.core.model.redaction import Dsn
 from loom.core.observability.config import (
@@ -148,9 +150,7 @@ class TestNoop:
         runtime.emit(make(LifecycleEvent, scope=Scope.NODE, kind=EventKind.END))
 
 
-_OTEL = OtelObservabilityConfig(
-    enabled=True, export_logs=True, config=OtelConfig(endpoint=None, service_name="loom")
-)
+_OTEL = OtelObservabilityConfig(enabled=True, export_logs=True, config=OtelConfig(endpoint=None))
 
 
 def _loom_handler() -> logging.Handler:
@@ -165,20 +165,8 @@ class TestFromConfig:
         with pytest.raises(ConfigError, match="export_logs requires observability.log.enabled"):
             Observability.from_config(config)
 
-    def test_export_logs_attaches_the_export_handler_with_the_identity_of_the_service(
-        self, log_export: LogExport
-    ) -> None:
-        config = ObservabilityConfig(
-            log=LogObservabilityConfig(format=LogFormatName.JSON), otel=_OTEL
-        )
-
-        Observability.from_config(config, service_name="billing")
-
-        assert log_export.handler in logging.getLogger().handlers
-        assert log_export.handler.identity.service_name == "billing"
-
     def test_the_runtime_reaches_the_export_and_the_stdout_line_alike(
-        self, log_export: LogExport, capsys: pytest.CaptureFixture[str]
+        self, configured_log_export: Callable[[], LogExport], capsys: pytest.CaptureFixture[str]
     ) -> None:
         config = ObservabilityConfig(
             log=LogObservabilityConfig(format=LogFormatName.JSON), otel=_OTEL
@@ -188,27 +176,36 @@ class TestFromConfig:
         observability.running_as(LogRuntime.CELERY)
         logging.getLogger("tests.export").warning("billing.check_done")
 
-        exported = log_export.exported()["billing.check_done"]
+        exported = configured_log_export().exported()["billing.check_done"]
         assert exported["loom.runtime"] == "celery"
         assert json.loads(capsys.readouterr().out.splitlines()[-1])["loom.runtime"] == "celery"
 
-    def test_configuring_twice_keeps_the_context_on_the_exported_logs(
-        self, log_export: LogExport
+    def test_configuring_twice_replaces_the_export_and_its_resource_is_the_service(
+        self, configured_log_export: Callable[[], LogExport]
     ) -> None:
         config = ObservabilityConfig(
             log=LogObservabilityConfig(format=LogFormatName.JSON), otel=_OTEL
         )
 
-        Observability.from_config(config, service_name="billing")
-        Observability.from_config(config, service_name="billing")
+        Observability.from_config(config, environment=Environment.STAGING, service_name="billing")
+        first = configured_log_export()
+        Observability.from_config(config, environment=Environment.STAGING, service_name="billing")
         with active_trace_id("trace-42"):
             logging.getLogger("tests.export").warning("billing.check_done")
 
-        attributes = log_export.exported()["billing.check_done"]
-        assert (attributes["loom.runtime"], attributes["trace_id"]) == ("cli", "trace-42")
-        handlers = logging.getLogger().handlers
-        assert handlers.count(log_export.handler) == 1
-        assert len([h for h in handlers if h.get_name() == HANDLER_NAME]) == 1
+        export = configured_log_export()
+        export.handler.flush()
+        [finished] = [
+            item
+            for item in export.exporter.get_finished_logs()
+            if item.log_record.body == "billing.check_done"
+        ]
+        assert finished.resource.attributes["service.name"] == "billing"
+        assert finished.resource.attributes["deployment.environment.name"] == "staging"
+        assert finished.log_record.attributes["trace_id"] == "trace-42"
+        assert first.exporter.export(()) is LogRecordExportResult.FAILURE
+        names = [h.get_name() for h in logging.getLogger().handlers]
+        assert (names.count(EXPORT_HANDLER_NAME), names.count(HANDLER_NAME)) == (1, 1)
 
     def test_the_log_format_is_installed_with_the_service_identity(
         self, capsys: pytest.CaptureFixture[str]
@@ -224,17 +221,6 @@ class TestFromConfig:
         assert entry["service.name"] == "billing"
         assert entry["service.version"] == "2.4"
         assert entry["deployment.environment.name"] == "staging"
-
-    def test_the_runtime_is_stamped_once_the_composition_names_it(
-        self, capsys: pytest.CaptureFixture[str]
-    ) -> None:
-        config = ObservabilityConfig(log=LogObservabilityConfig(format=LogFormatName.JSON))
-        observability = Observability.from_config(config)
-
-        observability.running_as(LogRuntime.CELERY)
-        logging.getLogger("tests.observability").warning("billing.check_done")
-
-        assert json.loads(capsys.readouterr().out)["loom.runtime"] == "celery"
 
     def test_a_disabled_log_backend_installs_no_handler(self) -> None:
         before = list(logging.getLogger().handlers)

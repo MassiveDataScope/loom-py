@@ -423,7 +423,7 @@ class TestCachedRepository:
         await wrapped.get_by_id(864209731)
 
         assert CapturedLog(caplog).named(CacheEvent.ENTRY_HIT)
-        assert "864209731" not in CapturedLog(caplog).laid_out_text
+        assert "864209731" not in CapturedLog(caplog).rendered_text
 
     @pytest.mark.asyncio
     async def test_a_load_that_fails_after_its_caller_left_is_logged(
@@ -980,7 +980,7 @@ class TestPostCommitDeferral:
             await channel.drain(committed=True)
 
         assert isinstance(excinfo.value.failures[0], RuntimeError)
-        text = CapturedLog(caplog).laid_out_text
+        text = CapturedLog(caplog).rendered_text
         assert CacheEvent.POST_COMMIT_BUMP_FAILED in text
         assert wrapped.entity_name in text
 

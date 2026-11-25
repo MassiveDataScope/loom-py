@@ -12,6 +12,7 @@ from collections.abc import Iterable
 from dataclasses import dataclass
 from enum import Enum
 from pathlib import Path
+from types import ModuleType
 from typing import TypeVar
 
 import loom
@@ -35,38 +36,47 @@ class DeclaredNames:
 
     A name's module is not published, so a published name missing from ``lines`` while a
     module failed to import may live in that module: it cannot be checked.
+
+    Attributes:
+        lines: One line per declared event and key.
+        failed_modules: The modules a missing extra or an unsupported Python kept from importing.
+        crashed_modules: The modules that raised anything but ``ImportError`` on import.
     """
 
     lines: frozenset[str]
     failed_modules: frozenset[str]
+    crashed_modules: frozenset[str] = frozenset()
 
     @classmethod
-    def from_loom(cls) -> DeclaredNames:
-        """Import every module of ``loom`` and read the names its classes declare.
+    def from_package(cls, package: ModuleType = loom) -> DeclaredNames:
+        """Import every module of *package* and read the names its classes declare.
 
-        Only an ``ImportError`` (a missing extra or an unsupported Python) hides names; a module
-        that raises anything else on import, like the Alembic ``env_template``, declares none.
+        Only an ``ImportError`` (a missing extra or an unsupported Python) is an expected
+        reason for a module to hide its names; any other exception is a crash.
         """
         failed: set[str] = set()
-        for module in pkgutil.walk_packages(loom.__path__, "loom.", onerror=failed.add):
+        crashed: set[str] = set()
+        for module in pkgutil.walk_packages(
+            package.__path__, f"{package.__name__}.", onerror=failed.add
+        ):
             try:
                 importlib.import_module(module.name)
             except ImportError:
                 failed.add(module.name)
             except Exception:
-                continue
+                crashed.add(module.name)
         lines = {
             f"event {event.value}"
             for owner in _subclasses(LogEvent)
-            if owner.__module__.startswith("loom.")
+            if owner.__module__.startswith(f"{package.__name__}.")
             for event in owner
         } | {
             f"key {key.value} {key.kind.value}"
             for owner in _subclasses(LogKey)
-            if owner.__module__.startswith("loom.")
+            if owner.__module__.startswith(f"{package.__name__}.")
             for key in owner
         }
-        return cls(frozenset(lines), frozenset(failed))
+        return cls(frozenset(lines), frozenset(failed), frozenset(crashed))
 
     def unchecked(self, published: Iterable[str]) -> frozenset[str]:
         """The *published* lines this run cannot verify: the undeclared ones, if a module failed."""
@@ -79,9 +89,13 @@ class DeclaredNames:
         return "".join(f"{line}\n" for line in sorted(self.lines))
 
 
-def main() -> None:
-    """Rewrite the contract file, refusing when a failed import hides a published line."""
-    declared = DeclaredNames.from_loom()
+def main(package: ModuleType = loom) -> None:
+    """Rewrite the contract file, refusing when an import crashed or hides a published line."""
+    declared = DeclaredNames.from_package(package)
+    if declared.crashed_modules:
+        raise SystemExit(
+            f"modules crashed on import: {', '.join(sorted(declared.crashed_modules))}"
+        )
     published = CONTRACT_FILE.read_text().splitlines() if CONTRACT_FILE.exists() else None
     if published is None or declared.unchecked(published):
         raise SystemExit(

@@ -15,7 +15,7 @@ import pytest
 
 from loom.core.log_names import LogEvent, LogField, LogKey, SubKey, ValueKind
 from loom.core.logger import current_log_fields
-from loom.core.logger.formats import RecordFields, TextFormatter, render_value
+from loom.core.logger.formats import RecordFields, render_value
 
 _QUOTED_TEXT_MIN: Final = 8
 """Characters of exception text that count as quoted inside a longer field value."""
@@ -54,7 +54,7 @@ class Breach(StrEnum):
         Each key is its own declaration. Nothing writes loom context on the record, so
         ``exception.type`` among its ``extra`` was written by hand.
         """
-        fields = {**current_log_fields(), **dict(RecordFields(record).items())}
+        fields = {**current_log_fields(), **RecordFields(record).extras()}
         failure = record.exc_info[1] if record.exc_info else None
         text = str(failure) if failure else ""
         quoting = len(text) >= _QUOTED_TEXT_MIN
@@ -116,13 +116,3 @@ def loom_records_follow_the_contract() -> Iterator[None]:
     loom_logger.setLevel(level)
     if offences := seen.offences():
         pytest.fail("records outside the log contract:\n" + "\n".join(offences))
-
-
-@pytest.fixture(autouse=True)
-def caplog_shows_fields(request: pytest.FixtureRequest) -> None:
-    """Make ``caplog.text`` show each record with its fields, laid out as the text format does.
-
-    Values stay raw: caplog's handler renders nothing.
-    """
-    if "caplog" in request.fixturenames:
-        request.getfixturevalue("caplog").handler.setFormatter(TextFormatter())

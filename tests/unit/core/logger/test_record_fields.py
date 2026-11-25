@@ -82,11 +82,12 @@ class TestDerivedFields:
             tracer.start_as_current_span("request", context=parent),
         ):
             _LOGGER.info("billing.invoice_issued")
+            _LOGGER.info("billing.invoice_issued", extra={LogField.TRACE_ID.value: "from-extra"})
 
-        assert rendering.fields[0][LogField.TRACE_ID] == caller_trace
+        assert [fields[LogField.TRACE_ID] for fields in rendering.fields] == [caller_trace] * 2
         assert rendering.fields[0][LogField.SPAN_ID] == "0000000000000def"
 
-    def test_extra_wins_then_the_trace_then_the_context_then_the_identity(
+    def test_outside_a_span_extra_wins_then_the_trace_then_the_context_then_the_identity(
         self, rendering: _Rendering
     ) -> None:
         context = {LogField.TRACE_ID: "from-context", LogField.SERVICE_NAME: "from-context"}

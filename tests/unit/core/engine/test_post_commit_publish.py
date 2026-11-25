@@ -30,7 +30,7 @@ from loom.core.stores.catalog import DEFAULT_STORE
 from loom.core.stores.uow.coordinator import OrderedCommits
 from loom.core.use_case.use_case import UseCase
 from tests.helpers.jobs import CeleryServiceFixture
-from tests.helpers.loggers import CapturedLog, RenderingHandler
+from tests.helpers.loggers import CapturedLog, CapturingHandler
 
 from ._lifecycle_doubles import Log, StubUnitOfWorkFactory
 
@@ -328,7 +328,7 @@ class TestPostCommitPublish:
         assert info.value.failures == tuple(errors)
 
     async def test_a_failure_after_a_commit_is_logged_by_what_it_sent_under_the_running_job(
-        self, caplog: pytest.LogCaptureFixture, rendering: RenderingHandler
+        self, caplog: pytest.LogCaptureFixture, rendering: CapturingHandler
     ) -> None:
         running = {LogField.JOB: "Outer", LogField.TASK_ID: "t0"}
         channel = PostCommitChannel()

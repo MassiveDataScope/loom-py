@@ -102,7 +102,7 @@ class TestClickHouseReaderArrowPath:
 
         reader.read(spec._to_spec("events"), object()).collect()
 
-        assert "acme-42" not in CapturedLog(caplog).laid_out_text
+        assert "acme-42" not in CapturedLog(caplog).rendered_text
 
     def test_select_star_when_no_columns(self) -> None:
         table = pa.table({"x": [1], "y": [2]})

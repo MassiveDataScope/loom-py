@@ -151,7 +151,6 @@ class TestLogBridge:
         monkeypatch.setattr(APILogWorker, "drain_all", lambda **_kw: drained.append(1))
         flow_id = uuid.uuid4()
         library_logger = logging.getLogger("a.library")
-        library_logger.propagate = False
 
         with log_bridge(flow_id):
             logging.getLogger("loom.test").warning(ObservabilityEvent.LIFECYCLE_FAILED)

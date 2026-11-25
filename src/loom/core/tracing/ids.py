@@ -5,6 +5,7 @@ from __future__ import annotations
 from dataclasses import dataclass
 
 from opentelemetry import trace
+from opentelemetry.trace import format_span_id, format_trace_id
 
 from loom.core.log_names import LogField
 from loom.core.tracing.context import get_trace_id
@@ -38,11 +39,14 @@ class TraceIds:
             return cls(trace_id=loom_trace_id or get_trace_id())
         context = span.get_span_context()
         return cls(
-            trace_id=format(context.trace_id, "032x"),
-            span_id=format(context.span_id, "016x"),
+            trace_id=format_trace_id(context.trace_id),
+            span_id=format_span_id(context.span_id),
         )
 
     def fields(self) -> dict[str, str]:
         """The log fields it writes, without the ids it does not know."""
-        known = {LogField.TRACE_ID: self.trace_id, LogField.SPAN_ID: self.span_id}
-        return {key: value for key, value in known.items() if value is not None}
+        if self.trace_id is None:
+            return {}
+        if self.span_id is None:
+            return {LogField.TRACE_ID: self.trace_id}
+        return {LogField.TRACE_ID: self.trace_id, LogField.SPAN_ID: self.span_id}

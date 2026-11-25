@@ -39,9 +39,8 @@ from loom.core.logger.settings import LogFormatName, LogSettings
 from loom.core.model.redaction import MASK, Dsn, RedactedMap, Secret
 from loom.core.observability.event import Scope
 from loom.core.observability.observability import Observability
-from loom.core.observability.observer import otel as otel_module
 from loom.core.observability.observer.log import LogLifecycleObserver
-from loom.core.observability.observer.otel import OtelLogHandler, install_otel_log_export
+from loom.core.observability.observer.otel import OtelLogHandler, build_log_export
 from loom.core.tracing.context import active_trace_id
 from loom.testing import make
 from tests.helpers.loggers import LambdaLoggerHandler, configured
@@ -172,13 +171,15 @@ class OtelExport:
 
 
 @pytest.fixture
-def otel_handler(monkeypatch: pytest.MonkeyPatch) -> Iterator[OtelExport]:
-    monkeypatch.setattr(otel_module, "_LOG_EXPORT_STATE", None)
+def otel_handler() -> Iterator[OtelExport]:
     exporter = InMemoryLogRecordExporter()
     identity = LogIdentity(environment=Environment.PRODUCTION, **_APP)
-    handler = install_otel_log_export(OtelConfig(endpoint=None), identity, exporter=exporter)
+    handler = build_log_export(
+        OtelConfig(endpoint=None), identity, service_name=_APP["service_name"], exporter=exporter
+    )
     yield OtelExport(handler, exporter)
     logging.getLogger().removeHandler(handler)
+    handler.close()
 
 
 @pytest.fixture

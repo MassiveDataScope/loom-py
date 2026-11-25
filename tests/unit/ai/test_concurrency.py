@@ -19,6 +19,7 @@ import pytest
 
 from loom.ai._concurrency import shield_and_drain
 from tests.helpers.gates import CallGate, await_cancelled
+from tests.helpers.loggers import CapturedLog
 
 
 async def _finish_when_released(gate: CallGate) -> str:
@@ -89,7 +90,7 @@ class TestShieldAndDrainDrainsOnCancel:
         gate.release()
         await await_cancelled(task)
 
-        assert "inventory-mcp" in caplog.text
+        assert "inventory-mcp" in CapturedLog(caplog).rendered_text
 
 
 class TestTheDrainedResultIsNotLeftUnretrieved:

@@ -39,6 +39,7 @@ from loom.core.stores.uow.coordinator import (
 )
 from loom.stores.mongo.uow import MongoUnitOfWork
 from loom.stores.sqlalchemy.uow import SQLAlchemyUnitOfWork
+from tests.helpers.loggers import CapturedLog
 
 from ..conftest import RecordingSessionManager, make_session
 from ..repository.mongo._fake import FakeMongoClient
@@ -151,8 +152,8 @@ class TestEnlist:
         with caplog.at_level(logging.ERROR), pytest.raises(Boom, match="begin failed"):
             await coordinator.enlist(scope, S0)
 
-        assert UowEvent.CLOSE_FAILED in caplog.text
-        assert "store=s0" in caplog.text
+        [fields] = CapturedLog(caplog).named(UowEvent.CLOSE_FAILED)
+        assert fields["loom.stores.store"] == "s0"
 
     async def test_a_store_without_a_factory_is_refused_naming_it_and_the_composed_ones(
         self,
@@ -489,7 +490,7 @@ class TestTeardownFailures:
             key: RolledBack(key, error) for key in (S0, S1, S2)
         }
         assert _ends(ledger) == [S2, S1, S0]
-        assert event in caplog.text
+        assert event in CapturedLog(caplog).rendered_text
 
 
 class TestHungRollback:
@@ -524,7 +525,7 @@ class TestHungRollback:
         with caplog.at_level(logging.ERROR):
             await _finish_within_a_second(coordinator, scope, Boom("business"), ledger)
 
-        assert UowEvent.ROLLBACK_FAILED in caplog.text
+        assert UowEvent.ROLLBACK_FAILED in CapturedLog(caplog).rendered_text
 
     async def test_the_owning_task_can_still_be_cancelled(self) -> None:
         ledger = Ledger()

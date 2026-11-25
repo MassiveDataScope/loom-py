@@ -9,6 +9,7 @@ the metadata contract is made in exactly one place.
 
 from __future__ import annotations
 
+import functools
 import inspect
 from collections.abc import Callable, Mapping
 from dataclasses import dataclass
@@ -140,6 +141,7 @@ def assemble_flow(
     check_inherited_params(settings.trigger, params_type, name=name)
     safe_name = flow_attribute_name(name)
 
+    @functools.wraps(body)
     def bridged_body(**kwargs: Any) -> None:
         with log_bridge(prefect_flow_run_id()):
             body(**kwargs)

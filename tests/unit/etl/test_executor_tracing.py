@@ -180,4 +180,4 @@ class TestExecutorLog:
             ETLCompiler().compile(DailySales), TracingParams(run_date=date(1987, 6, 5))
         )
 
-        assert "1987-06-05" not in CapturedLog(caplog).laid_out_text
+        assert "1987-06-05" not in CapturedLog(caplog).rendered_text

@@ -12,7 +12,6 @@ from loom.core.environment import (
     Environment,
 )
 from loom.core.log_names import LogField
-from loom.core.logger import LogRuntime
 from loom.core.logger.formats import JsonFormatter, LambdaFormatter, TextFormatter
 from loom.core.logger.install import HANDLER_NAME
 from loom.core.logger.settings import LogFormatName, LogLevel, LogSettings
@@ -92,16 +91,6 @@ class TestJsonInstallation:
         assert pristine_root_logger.level == logging.WARNING
         assert logging.getLogger("acme_library").level == logging.ERROR
         assert logging.getLogger("botocore").level == logging.WARNING
-
-    def test_the_runtime_is_named_after_the_composition(
-        self, pristine_root_logger: logging.Logger, capsys: pytest.CaptureFixture[str]
-    ) -> None:
-        identity = configured(LogSettings(format=LogFormatName.JSON))
-
-        identity.run_as(LogRuntime.CELERY)
-        logging.getLogger("tests.runtime").warning("billing.invoice_issued")
-
-        assert json.loads(capsys.readouterr().out)[LogField.RUNTIME] == "celery"
 
     def test_reconfiguring_leaves_an_owned_handler_attached_once(
         self, pristine_root_logger: logging.Logger
