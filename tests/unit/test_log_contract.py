@@ -31,20 +31,14 @@ class TestLogContract:
     def test_no_published_name_is_removed_or_renamed(
         self, declared: DeclaredNames, published: frozenset[str]
     ) -> None:
-        unchecked = declared.unchecked(published)
-        gone = sorted(published - unchecked - declared.lines)
-        not_checked = (
-            f" Not checked, their module failed to import: {sorted(unchecked)}."
-            if unchecked
-            else ""
-        )
+        if declared.failed_modules:
+            pytest.skip(
+                f"{sorted(declared.failed_modules)} failed to import, so their published names "
+                "cannot be checked; (b) runs on Python < 3.13 with all extras (CI's 3.11/3.12 legs)"
+            )
+        gone = sorted(published - declared.lines)
 
         assert not gone, (
             f"published log names are no longer declared: {gone}. After 12.0 the contract "
-            f"only grows: restore each name (a rename is a removal plus an addition).{not_checked}"
+            "only grows: restore each name (a rename is a removal plus an addition)."
         )
-        if unchecked:
-            pytest.skip(
-                f"the other lines were checked, but {sorted(declared.failed_modules)} failed to "
-                "import; (b) fully runs on Python < 3.13 with all extras (CI's 3.11/3.12 legs)"
-            )
