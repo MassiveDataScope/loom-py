@@ -7,14 +7,12 @@ from dataclasses import dataclass, replace
 from enum import StrEnum
 from typing import Final
 
-from opentelemetry import trace
-
 from loom.core.environment import Environment
 from loom.core.errors.summary import ErrorSummary
 from loom.core.log_names import LogField
 from loom.core.logger.context import current_log_fields
 from loom.core.logger.formats import STAMP_MARKER, truncated
-from loom.core.tracing.context import get_trace_id
+from loom.core.tracing.ids import TraceIds
 
 MAX_STACK_LENGTH: Final = 16_384
 """Characters of a written stack; a longer one keeps its end, where the failure is."""
@@ -72,9 +70,10 @@ class ContextFilter(logging.Filter):
     ``CodedError`` and, from ERROR up, ``exception.stacktrace``, never the message;
     an ``extra`` of those names is replaced or dropped. Every other value stays as it
     was passed, since each of loom's outputs renders its own copy. Inside a recording
-    OpenTelemetry span the record also gets ``span_id``, the span's id, beside loom's
-    ``trace_id``. A record is stamped once: the filter of a second loom handler lets
-    it through as it is. It never drops a record.
+    OpenTelemetry span the record's ``trace_id`` and ``span_id`` are the span's, so a
+    collector correlates it with the trace; elsewhere ``trace_id`` is loom's.
+    A record is stamped once: the filter of a second loom handler lets it
+    through as it is. It never drops a record.
 
     Args:
         identity: The service and process the records come from.
@@ -116,12 +115,7 @@ class ContextFilter(logging.Filter):
             **self._identity_fields,
             **current_log_fields(),
         }
-        trace_id = get_trace_id()
-        if trace_id is not None:
-            stamped[LogField.TRACE_ID] = trace_id
-        span = trace.get_current_span()
-        if span.is_recording():
-            stamped[LogField.SPAN_ID] = format(span.get_span_context().span_id, "016x")
+        stamped.update(TraceIds.current().fields())
         for key, value in stamped.items():
             if key not in fields:
                 fields[key] = value

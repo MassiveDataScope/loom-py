@@ -5,6 +5,7 @@ from __future__ import annotations
 import logging
 
 import pytest
+from opentelemetry.sdk.trace import TracerProvider
 
 from loom.core.config.observability import OtelConfig
 from loom.core.errors.summary import ErrorSummary
@@ -175,6 +176,19 @@ class TestLogLifecycleObserver:
             "trace-1",
         )
         assert (fields["loom.duration_ms"], fields["loom.status"]) == (12.5, "success")
+
+    def test_inside_a_span_the_record_carries_the_span_s_ids(
+        self, lifecycle_log: CapturedLog
+    ) -> None:
+        tracer = TracerProvider().get_tracer("tests.observers")
+
+        with tracer.start_as_current_span("request") as span:
+            LogLifecycleObserver().on_event(_event(kind=EventKind.START, trace_id="request-7"))
+
+        [fields] = lifecycle_log.named(ObservabilityEvent.LIFECYCLE_STARTED)
+        context = span.get_span_context()
+        assert fields["trace_id"] == format(context.trace_id, "032x")
+        assert fields["span_id"] == format(context.span_id, "016x")
 
     @pytest.mark.parametrize(
         ("event_id", "written"),
