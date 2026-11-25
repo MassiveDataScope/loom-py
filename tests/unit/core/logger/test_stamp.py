@@ -3,6 +3,9 @@ from __future__ import annotations
 import logging
 
 import pytest
+from opentelemetry.sdk.trace import TracerProvider
+from opentelemetry.sdk.trace.id_generator import IdGenerator
+from opentelemetry.trace.propagation.tracecontext import TraceContextTextMapPropagator
 
 from loom.core.environment import Environment
 from loom.core.errors import NotFound
@@ -31,6 +34,14 @@ def stamped(handler: CapturingHandler) -> CapturingHandler:
 def _only(handler: CapturingHandler) -> logging.LogRecord:
     assert len(handler.records) == 1
     return handler.records[0]
+
+
+class ShortSpanIds(IdGenerator):
+    def generate_span_id(self) -> int:
+        return 0xDEF
+
+    def generate_trace_id(self) -> int:
+        return 0xABC
 
 
 class Greeter:
@@ -63,6 +74,34 @@ class TestContextFilter:
             logging.getLogger("tests.stamp").info("billing.invoice_issued")
 
         assert _only(stamped).__dict__[LogField.TRACE_ID] == "trace-42"
+
+    def test_inside_a_span_of_a_caller_trace_the_ids_are_the_spans(
+        self, stamped: CapturingHandler
+    ) -> None:
+        caller_trace = "00000000000000000000000000000abc"
+        incoming = {"traceparent": f"00-{caller_trace}-00f067aa0ba902b7-01"}
+        parent = TraceContextTextMapPropagator().extract(incoming)
+        tracer = TracerProvider(id_generator=ShortSpanIds()).get_tracer("tests.stamp")
+
+        with (
+            active_trace_id("request-7"),
+            tracer.start_as_current_span("request", context=parent),
+        ):
+            logging.getLogger("tests.stamp").info("billing.invoice_issued")
+
+        record = _only(stamped).__dict__
+        assert record[LogField.TRACE_ID] == caller_trace
+        assert record[LogField.SPAN_ID] == "0000000000000def"
+
+    def test_outside_a_span_the_trace_id_is_loom_s_and_there_is_no_span_id(
+        self, stamped: CapturingHandler
+    ) -> None:
+        with active_trace_id("request-7"):
+            logging.getLogger("tests.stamp").info("billing.invoice_issued")
+
+        record = _only(stamped).__dict__
+        assert record[LogField.TRACE_ID] == "request-7"
+        assert LogField.SPAN_ID.value not in record
 
     def test_the_fields_of_the_running_job_are_stamped(self, stamped: CapturingHandler) -> None:
         job = {LogField.JOB: "SendInvoice", LogField.TASK_ID: "t-9", LogField.ATTEMPT: 3}

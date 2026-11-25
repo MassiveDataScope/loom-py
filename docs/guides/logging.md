@@ -91,7 +91,7 @@ it, whoever emitted it (loom, your code, a library):
 | `service.name`, `service.version` | `app.name`, `app.version` of the configuration |
 | `deployment.environment.name` | the resolved environment |
 | `loom.runtime` | `fastapi`, `celery`, `lambda` or `cli` |
-| `trace_id` | the active trace id (HTTP header, job envelope, flow) |
+| `trace_id`, `span_id` | inside a recording OpenTelemetry span, the span's own trace id and span id, so the record correlates with its trace even when the span continues a caller's `traceparent`; outside a span, `trace_id` is loom's id (HTTP header, job envelope, flow) and there is no `span_id` |
 | `loom.use_case.name` | the use case being executed |
 | `loom.job.name`, `loom.task_id`, `loom.attempt` | the job message being run |
 | `code.function.name`, `code.line.number`, `code.file.path` | where the record was emitted |
