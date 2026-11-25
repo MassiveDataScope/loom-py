@@ -1,5 +1,8 @@
 from __future__ import annotations
 
+import subprocess
+import sys
+
 import pytest
 
 from loom.core.environment import Environment
@@ -47,3 +50,21 @@ class TestTheSecretAtStartup:
 
         warnings = CapturedLog(caplog, log_subject.__name__).messages
         assert warnings == [LoggerEvent.SUBJECT_HASH_DISABLED]
+
+
+class TestAFreshProcess:
+    _BUILD_TWICE = """
+from loom.core.environment import Environment
+from loom.core.observability.config import ObservabilityConfig
+from loom.core.observability.observability import Observability
+
+Observability.from_config(ObservabilityConfig(), environment=Environment.TEST)
+Observability.from_config(ObservabilityConfig(), environment=Environment.TEST)
+"""
+
+    def test_built_twice_without_a_secret_warns_once(self) -> None:
+        run = subprocess.run(
+            [sys.executable, "-c", self._BUILD_TWICE], capture_output=True, text=True, check=True
+        )
+
+        assert run.stdout.count(LoggerEvent.SUBJECT_HASH_DISABLED) == 1

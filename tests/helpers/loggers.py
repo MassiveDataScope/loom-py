@@ -19,6 +19,7 @@ from loom.core.logger.install import configure_logging
 from loom.core.logger.settings import QUIET_LIBRARIES, LogSettings
 from loom.core.logger.subject import SubjectHasher
 from loom.core.model.redaction import Secret
+from loom.testing import make
 
 ErrorT = TypeVar("ErrorT", bound=BaseException)
 
@@ -33,9 +34,16 @@ def user_hash(subject: str) -> str:
 
 
 @pytest.fixture(autouse=True)
-def keyless_subject_hasher() -> None:
-    """Start every test keyless and already warned, as a process configured without a key."""
+def keyless_subject_hasher() -> Iterator[None]:
+    """Start every test keyless and already warned, and give the process its hasher back.
+
+    A process that never installed one cannot be restored through the public API: it comes
+    back keyless.
+    """
+    process_hasher = SubjectHasher.installed()
     SubjectHasher().install()
+    yield
+    process_hasher.install()
 
 
 def a_record(
@@ -73,8 +81,11 @@ def configured(
     service_version: str | None = None,
 ) -> LogIdentity:
     """Configure logging as a process of *environment* and give back the identity it shares."""
-    identity = LogIdentity(
-        environment=environment, service_name=service_name, service_version=service_version
+    identity = make(
+        LogIdentity,
+        environment=environment,
+        service_name=service_name,
+        service_version=service_version,
     )
     configure_logging(settings, identity, extra_handlers=extra_handlers)
     return identity
