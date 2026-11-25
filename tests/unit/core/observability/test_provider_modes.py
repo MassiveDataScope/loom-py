@@ -69,6 +69,24 @@ class TestLoomOwnedProvider:
         assert _hex_trace(spans[0]) == _TRACE_A
         assert spans[0].parent is None
 
+    @pytest.mark.parametrize(
+        ("configured", "app", "named"),
+        [(None, "billing", "billing"), ("custom", "billing", "custom"), (None, None, "loom")],
+        ids=["app-name", "configured-wins", "default"],
+    )
+    def test_the_resource_names_the_configured_service_then_the_app_then_loom(
+        self, monkeypatch: pytest.MonkeyPatch, configured: str | None, app: str | None, named: str
+    ) -> None:
+        monkeypatch.setattr(_otel, "_build_exporter", lambda _config: InMemorySpanExporter())
+        config = OtelConfig(
+            endpoint=Dsn("http://collector:4318/v1/traces"), service_name=configured
+        )
+
+        _, flusher = _otel.build_tracer(config, app_name=app)
+
+        assert isinstance(flusher, TracerProvider)
+        assert flusher.resource.attributes["service.name"] == named
+
     def test_the_sampler_from_config_reaches_the_owned_provider(
         self, monkeypatch: pytest.MonkeyPatch
     ) -> None:

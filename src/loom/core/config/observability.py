@@ -13,6 +13,9 @@ from loom.core.model.redaction import Dsn, RedactedMap
 
 _LOCAL_HOSTS = {"127.0.0.1", "localhost", "::1"}
 
+DEFAULT_SERVICE_NAME = "loom"
+"""The Resource's ``service.name`` when neither the configuration nor the application names one."""
+
 SAMPLERS: frozenset[str] = frozenset(
     {
         "always_on",
@@ -34,7 +37,8 @@ class OtelConfig(LoomFrozenStruct, frozen=True, forbid_unknown_fields=True):
     """OpenTelemetry SDK/exporter configuration.
 
     Args:
-        service_name: Resource attribute ``service.name``.
+        service_name: Resource attribute ``service.name``; when absent, the application's
+            name, else ``loom``.
         tracer_name: Tracer instrumentation name.
         tracer_version: Optional tracer instrumentation version.
         protocol: OTLP protocol (``http/protobuf`` or ``grpc``).
@@ -61,7 +65,7 @@ class OtelConfig(LoomFrozenStruct, frozen=True, forbid_unknown_fields=True):
             bound is hit the span is marked with ``loom.links_truncated``.
     """
 
-    service_name: str = "loom"
+    service_name: str | None = None
     tracer_name: str = "loom"
     tracer_version: str = ""
     protocol: str = "http/protobuf"
@@ -76,6 +80,10 @@ class OtelConfig(LoomFrozenStruct, frozen=True, forbid_unknown_fields=True):
     sampler: str = "parentbased_always_on"
     sampler_ratio: float = 1.0
     max_span_links: int = 128
+
+    def resolve_service_name(self, app_name: str | None) -> str:
+        """The Resource's ``service.name``: the configured one, else *app_name*, else ``loom``."""
+        return self.service_name or app_name or DEFAULT_SERVICE_NAME
 
     def validate(self) -> None:
         """Validate the transport protocol, the sampler, and the link bound.

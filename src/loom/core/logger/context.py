@@ -21,11 +21,11 @@ def log_context(fields: Mapping[str, object] = _NO_FIELDS, /, **named: object) -
     """Add *fields* to every log record emitted inside the block.
 
     The records of the application and of its libraries carry them once
-    :func:`~loom.core.logger.install.configure_logging` has put its filter on
-    the handler. The fields live in a context variable, so they follow the
-    current thread or asyncio task and never reach a concurrent request. Blocks
-    nest: an inner key shadows an outer one and the outer value returns on exit,
-    normal or by exception. Enter and exit a block in the same context. As a
+    :func:`~loom.core.logger.install.configure_logging` has installed loom's
+    formats, which derive them when they write a record. The fields live in a context
+    variable, so they follow the current thread or asyncio task and never reach a
+    concurrent request. Blocks nest: an inner key shadows an outer one and the outer
+    value returns on exit, normal or by exception. Enter and exit a block in the same context. As a
     decorator it binds only while the call itself runs, which for an ``async
     def`` is the creation of the coroutine: use a ``with`` block inside it.
 

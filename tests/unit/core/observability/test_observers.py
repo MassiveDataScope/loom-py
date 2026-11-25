@@ -8,15 +8,15 @@ import pytest
 from opentelemetry.sdk.trace import TracerProvider
 
 from loom.core.config.observability import OtelConfig
+from loom.core.environment import Environment
 from loom.core.errors.summary import ErrorSummary
 from loom.core.log_names import LogField
+from loom.core.logger import LogIdentity
 from loom.core.observability.diagnostic import ObservabilityEvent
 from loom.core.observability.event import EventKind, LifecycleEvent, LifecycleStatus, Scope
 from loom.core.observability.observer.log import LifecycleKey, LogLifecycleObserver
 from loom.core.observability.observer.noop import NoopObserver
-from loom.core.observability.observer.otel import (
-    install_otel_log_export,
-)
+from loom.core.observability.observer.otel import install_otel_log_export
 from loom.testing import make
 from tests.helpers.loggers import CapturedLog
 from tests.unit.core.observability.conftest import LogExport
@@ -104,9 +104,12 @@ class TestOtelLogExport:
         assert record.exc_info is not None
 
     def test_the_handler_is_idempotent_for_the_process(self, log_export: LogExport) -> None:
-        again = install_otel_log_export(OtelConfig(endpoint=None, service_name="other"))
+        identity = LogIdentity(environment=Environment.STAGING)
+
+        again = install_otel_log_export(OtelConfig(endpoint=None, service_name="other"), identity)
 
         assert again is log_export.handler
+        assert again.identity is identity
 
 
 @pytest.fixture

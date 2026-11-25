@@ -28,8 +28,8 @@ from loom.core.config.errors import ConfigError
 from loom.core.config.observability import OtelConfig
 from loom.core.environment import Environment, resolve_environment
 from loom.core.log_names import LogField
+from loom.core.logger.identity import LogIdentity, LogRuntime
 from loom.core.logger.install import configure_logging
-from loom.core.logger.stamp import ContextFilter, LogRuntime
 from loom.core.logger.subject import SubjectHasher
 from loom.core.observability.config import (
     ObservabilityConfig,
@@ -75,32 +75,20 @@ def _resolve_scrape_addr(cfg: PrometheusObservabilityConfig) -> str:
 
 
 def _configure_logging(
-    config: ObservabilityConfig,
-    environment: Environment,
-    service_name: str | None,
-    service_version: str | None,
-    export: OtelConfig | None,
-) -> ContextFilter:
-    """Install the log format and, when *export* is given, the OTEL log export beside it.
-
-    The export needs no filter of its own: the SDK's handler takes the active span's
-    trace and span ids from the context when it exports a record.
-    """
+    config: ObservabilityConfig, identity: LogIdentity, export: OtelConfig | None
+) -> None:
+    """Install the log format and, when *export* is given, the OTEL log export beside it."""
     extra_handlers: tuple[logging.Handler, ...] = ()
     if export is not None:
         from loom.core.observability.observer.otel import install_otel_log_export
 
-        extra_handlers = (install_otel_log_export(export),)
-    return configure_logging(
-        config.log,
-        environment=environment,
-        service_name=service_name,
-        service_version=service_version,
-        extra_handlers=extra_handlers,
-    )
+        extra_handlers = (install_otel_log_export(export, identity),)
+    configure_logging(config.log, identity, extra_handlers=extra_handlers)
 
 
-def _resolve_tracer(config: OtelObservabilityConfig) -> tuple[Tracer, SpanFlusher | None]:
+def _resolve_tracer(
+    config: OtelObservabilityConfig, app_name: str | None
+) -> tuple[Tracer, SpanFlusher | None]:
     """Resolve the tracer spans are opened on, and the exporter to flush.
 
     Three cases, in order: OTEL disabled yields an injected no-op tracer with
@@ -112,7 +100,7 @@ def _resolve_tracer(config: OtelObservabilityConfig) -> tuple[Tracer, SpanFlushe
         return NoOpTracer(), None
     from loom.core.observability.observer.otel import build_tracer
 
-    return build_tracer(config.config)
+    return build_tracer(config.config, app_name=app_name)
 
 
 def _build_observers(config: ObservabilityConfig) -> list[LifecycleObserver]:
@@ -163,10 +151,10 @@ class Observability:
         _scrape_addr: str = "127.0.0.1",
         _span_flusher: SpanFlusher | None = None,
         _max_span_links: int = 128,
-        _logging: ContextFilter | None = None,
+        _log_identity: LogIdentity | None = None,
     ) -> None:
         self._observers = tuple(observers)
-        self._logging = _logging
+        self._log_identity = _log_identity
         self._tracer: Tracer = tracer if tracer is not None else NoOpTracer()
         self._scrape_port = _scrape_port
         self._scrape_addr = _scrape_addr
@@ -176,9 +164,9 @@ class Observability:
         self._log = logging.getLogger(__name__)
 
     def running_as(self, runtime: LogRuntime) -> None:
-        """Stamp the log records of this process as emitted by *runtime*."""
-        if self._logging is not None:
-            self._logging.use_runtime(runtime)
+        """Write the log records of this process as emitted by *runtime*."""
+        if self._log_identity is not None:
+            self._log_identity.run_as(runtime)
 
     @property
     def observers(self) -> tuple[LifecycleObserver, ...]:
@@ -413,10 +401,11 @@ class Observability:
         Args:
             config: Unified observability configuration.
             environment: Environment of the process; picks the default log
-                format and is stamped on every record. Resolved like
+                format and is written on every record. Resolved like
                 :func:`~loom.core.environment.resolve_environment` when ``None``.
-            service_name: ``app.name``, stamped on every log record.
-            service_version: ``app.version``, stamped on every log record.
+            service_name: ``app.name``, written on every log record and the OTEL Resource's
+                ``service.name`` unless the OTEL configuration names one.
+            service_version: ``app.version``, written on every log record.
 
         Returns:
             Configured ``Observability`` ready for use.
@@ -434,22 +423,17 @@ class Observability:
                 "observability.otel.export_logs requires observability.otel.config to be provided."
             )
 
-        resolved = resolve_environment(environment)
-        exporting = config.otel.enabled and config.otel.export_logs
-        installation = (
-            _configure_logging(
-                config,
-                resolved,
-                service_name,
-                service_version,
-                config.otel.config if exporting else None,
-            )
-            if config.log.enabled
-            else None
+        identity = LogIdentity(
+            environment=resolve_environment(environment),
+            service_name=service_name,
+            service_version=service_version,
         )
+        exporting = config.otel.enabled and config.otel.export_logs
+        if config.log.enabled:
+            _configure_logging(config, identity, config.otel.config if exporting else None)
         SubjectHasher(config.log.subject_key).install()
         observers = _build_observers(config)
-        tracer, flusher = _resolve_tracer(config.otel)
+        tracer, flusher = _resolve_tracer(config.otel, service_name)
         scrape_port = _resolve_scrape_port(config.prometheus)
         scrape_addr = _resolve_scrape_addr(config.prometheus)
         return cls(
@@ -461,7 +445,7 @@ class Observability:
             _max_span_links=(
                 config.otel.config.max_span_links if config.otel.config is not None else 128
             ),
-            _logging=installation,
+            _log_identity=identity if config.log.enabled else None,
         )
 
     @classmethod

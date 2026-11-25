@@ -21,17 +21,16 @@ from loom.core.engine.post_commit import (
     PostCommitKey,
     active_channel,
 )
-from loom.core.environment import Environment
 from loom.core.errors import PostCommitError
 from loom.core.job.context import add_pending_dispatch, flush_pending_dispatches
 from loom.core.job.job import Job
 from loom.core.log_names import LogField
-from loom.core.logger import ContextFilter, LogIdentity, log_context
+from loom.core.logger import log_context
 from loom.core.stores.catalog import DEFAULT_STORE
 from loom.core.stores.uow.coordinator import OrderedCommits
 from loom.core.use_case.use_case import UseCase
 from tests.helpers.jobs import CeleryServiceFixture
-from tests.helpers.loggers import CapturedLog
+from tests.helpers.loggers import CapturedLog, RenderingHandler
 
 from ._lifecycle_doubles import Log, StubUnitOfWorkFactory
 
@@ -329,10 +328,8 @@ class TestPostCommitPublish:
         assert info.value.failures == tuple(errors)
 
     async def test_a_failure_after_a_commit_is_logged_by_what_it_sent_under_the_running_job(
-        self,
-        caplog: pytest.LogCaptureFixture,
+        self, caplog: pytest.LogCaptureFixture, rendering: RenderingHandler
     ) -> None:
-        caplog.handler.addFilter(ContextFilter(LogIdentity(environment=Environment.TEST)))
         running = {LogField.JOB: "Outer", LogField.TASK_ID: "t0"}
         channel = PostCommitChannel()
         channel.enqueue_publish(_Send(_ERROR))
@@ -341,7 +338,7 @@ class TestPostCommitPublish:
         with log_context(running), pytest.raises(PostCommitError):
             await channel.drain(committed=True)
 
-        named, plain = CapturedLog(caplog).named(PostCommitEvent.ACTION_FAILED)
+        named, plain = rendering.named(PostCommitEvent.ACTION_FAILED)
         assert {**running, **_SENT, PostCommitKey.INTERRUPTED: False}.items() <= named.items()
         assert running.items() <= plain.items()
         assert not plain.keys() & _SENT.keys()

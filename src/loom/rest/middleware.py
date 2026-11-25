@@ -33,8 +33,8 @@ class TraceIdMiddleware:
        (``[A-Za-z0-9._-]``, 1-128 chars); generates a UUID4 otherwise. A
        client-supplied identifier is echoed back and reaches every log line,
        so an unvalidated one is a log-forging primitive.
-    3. Activates the trace-id via :func:`~loom.core.tracing.set_trace_id`, which the
-       log filter stamps on every record.
+    3. Activates the trace-id via :func:`~loom.core.tracing.set_trace_id`, which
+       loom's log formats write on every record.
     4. Injects the trace-id into the response headers so clients can
        correlate logs.
     5. Resets the context after the response is sent.

@@ -5,17 +5,19 @@ from __future__ import annotations
 import hmac
 import logging
 import traceback
-from collections.abc import Iterator
+from collections.abc import Iterator, Sequence
 from contextlib import contextmanager
 from typing import Any
 
 import pytest
 
+from loom.core.environment import Environment
 from loom.core.log_names import SubKey
-from loom.core.logger import stamp
 from loom.core.logger import subject as log_subject
 from loom.core.logger.formats import RecordFields
-from loom.core.logger.settings import QUIET_LIBRARIES
+from loom.core.logger.identity import LogIdentity
+from loom.core.logger.install import configure_logging
+from loom.core.logger.settings import QUIET_LIBRARIES, LogSettings
 from loom.core.logger.subject import SubjectHasher
 from loom.core.model.redaction import Secret
 
@@ -35,10 +37,20 @@ def keyless_subject_hasher(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setattr(log_subject, "_installed", SubjectHasher())
 
 
-@pytest.fixture(autouse=True)
-def unconfigured_context_filter(monkeypatch: pytest.MonkeyPatch) -> None:
-    """Start every test as a process whose logging was never configured."""
-    monkeypatch.setattr(stamp, "_configured", None)
+def configured(
+    settings: LogSettings,
+    *,
+    environment: Environment = Environment.PRODUCTION,
+    extra_handlers: Sequence[logging.Handler] = (),
+    service_name: str | None = None,
+    service_version: str | None = None,
+) -> LogIdentity:
+    """Configure logging as a process of *environment* and give back the identity it shares."""
+    identity = LogIdentity(
+        environment=environment, service_name=service_name, service_version=service_version
+    )
+    configure_logging(settings, identity, extra_handlers=extra_handlers)
+    return identity
 
 
 def install_subject_key() -> None:
@@ -55,6 +67,29 @@ class CapturingHandler(logging.Handler):
 
     def emit(self, record: logging.LogRecord) -> None:
         self.records.append(record)
+
+
+class RenderingHandler(logging.Handler):
+    """Renders each record's fields as it is emitted, in the context that emitted it."""
+
+    def __init__(self) -> None:
+        super().__init__()
+        self.rendered: list[tuple[str, dict[str, object]]] = []
+
+    def emit(self, record: logging.LogRecord) -> None:
+        self.rendered.append((record.getMessage(), RecordFields(record).fields()))
+
+    def named(self, event: str) -> list[dict[str, object]]:
+        """The rendered fields of every record whose message is exactly *event*, in order."""
+        return [fields for message, fields in self.rendered if message == event]
+
+
+@pytest.fixture
+def rendering() -> RenderingHandler:
+    """A handler on the root logger that renders the fields of what reaches it."""
+    handler = RenderingHandler()
+    logging.getLogger().addHandler(handler)
+    return handler
 
 
 class LambdaLoggerHandler(CapturingHandler):
@@ -186,6 +221,8 @@ def root_logger_kept() -> Iterator[logging.Logger]:
 __all__ = [
     "CapturedLog",
     "CapturingHandler",
+    "RenderingHandler",
+    "configured",
     "logged_fields",
     "root_logger_kept",
 ]

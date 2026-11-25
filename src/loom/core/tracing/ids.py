@@ -43,6 +43,6 @@ class TraceIds:
         )
 
     def fields(self) -> dict[str, str]:
-        """The log fields it stamps, without the ids it does not know."""
+        """The log fields it writes, without the ids it does not know."""
         known = {LogField.TRACE_ID: self.trace_id, LogField.SPAN_ID: self.span_id}
         return {key: value for key, value in known.items() if value is not None}
