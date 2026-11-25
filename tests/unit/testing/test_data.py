@@ -5,13 +5,14 @@ from __future__ import annotations
 from collections.abc import Callable
 from dataclasses import dataclass
 from typing import Annotated, Any
+from urllib.parse import urlparse
 
 import msgspec
 import pytest
 from polyfactory.fields import Use
 
 from loom.core.model import BigInteger, LoomFrozenStruct
-from loom.core.model.redaction import MASK, Secret
+from loom.core.model.redaction import MASK, Dsn, RedactedMap, Secret
 from loom.core.stores.repository.query import MAX_PAGE_LIMIT, MIN_PAGE_LIMIT, PageParams
 from loom.testing import SampleFactory, make
 
@@ -180,3 +181,23 @@ class TestSecretFields:
     ) -> None:
         for secret in secrets(make(model)):
             assert (isinstance(secret, Secret), repr(secret)) == (True, MASK)
+
+
+class _WithDsn(msgspec.Struct):
+    dsn: Dsn
+
+
+class _WithHeaders(msgspec.Struct):
+    headers: RedactedMap
+
+
+class TestLoomValueTypeFields:
+    def test_a_dsn_field_is_a_parseable_https_address_with_a_host(self) -> None:
+        address = urlparse(make(_WithDsn).dsn.reveal())
+
+        assert (address.scheme, bool(address.hostname)) == ("https", True)
+
+    def test_a_redacted_map_field_holds_text_entries(self) -> None:
+        headers = make(_WithHeaders).headers.reveal()
+
+        assert (bool(headers), all(isinstance(v, str) for v in headers.values())) == (True, True)

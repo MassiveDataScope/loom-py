@@ -164,7 +164,10 @@ def otel_handler() -> Iterator[OtelExport]:
     exporter = InMemoryLogRecordExporter()
     identity = make(LogIdentity, environment=Environment.PRODUCTION, **_APP)
     handler = build_log_export(
-        OtelConfig(endpoint=None), identity, service_name=_APP["service_name"], exporter=exporter
+        make(OtelConfig, endpoint=None),
+        identity,
+        service_name=_APP["service_name"],
+        exporter=exporter,
     )
     yield OtelExport(handler, exporter)
     logging.getLogger().removeHandler(handler)

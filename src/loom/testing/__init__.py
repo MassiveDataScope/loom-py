@@ -86,7 +86,12 @@ class _LazyExport:
 
 
 _DATA = _LazyExport(
-    ("loom.testing.data", "loom.testing.job_factories", "loom.testing.store_factories"),
+    (
+        "loom.testing.data",
+        "loom.testing.job_factories",
+        "loom.testing.observability_factories",
+        "loom.testing.store_factories",
+    ),
     ("polyfactory",),
     "{name} requires polyfactory. Install loom-kernel[testing] to build test data.",
 )

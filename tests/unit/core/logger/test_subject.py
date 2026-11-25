@@ -36,7 +36,7 @@ class TestTheSecretAtStartup:
     def test_the_configured_secret_is_installed_even_with_logging_disabled(self) -> None:
         log = make(LogObservabilityConfig, enabled=False, subject_key=Secret(SUBJECT_KEY))
 
-        Observability.from_config(ObservabilityConfig(log=log), environment=Environment.TEST)
+        Observability.from_config(make(ObservabilityConfig, log=log), environment=Environment.TEST)
 
         assert SubjectHasher.installed().secret == Secret(SUBJECT_KEY)
 
