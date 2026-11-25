@@ -148,7 +148,7 @@ class TestTheNativeToolOracle:
             kinds = engine_supported_kinds(_Engine(), "third-party")
 
         assert kinds == frozenset({"sql"})
-        assert "third-party" in CapturedLog(caplog).laid_out_text
+        assert "third-party" in CapturedLog(caplog).rendered_text
 
     def test_the_registry_keeps_native_when_the_engine_provides_it(self) -> None:
         """The real engine keeps the kind, because it supplies the oracle."""

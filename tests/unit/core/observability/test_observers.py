@@ -5,6 +5,7 @@ from __future__ import annotations
 import logging
 
 import pytest
+from opentelemetry.sdk._logs.export import LogRecordExportResult
 from opentelemetry.sdk.trace import TracerProvider
 from opentelemetry.trace import format_span_id, format_trace_id
 
@@ -78,11 +79,19 @@ class TestOtelLogExport:
         root.addHandler(log_export.handler)
 
         root.info("loom otel log export works")
+        root.warning("w")
+        root.critical("c")
         log_export.exported()
 
-        [finished] = log_export.exporter.get_finished_logs()
-        assert finished.log_record.body == "loom otel log export works"
-        assert finished.resource.attributes["service.name"] == "loom-test"
+        finished = log_export.exporter.get_finished_logs()
+        assert [(f.log_record.body, f.log_record.severity_text) for f in finished] == [
+            ("loom otel log export works", "INFO"),
+            ("w", "WARN"),
+            ("c", "FATAL"),
+        ]
+        assert finished[0].resource.attributes["service.name"] == "loom-test"
+        log_export.handler.close()
+        assert log_export.exporter.export(()) is LogRecordExportResult.FAILURE
 
     def test_a_failure_is_exported_without_the_sdk_message_and_kept_for_other_handlers(
         self, log_export: LogExport

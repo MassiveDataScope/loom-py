@@ -73,7 +73,7 @@ class TestBootstrapEnvironment:
         with caplog.at_level(logging.WARNING, logger="loom.core.checks"):
             bootstrap_worker(config, environment="production", jobs=[_SyncJob])
 
-        messages = CapturedLog(caplog).laid_out_text
+        messages = CapturedLog(caplog).rendered_text
         assert EMBEDDED_PASSWORD_CHECK in messages
         assert rest_checks.AUTHENTICATION_CHECK not in messages
         assert rest_checks.SCHEMA_CHECK not in messages

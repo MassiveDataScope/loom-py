@@ -153,7 +153,7 @@ class Observability:
         _log_identity: LogIdentity | None = None,
     ) -> None:
         self._observers = tuple(observers)
-        self._log_identity = _log_identity or LogIdentity(environment=resolve_environment(None))
+        self._log_identity = _log_identity or LogIdentity(environment=Environment.TEST)
         self._tracer: Tracer = tracer if tracer is not None else NoOpTracer()
         self._scrape_port = _scrape_port
         self._scrape_addr = _scrape_addr

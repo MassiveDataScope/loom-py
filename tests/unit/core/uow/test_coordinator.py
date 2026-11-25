@@ -490,7 +490,7 @@ class TestTeardownFailures:
             key: RolledBack(key, error) for key in (S0, S1, S2)
         }
         assert _ends(ledger) == [S2, S1, S0]
-        assert event in CapturedLog(caplog).laid_out_text
+        assert event in CapturedLog(caplog).rendered_text
 
 
 class TestHungRollback:
@@ -525,7 +525,7 @@ class TestHungRollback:
         with caplog.at_level(logging.ERROR):
             await _finish_within_a_second(coordinator, scope, Boom("business"), ledger)
 
-        assert UowEvent.ROLLBACK_FAILED in CapturedLog(caplog).laid_out_text
+        assert UowEvent.ROLLBACK_FAILED in CapturedLog(caplog).rendered_text
 
     async def test_the_owning_task_can_still_be_cancelled(self) -> None:
         ledger = Ledger()

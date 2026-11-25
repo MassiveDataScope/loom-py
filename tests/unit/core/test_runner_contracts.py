@@ -90,8 +90,8 @@ class TestRunnerExceptionSafety:
         with caplog.at_level(logging.WARNING, logger="loom.core.runner"):
             shutdown_runner(_BrokenShutdown())  # must not raise
 
-        assert RunnerEvent.SHUTDOWN_FAILED in CapturedLog(caplog).laid_out_text
-        assert "_BrokenShutdown" in CapturedLog(caplog).laid_out_text
+        assert RunnerEvent.SHUTDOWN_FAILED in CapturedLog(caplog).rendered_text
+        assert "_BrokenShutdown" in CapturedLog(caplog).rendered_text
 
     def test_flush_runner_suppresses_exception_and_logs_warning(
         self,
@@ -100,8 +100,8 @@ class TestRunnerExceptionSafety:
         with caplog.at_level(logging.WARNING, logger="loom.core.runner"):
             flush_runner(_BrokenFlush())  # must not raise
 
-        assert RunnerEvent.FLUSH_FAILED in CapturedLog(caplog).laid_out_text
-        assert "_BrokenFlush" in CapturedLog(caplog).laid_out_text
+        assert RunnerEvent.FLUSH_FAILED in CapturedLog(caplog).rendered_text
+        assert "_BrokenFlush" in CapturedLog(caplog).rendered_text
 
     def test_original_exception_is_preserved_when_shutdown_raises_in_finally(self) -> None:
         def _pipeline_fails_then_shuts_down() -> None:

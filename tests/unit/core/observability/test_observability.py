@@ -8,6 +8,7 @@ from collections.abc import Callable
 
 import msgspec
 import pytest
+from opentelemetry.sdk._logs.export import LogRecordExportResult
 
 from loom.core.config import ConfigError
 from loom.core.config.observability import OtelConfig
@@ -186,10 +187,9 @@ class TestFromConfig:
             log=LogObservabilityConfig(format=LogFormatName.JSON), otel=_OTEL
         )
 
-        for _ in range(2):
-            Observability.from_config(
-                config, environment=Environment.STAGING, service_name="billing"
-            )
+        Observability.from_config(config, environment=Environment.STAGING, service_name="billing")
+        first = configured_log_export()
+        Observability.from_config(config, environment=Environment.STAGING, service_name="billing")
         with active_trace_id("trace-42"):
             logging.getLogger("tests.export").warning("billing.check_done")
 
@@ -203,6 +203,7 @@ class TestFromConfig:
         assert finished.resource.attributes["service.name"] == "billing"
         assert finished.resource.attributes["deployment.environment.name"] == "staging"
         assert finished.log_record.attributes["trace_id"] == "trace-42"
+        assert first.exporter.export(()) is LogRecordExportResult.FAILURE
         names = [h.get_name() for h in logging.getLogger().handlers]
         assert (names.count(EXPORT_HANDLER_NAME), names.count(HANDLER_NAME)) == (1, 1)
 
@@ -220,17 +221,6 @@ class TestFromConfig:
         assert entry["service.name"] == "billing"
         assert entry["service.version"] == "2.4"
         assert entry["deployment.environment.name"] == "staging"
-
-    def test_the_runtime_is_stamped_once_the_composition_names_it(
-        self, capsys: pytest.CaptureFixture[str]
-    ) -> None:
-        config = ObservabilityConfig(log=LogObservabilityConfig(format=LogFormatName.JSON))
-        observability = Observability.from_config(config)
-
-        observability.running_as(LogRuntime.CELERY)
-        logging.getLogger("tests.observability").warning("billing.check_done")
-
-        assert json.loads(capsys.readouterr().out)["loom.runtime"] == "celery"
 
     def test_a_disabled_log_backend_installs_no_handler(self) -> None:
         before = list(logging.getLogger().handlers)

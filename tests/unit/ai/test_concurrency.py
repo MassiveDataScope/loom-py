@@ -90,7 +90,7 @@ class TestShieldAndDrainDrainsOnCancel:
         gate.release()
         await await_cancelled(task)
 
-        assert "inventory-mcp" in CapturedLog(caplog).laid_out_text
+        assert "inventory-mcp" in CapturedLog(caplog).rendered_text
 
 
 class TestTheDrainedResultIsNotLeftUnretrieved:

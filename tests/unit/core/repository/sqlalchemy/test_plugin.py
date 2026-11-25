@@ -41,7 +41,7 @@ class TestSqlAlchemyStorePlugin:
         with caplog.at_level(logging.WARNING):
             _wiring("sqlite+aiosqlite:///", cursors={"signing": "unsigned"})
 
-        assert "unsigned" in CapturedLog(caplog).laid_out_text
+        assert "unsigned" in CapturedLog(caplog).rendered_text
 
     def test_the_wiring_registers_its_cursor_codec_for_direct_users(self) -> None:
         container = LoomContainer()
@@ -69,4 +69,4 @@ class TestSqlAlchemyStorePlugin:
         with caplog.at_level(logging.WARNING, logger=backend_module.__name__):
             assert await wiring.readiness() is False
 
-        assert "readiness" in CapturedLog(caplog).laid_out_text
+        assert "readiness" in CapturedLog(caplog).rendered_text

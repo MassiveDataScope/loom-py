@@ -12,6 +12,7 @@ from collections.abc import Iterable
 from dataclasses import dataclass
 from enum import Enum
 from pathlib import Path
+from types import ModuleType
 from typing import TypeVar
 
 import loom
@@ -47,15 +48,17 @@ class DeclaredNames:
     crashed_modules: frozenset[str] = frozenset()
 
     @classmethod
-    def from_loom(cls) -> DeclaredNames:
-        """Import every module of ``loom`` and read the names its classes declare.
+    def from_package(cls, package: ModuleType = loom) -> DeclaredNames:
+        """Import every module of *package* and read the names its classes declare.
 
         Only an ``ImportError`` (a missing extra or an unsupported Python) is an expected
         reason for a module to hide its names; any other exception is a crash.
         """
         failed: set[str] = set()
         crashed: set[str] = set()
-        for module in pkgutil.walk_packages(loom.__path__, "loom.", onerror=failed.add):
+        for module in pkgutil.walk_packages(
+            package.__path__, f"{package.__name__}.", onerror=failed.add
+        ):
             try:
                 importlib.import_module(module.name)
             except ImportError:
@@ -65,12 +68,12 @@ class DeclaredNames:
         lines = {
             f"event {event.value}"
             for owner in _subclasses(LogEvent)
-            if owner.__module__.startswith("loom.")
+            if owner.__module__.startswith(f"{package.__name__}.")
             for event in owner
         } | {
             f"key {key.value} {key.kind.value}"
             for owner in _subclasses(LogKey)
-            if owner.__module__.startswith("loom.")
+            if owner.__module__.startswith(f"{package.__name__}.")
             for key in owner
         }
         return cls(frozenset(lines), frozenset(failed), frozenset(crashed))
@@ -86,9 +89,9 @@ class DeclaredNames:
         return "".join(f"{line}\n" for line in sorted(self.lines))
 
 
-def main() -> None:
+def main(package: ModuleType = loom) -> None:
     """Rewrite the contract file, refusing when an import crashed or hides a published line."""
-    declared = DeclaredNames.from_loom()
+    declared = DeclaredNames.from_package(package)
     if declared.crashed_modules:
         raise SystemExit(
             f"modules crashed on import: {', '.join(sorted(declared.crashed_modules))}"

@@ -2,11 +2,13 @@
 
 from __future__ import annotations
 
+import importlib
 import sys
+from pathlib import Path
 
 import pytest
 
-from scripts.log_contract import CONTRACT_FILE, DeclaredNames
+from scripts.log_contract import CONTRACT_FILE, DeclaredNames, main
 
 pytestmark = pytest.mark.slow
 
@@ -15,7 +17,7 @@ _EVERY_EXTRA_INSTALLS = sys.version_info < (3, 13)
 
 @pytest.fixture(scope="module")
 def declared() -> DeclaredNames:
-    names = DeclaredNames.from_loom()
+    names = DeclaredNames.from_package()
     assert not names.crashed_modules, f"modules crashed on import: {sorted(names.crashed_modules)}"
     return names
 
@@ -51,3 +53,15 @@ class TestLogContract:
             f"published log names are no longer declared: {gone}. After 12.0 the contract "
             "only grows: restore each name (a rename is a removal plus an addition)."
         )
+
+    def test_a_module_that_crashes_on_import_is_refused(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        (tmp_path / "crashy").mkdir()
+        (tmp_path / "crashy" / "__init__.py").touch()
+        (tmp_path / "crashy" / "boom.py").write_text("raise RuntimeError")
+        monkeypatch.syspath_prepend(tmp_path)
+        monkeypatch.setitem(sys.modules, "crashy", importlib.import_module("crashy"))
+
+        with pytest.raises(SystemExit, match="crashy.boom"):
+            main(sys.modules["crashy"])

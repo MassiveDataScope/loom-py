@@ -171,7 +171,7 @@ class CapturedLog:
         ]
 
     @property
-    def laid_out_text(self) -> str:
+    def rendered_text(self) -> str:
         """Every record as :meth:`rendered` lays it out, one per line."""
         return "\n".join(self.rendered())
 

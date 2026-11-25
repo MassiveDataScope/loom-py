@@ -269,7 +269,7 @@ class TestOptionalStartup:
             async with host:
                 pass
 
-        assert _REFUSED not in CapturedLog(caplog).laid_out_text, (
+        assert _REFUSED not in CapturedLog(caplog).rendered_text, (
             "the transport's reason reached the logs"
         )
 

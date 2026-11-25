@@ -221,10 +221,7 @@ class OtelLogHandler(logging.Handler):
     """
 
     def __init__(self, provider: LoggerProvider, identity: LogIdentity) -> None:
-        from opentelemetry.sdk._logs._internal import std_to_otel
-
         super().__init__()
-        self._severity_of = std_to_otel
         self.set_name(EXPORT_HANDLER_NAME)
         self._provider = provider
         self._logger = provider.get_logger(_INSTRUMENTATION_SCOPE)
@@ -232,6 +229,8 @@ class OtelLogHandler(logging.Handler):
 
     def emit(self, record: logging.LogRecord) -> None:
         """Emit *record* with its fields rendered and no exception."""
+        from opentelemetry.sdk._logs._internal import std_to_otel
+
         view = RecordFields(record)
         attributes = view.fields()
         attributes[LogField.RUNTIME] = self._identity.runtime.value
@@ -240,7 +239,7 @@ class OtelLogHandler(logging.Handler):
         stack = view.stack
         if stack is not None:
             attributes[LogField.EXCEPTION_STACKTRACE] = stack
-        severity = self._severity_of(record.levelno)
+        severity = std_to_otel(record.levelno)
         self._logger.emit(
             timestamp=int(record.created * _NANOSECONDS_PER_SECOND),
             severity_number=severity,

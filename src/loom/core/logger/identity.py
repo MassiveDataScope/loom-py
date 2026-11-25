@@ -20,14 +20,14 @@ class LogRuntime(StrEnum):
     CLI = "cli"
 
 
-@dataclass(slots=True)
+@dataclass(frozen=True, slots=True)
 class LogIdentity:
     """Which service, and which process of it, emits the records.
 
     The runtime is known only once an entry point composes the application, after the
-    configuration that builds this identity has loaded, so it is the one mutable part:
-    every output holds this same instance, and :meth:`run_as` changes what the
-    following records say on all of them.
+    configuration that builds this identity has loaded. :meth:`run_as` is therefore the
+    one mutation, and every output holds this same instance, so it changes what the
+    following records say on all of them; every other field is read-only.
 
     Attributes:
         environment: The environment the process runs in.
@@ -43,12 +43,12 @@ class LogIdentity:
     _fields: Mapping[str, str] = field(init=False, repr=False, compare=False)
 
     def __post_init__(self) -> None:
-        self._fields = self._known()
+        object.__setattr__(self, "_fields", self._known())
 
     def run_as(self, runtime: LogRuntime) -> None:
         """Name *runtime* as the kind of process from now on."""
-        self.runtime = runtime
-        self._fields = self._known()
+        object.__setattr__(self, "runtime", runtime)
+        object.__setattr__(self, "_fields", self._known())
 
     def fields(self) -> Mapping[str, str]:
         """The fields it writes, without those it does not know."""
