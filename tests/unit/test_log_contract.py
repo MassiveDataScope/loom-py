@@ -9,7 +9,6 @@ import pytest
 from scripts.log_contract import CONTRACT_FILE, DeclaredNames
 
 pytestmark = pytest.mark.slow
-"""Importing all of loom takes seconds: CI's slow lane runs it, on Python 3.11 to 3.14."""
 
 _EVERY_EXTRA_INSTALLS = sys.version_info < (3, 13)
 

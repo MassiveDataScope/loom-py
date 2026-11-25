@@ -49,10 +49,7 @@ def log_export() -> Iterator[LogExport]:
 
 @pytest.fixture
 def configured_log_export(monkeypatch: pytest.MonkeyPatch) -> Iterator[Callable[[], LogExport]]:
-    """The OTEL log export ``Observability.from_config`` installs, into memory.
-
-    Calling it gives the handler now on the root logger with what its exporter got.
-    """
+    """The OTEL log export ``Observability.from_config`` installs, into memory."""
     built: list[InMemoryLogRecordExporter] = []
 
     def build(_config: OtelConfig) -> InMemoryLogRecordExporter:

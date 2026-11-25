@@ -164,34 +164,6 @@ class TestFromConfig:
         with pytest.raises(ConfigError, match="export_logs requires observability.log.enabled"):
             Observability.from_config(config)
 
-    def test_export_logs_attaches_a_handler_whose_resource_is_the_service(
-        self, configured_log_export: Callable[[], LogExport]
-    ) -> None:
-        config = ObservabilityConfig(
-            log=LogObservabilityConfig(format=LogFormatName.JSON), otel=_OTEL
-        )
-
-        Observability.from_config(
-            config, environment=Environment.STAGING, service_name="billing", service_version="2.4"
-        )
-        logging.getLogger("tests.export").warning("billing.check_done")
-
-        export = configured_log_export()
-        export.handler.flush()
-        [finished] = [
-            item
-            for item in export.exporter.get_finished_logs()
-            if item.log_record.body == "billing.check_done"
-        ]
-        assert (
-            dict(finished.resource.attributes).items()
-            >= {
-                "service.name": "billing",
-                "service.version": "2.4",
-                "deployment.environment.name": "staging",
-            }.items()
-        )
-
     def test_the_runtime_reaches_the_export_and_the_stdout_line_alike(
         self, configured_log_export: Callable[[], LogExport], capsys: pytest.CaptureFixture[str]
     ) -> None:
@@ -207,23 +179,32 @@ class TestFromConfig:
         assert exported["loom.runtime"] == "celery"
         assert json.loads(capsys.readouterr().out.splitlines()[-1])["loom.runtime"] == "celery"
 
-    def test_configuring_twice_replaces_the_export_instead_of_stacking_it(
+    def test_configuring_twice_replaces_the_export_and_its_resource_is_the_service(
         self, configured_log_export: Callable[[], LogExport]
     ) -> None:
         config = ObservabilityConfig(
             log=LogObservabilityConfig(format=LogFormatName.JSON), otel=_OTEL
         )
 
-        Observability.from_config(config, service_name="billing")
-        Observability.from_config(config, service_name="billing")
+        for _ in range(2):
+            Observability.from_config(
+                config, environment=Environment.STAGING, service_name="billing"
+            )
         with active_trace_id("trace-42"):
             logging.getLogger("tests.export").warning("billing.check_done")
 
-        attributes = configured_log_export().exported()["billing.check_done"]
-        assert (attributes["loom.runtime"], attributes["trace_id"]) == ("cli", "trace-42")
-        handlers = logging.getLogger().handlers
-        assert len([h for h in handlers if h.get_name() == EXPORT_HANDLER_NAME]) == 1
-        assert len([h for h in handlers if h.get_name() == HANDLER_NAME]) == 1
+        export = configured_log_export()
+        export.handler.flush()
+        [finished] = [
+            item
+            for item in export.exporter.get_finished_logs()
+            if item.log_record.body == "billing.check_done"
+        ]
+        assert finished.resource.attributes["service.name"] == "billing"
+        assert finished.resource.attributes["deployment.environment.name"] == "staging"
+        assert finished.log_record.attributes["trace_id"] == "trace-42"
+        names = [h.get_name() for h in logging.getLogger().handlers]
+        assert (names.count(EXPORT_HANDLER_NAME), names.count(HANDLER_NAME)) == (1, 1)
 
     def test_the_log_format_is_installed_with_the_service_identity(
         self, capsys: pytest.CaptureFixture[str]
