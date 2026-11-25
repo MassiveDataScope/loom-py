@@ -385,9 +385,14 @@ class TestLambdaFrames:
         self, runtime: LambdaLoggerHandler, lambda_json: Output
     ) -> None:
         _LOGGER.info("order_accepted")
+        _LOGGER.log(25, "order_noticed")
         _LOGGER.error("order_failed", exc_info=_failure())
 
-        assert runtime.frames == [bytes.fromhex("a55a000e"), bytes.fromhex("a55a0016")]
+        assert runtime.frames == [
+            bytes.fromhex("a55a000e"),
+            bytes.fromhex("a55a000e"),
+            bytes.fromhex("a55a0016"),
+        ]
         assert all(line.endswith("}\n") for line in runtime.lines)
 
     def test_under_text_the_runtime_keeps_its_text_frames(

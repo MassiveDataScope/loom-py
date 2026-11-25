@@ -72,18 +72,18 @@ def truncated(text: str, limit: int, *, keep: Literal["start", "end"] = "start")
 def _scalar(value: object) -> object:
     """*value* as a format writes a scalar, or ``_OPAQUE`` when it is none.
 
-    A secret is masked, a string cut, a non-finite float written as text, an id, a
-    decimal, a path and a dsn written as text, a date or time in ISO 8601 and an enum
-    as its value.
+    A secret is masked, a string cut, an int or str subclass written as the plain type,
+    a non-finite float, an id, a decimal, a path and a dsn written as text, a date or
+    time in ISO 8601 and an enum as its value.
     """
     if type(value) in _AS_IS:
         return value
     if isinstance(value, str):
-        return truncated(value, MAX_VALUE_LENGTH)
+        return truncated(str.__str__(value), MAX_VALUE_LENGTH)
     if isinstance(value, float):
         return value if math.isfinite(value) else str(value)
     if isinstance(value, int):
-        return value
+        return int(value)
     if isinstance(value, Secret | RedactedMap):
         return MASK
     if isinstance(value, Dsn | uuid.UUID | Decimal | PurePath):

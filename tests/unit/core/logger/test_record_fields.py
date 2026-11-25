@@ -11,7 +11,7 @@ from loom.core.environment import Environment
 from loom.core.errors import NotFound
 from loom.core.log_names import LogField
 from loom.core.logger import LogIdentity, LogRuntime, log_context
-from loom.core.logger.formats import MAX_STACK_LENGTH, TRUNCATION_MARKER
+from loom.core.logger.formats import MAX_STACK_LENGTH, TRUNCATION_MARKER, RecordFields
 from loom.core.tracing.context import active_trace_id
 from tests.helpers.loggers import CapturingHandler
 
@@ -103,6 +103,16 @@ class TestDerivedFields:
 
         assert LogField.TRACE_ID not in record.__dict__
         assert LogField.SERVICE_NAME not in record.__dict__
+
+
+@pytest.mark.parametrize(
+    ("level", "standard"),
+    [(0, 0), (5, 0), (10, 10), (25, 20), (30, 30), (45, 40), (60, 50)],
+)
+def test_a_level_is_the_standard_one_at_or_below_it(level: int, standard: int) -> None:
+    record = _LOGGER.makeRecord("x", level, __file__, 1, "a.b_c", (), None)
+
+    assert RecordFields(record).standard_level == standard
 
 
 class TestFailureFields:

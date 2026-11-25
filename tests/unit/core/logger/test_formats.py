@@ -8,7 +8,7 @@ import re
 import uuid
 from datetime import UTC, date, datetime, time
 from decimal import Decimal
-from enum import Enum
+from enum import Enum, StrEnum
 from http import HTTPStatus
 from pathlib import PurePosixPath
 from types import TracebackType
@@ -187,6 +187,15 @@ class _Color(Enum):
     RED = "red"
 
 
+class _Odd(Enum):
+    LIST = [1, 2]
+    SECRET = Secret("hunter2")
+
+
+class _Level(StrEnum):
+    HIGH = "high"
+
+
 class TestValueRendering:
     @pytest.mark.parametrize("value", ["text", 3, 2.5, True, None, ["a", 1, None], HTTPStatus.OK])
     def test_a_scalar_or_a_short_list_of_scalars_is_written_as_it_is(self, value: object) -> None:
@@ -222,9 +231,22 @@ class TestValueRendering:
             (datetime(2026, 1, 2, 3, 4, tzinfo=UTC), "2026-01-02T03:04:00+00:00"),
             (time(3, 4), "03:04:00"),
             (_Color.RED, "red"),
+            (_Odd.LIST, "_Odd"),
+            (_Odd.SECRET, MASK),
             ([_Color.RED, uuid.UUID(int=7)], ["red", "00000000-0000-0000-0000-000000000007"]),
         ],
-        ids=["uuid", "decimal", "path", "date", "datetime", "time", "enum", "list"],
+        ids=[
+            "uuid",
+            "decimal",
+            "path",
+            "date",
+            "datetime",
+            "time",
+            "enum",
+            "enum-list",
+            "enum-secret",
+            "list",
+        ],
     )
     def test_a_common_safe_type_is_written_as_its_text(
         self, value: object, written: object
@@ -232,6 +254,13 @@ class TestValueRendering:
         entry, _ = _both(field=value)
 
         assert entry["field"] == written
+
+    def test_a_str_enum_in_a_list_is_its_text_in_the_line_never_its_repr(self) -> None:
+        _, line = _both(field=[_Level.HIGH, HTTPStatus.OK])
+
+        assert "high" in line
+        assert "_Level" not in line
+        assert "HTTPStatus" not in line
 
     def test_a_non_finite_float_is_written_as_text_so_the_json_stays_valid(self) -> None:
         entry, _ = _both(field=float("nan"))

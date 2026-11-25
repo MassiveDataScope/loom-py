@@ -81,6 +81,7 @@ class TestOtelLogExport:
         root.info("loom otel log export works")
         root.warning("w")
         root.critical("c")
+        root.log(25, "n")
         log_export.exported()
 
         finished = log_export.exporter.get_finished_logs()
@@ -88,21 +89,20 @@ class TestOtelLogExport:
             ("loom otel log export works", "INFO"),
             ("w", "WARN"),
             ("c", "FATAL"),
+            ("n", "INFO"),
         ]
         assert finished[0].resource.attributes["service.name"] == "loom-test"
         log_export.handler.close()
         assert log_export.exporter.export(()) is LogRecordExportResult.FAILURE
 
     def test_a_failure_inside_emit_goes_to_the_handler_and_never_reaches_the_caller(
-        self, log_export: LogExport, monkeypatch: pytest.MonkeyPatch
+        self, log_export: LogExport, capsys: pytest.CaptureFixture[str]
     ) -> None:
-        failed: list[logging.LogRecord] = []
-        monkeypatch.setattr(log_export.handler, "handleError", failed.append)
         record = logging.LogRecord("x", logging.INFO, __file__, 1, "%d", ("not a number",), None)
 
         log_export.handler.handle(record)
 
-        assert failed == [record]
+        assert "--- Logging error ---" in capsys.readouterr().err
 
     def test_a_failure_is_exported_without_the_sdk_message_and_kept_for_other_handlers(
         self, log_export: LogExport
