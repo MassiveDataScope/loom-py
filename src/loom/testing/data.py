@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+from collections.abc import Callable
 from dataclasses import is_dataclass
 from typing import Any, Generic, TypeGuard, TypeVar, get_args, get_origin
 
@@ -10,7 +11,7 @@ from polyfactory.factories.dataclass_factory import DataclassFactory
 from polyfactory.factories.msgspec_factory import MsgspecFactory
 from polyfactory.field_meta import FieldMeta
 
-from loom.core.model.redaction import Secret
+from loom.core.model.redaction import Dsn, RedactedMap, Secret
 
 T = TypeVar("T")
 
@@ -51,6 +52,17 @@ class SampleFactory(DataclassFactory[T], MsgspecFactory[T], Generic[T]):  # type
         if is_dataclass(cls.__model__):
             return super().get_model_fields()
         return super(DataclassFactory, cls).get_model_fields()
+
+    @classmethod
+    def get_provider_map(cls) -> dict[Any, Callable[[], Any]]:
+        """Add the loom value types to polyfactory's providers, each built from valid text."""
+        return {
+            **super().get_provider_map(),
+            Dsn: lambda: Dsn(f"https://{cls.__faker__.domain_name()}/{cls.__faker__.word()}"),
+            RedactedMap: lambda: RedactedMap(
+                {cls.__faker__.word(): cls.__faker__.word() for _ in range(2)}
+            ),
+        }
 
     @classmethod
     def get_field_value(

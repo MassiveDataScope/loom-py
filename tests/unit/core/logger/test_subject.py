@@ -9,7 +9,12 @@ from loom.core.environment import Environment
 from loom.core.logger import subject as log_subject
 from loom.core.logger.subject import LoggerEvent, SubjectHasher
 from loom.core.model.redaction import Secret
-from loom.core.observability.config import LogObservabilityConfig, ObservabilityConfig
+from loom.core.observability.config import (
+    LogObservabilityConfig,
+    ObservabilityConfig,
+    OtelObservabilityConfig,
+    PrometheusObservabilityConfig,
+)
 from loom.core.observability.observability import Observability
 from loom.testing import make
 from tests.helpers.loggers import SUBJECT_KEY, CapturedLog, install_subject_key, user_hash
@@ -36,7 +41,15 @@ class TestTheSecretAtStartup:
     def test_the_configured_secret_is_installed_even_with_logging_disabled(self) -> None:
         log = make(LogObservabilityConfig, enabled=False, subject_key=Secret(SUBJECT_KEY))
 
-        Observability.from_config(ObservabilityConfig(log=log), environment=Environment.TEST)
+        config = make(
+            ObservabilityConfig,
+            log=log,
+            otel=OtelObservabilityConfig(),
+            prometheus=PrometheusObservabilityConfig(),
+            execution_observers=(),
+        )
+
+        Observability.from_config(config, environment=Environment.TEST)
 
         assert SubjectHasher.installed().secret == Secret(SUBJECT_KEY)
 

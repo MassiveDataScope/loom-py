@@ -11,7 +11,7 @@ import pytest
 from polyfactory.fields import Use
 
 from loom.core.model import BigInteger, LoomFrozenStruct
-from loom.core.model.redaction import MASK, Secret
+from loom.core.model.redaction import MASK, Dsn, RedactedMap, Secret
 from loom.core.stores.repository.query import MAX_PAGE_LIMIT, MIN_PAGE_LIMIT, PageParams
 from loom.testing import SampleFactory, make
 
@@ -180,3 +180,22 @@ class TestSecretFields:
     ) -> None:
         for secret in secrets(make(model)):
             assert (isinstance(secret, Secret), repr(secret)) == (True, MASK)
+
+
+class _Endpoints(msgspec.Struct):
+    dsn: Dsn
+    headers: RedactedMap
+
+
+class TestLoomValueTypeFields:
+    @pytest.mark.parametrize(
+        ("field", "value_type"),
+        [
+            pytest.param("dsn", Dsn, id="dsn"),
+            pytest.param("headers", RedactedMap, id="redacted-map"),
+        ],
+    )
+    def test_a_field_of_a_loom_value_type_is_built_valid(
+        self, field: str, value_type: type
+    ) -> None:
+        assert isinstance(getattr(make(_Endpoints), field), value_type)
