@@ -14,6 +14,7 @@ on:
 # version is tested; see the matrix of `tests-fast`.
 env:
   PRIMARY_PYTHON: "3.12"
+  HYPOTHESIS_PROFILE: ci
 
 permissions:
   contents: read

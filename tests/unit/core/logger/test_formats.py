@@ -5,7 +5,9 @@ from __future__ import annotations
 import json
 import logging
 import re
+import unicodedata
 import uuid
+from collections.abc import Callable
 from datetime import UTC, date, datetime, time
 from decimal import Decimal
 from enum import Enum, StrEnum
@@ -14,6 +16,8 @@ from pathlib import PurePosixPath
 from types import TracebackType
 
 import pytest
+from hypothesis import given
+from hypothesis import strategies as st
 
 from loom.core.log_names import LogField, SubKey
 from loom.core.logger.formats import (
@@ -21,11 +25,11 @@ from loom.core.logger.formats import (
     MAX_VALUE_LENGTH,
     TRUNCATION_MARKER,
     JsonFormatter,
+    Logfmt,
     RecordFields,
     TextFormatter,
 )
 from loom.core.model.redaction import MASK, Dsn, RedactedMap, Secret
-from loom.core.observability.observer.log import LifecycleKey
 
 _STACK = LogField.EXCEPTION_STACKTRACE.value
 
@@ -41,10 +45,11 @@ def _record(
     level: int = logging.INFO,
     msg: str = "billing.invoice_issued",
     exc_info: ExcInfo | None = None,
+    name: str = "billing.invoices",
     **extra: object,
 ) -> logging.LogRecord:
     record = logging.LogRecord(
-        name="billing.invoices",
+        name=name,
         level=level,
         pathname=__file__,
         lineno=7,
@@ -304,26 +309,23 @@ class TestValueRendering:
 class TestLogInjection:
     FORGED = "ok\r\n2026-01-01 ERROR billing.forged forged_entry"
 
-    def test_the_text_line_escapes_line_breaks_in_the_message(self) -> None:
-        line = TextFormatter().format(_record(msg=self.FORGED))
+    @pytest.mark.parametrize(
+        ("fields", "written"),
+        [
+            ({"user": FORGED}, 'm user="ok\\r\\n2026-01-01 ERROR billing.forged forged_entry"'),
+            ({"name": FORGED}, "ok\\r\\n2026-01-01 ERROR billing.forged forged_entry m"),
+            ({"a\nERROR forged": "x"}, 'm "a\\nERROR forged"=x'),
+            ({"msg": "bell\x07\x85next"}, "bell\\x07\\x85next"),
+        ],
+        ids=["value-line-breaks", "logger-name", "key-line-break", "message"],
+    )
+    def test_the_text_line_is_one_line_and_escapes_what_could_forge_a_record(
+        self, fields: dict[str, object], written: str
+    ) -> None:
+        line = _text(_record(**{"msg": "m", **fields}))
 
-        assert "\n" not in line
-        assert "ok\\r\\n2026" in line
-
-    def test_the_text_line_escapes_line_breaks_in_a_value(self) -> None:
-        line = TextFormatter().format(_record(user=self.FORGED))
-
-        assert "\n" not in line
-        assert 'user="' + self.FORGED.replace("\r", "\\r").replace("\n", "\\n") + '"' in line
-
-    def test_the_text_line_escapes_line_breaks_in_the_logger_name(self) -> None:
-        record = _record()
-        record.name = self.FORGED
-
-        line = TextFormatter().format(record)
-
-        assert "\n" not in line
-        assert " ok\\r\\n2026" in line
+        assert len(line.splitlines()) == 1
+        assert line.endswith(" " + written)
 
     def test_json_keeps_one_line_for_a_value_with_line_breaks(self) -> None:
         line = JsonFormatter().format(_record(user=self.FORGED))
@@ -331,31 +333,54 @@ class TestLogInjection:
         assert "\n" not in line
         assert json.loads(line)["user"] == self.FORGED
 
-    @pytest.mark.parametrize(
-        ("message", "extra", "written"),
-        [
-            ("m", {"a\nERROR forged": "x"}, 'm "a\\nERROR forged"=x'),
-            ("m", {"a b=c": 1}, 'm "a b=c"=1'),
-            ("m", {"user": "bell\x07esc\x1b"}, 'm user="bell\\x07esc\\x1b"'),
-            ("bell\x07\x85next", {}, "bell\\x07\\x85next"),
-            ("m", {"user": "a\u2028b"}, 'm user="a\\u2028b"'),
-            ("m", {"user": "p\\q"}, 'm user="p\\\\q"'),
-            ("m", {LifecycleKey.META.of("a b"): 1}, 'm "loom.lifecycle.meta.a b"=1'),
-        ],
-        ids=[
-            "newline-key",
-            "spaced-key",
-            "control-value",
-            "control-message",
-            "line-separator",
-            "backslash",
-            "meta-key",
-        ],
-    )
-    def test_the_text_line_is_one_line_and_each_key_and_value_reads_back(
-        self, message: str, extra: dict[str, object], written: str
-    ) -> None:
-        line = _text(_record(msg=message, **extra))
 
-        assert line.endswith(" " + written)
-        assert len(line.splitlines()) == 1
+_AWKWARD_CHARS = '\x00\x1f\x7f\x85\r\n\t\u2028\u2029="\\ '
+_AWKWARD = st.text(alphabet=_AWKWARD_CHARS + "a")
+_ONE_AWKWARD = st.builds(
+    "".join,
+    st.tuples(
+        st.text("ab", max_size=3),
+        st.sampled_from(sorted(_AWKWARD_CHARS)),
+        st.text("ab", max_size=3),
+    ),
+)
+_ANY_TEXT = st.one_of(st.text(), _AWKWARD, _ONE_AWKWARD)
+
+
+class TestLogfmtProperties:
+    ESCAPES = {"n": "\n", "r": "\r", "t": "\t", "\\": "\\", '"': '"'}
+
+    @classmethod
+    def read(cls, token: str) -> str:
+        if not token.startswith('"'):
+            return token
+        return re.sub(
+            r"\\(?:x([0-9a-f]{2})|u([0-9a-f]{4})|(.))",
+            lambda m: chr(int(m[1] or m[2], 16)) if m[3] is None else cls.ESCAPES[m[3]],
+            token[1:-1],
+        )
+
+    @staticmethod
+    def has_control(text: str) -> bool:
+        return any(unicodedata.category(char) in {"Cc", "Zl", "Zp"} for char in text)
+
+    @classmethod
+    def needs_quotes(cls, text: str) -> bool:
+        return cls.has_control(text) or any(char.isspace() or char in '="\\' for char in text)
+
+    @pytest.mark.parametrize("write", [Logfmt.token, Logfmt.one_line], ids=["token", "one-line"])
+    @given(text=_ANY_TEXT)
+    def test_written_text_holds_no_break_or_control_character(
+        self, write: Callable[[str], str], text: str
+    ) -> None:
+        assert not self.has_control(write(text))
+
+    @given(text=_ANY_TEXT)
+    def test_a_token_is_quoted_exactly_when_the_text_needs_it(self, text: str) -> None:
+        written = Logfmt.token(text)
+
+        assert (written.startswith('"') and written.endswith('"')) == self.needs_quotes(text)
+
+    @given(text=_ANY_TEXT)
+    def test_a_token_reads_back_to_its_text(self, text: str) -> None:
+        assert self.read(Logfmt.token(text)) == text
