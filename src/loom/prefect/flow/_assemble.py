@@ -29,10 +29,11 @@ from loom.prefect._flow_yaml import (
     resolve_config_uri,
 )
 from loom.prefect._meta import LOOM_ETL_META_ATTR, ETLFlowMeta, FlowTrigger
-from loom.prefect.flow._common import coerce_tags
+from loom.prefect.flow._common import coerce_tags, prefect_flow_run_id
 from loom.prefect.flow._hooks import make_notification_hooks, pause_schedule_on_failure
 from loom.prefect.flow._run_name import make_run_name_callback
 from loom.prefect.notify import Notifier, build_notifiers
+from loom.prefect.observer._logging_bridge import log_bridge
 
 _INHERITABLE_TYPES: frozenset[Any] = frozenset({str, date, datetime})
 
@@ -138,7 +139,12 @@ def assemble_flow(
     """
     check_inherited_params(settings.trigger, params_type, name=name)
     safe_name = flow_attribute_name(name)
-    flow_body: Any = body
+
+    def bridged_body(**kwargs: Any) -> None:
+        with log_bridge(prefect_flow_run_id()):
+            body(**kwargs)
+
+    flow_body: Any = bridged_body
     flow_body.__signature__ = signature
     flow_body.__name__ = safe_name
     flow_body.__qualname__ = safe_name

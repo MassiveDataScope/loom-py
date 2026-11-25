@@ -122,8 +122,6 @@ def invoked(monkeypatch: pytest.MonkeyPatch, events: list[str]) -> list[tuple[An
         lambda _path, _pipeline, params, _pending, ctx, *_rest, **_kw: calls.append((params, ctx)),
     )
     monkeypatch.setattr(_body, "build_observers", lambda *a, **k: [])
-    monkeypatch.setattr(_body, "install_log_bridge", lambda *a, **k: events.append("bridge"))
-    monkeypatch.setattr(_body, "uninstall_log_bridge", lambda *a, **k: None)
     return calls
 
 
@@ -252,7 +250,7 @@ class TestEtlRunParams:
         )
 
     @pytest.mark.usefixtures("in_run")
-    def test_the_record_is_one_short_attempt_after_the_log_bridge(
+    def test_the_record_is_one_short_attempt(
         self,
         tmp_path: Path,
         stored: dict[str, Any],
@@ -261,7 +259,7 @@ class TestEtlRunParams:
         invoked: list[tuple[Any, Any]],
     ) -> None:
         _run(_etl(tmp_path), stored, run_date="${yesterday}", updated_at_to="${now}")
-        assert events == ["bridge", "record"]
+        assert events == ["record"]
         assert client.max_retries == 0
         assert client.httpx_settings == {"timeout": _params._RECORD_TIMEOUT_SECONDS}
         assert _params._RECORD_TIMEOUT_SECONDS <= 10
@@ -375,8 +373,6 @@ class TestMaintenanceRunParams:
     ) -> None:
         runner = MagicMock()
         runner.run.return_value = MaintenanceReport()
-        monkeypatch.setattr(_maintenance, "install_log_bridge", MagicMock())
-        monkeypatch.setattr(_maintenance, "uninstall_log_bridge", MagicMock())
         monkeypatch.setattr(_maintenance, "_load_context", lambda path, **_kw: MagicMock())
         monkeypatch.setattr(
             _maintenance, "_parse_sections", lambda context: (MagicMock(), MagicMock())
@@ -413,8 +409,6 @@ class TestBackfillRunParams:
         runner = MagicMock()
         monkeypatch.setattr(_backfill_body.ETLRunner, "from_yaml", lambda *a, **k: runner)
         monkeypatch.setattr(_backfill_body, "build_observers", lambda *a, **k: [])
-        monkeypatch.setattr(_backfill_body, "install_log_bridge", lambda *a, **k: None)
-        monkeypatch.setattr(_backfill_body, "uninstall_log_bridge", lambda *a, **k: None)
         cfg = tmp_path / "backfill.yaml"
         cfg.write_text("params: {}\n", encoding="utf-8")
         flow = backfill_flow(

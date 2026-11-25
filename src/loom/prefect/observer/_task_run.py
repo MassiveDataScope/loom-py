@@ -12,7 +12,7 @@ from loom.core.log_names import LogField
 from loom.core.observability.event import EventKind, LifecycleEvent, Scope
 from loom.prefect._async import run_sync
 from loom.prefect.event import PrefectEvent
-from loom.prefect.observer._logging_bridge import _current_task_run_id
+from loom.prefect.observer._logging_bridge import active_task_run_id
 
 _log = logging.getLogger(__name__)
 
@@ -73,7 +73,7 @@ class PrefectTaskRunObserver:
         task_run_id = self._create_task_run(event)
         if task_run_id is not None:
             self._task_runs[step_run_id] = task_run_id
-            self._tokens[step_run_id] = _current_task_run_id.set(task_run_id)
+            self._tokens[step_run_id] = active_task_run_id.set(task_run_id)
 
     def _on_end(self, event: LifecycleEvent) -> None:
         self._reset_log_binding(event.id)
@@ -97,7 +97,7 @@ class PrefectTaskRunObserver:
         if token is None:
             return
         with contextlib.suppress(ValueError):
-            _current_task_run_id.reset(token)
+            active_task_run_id.reset(token)
 
     def _create_task_run(self, event: LifecycleEvent) -> uuid.UUID | None:
         from prefect.client.orchestration import get_client  # noqa: PLC0415
