@@ -82,7 +82,7 @@ class TestLoomOwnedProvider:
             endpoint=Dsn("http://collector:4318/v1/traces"), service_name=configured
         )
 
-        _, flusher = _otel.build_tracer(config, app_name=app)
+        _, flusher = _otel.build_tracer(config, service_name=config.resolve_service_name(app))
 
         assert isinstance(flusher, TracerProvider)
         assert flusher.resource.attributes["service.name"] == named

@@ -59,24 +59,19 @@ def install_subject_key() -> None:
 
 
 class CapturingHandler(logging.Handler):
-    """Keeps the records it is given, after the filters of the handler ran."""
+    """Keeps the records it is given, and each one's fields rendered as it was emitted.
+
+    The fields are derived in the context that emitted the record, as an output of loom
+    does; ``named`` reads them back by event.
+    """
 
     def __init__(self) -> None:
         super().__init__()
         self.records: list[logging.LogRecord] = []
-
-    def emit(self, record: logging.LogRecord) -> None:
-        self.records.append(record)
-
-
-class RenderingHandler(logging.Handler):
-    """Renders each record's fields as it is emitted, in the context that emitted it."""
-
-    def __init__(self) -> None:
-        super().__init__()
         self.rendered: list[tuple[str, dict[str, object]]] = []
 
     def emit(self, record: logging.LogRecord) -> None:
+        self.records.append(record)
         self.rendered.append((record.getMessage(), RecordFields(record).fields()))
 
     def named(self, event: str) -> list[dict[str, object]]:
@@ -85,9 +80,9 @@ class RenderingHandler(logging.Handler):
 
 
 @pytest.fixture
-def rendering() -> RenderingHandler:
-    """A handler on the root logger that renders the fields of what reaches it."""
-    handler = RenderingHandler()
+def rendering() -> CapturingHandler:
+    """A handler on the root logger that keeps what reaches it, its fields rendered."""
+    handler = CapturingHandler()
     logging.getLogger().addHandler(handler)
     return handler
 
@@ -168,12 +163,17 @@ class CapturedLog:
         return [fields for logged, fields in self.events if logged == event]
 
     def rendered(self, event: str | None = None) -> list[str]:
-        """Each record's event and fields as one string; only those of *event* when given."""
+        """Each record's event and fields as loom's formats lay them out; only those of *event*."""
         return [
-            f"{record.getMessage()} {logged_fields(record)}"
+            f"{record.getMessage()} {RecordFields(record).fields()}"
             for record in self._records()
             if event is None or record.getMessage() == event
         ]
+
+    @property
+    def laid_out_text(self) -> str:
+        """Every record as :meth:`rendered` lays it out, one per line."""
+        return "\n".join(self.rendered())
 
     @property
     def exception_text(self) -> str:
@@ -184,36 +184,26 @@ class CapturedLog:
             if record.exc_info is not None and record.exc_info[0] is not None
         )
 
-    @property
-    def laid_out_text(self) -> str:
-        """Each record's event and fields as loom's formats lay them out, one per line, no stack."""
-        return "\n".join(
-            f"{record.getMessage()} {RecordFields(record).laid_out()}" for record in self._records()
-        )
-
 
 def logged_fields(record: logging.LogRecord) -> dict[str, Any]:
     """Each field *record* carries as it is on the record, keys as text but a ``SubKey``."""
     return {
         (key if isinstance(key, SubKey) else str(key)): value
-        for key, value in RecordFields(record).items()
+        for key, value in RecordFields(record).extras().items()
     }
 
 
 @contextmanager
 def root_logger_kept() -> Iterator[logging.Logger]:
-    """Lend the root logger, then give back its level, handlers, filters and quiet libraries."""
+    """Lend the root logger, then give back its level, handlers and quiet libraries."""
     root = logging.getLogger()
     handlers, level = list(root.handlers), root.level
-    filters = {handler: list(handler.filters) for handler in handlers}
     libraries = {name: logging.getLogger(name).level for name in QUIET_LIBRARIES}
     try:
         yield root
     finally:
         root.handlers[:] = handlers
         root.setLevel(level)
-        for handler, kept in filters.items():
-            handler.filters[:] = kept
         for name, kept_level in libraries.items():
             logging.getLogger(name).setLevel(kept_level)
 
@@ -221,7 +211,6 @@ def root_logger_kept() -> Iterator[logging.Logger]:
 __all__ = [
     "CapturedLog",
     "CapturingHandler",
-    "RenderingHandler",
     "configured",
     "logged_fields",
     "root_logger_kept",

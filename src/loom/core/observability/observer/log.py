@@ -7,7 +7,6 @@ import logging
 from loom.core.log_names import LogField, LogKey, ValueKind
 from loom.core.observability.diagnostic import ObservabilityEvent
 from loom.core.observability.event import EventKind, LifecycleEvent, Scope
-from loom.core.tracing.ids import TraceIds
 
 _log = logging.getLogger(__name__)
 
@@ -62,7 +61,8 @@ class LogLifecycleObserver:
             fields[LogField.STATUS] = event.status.value
         if event.failure is not None:
             fields |= event.failure.fields()
-        fields |= TraceIds.current(event.trace_id).fields()
+        if event.trace_id is not None:
+            fields[LogField.TRACE_ID] = event.trace_id
         fields |= {LifecycleKey.META.of(key): value for key, value in event.meta.items()}
         _log.log(level, _EVENTS[event.kind], extra=fields)
 

@@ -35,26 +35,33 @@ class DeclaredNames:
 
     A name's module is not published, so a published name missing from ``lines`` while a
     module failed to import may live in that module: it cannot be checked.
+
+    Attributes:
+        lines: One line per declared event and key.
+        failed_modules: The modules a missing extra or an unsupported Python kept from importing.
+        crashed_modules: The modules that raised anything but ``ImportError`` on import.
     """
 
     lines: frozenset[str]
     failed_modules: frozenset[str]
+    crashed_modules: frozenset[str] = frozenset()
 
     @classmethod
     def from_loom(cls) -> DeclaredNames:
         """Import every module of ``loom`` and read the names its classes declare.
 
-        Only an ``ImportError`` (a missing extra or an unsupported Python) hides names; a module
-        that raises anything else on import, like the Alembic ``env_template``, declares none.
+        Only an ``ImportError`` (a missing extra or an unsupported Python) is an expected
+        reason for a module to hide its names; any other exception is a crash.
         """
         failed: set[str] = set()
+        crashed: set[str] = set()
         for module in pkgutil.walk_packages(loom.__path__, "loom.", onerror=failed.add):
             try:
                 importlib.import_module(module.name)
             except ImportError:
                 failed.add(module.name)
             except Exception:
-                continue
+                crashed.add(module.name)
         lines = {
             f"event {event.value}"
             for owner in _subclasses(LogEvent)
@@ -66,7 +73,7 @@ class DeclaredNames:
             if owner.__module__.startswith("loom.")
             for key in owner
         }
-        return cls(frozenset(lines), frozenset(failed))
+        return cls(frozenset(lines), frozenset(failed), frozenset(crashed))
 
     def unchecked(self, published: Iterable[str]) -> frozenset[str]:
         """The *published* lines this run cannot verify: the undeclared ones, if a module failed."""
@@ -80,8 +87,12 @@ class DeclaredNames:
 
 
 def main() -> None:
-    """Rewrite the contract file, refusing when a failed import hides a published line."""
+    """Rewrite the contract file, refusing when an import crashed or hides a published line."""
     declared = DeclaredNames.from_loom()
+    if declared.crashed_modules:
+        raise SystemExit(
+            f"modules crashed on import: {', '.join(sorted(declared.crashed_modules))}"
+        )
     published = CONTRACT_FILE.read_text().splitlines() if CONTRACT_FILE.exists() else None
     if published is None or declared.unchecked(published):
         raise SystemExit(

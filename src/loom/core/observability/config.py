@@ -58,6 +58,11 @@ class OtelObservabilityConfig(
     export_logs: bool = False
     config: OtelConfig | None = None
 
+    @property
+    def exports_logs(self) -> bool:
+        """Whether the log records are exported: OTEL is on and asks for it."""
+        return self.enabled and self.export_logs
+
 
 class PrometheusObservabilityConfig(
     LoomFrozenStruct, frozen=True, kw_only=True, forbid_unknown_fields=True

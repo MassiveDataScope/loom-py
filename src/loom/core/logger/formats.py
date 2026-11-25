@@ -6,7 +6,7 @@ import json
 import logging
 import math
 import re
-from collections.abc import Collection, Iterator
+from collections.abc import Collection
 from datetime import UTC, datetime
 from itertools import chain
 from typing import Final, Literal
@@ -36,27 +36,19 @@ _STACKTRACE: Final = LogField.EXCEPTION_STACKTRACE.value
 
 _STACK_FORMATTER: Final = logging.Formatter()
 
-RECORD_ATTRIBUTES: Final = frozenset(logging.makeLogRecord({}).__dict__) | {"message", "asctime"}
-"""Attributes the stdlib gives every record; none of them is a field."""
-
-_NOT_FIELDS: Final = RECORD_ATTRIBUTES | {_STACKTRACE}
+_NOT_FIELDS: Final = frozenset(logging.makeLogRecord({}).__dict__) | {
+    "message",
+    "asctime",
+    _STACKTRACE,
+}
+"""The attributes the stdlib gives every record, and the stack: none of them is a field."""
 
 _AS_IS: Final = frozenset({bool, int, type(None)})
 
 _OPAQUE: Final = object()
 
-RESERVED_KEYS: Final = frozenset(
-    {
-        "timestamp",
-        "level",
-        "message",
-        "logger",
-    }
-)
-"""Keys a format writes from the record itself; an ``extra`` key of that name cannot take them."""
-
 EXTRA_PREFIX: Final = "loom.extra."
-"""Prefix under which a colliding ``extra`` key is written."""
+"""Prefix under which a field is written when its name is a key the JSON layout owns."""
 
 
 def truncated(text: str, limit: int, *, keep: Literal["start", "end"] = "start") -> str:
@@ -119,8 +111,8 @@ class RecordFields:
     """One record as loom's outputs write it, derived when written; no context is stored on it.
 
     The fields are, later ones winning, where the call was made, the identity, the
-    fields of the running :func:`~loom.core.logger.context.log_context`, the ids of the
-    trace, and what was passed as ``extra``; the failure of ``exc_info`` replaces any
+    fields of the running :func:`~loom.core.logger.context.log_context`, what was passed
+    as ``extra``, and the ids of the trace; the failure of ``exc_info`` replaces any
     ``extra`` of its names. Each output builds its own view in the thread that emitted
     the record, so every handler sees the record as it was logged.
 
@@ -145,35 +137,42 @@ class RecordFields:
         """The record's message, cut at :data:`MAX_VALUE_LENGTH`."""
         return truncated(self._record.getMessage(), MAX_VALUE_LENGTH)
 
+    def extras(self) -> dict[str, object]:
+        """Each ``extra`` of the record under the key it was passed with, its value unrendered."""
+        return {
+            name: value
+            for name, value in self._record.__dict__.items()
+            if name not in _NOT_FIELDS and not str(name).startswith("_")
+        }
+
     def fields(self) -> dict[str, object]:
         """Every field but the stack, under its own name, as :func:`render_value` writes it."""
-        return self._rendered(frozenset())
-
-    def laid_out(self) -> dict[str, object]:
-        """Every field but the stack under the name the JSON and text formats write it.
-
-        A key those formats write from the record itself (:data:`RESERVED_KEYS`) is
-        never taken from ``extra``: the field is written under ``loom.extra.<key>``.
-        """
-        return self._rendered(RESERVED_KEYS)
-
-    def items(self) -> Iterator[tuple[str, object]]:
-        """Each ``extra`` of the record under the key it was passed with, its value unrendered."""
-        return (
-            (key, value)
-            for key, value in self._record.__dict__.items()
-            if key not in _NOT_FIELDS and not str(key).startswith("_")
-        )
+        record = self._record
+        derived: dict[str, object] = {
+            LogField.CODE_FUNCTION: record.funcName,
+            LogField.CODE_LINE: record.lineno,
+            LogField.CODE_FILE: record.pathname,
+        }
+        if self._identity is not None:
+            derived.update(self._identity.fields())
+        derived.update(current_log_fields())
+        extras = self.extras()
+        derived.update(extras)
+        passed = extras.get(LogField.TRACE_ID)
+        derived.update(TraceIds.current(passed if isinstance(passed, str) else None).fields())
+        if record.exc_info is not None and record.exc_info[1] is not None:
+            derived.update(ErrorSummary.of(record.exc_info[1]).fields(LogField.EXCEPTION_TYPE))
+        return {str(key): render_value(value) for key, value in derived.items()}
 
     def logfmt(self, without: Collection[str] = ()) -> str:
-        """The :meth:`laid_out` fields as logfmt ``key=value`` pairs, quoted where needed.
+        """The :meth:`fields` as logfmt ``key=value`` pairs, quoted where needed.
 
         Args:
             without: Names of the fields to leave out.
         """
         return " ".join(
-            f"{Logfmt(key).token()}={Logfmt(str(value)).token()}"
-            for key, value in self.laid_out().items()
+            f"{Logfmt.token(key)}={Logfmt.token(str(value))}"
+            for key, value in self.fields().items()
             if key not in without
         )
 
@@ -186,9 +185,7 @@ class RecordFields:
         Args:
             without: Names of the fields to leave out.
         """
-        line = " ".join(
-            filter(None, (Logfmt(self.message).one_line(), self.logfmt(without=without)))
-        )
+        line = " ".join(filter(None, (Logfmt.one_line(self.message), self.logfmt(without=without))))
         stack = self.stack
         if stack is None:
             return line
@@ -208,34 +205,13 @@ class RecordFields:
         record.exc_text = record.exc_text or _STACK_FORMATTER.formatException(exc_info)
         return truncated(record.exc_text, MAX_STACK_LENGTH, keep="end")
 
-    def _rendered(self, reserved: frozenset[str]) -> dict[str, object]:
-        return {
-            EXTRA_PREFIX + name if (name := str(key)) in reserved else name: render_value(value)
-            for key, value in self._derived().items()
-        }
-
-    def _derived(self) -> dict[str, object]:
-        record = self._record
-        derived: dict[str, object] = {
-            LogField.CODE_FUNCTION: record.funcName,
-            LogField.CODE_LINE: record.lineno,
-            LogField.CODE_FILE: record.pathname,
-        }
-        if self._identity is not None:
-            derived.update(self._identity.fields())
-        derived.update(current_log_fields())
-        derived.update(TraceIds.current().fields())
-        derived.update(self.items())
-        if record.exc_info is not None and record.exc_info[1] is not None:
-            derived.update(ErrorSummary.of(record.exc_info[1]).fields(LogField.EXCEPTION_TYPE))
-        return derived
-
 
 class JsonFormatter(logging.Formatter):
     """One JSON object per record, fields at the top level.
 
     The keys of Lambda's JSON format (``timestamp``, ``level``, ``message``,
-    ``logger``) come first and cannot be overwritten by ``extra``. The formatter
+    ``logger``) come first and cannot be overwritten by a field of the same name,
+    which is written under ``loom.extra.<key>``. The formatter
     derives every field itself, so used alone on any handler it writes the code origin,
     the running context, the trace ids, the failure's type and stack, and no ``repr``
     and no secret.
@@ -256,8 +232,9 @@ class JsonFormatter(logging.Formatter):
             "level": record.levelname,
             "message": fields.message,
             "logger": record.name,
-            **fields.laid_out(),
         }
+        for name, value in fields.fields().items():
+            entry[EXTRA_PREFIX + name if name in entry else name] = value
         stack = fields.stack
         if stack is not None:
             entry[_STACKTRACE] = stack
@@ -272,31 +249,32 @@ class Logfmt:
 
     Control characters and line breaks are always written escaped, so no text
     can start a second record; a key or value holding a space, ``=``, ``"`` or a
-    backslash is quoted, so it cannot forge or merge fields.
+    backslash is quoted, so it cannot forge or merge fields. Text that needs
+    neither is returned as it is.
     """
 
-    __slots__ = ("_text",)
-
+    _CONTROLS: Final = "".join(map(chr, chain(range(0x20), range(0x7F, 0xA0), (0x2028, 0x2029))))
     _ONE_LINE: Final = {
-        code: f"\\x{code:02x}" if code <= 0xFF else f"\\u{code:04x}"
-        for code in chain(range(0x20), range(0x7F, 0xA0), (0x2028, 0x2029))
+        ord(control): f"\\x{ord(control):02x}" if ord(control) <= 0xFF else f"\\u{ord(control):04x}"
+        for control in _CONTROLS
     } | {ord("\n"): "\\n", ord("\r"): "\\r", ord("\t"): "\\t"}
     _QUOTED: Final = _ONE_LINE | {ord("\\"): "\\\\", ord('"'): '\\"'}
-    _SPACE_OR_EQUALS: Final = re.compile(r"[\s=]")
+    _HAS_CONTROL: Final = re.compile(f"[{re.escape(_CONTROLS)}]")
+    _NEEDS_QUOTES: Final = re.compile(f'[\\s="\\\\{re.escape(_CONTROLS)}]')
 
-    def __init__(self, text: str) -> None:
-        self._text = text
+    @classmethod
+    def one_line(cls, text: str) -> str:
+        """*text* with control characters and line breaks escaped, otherwise as it is."""
+        if cls._HAS_CONTROL.search(text) is None:
+            return text
+        return text.translate(cls._ONE_LINE)
 
-    def one_line(self) -> str:
-        """The text with control characters and line breaks escaped, otherwise as it is."""
-        return self._text.translate(self._ONE_LINE)
-
-    def token(self) -> str:
-        """The text bare when it is a plain token, otherwise quoted and escaped."""
-        escaped = self._text.translate(self._QUOTED)
-        if escaped == self._text and self._SPACE_OR_EQUALS.search(escaped) is None:
-            return escaped
-        return f'"{escaped}"'
+    @classmethod
+    def token(cls, text: str) -> str:
+        """*text* bare when it is a plain token, otherwise quoted and escaped."""
+        if cls._NEEDS_QUOTES.search(text) is None:
+            return text
+        return f'"{text.translate(cls._QUOTED)}"'
 
 
 class TextFormatter(logging.Formatter):

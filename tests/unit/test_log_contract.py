@@ -2,14 +2,23 @@
 
 from __future__ import annotations
 
+import sys
+
 import pytest
 
 from scripts.log_contract import CONTRACT_FILE, DeclaredNames
 
+pytestmark = pytest.mark.slow
+"""Importing all of loom takes seconds: CI's slow lane runs it, on Python 3.11 to 3.14."""
+
+_EVERY_EXTRA_INSTALLS = sys.version_info < (3, 13)
+
 
 @pytest.fixture(scope="module")
 def declared() -> DeclaredNames:
-    return DeclaredNames.from_loom()
+    names = DeclaredNames.from_loom()
+    assert not names.crashed_modules, f"modules crashed on import: {sorted(names.crashed_modules)}"
+    return names
 
 
 @pytest.fixture(scope="module")
@@ -31,11 +40,12 @@ class TestLogContract:
     def test_no_published_name_is_removed_or_renamed(
         self, declared: DeclaredNames, published: frozenset[str]
     ) -> None:
-        if declared.failed_modules:
-            pytest.skip(
-                f"{sorted(declared.failed_modules)} failed to import, so their published names "
-                "cannot be checked; (b) runs on Python < 3.13 with all extras (CI's 3.11/3.12 legs)"
-            )
+        if declared.failed_modules and not _EVERY_EXTRA_INSTALLS:
+            pytest.skip(f"no wheel of an extra for Python {sys.version_info[:2]}")
+        assert not declared.failed_modules, (
+            f"{sorted(declared.failed_modules)} failed to import: sync with "
+            "`uv sync --all-extras --all-groups`"
+        )
         gone = sorted(published - declared.lines)
 
         assert not gone, (

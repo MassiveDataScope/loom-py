@@ -13,6 +13,7 @@ from loom.core.stores import StoreWiring
 from loom.core.stores.profile import SERVER_PROFILE
 from loom.core.stores.repository import CursorCodec
 from loom.stores.sqlalchemy.plugin import SQLAlchemyStorePlugin
+from tests.helpers.loggers import CapturedLog
 from tests.helpers.persistence import build_backend
 
 _UNREACHABLE_URL = "sqlite+aiosqlite:////nonexistent/loom-readiness/store.db"
@@ -40,7 +41,7 @@ class TestSqlAlchemyStorePlugin:
         with caplog.at_level(logging.WARNING):
             _wiring("sqlite+aiosqlite:///", cursors={"signing": "unsigned"})
 
-        assert "unsigned" in caplog.text
+        assert "unsigned" in CapturedLog(caplog).laid_out_text
 
     def test_the_wiring_registers_its_cursor_codec_for_direct_users(self) -> None:
         container = LoomContainer()
@@ -68,4 +69,4 @@ class TestSqlAlchemyStorePlugin:
         with caplog.at_level(logging.WARNING, logger=backend_module.__name__):
             assert await wiring.readiness() is False
 
-        assert "readiness" in caplog.text
+        assert "readiness" in CapturedLog(caplog).laid_out_text

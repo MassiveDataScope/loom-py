@@ -9,7 +9,7 @@ import pytest
 
 from loom.core.tracing import get_trace_id
 from loom.rest.middleware import TraceIdMiddleware, _extract_header
-from tests.helpers.loggers import RenderingHandler
+from tests.helpers.loggers import CapturingHandler
 
 # ---------------------------------------------------------------------------
 # ASGI test helpers
@@ -174,7 +174,7 @@ class TestTraceIdMiddlewareResponseHeader:
 class TestTraceIdMiddlewareLogs:
     @pytest.mark.asyncio
     async def test_a_record_emitted_during_the_request_carries_its_trace_id(
-        self, rendering: RenderingHandler
+        self, rendering: CapturingHandler
     ) -> None:
         scope = _make_http_scope([(b"x-request-id", b"log-tid")])
 
