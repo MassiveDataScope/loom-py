@@ -13,9 +13,11 @@ from __future__ import annotations
 
 import logging
 import os
+from types import MappingProxyType
 from typing import TYPE_CHECKING, Any, Final, cast
 
 from opentelemetry import trace
+from opentelemetry._logs import SeverityNumber
 from opentelemetry.trace import Tracer
 from opentelemetry.util.types import Attributes
 
@@ -34,7 +36,7 @@ if TYPE_CHECKING:
     from opentelemetry.sdk._logs import LoggerProvider
     from opentelemetry.sdk._logs.export import LogRecordExporter
 
-_OTEL_EXTRA = "etl-otel"
+_OTEL_EXTRA: Final = "etl-otel"
 _ERR_MISSING_SDK = (
     "OTEL span and log export requires 'opentelemetry-sdk'. "
     "Install it with: pip install 'loom-py[etl-otel]'"
@@ -44,6 +46,18 @@ _log = logging.getLogger(__name__)
 
 _INSTRUMENTATION_SCOPE: Final = "loom"
 _NANOSECONDS_PER_SECOND: Final = 1_000_000_000
+
+_SEVERITIES: Final = MappingProxyType(
+    {
+        logging.NOTSET: SeverityNumber.UNSPECIFIED,
+        logging.DEBUG: SeverityNumber.DEBUG,
+        logging.INFO: SeverityNumber.INFO,
+        logging.WARNING: SeverityNumber.WARN,
+        logging.ERROR: SeverityNumber.ERROR,
+        logging.CRITICAL: SeverityNumber.FATAL,
+    }
+)
+"""The severity of each standard level; its name is the severity text."""
 
 
 def _load_span_exporter_cls(protocol: str) -> type[Any]:
@@ -228,25 +242,26 @@ class OtelLogHandler(logging.Handler):
         self._identity = identity
 
     def emit(self, record: logging.LogRecord) -> None:
-        """Emit *record* with its fields rendered and no exception."""
-        from opentelemetry.sdk._logs._internal import std_to_otel
-
-        view = RecordFields(record)
-        attributes = view.fields()
-        attributes[LogField.RUNTIME] = self._identity.runtime.value
-        if LogField.SPAN_ID in attributes:
-            del attributes[LogField.TRACE_ID], attributes[LogField.SPAN_ID]
-        stack = view.stack
-        if stack is not None:
-            attributes[LogField.EXCEPTION_STACKTRACE] = stack
-        severity = std_to_otel(record.levelno)
-        self._logger.emit(
-            timestamp=int(record.created * _NANOSECONDS_PER_SECOND),
-            severity_number=severity,
-            severity_text=severity.name,
-            body=view.message,
-            attributes=cast("Attributes", attributes),
-        )
+        """Emit *record* with its fields rendered and no exception; a failure is handled."""
+        try:
+            view = RecordFields(record)
+            attributes = view.fields()
+            attributes[LogField.RUNTIME.value] = self._identity.runtime.value
+            if LogField.SPAN_ID in attributes:
+                del attributes[LogField.TRACE_ID], attributes[LogField.SPAN_ID]
+            stack = view.stack
+            if stack is not None:
+                attributes[LogField.EXCEPTION_STACKTRACE.value] = stack
+            severity = _SEVERITIES[view.standard_level]
+            self._logger.emit(
+                timestamp=int(record.created * _NANOSECONDS_PER_SECOND),
+                severity_number=severity,
+                severity_text=severity.name,
+                body=view.message,
+                attributes=cast("Attributes", attributes),
+            )
+        except Exception:
+            self.handleError(record)
 
     def flush(self) -> None:
         """Flush the provider's processors."""

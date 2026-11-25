@@ -5,7 +5,7 @@ from __future__ import annotations
 import logging
 import sys
 from collections.abc import Sequence
-from typing import Final
+from typing import Final, assert_never
 
 from loom.core.environment import lambda_writes_json_logs
 from loom.core.logger.formats import JsonFormatter, LambdaFormatter, TextFormatter
@@ -78,6 +78,8 @@ def configure_logging(
                 handler.setFormatter(formatter)
             if not runtime:
                 _stdout_handler(root, JsonFormatter(identity=identity))
+        case _ as unreachable:
+            assert_never(unreachable)
     for name, level in settings.logger_levels().items():
         logging.getLogger(name).setLevel(level)
 

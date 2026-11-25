@@ -6,9 +6,13 @@ import json
 import logging
 import math
 import re
+import uuid
 from collections.abc import Collection
-from datetime import UTC, datetime
+from datetime import UTC, date, datetime, time
+from decimal import Decimal
+from enum import Enum
 from itertools import chain
+from pathlib import PurePath
 from typing import Final, Literal
 
 from loom.core.errors.summary import ErrorSummary
@@ -68,35 +72,37 @@ def truncated(text: str, limit: int, *, keep: Literal["start", "end"] = "start")
 def _scalar(value: object) -> object:
     """*value* as a format writes a scalar, or ``_OPAQUE`` when it is none.
 
-    A secret is masked, a string cut and a non-finite float written as text.
+    A secret is masked, a string cut, an int or str subclass written as the plain type,
+    a non-finite float, an id, a decimal, a path and a dsn written as text, a date or
+    time in ISO 8601 and an enum as its value.
     """
     if type(value) in _AS_IS:
         return value
     if isinstance(value, str):
-        return truncated(value, MAX_VALUE_LENGTH)
+        return truncated(str.__str__(value), MAX_VALUE_LENGTH)
     if isinstance(value, float):
         return value if math.isfinite(value) else str(value)
     if isinstance(value, int):
-        return value
+        return int(value)
     if isinstance(value, Secret | RedactedMap):
         return MASK
-    if isinstance(value, Dsn):
+    if isinstance(value, Dsn | uuid.UUID | Decimal | PurePath):
         return truncated(str(value), MAX_VALUE_LENGTH)
+    if isinstance(value, date | time):
+        return value.isoformat()
+    if isinstance(value, Enum):
+        return _scalar(value.value)
     return _OPAQUE
 
 
 def render_value(value: object) -> object:
     """What a formatter writes for a field *value*.
 
-    A scalar is written as it is, a string cut at :data:`MAX_VALUE_LENGTH`; a
-    list of scalars is written as a list of at most :data:`MAX_LIST_ITEMS`
-    items; a ``Secret`` is masked; any other object is written as its type
-    name, never its ``repr``.
+    A scalar is written as :func:`_scalar` says, a string cut at
+    :data:`MAX_VALUE_LENGTH`; a list of scalars is written as a list of at most
+    :data:`MAX_LIST_ITEMS` items; a ``Secret`` is masked; any other object is
+    written as its type name, never its ``repr``.
     """
-    if type(value) is str:
-        return truncated(value, MAX_VALUE_LENGTH)
-    if type(value) in _AS_IS:
-        return value
     scalar = _scalar(value)
     if scalar is not _OPAQUE:
         return scalar
@@ -192,18 +198,28 @@ class RecordFields:
         return "\n".join([line, *(f"{_CONTINUATION}{row}" for row in stack.splitlines())])
 
     @property
-    def stack(self) -> str | None:
-        """The traceback of ``exc_info`` from ERROR up, keeping its end when it is long.
+    def standard_level(self) -> int:
+        """The record's level as the standard one at or below it; CRITICAL from there up."""
+        return min(max(self._record.levelno, 0), logging.CRITICAL) // 10 * 10
 
-        It is formatted once per record into the standard ``exc_text`` cache, which every
-        handler reuses; an ``extra`` of its name is never written.
+    @property
+    def stack(self) -> str | None:
+        """The traceback of ``exc_info`` from ERROR up, then the ``stack_info``, keeping the end.
+
+        The traceback is formatted once per record into the standard ``exc_text`` cache,
+        which every handler reuses; an ``extra`` of its name is never written.
         """
         record = self._record
         exc_info = record.exc_info
-        if exc_info is None or exc_info[1] is None or record.levelno < logging.ERROR:
+        parts = []
+        if exc_info is not None and exc_info[1] is not None and record.levelno >= logging.ERROR:
+            record.exc_text = record.exc_text or _STACK_FORMATTER.formatException(exc_info)
+            parts.append(record.exc_text)
+        if record.stack_info:
+            parts.append(_STACK_FORMATTER.formatStack(record.stack_info))
+        if not parts:
             return None
-        record.exc_text = record.exc_text or _STACK_FORMATTER.formatException(exc_info)
-        return truncated(record.exc_text, MAX_STACK_LENGTH, keep="end")
+        return truncated("\n".join(parts), MAX_STACK_LENGTH, keep="end")
 
 
 class JsonFormatter(logging.Formatter):
@@ -297,7 +313,7 @@ class TextFormatter(logging.Formatter):
     def format(self, record: logging.LogRecord) -> str:
         """Render *record* as one line, its stack after it when it carries one."""
         fields = RecordFields(record, self._identity)
-        head = f"{fields.timestamp} {record.levelname:<7} {record.name}"
+        head = f"{fields.timestamp} {record.levelname:<7} {Logfmt.one_line(record.name)}"
         return f"{head} {fields.body()}"
 
 
@@ -329,6 +345,6 @@ class LambdaFormatter(JsonFormatter):
     def format(self, record: logging.LogRecord) -> str:
         """Render *record* as a JSON object on one line, ended by a line break."""
         if self._json_frames:
-            level = min(max(record.levelno, 0), logging.CRITICAL) // 10 * 10
+            level = RecordFields(record).standard_level
             record.__dict__["_frame_type"] = _LAMBDA_JSON_FRAMES[level]
         return super().format(record) + "\n"

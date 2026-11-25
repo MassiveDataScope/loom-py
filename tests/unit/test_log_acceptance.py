@@ -1,10 +1,8 @@
-"""Spec 019 acceptance table: every log output against the logging requirements.
+"""Acceptance table: every log output against the logging requirements.
 
 Each test is one cell: an output loom writes to, crossed with one requirement,
 driven through the real pipeline (``configure_logging``, the real formatters, the
-OpenTelemetry Logs API handler and exporters). A cell loom does not meet yet is marked
-``xfail(strict=True)`` with the PR that owns it, so the cell turning green fails
-the suite until the mark is removed.
+OpenTelemetry Logs API handler and exporters).
 
 The Lambda row uses a stand-in for the runtime's handler, because ``awslambdaric``
 is not a dependency: its class name and text layout copy the runtime's Text format.
@@ -83,8 +81,8 @@ class Output:
 
     Attributes:
         read: Everything written so far.
-        read_fields: The same without the traceback, which (owner's option A) is the
-            standard one and may quote the messages of a chain.
+        read_fields: The same without the traceback, which is the standard
+            one and may quote the messages of a chain.
         parse: Reads the fields back from one line of ``read_fields``.
     """
 
@@ -387,9 +385,14 @@ class TestLambdaFrames:
         self, runtime: LambdaLoggerHandler, lambda_json: Output
     ) -> None:
         _LOGGER.info("order_accepted")
+        _LOGGER.log(25, "order_noticed")
         _LOGGER.error("order_failed", exc_info=_failure())
 
-        assert runtime.frames == [bytes.fromhex("a55a000e"), bytes.fromhex("a55a0016")]
+        assert runtime.frames == [
+            bytes.fromhex("a55a000e"),
+            bytes.fromhex("a55a000e"),
+            bytes.fromhex("a55a0016"),
+        ]
         assert all(line.endswith("}\n") for line in runtime.lines)
 
     def test_under_text_the_runtime_keeps_its_text_frames(

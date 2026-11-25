@@ -8,7 +8,7 @@ import uuid
 from collections.abc import Iterator
 from contextlib import contextmanager
 from contextvars import ContextVar
-from typing import Any
+from typing import Any, Final
 
 from prefect.logging.handlers import APILogHandler
 
@@ -21,7 +21,7 @@ active_task_run_id: ContextVar[uuid.UUID | None] = ContextVar(
 )
 """The TaskRun of the step running in this context, bound by the task run observer."""
 
-_NOT_SHOWN = frozenset(
+_NOT_SHOWN: Final = frozenset(
     {
         "flow_run_id",
         "task_run_id",
@@ -50,12 +50,14 @@ class PrefectLogBridgeHandler(APILogHandler):
         self._flow_run_id = flow_run_id
 
     def prepare(self, record: logging.LogRecord) -> dict[str, Any]:
+        """Prefect's log payload of a copy of *record* stamped with the flow and task run."""
         stamped = copy.copy(record)
         stamped.flow_run_id = self._flow_run_id
         stamped.task_run_id = active_task_run_id.get()
         return super().prepare(stamped)
 
     def format(self, record: logging.LogRecord) -> str:
+        """The text body of *record*: its event, fields and stack, without its code origin."""
         return RecordFields(record).body(without=_NOT_SHOWN)
 
 

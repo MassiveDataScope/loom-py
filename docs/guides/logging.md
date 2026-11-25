@@ -65,8 +65,12 @@ log.info(InvoiceEvent.ISSUED, extra={LogField.JOB: "SendInvoice"})
   error, and from ERROR up `exception.stacktrace` (the standard traceback, its last
   16 384 characters). The message is never a field of its own. Pass `exc_info` once
   per failure, where your code stops the exception, so one failure is one record
-  and one stack. With the `lambda` format
-  the runtime's handler writes loom's JSON line too, so no field is lost.
+  and one stack. A WARNING with `exc_info` writes the type and the code but no stack:
+  a handled degradation does not need a human to read a traceback. A `stack_info=True`
+  stack is written at any level, after the traceback. With the `lambda` format
+  the runtime's handler writes loom's JSON line too, so no field is lost; the formatter
+  sets `_frame_type` on the record, which the runtime's handler (`awslambdaric`) reads to
+  frame the line with the record's level.
 - Reserved keys: `timestamp`, `level`, `message` and `logger` belong to the record;
   the `json` and `text` formats write an `extra` of one of those names as
   `loom.extra.<key>`. The exception fields belong to loom's formats, which replace an
@@ -93,7 +97,7 @@ handler sees the record as it was logged.
 | `service.name`, `service.version` | `app.name`, `app.version` of the configuration |
 | `deployment.environment.name` | the resolved environment |
 | `loom.runtime` | `fastapi`, `celery`, `lambda` or `cli` |
-| `trace_id`, `span_id` | inside a recording OpenTelemetry span, the span's own trace id and span id, so the record correlates with its trace even when the span continues a caller's `traceparent`; outside a span, `trace_id` is loom's id (HTTP header, job envelope, flow) and there is no `span_id` |
+| `trace_id`, `span_id` | inside a recording OpenTelemetry span, the span's own trace id and span id, so the record correlates with its trace even when the span continues a caller's `traceparent`; an `extra` of either name is overridden there; outside a span, `trace_id` is loom's id (HTTP header, job envelope, flow) and there is no `span_id` |
 | `loom.use_case.name` | the use case being executed |
 | `loom.job.name`, `loom.task_id`, `loom.attempt` | the job message being run |
 | `code.function.name`, `code.line.number`, `code.file.path` | where the record was emitted |
