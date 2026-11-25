@@ -14,6 +14,8 @@ from pathlib import PurePosixPath
 from types import TracebackType
 
 import pytest
+from hypothesis import given
+from hypothesis import strategies as st
 
 from loom.core.log_names import LogField, SubKey
 from loom.core.logger.formats import (
@@ -21,6 +23,7 @@ from loom.core.logger.formats import (
     MAX_VALUE_LENGTH,
     TRUNCATION_MARKER,
     JsonFormatter,
+    Logfmt,
     RecordFields,
     TextFormatter,
 )
@@ -359,3 +362,31 @@ class TestLogInjection:
 
         assert line.endswith(" " + written)
         assert len(line.splitlines()) == 1
+
+
+_CONTROL = re.compile("[\\x00-\\x1f\\x7f-\\x9f\\u2028\\u2029]")
+_ESCAPES = {"n": "\n", "r": "\r", "t": "\t", "\\": "\\", '"': '"'}
+
+
+def _unquoted(token: str) -> str:
+    body = token[1:-1]
+    return re.sub(
+        r"\\(?:x([0-9a-f]{2})|u([0-9a-f]{4})|(.))",
+        lambda m: chr(int(m[1] or m[2], 16)) if m[3] is None else _ESCAPES[m[3]],
+        body,
+    )
+
+
+class TestLogfmtProperties:
+    @given(text=st.text())
+    def test_a_token_and_a_one_line_text_hold_no_break_or_control_character(
+        self, text: str
+    ) -> None:
+        for written in (Logfmt.token(text), Logfmt.one_line(text)):
+            assert _CONTROL.search(written) is None
+
+    @given(text=st.text())
+    def test_a_token_reads_back_to_its_text(self, text: str) -> None:
+        written = Logfmt.token(text)
+
+        assert (_unquoted(written) if written.startswith('"') else written) == text
