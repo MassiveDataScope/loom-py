@@ -83,14 +83,18 @@ def _configure_logging(
 ) -> ContextFilter:
     """Install the log format and, when *export* is given, the OTEL log export beside it.
 
-    The export needs no filter of its own: the SDK's handler takes the active span's
-    trace and span ids from the context when it exports a record.
+    The export needs no filter of its own: it takes the active span's trace and span ids
+    from the context when it exports a record. The ``Resource`` carries the service
+    version and the environment; the runtime is named later, so it stays a record field.
     """
     extra_handlers: tuple[logging.Handler, ...] = ()
     if export is not None:
         from loom.core.observability.observer.otel import install_otel_log_export
 
-        extra_handlers = (install_otel_log_export(export),)
+        identity = {LogField.ENVIRONMENT.value: environment.value}
+        if service_version is not None:
+            identity[LogField.SERVICE_VERSION.value] = service_version
+        extra_handlers = (install_otel_log_export(export, resource_attributes=identity),)
     return configure_logging(
         config.log,
         environment=environment,

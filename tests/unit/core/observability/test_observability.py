@@ -191,7 +191,7 @@ class TestFromConfig:
             logging.getLogger("tests.export").warning("billing.check_done")
 
         attributes = log_export.exported()["billing.check_done"]
-        assert (attributes["service.name"], attributes["trace_id"]) == ("billing", "trace-42")
+        assert (attributes["trace_id"], "service.name" in attributes) == ("trace-42", False)
         handlers = logging.getLogger().handlers
         assert handlers.count(log_export.handler) == 1
         assert len([h for h in handlers if h.get_name() == HANDLER_NAME]) == 1

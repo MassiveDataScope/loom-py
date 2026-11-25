@@ -3,6 +3,8 @@ from __future__ import annotations
 import logging
 
 import pytest
+from opentelemetry.sdk._logs import LoggerProvider
+from opentelemetry.sdk._logs.export import InMemoryLogRecordExporter, SimpleLogRecordProcessor
 
 from loom.core.environment import Environment
 from loom.core.errors import NotFound
@@ -141,14 +143,17 @@ class TestContextFilter:
     ) -> None:
         first = LogIdentity(environment=Environment.STAGING)
         handler.addFilter(ContextFilter(first))
-        exported = CapturingHandler()
-        otel = OtelLogHandler(exported)
+        exporter = InMemoryLogRecordExporter()
+        provider = LoggerProvider()
+        provider.add_log_record_processor(SimpleLogRecordProcessor(exporter))
+        otel = OtelLogHandler(provider)
         otel.addFilter(ContextFilter(_IDENTITY))
         pristine_root_logger.addHandler(otel)
 
         logging.getLogger("tests.stamp").info("billing.invoice_issued", extra={"_draft": 1})
 
-        export = _only(exported).__dict__
+        (finished,) = exporter.get_finished_logs()
+        export = dict(finished.log_record.attributes or {})
         identity = {key: export[key] for key in _IDENTITY.fields() if key in export}
         assert (identity, [key for key in export if str(key).startswith("_")]) == (
             first.fields(),

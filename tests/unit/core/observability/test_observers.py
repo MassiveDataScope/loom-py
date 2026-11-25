@@ -5,6 +5,10 @@ from __future__ import annotations
 import logging
 
 import pytest
+from opentelemetry._logs import SeverityNumber
+from opentelemetry.sdk._logs import LoggerProvider
+from opentelemetry.sdk._logs.export import InMemoryLogRecordExporter, SimpleLogRecordProcessor
+from opentelemetry.sdk.resources import Resource
 
 from loom.core.config.observability import OtelConfig
 from loom.core.errors.summary import ErrorSummary
@@ -13,9 +17,7 @@ from loom.core.observability.diagnostic import ObservabilityEvent
 from loom.core.observability.event import EventKind, LifecycleEvent, LifecycleStatus, Scope
 from loom.core.observability.observer.log import LifecycleKey, LogLifecycleObserver
 from loom.core.observability.observer.noop import NoopObserver
-from loom.core.observability.observer.otel import (
-    install_otel_log_export,
-)
+from loom.core.observability.observer.otel import OtelLogHandler, install_otel_log_export
 from loom.testing import make
 from tests.helpers.loggers import CapturedLog
 from tests.unit.core.observability.conftest import LogExport
@@ -101,6 +103,22 @@ class TestOtelLogExport:
         (attributes,) = log_export.exported().values()
         assert "exception.message" not in attributes
         assert record.exc_info is not None
+
+    def test_a_field_of_the_resource_is_not_repeated_and_keys_are_plain_text(self) -> None:
+        environment = LogField.ENVIRONMENT.value
+        exporter = InMemoryLogRecordExporter()
+        provider = LoggerProvider(resource=Resource({environment: "staging"}))
+        provider.add_log_record_processor(SimpleLogRecordProcessor(exporter))
+        record = logging.LogRecord("x", logging.WARNING, __file__, 1, "x.y_z", (), None)
+        record.__dict__.update({environment: "staging", LogField.ATTEMPT: 2})
+
+        OtelLogHandler(provider).handle(record)
+
+        (finished,) = exporter.get_finished_logs()
+        assert finished.resource.attributes[environment] == "staging"
+        assert {type(key) for key in finished.log_record.attributes or {}} == {str}
+        assert environment not in (finished.log_record.attributes or {})
+        assert finished.log_record.severity_number is SeverityNumber.WARN
 
     def test_the_handler_is_idempotent_for_the_process(self, log_export: LogExport) -> None:
         again = install_otel_log_export(OtelConfig(endpoint=None, service_name="other"))

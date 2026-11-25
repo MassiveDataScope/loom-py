@@ -22,9 +22,7 @@ class LogExport:
 
     def exported(self) -> dict[object, dict[str, object]]:
         """The attributes of each record exported so far by its body, after flushing."""
-        state = otel_module._LOG_EXPORT_STATE  # pyright: ignore[reportPrivateUsage]
-        assert state is not None
-        state[0].force_flush()
+        self.handler.flush()
         return {
             finished.log_record.body: dict(finished.log_record.attributes or {})
             for finished in self.exporter.get_finished_logs()

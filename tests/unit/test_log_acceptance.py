@@ -21,8 +21,8 @@ from collections.abc import Callable, Iterator
 from dataclasses import dataclass
 
 import pytest
-from opentelemetry.sdk._logs import LoggerProvider, LoggingHandler
-from opentelemetry.sdk._logs.export import InMemoryLogExporter, SimpleLogRecordProcessor
+from opentelemetry.sdk._logs import LoggerProvider
+from opentelemetry.sdk._logs.export import InMemoryLogRecordExporter, SimpleLogRecordProcessor
 from opentelemetry.sdk.trace import TracerProvider
 from opentelemetry.sdk.trace.export import SimpleSpanProcessor
 from opentelemetry.sdk.trace.export.in_memory_span_exporter import InMemorySpanExporter
@@ -156,16 +156,16 @@ def lambda_json(runtime: LambdaLoggerHandler, monkeypatch: pytest.MonkeyPatch) -
 
 
 @pytest.fixture
-def log_exporter() -> InMemoryLogExporter:
-    return InMemoryLogExporter()
+def log_exporter() -> InMemoryLogRecordExporter:
+    return InMemoryLogRecordExporter()
 
 
 @pytest.fixture
-def otel_export(log_exporter: InMemoryLogExporter) -> Iterator[Output]:
+def otel_export(log_exporter: InMemoryLogRecordExporter) -> Iterator[Output]:
     exporter = log_exporter
     provider = LoggerProvider()
     provider.add_log_record_processor(SimpleLogRecordProcessor(exporter))
-    handler = OtelLogHandler(LoggingHandler(level=logging.NOTSET, logger_provider=provider))
+    handler = OtelLogHandler(provider)
     configure_logging(
         LogSettings(format=LogFormatName.JSON),
         environment=Environment.PRODUCTION,
@@ -252,7 +252,7 @@ class TestSpanCorrelation:
     """A record written inside a recording OpenTelemetry span names the span."""
 
     def test_the_export_carries_the_active_span(
-        self, otel_export: Output, log_exporter: InMemoryLogExporter
+        self, otel_export: Output, log_exporter: InMemoryLogRecordExporter
     ) -> None:
         with TracerProvider().get_tracer("acceptance").start_as_current_span("work") as span:
             _LOGGER.info("order_accepted")
