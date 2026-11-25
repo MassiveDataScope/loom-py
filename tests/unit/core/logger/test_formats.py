@@ -5,6 +5,7 @@ from __future__ import annotations
 import json
 import logging
 import re
+import unicodedata
 import uuid
 from collections.abc import Callable
 from datetime import UTC, date, datetime, time
@@ -44,10 +45,11 @@ def _record(
     level: int = logging.INFO,
     msg: str = "billing.invoice_issued",
     exc_info: ExcInfo | None = None,
+    name: str = "billing.invoices",
     **extra: object,
 ) -> logging.LogRecord:
     record = logging.LogRecord(
-        name="billing.invoices",
+        name=name,
         level=level,
         pathname=__file__,
         lineno=7,
@@ -307,36 +309,20 @@ class TestValueRendering:
 class TestLogInjection:
     FORGED = "ok\r\n2026-01-01 ERROR billing.forged forged_entry"
 
-    @pytest.fixture
-    def text_line(self) -> Callable[..., str]:
-        def render(*, logger: str = "billing.invoices", msg: str = "m", **extra: object) -> str:
-            record = _record(msg=msg, **extra)
-            record.name = logger
-            return _text(record)
-
-        return render
-
     @pytest.mark.parametrize(
         ("fields", "written"),
         [
             ({"user": FORGED}, 'm user="ok\\r\\n2026-01-01 ERROR billing.forged forged_entry"'),
-            ({"logger": FORGED}, "ok\\r\\n2026-01-01 ERROR billing.forged forged_entry m"),
+            ({"name": FORGED}, "ok\\r\\n2026-01-01 ERROR billing.forged forged_entry m"),
             ({"a\nERROR forged": "x"}, 'm "a\\nERROR forged"=x'),
-            ({"user": "bell\x07esc\x1b"}, 'm user="bell\\x07esc\\x1b"'),
             ({"msg": "bell\x07\x85next"}, "bell\\x07\\x85next"),
         ],
-        ids=[
-            "value-line-breaks",
-            "logger-name",
-            "key-line-break",
-            "control-value",
-            "control-message",
-        ],
+        ids=["value-line-breaks", "logger-name", "key-line-break", "message"],
     )
     def test_the_text_line_is_one_line_and_escapes_what_could_forge_a_record(
-        self, text_line: Callable[..., str], fields: dict[str, object], written: str
+        self, fields: dict[str, object], written: str
     ) -> None:
-        line = text_line(**fields)
+        line = _text(_record(**{"msg": "m", **fields}))
 
         assert len(line.splitlines()) == 1
         assert line.endswith(" " + written)
@@ -346,19 +332,6 @@ class TestLogInjection:
 
         assert "\n" not in line
         assert json.loads(line)["user"] == self.FORGED
-
-
-_CONTROL = re.compile("[\\x00-\\x1f\\x7f-\\x9f\\u2028\\u2029]")
-_ESCAPES = {"n": "\n", "r": "\r", "t": "\t", "\\": "\\", '"': '"'}
-
-
-def _unquoted(token: str) -> str:
-    body = token[1:-1]
-    return re.sub(
-        r"\\(?:x([0-9a-f]{2})|u([0-9a-f]{4})|(.))",
-        lambda m: chr(int(m[1] or m[2], 16)) if m[3] is None else _ESCAPES[m[3]],
-        body,
-    )
 
 
 _AWKWARD_CHARS = '\x00\x1f\x7f\x85\r\n\t\u2028\u2029="\\ '
@@ -372,27 +345,42 @@ _ONE_AWKWARD = st.builds(
     ),
 )
 _ANY_TEXT = st.one_of(st.text(), _AWKWARD, _ONE_AWKWARD)
-_NEEDS_QUOTES = re.compile(r'[\s="\\\x00-\x1f\x7f-\x9f\u2028\u2029]')
 
 
 class TestLogfmtProperties:
+    ESCAPES = {"n": "\n", "r": "\r", "t": "\t", "\\": "\\", '"': '"'}
+
+    @classmethod
+    def read(cls, token: str) -> str:
+        if not token.startswith('"'):
+            return token
+        return re.sub(
+            r"\\(?:x([0-9a-f]{2})|u([0-9a-f]{4})|(.))",
+            lambda m: chr(int(m[1] or m[2], 16)) if m[3] is None else cls.ESCAPES[m[3]],
+            token[1:-1],
+        )
+
+    @staticmethod
+    def has_control(text: str) -> bool:
+        return any(unicodedata.category(char) in {"Cc", "Zl", "Zp"} for char in text)
+
+    @classmethod
+    def needs_quotes(cls, text: str) -> bool:
+        return cls.has_control(text) or any(char.isspace() or char in '="\\' for char in text)
+
     @pytest.mark.parametrize("write", [Logfmt.token, Logfmt.one_line], ids=["token", "one-line"])
     @given(text=_ANY_TEXT)
     def test_written_text_holds_no_break_or_control_character(
         self, write: Callable[[str], str], text: str
     ) -> None:
-        assert _CONTROL.search(write(text)) is None
+        assert not self.has_control(write(text))
 
     @given(text=_ANY_TEXT)
     def test_a_token_is_quoted_exactly_when_the_text_needs_it(self, text: str) -> None:
         written = Logfmt.token(text)
 
-        assert (written.startswith('"') and written.endswith('"')) == (
-            _NEEDS_QUOTES.search(text) is not None
-        )
+        assert (written.startswith('"') and written.endswith('"')) == self.needs_quotes(text)
 
     @given(text=_ANY_TEXT)
     def test_a_token_reads_back_to_its_text(self, text: str) -> None:
-        written = Logfmt.token(text)
-
-        assert (_unquoted(written) if _NEEDS_QUOTES.search(text) else written) == text
+        assert self.read(Logfmt.token(text)) == text
