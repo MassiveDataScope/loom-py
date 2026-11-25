@@ -33,7 +33,7 @@ from loom.prefect.flow._runtime import (
 )
 from loom.prefect.flow._signature import ENV_SOURCE, coerce_to_utc
 from loom.prefect.manifest import ManifestStore
-from loom.prefect.observer._logging_bridge import install_log_bridge, uninstall_log_bridge
+from loom.prefect.observer._logging_bridge import log_bridge
 
 _log = logging.getLogger(__name__)
 
@@ -127,11 +127,8 @@ def build_backfill_body(
 
     def _flow_body(**kwargs: Any) -> None:
         flow_run_id = prefect_flow_run_id()
-        install_log_bridge(flow_run_id)
-        try:
+        with log_bridge(flow_run_id):
             _run(flow_run_id, kwargs)
-        finally:
-            uninstall_log_bridge()
 
     def _run(flow_run_id: uuid.UUID | None, kwargs: dict[str, Any]) -> None:
         anchor = prefect_run_anchor()

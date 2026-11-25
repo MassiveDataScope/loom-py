@@ -6,7 +6,7 @@ import logging
 import textwrap
 import uuid
 from collections.abc import Iterator
-from contextlib import contextmanager
+from contextlib import contextmanager, nullcontext
 from datetime import UTC, date, datetime, timedelta, timezone
 from pathlib import Path
 from types import SimpleNamespace
@@ -122,8 +122,13 @@ def invoked(monkeypatch: pytest.MonkeyPatch, events: list[str]) -> list[tuple[An
         lambda _path, _pipeline, params, _pending, ctx, *_rest, **_kw: calls.append((params, ctx)),
     )
     monkeypatch.setattr(_body, "build_observers", lambda *a, **k: [])
-    monkeypatch.setattr(_body, "install_log_bridge", lambda *a, **k: events.append("bridge"))
-    monkeypatch.setattr(_body, "uninstall_log_bridge", lambda *a, **k: None)
+
+    @contextmanager
+    def bridge(*_args: object) -> Iterator[None]:
+        events.append("bridge")
+        yield
+
+    monkeypatch.setattr(_body, "log_bridge", bridge)
     return calls
 
 
@@ -375,8 +380,7 @@ class TestMaintenanceRunParams:
     ) -> None:
         runner = MagicMock()
         runner.run.return_value = MaintenanceReport()
-        monkeypatch.setattr(_maintenance, "install_log_bridge", MagicMock())
-        monkeypatch.setattr(_maintenance, "uninstall_log_bridge", MagicMock())
+        monkeypatch.setattr(_maintenance, "log_bridge", lambda *a, **k: nullcontext())
         monkeypatch.setattr(_maintenance, "_load_context", lambda path, **_kw: MagicMock())
         monkeypatch.setattr(
             _maintenance, "_parse_sections", lambda context: (MagicMock(), MagicMock())
@@ -413,8 +417,7 @@ class TestBackfillRunParams:
         runner = MagicMock()
         monkeypatch.setattr(_backfill_body.ETLRunner, "from_yaml", lambda *a, **k: runner)
         monkeypatch.setattr(_backfill_body, "build_observers", lambda *a, **k: [])
-        monkeypatch.setattr(_backfill_body, "install_log_bridge", lambda *a, **k: None)
-        monkeypatch.setattr(_backfill_body, "uninstall_log_bridge", lambda *a, **k: None)
+        monkeypatch.setattr(_backfill_body, "log_bridge", lambda *a, **k: nullcontext())
         cfg = tmp_path / "backfill.yaml"
         cfg.write_text("params: {}\n", encoding="utf-8")
         flow = backfill_flow(

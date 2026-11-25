@@ -4,25 +4,23 @@ from __future__ import annotations
 
 import logging
 import sys
+import threading
 import uuid
+from collections.abc import Iterator
 from typing import Any
 
 import pytest
 from prefect.logging.handlers import APILogWorker
 
-from loom.core.environment import Environment
 from loom.core.log_names import LogField
-from loom.core.logger import LogIdentity, log_context
+from loom.core.logger import log_context
 from loom.core.model.redaction import Secret
 from loom.core.observability.diagnostic import ObservabilityEvent
 from loom.core.tracing.context import active_trace_id
-from loom.etl.executor._dispatcher import ThreadDispatcher
 from loom.prefect.observer._logging_bridge import (
     PrefectLogBridgeHandler,
-    bind_task_run,
-    current_task_run_id,
-    install_log_bridge,
-    uninstall_log_bridge,
+    active_task_run_id,
+    log_bridge,
 )
 
 
@@ -39,6 +37,15 @@ def sent(monkeypatch: pytest.MonkeyPatch) -> _Sent:
     return payloads
 
 
+@pytest.fixture
+def task_run_id() -> Iterator[uuid.UUID]:
+    """A step's TaskRun, bound for the test."""
+    bound = uuid.uuid4()
+    token = active_task_run_id.set(bound)
+    yield bound
+    active_task_run_id.reset(token)
+
+
 def _record(
     message: str = "hello", level: int = logging.INFO, **extra: object
 ) -> logging.LogRecord:
@@ -49,16 +56,14 @@ def _record(
 
 class TestPrefectLogBridgeHandler:
     def test_a_step_record_reaches_the_api_with_its_task_run_and_its_flow_run(
-        self, sent: _Sent
+        self, sent: _Sent, task_run_id: uuid.UUID
     ) -> None:
-        flow_id, task_id = uuid.uuid4(), uuid.uuid4()
-        handler = PrefectLogBridgeHandler(flow_id)
+        flow_id = uuid.uuid4()
 
-        with bind_task_run(task_id):
-            handler.handle(_record("step log", level=logging.WARNING))
+        PrefectLogBridgeHandler(flow_id).handle(_record("step log", level=logging.WARNING))
 
         (payload,) = sent
-        assert (payload["flow_run_id"], payload["task_run_id"]) == (str(flow_id), str(task_id))
+        assert (payload["flow_run_id"], payload["task_run_id"]) == (str(flow_id), str(task_run_id))
         assert (payload["message"], payload["level"]) == ("step log", logging.WARNING)
 
     def test_a_record_between_steps_carries_the_flow_run_only(self, sent: _Sent) -> None:
@@ -92,13 +97,6 @@ class TestPrefectLogBridgeHandler:
 
         assert sent[0]["message"] == "hello loom.job.name=Load trace_id=trace-1"
 
-    def test_the_message_has_the_service_identity_when_one_is_given(self, sent: _Sent) -> None:
-        identity = LogIdentity(environment=Environment.PRODUCTION, service_name="shop")
-
-        PrefectLogBridgeHandler(uuid.uuid4(), identity).handle(_record())
-
-        assert "service.name=shop" in sent[0]["message"]
-
     def test_a_failure_sends_its_stack_after_the_line(self, sent: _Sent) -> None:
         try:
             raise ValueError("boom")
@@ -112,57 +110,56 @@ class TestPrefectLogBridgeHandler:
         assert first.startswith("failed ")
         assert stack[-1] == "ValueError: boom"
 
-    def test_the_shared_record_is_not_given_the_run_ids(self, sent: _Sent) -> None:
+    def test_a_record_of_a_prefect_run_logger_is_left_to_prefect(self, sent: _Sent) -> None:
+        PrefectLogBridgeHandler(uuid.uuid4()).handle(_record(flow_run_id=uuid.uuid4()))
+
+        assert sent == []
+
+    def test_the_shared_record_is_not_given_the_run_ids(
+        self, sent: _Sent, task_run_id: uuid.UUID
+    ) -> None:
         record = _record()
 
-        with bind_task_run(uuid.uuid4()):
-            PrefectLogBridgeHandler(uuid.uuid4()).handle(record)
+        PrefectLogBridgeHandler(uuid.uuid4()).handle(record)
 
         assert not {"flow_run_id", "task_run_id"} & set(vars(record))
 
-    def test_a_parallel_step_carries_the_flow_run_of_its_handler(self, sent: _Sent) -> None:
-        flow_id, task_id = uuid.uuid4(), uuid.uuid4()
+    def test_a_thread_without_the_callers_context_still_carries_the_flow_run(
+        self, sent: _Sent, task_run_id: uuid.UUID
+    ) -> None:
+        flow_id = uuid.uuid4()
         handler = PrefectLogBridgeHandler(flow_id)
+        thread = threading.Thread(target=lambda: handler.handle(_record()))
 
-        def step() -> None:
-            with bind_task_run(task_id):
-                handler.handle(_record())
-
-        ThreadDispatcher().run_all([step])
+        thread.start()
+        thread.join()
 
         (payload,) = sent
-        assert (payload["flow_run_id"], payload["task_run_id"]) == (str(flow_id), str(task_id))
+        assert (payload["flow_run_id"], payload["task_run_id"]) == (str(flow_id), None)
 
 
-class TestBindTaskRun:
-    def test_resets_on_exit(self) -> None:
-        task_id = uuid.uuid4()
-
-        with bind_task_run(task_id):
-            inside = current_task_run_id()
-
-        assert (inside, current_task_run_id()) == (task_id, None)
-
-
-class TestInstall:
+class TestLogBridge:
     @staticmethod
     def _bridges() -> list[logging.Handler]:
         return [h for h in logging.getLogger().handlers if isinstance(h, PrefectLogBridgeHandler)]
 
-    def test_installing_again_replaces_the_handler_with_the_new_flow_run(self, sent: _Sent) -> None:
-        first, second = uuid.uuid4(), uuid.uuid4()
-        install_log_bridge(first)
-        install_log_bridge(second)
-        try:
-            (installed,) = self._bridges()
-            installed.handle(_record())
-        finally:
-            uninstall_log_bridge()
+    def test_ships_inside_the_block_and_flushes_and_detaches_on_exit(
+        self, sent: _Sent, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        flushed: list[int] = []
+        monkeypatch.setattr(PrefectLogBridgeHandler, "flush", lambda _self: flushed.append(1))
+        flow_id = uuid.uuid4()
 
-        assert sent[0]["flow_run_id"] == str(second)
+        with log_bridge(flow_id):
+            (attached,) = self._bridges()
+            attached.handle(_record())
+            flushed_inside = list(flushed)
+
+        assert (sent[0]["flow_run_id"], flushed_inside, flushed) == (str(flow_id), [], [1])
         assert self._bridges() == []
 
-    def test_no_flow_run_installs_nothing(self) -> None:
-        install_log_bridge(None)
+    def test_no_flow_run_attaches_nothing(self) -> None:
+        with log_bridge(None):
+            attached = self._bridges()
 
-        assert self._bridges() == []
+        assert attached == []

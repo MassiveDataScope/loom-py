@@ -17,7 +17,7 @@ from loom.prefect.flow._assemble import assemble_flow, load_flow_settings
 from loom.prefect.flow._common import prefect_flow_run_id, prefect_run_anchor
 from loom.prefect.flow._params import record_run_params, resolve_run_params
 from loom.prefect.flow._signature import ENV_SOURCE, synthesise_flow_signature
-from loom.prefect.observer._logging_bridge import install_log_bridge, uninstall_log_bridge
+from loom.prefect.observer._logging_bridge import log_bridge
 
 
 def maintenance_flow(
@@ -56,8 +56,7 @@ def maintenance_flow(
     settings = load_flow_settings(config_path)
 
     def _flow_body(**kwargs: Any) -> None:
-        install_log_bridge(prefect_flow_run_id())
-        try:
+        with log_bridge(prefect_flow_run_id()):
             environment = confirm_environment(kwargs.pop("env", None), source=ENV_SOURCE)
             params = resolve_run_params(kwargs, params_type, anchor=prefect_run_anchor())
             decoded = msgspec.structs.asdict(params)
@@ -71,8 +70,6 @@ def maintenance_flow(
                 report = MaintenanceRunner.from_config(storage_config).run(step, params=params)
                 set_run_summary(_maintenance_summary(report, decoded))
                 report.raise_if_errors()
-        finally:
-            uninstall_log_bridge()
 
     return assemble_flow(
         name=name,

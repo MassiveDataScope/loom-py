@@ -164,7 +164,7 @@ needs no CloudWatch Insights).
 flow run or not. A flow loom builds ships them to Prefect UI through Prefect's own API log handler
 (batching, size limit and `PREFECT_LOGGING_TO_API_ENABLED` are Prefect's), each as
 its event followed by its fields in logfmt, masked as loom's formats mask them,
-and its stack; in a flow of your own, set `PREFECT_LOGGING_EXTRA_LOGGERS=loom`.
+and its stack; a record from Prefect's own run loggers (`prefect.flow_runs`, `prefect.task_runs`) already names its flow run, is shipped by Prefect and is not sent twice; in a flow of your own, set `PREFECT_LOGGING_EXTRA_LOGGERS=loom`.
 
 ## What loom logs and what is yours
 

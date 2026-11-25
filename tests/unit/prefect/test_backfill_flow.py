@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+from contextlib import nullcontext
 from datetime import UTC, date, datetime, timedelta
 from pathlib import Path
 from typing import Any
@@ -67,8 +68,7 @@ def runner(monkeypatch: pytest.MonkeyPatch) -> MagicMock:
     runner = MagicMock()
     monkeypatch.setattr(_backfill_body.ETLRunner, "from_yaml", lambda *a, **k: runner)
     monkeypatch.setattr(_backfill_body, "prefect_flow_run_id", lambda: None)
-    monkeypatch.setattr(_backfill_body, "install_log_bridge", lambda *a, **k: None)
-    monkeypatch.setattr(_backfill_body, "uninstall_log_bridge", lambda *a, **k: None)
+    monkeypatch.setattr(_backfill_body, "log_bridge", lambda *a, **k: nullcontext())
     monkeypatch.setattr(_backfill_body, "maybe_delete_manifest", lambda *a, **k: None)
     return runner
 

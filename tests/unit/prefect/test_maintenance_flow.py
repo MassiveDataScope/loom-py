@@ -51,12 +51,19 @@ class TestMaintenanceFlow:
         configure = MagicMock(
             side_effect=lambda config, **_kw: events.append("configure") or runtime
         )
-        install = MagicMock(side_effect=lambda flow_id: events.append("install"))
-        uninstall = MagicMock(side_effect=lambda: events.append("uninstall"))
+        bridged: list[object] = []
+
+        @contextmanager
+        def bridge(flow_id: object) -> Iterator[None]:
+            bridged.append(flow_id)
+            events.append("install")
+            try:
+                yield
+            finally:
+                events.append("uninstall")
 
         monkeypatch.setattr(_maintenance, "prefect_flow_run_id", lambda: flow_run_id)
-        monkeypatch.setattr(_maintenance, "install_log_bridge", install)
-        monkeypatch.setattr(_maintenance, "uninstall_log_bridge", uninstall)
+        monkeypatch.setattr(_maintenance, "log_bridge", bridge)
         monkeypatch.setattr(
             _maintenance, "_load_context", lambda path, **_kw: events.append("load")
         )
@@ -71,12 +78,11 @@ class TestMaintenanceFlow:
 
         assert events == ["install", "load", "configure", "span", "run", "uninstall"]
         configure.assert_called_once_with(observability_config, environment=Environment.TEST)
-        install.assert_called_once_with(flow_run_id)
-        uninstall.assert_called_once_with()
+        assert bridged == [flow_run_id]
         runtime.span.assert_called_once_with(Scope.MAINTENANCE, "AcmeMaintenance")
         runner.run.assert_called_once()
 
-    def test_uninstalls_the_log_bridge_after_failure(
+    def test_closes_the_log_bridge_after_failure(
         self,
         monkeypatch: pytest.MonkeyPatch,
         tmp_path: Path,
@@ -98,11 +104,16 @@ class TestMaintenanceFlow:
                 raise
 
         runtime.span.side_effect = record_span
-        uninstall = MagicMock()
+
+        @contextmanager
+        def bridge(_flow_id: object) -> Iterator[None]:
+            try:
+                yield
+            finally:
+                span_events.append("uninstall")
 
         monkeypatch.setattr(_maintenance, "prefect_flow_run_id", uuid.uuid4)
-        monkeypatch.setattr(_maintenance, "install_log_bridge", MagicMock())
-        monkeypatch.setattr(_maintenance, "uninstall_log_bridge", uninstall)
+        monkeypatch.setattr(_maintenance, "log_bridge", bridge)
         monkeypatch.setattr(_maintenance, "_load_context", lambda path, **_kw: MagicMock())
         monkeypatch.setattr(
             _maintenance, "_parse_sections", lambda context: (MagicMock(), MagicMock())
@@ -118,5 +129,4 @@ class TestMaintenanceFlow:
         with pytest.raises(MaintenanceError, match="raw.events"):
             flow.fn(dry_run=False)  # type: ignore[attr-defined]
 
-        assert span_events == ["error"]
-        uninstall.assert_called_once_with()
+        assert span_events == ["error", "uninstall"]

@@ -7,7 +7,7 @@ from unittest.mock import patch
 
 from loom.core.observability.event import LifecycleEvent, LifecycleStatus, Scope
 from loom.prefect.observer import PrefectTaskRunObserver
-from loom.prefect.observer._logging_bridge import current_task_run_id
+from loom.prefect.observer._logging_bridge import active_task_run_id
 
 
 def _start(name: str, step_run_id: str) -> LifecycleEvent:
@@ -52,11 +52,11 @@ class TestPrefectTaskRunObserver:
             patch.object(observer, "_create_task_run", return_value=fake_task_run),
             patch.object(observer, "_set_state"),
         ):
-            assert current_task_run_id() is None
+            assert active_task_run_id.get() is None
             observer.on_event(_start("MyStep", "step-1"))
-            assert current_task_run_id() == fake_task_run
+            assert active_task_run_id.get() == fake_task_run
             observer.on_event(_end("MyStep", "step-1"))
-            assert current_task_run_id() is None
+            assert active_task_run_id.get() is None
 
     def test_step_marker_is_cached_per_name(self) -> None:
         observer = PrefectTaskRunObserver(flow_run_id=uuid.uuid4())
