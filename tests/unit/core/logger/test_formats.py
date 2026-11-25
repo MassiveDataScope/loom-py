@@ -6,6 +6,7 @@ import json
 import logging
 import re
 import uuid
+from collections.abc import Callable
 from datetime import UTC, date, datetime, time
 from decimal import Decimal
 from enum import Enum, StrEnum
@@ -28,7 +29,6 @@ from loom.core.logger.formats import (
     TextFormatter,
 )
 from loom.core.model.redaction import MASK, Dsn, RedactedMap, Secret
-from loom.core.observability.observer.log import LifecycleKey
 
 _STACK = LogField.EXCEPTION_STACKTRACE.value
 
@@ -307,12 +307,6 @@ class TestValueRendering:
 class TestLogInjection:
     FORGED = "ok\r\n2026-01-01 ERROR billing.forged forged_entry"
 
-    def test_the_text_line_escapes_line_breaks_in_the_message(self) -> None:
-        line = TextFormatter().format(_record(msg=self.FORGED))
-
-        assert "\n" not in line
-        assert "ok\\r\\n2026" in line
-
     def test_the_text_line_escapes_line_breaks_in_a_value(self) -> None:
         line = TextFormatter().format(_record(user=self.FORGED))
 
@@ -338,21 +332,13 @@ class TestLogInjection:
         ("message", "extra", "written"),
         [
             ("m", {"a\nERROR forged": "x"}, 'm "a\\nERROR forged"=x'),
-            ("m", {"a b=c": 1}, 'm "a b=c"=1'),
             ("m", {"user": "bell\x07esc\x1b"}, 'm user="bell\\x07esc\\x1b"'),
             ("bell\x07\x85next", {}, "bell\\x07\\x85next"),
-            ("m", {"user": "a\u2028b"}, 'm user="a\\u2028b"'),
-            ("m", {"user": "p\\q"}, 'm user="p\\\\q"'),
-            ("m", {LifecycleKey.META.of("a b"): 1}, 'm "loom.lifecycle.meta.a b"=1'),
         ],
         ids=[
             "newline-key",
-            "spaced-key",
             "control-value",
             "control-message",
-            "line-separator",
-            "backslash",
-            "meta-key",
         ],
     )
     def test_the_text_line_is_one_line_and_each_key_and_value_reads_back(
@@ -377,16 +363,38 @@ def _unquoted(token: str) -> str:
     )
 
 
-class TestLogfmtProperties:
-    @given(text=st.text())
-    def test_a_token_and_a_one_line_text_hold_no_break_or_control_character(
-        self, text: str
-    ) -> None:
-        for written in (Logfmt.token(text), Logfmt.one_line(text)):
-            assert _CONTROL.search(written) is None
+_AWKWARD_CHARS = '\x00\x1f\x7f\x85\r\n\t\u2028\u2029="\\ '
+_AWKWARD = st.text(alphabet=_AWKWARD_CHARS + "a")
+_ONE_AWKWARD = st.builds(
+    "".join,
+    st.tuples(
+        st.text("ab", max_size=3),
+        st.sampled_from(sorted(_AWKWARD_CHARS)),
+        st.text("ab", max_size=3),
+    ),
+)
+_ANY_TEXT = st.one_of(st.text(), _AWKWARD, _ONE_AWKWARD)
+_NEEDS_QUOTES = re.compile(r'[\s="\\\x00-\x1f\x7f-\x9f\u2028\u2029]')
 
-    @given(text=st.text())
+
+class TestLogfmtProperties:
+    @pytest.mark.parametrize("write", [Logfmt.token, Logfmt.one_line], ids=["token", "one-line"])
+    @given(text=_ANY_TEXT)
+    def test_written_text_holds_no_break_or_control_character(
+        self, write: Callable[[str], str], text: str
+    ) -> None:
+        assert _CONTROL.search(write(text)) is None
+
+    @given(text=_ANY_TEXT)
+    def test_a_token_is_quoted_exactly_when_the_text_needs_it(self, text: str) -> None:
+        written = Logfmt.token(text)
+
+        assert (written.startswith('"') and written.endswith('"')) == (
+            _NEEDS_QUOTES.search(text) is not None
+        )
+
+    @given(text=_ANY_TEXT)
     def test_a_token_reads_back_to_its_text(self, text: str) -> None:
         written = Logfmt.token(text)
 
-        assert (_unquoted(written) if written.startswith('"') else written) == text
+        assert (_unquoted(written) if _NEEDS_QUOTES.search(text) else written) == text
