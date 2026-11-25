@@ -33,8 +33,8 @@ def _subclasses(base: type[_Names]) -> set[type[_Names]]:
 class DeclaredNames:
     """The log names of the loom modules that could be imported, and the modules that could not.
 
-    Each line ends with the module that declares it, so a line is ``covered_by_failure``
-    when its module, or a package above it, failed to import.
+    A name's module is not published, so a published name missing from ``lines`` while a
+    module failed to import may live in that module: it cannot be checked.
     """
 
     lines: frozenset[str]
@@ -42,34 +42,37 @@ class DeclaredNames:
 
     @classmethod
     def from_loom(cls) -> DeclaredNames:
-        """Import every module of ``loom`` and read the names its classes declare."""
+        """Import every module of ``loom`` and read the names its classes declare.
+
+        Only an ``ImportError`` (a missing extra or an unsupported Python) hides names; a module
+        that raises anything else on import, like the Alembic ``env_template``, declares none.
+        """
         failed: set[str] = set()
         for module in pkgutil.walk_packages(loom.__path__, "loom.", onerror=failed.add):
             try:
                 importlib.import_module(module.name)
-            except Exception:
+            except ImportError:
                 failed.add(module.name)
+            except Exception:
+                continue
         lines = {
-            f"event {event.value} {owner.__module__}"
+            f"event {event.value}"
             for owner in _subclasses(LogEvent)
             if owner.__module__.startswith("loom.")
             for event in owner
         } | {
-            f"key {key.value} {key.kind.value} {owner.__module__}"
+            f"key {key.value} {key.kind.value}"
             for owner in _subclasses(LogKey)
             if owner.__module__.startswith("loom.")
             for key in owner
         }
         return cls(frozenset(lines), frozenset(failed))
 
-    def covered_by_failure(self, line: str) -> bool:
-        """Whether *line* belongs to a module that failed to import, or to one beneath it."""
-        module = line.rsplit(" ", 1)[1]
-        return any(module == name or module.startswith(f"{name}.") for name in self.failed_modules)
-
     def unchecked(self, published: Iterable[str]) -> frozenset[str]:
-        """The *published* lines this run could not verify because their module failed."""
-        return frozenset(line for line in published if self.covered_by_failure(line))
+        """The *published* lines this run cannot verify: the undeclared ones, if a module failed."""
+        if not self.failed_modules:
+            return frozenset()
+        return frozenset(published) - self.lines
 
     def text(self) -> str:
         """The contract file's content: one sorted line per event and key."""

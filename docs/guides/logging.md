@@ -211,8 +211,9 @@ log.info(InvoiceEvent.ISSUED, extra={InvoiceKey.NUMBER: "INV-2041", InvoiceKey.T
 ### The names are a contract
 
 From release 12.0 the events and keys loom declares are public and only grow:
-`docs/reference/log-contract.txt` lists each as `event <name> <module>` or `key <name> <kind> <module>`, generated from the
-declarations. A test fails when a listed name is no longer declared (a removal or a rename breaks
+`docs/reference/log-contract.txt` lists each as `event <name>` or `key <name> <kind>`, generated
+from the declarations; the module that declares a name is not published, so a declaration may move
+between modules. A test fails when a listed name is no longer declared (a removal or a rename breaks
 collectors and alerts built on it) and when a declared name is not listed. After adding a name, run
 `uv run poe log-contract` under Python < 3.13 with every extra installed (bytewax needs it) and commit the file.
 
