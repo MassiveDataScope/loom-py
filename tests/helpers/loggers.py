@@ -61,18 +61,30 @@ def install_subject_key() -> None:
 class CapturingHandler(logging.Handler):
     """Keeps the records it is given, and each one's fields rendered as it was emitted.
 
-    The fields are derived in the context that emitted the record, as an output of loom
-    does; ``named`` reads them back by event.
+    The fields and the stack are derived in the context that emitted the record, as an
+    output of loom does; ``named`` reads the fields back by event.
+
+    Args:
+        identity: The identity the records are rendered with; none writes no identity.
     """
 
-    def __init__(self) -> None:
+    def __init__(self, identity: LogIdentity | None = None) -> None:
         super().__init__()
+        self.identity = identity
         self.records: list[logging.LogRecord] = []
         self.rendered: list[tuple[str, dict[str, object]]] = []
+        self.stacks: list[str | None] = []
 
     def emit(self, record: logging.LogRecord) -> None:
+        view = RecordFields(record, self.identity)
         self.records.append(record)
-        self.rendered.append((record.getMessage(), RecordFields(record).fields()))
+        self.rendered.append((record.getMessage(), view.fields()))
+        self.stacks.append(view.stack)
+
+    @property
+    def fields(self) -> list[dict[str, object]]:
+        """The rendered fields of every record, in order."""
+        return [fields for _, fields in self.rendered]
 
     def named(self, event: str) -> list[dict[str, object]]:
         """The rendered fields of every record whose message is exactly *event*, in order."""
@@ -209,9 +221,15 @@ def root_logger_kept() -> Iterator[logging.Logger]:
 
 
 __all__ = [
+    "SUBJECT_KEY",
     "CapturedLog",
     "CapturingHandler",
+    "LambdaLoggerHandler",
     "configured",
+    "install_subject_key",
+    "keyless_subject_hasher",
     "logged_fields",
+    "rendering",
     "root_logger_kept",
+    "user_hash",
 ]

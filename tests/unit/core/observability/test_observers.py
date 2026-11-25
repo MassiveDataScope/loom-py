@@ -93,6 +93,17 @@ class TestOtelLogExport:
         log_export.handler.close()
         assert log_export.exporter.export(()) is LogRecordExportResult.FAILURE
 
+    def test_a_failure_inside_emit_goes_to_the_handler_and_never_reaches_the_caller(
+        self, log_export: LogExport, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        failed: list[logging.LogRecord] = []
+        monkeypatch.setattr(log_export.handler, "handleError", failed.append)
+        record = logging.LogRecord("x", logging.INFO, __file__, 1, "%d", ("not a number",), None)
+
+        log_export.handler.handle(record)
+
+        assert failed == [record]
+
     def test_a_failure_is_exported_without_the_sdk_message_and_kept_for_other_handlers(
         self, log_export: LogExport
     ) -> None:

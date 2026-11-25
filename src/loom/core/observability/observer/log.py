@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import logging
+from typing import Final
 
 from loom.core.log_names import LogField, LogKey, ValueKind
 from loom.core.observability.diagnostic import ObservabilityEvent
@@ -18,7 +19,7 @@ class LifecycleKey(LogKey):
     META = "loom.lifecycle.meta", ValueKind.OBJECT
 
 
-_EVENTS = {
+_EVENTS: Final = {
     EventKind.START: ObservabilityEvent.LIFECYCLE_STARTED,
     EventKind.END: ObservabilityEvent.LIFECYCLE_ENDED,
     EventKind.ERROR: ObservabilityEvent.LIFECYCLE_FAILED,

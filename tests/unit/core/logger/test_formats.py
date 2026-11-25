@@ -5,7 +5,12 @@ from __future__ import annotations
 import json
 import logging
 import re
+import uuid
+from datetime import UTC, date, datetime, time
+from decimal import Decimal
+from enum import Enum
 from http import HTTPStatus
+from pathlib import PurePosixPath
 from types import TracebackType
 
 import pytest
@@ -178,6 +183,10 @@ def _both(**extra: object) -> tuple[dict[str, object], str]:
     return json.loads(JsonFormatter().format(record)), TextFormatter().format(record)
 
 
+class _Color(Enum):
+    RED = "red"
+
+
 class TestValueRendering:
     @pytest.mark.parametrize("value", ["text", 3, 2.5, True, None, ["a", 1, None], HTTPStatus.OK])
     def test_a_scalar_or_a_short_list_of_scalars_is_written_as_it_is(self, value: object) -> None:
@@ -202,6 +211,27 @@ class TestValueRendering:
 
         assert entry["field"] == type_name
         assert "4111" not in line
+
+    @pytest.mark.parametrize(
+        ("value", "written"),
+        [
+            (uuid.UUID(int=7), "00000000-0000-0000-0000-000000000007"),
+            (Decimal("1.50"), "1.50"),
+            (PurePosixPath("/srv/a"), "/srv/a"),
+            (date(2026, 1, 2), "2026-01-02"),
+            (datetime(2026, 1, 2, 3, 4, tzinfo=UTC), "2026-01-02T03:04:00+00:00"),
+            (time(3, 4), "03:04:00"),
+            (_Color.RED, "red"),
+            ([_Color.RED, uuid.UUID(int=7)], ["red", "00000000-0000-0000-0000-000000000007"]),
+        ],
+        ids=["uuid", "decimal", "path", "date", "datetime", "time", "enum", "list"],
+    )
+    def test_a_common_safe_type_is_written_as_its_text(
+        self, value: object, written: object
+    ) -> None:
+        entry, _ = _both(field=value)
+
+        assert entry["field"] == written
 
     def test_a_non_finite_float_is_written_as_text_so_the_json_stays_valid(self) -> None:
         entry, _ = _both(field=float("nan"))
@@ -256,6 +286,15 @@ class TestLogInjection:
 
         assert "\n" not in line
         assert 'user="' + self.FORGED.replace("\r", "\\r").replace("\n", "\\n") + '"' in line
+
+    def test_the_text_line_escapes_line_breaks_in_the_logger_name(self) -> None:
+        record = _record()
+        record.name = self.FORGED
+
+        line = TextFormatter().format(record)
+
+        assert "\n" not in line
+        assert " ok\\r\\n2026" in line
 
     def test_json_keeps_one_line_for_a_value_with_line_breaks(self) -> None:
         line = JsonFormatter().format(_record(user=self.FORGED))

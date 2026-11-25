@@ -26,7 +26,7 @@ UNKNOWN_LEVEL_CHECK: Final = "loom.logger.E002"
 CHECKS: Final = CheckSet()
 """Checks of ``observability.log``, run when the process uses that path."""
 
-_PATH = "observability.log"
+_PATH: Final = "observability.log"
 
 
 def _literal(value: object) -> str | None:
