@@ -2,7 +2,7 @@
 
 Each test is one cell: an output loom writes to, crossed with one requirement,
 driven through the real pipeline (``configure_logging``, the real formatters, the
-OpenTelemetry SDK handler and exporters). A cell loom does not meet yet is marked
+OpenTelemetry Logs API handler and exporters). A cell loom does not meet yet is marked
 ``xfail(strict=True)`` with the PR that owns it, so the cell turning green fails
 the suite until the mark is removed.
 
@@ -21,26 +21,30 @@ from collections.abc import Callable, Iterator
 from dataclasses import dataclass
 
 import pytest
-from opentelemetry.sdk._logs import LoggerProvider, LoggingHandler
-from opentelemetry.sdk._logs.export import InMemoryLogExporter, SimpleLogRecordProcessor
+from opentelemetry.sdk._logs.export import InMemoryLogRecordExporter
 from opentelemetry.sdk.trace import TracerProvider
 from opentelemetry.sdk.trace.export import SimpleSpanProcessor
 from opentelemetry.sdk.trace.export.in_memory_span_exporter import InMemorySpanExporter
 
+from loom.core.config.observability import OtelConfig
 from loom.core.environment import LAMBDA_LOG_FORMAT_VARIABLE, Environment
 from loom.core.errors.base import DomainError
 from loom.core.errors.codes import ErrorCode
 from loom.core.log_names import LogField
 from loom.core.logger import log_context
-from loom.core.logger.install import HANDLER_NAME, configure_logging
+from loom.core.logger.formats import JsonFormatter
+from loom.core.logger.identity import LogIdentity
+from loom.core.logger.install import HANDLER_NAME
 from loom.core.logger.settings import LogFormatName, LogSettings
 from loom.core.model.redaction import MASK, Dsn, RedactedMap, Secret
 from loom.core.observability.event import Scope
 from loom.core.observability.observability import Observability
+from loom.core.observability.observer import otel as otel_module
 from loom.core.observability.observer.log import LogLifecycleObserver
-from loom.core.observability.observer.otel import OtelLogHandler
+from loom.core.observability.observer.otel import OtelLogHandler, install_otel_log_export
+from loom.core.tracing.context import active_trace_id
 from loom.testing import make
-from tests.helpers.loggers import LambdaLoggerHandler
+from tests.helpers.loggers import LambdaLoggerHandler, configured
 
 CANARY = "CANARY-ROW-VALUE-4711"
 """Data a driver puts in an exception message: it must not become a field loom writes."""
@@ -50,6 +54,10 @@ STACK_HEAD = "Traceback (most recent call last)"
 _DOMAIN_ERROR = "loom.core.errors.base.DomainError"
 
 _LOGGER = logging.getLogger("acceptance")
+
+pytestmark = pytest.mark.filterwarnings("error::DeprecationWarning")
+
+_APP = {"service_name": "billing", "service_version": "2.4.0"}
 
 
 @dataclass(frozen=True, slots=True)
@@ -113,14 +121,14 @@ def _loom_stream() -> io.StringIO:
 
 @pytest.fixture
 def stdout_json() -> Output:
-    configure_logging(LogSettings(format=LogFormatName.JSON), environment=Environment.PRODUCTION)
+    configured(LogSettings(format=LogFormatName.JSON), **_APP)
     stream = _loom_stream()
     return Output(stream.getvalue, lambda: _json_fields(stream.getvalue()))
 
 
 @pytest.fixture
 def stdout_text() -> Output:
-    configure_logging(LogSettings(format=LogFormatName.TEXT), environment=Environment.DEVELOPMENT)
+    configured(LogSettings(format=LogFormatName.TEXT), environment=Environment.DEVELOPMENT, **_APP)
     stream = _loom_stream()
     return Output(stream.getvalue, lambda: _text_fields(stream.getvalue()), _logfmt_fields)
 
@@ -135,7 +143,7 @@ def runtime() -> Iterator[LambdaLoggerHandler]:
 
 
 def _lambda_output(runtime: LambdaLoggerHandler) -> Output:
-    configure_logging(LogSettings(format=LogFormatName.LAMBDA), environment=Environment.PRODUCTION)
+    configured(LogSettings(format=LogFormatName.LAMBDA), **_APP)
 
     def read() -> str:
         return "".join(runtime.lines)
@@ -155,40 +163,50 @@ def lambda_json(runtime: LambdaLoggerHandler, monkeypatch: pytest.MonkeyPatch) -
     return _lambda_output(runtime)
 
 
-@pytest.fixture
-def log_exporter() -> InMemoryLogExporter:
-    return InMemoryLogExporter()
+@dataclass(frozen=True, slots=True)
+class OtelExport:
+    """The export of the test: its handler and what it exported."""
+
+    handler: OtelLogHandler
+    exporter: InMemoryLogRecordExporter
 
 
 @pytest.fixture
-def otel_export(log_exporter: InMemoryLogExporter) -> Iterator[Output]:
-    exporter = log_exporter
-    provider = LoggerProvider()
-    provider.add_log_record_processor(SimpleLogRecordProcessor(exporter))
-    handler = OtelLogHandler(LoggingHandler(level=logging.NOTSET, logger_provider=provider))
-    configure_logging(
-        LogSettings(format=LogFormatName.JSON),
-        environment=Environment.PRODUCTION,
-        extra_handlers=[handler],
+def otel_handler(monkeypatch: pytest.MonkeyPatch) -> Iterator[OtelExport]:
+    monkeypatch.setattr(otel_module, "_LOG_EXPORT_STATE", None)
+    exporter = InMemoryLogRecordExporter()
+    identity = LogIdentity(environment=Environment.PRODUCTION, **_APP)
+    handler = install_otel_log_export(OtelConfig(endpoint=None), identity, exporter=exporter)
+    yield OtelExport(handler, exporter)
+    logging.getLogger().removeHandler(handler)
+
+
+@pytest.fixture
+def otel_export(otel_handler: OtelExport) -> Output:
+    configured(
+        LogSettings(format=LogFormatName.JSON), extra_handlers=[otel_handler.handler], **_APP
     )
     _loom_stream()
+    exporter = otel_handler.exporter
 
     def attributes(*, with_stack: bool) -> str:
+        otel_handler.handler.flush()
         return "\n".join(
             json.dumps(
                 {
-                    k: v
-                    for k, v in dict(item.log_record.attributes or {}).items()
-                    if with_stack or k != LogField.EXCEPTION_STACKTRACE
+                    **item.resource.attributes,
+                    **{
+                        k: v
+                        for k, v in dict(item.log_record.attributes or {}).items()
+                        if with_stack or k != LogField.EXCEPTION_STACKTRACE
+                    },
                 },
                 default=str,
             )
             for item in exporter.get_finished_logs()
         )
 
-    yield Output(lambda: attributes(with_stack=True), lambda: attributes(with_stack=False))
-    logging.getLogger().removeHandler(handler)
-    provider.shutdown()
+    return Output(lambda: attributes(with_stack=True), lambda: attributes(with_stack=False))
 
 
 OUTPUTS = ("stdout_json", "stdout_text", "lambda_text", "lambda_json", "otel_export")
@@ -207,6 +225,38 @@ class TestFieldsSurvive:
         _LOGGER.info("order_accepted", extra={LogField.ATTEMPT: 3})
 
         assert str(output.fields()[LogField.ATTEMPT]) == "3"
+
+
+class TestContextDerivedAtWrite:
+    """Requirement 4: every output derives the context, trace and identity itself."""
+
+    @pytest.mark.parametrize("output", OUTPUTS, indirect=True)
+    def test_a_record_carries_the_running_context_the_trace_and_the_identity(
+        self, output: Output
+    ) -> None:
+        with log_context({LogField.JOB: "PlaceOrder"}), active_trace_id("trace-7"):
+            _LOGGER.info("order_accepted")
+
+        expected = {
+            LogField.JOB: "PlaceOrder",
+            LogField.TRACE_ID: "trace-7",
+            LogField.SERVICE_NAME: "billing",
+            LogField.SERVICE_VERSION: "2.4.0",
+            LogField.RUNTIME: "cli",
+        }
+        assert expected.items() <= output.fields().items()
+
+    def test_reconfiguring_twice_does_not_duplicate_the_export(
+        self, otel_export: Output, otel_handler: OtelExport
+    ) -> None:
+        configured(
+            LogSettings(format=LogFormatName.JSON), extra_handlers=[otel_handler.handler], **_APP
+        )
+
+        _LOGGER.info("order_accepted")
+
+        otel_handler.handler.flush()
+        assert len(otel_handler.exporter.get_finished_logs()) == 1
 
 
 class TestValuesRendered:
@@ -251,14 +301,18 @@ class TestValuesRendered:
 class TestSpanCorrelation:
     """A record written inside a recording OpenTelemetry span names the span."""
 
-    def test_the_export_carries_the_active_span(
-        self, otel_export: Output, log_exporter: InMemoryLogExporter
+    def test_the_export_carries_the_active_span_as_its_context_not_as_attributes(
+        self, otel_export: Output, otel_handler: OtelExport
     ) -> None:
         with TracerProvider().get_tracer("acceptance").start_as_current_span("work") as span:
             _LOGGER.info("order_accepted")
 
-        (item,) = log_exporter.get_finished_logs()
+        otel_handler.handler.flush()
+        (item,) = otel_handler.exporter.get_finished_logs()
         assert item.log_record.span_id == span.get_span_context().span_id
+        attributes = item.log_record.attributes or {}
+        assert {LogField.TRACE_ID, LogField.SPAN_ID, LogField.SERVICE_NAME}.isdisjoint(attributes)
+        assert item.resource.attributes["service.name"] == "billing"
 
     def test_a_stdout_line_carries_the_span_id_only_inside_a_span(
         self, stdout_json: Output
@@ -284,15 +338,29 @@ class TestDeveloperHandlers:
         before.setFormatter(attempt_repr)
         after.setFormatter(attempt_repr)
         logging.getLogger().addHandler(before)
-        configure_logging(
-            LogSettings(format=LogFormatName.JSON), environment=Environment.PRODUCTION
-        )
+        configured(LogSettings(format=LogFormatName.JSON))
         _loom_stream()
         logging.getLogger().addHandler(after)
 
         _LOGGER.info("order_accepted", extra={LogField.ATTEMPT: card})
 
         assert before.stream.getvalue() == after.stream.getvalue() == f"{card!r}\n"
+
+
+class TestJsonFormatterAlone:
+    """A formatter on a handler loom did not install still writes the failure."""
+
+    def test_a_plain_handler_keeps_the_type_and_the_stack(self) -> None:
+        stream = io.StringIO()
+        plain = logging.StreamHandler(stream)
+        plain.setFormatter(JsonFormatter())
+        logging.getLogger().addHandler(plain)
+
+        _LOGGER.error("order_failed", exc_info=_failure())
+
+        entry = json.loads(stream.getvalue())
+        assert entry[LogField.EXCEPTION_TYPE] == _DOMAIN_ERROR
+        assert STACK_HEAD in entry[LogField.EXCEPTION_STACKTRACE]
 
 
 class TestFailureIdentity:

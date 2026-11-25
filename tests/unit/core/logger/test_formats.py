@@ -4,7 +4,9 @@ from __future__ import annotations
 
 import json
 import logging
+import re
 from http import HTTPStatus
+from types import TracebackType
 
 import pytest
 
@@ -22,9 +24,19 @@ from loom.core.observability.observer.log import LifecycleKey
 
 _STACK = LogField.EXCEPTION_STACKTRACE.value
 
+ExcInfo = tuple[type[BaseException], BaseException, TracebackType | None]
+
+
+_ORIGIN = re.compile(
+    r' code\.function\.name=\S+ code\.line\.number=\d+ code\.file\.path=("[^"]*"|\S+)'
+)
+
 
 def _record(
-    level: int = logging.INFO, msg: str = "billing.invoice_issued", **extra: object
+    level: int = logging.INFO,
+    msg: str = "billing.invoice_issued",
+    exc_info: ExcInfo | None = None,
+    **extra: object,
 ) -> logging.LogRecord:
     record = logging.LogRecord(
         name="billing.invoices",
@@ -33,10 +45,23 @@ def _record(
         lineno=7,
         msg=msg,
         args=(),
-        exc_info=None,
+        exc_info=exc_info,
+        func="emit",
     )
     record.__dict__.update(extra)
     return record
+
+
+def _text(record: logging.LogRecord) -> str:
+    """The text line of *record* without the code origin every record carries."""
+    return _ORIGIN.sub("", TextFormatter().format(record))
+
+
+def _failed(message: str = "boom") -> ExcInfo:
+    try:
+        raise ValueError(message)
+    except ValueError as error:
+        return type(error), error, error.__traceback__
 
 
 class TestJsonFormatter:
@@ -60,11 +85,12 @@ class TestJsonFormatter:
         assert (entry["loom.job.name"], entry["amount"]) == ("SendInvoice", 12.5)
 
     def test_the_stack_field_is_written_whole_not_cut_like_a_value(self) -> None:
-        stack = "x" * (MAX_VALUE_LENGTH * 2)
+        record = _record(logging.ERROR, exc_info=_failed("x" * (MAX_VALUE_LENGTH * 2)))
 
-        entry = json.loads(JsonFormatter().format(_record(**{_STACK: stack})))
+        entry = json.loads(JsonFormatter().format(record))
 
-        assert entry[_STACK] == stack
+        assert len(entry[_STACK]) > MAX_VALUE_LENGTH
+        assert entry[_STACK].endswith("x" * MAX_VALUE_LENGTH)
 
 
 class TestTimestamp:
@@ -80,24 +106,23 @@ class TestTimestamp:
 
 class TestTextFormatter:
     def test_a_record_is_a_line_with_its_level_logger_and_message(self) -> None:
-        line = TextFormatter().format(_record())
+        line = _text(_record())
 
         assert "INFO" in line
         assert line.endswith("billing.invoices billing.invoice_issued")
 
     def test_extra_keys_follow_the_message_as_key_value_pairs(self) -> None:
-        line = TextFormatter().format(_record(amount=12.5, **{LogField.JOB.value: "SendInvoice"}))
+        line = _text(_record(amount=12.5, **{LogField.JOB.value: "SendInvoice"}))
 
         assert line.endswith("billing.invoice_issued amount=12.5 loom.job.name=SendInvoice")
 
     def test_the_stack_follows_the_line_with_every_row_prefixed(self) -> None:
-        stack = "Traceback (most recent call last):\nValueError: boom\n2026-01-01 ERROR fake"
-
-        rows = TextFormatter().format(_record(logging.ERROR, **{_STACK: stack})).split("\n")
+        rows = TextFormatter().format(_record(logging.ERROR, exc_info=_failed())).split("\n")
 
         assert [row for row in rows if not row.startswith("  | ")] == [rows[0]]
         assert _STACK not in rows[0]
-        assert rows[1:] == [f"  | {row}" for row in stack.split("\n")]
+        assert rows[1].startswith("  | Traceback (most recent call last):")
+        assert rows[-1] == "  | ValueError: boom"
 
 
 def _colliding_record(extra: dict[str, str]) -> logging.LogRecord:
@@ -215,7 +240,7 @@ class TestValueRendering:
         entry = json.loads(JsonFormatter().format(record))
 
         assert entry["message"].endswith("..." + TRUNCATION_MARKER)
-        assert TextFormatter().format(record).endswith("..." + TRUNCATION_MARKER)
+        assert _text(record).endswith("..." + TRUNCATION_MARKER)
 
 
 class TestLogInjection:
@@ -263,7 +288,7 @@ class TestLogInjection:
     def test_the_text_line_is_one_line_and_each_key_and_value_reads_back(
         self, message: str, extra: dict[str, object], written: str
     ) -> None:
-        line = TextFormatter().format(_record(msg=message, **extra))
+        line = _text(_record(msg=message, **extra))
 
         assert line.endswith(" " + written)
         assert len(line.splitlines()) == 1

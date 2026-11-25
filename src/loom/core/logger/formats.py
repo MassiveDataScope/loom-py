@@ -11,8 +11,12 @@ from datetime import UTC, datetime
 from itertools import chain
 from typing import Final, Literal
 
+from loom.core.errors.summary import ErrorSummary
 from loom.core.log_names import LogField
+from loom.core.logger.context import current_log_fields
+from loom.core.logger.identity import LogIdentity
 from loom.core.model.redaction import MASK, Dsn, RedactedMap, Secret
+from loom.core.tracing.ids import TraceIds
 
 MAX_VALUE_LENGTH: Final = 2048
 """Characters of a rendered message or text value; longer ones end in the marker."""
@@ -25,13 +29,15 @@ TRUNCATION_MARKER: Final = "[truncated]"
 
 _ELLIPSIS: Final = "..."
 
+MAX_STACK_LENGTH: Final = 16_384
+"""Characters of a written stack; a longer one keeps its end, where the failure is."""
+
 _STACKTRACE: Final = LogField.EXCEPTION_STACKTRACE.value
+
+_STACK_FORMATTER: Final = logging.Formatter()
 
 RECORD_ATTRIBUTES: Final = frozenset(logging.makeLogRecord({}).__dict__) | {"message", "asctime"}
 """Attributes the stdlib gives every record; none of them is a field."""
-
-STAMP_MARKER: Final = "_loom_stamped"
-"""Attribute the context filter sets on a record it stamped; private, so never a field."""
 
 _NOT_FIELDS: Final = RECORD_ATTRIBUTES | {_STACKTRACE}
 
@@ -110,16 +116,24 @@ def render_value(value: object) -> object:
 
 
 class RecordFields:
-    """The fields of one record as loom's outputs write them, read without changing it.
+    """One record as loom's outputs write it, derived when written; no context is stored on it.
 
-    The fields are what was passed as ``extra`` and what a filter stamped. Each
-    output renders its own copy, so every handler sees the record as it was logged.
+    The fields are, later ones winning, where the call was made, the identity, the
+    fields of the running :func:`~loom.core.logger.context.log_context`, the ids of the
+    trace, and what was passed as ``extra``; the failure of ``exc_info`` replaces any
+    ``extra`` of its names. Each output builds its own view in the thread that emitted
+    the record, so every handler sees the record as it was logged.
+
+    Args:
+        record: The record to write.
+        identity: The service and process the record comes from; none writes no identity.
     """
 
-    __slots__ = ("_record",)
+    __slots__ = ("_identity", "_record")
 
-    def __init__(self, record: logging.LogRecord) -> None:
+    def __init__(self, record: logging.LogRecord, identity: LogIdentity | None = None) -> None:
         self._record = record
+        self._identity = identity
 
     @property
     def timestamp(self) -> str:
@@ -144,7 +158,7 @@ class RecordFields:
         return self._rendered(RESERVED_KEYS)
 
     def items(self) -> Iterator[tuple[str, object]]:
-        """Each field but the stack under the key it was passed with, its value unrendered."""
+        """Each ``extra`` of the record under the key it was passed with, its value unrendered."""
         return (
             (key, value)
             for key, value in self._record.__dict__.items()
@@ -163,17 +177,41 @@ class RecordFields:
             if key not in without
         )
 
+    @property
+    def stack(self) -> str | None:
+        """The traceback of ``exc_info`` from ERROR up, keeping its end when it is long.
+
+        It is formatted once per record into the standard ``exc_text`` cache, which every
+        handler reuses; an ``extra`` of its name is never written.
+        """
+        record = self._record
+        exc_info = record.exc_info
+        if exc_info is None or exc_info[1] is None or record.levelno < logging.ERROR:
+            return None
+        record.exc_text = record.exc_text or _STACK_FORMATTER.formatException(exc_info)
+        return truncated(record.exc_text, MAX_STACK_LENGTH, keep="end")
+
     def _rendered(self, reserved: frozenset[str]) -> dict[str, object]:
         return {
             EXTRA_PREFIX + name if (name := str(key)) in reserved else name: render_value(value)
-            for key, value in self.items()
+            for key, value in self._derived().items()
         }
 
-    @property
-    def stack(self) -> str | None:
-        """The stack the context filter wrote on the record, if any; each format writes it whole."""
-        stack = self._record.__dict__.get(_STACKTRACE)
-        return stack if isinstance(stack, str) else None
+    def _derived(self) -> dict[str, object]:
+        record = self._record
+        derived: dict[str, object] = {
+            LogField.CODE_FUNCTION: record.funcName,
+            LogField.CODE_LINE: record.lineno,
+            LogField.CODE_FILE: record.pathname,
+        }
+        if self._identity is not None:
+            derived.update(self._identity.fields())
+        derived.update(current_log_fields())
+        derived.update(TraceIds.current().fields())
+        derived.update(self.items())
+        if record.exc_info is not None and record.exc_info[1] is not None:
+            derived.update(ErrorSummary.of(record.exc_info[1]).fields(LogField.EXCEPTION_TYPE))
+        return derived
 
 
 class JsonFormatter(logging.Formatter):
@@ -181,13 +219,21 @@ class JsonFormatter(logging.Formatter):
 
     The keys of Lambda's JSON format (``timestamp``, ``level``, ``message``,
     ``logger``) come first and cannot be overwritten by ``extra``. The formatter
-    renders the values itself, so even on a handler without the context filter it
-    writes no ``repr`` and no secret.
+    derives every field itself, so used alone on any handler it writes the code origin,
+    the running context, the trace ids, the failure's type and stack, and no ``repr``
+    and no secret.
+
+    Args:
+        identity: The service and process to write on every record; none writes no identity.
     """
+
+    def __init__(self, *, identity: LogIdentity | None = None) -> None:
+        super().__init__()
+        self._identity = identity
 
     def format(self, record: logging.LogRecord) -> str:
         """Render *record* as a JSON object on one line."""
-        fields = RecordFields(record)
+        fields = RecordFields(record, self._identity)
         entry: dict[str, object] = {
             "timestamp": fields.timestamp,
             "level": record.levelname,
@@ -241,14 +287,21 @@ class TextFormatter(logging.Formatter):
 
     A key or value holding a space, ``=``, ``"`` or a backslash is quoted, so it
     cannot forge a field; a line break or control character in the message, a key
-    or a value is written escaped, so it cannot forge a second record. The stack the
-    context filter wrote follows the line, each of its rows prefixed so that the
+    or a value is written escaped, so it cannot forge a second record. The stack of the
+    record's exception follows the line, each of its rows prefixed so that the
     record's first line is the only unindented one.
+
+    Args:
+        identity: The service and process to write on every record; none writes no identity.
     """
+
+    def __init__(self, *, identity: LogIdentity | None = None) -> None:
+        super().__init__()
+        self._identity = identity
 
     def format(self, record: logging.LogRecord) -> str:
         """Render *record* as one line, its stack after it when it carries one."""
-        fields = RecordFields(record)
+        fields = RecordFields(record, self._identity)
         head = f"{fields.timestamp} {record.levelname:<7} {record.name}"
         line = f"{head} {Logfmt(fields.message).one_line()}"
         pairs = fields.logfmt()
@@ -278,10 +331,11 @@ class LambdaFormatter(JsonFormatter):
         json_frames: Whether the function uses the ``JSON`` log format, under which
             the runtime's handler reads the record's frame type; under ``Text`` it
             frames the line as text.
+        identity: The service and process to write on every record.
     """
 
-    def __init__(self, *, json_frames: bool) -> None:
-        super().__init__()
+    def __init__(self, *, json_frames: bool, identity: LogIdentity | None = None) -> None:
+        super().__init__(identity=identity)
         self._json_frames = json_frames
 
     def format(self, record: logging.LogRecord) -> str:

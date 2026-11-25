@@ -16,7 +16,6 @@ from typing import Any
 
 from loom.core.log_names import LogField
 from loom.core.logger.formats import RecordFields
-from loom.core.logger.stamp import ContextFilter
 
 _current_task_run_id: ContextVar[uuid.UUID | None] = ContextVar(
     "loom_prefect_task_run_id",
@@ -67,8 +66,8 @@ class PrefectLogBridgeHandler(logging.Handler):
 
     Each record is sent as its event followed by its fields in logfmt, rendered as
     loom's formats render them, so Prefect UI shows them with secrets masked.
-    The fields are always those the configured context filter stamps, whichever
-    handler sees the record first, less where the call was made (``code.*``).
+    The fields are those of the record view, less where the call was made (``code.*``)
+    and the service identity, which only loom's own formats hold.
     Records carry the installed ``flow_run_id``, when there is one, and,
     inside a step, the active ``task_run_id`` from the ContextVar too.
     A daemon worker drains the queue and retries with exponential
@@ -99,13 +98,6 @@ class PrefectLogBridgeHandler(logging.Handler):
             daemon=True,
         )
         self._worker.start()
-
-    def filter(self, record: logging.LogRecord) -> bool:
-        """Stamp *record* with the configured context filter, then apply this handler's own."""
-        stamp = ContextFilter.configured()
-        if stamp is not None:
-            stamp.filter(record)
-        return bool(super().filter(record))
 
     def emit(self, record: logging.LogRecord) -> None:  # noqa: D401
         if self._closed:

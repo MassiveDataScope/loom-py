@@ -14,22 +14,25 @@ from __future__ import annotations
 import atexit
 import logging
 import os
-from typing import TYPE_CHECKING, Any, cast
+from typing import TYPE_CHECKING, Any, Final, cast
 
 from opentelemetry import _logs as otel_logs
 from opentelemetry import trace
 from opentelemetry.trace import Tracer
+from opentelemetry.util.types import Attributes
 
 from loom.core.config.observability import OtelConfig
 from loom.core.errors import InvalidValue
 from loom.core.log_names import LogField
-from loom.core.logger.formats import RECORD_ATTRIBUTES, RecordFields
+from loom.core.logger.formats import RecordFields
+from loom.core.logger.identity import LogIdentity
 from loom.core.model.redaction import reveal_for_driver
 from loom.core.observability.diagnostic import ObservabilityEvent, ObservabilityKey
 from loom.core.observability.protocol import SpanFlusher
 from loom.core.plugins.optional import MissingExtraError
 
 if TYPE_CHECKING:
+    from opentelemetry.sdk._logs import LoggerProvider
     from opentelemetry.sdk._logs.export import LogRecordExporter
 
 _OTEL_EXTRA = "etl-otel"
@@ -39,6 +42,19 @@ _ERR_MISSING_SDK = (
 )
 _V1_LOGS_SUFFIX = "/v1/logs"
 _log = logging.getLogger(__name__)
+
+_INSTRUMENTATION_SCOPE: Final = "loom"
+_NANOSECONDS_PER_SECOND: Final = 1_000_000_000
+_SPAN_IDS: Final = frozenset({LogField.TRACE_ID, LogField.SPAN_ID})
+_SEVERITY_BY_LEVEL: Final = {
+    logging.NOTSET: otel_logs.SeverityNumber.TRACE,
+    logging.DEBUG: otel_logs.SeverityNumber.DEBUG,
+    logging.INFO: otel_logs.SeverityNumber.INFO,
+    logging.WARNING: otel_logs.SeverityNumber.WARN,
+    logging.ERROR: otel_logs.SeverityNumber.ERROR,
+    logging.CRITICAL: otel_logs.SeverityNumber.FATAL,
+}
+"""The OTEL severity of each stdlib level; a level between two takes the lower one."""
 
 
 def _load_span_exporter_cls(protocol: str) -> type[Any]:
@@ -101,7 +117,9 @@ def _load_log_exporter_cls(protocol: str) -> type[Any]:
     return HttpLogExporter
 
 
-def build_tracer(config: OtelConfig) -> tuple[Tracer, SpanFlusher | None]:
+def build_tracer(
+    config: OtelConfig, *, app_name: str | None = None
+) -> tuple[Tracer, SpanFlusher | None]:
     """Build the tracer Loom opens its spans on, and the exporter to flush.
 
     Where spans go and what trace ids they get are orthogonal. ``endpoint``
@@ -117,6 +135,7 @@ def build_tracer(config: OtelConfig) -> tuple[Tracer, SpanFlusher | None]:
 
     Args:
         config: OTLP exporter configuration.
+        app_name: ``app.name``, the Resource's ``service.name`` unless the configuration names one.
 
     Returns:
         The tracer, and the provider to force-flush when Loom owns one.
@@ -140,7 +159,10 @@ def build_tracer(config: OtelConfig) -> tuple[Tracer, SpanFlusher | None]:
 
     from loom.core.observability.otel_ids import LoomMessageIdGenerator, build_sampler
 
-    resource_attrs = {SERVICE_NAME: config.service_name, **config.resource_attributes}
+    resource_attrs = {
+        SERVICE_NAME: config.resolve_service_name(app_name),
+        **config.resource_attributes,
+    }
     provider = TracerProvider(
         resource=Resource.create(resource_attrs),
         id_generator=LoomMessageIdGenerator(),
@@ -190,56 +212,75 @@ def _build_exporter(config: OtelConfig) -> Any:
 
 
 class OtelLogHandler(logging.Handler):
-    """Hand the SDK's ``LoggingHandler`` a rendered copy of each record, with no exception.
+    """Export each record through the OpenTelemetry Logs API, with no exception.
 
-    The copy carries the record's standard attributes and its fields as loom's formats
-    write them, under their own names: a ``Secret`` is masked, an object is its type
-    name, and no private attribute of the record is exported. The SDK turns ``exc_info``
-    into ``exception.message`` and a stack of its own; the context filter has already
-    put the type, the code and the stack on the record.
+    The body is the record's message and the attributes are its fields as loom's formats
+    write them, under their own names: a ``Secret`` is masked, an object is its type name
+    and no private attribute of the record is exported. A field the provider's ``Resource``
+    already carries is not repeated, and inside a recording span neither are its ids, which
+    the emitting context gives. The exception is never handed over, so the SDK adds no
+    ``exception.message``: the attributes hold its type, its code and its stack.
+
+    Args:
+        provider: The provider the records are emitted through.
+        identity: The service and process the records come from.
+
+    Attributes:
+        identity: The identity written on each record; assign to replace it.
     """
 
-    def __init__(self, sdk_handler: logging.Handler) -> None:
+    def __init__(self, provider: LoggerProvider, identity: LogIdentity) -> None:
         super().__init__()
-        self._sdk_handler = sdk_handler
+        self._provider = provider
+        self._logger = provider.get_logger(_INSTRUMENTATION_SCOPE)
+        self._resource_keys = frozenset(provider.resource.attributes)
+        self.identity = identity
 
     def emit(self, record: logging.LogRecord) -> None:
-        """Export a copy of *record* with its fields rendered and no ``exc_info``."""
-        record_fields = RecordFields(record)
-        exported = object.__new__(type(record))
-        exported.__dict__ = {
-            **{key: value for key, value in record.__dict__.items() if key in RECORD_ATTRIBUTES},
-            **record_fields.fields(),
-            "exc_info": None,
-            "exc_text": None,
-        }
-        stack = record_fields.stack
+        """Emit *record* with its fields rendered and no exception."""
+        view = RecordFields(record, self.identity)
+        fields = view.fields()
+        carried = self._resource_keys
+        if LogField.SPAN_ID in fields:
+            carried = carried | _SPAN_IDS
+        attributes = {key: value for key, value in fields.items() if key not in carried}
+        stack = view.stack
         if stack is not None:
-            exported.__dict__[LogField.EXCEPTION_STACKTRACE] = stack
-        self._sdk_handler.emit(exported)
+            attributes[LogField.EXCEPTION_STACKTRACE] = stack
+        level = min(max(record.levelno, 0), logging.CRITICAL) // 10 * 10
+        self._logger.emit(
+            timestamp=int(record.created * _NANOSECONDS_PER_SECOND),
+            severity_number=_SEVERITY_BY_LEVEL[level],
+            severity_text=record.levelname,
+            body=view.message,
+            attributes=cast("Attributes", attributes),
+        )
 
     def flush(self) -> None:
-        """Flush the SDK's handler."""
-        self._sdk_handler.flush()
+        """Flush the provider's processors."""
+        self._provider.force_flush()
 
 
-_LOG_EXPORT_STATE: tuple[Any, OtelLogHandler] | None = None
+_LOG_EXPORT_STATE: OtelLogHandler | None = None
 
 
 def install_otel_log_export(
     config: OtelConfig,
+    identity: LogIdentity,
     *,
     exporter: LogRecordExporter | None = None,
 ) -> OtelLogHandler:
     """Build the stdlib log handler that exports OTEL logs.
 
     The handler is not attached to the root logger: pass it to
-    :func:`~loom.core.logger.install.configure_logging`, which attaches it and
-    puts the context filter on it like on every handler loom owns. The helper is
-    idempotent for the current process: later calls return the same handler.
+    :func:`~loom.core.logger.install.configure_logging`, which attaches it. The helper
+    is idempotent for the current process: later calls return the same handler, now
+    writing *identity*, with the first call's ``Resource``.
 
     Args:
         config: OTLP exporter configuration.
+        identity: The service and process the records come from; its service name is the
+            Resource's ``service.name`` unless the configuration names one.
         exporter: Optional pre-built log record exporter. When omitted, one is
             built from ``config``.
 
@@ -254,10 +295,11 @@ def install_otel_log_export(
     global _LOG_EXPORT_STATE
     config.validate()
     if _LOG_EXPORT_STATE is not None:
-        return _LOG_EXPORT_STATE[1]
+        _LOG_EXPORT_STATE.identity = identity
+        return _LOG_EXPORT_STATE
 
     try:
-        from opentelemetry.sdk._logs import LoggerProvider, LoggingHandler
+        from opentelemetry.sdk._logs import LoggerProvider
         from opentelemetry.sdk._logs.export import BatchLogRecordProcessor
         from opentelemetry.sdk.resources import SERVICE_NAME, Resource
     except ImportError as exc:
@@ -267,7 +309,7 @@ def install_otel_log_export(
     provider = LoggerProvider(
         resource=Resource.create(
             {
-                SERVICE_NAME: config.service_name,
+                SERVICE_NAME: config.resolve_service_name(identity.service_name),
                 **config.resource_attributes,
             }
         )
@@ -275,9 +317,9 @@ def install_otel_log_export(
     provider.add_log_record_processor(BatchLogRecordProcessor(log_exporter))
     otel_logs.set_logger_provider(provider)
 
-    handler = OtelLogHandler(LoggingHandler(level=logging.NOTSET, logger_provider=provider))
+    handler = OtelLogHandler(provider, identity)
     atexit.register(provider.shutdown)
-    _LOG_EXPORT_STATE = (provider, handler)
+    _LOG_EXPORT_STATE = handler
     return handler
 
 

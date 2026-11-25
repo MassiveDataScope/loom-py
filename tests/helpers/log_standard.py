@@ -51,8 +51,8 @@ class Breach(StrEnum):
     def broken_by(cls, record: logging.LogRecord) -> list[Breach]:
         """The rules *record* breaks, read from the record and the log context it runs in.
 
-        Each key is its own declaration. The contract handler sees the record before any
-        context filter, so ``exception.type`` on it was written by hand.
+        Each key is its own declaration. Nothing writes loom context on the record, so
+        ``exception.type`` among its ``extra`` was written by hand.
         """
         fields = {**current_log_fields(), **dict(RecordFields(record).items())}
         failure = record.exc_info[1] if record.exc_info else None
@@ -122,7 +122,7 @@ def loom_records_follow_the_contract() -> Iterator[None]:
 def caplog_shows_fields(request: pytest.FixtureRequest) -> None:
     """Make ``caplog.text`` show each record with its fields, laid out as the text format does.
 
-    Values stay raw: caplog's handler carries no ``ContextFilter``.
+    Values stay raw: caplog's handler renders nothing.
     """
     if "caplog" in request.fixturenames:
         request.getfixturevalue("caplog").handler.setFormatter(TextFormatter())

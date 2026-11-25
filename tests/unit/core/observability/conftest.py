@@ -9,6 +9,8 @@ import pytest
 from opentelemetry.sdk._logs.export import InMemoryLogRecordExporter
 
 from loom.core.config.observability import OtelConfig
+from loom.core.environment import Environment
+from loom.core.logger import LogIdentity
 from loom.core.observability.observer import otel as otel_module
 from loom.core.observability.observer.otel import OtelLogHandler, install_otel_log_export
 
@@ -22,9 +24,7 @@ class LogExport:
 
     def exported(self) -> dict[object, dict[str, object]]:
         """The attributes of each record exported so far by its body, after flushing."""
-        state = otel_module._LOG_EXPORT_STATE  # pyright: ignore[reportPrivateUsage]
-        assert state is not None
-        state[0].force_flush()
+        self.handler.flush()
         return {
             finished.log_record.body: dict(finished.log_record.attributes or {})
             for finished in self.exporter.get_finished_logs()
@@ -37,6 +37,8 @@ def log_export(monkeypatch: pytest.MonkeyPatch) -> Iterator[LogExport]:
     monkeypatch.setattr(otel_module, "_LOG_EXPORT_STATE", None)
     exporter = InMemoryLogRecordExporter()
     handler = install_otel_log_export(
-        OtelConfig(endpoint=None, service_name="loom-test"), exporter=exporter
+        OtelConfig(endpoint=None, service_name="loom-test"),
+        LogIdentity(environment=Environment.TEST),
+        exporter=exporter,
     )
     yield LogExport(handler, exporter)

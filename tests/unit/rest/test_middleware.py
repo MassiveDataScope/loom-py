@@ -7,11 +7,9 @@ from typing import Any
 
 import pytest
 
-from loom.core.environment import Environment
-from loom.core.logger import ContextFilter, LogIdentity
 from loom.core.tracing import get_trace_id
 from loom.rest.middleware import TraceIdMiddleware, _extract_header
-from tests.helpers.loggers import CapturingHandler
+from tests.helpers.loggers import RenderingHandler
 
 # ---------------------------------------------------------------------------
 # ASGI test helpers
@@ -175,19 +173,15 @@ class TestTraceIdMiddlewareResponseHeader:
 
 class TestTraceIdMiddlewareLogs:
     @pytest.mark.asyncio
-    async def test_a_record_emitted_during_the_request_carries_its_trace_id(self) -> None:
-        stamped = CapturingHandler()
-        stamped.addFilter(ContextFilter(LogIdentity(environment=Environment.TEST)))
-        root = logging.getLogger()
-        root.addHandler(stamped)
-        root.setLevel(logging.INFO)
+    async def test_a_record_emitted_during_the_request_carries_its_trace_id(
+        self, rendering: RenderingHandler
+    ) -> None:
         scope = _make_http_scope([(b"x-request-id", b"log-tid")])
 
         await TraceIdMiddleware(_AppCapture())(scope, _null_receive, _make_async_sink([]))
 
-        root.removeHandler(stamped)
-        [record] = stamped.records
-        assert record.__dict__["trace_id"] == "log-tid"
+        [(_, fields)] = rendering.rendered
+        assert fields["trace_id"] == "log-tid"
 
 
 class TestTraceIdMiddlewareContextReset:

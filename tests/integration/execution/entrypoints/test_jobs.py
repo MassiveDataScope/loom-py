@@ -18,7 +18,6 @@ import pytest
 from loom.core.engine.compiler import UseCaseCompiler
 from loom.core.engine.executor import UseCaseExecutor
 from loom.core.engine.post_commit import PostCommitChannel, bind_channel, reset_channel
-from loom.core.environment import Environment
 from loom.core.errors import DelegationExpired, Unauthenticated
 from loom.core.execution import ExecutionScope
 from loom.core.identity import ANONYMOUS, Delegation, Identity, captured_delegation
@@ -31,7 +30,6 @@ from loom.core.job.run import EnvelopeInvocation
 from loom.core.job.timer import JobTimer
 from loom.core.log_names import LogField
 from loom.core.logger import log_context
-from loom.core.logger.stamp import ContextFilter, LogIdentity
 from loom.core.observability.observability import Observability
 from loom.core.stores.catalog import DEFAULT_STORE
 from loom.core.stores.uow.coordinator import OrderedCommits
@@ -43,7 +41,7 @@ from loom.testing import JobTestData, ManualTimer, make
 from tests.helpers.celery import CeleryBroker
 from tests.helpers.delegation import acting_as, assert_new_delegation
 from tests.helpers.jobs import CeleryServiceFixture, InlineServiceFixture
-from tests.helpers.loggers import CapturedLog
+from tests.helpers.loggers import RenderingHandler
 from tests.unit.core.engine._lifecycle_doubles import Log, StubUnitOfWorkFactory
 
 from .doubles import (
@@ -128,10 +126,9 @@ class TestInlineJobTransport:
         assert handles[0].wait().session.caller is ALICE
 
     async def test_a_dispatch_carries_no_log_field_of_its_sender(
-        self, factory: UseCaseFactory, executor: UseCaseExecutor, caplog: pytest.LogCaptureFixture
+        self, factory: UseCaseFactory, executor: UseCaseExecutor, rendering: RenderingHandler
     ) -> None:
-        caplog.set_level(logging.DEBUG)
-        caplog.handler.addFilter(ContextFilter(LogIdentity(environment=Environment.TEST)))
+        logging.getLogger().setLevel(logging.DEBUG)
         jobs = InlineServiceFixture(factory, executor)
 
         async def dispatch_for_an_order() -> None:
@@ -141,7 +138,7 @@ class TestInlineJobTransport:
         await executor.execute(AcmeRun(dispatch_for_an_order), identity=ALICE)
         await jobs.wait_until_idle()
 
-        job_records = [entry for _, entry in CapturedLog(caplog).events if LogField.JOB in entry]
+        job_records = [entry for _, entry in rendering.rendered if LogField.JOB in entry]
         assert {entry.get("order_id") for entry in job_records} == {None}
 
 

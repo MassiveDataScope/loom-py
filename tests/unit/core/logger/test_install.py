@@ -12,15 +12,11 @@ from loom.core.environment import (
     Environment,
 )
 from loom.core.log_names import LogField
-from loom.core.logger import ContextFilter, LogRuntime
+from loom.core.logger import LogRuntime
 from loom.core.logger.formats import JsonFormatter, LambdaFormatter, TextFormatter
-from loom.core.logger.install import HANDLER_NAME, configure_logging
+from loom.core.logger.install import HANDLER_NAME
 from loom.core.logger.settings import LogFormatName, LogLevel, LogSettings
-from tests.helpers.loggers import CapturingHandler, LambdaLoggerHandler
-
-
-def _stamping(handler: logging.Handler) -> list[ContextFilter]:
-    return [f for f in handler.filters if isinstance(f, ContextFilter)]
+from tests.helpers.loggers import CapturingHandler, LambdaLoggerHandler, configured
 
 
 def _installed(root: logging.Logger) -> list[logging.Handler]:
@@ -40,7 +36,7 @@ class TestStdoutFormats:
         log_format: LogFormatName,
         formatter: type[logging.Formatter],
     ) -> None:
-        configure_logging(LogSettings(format=log_format), environment=Environment.PRODUCTION)
+        configured(LogSettings(format=log_format), environment=Environment.PRODUCTION)
 
         logging.getLogger("tests.stdout").warning("billing.invoice_issued")
 
@@ -53,7 +49,7 @@ class TestJsonInstallation:
     def test_json_lines_reach_stdout_stamped_with_the_service(
         self, pristine_root_logger: logging.Logger, capsys: pytest.CaptureFixture[str]
     ) -> None:
-        configure_logging(
+        configured(
             LogSettings(format=LogFormatName.JSON),
             environment=Environment.PRODUCTION,
             service_name="billing",
@@ -71,18 +67,14 @@ class TestJsonInstallation:
         self, pristine_root_logger: logging.Logger
     ) -> None:
         for _ in range(2):
-            configure_logging(
-                LogSettings(format=LogFormatName.JSON), environment=Environment.PRODUCTION
-            )
+            configured(LogSettings(format=LogFormatName.JSON), environment=Environment.PRODUCTION)
 
         assert len(_installed(pristine_root_logger)) == 1
 
     def test_a_handler_somebody_else_added_stays(
         self, handler: CapturingHandler, pristine_root_logger: logging.Logger
     ) -> None:
-        configure_logging(
-            LogSettings(format=LogFormatName.JSON), environment=Environment.PRODUCTION
-        )
+        configured(LogSettings(format=LogFormatName.JSON), environment=Environment.PRODUCTION)
 
         assert handler in pristine_root_logger.handlers
 
@@ -95,37 +87,31 @@ class TestJsonInstallation:
             named_levels={"acme_library": LogLevel.ERROR},
         )
 
-        configure_logging(settings, environment=Environment.DEVELOPMENT)
+        configured(settings, environment=Environment.DEVELOPMENT)
 
         assert pristine_root_logger.level == logging.WARNING
         assert logging.getLogger("acme_library").level == logging.ERROR
         assert logging.getLogger("botocore").level == logging.WARNING
 
     def test_the_runtime_is_named_after_the_composition(
-        self, pristine_root_logger: logging.Logger
+        self, pristine_root_logger: logging.Logger, capsys: pytest.CaptureFixture[str]
     ) -> None:
-        stamp = configure_logging(
-            LogSettings(format=LogFormatName.JSON), environment=Environment.PRODUCTION
-        )
+        identity = configured(LogSettings(format=LogFormatName.JSON))
 
-        stamp.use_runtime(LogRuntime.CELERY)
+        identity.run_as(LogRuntime.CELERY)
+        logging.getLogger("tests.runtime").warning("billing.invoice_issued")
 
-        (handler,) = _installed(pristine_root_logger)
-        record = logging.LogRecord("x", logging.INFO, __file__, 1, "x.y_z", (), None)
-        _stamping(handler)[0].filter(record)
-        assert record.__dict__[LogField.RUNTIME] == "celery"
+        assert json.loads(capsys.readouterr().out)[LogField.RUNTIME] == "celery"
 
-    def test_reconfiguring_leaves_an_owned_handler_this_call_filter_alone(
+    def test_reconfiguring_leaves_an_owned_handler_attached_once(
         self, pristine_root_logger: logging.Logger
     ) -> None:
         export, settings = CapturingHandler(), LogSettings(format=LogFormatName.JSON)
-        configure_logging(settings, environment=Environment.PRODUCTION, extra_handlers=(export,))
 
-        stamp = configure_logging(
-            settings, environment=Environment.PRODUCTION, extra_handlers=(export,)
-        )
+        for _ in range(2):
+            configured(settings, extra_handlers=(export,))
 
-        assert export.filters == [stamp]
+        assert pristine_root_logger.handlers.count(export) == 1
 
 
 class TestLambdaInstallation:
@@ -142,7 +128,7 @@ class TestLambdaInstallation:
     def test_a_handler_that_is_not_the_runtime_keeps_its_formatter(
         self, runtime_handler: LambdaLoggerHandler, handler: CapturingHandler
     ) -> None:
-        configure_logging(LogSettings(), environment=Environment.PRODUCTION)
+        configured(LogSettings(), environment=Environment.PRODUCTION)
 
         assert handler.formatter is None
 
@@ -151,7 +137,7 @@ class TestLambdaInstallation:
     ) -> None:
         monkeypatch.setenv(LAMBDA_FUNCTION_VARIABLE, "billing-handler")
 
-        configure_logging(LogSettings(), environment=Environment.PRODUCTION)
+        configured(LogSettings(), environment=Environment.PRODUCTION)
 
         (installed,) = [h for h in pristine_root_logger.handlers if h.get_name() == HANDLER_NAME]
         assert isinstance(installed.formatter, JsonFormatter)
@@ -161,7 +147,7 @@ class TestLambdaInstallation:
     ) -> None:
         before = list(pristine_root_logger.handlers)
 
-        configure_logging(LogSettings(), environment=Environment.PRODUCTION)
+        configured(LogSettings(), environment=Environment.PRODUCTION)
 
         assert pristine_root_logger.handlers == before
 
@@ -170,7 +156,7 @@ class TestLambdaInstallation:
     ) -> None:
         pristine_root_logger.setLevel(logging.ERROR)
 
-        configure_logging(LogSettings(level=LogLevel.DEBUG), environment=Environment.PRODUCTION)
+        configured(LogSettings(level=LogLevel.DEBUG), environment=Environment.PRODUCTION)
 
         assert pristine_root_logger.level == logging.DEBUG
 
@@ -188,38 +174,28 @@ class TestLambdaInstallation:
     ) -> None:
         monkeypatch.setenv(LAMBDA_LOG_FORMAT_VARIABLE, log_format)
 
-        configure_logging(LogSettings(), environment=Environment.PRODUCTION)
+        configured(LogSettings(), environment=Environment.PRODUCTION)
 
         logging.getLogger("tests.lambda").error("billing.invoice_failed")
 
         assert isinstance(runtime_handler.formatter, LambdaFormatter)
         assert runtime_handler.frames == [frame]
 
-    def test_the_context_filter_goes_on_the_handler_of_the_runtime(
+    def test_the_runtime_handler_writes_the_identity(
         self, runtime_handler: LambdaLoggerHandler
     ) -> None:
-        configure_logging(LogSettings(), environment=Environment.PRODUCTION, service_name="billing")
+        configured(LogSettings(), environment=Environment.PRODUCTION, service_name="billing")
 
         logging.getLogger("tests.lambda").error("billing.invoice_failed")
 
-        (record,) = runtime_handler.records
-        assert record.__dict__[LogField.SERVICE_NAME] == "billing"
+        (line,) = runtime_handler.lines
+        assert json.loads(line)[LogField.SERVICE_NAME] == "billing"
 
     def test_switching_from_json_leaves_no_loom_handler_behind(
         self, runtime_handler: LambdaLoggerHandler, pristine_root_logger: logging.Logger
     ) -> None:
-        configure_logging(
-            LogSettings(format=LogFormatName.JSON), environment=Environment.PRODUCTION
-        )
+        configured(LogSettings(format=LogFormatName.JSON), environment=Environment.PRODUCTION)
 
-        configure_logging(LogSettings(), environment=Environment.PRODUCTION)
+        configured(LogSettings(), environment=Environment.PRODUCTION)
 
         assert _installed(pristine_root_logger) == []
-
-    def test_configuring_twice_leaves_one_context_filter(
-        self, runtime_handler: LambdaLoggerHandler
-    ) -> None:
-        for _ in range(2):
-            configure_logging(LogSettings(), environment=Environment.PRODUCTION)
-
-        assert len(_stamping(runtime_handler)) == 1

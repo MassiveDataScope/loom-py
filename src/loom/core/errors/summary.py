@@ -54,7 +54,7 @@ class ErrorSummary(msgspec.Struct, frozen=True, kw_only=True):
 
         A record with no exception to carry, such as a lifecycle event that kept the
         summary alone or loom's own token failure, whose frames hold the token and the key,
-        writes ``error.type``. ``exception.type`` is the context filter's alone: it writes it
+        writes ``error.type``. ``exception.type`` is the record view's alone: it writes it
         from the ``exc_info`` of a record that logs a caught exception.
         """
         if self.code is None:
