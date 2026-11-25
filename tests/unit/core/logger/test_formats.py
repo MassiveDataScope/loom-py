@@ -307,47 +307,45 @@ class TestValueRendering:
 class TestLogInjection:
     FORGED = "ok\r\n2026-01-01 ERROR billing.forged forged_entry"
 
-    def test_the_text_line_escapes_line_breaks_in_a_value(self) -> None:
-        line = TextFormatter().format(_record(user=self.FORGED))
+    @pytest.fixture
+    def text_line(self) -> Callable[..., str]:
+        def render(*, logger: str = "billing.invoices", msg: str = "m", **extra: object) -> str:
+            record = _record(msg=msg, **extra)
+            record.name = logger
+            return _text(record)
 
-        assert "\n" not in line
-        assert 'user="' + self.FORGED.replace("\r", "\\r").replace("\n", "\\n") + '"' in line
+        return render
 
-    def test_the_text_line_escapes_line_breaks_in_the_logger_name(self) -> None:
-        record = _record()
-        record.name = self.FORGED
+    @pytest.mark.parametrize(
+        ("fields", "written"),
+        [
+            ({"user": FORGED}, 'm user="ok\\r\\n2026-01-01 ERROR billing.forged forged_entry"'),
+            ({"logger": FORGED}, "ok\\r\\n2026-01-01 ERROR billing.forged forged_entry m"),
+            ({"a\nERROR forged": "x"}, 'm "a\\nERROR forged"=x'),
+            ({"user": "bell\x07esc\x1b"}, 'm user="bell\\x07esc\\x1b"'),
+            ({"msg": "bell\x07\x85next"}, "bell\\x07\\x85next"),
+        ],
+        ids=[
+            "value-line-breaks",
+            "logger-name",
+            "key-line-break",
+            "control-value",
+            "control-message",
+        ],
+    )
+    def test_the_text_line_is_one_line_and_escapes_what_could_forge_a_record(
+        self, text_line: Callable[..., str], fields: dict[str, object], written: str
+    ) -> None:
+        line = text_line(**fields)
 
-        line = TextFormatter().format(record)
-
-        assert "\n" not in line
-        assert " ok\\r\\n2026" in line
+        assert len(line.splitlines()) == 1
+        assert line.endswith(" " + written)
 
     def test_json_keeps_one_line_for_a_value_with_line_breaks(self) -> None:
         line = JsonFormatter().format(_record(user=self.FORGED))
 
         assert "\n" not in line
         assert json.loads(line)["user"] == self.FORGED
-
-    @pytest.mark.parametrize(
-        ("message", "extra", "written"),
-        [
-            ("m", {"a\nERROR forged": "x"}, 'm "a\\nERROR forged"=x'),
-            ("m", {"user": "bell\x07esc\x1b"}, 'm user="bell\\x07esc\\x1b"'),
-            ("bell\x07\x85next", {}, "bell\\x07\\x85next"),
-        ],
-        ids=[
-            "newline-key",
-            "control-value",
-            "control-message",
-        ],
-    )
-    def test_the_text_line_is_one_line_and_each_key_and_value_reads_back(
-        self, message: str, extra: dict[str, object], written: str
-    ) -> None:
-        line = _text(_record(msg=message, **extra))
-
-        assert line.endswith(" " + written)
-        assert len(line.splitlines()) == 1
 
 
 _CONTROL = re.compile("[\\x00-\\x1f\\x7f-\\x9f\\u2028\\u2029]")
