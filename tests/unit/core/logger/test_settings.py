@@ -54,14 +54,17 @@ class TestFormatFor:
     def test_the_environment_picks_json_or_text(
         self, environment: Environment, expected: str
     ) -> None:
-        assert LogSettings().format_for(environment) == expected
+        assert make(LogSettings, format=None).format_for(environment) == expected
 
     def test_inside_lambda_the_format_is_lambda(self, monkeypatch: pytest.MonkeyPatch) -> None:
         monkeypatch.setenv(_LAMBDA, "billing-handler")
 
-        assert LogSettings().format_for(Environment.PRODUCTION) == "lambda"
+        assert make(LogSettings, format=None).format_for(Environment.PRODUCTION) == "lambda"
 
     def test_a_written_format_wins_over_lambda(self, monkeypatch: pytest.MonkeyPatch) -> None:
         monkeypatch.setenv(_LAMBDA, "billing-handler")
 
-        assert LogSettings(format=LogFormatName.JSON).format_for(Environment.PRODUCTION) == "json"
+        assert (
+            make(LogSettings, format=LogFormatName.JSON).format_for(Environment.PRODUCTION)
+            == "json"
+        )

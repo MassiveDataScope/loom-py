@@ -13,7 +13,6 @@ from decimal import Decimal
 from enum import Enum, StrEnum
 from http import HTTPStatus
 from pathlib import PurePosixPath
-from types import TracebackType
 
 import pytest
 from hypothesis import given
@@ -30,36 +29,13 @@ from loom.core.logger.formats import (
     TextFormatter,
 )
 from loom.core.model.redaction import MASK, Dsn, RedactedMap, Secret
+from tests.helpers.loggers import a_record, raised
 
 _STACK = LogField.EXCEPTION_STACKTRACE.value
-
-ExcInfo = tuple[type[BaseException], BaseException, TracebackType | None]
-
 
 _ORIGIN = re.compile(
     r' code\.function\.name=\S+ code\.line\.number=\d+ code\.file\.path=("[^"]*"|\S+)'
 )
-
-
-def _record(
-    level: int = logging.INFO,
-    msg: str = "billing.invoice_issued",
-    exc_info: ExcInfo | None = None,
-    name: str = "billing.invoices",
-    **extra: object,
-) -> logging.LogRecord:
-    record = logging.LogRecord(
-        name=name,
-        level=level,
-        pathname=__file__,
-        lineno=7,
-        msg=msg,
-        args=(),
-        exc_info=exc_info,
-        func="emit",
-    )
-    record.__dict__.update(extra)
-    return record
 
 
 def _text(record: logging.LogRecord) -> str:
@@ -67,35 +43,23 @@ def _text(record: logging.LogRecord) -> str:
     return _ORIGIN.sub("", TextFormatter().format(record))
 
 
-def _failed(message: str = "boom") -> ExcInfo:
-    try:
-        raise ValueError(message)
-    except ValueError as error:
-        return type(error), error, error.__traceback__
-
-
 class TestJsonFormatter:
-    def test_a_record_is_one_json_object_with_the_keys_of_lambda_first(self) -> None:
-        line = JsonFormatter().format(_record())
+    def test_a_record_starts_with_the_keys_of_lambda(self) -> None:
+        entry = json.loads(JsonFormatter().format(a_record()))
 
-        entry = json.loads(line)
-        assert "\n" not in line
         assert list(entry)[:4] == ["timestamp", "level", "message", "logger"]
-        assert (entry["level"], entry["message"], entry["logger"]) == (
-            "INFO",
-            "billing.invoice_issued",
-            "billing.invoices",
-        )
 
     def test_extra_keys_are_top_level_and_keep_their_dots(self) -> None:
         entry = json.loads(
-            JsonFormatter().format(_record(**{LogField.JOB.value: "SendInvoice", "amount": 12.5}))
+            JsonFormatter().format(a_record(**{LogField.JOB.value: "SendInvoice", "amount": 12.5}))
         )
 
         assert (entry["loom.job.name"], entry["amount"]) == ("SendInvoice", 12.5)
 
     def test_the_stack_field_is_written_whole_not_cut_like_a_value(self) -> None:
-        record = _record(logging.ERROR, exc_info=_failed("x" * (MAX_VALUE_LENGTH * 2)))
+        record = a_record(
+            severity=logging.ERROR, failure=raised(ValueError("x" * (MAX_VALUE_LENGTH * 2)))
+        )
 
         entry = json.loads(JsonFormatter().format(record))
 
@@ -106,7 +70,7 @@ class TestJsonFormatter:
 class TestTimestamp:
     @pytest.mark.parametrize("formatter", [JsonFormatter(), TextFormatter()], ids=["json", "text"])
     def test_the_timestamp_is_utc_iso_8601(self, formatter: logging.Formatter) -> None:
-        record = _record()
+        record = a_record()
         record.created = 0.0
 
         line = formatter.format(record)
@@ -116,29 +80,27 @@ class TestTimestamp:
 
 class TestTextFormatter:
     def test_a_record_is_a_line_with_its_level_logger_and_message(self) -> None:
-        line = _text(_record())
+        line = _text(a_record())
 
         assert "INFO" in line
         assert line.endswith("billing.invoices billing.invoice_issued")
 
     def test_extra_keys_follow_the_message_as_key_value_pairs(self) -> None:
-        line = _text(_record(amount=12.5, **{LogField.JOB.value: "SendInvoice"}))
+        line = _text(a_record(amount=12.5, **{LogField.JOB.value: "SendInvoice"}))
 
         assert line.endswith("billing.invoice_issued amount=12.5 loom.job.name=SendInvoice")
 
     def test_the_stack_follows_the_line_with_every_row_prefixed(self) -> None:
-        rows = TextFormatter().format(_record(logging.ERROR, exc_info=_failed())).split("\n")
+        rows = (
+            TextFormatter()
+            .format(a_record(severity=logging.ERROR, failure=raised(ValueError("boom"))))
+            .split("\n")
+        )
 
         assert [row for row in rows if not row.startswith("  | ")] == [rows[0]]
         assert _STACK not in rows[0]
         assert rows[1].startswith("  | Traceback (most recent call last):")
         assert rows[-1] == "  | ValueError: boom"
-
-
-def _colliding_record(extra: dict[str, str]) -> logging.LogRecord:
-    record = _record()
-    record.__dict__.update(extra)
-    return record
 
 
 class TestReservedKeys:
@@ -149,7 +111,7 @@ class TestReservedKeys:
     }
 
     def test_json_keeps_the_metadata_of_the_record_and_moves_the_colliding_keys(self) -> None:
-        entry = json.loads(JsonFormatter().format(_colliding_record(self.COLLIDING)))
+        entry = json.loads(JsonFormatter().format(a_record(**self.COLLIDING)))
 
         assert (entry["level"], entry["logger"], entry["message"]) == (
             "INFO",
@@ -159,7 +121,7 @@ class TestReservedKeys:
         assert entry["timestamp"].endswith("+00:00")
 
     def test_json_moves_the_colliding_keys_and_the_fields_keep_them(self) -> None:
-        record = _colliding_record(self.COLLIDING)
+        record = a_record(**self.COLLIDING)
 
         entry = json.loads(JsonFormatter().format(record))
 
@@ -167,13 +129,13 @@ class TestReservedKeys:
         assert RecordFields(record).fields().items() >= self.COLLIDING.items()
 
     def test_text_writes_the_colliding_keys_as_given_after_its_own(self) -> None:
-        line = TextFormatter().format(_colliding_record(self.COLLIDING))
+        line = TextFormatter().format(a_record(**self.COLLIDING))
 
         assert " level=FATAL" in line
         assert " logger=forged.logger" in line
 
     def test_a_key_that_does_not_collide_is_written_as_given(self) -> None:
-        entry = json.loads(JsonFormatter().format(_record(levels="x")))
+        entry = json.loads(JsonFormatter().format(a_record(levels="x")))
 
         assert entry["levels"] == "x"
 
@@ -184,7 +146,7 @@ class _Invoice:
 
 
 def _both(**extra: object) -> tuple[dict[str, object], str]:
-    record = _record(**extra)
+    record = a_record(**extra)
     return json.loads(JsonFormatter().format(record)), TextFormatter().format(record)
 
 
@@ -263,9 +225,7 @@ class TestValueRendering:
     def test_a_str_enum_in_a_list_is_its_text_in_the_line_never_its_repr(self) -> None:
         _, line = _both(field=[_Level.HIGH, HTTPStatus.OK])
 
-        assert "high" in line
-        assert "_Level" not in line
-        assert "HTTPStatus" not in line
+        assert line.endswith("field=\"['high', 200]\"")
 
     def test_a_non_finite_float_is_written_as_text_so_the_json_stays_valid(self) -> None:
         entry, _ = _both(field=float("nan"))
@@ -298,7 +258,7 @@ class TestValueRendering:
         assert line.endswith("..." + TRUNCATION_MARKER)
 
     def test_a_long_message_is_cut_in_both_formats(self) -> None:
-        record = _record(msg="y" * (MAX_VALUE_LENGTH + 10))
+        record = a_record(msg="y" * (MAX_VALUE_LENGTH + 10))
 
         entry = json.loads(JsonFormatter().format(record))
 
@@ -322,13 +282,13 @@ class TestLogInjection:
     def test_the_text_line_is_one_line_and_escapes_what_could_forge_a_record(
         self, fields: dict[str, object], written: str
     ) -> None:
-        line = _text(_record(**{"msg": "m", **fields}))
+        line = _text(a_record(**{"msg": "m", **fields}))
 
         assert len(line.splitlines()) == 1
         assert line.endswith(" " + written)
 
     def test_json_keeps_one_line_for_a_value_with_line_breaks(self) -> None:
-        line = JsonFormatter().format(_record(user=self.FORGED))
+        line = JsonFormatter().format(a_record(user=self.FORGED))
 
         assert "\n" not in line
         assert json.loads(line)["user"] == self.FORGED

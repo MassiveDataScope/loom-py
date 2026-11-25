@@ -13,9 +13,11 @@ from loom.core.log_names import LogField
 from loom.core.logger import LogIdentity, LogRuntime, log_context
 from loom.core.logger.formats import MAX_STACK_LENGTH, TRUNCATION_MARKER, RecordFields
 from loom.core.tracing.context import active_trace_id
-from tests.helpers.loggers import CapturingHandler
+from loom.testing import make
+from tests.helpers.loggers import CapturingHandler, a_record, raised
 
-_IDENTITY = LogIdentity(
+_IDENTITY = make(
+    LogIdentity,
     environment=Environment.PRODUCTION,
     runtime=LogRuntime.FASTAPI,
     service_name="billing",
@@ -44,10 +46,7 @@ def identified(handler: CapturingHandler) -> CapturingHandler:
 
 
 def _log_failure(level: int, failure: Exception, **extra: object) -> None:
-    try:
-        raise failure
-    except Exception:
-        _LOGGER.log(level, "billing.invoice_failed", exc_info=True, extra=extra)
+    _LOGGER.log(level, "billing.invoice_failed", exc_info=raised(failure), extra=extra)
 
 
 class TestDerivedFields:
@@ -96,7 +95,7 @@ class TestDerivedFields:
         assert fields[LogField.CODE_FILE] == __file__
 
     def test_the_record_is_left_as_it_was_logged(self, identified: CapturingHandler) -> None:
-        record = _LOGGER.makeRecord("x", logging.INFO, __file__, 1, "a.b_c", (), None)
+        record = a_record()
 
         with active_trace_id("trace-42"):
             CapturingHandler(_IDENTITY).handle(record)
@@ -105,14 +104,13 @@ class TestDerivedFields:
         assert LogField.SERVICE_NAME not in record.__dict__
 
 
-@pytest.mark.parametrize(
-    ("level", "standard"),
-    [(0, 0), (5, 0), (10, 10), (25, 20), (30, 30), (45, 40), (60, 50)],
-)
-def test_a_level_is_the_standard_one_at_or_below_it(level: int, standard: int) -> None:
-    record = _LOGGER.makeRecord("x", level, __file__, 1, "a.b_c", (), None)
-
-    assert RecordFields(record).standard_level == standard
+class TestStandardLevel:
+    @pytest.mark.parametrize(
+        ("level", "standard"),
+        [(0, 0), (5, 0), (10, 10), (25, 20), (30, 30), (45, 40), (60, 50)],
+    )
+    def test_a_level_is_the_standard_one_at_or_below_it(self, level: int, standard: int) -> None:
+        assert RecordFields(a_record(severity=level)).standard_level == standard
 
 
 class TestFailureFields:
@@ -131,13 +129,10 @@ class TestFailureFields:
     def test_from_error_up_the_stack_is_written_with_its_cause(
         self, identified: CapturingHandler
     ) -> None:
-        try:
-            try:
-                raise KeyError("row")
-            except KeyError as cause:
-                raise ValueError("amount below zero") from cause
-        except ValueError:
-            _LOGGER.error("billing.invoice_failed", exc_info=True)
+        failure = ValueError("amount below zero")
+        failure.__cause__ = raised(KeyError("row"))
+
+        _LOGGER.error("billing.invoice_failed", exc_info=raised(failure))
 
         (stack,) = identified.stacks
         assert stack is not None
@@ -150,10 +145,9 @@ class TestFailureFields:
         self, identified: CapturingHandler
     ) -> None:
         _LOGGER.info("billing.invoice_issued", stack_info=True)
-        try:
-            raise ValueError("boom")
-        except ValueError:
-            _LOGGER.error("billing.invoice_failed", exc_info=True, stack_info=True)
+        _LOGGER.error(
+            "billing.invoice_failed", exc_info=raised(ValueError("boom")), stack_info=True
+        )
 
         issued, failed = identified.stacks
         assert issued is not None
