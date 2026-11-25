@@ -177,6 +177,23 @@ class RecordFields:
             if key not in without
         )
 
+    def body(self, without: Collection[str] = ()) -> str:
+        """The message, its :meth:`logfmt` fields, then the stack, each of its rows prefixed.
+
+        The message is written on one line, so only the first line of the body is
+        unindented; a record's stack cannot forge a second record.
+
+        Args:
+            without: Names of the fields to leave out.
+        """
+        line = " ".join(
+            filter(None, (Logfmt(self.message).one_line(), self.logfmt(without=without)))
+        )
+        stack = self.stack
+        if stack is None:
+            return line
+        return "\n".join([line, *(f"{_CONTINUATION}{row}" for row in stack.splitlines())])
+
     @property
     def stack(self) -> str | None:
         """The traceback of ``exc_info`` from ERROR up, keeping its end when it is long.
@@ -303,14 +320,7 @@ class TextFormatter(logging.Formatter):
         """Render *record* as one line, its stack after it when it carries one."""
         fields = RecordFields(record, self._identity)
         head = f"{fields.timestamp} {record.levelname:<7} {record.name}"
-        line = f"{head} {Logfmt(fields.message).one_line()}"
-        pairs = fields.logfmt()
-        if pairs:
-            line = f"{line} {pairs}"
-        stack = fields.stack
-        if stack is None:
-            return line
-        return "\n".join([line, *(f"{_CONTINUATION}{row}" for row in stack.splitlines())])
+        return f"{head} {fields.body()}"
 
 
 _LAMBDA_JSON_FRAMES: Final = {

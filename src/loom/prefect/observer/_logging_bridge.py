@@ -35,27 +35,19 @@ _NOT_SHOWN = frozenset(
 class PrefectLogBridgeHandler(APILogHandler):
     """Prefect's API log handler for the records of one flow run.
 
-    Prefect batches, sizes and sends each record as it does its own. Each is
-    sent as its event followed by its fields in logfmt, masked as loom's
-    formats mask them, then its stack. Where the call was made (``code.*``) is left
-    out. A record
-    carries the flow run it was built for and, inside a step, the active task run.
-    A record that already names its flow run is one of Prefect's own run loggers,
-    which ships it, so it is skipped. The shared record is never modified: Prefect
-    reads the ids from a copy.
+    Prefect batches, sizes and sends each record as it does its own. A record is
+    sent as loom's text body: its event, its fields in logfmt with secrets masked
+    and its stack, without where the call was made (``code.*``). It carries the
+    handler's flow run and, inside a step, the active task run, which Prefect reads
+    from a copy of the record so the shared record is never modified.
 
     Args:
         flow_run_id: The flow run every record belongs to.
     """
 
     def __init__(self, flow_run_id: uuid.UUID) -> None:
-        super().__init__(level=logging.NOTSET)
+        super().__init__()
         self._flow_run_id = flow_run_id
-
-    def emit(self, record: logging.LogRecord) -> None:
-        if hasattr(record, "flow_run_id"):
-            return
-        super().emit(record)
 
     def prepare(self, record: logging.LogRecord) -> dict[str, Any]:
         stamped = copy.copy(record)
@@ -64,30 +56,28 @@ class PrefectLogBridgeHandler(APILogHandler):
         return super().prepare(stamped)
 
     def format(self, record: logging.LogRecord) -> str:
-        fields = RecordFields(record)
-        line = " ".join(filter(None, (fields.message, fields.logfmt(without=_NOT_SHOWN))))
-        stack = fields.stack
-        return line if stack is None else f"{line}\n{stack}"
+        return RecordFields(record).body(without=_NOT_SHOWN)
 
 
 @contextmanager
 def log_bridge(flow_run_id: uuid.UUID | None) -> Iterator[None]:
-    """Send the root logger's records to the Prefect logs of *flow_run_id* while it is open.
+    """Send loom's records to the Prefect logs of *flow_run_id* while the block runs.
 
-    On exit the pending records are sent and the handler is detached. With no
-    flow run nothing is attached.
+    The handler is on the ``loom`` logger, so no other library's record is sent.
+    On exit the pending records are sent and the handler is detached. With no flow
+    run nothing is attached.
     """
     if flow_run_id is None:
         yield
         return
-    root = logging.getLogger()
+    loom_logger = logging.getLogger("loom")
     handler = PrefectLogBridgeHandler(flow_run_id)
-    root.addHandler(handler)
+    loom_logger.addHandler(handler)
     try:
         yield
     finally:
         handler.flush()
-        root.removeHandler(handler)
+        loom_logger.removeHandler(handler)
         handler.close()
 
 

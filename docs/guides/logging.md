@@ -161,10 +161,12 @@ needs no CloudWatch Insights).
 ### Prefect
 
 `PrefectObserver` writes loom's lifecycle records on its `loom.*` logger, inside a
-flow run or not. A flow loom builds ships them to Prefect UI through Prefect's own API log handler
-(batching, size limit and `PREFECT_LOGGING_TO_API_ENABLED` are Prefect's), each as
-its event followed by its fields in logfmt, masked as loom's formats mask them,
-and its stack; a record from Prefect's own run loggers (`prefect.flow_runs`, `prefect.task_runs`) already names its flow run, is shipped by Prefect and is not sent twice; in a flow of your own, set `PREFECT_LOGGING_EXTRA_LOGGERS=loom`.
+flow run or not. A flow loom builds ships the records of the `loom` logger to Prefect UI through
+Prefect's own API log handler (batching, size limit and `PREFECT_LOGGING_TO_API_ENABLED`
+are Prefect's), each as its event followed by its fields in logfmt, masked as loom's
+formats mask them, and its stack. Your own loggers and other libraries' do not reach
+the UI through loom; use Prefect's own mechanisms for them, such as
+`PREFECT_LOGGING_EXTRA_LOGGERS`, which is also how a flow of your own ships `loom`'s.
 
 ## What loom logs and what is yours
 
