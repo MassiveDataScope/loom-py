@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import logging
 from collections.abc import Callable
+from functools import partial
 from pathlib import Path
 
 import pytest
@@ -14,12 +15,12 @@ from loom.core.logger import log_context
 from loom.core.model.redaction import Secret
 from loom.core.observability.observer.log import LifecycleKey
 from tests.helpers.log_standard import Breach, LogContract
+from tests.helpers.loggers import a_record
 
 ATTEMPT = LogField.ATTEMPT
 JOB = LogField.JOB
 SUBKEY = LifecycleKey.META.of("tenant")
 RecordFactory = Callable[..., logging.LogRecord]
-FAILURE = (ValueError, ValueError("card 4111"), None)
 
 
 class _AcmeEvent(LogEvent):
@@ -28,16 +29,7 @@ class _AcmeEvent(LogEvent):
 
 @pytest.fixture
 def record() -> RecordFactory:
-    def build(
-        msg: object = _AcmeEvent.THING_DONE,
-        args: tuple[object, ...] = (),
-        fields: dict[str, object] | None = None,
-    ) -> logging.LogRecord:
-        return logging.makeLogRecord(
-            {"name": "loom.acme", "msg": msg, "args": args, **(fields or {})}
-        )
-
-    return build
+    return partial(a_record, msg=_AcmeEvent.THING_DONE, name="loom.acme")
 
 
 class TestBreach:
@@ -45,46 +37,37 @@ class TestBreach:
         ("built", "expected"),
         [
             pytest.param({}, [], id="event-alone"),
-            pytest.param({"fields": {ATTEMPT: 3, JOB: "x"}}, [], id="declared-keys"),
+            pytest.param({ATTEMPT: 3, JOB: "x"}, [], id="declared-keys"),
             pytest.param({"msg": "thing done"}, [Breach.MESSAGE_NOT_EVENT], id="free-text"),
             pytest.param(
                 {"msg": "done %s", "args": ("x",)},
                 [Breach.MESSAGE_NOT_EVENT, Breach.MESSAGE_ARGUMENTS],
                 id="percent-arguments",
             ),
-            pytest.param({"fields": {"amount": 3}}, [Breach.UNDECLARED_KEY], id="undeclared-key"),
+            pytest.param({"amount": 3}, [Breach.UNDECLARED_KEY], id="undeclared-key"),
+            pytest.param({JOB.value: "x"}, [Breach.UNDECLARED_KEY], id="declared-key-as-text"),
+            pytest.param({JOB: object()}, [Breach.OPAQUE_VALUE], id="opaque-value"),
+            pytest.param({ChecksKey.IDS: ["a", "b"]}, [], id="list-of-scalars"),
+            pytest.param({ATTEMPT: 12.5}, [], id="float-is-a-number"),
+            pytest.param({JOB: Secret("a")}, [], id="secret-is-a-string"),
+            pytest.param({ATTEMPT: "3"}, [Breach.WRONG_KIND], id="text-for-number"),
+            pytest.param({ATTEMPT: True}, [Breach.WRONG_KIND], id="boolean-for-number"),
+            pytest.param({JOB: ["a"]}, [Breach.WRONG_KIND], id="array-for-text"),
+            pytest.param({LifecycleKey.META: "x"}, [Breach.WRONG_KIND], id="bag-as-value"),
+            pytest.param({ATTEMPT: None}, [], id="missing-value"),
+            pytest.param({SUBKEY: object()}, [Breach.OPAQUE_VALUE], id="opaque-subkey"),
             pytest.param(
-                {"fields": {JOB.value: "x"}}, [Breach.UNDECLARED_KEY], id="declared-key-as-text"
-            ),
-            pytest.param({"fields": {JOB: object()}}, [Breach.OPAQUE_VALUE], id="opaque-value"),
-            pytest.param({"fields": {ChecksKey.IDS: ["a", "b"]}}, [], id="list-of-scalars"),
-            pytest.param({"fields": {ATTEMPT: 12.5}}, [], id="float-is-a-number"),
-            pytest.param({"fields": {JOB: Secret("a")}}, [], id="secret-is-a-string"),
-            pytest.param({"fields": {ATTEMPT: "3"}}, [Breach.WRONG_KIND], id="text-for-number"),
-            pytest.param({"fields": {ATTEMPT: True}}, [Breach.WRONG_KIND], id="boolean-for-number"),
-            pytest.param({"fields": {JOB: ["a"]}}, [Breach.WRONG_KIND], id="array-for-text"),
-            pytest.param(
-                {"fields": {LifecycleKey.META: "x"}}, [Breach.WRONG_KIND], id="bag-as-value"
-            ),
-            pytest.param({"fields": {ATTEMPT: None}}, [], id="missing-value"),
-            pytest.param({"fields": {SUBKEY: object()}}, [Breach.OPAQUE_VALUE], id="opaque-subkey"),
-            pytest.param(
-                {"fields": {LogField.EXCEPTION_TYPE: "ValueError"}},
+                {LogField.EXCEPTION_TYPE: "ValueError"},
                 [Breach.EXCEPTION_TYPE_BY_HAND],
                 id="exception-type-by-hand",
             ),
             pytest.param(
-                {"fields": {JOB: "card 4111 refused", "exc_info": FAILURE}},
+                {JOB: "card 4111 refused", "failure": ValueError("card 4111")},
                 [Breach.EXCEPTION_TEXT_IN_FIELD],
                 id="exception-text-in-field",
             ),
             pytest.param(
-                {
-                    "fields": {
-                        JOB: "billing-job",
-                        "exc_info": (ValueError, ValueError("bill"), None),
-                    }
-                },
+                {JOB: "billing-job", "failure": ValueError("bill")},
                 [],
                 id="short-text-inside-a-field",
             ),
@@ -108,8 +91,8 @@ class TestLogContract:
     def test_lists_each_record_that_breaks_the_contract_once(self, record: RecordFactory) -> None:
         contract = LogContract()
 
-        contract.emit(record("thing done", fields={"amount": 3}))
-        contract.emit(record("thing done", fields={"amount": 3}))
+        contract.emit(record(msg="thing done", amount=3))
+        contract.emit(record(msg="thing done", amount=3))
         contract.emit(record())
 
         assert contract.offences() == [

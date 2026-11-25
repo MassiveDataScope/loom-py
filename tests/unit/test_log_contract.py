@@ -22,6 +22,13 @@ def declared() -> DeclaredNames:
     return names
 
 
+@pytest.fixture
+def declared_by_every_extra(declared: DeclaredNames) -> DeclaredNames:
+    if declared.failed_modules and not _EVERY_EXTRA_INSTALLS:
+        pytest.skip(f"no wheel of an extra for Python {sys.version_info[:2]}")
+    return declared
+
+
 @pytest.fixture(scope="module")
 def published() -> frozenset[str]:
     return frozenset(CONTRACT_FILE.read_text().splitlines())
@@ -39,10 +46,9 @@ class TestLogContract:
         )
 
     def test_no_published_name_is_removed_or_renamed(
-        self, declared: DeclaredNames, published: frozenset[str]
+        self, declared_by_every_extra: DeclaredNames, published: frozenset[str]
     ) -> None:
-        if declared.failed_modules and not _EVERY_EXTRA_INSTALLS:
-            pytest.skip(f"no wheel of an extra for Python {sys.version_info[:2]}")
+        declared = declared_by_every_extra
         assert not declared.failed_modules, (
             f"{sorted(declared.failed_modules)} failed to import: sync with "
             "`uv sync --all-extras --all-groups`"

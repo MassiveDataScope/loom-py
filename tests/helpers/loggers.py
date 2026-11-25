@@ -7,19 +7,20 @@ import logging
 import traceback
 from collections.abc import Iterator, Sequence
 from contextlib import contextmanager
-from typing import Any
+from typing import Any, TypeVar
 
 import pytest
 
-from loom.core.environment import Environment
+from loom.core.environment import LAMBDA_FUNCTION_VARIABLE, Environment
 from loom.core.log_names import SubKey
-from loom.core.logger import subject as log_subject
 from loom.core.logger.formats import RecordFields
 from loom.core.logger.identity import LogIdentity
 from loom.core.logger.install import configure_logging
 from loom.core.logger.settings import QUIET_LIBRARIES, LogSettings
 from loom.core.logger.subject import SubjectHasher
 from loom.core.model.redaction import Secret
+
+ErrorT = TypeVar("ErrorT", bound=BaseException)
 
 SUBJECT_KEY = "acme-subject-key"
 """The ``observability.log.subject_key`` of the tests that key the caller."""
@@ -32,9 +33,35 @@ def user_hash(subject: str) -> str:
 
 
 @pytest.fixture(autouse=True)
-def keyless_subject_hasher(monkeypatch: pytest.MonkeyPatch) -> None:
+def keyless_subject_hasher() -> None:
     """Start every test keyless and already warned, as a process configured without a key."""
-    monkeypatch.setattr(log_subject, "_installed", SubjectHasher())
+    SubjectHasher().install()
+
+
+def a_record(
+    *,
+    msg: object = "billing.invoice_issued",
+    severity: int = logging.INFO,
+    name: str = "billing.invoices",
+    args: tuple[object, ...] = (),
+    failure: BaseException | None = None,
+    **extra: object,
+) -> logging.LogRecord:
+    """A record of logger *name*, with *failure* as its ``exc_info`` and *extra* as its fields."""
+    exc_info = None if failure is None else (type(failure), failure, failure.__traceback__)
+    record = logging.LogRecord(
+        name, severity, "billing/invoices.py", 7, msg, args, exc_info, "emit"
+    )
+    record.__dict__.update(extra)
+    return record
+
+
+def raised(error: ErrorT) -> ErrorT:
+    """*error* after it was raised and caught, so that it carries a traceback."""
+    try:
+        raise error
+    except type(error):
+        return error
 
 
 def configured(
@@ -116,6 +143,15 @@ class LambdaLoggerHandler(CapturingHandler):
         self.lines.append(self.format(record))
         self.frames.append(getattr(record, "_frame_type", None))
         super().emit(record)
+
+
+@pytest.fixture
+def runtime_handler(monkeypatch: pytest.MonkeyPatch) -> LambdaLoggerHandler:
+    """The Lambda runtime's handler on the root logger, in a process that runs as a function."""
+    monkeypatch.setenv(LAMBDA_FUNCTION_VARIABLE, "billing-handler")
+    runtime = LambdaLoggerHandler()
+    logging.getLogger().addHandler(runtime)
+    return runtime
 
 
 class CapturedLog:
@@ -223,7 +259,10 @@ def root_logger_kept() -> Iterator[logging.Logger]:
 __all__ = [
     "CapturedLog",
     "CapturingHandler",
+    "a_record",
     "configured",
+    "install_subject_key",
     "logged_fields",
+    "raised",
     "root_logger_kept",
 ]

@@ -3,7 +3,6 @@
 from __future__ import annotations
 
 import logging
-from collections.abc import Iterator
 
 import pytest
 
@@ -17,10 +16,7 @@ def pristine_root_logger() -> logging.Logger:
 
 
 @pytest.fixture
-def handler(pristine_root_logger: logging.Logger) -> Iterator[CapturingHandler]:
-    """A handler on the root logger that keeps what reaches it."""
-    capturing = CapturingHandler()
-    pristine_root_logger.addHandler(capturing)
+def handler(rendering: CapturingHandler, pristine_root_logger: logging.Logger) -> CapturingHandler:
+    """The handler of ``rendering`` on a root logger that lets every level through."""
     pristine_root_logger.setLevel(logging.DEBUG)
-    yield capturing
-    pristine_root_logger.removeHandler(capturing)
+    return rendering

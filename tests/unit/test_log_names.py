@@ -63,17 +63,22 @@ class TestKeyDeclaration:
         with pytest.raises(ValueError, match="snake_case"):
             LogKey("Sample", {"KEY": value})
 
+
+class TestReservedNames:
+    @pytest.mark.parametrize("declare", [LogKey, LogEvent])
     @pytest.mark.parametrize(
         ("value", "module"),
         [
-            pytest.param("loom.acme.key", __name__, id="loom-key-outside-loom"),
-            pytest.param("loom.acme.key", "loomx.ext", id="loom-key-in-a-look-alike-package"),
-            pytest.param("acme.key", "loom.acme.event", id="loom-area-key-outside-loom-prefix"),
+            pytest.param("loom.acme.thing_done", __name__, id="loom-name-outside-loom"),
+            pytest.param("loom.acme.thing_done", "loomx.ext", id="loom-name-in-a-look-alike"),
+            pytest.param("acme.thing_done", "loom.acme.event", id="loom-area-name-without-prefix"),
         ],
     )
-    def test_a_key_on_the_wrong_side_of_loom_is_refused(self, value: str, module: str) -> None:
+    def test_a_name_on_the_wrong_side_of_loom_is_refused(
+        self, declare: type[LogKey | LogEvent], value: str, module: str
+    ) -> None:
         with pytest.raises(ValueError, match="reserved to loom"):
-            LogKey("Sample", {"KEY": value}, module=module)
+            declare("Sample", {"NAME": value}, module=module)
 
 
 class TestEventDeclaration:
@@ -93,18 +98,6 @@ class TestEventDeclaration:
     def test_an_event_out_of_form_is_refused(self, value: str) -> None:
         with pytest.raises(ValueError, match="<area>.<subject>_<fact>"):
             LogEvent("Sample", {"EVENT": value})
-
-    @pytest.mark.parametrize(
-        ("value", "module"),
-        [
-            pytest.param("loom.acme.thing_done", __name__, id="loom-event-outside-loom"),
-            pytest.param("loom.acme.thing_done", "loomx.ext", id="loom-event-in-a-look-alike"),
-            pytest.param("acme.thing_done", "loom.acme.event", id="loom-area-event-without-prefix"),
-        ],
-    )
-    def test_an_event_on_the_wrong_side_of_loom_is_refused(self, value: str, module: str) -> None:
-        with pytest.raises(ValueError, match="reserved to loom"):
-            LogEvent("Sample", {"EVENT": value}, module=module)
 
     def test_an_event_another_class_declared_is_refused(self) -> None:
         LogEvent("First", {"EVENT": "acme.thing_shared"})

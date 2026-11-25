@@ -29,6 +29,7 @@ from tests.helpers.loggers import (  # noqa: F401
     keyless_subject_hasher,
     rendering,
     root_logger_kept,
+    runtime_handler,
 )
 
 pytest_plugins = ["pytester", "tests.helpers.delegation", "tests.helpers.log_standard"]
