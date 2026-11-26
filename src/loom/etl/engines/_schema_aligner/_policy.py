@@ -5,9 +5,9 @@ from __future__ import annotations
 from dataclasses import dataclass
 from typing import Any, Generic, TypeVar
 
+from loom.core.errors import InvalidUse
 from loom.etl.declarative.target import SchemaMode
 from loom.etl.engines._schema_aligner._aligner import SchemaAligner
-from loom.etl.schema._schema import SchemaNotFoundError
 
 FrameT = TypeVar("FrameT")
 SchemaT = TypeVar("SchemaT")
@@ -29,7 +29,7 @@ class SchemaAlignmentPolicy(Generic[FrameT, SchemaT]):
             return frame
 
         if schema is None:
-            raise SchemaNotFoundError(
+            raise InvalidUse(
                 f"No table schema to align the frame to under SchemaMode.{mode.name}. "
                 "Pass the table's schema, or use SchemaMode.OVERWRITE, which skips alignment."
             )

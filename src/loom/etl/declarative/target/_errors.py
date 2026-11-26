@@ -5,8 +5,10 @@ Internal module — import from :mod:`loom.etl.declarative.target` or :mod:`loom
 
 from __future__ import annotations
 
+from loom.core.errors import InvalidUse, InvalidValue
 
-class EmptyReplaceError(ValueError):
+
+class EmptyReplaceError(InvalidValue):
     """Raised when a ``replace(allow_empty=False)`` target receives no rows.
 
     The table is left as it was: the check runs before anything is written
@@ -27,7 +29,7 @@ class EmptyReplaceError(ValueError):
         )
 
 
-class UpsertDeleteFlagError(ValueError):
+class UpsertDeleteFlagError(InvalidValue):
     """Raised when the ``upsert(delete_flag=...)`` column cannot be used.
 
     Raised before anything is written or created.
@@ -47,7 +49,7 @@ class UpsertDeleteFlagError(ValueError):
         super().__init__(f"upsert() delete_flag={column!r} {problem}.")
 
 
-class UnsupportedUpsertDeleteFlagError(ValueError):
+class UnsupportedUpsertDeleteFlagError(InvalidUse, ValueError):
     """Raised when a writer that cannot apply ``upsert(delete_flag=...)`` receives one.
 
     Args:

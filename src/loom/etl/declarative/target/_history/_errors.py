@@ -2,10 +2,11 @@
 
 from __future__ import annotations
 
+from loom.core.errors import Conflict, InvalidValue
 from loom.etl.declarative.target._history._enums import HistorifyInputMode
 
 
-class HistorifyKeyConflictError(ValueError):
+class HistorifyKeyConflictError(InvalidValue):
     """Raised when the incoming frame repeats an entity state vector or event.
 
     In SNAPSHOT mode each ``keys + track`` combination must be unique: duplicates
@@ -41,7 +42,7 @@ class HistorifyKeyConflictError(ValueError):
         )
 
 
-class HistorifyDateCollisionError(ValueError):
+class HistorifyDateCollisionError(InvalidValue):
     """Raised in LOG mode when two events share the same ``(keys + track, effective_date)``.
 
     At DATE granularity, two events on the same calendar day for the same entity
@@ -64,7 +65,7 @@ class HistorifyDateCollisionError(ValueError):
         )
 
 
-class HistorifyDeleteMarkerError(ValueError):
+class HistorifyDeleteMarkerError(InvalidValue):
     """Raised in LOG mode when the ``delete_marker`` column is missing or not boolean.
 
     Args:
@@ -79,7 +80,7 @@ class HistorifyDeleteMarkerError(ValueError):
         )
 
 
-class HistorifyTemporalConflictError(ValueError):
+class HistorifyTemporalConflictError(Conflict, ValueError):
     """Raised when the target contains future-open vectors and re-weave is disabled.
 
     A temporal conflict occurs when ``valid_from > effective_date``, meaning the

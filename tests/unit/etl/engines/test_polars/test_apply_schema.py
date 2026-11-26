@@ -5,9 +5,10 @@ from __future__ import annotations
 import polars as pl
 import pytest
 
+from loom.core.errors import InvalidUse
 from loom.etl.declarative.target import SchemaMode
 from loom.etl.engines.polars._schema import apply_schema_polars
-from loom.etl.schema import SchemaError, SchemaNotFoundError
+from loom.etl.schema import SchemaError
 
 
 def _frame(**cols: object) -> pl.LazyFrame:
@@ -16,9 +17,9 @@ def _frame(**cols: object) -> pl.LazyFrame:
 
 class TestApplySchema:
     @pytest.mark.parametrize("mode", [SchemaMode.STRICT, SchemaMode.EVOLVE])
-    def test_apply_schema_none_raises_schema_not_found(self, mode: SchemaMode) -> None:
+    def test_apply_schema_none_raises_invalid_use(self, mode: SchemaMode) -> None:
         frame = _frame(id=[1])
-        with pytest.raises(SchemaNotFoundError):
+        with pytest.raises(InvalidUse, match="No table schema to align"):
             apply_schema_polars(frame, None, mode)
 
     def test_overwrite_passthrough_identity(self) -> None:

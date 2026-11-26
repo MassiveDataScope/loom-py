@@ -55,6 +55,8 @@ from __future__ import annotations
 from dataclasses import dataclass
 from enum import StrEnum
 
+from loom.core.errors import InvalidUse, InvalidValue
+
 
 class LoomDtype(StrEnum):
     """Canonical data types understood by loom's schema system.
@@ -262,7 +264,7 @@ LoomType = (
 )
 
 
-class SchemaNotFoundError(Exception):
+class SchemaNotFoundError(InvalidUse):
     """Raised when a table's schema is needed but the table does not exist.
 
     * A write that may create its table (append, replace, replace_partitions,
@@ -272,12 +274,10 @@ class SchemaNotFoundError(Exception):
       :attr:`~loom.core.schema.SchemaMode.OVERWRITE`.  With ``"error"`` it
       always raises.
     * An update raises it for a missing table under every policy.
-    * ``apply_schema_polars`` and ``apply_schema_spark`` raise it when given
-      no schema under ``SchemaMode.STRICT`` or ``SchemaMode.EVOLVE``.
     """
 
 
-class SchemaError(Exception):
+class SchemaError(InvalidValue):
     """Raised when a frame is incompatible with the registered table schema."""
 
 

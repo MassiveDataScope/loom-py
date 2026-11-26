@@ -44,7 +44,7 @@ class TestEtlErrorClassification:
     @pytest.mark.parametrize(
         ("error", "expected"),
         [
-            pytest.param(SchemaError("orders"), (False, None, True), id="SchemaError"),
+            pytest.param(SchemaError("orders"), (True, None, True), id="SchemaError"),
             pytest.param(EmptyReplaceError("orders"), (True, None, True), id="EmptyReplaceError"),
             pytest.param(
                 UpsertDeleteFlagError("deleted", "is missing"),
@@ -73,7 +73,7 @@ class TestEtlErrorClassification:
             ),
             pytest.param(
                 HistorifyTemporalConflictError(date(2024, 1, 5), date(2024, 1, 1)),
-                (True, None, True),
+                (True, ErrorCode.CONFLICT, False),
                 id="HistorifyTemporalConflictError",
             ),
             pytest.param(
@@ -89,9 +89,15 @@ class TestEtlErrorClassification:
             pytest.param(
                 SchemaNotFoundError("orders"), (False, None, True), id="SchemaNotFoundError"
             ),
-            pytest.param(MaintenanceError([]), (False, None, True), id="MaintenanceError"),
             pytest.param(
-                CheckpointCleanupError("orders"), (False, None, True), id="CheckpointCleanupError"
+                MaintenanceError([]),
+                (False, ErrorCode.SYSTEM_ERROR, True),
+                id="MaintenanceError",
+            ),
+            pytest.param(
+                CheckpointCleanupError("orders"),
+                (False, ErrorCode.SYSTEM_ERROR, True),
+                id="CheckpointCleanupError",
             ),
             pytest.param(
                 ETLCompilationError(ETLErrorCode.MISSING_TARGET, "LoadOrders", "no target"),
