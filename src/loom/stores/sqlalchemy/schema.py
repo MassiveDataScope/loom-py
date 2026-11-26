@@ -48,7 +48,7 @@ from loom.core.config import ConfigError
 from loom.core.errors import InvalidType, InvalidValue
 from loom.core.model.audited import AuditedTable, AuditedTables, audited_table, is_audited
 from loom.core.model.enums import Cardinality, OnDelete, ServerDefault, ServerOnUpdate
-from loom.core.model.field import ColumnType, Field
+from loom.core.model.field import Field
 from loom.core.model.introspection import (
     ColumnFieldInfo,
     PartialUnique,
@@ -72,6 +72,7 @@ from loom.core.model.introspection import (
 from loom.core.model.privilege import READ_WRITE, Privilege
 from loom.core.model.relation import Relation
 from loom.core.model.scoped import ScopeColumn, ScopedTable
+from loom.core.model.types import ColumnType
 from loom.core.projection.plan import ProjectionStep, build_projection_plan_from_steps
 from loom.core.schema_names import MAX_IDENTIFIER_LENGTH, naming_convention
 from loom.stores.sqlalchemy.core_model import CoreModel, CoreProfilePlan, CoreRelationStep

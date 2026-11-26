@@ -21,7 +21,6 @@ from loom.core.model import (
     Postgres,
     RelationField,
 )
-from loom.core.model.field import ColumnType
 from loom.core.model.introspection import (
     _union_inner_args,
     extract_model_from_hint,
@@ -33,6 +32,7 @@ from loom.core.model.introspection import (
 )
 from loom.core.model.types import (
     Bytes,
+    ColumnType,
     Date,
     DateTime,
     Float,

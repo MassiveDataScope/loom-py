@@ -1,12 +1,29 @@
 from __future__ import annotations
 
 import sys
-from typing import Annotated
+from dataclasses import dataclass
+from typing import Annotated, Any
 
 import msgspec
 
 from loom.core.errors import InvalidValue
-from loom.core.model.field import ColumnType
+
+
+@dataclass(frozen=True, slots=True)
+class ColumnType:
+    """Backend column type descriptor stored inside ``Annotated[...]``.
+
+    It is hashable, as ``Annotated`` metadata must be: the keyword options are
+    held as ``(name, value)`` pairs.
+    """
+
+    type_name: str
+    args: tuple[Any, ...] = ()
+    kwargs: tuple[tuple[str, Any], ...] = ()
+
+    def option(self, name: str, default: Any = None) -> Any:
+        """Return the keyword option *name*, or *default* when it is not set."""
+        return dict(self.kwargs).get(name, default)
 
 
 def String(length: int | None = None) -> ColumnType:
@@ -59,3 +76,20 @@ PositiveSeconds = Annotated[float, msgspec.Meta(gt=0, le=sys.float_info.max)]
 
 NonNegativeInt = Annotated[int, msgspec.Meta(ge=0)]
 """An integer at or above zero: an extra allowance where none at all is valid."""
+
+
+class _PostgresTypes:
+    """Namespace for PostgreSQL-specific column types."""
+
+    JSONB = ColumnType("Postgres.JSONB")
+    UUID = ColumnType("Postgres.UUID")
+    """Postgres only; :data:`loom.core.model.Uuid` is the portable UUID column."""
+    TSVECTOR = ColumnType("Postgres.TSVECTOR")
+    INET = ColumnType("Postgres.INET")
+
+    @staticmethod
+    def ARRAY(item: ColumnType) -> ColumnType:
+        return ColumnType("Postgres.ARRAY", args=(item,))
+
+
+Postgres = _PostgresTypes()

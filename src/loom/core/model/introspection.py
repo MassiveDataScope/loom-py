@@ -24,7 +24,7 @@ from uuid import UUID
 import msgspec
 
 from loom.core.errors import InvalidType, InvalidValue
-from loom.core.model.field import ColumnFieldSpec, ColumnType, Field
+from loom.core.model.field import ColumnFieldSpec, Field
 from loom.core.model.keys import (
     BusinessKey,
     DerivedKey,
@@ -40,6 +40,7 @@ from loom.core.model.types import (
     JSON,
     Boolean,
     Bytes,
+    ColumnType,
     Date,
     DateTime,
     Float,

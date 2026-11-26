@@ -11,7 +11,6 @@ from loom.core.model.base import BaseModel, LoomStructMeta
 from loom.core.model.enums import Cardinality, OnDelete, OnUpdate, ServerDefault, ServerOnUpdate
 from loom.core.model.field import (
     ColumnField,
-    ColumnType,
     CreatedAtField,
     Field,
     ScopedField,
@@ -54,18 +53,19 @@ from loom.core.model.types import (
     BigInteger,
     Boolean,
     Bytes,
+    ColumnType,
     Date,
     DateTime,
     Float,
     Integer,
     JsonStr,
     Numeric,
+    Postgres,
     String,
     Text,
     Time,
     Uuid,
 )
-from loom.core.model.types_postgres import Postgres
 
 __all__ = [
     "Audited",
