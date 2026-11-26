@@ -11,13 +11,16 @@ from __future__ import annotations
 
 from pathlib import Path
 
+import msgspec
 import polars as pl
 import pytest
 
+from loom.core.errors import InvalidValue
 from loom.core.observability.observability import Observability
 from loom.etl import ETLStep, FromTable, IntoTable
 from loom.etl.compiler import ETLCompiler
 from loom.etl.declarative.expr._refs import TableRef
+from loom.etl.engines.polars import PolarsSourceReader
 from loom.etl.executor import ETLExecutor
 from loom.etl.lineage._records import EventName, RunStatus
 from loom.etl.schema._schema import LoomDtype
@@ -51,6 +54,21 @@ class PassThroughStep(ETLStep[NoParams]):
 
     def execute(self, params: NoParams, *, events: pl.LazyFrame) -> pl.LazyFrame:  # type: ignore[override]
         return events
+
+
+class Buyer(msgspec.Struct):
+    name: str
+    order_count: int
+
+
+class DecodeBuyerStep(ETLStep[NoParams]):
+    """Reads the JSON column raw.customers.buyer into a Buyer struct."""
+
+    customers: FromTable = FromTable("raw.customers").parse_json("buyer", Buyer)  # type: ignore[assignment]
+    target = IntoTable("staging.customers").replace()
+
+    def execute(self, params: NoParams, *, customers: pl.LazyFrame) -> pl.LazyFrame:  # type: ignore[override]
+        return customers
 
 
 class AppendStep(ETLStep[NoParams]):
@@ -180,6 +198,24 @@ class TestRunStep:
 
         assert EventName.STEP_ERROR in observer.event_names
         assert observer.step_statuses == [RunStatus.FAILED]
+
+
+class TestJsonDecodeFailure:
+    @pytest.mark.parametrize(
+        "document", ["not json", "[1, 2]"], ids=["malformed", "shape-mismatch"]
+    )
+    def test_a_document_that_does_not_decode_names_the_declared_column(
+        self,
+        seed_table,
+        delta_root,
+        polars_writer: MinimalPolarsTargetWriter,
+        document: str,
+    ) -> None:
+        seed_table("raw.customers", pl.DataFrame({"buyer": [document]}))
+        plan = ETLCompiler().compile_step(DecodeBuyerStep)
+
+        with pytest.raises(InvalidValue, match=r"customers\.buyer as StructType"):
+            ETLExecutor(PolarsSourceReader(delta_root), polars_writer).run_step(plan, NoParams())
 
 
 class StreamingReplaceStep(ETLStep[NoParams]):

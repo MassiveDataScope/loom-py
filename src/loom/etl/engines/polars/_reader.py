@@ -97,6 +97,10 @@ class PolarsSourceReader(SourceReader):
         self._clickhouse_reader: ClickHouseSourceReader | None = clickhouse_reader
         self._dynamodb_reader: DynamoDBSourceReader | None = dynamodb_reader
 
+    def is_json_decode_failure(self, error: Exception) -> bool:
+        """Whether *error* is Polars refusing a JSON document while decoding a column."""
+        return isinstance(error, pl.exceptions.ComputeError) and "error deserializing" in str(error)
+
     def read(self, spec: SourceSpec, params_instance: Any, /) -> pl.LazyFrame:
         """Read source spec and return lazy frame."""
         if isinstance(spec, TableSourceSpec):

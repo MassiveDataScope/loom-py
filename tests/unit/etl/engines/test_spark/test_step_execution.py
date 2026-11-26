@@ -11,6 +11,7 @@ import pytest
 from pyspark.sql import DataFrame, SparkSession
 from pyspark.sql import functions as F
 
+from loom.core.errors import InvalidValue
 from loom.core.observability.observability import Observability
 from loom.etl import (
     ETLStep,
@@ -53,6 +54,19 @@ class SparkPassThroughStep(ETLStep[NoParams]):
 
     def execute(self, params: NoParams, *, events: DataFrame) -> DataFrame:  # type: ignore[override]
         return events
+
+
+class _Buyer(msgspec.Struct):
+    name: str
+    order_count: int
+
+
+class SparkDecodeBuyerStep(ETLStep[NoParams]):
+    customers: FromTable = FromTable("raw.customers").parse_json("buyer", _Buyer)  # type: ignore[assignment]
+    target = IntoTable("staging.customers").replace(schema=SchemaMode.OVERWRITE)
+
+    def execute(self, params: NoParams, *, customers: DataFrame) -> DataFrame:  # type: ignore[override]
+        return customers
 
 
 class SparkAppendStep(ETLStep[NoParams]):
@@ -340,6 +354,25 @@ class TestRunStepContracts:
         out = spark.read.option("header", "true").csv(str(report_path)).orderBy("id").collect()
         assert [row["id"] for row in out] == ["1", "2"]
         assert [float(row["amount"]) for row in out] == pytest.approx([10.0, 20.0])
+
+
+class TestJsonDecodeFailure:
+    @pytest.mark.parametrize(
+        "document", ["not json", "[1, 2]"], ids=["malformed", "shape-mismatch"]
+    )
+    def test_a_document_that_does_not_decode_names_the_declared_column(
+        self,
+        spark: SparkSession,
+        seed_spark_table: Callable[[str | TableRef, DataFrame], Path],
+        spark_reader: SparkSourceReader,
+        spark_writer: SparkTargetWriter,
+        document: str,
+    ) -> None:
+        seed_spark_table("raw.customers", spark.createDataFrame([(document,)], ["buyer"]))
+        plan = ETLCompiler().compile_step(SparkDecodeBuyerStep)
+
+        with pytest.raises(InvalidValue, match=r"customers\.buyer as StructType"):
+            ETLExecutor(spark_reader, spark_writer).run_step(plan, NoParams())
 
 
 class TestSparkReaderWriterTypeGuards:

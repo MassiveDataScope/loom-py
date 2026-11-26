@@ -55,6 +55,10 @@ class SparkSourceReader(SourceReader):
         self._resolver = resolver
         self._file_locator = file_locator
 
+    def is_json_decode_failure(self, error: Exception) -> bool:
+        """Whether *error* is a FAILFAST ``from_json`` rejecting a malformed document."""
+        return "MALFORMED_RECORD_IN_PARSING" in str(error)
+
     def read(self, spec: SourceSpec, params_instance: Any, /) -> DataFrame:
         """Read source spec and return DataFrame."""
         if isinstance(spec, TableSourceSpec):
@@ -171,7 +175,9 @@ class SparkSourceReader(SourceReader):
             return df
 
         for jc in json_columns:
-            decoded = F.from_json(F.col(jc.column), frame_type_to_spark(jc.frame_type))
+            decoded = F.from_json(
+                F.col(jc.column), frame_type_to_spark(jc.frame_type), {"mode": "FAILFAST"}
+            )
             df = df.withColumn(jc.column, decoded)
         return df
 
