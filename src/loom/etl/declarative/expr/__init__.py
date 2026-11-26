@@ -24,7 +24,7 @@ from ._predicate import (
     PredicateNode,
 )
 from ._predicate_dialect import PredicateDialect, fold_predicate
-from ._refs import ColumnRef, TableRef, UnboundColumnRef, col
+from ._refs import TableRef, UnboundColumnRef, col
 
 __all__ = [
     "PredicateNode",
@@ -41,7 +41,6 @@ __all__ = [
     "PredicateDialect",
     "fold_predicate",
     "TableRef",
-    "ColumnRef",
     "UnboundColumnRef",
     "col",
     "ParamExpr",

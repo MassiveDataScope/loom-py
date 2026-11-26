@@ -8,15 +8,33 @@ Internal module — import from :mod:`loom.etl.declarative.target`.
 
 from __future__ import annotations
 
+from collections.abc import Mapping
 from dataclasses import dataclass, field
 
 from loom.core.schema import SchemaMode
 from loom.etl.declarative.expr._predicate import PredicateNode
 from loom.etl.declarative.expr._refs import TableRef
+from loom.etl.schema import ModelTable
 
 
 @dataclass(frozen=True)
-class AppendSpec:
+class ModelBoundSpec:
+    """What every table spec shares: the model its target was declared with, if any.
+
+    Args:
+        model_table: Lake table of the model the target named, ``None`` for a plain reference.
+    """
+
+    model_table: ModelTable | None = field(default=None, kw_only=True)
+
+    @property
+    def declared_columns(self) -> Mapping[str, tuple[str, ...]]:
+        """The model columns this spec names, by the argument that names them."""
+        return {}
+
+
+@dataclass(frozen=True)
+class AppendSpec(ModelBoundSpec):
     """Append rows to an existing Delta table.
 
     Args:
@@ -34,7 +52,7 @@ class AppendSpec:
 
 
 @dataclass(frozen=True)
-class ReplaceSpec:
+class ReplaceSpec(ModelBoundSpec):
     """Full overwrite of a Delta table.
 
     Args:
@@ -57,7 +75,7 @@ class ReplaceSpec:
 
 
 @dataclass(frozen=True)
-class ReplacePartitionsSpec:
+class ReplacePartitionsSpec(ModelBoundSpec):
     """Overwrite only the partitions present in the source frame.
 
     The writer collects distinct partition-column combinations from the
@@ -83,9 +101,14 @@ class ReplacePartitionsSpec:
     partition-replace, where the predicate maps to whole-partition file
     pruning instead of a row-level rewrite."""
 
+    @property
+    def declared_columns(self) -> Mapping[str, tuple[str, ...]]:
+        """The model columns this spec names, by the argument that names them."""
+        return {"partition_cols": self.partition_cols}
+
 
 @dataclass(frozen=True)
-class ReplaceWhereSpec:
+class ReplaceWhereSpec(ModelBoundSpec):
     """Overwrite rows matching a static predicate (Delta ``replaceWhere``).
 
     The predicate is resolved from run params at write time and passed
@@ -109,7 +132,7 @@ class ReplaceWhereSpec:
 
 
 @dataclass(frozen=True)
-class UpsertSpec:
+class UpsertSpec(ModelBoundSpec):
     """Merge rows into a Delta table using explicit merge keys (UPSERT).
 
     Args:
@@ -139,6 +162,16 @@ class UpsertSpec:
     upsert_include: tuple[str, ...] = field(default_factory=tuple)
     delete_flag: str | None = None
 
+    @property
+    def declared_columns(self) -> Mapping[str, tuple[str, ...]]:
+        """The model columns this spec names, by the argument that names them."""
+        return {
+            "keys": self.upsert_keys,
+            "partition_cols": self.partition_cols,
+            "exclude": self.upsert_exclude,
+            "include": self.upsert_include,
+        }
+
 
 def upsert_delete_flag_conflict(spec: UpsertSpec) -> str | None:
     """Return the upsert option ``delete_flag`` names, or ``None`` when it is usable.
@@ -161,7 +194,7 @@ def upsert_delete_flag_conflict(spec: UpsertSpec) -> str | None:
 
 
 @dataclass(frozen=True)
-class UpdateSpec:
+class UpdateSpec(ModelBoundSpec):
     """Merge rows into a Delta table updating matches only (matched-only MERGE).
 
     Same MERGE machinery as :class:`UpsertSpec`, minus the insert branch:
@@ -189,6 +222,16 @@ class UpdateSpec:
     partition_cols: tuple[str, ...] = field(default_factory=tuple)
     exclude: tuple[str, ...] = field(default_factory=tuple)
     include: tuple[str, ...] = field(default_factory=tuple)
+
+    @property
+    def declared_columns(self) -> Mapping[str, tuple[str, ...]]:
+        """The model columns this spec names, by the argument that names them."""
+        return {
+            "keys": self.keys,
+            "partition_cols": self.partition_cols,
+            "exclude": self.exclude,
+            "include": self.include,
+        }
 
     @property
     def upsert_keys(self) -> tuple[str, ...]:

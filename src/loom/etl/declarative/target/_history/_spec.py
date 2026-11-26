@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+from collections.abc import Mapping
 from dataclasses import dataclass
 
 from loom.core.schema import SchemaMode
@@ -12,10 +13,11 @@ from loom.etl.declarative.target._history._enums import (
     HistorifyInputMode,
     HistoryDateType,
 )
+from loom.etl.declarative.target._table import ModelBoundSpec
 
 
 @dataclass(frozen=True)
-class HistorifySpec:
+class HistorifySpec(ModelBoundSpec):
     """Compiled SCD Type 2 write spec. Produced by :meth:`IntoHistory._to_spec`.
 
     This frozen dataclass is the sole input to the backend engine. All
@@ -76,6 +78,20 @@ class HistorifySpec:
     schema_mode: SchemaMode = SchemaMode.STRICT
     allow_temporal_rerun: bool = False
     delete_marker: str | None = None
+
+    @property
+    def declared_columns(self) -> Mapping[str, tuple[str, ...]]:
+        """The model columns this spec names, by the argument that names them."""
+        boundaries = {"valid_from": (self.valid_from,), "valid_to": (self.valid_to,)}
+        if self.delete_policy is DeletePolicy.SOFT_DELETE:
+            boundaries["deleted_at"] = (self.deleted_at,)
+        return {
+            "keys": self.keys,
+            "track": self.track or (),
+            "overwrite": self.overwrite or (),
+            "partition_scope": self.partition_scope or (),
+            **boundaries,
+        }
 
 
 __all__ = ["HistorifySpec"]

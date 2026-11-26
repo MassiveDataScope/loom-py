@@ -20,7 +20,7 @@ from loom.etl.declarative.expr._predicate import (
     OrPred,
     PredicateNode,
 )
-from loom.etl.declarative.expr._refs import ColumnRef, UnboundColumnRef
+from loom.etl.declarative.expr._refs import UnboundColumnRef
 
 T = TypeVar("T")
 
@@ -64,7 +64,7 @@ def _fold(node: object, params_instance: Any, dialect: PredicateDialect[T]) -> T
 
 
 def _term(value: Any, params_instance: Any, dialect: PredicateDialect[T]) -> T:
-    if isinstance(value, (UnboundColumnRef, ColumnRef)):
+    if isinstance(value, UnboundColumnRef):
         return dialect.column(value.name)
     if isinstance(value, ParamExpr):
         return dialect.literal(resolve_param_expr(value, params_instance))

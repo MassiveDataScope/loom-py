@@ -23,11 +23,6 @@ class TableRef:
         """Raw dotted table reference."""
         return self._ref.ref
 
-    @property
-    def c(self) -> _ColumnNamespace:
-        """Column namespace for bound references."""
-        return _ColumnNamespace(self)
-
     def qualify(self, default_catalog: str) -> TableRef:
         """Return a catalog-qualified reference when the ref is 2-part.
 
@@ -57,44 +52,6 @@ class TableRef:
         return f"TableRef({self.ref!r})"
 
 
-class _ColumnNamespace:
-    __slots__ = ("_table",)
-
-    def __init__(self, table: TableRef) -> None:
-        self._table = table
-
-    def __getattr__(self, name: str) -> ColumnRef:
-        if name.startswith("_"):
-            raise AttributeError(name)
-        return ColumnRef(table=self._table, name=name)
-
-
-class ColumnRef(_ColOps):
-    """Column reference bound to a specific :class:`TableRef`."""
-
-    __slots__ = ("_table", "_name")
-
-    def __init__(self, table: TableRef, name: str) -> None:
-        self._table = table
-        self._name = name
-
-    @property
-    def table(self) -> TableRef:
-        """Table this column belongs to."""
-        return self._table
-
-    @property
-    def name(self) -> str:
-        """Column name."""
-        return self._name
-
-    def __hash__(self) -> int:
-        return hash((self._table, self._name))
-
-    def __repr__(self) -> str:
-        return f"{self._table.ref}.c.{self._name}"
-
-
 class UnboundColumnRef(_ColOps):
     """Column reference not yet bound to a specific table."""
 
@@ -120,4 +77,4 @@ def col(name: str) -> UnboundColumnRef:
     return UnboundColumnRef(name)
 
 
-__all__ = ["TableRef", "ColumnRef", "UnboundColumnRef", "col"]
+__all__ = ["TableRef", "UnboundColumnRef", "col"]

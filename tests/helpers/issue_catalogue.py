@@ -55,6 +55,10 @@ INDIRECT_CALLS: Mapping[str, tuple[str, ...]] = {
     "etl/compiler/_validators_agents.py::validate_step_agents": (
         "tests/unit/etl/test_with_agent.py::test_each_issue_kind_has_its_own_code",
     ),
+    "etl/compiler/_validators_model.py::_refusal": (
+        "tests/unit/etl/compiler/test_model_targets.py::"
+        "test_a_target_the_model_contradicts_is_refused_naming_model_field_and_fix",
+    ),
 }
 """Each ``.issue(...)`` call on a code held in a variable, keyed by
 ``<path under src/loom>::<enclosing function>``, with the tests that cover it."""

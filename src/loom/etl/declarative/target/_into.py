@@ -23,15 +23,15 @@ from __future__ import annotations
 from typing import Any
 
 from loom.core.errors import InvalidValue
-from loom.core.routing import LogicalRef
 from loom.core.schema import SchemaMode
 from loom.etl.checkpoint import CheckpointScope
+from loom.etl.declarative._declared_table import DeclaredTable, TableDeclaration
 from loom.etl.declarative._format import Format
 from loom.etl.declarative._utils import _clone_slots
 from loom.etl.declarative._write_options import WriteOptions
 from loom.etl.declarative.expr._params import ParamExpr
 from loom.etl.declarative.expr._predicate import AndPred, EqPred, PredicateNode
-from loom.etl.declarative.expr._refs import TableRef, UnboundColumnRef
+from loom.etl.declarative.expr._refs import UnboundColumnRef
 from loom.etl.declarative.target._errors import UpsertDeleteFlagError
 from loom.etl.declarative.target._file import FileSpec
 from loom.etl.declarative.target._table import (
@@ -62,7 +62,9 @@ class IntoTable:
     :meth:`replace_where`, :meth:`upsert`, :meth:`update`.
 
     Args:
-        ref: Logical table reference — ``str`` or :class:`~loom.etl.TableRef`.
+        ref: Logical table reference — ``str`` or :class:`~loom.etl.TableRef` — or a
+            model, which names its table with ``__tablename__`` and, on upsert and
+            update, supplies the default ``keys``.
 
     Example::
 
@@ -78,12 +80,13 @@ class IntoTable:
         )
     """
 
-    __slots__ = ("_ref", "_spec")
+    __slots__ = ("_table", "_spec")
 
-    def __init__(self, ref: str | LogicalRef | TableRef) -> None:
-        table_ref = ref if isinstance(ref, TableRef) else TableRef(ref)
-        self._ref = table_ref
-        self._spec: Any = ReplaceSpec(table_ref=table_ref)
+    def __init__(self, ref: TableDeclaration) -> None:
+        self._table = DeclaredTable.from_declaration(ref)
+        self._spec: Any = ReplaceSpec(
+            table_ref=self._table.ref, model_table=self._table.model_table
+        )
 
     def append(
         self,
@@ -104,7 +107,14 @@ class IntoTable:
         Returns:
             New ``IntoTable`` with APPEND mode.
         """
-        return self._with(AppendSpec(table_ref=self._ref, schema_mode=schema, streaming=streaming))
+        return self._with(
+            AppendSpec(
+                table_ref=self._table.ref,
+                model_table=self._table.model_table,
+                schema_mode=schema,
+                streaming=streaming,
+            )
+        )
 
     def replace(
         self,
@@ -144,7 +154,8 @@ class IntoTable:
         """
         return self._with(
             ReplaceSpec(
-                table_ref=self._ref,
+                table_ref=self._table.ref,
+                model_table=self._table.model_table,
                 schema_mode=schema,
                 streaming=streaming,
                 allow_empty=allow_empty,
@@ -191,7 +202,8 @@ class IntoTable:
             )
         return self._with(
             ReplacePartitionsSpec(
-                table_ref=self._ref,
+                table_ref=self._table.ref,
+                model_table=self._table.model_table,
                 partition_cols=cols,
                 schema_mode=schema,
                 streaming=streaming,
@@ -270,7 +282,8 @@ class IntoTable:
             )
         return self._with(
             ReplacePartitionsSpec(
-                table_ref=self._ref,
+                table_ref=self._table.ref,
+                model_table=self._table.model_table,
                 partition_cols=cols,
                 schema_mode=schema,
                 streaming=streaming,
@@ -320,7 +333,8 @@ class IntoTable:
         predicate = _build_eq_predicate(partition)
         return self._with(
             ReplaceWhereSpec(
-                table_ref=self._ref,
+                table_ref=self._table.ref,
+                model_table=self._table.model_table,
                 replace_predicate=predicate,
                 schema_mode=schema,
             )
@@ -357,7 +371,8 @@ class IntoTable:
         """
         return self._with(
             ReplaceWhereSpec(
-                table_ref=self._ref,
+                table_ref=self._table.ref,
+                model_table=self._table.model_table,
                 replace_predicate=predicate,
                 schema_mode=schema,
                 streaming=streaming,
@@ -367,7 +382,7 @@ class IntoTable:
     def upsert(
         self,
         *,
-        keys: tuple[str, ...],
+        keys: tuple[str, ...] | None = None,
         partition_cols: tuple[str, ...] = (),
         exclude: tuple[str, ...] = (),
         include: tuple[str, ...] = (),
@@ -405,7 +420,9 @@ class IntoTable:
 
         Args:
             keys:           Columns that uniquely identify a row.  Used in the
-                            MERGE ``ON`` join condition.
+                            MERGE ``ON`` join condition.  A model target
+                            defaults to the model's business key, else its
+                            primary key; a string target requires it.
             partition_cols: Partition columns to include in the MERGE ``ON``
                             predicate and for Delta log pruning.  Must be a
                             subset of the frame columns.
@@ -441,8 +458,9 @@ class IntoTable:
             raise UpsertDeleteFlagError(delete_flag, "must name a source column")
         return self._with(
             UpsertSpec(
-                table_ref=self._ref,
-                upsert_keys=keys,
+                table_ref=self._table.ref,
+                model_table=self._table.model_table,
+                upsert_keys=self._table.merge_keys(keys),
                 partition_cols=partition_cols,
                 upsert_exclude=exclude,
                 upsert_include=include,
@@ -454,7 +472,7 @@ class IntoTable:
     def update(
         self,
         *,
-        keys: tuple[str, ...],
+        keys: tuple[str, ...] | None = None,
         partition_cols: tuple[str, ...] = (),
         exclude: tuple[str, ...] = (),
         include: tuple[str, ...] = (),
@@ -475,7 +493,9 @@ class IntoTable:
 
         Args:
             keys:           Columns that uniquely identify a row.  Used in the
-                            MERGE ``ON`` join condition.
+                            MERGE ``ON`` join condition.  A model target
+                            defaults to the model's business key, else its
+                            primary key; a string target requires it.
             partition_cols: Partition columns to include in the MERGE ``ON``
                             predicate and for Delta log pruning.  Must be a
                             subset of the frame columns.
@@ -502,8 +522,9 @@ class IntoTable:
         """
         return self._with(
             UpdateSpec(
-                table_ref=self._ref,
-                keys=keys,
+                table_ref=self._table.ref,
+                model_table=self._table.model_table,
+                keys=self._table.merge_keys(keys),
                 partition_cols=partition_cols,
                 exclude=exclude,
                 include=include,
@@ -521,7 +542,7 @@ class IntoTable:
 
     def __repr__(self) -> str:
         mode = type(self._spec).__name__.removesuffix("Spec").lower()
-        return f"IntoTable({self._ref.ref!r}, mode={mode!r})"
+        return f"IntoTable({self._table.ref.ref!r}, mode={mode!r})"
 
 
 class IntoFile:

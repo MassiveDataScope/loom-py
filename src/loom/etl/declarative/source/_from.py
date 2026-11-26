@@ -36,7 +36,7 @@ from __future__ import annotations
 from typing import Any, Generic, TypeVar
 
 from loom.core.errors import InvalidType, InvalidValue
-from loom.core.routing import LogicalRef
+from loom.etl.declarative._declared_table import DeclaredTable, TableDeclaration
 from loom.etl.declarative._format import Format
 from loom.etl.declarative._read_options import ReadOptions
 from loom.etl.declarative._utils import _clone_slots
@@ -68,11 +68,13 @@ _SourceEntry = "FromTable | FromFile | FromTemp | FromMongo | FromClickHouse"
 class FromTable:
     """Declare a Delta table as an ETL source.
 
-    Accepts a dotted logical reference or an explicit :class:`~loom.etl.TableRef`.
+    Accepts a dotted logical reference, an explicit :class:`~loom.etl.TableRef` or a
+    model, which names its table with ``__tablename__`` and gives the source its
+    schema: ``FromTable(Order)`` is ``FromTable("order").with_schema(Order)``.
     Predicates are added via :meth:`where` using the standard operator DSL.
 
     Args:
-        ref: Logical table reference — ``str`` or :class:`~loom.etl.TableRef`.
+        ref: Logical table reference — ``str`` or :class:`~loom.etl.TableRef` — or a model.
 
     Example::
 
@@ -84,10 +86,13 @@ class FromTable:
 
     __slots__ = ("_ref", "_predicates", "_schema", "_columns", "_json_columns")
 
-    def __init__(self, ref: str | LogicalRef | TableRef) -> None:
-        self._ref: TableRef = ref if isinstance(ref, TableRef) else TableRef(ref)
+    def __init__(self, ref: TableDeclaration) -> None:
+        declared = DeclaredTable.from_declaration(ref)
+        self._ref: TableRef = declared.ref
         self._predicates: tuple[PredicateNode, ...] = ()
-        self._schema: tuple[ColumnSchema, ...] = ()
+        self._schema: tuple[ColumnSchema, ...] = (
+            () if declared.model_table is None else declared.model_table.schema
+        )
         self._columns: tuple[str, ...] = ()
         self._json_columns: tuple[JsonColumnSpec, ...] = ()
 

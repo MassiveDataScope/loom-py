@@ -4,6 +4,8 @@ from __future__ import annotations
 
 from enum import StrEnum
 
+from loom.etl.schema import DatetimeType, FrameType, LoomDtype
+
 
 class HistorifyInputMode(StrEnum):
     """Input semantics for the SCD2 writer.
@@ -53,6 +55,15 @@ class HistoryDateType(StrEnum):
 
     DATE = "date"
     TIMESTAMP = "timestamp"
+
+    @classmethod
+    def of_column(cls, frame_type: FrameType | None) -> HistoryDateType | None:
+        """The boundary type a column of *frame_type* holds, ``None`` when it is not temporal."""
+        if frame_type is LoomDtype.DATE:
+            return HistoryDateType.DATE
+        if isinstance(frame_type, DatetimeType):
+            return HistoryDateType.TIMESTAMP
+        return None
 
 
 __all__ = ["HistorifyInputMode", "DeletePolicy", "HistoryDateType"]

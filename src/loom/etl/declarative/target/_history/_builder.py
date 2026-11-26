@@ -6,8 +6,8 @@ from typing import Literal
 
 from loom.core.errors import InvalidValue
 from loom.core.schema import SchemaMode
+from loom.etl.declarative._declared_table import DeclaredTable, TableDeclaration
 from loom.etl.declarative.expr._params import ParamExpr
-from loom.etl.declarative.expr._refs import TableRef
 from loom.etl.declarative.target._history._enums import (
     DeletePolicy,
     HistorifyInputMode,
@@ -90,7 +90,10 @@ class IntoHistory:
       state matters.
 
     Args:
-        ref: Logical table reference — ``str`` or :class:`~loom.etl.TableRef`.
+        ref: Logical table reference — ``str`` or :class:`~loom.etl.TableRef` — or a
+            model, which names its table with ``__tablename__`` and must declare the
+            ``valid_from`` and ``valid_to`` columns (and ``deleted_at`` under
+            ``delete_policy="soft_delete"``).
         keys: One or more column names that identify the entity.
             Must be non-empty and must not overlap with ``track``.
         effective_date: In ``\"log\"`` mode: name of the frame column carrying
@@ -119,7 +122,10 @@ class IntoHistory:
             Defaults to ``\"valid_from\"``.
         valid_to: Name of the period-end column in the Delta table.
             Defaults to ``\"valid_to\"``.
-        date_type: Precision for boundary columns. Defaults to ``\"date\"``.
+        date_type: Precision for boundary columns. Defaults to ``None``: ``\"date\"`` for a
+            string target, the type of the model's ``valid_from`` column for a model
+            (``Date`` gives ``\"date\"``, ``DateTime`` gives ``\"timestamp\"``). A value that
+            contradicts the model fails at compile time.
         schema: Schema evolution strategy.
             Defaults to :attr:`~SchemaMode.STRICT`.
         allow_temporal_rerun: Allow SNAPSHOT backfills with a past effective
@@ -157,7 +163,7 @@ class IntoHistory:
 
     def __init__(
         self,
-        ref: str | TableRef,
+        ref: TableDeclaration,
         *,
         keys: tuple[str, ...] | list[str],
         effective_date: str | ParamExpr,
@@ -169,7 +175,7 @@ class IntoHistory:
         valid_from: str = "valid_from",
         valid_to: str = "valid_to",
         deleted_at: str = "deleted_at",
-        date_type: Literal["date", "timestamp"] = "date",
+        date_type: Literal["date", "timestamp"] | None = None,
         schema: SchemaMode = SchemaMode.STRICT,
         allow_temporal_rerun: bool = False,
         delete_marker: str | None = None,
@@ -195,9 +201,10 @@ class IntoHistory:
             ),
         )
 
-        table_ref = TableRef(ref) if isinstance(ref, str) else ref
+        table = DeclaredTable.from_declaration(ref)
         self._spec = HistorifySpec(
-            table_ref=table_ref,
+            table_ref=table.ref,
+            model_table=table.model_table,
             keys=keys_t,
             effective_date=effective_date,
             mode=HistorifyInputMode(mode),
@@ -208,7 +215,7 @@ class IntoHistory:
             valid_from=valid_from,
             valid_to=valid_to,
             deleted_at=deleted_at,
-            date_type=HistoryDateType(date_type),
+            date_type=_resolve_date_type(date_type, table, valid_from),
             schema_mode=schema,
             allow_temporal_rerun=allow_temporal_rerun,
             delete_marker=delete_marker,
@@ -225,6 +232,17 @@ class IntoHistory:
     def __repr__(self) -> str:
         spec = self._spec
         return f"IntoHistory({spec.table_ref.ref!r}, keys={spec.keys!r}, mode={spec.mode!r})"
+
+
+def _resolve_date_type(
+    declared: Literal["date", "timestamp"] | None, table: DeclaredTable, valid_from: str
+) -> HistoryDateType:
+    if declared is not None:
+        return HistoryDateType(declared)
+    if table.model_table is None:
+        return HistoryDateType.DATE
+    column = table.model_table.column_type(valid_from)
+    return HistoryDateType.of_column(column) or HistoryDateType.DATE
 
 
 def _validate_history_args(

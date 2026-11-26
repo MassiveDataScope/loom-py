@@ -18,7 +18,12 @@ from loom.core.model.inference import (
     ResolvedField,
     StructShape,
 )
-from loom.core.model.introspection import get_column_fields, get_table_name
+from loom.core.model.introspection import (
+    business_key_of,
+    conflict_key_of,
+    get_column_fields,
+    get_table_name,
+)
 from loom.core.model.types import ColumnKind, ColumnType
 from loom.etl.schema._schema import (
     ColumnSchema,
@@ -183,6 +188,14 @@ _RULES: Final[Mapping[ColumnKind, _Rule]] = {
 
 
 @dataclass(frozen=True, slots=True)
+class KeyProblem:
+    """Why a model's conflict key cannot come from a frame: the field and the reason."""
+
+    field: str
+    reason: str
+
+
+@dataclass(frozen=True, slots=True)
 class ModelTable:
     """A model as a lake table: its logical name and the frame type of each column."""
 
@@ -201,3 +214,42 @@ class ModelTable:
         """
         name = get_table_name(model)
         return cls(model, name, LakeTranslator(model.__name__).schema_of(model))
+
+    @property
+    def column_names(self) -> tuple[str, ...]:
+        """The names of the columns, in declaration order."""
+        return tuple(column.name for column in self.schema)
+
+    def column_type(self, name: str) -> FrameType | None:
+        """The frame type of column *name*, ``None`` when the model has no such column."""
+        return next((column.dtype for column in self.schema if column.name == name), None)
+
+    def unknown_columns(self, names: Iterable[str]) -> tuple[str, ...]:
+        """The *names* that are not columns of the model, in the order given."""
+        return tuple(name for name in names if name not in self.column_names)
+
+    def key_problem(self) -> KeyProblem | None:
+        """Why the conflict key cannot come from a frame, ``None`` when it can.
+
+        A business key always comes from the frame. A primary key does not when the
+        store fills it: autoincrement, derived from a business key, or server default.
+        """
+        key = conflict_key_of(self.model)
+        if not key:
+            return KeyProblem("keys", "declares neither a business key nor a primary key")
+        if business_key_of(self.model) is not None:
+            return None
+        columns = get_column_fields(self.model)
+        for name in key:
+            declaration = columns[name].field
+            if declaration.autoincrement:
+                return KeyProblem(name, f"primary key {name!r} is autoincrement")
+            if declaration.derived is not None:
+                return KeyProblem(name, f"primary key {name!r} is derived by the store")
+            if declaration.server_default is not None:
+                return KeyProblem(name, f"primary key {name!r} is filled by the server")
+        return None
+
+    def frame_keys(self) -> tuple[str, ...]:
+        """The conflict key of the model when the frame can supply it, else ``()``."""
+        return conflict_key_of(self.model) if self.key_problem() is None else ()

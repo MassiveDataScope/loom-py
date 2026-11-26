@@ -269,6 +269,49 @@ class ETLErrorCode(IssueCode):
             field="delete_marker",
         ),
     )
+    MODEL_COLUMN_UNKNOWN = (
+        "MODEL_COLUMN_UNKNOWN",
+        Template(
+            "{component}: {role} names column {column!r}, which model {model} does not "
+            "declare for table {table!r}. Use one of {known}, or add the field to {model}.",
+            field="{column}",
+        ),
+    )
+    MODEL_KEY_NOT_IN_FRAME = (
+        "MODEL_KEY_NOT_IN_FRAME",
+        Template(
+            "{component}: model {model} (table {table!r}) {reason}, so its key cannot come "
+            "from the frame and no default keys exist. Pass keys=(...) naming columns the "
+            "frame carries; frame-supplied surrogate keys arrive with spec 024.",
+            field="{field}",
+        ),
+    )
+    MODEL_SCHEMA_MODE_UNSUPPORTED = (
+        "MODEL_SCHEMA_MODE_UNSUPPORTED",
+        Template(
+            "{component}: model {model} (table {table!r}) is written with schema={mode}, "
+            "but a model target only allows STRICT. Use schema=SchemaMode.STRICT; EVOLVE and "
+            "OVERWRITE arrive with spec 023b.",
+            field="schema",
+        ),
+    )
+    MODEL_BOUNDARY_NOT_TEMPORAL = (
+        "MODEL_BOUNDARY_NOT_TEMPORAL",
+        Template(
+            "{component}: model {model} (table {table!r}) declares valid_from column "
+            "{column!r} as {actual}, which holds no dates. Declare it as a date or a datetime.",
+            field="{column}",
+        ),
+    )
+    MODEL_DATE_TYPE_MISMATCH = (
+        "MODEL_DATE_TYPE_MISMATCH",
+        Template(
+            "{component}: IntoHistory date_type={declared!r} contradicts model {model} "
+            "(table {table!r}), whose {column!r} column holds {actual!r} values. Drop "
+            "date_type= to follow the model, or change the column type.",
+            field="date_type",
+        ),
+    )
 
 
 class ETLCompilationError(Exception):
