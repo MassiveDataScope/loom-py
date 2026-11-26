@@ -18,11 +18,13 @@ from loom.etl.schema._schema import (  # noqa: E402
     DatetimeType,
     DecimalType,
     DurationType,
+    FrameType,
     ListType,
     LoomDtype,
     StructField,
     StructType,
 )
+from tests.unit.etl.engines.frame_types import LAKE_FRAME_TYPES  # noqa: E402
 
 
 class TestLoomToSpark:
@@ -46,7 +48,6 @@ class TestLoomToSpark:
             LoomDtype.UINT64,
             LoomDtype.FLOAT32,
             LoomDtype.FLOAT64,
-            LoomDtype.DECIMAL,
             LoomDtype.UTF8,
             LoomDtype.BINARY,
             LoomDtype.BOOLEAN,
@@ -93,8 +94,18 @@ class TestFrameTypeToSpark:
         assert result.precision == 10
         assert result.scale == 2
 
-    def test_datetime_type(self) -> None:
-        assert frame_type_to_spark(DatetimeType()) == T.TimestampType()
+    @pytest.mark.parametrize(
+        ("frame_type", "spark_type"),
+        [
+            (DatetimeType("us", "UTC"), T.TimestampType()),
+            (DatetimeType("us", None), T.TimestampNTZType()),
+        ],
+        ids=["utc", "naive"],
+    )
+    def test_datetime_type_keeps_its_zone(
+        self, frame_type: DatetimeType, spark_type: T.DataType
+    ) -> None:
+        assert frame_type_to_spark(frame_type) == spark_type
 
     def test_duration_type(self) -> None:
         assert frame_type_to_spark(DurationType()) == T.LongType()
@@ -102,3 +113,17 @@ class TestFrameTypeToSpark:
     def test_unknown_type_raises_type_error(self) -> None:
         with pytest.raises(TypeError, match="No Spark mapping"):
             frame_type_to_spark(object())  # type: ignore[arg-type]
+
+
+class TestSparkRoundTrip:
+    @pytest.mark.parametrize("frame_type", LAKE_FRAME_TYPES.values(), ids=list(LAKE_FRAME_TYPES))
+    def test_a_frame_type_survives_the_trip_through_spark(self, frame_type: FrameType) -> None:
+        assert spark_to_frame_type(frame_type_to_spark(frame_type)) == frame_type
+
+    @pytest.mark.parametrize("frame_type", LAKE_FRAME_TYPES.values(), ids=list(LAKE_FRAME_TYPES))
+    def test_a_spark_type_survives_the_trip_through_a_frame_type(
+        self, frame_type: FrameType
+    ) -> None:
+        spark_type = frame_type_to_spark(frame_type)
+
+        assert frame_type_to_spark(spark_to_frame_type(spark_type)) == spark_type

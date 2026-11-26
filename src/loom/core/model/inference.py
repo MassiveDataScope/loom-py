@@ -403,3 +403,12 @@ def resolve_fields(
         for source in read_fields(cls)
         if source.name not in exclude
     )
+
+
+def resolve_annotation(annotation: Any) -> ResolvedField:
+    """Resolve the column type of one bare annotation, as a field named ``value``.
+
+    Like :func:`resolve_fields`, it never raises on an annotation it cannot map.
+    """
+    source = FieldSource("value", "value", annotation, msgspec.NODEFAULT)
+    return _Resolver(frozenset()).resolve(source)

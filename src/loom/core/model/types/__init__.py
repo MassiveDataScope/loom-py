@@ -56,8 +56,8 @@ class ColumnType:
         """The portable column this type is stored as outside its dialect.
 
         A portable type is its own counterpart; a Postgres type answers the
-        portable one it stands for, and ``None`` when it has none. An array is
-        a ``JSON`` list of its item type.
+        portable one it stands for, and ``None`` when it has none, as a
+        tsvector or an array, whose item type is part of the column.
         """
         return _PORTABLE_COUNTERPART.get(self.type_name, self)
 
@@ -140,6 +140,6 @@ _PORTABLE_COUNTERPART: Final[Mapping[ColumnKind, ColumnType | None]] = {
     ColumnKind.POSTGRES_JSONB: JSON,
     ColumnKind.POSTGRES_UUID: Uuid,
     ColumnKind.POSTGRES_INET: String(),
-    ColumnKind.POSTGRES_ARRAY: JSON,
+    ColumnKind.POSTGRES_ARRAY: None,
     ColumnKind.POSTGRES_TSVECTOR: None,
 }

@@ -41,7 +41,7 @@ class TestColumnTypeRules:
             (Postgres.JSONB, JSON),
             (Postgres.UUID, Uuid),
             (Postgres.INET, String()),
-            (Postgres.ARRAY(Uuid), JSON),
+            (Postgres.ARRAY(Uuid), None),
             (Postgres.TSVECTOR, None),
             (Uuid, Uuid),
         ],

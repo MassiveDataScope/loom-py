@@ -21,27 +21,21 @@ Public entry points
 ``annotation_to_frame_type``
     Converts one Python type annotation to a :data:`~loom.etl._schema.FrameType`.
 
-Supported annotation forms
---------------------------
-
-* Python primitive types: ``int``, ``float``, ``str``, ``bool``, ``bytes``,
-  ``datetime.datetime``, ``datetime.date``.
-* Generic lists: ``list[X]`` → :class:`~loom.etl._schema.ListType`.
-* ``Optional[X]`` / ``X | None`` → inner type (nullable is the default anyway).
-* Annotated class (Struct / dataclass / plain) → :class:`~loom.etl._schema.StructType`.
-* Existing :data:`~loom.etl._schema.FrameType` instances → passed through.
+Every annotation goes through core inference and the lake translator of
+:mod:`loom.etl.schema._model`, so a model, a msgspec struct, a dataclass and a
+plain annotated class with the same annotations give the same schema.
 
 Internal module — not part of the public API.
 """
 
 from __future__ import annotations
 
-import datetime
-import types as _builtin_types
 import typing
 from typing import Any, TypeAlias
 
 from loom.core.errors import InvalidType
+from loom.core.model.inference import resolve_annotation
+from loom.etl.schema._model import LakeTranslator
 from loom.etl.schema._schema import (
     ArrayType,
     CategoricalType,
@@ -53,7 +47,6 @@ from loom.etl.schema._schema import (
     FrameType,
     ListType,
     LoomDtype,
-    StructField,
     StructType,
 )
 
@@ -63,16 +56,6 @@ SchemaContract: TypeAlias = tuple[ColumnSchema, ...] | type[Any]
 JsonContract: TypeAlias = FrameType | type[Any]
 """Contract accepted by ``parse_json``: a :data:`FrameType`, an annotated class or ``list[X]``."""
 
-
-_PY_TO_LOOM: dict[type, LoomDtype] = {
-    int: LoomDtype.INT64,
-    float: LoomDtype.FLOAT64,
-    str: LoomDtype.UTF8,
-    bool: LoomDtype.BOOLEAN,
-    bytes: LoomDtype.BINARY,
-    datetime.datetime: LoomDtype.DATETIME,
-    datetime.date: LoomDtype.DATE,
-}
 
 _LOOM_INSTANCES = (
     LoomDtype,
@@ -103,7 +86,7 @@ def resolve_schema(contract: tuple[ColumnSchema, ...] | type[Any]) -> tuple[Colu
     if isinstance(contract, tuple):
         return contract
     if isinstance(contract, type):
-        return _class_to_schema(contract)
+        return LakeTranslator(contract.__name__).schema_of(contract)
     raise InvalidType(
         f"Expected tuple[ColumnSchema, ...] or an annotated class, got {type(contract).__name__!r}."
     )
@@ -128,11 +111,9 @@ def resolve_json_type(contract: Any) -> FrameType:
     if isinstance(contract, _LOOM_INSTANCES):
         return contract
     if typing.get_origin(contract) is list:
-        args = typing.get_args(contract)
-        inner = annotation_to_frame_type(args[0]) if args else LoomDtype.UTF8
-        return ListType(inner=inner)
+        return annotation_to_frame_type(contract)
     if isinstance(contract, type):
-        return _class_to_struct_type(contract)
+        return LakeTranslator(contract.__name__).struct_of(contract)
     raise InvalidType("Expected a FrameType, an annotated class, or list[...] generic.")
 
 
@@ -143,16 +124,15 @@ def annotation_to_frame_type(ann: Any) -> FrameType:
     annotated class. ``X | None`` and ``Optional[X]`` map as ``X``.
 
     Args:
-        ann: ``int``, ``float``, ``str``, ``bool``, ``bytes``,
-             ``datetime.datetime``, ``datetime.date``, ``list[X]``, an
-             annotated class (mapped to a :class:`~loom.etl.schema.StructType`)
-             or a :data:`~loom.etl.schema.FrameType` (returned as-is).
+        ann: A scalar type, ``list[X]``, a record (msgspec struct or dataclass,
+             mapped to a :class:`~loom.etl.schema.StructType`) or a
+             :data:`~loom.etl.schema.FrameType` (returned as-is).
 
     Returns:
         The matching :data:`~loom.etl.schema.FrameType`.
 
     Raises:
-        InvalidType: If *ann* has no Loom equivalent.
+        InvalidValue: If the lake has no type for *ann*.
 
     Example::
 
@@ -161,61 +141,4 @@ def annotation_to_frame_type(ann: Any) -> FrameType:
     """
     if isinstance(ann, _LOOM_INSTANCES):
         return ann
-    if ann in _PY_TO_LOOM:
-        return _PY_TO_LOOM[ann]
-    is_opt, inner = _strip_optional(ann)
-    if is_opt:
-        return annotation_to_frame_type(inner)
-    origin = typing.get_origin(ann)
-    if origin is list:
-        args = typing.get_args(ann)
-        inner_type = annotation_to_frame_type(args[0]) if args else LoomDtype.UTF8
-        return ListType(inner=inner_type)
-    if isinstance(ann, type) and hasattr(ann, "__annotations__"):
-        return _class_to_struct_type(ann)
-    raise InvalidType(
-        "Cannot convert annotation to FrameType. "
-        "Supported: int, float, str, bool, bytes, datetime, date, list[X], "
-        "FrameType instances, and annotated classes."
-    )
-
-
-def _class_to_schema(cls: type[Any]) -> tuple[ColumnSchema, ...]:
-    hints = _get_type_hints(cls)
-    return tuple(
-        ColumnSchema(name=name, dtype=annotation_to_frame_type(ann)) for name, ann in hints.items()
-    )
-
-
-def _class_to_struct_type(cls: type[Any]) -> StructType:
-    hints = _get_type_hints(cls)
-    fields = tuple(
-        StructField(name=name, dtype=annotation_to_frame_type(ann)) for name, ann in hints.items()
-    )
-    return StructType(fields=fields)
-
-
-def _get_type_hints(cls: type[Any]) -> dict[str, Any]:
-    try:
-        hints = typing.get_type_hints(cls)
-    except (TypeError, NameError) as exc:
-        raise InvalidType(f"Cannot introspect annotations of {cls.__name__!r}") from exc
-    if not hints:
-        raise InvalidType(
-            f"Class {cls.__name__!r} has no type annotations. "
-            "Add field annotations or pass an explicit tuple[ColumnSchema, ...] instead."
-        )
-    return hints
-
-
-def _strip_optional(ann: Any) -> tuple[bool, Any]:
-    """Return ``(True, inner)`` if *ann* is ``Optional[X]`` or ``X | None``."""
-    is_new_union = isinstance(ann, _builtin_types.UnionType)
-    is_old_union = typing.get_origin(ann) is typing.Union
-    if not (is_new_union or is_old_union):
-        return False, ann
-    args = typing.get_args(ann)
-    non_none = [a for a in args if a is not type(None)]
-    if len(non_none) == 1 and len(non_none) < len(args):
-        return True, non_none[0]
-    return False, ann
+    return LakeTranslator("annotation").frame_type(resolve_annotation(ann))

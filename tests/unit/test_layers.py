@@ -47,6 +47,20 @@ _RULES: dict[str, tuple[tuple[str, ...], tuple[str, ...]]] = {
     ),
     # The column vocabulary is a leaf: it reads no model module and encodes nothing (spec 023, D3).
     "loom.core.model.types": (("loom",), ("loom.core.errors", "loom.core.model.types")),
+    # The frame vocabulary translates models without reading an engine or a store (spec 023, D10).
+    "loom.etl.schema": (
+        (
+            "loom.etl.declarative",
+            "loom.etl.engines",
+            "loom.etl.compiler",
+            "loom.stores",
+            "sqlalchemy",
+            "polars",
+            "pyspark",
+            "deltalake",
+        ),
+        (),
+    ),
     # No transport but the JobService adapter and the ones app.entry selects, lazily.
     "loom.composition": (
         ("fastapi", "starlette", "celery", "loom.rest", "loom.celery", "loom.serverless"),

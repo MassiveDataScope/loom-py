@@ -34,7 +34,6 @@ class TestLoomDtype:
             (LoomDtype.BOOLEAN, "Boolean"),
             (LoomDtype.FLOAT32, "Float32"),
             (LoomDtype.FLOAT64, "Float64"),
-            (LoomDtype.DECIMAL, "Decimal"),
         ],
     )
     def test_value_contract(self, dtype: LoomDtype, expected: str) -> None:

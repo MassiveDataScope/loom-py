@@ -1,8 +1,6 @@
-"""Schema, contracts, and table-reference primitives for ETL."""
+"""Schema, contracts and model tables for ETL."""
 
 from __future__ import annotations
-
-from loom.etl.declarative.expr._refs import TableRef, col
 
 from ._contract import (
     JsonContract,
@@ -11,6 +9,7 @@ from ._contract import (
     resolve_json_type,
     resolve_schema,
 )
+from ._model import ModelTable
 from ._schema import (
     ArrayType,
     CategoricalType,
@@ -48,6 +47,5 @@ __all__ = [
     "DurationType",
     "CategoricalType",
     "EnumType",
-    "TableRef",
-    "col",
+    "ModelTable",
 ]

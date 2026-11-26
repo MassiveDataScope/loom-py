@@ -10,10 +10,9 @@ from typing import Any
 import msgspec
 import pytest
 
-from loom.core.errors import InvalidType
+from loom.core.errors import InvalidType, InvalidValue
 from loom.core.model import BaseModel
 from loom.etl.schema._contract import (
-    _strip_optional,
     annotation_to_frame_type,
     resolve_json_type,
     resolve_schema,
@@ -28,33 +27,10 @@ from loom.etl.schema._schema import (
 )
 
 
-class PlainRow:
-    id: int
-    name: str
-    score: float
-
-
-@dataclasses.dataclass
-class DataclassRow:
-    order_id: int
-    amount: float
-    active: bool
-
-
 class MsgspecRow(msgspec.Struct):
     user_id: int
     email: str
     age: float
-
-
-class NestedAddress(msgspec.Struct):
-    street: str
-    zip_code: str
-
-
-class NestedRow(msgspec.Struct):
-    id: int
-    address: NestedAddress
 
 
 class RowWithOptional(msgspec.Struct):
@@ -75,6 +51,32 @@ class PricedRow(msgspec.Struct):
     price: Decimal
 
 
+class SameStruct(msgspec.Struct):
+    id: int
+    placed_at: datetime.datetime
+    tags: list[str]
+
+
+@dataclasses.dataclass
+class SameDataclass:
+    id: int
+    placed_at: datetime.datetime
+    tags: list[str]
+
+
+class SamePlain:
+    id: int
+    placed_at: datetime.datetime
+    tags: list[str]
+
+
+class SameModel(BaseModel):
+    __tablename__ = "same"
+    id: int
+    placed_at: datetime.datetime
+    tags: list[str]
+
+
 class TestResolveSchema:
     @pytest.mark.parametrize(
         "contract,expected",
@@ -91,37 +93,15 @@ class TestResolveSchema:
             ),
             ((), ()),
             (
-                PlainRow,
-                (
-                    ColumnSchema("id", LoomDtype.INT64),
-                    ColumnSchema("name", LoomDtype.UTF8),
-                    ColumnSchema("score", LoomDtype.FLOAT64),
-                ),
-            ),
-            (
-                DataclassRow,
-                (
-                    ColumnSchema("order_id", LoomDtype.INT64),
-                    ColumnSchema("amount", LoomDtype.FLOAT64),
-                    ColumnSchema("active", LoomDtype.BOOLEAN),
-                ),
-            ),
-            (
-                MsgspecRow,
-                (
-                    ColumnSchema("user_id", LoomDtype.INT64),
-                    ColumnSchema("email", LoomDtype.UTF8),
-                    ColumnSchema("age", LoomDtype.FLOAT64),
-                ),
-            ),
-            (
                 RowWithOptional,
                 (
                     ColumnSchema("id", LoomDtype.INT64),
                     ColumnSchema("label", LoomDtype.UTF8),
                 ),
             ),
+            (OrderModel, (ColumnSchema("id", LoomDtype.INT64),)),
         ],
+        ids=["tuple", "empty", "optional", "model"],
     )
     def test_resolve_schema_contracts(
         self,
@@ -135,14 +115,26 @@ class TestResolveSchema:
         [
             (NoAnnotations, "no type annotations"),
             ("not_a_class", "annotated class"),
-            (OrderModel, "Cannot convert annotation"),
-            (PricedRow, "'Decimal' has no type annotations"),
         ],
-        ids=["no_annotations", "not_a_class", "loom_model_classvars", "decimal_field"],
+        ids=["no_annotations", "not_a_class"],
     )
     def test_resolve_schema_errors(self, contract: object, error: str) -> None:
         with pytest.raises(InvalidType, match=error):
             resolve_schema(contract)  # type: ignore[arg-type]
+
+    @pytest.mark.parametrize(
+        "contract", [SameStruct, SameDataclass, SamePlain, SameModel], ids=lambda c: c.__name__
+    )
+    def test_the_same_annotations_resolve_to_the_same_schema(self, contract: type[Any]) -> None:
+        assert resolve_schema(contract) == (
+            ColumnSchema("id", LoomDtype.INT64),
+            ColumnSchema("placed_at", DatetimeType("us", "UTC")),
+            ColumnSchema("tags", ListType(LoomDtype.UTF8)),
+        )
+
+    def test_an_undeclared_decimal_is_refused_with_the_lake_message(self) -> None:
+        with pytest.raises(InvalidValue, match=r"PricedRow\.price .*unbounded Numeric"):
+            resolve_schema(PricedRow)
 
 
 class TestResolveJsonType:
@@ -171,25 +163,7 @@ class TestResolveJsonType:
                     )
                 ),
             ),
-            (
-                NestedRow,
-                StructType(
-                    fields=(
-                        StructField("id", LoomDtype.INT64),
-                        StructField(
-                            "address",
-                            StructType(
-                                fields=(
-                                    StructField("street", LoomDtype.UTF8),
-                                    StructField("zip_code", LoomDtype.UTF8),
-                                )
-                            ),
-                        ),
-                    )
-                ),
-            ),
             (list[str], ListType(inner=LoomDtype.UTF8)),
-            (list[int], ListType(inner=LoomDtype.INT64)),
             (
                 list[MsgspecRow],
                 ListType(
@@ -213,52 +187,6 @@ class TestResolveJsonType:
 
 
 class TestAnnotationConversion:
-    @pytest.mark.parametrize(
-        "annotation,expected",
-        [
-            (int, LoomDtype.INT64),
-            (float, LoomDtype.FLOAT64),
-            (str, LoomDtype.UTF8),
-            (bool, LoomDtype.BOOLEAN),
-            (bytes, LoomDtype.BINARY),
-            (datetime.datetime, LoomDtype.DATETIME),
-            (datetime.date, LoomDtype.DATE),
-            (list[str], ListType(inner=LoomDtype.UTF8)),
-            (
-                NestedAddress,
-                StructType(
-                    fields=(
-                        StructField("street", LoomDtype.UTF8),
-                        StructField("zip_code", LoomDtype.UTF8),
-                    )
-                ),
-            ),
-            (str | None, LoomDtype.UTF8),
-        ],
-    )
-    def testannotation_to_frame_type(self, annotation: Any, expected: Any) -> None:
-        assert annotation_to_frame_type(annotation) == expected
-
     def test_annotation_to_frame_type_unknown_raises(self) -> None:
-        with pytest.raises(TypeError, match="Cannot convert annotation"):
+        with pytest.raises(InvalidValue, match="not a record"):
             annotation_to_frame_type(object)
-
-
-class TestStripOptional:
-    @pytest.mark.parametrize(
-        "annotation,is_optional,inner",
-        [
-            (str | None, True, str),
-            (int, False, int),
-            (str | int | None, False, str | int | None),
-        ],
-    )
-    def test_strip_optional(
-        self,
-        annotation: Any,
-        is_optional: bool,
-        inner: Any,
-    ) -> None:
-        actual_is_optional, actual_inner = _strip_optional(annotation)
-        assert actual_is_optional is is_optional
-        assert actual_inner == inner

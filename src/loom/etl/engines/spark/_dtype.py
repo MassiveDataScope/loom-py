@@ -16,6 +16,7 @@ from loom.etl.schema._schema import (
     FrameType,
     ListType,
     LoomDtype,
+    StructField,
     StructType,
 )
 
@@ -30,7 +31,6 @@ _LOOM_TO_SPARK: dict[LoomDtype, T.DataType] = {
     LoomDtype.UINT64: T.LongType(),
     LoomDtype.FLOAT32: T.FloatType(),
     LoomDtype.FLOAT64: T.DoubleType(),
-    LoomDtype.DECIMAL: T.DecimalType(38, 18),
     LoomDtype.UTF8: T.StringType(),
     LoomDtype.BINARY: T.BinaryType(),
     LoomDtype.BOOLEAN: T.BooleanType(),
@@ -48,13 +48,10 @@ _SPARK_TO_LOOM: dict[type[T.DataType], LoomDtype] = {
     T.LongType: LoomDtype.INT64,
     T.FloatType: LoomDtype.FLOAT32,
     T.DoubleType: LoomDtype.FLOAT64,
-    T.DecimalType: LoomDtype.DECIMAL,
     T.StringType: LoomDtype.UTF8,
     T.BinaryType: LoomDtype.BINARY,
     T.BooleanType: LoomDtype.BOOLEAN,
     T.DateType: LoomDtype.DATE,
-    T.TimestampType: LoomDtype.DATETIME,
-    T.TimestampNTZType: LoomDtype.DATETIME,
     T.NullType: LoomDtype.NULL,
 }
 
@@ -74,16 +71,34 @@ def loom_to_spark(dtype: LoomDtype) -> T.DataType:
     return _LOOM_TO_SPARK[dtype]
 
 
-def spark_to_frame_type(dtype: T.DataType) -> LoomDtype:
-    """Return the :class:`~loom.etl._schema.LoomDtype` for a PySpark DataType.
+def spark_to_frame_type(dtype: T.DataType) -> FrameType:
+    """Return the :data:`~loom.etl._schema.FrameType` for a PySpark DataType.
+
+    Decimal precision and scale, timestamp zone, array elements and struct
+    fields are kept; a timestamp reads as UTC and a tz-less one as naive.
 
     Args:
         dtype: PySpark DataType instance.
 
     Returns:
-        Canonical Loom dtype, or :attr:`~loom.etl._schema.LoomDtype.NULL` if
+        The matching frame type, or :attr:`~loom.etl._schema.LoomDtype.NULL` if
         the Spark type has no direct mapping.
     """
+    if isinstance(dtype, T.ArrayType):
+        return ListType(spark_to_frame_type(dtype.elementType))
+    if isinstance(dtype, T.StructType):
+        return StructType(
+            tuple(
+                StructField(f.name, spark_to_frame_type(f.dataType), f.nullable)
+                for f in dtype.fields
+            )
+        )
+    if isinstance(dtype, T.DecimalType):
+        return DecimalType(dtype.precision, dtype.scale)
+    if isinstance(dtype, T.TimestampNTZType):
+        return DatetimeType("us", None)
+    if isinstance(dtype, T.TimestampType):
+        return DatetimeType("us", "UTC")
     return _SPARK_TO_LOOM.get(type(dtype), LoomDtype.NULL)
 
 
@@ -116,9 +131,9 @@ def frame_type_to_spark(lt: FrameType) -> T.DataType:
             [T.StructField(f.name, frame_type_to_spark(f.dtype)) for f in lt.fields]
         )
     if isinstance(lt, DecimalType):
-        return T.DecimalType(lt.precision or 38, lt.scale or 18)
+        return T.DecimalType(lt.precision, lt.scale)
     if isinstance(lt, DatetimeType):
-        return T.TimestampType()
+        return T.TimestampNTZType() if lt.time_zone is None else T.TimestampType()
     if isinstance(lt, DurationType):
         return T.LongType()
     raise InvalidType(f"No Spark mapping for FrameType {type(lt).__name__!r}")

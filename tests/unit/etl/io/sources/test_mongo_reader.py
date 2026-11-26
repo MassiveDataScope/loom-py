@@ -9,6 +9,7 @@ from __future__ import annotations
 
 import logging
 import math
+from dataclasses import dataclass
 from datetime import UTC, datetime
 from typing import Any
 
@@ -125,7 +126,7 @@ class _FakeClient:
 
 
 # ---------------------------------------------------------------------------
-# Schema classes — plain Python, no msgspec
+# Schema classes — plain Python; nested ones are dataclasses, as a nested field must be a record
 # ---------------------------------------------------------------------------
 
 
@@ -138,15 +139,18 @@ class ProductDoc:
     label: str
 
 
+@dataclass
 class DeepLeaf:
     refs: list[str] | None = None
 
 
+@dataclass
 class DeepNode:
     leaves: list[DeepLeaf] | None = None
     tags: list[str] | None = None
 
 
+@dataclass
 class DeepEnvelope:
     payload: DeepNode | None = None
 
@@ -156,6 +160,7 @@ class MetaDoc:
     score: float
 
 
+@dataclass
 class ArchiveAsset:
     url: str
     name: str
@@ -165,10 +170,12 @@ class ArchiveAsset:
     updatedAt: datetime
 
 
+@dataclass
 class ArchiveBundle:
     assets: list[ArchiveAsset] | None = None
 
 
+@dataclass
 class ArchiveEnvelope:
     bundle: ArchiveBundle | None = None
 

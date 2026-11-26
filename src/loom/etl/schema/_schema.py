@@ -84,7 +84,6 @@ class LoomDtype(StrEnum):
 
     FLOAT32 = "Float32"
     FLOAT64 = "Float64"
-    DECIMAL = "Decimal"
 
     UTF8 = "Utf8"
     BINARY = "Binary"
@@ -177,16 +176,16 @@ class DecimalType:
     """Fixed-precision decimal column.
 
     Args:
-        precision: Total number of significant digits (``None`` = backend default).
-        scale:     Number of digits after the decimal point (``None`` = backend default).
+        precision: Total number of significant digits.
+        scale:     Number of digits after the decimal point; ``0`` when not given.
 
     Example::
 
         DecimalType(precision=18, scale=4)
     """
 
-    precision: int | None = None
-    scale: int | None = None
+    precision: int
+    scale: int = 0
 
 
 @dataclass(frozen=True)

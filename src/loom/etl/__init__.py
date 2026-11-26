@@ -87,6 +87,7 @@ from loom.etl.declarative import (
     WithAgent,
     WriteOptions,
 )
+from loom.etl.declarative.expr import TableRef, col
 from loom.etl.declarative.target._client import IntoClient
 from loom.etl.executor import AgentMapper
 from loom.etl.io import (
@@ -144,8 +145,6 @@ from loom.etl.schema import (
     SchemaNotFoundError,
     StructField,
     StructType,
-    TableRef,
-    col,
 )
 from loom.etl.storage import (
     CatalogConnection,

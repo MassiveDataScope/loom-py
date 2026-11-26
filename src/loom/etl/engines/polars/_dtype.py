@@ -54,7 +54,6 @@ _LOOM_TO_POLARS: dict[LoomDtype, type[pl.DataType]] = {
     LoomDtype.UINT64: pl.UInt64,
     LoomDtype.FLOAT32: pl.Float32,
     LoomDtype.FLOAT64: pl.Float64,
-    LoomDtype.DECIMAL: pl.Float64,
     LoomDtype.UTF8: pl.String,
     LoomDtype.BINARY: pl.Binary,
     LoomDtype.BOOLEAN: pl.Boolean,
@@ -76,7 +75,6 @@ _POLARS_TO_LOOM: dict[type[pl.DataType], LoomDtype] = {
     pl.UInt64: LoomDtype.UINT64,
     pl.Float32: LoomDtype.FLOAT32,
     pl.Float64: LoomDtype.FLOAT64,
-    pl.Decimal: LoomDtype.DECIMAL,
     pl.String: LoomDtype.UTF8,
     pl.Binary: LoomDtype.BINARY,
     pl.Boolean: LoomDtype.BOOLEAN,
@@ -170,8 +168,7 @@ def polars_to_frame_type(dtype: pl.DataType | DataTypeClass) -> FrameType:
         )
         return StructType(fields=fields)
     if isinstance(dtype, pl.Decimal):
-        scale = dtype.scale if dtype.scale is not None else 0
-        return DecimalType(precision=dtype.precision, scale=scale)
+        return DecimalType(precision=dtype.precision, scale=dtype.scale)
     if isinstance(dtype, pl.Datetime):
         return DatetimeType(time_unit=dtype.time_unit, time_zone=dtype.time_zone)
     if isinstance(dtype, pl.Duration):
@@ -214,7 +211,7 @@ def frame_type_to_polars(lt: FrameType) -> pl.DataType:
     if isinstance(lt, StructType):
         return pl.Struct([pl.Field(f.name, frame_type_to_polars(f.dtype)) for f in lt.fields])
     if isinstance(lt, DecimalType):
-        return pl.Decimal(lt.precision, lt.scale if lt.scale is not None else 0)
+        return pl.Decimal(lt.precision, lt.scale)
     if isinstance(lt, CategoricalType):
         return pl.Categorical()
     if isinstance(lt, EnumType):

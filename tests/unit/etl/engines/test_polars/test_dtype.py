@@ -18,11 +18,13 @@ from loom.etl.schema import (
     DecimalType,
     DurationType,
     EnumType,
+    FrameType,
     ListType,
     LoomDtype,
     StructField,
     StructType,
 )
+from tests.unit.etl.engines.frame_types import LAKE_FRAME_TYPES
 
 
 class TestLoomToPolarsCoarse:
@@ -122,7 +124,7 @@ class TestFrameTypeToPolars:
         ("frame_type", "polars_dtype"),
         [
             (ArrayType(LoomDtype.FLOAT64, 2), pl.Array(pl.Float64(), 2)),
-            (DecimalType(10, None), pl.Decimal(10, 0)),
+            (DecimalType(10), pl.Decimal(10, 0)),
             (DatetimeType("bad", "UTC"), pl.Datetime("us", "UTC")),
             (DurationType("bad"), pl.Duration("us")),
             (CategoricalType(), pl.Categorical()),
@@ -139,3 +141,17 @@ class TestFrameTypeToPolars:
     def test_frame_type_to_polars_rejects_unknown_type(self) -> None:
         with pytest.raises(TypeError, match="Unknown FrameType"):
             frame_type_to_polars(object())  # type: ignore[arg-type]
+
+
+class TestPolarsRoundTrip:
+    @pytest.mark.parametrize("frame_type", LAKE_FRAME_TYPES.values(), ids=list(LAKE_FRAME_TYPES))
+    def test_a_frame_type_survives_the_trip_through_polars(self, frame_type: FrameType) -> None:
+        assert polars_to_frame_type(frame_type_to_polars(frame_type)) == frame_type
+
+    @pytest.mark.parametrize("frame_type", LAKE_FRAME_TYPES.values(), ids=list(LAKE_FRAME_TYPES))
+    def test_a_polars_dtype_survives_the_trip_through_a_frame_type(
+        self, frame_type: FrameType
+    ) -> None:
+        dtype = frame_type_to_polars(frame_type)
+
+        assert frame_type_to_polars(polars_to_frame_type(dtype)) == dtype
