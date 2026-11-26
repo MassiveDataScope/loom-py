@@ -4,8 +4,10 @@ from __future__ import annotations
 
 import logging
 from collections.abc import Callable, Mapping
-from typing import Any
+from contextlib import suppress
+from typing import Any, Final
 
+from py4j.protocol import Py4JError
 from pyspark.sql import DataFrame, SparkSession
 from pyspark.sql import functions as F
 
@@ -35,10 +37,21 @@ from loom.etl.storage.routing import (
 
 _log = logging.getLogger(__name__)
 
+_MALFORMED_RECORD: Final = "MALFORMED_RECORD_IN_PARSING"
+_ERROR_CLASS_GETTERS: Final = ("getCondition", "getErrorClass")
+
 _FROM_JSON_MODE: Mapping[JsonMismatch, str] = {
     JsonMismatch.FAIL: "FAILFAST",
     JsonMismatch.NULL: "PERMISSIVE",
 }
+
+
+def _error_class_of(java_error: Any) -> str:
+    """The Spark error class of a JVM exception, ``""`` when it is not a Spark error."""
+    for getter in _ERROR_CLASS_GETTERS:
+        with suppress(Py4JError):
+            return str(getattr(java_error, getter)() or "")
+    return ""
 
 
 class SparkSourceReader(SourceReader):
@@ -66,8 +79,17 @@ class SparkSourceReader(SourceReader):
         self._file_locator = file_locator
 
     def is_json_decode_failure(self, error: Exception) -> bool:
-        """Whether *error* is a FAILFAST ``from_json`` rejecting a malformed document."""
-        return "MALFORMED_RECORD_IN_PARSING" in str(error)
+        """Whether *error* is a FAILFAST ``from_json`` rejecting a malformed document.
+
+        Spark reports it as the error class ``MALFORMED_RECORD_IN_PARSING`` on a
+        cause of the JVM exception that PySpark carries.
+        """
+        java_error = getattr(error, "java_exception", None)
+        while java_error is not None:
+            if _error_class_of(java_error).startswith(_MALFORMED_RECORD):
+                return True
+            java_error = java_error.getCause()
+        return False
 
     def read(self, spec: SourceSpec, params_instance: Any, /) -> DataFrame:
         """Read source spec and return DataFrame."""

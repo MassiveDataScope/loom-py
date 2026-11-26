@@ -33,7 +33,7 @@ from loom.etl.declarative.target import (
 from loom.etl.declarative.target._history import HistorifyRepairReport, HistorifySpec
 from loom.etl.engines._historify import HistorifyOps, scd2_transform
 from loom.etl.ports.contracts import TargetWriter
-from loom.etl.schema._schema import ColumnSchema, SchemaNotFoundError
+from loom.etl.schema._schema import SchemaNotFoundError, StructType
 from loom.etl.storage._config import AuditConfig, MissingTablePolicy
 from loom.etl.storage.routing import ResolvedTarget, TableRouteResolver
 
@@ -158,6 +158,7 @@ class _WritePolicy(TargetWriter, Generic[InputFrameT, WriteFrameT, PhysicalSchem
 
         frame = self._apply_audit_columns(frame, write_ctx, params_instance, self._audit_config)
         target = self._resolver.resolve(spec.table_ref)
+        self._log_model_schema(spec)
         self._dispatch_table_write(frame, target, spec, params_instance, streaming)
 
     def _dispatch_table_write(
@@ -272,10 +273,10 @@ class _WritePolicy(TargetWriter, Generic[InputFrameT, WriteFrameT, PhysicalSchem
             schema_mode=spec.schema_mode,
             missing_table_policy=self._missing_table_policy,
         )
-        modelled = self._align_to_model(frame, spec)
-        materialized = self._materialize_checked(
-            modelled, target, streaming, allow_empty=allow_empty
-        )
+        schema = self._contract_schema(None, spec)
+        if schema is not None:
+            frame = self._align(frame, schema, spec.schema_mode)
+        materialized = self._materialize_checked(frame, target, streaming, allow_empty=allow_empty)
         try:
             self._create(
                 materialized,
@@ -514,7 +515,9 @@ class _WritePolicy(TargetWriter, Generic[InputFrameT, WriteFrameT, PhysicalSchem
             self._historify_ops(), materialized, existing, spec, params_instance
         )
         del existing
-        result = self._align_result_to_model(result, spec)
+        schema = self._contract_schema(None, spec)
+        if schema is not None:
+            result = self._align_result(result, schema, spec.schema_mode)
         if report is not None:
             _log.warning(
                 EtlEvent.HISTORIFY_RERUN_REQUIRED,
@@ -626,21 +629,21 @@ class _WritePolicy(TargetWriter, Generic[InputFrameT, WriteFrameT, PhysicalSchem
         """Align a materialised frame, such as a historify result, with *schema*."""
 
     @abstractmethod
-    def _physical_of(self, columns: tuple[ColumnSchema, ...]) -> PhysicalSchemaT:
-        """Translate lake *columns* to the engine's physical schema."""
+    def _physical_of(self, schema: StructType) -> PhysicalSchemaT:
+        """Translate the lake *schema* to the engine's physical schema."""
 
     def _contract_schema(
         self, existing: PhysicalSchemaT | None, spec: TableSpec
     ) -> PhysicalSchemaT | None:
-        """The schema a write aligns to: the model's lake schema, else *existing*.
-
-        Every path that aligns or creates asks here, so the model replaces the
-        physical schema in one place. A spec with a model logs the columns it
-        applies, once per write.
-        """
+        """The schema a write aligns to: the model's lake schema, else *existing*."""
         model = spec.model_table
+        return existing if model is None else self._physical_of(model.struct_type)
+
+    def _log_model_schema(self, spec: TargetSpec) -> None:
+        """Log the columns of the model a table write applies, once per write."""
+        model = spec.model_table if isinstance(spec, TableSpec) else None
         if model is None:
-            return existing
+            return
         _log.info(
             EtlEvent.MODEL_SCHEMA_APPLIED,
             extra={
@@ -649,17 +652,6 @@ class _WritePolicy(TargetWriter, Generic[InputFrameT, WriteFrameT, PhysicalSchem
                 EtlKey.COLUMNS: list(model.column_names),
             },
         )
-        return self._physical_of(model.schema)
-
-    def _align_to_model(self, frame: InputFrameT, spec: TableSpec) -> InputFrameT:
-        """Align *frame* to the model of *spec*; a spec without a model leaves it as is."""
-        schema = self._contract_schema(None, spec)
-        return frame if schema is None else self._align(frame, schema, spec.schema_mode)
-
-    def _align_result_to_model(self, result: WriteFrameT, spec: TableSpec) -> WriteFrameT:
-        """Align a materialised *result* to the model of *spec*, if it has one."""
-        schema = self._contract_schema(None, spec)
-        return result if schema is None else self._align_result(result, schema, spec.schema_mode)
 
     def _row_count_if_cheap(self, frame: WriteFrameT) -> int | None:
         """Rows in *frame*, or ``None`` when the backend cannot tell without a scan."""

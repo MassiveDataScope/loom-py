@@ -11,7 +11,6 @@ from __future__ import annotations
 
 from pathlib import Path
 
-import msgspec
 import polars as pl
 import pytest
 
@@ -26,6 +25,7 @@ from loom.etl.lineage._records import EventName, RunStatus
 from loom.etl.schema._schema import LoomDtype
 from loom.etl.testing import RecordingRunObserver
 from tests.unit.etl.engines.doubles import NoParams
+from tests.unit.etl.engines.frame_types import Buyer
 
 from .conftest import MinimalPolarsSourceReader, MinimalPolarsTargetWriter, table_path
 
@@ -54,11 +54,6 @@ class PassThroughStep(ETLStep[NoParams]):
 
     def execute(self, params: NoParams, *, events: pl.LazyFrame) -> pl.LazyFrame:  # type: ignore[override]
         return events
-
-
-class Buyer(msgspec.Struct):
-    name: str
-    order_count: int
 
 
 class DecodeBuyerStep(ETLStep[NoParams]):

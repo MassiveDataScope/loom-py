@@ -43,7 +43,7 @@ from loom.etl.engines.polars._schema import (
 )
 from loom.etl.event import EtlEvent, EtlKey
 from loom.etl.lineage._records import LineageRecord, WriteContext, get_lineage_schema
-from loom.etl.schema._schema import ColumnSchema, SchemaError
+from loom.etl.schema._schema import SchemaError, StructType
 from loom.etl.storage import (
     MissingTablePolicy,
     PathRouteResolver,
@@ -56,7 +56,7 @@ from loom.etl.storage._config import AuditConfig
 from loom.etl.storage._file_locator import FileLocator
 from loom.etl.storage._locator import TableLocator, _as_locator
 
-from ._dtype import frame_type_to_polars
+from ._dtype import frame_type_to_polars_schema
 from ._file_writer import PolarsFileWriter
 from ._streaming import partition_rows_from_spool, spool_lazy_to_arrow_reader
 
@@ -318,16 +318,12 @@ class PolarsTargetWriter(_WritePolicy[pl.LazyFrame, pl.DataFrame, PolarsPhysical
         schema: PolarsPhysicalSchema,
         mode: SchemaMode,
     ) -> pl.DataFrame:
-        """Align a collected frame by projecting it lazily once."""
-        return self._align(result.lazy(), schema, mode).collect()
+        """Align a collected frame, eagerly."""
+        return apply_schema_polars(result, schema.schema, mode)
 
-    def _physical_of(self, columns: tuple[ColumnSchema, ...]) -> PolarsPhysicalSchema:
-        """The Polars schema of lake *columns*."""
-        return PolarsPhysicalSchema(
-            schema=pl.Schema(
-                {column.name: frame_type_to_polars(column.dtype) for column in columns}
-            )
-        )
+    def _physical_of(self, schema: StructType) -> PolarsPhysicalSchema:
+        """The Polars schema of the lake *schema*."""
+        return PolarsPhysicalSchema(schema=frame_type_to_polars_schema(schema))
 
     def _row_count_if_cheap(self, frame: pl.DataFrame) -> int | None:
         """Rows in the collected frame."""
@@ -866,5 +862,5 @@ def _partition_filter(
 
 
 def _polars_lineage_schema(record: LineageRecord) -> pl.Schema:
-    cols = get_lineage_schema(type(record))
-    return pl.Schema({c.name: frame_type_to_polars(c.dtype) for c in cols})
+    columns = get_lineage_schema(type(record))
+    return frame_type_to_polars_schema(StructType.of_columns(columns))

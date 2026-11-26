@@ -219,6 +219,11 @@ def frame_type_to_polars(lt: FrameType) -> pl.DataType:
     raise InvalidType(f"Unknown FrameType: {type(lt).__qualname__}")
 
 
+def frame_type_to_polars_schema(struct: StructType) -> pl.Schema:
+    """The Polars schema whose columns are the fields of *struct*, in order."""
+    return pl.Schema(cast(pl.Struct, frame_type_to_polars(struct)).to_schema())
+
+
 def _loom_primitive_to_polars(lt: LoomDtype) -> pl.DataType:
     if lt in _STRUCTURAL_DTYPES:
         raise InvalidType(

@@ -4,7 +4,6 @@ from __future__ import annotations
 
 import json
 from dataclasses import dataclass
-from functools import singledispatchmethod
 from typing import Any
 
 import polars as pl
@@ -45,29 +44,19 @@ class TolerantJson:
             return document
         return json.dumps(coerced, ensure_ascii=False)
 
-    @singledispatchmethod
     def _coerce(self, frame_type: FrameType, value: Any) -> Any:
-        if value is not None and frame_type is LoomDtype.UTF8:
-            return self._as_text(value)
-        return value
-
-    @_coerce.register
-    def _coerce_struct(self, frame_type: StructType, value: Any) -> Any:
-        if not isinstance(value, dict):
-            return None
-        return {f.name: self._coerce(f.dtype, value.get(f.name)) for f in frame_type.fields}
-
-    @_coerce.register(ListType)
-    @_coerce.register(ArrayType)
-    def _coerce_list(self, frame_type: ListType | ArrayType, value: Any) -> Any:
-        if not isinstance(value, list):
-            return None
-        return [self._coerce(frame_type.inner, item) for item in value]
-
-    @staticmethod
-    def _as_text(value: Any) -> str:
-        if isinstance(value, str):
-            return value
-        if isinstance(value, (dict, list)):
-            return json.dumps(value, ensure_ascii=False)
-        return str(value)
+        match frame_type:
+            case StructType(fields=fields):
+                if not isinstance(value, dict):
+                    return None
+                return {f.name: self._coerce(f.dtype, value.get(f.name)) for f in fields}
+            case ListType(inner=inner) | ArrayType(inner=inner):
+                if not isinstance(value, list):
+                    return None
+                return [self._coerce(inner, item) for item in value]
+            case LoomDtype.UTF8 if isinstance(value, dict | list):
+                return json.dumps(value, ensure_ascii=False)
+            case LoomDtype.UTF8 if value is not None:
+                return str(value)
+            case _:
+                return value

@@ -3,13 +3,12 @@
 Requires ``pyspark>=3.5`` and ``delta-spark>=3.2`` to be installed.
 The entire package is skipped automatically when either is absent.
 
-SparkSession is scoped to the test session — Spark startup is expensive
-(~5s) so we create it once and share across all tests in this package.
+The ``spark`` session fixture lives in ``tests/unit/etl/engines/conftest.py``.
 """
 
 from __future__ import annotations
 
-from collections.abc import Callable, Generator
+from collections.abc import Callable
 from pathlib import Path
 
 import pytest
@@ -21,18 +20,7 @@ from pyspark.sql import DataFrame, SparkSession  # noqa: E402
 
 from loom.etl.declarative.expr._refs import TableRef  # noqa: E402
 from loom.etl.engines.spark import SparkSourceReader, SparkTargetWriter  # noqa: E402
-from loom.etl.testing.spark import SparkStepRunner, SparkTestSession  # noqa: E402
-
-
-@pytest.fixture(scope="session")
-def spark() -> Generator[SparkSession, None, None]:
-    """Local SparkSession with Delta Lake extensions.
-
-    Scoped to the session to avoid the ~5s JVM startup cost per test.
-    Log level set to ERROR to suppress verbose Spark output.
-    """
-    with SparkTestSession.start(app="loom-etl-spark-tests", parallelism=1) as session:
-        yield session
+from loom.etl.testing.spark import SparkStepRunner  # noqa: E402
 
 
 @pytest.fixture

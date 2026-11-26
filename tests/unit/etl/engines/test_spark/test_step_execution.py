@@ -37,6 +37,7 @@ from loom.etl.schema._schema import ColumnSchema, LoomDtype, SchemaNotFoundError
 from loom.etl.storage._config import MissingTablePolicy
 from loom.etl.testing import RecordingRunObserver
 from tests.unit.etl.engines.doubles import NoParams
+from tests.unit.etl.engines.frame_types import Buyer
 
 from .conftest import SparkSourceReader, SparkTargetWriter, spark_table_path
 
@@ -57,13 +58,8 @@ class SparkPassThroughStep(ETLStep[NoParams]):
         return events
 
 
-class _Buyer(msgspec.Struct):
-    name: str
-    order_count: int
-
-
 class SparkDecodeBuyerStep(ETLStep[NoParams]):
-    customers: FromTable = FromTable("raw.customers").parse_json("buyer", _Buyer)  # type: ignore[assignment]
+    customers: FromTable = FromTable("raw.customers").parse_json("buyer", Buyer)  # type: ignore[assignment]
     target = IntoTable("staging.customers").replace(schema=SchemaMode.OVERWRITE)
 
     def execute(self, params: NoParams, *, customers: DataFrame) -> DataFrame:  # type: ignore[override]
@@ -386,7 +382,7 @@ class TestJsonDecodeFailure:
             spark.createDataFrame([('{"name": {"first": "Ada"}}',), ("not json",)], ["buyer"]),
         )
         source = FromTable("raw.customers").parse_json(
-            "buyer", _Buyer, on_mismatch=JsonMismatch.NULL
+            "buyer", Buyer, on_mismatch=JsonMismatch.NULL
         )
 
         rows = spark_reader.read(source._to_spec("customers"), None).collect()

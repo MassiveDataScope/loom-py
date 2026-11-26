@@ -2,14 +2,18 @@
 
 from __future__ import annotations
 
-from typing import Any
+from typing import Any, Generic, TypeVar
 
 import polars as pl
 from polars.datatypes import DataTypeClass as _DataTypeClass
 
+PolarsFrameT = TypeVar("PolarsFrameT", pl.LazyFrame, pl.DataFrame)
 
-class PolarsSchemaAligner:
-    def get_frame_columns(self, frame: pl.LazyFrame) -> set[str]:
+
+class PolarsSchemaAligner(Generic[PolarsFrameT]):
+    """Aligns a lazy or an eager frame; the aligner is the frame type it was built for."""
+
+    def get_frame_columns(self, frame: PolarsFrameT) -> set[str]:
         return set(frame.collect_schema().names())
 
     def iter_schema(self, schema: pl.Schema) -> list[tuple[str, Any]]:
@@ -30,8 +34,8 @@ class PolarsSchemaAligner:
     def null_column(self, name: str, dtype: pl.DataType | _DataTypeClass) -> tuple[str, pl.Expr]:
         return name, pl.lit(None).cast(dtype)
 
-    def apply_casts(self, frame: pl.LazyFrame, casts: list[tuple[str, pl.Expr]]) -> pl.LazyFrame:
+    def apply_casts(self, frame: PolarsFrameT, casts: list[tuple[str, pl.Expr]]) -> PolarsFrameT:
         return frame.with_columns([expr.alias(name) for name, expr in casts])
 
-    def select_columns(self, frame: pl.LazyFrame, names: list[str]) -> pl.LazyFrame:
+    def select_columns(self, frame: PolarsFrameT, names: list[str]) -> PolarsFrameT:
         return frame.select(names)

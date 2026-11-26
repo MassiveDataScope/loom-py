@@ -42,7 +42,7 @@ from loom.etl.engines.spark._historify import SparkHistorifyOps
 from loom.etl.engines.spark._schema import SparkPhysicalSchema, apply_schema_spark
 from loom.etl.event import EtlEvent
 from loom.etl.lineage._records import LineageRecord, get_lineage_schema
-from loom.etl.schema._schema import ColumnSchema
+from loom.etl.schema._schema import StructType
 from loom.etl.storage._config import MissingTablePolicy
 from loom.etl.storage._file_locator import FileLocator
 from loom.etl.storage._locator import TableLocator, _as_locator
@@ -145,16 +145,10 @@ class SparkTargetWriter(_WritePolicy[DataFrame, DataFrame, SparkPhysicalSchema])
         """Align a Spark frame, which is lazy like any other."""
         return self._align(result, schema, mode)
 
-    def _physical_of(self, columns: tuple[ColumnSchema, ...]) -> SparkPhysicalSchema:
-        """The Spark schema of lake *columns*."""
-        return SparkPhysicalSchema(
-            schema=T.StructType(
-                [
-                    T.StructField(column.name, frame_type_to_spark(column.dtype))
-                    for column in columns
-                ]
-            )
-        )
+    def _physical_of(self, schema: StructType) -> SparkPhysicalSchema:
+        """The Spark schema of the lake *schema*."""
+        spark_schema = frame_type_to_spark(schema)
+        return SparkPhysicalSchema(schema=cast(T.StructType, spark_schema))
 
     def _materialize_for_write(self, frame: DataFrame, streaming: bool) -> DataFrame:
         """Return Spark frame unchanged (already materialized/eager)."""

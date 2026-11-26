@@ -16,6 +16,7 @@ from polars.datatypes import DataTypeClass
 
 from loom.core.errors import InvalidType, InvalidValue
 from loom.etl.declarative.target import SchemaMode
+from loom.etl.engines.polars._schema_aligner import PolarsFrameT, PolarsSchemaAligner
 from loom.etl.schema._schema import SchemaError
 
 _log = logging.getLogger(__name__)
@@ -41,16 +42,15 @@ class PolarsPhysicalSchema:
 
 
 def apply_schema_polars(
-    frame: pl.LazyFrame,
+    frame: PolarsFrameT,
     schema: pl.Schema | None,
     mode: SchemaMode,
-) -> pl.LazyFrame:
+) -> PolarsFrameT:
     from loom.etl.engines._schema_aligner import SchemaAlignmentPolicy
-    from loom.etl.engines.polars._schema_aligner import PolarsSchemaAligner
 
     if mode is not SchemaMode.OVERWRITE and schema is not None:
         refuse_lossy_casts(frame.collect_schema(), schema)
-    policy = SchemaAlignmentPolicy(PolarsSchemaAligner())
+    policy = SchemaAlignmentPolicy(PolarsSchemaAligner[PolarsFrameT]())
     return policy.align(frame, schema, mode)
 
 
