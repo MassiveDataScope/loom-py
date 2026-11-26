@@ -6,6 +6,7 @@ from collections.abc import Callable
 from dataclasses import dataclass
 from pathlib import Path
 
+import msgspec
 import pytest
 from pyspark.sql import DataFrame, SparkSession
 from pyspark.sql import functions as F
@@ -62,10 +63,10 @@ class SparkAppendStep(ETLStep[NoParams]):
         return deltas
 
 
-class _PayloadContract:
+class _PayloadContract(msgspec.Struct, rename="camel"):
     store: str
     amount: float
-    items: int
+    item_count: int
 
 
 @dataclass(frozen=True)
@@ -389,8 +390,8 @@ class TestSparkReaderWriterTypeGuards:
     ) -> None:
         source_path = tmp_path / "events.json"
         source_path.write_text(
-            '{"event_id":1,"payload":"{\\"store\\":\\"es\\",\\"amount\\":10.0,\\"items\\":2}"}\n'
-            '{"event_id":2,"payload":"{\\"store\\":\\"uk\\",\\"amount\\":7.5,\\"items\\":1}"}\n',
+            '{"event_id":1,"payload":"{\\"store\\":\\"es\\",\\"amount\\":10.0,\\"itemCount\\":2}"}\n'
+            '{"event_id":2,"payload":"{\\"store\\":\\"uk\\",\\"amount\\":7.5,\\"itemCount\\":1}"}\n',
             encoding="utf-8",
         )
 
@@ -399,10 +400,12 @@ class TestSparkReaderWriterTypeGuards:
             .parse_json("payload", _PayloadContract)
             ._to_spec("events")
         )
-        result = spark_reader.read(spec, None).orderBy("event_id").collect()
+        frame = spark_reader.read(spec, None).orderBy("event_id")
+        result = frame.collect()
 
         assert [row["payload"]["store"] for row in result] == ["es", "uk"]
-        assert [row["payload"]["items"] for row in result] == [2, 1]
+        assert [row["payload"]["itemCount"] for row in result] == [2, 1]
+        assert "Python" not in frame._jdf.queryExecution().toString()
         assert [row["payload"]["amount"] for row in result] == pytest.approx([10.0, 7.5])
 
     def test_unified_components_reject_xlsx_without_plugin(

@@ -57,6 +57,14 @@ class _Parcel:
     label: str | None = None
 
 
+class _Label:
+    text: str
+
+
+class _Box(msgspec.Struct):
+    label: _Label
+
+
 class _Tree(msgspec.Struct):
     label: str
     children: list[_Tree]
@@ -189,6 +197,14 @@ class TestJsonShape:
 
         assert isinstance(shape, StructShape)
         assert [f.name for f in shape.fields] == ["street", "zip_code"]
+
+    def test_a_nested_plain_class_describes_its_fields(self) -> None:
+        (label,) = resolve_fields(_Box)
+
+        assert (label.column_type, label.shape) == (
+            JSON,
+            StructShape(resolve_fields(_Label)),
+        )
 
     def test_a_list_describes_its_item(self, scalars: dict[str, ResolvedField]) -> None:
         shape = scalars["parcels"].shape

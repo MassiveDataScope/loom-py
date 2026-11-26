@@ -1,6 +1,5 @@
 from __future__ import annotations
 
-import dataclasses
 from collections.abc import Collection, Mapping
 from dataclasses import dataclass
 from datetime import date, datetime, time, timedelta
@@ -275,9 +274,7 @@ _CONTAINERS: Final = (list, tuple, set, frozenset, dict)
 
 
 def _is_record(cls: Any) -> bool:
-    return isinstance(cls, type) and (
-        issubclass(cls, msgspec.Struct) or dataclasses.is_dataclass(cls)
-    )
+    return isinstance(cls, type) and bool(read_fields(cls))
 
 
 def _scalar_rule(cls: type) -> ColumnType | _Undeclared | None:

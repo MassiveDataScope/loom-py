@@ -7,6 +7,7 @@ from pathlib import Path
 
 import msgspec
 import polars as pl
+import pytest
 from deltalake import write_deltalake
 from polars.testing import assert_frame_equal
 
@@ -21,6 +22,11 @@ class AcmePayload(msgspec.Struct):
     user_id: int
 
 
+class Customer(msgspec.Struct, rename="camel"):
+    given_name: str
+    order_count: int
+
+
 def _raw() -> pl.DataFrame:
     return pl.DataFrame(
         {
@@ -28,7 +34,7 @@ def _raw() -> pl.DataFrame:
             "payload": [
                 json.dumps({"event_type": "click", "user_id": 7}),
                 None,
-                "not json",
+                "null",
             ],
             "tags": [json.dumps(["a", "b"]), json.dumps([]), None],
         }
@@ -71,18 +77,23 @@ class TestDecodeJsonColumns:
 
         assert decoded["payload"].to_list()[0] == {"event_type": "click", "user_id": 7}
 
-    def test_normalises_a_field_that_changes_type_between_rows(self) -> None:
-        frame = pl.DataFrame(
-            {
-                "payload": [
-                    json.dumps({"event_type": "click", "user_id": 7}),
-                    json.dumps({"event_type": {"name": "view"}, "user_id": 8}),
-                ]
-            }
-        )
-        decoded = decode_json_columns(frame, _EVENTS.json_columns[:1])
+    def test_decodes_without_python_per_row(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        def refuse(*_: object, **__: object) -> None:
+            raise AssertionError("map_elements runs Python per row")
 
-        assert decoded["payload"].to_list()[1] == {"event_type": '{"name": "view"}', "user_id": 8}
+        monkeypatch.setattr(pl.Expr, "map_elements", refuse)
+
+        decoded = decode_json_columns(_raw(), _EVENTS.json_columns)
+
+        assert decoded["payload"].to_list()[0] == {"event_type": "click", "user_id": 7}
+
+    def test_fills_a_camel_case_sub_entity_by_its_encode_names(self) -> None:
+        frame = pl.DataFrame({"customer": [json.dumps({"givenName": "Ada", "orderCount": 3})]})
+        source = FromTable("raw.orders").parse_json("customer", Customer)
+
+        decoded = decode_json_columns(frame, source.json_columns)
+
+        assert decoded["customer"].to_list() == [{"givenName": "Ada", "orderCount": 3}]
 
     def test_the_reader_decodes_the_columns_its_source_declares(self, tmp_path: Path) -> None:
         write_deltalake(str(table_path(tmp_path, _EVENTS.table_ref)), _raw(), mode="overwrite")

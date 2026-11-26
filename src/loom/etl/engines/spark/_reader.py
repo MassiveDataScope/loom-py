@@ -171,8 +171,8 @@ class SparkSourceReader(SourceReader):
             return df
 
         for jc in json_columns:
-            schema_ddl = frame_type_to_spark(jc.frame_type).simpleString()
-            df = df.withColumn(jc.column, F.from_json(F.col(jc.column), schema_ddl))
+            decoded = F.from_json(F.col(jc.column), frame_type_to_spark(jc.frame_type))
+            df = df.withColumn(jc.column, decoded)
         return df
 
 

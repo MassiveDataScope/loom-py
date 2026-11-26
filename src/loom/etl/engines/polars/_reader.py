@@ -2,8 +2,6 @@
 
 from __future__ import annotations
 
-import functools
-import json
 import logging
 from collections.abc import Callable, Iterable
 from typing import TYPE_CHECKING, Any
@@ -29,14 +27,7 @@ from loom.etl.declarative.source._specs import (
 from loom.etl.engines._format_registry import resolve_format_handler
 from loom.etl.engines._path_template import resolve_file_uri
 from loom.etl.ports.contracts import SourceReader
-from loom.etl.schema._schema import (
-    ArrayType,
-    ColumnSchema,
-    FrameType,
-    ListType,
-    LoomDtype,
-    StructType,
-)
+from loom.etl.schema._schema import ColumnSchema
 from loom.etl.storage._file_locator import FileLocator
 from loom.etl.storage._locator import TableLocator, _as_locator
 from loom.etl.storage.routing import PathRouteResolver, PathTarget, TableRouteResolver
@@ -48,90 +39,15 @@ from ._predicate import predicate_to_polars
 _log = logging.getLogger(__name__)
 
 
-def _normalize_utf8_value(value: object) -> object:
-    if isinstance(value, str):
-        return value
-    if isinstance(value, (dict, list)):
-        return json.dumps(value, ensure_ascii=False)
-    return str(value)
-
-
-def _normalize_struct_value(value: object, frame_type: StructType) -> object:
-    if isinstance(value, str):
-        try:
-            value = json.loads(value)
-        except (ValueError, TypeError):
-            return None
-    if not isinstance(value, dict):
-        return None
-    return {f.name: _normalize_to_schema(value.get(f.name), f.dtype) for f in frame_type.fields}
-
-
-def _normalize_list_value(value: object, frame_type: ListType | ArrayType) -> object:
-    if isinstance(value, str):
-        try:
-            value = json.loads(value)
-        except (ValueError, TypeError):
-            return None
-    if not isinstance(value, list):
-        return None
-    return [_normalize_to_schema(item, frame_type.inner) for item in value]
-
-
-_COMPLEX_NORMALIZERS: dict[type, Callable[[object, Any], object]] = {
-    StructType: _normalize_struct_value,
-    ListType: _normalize_list_value,
-    ArrayType: _normalize_list_value,
-}
-
-_PRIMITIVE_COERCERS: dict[LoomDtype, Callable[[object], object]] = {
-    LoomDtype.UTF8: _normalize_utf8_value,
-}
-
-
-def _normalize_to_schema(value: object, frame_type: FrameType) -> object:
-    """Coerce *value* to match *frame_type*. Returns ``None`` on unrecoverable mismatch."""
-    if value is None:
-        return None
-    handler = _COMPLEX_NORMALIZERS.get(type(frame_type))
-    if handler is not None:
-        return handler(value, frame_type)
-    if isinstance(frame_type, LoomDtype):
-        prim = _PRIMITIVE_COERCERS.get(frame_type)
-        return prim(value) if prim is not None else value
-    return value
-
-
-def _normalize_json_string(json_str: str | None, *, frame_type: FrameType) -> str | None:
-    """Parse *json_str*, coerce to *frame_type*, and re-serialize.
-
-    Returns ``None`` when *json_str* is ``None``, unparseable, or coercion
-    produces ``None``. After this step, ``str.json_decode(schema)`` always
-    succeeds for the target column.
-    """
-    if json_str is None:
-        return None
-    try:
-        parsed = json.loads(json_str)
-    except (ValueError, TypeError):
-        return None
-    result = _normalize_to_schema(parsed, frame_type)
-    if result is None:
-        return None
-    if result is parsed:
-        return json_str
-    return json.dumps(result, ensure_ascii=False)
-
-
 def decode_json_columns(frame: FrameT, json_columns: Iterable[JsonColumnSpec]) -> FrameT:
     """Decode JSON string columns the way :class:`PolarsSourceReader` does at read time.
 
     Each column named in *json_columns* holds JSON text and is replaced by the
-    value decoded into its declared :class:`~loom.etl.schema.FrameType`. Rows
-    are first normalised to that type, so a field that is a string in some rows
-    and an object in others decodes instead of raising
-    :exc:`polars.exceptions.ComputeError`. A null or unparseable value decodes
-    to null. Other columns pass through unchanged.
+    value decoded into its declared :class:`~loom.etl.schema.FrameType` by
+    ``str.json_decode`` over the column cast to text, a native expression with
+    no Python per row. A null or JSON ``null`` value decodes to null; a value
+    that is not JSON of the declared type raises
+    :exc:`polars.exceptions.ComputeError`. Other columns pass through unchanged.
 
     Use it to reproduce in a test what a step receives from a source declared
     with ``parse_json``.
@@ -153,12 +69,7 @@ def decode_json_columns(frame: FrameT, json_columns: Iterable[JsonColumnSpec]) -
         decoded = decode_json_columns(raw_frame, events.json_columns)
     """
     exprs = [
-        pl.col(jc.column)
-        .map_elements(
-            functools.partial(_normalize_json_string, frame_type=jc.frame_type),
-            return_dtype=pl.String,
-        )
-        .str.json_decode(frame_type_to_polars(jc.frame_type))
+        pl.col(jc.column).cast(pl.String).str.json_decode(frame_type_to_polars(jc.frame_type))
         for jc in json_columns
     ]
     if not exprs:
