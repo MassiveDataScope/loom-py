@@ -15,7 +15,7 @@ from loom.core.errors import InternalError, InvalidUse, UnknownKey, UnsupportedQ
 from loom.core.errors.codes import ErrorCode
 from loom.core.model.convert import to_column_value, to_struct
 from loom.core.model.introspection import (
-    business_key_of,
+    conflict_key_of,
     get_column_fields,
     get_id_attributes,
     get_relations,
@@ -481,10 +481,7 @@ class SQLAlchemyBulkCreateMixin(SQLAlchemyContextMixin[OutputT, IdT], Generic[Ou
     def _conflict_target(self) -> list[Any]:
         """Return the columns whose duplicates ``IGNORE`` skips: business key, else primary key."""
         sa_model = self._effective_sa_model
-        key = business_key_of(self.model)
-        if key is None:
-            return list(sa_model.__table__.primary_key.columns)
-        return [getattr(sa_model, name) for name in key.fields]
+        return [getattr(sa_model, name) for name in conflict_key_of(self.model)]
 
     async def _insert_and_reselect(
         self, session: AsyncSession, rows: list[dict[str, Any]]

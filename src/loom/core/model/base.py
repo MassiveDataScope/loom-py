@@ -7,7 +7,7 @@ from msgspec import UNSET, UnsetType
 
 from loom.core.errors import InvalidType
 from loom.core.model.field import ColumnFieldSpec
-from loom.core.model.introspection import derived_key_of
+from loom.core.model.introspection import derived_key_of, get_projections, get_relations
 from loom.core.model.projection import Projection
 from loom.core.model.relation import Relation
 from loom.core.model.struct import LoomStruct
@@ -24,6 +24,8 @@ else:
 
 
 _KEY_FOR = "key_for"
+_COLUMN_NAMES = "__loom_column_names__"
+_COLUMN_NAMESPACE = "c"
 _DERIVES_KEY = "__derives_key__"
 
 
@@ -110,6 +112,47 @@ def _mark_optional_unset(
     annotations[attr_name] = resolved | UnsetType
 
 
+class ColumnNames:
+    """The column names of one model, read as attributes: ``Order.c.total == "total"``.
+
+    Immutable. Reading a name the model does not declare raises
+    ``AttributeError`` naming the model and the field.
+    """
+
+    __slots__ = ("_model", "_names")
+
+    def __init__(self, model: str, names: tuple[str, ...]) -> None:
+        object.__setattr__(self, "_model", model)
+        object.__setattr__(self, "_names", names)
+
+    def __getattr__(self, name: str) -> str:
+        if name in self._names:
+            return name
+        raise AttributeError(f"{self._model} has no column {name!r}; columns: {self._names}")
+
+    def __setattr__(self, name: str, value: Any) -> None:
+        raise AttributeError(f"{self._model}.c is read-only")
+
+    def __dir__(self) -> list[str]:
+        return list(self._names)
+
+
+def _column_names_of(model: Any) -> ColumnNames:
+    """Build the ``c`` namespace of *model*: its fields, without relations or projections.
+
+    Raises:
+        InvalidType: If the model declares a field named ``c``.
+    """
+    if _COLUMN_NAMESPACE in model.__struct_fields__:
+        raise InvalidType(
+            f"{model.__name__}.{_COLUMN_NAMESPACE} cannot be a field: "
+            "it is the namespace of column names"
+        )
+    loaded_on_demand = get_relations(model).keys() | get_projections(model).keys()
+    names = tuple(field for field in model.__struct_fields__ if field not in loaded_on_demand)
+    return ColumnNames(model.__name__, names)
+
+
 class LoomStructMeta(_StructMeta):
     """Metaclass that intercepts ``Relation`` and ``Projection`` assignments
     before ``StructMeta`` processes the class body.
@@ -174,7 +217,14 @@ class LoomStructMeta(_StructMeta):
         struct_cls.__loom_relations__ = relations
         struct_cls.__loom_projections__ = projections
         setattr(struct_cls, _DERIVES_KEY, derives_here or derives_inherited)
+        struct_cls.__loom_column_names__ = _column_names_of(struct_cls)
         return struct_cls
+
+    @property
+    def c(cls) -> ColumnNames:
+        """The column names of this model, one attribute per column field."""
+        names: ColumnNames = getattr(cls, _COLUMN_NAMES)
+        return names
 
 
 class BaseModel(LoomStruct, metaclass=LoomStructMeta):  # type: ignore[metaclass]

@@ -377,6 +377,17 @@ def business_key_of(cls: type) -> BusinessKey | None:
     return _BUSINESS_KEYS[cls]
 
 
+def conflict_key_of(cls: type) -> tuple[str, ...]:
+    """The columns that identify a duplicate row: the business key, else the primary key.
+
+    Pure: an undeclared key gives the primary key, and a model without one gives ``()``.
+    """
+    key = business_key_of(cls)
+    if key is not None:
+        return key.fields
+    return tuple(name for name, info in get_column_fields(cls).items() if info.field.primary_key)
+
+
 def _checked_business_key(cls: type) -> BusinessKey | None:
     key = getattr(cls, "__business_key__", None)
     if key is None:
