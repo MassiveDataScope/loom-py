@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 import logging
-from collections.abc import Callable
+from collections.abc import Callable, Mapping
 from typing import Any
 
 from pyspark.sql import DataFrame, SparkSession
@@ -12,7 +12,12 @@ from pyspark.sql import functions as F
 from loom.core.errors import InvalidType, InvalidValue
 from loom.etl.declarative._format import Format
 from loom.etl.declarative._read_options import CsvReadOptions, JsonReadOptions
-from loom.etl.declarative.source import FileSourceSpec, SourceSpec, TableSourceSpec
+from loom.etl.declarative.source import (
+    FileSourceSpec,
+    JsonMismatch,
+    SourceSpec,
+    TableSourceSpec,
+)
 from loom.etl.engines._format_registry import resolve_format_handler
 from loom.etl.engines._path_template import resolve_file_uri
 from loom.etl.engines._predicate import predicate_to_sql
@@ -29,6 +34,11 @@ from loom.etl.storage.routing import (
 )
 
 _log = logging.getLogger(__name__)
+
+_FROM_JSON_MODE: Mapping[JsonMismatch, str] = {
+    JsonMismatch.FAIL: "FAILFAST",
+    JsonMismatch.NULL: "PERMISSIVE",
+}
 
 
 class SparkSourceReader(SourceReader):
@@ -176,7 +186,9 @@ class SparkSourceReader(SourceReader):
 
         for jc in json_columns:
             decoded = F.from_json(
-                F.col(jc.column), frame_type_to_spark(jc.frame_type), {"mode": "FAILFAST"}
+                F.col(jc.column),
+                frame_type_to_spark(jc.frame_type),
+                {"mode": _FROM_JSON_MODE[jc.on_mismatch]},
             )
             df = df.withColumn(jc.column, decoded)
         return df

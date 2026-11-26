@@ -47,6 +47,7 @@ from loom.etl.declarative.source._from_mongo import FromMongo
 from loom.etl.declarative.source._specs import (
     FileSourceSpec,
     JsonColumnSpec,
+    JsonMismatch,
     SourceSpec,
     TableSourceSpec,
     TempSourceSpec,
@@ -138,7 +139,13 @@ class FromTable:
         object.__setattr__(new, "_schema", resolve_schema(schema))
         return new
 
-    def parse_json(self, column: str, contract: JsonContract) -> FromTable:
+    def parse_json(
+        self,
+        column: str,
+        contract: JsonContract,
+        *,
+        on_mismatch: JsonMismatch = JsonMismatch.FAIL,
+    ) -> FromTable:
         """Return a new ``FromTable`` that decodes *column* from JSON at read time.
 
         The string column *column* is decoded into a structured type using the
@@ -156,6 +163,16 @@ class FromTable:
                       * ``list[SomeClass]`` — converted to
                         :class:`~loom.etl._schema.ListType`.
 
+            on_mismatch: ``JsonMismatch.FAIL`` (default) decodes natively and
+                      fails the run on a malformed document or one that does not
+                      match *contract*. ``JsonMismatch.NULL`` tolerates it: malformed
+                      JSON and a struct or list mismatch become null, and an object
+                      or array under a ``str`` field is kept as JSON text. On Polars
+                      ``NULL`` runs Python per row on that column only; on Spark it
+                      maps to ``from_json`` ``PERMISSIVE``, which nulls the
+                      mismatched field, and decodes malformed JSON or a non-object
+                      to a struct of nulls rather than a null struct.
+
         Returns:
             New ``FromTable`` with the JSON decode applied at read time.
 
@@ -169,7 +186,7 @@ class FromTable:
             events = FromTable("raw.events").parse_json("tags", list[str])
         """
         frame_type = resolve_json_type(contract)
-        spec = JsonColumnSpec(column=column, frame_type=frame_type)
+        spec = JsonColumnSpec(column=column, frame_type=frame_type, on_mismatch=on_mismatch)
         new = _clone_slots(self, FromTable, FromTable.__slots__)
         object.__setattr__(new, "_json_columns", self._json_columns + (spec,))
         return new
@@ -345,7 +362,13 @@ class FromFile:
         object.__setattr__(new, "_schema", resolve_schema(schema))
         return new
 
-    def parse_json(self, column: str, contract: JsonContract) -> FromFile:
+    def parse_json(
+        self,
+        column: str,
+        contract: JsonContract,
+        *,
+        on_mismatch: JsonMismatch = JsonMismatch.FAIL,
+    ) -> FromFile:
         """Return a new ``FromFile`` that decodes *column* from JSON at read time.
 
         The string column *column* is decoded into a structured type using the
@@ -361,11 +384,13 @@ class FromFile:
                       * ``list[SomeClass]`` — converted to
                         :class:`~loom.etl._schema.ListType`.
 
+            on_mismatch: As for :meth:`FromTable.parse_json`.
+
         Returns:
             New ``FromFile`` with the JSON decode applied at read time.
         """
         frame_type = resolve_json_type(contract)
-        spec = JsonColumnSpec(column=column, frame_type=frame_type)
+        spec = JsonColumnSpec(column=column, frame_type=frame_type, on_mismatch=on_mismatch)
         new = _clone_slots(self, FromFile, FromFile.__slots__)
         object.__setattr__(new, "_json_columns", self._json_columns + (spec,))
         return new

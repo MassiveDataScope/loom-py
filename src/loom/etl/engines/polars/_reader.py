@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 import logging
-from collections.abc import Callable, Iterable
+from collections.abc import Callable, Iterable, Mapping
 from typing import TYPE_CHECKING, Any
 
 from loom.core.errors import InvalidType, InvalidUse
@@ -22,12 +22,13 @@ from loom.etl.declarative.source._specs import (
     ClickHouseSourceSpec,
     DynamoDBSourceSpec,
     JsonColumnSpec,
+    JsonMismatch,
     MongoSourceSpec,
 )
 from loom.etl.engines._format_registry import resolve_format_handler
 from loom.etl.engines._path_template import resolve_file_uri
 from loom.etl.ports.contracts import SourceReader
-from loom.etl.schema._schema import ColumnSchema
+from loom.etl.schema._schema import ColumnSchema, FrameType
 from loom.etl.storage._file_locator import FileLocator
 from loom.etl.storage._locator import TableLocator, _as_locator
 from loom.etl.storage.routing import PathRouteResolver, PathTarget, TableRouteResolver
@@ -35,8 +36,15 @@ from loom.etl.storage.routing import PathRouteResolver, PathTarget, TableRouteRe
 from ._dtype import frame_type_to_polars
 from ._frame import FrameT
 from ._predicate import predicate_to_polars
+from ._tolerant_json import TolerantJson
 
 _log = logging.getLogger(__name__)
+
+
+_TEXT_PREPARATION: Mapping[JsonMismatch, Callable[[pl.Expr, FrameType], pl.Expr]] = {
+    JsonMismatch.FAIL: lambda column, frame_type: column,
+    JsonMismatch.NULL: lambda column, frame_type: TolerantJson(frame_type).normalise(column),
+}
 
 
 def decode_json_columns(frame: FrameT, json_columns: Iterable[JsonColumnSpec]) -> FrameT:
@@ -45,9 +53,11 @@ def decode_json_columns(frame: FrameT, json_columns: Iterable[JsonColumnSpec]) -
     Each column named in *json_columns* holds JSON text and is replaced by the
     value decoded into its declared :class:`~loom.etl.schema.FrameType` by
     ``str.json_decode`` over the column cast to text, a native expression with
-    no Python per row. A null or JSON ``null`` value decodes to null; a value
-    that is not JSON of the declared type raises
-    :exc:`polars.exceptions.ComputeError`. Other columns pass through unchanged.
+    no Python per row. A null or JSON ``null`` value decodes to null; with
+    :attr:`~loom.etl.declarative.source.JsonMismatch.FAIL` a value that is not
+    JSON of the declared type raises :exc:`polars.exceptions.ComputeError`.
+    With ``NULL`` the text is first normalised in Python, per row of that
+    column. Other columns pass through unchanged.
 
     Use it to reproduce in a test what a step receives from a source declared
     with ``parse_json``.
@@ -69,7 +79,9 @@ def decode_json_columns(frame: FrameT, json_columns: Iterable[JsonColumnSpec]) -
         decoded = decode_json_columns(raw_frame, events.json_columns)
     """
     exprs = [
-        pl.col(jc.column).cast(pl.String).str.json_decode(frame_type_to_polars(jc.frame_type))
+        _TEXT_PREPARATION[jc.on_mismatch](
+            pl.col(jc.column).cast(pl.String), jc.frame_type
+        ).str.json_decode(frame_type_to_polars(jc.frame_type))
         for jc in json_columns
     ]
     if not exprs:

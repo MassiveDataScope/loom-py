@@ -7,9 +7,9 @@ import json
 import polars as pl
 import pytest
 
-from loom.etl.declarative.source import JsonColumnSpec
+from loom.etl.declarative.source import JsonColumnSpec, JsonMismatch
 from loom.etl.engines.polars import decode_json_columns
-from loom.etl.schema._schema import ListType, LoomDtype, StructField, StructType
+from loom.etl.schema._schema import FrameType, ListType, LoomDtype, StructField, StructType
 
 # ---------------------------------------------------------------------------
 # Helpers
@@ -183,6 +183,50 @@ class TestDecodeJsonColumnShapes:
 
         assert result["payload"][0] is None or result["payload"][0]["x"] is None
         assert result["payload"][1]["x"] == 1
+
+
+class TestTolerantJsonDecoding:
+    @pytest.mark.parametrize(
+        ("frame_type", "document", "expected"),
+        [
+            (LoomDtype.UTF8, '{"source": "web"}', '{"source": "web"}'),
+            (
+                StructType(
+                    (StructField("name", LoomDtype.UTF8), StructField("meta", LoomDtype.UTF8))
+                ),
+                '{"name": "a", "meta": {"page": "/home"}}',
+                {"name": "a", "meta": '{"page": "/home"}'},
+            ),
+            (
+                ListType(
+                    StructType(
+                        (StructField("key", LoomDtype.UTF8), StructField("val", LoomDtype.UTF8))
+                    )
+                ),
+                '[{"key": "k", "val": {"x": 1}}]',
+                [{"key": "k", "val": '{"x": 1}'}],
+            ),
+            (StructType((StructField("user_id", LoomDtype.INT64),)), "[1, 2, 3]", None),
+            (StructType((StructField("user_id", LoomDtype.INT64),)), "not json", None),
+            (ListType(LoomDtype.UTF8), '"single"', None),
+        ],
+        ids=[
+            "object-under-str",
+            "object-under-nested-str",
+            "object-under-str-in-list-item",
+            "array-for-struct",
+            "malformed",
+            "scalar-for-list",
+        ],
+    )
+    def test_a_mismatched_document_decodes_to_text_or_null(
+        self, frame_type: FrameType, document: str, expected: object
+    ) -> None:
+        jc = JsonColumnSpec("payload", frame_type, JsonMismatch.NULL)
+
+        result = decode_json_columns(pl.DataFrame({"payload": [document]}), (jc,))
+
+        assert result["payload"].to_list() == [expected]
 
 
 # ---------------------------------------------------------------------------

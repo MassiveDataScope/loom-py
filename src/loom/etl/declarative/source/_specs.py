@@ -55,6 +55,19 @@ class SourceKind(StrEnum):
     DYNAMODB = "dynamodb"
 
 
+class JsonMismatch(StrEnum):
+    """What a JSON column does with a document that does not match its declared type.
+
+    ``FAIL`` decodes natively and fails the run. ``NULL`` tolerates the
+    mismatch: malformed JSON, or an object where a list is declared (and the
+    reverse), becomes null, and an object or array under a ``str`` field is kept
+    as JSON text. On Polars, ``NULL`` runs Python per row on that column only.
+    """
+
+    FAIL = "fail"
+    NULL = "null"
+
+
 @dataclass(frozen=True)
 class JsonColumnSpec:
     """Declares that a string column contains JSON to be decoded at read time.
@@ -66,10 +79,12 @@ class JsonColumnSpec:
     Args:
         column:    Name of the string column that holds the JSON payload.
         frame_type: Target :data:`~loom.etl._schema.FrameType` to decode into.
+        on_mismatch: Whether a document that does not match fails or becomes null.
     """
 
     column: str
     frame_type: FrameType
+    on_mismatch: JsonMismatch = JsonMismatch.FAIL
 
 
 @dataclass(frozen=True)

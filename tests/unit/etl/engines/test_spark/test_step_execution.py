@@ -20,6 +20,7 @@ from loom.etl import (
     FromTable,
     IntoFile,
     IntoTable,
+    JsonMismatch,
     UnsupportedFormatError,
 )
 from loom.etl.compiler import ETLCompiler
@@ -373,6 +374,24 @@ class TestJsonDecodeFailure:
 
         with pytest.raises(InvalidValue, match=r"customers\.buyer as StructType"):
             ETLExecutor(spark_reader, spark_writer).run_step(plan, NoParams())
+
+    def test_null_mode_tolerates_a_document_that_fails_in_strict_mode(
+        self,
+        spark: SparkSession,
+        seed_spark_table: Callable[[str | TableRef, DataFrame], Path],
+        spark_reader: SparkSourceReader,
+    ) -> None:
+        seed_spark_table(
+            "raw.customers",
+            spark.createDataFrame([('{"name": {"first": "Ada"}}',), ("not json",)], ["buyer"]),
+        )
+        source = FromTable("raw.customers").parse_json(
+            "buyer", _Buyer, on_mismatch=JsonMismatch.NULL
+        )
+
+        rows = spark_reader.read(source._to_spec("customers"), None).collect()
+
+        assert sorted(row["buyer"]["name"] or "" for row in rows) == ["", '{"first":"Ada"}']
 
 
 class TestSparkReaderWriterTypeGuards:
