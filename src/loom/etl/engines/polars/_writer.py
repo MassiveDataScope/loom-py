@@ -43,7 +43,7 @@ from loom.etl.engines.polars._schema import (
 )
 from loom.etl.event import EtlEvent, EtlKey
 from loom.etl.lineage._records import LineageRecord, WriteContext, get_lineage_schema
-from loom.etl.schema._schema import SchemaError
+from loom.etl.schema._schema import ColumnSchema, SchemaError
 from loom.etl.storage import (
     MissingTablePolicy,
     PathRouteResolver,
@@ -312,6 +312,23 @@ class PolarsTargetWriter(_WritePolicy[pl.LazyFrame, pl.DataFrame, PolarsPhysical
         schema = existing_schema.schema if existing_schema is not None else None
         return apply_schema_polars(frame, schema, mode)
 
+    def _align_result(
+        self,
+        result: pl.DataFrame,
+        schema: PolarsPhysicalSchema,
+        mode: SchemaMode,
+    ) -> pl.DataFrame:
+        """Align a collected frame by projecting it lazily once."""
+        return self._align(result.lazy(), schema, mode).collect()
+
+    def _physical_of(self, columns: tuple[ColumnSchema, ...]) -> PolarsPhysicalSchema:
+        """The Polars schema of lake *columns*."""
+        return PolarsPhysicalSchema(
+            schema=pl.Schema(
+                {column.name: frame_type_to_polars(column.dtype) for column in columns}
+            )
+        )
+
     def _row_count_if_cheap(self, frame: pl.DataFrame) -> int | None:
         """Rows in the collected frame."""
         return frame.height
@@ -344,7 +361,7 @@ class PolarsTargetWriter(_WritePolicy[pl.LazyFrame, pl.DataFrame, PolarsPhysical
 
         if spec.require_physical:
             self._require_physical_partitions(target, spec.partition_cols)
-        aligned = self._align(frame, existing, spec.schema_mode)
+        aligned = self._align(frame, self._contract_schema(existing, spec), spec.schema_mode)
         _check_null_dtype_columns_lazy(aligned)
         self._streaming_replace_partitions(aligned, target, spec)
 
@@ -587,7 +604,7 @@ class PolarsTargetWriter(_WritePolicy[pl.LazyFrame, pl.DataFrame, PolarsPhysical
             self._create_missing(
                 frame.filter(~pl.col(flag).fill_null(False)).drop(flag),
                 target,
-                schema_mode=spec.schema_mode,
+                spec=spec,
                 streaming=False,
                 partition_cols=spec.partition_cols,
             )
@@ -595,7 +612,9 @@ class PolarsTargetWriter(_WritePolicy[pl.LazyFrame, pl.DataFrame, PolarsPhysical
         _require_flag_not_in_target(flag, existing)
         source = frame.collect()
         aligned = self._materialize_checked(
-            self._align(source.drop(flag).lazy(), existing, spec.schema_mode),
+            self._align(
+                source.drop(flag).lazy(), self._contract_schema(existing, spec), spec.schema_mode
+            ),
             target,
             streaming=False,
         )

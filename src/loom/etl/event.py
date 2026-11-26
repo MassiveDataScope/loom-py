@@ -30,6 +30,7 @@ class EtlEvent(LogEvent):
     HISTORIFY_TRACK_INFERRED = "loom.etl.historify_track_inferred"
     MODEL_RESOLVED = "loom.etl.model_resolved"
     MODEL_REFUSED = "loom.etl.model_refused"
+    MODEL_SCHEMA_APPLIED = "loom.etl.model_schema_applied"
 
     YAML_LOADED = "loom.etl.yaml_loaded"
     PLAN_FILTERED = "loom.etl.plan_filtered"

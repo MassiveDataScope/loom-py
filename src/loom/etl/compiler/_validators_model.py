@@ -8,11 +8,8 @@ from typing import Any
 from loom.core.schema import SchemaMode
 from loom.etl.compiler._errors import ETLCompilationError, ETLErrorCode
 from loom.etl.declarative.target import (
-    AppendSpec,
     HistorifySpec,
-    ReplacePartitionsSpec,
-    ReplaceSpec,
-    ReplaceWhereSpec,
+    TableSpec,
     TargetSpec,
     UpdateSpec,
     UpsertSpec,
@@ -22,16 +19,6 @@ from loom.etl.event import EtlEvent, EtlKey
 from loom.etl.schema import ModelTable
 
 _log = logging.getLogger(__name__)
-
-_TableSpec = (
-    AppendSpec
-    | ReplaceSpec
-    | ReplacePartitionsSpec
-    | ReplaceWhereSpec
-    | UpsertSpec
-    | UpdateSpec
-    | HistorifySpec
-)
 
 
 class ModelTargetCheck:
@@ -43,7 +30,7 @@ class ModelTargetCheck:
         table: The lake table of that model.
     """
 
-    def __init__(self, step_type: type[Any], spec: _TableSpec, table: ModelTable) -> None:
+    def __init__(self, step_type: type[Any], spec: TableSpec, table: ModelTable) -> None:
         self._step_type = step_type
         self._spec = spec
         self._table = table
@@ -133,5 +120,5 @@ class ModelTargetCheck:
 
 def validate_model_target(step_type: type[Any], spec: TargetSpec) -> None:
     """Validate a target declared with a model; any other target is skipped."""
-    if isinstance(spec, _TableSpec) and spec.model_table is not None:
+    if isinstance(spec, TableSpec) and spec.model_table is not None:
         ModelTargetCheck(step_type, spec, spec.model_table).run()

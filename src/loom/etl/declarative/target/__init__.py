@@ -75,7 +75,7 @@ from loom.etl.declarative.target._table import (
 )
 from loom.etl.declarative.target._temp import TempFanInSpec, TempSpec
 
-TargetSpec = (
+TableSpec = (
     AppendSpec
     | ReplaceSpec
     | ReplacePartitionsSpec
@@ -83,11 +83,10 @@ TargetSpec = (
     | UpsertSpec
     | UpdateSpec
     | HistorifySpec
-    | FileSpec
-    | TempSpec
-    | TempFanInSpec
-    | ClientSpec
 )
+"""Union of the specs that write a Delta table, each able to carry a model."""
+
+TargetSpec = TableSpec | FileSpec | TempSpec | TempFanInSpec | ClientSpec
 """Union of all concrete target spec variants.
 
 Used as the public type annotation for any value produced by ``_to_spec``
@@ -106,6 +105,7 @@ on any target builder (:class:`IntoTable`, :class:`IntoFile`,
 """
 
 __all__ = [
+    "TableSpec",
     "IntoTable",
     "IntoFile",
     "IntoTemp",

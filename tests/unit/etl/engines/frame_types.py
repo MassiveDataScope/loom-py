@@ -1,12 +1,21 @@
-"""Every frame type the lake table produces, shared by the engine round-trip tests."""
+"""Every frame type the lake table produces, and the models the engine write tests share."""
 
 from __future__ import annotations
 
+from datetime import date, datetime
+from decimal import Decimal
+from typing import Annotated
+
+from loom.core.model import BaseModel, Field
+from loom.core.model.types import DateTime, Numeric
 from loom.etl.schema import (
+    ColumnSchema,
     DatetimeType,
     DecimalType,
+    FrameType,
     ListType,
     LoomDtype,
+    ModelTable,
     StructField,
     StructType,
 )
@@ -37,3 +46,29 @@ LAKE_FRAME_TYPES = {
         )
     ),
 }
+
+
+class Order(BaseModel):
+    __tablename__ = "sales.order"
+    order_id: Annotated[str, Field(primary_key=True)]
+    customer_id: Annotated[str, Field(index=True)]
+    amount: Annotated[Decimal, Numeric(precision=12, scale=2)]
+    placed_at: Annotated[datetime, DateTime(tz=True)]
+
+
+class Rate(BaseModel):
+    __tablename__ = "sales.rate"
+    rate_id: Annotated[str, Field(primary_key=True)]
+    price: Annotated[Decimal, Numeric(precision=12, scale=2)]
+    valid_from: date
+    valid_to: date | None
+    deleted_at: Annotated[datetime, DateTime(tz=True)] | None
+
+
+def table_of_one_column(frame_type: FrameType) -> ModelTable:
+    """A lake table of an ``id`` and one ``value`` column of *frame_type*."""
+    return ModelTable(
+        Order,
+        "sales.order",
+        (ColumnSchema("id", LoomDtype.INT64), ColumnSchema("value", frame_type)),
+    )

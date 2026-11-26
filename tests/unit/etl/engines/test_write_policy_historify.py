@@ -43,6 +43,7 @@ from loom.etl.declarative.target._temp import TempSpec
 from loom.etl.engines import _write_policy
 from loom.etl.engines._write_policy import _WritePolicy
 from loom.etl.event import EtlEvent, EtlKey
+from loom.etl.schema import ColumnSchema
 from loom.etl.schema._schema import SchemaError, SchemaNotFoundError
 from loom.etl.storage._config import MissingTablePolicy
 from loom.etl.storage.routing import ResolvedTarget
@@ -104,6 +105,14 @@ class _StubWritePolicy(_WritePolicy[list[int], list[int], dict[str, Any]]):
         self, frame: list[int], existing: dict[str, Any] | None, mode: SchemaMode
     ) -> list[int]:
         return frame
+
+    def _align_result(
+        self, result: list[int], schema: dict[str, Any], mode: SchemaMode
+    ) -> list[int]:
+        return result
+
+    def _physical_of(self, columns: tuple[ColumnSchema, ...]) -> dict[str, Any]:
+        return {column.name: column.dtype for column in columns}
 
     def _materialize_for_write(self, frame: list[int], streaming: bool) -> list[int]:
         return list(frame)  # return a copy so we can track it

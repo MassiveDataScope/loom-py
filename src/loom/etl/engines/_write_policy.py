@@ -22,6 +22,7 @@ from loom.etl.declarative.target import (
     ReplaceSpec,
     ReplaceWhereSpec,
     SchemaMode,
+    TableSpec,
     TargetSpec,
     TempFanInSpec,
     TempSpec,
@@ -32,7 +33,7 @@ from loom.etl.declarative.target import (
 from loom.etl.declarative.target._history import HistorifyRepairReport, HistorifySpec
 from loom.etl.engines._historify import HistorifyOps, scd2_transform
 from loom.etl.ports.contracts import TargetWriter
-from loom.etl.schema._schema import SchemaNotFoundError
+from loom.etl.schema._schema import ColumnSchema, SchemaNotFoundError
 from loom.etl.storage._config import AuditConfig, MissingTablePolicy
 from loom.etl.storage.routing import ResolvedTarget, TableRouteResolver
 
@@ -191,7 +192,7 @@ class _WritePolicy(TargetWriter, Generic[InputFrameT, WriteFrameT, PhysicalSchem
         frame: InputFrameT,
         target: ResolvedTarget,
         *,
-        schema_mode: SchemaMode,
+        spec: TableSpec,
         streaming: bool,
         create_partition_cols: tuple[str, ...] = (),
         require_physical_partitions: tuple[str, ...] | None = None,
@@ -202,12 +203,14 @@ class _WritePolicy(TargetWriter, Generic[InputFrameT, WriteFrameT, PhysicalSchem
         The policy is the same for every mode that may create its destination:
         read the physical schema; when the table is absent, check that creating
         it is allowed and create it from *frame*; when it is present, align
-        *frame* to it and materialise the result.
+        *frame* to it and materialise the result. A spec with a model aligns
+        and creates to the model's schema instead of the physical one.
 
         Args:
             frame:                       Input frame for the write.
             target:                      Resolved destination.
-            schema_mode:                 Schema mode declared by the spec.
+            spec:                        Table spec of the write; carries the
+                                         schema mode and the optional model.
             streaming:                   Hint for lazy backends to stream the
                                          materialisation.
             create_partition_cols:       Partition columns for the created
@@ -231,7 +234,7 @@ class _WritePolicy(TargetWriter, Generic[InputFrameT, WriteFrameT, PhysicalSchem
             self._create_missing(
                 frame,
                 target,
-                schema_mode=schema_mode,
+                spec=spec,
                 streaming=streaming,
                 partition_cols=create_partition_cols,
                 allow_empty=allow_empty,
@@ -239,7 +242,7 @@ class _WritePolicy(TargetWriter, Generic[InputFrameT, WriteFrameT, PhysicalSchem
             return None
         if require_physical_partitions is not None:
             self._require_physical_partitions(target, require_physical_partitions)
-        aligned = self._align(frame, existing, schema_mode)
+        aligned = self._align(frame, self._contract_schema(existing, spec), spec.schema_mode)
         return _PreparedWrite(
             frame=self._materialize_checked(aligned, target, streaming, allow_empty=allow_empty),
             existing_schema=existing,
@@ -250,12 +253,14 @@ class _WritePolicy(TargetWriter, Generic[InputFrameT, WriteFrameT, PhysicalSchem
         frame: InputFrameT,
         target: ResolvedTarget,
         *,
-        schema_mode: SchemaMode,
+        spec: TableSpec,
         streaming: bool,
         partition_cols: tuple[str, ...] = (),
         allow_empty: bool = True,
     ) -> None:
         """Create the absent destination table from *frame*.
+
+        A spec with a model creates the table with the model's types.
 
         Raises:
             SchemaNotFoundError: The schema mode and the missing-table policy
@@ -264,15 +269,18 @@ class _WritePolicy(TargetWriter, Generic[InputFrameT, WriteFrameT, PhysicalSchem
         """
         _ensure_can_create_missing_table(
             target=target,
-            schema_mode=schema_mode,
+            schema_mode=spec.schema_mode,
             missing_table_policy=self._missing_table_policy,
         )
-        materialized = self._materialize_checked(frame, target, streaming, allow_empty=allow_empty)
+        modelled = self._align_to_model(frame, spec)
+        materialized = self._materialize_checked(
+            modelled, target, streaming, allow_empty=allow_empty
+        )
         try:
             self._create(
                 materialized,
                 target,
-                schema_mode=schema_mode,
+                schema_mode=spec.schema_mode,
                 partition_cols=partition_cols,
             )
         finally:
@@ -287,9 +295,7 @@ class _WritePolicy(TargetWriter, Generic[InputFrameT, WriteFrameT, PhysicalSchem
         streaming: bool,
     ) -> None:
         """Append policy: check exists → create OR align → write."""
-        prepared = self._prepare_write(
-            frame, target, schema_mode=spec.schema_mode, streaming=streaming
-        )
+        prepared = self._prepare_write(frame, target, spec=spec, streaming=streaming)
         if prepared is None:
             return
         self._append(prepared.frame, target, schema_mode=spec.schema_mode)
@@ -305,7 +311,7 @@ class _WritePolicy(TargetWriter, Generic[InputFrameT, WriteFrameT, PhysicalSchem
         prepared = self._prepare_write(
             frame,
             target,
-            schema_mode=spec.schema_mode,
+            spec=spec,
             streaming=streaming,
             allow_empty=spec.allow_empty,
         )
@@ -328,7 +334,7 @@ class _WritePolicy(TargetWriter, Generic[InputFrameT, WriteFrameT, PhysicalSchem
         prepared = self._prepare_write(
             frame,
             target,
-            schema_mode=spec.schema_mode,
+            spec=spec,
             streaming=streaming,
             create_partition_cols=spec.partition_cols,
             require_physical_partitions=spec.partition_cols if spec.require_physical else None,
@@ -376,9 +382,7 @@ class _WritePolicy(TargetWriter, Generic[InputFrameT, WriteFrameT, PhysicalSchem
     ) -> None:
         """Replace where policy: compile predicate → check exists → create OR align → write."""
         predicate = self._predicate_to_sql(spec.replace_predicate, params_instance)
-        prepared = self._prepare_write(
-            frame, target, schema_mode=spec.schema_mode, streaming=streaming
-        )
+        prepared = self._prepare_write(frame, target, spec=spec, streaming=streaming)
         if prepared is None:
             return
         self._replace_where(
@@ -406,7 +410,7 @@ class _WritePolicy(TargetWriter, Generic[InputFrameT, WriteFrameT, PhysicalSchem
         prepared = self._prepare_write(
             frame,
             target,
-            schema_mode=spec.schema_mode,
+            spec=spec,
             streaming=False,
             create_partition_cols=spec.partition_cols,
         )
@@ -456,7 +460,7 @@ class _WritePolicy(TargetWriter, Generic[InputFrameT, WriteFrameT, PhysicalSchem
                 "update() never inserts, so it cannot create the table — "
                 "create it first with append/replace/upsert."
             )
-        aligned = self._align(frame, existing, spec.schema_mode)
+        aligned = self._align(frame, self._contract_schema(existing, spec), spec.schema_mode)
         materialized = self._materialize_checked(aligned, target, streaming=False)
         self._update(
             materialized,
@@ -510,6 +514,7 @@ class _WritePolicy(TargetWriter, Generic[InputFrameT, WriteFrameT, PhysicalSchem
             self._historify_ops(), materialized, existing, spec, params_instance
         )
         del existing
+        result = self._align_result_to_model(result, spec)
         if report is not None:
             _log.warning(
                 EtlEvent.HISTORIFY_RERUN_REQUIRED,
@@ -610,6 +615,51 @@ class _WritePolicy(TargetWriter, Generic[InputFrameT, WriteFrameT, PhysicalSchem
         mode: SchemaMode,
     ) -> InputFrameT:
         """Align frame schema with existing."""
+
+    @abstractmethod
+    def _align_result(
+        self,
+        result: WriteFrameT,
+        schema: PhysicalSchemaT,
+        mode: SchemaMode,
+    ) -> WriteFrameT:
+        """Align a materialised frame, such as a historify result, with *schema*."""
+
+    @abstractmethod
+    def _physical_of(self, columns: tuple[ColumnSchema, ...]) -> PhysicalSchemaT:
+        """Translate lake *columns* to the engine's physical schema."""
+
+    def _contract_schema(
+        self, existing: PhysicalSchemaT | None, spec: TableSpec
+    ) -> PhysicalSchemaT | None:
+        """The schema a write aligns to: the model's lake schema, else *existing*.
+
+        Every path that aligns or creates asks here, so the model replaces the
+        physical schema in one place. A spec with a model logs the columns it
+        applies, once per write.
+        """
+        model = spec.model_table
+        if model is None:
+            return existing
+        _log.info(
+            EtlEvent.MODEL_SCHEMA_APPLIED,
+            extra={
+                EtlKey.MODEL: model.model.__name__,
+                EtlKey.TABLE: model.name,
+                EtlKey.COLUMNS: list(model.column_names),
+            },
+        )
+        return self._physical_of(model.schema)
+
+    def _align_to_model(self, frame: InputFrameT, spec: TableSpec) -> InputFrameT:
+        """Align *frame* to the model of *spec*; a spec without a model leaves it as is."""
+        schema = self._contract_schema(None, spec)
+        return frame if schema is None else self._align(frame, schema, spec.schema_mode)
+
+    def _align_result_to_model(self, result: WriteFrameT, spec: TableSpec) -> WriteFrameT:
+        """Align a materialised *result* to the model of *spec*, if it has one."""
+        schema = self._contract_schema(None, spec)
+        return result if schema is None else self._align_result(result, schema, spec.schema_mode)
 
     def _row_count_if_cheap(self, frame: WriteFrameT) -> int | None:
         """Rows in *frame*, or ``None`` when the backend cannot tell without a scan."""
