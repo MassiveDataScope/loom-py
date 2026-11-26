@@ -15,7 +15,7 @@ from loom.etl.testing._runners import PolarsStepRunner, SeedSchema, TempData
 class StepRunnerProto(Protocol):
     """Protocol satisfied by both :class:`PolarsStepRunner` and :class:`SparkStepRunner`.
 
-    Any object implementing :meth:`seed`, :meth:`seed_temp` and :meth:`run`
+    Any object implementing :meth:`seed`, :meth:`seed_rows`, :meth:`seed_temp` and :meth:`run`
     is compatible with :class:`ETLScenario`.
     """
 
@@ -28,6 +28,10 @@ class StepRunnerProto(Protocol):
         schema: SeedSchema | None = None,
     ) -> object:
         """Register raw data under the logical table reference *ref*."""
+        ...
+
+    def seed_rows(self, *instances: Any) -> object:
+        """Seed the table of each model with its instances, typed by the model."""
         ...
 
     def seed_temp(

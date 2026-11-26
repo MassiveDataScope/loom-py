@@ -60,8 +60,8 @@ class TestSparkFrameConversionsAndStubs:
             def __init__(self, data: dict[str, Any]) -> None:
                 self._data = data
 
-            def __getitem__(self, key: str) -> Any:
-                return self._data[key]
+            def asDict(self, recursive: bool = False) -> dict[str, Any]:
+                return self._data
 
         class _Frame:
             columns = ["id", "amount"]
@@ -104,8 +104,8 @@ class TestSparkStepRunner:
                     def __init__(self, d: dict[str, Any]) -> None:
                         self._d = d
 
-                    def __getitem__(self, key: str) -> Any:
-                        return self._d[key]
+                    def asDict(self, recursive: bool = False) -> dict[str, Any]:
+                        return self._d
 
                 class _Frame:
                     def __init__(self, records: list[dict[str, Any]]) -> None:
@@ -179,8 +179,8 @@ class TestSparkStepRunner:
                 self.columns = ["token"]
                 self._token = token
 
-            def collect(self) -> list[dict[str, str]]:
-                return [{"token": self._token}]
+            def collect(self) -> list[Any]:
+                return [type("_Row", (), {"asDict": lambda _, recursive: {"token": self._token}})()]
 
         class _Step(ETLStep[_Params]):
             api_token = FromConfig("respondio.api_token")

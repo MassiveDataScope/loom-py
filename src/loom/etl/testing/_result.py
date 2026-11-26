@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
+from typing import Any, TypeVar
 
 import polars as pl
 
@@ -12,6 +13,9 @@ from loom.etl.declarative.target._table import UpsertSpec
 from loom.etl.declarative.target._temp import TempFanInSpec, TempSpec
 from loom.etl.engines.polars._writer import _require_boolean_flag_column
 from loom.etl.schema._schema import LoomDtype
+from loom.etl.testing._model_rows import ModelRows
+
+ModelT = TypeVar("ModelT")
 
 
 @dataclass(frozen=True)
@@ -140,6 +144,55 @@ class StepResult:
                 raise AssertionError(
                     f"Column '{col_name}': expected {expected_polars}, got {actual}"
                 )
+
+    def rows(self, model: type[ModelT]) -> list[ModelT]:
+        """Return the output rows as instances of *model*, cast to its lake types.
+
+        Capturing runners keep the frame the step produced, so the cast on read
+        is what makes its rows comparable to the model's.
+
+        Args:
+            model: A model with a table.
+
+        Returns:
+            One instance per row, in frame order.
+
+        Raises:
+            InvalidValue: When the output lacks a column of the model.
+        """
+        return ModelRows(model).instances_in(self._frame)
+
+    def assert_rows(self, *instances: Any) -> None:
+        """Assert the output holds exactly these rows of one model, in any order.
+
+        Every column of the model is compared.
+
+        Args:
+            *instances: Expected instances of one model, usually built with
+                ``loom.testing.make``.
+
+        Raises:
+            InvalidUse: When no instances or instances of several models come.
+            AssertionError: When a row is missing or unexpected.
+        """
+        models = {type(instance) for instance in instances}
+        if len(models) != 1:
+            raise InvalidUse(
+                "assert_rows needs the rows of exactly one model; use assert_count(0) for none."
+            )
+        (model,) = models
+        actual = self.rows(model)
+        unexpected = list(actual)
+        missing = []
+        for row in instances:
+            if row in unexpected:
+                unexpected.remove(row)
+            else:
+                missing.append(row)
+        if missing or unexpected:
+            raise AssertionError(
+                f"{model.__name__} rows differ.\nmissing: {missing}\nunexpected: {unexpected}"
+            )
 
     def assert_count(self, n: int) -> None:
         """Assert the result contains exactly *n* rows.

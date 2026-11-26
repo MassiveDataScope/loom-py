@@ -35,6 +35,9 @@ class _Runner:
         self.calls.append((ref, data, columns))
         return None
 
+    def seed_rows(self, *instances: Any) -> Any:
+        return None
+
     def seed_temp(
         self, name: Any, data: Any = None, columns: Any = None, *, schema: Any = None
     ) -> Any:

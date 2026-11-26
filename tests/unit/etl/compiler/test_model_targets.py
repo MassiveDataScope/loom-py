@@ -22,14 +22,7 @@ from loom.etl.declarative.target._history import HistoryDateType
 from loom.etl.event import EtlEvent, EtlKey
 from tests.helpers.loggers import CapturedLog
 from tests.unit.etl.compiler.conftest import CompileTarget
-
-
-class Order(BaseModel):
-    __tablename__ = "sales.order"
-    order_id: Annotated[str, Field(primary_key=True)]
-    customer_id: Annotated[str, Field(index=True)]
-    amount: Annotated[Decimal, Numeric(precision=12, scale=2)]
-    placed_at: Annotated[datetime, DateTime(tz=True)]
+from tests.unit.etl.engines.frame_types import Order
 
 
 class Ledger(BaseModel):

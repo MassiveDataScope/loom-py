@@ -30,6 +30,7 @@ from loom.etl.lineage._records import RunContext
 from loom.etl.ports.contracts import SourceReader, TargetWriter
 from loom.etl.schema._schema import ColumnSchema, FrameType, SchemaError
 from loom.etl.testing._delta import _DeltaRoot
+from loom.etl.testing._model_rows import ModelRows
 from loom.etl.testing._result import StepResult
 
 if TYPE_CHECKING:
@@ -244,6 +245,32 @@ class PolarsStepRunner:
             self._delta.seed(ref, frame)
         else:
             self._tables[ref] = frame
+        return self
+
+    def seed_rows(self, *instances: Any) -> PolarsStepRunner:
+        """Seed the table of each model with its instances, typed by the model.
+
+        Instances are grouped by model class and written under the model's
+        ``__tablename__`` with the model's lake types, never inferred ones, so
+        an empty or all-null column keeps its type.  A model seeded twice is
+        replaced, as :meth:`seed` replaces a table.
+
+        Args:
+            *instances: Model instances, usually built with ``loom.testing.make``.
+
+        Returns:
+            ``self`` for fluent chaining.
+
+        Raises:
+            InvalidValue: When two instances of a model share a conflict key.
+        """
+        for rows, group in ModelRows.by_model(instances):
+            self.seed(
+                rows.table.name,
+                rows.seed_values(group),
+                rows.table.column_names,
+                schema=rows.lake_types,
+            )
         return self
 
     def seed_temp(

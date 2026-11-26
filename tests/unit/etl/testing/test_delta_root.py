@@ -4,7 +4,7 @@ from __future__ import annotations
 
 from datetime import date
 from pathlib import Path
-from typing import Any
+from typing import Annotated, Any
 
 import pytest
 
@@ -12,6 +12,7 @@ pytest.importorskip("deltalake")
 
 from deltalake import DeltaTable  # noqa: E402 — import after importorskip guard
 
+from loom.core.model import BaseModel, Field  # noqa: E402
 from loom.etl import (  # noqa: E402
     ETLParams,
     ETLStep,
@@ -24,6 +25,7 @@ from loom.etl import (  # noqa: E402
 )
 from loom.etl.schema._schema import LoomDtype, SchemaError  # noqa: E402
 from loom.etl.testing import ETLScenario, MergeMetrics, PolarsStepRunner  # noqa: E402
+from loom.testing import make  # noqa: E402
 
 
 class YearParams(ETLParams):  # type: ignore[misc]
@@ -84,6 +86,13 @@ class AppendEvent(ETLStep[YearParams]):
 
     def execute(self, params: YearParams, *, raw: Any) -> Any:  # type: ignore[override]
         return raw
+
+
+class RawCustomer(BaseModel):
+    __tablename__ = "raw.customers"
+    id: Annotated[int, Field(primary_key=True)]
+    tier: str
+    changed_on: date
 
 
 class DayParams(ETLParams):  # type: ignore[misc]
@@ -255,11 +264,10 @@ class TestIntoHistoryStringTarget:
     def test_a_changed_tier_closes_the_old_row_and_opens_a_new_one(
         self, tmp_path: Path, step: type[ETLStep[DayParams]], history: list[tuple[Any, ...]]
     ) -> None:
-        columns = ["id", "tier", "changed_on"]
         runner = PolarsStepRunner(delta_root=tmp_path)
-        runner.seed("raw.customers", [(1, "silver", date(2024, 1, 1))], columns)
+        runner.seed_rows(make(RawCustomer, id=1, tier="silver", changed_on=date(2024, 1, 1)))
         runner.run(step, DayParams(run_date=date(2024, 1, 1)))
-        runner.seed("raw.customers", [(1, "gold", date(2024, 1, 5))], columns)
+        runner.seed_rows(make(RawCustomer, id=1, tier="gold", changed_on=date(2024, 1, 5)))
 
         runner.run(step, DayParams(run_date=date(2024, 1, 5)))
 
