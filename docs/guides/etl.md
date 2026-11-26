@@ -3,6 +3,9 @@
 `loom.etl` is a declarative ETL subsystem with compile-time validation,
 backend-agnostic declarations, and a single runtime entrypoint (`ETLRunner`).
 
+Declare tables as loom models instead of strings with
+[Loom models as ETL tables](etl-models.md).
+
 ## Install
 
 Choose one backend:
