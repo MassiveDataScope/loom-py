@@ -136,21 +136,21 @@ class ColumnNames:
     def __dir__(self) -> list[str]:
         return list(self._names)
 
+    @classmethod
+    def of(cls, model: Any) -> "ColumnNames":
+        """Build the namespace of *model*: its fields, without relations or projections.
 
-def _column_names_of(model: Any) -> ColumnNames:
-    """Build the ``c`` namespace of *model*: its fields, without relations or projections.
-
-    Raises:
-        InvalidType: If the model declares a field named ``c``.
-    """
-    if _COLUMN_NAMESPACE in model.__struct_fields__:
-        raise InvalidType(
-            f"{model.__name__}.{_COLUMN_NAMESPACE} cannot be a field: "
-            "it is the namespace of column names"
-        )
-    loaded_on_demand = get_relations(model).keys() | get_projections(model).keys()
-    names = tuple(field for field in model.__struct_fields__ if field not in loaded_on_demand)
-    return ColumnNames(model.__name__, names)
+        Raises:
+            InvalidType: If the model declares a field named ``c``.
+        """
+        if _COLUMN_NAMESPACE in model.__struct_fields__:
+            raise InvalidType(
+                f"{model.__name__}.{_COLUMN_NAMESPACE} cannot be a field: "
+                "it is the namespace of column names"
+            )
+        loaded_on_demand = get_relations(model).keys() | get_projections(model).keys()
+        names = tuple(field for field in model.__struct_fields__ if field not in loaded_on_demand)
+        return cls(model.__name__, names)
 
 
 class LoomStructMeta(_StructMeta):
@@ -217,7 +217,7 @@ class LoomStructMeta(_StructMeta):
         struct_cls.__loom_relations__ = relations
         struct_cls.__loom_projections__ = projections
         setattr(struct_cls, _DERIVES_KEY, derives_here or derives_inherited)
-        struct_cls.__loom_column_names__ = _column_names_of(struct_cls)
+        struct_cls.__loom_column_names__ = ColumnNames.of(struct_cls)
         return struct_cls
 
     @property
