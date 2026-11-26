@@ -182,13 +182,7 @@ class StepResult:
             )
         (model,) = models
         actual = self.rows(model)
-        unexpected = list(actual)
-        missing = []
-        for row in instances:
-            if row in unexpected:
-                unexpected.remove(row)
-            else:
-                missing.append(row)
+        missing, unexpected = ModelRows.differences(instances, actual)
         if missing or unexpected:
             raise AssertionError(
                 f"{model.__name__} rows differ.\nmissing: {missing}\nunexpected: {unexpected}"

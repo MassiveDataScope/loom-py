@@ -30,7 +30,7 @@ fetching them from Maven.
 
 from __future__ import annotations
 
-from collections.abc import Generator, Mapping, Sequence
+from collections.abc import Callable, Generator, Mapping, Sequence
 from datetime import UTC
 from importlib.metadata import PackageNotFoundError, version
 from pathlib import Path
@@ -263,18 +263,13 @@ class SparkStepRunner:
         Raises:
             InvalidValue: When two instances of a model share a conflict key.
         """
-        from pyspark.sql import types as T
-
         from loom.etl.engines.spark._dtype import frame_type_to_spark
 
-        for rows, group in ModelRows.by_model(instances):
-            schema = T.StructType(
-                [
-                    T.StructField(name, frame_type_to_spark(frame_type))
-                    for name, frame_type in rows.lake_types.items()
-                ]
+        for seed in ModelRows.seeds_of(instances):
+            self._seeds[seed.table.name] = (
+                seed.values,
+                frame_type_to_spark(seed.table.struct_type),
             )
-            self._seeds[rows.table.name] = (rows.seed_values(group), schema)
         return self
 
     def seed_temp(
@@ -419,44 +414,59 @@ def _pick_jar(jar_dir: Path, prefix: str, expected_version: str | None) -> Path 
     return candidates[-1]
 
 
-class _CollectedValues:
-    """Python values collected from Spark, with timestamps read as UTC instants.
+def _utc_instants(spark_type: Any) -> Callable[[Any], Any] | None:
+    """A converter reading every ``TimestampType`` leaf of *spark_type* as an aware UTC datetime.
 
-    PySpark returns a ``TimestampType`` value as a naive datetime in the
-    process zone; ``TimestampNTZType`` values are wall-clock and stay naive.
-    The Spark schema tells the two apart at every depth of structs, lists
-    and maps.
+    PySpark returns a ``TimestampType`` value as a naive datetime in the process
+    zone; ``TimestampNTZType`` values are wall-clock and stay naive. The Spark
+    schema tells the two apart at every depth of structs, lists and maps.
+    The converter keeps ``None``; the result is ``None`` when the type holds no
+    timestamp, so its values need no conversion.
     """
-
-    def of(self, value: Any, spark_type: Any) -> Any:
-        """*value* with every ``TimestampType`` leaf converted to an aware UTC datetime."""
-        if value is None:
+    kind = spark_type.typeName()
+    if kind == "timestamp":
+        return lambda value: None if value is None else value.astimezone(UTC)
+    if kind == "struct":
+        fields = {field.name: _utc_instants(field.dataType) for field in spark_type.fields}
+        if not any(fields.values()):
             return None
-        kind = spark_type.typeName()
-        if kind == "timestamp":
-            return value.astimezone(UTC)
-        if kind == "struct":
-            return {
-                field.name: self.of(value[field.name], field.dataType)
-                for field in spark_type.fields
+        return lambda value: (
+            None
+            if value is None
+            else {
+                name: value[name] if convert is None else convert(value[name])
+                for name, convert in fields.items()
             }
-        if kind == "array":
-            return [self.of(item, spark_type.elementType) for item in value]
-        if kind == "map":
-            return {key: self.of(item, spark_type.valueType) for key, item in value.items()}
-        return value
+        )
+    if kind == "array":
+        element = _utc_instants(spark_type.elementType)
+        if element is None:
+            return None
+        return lambda value: None if value is None else [element(item) for item in value]
+    if kind == "map":
+        entry = _utc_instants(spark_type.valueType)
+        if entry is None:
+            return None
+        return lambda value: (
+            None if value is None else {key: entry(item) for key, item in value.items()}
+        )
+    return None
+
+
+def _unchanged(value: Any) -> Any:
+    return value
 
 
 def _spark_frame_to_polars(frame: Any) -> pl.DataFrame:
     import polars as pl
 
-    columns = list(frame.columns)
-    spark_types = {field.name: field.dataType for field in frame.schema.fields}
-    values = _CollectedValues()
+    converters = {
+        field.name: _utc_instants(field.dataType) or _unchanged for field in frame.schema.fields
+    }
     records = [
-        {name: values.of(value, spark_types[name]) for name, value in row.asDict().items()}
+        {name: converters[name](value) for name, value in row.asDict().items()}
         for row in frame.collect()
     ]
     if not records:
-        return pl.DataFrame({col: [] for col in columns})
+        return pl.DataFrame({column: [] for column in frame.columns})
     return pl.DataFrame(records)

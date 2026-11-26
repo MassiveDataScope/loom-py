@@ -3,8 +3,9 @@
 from __future__ import annotations
 
 from collections import Counter
-from collections.abc import Iterable
-from typing import Any, Final
+from collections.abc import Iterable, Sequence
+from dataclasses import dataclass
+from typing import Any
 
 import msgspec
 import polars as pl
@@ -12,13 +13,46 @@ import polars as pl
 from loom.core.errors import InvalidValue
 from loom.core.model.convert import to_column_value, to_struct
 from loom.core.model.introspection import conflict_key_of, get_column_fields
-from loom.core.model.types import ColumnKind
 from loom.etl.engines.polars._dtype import frame_type_to_polars
-from loom.etl.schema import ColumnSchema, FrameType, LoomDtype, ModelTable
+from loom.etl.schema import ColumnSchema, LoomDtype, ModelTable
 
-_JSON_KINDS: Final = frozenset(
-    {ColumnKind.JSON, ColumnKind.POSTGRES_JSONB, ColumnKind.POSTGRES_ARRAY}
-)
+
+@dataclass(frozen=True, slots=True)
+class _RowColumn:
+    """One column of a model's rows: how its values go to the lake types and back."""
+
+    name: str
+    polars_dtype: pl.DataType
+    is_text: bool
+    is_json_text: bool
+
+    @classmethod
+    def of(cls, column: ColumnSchema, *, stores_json: bool) -> _RowColumn:
+        is_text = column.dtype is LoomDtype.UTF8
+        return cls(
+            column.name, frame_type_to_polars(column.dtype), is_text, stores_json and is_text
+        )
+
+    def to_lake(self, value: Any) -> Any:
+        if value is None:
+            return None
+        if self.is_json_text:
+            return msgspec.json.encode(to_column_value(value, json=True)).decode()
+        stored = to_column_value(value)
+        return str(stored) if self.is_text else stored
+
+    def from_lake(self, value: Any) -> Any:
+        if value is None or not self.is_json_text:
+            return value
+        return msgspec.json.decode(value)
+
+
+@dataclass(frozen=True, slots=True)
+class ModelSeed:
+    """The rows to seed for one model: its table and the row tuples in column order."""
+
+    table: ModelTable
+    values: list[tuple[Any, ...]]
 
 
 class ModelRows:
@@ -36,20 +70,40 @@ class ModelRows:
 
     def __init__(self, model: type) -> None:
         self.table = ModelTable.from_model(model)
-        self._fields = get_column_fields(model)
+        fields = get_column_fields(model)
+        self._columns = tuple(
+            _RowColumn.of(column, stores_json=fields[column.name].is_json)
+            for column in self.table.schema
+        )
 
     @classmethod
-    def by_model(cls, instances: Iterable[Any]) -> list[tuple[ModelRows, list[Any]]]:
-        """Group *instances* by model class, in order of first appearance."""
+    def seeds_of(cls, instances: Iterable[Any]) -> list[ModelSeed]:
+        """The seed of each model among *instances*, in order of first appearance.
+
+        Raises:
+            InvalidValue: Two instances of a model share a conflict key.
+        """
         grouped: dict[type, list[Any]] = {}
         for instance in instances:
             grouped.setdefault(type(instance), []).append(instance)
-        return [(cls(model), rows) for model, rows in grouped.items()]
+        seeds = []
+        for model, rows in grouped.items():
+            model_rows = cls(model)
+            seeds.append(ModelSeed(model_rows.table, model_rows.seed_values(rows)))
+        return seeds
 
-    @property
-    def lake_types(self) -> dict[str, FrameType]:
-        """The lake type of each column, by column name."""
-        return {column.name: column.dtype for column in self.table.schema}
+    @staticmethod
+    def differences(expected: Sequence[Any], actual: Sequence[Any]) -> tuple[list[Any], list[Any]]:
+        """The *expected* instances *actual* lacks and the *actual* ones not expected.
+
+        Rows are compared as a multiset, by value, in any order.
+        """
+        wanted = [_frozen(row) for row in expected]
+        found = [_frozen(row) for row in actual]
+        rows = dict(zip([*found, *wanted], [*actual, *expected], strict=True))
+        missing = (Counter(wanted) - Counter(found)).elements()
+        unexpected = (Counter(found) - Counter(wanted)).elements()
+        return [rows[key] for key in missing], [rows[key] for key in unexpected]
 
     def seed_values(self, instances: list[Any]) -> list[tuple[Any, ...]]:
         """The row tuples of *instances*, in column order.
@@ -58,7 +112,10 @@ class ModelRows:
             InvalidValue: Two instances share a conflict key.
         """
         self._require_distinct_keys(instances)
-        return [self._row_of(instance) for instance in instances]
+        return [
+            tuple(column.to_lake(getattr(instance, column.name)) for column in self._columns)
+            for instance in instances
+        ]
 
     def instances_in(self, frame: pl.DataFrame) -> list[Any]:
         """The instances of the rows of *frame*, cast to the lake types of the model.
@@ -66,18 +123,25 @@ class ModelRows:
         Raises:
             InvalidValue: *frame* lacks a column of the model.
         """
-        absent = [name for name in self.table.column_names if name not in frame.columns]
+        present = set(frame.columns)
+        absent = [name for name in self.table.column_names if name not in present]
         if absent:
             raise InvalidValue(
                 f"{self.table.model.__name__} rows need the columns {absent}, "
                 f"which the frame lacks; it has {frame.columns}."
             )
         cast = frame.select(
-            pl.col(column.name).cast(frame_type_to_polars(column.dtype))
-            for column in self.table.schema
+            pl.col(column.name).cast(column.polars_dtype) for column in self._columns
         )
         return [
-            to_struct(self.table.model, self._field_values(record)) for record in cast.to_dicts()
+            to_struct(
+                self.table.model,
+                {
+                    column.name: column.from_lake(value)
+                    for column, value in zip(self._columns, row, strict=True)
+                },
+            )
+            for row in cast.iter_rows()
         ]
 
     def _require_distinct_keys(self, instances: list[Any]) -> None:
@@ -93,26 +157,17 @@ class ModelRows:
                 f"give each row its own {list(key)}, because make() repeats what it generates."
             )
 
-    def _row_of(self, instance: Any) -> tuple[Any, ...]:
-        return tuple(
-            self._lake_value(column, getattr(instance, column.name)) for column in self.table.schema
-        )
 
-    def _is_json_text(self, column: ColumnSchema) -> bool:
-        return self._fields[column.name].kind in _JSON_KINDS and column.dtype is LoomDtype.UTF8
-
-    def _lake_value(self, column: ColumnSchema, value: Any) -> Any:
-        if value is None:
-            return None
-        if self._is_json_text(column):
-            return msgspec.json.encode(to_column_value(value, json=True)).decode()
-        stored = to_column_value(value)
-        return str(stored) if column.dtype is LoomDtype.UTF8 else stored
-
-    def _field_values(self, record: dict[str, Any]) -> dict[str, Any]:
-        return {
-            column.name: msgspec.json.decode(record[column.name])
-            if record[column.name] is not None and self._is_json_text(column)
-            else record[column.name]
-            for column in self.table.schema
-        }
+def _frozen(value: Any) -> Any:
+    """A hashable stand-in for *value* that is equal exactly when the values are."""
+    match value:
+        case msgspec.Struct():
+            return (type(value), tuple(_frozen(item) for item in msgspec.structs.astuple(value)))
+        case list() | tuple():
+            return tuple(_frozen(item) for item in value)
+        case dict():
+            return frozenset((key, _frozen(item)) for key, item in value.items())
+        case set() | frozenset():
+            return frozenset(_frozen(item) for item in value)
+        case _:
+            return value

@@ -264,12 +264,12 @@ class PolarsStepRunner:
         Raises:
             InvalidValue: When two instances of a model share a conflict key.
         """
-        for rows, group in ModelRows.by_model(instances):
+        for seed in ModelRows.seeds_of(instances):
             self.seed(
-                rows.table.name,
-                rows.seed_values(group),
-                rows.table.column_names,
-                schema=rows.lake_types,
+                seed.table.name,
+                seed.values,
+                seed.table.column_names,
+                schema=seed.table.column_types,
             )
         return self
 
