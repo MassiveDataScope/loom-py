@@ -52,6 +52,7 @@ equality including inner types.
 
 from __future__ import annotations
 
+from collections.abc import Iterable
 from dataclasses import dataclass
 from enum import StrEnum
 
@@ -169,6 +170,11 @@ class StructType:
     """
 
     fields: tuple[StructField, ...]
+
+    @classmethod
+    def of_columns(cls, columns: Iterable[ColumnSchema]) -> StructType:
+        """The struct whose fields are *columns*, in order, with their nullability."""
+        return cls(tuple(StructField(c.name, c.dtype, c.nullable) for c in columns))
 
 
 @dataclass(frozen=True)

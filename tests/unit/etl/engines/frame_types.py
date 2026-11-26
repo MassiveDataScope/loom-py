@@ -6,6 +6,8 @@ from datetime import date, datetime
 from decimal import Decimal
 from typing import Annotated
 
+import msgspec
+
 from loom.core.model import BaseModel, Field
 from loom.core.model.types import DateTime, Numeric
 from loom.etl.schema import (
@@ -46,6 +48,15 @@ LAKE_FRAME_TYPES = {
         )
     ),
 }
+
+
+class Buyer(msgspec.Struct):
+    name: str
+    order_count: int
+
+
+class Priced(msgspec.Struct):
+    price: Decimal
 
 
 class Order(BaseModel):

@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+from contextlib import suppress
 from datetime import date, datetime, time
 from decimal import Decimal
 from pathlib import Path
@@ -14,9 +15,11 @@ import pytest
 
 from loom.core.errors import InvalidType, InvalidValue
 from loom.core.model import BaseModel
+from loom.core.model.inference import Outcome, ResolvedField
 from loom.core.model.types import (
     BigInteger,
     ColumnKind,
+    ColumnType,
     DateTime,
     Float,
     Integer,
@@ -40,7 +43,8 @@ from loom.etl.schema import (
     StructField,
     StructType,
 )
-from loom.etl.schema._model import _RULES
+from loom.etl.schema._model import LakeTranslator
+from tests.unit.etl.engines.frame_types import Priced
 
 
 class SubEntity(msgspec.Struct):
@@ -51,10 +55,6 @@ class SubEntity(msgspec.Struct):
 class CamelEntity(msgspec.Struct, rename="camel"):
     zip_code: str
     seen_at: datetime
-
-
-class PricedEntity(msgspec.Struct):
-    price: Decimal
 
 
 def _model(annotation: Any) -> type[BaseModel]:
@@ -110,8 +110,8 @@ _REFUSALS = {
     "time": (time, "Time"),
     "tsvector": (Annotated[str, Postgres.TSVECTOR], "tsvector"),
     "undeclared": (Any, "no column type"),
-    "sub-entity-decimal": (PricedEntity, r"Probe\.value\.price .*unbounded Numeric"),
-    "list-of-sub-entity-decimal": (list[PricedEntity], r"Probe\.value\.item\.price"),
+    "sub-entity-decimal": (Priced, r"Probe\.value\.price .*unbounded Numeric"),
+    "list-of-sub-entity-decimal": (list[Priced], r"Probe\.value\.item\.price"),
 }
 
 
@@ -138,8 +138,12 @@ class TestLakeTable:
         with pytest.raises(InvalidValue, match=message):
             ModelTable.from_model(_model(annotation))
 
-    def test_every_column_kind_has_a_rule_or_a_named_refusal(self) -> None:
-        assert set(_RULES) == set(ColumnKind)
+    @pytest.mark.parametrize("kind", ColumnKind)
+    def test_every_column_kind_is_translated_or_refused(self, kind: ColumnKind) -> None:
+        field = ResolvedField("value", "value", ColumnType(kind), True, Outcome.DECLARED)
+
+        with suppress(InvalidValue):
+            LakeTranslator("Probe").frame_type(field)
 
     def test_the_table_carries_the_model_and_its_logical_name(self) -> None:
         model = _model(int)

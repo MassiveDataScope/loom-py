@@ -66,7 +66,7 @@ class ModelTargetCheck:
     def _check_merge_keys(self) -> None:
         if not isinstance(self._spec, UpsertSpec | UpdateSpec) or self._spec.upsert_keys:
             return
-        problem = self._table.key_problem()
+        problem = self._table.key_problem
         if problem is not None:
             raise self._refusal(
                 ETLErrorCode.MODEL_KEY_NOT_IN_FRAME,

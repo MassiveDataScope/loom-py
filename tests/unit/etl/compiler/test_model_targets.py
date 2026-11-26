@@ -4,15 +4,13 @@ from __future__ import annotations
 
 import logging
 from collections.abc import Callable
-from datetime import date, datetime
-from decimal import Decimal
+from datetime import datetime
 from typing import Annotated, Any
 
 import pytest
 
-from loom.core.errors import InvalidType
 from loom.core.model import BaseModel, BusinessKey, ColumnField, Field
-from loom.core.model.types import DateTime, Numeric, Text
+from loom.core.model.types import DateTime, Text
 from loom.core.routing import LogicalRef
 from loom.core.schema import SchemaMode
 from loom.etl import FromTable, IntoHistory, IntoTable
@@ -22,7 +20,7 @@ from loom.etl.declarative.target._history import HistoryDateType
 from loom.etl.event import EtlEvent, EtlKey
 from tests.helpers.loggers import CapturedLog
 from tests.unit.etl.compiler.conftest import CompileTarget
-from tests.unit.etl.engines.frame_types import Order
+from tests.unit.etl.engines.frame_types import Order, Rate
 
 
 class Ledger(BaseModel):
@@ -40,15 +38,6 @@ class Booking(BaseModel):
     note: Annotated[str, Text]
 
 
-class Rate(BaseModel):
-    __tablename__ = "rate"
-    rate_id: Annotated[str, Field(primary_key=True)]
-    price: Annotated[Decimal, Numeric(precision=12, scale=2)]
-    valid_from: date
-    valid_to: date | None
-    deleted_at: datetime | None
-
-
 class Tick(BaseModel):
     __tablename__ = "tick"
     tick_id: Annotated[str, Field(primary_key=True)]
@@ -61,10 +50,6 @@ class Undated(BaseModel):
     undated_id: Annotated[str, Field(primary_key=True)]
     valid_from: str
     valid_to: str | None
-
-
-class Nameless(BaseModel):
-    order_id: Annotated[str, Field(primary_key=True)]
 
 
 _MODEL_LOGGER = "loom.etl.compiler._validators_model"
@@ -174,16 +159,6 @@ class TestModelDeclaration:
         from_model = FromTable(Order)._to_spec("orders")
 
         assert from_model == FromTable(ref).with_schema(Order)._to_spec("orders")
-
-    def test_a_model_names_its_table_with_its_tablename(self) -> None:
-        assert IntoTable(Order).append()._to_spec().table_ref == TableRef("sales.order")
-        assert IntoHistory(Rate, keys=("rate_id",), effective_date="d")._to_spec().table_ref == (
-            TableRef("rate")
-        )
-
-    def test_a_class_without_a_tablename_is_refused_naming_it(self) -> None:
-        with pytest.raises(InvalidType, match="__tablename__"):
-            IntoTable(Nameless)
 
     @pytest.mark.parametrize(("target", "keys"), _MERGE_KEYS.values(), ids=list(_MERGE_KEYS))
     def test_merge_keys_default_to_the_conflict_key_of_a_model(

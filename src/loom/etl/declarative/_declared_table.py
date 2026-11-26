@@ -35,8 +35,7 @@ class DeclaredTable:
             InvalidValue: A model column has a type the lake refuses.
         """
         if isinstance(declaration, type):
-            model: type = declaration
-            table = ModelTable.from_model(model)
+            table = ModelTable.from_model(declaration)
             return cls(TableRef(table.name), table)
         if isinstance(declaration, TableRef):
             return cls(declaration)
@@ -47,6 +46,6 @@ class DeclaredTable:
 
         A reference has no default, so it gives ``()`` and the compiler asks for ``keys``.
         """
-        if declared is not None:
+        if declared:
             return declared
-        return () if self.model_table is None else self.model_table.frame_keys()
+        return self.model_table.frame_keys() if self.model_table is not None else ()

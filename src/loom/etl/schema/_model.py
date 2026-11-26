@@ -6,12 +6,13 @@ lake rules: what Delta can store, and what it refuses.
 
 from __future__ import annotations
 
-from collections.abc import Callable, Iterable, Mapping
+from collections.abc import Iterable, Mapping
 from dataclasses import dataclass, replace
-from functools import cache
-from typing import Final, NoReturn
+from functools import cached_property
+from typing import Final
 
 from loom.core.errors import InvalidType, InvalidValue
+from loom.core.model._class_store import stored_on_class
 from loom.core.model.inference import (
     JsonShape,
     ListShape,
@@ -38,7 +39,27 @@ from loom.etl.schema._schema import (
 
 _MAX_DECIMAL_PRECISION: Final = 38
 
-_Rule = Callable[["LakeTranslator", ResolvedField, ColumnType], FrameType]
+_SIMPLE_TYPES: Final[Mapping[ColumnKind, LoomDtype]] = {
+    ColumnKind.STRING: LoomDtype.UTF8,
+    ColumnKind.TEXT: LoomDtype.UTF8,
+    ColumnKind.UUID: LoomDtype.UTF8,
+    ColumnKind.TINY_INTEGER: LoomDtype.INT8,
+    ColumnKind.SMALL_INTEGER: LoomDtype.INT16,
+    ColumnKind.INTEGER: LoomDtype.INT32,
+    ColumnKind.BIG_INTEGER: LoomDtype.INT64,
+    ColumnKind.FLOAT: LoomDtype.FLOAT64,
+    ColumnKind.BOOLEAN: LoomDtype.BOOLEAN,
+    ColumnKind.BYTES: LoomDtype.BINARY,
+    ColumnKind.DATE: LoomDtype.DATE,
+}
+
+_REFUSED_KINDS: Final[Mapping[ColumnKind, tuple[str, str]]] = {
+    ColumnKind.TIME: ("is a Time, which Delta has no type for", "store it as a Text or a DateTime"),
+    ColumnKind.POSTGRES_TSVECTOR: (
+        "is a tsvector, a search index with no lake type",
+        "store the text in a Text column and index it in Postgres",
+    ),
+}
 
 
 @dataclass(frozen=True, slots=True)
@@ -70,20 +91,48 @@ class LakeTranslator:
         """
         column_type = field.column_type
         if column_type is None:
-            raise self.refusal(
+            raise self._refusal(
                 field,
                 f"has no column type ({field.reason})",
                 "declare it with Annotated[<type>, <column type>]",
             )
-        return _RULES[column_type.type_name](self, field, column_type)
+        kind = column_type.type_name
+        match kind:
+            case ColumnKind.NUMERIC:
+                return self._decimal(field, column_type)
+            case ColumnKind.DATETIME:
+                return DatetimeType("us", "UTC" if column_type.option("timezone", True) else None)
+            case ColumnKind.POSTGRES_UUID | ColumnKind.POSTGRES_INET:
+                return self.frame_type(replace(field, column_type=column_type.portable()))
+            case _ if kind.is_json:
+                return self._json_shape(field)
+            case _ if kind in _REFUSED_KINDS:
+                raise self._refusal(field, *_REFUSED_KINDS[kind])
+            case _:
+                return _SIMPLE_TYPES[kind]
 
-    def refusal(self, field: ResolvedField, problem: str, fix: str) -> InvalidValue:
-        """The error that refuses *field* for *problem*, pointing at *fix*."""
+    def _refusal(self, field: ResolvedField, problem: str, fix: str) -> InvalidValue:
         location = ".".join((self.owner, *self.path, field.name))
         return InvalidValue(f"{location} {problem}; {fix}.")
 
-    def json_shape(self, field: ResolvedField) -> FrameType:
-        """The lake type of a JSON field: struct, list, or text when its shape is opaque."""
+    def _decimal(self, field: ResolvedField, column_type: ColumnType) -> DecimalType:
+        precision = column_type.option("precision")
+        if precision is None:
+            raise self._refusal(
+                field,
+                "is an unbounded Numeric, which the lake cannot store",
+                "declare Annotated[Decimal, Numeric(precision=p, scale=s)] with p <= 38",
+            )
+        if precision > _MAX_DECIMAL_PRECISION:
+            raise self._refusal(
+                field,
+                f"has Numeric precision {precision}, above the lake maximum of 38",
+                "declare a precision of 38 or less",
+            )
+        scale = column_type.option("scale")
+        return DecimalType(precision) if scale is None else DecimalType(precision, scale)
+
+    def _json_shape(self, field: ResolvedField) -> FrameType:
         inside = replace(self, path=(*self.path, field.name))
         shape: JsonShape | None = field.shape
         match shape:
@@ -110,83 +159,6 @@ class LakeTranslator:
         return tuple(info.resolved for info in columns.values())
 
 
-def _always(frame_type: FrameType) -> _Rule:
-    return lambda translator, field, column_type: frame_type
-
-
-def _refused(problem: str, fix: str) -> _Rule:
-    def refuse(
-        translator: LakeTranslator, field: ResolvedField, column_type: ColumnType
-    ) -> NoReturn:
-        raise translator.refusal(field, problem, fix)
-
-    return refuse
-
-
-def _decimal(
-    translator: LakeTranslator, field: ResolvedField, column_type: ColumnType
-) -> FrameType:
-    precision = column_type.option("precision")
-    if precision is None:
-        raise translator.refusal(
-            field,
-            "is an unbounded Numeric, which the lake cannot store",
-            "declare Annotated[Decimal, Numeric(precision=p, scale=s)] with p <= 38",
-        )
-    if precision > _MAX_DECIMAL_PRECISION:
-        raise translator.refusal(
-            field,
-            f"has Numeric precision {precision}, above the lake maximum of 38",
-            "declare a precision of 38 or less",
-        )
-    return DecimalType(precision, column_type.option("scale") or 0)
-
-
-def _datetime(
-    translator: LakeTranslator, field: ResolvedField, column_type: ColumnType
-) -> FrameType:
-    return DatetimeType("us", "UTC" if column_type.option("timezone", True) else None)
-
-
-def _json(translator: LakeTranslator, field: ResolvedField, column_type: ColumnType) -> FrameType:
-    return translator.json_shape(field)
-
-
-def _portable(
-    translator: LakeTranslator, field: ResolvedField, column_type: ColumnType
-) -> FrameType:
-    return translator.frame_type(replace(field, column_type=column_type.portable()))
-
-
-_RULES: Final[Mapping[ColumnKind, _Rule]] = {
-    ColumnKind.STRING: _always(LoomDtype.UTF8),
-    ColumnKind.TEXT: _always(LoomDtype.UTF8),
-    ColumnKind.UUID: _always(LoomDtype.UTF8),
-    ColumnKind.TINY_INTEGER: _always(LoomDtype.INT8),
-    ColumnKind.SMALL_INTEGER: _always(LoomDtype.INT16),
-    ColumnKind.INTEGER: _always(LoomDtype.INT32),
-    ColumnKind.BIG_INTEGER: _always(LoomDtype.INT64),
-    ColumnKind.FLOAT: _always(LoomDtype.FLOAT64),
-    ColumnKind.BOOLEAN: _always(LoomDtype.BOOLEAN),
-    ColumnKind.BYTES: _always(LoomDtype.BINARY),
-    ColumnKind.DATE: _always(LoomDtype.DATE),
-    ColumnKind.NUMERIC: _decimal,
-    ColumnKind.DATETIME: _datetime,
-    ColumnKind.JSON: _json,
-    ColumnKind.POSTGRES_ARRAY: _json,
-    ColumnKind.POSTGRES_JSONB: _portable,
-    ColumnKind.POSTGRES_UUID: _portable,
-    ColumnKind.POSTGRES_INET: _portable,
-    ColumnKind.TIME: _refused(
-        "is a Time, which Delta has no type for", "store it as a Text or a DateTime"
-    ),
-    ColumnKind.POSTGRES_TSVECTOR: _refused(
-        "is a tsvector, a search index with no lake type",
-        "store the text in a Text column and index it in Postgres",
-    ),
-}
-
-
 @dataclass(frozen=True, slots=True)
 class KeyProblem:
     """Why a model's conflict key cannot come from a frame: the field and the reason."""
@@ -195,7 +167,7 @@ class KeyProblem:
     reason: str
 
 
-@dataclass(frozen=True, slots=True)
+@dataclass(frozen=True)
 class ModelTable:
     """A model as a lake table: its logical name and the frame type of each column."""
 
@@ -204,7 +176,6 @@ class ModelTable:
     schema: tuple[ColumnSchema, ...]
 
     @classmethod
-    @cache
     def from_model(cls, model: type) -> ModelTable:
         """The lake table of *model*, translated once per class.
 
@@ -212,22 +183,19 @@ class ModelTable:
             InvalidType: *model* declares no ``__tablename__``.
             InvalidValue: A column has a type the lake refuses.
         """
-        name = get_table_name(model)
-        return cls(model, name, LakeTranslator(model.__name__).schema_of(model))
+        return _lake_table(model)
 
-    @property
+    @cached_property
     def column_names(self) -> tuple[str, ...]:
         """The names of the columns, in declaration order."""
         return tuple(column.name for column in self.schema)
 
-    def column_type(self, name: str) -> FrameType | None:
-        """The frame type of column *name*, ``None`` when the model has no such column."""
-        return next((column.dtype for column in self.schema if column.name == name), None)
+    @cached_property
+    def struct_type(self) -> StructType:
+        """The columns as one struct, to translate to an engine schema in one step."""
+        return StructType.of_columns(self.schema)
 
-    def unknown_columns(self, names: Iterable[str]) -> tuple[str, ...]:
-        """The *names* that are not columns of the model, in the order given."""
-        return tuple(name for name in names if name not in self.column_names)
-
+    @cached_property
     def key_problem(self) -> KeyProblem | None:
         """Why the conflict key cannot come from a frame, ``None`` when it can.
 
@@ -250,6 +218,24 @@ class ModelTable:
                 return KeyProblem(name, f"primary key {name!r} is filled by the server")
         return None
 
+    def column_type(self, name: str) -> FrameType | None:
+        """The frame type of column *name*, ``None`` when the model has no such column."""
+        return self.column_types.get(name)
+
+    def unknown_columns(self, names: Iterable[str]) -> tuple[str, ...]:
+        """The *names* that are not columns of the model, in the order given."""
+        return tuple(name for name in names if name not in self.column_types)
+
     def frame_keys(self) -> tuple[str, ...]:
         """The conflict key of the model when the frame can supply it, else ``()``."""
-        return conflict_key_of(self.model) if self.key_problem() is None else ()
+        return conflict_key_of(self.model) if self.key_problem is None else ()
+
+    @cached_property
+    def column_types(self) -> Mapping[str, FrameType]:
+        """The frame type of each column, by column name."""
+        return {column.name: column.dtype for column in self.schema}
+
+
+@stored_on_class("__loom_model_table__")
+def _lake_table(model: type) -> ModelTable:
+    return ModelTable(model, get_table_name(model), LakeTranslator(model.__name__).schema_of(model))

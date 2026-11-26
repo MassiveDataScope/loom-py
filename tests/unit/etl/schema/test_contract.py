@@ -4,7 +4,6 @@ from __future__ import annotations
 
 import dataclasses
 import datetime
-from decimal import Decimal
 from typing import Any
 
 import msgspec
@@ -25,6 +24,7 @@ from loom.etl.schema._schema import (
     StructField,
     StructType,
 )
+from tests.unit.etl.engines.frame_types import Priced
 
 
 class MsgspecRow(msgspec.Struct):
@@ -45,10 +45,6 @@ class NoAnnotations:
 class OrderModel(BaseModel):
     __tablename__ = "orders"
     id: int
-
-
-class PricedRow(msgspec.Struct):
-    price: Decimal
 
 
 class SameStruct(msgspec.Struct):
@@ -133,8 +129,8 @@ class TestResolveSchema:
         )
 
     def test_an_undeclared_decimal_is_refused_with_the_lake_message(self) -> None:
-        with pytest.raises(InvalidValue, match=r"PricedRow\.price .*unbounded Numeric"):
-            resolve_schema(PricedRow)
+        with pytest.raises(InvalidValue, match=r"Priced\.price .*unbounded Numeric"):
+            resolve_schema(Priced)
 
 
 class TestResolveJsonType:
