@@ -111,7 +111,7 @@ class ListType:
 
     Args:
         inner: Element type.  May itself be a :class:`StructType`,
-               :class:`ListType`, or any other :data:`LoomType`.
+               :class:`ListType`, or any other :data:`FrameType`.
 
     Example::
 
@@ -119,7 +119,7 @@ class ListType:
         ListType(inner=StructType(fields=(StructField("x", LoomDtype.INT64),)))
     """
 
-    inner: LoomType
+    inner: FrameType
 
 
 @dataclass(frozen=True)
@@ -135,7 +135,7 @@ class ArrayType:
         ArrayType(inner=LoomDtype.FLOAT64, width=3)
     """
 
-    inner: LoomType
+    inner: FrameType
     width: int
 
 
@@ -145,12 +145,12 @@ class StructField:
 
     Args:
         name:     Field name.
-        dtype:    Field type — any :data:`LoomType`.
+        dtype:    Field type — any :data:`FrameType`.
         nullable: Whether the field accepts nulls.  Defaults to ``True``.
     """
 
     name: str
-    dtype: LoomType
+    dtype: FrameType
     nullable: bool = True
 
 
@@ -251,7 +251,7 @@ class EnumType:
 #:
 #: Use :class:`LoomDtype` for primitive types.  Use the structural
 #: classes for complex, nested, or parametrised types.
-LoomType = (
+FrameType = (
     LoomDtype
     | ListType
     | ArrayType
@@ -290,7 +290,7 @@ class ColumnSchema:
 
     Args:
         name:     Column name.
-        dtype:    Column type — any :data:`LoomType`.  Use :class:`LoomDtype`
+        dtype:    Column type — any :data:`FrameType`.  Use :class:`LoomDtype`
                   for simple scalars; use the structural classes
                   (:class:`ListType`, :class:`StructType`, :class:`DatetimeType`,
                   etc.) for complex or parametrised columns.
@@ -310,5 +310,5 @@ class ColumnSchema:
     """
 
     name: str
-    dtype: LoomType
+    dtype: FrameType
     nullable: bool = True

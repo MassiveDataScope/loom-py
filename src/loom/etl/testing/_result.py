@@ -129,13 +129,13 @@ class StepResult:
         Raises:
             AssertionError: When a column is missing or has a different dtype.
         """
-        from loom.etl.engines.polars._dtype import loom_type_to_polars
+        from loom.etl.engines.polars._dtype import frame_type_to_polars
 
         for col_name, loom_dtype in expected.items():
             actual = self._frame.schema.get(col_name)
             if actual is None:
                 raise AssertionError(f"Column '{col_name}' not found in result schema")
-            expected_polars = loom_type_to_polars(loom_dtype)
+            expected_polars = frame_type_to_polars(loom_dtype)
             if actual != expected_polars:
                 raise AssertionError(
                     f"Column '{col_name}': expected {expected_polars}, got {actual}"

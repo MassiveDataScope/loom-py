@@ -14,7 +14,7 @@ from loom.core.errors import InvalidType
 from loom.core.model import BaseModel
 from loom.etl.schema._contract import (
     _strip_optional,
-    annotation_to_loom_type,
+    annotation_to_frame_type,
     resolve_json_type,
     resolve_schema,
 )
@@ -155,7 +155,7 @@ class TestResolveJsonType:
             DatetimeType("us", "UTC"),
         ],
     )
-    def test_passthrough_loom_types(self, contract: Any) -> None:
+    def test_passthrough_frame_types(self, contract: Any) -> None:
         assert resolve_json_type(contract) == contract
 
     @pytest.mark.parametrize(
@@ -236,12 +236,12 @@ class TestAnnotationConversion:
             (str | None, LoomDtype.UTF8),
         ],
     )
-    def testannotation_to_loom_type(self, annotation: Any, expected: Any) -> None:
-        assert annotation_to_loom_type(annotation) == expected
+    def testannotation_to_frame_type(self, annotation: Any, expected: Any) -> None:
+        assert annotation_to_frame_type(annotation) == expected
 
-    def test_annotation_to_loom_type_unknown_raises(self) -> None:
+    def test_annotation_to_frame_type_unknown_raises(self) -> None:
         with pytest.raises(TypeError, match="Cannot convert annotation"):
-            annotation_to_loom_type(object)
+            annotation_to_frame_type(object)
 
 
 class TestStripOptional:

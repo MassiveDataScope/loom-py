@@ -16,7 +16,7 @@ from loom.etl.declarative.source import FileSourceSpec, SourceSpec, TableSourceS
 from loom.etl.engines._format_registry import resolve_format_handler
 from loom.etl.engines._path_template import resolve_file_uri
 from loom.etl.engines._predicate import predicate_to_sql
-from loom.etl.engines.spark._dtype import loom_type_to_spark
+from loom.etl.engines.spark._dtype import frame_type_to_spark
 from loom.etl.ports.contracts import SourceReader
 from loom.etl.schema._schema import ColumnSchema
 from loom.etl.storage._file_locator import FileLocator
@@ -162,7 +162,7 @@ class SparkSourceReader(SourceReader):
             return df
 
         for col in schema:
-            df = df.withColumn(col.name, F.col(col.name).cast(loom_type_to_spark(col.dtype)))
+            df = df.withColumn(col.name, F.col(col.name).cast(frame_type_to_spark(col.dtype)))
         return df
 
     def _apply_json_decode(self, df: DataFrame, json_columns: tuple[Any, ...]) -> DataFrame:
@@ -171,7 +171,7 @@ class SparkSourceReader(SourceReader):
             return df
 
         for jc in json_columns:
-            schema_ddl = loom_type_to_spark(jc.loom_type).simpleString()
+            schema_ddl = frame_type_to_spark(jc.frame_type).simpleString()
             df = df.withColumn(jc.column, F.from_json(F.col(jc.column), schema_ddl))
         return df
 

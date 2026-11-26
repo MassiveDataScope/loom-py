@@ -27,7 +27,7 @@ from loom.etl.declarative.source import FileSourceSpec
 from loom.etl.declarative.target import SchemaMode
 from loom.etl.declarative.target._file import FileSpec
 from loom.etl.declarative.target._table import ReplacePartitionsSpec
-from loom.etl.engines.spark._dtype import spark_to_loom
+from loom.etl.engines.spark._dtype import spark_to_frame_type
 from loom.etl.executor import ETLExecutor
 from loom.etl.lineage._records import EventName, RunStatus
 from loom.etl.schema._schema import ColumnSchema, LoomDtype, SchemaNotFoundError
@@ -307,9 +307,9 @@ class TestRunStepContracts:
 
         fields = _read(spark, spark_root, "raw.orders").schema.fields
         assert fields[0].name == "id"
-        assert spark_to_loom(fields[0].dataType) is LoomDtype.INT64
+        assert spark_to_frame_type(fields[0].dataType) is LoomDtype.INT64
         assert fields[1].name == "amount"
-        assert spark_to_loom(fields[1].dataType) is LoomDtype.FLOAT64
+        assert spark_to_frame_type(fields[1].dataType) is LoomDtype.FLOAT64
 
     def test_run_step_supports_csv_reporting_target(
         self,

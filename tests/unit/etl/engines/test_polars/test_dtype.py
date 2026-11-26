@@ -1,4 +1,4 @@
-"""Unit tests for LoomType <-> Polars DataType conversions."""
+"""Unit tests for FrameType <-> Polars DataType conversions."""
 
 from __future__ import annotations
 
@@ -6,10 +6,10 @@ import polars as pl
 import pytest
 
 from loom.etl.engines.polars._dtype import (
+    frame_type_to_polars,
     loom_to_polars,
-    loom_type_to_polars,
+    polars_to_frame_type,
     polars_to_loom,
-    polars_to_loom_type,
 )
 from loom.etl.schema import (
     ArrayType,
@@ -47,7 +47,7 @@ class TestLoomToPolarsCoarse:
             loom_to_polars(loom_dtype)
 
 
-class TestPolarsToLoomType:
+class TestPolarsToFrameType:
     @pytest.mark.parametrize(
         ("polars_dtype", "loom_dtype"),
         [
@@ -64,8 +64,8 @@ class TestPolarsToLoomType:
     ) -> None:
         assert polars_to_loom(polars_dtype) is loom_dtype
 
-    def test_polars_to_loom_type_recurses_nested_structures(self) -> None:
-        result = polars_to_loom_type(
+    def test_polars_to_frame_type_recurses_nested_structures(self) -> None:
+        result = polars_to_frame_type(
             pl.Struct(
                 {
                     "id": pl.Int64,
@@ -85,7 +85,7 @@ class TestPolarsToLoomType:
         )
 
     @pytest.mark.parametrize(
-        ("polars_dtype", "loom_type"),
+        ("polars_dtype", "frame_type"),
         [
             (pl.Array(pl.Int16, 3), ArrayType(LoomDtype.INT16, 3)),
             (pl.Decimal(18, 4), DecimalType(18, 4)),
@@ -95,17 +95,17 @@ class TestPolarsToLoomType:
             (pl.Int8, LoomDtype.INT8),
         ],
     )
-    def test_polars_to_loom_type_handles_rich_leaf_types(
+    def test_polars_to_frame_type_handles_rich_leaf_types(
         self,
         polars_dtype: pl.DataType,
-        loom_type: object,
+        frame_type: object,
     ) -> None:
-        assert polars_to_loom_type(polars_dtype) == loom_type
+        assert polars_to_frame_type(polars_dtype) == frame_type
 
 
-class TestLoomTypeToPolars:
-    def test_loom_type_to_polars_recurses_nested_structures(self) -> None:
-        result = loom_type_to_polars(
+class TestFrameTypeToPolars:
+    def test_frame_type_to_polars_recurses_nested_structures(self) -> None:
+        result = frame_type_to_polars(
             StructType(
                 fields=(
                     StructField("id", LoomDtype.INT64),
@@ -119,7 +119,7 @@ class TestLoomTypeToPolars:
         )
 
     @pytest.mark.parametrize(
-        ("loom_type", "polars_dtype"),
+        ("frame_type", "polars_dtype"),
         [
             (ArrayType(LoomDtype.FLOAT64, 2), pl.Array(pl.Float64(), 2)),
             (DecimalType(10, None), pl.Decimal(10, 0)),
@@ -129,13 +129,13 @@ class TestLoomTypeToPolars:
             (EnumType(("x", "y")), pl.Enum(["x", "y"])),
         ],
     )
-    def test_loom_type_to_polars_handles_rich_leaf_types(
+    def test_frame_type_to_polars_handles_rich_leaf_types(
         self,
-        loom_type: object,
+        frame_type: object,
         polars_dtype: pl.DataType,
     ) -> None:
-        assert loom_type_to_polars(loom_type) == polars_dtype  # type: ignore[arg-type]
+        assert frame_type_to_polars(frame_type) == polars_dtype  # type: ignore[arg-type]
 
-    def test_loom_type_to_polars_rejects_unknown_type(self) -> None:
-        with pytest.raises(TypeError, match="Unknown LoomType"):
-            loom_type_to_polars(object())  # type: ignore[arg-type]
+    def test_frame_type_to_polars_rejects_unknown_type(self) -> None:
+        with pytest.raises(TypeError, match="Unknown FrameType"):
+            frame_type_to_polars(object())  # type: ignore[arg-type]

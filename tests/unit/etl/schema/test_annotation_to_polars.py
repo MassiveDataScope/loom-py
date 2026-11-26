@@ -9,14 +9,14 @@ import msgspec
 import polars as pl
 import pytest
 
-from loom.etl.engines.polars import loom_type_to_polars, polars_to_loom_type
-from loom.etl.engines.polars._dtype import loom_type_to_polars as private_loom_type_to_polars
+from loom.etl.engines.polars import frame_type_to_polars, polars_to_frame_type
+from loom.etl.engines.polars._dtype import frame_type_to_polars as private_frame_type_to_polars
 from loom.etl.schema import (
     ListType,
     LoomDtype,
     StructField,
     StructType,
-    annotation_to_loom_type,
+    annotation_to_frame_type,
     resolve_schema,
 )
 
@@ -47,18 +47,18 @@ class TestAnnotationToPolars:
     def test_an_annotation_maps_to_the_polars_dtype_it_declares(
         self, annotation: object, dtype: pl.DataType
     ) -> None:
-        assert loom_type_to_polars(annotation_to_loom_type(annotation)) == dtype
+        assert frame_type_to_polars(annotation_to_frame_type(annotation)) == dtype
 
     def test_each_field_maps_as_resolve_schema_maps_it(self) -> None:
         by_name = {column.name: column.dtype for column in resolve_schema(_Order)}
 
         for name, annotation in typing.get_type_hints(_Order).items():
-            assert annotation_to_loom_type(annotation) == by_name[name]
+            assert annotation_to_frame_type(annotation) == by_name[name]
 
     def test_a_nested_annotation_round_trips_through_polars(self) -> None:
-        loom_type = annotation_to_loom_type(list[_Line])
+        frame_type = annotation_to_frame_type(list[_Line])
 
-        assert loom_type == ListType(
+        assert frame_type == ListType(
             inner=StructType(
                 fields=(
                     StructField(name="sku", dtype=LoomDtype.UTF8),
@@ -66,14 +66,14 @@ class TestAnnotationToPolars:
                 )
             )
         )
-        assert polars_to_loom_type(loom_type_to_polars(loom_type)) == loom_type
+        assert polars_to_frame_type(frame_type_to_polars(frame_type)) == frame_type
 
-    def test_an_annotation_without_a_loom_type_is_refused(self) -> None:
+    def test_an_annotation_without_a_frame_type_is_refused(self) -> None:
         with pytest.raises(TypeError, match="Cannot convert annotation"):
-            annotation_to_loom_type(complex)
+            annotation_to_frame_type(complex)
 
     def test_the_private_names_give_the_same_result(self) -> None:
-        loom_type = annotation_to_loom_type(list[int])
+        frame_type = annotation_to_frame_type(list[int])
 
-        assert loom_type == annotation_to_loom_type(list[int])
-        assert private_loom_type_to_polars(loom_type) == loom_type_to_polars(loom_type)
+        assert frame_type == annotation_to_frame_type(list[int])
+        assert private_frame_type_to_polars(frame_type) == frame_type_to_polars(frame_type)

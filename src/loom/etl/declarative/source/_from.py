@@ -148,7 +148,7 @@ class FromTable:
             column:   Name of the string column that contains the JSON payload.
             contract: Target type for the decoded column.  Accepted forms:
 
-                      * Any :data:`~loom.etl._schema.LoomType` instance
+                      * Any :data:`~loom.etl._schema.FrameType` instance
                         (e.g. ``StructType(...)``, ``ListType(...)``).
                       * An annotated class (``msgspec.Struct``, ``dataclass``,
                         or plain Python class) — converted to
@@ -168,8 +168,8 @@ class FromTable:
             events = FromTable("raw.events").parse_json("payload", Payload)
             events = FromTable("raw.events").parse_json("tags", list[str])
         """
-        loom_type = resolve_json_type(contract)
-        spec = JsonColumnSpec(column=column, loom_type=loom_type)
+        frame_type = resolve_json_type(contract)
+        spec = JsonColumnSpec(column=column, frame_type=frame_type)
         new = _clone_slots(self, FromTable, FromTable.__slots__)
         object.__setattr__(new, "_json_columns", self._json_columns + (spec,))
         return new
@@ -355,7 +355,7 @@ class FromFile:
             column:   Name of the string column that contains the JSON payload.
             contract: Target type for the decoded column.  Accepted forms:
 
-                      * Any :data:`~loom.etl._schema.LoomType` instance.
+                      * Any :data:`~loom.etl._schema.FrameType` instance.
                       * An annotated class — converted to
                         :class:`~loom.etl._schema.StructType`.
                       * ``list[SomeClass]`` — converted to
@@ -364,8 +364,8 @@ class FromFile:
         Returns:
             New ``FromFile`` with the JSON decode applied at read time.
         """
-        loom_type = resolve_json_type(contract)
-        spec = JsonColumnSpec(column=column, loom_type=loom_type)
+        frame_type = resolve_json_type(contract)
+        spec = JsonColumnSpec(column=column, frame_type=frame_type)
         new = _clone_slots(self, FromFile, FromFile.__slots__)
         object.__setattr__(new, "_json_columns", self._json_columns + (spec,))
         return new

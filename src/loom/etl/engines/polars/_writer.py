@@ -56,7 +56,7 @@ from loom.etl.storage._config import AuditConfig
 from loom.etl.storage._file_locator import FileLocator
 from loom.etl.storage._locator import TableLocator, _as_locator
 
-from ._dtype import loom_type_to_polars
+from ._dtype import frame_type_to_polars
 from ._file_writer import PolarsFileWriter
 from ._streaming import partition_rows_from_spool, spool_lazy_to_arrow_reader
 
@@ -848,4 +848,4 @@ def _partition_filter(
 
 def _polars_lineage_schema(record: LineageRecord) -> pl.Schema:
     cols = get_lineage_schema(type(record))
-    return pl.Schema({c.name: loom_type_to_polars(c.dtype) for c in cols})
+    return pl.Schema({c.name: frame_type_to_polars(c.dtype) for c in cols})

@@ -18,7 +18,7 @@ from loom.core.log_names import LogField
 from loom.core.observability.span import elapsed_ms
 from loom.etl.declarative.source._from_dynamodb import FromDynamoDB
 from loom.etl.declarative.source._specs import DynamoDBSourceSpec, ExtraFieldsMode
-from loom.etl.engines.polars._dtype import loom_type_to_polars
+from loom.etl.engines.polars._dtype import frame_type_to_polars
 from loom.etl.event import EtlEvent, EtlKey
 from loom.etl.io.sources._dynamodb_items import normalize_dynamo_item
 from loom.etl.io.sources._dynamodb_predicate import predicate_to_dynamo
@@ -106,7 +106,7 @@ class DynamoDBSourceReader:
     ) -> tuple[dict[str, pl.DataType], frozenset[str]]:
         if not spec.schema:
             return {}, frozenset()
-        field_dtypes = {col.name: loom_type_to_polars(col.dtype) for col in spec.schema}
+        field_dtypes = {col.name: frame_type_to_polars(col.dtype) for col in spec.schema}
         str_field_names = frozenset(col.name for col in spec.schema if col.dtype == LoomDtype.UTF8)
         return (field_dtypes, str_field_names)
 

@@ -17,7 +17,7 @@ from loom.core.errors import InvalidValue
 from loom.etl.declarative._format import Format
 from loom.etl.declarative._read_options import ReadOptions
 from loom.etl.declarative.expr._refs import TableRef
-from loom.etl.schema._schema import ColumnSchema, LoomType
+from loom.etl.schema._schema import ColumnSchema, FrameType
 
 if TYPE_CHECKING:
     from loom.core.expr.nodes import ExprNode
@@ -65,11 +65,11 @@ class JsonColumnSpec:
 
     Args:
         column:    Name of the string column that holds the JSON payload.
-        loom_type: Target :data:`~loom.etl._schema.LoomType` to decode into.
+        frame_type: Target :data:`~loom.etl._schema.FrameType` to decode into.
     """
 
     column: str
-    loom_type: LoomType
+    frame_type: FrameType
 
 
 @dataclass(frozen=True)

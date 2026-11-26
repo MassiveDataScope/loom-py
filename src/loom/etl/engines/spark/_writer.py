@@ -37,7 +37,7 @@ from loom.etl.engines._merge import (
 from loom.etl.engines._path_template import resolve_file_uri
 from loom.etl.engines._predicate import predicate_to_sql
 from loom.etl.engines._write_policy import _WritePolicy
-from loom.etl.engines.spark._dtype import loom_type_to_spark
+from loom.etl.engines.spark._dtype import frame_type_to_spark
 from loom.etl.engines.spark._historify import SparkHistorifyOps
 from loom.etl.engines.spark._schema import SparkPhysicalSchema, apply_schema_spark
 from loom.etl.event import EtlEvent
@@ -553,5 +553,5 @@ def _sql_literal(value: Any) -> str:
 def _spark_record_schema(record: LineageRecord) -> T.StructType:
     cols = get_lineage_schema(type(record))
     return T.StructType(
-        [T.StructField(c.name, loom_type_to_spark(c.dtype), c.nullable) for c in cols]
+        [T.StructField(c.name, frame_type_to_spark(c.dtype), c.nullable) for c in cols]
     )

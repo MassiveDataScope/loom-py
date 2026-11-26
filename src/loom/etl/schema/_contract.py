@@ -2,7 +2,7 @@
 
 A *contract* is any annotated class (``msgspec.Struct``, ``dataclass``, or
 plain Python class with field annotations) or an existing
-:data:`~loom.etl._schema.LoomType` / ``tuple[ColumnSchema, ...]``.
+:data:`~loom.etl._schema.FrameType` / ``tuple[ColumnSchema, ...]``.
 
 Public entry points
 -------------------
@@ -14,12 +14,12 @@ Public entry points
     an explicit tuple or an annotated class.
 
 ``resolve_json_type``
-    Converts a JSON column contract to a single :data:`~loom.etl._schema.LoomType`.
+    Converts a JSON column contract to a single :data:`~loom.etl._schema.FrameType`.
     Used by :meth:`~loom.etl._source.FromTable.parse_json` and
     :meth:`~loom.etl._source.FromFile.parse_json`.
 
-``annotation_to_loom_type``
-    Converts one Python type annotation to a :data:`~loom.etl._schema.LoomType`.
+``annotation_to_frame_type``
+    Converts one Python type annotation to a :data:`~loom.etl._schema.FrameType`.
 
 Supported annotation forms
 --------------------------
@@ -29,7 +29,7 @@ Supported annotation forms
 * Generic lists: ``list[X]`` → :class:`~loom.etl._schema.ListType`.
 * ``Optional[X]`` / ``X | None`` → inner type (nullable is the default anyway).
 * Annotated class (Struct / dataclass / plain) → :class:`~loom.etl._schema.StructType`.
-* Existing :data:`~loom.etl._schema.LoomType` instances → passed through.
+* Existing :data:`~loom.etl._schema.FrameType` instances → passed through.
 
 Internal module — not part of the public API.
 """
@@ -50,9 +50,9 @@ from loom.etl.schema._schema import (
     DecimalType,
     DurationType,
     EnumType,
+    FrameType,
     ListType,
     LoomDtype,
-    LoomType,
     StructField,
     StructType,
 )
@@ -60,8 +60,8 @@ from loom.etl.schema._schema import (
 SchemaContract: TypeAlias = tuple[ColumnSchema, ...] | type[Any]
 """Contract accepted by ``with_schema``: a column-schema tuple or an annotated class."""
 
-JsonContract: TypeAlias = LoomType | type[Any]
-"""Contract accepted by ``parse_json``: a :data:`LoomType`, an annotated class or ``list[X]``."""
+JsonContract: TypeAlias = FrameType | type[Any]
+"""Contract accepted by ``parse_json``: a :data:`FrameType`, an annotated class or ``list[X]``."""
 
 
 _PY_TO_LOOM: dict[type, LoomDtype] = {
@@ -109,35 +109,35 @@ def resolve_schema(contract: tuple[ColumnSchema, ...] | type[Any]) -> tuple[Colu
     )
 
 
-def resolve_json_type(contract: Any) -> LoomType:
-    """Convert a JSON column contract to a :data:`~loom.etl._schema.LoomType`.
+def resolve_json_type(contract: Any) -> FrameType:
+    """Convert a JSON column contract to a :data:`~loom.etl._schema.FrameType`.
 
     Args:
-        contract: A :data:`~loom.etl._schema.LoomType` (returned as-is),
+        contract: A :data:`~loom.etl._schema.FrameType` (returned as-is),
                   an annotated class (converted to
                   :class:`~loom.etl._schema.StructType`), or a ``list[X]`` generic alias
                   (converted to :class:`~loom.etl._schema.ListType`).
 
     Returns:
-        :data:`~loom.etl._schema.LoomType` for use with Polars
+        :data:`~loom.etl._schema.FrameType` for use with Polars
         ``str.json_decode`` or Spark ``from_json``.
 
     Raises:
-        InvalidType: If *contract* cannot be converted to a LoomType.
+        InvalidType: If *contract* cannot be converted to a FrameType.
     """
     if isinstance(contract, _LOOM_INSTANCES):
         return contract
     if typing.get_origin(contract) is list:
         args = typing.get_args(contract)
-        inner = annotation_to_loom_type(args[0]) if args else LoomDtype.UTF8
+        inner = annotation_to_frame_type(args[0]) if args else LoomDtype.UTF8
         return ListType(inner=inner)
     if isinstance(contract, type):
         return _class_to_struct_type(contract)
-    raise InvalidType("Expected a LoomType, an annotated class, or list[...] generic.")
+    raise InvalidType("Expected a FrameType, an annotated class, or list[...] generic.")
 
 
-def annotation_to_loom_type(ann: Any) -> LoomType:
-    """Convert a Python type annotation to the :data:`~loom.etl.schema.LoomType` it declares.
+def annotation_to_frame_type(ann: Any) -> FrameType:
+    """Convert a Python type annotation to the :data:`~loom.etl.schema.FrameType` it declares.
 
     This is the mapping :func:`resolve_schema` applies to each field of an
     annotated class. ``X | None`` and ``Optional[X]`` map as ``X``.
@@ -146,17 +146,17 @@ def annotation_to_loom_type(ann: Any) -> LoomType:
         ann: ``int``, ``float``, ``str``, ``bool``, ``bytes``,
              ``datetime.datetime``, ``datetime.date``, ``list[X]``, an
              annotated class (mapped to a :class:`~loom.etl.schema.StructType`)
-             or a :data:`~loom.etl.schema.LoomType` (returned as-is).
+             or a :data:`~loom.etl.schema.FrameType` (returned as-is).
 
     Returns:
-        The matching :data:`~loom.etl.schema.LoomType`.
+        The matching :data:`~loom.etl.schema.FrameType`.
 
     Raises:
         InvalidType: If *ann* has no Loom equivalent.
 
     Example::
 
-        >>> annotation_to_loom_type(list[int] | None)
+        >>> annotation_to_frame_type(list[int] | None)
         ListType(inner=<LoomDtype.INT64: 'Int64'>)
     """
     if isinstance(ann, _LOOM_INSTANCES):
@@ -165,32 +165,32 @@ def annotation_to_loom_type(ann: Any) -> LoomType:
         return _PY_TO_LOOM[ann]
     is_opt, inner = _strip_optional(ann)
     if is_opt:
-        return annotation_to_loom_type(inner)
+        return annotation_to_frame_type(inner)
     origin = typing.get_origin(ann)
     if origin is list:
         args = typing.get_args(ann)
-        inner_type = annotation_to_loom_type(args[0]) if args else LoomDtype.UTF8
+        inner_type = annotation_to_frame_type(args[0]) if args else LoomDtype.UTF8
         return ListType(inner=inner_type)
     if isinstance(ann, type) and hasattr(ann, "__annotations__"):
         return _class_to_struct_type(ann)
     raise InvalidType(
-        "Cannot convert annotation to LoomType. "
+        "Cannot convert annotation to FrameType. "
         "Supported: int, float, str, bool, bytes, datetime, date, list[X], "
-        "LoomType instances, and annotated classes."
+        "FrameType instances, and annotated classes."
     )
 
 
 def _class_to_schema(cls: type[Any]) -> tuple[ColumnSchema, ...]:
     hints = _get_type_hints(cls)
     return tuple(
-        ColumnSchema(name=name, dtype=annotation_to_loom_type(ann)) for name, ann in hints.items()
+        ColumnSchema(name=name, dtype=annotation_to_frame_type(ann)) for name, ann in hints.items()
     )
 
 
 def _class_to_struct_type(cls: type[Any]) -> StructType:
     hints = _get_type_hints(cls)
     fields = tuple(
-        StructField(name=name, dtype=annotation_to_loom_type(ann)) for name, ann in hints.items()
+        StructField(name=name, dtype=annotation_to_frame_type(ann)) for name, ann in hints.items()
     )
     return StructType(fields=fields)
 

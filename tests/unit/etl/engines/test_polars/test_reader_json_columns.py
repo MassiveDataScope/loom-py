@@ -46,7 +46,7 @@ class TestDecodeJsonColumnShapes:
                 StructField("amount", LoomDtype.FLOAT64),
             )
         )
-        jc = JsonColumnSpec(column="payload", loom_type=struct_type)
+        jc = JsonColumnSpec(column="payload", frame_type=struct_type)
 
         rows = [
             {"id": 1, "payload": _json_str({"order_id": 10, "amount": 99.5})},
@@ -67,7 +67,7 @@ class TestDecodeJsonColumnShapes:
     # ---------------------------------------------------------------------------
 
     def test_decode_json_columns_list_of_primitives(self) -> None:
-        jc = JsonColumnSpec(column="tags", loom_type=ListType(inner=LoomDtype.UTF8))
+        jc = JsonColumnSpec(column="tags", frame_type=ListType(inner=LoomDtype.UTF8))
 
         rows = [
             {"id": 1, "tags": _json_str(["a", "b"])},
@@ -90,7 +90,7 @@ class TestDecodeJsonColumnShapes:
                 StructField("count", LoomDtype.INT64),
             )
         )
-        jc = JsonColumnSpec(column="events", loom_type=ListType(inner=inner))
+        jc = JsonColumnSpec(column="events", frame_type=ListType(inner=inner))
 
         rows = [
             {"id": 1, "events": _json_str([{"kind": "click", "count": 3}])},
@@ -112,9 +112,9 @@ class TestDecodeJsonColumnShapes:
     def test_decode_json_columns_multiple_columns(self) -> None:
         jc_payload = JsonColumnSpec(
             column="payload",
-            loom_type=StructType(fields=(StructField("x", LoomDtype.INT64),)),
+            frame_type=StructType(fields=(StructField("x", LoomDtype.INT64),)),
         )
-        jc_tags = JsonColumnSpec(column="tags", loom_type=ListType(inner=LoomDtype.UTF8))
+        jc_tags = JsonColumnSpec(column="tags", frame_type=ListType(inner=LoomDtype.UTF8))
 
         rows = [{"payload": '{"x": 5}', "tags": '["a","b"]'}]
         frame = pl.DataFrame(rows).lazy()
@@ -130,7 +130,7 @@ class TestDecodeJsonColumnShapes:
     def test_decode_json_columns_preserves_non_json_columns(self) -> None:
         jc = JsonColumnSpec(
             column="meta",
-            loom_type=StructType(fields=(StructField("k", LoomDtype.UTF8),)),
+            frame_type=StructType(fields=(StructField("k", LoomDtype.UTF8),)),
         )
         rows = [{"id": 42, "name": "alice", "meta": '{"k": "v"}'}]
         frame = pl.DataFrame(rows).lazy()
@@ -157,7 +157,7 @@ class TestDecodeJsonColumnShapes:
                 StructField("point", inner_struct),
             )
         )
-        jc = JsonColumnSpec(column="loc", loom_type=outer_struct)
+        jc = JsonColumnSpec(column="loc", frame_type=outer_struct)
 
         rows = [{"loc": _json_str({"name": "HQ", "point": {"lat": 40.7, "lon": -74.0}})}]
         frame = pl.DataFrame(rows).lazy()
@@ -175,7 +175,7 @@ class TestDecodeJsonColumnShapes:
     def test_decode_json_columns_null_json_value(self) -> None:
         jc = JsonColumnSpec(
             column="payload",
-            loom_type=StructType(fields=(StructField("x", LoomDtype.INT64),)),
+            frame_type=StructType(fields=(StructField("x", LoomDtype.INT64),)),
         )
         rows = [{"payload": "null"}, {"payload": '{"x": 1}'}]
         frame = pl.DataFrame(rows).lazy()
@@ -194,7 +194,7 @@ class TestPolymorphicJsonNormalization:
     """Verify that decode_json_columns tolerates polymorphic JSON fields in the same batch."""
 
     def test_t1_string_field_with_json_object_coerces_to_string(self) -> None:
-        jc = JsonColumnSpec(column="origin", loom_type=LoomDtype.UTF8)
+        jc = JsonColumnSpec(column="origin", frame_type=LoomDtype.UTF8)
         rows = [
             {"id": 1, "origin": '"web"'},
             {"id": 2, "origin": '{"source": "web", "medium": "referral"}'},
@@ -205,7 +205,7 @@ class TestPolymorphicJsonNormalization:
         assert json.loads(result["origin"][1]) == {"source": "web", "medium": "referral"}
 
     def test_t2_string_field_with_json_array_coerces_to_string(self) -> None:
-        jc = JsonColumnSpec(column="tag", loom_type=LoomDtype.UTF8)
+        jc = JsonColumnSpec(column="tag", frame_type=LoomDtype.UTF8)
         rows = [
             {"id": 1, "tag": '"featured"'},
             {"id": 2, "tag": '["sale", "new"]'},
@@ -217,7 +217,7 @@ class TestPolymorphicJsonNormalization:
 
     def test_t3_struct_field_with_array_value_produces_null(self) -> None:
         struct_type = StructType(fields=(StructField("user_id", LoomDtype.INT64),))
-        jc = JsonColumnSpec(column="profile", loom_type=struct_type)
+        jc = JsonColumnSpec(column="profile", frame_type=struct_type)
         rows = [
             {"id": 1, "profile": '{"user_id": 1}'},
             {"id": 2, "profile": "[1, 2, 3]"},
@@ -234,7 +234,7 @@ class TestPolymorphicJsonNormalization:
                 StructField("meta", LoomDtype.UTF8),
             )
         )
-        jc = JsonColumnSpec(column="event", loom_type=struct_type)
+        jc = JsonColumnSpec(column="event", frame_type=struct_type)
         rows = [
             {"id": 1, "event": '{"name": "click", "meta": "button_1"}'},
             {
@@ -262,7 +262,7 @@ class TestPolymorphicJsonNormalization:
                 StructField("context", inner_type),
             )
         )
-        jc = JsonColumnSpec(column="record", loom_type=outer_type)
+        jc = JsonColumnSpec(column="record", frame_type=outer_type)
         rows = [
             {
                 "id": 1,
@@ -287,7 +287,7 @@ class TestPolymorphicJsonNormalization:
         }
 
     def test_t6_list_field_with_scalar_value_produces_null(self) -> None:
-        jc = JsonColumnSpec(column="tags", loom_type=ListType(inner=LoomDtype.UTF8))
+        jc = JsonColumnSpec(column="tags", frame_type=ListType(inner=LoomDtype.UTF8))
         rows = [
             {"id": 1, "tags": '["python", "data"]'},
             {"id": 2, "tags": '"single_tag"'},
@@ -304,7 +304,7 @@ class TestPolymorphicJsonNormalization:
                 StructField("val", LoomDtype.UTF8),
             )
         )
-        jc = JsonColumnSpec(column="attrs", loom_type=ListType(inner=item_type))
+        jc = JsonColumnSpec(column="attrs", frame_type=ListType(inner=item_type))
         rows = [
             {"id": 1, "attrs": '[{"key": "color", "val": "blue"}]'},
             {"id": 2, "attrs": '[{"key": "config", "val": {"theme": "dark", "lang": "en"}}]'},
@@ -315,7 +315,7 @@ class TestPolymorphicJsonNormalization:
         assert json.loads(result["attrs"][1].to_list()[0]["val"]) == {"theme": "dark", "lang": "en"}
 
     def test_t8_null_rows_propagate_in_polymorphic_batch(self) -> None:
-        jc = JsonColumnSpec(column="status", loom_type=LoomDtype.UTF8)
+        jc = JsonColumnSpec(column="status", frame_type=LoomDtype.UTF8)
         rows = [
             {"id": 1, "status": None},
             {"id": 2, "status": '"active"'},
@@ -328,8 +328,8 @@ class TestPolymorphicJsonNormalization:
         assert json.loads(result["status"][2]) == {"state": "pending", "since": "2024-01-01"}
 
     def test_t9_multiple_columns_one_polymorphic(self) -> None:
-        jc_origin = JsonColumnSpec(column="origin", loom_type=LoomDtype.UTF8)
-        jc_tags = JsonColumnSpec(column="tags", loom_type=ListType(inner=LoomDtype.UTF8))
+        jc_origin = JsonColumnSpec(column="origin", frame_type=LoomDtype.UTF8)
+        jc_tags = JsonColumnSpec(column="tags", frame_type=ListType(inner=LoomDtype.UTF8))
         rows = [
             {"id": 1, "origin": '"web"', "tags": '["a"]'},
             {"id": 2, "origin": '{"source": "email", "campaign": "q4"}', "tags": '["b", "c"]'},
@@ -349,7 +349,7 @@ class TestPolymorphicJsonNormalization:
                 StructField("price", LoomDtype.FLOAT64),
             )
         )
-        jc = JsonColumnSpec(column="product", loom_type=struct_type)
+        jc = JsonColumnSpec(column="product", frame_type=struct_type)
         rows = [
             {"id": 1, "product": '{"product_id": 10, "name": "Widget", "price": 9.99}'},
             {"id": 2, "product": '{"product_id": 20, "name": "Gadget", "price": 49.0}'},
@@ -374,7 +374,7 @@ class TestNullColumnTypeSafety:
 
     def test_all_null_string_column_struct_has_declared_dtype(self) -> None:
         struct_type = StructType(fields=(StructField("user_id", LoomDtype.INT64),))
-        jc = JsonColumnSpec(column="payload", loom_type=struct_type)
+        jc = JsonColumnSpec(column="payload", frame_type=struct_type)
         frame = pl.DataFrame({"payload": pl.Series([None, None], dtype=pl.String)}).lazy()
         result = decode_json_columns(frame, (jc,)).collect()
 
@@ -384,7 +384,7 @@ class TestNullColumnTypeSafety:
 
     def test_null_dtype_column_struct_has_declared_dtype(self) -> None:
         struct_type = StructType(fields=(StructField("amount", LoomDtype.FLOAT64),))
-        jc = JsonColumnSpec(column="data", loom_type=struct_type)
+        jc = JsonColumnSpec(column="data", frame_type=struct_type)
         # Null dtype — simulates optional_col()/pl.lit(None) columns from pipelines
         frame = pl.DataFrame({"data": pl.Series([None, None], dtype=pl.Null)}).lazy()
         result = decode_json_columns(frame, (jc,)).collect()
@@ -392,21 +392,21 @@ class TestNullColumnTypeSafety:
         assert result["data"].dtype == pl.Struct([pl.Field("amount", pl.Float64)])
 
     def test_all_null_string_column_list_has_declared_dtype(self) -> None:
-        jc = JsonColumnSpec(column="tags", loom_type=ListType(inner=LoomDtype.UTF8))
+        jc = JsonColumnSpec(column="tags", frame_type=ListType(inner=LoomDtype.UTF8))
         frame = pl.DataFrame({"tags": pl.Series([None, None], dtype=pl.String)}).lazy()
         result = decode_json_columns(frame, (jc,)).collect()
 
         assert result["tags"].dtype == pl.List(pl.String)
 
     def test_null_dtype_column_primitive_has_declared_dtype(self) -> None:
-        jc = JsonColumnSpec(column="label", loom_type=LoomDtype.UTF8)
+        jc = JsonColumnSpec(column="label", frame_type=LoomDtype.UTF8)
         frame = pl.DataFrame({"label": pl.Series([None], dtype=pl.Null)}).lazy()
         result = decode_json_columns(frame, (jc,)).collect()
 
         assert result["label"].dtype == pl.String
 
     def test_mixed_null_and_valid_rows_declared_dtype_preserved(self) -> None:
-        jc = JsonColumnSpec(column="payload", loom_type=LoomDtype.UTF8)
+        jc = JsonColumnSpec(column="payload", frame_type=LoomDtype.UTF8)
         rows = [{"payload": None}, {"payload": '"active"'}, {"payload": None}]
         result = decode_json_columns(pl.DataFrame(rows).lazy(), (jc,)).collect()
 
