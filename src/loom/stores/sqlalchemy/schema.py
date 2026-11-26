@@ -5,7 +5,7 @@ from collections import deque
 from collections.abc import Mapping
 from dataclasses import dataclass, field
 from enum import Enum
-from typing import Any, Final
+from typing import Any, Final, cast
 
 import msgspec
 from sqlalchemy import (
@@ -25,6 +25,7 @@ from sqlalchemy import (
     LargeBinary,
     MetaData,
     Numeric,
+    SmallInteger,
     String,
     Table,
     Text,
@@ -45,7 +46,7 @@ from sqlalchemy.sql.naming import conv
 from sqlalchemy.sql.schema import DEFAULT_NAMING_CONVENTION
 
 from loom.core.config import ConfigError
-from loom.core.errors import InvalidType, InvalidValue
+from loom.core.errors import InvalidValue
 from loom.core.model.audited import AuditedTable, AuditedTables, audited_table, is_audited
 from loom.core.model.enums import Cardinality, OnDelete, ServerDefault, ServerOnUpdate
 from loom.core.model.field import Field
@@ -72,30 +73,33 @@ from loom.core.model.introspection import (
 from loom.core.model.privilege import READ_WRITE, Privilege
 from loom.core.model.relation import Relation
 from loom.core.model.scoped import ScopeColumn, ScopedTable
-from loom.core.model.types import ColumnType
+from loom.core.model.types import ColumnKind, ColumnType
 from loom.core.projection.plan import ProjectionStep, build_projection_plan_from_steps
 from loom.core.schema_names import MAX_IDENTIFIER_LENGTH, naming_convention
 from loom.stores.sqlalchemy.core_model import CoreModel, CoreProfilePlan, CoreRelationStep
 from loom.stores.sqlalchemy.scoped_ddl import SCHEMA_KEY, register_listeners
 
-_SA_TYPE_MAP: dict[str, type] = {
-    "String": String,
-    "Integer": Integer,
-    "BigInteger": BigInteger,
-    "Float": Float,
-    "Boolean": Boolean,
-    "Text": Text,
-    "JSON": JSON,
-    "Bytes": LargeBinary,
-    "Date": Date,
-    "DateTime": DateTime,
-    "Time": Time,
-    "Numeric": Numeric,
-    "Uuid": Uuid,
-    "Postgres.JSONB": PG_JSONB,
-    "Postgres.UUID": PG_UUID,
-    "Postgres.TSVECTOR": PG_TSVECTOR,
-    "Postgres.INET": PG_INET,
+_SA_TYPE_MAP: dict[ColumnKind, type] = {
+    ColumnKind.STRING: String,
+    ColumnKind.TEXT: Text,
+    ColumnKind.TINY_INTEGER: SmallInteger,
+    ColumnKind.SMALL_INTEGER: SmallInteger,
+    ColumnKind.INTEGER: Integer,
+    ColumnKind.BIG_INTEGER: BigInteger,
+    ColumnKind.FLOAT: Float,
+    ColumnKind.BOOLEAN: Boolean,
+    ColumnKind.NUMERIC: Numeric,
+    ColumnKind.JSON: JSON,
+    ColumnKind.BYTES: LargeBinary,
+    ColumnKind.DATE: Date,
+    ColumnKind.TIME: Time,
+    ColumnKind.DATETIME: DateTime,
+    ColumnKind.UUID: Uuid,
+    ColumnKind.POSTGRES_JSONB: PG_JSONB,
+    ColumnKind.POSTGRES_UUID: PG_UUID,
+    ColumnKind.POSTGRES_TSVECTOR: PG_TSVECTOR,
+    ColumnKind.POSTGRES_INET: PG_INET,
+    ColumnKind.POSTGRES_ARRAY: PG_ARRAY,
 }
 
 _SERVER_DEFAULT_MAP = {
@@ -176,18 +180,24 @@ def audited_tables(metadata: MetaData | None = None) -> AuditedTables:
 
 
 def _build_sa_column_type(col_type: ColumnType) -> Any:
-    if col_type.type_name == "Postgres.ARRAY":
-        if len(col_type.args) != 1:
-            raise InvalidValue("Postgres.ARRAY expects one inner ColumnType")
-        inner = col_type.args[0]
-        if not isinstance(inner, ColumnType):
-            raise InvalidType("Postgres.ARRAY inner type must be ColumnType")
-        return PG_ARRAY(_build_sa_column_type(inner))
-
     sa_type_cls = _SA_TYPE_MAP.get(col_type.type_name)
     if sa_type_cls is None:
         raise InvalidValue(f"Unsupported column type: {col_type.type_name}")
-    return sa_type_cls(*col_type.args, **dict(col_type.kwargs))
+    args = tuple(
+        _build_sa_column_type(arg) if isinstance(arg, ColumnType) else arg for arg in col_type.args
+    )
+    return sa_type_cls(*args, **dict(col_type.kwargs))
+
+
+def _rowid_compatible(col_type: Any) -> Any:
+    """Make a ``BIGINT`` primary key an ``INTEGER`` on SQLite, which is 64-bit there.
+
+    SQLite auto-increments only an ``INTEGER PRIMARY KEY``, so a ``BIGINT`` one
+    would never receive an id.
+    """
+    if isinstance(col_type, BigInteger):
+        return col_type.with_variant(Integer(), "sqlite")
+    return col_type
 
 
 def _build_field_kwargs(field: Field) -> dict[str, Any]:
@@ -214,8 +224,10 @@ def _build_field_kwargs(field: Field) -> dict[str, Any]:
 
 
 def _build_mapped_column(field_info: Any, *, inline_foreign_key: bool = True) -> Any:
-    col_type = _build_sa_column_type(field_info.column_type)
     column: Field = field_info.field
+    col_type = _build_sa_column_type(field_info.column_type)
+    if column.primary_key:
+        col_type = _rowid_compatible(col_type)
     kwargs = _build_field_kwargs(column)
 
     if column.foreign_key is not None and inline_foreign_key:
@@ -335,19 +347,26 @@ def _audited(struct_cls: type, table: Any) -> AuditedTable:
 def _refuse_undeclared_column_types(
     struct_cls: type, column_fields: Mapping[str, ColumnFieldInfo]
 ) -> None:
-    """Refuse a ``Decimal``, plain enum or ``Literal`` field whose column type is not declared.
+    """Refuse a field whose column type is neither declared nor inferred.
 
-    loom does not infer a SQL type from the values of an enum or a ``Literal``,
-    nor a precision and scale for a ``Decimal``: Postgres rounds a value to the
-    declared scale and refuses one past the declared precision.
+    loom infers no SQL type from the values of an enum or a ``Literal``, nor a
+    precision and scale for a ``Decimal``: Postgres rounds a value to the
+    declared scale and refuses one past the declared precision. A class that
+    is not a record has no column either; the fix is to declare the column or
+    to store a type loom infers and convert it in the domain.
+
+    Raises:
+        InvalidValue: Naming the model, the field, why no type is inferred and
+            how to declare one.
     """
     for name, info in column_fields.items():
-        if info.needs_declared_type:
+        if info.resolved.is_undeclared:
             raise InvalidValue(
-                f"{struct_cls.__name__}.{name}: no column type is inferred from a Decimal, "
-                "plain Enum or Literal annotation; declare it, e.g. "
+                f"{struct_cls.__name__}.{name}: no column type is inferred from "
+                f"{info.resolved.reason}; declare it, e.g. "
                 "`Annotated[Decimal, Numeric(precision=12, scale=2)]` for a Decimal, "
-                "`ColumnField(String(20))` for an Enum or Literal"
+                "`ColumnField(String(20))` for an Enum or Literal, `ColumnField(JSON)` to store "
+                "it as JSON, or store a str, int or Decimal and convert it in the domain"
             )
 
 
@@ -361,13 +380,13 @@ def sa_table_for(struct_cls: type, name: str) -> Table:
     nowhere.
 
     Raises:
-        InvalidValue: If a ``Decimal``, plain enum or ``Literal`` field declares no
-            column type.
+        InvalidValue: If a field is undeclared: a ``Decimal``, plain enum,
+            ``Literal`` or other type with no inferred column and no declared one.
     """
     column_fields = get_column_fields(struct_cls)
     _refuse_undeclared_column_types(struct_cls, column_fields)
     columns = [
-        Column(field_name, _build_sa_column_type(info.column_type))
+        Column(field_name, _build_sa_column_type(cast(ColumnType, info.column_type)))
         for field_name, info in column_fields.items()
     ]
     return Table(name, MetaData(), *columns)

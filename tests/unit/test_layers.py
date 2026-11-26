@@ -34,10 +34,19 @@ _RULES: dict[str, tuple[tuple[str, ...], tuple[str, ...]]] = {
             "loom.jobs",
             "loom.stores",
             "loom.connections",
+            "loom.etl",
+            "loom.streaming",
             "sqlalchemy",
+            "polars",
+            "pyspark",
+            "deltalake",
+            "pyarrow",
+            "adbc_driver_manager",
         ),
         (),
     ),
+    # The column vocabulary is a leaf: it reads no model module and encodes nothing (spec 023, D3).
+    "loom.core.model.types": (("loom",), ("loom.core.errors", "loom.core.model.types")),
     # No transport but the JobService adapter and the ones app.entry selects, lazily.
     "loom.composition": (
         ("fastapi", "starlette", "celery", "loom.rest", "loom.celery", "loom.serverless"),
@@ -90,13 +99,23 @@ def _within(module: str, package: str) -> bool:
     return module == package or module.startswith(package + ".")
 
 
+def _layer_files(layer: str) -> list[Path]:
+    """The source files of *layer*, a package or a single module."""
+    location = _SRC / Path(*layer.split("."))
+    if location.is_dir():
+        return sorted(location.rglob("*.py"))
+    return [location.with_suffix(".py")] if location.with_suffix(".py").is_file() else []
+
+
 @pytest.mark.parametrize(("layer", "rule"), _RULES.items(), ids=list(_RULES))
 def test_a_layer_imports_nothing_outside_it(
     layer: str, rule: tuple[tuple[str, ...], tuple[str, ...]]
 ) -> None:
     forbidden, allowed = rule
     offenders = []
-    for path in sorted((_SRC / Path(*layer.split("."))).rglob("*.py")):
+    files = _layer_files(layer)
+    assert files, f"{layer} matches no source file"
+    for path in files:
         module, package = _module_of(path)
         tree = parsed(path)
         for imported in sorted(imported_modules(tree, package=package)):
@@ -106,6 +125,16 @@ def test_a_layer_imports_nothing_outside_it(
                 offenders.append(f"{module} imports {imported}")
 
     assert offenders == []
+
+
+def test_a_layer_naming_a_single_module_is_that_module() -> None:
+    assert _layer_files("loom.core.identity.context") == [
+        _SRC / "loom" / "core" / "identity" / "context.py"
+    ]
+
+
+def test_a_layer_naming_nothing_matches_no_file() -> None:
+    assert _layer_files("loom.core.identity.no_such_module") == []
 
 
 def test_the_check_sees_function_local_and_relative_imports() -> None:

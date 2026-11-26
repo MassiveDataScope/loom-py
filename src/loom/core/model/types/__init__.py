@@ -1,12 +1,39 @@
 from __future__ import annotations
 
 import sys
+from collections.abc import Mapping
 from dataclasses import dataclass
-from typing import Annotated, Any
+from enum import StrEnum
+from typing import Annotated, Any, Final
 
 import msgspec
 
 from loom.core.errors import InvalidValue
+
+
+class ColumnKind(StrEnum):
+    """Every kind of column loom can describe; the registry the translators are checked against."""
+
+    STRING = "String"
+    TEXT = "Text"
+    INTEGER = "Integer"
+    BIG_INTEGER = "BigInteger"
+    TINY_INTEGER = "TinyInteger"
+    SMALL_INTEGER = "SmallInteger"
+    FLOAT = "Float"
+    BOOLEAN = "Boolean"
+    NUMERIC = "Numeric"
+    JSON = "JSON"
+    BYTES = "Bytes"
+    DATE = "Date"
+    TIME = "Time"
+    DATETIME = "DateTime"
+    UUID = "Uuid"
+    POSTGRES_JSONB = "Postgres.JSONB"
+    POSTGRES_UUID = "Postgres.UUID"
+    POSTGRES_TSVECTOR = "Postgres.TSVECTOR"
+    POSTGRES_INET = "Postgres.INET"
+    POSTGRES_ARRAY = "Postgres.ARRAY"
 
 
 @dataclass(frozen=True, slots=True)
@@ -17,7 +44,7 @@ class ColumnType:
     held as ``(name, value)`` pairs.
     """
 
-    type_name: str
+    type_name: ColumnKind
     args: tuple[Any, ...] = ()
     kwargs: tuple[tuple[str, Any], ...] = ()
 
@@ -25,48 +52,63 @@ class ColumnType:
         """Return the keyword option *name*, or *default* when it is not set."""
         return dict(self.kwargs).get(name, default)
 
+    def portable(self) -> ColumnType | None:
+        """The portable column this type is stored as outside its dialect.
+
+        A portable type is its own counterpart; a Postgres type answers the
+        portable one it stands for, and ``None`` when it has none. An array is
+        a ``JSON`` list of its item type.
+        """
+        return _PORTABLE_COUNTERPART.get(self.type_name, self)
+
 
 def String(length: int | None = None) -> ColumnType:
     if length is None:
-        return ColumnType("String")
-    return ColumnType("String", args=(length,))
+        return ColumnType(ColumnKind.STRING)
+    return ColumnType(ColumnKind.STRING, args=(length,))
 
 
-Integer = ColumnType("Integer")
-BigInteger = ColumnType("BigInteger")
-Float = ColumnType("Float")
-Boolean = ColumnType("Boolean")
-Text = ColumnType("Text")
-JSON = ColumnType("JSON")
-Bytes = ColumnType("Bytes")
-Date = ColumnType("Date")
-Time = ColumnType("Time")
-Uuid = ColumnType("Uuid")
+TinyInteger = ColumnType(ColumnKind.TINY_INTEGER)
+SmallInteger = ColumnType(ColumnKind.SMALL_INTEGER)
+Integer = ColumnType(ColumnKind.INTEGER)
+BigInteger = ColumnType(ColumnKind.BIG_INTEGER)
+Float = ColumnType(ColumnKind.FLOAT)
+Boolean = ColumnType(ColumnKind.BOOLEAN)
+Text = ColumnType(ColumnKind.TEXT)
+JSON = ColumnType(ColumnKind.JSON)
+Bytes = ColumnType(ColumnKind.BYTES)
+Date = ColumnType(ColumnKind.DATE)
+Time = ColumnType(ColumnKind.TIME)
+Uuid = ColumnType(ColumnKind.UUID)
 
 
 def DateTime(*, tz: bool = True) -> ColumnType:
-    return ColumnType("DateTime", kwargs=(("timezone", tz),))
+    return ColumnType(ColumnKind.DATETIME, kwargs=(("timezone", tz),))
 
 
 def Numeric(*, precision: int | None = None, scale: int | None = None) -> ColumnType:
     """A ``NUMERIC`` column; with no precision it is unbounded.
 
     Raises:
-        InvalidValue: A scale is given without a precision; SQLAlchemy would
-            ignore it.
+        InvalidValue: A scale is given without a precision, the precision is
+            below 1, or the scale is outside ``0..precision``.
     """
     if scale is not None and precision is None:
         raise InvalidValue("Numeric: a scale needs a precision")
-    return ColumnType("Numeric", kwargs=(("precision", precision), ("scale", scale)))
+    if precision is not None and precision < 1:
+        raise InvalidValue(f"Numeric: precision must be at least 1, got {precision}")
+    if scale is not None and precision is not None and not 0 <= scale <= precision:
+        raise InvalidValue(f"Numeric: scale must be between 0 and the precision, got {scale}")
+    return ColumnType(ColumnKind.NUMERIC, kwargs=(("precision", precision), ("scale", scale)))
 
 
-class _JsonMarker:
+class JsonMarker:
     """Sentinel that marks a str field as containing serialized JSON."""
 
     __slots__ = ()
 
 
-JsonStr = Annotated[str, _JsonMarker()]
+JsonStr = Annotated[str, JsonMarker()]
 
 PositiveInt = Annotated[int, msgspec.Meta(gt=0)]
 """An integer above zero: a size, a count or a timeout where zero makes no sense."""
@@ -81,15 +123,23 @@ NonNegativeInt = Annotated[int, msgspec.Meta(ge=0)]
 class _PostgresTypes:
     """Namespace for PostgreSQL-specific column types."""
 
-    JSONB = ColumnType("Postgres.JSONB")
-    UUID = ColumnType("Postgres.UUID")
+    JSONB = ColumnType(ColumnKind.POSTGRES_JSONB)
+    UUID = ColumnType(ColumnKind.POSTGRES_UUID)
     """Postgres only; :data:`loom.core.model.Uuid` is the portable UUID column."""
-    TSVECTOR = ColumnType("Postgres.TSVECTOR")
-    INET = ColumnType("Postgres.INET")
+    TSVECTOR = ColumnType(ColumnKind.POSTGRES_TSVECTOR)
+    INET = ColumnType(ColumnKind.POSTGRES_INET)
 
     @staticmethod
     def ARRAY(item: ColumnType) -> ColumnType:
-        return ColumnType("Postgres.ARRAY", args=(item,))
+        return ColumnType(ColumnKind.POSTGRES_ARRAY, args=(item,))
 
 
 Postgres = _PostgresTypes()
+
+_PORTABLE_COUNTERPART: Final[Mapping[ColumnKind, ColumnType | None]] = {
+    ColumnKind.POSTGRES_JSONB: JSON,
+    ColumnKind.POSTGRES_UUID: Uuid,
+    ColumnKind.POSTGRES_INET: String(),
+    ColumnKind.POSTGRES_ARRAY: JSON,
+    ColumnKind.POSTGRES_TSVECTOR: None,
+}

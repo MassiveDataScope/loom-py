@@ -86,20 +86,20 @@ class TestOptionalNullColumns:
     def test_an_optional_field_gives_a_null_column(self, dialect: Dialect) -> None:
         ddl = _ddl(dialect)
 
-        assert "\toptional INTEGER," in ddl
-        assert "\tannotated_optional INTEGER," in ddl
+        assert "\toptional BIGINT," in ddl
+        assert "\tannotated_optional BIGINT," in ddl
 
     @pytest.mark.parametrize("dialect", [PGDialect(), SQLiteDialect()])
     def test_a_field_that_does_not_admit_none_gives_a_not_null_column(
         self, dialect: Dialect
     ) -> None:
-        assert "\trequired INTEGER NOT NULL" in _ddl(dialect)
+        assert "\trequired BIGINT NOT NULL" in _ddl(dialect)
 
     @pytest.mark.parametrize("dialect", [PGDialect(), SQLiteDialect()])
     def test_a_declared_nullable_wins_over_the_annotation(self, dialect: Dialect) -> None:
         ddl = _ddl(dialect)
 
-        assert "\tdeclared_not_null INTEGER NOT NULL" in ddl
+        assert "\tdeclared_not_null BIGINT NOT NULL" in ddl
         assert "\tdeclared_null INTEGER," in ddl
 
     def test_an_optional_primary_key_stays_not_null(self) -> None:
@@ -107,7 +107,7 @@ class TestOptionalNullColumns:
         compile_all(Reading, metadata=metadata)
 
         assert metadata.tables["nullable_readings"].c.id.nullable is False
-        assert "\tid SERIAL NOT NULL" in _ddl(PGDialect())
+        assert "\tid BIGSERIAL NOT NULL" in _ddl(PGDialect())
 
     def test_the_resolved_field_carries_the_nullability(self) -> None:
         fields = get_column_fields(Reading)
