@@ -9,19 +9,18 @@ from __future__ import annotations
 
 import copy
 import re
-import types
 from collections.abc import Iterator, Mapping, Sequence
 from functools import cache
-from typing import Any, Generic, TypeVar, Union, get_args, get_origin
+from typing import Any, Generic, TypeVar, get_origin
 
 import msgspec
 
 from loom.core.errors import InvalidType, InvalidValue
+from loom.core.model.inference import union_inner_args
 
 T = TypeVar("T")
 
 MASK = "***"
-_UNION = (Union, types.UnionType)
 _SECRET_TOKENS = frozenset({"password", "passwd", "pwd", "secret", "token", "apikey", "credential"})
 _EXACT_NAMES = frozenset({"webhook_url", "authorization", "cookie", "authmechanismproperties"})
 _KEY_EXCEPTIONS = frozenset({"primary_key", "foreign_key", "partition_key", "sort_key"})
@@ -329,7 +328,7 @@ def _redacted_fields(
 
 
 def _redaction_kind(annotation: Any) -> type[Any] | None:
-    for option in _union_members(annotation):
+    for option in union_inner_args(annotation) or (annotation,):
         origin = get_origin(option) or option
         if origin is Secret:
             return Secret
@@ -338,12 +337,6 @@ def _redaction_kind(annotation: Any) -> type[Any] | None:
         if option is RedactedMap:
             return RedactedMap
     return None
-
-
-def _union_members(annotation: Any) -> tuple[Any, ...]:
-    if get_origin(annotation) in _UNION:
-        return tuple(arg for arg in get_args(annotation) if arg is not type(None))
-    return (annotation,)
 
 
 def _tokens(name: str) -> list[str]:

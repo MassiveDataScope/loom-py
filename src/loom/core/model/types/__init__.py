@@ -35,6 +35,16 @@ class ColumnKind(StrEnum):
     POSTGRES_INET = "Postgres.INET"
     POSTGRES_ARRAY = "Postgres.ARRAY"
 
+    @property
+    def is_json(self) -> bool:
+        """Whether a column of this kind holds a JSON document or a list of items."""
+        return self in _JSON_KINDS
+
+
+_JSON_KINDS: Final = frozenset(
+    {ColumnKind.JSON, ColumnKind.POSTGRES_JSONB, ColumnKind.POSTGRES_ARRAY}
+)
+
 
 @dataclass(frozen=True, slots=True)
 class ColumnType:

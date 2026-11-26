@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+import gc
+import weakref
 from dataclasses import dataclass
 from datetime import date, datetime, timedelta
 from decimal import Decimal
@@ -19,6 +21,7 @@ from loom.core.model.inference import (
     Outcome,
     ResolvedField,
     StructShape,
+    read_fields,
     resolve_fields,
 )
 from loom.core.model.types import (
@@ -186,6 +189,16 @@ class TestFieldReaders:
         ]
 
         assert names == [("weight", "weight"), ("label", "label"), ("code", "code")]
+
+    def test_the_fields_of_a_class_built_at_run_time_are_collected_with_it(self) -> None:
+        built = msgspec.defstruct("Built", [("code", str)])
+        alive = weakref.ref(built)
+
+        read_fields(built)
+        del built
+        gc.collect()
+
+        assert alive() is None
 
     def test_a_field_that_admits_none_is_nullable(self, scalars: dict[str, ResolvedField]) -> None:
         assert (scalars["note"].nullable, scalars["count"].nullable) == (True, False)

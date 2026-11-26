@@ -9,6 +9,7 @@ from typing import Any, cast, get_args, get_origin, get_type_hints
 import msgspec
 
 from loom.core.errors import InvalidType, InvalidValue
+from loom.core.model._class_store import stored_on_class
 from loom.core.model.field import ColumnFieldSpec, Field
 from loom.core.model.inference import (
     FieldSource,
@@ -61,6 +62,12 @@ class ColumnFieldInfo:
     def column_type(self) -> ColumnType | None:
         """The column type, ``None`` when none could be settled."""
         return self.resolved.column_type
+
+    @property
+    def is_json(self) -> bool:
+        """Whether the column holds a JSON document or a list of items."""
+        kind = self.kind
+        return kind is not None and kind.is_json
 
     @property
     def kind(self) -> ColumnKind | None:
@@ -377,6 +384,7 @@ def business_key_of(cls: type) -> BusinessKey | None:
     return _BUSINESS_KEYS[cls]
 
 
+@stored_on_class("__loom_conflict_key__")
 def conflict_key_of(cls: type) -> tuple[str, ...]:
     """The columns that identify a duplicate row: the business key, else the primary key.
 

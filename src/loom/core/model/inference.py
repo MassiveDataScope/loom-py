@@ -5,7 +5,6 @@ from dataclasses import dataclass
 from datetime import date, datetime, time, timedelta
 from decimal import Decimal
 from enum import Enum, StrEnum
-from functools import cache
 from types import UnionType
 from typing import (
     Annotated,
@@ -23,6 +22,7 @@ from uuid import UUID
 
 import msgspec
 
+from loom.core.model._class_store import stored_on_class
 from loom.core.model.field import ColumnFieldSpec, Field
 from loom.core.model.types import (
     JSON,
@@ -109,7 +109,7 @@ class FieldSource:
     default: Any
 
 
-def union_members(hint: Any) -> tuple[Any, ...] | None:
+def _union_members(hint: Any) -> tuple[Any, ...] | None:
     """Return the members of a Union annotation, normalising ``X | Y`` and ``Union[X, Y]``.
 
     Returns:
@@ -128,18 +128,18 @@ def union_inner_args(hint: Any) -> tuple[Any, ...] | None:
     Returns:
         The meaningful union members, or ``None`` when *hint* is not a Union.
     """
-    members = union_members(hint)
+    members = _union_members(hint)
     if members is None:
         return None
     return tuple(a for a in members if a is not type(None) and a is not msgspec.UnsetType)
 
 
-def unwrap_optional(annotation: Any) -> Any:
+def _unwrap_optional(annotation: Any) -> Any:
     """Return the single type of a union once ``None`` and ``UnsetType`` are dropped.
 
     ``UNSET`` means "not provided", not another type, so ``X | UnsetType``
     and ``X | None | UnsetType`` unwrap to ``X``; whether ``None`` is admitted
-    is decided apart, by :func:`admits_none`.
+    is decided apart, by :func:`_admits_none`.
     """
     args = union_inner_args(annotation)
     if args is None:
@@ -149,20 +149,20 @@ def unwrap_optional(annotation: Any) -> Any:
     return annotation
 
 
-def admits_none(annotation: Any) -> bool:
+def _admits_none(annotation: Any) -> bool:
     """Whether ``annotation`` accepts ``None``, through ``Annotated``, ``Literal`` and unions."""
     origin = get_origin(annotation)
     if origin is Annotated:
-        return admits_none(get_args(annotation)[0])
+        return _admits_none(get_args(annotation)[0])
     if origin is Literal:
         return None in get_args(annotation)
-    members = union_members(annotation)
+    members = _union_members(annotation)
     if members is None:
         return annotation is type(None)
-    return any(admits_none(member) for member in members)
+    return any(_admits_none(member) for member in members)
 
 
-def column_base(annotation: Any) -> tuple[Any, tuple[Any, ...]]:
+def _column_base(annotation: Any) -> tuple[Any, tuple[Any, ...]]:
     """Strip ``Optional`` and ``Annotated`` layers, in either order.
 
     Returns:
@@ -170,7 +170,7 @@ def column_base(annotation: Any) -> tuple[Any, tuple[Any, ...]]:
     """
     metadata: tuple[Any, ...] = ()
     while True:
-        unwrapped = unwrap_optional(annotation)
+        unwrapped = _unwrap_optional(annotation)
         if get_origin(unwrapped) is Annotated:
             metadata += unwrapped.__metadata__
             unwrapped = get_args(unwrapped)[0]
@@ -189,7 +189,7 @@ def origin_type(annotation: Any) -> type[Any]:
             if isinstance(value, type):
                 return value
             return object
-    raw = unwrap_optional(annotation)
+    raw = _unwrap_optional(annotation)
     origin = get_origin(raw)
     if origin is not None:
         if isinstance(origin, type):
@@ -210,7 +210,7 @@ def field_declaration(
     """
     column_type: ColumnType | None = None
     field = Field()
-    _, metadata = column_base(annotation)
+    _, metadata = _column_base(annotation)
     for entry in metadata:
         if isinstance(entry, ColumnType):
             column_type = entry
@@ -237,7 +237,7 @@ def _hinted_sources(cls: type) -> tuple[FieldSource, ...]:
     )
 
 
-@cache
+@stored_on_class("__loom_fields__")
 def read_fields(cls: type) -> tuple[FieldSource, ...]:
     """The annotated fields of *cls*, read once per class.
 
@@ -297,7 +297,7 @@ class _Resolver:
         self, source: FieldSource, declared: ColumnFieldSpec | None = None
     ) -> ResolvedField:
         annotated_type, field = field_declaration(source.annotation, declared)
-        base, metadata = column_base(source.annotation)
+        base, metadata = _column_base(source.annotation)
         if annotated_type is not None:
             return self._settled(source, base, annotated_type, Outcome.DECLARED)
         found = self._infer(base, metadata)
@@ -319,7 +319,7 @@ class _Resolver:
             name=source.name,
             encode_name=source.encode_name,
             column_type=column_type,
-            nullable=admits_none(source.annotation),
+            nullable=_admits_none(source.annotation),
             outcome=outcome,
             reason=reason,
             shape=None if column_type is None else self._shape(column_type, base),
@@ -346,7 +346,7 @@ class _Resolver:
         return _Undeclared(f"{cls.__name__}, a class that is not a record")
 
     def _infer_union(self, members: tuple[Any, ...]) -> ColumnType | _Undeclared:
-        found = {self._infer(*column_base(member)) for member in members}
+        found = {self._infer(*_column_base(member)) for member in members}
         if found == {JSON}:
             return JSON
         return _Undeclared("a union of types that are not all JSON")
