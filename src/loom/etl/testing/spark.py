@@ -31,6 +31,7 @@ fetching them from Maven.
 from __future__ import annotations
 
 from collections.abc import Generator, Mapping, Sequence
+from datetime import UTC
 from importlib.metadata import PackageNotFoundError, version
 from pathlib import Path
 from types import TracebackType
@@ -418,12 +419,44 @@ def _pick_jar(jar_dir: Path, prefix: str, expected_version: str | None) -> Path 
     return candidates[-1]
 
 
+class _CollectedValues:
+    """Python values collected from Spark, with timestamps read as UTC instants.
+
+    PySpark returns a ``TimestampType`` value as a naive datetime in the
+    process zone; ``TimestampNTZType`` values are wall-clock and stay naive.
+    The Spark schema tells the two apart at every depth of structs, lists
+    and maps.
+    """
+
+    def of(self, value: Any, spark_type: Any) -> Any:
+        """*value* with every ``TimestampType`` leaf converted to an aware UTC datetime."""
+        if value is None:
+            return None
+        kind = spark_type.typeName()
+        if kind == "timestamp":
+            return value.astimezone(UTC)
+        if kind == "struct":
+            return {
+                field.name: self.of(value[field.name], field.dataType)
+                for field in spark_type.fields
+            }
+        if kind == "array":
+            return [self.of(item, spark_type.elementType) for item in value]
+        if kind == "map":
+            return {key: self.of(item, spark_type.valueType) for key, item in value.items()}
+        return value
+
+
 def _spark_frame_to_polars(frame: Any) -> pl.DataFrame:
     import polars as pl
 
     columns = list(frame.columns)
-    rows = frame.collect()
-    records = [row.asDict(recursive=True) for row in rows]
+    spark_types = {field.name: field.dataType for field in frame.schema.fields}
+    values = _CollectedValues()
+    records = [
+        {name: values.of(value, spark_types[name]) for name, value in row.asDict().items()}
+        for row in frame.collect()
+    ]
     if not records:
         return pl.DataFrame({col: [] for col in columns})
     return pl.DataFrame(records)

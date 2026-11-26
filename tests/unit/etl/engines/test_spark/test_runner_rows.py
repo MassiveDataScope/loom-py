@@ -2,12 +2,9 @@
 
 from __future__ import annotations
 
-import time
-from collections.abc import Iterator
 from datetime import UTC, datetime
 from decimal import Decimal
 
-import pytest
 from pyspark.sql import DataFrame
 from pyspark.sql import functions as F
 
@@ -18,16 +15,6 @@ from tests.unit.etl.engines.frame_types import Order
 from tests.unit.etl.testing.models import CustomerTotal, Since, Stop, Tier, Visitor
 
 DAY = datetime(2026, 1, 2, tzinfo=UTC)
-
-
-@pytest.fixture(autouse=True)
-def utc_clock(monkeypatch: pytest.MonkeyPatch) -> Iterator[None]:
-    """PySpark reads a timestamp in the process zone; pin it so every machine reads the instant."""
-    monkeypatch.setenv("TZ", "UTC")
-    time.tzset()
-    yield
-    monkeypatch.undo()
-    time.tzset()
 
 
 class SparkTotalCustomers(ETLStep[Since]):
