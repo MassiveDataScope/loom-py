@@ -4,11 +4,14 @@ from __future__ import annotations
 
 import dataclasses
 import datetime
+from decimal import Decimal
 from typing import Any
 
 import msgspec
 import pytest
 
+from loom.core.errors import InvalidType
+from loom.core.model import BaseModel
 from loom.etl.schema._contract import (
     _strip_optional,
     annotation_to_loom_type,
@@ -61,6 +64,15 @@ class RowWithOptional(msgspec.Struct):
 
 class NoAnnotations:
     pass
+
+
+class OrderModel(BaseModel):
+    __tablename__ = "orders"
+    id: int
+
+
+class PricedRow(msgspec.Struct):
+    price: Decimal
 
 
 class TestResolveSchema:
@@ -123,10 +135,13 @@ class TestResolveSchema:
         [
             (NoAnnotations, "no type annotations"),
             ("not_a_class", "annotated class"),
+            (OrderModel, "Cannot convert annotation"),
+            (PricedRow, "'Decimal' has no type annotations"),
         ],
+        ids=["no_annotations", "not_a_class", "loom_model_classvars", "decimal_field"],
     )
     def test_resolve_schema_errors(self, contract: object, error: str) -> None:
-        with pytest.raises(TypeError, match=error):
+        with pytest.raises(InvalidType, match=error):
             resolve_schema(contract)  # type: ignore[arg-type]
 
 

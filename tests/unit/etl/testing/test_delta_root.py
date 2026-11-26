@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+from datetime import date
 from pathlib import Path
 from typing import Any
 
@@ -15,6 +16,7 @@ from loom.etl import (  # noqa: E402
     ETLParams,
     ETLStep,
     FromTable,
+    IntoHistory,
     IntoTable,
     Sources,
     col,
@@ -82,6 +84,34 @@ class AppendEvent(ETLStep[YearParams]):
 
     def execute(self, params: YearParams, *, raw: Any) -> Any:  # type: ignore[override]
         return raw
+
+
+class DayParams(ETLParams):  # type: ignore[misc]
+    run_date: date
+
+
+class HistoriseTierSnapshot(ETLStep[DayParams]):
+    sources = Sources(customers=FromTable("raw.customers"))
+    target = IntoHistory(
+        "silver.customer_tiers", keys=("id",), track=("tier",), effective_date=params.run_date
+    )
+
+    def execute(self, params: DayParams, *, customers: Any) -> Any:  # type: ignore[override]
+        return customers
+
+
+class HistoriseTierLog(ETLStep[DayParams]):
+    sources = Sources(customers=FromTable("raw.customers"))
+    target = IntoHistory(
+        "silver.customer_tiers",
+        keys=("id",),
+        track=("tier",),
+        effective_date="changed_on",
+        mode="log",
+    )
+
+    def execute(self, params: DayParams, *, customers: Any) -> Any:  # type: ignore[override]
+        return customers
 
 
 _ORDER_SCHEMA = {"id": LoomDtype.INT64, "status": LoomDtype.UTF8}
@@ -198,6 +228,43 @@ class TestReplaceOnPartitionedTable:
             "amount": [10.0, 20.0],
         }
         assert runner.resolved_predicate is None
+
+
+class TestIntoHistoryStringTarget:
+    @pytest.mark.parametrize(
+        ("step", "history"),
+        [
+            pytest.param(
+                HistoriseTierSnapshot,
+                [
+                    (1, "silver", date(2024, 1, 1), date(2024, 1, 1), date(2024, 1, 4)),
+                    (1, "gold", date(2024, 1, 5), date(2024, 1, 5), None),
+                ],
+                id="snapshot_keeps_the_passive_column",
+            ),
+            pytest.param(
+                HistoriseTierLog,
+                [
+                    (1, "silver", date(2024, 1, 1), date(2024, 1, 4)),
+                    (1, "gold", date(2024, 1, 5), None),
+                ],
+                id="log_drops_the_effective_date_column",
+            ),
+        ],
+    )
+    def test_a_changed_tier_closes_the_old_row_and_opens_a_new_one(
+        self, tmp_path: Path, step: type[ETLStep[DayParams]], history: list[tuple[Any, ...]]
+    ) -> None:
+        columns = ["id", "tier", "changed_on"]
+        runner = PolarsStepRunner(delta_root=tmp_path)
+        runner.seed("raw.customers", [(1, "silver", date(2024, 1, 1))], columns)
+        runner.run(step, DayParams(run_date=date(2024, 1, 1)))
+        runner.seed("raw.customers", [(1, "gold", date(2024, 1, 5))], columns)
+
+        runner.run(step, DayParams(run_date=date(2024, 1, 5)))
+
+        stored = runner.table("silver.customer_tiers").to_polars()
+        assert stored.sort("valid_from").rows() == history
 
 
 # 12 --------------------------------------------------------------------------
