@@ -3,13 +3,13 @@
 from __future__ import annotations
 
 from collections.abc import Callable
-from contextlib import suppress
 from functools import wraps
 from typing import Any, TypeVar, cast
 
 ClassFunction = TypeVar("ClassFunction", bound=Callable[[type], Any])
 
 _ABSENT: Any = object()
+_IMMUTABLE_TYPE_FLAG = 1 << 8
 
 
 def stored_on_class(attribute: str) -> Callable[[ClassFunction], ClassFunction]:
@@ -27,7 +27,7 @@ def stored_on_class(attribute: str) -> Callable[[ClassFunction], ClassFunction]:
             value = cls.__dict__.get(attribute, _ABSENT)
             if value is _ABSENT:
                 value = compute(cls)
-                with suppress(TypeError):
+                if not cls.__flags__ & _IMMUTABLE_TYPE_FLAG:
                     setattr(cls, attribute, value)
             return value
 

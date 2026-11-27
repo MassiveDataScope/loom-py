@@ -184,6 +184,7 @@ class TestUndeclaredFields:
             None,
             False,
         )
+        assert item.reason == "_Foreign, a class whose annotations could not be resolved"
 
 
 class TestFieldReaders:

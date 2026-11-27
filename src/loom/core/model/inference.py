@@ -270,13 +270,15 @@ _RULES: Final[Mapping[type, ColumnType | _Undeclared]] = {
 _CONTAINERS: Final = (list, tuple, set, frozenset, dict)
 
 
-def _is_record(cls: Any) -> bool:
-    if not isinstance(cls, type):
-        return False
+def _record_fields(cls: type) -> tuple[FieldSource, ...] | None:
     try:
-        return bool(read_fields(cls))
+        return read_fields(cls)
     except (NameError, TypeError):
-        return False
+        return None
+
+
+def _is_record(cls: Any) -> bool:
+    return isinstance(cls, type) and bool(_record_fields(cls))
 
 
 def _scalar_rule(cls: type) -> ColumnType | _Undeclared | None:
@@ -345,6 +347,8 @@ class _Resolver:
             return _Undeclared("a plain Enum")
         if issubclass(cls, _CONTAINERS) or _is_record(cls) or is_typeddict(cls):
             return JSON
+        if _record_fields(cls) is None:
+            return _Undeclared(f"{cls.__name__}, a class whose annotations could not be resolved")
         return _Undeclared(f"{cls.__name__}, a class that is not a record")
 
     def _infer_union(self, members: tuple[Any, ...]) -> ColumnType | _Undeclared:

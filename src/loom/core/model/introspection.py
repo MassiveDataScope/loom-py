@@ -277,13 +277,7 @@ def generic_type_arg(annotation: Any, origin: Any) -> type | None:
 
 
 _NON_SCALAR_KINDS: frozenset[ColumnKind | None] = frozenset(
-    {
-        None,
-        ColumnKind.JSON,
-        ColumnKind.POSTGRES_JSONB,
-        ColumnKind.POSTGRES_ARRAY,
-        ColumnKind.POSTGRES_TSVECTOR,
-    }
+    {None, ColumnKind.POSTGRES_TSVECTOR, *(kind for kind in ColumnKind if kind.is_json)}
 )
 
 
@@ -366,23 +360,6 @@ def declared_unique(cls: type) -> tuple[tuple[str, ...], ...]:
     return (*declared, key.fields)
 
 
-_BUSINESS_KEYS: dict[type, BusinessKey | None] = {}
-_DERIVED_KEYS: dict[type, DerivedKey | None] = {}
-
-
-def business_key_of(cls: type) -> BusinessKey | None:
-    """The business key declared with ``__business_key__``, checked against the columns once.
-
-    Raises:
-        InvalidType: If the declaration is not a ``BusinessKey``.
-        InvalidValue: If it names an unknown or nullable field, or one whose
-            type has no canonical form.
-    """
-    if cls not in _BUSINESS_KEYS:
-        _BUSINESS_KEYS[cls] = _checked_business_key(cls)
-    return _BUSINESS_KEYS[cls]
-
-
 @stored_on_class("__loom_conflict_key__")
 def conflict_key_of(cls: type) -> tuple[str, ...]:
     """The columns that identify a duplicate row: the business key, else the primary key.
@@ -409,7 +386,15 @@ def store_filled_key_columns(cls: type) -> dict[str, KeyFill]:
     return {name: fill for name, fill in fills if fill is not None}
 
 
-def _checked_business_key(cls: type) -> BusinessKey | None:
+@stored_on_class("__loom_business_key__")
+def business_key_of(cls: type) -> BusinessKey | None:
+    """The business key declared with ``__business_key__``, checked against the columns once.
+
+    Raises:
+        InvalidType: If the declaration is not a ``BusinessKey``.
+        InvalidValue: If it names an unknown or nullable field, or one whose
+            type has no canonical form.
+    """
     key = getattr(cls, "__business_key__", None)
     if key is None:
         return None
@@ -431,6 +416,7 @@ def _checked_business_key(cls: type) -> BusinessKey | None:
     return key
 
 
+@stored_on_class("__loom_derived_key__")
 def derived_key_of(cls: type) -> DerivedKey | None:
     """The primary key a model derives from its business key, or ``None`` when it derives none.
 
@@ -444,12 +430,6 @@ def derived_key_of(cls: type) -> DerivedKey | None:
             contains the derived field.
         ConfigError: If a key field is set by the store after the insert.
     """
-    if cls not in _DERIVED_KEYS:
-        _DERIVED_KEYS[cls] = _checked_derived_key(cls)
-    return _DERIVED_KEYS[cls]
-
-
-def _checked_derived_key(cls: type) -> DerivedKey | None:
     derived = {name: info for name, info in get_column_fields(cls).items() if info.field.derived}
     if not derived:
         business_key_of(cls)
