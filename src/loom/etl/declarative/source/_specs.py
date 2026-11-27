@@ -243,6 +243,11 @@ class ClickHouseSourceSpec:
     allow_full_scan: bool = False
 
     @property
+    def read_schema(self) -> tuple[ColumnSchema, ...]:
+        """The schema applied at read time: the declared one, limited to the projected columns."""
+        return _projected(self.schema, self.columns)
+
+    @property
     def kind(self) -> SourceKind:
         """Physical kind — always :attr:`SourceKind.CLICKHOUSE`."""
         return SourceKind.CLICKHOUSE

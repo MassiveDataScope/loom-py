@@ -148,9 +148,7 @@ class ClickHouseSourceReader(SourceReader, ClientCommandExecutor):
                 LogField.DURATION_MS: elapsed_ms(started),
             },
         )
-        if spec.schema:
-            frame = self._apply_source_schema(frame, spec.schema)
-        return frame
+        return self._apply_source_schema(frame, spec.read_schema)
 
     def read_streaming(self, spec: Any, params_instance: Any, /) -> pl.LazyFrame:
         """Stream the ClickHouse query result through a temporary IPC file.
@@ -188,9 +186,7 @@ class ClickHouseSourceReader(SourceReader, ClientCommandExecutor):
                 LogField.DURATION_MS: elapsed_ms(started),
             },
         )
-        if spec.schema:
-            frame = self._apply_source_schema(frame, spec.schema)
-        return frame
+        return self._apply_source_schema(frame, spec.read_schema)
 
     def command(self, fn: Callable[[Any], None]) -> None:
         """Obtain the ClickHouse client and invoke *fn* with it.
