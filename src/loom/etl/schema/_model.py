@@ -259,6 +259,16 @@ class ModelTable:
             column for column in self.schema if isinstance(column.dtype, StructType | ListType)
         )
 
+    @cached_property
+    def json_text_columns(self) -> frozenset[str]:
+        """The JSON columns the lake stores as text, which are encoded and decoded by hand."""
+        fields = get_column_fields(self.model)
+        return frozenset(
+            column.name
+            for column in self.schema
+            if fields[column.name].is_json and column.dtype is LoomDtype.UTF8
+        )
+
     def unknown_columns(self, names: Iterable[str]) -> tuple[str, ...]:
         """The *names* that are not columns of the model, in the order given."""
         return tuple(name for name in names if name not in self.column_types)

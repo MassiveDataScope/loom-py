@@ -658,9 +658,9 @@ class _WritePolicy(TargetWriter, Generic[InputFrameT, WriteFrameT, PhysicalSchem
         _ = frame
         return ()
 
-    def _log_model_schema(self, spec: TargetSpec) -> None:
+    def _log_model_schema(self, spec: TableSpec) -> None:
         """Log the columns of the model a table write applies, once per write."""
-        model = spec.model_table if isinstance(spec, TableSpec) else None
+        model = spec.model_table
         if model is None:
             return
         _log.info(

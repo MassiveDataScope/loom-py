@@ -12,7 +12,7 @@ import polars as pl
 
 from loom.core.errors import InvalidValue
 from loom.core.model.convert import to_column_value, to_struct
-from loom.core.model.introspection import ModelKeys, get_column_fields
+from loom.core.model.introspection import ModelKeys
 from loom.etl.engines.polars._dtype import frame_type_to_polars
 from loom.etl.schema import ColumnSchema, LoomDtype, ModelTable
 
@@ -70,9 +70,8 @@ class ModelRows:
 
     def __init__(self, model: type) -> None:
         self.table = ModelTable.from_model(model)
-        fields = get_column_fields(model)
         self._columns = tuple(
-            _RowColumn.of(column, stores_json=fields[column.name].is_json)
+            _RowColumn.of(column, stores_json=column.name in self.table.json_text_columns)
             for column in self.table.schema
         )
 
