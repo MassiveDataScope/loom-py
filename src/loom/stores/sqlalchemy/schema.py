@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import functools
 from collections import deque
-from collections.abc import Mapping
+from collections.abc import Callable, Mapping
 from dataclasses import dataclass, field
 from enum import Enum
 from typing import Any, Final, cast
@@ -79,13 +79,13 @@ from loom.core.schema_names import MAX_IDENTIFIER_LENGTH, naming_convention
 from loom.stores.sqlalchemy.core_model import CoreModel, CoreProfilePlan, CoreRelationStep
 from loom.stores.sqlalchemy.scoped_ddl import SCHEMA_KEY, register_listeners
 
-_SA_TYPE_MAP: dict[ColumnKind, type] = {
+_SA_TYPE_MAP: dict[ColumnKind, Callable[..., Any]] = {
     ColumnKind.STRING: String,
     ColumnKind.TEXT: Text,
     ColumnKind.TINY_INTEGER: SmallInteger,
     ColumnKind.SMALL_INTEGER: SmallInteger,
     ColumnKind.INTEGER: Integer,
-    ColumnKind.BIG_INTEGER: BigInteger,
+    ColumnKind.BIG_INTEGER: lambda: BigInteger().with_variant(Integer(), "sqlite"),
     ColumnKind.FLOAT: Float,
     ColumnKind.BOOLEAN: Boolean,
     ColumnKind.NUMERIC: Numeric,
@@ -189,17 +189,6 @@ def _build_sa_column_type(col_type: ColumnType) -> Any:
     return sa_type_cls(*args, **dict(col_type.kwargs))
 
 
-def _rowid_compatible(col_type: Any) -> Any:
-    """Make a ``BIGINT`` primary key an ``INTEGER`` on SQLite, which is 64-bit there.
-
-    SQLite auto-increments only an ``INTEGER PRIMARY KEY``, so a ``BIGINT`` one
-    would never receive an id.
-    """
-    if isinstance(col_type, BigInteger):
-        return col_type.with_variant(Integer(), "sqlite")
-    return col_type
-
-
 def _build_field_kwargs(field: Field) -> dict[str, Any]:
     kwargs: dict[str, Any] = {"nullable": field.nullable}
     if field.primary_key:
@@ -226,8 +215,6 @@ def _build_field_kwargs(field: Field) -> dict[str, Any]:
 def _build_mapped_column(field_info: Any, *, inline_foreign_key: bool = True) -> Any:
     column: Field = field_info.field
     col_type = _build_sa_column_type(field_info.column_type)
-    if column.primary_key:
-        col_type = _rowid_compatible(col_type)
     kwargs = _build_field_kwargs(column)
 
     if column.foreign_key is not None and inline_foreign_key:
@@ -261,7 +248,12 @@ def _compile_model(
         return comp.compiled[struct_cls]
 
     table_name = get_table_name(struct_cls)
-    _refuse_dotted_table_name(struct_cls, table_name)
+    if "." in table_name:
+        raise InvalidValue(
+            f"{struct_cls.__name__}: __tablename__ {table_name!r} is dotted, which names a lake "
+            "table and not a SQL table; use a simple __tablename__ and route the lake table "
+            "with an entry in storage.tables"
+        )
     column_fields = get_column_fields(struct_cls)
     _refuse_undeclared_column_types(struct_cls, column_fields)
     scopes = scope_columns(struct_cls)
@@ -343,20 +335,6 @@ def _audited(struct_cls: type, table: Any) -> AuditedTable:
         )
     except ValueError as exc:
         raise ConfigError(str(exc)) from exc
-
-
-def _refuse_dotted_table_name(struct_cls: type, table_name: str) -> None:
-    """Refuse a dotted ``__tablename__``: a lake reference, never a SQL table name.
-
-    Raises:
-        InvalidValue: Naming the model and the fix.
-    """
-    if "." in table_name:
-        raise InvalidValue(
-            f"{struct_cls.__name__}: __tablename__ {table_name!r} is dotted, which names a lake "
-            "table and not a SQL table; use a simple __tablename__ and route the lake table "
-            "with an entry in storage.tables"
-        )
 
 
 def _refuse_undeclared_column_types(

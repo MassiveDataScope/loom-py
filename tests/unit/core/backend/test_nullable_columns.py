@@ -81,25 +81,28 @@ def _ddl(dialect: Dialect) -> str:
     return str(CreateTable(metadata.tables["nullable_readings"]).compile(dialect=dialect))
 
 
+_BIG_INTEGER_DDL = [(PGDialect(), "BIGINT"), (SQLiteDialect(), "INTEGER")]
+
+
 class TestOptionalNullColumns:
-    @pytest.mark.parametrize("dialect", [PGDialect(), SQLiteDialect()])
-    def test_an_optional_field_gives_a_null_column(self, dialect: Dialect) -> None:
+    @pytest.mark.parametrize(("dialect", "big"), _BIG_INTEGER_DDL)
+    def test_an_optional_field_gives_a_null_column(self, dialect: Dialect, big: str) -> None:
         ddl = _ddl(dialect)
 
-        assert "\toptional BIGINT," in ddl
-        assert "\tannotated_optional BIGINT," in ddl
+        assert f"\toptional {big}," in ddl
+        assert f"\tannotated_optional {big}," in ddl
 
-    @pytest.mark.parametrize("dialect", [PGDialect(), SQLiteDialect()])
+    @pytest.mark.parametrize(("dialect", "big"), _BIG_INTEGER_DDL)
     def test_a_field_that_does_not_admit_none_gives_a_not_null_column(
-        self, dialect: Dialect
+        self, dialect: Dialect, big: str
     ) -> None:
-        assert "\trequired BIGINT NOT NULL" in _ddl(dialect)
+        assert f"\trequired {big} NOT NULL" in _ddl(dialect)
 
-    @pytest.mark.parametrize("dialect", [PGDialect(), SQLiteDialect()])
-    def test_a_declared_nullable_wins_over_the_annotation(self, dialect: Dialect) -> None:
+    @pytest.mark.parametrize(("dialect", "big"), _BIG_INTEGER_DDL)
+    def test_a_declared_nullable_wins_over_the_annotation(self, dialect: Dialect, big: str) -> None:
         ddl = _ddl(dialect)
 
-        assert "\tdeclared_not_null BIGINT NOT NULL" in ddl
+        assert f"\tdeclared_not_null {big} NOT NULL" in ddl
         assert "\tdeclared_null INTEGER," in ddl
 
     def test_an_optional_primary_key_stays_not_null(self) -> None:
