@@ -94,7 +94,7 @@ class ModelCheck:
     def _check_merge_keys(self, spec: TableSpec) -> None:
         if not isinstance(spec, UpsertSpec | UpdateSpec):
             return
-        if spec.upsert_keys or spec.declared_keys is not None:
+        if spec.declared_keys is not None:
             return
         keys = ModelKeys.of(self._model)
         if keys.frame_supplied:

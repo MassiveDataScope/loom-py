@@ -38,17 +38,17 @@ def delta_runner(tmp_path: Path) -> PolarsStepRunner:
 
 
 @pytest.fixture(params=["captured", "delta"])
-def runner(request: pytest.FixtureRequest, delta_runner: PolarsStepRunner) -> PolarsStepRunner:
-    return delta_runner if request.param == "delta" else PolarsStepRunner()
+def runner(request: pytest.FixtureRequest, tmp_path: Path) -> PolarsStepRunner:
+    return PolarsStepRunner(delta_root=tmp_path if request.param == "delta" else None)
 
 
 @pytest.fixture(params=["captured", "delta", "spark"])
 def rows_runner(
-    request: pytest.FixtureRequest, delta_runner: PolarsStepRunner
+    request: pytest.FixtureRequest, tmp_path: Path
 ) -> PolarsStepRunner | SparkStepRunner:
     if request.param == "spark":
         return SparkStepRunner(request.getfixturevalue("spark"))
-    return delta_runner if request.param == "delta" else PolarsStepRunner()
+    return PolarsStepRunner(delta_root=tmp_path if request.param == "delta" else None)
 
 
 class TestRowsContract:

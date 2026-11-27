@@ -490,9 +490,10 @@ class _WritePolicy(TargetWriter, Generic[InputFrameT, WriteFrameT, PhysicalSchem
 
         Reads existing target data, validates creation rights when absent, runs
         :func:`~loom.etl.engines._historify.scd2_transform` with the engine's
-        :meth:`_historify_ops`, then writes the rebuilt history. The existing
-        frame is dropped before the write, so eager backends release the table
-        snapshot instead of holding it alongside the rebuilt history.
+        :meth:`_historify_ops`, aligns the rebuilt history to the physical schema of the
+        table, or to its model's schema, then writes it. The existing frame is dropped
+        before the write, so eager backends release the table snapshot instead of
+        holding it alongside the rebuilt history.
 
         Args:
             frame:           Incoming input frame.
@@ -511,7 +512,7 @@ class _WritePolicy(TargetWriter, Generic[InputFrameT, WriteFrameT, PhysicalSchem
             HistorifyDateCollisionError:    Same-date ties in LOG mode.
             HistorifyTemporalConflictError: Future-open records detected.
         """
-        physical = self._physical_schema(target)
+        physical = self._physical_schema(target) if spec.model_table is None else None
         existing = self._read_existing_data(target, frame, spec)
         create = existing is None
         if create:

@@ -66,6 +66,21 @@ class TestHistorifyPolars(HistorifyContractTests):
         return lambda uri: pl.scan_delta(uri).collect().to_dicts()
 
 
+class TestHistorifyResultTypes:
+    def test_a_result_column_wider_than_the_existing_table_is_cast_to_its_type(
+        self, tmp_path: Path
+    ) -> None:
+        writer = PolarsTargetWriter(str(tmp_path), missing_table_policy=MissingTablePolicy.CREATE)
+        narrow = pl.LazyFrame({"player_id": [1], "team_id": [10]}).cast({"team_id": pl.Int32})
+        wide = pl.LazyFrame({"player_id": [1], "team_id": [11]})
+        writer.write(narrow, _snapshot_spec(), RunDateParams(date(2026, 1, 1)))
+
+        writer.write(wide, _snapshot_spec(), RunDateParams(date(2026, 1, 2)))
+
+        stored = pl.scan_delta(str(tmp_path / "dim_players")).collect_schema()
+        assert stored["team_id"] == pl.Int32
+
+
 class TestLogDeleteMarkerDtype:
     def test_all_null_marker_is_rejected_with_its_dtype(self) -> None:
         frame = pl.DataFrame(

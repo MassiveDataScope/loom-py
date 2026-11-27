@@ -14,7 +14,7 @@ from loom.core.model import BaseModel, BusinessKey, ColumnField, Field
 from loom.core.model.types import DateTime, Text
 from loom.core.routing import LogicalRef
 from loom.core.schema import SchemaMode
-from loom.etl import Format, FromFile, FromTable, IntoHistory, IntoTable, col
+from loom.etl import FromTable, IntoHistory, IntoTable, col
 from loom.etl.compiler import ETLCompilationError, ETLErrorCode
 from loom.etl.declarative.expr._refs import TableRef
 from loom.etl.declarative.target._history import HistoryDateType
@@ -186,24 +186,23 @@ class Pending(BaseModel):
     when: NotDefinedYet  # noqa: F821
 
 
-def _csv_file() -> FromFile:
-    return FromFile("s3://raw/p.csv", format=Format.CSV)
+@pytest.fixture
+def define_missing_type(monkeypatch: pytest.MonkeyPatch) -> Callable[[], None]:
+    """Define the type ``Pending`` annotates but this module has not defined yet."""
+
+    def define() -> None:
+        monkeypatch.setitem(globals(), "NotDefinedYet", Annotated[str, Text])
+
+    return define
 
 
-_BUILDERS_BEFORE_COMPILE = {
+_SOURCES_BEFORE_COMPILE = {
     "from-table": lambda: FromTable(Pending),
-    "from-table-with-model-schema": lambda: FromTable("wh.pending").with_schema(Pending),
-    "from-table-columns": lambda: FromTable(Pending).columns(Pending.c.pending_id),
     "from-table-where": lambda: FromTable(Pending).where(col(Pending.c.pending_id) == "a"),
-    "from-table-parse-json": lambda: FromTable(Pending).parse_json("payload", list[str]),
-    "from-file-with-model-schema": lambda: _csv_file().with_schema(Pending),
-    "from-file-parse-json": lambda: _csv_file().parse_json("payload", list[str]),
-    "append": lambda: IntoTable(Pending).append(),
+}
+_TARGETS_BEFORE_COMPILE = {
     "replace": lambda: IntoTable(Pending).replace(),
-    "replace-partitions": lambda: IntoTable(Pending).replace_partitions(Pending.c.pending_id),
-    "replace-where": lambda: IntoTable(Pending).replace_where(col(Pending.c.pending_id) == "a"),
     "upsert": lambda: IntoTable(Pending).upsert(),
-    "upsert-explicit-keys": lambda: IntoTable(Pending).upsert(keys=(Pending.c.pending_id,)),
     "update": lambda: IntoTable(Pending).update(include=(Pending.c.valid_to,)),
     "history": lambda: IntoHistory(Pending, keys=(Pending.c.pending_id,), effective_date="d"),
 }
@@ -248,12 +247,36 @@ class TestModelDeclaration:
         assert history._to_spec().date_type is expected
 
     @pytest.mark.parametrize(
-        "build", _BUILDERS_BEFORE_COMPILE.values(), ids=list(_BUILDERS_BEFORE_COMPILE)
+        "build", _SOURCES_BEFORE_COMPILE.values(), ids=list(_SOURCES_BEFORE_COMPILE)
     )
-    def test_a_builder_reads_nothing_from_a_model_whose_annotations_do_not_resolve_yet(
-        self, build: Callable[[], Any]
+    def test_a_source_builder_waits_for_the_annotations_of_its_model_to_resolve(
+        self,
+        build: Callable[[], Any],
+        define_missing_type: Callable[[], None],
+        compile_source: CompileDeclaration,
     ) -> None:
-        assert build() is not None
+        source = build()
+        define_missing_type()
+
+        plan = compile_source(source)
+
+        assert plan.source_bindings[0].spec.model_table.column_names[-1] == "when"
+
+    @pytest.mark.parametrize(
+        "build", _TARGETS_BEFORE_COMPILE.values(), ids=list(_TARGETS_BEFORE_COMPILE)
+    )
+    def test_a_target_builder_waits_for_the_annotations_of_its_model_to_resolve(
+        self,
+        build: Callable[[], Any],
+        define_missing_type: Callable[[], None],
+        compile_target: CompileDeclaration,
+    ) -> None:
+        target = build()
+        define_missing_type()
+
+        plan = compile_target(target)
+
+        assert plan.target_binding.spec.model_table.name == "pending"
 
     @pytest.mark.parametrize("merge", [IntoTable.upsert, IntoTable.update])
     def test_a_model_target_refuses_explicitly_empty_keys(

@@ -353,16 +353,21 @@ class _Existing:
     """Weak-referenceable stand-in for the existing target frame."""
 
 
-class _CastingSchema(PassthroughSchema):
-    """A physical schema whose alignment marks the frame with the casts it applied."""
+_ALIGNED = 0
+
+
+class _MarkingSchema(PassthroughSchema):
+    """A physical schema whose alignment appends the ``_ALIGNED`` marker to the frame."""
 
     def align(self, frame: Any, mode: SchemaMode) -> Any:
-        return [*frame, 0]
+        return [*frame, _ALIGNED]
 
 
-class _CastingWriter(_StubWritePolicy):
+class _MarkingWriter(_StubWritePolicy):
+    """A write policy whose existing table has a :class:`_MarkingSchema`."""
+
     def _physical_schema(self, target: ResolvedTarget) -> PassthroughSchema | None:
-        return _CastingSchema() if self._schema_exists else None
+        return _MarkingSchema() if self._schema_exists else None
 
 
 class TestHistorifyResultWrite:
@@ -382,11 +387,11 @@ class TestHistorifyResultWrite:
     def test_the_result_is_aligned_to_the_physical_schema_of_the_existing_table(
         self, fake_scd2_transform: None
     ) -> None:
-        writer = _CastingWriter(schema_exists=True)
+        writer = _MarkingWriter(schema_exists=True)
 
         writer.write([1], _spec(), None)
 
-        assert writer.replace_calls == [([1, -1, 0], SchemaMode.STRICT)]
+        assert writer.replace_calls == [([1, -1, _ALIGNED], SchemaMode.STRICT)]
 
     def test_existing_table_with_partition_scope_replaces_partitions(
         self, fake_scd2_transform: None
