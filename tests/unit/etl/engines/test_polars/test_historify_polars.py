@@ -172,7 +172,7 @@ class TestAssertNoDateCollisions:
             effective_date="event_date",
             mode=HistorifyInputMode.LOG,
             track=("plan",),
-            date_type=HistoryDateType.TIMESTAMP,
+            declared_date_type=HistoryDateType.TIMESTAMP,
         )
         PolarsHistorifyOps().assert_no_date_collisions(
             frame, ["subscription_id", "plan"], "event_date", spec
@@ -246,7 +246,7 @@ class TestTimestampBoundariesAreUtcAware:
             effective_date="eff",
             mode=HistorifyInputMode.LOG,
             track=("status",),
-            date_type=HistoryDateType.TIMESTAMP,
+            declared_date_type=HistoryDateType.TIMESTAMP,
         )
         frame = pl.DataFrame(
             {
@@ -274,7 +274,7 @@ class TestBuildLogBoundariesClampsSameInstant:
         effective_date="event_ts",
         mode=HistorifyInputMode.LOG,
         track=("state",),
-        date_type=HistoryDateType.TIMESTAMP,
+        declared_date_type=HistoryDateType.TIMESTAMP,
     )
 
     @staticmethod
@@ -326,7 +326,7 @@ class TestBuildLogBoundariesClampsSameInstant:
             effective_date="event_date",
             mode=HistorifyInputMode.LOG,
             track=("state",),
-            date_type=HistoryDateType.DATE,
+            declared_date_type=HistoryDateType.DATE,
         )
         # Two events on the same day -> zero-width [D, D], not D-1.
         events = pl.DataFrame(

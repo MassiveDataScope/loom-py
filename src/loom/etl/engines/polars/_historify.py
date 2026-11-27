@@ -17,11 +17,11 @@ from loom.etl.engines.polars._frame import FrameT
 
 
 def _history_boundary_dtype(spec: HistorifySpec) -> type[pl.Date] | pl.Datetime:
-    return pl.Date if spec.resolved_date_type is HistoryDateType.DATE else pl.Datetime("us", "UTC")
+    return pl.Date if spec.date_type is HistoryDateType.DATE else pl.Datetime("us", "UTC")
 
 
 def _period_offset(spec: HistorifySpec) -> pl.Expr:
-    if spec.resolved_date_type is HistoryDateType.DATE:
+    if spec.date_type is HistoryDateType.DATE:
         return pl.duration(days=1)
     return pl.duration(microseconds=1)
 
@@ -268,7 +268,7 @@ class PolarsHistorifyOps:
         eff_col: str,
         spec: HistorifySpec,
     ) -> None:
-        if spec.resolved_date_type is not HistoryDateType.DATE:
+        if spec.date_type is not HistoryDateType.DATE:
             return
         combo_key = keys + [eff_col]
         if len(frame) == frame.select(combo_key).n_unique():

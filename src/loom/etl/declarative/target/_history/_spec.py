@@ -49,7 +49,7 @@ class HistorifySpec(ModelBoundSpec):
             vector to zero width (``valid_from == valid_to``).
         deleted_at: Name of the soft-delete audit column. Only written when
             ``delete_policy=SOFT_DELETE``.
-        date_type: Declared precision of the ``valid_from`` / ``valid_to`` columns;
+        declared_date_type: Declared precision of the ``valid_from`` / ``valid_to`` columns;
             ``None`` follows the model's ``valid_from`` column, or ``DATE`` for a reference.
         schema_mode: Schema evolution strategy.
         allow_temporal_rerun: Allow re-weave when past-date data is loaded.
@@ -70,7 +70,7 @@ class HistorifySpec(ModelBoundSpec):
     valid_from: str = "valid_from"
     valid_to: str = "valid_to"
     deleted_at: str = "deleted_at"
-    date_type: HistoryDateType | None = None
+    declared_date_type: HistoryDateType | None = None
     schema_mode: SchemaMode = SchemaMode.STRICT
     allow_temporal_rerun: bool = False
     delete_marker: str | None = None
@@ -84,9 +84,9 @@ class HistorifySpec(ModelBoundSpec):
         return HistoryDateType.of_frame_type(table.column_types.get(self.valid_from))
 
     @property
-    def resolved_date_type(self) -> HistoryDateType:
+    def date_type(self) -> HistoryDateType:
         """The precision of the boundary columns: declared, else the model's, else ``DATE``."""
-        return self.date_type or self.model_boundary_type or HistoryDateType.DATE
+        return self.declared_date_type or self.model_boundary_type or HistoryDateType.DATE
 
     @property
     def declared_columns(self) -> Mapping[str, tuple[str, ...]]:

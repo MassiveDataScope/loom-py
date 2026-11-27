@@ -176,7 +176,7 @@ class TestIntoHistoryPlayerDimension:
         assert isinstance(self.spec.effective_date, ParamExpr)
         assert self.spec.valid_from == "valid_from"
         assert self.spec.valid_to == "valid_to"
-        assert self.spec.resolved_date_type is HistoryDateType.DATE
+        assert self.spec.date_type is HistoryDateType.DATE
         assert self.spec.schema_mode is SchemaMode.STRICT
         assert self.spec.allow_temporal_rerun is False
 

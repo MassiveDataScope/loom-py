@@ -78,7 +78,9 @@ class ModelCheck:
             )
 
     def _check_merge_keys(self, spec: TableSpec) -> None:
-        if not isinstance(spec, UpsertSpec | UpdateSpec) or spec.upsert_keys:
+        if not isinstance(spec, UpsertSpec | UpdateSpec):
+            return
+        if spec.upsert_keys or spec.declared_keys is not None:
             return
         keys = ModelKeys.of(self._model)
         if keys.frame_supplied:
@@ -96,11 +98,11 @@ class ModelCheck:
         actual = spec.model_boundary_type
         if actual is None:
             raise self._refusal(ETLErrorCode.MODEL_BOUNDARY_NOT_TEMPORAL, spec.valid_from)
-        if spec.date_type is not None and actual is not spec.date_type:
+        if spec.declared_date_type is not None and actual is not spec.declared_date_type:
             raise self._refusal(
                 ETLErrorCode.MODEL_DATE_TYPE_MISMATCH,
                 "date_type",
-                declared=spec.date_type.value,
+                declared=spec.declared_date_type.value,
                 column=spec.valid_from,
                 actual=actual.value,
             )

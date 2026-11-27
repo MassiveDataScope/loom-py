@@ -15,7 +15,7 @@ from loom.etl.engines.spark._writer import SparkTargetWriter
 def _spec() -> UpsertSpec:
     return UpsertSpec(
         table_ref=TableRef("test.orders"),
-        upsert_keys=("id",),
+        declared_keys=("id",),
         delete_flag="_deleted",
     )
 

@@ -37,7 +37,7 @@ def _update_spec(
 ) -> UpdateSpec:
     return UpdateSpec(
         table_ref=TableRef(ref),
-        keys=keys,
+        declared_keys=keys,
         partition_cols=partition_cols,
         exclude=exclude,
         include=include,

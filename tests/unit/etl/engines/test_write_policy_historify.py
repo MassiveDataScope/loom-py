@@ -422,8 +422,8 @@ _WRITE_MODES: tuple[tuple[Any, str], ...] = (
         ),
         "_replace_where",
     ),
-    (UpsertSpec(table_ref=_TABLE_REF, upsert_keys=("player_id",)), "_upsert"),
-    (UpdateSpec(table_ref=_TABLE_REF, keys=("player_id",)), "_update"),
+    (UpsertSpec(table_ref=_TABLE_REF, declared_keys=("player_id",)), "_upsert"),
+    (UpdateSpec(table_ref=_TABLE_REF, declared_keys=("player_id",)), "_update"),
     (_spec(), "_historify_ops"),
 )
 

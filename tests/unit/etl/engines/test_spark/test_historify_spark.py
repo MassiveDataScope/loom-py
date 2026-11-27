@@ -157,7 +157,7 @@ class TestAssertNoDateCollisions:
             effective_date="event_date",
             mode=HistorifyInputMode.LOG,
             track=("plan",),
-            date_type=HistoryDateType.TIMESTAMP,
+            declared_date_type=HistoryDateType.TIMESTAMP,
         )
         SparkHistorifyOps().assert_no_date_collisions(
             frame, ["subscription_id", "plan"], "event_date", spec
@@ -191,7 +191,7 @@ class TestBackendHelpers:
             effective_date="event_date",
             mode=HistorifyInputMode.LOG,
             track=("plan",),
-            date_type=HistoryDateType.TIMESTAMP,
+            declared_date_type=HistoryDateType.TIMESTAMP,
         )
         frame = spark.createDataFrame(
             [
@@ -211,7 +211,7 @@ class TestBackendHelpers:
             effective_date="event_ts",
             mode=HistorifyInputMode.LOG,
             track=("state",),
-            date_type=HistoryDateType.TIMESTAMP,
+            declared_date_type=HistoryDateType.TIMESTAMP,
         )
         # false and true stamped in the same snapshot instant -> zero-width, not negative.
         frame = spark.createDataFrame(
@@ -235,7 +235,7 @@ class TestBackendHelpers:
             effective_date="event_date",
             mode=HistorifyInputMode.LOG,
             track=("state",),
-            date_type=HistoryDateType.DATE,
+            declared_date_type=HistoryDateType.DATE,
         )
         # Two events on the same day -> zero-width [D, D], not D-1.
         frame = spark.createDataFrame(

@@ -101,7 +101,7 @@ def _replacement_spec(
         track=track,
         overwrite=overwrite,
         delete_marker="is_deleted",
-        date_type=date_type,
+        declared_date_type=date_type,
         schema_mode=SchemaMode.STRICT,
     )
 

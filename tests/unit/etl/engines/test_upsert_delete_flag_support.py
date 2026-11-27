@@ -119,7 +119,7 @@ class TestWritePolicyUpsertDeleteFlag:
         writer = _UnsupportedWriter()
         spec = UpsertSpec(
             table_ref=TableRef("test.orders"),
-            upsert_keys=("id",),
+            declared_keys=("id",),
             delete_flag="_deleted",
         )
         with pytest.raises(

@@ -439,7 +439,7 @@ class IntoTable:
             raise UpsertDeleteFlagError(delete_flag, "must name a source column")
         return self._with(
             UpsertSpec,
-            upsert_keys=self._table.merge_keys(keys),
+            declared_keys=keys,
             partition_cols=partition_cols,
             upsert_exclude=exclude,
             upsert_include=include,
@@ -500,7 +500,7 @@ class IntoTable:
         """
         return self._with(
             UpdateSpec,
-            keys=self._table.merge_keys(keys),
+            declared_keys=keys,
             partition_cols=partition_cols,
             exclude=exclude,
             include=include,

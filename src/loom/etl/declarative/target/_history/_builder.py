@@ -212,7 +212,7 @@ class IntoHistory:
             valid_from=valid_from,
             valid_to=valid_to,
             deleted_at=deleted_at,
-            date_type=None if date_type is None else HistoryDateType(date_type),
+            declared_date_type=None if date_type is None else HistoryDateType(date_type),
             schema_mode=schema,
             allow_temporal_rerun=allow_temporal_rerun,
             delete_marker=delete_marker,

@@ -44,15 +44,6 @@ class DeclaredTable:
             return cls(declaration)
         return cls(TableRef(declaration))
 
-    def merge_keys(self, declared: tuple[str, ...] | None) -> tuple[str, ...]:
-        """The keys to merge on: those declared, else the model's when the frame can supply them.
-
-        A reference has no default, so it gives ``()`` and the compiler asks for ``keys``.
-        """
-        if declared:
-            return declared
-        return ModelKeys.of(self.model).frame_supplied if self.model is not None else ()
-
 
 @dataclass(frozen=True)
 class ModelBoundSpec:
@@ -76,3 +67,12 @@ class ModelBoundSpec:
     def declared_columns(self) -> Mapping[str, tuple[str, ...]]:
         """The model columns this spec names, by the argument that names them."""
         return {}
+
+    def _declared_or_model_keys(self, declared: tuple[str, ...] | None) -> tuple[str, ...]:
+        """The keys declared, else the model's the frame can supply, else ``()`` for a reference.
+
+        ``None`` is not declared; ``()`` is declared empty and stays empty.
+        """
+        if declared is not None:
+            return declared
+        return ModelKeys.of(self.model).frame_supplied if self.model is not None else ()

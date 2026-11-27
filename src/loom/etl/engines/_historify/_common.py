@@ -58,7 +58,7 @@ def log_run_cols(spec: HistorifySpec) -> list[str]:
 
 def prev_period_value(eff_date: Any, spec: HistorifySpec) -> Any:
     """Return one unit before eff_date (one day or one microsecond)."""
-    delta = _DATE_DELTA if spec.resolved_date_type is HistoryDateType.DATE else _TS_DELTA
+    delta = _DATE_DELTA if spec.date_type is HistoryDateType.DATE else _TS_DELTA
     return eff_date - delta
 
 

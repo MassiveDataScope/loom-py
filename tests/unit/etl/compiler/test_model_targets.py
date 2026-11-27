@@ -14,7 +14,7 @@ from loom.core.model import BaseModel, BusinessKey, ColumnField, Field
 from loom.core.model.types import DateTime, Text
 from loom.core.routing import LogicalRef
 from loom.core.schema import SchemaMode
-from loom.etl import FromTable, IntoHistory, IntoTable, col
+from loom.etl import Format, FromFile, FromTable, IntoHistory, IntoTable, col
 from loom.etl.compiler import ETLCompilationError, ETLErrorCode
 from loom.etl.declarative.expr._refs import TableRef
 from loom.etl.declarative.target._history import HistoryDateType
@@ -198,11 +198,35 @@ _DATE_TYPES = {
 }
 
 
-class Delayed(BaseModel):
-    __tablename__ = "delayed"
-    delayed_id: Annotated[str, Field(primary_key=True)]
-    valid_from: NotDefinedYet  # noqa: F821
-    valid_to: NotDefinedYet | None  # noqa: F821
+class Pending(BaseModel):
+    __tablename__ = "pending"
+    pending_id: Annotated[str, Field(primary_key=True)]
+    valid_from: Annotated[datetime, DateTime(tz=True)]
+    valid_to: Annotated[datetime, DateTime(tz=True)] | None
+    when: NotDefinedYet  # noqa: F821
+
+
+def _csv_file() -> FromFile:
+    return FromFile("s3://raw/p.csv", format=Format.CSV)
+
+
+_BUILDERS_BEFORE_COMPILE = {
+    "from-table": lambda: FromTable(Pending),
+    "from-table-with-model-schema": lambda: FromTable("wh.pending").with_schema(Pending),
+    "from-table-columns": lambda: FromTable(Pending).columns(Pending.c.pending_id),
+    "from-table-where": lambda: FromTable(Pending).where(col(Pending.c.pending_id) == "a"),
+    "from-table-parse-json": lambda: FromTable(Pending).parse_json("payload", list[str]),
+    "from-file-with-model-schema": lambda: _csv_file().with_schema(Pending),
+    "from-file-parse-json": lambda: _csv_file().parse_json("payload", list[str]),
+    "append": lambda: IntoTable(Pending).append(),
+    "replace": lambda: IntoTable(Pending).replace(),
+    "replace-partitions": lambda: IntoTable(Pending).replace_partitions(Pending.c.pending_id),
+    "replace-where": lambda: IntoTable(Pending).replace_where(col(Pending.c.pending_id) == "a"),
+    "upsert": lambda: IntoTable(Pending).upsert(),
+    "upsert-explicit-keys": lambda: IntoTable(Pending).upsert(keys=(Pending.c.pending_id,)),
+    "update": lambda: IntoTable(Pending).update(include=(Pending.c.valid_to,)),
+    "history": lambda: IntoHistory(Pending, keys=(Pending.c.pending_id,), effective_date="d"),
+}
 
 
 _CONSISTENT_TARGETS = {
@@ -241,12 +265,24 @@ class TestModelDeclaration:
     ) -> None:
         history = IntoHistory(target, keys=("k",), effective_date="d", date_type=date_type)
 
-        assert history._to_spec().resolved_date_type is expected
+        assert history._to_spec().date_type is expected
 
-    def test_a_model_whose_annotations_do_not_resolve_yet_builds_its_history_target(self) -> None:
-        target = IntoHistory(Delayed, keys=(Delayed.c.delayed_id,), effective_date="d")
+    @pytest.mark.parametrize(
+        "build", _BUILDERS_BEFORE_COMPILE.values(), ids=list(_BUILDERS_BEFORE_COMPILE)
+    )
+    def test_a_builder_reads_nothing_from_a_model_whose_annotations_do_not_resolve_yet(
+        self, build: Callable[[], Any]
+    ) -> None:
+        assert build() is not None
 
-        assert target._to_spec().model is Delayed
+    @pytest.mark.parametrize("merge", [IntoTable.upsert, IntoTable.update])
+    def test_a_model_target_refuses_explicitly_empty_keys(
+        self, compile_target: CompileTarget, merge: Callable[..., IntoTable]
+    ) -> None:
+        with pytest.raises(ETLCompilationError) as refused:
+            compile_target(merge(IntoTable(Order), keys=()))
+
+        assert refused.value.code is ETLErrorCode.UPSERT_NO_KEYS
 
     def test_a_source_declared_with_a_model_refuses_another_schema(self) -> None:
         with pytest.raises(InvalidUse, match=r"FromTable\(Order\).*drop it"):

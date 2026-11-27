@@ -131,7 +131,8 @@ class UpsertSpec(ModelBoundSpec):
 
     Args:
         table_ref:      Logical table reference.
-        upsert_keys:    Columns that uniquely identify a row (MERGE ON).
+        declared_keys:  Columns that uniquely identify a row (MERGE ON); ``None``
+                        follows the model's conflict key at compile time.
         schema_mode:    Schema evolution strategy.
         partition_cols: Partition columns added to the MERGE ON predicate
                         for file-level pruning.  Strongly recommended for
@@ -148,7 +149,7 @@ class UpsertSpec(ModelBoundSpec):
                         and does not appear in the update or insert maps.
     """
 
-    upsert_keys: tuple[str, ...]
+    declared_keys: tuple[str, ...] | None = None
     schema_mode: SchemaMode = SchemaMode.STRICT
     partition_cols: tuple[str, ...] = field(default_factory=tuple)
     upsert_exclude: tuple[str, ...] = field(default_factory=tuple)
@@ -159,6 +160,11 @@ class UpsertSpec(ModelBoundSpec):
     def declared_columns(self) -> Mapping[str, tuple[str, ...]]:
         """The model columns this spec names, by the argument that names them."""
         return _merge_roles(self)
+
+    @property
+    def upsert_keys(self) -> tuple[str, ...]:
+        """The merge keys: declared, else the model's conflict key."""
+        return self._declared_or_model_keys(self.declared_keys)
 
     @property
     def delete_flag_conflict(self) -> str | None:
@@ -184,7 +190,8 @@ class UpdateSpec(ModelBoundSpec):
 
     Args:
         table_ref:      Logical table reference.
-        keys:           Columns that uniquely identify a row (MERGE ON).
+        declared_keys:  Columns that uniquely identify a row (MERGE ON); ``None``
+                        follows the model's conflict key at compile time.
         schema_mode:    Schema evolution strategy.
         partition_cols: Partition columns added to the MERGE ON predicate
                         for file-level pruning.  Strongly recommended for
@@ -195,7 +202,7 @@ class UpdateSpec(ModelBoundSpec):
                         Mutually exclusive with *exclude*.
     """
 
-    keys: tuple[str, ...]
+    declared_keys: tuple[str, ...] | None = None
     schema_mode: SchemaMode = SchemaMode.STRICT
     partition_cols: tuple[str, ...] = field(default_factory=tuple)
     exclude: tuple[str, ...] = field(default_factory=tuple)
@@ -205,6 +212,11 @@ class UpdateSpec(ModelBoundSpec):
     def declared_columns(self) -> Mapping[str, tuple[str, ...]]:
         """The model columns this spec names, by the argument that names them."""
         return _merge_roles(self)
+
+    @property
+    def keys(self) -> tuple[str, ...]:
+        """The merge keys: declared, else the model's conflict key."""
+        return self._declared_or_model_keys(self.declared_keys)
 
     @property
     def upsert_keys(self) -> tuple[str, ...]:
