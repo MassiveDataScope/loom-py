@@ -9,12 +9,12 @@ import pytest
 
 from loom.etl import ETLStep, IntoTemp, Sources
 from loom.etl.compiler import ETLCompiler, StepPlan
-from tests.unit.etl.compiler.probes import CompileTarget
+from tests.unit.etl.compiler.probes import CompileDeclaration
 from tests.unit.etl.engines.doubles import NoParams
 
 
 @pytest.fixture
-def compile_target() -> CompileTarget:
+def compile_target() -> CompileDeclaration:
     """Compile a step whose only declaration is the given target."""
 
     def compile_step(target: Any) -> StepPlan:
@@ -29,7 +29,7 @@ def compile_target() -> CompileTarget:
 
 
 @pytest.fixture
-def compile_source() -> CompileTarget:
+def compile_source() -> CompileDeclaration:
     """Compile a step whose only declaration is the given source, named ``orders``."""
 
     def compile_step(source: Any) -> StepPlan:

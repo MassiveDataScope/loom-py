@@ -107,17 +107,19 @@ class TestFieldReaders:
 
         assert (field.name, field.encode_name) == ("given_name", "givenName")
 
-    def test_a_dataclass_and_a_plain_class_encode_as_their_names_without_class_vars(self) -> None:
+    def test_a_dataclass_encodes_as_its_field_names(self) -> None:
+        names = [(f.name, f.encode_name) for f in AnnotatedClass(_Parcel).resolve()]
+
+        assert names == [("weight", "weight"), ("label", "label")]
+
+    def test_a_plain_class_leaves_its_class_vars_out(self) -> None:
         class Plain:
             code: str
             registry: ClassVar[dict[str, str]]
 
-        names = [
-            (f.name, f.encode_name)
-            for f in (*AnnotatedClass(_Parcel).resolve(), *AnnotatedClass(Plain).resolve())
-        ]
+        names = [(f.name, f.encode_name) for f in AnnotatedClass(Plain).resolve()]
 
-        assert names == [("weight", "weight"), ("label", "label"), ("code", "code")]
+        assert names == [("code", "code")]
 
     def test_the_fields_of_a_class_built_at_run_time_are_collected_with_it(self) -> None:
         built = msgspec.defstruct("Built", [("code", str)])

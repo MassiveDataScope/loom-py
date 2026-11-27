@@ -70,6 +70,7 @@ class CamelEntity(msgspec.Struct, rename="camel"):
 
 
 def probe_model(annotation: Any) -> type[BaseModel]:
+    """A model of one table whose only field, ``value``, is annotated with *annotation*."""
     return type(
         "Probe",
         (BaseModel,),

@@ -32,18 +32,23 @@ def _order(order_id: str, amount: str) -> Order:
     return make(Order, order_id=order_id, customer_id="c1", amount=Decimal(amount), placed_at=DAY)
 
 
+@pytest.fixture
+def delta_runner(tmp_path: Path) -> PolarsStepRunner:
+    return PolarsStepRunner(delta_root=tmp_path)
+
+
 @pytest.fixture(params=["captured", "delta"])
-def runner(request: pytest.FixtureRequest, tmp_path: Path) -> PolarsStepRunner:
-    return PolarsStepRunner(delta_root=tmp_path if request.param == "delta" else None)
+def runner(request: pytest.FixtureRequest, delta_runner: PolarsStepRunner) -> PolarsStepRunner:
+    return delta_runner if request.param == "delta" else PolarsStepRunner()
 
 
-@pytest.fixture(params=["polars", "polars-delta", "spark"])
+@pytest.fixture(params=["captured", "delta", "spark"])
 def rows_runner(
-    request: pytest.FixtureRequest, tmp_path: Path
+    request: pytest.FixtureRequest, delta_runner: PolarsStepRunner
 ) -> PolarsStepRunner | SparkStepRunner:
     if request.param == "spark":
         return SparkStepRunner(request.getfixturevalue("spark"))
-    return PolarsStepRunner(delta_root=tmp_path if request.param == "polars-delta" else None)
+    return delta_runner if request.param == "delta" else PolarsStepRunner()
 
 
 class TestRowsContract:
@@ -60,7 +65,7 @@ class TestRowsContract:
         assert result.rows(Visitor) == [visitor]
 
 
-class TestOutcome:
+class TestRunWithSeededRows:
     def test_the_total_of_the_seeded_orders_is_the_model_row(
         self, runner: PolarsStepRunner
     ) -> None:
@@ -88,25 +93,21 @@ class TestAssertRows:
         ],
     )
     def test_a_different_row_set_fails_naming_the_difference(
-        self, tmp_path: Path, expected: list[tuple[str, str]], message: str
+        self, delta_runner: PolarsStepRunner, expected: list[tuple[str, str]], message: str
     ) -> None:
-        runner = PolarsStepRunner(delta_root=tmp_path)
-        runner.seed_rows(_order("o1", "10"), _order("o2", "12"))
-        result = runner.table("sales.order")
+        delta_runner.seed_rows(_order("o1", "10"), _order("o2", "12"))
+        result = delta_runner.table("sales.order")
 
         with pytest.raises(AssertionError, match=message):
             result.assert_rows(*(_order(*row) for row in expected))
 
-    def test_the_order_of_the_rows_does_not_matter(self, tmp_path: Path) -> None:
-        runner = PolarsStepRunner(delta_root=tmp_path)
-        runner.seed_rows(_order("o1", "10"), _order("o2", "12"))
+    def test_the_order_of_the_rows_does_not_matter(self, delta_runner: PolarsStepRunner) -> None:
+        delta_runner.seed_rows(_order("o1", "10"), _order("o2", "12"))
 
-        runner.table("sales.order").assert_rows(_order("o2", "12"), _order("o1", "10"))
+        delta_runner.table("sales.order").assert_rows(_order("o2", "12"), _order("o1", "10"))
 
-    def test_rows_of_two_models_are_refused(self, tmp_path: Path) -> None:
-        result = (
-            PolarsStepRunner(delta_root=tmp_path).seed_rows(_order("o1", "1")).table("sales.order")
-        )
+    def test_rows_of_two_models_are_refused(self, delta_runner: PolarsStepRunner) -> None:
+        result = delta_runner.seed_rows(_order("o1", "1")).table("sales.order")
 
         with pytest.raises(InvalidUse, match="exactly one model"):
             result.assert_rows(_order("o1", "1"), make(CustomerTotal))

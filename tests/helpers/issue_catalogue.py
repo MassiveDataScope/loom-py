@@ -57,7 +57,9 @@ INDIRECT_CALLS: Mapping[str, tuple[str, ...]] = {
     ),
     "etl/compiler/_validators_model.py::_refusal": (
         "tests/unit/etl/compiler/test_model_targets.py::"
-        "test_a_target_the_model_contradicts_is_refused_naming_the_field",
+        "test_a_target_naming_a_column_the_model_lacks_is_refused_naming_the_role",
+        "tests/unit/etl/compiler/test_model_targets.py::"
+        "test_a_target_the_model_contradicts_is_refused_naming_the_field_and_the_fix",
     ),
 }
 """Each ``.issue(...)`` call on a code held in a variable, keyed by

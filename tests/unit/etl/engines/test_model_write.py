@@ -60,28 +60,25 @@ def _orders(engine: ModelEngine, *order_ids: str, void: Collection[str] | None =
     return engine.frame(columns)
 
 
+_REPLACE = IntoTable(Order).replace()
+_REPLACE_PARTITIONS = IntoTable(Order).replace_partitions(*_BY_CUSTOMER)
+_REPLACE_PARTITIONS_STREAMING = IntoTable(Order).replace_partitions(*_BY_CUSTOMER, streaming=True)
+_ORDER_UPSERT = IntoTable(Order).upsert(keys=_ORDER_ID)
 _ORDER_WRITES = {
-    "replace": (IntoTable(Order).replace(), None),
-    "replace-partitions": (IntoTable(Order).replace_partitions(*_BY_CUSTOMER), None),
-    "replace-partitions-streaming": (
-        IntoTable(Order).replace_partitions(*_BY_CUSTOMER, streaming=True),
-        None,
-    ),
-    "upsert": (IntoTable(Order).upsert(keys=_ORDER_ID), None),
-    "update": (IntoTable(Order).update(keys=_ORDER_ID), IntoTable(Order).upsert(keys=_ORDER_ID)),
+    "replace": (_REPLACE, _REPLACE),
+    "replace-partitions": (_REPLACE_PARTITIONS, _REPLACE_PARTITIONS),
+    "replace-partitions-streaming": (_REPLACE_PARTITIONS_STREAMING, _REPLACE_PARTITIONS_STREAMING),
+    "upsert": (_ORDER_UPSERT, _ORDER_UPSERT),
+    "update": (IntoTable(Order).update(keys=_ORDER_ID), _ORDER_UPSERT),
 }
 
 
 class TestModelAlignTarget:
-    @pytest.mark.parametrize("path", _ORDER_WRITES)
+    @pytest.mark.parametrize(("target", "seeding"), _ORDER_WRITES.values(), ids=list(_ORDER_WRITES))
     def test_every_path_writes_the_model_types_on_create_and_on_an_existing_table(
-        self, polars_engine: PolarsEngine, path: str
+        self, polars_engine: PolarsEngine, target: IntoTable, seeding: IntoTable
     ) -> None:
-        target, creating = _ORDER_WRITES[path]
-
-        polars_engine.writer.write(
-            _orders(polars_engine, "o1"), (creating or target)._to_spec(), None
-        )
+        polars_engine.writer.write(_orders(polars_engine, "o1"), seeding._to_spec(), None)
         polars_engine.writer.write(_orders(polars_engine, "o1"), target._to_spec(), None)
 
         assert polars_engine.stored_types("sales.order") == _ORDER.column_types
@@ -120,6 +117,13 @@ class TestModelAlignTarget:
         )
 
         assert engine.read_columns(FromTable(Order).columns(Order.c.order_id)) == [Order.c.order_id]
+
+
+_SPARK_TARGETS = {
+    "append": IntoTable(Order).append(),
+    "replace": _REPLACE,
+    "upsert": _ORDER_UPSERT,
+}
 
 
 class _Entry(BaseModel):
@@ -217,19 +221,15 @@ class TestPolarsAuditColumns:
             _orders(engine, "o1"), IntoTable(Order).append()._to_spec(), None, write_ctx=write_ctx
         )
         engine.writer.write(
-            _orders(engine, "o1"),
+            _orders(engine, "o1").drop("noise"),
             IntoTable("sales.plain").append()._to_spec(),
             None,
             write_ctx=write_ctx,
         )
 
-        stamped = {
-            name: dtype
-            for name, dtype in engine.stored_types("sales.plain").items()
-            if name not in (*_ORDER.column_names, "noise")
-        }
-        assert stamped.keys() >= {"_loom_run_id", "_loom_step", "_loom_attempt", "region"}
-        assert engine.stored_types("sales.order") == {**_ORDER.column_types, **stamped}
+        plain = engine.stored_types("sales.plain")
+        assert plain.keys() >= {"_loom_run_id", "_loom_step", "_loom_attempt", "region"}
+        assert engine.stored_types("sales.order") == {**plain, **_ORDER.column_types}
 
     def test_a_model_column_named_like_an_audit_column_keeps_the_model_type(
         self, tmp_path: Path
@@ -270,11 +270,8 @@ class TestModelWriteObservability:
             monkeypatch.setattr(DataFrame, action, refuse)
         yield
 
-    @pytest.mark.parametrize("mode", ["append", "replace", "upsert"])
+    @pytest.mark.parametrize("target", _SPARK_TARGETS.values(), ids=list(_SPARK_TARGETS))
     def test_a_model_write_runs_no_spark_action(
-        self, spark_engine: SparkEngine, actions_refused: None, mode: str
+        self, spark_engine: SparkEngine, actions_refused: None, target: IntoTable
     ) -> None:
-        target = IntoTable(Order)
-        target = target.upsert(keys=_ORDER_ID) if mode == "upsert" else getattr(target, mode)()
-
         spark_engine.writer.write(_orders(spark_engine, "o1"), target._to_spec(), None)

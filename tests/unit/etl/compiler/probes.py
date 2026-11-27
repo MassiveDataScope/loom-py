@@ -1,4 +1,4 @@
-"""Aliases of the compile probes the ETL compiler tests share."""
+"""The compile probes the ETL compiler tests share: a declaration in, its compiled plan out."""
 
 from __future__ import annotations
 
@@ -7,4 +7,4 @@ from typing import Any
 
 from loom.etl.compiler import StepPlan
 
-CompileTarget = Callable[[Any], StepPlan]
+CompileDeclaration = Callable[[Any], StepPlan]
