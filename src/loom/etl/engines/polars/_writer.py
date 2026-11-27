@@ -35,7 +35,7 @@ from loom.etl.engines._path_template import resolve_file_uri
 from loom.etl.engines._predicate import predicate_to_sql
 from loom.etl.engines._write_policy import _WritePolicy
 from loom.etl.engines.polars._historify import PolarsHistorifyOps
-from loom.etl.engines.polars._json_failure import is_json_decode_failure
+from loom.etl.engines.polars._reader import is_json_decode_failure
 from loom.etl.engines.polars._schema import (
     PolarsPhysicalSchema,
     read_delta_physical_schema,

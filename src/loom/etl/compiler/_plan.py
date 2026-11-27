@@ -14,6 +14,22 @@ from typing import Any
 from loom.etl.declarative._declared_table import ModelBoundSpec
 from loom.etl.declarative.source import FileSourceSpec, SourceSpec, TableSourceSpec
 from loom.etl.declarative.target import TargetSpec
+from loom.etl.schema import FrameType
+
+
+@dataclass(frozen=True, slots=True)
+class DeclaredJsonColumn:
+    """A JSON column a step decodes: where it lives, its name and the type it decodes into.
+
+    Args:
+        owner: The source alias, or the target table, the column belongs to.
+        name: Column name.
+        frame_type: Type the JSON text is decoded into.
+    """
+
+    owner: str
+    name: str
+    frame_type: FrameType
 
 
 @dataclass(frozen=True)
@@ -99,10 +115,10 @@ class StepPlan:
     agent_bindings: tuple[AgentBinding, ...] = ()
 
     @property
-    def declared_json_columns(self) -> tuple[str, ...]:
-        """The JSON columns the step decodes, each with its type: sources first, then the target."""
+    def declared_json_columns(self) -> tuple[DeclaredJsonColumn, ...]:
+        """The JSON columns the step decodes: those of its sources, then those of its target."""
         declared = [
-            f"{binding.alias}.{json_column.column} as {json_column.frame_type}"
+            DeclaredJsonColumn(binding.alias, json_column.column, json_column.frame_type)
             for binding in self.source_bindings
             if isinstance(binding.spec, TableSourceSpec | FileSourceSpec)
             for json_column in binding.spec.json_columns
@@ -110,7 +126,7 @@ class StepPlan:
         target = self.target_binding.spec
         if isinstance(target, ModelBoundSpec) and target.model_table is not None:
             declared.extend(
-                f"target {target.table_ref.ref}.{column.name} as {column.dtype}"
+                DeclaredJsonColumn(f"target {target.table_ref.ref}", column.name, column.dtype)
                 for column in target.model_table.nested_columns
             )
         return tuple(declared)
