@@ -2,7 +2,8 @@
 
 from __future__ import annotations
 
-from dataclasses import dataclass
+from collections.abc import Mapping
+from dataclasses import dataclass, field
 from typing import TypeAlias
 
 from loom.core.model import BaseModel
@@ -10,6 +11,7 @@ from loom.core.model.introspection import ModelKeys, get_column_fields, get_tabl
 from loom.core.routing import LogicalRef
 from loom.etl.declarative._history_date_type import HistoryDateType
 from loom.etl.declarative.expr._refs import TableRef
+from loom.etl.schema import ModelTable
 
 TableDeclaration: TypeAlias = str | LogicalRef | TableRef | type[BaseModel]
 """What a builder accepts to name a table: a reference, or a model that names its own."""
@@ -58,3 +60,25 @@ class DeclaredTable:
             return None
         info = get_column_fields(self.model).get(column)
         return HistoryDateType.of_kind(None if info is None else info.kind)
+
+
+@dataclass(frozen=True)
+class ModelBoundSpec:
+    """What every table spec shares: the model its target was declared with, if any.
+
+    Args:
+        model: The model the target named, ``None`` for a plain reference. The compiler
+            translates it to lake types and refuses what the lake cannot store.
+    """
+
+    model: type[BaseModel] | None = field(default=None, kw_only=True)
+
+    @property
+    def model_table(self) -> ModelTable | None:
+        """The lake table of the model: translated once per class, at compile time."""
+        return None if self.model is None else ModelTable.from_model(self.model)
+
+    @property
+    def declared_columns(self) -> Mapping[str, tuple[str, ...]]:
+        """The model columns this spec names, by the argument that names them."""
+        return {}

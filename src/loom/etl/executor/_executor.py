@@ -54,9 +54,9 @@ from loom.etl.compiler._plan import (
     ProcessStepNode,
     StepPlan,
 )
+from loom.etl.declarative._declared_table import ModelBoundSpec
 from loom.etl.declarative.source import FileSourceSpec, TableSourceSpec, TempSourceSpec
 from loom.etl.declarative.target._client import ClientSpec
-from loom.etl.declarative.target._table import ModelBoundSpec
 from loom.etl.declarative.target._temp import TempFanInSpec, TempSpec
 from loom.etl.event import EtlEvent, EtlKey
 from loom.etl.executor._agents import AgentMapper

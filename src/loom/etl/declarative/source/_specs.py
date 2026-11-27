@@ -15,12 +15,11 @@ from enum import StrEnum
 from typing import TYPE_CHECKING, Any
 
 from loom.core.errors import InvalidValue
-from loom.core.model import BaseModel
+from loom.etl.declarative._declared_table import ModelBoundSpec
 from loom.etl.declarative._format import Format
 from loom.etl.declarative._read_options import ReadOptions
 from loom.etl.declarative.expr._predicate_dialect import columns_in
 from loom.etl.declarative.expr._refs import TableRef
-from loom.etl.schema import ModelTable
 from loom.etl.schema._schema import ColumnSchema, FrameType
 
 if TYPE_CHECKING:
@@ -92,7 +91,7 @@ class JsonColumnSpec:
 
 
 @dataclass(frozen=True)
-class TableSourceSpec:
+class TableSourceSpec(ModelBoundSpec):
     """Normalized internal representation of a Delta table ETL source.
 
     Produced by :meth:`~loom.etl.declarative.source.FromTable._to_spec`.
@@ -123,7 +122,6 @@ class TableSourceSpec:
     columns: tuple[str, ...] = field(default_factory=tuple)
     schema: tuple[ColumnSchema, ...] = field(default_factory=tuple)
     json_columns: tuple[JsonColumnSpec, ...] = field(default_factory=tuple)
-    model: type[BaseModel] | None = None
 
     @property
     def read_schema(self) -> tuple[ColumnSchema, ...]:
@@ -131,7 +129,8 @@ class TableSourceSpec:
 
         Only the columns left after the ``columns`` projection are cast.
         """
-        schema = self.schema if self.model is None else ModelTable.from_model(self.model).schema
+        table = self.model_table
+        schema = self.schema if table is None else table.schema
         return _projected(schema, self.columns)
 
     @property
