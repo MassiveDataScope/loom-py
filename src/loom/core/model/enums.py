@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from enum import StrEnum
+from typing import Final
 
 
 class OnDelete(StrEnum):
@@ -60,7 +61,7 @@ class KeyFill(StrEnum):
         return _KEY_FILL_DESCRIPTIONS[self]
 
 
-_KEY_FILL_DESCRIPTIONS = {
+_KEY_FILL_DESCRIPTIONS: Final = {
     KeyFill.AUTOINCREMENT: "autoincrement",
     KeyFill.DERIVED: "derived by the store",
     KeyFill.SERVER_DEFAULT: "filled by the server",

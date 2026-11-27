@@ -66,8 +66,8 @@ class RowDifference:
         unexpected: The actual instances that were not expected.
     """
 
-    missing: list[Any]
-    unexpected: list[Any]
+    missing: tuple[Any, ...]
+    unexpected: tuple[Any, ...]
 
     @classmethod
     def between(cls, expected: Sequence[Any], actual: Sequence[Any]) -> RowDifference:
@@ -77,7 +77,7 @@ class RowDifference:
         rows = dict(zip([*found, *wanted], [*actual, *expected], strict=True))
         missing = (Counter(wanted) - Counter(found)).elements()
         unexpected = (Counter(found) - Counter(wanted)).elements()
-        return cls([rows[key] for key in missing], [rows[key] for key in unexpected])
+        return cls(tuple(rows[key] for key in missing), tuple(rows[key] for key in unexpected))
 
     @property
     def is_empty(self) -> bool:

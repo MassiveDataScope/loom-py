@@ -182,9 +182,8 @@ class LakeTranslator:
             case ColumnKind.DATETIME:
                 return DatetimeType("us", "UTC" if column_type.option("timezone", True) else None)
             case _ if kind in _UNSTORABLE_KINDS:
-                raise self._refusal(
-                    field, _UNSTORABLE_KINDS[kind].problem, _UNSTORABLE_KINDS[kind].fix
-                )
+                unstorable = _UNSTORABLE_KINDS[kind]
+                raise self._refusal(field, unstorable.problem, unstorable.fix)
             case ColumnKind.POSTGRES_ARRAY:
                 return self._list(field, cast(ListShape, field.shape))
             case _ if kind.is_json:

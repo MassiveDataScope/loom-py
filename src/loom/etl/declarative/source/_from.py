@@ -138,16 +138,15 @@ class FromTable:
 
             orders = FromTable("raw.orders").with_schema(OrderRow)
         """
-        if self._model is not None and not (
-            isinstance(schema, type) and issubclass(schema, BaseModel)
-        ):
+        schema_is_model = isinstance(schema, type) and issubclass(schema, BaseModel)
+        if self._model is not None and not schema_is_model:
             raise InvalidUse(
                 f"FromTable({self._model.__name__}) takes its schema from the model, and "
                 "with_schema would drop it. Declare FromTable with the table reference to "
                 "read it with another schema."
             )
         new = _clone_slots(self, FromTable, FromTable.__slots__)
-        if isinstance(schema, type) and issubclass(schema, BaseModel):
+        if schema_is_model:
             object.__setattr__(new, "_model", schema)
         else:
             object.__setattr__(new, "_schema", resolve_schema(schema))

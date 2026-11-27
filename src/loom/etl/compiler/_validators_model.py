@@ -43,13 +43,27 @@ class ModelCheck:
         self._model = spec.model
 
     def run(self) -> None:
-        """Raise the first refusal, else log that the model resolved for the step."""
+        """Raise the first refusal, logging it once, else log that the model resolved."""
+        try:
+            self._check()
+        except ETLCompilationError as refusal:
+            _log.warning(
+                EtlEvent.MODEL_REFUSED,
+                extra={
+                    **self._log_fields(),
+                    EtlKey.FIELD: refusal.field,
+                    EtlKey.REASON: refusal.code.value,
+                },
+            )
+            raise
+        _log.debug(EtlEvent.MODEL_RESOLVED, extra=self._log_fields())
+
+    def _check(self) -> None:
         self._check_declared_columns(self._model_table())
         if isinstance(self._spec, TableSpec):
             self._check_schema_mode(self._spec)
             self._check_merge_keys(self._spec)
             self._check_history_date_type(self._spec)
-        _log.debug(EtlEvent.MODEL_RESOLVED, extra=self._log_fields())
 
     def _model_table(self) -> ModelTable:
         try:
@@ -108,10 +122,6 @@ class ModelCheck:
             )
 
     def _refusal(self, code: ETLErrorCode, blamed: str, **details: object) -> ETLCompilationError:
-        _log.warning(
-            EtlEvent.MODEL_REFUSED,
-            extra={**self._log_fields(), EtlKey.FIELD: blamed, EtlKey.REASON: code.value},
-        )
         issue = code.issue(
             component=self._step_type,
             model=self._model,

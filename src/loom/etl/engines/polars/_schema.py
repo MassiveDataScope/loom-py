@@ -86,7 +86,7 @@ class PolarsPhysicalSchema:
             frame_dtype = frame_schema.get(name)
             if frame_dtype is None:
                 continue
-            if self.aligner.decodes_json_text(frame_dtype, table_dtype):
+            if self.aligner.is_json_text_target(frame_dtype, table_dtype):
                 continue
             if _is_lossy(frame_dtype, table_dtype):
                 raise SchemaError(
