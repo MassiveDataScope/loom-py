@@ -311,8 +311,8 @@ def _finalize_source_frame(
             frame = frame.filter(predicate_to_polars(predicate, params_instance))
     if spec.columns:
         frame = frame.select(list(spec.columns))
-    if spec.schema:
-        frame = _apply_source_schema(frame, spec.schema)
+    if spec.read_schema:
+        frame = _apply_source_schema(frame, spec.read_schema)
     if spec.json_columns:
         frame = decode_json_columns(frame, spec.json_columns)
     return frame

@@ -11,9 +11,10 @@ from __future__ import annotations
 from collections.abc import Mapping
 from dataclasses import dataclass, field
 
+from loom.core.model import BaseModel
 from loom.core.schema import SchemaMode
 from loom.etl.declarative.expr._predicate import PredicateNode
-from loom.etl.declarative.expr._refs import TableRef
+from loom.etl.declarative.expr._refs import TableRef, columns_in
 from loom.etl.schema import ModelTable
 
 
@@ -22,10 +23,16 @@ class ModelBoundSpec:
     """What every table spec shares: the model its target was declared with, if any.
 
     Args:
-        model_table: Lake table of the model the target named, ``None`` for a plain reference.
+        model: The model the target named, ``None`` for a plain reference. The compiler
+            translates it to lake types and refuses what the lake cannot store.
     """
 
-    model_table: ModelTable | None = field(default=None, kw_only=True)
+    model: type[BaseModel] | None = field(default=None, kw_only=True)
+
+    @property
+    def model_table(self) -> ModelTable | None:
+        """The lake table of the model: translated once per class, at compile time."""
+        return None if self.model is None else ModelTable.from_model(self.model)
 
     @property
     def declared_columns(self) -> Mapping[str, tuple[str, ...]]:
@@ -129,6 +136,11 @@ class ReplaceWhereSpec(ModelBoundSpec):
     replace_predicate: PredicateNode
     schema_mode: SchemaMode = SchemaMode.STRICT
     streaming: bool = False
+
+    @property
+    def declared_columns(self) -> Mapping[str, tuple[str, ...]]:
+        """The model columns this spec names, by the argument that names them."""
+        return {"replace_where": columns_in(self.replace_predicate)}
 
 
 @dataclass(frozen=True)

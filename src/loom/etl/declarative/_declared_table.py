@@ -6,9 +6,11 @@ from dataclasses import dataclass
 from typing import TypeAlias
 
 from loom.core.model import BaseModel
+from loom.core.model.introspection import get_column_fields, get_table_name
 from loom.core.routing import LogicalRef
+from loom.etl.declarative._history_date_type import HistoryDateType
 from loom.etl.declarative.expr._refs import TableRef
-from loom.etl.schema import ModelTable
+from loom.etl.schema import FrameKey
 
 TableDeclaration: TypeAlias = str | LogicalRef | TableRef | type[BaseModel]
 """What a builder accepts to name a table: a reference, or a model that names its own."""
@@ -16,27 +18,28 @@ TableDeclaration: TypeAlias = str | LogicalRef | TableRef | type[BaseModel]
 
 @dataclass(frozen=True, slots=True)
 class DeclaredTable:
-    """A table as a step declares it: its reference and, for a model, its lake table.
+    """A table as a step declares it: its reference and, for a model, the model.
+
+    The model is translated to lake types by the compiler, which refuses what the
+    lake cannot store; a declaration only names it.
 
     Args:
         ref: Logical reference the table is routed by.
-        model_table: The lake table of the model the declaration named, ``None`` for a reference.
+        model: The model the declaration named, ``None`` for a reference.
     """
 
     ref: TableRef
-    model_table: ModelTable | None = None
+    model: type[BaseModel] | None = None
 
     @classmethod
     def from_declaration(cls, declaration: TableDeclaration) -> DeclaredTable:
-        """Normalise *declaration*; a model resolves to its ``__tablename__`` and lake table.
+        """Normalise *declaration*; a model resolves to its ``__tablename__``.
 
         Raises:
             InvalidType: A model declares no ``__tablename__``.
-            InvalidValue: A model column has a type the lake refuses.
         """
         if isinstance(declaration, type):
-            table = ModelTable.from_model(declaration)
-            return cls(TableRef(table.name), table)
+            return cls(TableRef(get_table_name(declaration)), declaration)
         if isinstance(declaration, TableRef):
             return cls(declaration)
         return cls(TableRef(declaration))
@@ -48,4 +51,11 @@ class DeclaredTable:
         """
         if declared:
             return declared
-        return self.model_table.frame_keys() if self.model_table is not None else ()
+        return FrameKey(self.model).columns if self.model is not None else ()
+
+    def boundary_type(self, column: str) -> HistoryDateType | None:
+        """The history date type of model *column*, ``None`` when it is not a temporal column."""
+        if self.model is None:
+            return None
+        info = get_column_fields(self.model).get(column)
+        return HistoryDateType.of_kind(None if info is None else info.kind)

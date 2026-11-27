@@ -129,8 +129,14 @@ class TestResolveSchema:
         )
 
     def test_an_undeclared_decimal_is_refused_with_the_lake_message(self) -> None:
-        with pytest.raises(InvalidValue, match=r"Priced\.price .*unbounded Numeric"):
+        with pytest.raises(InvalidValue, match=r"Priced\.price .*no column type \(a Decimal\)"):
             resolve_schema(Priced)
+
+    def test_a_string_annotation_is_refused_asking_for_resolved_hints(self) -> None:
+        with pytest.raises(
+            InvalidValue, match=r"unresolved string annotation 'str'.*get_type_hints"
+        ):
+            annotation_to_frame_type("str")
 
 
 class TestResolveJsonType:

@@ -9,7 +9,7 @@ from ._contract import (
     resolve_json_type,
     resolve_schema,
 )
-from ._model import KeyProblem, ModelTable
+from ._model import FrameKey, KeyProblem, LakeRefusal, ModelTable
 from ._schema import (
     ArrayType,
     CategoricalType,
@@ -48,5 +48,7 @@ __all__ = [
     "CategoricalType",
     "EnumType",
     "ModelTable",
+    "FrameKey",
     "KeyProblem",
+    "LakeRefusal",
 ]

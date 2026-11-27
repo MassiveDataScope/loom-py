@@ -6,7 +6,7 @@ from typing import Any, Literal, cast
 
 import msgspec
 
-from loom.core.model.enums import OnDelete, ServerDefault, ServerOnUpdate
+from loom.core.model.enums import KeyFill, OnDelete, ServerDefault, ServerOnUpdate
 from loom.core.model.keys import KeyHash
 from loom.core.model.types import ColumnType
 
@@ -37,6 +37,17 @@ class Field:
     on: Reach = "both"
     elevable: bool = False
     derived: KeyHash | None = None
+
+    @property
+    def key_fill(self) -> KeyFill | None:
+        """How the store fills this column when it is a key, ``None`` when the frame supplies it."""
+        if self.autoincrement:
+            return KeyFill.AUTOINCREMENT
+        if self.derived is not None:
+            return KeyFill.DERIVED
+        if self.server_default is not None:
+            return KeyFill.SERVER_DEFAULT
+        return None
 
 
 @dataclass(frozen=True, slots=True)

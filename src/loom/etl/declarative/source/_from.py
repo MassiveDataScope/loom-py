@@ -36,6 +36,7 @@ from __future__ import annotations
 from typing import Any, Generic, TypeVar
 
 from loom.core.errors import InvalidType, InvalidValue
+from loom.core.model import BaseModel
 from loom.etl.declarative._declared_table import DeclaredTable, TableDeclaration
 from loom.etl.declarative._format import Format
 from loom.etl.declarative._read_options import ReadOptions
@@ -84,15 +85,14 @@ class FromTable:
         )
     """
 
-    __slots__ = ("_ref", "_predicates", "_schema", "_columns", "_json_columns")
+    __slots__ = ("_ref", "_model", "_predicates", "_schema", "_columns", "_json_columns")
 
     def __init__(self, ref: TableDeclaration) -> None:
         declared = DeclaredTable.from_declaration(ref)
         self._ref: TableRef = declared.ref
+        self._model: type[BaseModel] | None = declared.model
         self._predicates: tuple[PredicateNode, ...] = ()
-        self._schema: tuple[ColumnSchema, ...] = (
-            () if declared.model_table is None else declared.model_table.schema
-        )
+        self._schema: tuple[ColumnSchema, ...] = ()
         self._columns: tuple[str, ...] = ()
         self._json_columns: tuple[JsonColumnSpec, ...] = ()
 
@@ -141,7 +141,12 @@ class FromTable:
             orders = FromTable("raw.orders").with_schema(OrderRow)
         """
         new = _clone_slots(self, FromTable, FromTable.__slots__)
-        object.__setattr__(new, "_schema", resolve_schema(schema))
+        if isinstance(schema, type) and issubclass(schema, BaseModel):
+            object.__setattr__(new, "_model", schema)
+            object.__setattr__(new, "_schema", ())
+        else:
+            object.__setattr__(new, "_model", None)
+            object.__setattr__(new, "_schema", resolve_schema(schema))
         return new
 
     def parse_json(
@@ -160,13 +165,13 @@ class FromTable:
             column:   Name of the string column that contains the JSON payload.
             contract: Target type for the decoded column.  Accepted forms:
 
-                      * Any :data:`~loom.etl._schema.FrameType` instance
+                      * Any :data:`~loom.etl.schema.FrameType` instance
                         (e.g. ``StructType(...)``, ``ListType(...)``).
                       * An annotated class (``msgspec.Struct``, ``dataclass``,
                         or plain Python class) — converted to
-                        :class:`~loom.etl._schema.StructType`.
+                        :class:`~loom.etl.schema.StructType`.
                       * ``list[SomeClass]`` — converted to
-                        :class:`~loom.etl._schema.ListType`.
+                        :class:`~loom.etl.schema.ListType`.
 
             on_mismatch: ``JsonMismatch.FAIL`` (default) decodes natively and
                       fails the run on a malformed document or one that does not
@@ -200,7 +205,7 @@ class FromTable:
         """Return a new ``FromTable`` with the given predicates added.
 
         Args:
-            *predicates: One or more :data:`~loom.etl._predicate.PredicateNode`
+            *predicates: One or more :data:`~loom.etl.declarative.expr.PredicateNode`
                 expressions built with the column / param operator DSL.
 
         Returns:
@@ -250,6 +255,7 @@ class FromTable:
             columns=self._columns,
             schema=self._schema,
             json_columns=self._json_columns,
+            model=self._model,
         )
 
     def __repr__(self) -> str:
@@ -383,11 +389,11 @@ class FromFile:
             column:   Name of the string column that contains the JSON payload.
             contract: Target type for the decoded column.  Accepted forms:
 
-                      * Any :data:`~loom.etl._schema.FrameType` instance.
+                      * Any :data:`~loom.etl.schema.FrameType` instance.
                       * An annotated class — converted to
-                        :class:`~loom.etl._schema.StructType`.
+                        :class:`~loom.etl.schema.StructType`.
                       * ``list[SomeClass]`` — converted to
-                        :class:`~loom.etl._schema.ListType`.
+                        :class:`~loom.etl.schema.ListType`.
 
             on_mismatch: As for :meth:`FromTable.parse_json`.
 

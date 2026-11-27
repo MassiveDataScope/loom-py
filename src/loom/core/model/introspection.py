@@ -3,13 +3,13 @@ from __future__ import annotations
 import re
 from collections.abc import Callable, Iterable, Mapping
 from dataclasses import dataclass, replace
-from functools import cache
 from typing import Any, cast, get_args, get_origin, get_type_hints
 
 import msgspec
 
 from loom.core.errors import InvalidType, InvalidValue
-from loom.core.model._class_store import stored_on_class
+from loom.core.model.class_store import stored_on_class
+from loom.core.model.enums import KeyFill
 from loom.core.model.field import ColumnFieldSpec, Field
 from loom.core.model.inference import (
     FieldSource,
@@ -49,8 +49,7 @@ class ColumnFieldInfo:
     """Resolved metadata for a single column field.
 
     ``resolved`` carries how the column type was settled; ``column_type`` is
-    ``None`` while the field is undeclared, apart from a ``Decimal``, which
-    keeps an unbounded ``Numeric`` placeholder.
+    ``None`` while the field is undeclared.
     """
 
     name: str
@@ -91,7 +90,7 @@ def get_column_fields(cls: type) -> dict[str, ColumnFieldInfo]:
     return dict(_column_fields(cls))
 
 
-@cache
+@stored_on_class("__loom_column_fields__")
 def _column_fields(cls: type) -> Mapping[str, ColumnFieldInfo]:
     declared = _collect_inherited_dict_metadata(cls, "__loom_columns__")
     non_columns = set(get_relations(cls)) | set(get_projections(cls))
@@ -394,6 +393,20 @@ def conflict_key_of(cls: type) -> tuple[str, ...]:
     if key is not None:
         return key.fields
     return tuple(name for name, info in get_column_fields(cls).items() if info.field.primary_key)
+
+
+def store_filled_key_columns(cls: type) -> dict[str, KeyFill]:
+    """The conflict-key columns the store fills, so a frame cannot supply them.
+
+    A business key always comes from the frame, so it gives ``{}``. A primary key
+    comes from the store when it is autoincrement, derived from a business key, or
+    filled by a server default.
+    """
+    if business_key_of(cls) is not None:
+        return {}
+    columns = get_column_fields(cls)
+    fills = ((name, columns[name].field.key_fill) for name in conflict_key_of(cls))
+    return {name: fill for name, fill in fills if fill is not None}
 
 
 def _checked_business_key(cls: type) -> BusinessKey | None:

@@ -23,19 +23,19 @@ from loom.etl.declarative.target._table import (
     UpdateSpec,
     UpsertSpec,
 )
-from loom.etl.engines.polars import PolarsTargetWriter, polars_to_frame_type
+from loom.etl.engines.polars import PolarsSourceReader, PolarsTargetWriter, polars_to_frame_type
 from loom.etl.event import EtlEvent, EtlKey
 from loom.etl.ports.contracts import TargetWriter
 from loom.etl.schema import FrameType, ModelTable
 from loom.etl.schema._model import LakeTranslator
-from loom.etl.storage._config import MissingTablePolicy
+from loom.etl.storage._config import AuditConfig, MissingTablePolicy
 from tests.helpers.loggers import CapturedLog
 from tests.unit.etl.engines.doubles import RunDateParams
 from tests.unit.etl.engines.frame_types import (
-    LAKE_FRAME_TYPES,
+    LAKE_ROWS,
     Order,
     Rate,
-    table_of_one_column,
+    probe_model,
 )
 
 _ORDER = ModelTable.from_model(Order)
@@ -55,21 +55,28 @@ class _Engine(Protocol):
 
     def stored_types(self, ref: str) -> dict[str, FrameType]: ...
 
+    def is_json_decode_failure(self, error: Exception) -> bool: ...
+
 
 def _table_path(root: Path, ref: str) -> str:
     return str(root.joinpath(*ref.split(".")))
 
 
 class _PolarsEngine:
-    def __init__(self, root: Path) -> None:
+    def __init__(self, root: Path, audit: AuditConfig | None = None) -> None:
         self._root = root
-        self.writer = PolarsTargetWriter(str(root), missing_table_policy=MissingTablePolicy.CREATE)
+        self.writer = PolarsTargetWriter(
+            str(root), missing_table_policy=MissingTablePolicy.CREATE, audit_config=audit
+        )
 
     def frame(self, columns: dict[str, list[Any]]) -> pl.LazyFrame:
         return pl.LazyFrame(columns)
 
     def stored(self, ref: str) -> list[dict[str, Any]]:
         return pl.read_delta(_table_path(self._root, ref)).to_dicts()
+
+    def is_json_decode_failure(self, error: Exception) -> bool:
+        return PolarsSourceReader(str(self._root)).is_json_decode_failure(error)
 
     def stored_types(self, ref: str) -> dict[str, FrameType]:
         schema = pl.scan_delta(_table_path(self._root, ref)).collect_schema()
@@ -88,7 +95,12 @@ class _SparkEngine:
         return self._spark.createDataFrame(list(zip(*columns.values(), strict=True)), list(columns))
 
     def stored(self, ref: str) -> list[dict[str, Any]]:
-        return [row.asDict() for row in self._stored(ref).collect()]
+        return [row.asDict(recursive=True) for row in self._stored(ref).collect()]
+
+    def is_json_decode_failure(self, error: Exception) -> bool:
+        from loom.etl.engines.spark import SparkSourceReader
+
+        return SparkSourceReader(self._spark, str(self._root)).is_json_decode_failure(error)
 
     def stored_types(self, ref: str) -> dict[str, FrameType]:
         from loom.etl.engines.spark._dtype import spark_to_frame_type
@@ -107,7 +119,7 @@ def engine(request: pytest.FixtureRequest, tmp_path: Path) -> _Engine:
 
 
 def _spec(factory: Callable[..., TableSpec], ref: str = "sales.order", **fields: Any) -> TableSpec:
-    return factory(table_ref=TableRef(ref), model_table=_ORDER, **fields)
+    return factory(table_ref=TableRef(ref), model=Order, **fields)
 
 
 def _orders(engine: _Engine, *order_ids: str, void: Collection[str] | None = None) -> Any:
@@ -188,7 +200,7 @@ class TestModelAlignTarget:
             effective_date=p.run_date,
             mode=HistorifyInputMode.SNAPSHOT,
             track=("price",),
-            model_table=_RATE,
+            model=Rate,
         )
 
         with caplog.at_level(logging.INFO):
@@ -217,16 +229,26 @@ class TestPolarsDeleteFlag:
 
 
 class TestLakeTypeRoundTrip:
-    @pytest.mark.parametrize("frame_type", LAKE_FRAME_TYPES.values(), ids=LAKE_FRAME_TYPES)
+    @pytest.mark.parametrize(("annotation", "expected"), LAKE_ROWS.values(), ids=list(LAKE_ROWS))
     def test_the_delta_table_reads_back_with_the_lake_type(
-        self, engine: _Engine, frame_type: FrameType
+        self, engine: _Engine, annotation: Any, expected: FrameType
     ) -> None:
-        table = table_of_one_column(frame_type)
-        spec = AppendSpec(table_ref=TableRef("sales.value"), model_table=table)
+        spec = AppendSpec(table_ref=TableRef("probes"), model=probe_model(annotation))
 
-        engine.writer.write(engine.frame({"id": [1]}), spec, None)
+        engine.writer.write(engine.frame({"unrelated": [1]}), spec, None)
 
-        assert engine.stored_types("sales.value") == table.column_types
+        assert engine.stored_types("probes") == {"value": expected}
+
+    @pytest.mark.parametrize(("annotation", "expected"), LAKE_ROWS.values(), ids=list(LAKE_ROWS))
+    def test_spark_reads_a_polars_table_with_the_same_types(
+        self, spark: Any, tmp_path: Path, annotation: Any, expected: FrameType
+    ) -> None:
+        spec = AppendSpec(table_ref=TableRef("probes"), model=probe_model(annotation))
+        written = _PolarsEngine(tmp_path)
+
+        written.writer.write(written.frame({"unrelated": [1]}), spec, None)
+
+        assert _SparkEngine(spark, tmp_path).stored_types("probes") == {"value": expected}
 
 
 class TestModelWriteObservability:

@@ -2,24 +2,24 @@
 
 A *contract* is any annotated class (``msgspec.Struct``, ``dataclass``, or
 plain Python class with field annotations) or an existing
-:data:`~loom.etl._schema.FrameType` / ``tuple[ColumnSchema, ...]``.
+:data:`~loom.etl.schema.FrameType` / ``tuple[ColumnSchema, ...]``.
 
 Public entry points
 -------------------
 
 ``resolve_schema``
     Converts a schema contract to ``tuple[ColumnSchema, ...]``.  Used by
-    :meth:`~loom.etl._source.FromTable.with_schema` and
-    :meth:`~loom.etl._source.FromFile.with_schema` so callers can pass either
+    :meth:`~loom.etl.declarative.source.FromTable.with_schema` and
+    :meth:`~loom.etl.declarative.source.FromFile.with_schema` so callers can pass either
     an explicit tuple or an annotated class.
 
 ``resolve_json_type``
-    Converts a JSON column contract to a single :data:`~loom.etl._schema.FrameType`.
-    Used by :meth:`~loom.etl._source.FromTable.parse_json` and
-    :meth:`~loom.etl._source.FromFile.parse_json`.
+    Converts a JSON column contract to a single :data:`~loom.etl.schema.FrameType`.
+    Used by :meth:`~loom.etl.declarative.source.FromTable.parse_json` and
+    :meth:`~loom.etl.declarative.source.FromFile.parse_json`.
 
 ``annotation_to_frame_type``
-    Converts one Python type annotation to a :data:`~loom.etl._schema.FrameType`.
+    Converts one Python type annotation to a :data:`~loom.etl.schema.FrameType`.
 
 Every annotation goes through core inference and the lake translator of
 :mod:`loom.etl.schema._model`, so a model, a msgspec struct, a dataclass and a
@@ -35,7 +35,7 @@ from typing import Any, TypeAlias
 
 from loom.core.errors import InvalidType
 from loom.core.model.inference import resolve_annotation
-from loom.etl.schema._model import LakeTranslator
+from loom.etl.schema._model import LakeRefusal, LakeTranslator
 from loom.etl.schema._schema import (
     ArrayType,
     CategoricalType,
@@ -57,7 +57,7 @@ JsonContract: TypeAlias = FrameType | type[Any]
 """Contract accepted by ``parse_json``: a :data:`FrameType`, an annotated class or ``list[X]``."""
 
 
-_LOOM_INSTANCES = (
+_FRAME_TYPE_CLASSES = (
     LoomDtype,
     ListType,
     ArrayType,
@@ -78,7 +78,7 @@ def resolve_schema(contract: tuple[ColumnSchema, ...] | type[Any]) -> tuple[Colu
                   an annotated class whose fields map to column schemas.
 
     Returns:
-        Tuple of :class:`~loom.etl._schema.ColumnSchema` entries.
+        Tuple of :class:`~loom.etl.schema.ColumnSchema` entries.
 
     Raises:
         InvalidType: If *contract* is not a supported schema contract form.
@@ -93,22 +93,22 @@ def resolve_schema(contract: tuple[ColumnSchema, ...] | type[Any]) -> tuple[Colu
 
 
 def resolve_json_type(contract: Any) -> FrameType:
-    """Convert a JSON column contract to a :data:`~loom.etl._schema.FrameType`.
+    """Convert a JSON column contract to a :data:`~loom.etl.schema.FrameType`.
 
     Args:
-        contract: A :data:`~loom.etl._schema.FrameType` (returned as-is),
+        contract: A :data:`~loom.etl.schema.FrameType` (returned as-is),
                   an annotated class (converted to
-                  :class:`~loom.etl._schema.StructType`), or a ``list[X]`` generic alias
-                  (converted to :class:`~loom.etl._schema.ListType`).
+                  :class:`~loom.etl.schema.StructType`), or a ``list[X]`` generic alias
+                  (converted to :class:`~loom.etl.schema.ListType`).
 
     Returns:
-        :data:`~loom.etl._schema.FrameType` for use with Polars
+        :data:`~loom.etl.schema.FrameType` for use with Polars
         ``str.json_decode`` or Spark ``from_json``.
 
     Raises:
         InvalidType: If *contract* cannot be converted to a FrameType.
     """
-    if isinstance(contract, _LOOM_INSTANCES):
+    if isinstance(contract, _FRAME_TYPE_CLASSES):
         return contract
     if typing.get_origin(contract) is list:
         return annotation_to_frame_type(contract)
@@ -132,13 +132,21 @@ def annotation_to_frame_type(ann: Any) -> FrameType:
         The matching :data:`~loom.etl.schema.FrameType`.
 
     Raises:
-        InvalidValue: If the lake has no type for *ann*.
+        InvalidValue: If the lake has no type for *ann*, or *ann* is an unresolved
+            string annotation such as a raw ``__annotations__`` value under
+            ``from __future__ import annotations``.
 
     Example::
 
         >>> annotation_to_frame_type(list[int] | None)
         ListType(inner=<LoomDtype.INT64: 'Int64'>)
     """
-    if isinstance(ann, _LOOM_INSTANCES):
+    if isinstance(ann, _FRAME_TYPE_CLASSES):
         return ann
+    if isinstance(ann, str):
+        raise LakeRefusal(
+            f"annotation.value is an unresolved string annotation {ann!r}; "
+            "pass the resolved hint, e.g. typing.get_type_hints(cls)[name].",
+            "value",
+        )
     return LakeTranslator("annotation").frame_type(resolve_annotation(ann))

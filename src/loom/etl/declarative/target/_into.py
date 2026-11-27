@@ -84,9 +84,7 @@ class IntoTable:
 
     def __init__(self, ref: TableDeclaration) -> None:
         self._table = DeclaredTable.from_declaration(ref)
-        self._spec: Any = ReplaceSpec(
-            table_ref=self._table.ref, model_table=self._table.model_table
-        )
+        self._spec: Any = ReplaceSpec(table_ref=self._table.ref, model=self._table.model)
 
     def append(
         self,
@@ -110,7 +108,7 @@ class IntoTable:
         return self._with(
             AppendSpec(
                 table_ref=self._table.ref,
-                model_table=self._table.model_table,
+                model=self._table.model,
                 schema_mode=schema,
                 streaming=streaming,
             )
@@ -155,7 +153,7 @@ class IntoTable:
         return self._with(
             ReplaceSpec(
                 table_ref=self._table.ref,
-                model_table=self._table.model_table,
+                model=self._table.model,
                 schema_mode=schema,
                 streaming=streaming,
                 allow_empty=allow_empty,
@@ -203,7 +201,7 @@ class IntoTable:
         return self._with(
             ReplacePartitionsSpec(
                 table_ref=self._table.ref,
-                model_table=self._table.model_table,
+                model=self._table.model,
                 partition_cols=cols,
                 schema_mode=schema,
                 streaming=streaming,
@@ -283,7 +281,7 @@ class IntoTable:
         return self._with(
             ReplacePartitionsSpec(
                 table_ref=self._table.ref,
-                model_table=self._table.model_table,
+                model=self._table.model,
                 partition_cols=cols,
                 schema_mode=schema,
                 streaming=streaming,
@@ -334,7 +332,7 @@ class IntoTable:
         return self._with(
             ReplaceWhereSpec(
                 table_ref=self._table.ref,
-                model_table=self._table.model_table,
+                model=self._table.model,
                 replace_predicate=predicate,
                 schema_mode=schema,
             )
@@ -372,7 +370,7 @@ class IntoTable:
         return self._with(
             ReplaceWhereSpec(
                 table_ref=self._table.ref,
-                model_table=self._table.model_table,
+                model=self._table.model,
                 replace_predicate=predicate,
                 schema_mode=schema,
                 streaming=streaming,
@@ -459,7 +457,7 @@ class IntoTable:
         return self._with(
             UpsertSpec(
                 table_ref=self._table.ref,
-                model_table=self._table.model_table,
+                model=self._table.model,
                 upsert_keys=self._table.merge_keys(keys),
                 partition_cols=partition_cols,
                 upsert_exclude=exclude,
@@ -523,7 +521,7 @@ class IntoTable:
         return self._with(
             UpdateSpec(
                 table_ref=self._table.ref,
-                model_table=self._table.model_table,
+                model=self._table.model,
                 keys=self._table.merge_keys(keys),
                 partition_cols=partition_cols,
                 exclude=exclude,

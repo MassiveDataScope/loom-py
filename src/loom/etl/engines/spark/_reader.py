@@ -146,8 +146,8 @@ class SparkSourceReader(SourceReader):
         """Apply post-read transformations: columns, schema, json decode."""
         if spec.columns:
             df = df.select(list(spec.columns))
-        if spec.schema:
-            df = self._apply_source_schema(df, spec.schema)
+        if spec.read_schema:
+            df = self._apply_source_schema(df, spec.read_schema)
         if spec.json_columns:
             df = self._apply_json_decode(df, spec.json_columns)
         return df

@@ -269,6 +269,13 @@ class ETLErrorCode(IssueCode):
             field="delete_marker",
         ),
     )
+    MODEL_COLUMN_TYPE_REFUSED = (
+        "MODEL_COLUMN_TYPE_REFUSED",
+        Template(
+            "{component}: model {model} (table {table!r}) cannot be a lake table. {reason}",
+            field="{field}",
+        ),
+    )
     MODEL_COLUMN_UNKNOWN = (
         "MODEL_COLUMN_UNKNOWN",
         Template(
@@ -299,7 +306,7 @@ class ETLErrorCode(IssueCode):
         "MODEL_BOUNDARY_NOT_TEMPORAL",
         Template(
             "{component}: model {model} (table {table!r}) declares valid_from column "
-            "{column!r} as {actual}, which holds no dates. Declare it as a date or a datetime.",
+            "{column!r} with a type that holds no dates. Declare it as a date or a datetime.",
             field="{column}",
         ),
     )

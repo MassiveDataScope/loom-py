@@ -8,7 +8,7 @@ from dataclasses import dataclass
 from datetime import date, datetime, timedelta
 from decimal import Decimal
 from enum import Enum
-from typing import Annotated, Any, ClassVar, Literal
+from typing import TYPE_CHECKING, Annotated, Any, ClassVar, Literal
 from uuid import UUID
 
 import msgspec
@@ -40,6 +40,9 @@ from loom.core.model.types import (
     Uuid,
 )
 
+if TYPE_CHECKING:
+    from fractions import Fraction as NotImported
+
 
 class _Tone(Enum):
     LOW = "low"
@@ -47,6 +50,14 @@ class _Tone(Enum):
 
 class _Money:
     pass
+
+
+class _Foreign:
+    value: NotImported
+
+
+class _HoldsForeign(msgspec.Struct):
+    item: _Foreign
 
 
 class _Address(msgspec.Struct):
@@ -143,30 +154,35 @@ class TestInferredColumnTypes:
 
 class TestUndeclaredFields:
     @pytest.mark.parametrize(
-        ("name", "reason", "placeholder"),
+        ("name", "reason"),
         [
-            ("amount", "a Decimal", Numeric()),
-            ("span", "a timedelta", None),
-            ("tone", "a plain Enum", None),
-            ("mode", "a Literal", None),
-            ("anything", "Any", None),
-            ("mixed", "a union of types that are not all JSON", None),
-            ("money", "_Money, a class that is not a record", None),
+            ("amount", "a Decimal"),
+            ("span", "a timedelta"),
+            ("tone", "a plain Enum"),
+            ("mode", "a Literal"),
+            ("anything", "Any"),
+            ("mixed", "a union of types that are not all JSON"),
+            ("money", "_Money, a class that is not a record"),
         ],
     )
     def test_a_type_with_no_column_is_undeclared_with_its_reason(
-        self,
-        scalars: dict[str, ResolvedField],
-        name: str,
-        reason: str,
-        placeholder: ColumnType | None,
+        self, scalars: dict[str, ResolvedField], name: str, reason: str
     ) -> None:
         field = scalars[name]
 
         assert (field.outcome, field.reason, field.column_type) == (
             Outcome.UNDECLARED,
             reason,
-            placeholder,
+            None,
+        )
+
+    def test_a_foreign_class_whose_hints_cannot_resolve_is_not_a_record(self) -> None:
+        (item,) = resolve_fields(_HoldsForeign)
+
+        assert (item.outcome, item.column_type, "__loom_fields__" in vars(_Foreign)) == (
+            Outcome.UNDECLARED,
+            None,
+            False,
         )
 
 

@@ -128,7 +128,7 @@ class StepResult:
         """Assert that the output columns match the expected Loom schema.
 
         Args:
-            expected: Mapping of column name → :class:`~loom.etl._schema.LoomDtype`.
+            expected: Mapping of column name → :class:`~loom.etl.schema.LoomDtype`.
 
         Raises:
             AssertionError: When a column is missing or has a different dtype.

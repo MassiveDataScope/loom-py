@@ -45,3 +45,11 @@ class ServerOnUpdate(StrEnum):
             ``True`` for ``ServerOnUpdate.NOW`` or ``"now"`` in any case.
         """
         return isinstance(value, str) and value.strip().lower() == cls.NOW.value
+
+
+class KeyFill(StrEnum):
+    """How a store fills a primary-key column the frame does not supply."""
+
+    AUTOINCREMENT = "autoincrement"
+    DERIVED = "derived by the store"
+    SERVER_DEFAULT = "filled by the server"

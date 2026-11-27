@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import logging
 from collections.abc import Callable
-from datetime import datetime
+from datetime import datetime, time
 from typing import Annotated, Any
 
 import pytest
@@ -13,11 +13,12 @@ from loom.core.model import BaseModel, BusinessKey, ColumnField, Field
 from loom.core.model.types import DateTime, Text
 from loom.core.routing import LogicalRef
 from loom.core.schema import SchemaMode
-from loom.etl import FromTable, IntoHistory, IntoTable
+from loom.etl import FromTable, IntoHistory, IntoTable, col
 from loom.etl.compiler import ETLCompilationError, ETLErrorCode
 from loom.etl.declarative.expr._refs import TableRef
 from loom.etl.declarative.target._history import HistoryDateType
 from loom.etl.event import EtlEvent, EtlKey
+from loom.etl.schema._model import LakeTranslator
 from tests.helpers.loggers import CapturedLog
 from tests.unit.etl.compiler.conftest import CompileTarget
 from tests.unit.etl.engines.frame_types import Order, Rate
@@ -43,6 +44,12 @@ class Tick(BaseModel):
     tick_id: Annotated[str, Field(primary_key=True)]
     valid_from: Annotated[datetime, DateTime(tz=True)]
     valid_to: Annotated[datetime, DateTime(tz=True)] | None
+
+
+class Clocked(BaseModel):
+    __tablename__ = "clocked"
+    clock_id: Annotated[str, Field(primary_key=True)]
+    opens_at: time
 
 
 class Undated(BaseModel):
@@ -109,6 +116,18 @@ _REFUSALS = {
         "deleted_at",
         "deleted_at",
     ),
+    "unknown-replace-where": (
+        lambda: IntoTable(Order).replace_where(col("status") == "open"),
+        ETLErrorCode.MODEL_COLUMN_UNKNOWN,
+        "status",
+        "replace_where",
+    ),
+    "time-column": (
+        lambda: IntoTable(Clocked).append(),
+        ETLErrorCode.MODEL_COLUMN_TYPE_REFUSED,
+        "opens_at",
+        r"Clocked\.opens_at is a Time.*store it as a Text or a DateTime",
+    ),
     "evolve": (
         lambda: IntoTable(Order).append(schema=SchemaMode.EVOLVE),
         ETLErrorCode.MODEL_SCHEMA_MODE_UNSUPPORTED,
@@ -140,6 +159,33 @@ _REFUSALS = {
         ETLErrorCode.MODEL_BOUNDARY_NOT_TEMPORAL,
         "valid_from",
         "holds no dates",
+    ),
+}
+_SOURCE_REFUSALS = {
+    "unknown-column": (
+        FromTable(Order).columns("order_id", "status"),
+        ETLErrorCode.MODEL_COLUMN_UNKNOWN,
+        "status",
+    ),
+    "unknown-where-column": (
+        FromTable(Order).where(col("status") == "open"),
+        ETLErrorCode.MODEL_COLUMN_UNKNOWN,
+        "status",
+    ),
+    "unknown-parse-json-column": (
+        FromTable(Order).parse_json("payload", list[str]),
+        ETLErrorCode.MODEL_COLUMN_UNKNOWN,
+        "payload",
+    ),
+    "time-column": (
+        FromTable(Clocked),
+        ETLErrorCode.MODEL_COLUMN_TYPE_REFUSED,
+        "opens_at",
+    ),
+    "time-column-by-with-schema": (
+        FromTable("wh.clocked").with_schema(Clocked),
+        ETLErrorCode.MODEL_COLUMN_TYPE_REFUSED,
+        "opens_at",
     ),
 }
 _DATE_TYPES = {
@@ -175,6 +221,50 @@ class TestModelDeclaration:
         history = IntoHistory(target, keys=("k",), effective_date="d", date_type=date_type)
 
         assert history._to_spec().date_type is expected
+
+
+class TestModelSourceCompilation:
+    def test_a_source_consistent_with_its_model_compiles(
+        self, compile_source: CompileTarget
+    ) -> None:
+        compile_source(FromTable(Order).where(col("amount") > 0).columns("order_id", "amount"))
+
+    @pytest.mark.parametrize(
+        ("source", "code", "field"), _SOURCE_REFUSALS.values(), ids=list(_SOURCE_REFUSALS)
+    )
+    def test_a_source_the_model_contradicts_is_refused_naming_the_field(
+        self, compile_source: CompileTarget, source: FromTable, code: ETLErrorCode, field: str
+    ) -> None:
+        with pytest.raises(ETLCompilationError) as refused:
+            compile_source(source)
+
+        assert (refused.value.code, refused.value.field) == (code, field)
+
+    def test_fifty_steps_sharing_a_model_translate_it_once(
+        self,
+        compile_target: CompileTarget,
+        compile_source: CompileTarget,
+        monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        shared = type(
+            "Shared",
+            (BaseModel,),
+            {"__tablename__": "shared", "__annotations__": {"shared_id": int}},
+        )
+        translations: list[type] = []
+        translate = LakeTranslator.schema_of
+
+        def counting(self: LakeTranslator, contract: type) -> Any:
+            translations.append(contract)
+            return translate(self, contract)
+
+        monkeypatch.setattr(LakeTranslator, "schema_of", counting)
+
+        for _ in range(25):
+            compile_target(IntoTable(shared).append())
+            compile_source(FromTable(shared))
+
+        assert translations == [shared]
 
 
 class TestModelTargetCompilation:
@@ -228,21 +318,50 @@ class TestModelTargetLogs:
         (fields,) = CapturedLog(caplog, _MODEL_LOGGER).named(EtlEvent.MODEL_RESOLVED)
         assert (fields[EtlKey.MODEL], fields[EtlKey.TABLE]) == ("Order", "sales.order")
 
+    @pytest.mark.parametrize(
+        ("target", "model", "table", "field", "code"),
+        [
+            (
+                lambda: IntoTable(Ledger).upsert(),
+                "Ledger",
+                "ledger",
+                "ledger_id",
+                ETLErrorCode.MODEL_KEY_NOT_IN_FRAME,
+            ),
+            (
+                lambda: IntoTable(Clocked).append(),
+                "Clocked",
+                "clocked",
+                "opens_at",
+                ETLErrorCode.MODEL_COLUMN_TYPE_REFUSED,
+            ),
+        ],
+        ids=["key", "column-type"],
+    )
     def test_a_refusal_logs_once_with_model_table_field_and_reason(
-        self, compile_target: CompileTarget, caplog: pytest.LogCaptureFixture
+        self,
+        compile_target: CompileTarget,
+        caplog: pytest.LogCaptureFixture,
+        target: Callable[[], Any],
+        model: str,
+        table: str,
+        field: str,
+        code: ETLErrorCode,
     ) -> None:
         with (
             caplog.at_level(logging.DEBUG, logger=_MODEL_LOGGER),
             pytest.raises(ETLCompilationError),
         ):
-            compile_target(IntoTable(Ledger).upsert())
+            compile_target(target())
 
         log = CapturedLog(caplog, _MODEL_LOGGER)
         (fields,) = log.named(EtlEvent.MODEL_REFUSED)
-        assert fields[EtlKey.MODEL] == "Ledger"
-        assert fields[EtlKey.TABLE] == "ledger"
-        assert fields[EtlKey.FIELD] == "ledger_id"
-        assert fields[EtlKey.REASON] == ETLErrorCode.MODEL_KEY_NOT_IN_FRAME.value
+        assert (fields[EtlKey.MODEL], fields[EtlKey.TABLE], fields[EtlKey.FIELD]) == (
+            model,
+            table,
+            field,
+        )
+        assert fields[EtlKey.REASON] == code.value
         assert EtlEvent.MODEL_RESOLVED not in log.messages
 
     def test_a_string_target_logs_no_model_event(

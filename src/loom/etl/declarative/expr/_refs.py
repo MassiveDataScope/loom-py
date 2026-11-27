@@ -2,6 +2,10 @@
 
 from __future__ import annotations
 
+from collections.abc import Iterator
+
+import msgspec
+
 from loom.core.routing import LogicalRef, as_logical_ref
 from loom.etl.declarative.expr._predicate import _ColOps
 
@@ -77,4 +81,20 @@ def col(name: str) -> UnboundColumnRef:
     return UnboundColumnRef(name)
 
 
-__all__ = ["TableRef", "UnboundColumnRef", "col"]
+def columns_in(node: object) -> tuple[str, ...]:
+    """The names of the columns a predicate refers to, in order of appearance, once each."""
+    return tuple(dict.fromkeys(_column_names(node)))
+
+
+def _column_names(node: object) -> Iterator[str]:
+    if isinstance(node, UnboundColumnRef):
+        yield node.name
+    elif isinstance(node, msgspec.Struct):
+        for field in msgspec.structs.fields(node):
+            yield from _column_names(getattr(node, field.name))
+    elif isinstance(node, tuple | list):
+        for item in node:
+            yield from _column_names(item)
+
+
+__all__ = ["TableRef", "UnboundColumnRef", "col", "columns_in"]

@@ -6,13 +6,10 @@ from collections.abc import Mapping
 from dataclasses import dataclass
 
 from loom.core.schema import SchemaMode
+from loom.etl.declarative._history_date_type import HistoryDateType
 from loom.etl.declarative.expr._params import ParamExpr
 from loom.etl.declarative.expr._refs import TableRef
-from loom.etl.declarative.target._history._enums import (
-    DeletePolicy,
-    HistorifyInputMode,
-    HistoryDateType,
-)
+from loom.etl.declarative.target._history._enums import DeletePolicy, HistorifyInputMode
 from loom.etl.declarative.target._table import ModelBoundSpec
 
 

@@ -12,7 +12,7 @@ from functools import cached_property
 from typing import Final
 
 from loom.core.errors import InvalidType, InvalidValue
-from loom.core.model._class_store import stored_on_class
+from loom.core.model.class_store import stored_on_class
 from loom.core.model.inference import (
     JsonShape,
     ListShape,
@@ -20,10 +20,10 @@ from loom.core.model.inference import (
     StructShape,
 )
 from loom.core.model.introspection import (
-    business_key_of,
     conflict_key_of,
     get_column_fields,
     get_table_name,
+    store_filled_key_columns,
 )
 from loom.core.model.types import ColumnKind, ColumnType
 from loom.etl.schema._schema import (
@@ -62,6 +62,22 @@ _REFUSED_KINDS: Final[Mapping[ColumnKind, tuple[str, str]]] = {
 }
 
 
+class LakeRefusal(InvalidValue):
+    """A field the lake cannot store.
+
+    Args:
+        message: Names the class, the field, the problem and the fix.
+        field: Path of the refused field below its class, dotted when inside JSON.
+
+    Attributes:
+        field: Path of the refused field below its class.
+    """
+
+    def __init__(self, message: str, field: str) -> None:
+        super().__init__(message)
+        self.field = field
+
+
 @dataclass(frozen=True, slots=True)
 class LakeTranslator:
     """Translates resolved fields to lake frame types, refusing what the lake cannot hold.
@@ -86,7 +102,7 @@ class LakeTranslator:
         """The lake type of *field*.
 
         Raises:
-            InvalidValue: The lake cannot store the field; the message names the
+            LakeRefusal: The lake cannot store the field; the message names the
                 class, the field and the fix.
         """
         column_type = field.column_type
@@ -102,18 +118,19 @@ class LakeTranslator:
                 return self._decimal(field, column_type)
             case ColumnKind.DATETIME:
                 return DatetimeType("us", "UTC" if column_type.option("timezone", True) else None)
-            case ColumnKind.POSTGRES_UUID | ColumnKind.POSTGRES_INET:
-                return self.frame_type(replace(field, column_type=column_type.portable()))
-            case _ if kind.is_json:
-                return self._json_shape(field)
             case _ if kind in _REFUSED_KINDS:
                 raise self._refusal(field, *_REFUSED_KINDS[kind])
+            case _ if kind.is_json:
+                return self._json_shape(field)
             case _:
-                return _SIMPLE_TYPES[kind]
+                portable = column_type.portable()
+                if portable is None or portable == column_type:
+                    return _SIMPLE_TYPES[kind]
+                return self.frame_type(replace(field, column_type=portable))
 
-    def _refusal(self, field: ResolvedField, problem: str, fix: str) -> InvalidValue:
-        location = ".".join((self.owner, *self.path, field.name))
-        return InvalidValue(f"{location} {problem}; {fix}.")
+    def _refusal(self, field: ResolvedField, problem: str, fix: str) -> LakeRefusal:
+        path = ".".join((*self.path, field.name))
+        return LakeRefusal(f"{self.owner}.{path} {problem}; {fix}.", path)
 
     def _decimal(self, field: ResolvedField, column_type: ColumnType) -> DecimalType:
         precision = column_type.option("precision")
@@ -168,6 +185,33 @@ class KeyProblem:
 
 
 @dataclass(frozen=True)
+class FrameKey:
+    """The conflict key of a model, and whether a frame can supply it."""
+
+    model: type
+
+    @cached_property
+    def problem(self) -> KeyProblem | None:
+        """Why the key cannot come from a frame, ``None`` when it can.
+
+        A business key always comes from the frame. A primary key does not when the
+        store fills it: autoincrement, derived from a business key, or server default.
+        """
+        if not conflict_key_of(self.model):
+            return KeyProblem("keys", "declares neither a business key nor a primary key")
+        filled = store_filled_key_columns(self.model)
+        if not filled:
+            return None
+        name, fill = next(iter(filled.items()))
+        return KeyProblem(name, f"primary key {name!r} is {fill}")
+
+    @property
+    def columns(self) -> tuple[str, ...]:
+        """The conflict key of the model when the frame can supply it, else ``()``."""
+        return conflict_key_of(self.model) if self.problem is None else ()
+
+
+@dataclass(frozen=True)
 class ModelTable:
     """A model as a lake table: its logical name and the frame type of each column."""
 
@@ -181,7 +225,7 @@ class ModelTable:
 
         Raises:
             InvalidType: *model* declares no ``__tablename__``.
-            InvalidValue: A column has a type the lake refuses.
+            LakeRefusal: A column has a type the lake refuses.
         """
         return _lake_table(model)
 
@@ -196,44 +240,13 @@ class ModelTable:
         return StructType.of_columns(self.schema)
 
     @cached_property
-    def key_problem(self) -> KeyProblem | None:
-        """Why the conflict key cannot come from a frame, ``None`` when it can.
-
-        A business key always comes from the frame. A primary key does not when the
-        store fills it: autoincrement, derived from a business key, or server default.
-        """
-        key = conflict_key_of(self.model)
-        if not key:
-            return KeyProblem("keys", "declares neither a business key nor a primary key")
-        if business_key_of(self.model) is not None:
-            return None
-        columns = get_column_fields(self.model)
-        for name in key:
-            declaration = columns[name].field
-            if declaration.autoincrement:
-                return KeyProblem(name, f"primary key {name!r} is autoincrement")
-            if declaration.derived is not None:
-                return KeyProblem(name, f"primary key {name!r} is derived by the store")
-            if declaration.server_default is not None:
-                return KeyProblem(name, f"primary key {name!r} is filled by the server")
-        return None
-
-    def column_type(self, name: str) -> FrameType | None:
-        """The frame type of column *name*, ``None`` when the model has no such column."""
-        return self.column_types.get(name)
+    def column_types(self) -> Mapping[str, FrameType]:
+        """The frame type of each column, by column name."""
+        return {column.name: column.dtype for column in self.schema}
 
     def unknown_columns(self, names: Iterable[str]) -> tuple[str, ...]:
         """The *names* that are not columns of the model, in the order given."""
         return tuple(name for name in names if name not in self.column_types)
-
-    def frame_keys(self) -> tuple[str, ...]:
-        """The conflict key of the model when the frame can supply it, else ``()``."""
-        return conflict_key_of(self.model) if self.key_problem is None else ()
-
-    @cached_property
-    def column_types(self) -> Mapping[str, FrameType]:
-        """The frame type of each column, by column name."""
-        return {column.name: column.dtype for column in self.schema}
 
 
 @stored_on_class("__loom_model_table__")

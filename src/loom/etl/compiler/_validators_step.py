@@ -18,7 +18,7 @@ from loom.etl.compiler._plan import (
     SourceBinding,
     TargetBinding,
 )
-from loom.etl.compiler._validators_model import validate_model_target
+from loom.etl.compiler._validators_model import validate_model_sources, validate_model_target
 from loom.etl.declarative.expr._params import ParamExpr
 from loom.etl.declarative.expr._predicate import PredicateNode
 from loom.etl.declarative.source import FileSourceSpec
@@ -109,7 +109,7 @@ class StepCompilationContext:
 
 
 def validate_step(ctx: StepCompilationContext) -> None:
-    """Validate signature, model target, upsert, history, param expressions, then file paths."""
+    """Validate signature, models, upsert, history, param expressions, then file paths."""
     validate_execute_signature(
         ctx.step_type,
         ctx.params_type,
@@ -117,6 +117,7 @@ def validate_step(ctx: StepCompilationContext) -> None:
         ctx.config_bindings,
         ctx.agent_bindings,
     )
+    validate_model_sources(ctx.step_type, (binding.spec for binding in ctx.source_bindings))
     validate_model_target(ctx.step_type, ctx.target_binding.spec)
     validate_upsert_spec(ctx.step_type, ctx.target_binding.spec)
     validate_historify_spec(ctx.step_type, ctx.target_binding.spec)

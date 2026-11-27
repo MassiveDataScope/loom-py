@@ -22,7 +22,7 @@ from uuid import UUID
 
 import msgspec
 
-from loom.core.model._class_store import stored_on_class
+from loom.core.model.class_store import stored_on_class
 from loom.core.model.field import ColumnFieldSpec, Field
 from loom.core.model.types import (
     JSON,
@@ -35,7 +35,6 @@ from loom.core.model.types import (
     DateTime,
     Float,
     JsonMarker,
-    Numeric,
     String,
     Text,
     Time,
@@ -77,9 +76,8 @@ JsonShape = Opaque | StructShape | ListShape
 class ResolvedField:
     """The column type of one field, settled once from its annotation.
 
-    ``column_type`` is ``None`` when the field is undeclared, except for a
-    ``Decimal``, which keeps an unbounded ``Numeric`` as a placeholder; its
-    ``reason`` says what is missing. ``shape`` describes the JSON stored in a
+    ``column_type`` is ``None`` when the field is undeclared; its ``reason`` says
+    what is missing. ``shape`` describes the JSON stored in a
     ``JSON`` column and is ``None`` for any other column. ``nullable`` is
     whether the annotation admits ``None``; the field's own constraints are
     merged by the caller.
@@ -252,7 +250,6 @@ def read_fields(cls: type) -> tuple[FieldSource, ...]:
 @dataclass(frozen=True, slots=True)
 class _Undeclared:
     reason: str
-    placeholder: ColumnType | None = None
 
 
 _RULES: Final[Mapping[type, ColumnType | _Undeclared]] = {
@@ -266,7 +263,7 @@ _RULES: Final[Mapping[type, ColumnType | _Undeclared]] = {
     date: Date,
     time: Time,
     UUID: Uuid,
-    Decimal: _Undeclared("a Decimal", placeholder=Numeric()),
+    Decimal: _Undeclared("a Decimal"),
     timedelta: _Undeclared("a timedelta"),
 }
 
@@ -274,7 +271,12 @@ _CONTAINERS: Final = (list, tuple, set, frozenset, dict)
 
 
 def _is_record(cls: Any) -> bool:
-    return isinstance(cls, type) and bool(read_fields(cls))
+    if not isinstance(cls, type):
+        return False
+    try:
+        return bool(read_fields(cls))
+    except (NameError, TypeError):
+        return False
 
 
 def _scalar_rule(cls: type) -> ColumnType | _Undeclared | None:
@@ -302,7 +304,7 @@ class _Resolver:
             return self._settled(source, base, annotated_type, Outcome.DECLARED)
         found = self._infer(base, metadata)
         if isinstance(found, _Undeclared):
-            return self._settled(source, base, found.placeholder, Outcome.UNDECLARED, found.reason)
+            return self._settled(source, base, None, Outcome.UNDECLARED, found.reason)
         if field.length is not None and found == String():
             found = String(field.length)
         return self._settled(source, base, found, Outcome.INFERRED)

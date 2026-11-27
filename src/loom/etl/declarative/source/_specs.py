@@ -9,14 +9,17 @@ compiler and executor; they are never constructed directly in user code.
 
 from __future__ import annotations
 
+from collections.abc import Mapping
 from dataclasses import dataclass, field
 from enum import StrEnum
 from typing import TYPE_CHECKING, Any
 
 from loom.core.errors import InvalidValue
+from loom.core.model import BaseModel
 from loom.etl.declarative._format import Format
 from loom.etl.declarative._read_options import ReadOptions
-from loom.etl.declarative.expr._refs import TableRef
+from loom.etl.declarative.expr._refs import TableRef, columns_in
+from loom.etl.schema import ModelTable
 from loom.etl.schema._schema import ColumnSchema, FrameType
 
 if TYPE_CHECKING:
@@ -78,7 +81,7 @@ class JsonColumnSpec:
 
     Args:
         column:    Name of the string column that holds the JSON payload.
-        frame_type: Target :data:`~loom.etl._schema.FrameType` to decode into.
+        frame_type: Target :data:`~loom.etl.schema.FrameType` to decode into.
         on_mismatch: Whether a document that does not match fails or becomes null.
     """
 
@@ -105,9 +108,12 @@ class TableSourceSpec:
                       Parquet row-group scanner, reducing I/O.
         schema:       Optional user-declared schema applied at read time via
                       ``with_columns(cast(...))``; casts each declared column to
-                      its :class:`~loom.etl._schema.LoomDtype`.  Extra columns
+                      its :class:`~loom.etl.schema.LoomDtype`.  Extra columns
                       in the source pass through untouched.
         json_columns: JSON decode specs applied at read time.
+        model:        The model the source was declared with, ``None`` otherwise.
+                      It gives the read schema; the compiler translates it and
+                      checks the columns the source names against it.
     """
 
     alias: str
@@ -116,6 +122,21 @@ class TableSourceSpec:
     columns: tuple[str, ...] = field(default_factory=tuple)
     schema: tuple[ColumnSchema, ...] = field(default_factory=tuple)
     json_columns: tuple[JsonColumnSpec, ...] = field(default_factory=tuple)
+    model: type[BaseModel] | None = None
+
+    @property
+    def read_schema(self) -> tuple[ColumnSchema, ...]:
+        """The schema applied at read time: the model's lake schema, else the declared one."""
+        return self.schema if self.model is None else ModelTable.from_model(self.model).schema
+
+    @property
+    def declared_columns(self) -> Mapping[str, tuple[str, ...]]:
+        """The model columns this source names, by the call that names them."""
+        return {
+            "columns": self.columns,
+            "where": columns_in(self.predicates),
+            "parse_json": tuple(spec.column for spec in self.json_columns),
+        }
 
     @property
     def kind(self) -> SourceKind:
@@ -159,6 +180,11 @@ class FileSourceSpec:
     columns: tuple[str, ...] = field(default_factory=tuple)
     schema: tuple[ColumnSchema, ...] = field(default_factory=tuple)
     json_columns: tuple[JsonColumnSpec, ...] = field(default_factory=tuple)
+
+    @property
+    def read_schema(self) -> tuple[ColumnSchema, ...]:
+        """The schema applied at read time: the declared one."""
+        return self.schema
 
     @property
     def kind(self) -> SourceKind:

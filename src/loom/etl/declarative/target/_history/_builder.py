@@ -7,12 +7,9 @@ from typing import Literal
 from loom.core.errors import InvalidValue
 from loom.core.schema import SchemaMode
 from loom.etl.declarative._declared_table import DeclaredTable, TableDeclaration
+from loom.etl.declarative._history_date_type import HistoryDateType
 from loom.etl.declarative.expr._params import ParamExpr
-from loom.etl.declarative.target._history._enums import (
-    DeletePolicy,
-    HistorifyInputMode,
-    HistoryDateType,
-)
+from loom.etl.declarative.target._history._enums import DeletePolicy, HistorifyInputMode
 from loom.etl.declarative.target._history._spec import HistorifySpec
 
 
@@ -202,9 +199,14 @@ class IntoHistory:
         )
 
         table = DeclaredTable.from_declaration(ref)
+        boundary_type = (
+            HistoryDateType(date_type)
+            if date_type is not None
+            else table.boundary_type(valid_from) or HistoryDateType.DATE
+        )
         self._spec = HistorifySpec(
             table_ref=table.ref,
-            model_table=table.model_table,
+            model=table.model,
             keys=keys_t,
             effective_date=effective_date,
             mode=HistorifyInputMode(mode),
@@ -215,7 +217,7 @@ class IntoHistory:
             valid_from=valid_from,
             valid_to=valid_to,
             deleted_at=deleted_at,
-            date_type=_resolve_date_type(date_type, table, valid_from),
+            date_type=boundary_type,
             schema_mode=schema,
             allow_temporal_rerun=allow_temporal_rerun,
             delete_marker=delete_marker,
@@ -232,17 +234,6 @@ class IntoHistory:
     def __repr__(self) -> str:
         spec = self._spec
         return f"IntoHistory({spec.table_ref.ref!r}, keys={spec.keys!r}, mode={spec.mode!r})"
-
-
-def _resolve_date_type(
-    declared: Literal["date", "timestamp"] | None, table: DeclaredTable, valid_from: str
-) -> HistoryDateType:
-    if declared is not None:
-        return HistoryDateType(declared)
-    if table.model_table is None:
-        return HistoryDateType.DATE
-    column = table.model_table.column_type(valid_from)
-    return HistoryDateType.of_column(column) or HistoryDateType.DATE
 
 
 def _validate_history_args(

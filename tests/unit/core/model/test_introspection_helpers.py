@@ -38,7 +38,6 @@ from loom.core.model.types import (
     DateTime,
     Float,
     Integer,
-    Numeric,
     String,
     Time,
     Uuid,
@@ -383,7 +382,7 @@ class TestEnumColumnTypes:
     def test_a_decimal_enum_without_a_column_type_needs_one_declared(self) -> None:
         info = get_column_fields(_MixedEnums)["amount"]
 
-        assert (info.column_type, info.resolved.is_undeclared) == (Numeric(), True)
+        assert (info.column_type, info.resolved.is_undeclared) == (None, True)
 
     def test_declared_and_inferable_fields_need_no_declared_type(self) -> None:
         assert not any(info.resolved.is_undeclared for info in get_column_fields(_Enums).values())
@@ -440,5 +439,5 @@ class TestScalarColumnAnnotations:
     def test_json_array_and_text_search_columns_are_not_scalar(self) -> None:
         assert set(scalar_column_annotations(_Shelf)) == {"id", "label"}
 
-    def test_a_decimal_without_a_column_type_is_scalar(self) -> None:
-        assert scalar_column_annotations(_Priced) == {"price": Decimal, "maybe": Decimal | None}
+    def test_a_decimal_without_a_column_type_is_not_listed(self) -> None:
+        assert scalar_column_annotations(_Priced) == {}

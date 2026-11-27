@@ -1,4 +1,4 @@
-"""LoomDtype ↔ PySpark DataType conversion utilities.
+"""FrameType ↔ PySpark DataType conversion utilities.
 
 Internal module — not part of the public API.
 """
@@ -57,7 +57,7 @@ _SPARK_TO_LOOM: dict[type[T.DataType], LoomDtype] = {
 
 
 def loom_to_spark(dtype: LoomDtype) -> T.DataType:
-    """Return the PySpark DataType for a :class:`~loom.etl._schema.LoomDtype`.
+    """Return the PySpark DataType for a :class:`~loom.etl.schema.LoomDtype`.
 
     Args:
         dtype: Canonical Loom dtype.
@@ -72,7 +72,7 @@ def loom_to_spark(dtype: LoomDtype) -> T.DataType:
 
 
 def spark_to_frame_type(dtype: T.DataType) -> FrameType:
-    """Return the :data:`~loom.etl._schema.FrameType` for a PySpark DataType.
+    """Return the :data:`~loom.etl.schema.FrameType` for a PySpark DataType.
 
     Decimal precision and scale, timestamp zone, array elements and struct
     fields are kept; a timestamp reads as UTC and a tz-less one as naive.
@@ -81,7 +81,7 @@ def spark_to_frame_type(dtype: T.DataType) -> FrameType:
         dtype: PySpark DataType instance.
 
     Returns:
-        The matching frame type, or :attr:`~loom.etl._schema.LoomDtype.NULL` if
+        The matching frame type, or :attr:`~loom.etl.schema.LoomDtype.NULL` if
         the Spark type has no direct mapping.
     """
     if isinstance(dtype, T.ArrayType):
@@ -103,22 +103,22 @@ def spark_to_frame_type(dtype: T.DataType) -> FrameType:
 
 
 def frame_type_to_spark(lt: FrameType) -> T.DataType:
-    """Recursively convert a :data:`~loom.etl._schema.FrameType` to a PySpark DataType.
+    """Recursively convert a :data:`~loom.etl.schema.FrameType` to a PySpark DataType.
 
-    Handles primitive :class:`~loom.etl._schema.LoomDtype` values as well as
-    complex structural types such as :class:`~loom.etl._schema.ListType`,
-    :class:`~loom.etl._schema.ArrayType`, :class:`~loom.etl._schema.StructType`,
-    :class:`~loom.etl._schema.DecimalType`, :class:`~loom.etl._schema.DatetimeType`,
-    and :class:`~loom.etl._schema.DurationType`.
+    Handles primitive :class:`~loom.etl.schema.LoomDtype` values as well as
+    complex structural types such as :class:`~loom.etl.schema.ListType`,
+    :class:`~loom.etl.schema.ArrayType`, :class:`~loom.etl.schema.StructType`,
+    :class:`~loom.etl.schema.DecimalType`, :class:`~loom.etl.schema.DatetimeType`,
+    and :class:`~loom.etl.schema.DurationType`.
 
     Args:
-        lt: Any :data:`~loom.etl._schema.FrameType` value.
+        lt: Any :data:`~loom.etl.schema.FrameType` value.
 
     Returns:
         Concrete PySpark DataType instance.
 
     Raises:
-        InvalidType: When *lt* is not a recognized :data:`~loom.etl._schema.FrameType`.
+        InvalidType: When *lt* is not a recognized :data:`~loom.etl.schema.FrameType`.
     """
     if isinstance(lt, LoomDtype):
         return loom_to_spark(lt)
