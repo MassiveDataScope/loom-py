@@ -51,5 +51,17 @@ class KeyFill(StrEnum):
     """How a store fills a primary-key column the frame does not supply."""
 
     AUTOINCREMENT = "autoincrement"
-    DERIVED = "derived by the store"
-    SERVER_DEFAULT = "filled by the server"
+    DERIVED = "derived"
+    SERVER_DEFAULT = "server_default"
+
+    @property
+    def description(self) -> str:
+        """The fill as a message reads it: ``autoincrement``, ``derived by the store``..."""
+        return _KEY_FILL_DESCRIPTIONS[self]
+
+
+_KEY_FILL_DESCRIPTIONS = {
+    KeyFill.AUTOINCREMENT: "autoincrement",
+    KeyFill.DERIVED: "derived by the store",
+    KeyFill.SERVER_DEFAULT: "filled by the server",
+}

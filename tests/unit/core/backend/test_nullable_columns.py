@@ -22,6 +22,7 @@ from loom.core.model import (
     String,
     get_column_fields,
 )
+from loom.core.model.types import SmallInteger, TinyInteger
 from loom.stores.sqlalchemy.schema import compile_all
 
 
@@ -34,6 +35,8 @@ class Reading(BaseModel):
     annotated_optional: Annotated[int | None, Field()] = None
     declared_not_null: int | None = ColumnField(nullable=False, default=None)
     declared_null: int = ColumnField(Integer, nullable=True)
+    tiny: Annotated[int, TinyInteger]
+    small: Annotated[int, SmallInteger]
 
 
 class _Tone(Enum):
@@ -105,6 +108,11 @@ class TestOptionalNullColumns:
         assert f"\tdeclared_not_null {big} NOT NULL" in ddl
         assert "\tdeclared_null INTEGER," in ddl
 
+    @pytest.mark.parametrize("dialect", [PGDialect(), SQLiteDialect()])
+    @pytest.mark.parametrize("column", ["tiny", "small"])
+    def test_the_small_integers_are_a_smallint(self, dialect: Dialect, column: str) -> None:
+        assert f"\t{column} SMALLINT NOT NULL" in _ddl(dialect)
+
     def test_an_optional_primary_key_stays_not_null(self) -> None:
         metadata = MetaData()
         compile_all(Reading, metadata=metadata)
@@ -122,4 +130,6 @@ class TestOptionalNullColumns:
             "annotated_optional": True,
             "declared_not_null": False,
             "declared_null": True,
+            "tiny": False,
+            "small": False,
         }

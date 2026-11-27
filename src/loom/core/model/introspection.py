@@ -11,7 +11,12 @@ from loom.core.errors import InvalidType, InvalidValue
 from loom.core.model.class_store import stored_on_class
 from loom.core.model.enums import KeyFill
 from loom.core.model.field import ColumnFieldSpec, Field
-from loom.core.model.inference import Annotation, FieldSource, Record, ResolvedField
+from loom.core.model.inference import (
+    AnnotatedClass,
+    Annotation,
+    FieldSource,
+    ResolvedField,
+)
 from loom.core.model.keys import (
     BusinessKey,
     DerivedKey,
@@ -49,6 +54,19 @@ class ColumnFieldInfo:
     resolved: ResolvedField
     field: Field
 
+    @classmethod
+    def from_source(
+        cls, source: FieldSource, resolved: ResolvedField, declared: ColumnFieldSpec | None
+    ) -> ColumnFieldInfo:
+        """The column info of *source*, its ``Field`` completed from the annotation and default."""
+        field = source.declaration(declared).field
+        return cls(
+            name=source.name,
+            python_type=Annotation(source.annotation).origin_type,
+            resolved=resolved,
+            field=_with_nullable(_with_struct_default(field, source.default), resolved),
+        )
+
     @property
     def column_type(self) -> ColumnType | None:
         """The column type, ``None`` when none could be settled."""
@@ -64,7 +82,7 @@ class ColumnFieldInfo:
     def kind(self) -> ColumnKind | None:
         """The kind of the column type, ``None`` when none could be settled."""
         column_type = self.resolved.column_type
-        return None if column_type is None else column_type.type_name
+        return None if column_type is None else column_type.kind
 
 
 def _collect_inherited_dict_metadata(cls: type, attr: str) -> dict[str, Any]:
@@ -86,25 +104,16 @@ def get_column_fields(cls: type) -> dict[str, ColumnFieldInfo]:
 def _column_fields(cls: type) -> Mapping[str, ColumnFieldInfo]:
     declared = _collect_inherited_dict_metadata(cls, "__loom_columns__")
     non_columns = set(get_relations(cls)) | set(get_projections(cls))
-    resolved = {field.name: field for field in Record(cls).resolve(declared, exclude=non_columns)}
+    resolved = {
+        field.name: field for field in AnnotatedClass(cls).resolve(declared, exclude=non_columns)
+    }
     return {
-        source.name: _column_field_info(source, resolved[source.name], declared.get(source.name))
-        for source in Record(cls).fields
+        source.name: ColumnFieldInfo.from_source(
+            source, resolved[source.name], declared.get(source.name)
+        )
+        for source in AnnotatedClass(cls).fields
         if source.name in resolved
     }
-
-
-def _column_field_info(
-    source: FieldSource, resolved: ResolvedField, declared: ColumnFieldSpec | None
-) -> ColumnFieldInfo:
-    _, field = source.declaration(declared)
-    field = _with_nullable(_with_struct_default(field, source.default), resolved)
-    return ColumnFieldInfo(
-        name=source.name,
-        python_type=Annotation(source.annotation).origin_type,
-        resolved=resolved,
-        field=field,
-    )
 
 
 def _with_nullable(field: Field, resolved: ResolvedField) -> Field:
@@ -269,7 +278,12 @@ def generic_type_arg(annotation: Any, origin: Any) -> type | None:
 
 
 _NON_SCALAR_KINDS: frozenset[ColumnKind | None] = frozenset(
-    {None, ColumnKind.POSTGRES_TSVECTOR, *(kind for kind in ColumnKind if kind.is_json)}
+    {
+        None,
+        ColumnKind.POSTGRES_TSVECTOR,
+        ColumnKind.POSTGRES_ARRAY,
+        *(kind for kind in ColumnKind if kind.is_json),
+    }
 )
 
 
@@ -373,10 +387,10 @@ class ModelKeys:
 
     @staticmethod
     @stored_on_class("__loom_model_keys__")
-    def of(cls: type) -> ModelKeys:
-        """The keys of *cls*, derived once from its declared columns."""
-        key = business_key_of(cls)
-        columns = get_column_fields(cls)
+    def of(model: type) -> ModelKeys:
+        """The keys of *model*, derived once from its declared columns."""
+        key = business_key_of(model)
+        columns = get_column_fields(model)
         if key is not None:
             return ModelKeys(key.fields, {})
         conflict = tuple(name for name, info in columns.items() if info.field.primary_key)

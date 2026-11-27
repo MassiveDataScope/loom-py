@@ -1,3 +1,9 @@
+"""Column types: the portable and Postgres kinds a model column can declare.
+
+A :class:`ColumnType` is the descriptor stored in ``Annotated[...]`` or passed to
+``ColumnField``; its :class:`ColumnKind` is what translators and stores dispatch on.
+"""
+
 from __future__ import annotations
 
 import sys
@@ -37,13 +43,11 @@ class ColumnKind(StrEnum):
 
     @property
     def is_json(self) -> bool:
-        """Whether a column of this kind holds a JSON document or a list of items."""
+        """Whether a column of this kind holds a JSON document."""
         return self in _JSON_KINDS
 
 
-_JSON_KINDS: Final = frozenset(
-    {ColumnKind.JSON, ColumnKind.POSTGRES_JSONB, ColumnKind.POSTGRES_ARRAY}
-)
+_JSON_KINDS: Final = frozenset({ColumnKind.JSON, ColumnKind.POSTGRES_JSONB})
 
 
 @dataclass(frozen=True, slots=True)
@@ -54,7 +58,7 @@ class ColumnType:
     held as ``(name, value)`` pairs.
     """
 
-    type_name: ColumnKind
+    kind: ColumnKind
     args: tuple[Any, ...] = ()
     kwargs: tuple[tuple[str, Any], ...] = ()
 
@@ -69,7 +73,7 @@ class ColumnType:
         portable one it stands for, and ``None`` when it has none, as a
         tsvector or an array, whose item type is part of the column.
         """
-        return _PORTABLE_COUNTERPART.get(self.type_name, self)
+        return _PORTABLE_COUNTERPART.get(self.kind, self)
 
 
 def String(length: int | None = None) -> ColumnType:

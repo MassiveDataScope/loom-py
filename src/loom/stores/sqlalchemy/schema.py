@@ -180,9 +180,9 @@ def audited_tables(metadata: MetaData | None = None) -> AuditedTables:
 
 
 def _build_sa_column_type(col_type: ColumnType) -> Any:
-    sa_type_cls = _SA_TYPE_MAP.get(col_type.type_name)
+    sa_type_cls = _SA_TYPE_MAP.get(col_type.kind)
     if sa_type_cls is None:
-        raise InvalidValue(f"Unsupported column type: {col_type.type_name}")
+        raise InvalidValue(f"Unsupported column type: {col_type.kind}")
     args = tuple(
         _build_sa_column_type(arg) if isinstance(arg, ColumnType) else arg for arg in col_type.args
     )

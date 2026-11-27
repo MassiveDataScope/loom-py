@@ -237,8 +237,8 @@ class MongoRepository(
         self._naive_datetime_fields = frozenset(
             name
             for name, info in column_fields.items()
-            if info.column_type is not None
-            and info.column_type.type_name is ColumnKind.DATETIME
+            if info.kind is ColumnKind.DATETIME
+            and info.column_type is not None
             and info.column_type.option("timezone") is False
         )
         self._stamps = ServerStamps.of(model)

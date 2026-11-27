@@ -1,10 +1,17 @@
+"""Core inference of the column type of every annotated field, settled once.
+
+A field declares its column type with ``Annotated`` or ``ColumnField``; otherwise
+it is inferred from the annotation, and a field with no type loom can infer comes
+back undeclared with its reason. JSON fields carry the shape of what they store.
+"""
+
 from __future__ import annotations
 
 from collections.abc import Collection, Mapping
 from dataclasses import dataclass
 from datetime import date, datetime, time, timedelta
 from decimal import Decimal
-from enum import Enum, StrEnum
+from enum import Enum
 from types import UnionType
 from typing import (
     Annotated,
@@ -40,14 +47,6 @@ from loom.core.model.types import (
     Time,
     Uuid,
 )
-
-
-class Outcome(StrEnum):
-    """How the column type of a field was settled."""
-
-    DECLARED = "declared"
-    INFERRED = "inferred"
-    UNDECLARED = "undeclared"
 
 
 @dataclass(frozen=True, slots=True)
@@ -87,14 +86,26 @@ class ResolvedField:
     encode_name: str
     column_type: ColumnType | None
     nullable: bool
-    outcome: Outcome
     reason: str | None = None
     shape: JsonShape | None = None
 
     @property
     def is_undeclared(self) -> bool:
         """Whether no column type could be settled and the field needs a declaration."""
-        return self.outcome is Outcome.UNDECLARED
+        return self.column_type is None
+
+    @property
+    def stores_json_text(self) -> bool:
+        """Whether the field is JSON whose structure is not described, so it is kept as text."""
+        return isinstance(self.shape, Opaque) and self.column_type is not None
+
+
+@dataclass(frozen=True, slots=True)
+class FieldDeclaration:
+    """What a field declares before any inference: its column type, if any, and its ``Field``."""
+
+    column_type: ColumnType | None
+    field: Field
 
 
 @dataclass(frozen=True, slots=True)
@@ -106,9 +117,7 @@ class FieldSource:
     annotation: Any
     default: Any
 
-    def declaration(
-        self, declared: ColumnFieldSpec | None = None
-    ) -> tuple[ColumnType | None, Field]:
+    def declaration(self, declared: ColumnFieldSpec | None = None) -> FieldDeclaration:
         """The column type and ``Field`` this field declares, before any inference.
 
         A ``ColumnField`` supplies the ``Field``, and its column type wins over the
@@ -116,15 +125,22 @@ class FieldSource:
         """
         column_type: ColumnType | None = None
         field = Field()
-        _, metadata = Annotation(self.annotation).column_base
-        for entry in metadata:
+        for entry in Annotation(self.annotation).column_base.metadata:
             if isinstance(entry, ColumnType):
                 column_type = entry
             elif isinstance(entry, Field):
                 field = entry
         if declared is None:
-            return column_type, field
-        return declared.column_type or column_type, declared.field
+            return FieldDeclaration(column_type, field)
+        return FieldDeclaration(declared.column_type or column_type, declared.field)
+
+
+@dataclass(frozen=True, slots=True)
+class ColumnBase:
+    """An annotation stripped of ``Optional`` and ``Annotated`` layers, and the metadata found."""
+
+    annotation: Any
+    metadata: tuple[Any, ...]
 
 
 @dataclass(frozen=True, slots=True)
@@ -177,12 +193,8 @@ class Annotation:
         return any(Annotation(member).admits_none for member in members)
 
     @property
-    def column_base(self) -> tuple[Any, tuple[Any, ...]]:
-        """Strip ``Optional`` and ``Annotated`` layers, in either order.
-
-        Returns:
-            The inner annotation and the metadata of the ``Annotated`` layers.
-        """
+    def column_base(self) -> ColumnBase:
+        """Strip ``Optional`` and ``Annotated`` layers, in either order."""
         annotation = self.hint
         metadata: tuple[Any, ...] = ()
         while True:
@@ -191,7 +203,7 @@ class Annotation:
                 metadata += unwrapped.__metadata__
                 unwrapped = get_args(unwrapped)[0]
             if unwrapped is annotation:
-                return annotation, metadata
+                return ColumnBase(annotation, metadata)
             annotation = unwrapped
 
     @property
@@ -209,33 +221,33 @@ class Annotation:
     def resolved(self) -> ResolvedField:
         """The column type of this bare annotation, as a field named ``value``.
 
-        Like :meth:`Record.resolve`, it never raises on an annotation it cannot map.
+        Like :meth:`AnnotatedClass.resolve`, it never raises on an annotation it cannot map.
         """
         source = FieldSource("value", "value", self.hint, msgspec.NODEFAULT)
         return _Resolver(frozenset()).resolve(source)
 
 
 @dataclass(frozen=True, slots=True)
-class Record:
+class AnnotatedClass:
     """A class whose annotated fields are columns or JSON members."""
 
-    cls: Any
+    target: Any
 
     @staticmethod
     @stored_on_class("__loom_fields__")
-    def _read(cls: type) -> tuple[FieldSource, ...]:
-        """The annotated fields of *cls*, read once per class.
+    def _read(target: type) -> tuple[FieldSource, ...]:
+        """The annotated fields of *target*, read once per class.
 
         A msgspec struct reads ``msgspec.structs.fields``, which keeps ``Annotated``
         and ``encode_name``; any other annotated class reads its type hints without
         ``ClassVar``, and its encode name is its name.
         """
-        if issubclass(cls, msgspec.Struct):
+        if issubclass(target, msgspec.Struct):
             return tuple(
                 FieldSource(info.name, info.encode_name, info.type, info.default)
-                for info in msgspec.structs.fields(cls)
+                for info in msgspec.structs.fields(target)
             )
-        hints = get_type_hints(cls, include_extras=True)
+        hints = get_type_hints(target, include_extras=True)
         return tuple(
             FieldSource(name, name, annotation, msgspec.NODEFAULT)
             for name, annotation in hints.items()
@@ -245,13 +257,13 @@ class Record:
     @property
     def fields(self) -> tuple[FieldSource, ...]:
         """The annotated fields; an annotation naming something unimportable raises."""
-        return self._read(self.cls)
+        return self._read(self.target)
 
     @property
     def is_readable(self) -> bool:
         """Whether its annotations could be read, so its fields can be listed."""
         try:
-            self._read(self.cls)
+            self._read(self.target)
         except (NameError, TypeError):
             return False
         return True
@@ -259,7 +271,7 @@ class Record:
     @property
     def is_record(self) -> bool:
         """Whether it is a class with at least one readable annotated field."""
-        return isinstance(self.cls, type) and self.is_readable and bool(self.fields)
+        return isinstance(self.target, type) and self.is_readable and bool(self.fields)
 
     def resolve(
         self,
@@ -279,7 +291,7 @@ class Record:
             exclude: Field names that are not columns, such as relations.
         """
         declared = declared or {}
-        resolver = _Resolver(frozenset({self.cls}))
+        resolver = _Resolver(frozenset({self.target}))
         return tuple(
             resolver.resolve(source, declared.get(source.name))
             for source in self.fields
@@ -292,7 +304,7 @@ class _Undeclared:
     reason: str
 
 
-_RULES: Final[Mapping[type, ColumnType | _Undeclared]] = {
+_SCALAR_COLUMN_TYPES: Final[Mapping[type, ColumnType | _Undeclared]] = {
     int: BigInteger,
     float: Float,
     bool: Boolean,
@@ -323,23 +335,23 @@ class _Resolver:
     def resolve(
         self, source: FieldSource, declared: ColumnFieldSpec | None = None
     ) -> ResolvedField:
-        annotated_type, field = source.declaration(declared)
-        base, metadata = Annotation(source.annotation).column_base
-        if annotated_type is not None:
-            return self._settled(source, base, annotated_type, Outcome.DECLARED)
-        found = self._infer(base, metadata)
+        declaration = source.declaration(declared)
+        column_base = Annotation(source.annotation).column_base
+        base = column_base.annotation
+        if declaration.column_type is not None:
+            return self._resolved_field(source, base, declaration.column_type)
+        found = self._infer(column_base)
         if isinstance(found, _Undeclared):
-            return self._settled(source, base, None, Outcome.UNDECLARED, found.reason)
-        if field.length is not None and found == String():
-            found = String(field.length)
-        return self._settled(source, base, found, Outcome.INFERRED)
+            return self._resolved_field(source, base, None, found.reason)
+        if declaration.field.length is not None and found == String():
+            found = String(declaration.field.length)
+        return self._resolved_field(source, base, found)
 
-    def _settled(
+    def _resolved_field(
         self,
         source: FieldSource,
         base: Any,
         column_type: ColumnType | None,
-        outcome: Outcome,
         reason: str | None = None,
     ) -> ResolvedField:
         return ResolvedField(
@@ -347,13 +359,13 @@ class _Resolver:
             encode_name=source.encode_name,
             column_type=column_type,
             nullable=Annotation(source.annotation).admits_none,
-            outcome=outcome,
             reason=reason,
             shape=None if column_type is None else self._shape(column_type, base),
         )
 
-    def _infer(self, base: Any, metadata: tuple[Any, ...]) -> ColumnType | _Undeclared:
-        if any(isinstance(entry, JsonMarker) for entry in metadata):
+    def _infer(self, column_base: ColumnBase) -> ColumnType | _Undeclared:
+        base = column_base.annotation
+        if any(isinstance(entry, JsonMarker) for entry in column_base.metadata):
             return Text
         if base is Any or get_origin(base) is Literal:
             return _Undeclared("Any" if base is Any else "a Literal")
@@ -368,26 +380,33 @@ class _Resolver:
             return rule
         if issubclass(cls, Enum):
             return _Undeclared("a plain Enum")
-        if issubclass(cls, _CONTAINERS) or Record(cls).is_record or is_typeddict(cls):
+        if issubclass(cls, _CONTAINERS) or AnnotatedClass(cls).is_record or is_typeddict(cls):
             return JSON
-        if not Record(cls).is_readable:
+        if not AnnotatedClass(cls).is_readable:
             return _Undeclared(f"{cls.__name__}, a class whose annotations could not be resolved")
         return _Undeclared(f"{cls.__name__}, a class that is not a record")
 
     @staticmethod
-    def _scalar_rule(cls: type) -> ColumnType | _Undeclared | None:
-        if not issubclass(cls, Enum):
-            return _RULES.get(cls)
-        return next((_RULES[mixin] for mixin in cls.__mro__ if mixin in _RULES), None)
+    def _scalar_rule(scalar: type) -> ColumnType | _Undeclared | None:
+        if not issubclass(scalar, Enum):
+            return _SCALAR_COLUMN_TYPES.get(scalar)
+        return next(
+            (
+                _SCALAR_COLUMN_TYPES[mixin]
+                for mixin in scalar.__mro__
+                if mixin in _SCALAR_COLUMN_TYPES
+            ),
+            None,
+        )
 
     def _infer_union(self, members: tuple[Any, ...]) -> ColumnType | _Undeclared:
-        found = {self._infer(*Annotation(member).column_base) for member in members}
+        found = {self._infer(Annotation(member).column_base) for member in members}
         if found == {JSON}:
             return JSON
         return _Undeclared("a union of types that are not all JSON")
 
     def _shape(self, column_type: ColumnType, base: Any) -> JsonShape | None:
-        if column_type.type_name is ColumnKind.POSTGRES_ARRAY:
+        if column_type.kind is ColumnKind.POSTGRES_ARRAY:
             return ListShape(self._declared_item(column_type.args[0]))
         if column_type.portable() != JSON:
             return None
@@ -400,11 +419,13 @@ class _Resolver:
         if origin is list and get_args(base):
             item = FieldSource("item", "item", get_args(base)[0], msgspec.NODEFAULT)
             return ListShape(self.resolve(item))
-        if Record(base).is_record and base not in self.path:
+        if AnnotatedClass(base).is_record and base not in self.path:
             below = _Resolver(self.path | {base})
-            return StructShape(tuple(below.resolve(source) for source in Record(base).fields))
+            return StructShape(
+                tuple(below.resolve(source) for source in AnnotatedClass(base).fields)
+            )
         return Opaque()
 
     @staticmethod
     def _declared_item(item: ColumnType) -> ResolvedField:
-        return ResolvedField("item", "item", item, nullable=True, outcome=Outcome.DECLARED)
+        return ResolvedField("item", "item", item, nullable=True)

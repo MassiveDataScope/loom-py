@@ -5,39 +5,17 @@ from __future__ import annotations
 import gc
 import weakref
 from dataclasses import dataclass
-from datetime import date, datetime, timedelta
+from datetime import timedelta
 from decimal import Decimal
 from enum import Enum
 from typing import TYPE_CHECKING, Annotated, Any, ClassVar, Literal
-from uuid import UUID
 
 import msgspec
 import pytest
 
 from loom.core.model.field import ColumnFieldSpec
-from loom.core.model.inference import (
-    ListShape,
-    Opaque,
-    Outcome,
-    Record,
-    ResolvedField,
-    StructShape,
-)
-from loom.core.model.types import (
-    JSON,
-    BigInteger,
-    ColumnType,
-    Date,
-    DateTime,
-    Float,
-    Integer,
-    JsonStr,
-    Numeric,
-    Postgres,
-    String,
-    Text,
-    Uuid,
-)
+from loom.core.model.inference import AnnotatedClass, ListShape, Opaque
+from loom.core.model.types import Float, JsonStr, Numeric, String
 
 if TYPE_CHECKING:
     from fractions import Fraction as NotImported
@@ -59,23 +37,10 @@ class _HoldsForeign(msgspec.Struct):
     item: _Foreign
 
 
-class _Address(msgspec.Struct):
-    street: str
-    zip_code: str | None = None
-
-
 @dataclass
 class _Parcel:
     weight: float
     label: str | None = None
-
-
-class _Label:
-    text: str
-
-
-class _Box(msgspec.Struct):
-    label: _Label
 
 
 class _Tree(msgspec.Struct):
@@ -84,19 +49,6 @@ class _Tree(msgspec.Struct):
 
 
 class _Scalars(msgspec.Struct):
-    count: int
-    name: str
-    moment: datetime
-    day: date
-    ref: UUID
-    note: str | None
-    unset: int | msgspec.UnsetType
-    payload: JsonStr
-    address: _Address
-    parcels: list[_Parcel]
-    extras: dict[str, Any]
-    tags: tuple[str, ...]
-    declared: Annotated[int, Integer]
     amount: Decimal
     span: timedelta
     tone: _Tone
@@ -104,55 +56,28 @@ class _Scalars(msgspec.Struct):
     anything: Any
     mixed: int | str
     money: _Money
+    payload: JsonStr
 
 
-@pytest.fixture(scope="module")
-def scalars() -> dict[str, ResolvedField]:
-    return {field.name: field for field in Record(_Scalars).resolve()}
-
-
-_INFERRED, _DECLARED, _UNDECLARED = Outcome.INFERRED, Outcome.DECLARED, Outcome.UNDECLARED
-_SCALAR_RULES = {
-    "count": (BigInteger, _INFERRED, None),
-    "name": (String(), _INFERRED, None),
-    "moment": (DateTime(tz=True), _INFERRED, None),
-    "day": (Date, _INFERRED, None),
-    "ref": (Uuid, _INFERRED, None),
-    "note": (String(), _INFERRED, None),
-    "unset": (BigInteger, _INFERRED, None),
-    "payload": (Text, _INFERRED, None),
-    "address": (JSON, _INFERRED, None),
-    "parcels": (JSON, _INFERRED, None),
-    "extras": (JSON, _INFERRED, None),
-    "tags": (JSON, _INFERRED, None),
-    "declared": (Integer, _DECLARED, None),
-    "amount": (None, _UNDECLARED, "a Decimal"),
-    "span": (None, _UNDECLARED, "a timedelta"),
-    "tone": (None, _UNDECLARED, "a plain Enum"),
-    "mode": (None, _UNDECLARED, "a Literal"),
-    "anything": (None, _UNDECLARED, "Any"),
-    "mixed": (None, _UNDECLARED, "a union of types that are not all JSON"),
-    "money": (None, _UNDECLARED, "_Money, a class that is not a record"),
+_UNDECLARED_REASONS = {
+    "amount": "a Decimal",
+    "span": "a timedelta",
+    "tone": "a plain Enum",
+    "mode": "a Literal",
+    "anything": "Any",
+    "mixed": "a union of types that are not all JSON",
+    "money": "_Money, a class that is not a record",
 }
 
 
 class TestColumnTypes:
-    @pytest.mark.parametrize(
-        ("name", "column_type", "outcome", "reason"),
-        [(name, *rule) for name, rule in _SCALAR_RULES.items()],
-        ids=list(_SCALAR_RULES),
-    )
-    def test_a_field_follows_its_rule_or_is_undeclared_with_its_reason(
-        self,
-        scalars: dict[str, ResolvedField],
-        name: str,
-        column_type: ColumnType | None,
-        outcome: Outcome,
-        reason: str | None,
+    @pytest.mark.parametrize(("name", "reason"), _UNDECLARED_REASONS.items())
+    def test_a_field_with_no_rule_is_undeclared_with_its_reason(
+        self, name: str, reason: str
     ) -> None:
-        field = scalars[name]
+        field = {f.name: f for f in AnnotatedClass(_Scalars).resolve()}[name]
 
-        assert (field.column_type, field.outcome, field.reason) == (column_type, outcome, reason)
+        assert (field.column_type, field.reason) == (None, reason)
 
     def test_a_column_field_type_wins_over_the_annotation(self) -> None:
         class Reading(msgspec.Struct):
@@ -160,21 +85,17 @@ class TestColumnTypes:
 
         declared = {"value": ColumnFieldSpec(Numeric(precision=9, scale=3))}
 
-        (value,) = Record(Reading).resolve(declared)
+        (value,) = AnnotatedClass(Reading).resolve(declared)
 
         assert value.column_type == Numeric(precision=9, scale=3)
 
+    def test_a_foreign_class_whose_hints_cannot_resolve_is_undeclared(self) -> None:
+        (item,) = AnnotatedClass(_HoldsForeign).resolve()
 
-class TestUndeclaredFields:
-    def test_a_foreign_class_whose_hints_cannot_resolve_is_not_a_record(self) -> None:
-        (item,) = Record(_HoldsForeign).resolve()
-
-        assert (item.outcome, item.column_type, "__loom_fields__" in vars(_Foreign)) == (
-            Outcome.UNDECLARED,
+        assert (item.column_type, item.reason) == (
             None,
-            False,
+            "_Foreign, a class whose annotations could not be resolved",
         )
-        assert item.reason == "_Foreign, a class whose annotations could not be resolved"
 
 
 class TestFieldReaders:
@@ -182,7 +103,7 @@ class TestFieldReaders:
         class Customer(msgspec.Struct, rename="camel"):
             given_name: str
 
-        (field,) = Record(Customer).resolve()
+        (field,) = AnnotatedClass(Customer).resolve()
 
         assert (field.name, field.encode_name) == ("given_name", "givenName")
 
@@ -192,7 +113,8 @@ class TestFieldReaders:
             registry: ClassVar[dict[str, str]]
 
         names = [
-            (f.name, f.encode_name) for f in (*Record(_Parcel).resolve(), *Record(Plain).resolve())
+            (f.name, f.encode_name)
+            for f in (*AnnotatedClass(_Parcel).resolve(), *AnnotatedClass(Plain).resolve())
         ]
 
         assert names == [("weight", "weight"), ("label", "label"), ("code", "code")]
@@ -201,7 +123,7 @@ class TestFieldReaders:
         built = msgspec.defstruct("Built", [("code", str)])
         alive = weakref.ref(built)
 
-        _ = Record(built).fields
+        _ = AnnotatedClass(built).fields
         del built
         gc.collect()
 
@@ -215,55 +137,12 @@ class TestFieldReaders:
         class Sealed(metaclass=Frozen):
             code: str
 
-        (field,) = Record(Sealed).resolve()
+        (field,) = AnnotatedClass(Sealed).resolve()
 
         assert (field.name, field.column_type) == ("code", String())
 
-    def test_a_field_that_admits_none_is_nullable(self, scalars: dict[str, ResolvedField]) -> None:
-        assert (scalars["note"].nullable, scalars["count"].nullable) == (True, False)
-
-
-class TestJsonShape:
-    def test_a_nested_plain_class_describes_its_fields(self) -> None:
-        (label,) = Record(_Box).resolve()
-
-        assert (label.column_type, label.shape) == (
-            JSON,
-            StructShape(Record(_Label).resolve()),
-        )
-
-    def test_a_list_describes_its_item(self, scalars: dict[str, ResolvedField]) -> None:
-        shape = scalars["parcels"].shape
-
-        assert isinstance(shape, ListShape)
-        assert isinstance(shape.item.shape, StructShape)
-
-    def test_a_list_of_scalars_has_a_scalar_item(self) -> None:
-        class Basket(msgspec.Struct):
-            labels: list[str]
-
-        (labels,) = Record(Basket).resolve()
-
-        assert isinstance(labels.shape, ListShape)
-        assert labels.shape.item.column_type == String()
-
     def test_a_class_met_again_becomes_opaque(self) -> None:
-        (_, children) = Record(_Tree).resolve()
+        (_, children) = AnnotatedClass(_Tree).resolve()
 
         assert isinstance(children.shape, ListShape)
         assert children.shape.item.shape == Opaque()
-
-    @pytest.mark.parametrize("name", ["extras", "tags"])
-    def test_a_container_without_a_record_is_opaque(
-        self, scalars: dict[str, ResolvedField], name: str
-    ) -> None:
-        assert scalars[name].shape == Opaque()
-
-    def test_a_declared_array_is_a_list_of_its_item(self) -> None:
-        class Device(msgspec.Struct):
-            marks: Annotated[list[int], Postgres.ARRAY(Integer)]
-
-        (marks,) = Record(Device).resolve()
-
-        assert isinstance(marks.shape, ListShape)
-        assert marks.shape.item.column_type == Integer

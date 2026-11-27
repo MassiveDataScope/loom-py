@@ -121,23 +121,7 @@ class ColumnNames:
 
     __slots__ = ("_model", "_names")
 
-    def __init__(self, model: str, names: tuple[str, ...]) -> None:
-        object.__setattr__(self, "_model", model)
-        object.__setattr__(self, "_names", names)
-
-    def __getattr__(self, name: str) -> str:
-        if name in self._names:
-            return name
-        raise AttributeError(f"{self._model} has no column {name!r}; columns: {self._names}")
-
-    def __setattr__(self, name: str, value: Any) -> None:
-        raise AttributeError(f"{self._model}.c is read-only")
-
-    def __dir__(self) -> list[str]:
-        return list(self._names)
-
-    @classmethod
-    def of(cls, model: Any) -> "ColumnNames":
+    def __init__(self, model: Any) -> None:
         """Build the namespace of *model*: its fields, without relations or projections.
 
         Raises:
@@ -149,8 +133,23 @@ class ColumnNames:
                 "it is the namespace of column names"
             )
         loaded_on_demand = get_relations(model).keys() | get_projections(model).keys()
-        names = tuple(field for field in model.__struct_fields__ if field not in loaded_on_demand)
-        return cls(model.__name__, names)
+        object.__setattr__(self, "_model", model.__name__)
+        object.__setattr__(
+            self,
+            "_names",
+            tuple(field for field in model.__struct_fields__ if field not in loaded_on_demand),
+        )
+
+    def __getattr__(self, name: str) -> str:
+        if name in self._names:
+            return name
+        raise AttributeError(f"{self._model} has no column {name!r}; columns: {self._names}")
+
+    def __setattr__(self, name: str, value: Any) -> None:
+        raise AttributeError(f"{self._model}.c is read-only")
+
+    def __dir__(self) -> list[str]:
+        return list(self._names)
 
 
 class LoomStructMeta(_StructMeta):
@@ -217,7 +216,7 @@ class LoomStructMeta(_StructMeta):
         struct_cls.__loom_relations__ = relations
         struct_cls.__loom_projections__ = projections
         setattr(struct_cls, _DERIVES_KEY, derives_here or derives_inherited)
-        struct_cls.__loom_column_names__ = ColumnNames.of(struct_cls)
+        struct_cls.__loom_column_names__ = ColumnNames(struct_cls)
         return struct_cls
 
     @property

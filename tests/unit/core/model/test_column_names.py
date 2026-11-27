@@ -5,7 +5,7 @@ import pickle
 import pytest
 
 from loom.core.errors import InvalidType
-from loom.core.model import BaseModel, BusinessKey, ColumnField, ModelKeys, RelationField
+from loom.core.model import BaseModel, ColumnField, RelationField
 from loom.core.model.enums import Cardinality
 from loom.core.model.types import Integer, Text
 from loom.testing import make
@@ -30,20 +30,6 @@ class Order(BaseModel):
 class PriorityOrder(Order):
     __tablename__ = "priority_orders"
     rush_fee: int = ColumnField(Integer)
-
-
-class Plain(BaseModel, rename=None):
-    __tablename__ = "plain"
-    id: int = ColumnField(Integer, primary_key=True)
-    full_name: str = ColumnField(Text)
-
-
-class Keyed(BaseModel):
-    __tablename__ = "keyed"
-    __business_key__ = BusinessKey("customer_id", "placed_on")
-    id: int = ColumnField(Integer, primary_key=True)
-    customer_id: int = ColumnField(Integer)
-    placed_on: str = ColumnField(Text)
 
 
 class TestColumnNames:
@@ -75,23 +61,17 @@ class TestColumnNames:
         with pytest.raises(AttributeError, match="read-only"):
             Order.c.id = "other"  # type: ignore[misc]
 
-    @pytest.mark.parametrize(
-        ("model", "name"),
-        [(Order, "customer_id"), (Plain, "full_name")],
-        ids=["camel", "plain"],
-    )
-    def test_names_ignore_the_wire_encoding(self, model: type[BaseModel], name: str) -> None:
-        assert getattr(model.c, name) == name
+    def test_a_field_named_like_a_namespace_method_is_a_column(self) -> None:
+        class Odd(BaseModel):
+            __tablename__ = "odd"
+            id: int = ColumnField(Integer, primary_key=True)
+            of: int = ColumnField(Integer)
+
+        assert Odd.c.of == "of"
+        with pytest.raises(AttributeError, match="no column 'of'"):
+            _ = Order.c.of
 
     def test_instances_still_pickle(self) -> None:
         order = make(Order, id=7)
 
         assert pickle.loads(pickle.dumps(order)) == order
-
-
-class TestConflictKey:
-    def test_it_is_the_business_key_when_declared(self) -> None:
-        assert ModelKeys.of(Keyed).conflict == ("customer_id", "placed_on")
-
-    def test_it_is_the_primary_key_otherwise(self) -> None:
-        assert ModelKeys.of(Order).conflict == ("id",)
