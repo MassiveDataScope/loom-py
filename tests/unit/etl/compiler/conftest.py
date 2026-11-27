@@ -3,16 +3,14 @@
 from __future__ import annotations
 
 import types
-from collections.abc import Callable
 from typing import Any
 
 import pytest
 
 from loom.etl import ETLStep, IntoTemp, Sources
 from loom.etl.compiler import ETLCompiler, StepPlan
+from tests.unit.etl.compiler.probes import CompileTarget
 from tests.unit.etl.engines.doubles import NoParams
-
-CompileTarget = Callable[[Any], StepPlan]
 
 
 @pytest.fixture

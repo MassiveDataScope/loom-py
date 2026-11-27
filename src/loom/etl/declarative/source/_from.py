@@ -35,7 +35,7 @@ from __future__ import annotations
 
 from typing import Any, Generic, TypeVar
 
-from loom.core.errors import InvalidType, InvalidValue
+from loom.core.errors import InvalidType, InvalidUse, InvalidValue
 from loom.core.model import BaseModel
 from loom.etl.declarative._declared_table import DeclaredTable, TableDeclaration
 from loom.etl.declarative._format import Format
@@ -53,8 +53,7 @@ from loom.etl.declarative.source._specs import (
     TableSourceSpec,
     TempSourceSpec,
 )
-from loom.etl.schema._contract import JsonContract, SchemaContract, resolve_schema
-from loom.etl.schema._model import LakeTranslator
+from loom.etl.schema._model import JsonContract, LakeTranslator, SchemaContract, resolve_schema
 from loom.etl.schema._schema import ColumnSchema
 
 ParamsT = TypeVar("ParamsT")
@@ -122,6 +121,9 @@ class FromTable:
         Returns:
             New ``FromTable`` with the schema applied at read time.
 
+        Raises:
+            InvalidUse: The source was declared with a model and *schema* is not a model.
+
         Example::
 
             orders = FromTable("raw.orders").with_schema((
@@ -136,12 +138,18 @@ class FromTable:
 
             orders = FromTable("raw.orders").with_schema(OrderRow)
         """
+        if self._model is not None and not (
+            isinstance(schema, type) and issubclass(schema, BaseModel)
+        ):
+            raise InvalidUse(
+                f"FromTable({self._model.__name__}) takes its schema from the model, and "
+                "with_schema would drop it. Declare FromTable with the table reference to "
+                "read it with another schema."
+            )
         new = _clone_slots(self, FromTable, FromTable.__slots__)
         if isinstance(schema, type) and issubclass(schema, BaseModel):
             object.__setattr__(new, "_model", schema)
-            object.__setattr__(new, "_schema", ())
         else:
-            object.__setattr__(new, "_model", None)
             object.__setattr__(new, "_schema", resolve_schema(schema))
         return new
 
@@ -286,7 +294,7 @@ class FromFile:
     def __init__(self, path: str, *, format: Format) -> None:
         self._path = path
         self._format = format
-        self._schema: tuple[ColumnSchema, ...] = ()
+        self._schema: SchemaContract = ()
         self._read_options: ReadOptions | None = None
         self._columns: tuple[str, ...] = ()
         self._json_columns: tuple[JsonColumnSpec, ...] = ()
@@ -366,7 +374,7 @@ class FromFile:
             )
         """
         new = _clone_slots(self, FromFile, FromFile.__slots__)
-        object.__setattr__(new, "_schema", resolve_schema(schema))
+        object.__setattr__(new, "_schema", schema)
         return new
 
     def parse_json(
@@ -456,7 +464,7 @@ class FromFile:
             path=self._path,
             format=self._format,
             is_alias=self._is_alias,
-            schema=self._schema,
+            schema=resolve_schema(self._schema),
             read_options=self._read_options,
             columns=self._columns,
             json_columns=self._json_columns,

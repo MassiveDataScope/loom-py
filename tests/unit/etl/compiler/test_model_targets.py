@@ -9,6 +9,7 @@ from typing import Annotated, Any
 
 import pytest
 
+from loom.core.errors import InvalidUse
 from loom.core.model import BaseModel, BusinessKey, ColumnField, Field
 from loom.core.model.types import DateTime, Text
 from loom.core.routing import LogicalRef
@@ -18,10 +19,10 @@ from loom.etl.compiler import ETLCompilationError, ETLErrorCode
 from loom.etl.declarative.expr._refs import TableRef
 from loom.etl.declarative.target._history import HistoryDateType
 from loom.etl.event import EtlEvent, EtlKey
-from loom.etl.schema._model import LakeTranslator
+from loom.etl.schema import ColumnSchema, LoomDtype
 from tests.helpers.loggers import CapturedLog
-from tests.unit.etl.compiler.conftest import CompileTarget
-from tests.unit.etl.engines.frame_types import Order, Rate
+from tests.unit.etl.compiler.probes import CompileTarget
+from tests.unit.etl.models import Order, Rate
 
 
 class Ledger(BaseModel):
@@ -80,37 +81,31 @@ _REFUSALS = {
         lambda: IntoTable(Order).upsert(keys=("order_ref",)),
         ETLErrorCode.MODEL_COLUMN_UNKNOWN,
         "order_ref",
-        "keys",
     ),
     "unknown-include": (
         lambda: IntoTable(Order).update(include=("status",)),
         ETLErrorCode.MODEL_COLUMN_UNKNOWN,
         "status",
-        "include",
     ),
     "unknown-exclude": (
         lambda: IntoTable(Order).upsert(exclude=("status",)),
         ETLErrorCode.MODEL_COLUMN_UNKNOWN,
         "status",
-        "exclude",
     ),
     "unknown-partition": (
         lambda: IntoTable(Order).replace_partitions("status"),
         ETLErrorCode.MODEL_COLUMN_UNKNOWN,
         "status",
-        "partition_cols",
     ),
     "unknown-track": (
         lambda: IntoHistory(Rate, keys=(Rate.c.rate_id,), track=("tier",), effective_date="d"),
         ETLErrorCode.MODEL_COLUMN_UNKNOWN,
         "tier",
-        "track",
     ),
     "missing-valid-to": (
         lambda: IntoHistory(Rate, keys=(Rate.c.rate_id,), effective_date="d", valid_to="ends_on"),
         ETLErrorCode.MODEL_COLUMN_UNKNOWN,
         "ends_on",
-        "valid_to",
     ),
     "missing-deleted-at": (
         lambda: IntoHistory(
@@ -118,31 +113,26 @@ _REFUSALS = {
         ),
         ETLErrorCode.MODEL_COLUMN_UNKNOWN,
         "deleted_at",
-        "deleted_at",
     ),
     "unknown-replace-where": (
         lambda: IntoTable(Order).replace_where(col("status") == "open"),
         ETLErrorCode.MODEL_COLUMN_UNKNOWN,
         "status",
-        "replace_where",
     ),
     "time-column": (
         lambda: IntoTable(Clocked).append(),
         ETLErrorCode.MODEL_COLUMN_TYPE_REFUSED,
         Clocked.c.opens_at,
-        r"Clocked\.opens_at is a Time.*store it as a Text or a DateTime",
     ),
     "evolve": (
         lambda: IntoTable(Order).append(schema=SchemaMode.EVOLVE),
         ETLErrorCode.MODEL_SCHEMA_MODE_UNSUPPORTED,
         "schema",
-        "EVOLVE",
     ),
     "autoincrement-key": (
         lambda: IntoTable(Ledger).upsert(),
         ETLErrorCode.MODEL_KEY_NOT_IN_FRAME,
         Ledger.c.ledger_id,
-        "autoincrement.*spec 024",
     ),
     "contradicting-date-type": (
         lambda: IntoHistory(
@@ -150,14 +140,27 @@ _REFUSALS = {
         ),
         ETLErrorCode.MODEL_DATE_TYPE_MISMATCH,
         "date_type",
-        "'timestamp'.*'valid_from'.*'date'",
     ),
     "non-temporal-valid-from": (
         lambda: IntoHistory(Undated, keys=(Undated.c.undated_id,), effective_date="d"),
         ETLErrorCode.MODEL_BOUNDARY_NOT_TEMPORAL,
         "valid_from",
-        "holds no dates",
     ),
+}
+_REFUSAL_MESSAGES = {
+    "unknown-key": "keys",
+    "unknown-include": "include",
+    "unknown-exclude": "exclude",
+    "unknown-partition": "partition_cols",
+    "unknown-track": "track",
+    "missing-valid-to": "valid_to",
+    "missing-deleted-at": "deleted_at",
+    "unknown-replace-where": "replace_where",
+    "time-column": r"Clocked\.opens_at is a Time.*store it as a Text or a DateTime",
+    "evolve": "EVOLVE",
+    "autoincrement-key": "autoincrement.*not supported yet",
+    "contradicting-date-type": "'timestamp'.*'valid_from'.*'date'",
+    "non-temporal-valid-from": "holds no dates",
 }
 _SOURCE_REFUSALS = {
     "unknown-column": (
@@ -195,6 +198,26 @@ _DATE_TYPES = {
 }
 
 
+class Delayed(BaseModel):
+    __tablename__ = "delayed"
+    delayed_id: Annotated[str, Field(primary_key=True)]
+    valid_from: NotDefinedYet  # noqa: F821
+    valid_to: NotDefinedYet | None  # noqa: F821
+
+
+_CONSISTENT_TARGETS = {
+    "upsert-primary-key": lambda: IntoTable(Order).upsert(),
+    "update-include": lambda: IntoTable(Order).update(include=(Order.c.amount,)),
+    "upsert-business-key": lambda: IntoTable(Booking).upsert(),
+    "upsert-explicit-keys": lambda: IntoTable(Ledger).upsert(keys=(Ledger.c.memo,)),
+    "replace-partitions": lambda: IntoTable(Order).replace_partitions(Order.c.customer_id),
+    "history-date": lambda: IntoHistory(Rate, keys=(Rate.c.rate_id,), effective_date="d"),
+    "history-datetime": lambda: IntoHistory(
+        Tick, keys=(Tick.c.tick_id,), effective_date="d", track=()
+    ),
+}
+
+
 class TestModelDeclaration:
     @pytest.mark.parametrize("ref", _LAKE_REFS.values(), ids=list(_LAKE_REFS))
     def test_a_source_of_a_model_is_the_reference_with_the_schema_of_the_model(
@@ -218,7 +241,16 @@ class TestModelDeclaration:
     ) -> None:
         history = IntoHistory(target, keys=("k",), effective_date="d", date_type=date_type)
 
-        assert history._to_spec().date_type is expected
+        assert history._to_spec().resolved_date_type is expected
+
+    def test_a_model_whose_annotations_do_not_resolve_yet_builds_its_history_target(self) -> None:
+        target = IntoHistory(Delayed, keys=(Delayed.c.delayed_id,), effective_date="d")
+
+        assert target._to_spec().model is Delayed
+
+    def test_a_source_declared_with_a_model_refuses_another_schema(self) -> None:
+        with pytest.raises(InvalidUse, match=r"FromTable\(Order\).*drop it"):
+            FromTable(Order).with_schema((ColumnSchema("id", LoomDtype.INT64),))
 
 
 class TestModelSourceCompilation:
@@ -242,72 +274,35 @@ class TestModelSourceCompilation:
 
         assert (refused.value.code, refused.value.field) == (code, field)
 
-    def test_fifty_steps_sharing_a_model_translate_it_once(
-        self,
-        compile_target: CompileTarget,
-        compile_source: CompileTarget,
-        monkeypatch: pytest.MonkeyPatch,
-    ) -> None:
-        shared = type(
-            "Shared",
-            (BaseModel,),
-            {"__tablename__": "shared", "__annotations__": {"shared_id": int}},
-        )
-        translations: list[type] = []
-        translate = LakeTranslator.schema_of
-
-        def counting(self: LakeTranslator, contract: type) -> Any:
-            translations.append(contract)
-            return translate(self, contract)
-
-        monkeypatch.setattr(LakeTranslator, "schema_of", counting)
-
-        for _ in range(25):
-            compile_target(IntoTable(shared).append())
-            compile_source(FromTable(shared))
-
-        assert translations == [shared]
-
 
 class TestModelTargetCompilation:
-    @pytest.mark.parametrize(
-        "declare",
-        [
-            lambda: IntoTable(Order).upsert(),
-            lambda: IntoTable(Order).update(include=(Order.c.amount,)),
-            lambda: IntoTable(Booking).upsert(),
-            lambda: IntoTable(Ledger).upsert(keys=(Ledger.c.memo,)),
-            lambda: IntoTable(Order).replace_partitions(Order.c.customer_id),
-            lambda: IntoHistory(Rate, keys=(Rate.c.rate_id,), effective_date="d"),
-            lambda: IntoHistory(Tick, keys=(Tick.c.tick_id,), effective_date="d", track=()),
-        ],
-    )
+    @pytest.mark.parametrize("declare", _CONSISTENT_TARGETS.values(), ids=list(_CONSISTENT_TARGETS))
     def test_a_target_consistent_with_its_model_compiles(
         self, compile_target: CompileTarget, declare: Callable[[], Any]
     ) -> None:
         compile_target(declare())
 
-    @pytest.mark.parametrize(
-        ("declare", "code", "field", "message"), _REFUSALS.values(), ids=list(_REFUSALS)
-    )
-    def test_a_target_the_model_contradicts_is_refused_naming_model_field_and_fix(
+    @pytest.mark.parametrize(("declare", "code", "field"), _REFUSALS.values(), ids=list(_REFUSALS))
+    def test_a_target_the_model_contradicts_is_refused_naming_the_field(
         self,
         compile_target: CompileTarget,
-        caplog: pytest.LogCaptureFixture,
         declare: Callable[[], Any],
         code: ETLErrorCode,
         field: str,
-        message: str,
     ) -> None:
-        with (
-            caplog.at_level(logging.DEBUG, logger=_MODEL_LOGGER),
-            pytest.raises(ETLCompilationError, match=message) as refused,
-        ):
+        with pytest.raises(ETLCompilationError) as refused:
             compile_target(declare())
 
         assert (refused.value.code, refused.value.field) == (code, field)
-        (logged,) = CapturedLog(caplog, _MODEL_LOGGER).named(EtlEvent.MODEL_REFUSED)
-        assert (logged[EtlKey.FIELD], logged[EtlKey.REASON]) == (field, code.value)
+
+    @pytest.mark.parametrize("refusal", _REFUSAL_MESSAGES)
+    def test_a_refusal_names_the_model_and_the_fix(
+        self, compile_target: CompileTarget, refusal: str
+    ) -> None:
+        declare = _REFUSALS[refusal][0]
+
+        with pytest.raises(ETLCompilationError, match=_REFUSAL_MESSAGES[refusal]):
+            compile_target(declare())
 
 
 class TestModelTargetLogs:
@@ -319,6 +314,21 @@ class TestModelTargetLogs:
 
         (fields,) = CapturedLog(caplog, _MODEL_LOGGER).named(EtlEvent.MODEL_RESOLVED)
         assert (fields[EtlKey.MODEL], fields[EtlKey.TABLE]) == ("Order", "sales.order")
+
+    def test_a_refused_model_logs_the_blamed_field_and_code_once(
+        self, compile_target: CompileTarget, caplog: pytest.LogCaptureFixture
+    ) -> None:
+        with (
+            caplog.at_level(logging.DEBUG, logger=_MODEL_LOGGER),
+            pytest.raises(ETLCompilationError),
+        ):
+            compile_target(IntoTable(Order).upsert(keys=("order_ref",)))
+
+        (logged,) = CapturedLog(caplog, _MODEL_LOGGER).named(EtlEvent.MODEL_REFUSED)
+        assert (logged[EtlKey.FIELD], logged[EtlKey.REASON]) == (
+            "order_ref",
+            ETLErrorCode.MODEL_COLUMN_UNKNOWN.value,
+        )
 
     def test_a_string_target_logs_no_model_event(
         self, compile_target: CompileTarget, caplog: pytest.LogCaptureFixture

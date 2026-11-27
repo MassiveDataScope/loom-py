@@ -9,7 +9,6 @@ from loom.core.schema import SchemaMode
 from loom.etl.declarative._declared_table import ModelBoundSpec
 from loom.etl.declarative._history_date_type import HistoryDateType
 from loom.etl.declarative.expr._params import ParamExpr
-from loom.etl.declarative.expr._refs import TableRef
 from loom.etl.declarative.target._history._enums import DeletePolicy, HistorifyInputMode
 
 
@@ -50,7 +49,8 @@ class HistorifySpec(ModelBoundSpec):
             vector to zero width (``valid_from == valid_to``).
         deleted_at: Name of the soft-delete audit column. Only written when
             ``delete_policy=SOFT_DELETE``.
-        date_type: Precision of the ``valid_from`` / ``valid_to`` columns.
+        date_type: Declared precision of the ``valid_from`` / ``valid_to`` columns;
+            ``None`` follows the model's ``valid_from`` column, or ``DATE`` for a reference.
         schema_mode: Schema evolution strategy.
         allow_temporal_rerun: Allow re-weave when past-date data is loaded.
         delete_marker: LOG mode only. Name of a boolean frame column flagging
@@ -60,7 +60,6 @@ class HistorifySpec(ModelBoundSpec):
             disables tombstones.
     """
 
-    table_ref: TableRef
     keys: tuple[str, ...]
     effective_date: str | ParamExpr
     mode: HistorifyInputMode
@@ -71,10 +70,23 @@ class HistorifySpec(ModelBoundSpec):
     valid_from: str = "valid_from"
     valid_to: str = "valid_to"
     deleted_at: str = "deleted_at"
-    date_type: HistoryDateType = HistoryDateType.DATE
+    date_type: HistoryDateType | None = None
     schema_mode: SchemaMode = SchemaMode.STRICT
     allow_temporal_rerun: bool = False
     delete_marker: str | None = None
+
+    @property
+    def model_boundary_type(self) -> HistoryDateType | None:
+        """The date type of the model's ``valid_from``, ``None`` without a model or a date."""
+        table = self.model_table
+        if table is None:
+            return None
+        return HistoryDateType.of_frame_type(table.column_types.get(self.valid_from))
+
+    @property
+    def resolved_date_type(self) -> HistoryDateType:
+        """The precision of the boundary columns: declared, else the model's, else ``DATE``."""
+        return self.date_type or self.model_boundary_type or HistoryDateType.DATE
 
     @property
     def declared_columns(self) -> Mapping[str, tuple[str, ...]]:

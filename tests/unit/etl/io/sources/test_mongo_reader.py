@@ -28,7 +28,7 @@ from loom.etl.io.sources._mongo_batch import (
     _canonicalize_batch,
 )
 from loom.etl.io.sources._mongo_bson import normalize_bson_doc
-from loom.etl.schema._contract import resolve_schema
+from loom.etl.schema import resolve_schema
 from loom.etl.schema._schema import ColumnSchema, ListType, LoomDtype, StructField, StructType
 from tests.helpers.loggers import CapturedLog
 

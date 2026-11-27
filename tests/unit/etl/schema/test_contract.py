@@ -11,8 +11,7 @@ import pytest
 
 from loom.core.errors import InvalidType, InvalidValue
 from loom.core.model import BaseModel
-from loom.etl.schema._contract import resolve_schema
-from loom.etl.schema._model import LakeTranslator
+from loom.etl.schema import LakeTranslator, resolve_schema
 from loom.etl.schema._schema import (
     ColumnSchema,
     DatetimeType,
@@ -21,7 +20,7 @@ from loom.etl.schema._schema import (
     StructField,
     StructType,
 )
-from tests.unit.etl.engines.frame_types import Priced
+from tests.unit.etl.models import Priced
 
 
 class MsgspecRow(msgspec.Struct):

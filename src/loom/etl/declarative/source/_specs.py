@@ -117,7 +117,6 @@ class TableSourceSpec(ModelBoundSpec):
     """
 
     alias: str
-    table_ref: TableRef
     predicates: tuple[Any, ...] = field(default_factory=tuple)
     columns: tuple[str, ...] = field(default_factory=tuple)
     schema: tuple[ColumnSchema, ...] = field(default_factory=tuple)

@@ -4,7 +4,7 @@ from __future__ import annotations
 
 from enum import StrEnum
 
-from loom.core.model.types import ColumnKind
+from loom.etl.schema import DatetimeType, FrameType, LoomDtype
 
 
 class HistoryDateType(StrEnum):
@@ -21,12 +21,12 @@ class HistoryDateType(StrEnum):
     TIMESTAMP = "timestamp"
 
     @classmethod
-    def of_kind(cls, kind: ColumnKind | None) -> HistoryDateType | None:
-        """The boundary type a column of *kind* holds, ``None`` when it is not temporal."""
-        match kind:
-            case ColumnKind.DATE:
+    def of_frame_type(cls, frame_type: FrameType | None) -> HistoryDateType | None:
+        """The boundary type a column of *frame_type* holds, ``None`` when it is not temporal."""
+        match frame_type:
+            case LoomDtype.DATE:
                 return cls.DATE
-            case ColumnKind.DATETIME:
+            case DatetimeType():
                 return cls.TIMESTAMP
             case _:
                 return None

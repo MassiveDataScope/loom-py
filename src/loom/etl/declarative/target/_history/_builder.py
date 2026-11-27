@@ -199,11 +199,6 @@ class IntoHistory:
         )
 
         table = DeclaredTable.from_declaration(ref)
-        boundary_type = (
-            HistoryDateType(date_type)
-            if date_type is not None
-            else table.boundary_type(valid_from) or HistoryDateType.DATE
-        )
         self._spec = HistorifySpec(
             table_ref=table.ref,
             model=table.model,
@@ -217,7 +212,7 @@ class IntoHistory:
             valid_from=valid_from,
             valid_to=valid_to,
             deleted_at=deleted_at,
-            date_type=boundary_type,
+            date_type=None if date_type is None else HistoryDateType(date_type),
             schema_mode=schema,
             allow_temporal_rerun=allow_temporal_rerun,
             delete_marker=delete_marker,

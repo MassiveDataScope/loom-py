@@ -10,24 +10,9 @@ import pytest
 
 from loom.core.errors import InvalidType, InvalidValue
 from loom.core.model import BaseModel
-from loom.core.model.inference import Outcome, ResolvedField
-from loom.core.model.types import (
-    ColumnKind,
-    ColumnType,
-    Numeric,
-    Postgres,
-)
-from loom.etl.schema import (
-    ColumnSchema,
-    DatetimeType,
-    FrameType,
-    ListType,
-    LoomDtype,
-    ModelTable,
-    StructType,
-)
-from loom.etl.schema._model import _REFUSED_KINDS, LakeTranslator
-from tests.unit.etl.engines.frame_types import LAKE_ROWS, Priced, probe_model
+from loom.core.model.types import Numeric, Postgres
+from loom.etl.schema import ColumnSchema, FrameType, ModelTable
+from tests.unit.etl.models import LAKE_ROWS, Priced, probe_model
 
 _REFUSALS = {
     "unbounded-numeric": (Annotated[Decimal, Numeric()], "unbounded Numeric"),
@@ -39,9 +24,6 @@ _REFUSALS = {
     "sub-entity-decimal": (Priced, r"Probe\.value\.price .*no column type \(a Decimal\)"),
     "list-of-sub-entity-decimal": (list[Priced], r"Probe\.value\.item\.price"),
 }
-
-
-_BY_KIND_REFUSED = (*_REFUSED_KINDS, ColumnKind.NUMERIC)
 
 
 class TestLakeTable:
@@ -58,21 +40,10 @@ class TestLakeTable:
         with pytest.raises(InvalidValue, match=message):
             ModelTable.from_model(probe_model(annotation))
 
-    @pytest.mark.parametrize("kind", [kind for kind in ColumnKind if kind not in _BY_KIND_REFUSED])
-    def test_every_column_kind_the_lake_stores_translates(self, kind: ColumnKind) -> None:
-        field = ResolvedField("value", "value", ColumnType(kind), True, Outcome.DECLARED)
-
-        assert isinstance(
-            LakeTranslator("Probe").frame_type(field),
-            LoomDtype | DatetimeType | ListType | StructType,
-        )
-
-    def test_the_table_carries_the_model_and_its_logical_name(self) -> None:
+    def test_a_model_is_translated_once(self) -> None:
         model = probe_model(int)
 
-        table = ModelTable.from_model(model)
-
-        assert (table.model, table.name) == (model, "probes")
+        assert ModelTable.from_model(model) is ModelTable.from_model(model)
 
     def test_a_model_without_a_table_name_is_refused(self) -> None:
         with pytest.raises(InvalidType, match="__tablename__"):

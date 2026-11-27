@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+from collections.abc import Iterator
 from functools import singledispatch
 from typing import Any, Protocol, TypeVar
 
@@ -54,39 +55,41 @@ class PredicateDialect(Protocol[T]):
 
 
 def fold_predicate(node: PredicateNode, params_instance: Any, dialect: PredicateDialect[T]) -> T:
-    """Fold a predicate AST using a backend-specific dialect.
-
-    With ``params_instance=None`` the params are not resolved: a params reference
-    reaches the dialect as the :class:`ParamExpr` itself, and a params list as ``()``.
-    """
+    """Fold a predicate AST with a backend dialect, resolving params from *params_instance*."""
     return _fold(node, params_instance, dialect)
-
-
-class _ColumnNames:
-    """Dialect whose fold result is the column names a predicate refers to."""
-
-    def column(self, name: str) -> tuple[str, ...]:
-        return (name,)
-
-    def literal(self, value: Any) -> tuple[str, ...]:
-        return ()
-
-    def eq(self, left: tuple[str, ...], right: tuple[str, ...]) -> tuple[str, ...]:
-        return left + right
-
-    ne = gt = ge = lt = le = and_ = or_ = eq
-
-    def in_(self, ref: tuple[str, ...], values: tuple[Any, ...]) -> tuple[str, ...]:
-        return ref
-
-    def not_(self, operand: tuple[str, ...]) -> tuple[str, ...]:
-        return operand
 
 
 def columns_in(*predicates: PredicateNode) -> tuple[str, ...]:
     """The columns the predicates refer to, in order of appearance, once each."""
-    names = (name for node in predicates for name in fold_predicate(node, None, _ColumnNames()))
-    return tuple(dict.fromkeys(names))
+    return tuple(dict.fromkeys(name for node in predicates for name in _columns(node)))
+
+
+def _columns(node: PredicateNode) -> Iterator[str]:
+    match node:
+        case AndPred(left=left, right=right) | OrPred(left=left, right=right):
+            yield from _columns(left)
+            yield from _columns(right)
+        case NotPred(operand=operand):
+            yield from _columns(operand)
+        case InPred(ref=ref):
+            yield from _column_name(ref)
+        case (
+            EqPred(left=left, right=right)
+            | NePred(left=left, right=right)
+            | GtPred(left=left, right=right)
+            | GePred(left=left, right=right)
+            | LtPred(left=left, right=right)
+            | LePred(left=left, right=right)
+        ):
+            yield from _column_name(left)
+            yield from _column_name(right)
+        case _:
+            raise InvalidType(f"columns_in: unsupported node type {type(node)!r}")
+
+
+def _column_name(term: Any) -> Iterator[str]:
+    if isinstance(term, UnboundColumnRef):
+        yield term.name
 
 
 @singledispatch
@@ -97,15 +100,15 @@ def _fold(node: object, params_instance: Any, dialect: PredicateDialect[T]) -> T
 def _term(value: Any, params_instance: Any, dialect: PredicateDialect[T]) -> T:
     if isinstance(value, UnboundColumnRef):
         return dialect.column(value.name)
-    if isinstance(value, ParamExpr) and params_instance is not None:
+    if isinstance(value, ParamExpr):
         return dialect.literal(resolve_param_expr(value, params_instance))
     return dialect.literal(value)
 
 
 def _in_values(values: Any, params_instance: Any) -> tuple[Any, ...]:
-    if not isinstance(values, ParamExpr):
-        return tuple(values)
-    return () if params_instance is None else tuple(resolve_param_expr(values, params_instance))
+    if isinstance(values, ParamExpr):
+        return tuple(resolve_param_expr(values, params_instance))
+    return tuple(values)
 
 
 def _binary(

@@ -54,6 +54,11 @@ def _build_eq_predicate(values: dict[str, ParamExpr]) -> PredicateNode:
     return result
 
 
+_IntoTableSpec = (
+    AppendSpec | ReplaceSpec | ReplacePartitionsSpec | ReplaceWhereSpec | UpsertSpec | UpdateSpec
+)
+
+
 class IntoTable:
     """Declare a Delta table as the ETL step target.
 
@@ -84,7 +89,7 @@ class IntoTable:
 
     def __init__(self, ref: TableDeclaration) -> None:
         self._table = DeclaredTable.from_declaration(ref)
-        self._spec: Any = self._build_spec(ReplaceSpec)
+        self._spec: _IntoTableSpec = self._build_spec(ReplaceSpec)
 
     def append(
         self,
@@ -502,15 +507,15 @@ class IntoTable:
             schema_mode=schema,
         )
 
-    def _build_spec(self, spec_type: type, **fields: Any) -> Any:
+    def _build_spec(self, spec_type: type[_IntoTableSpec], **fields: Any) -> _IntoTableSpec:
         return spec_type(table_ref=self._table.ref, model=self._table.model, **fields)
 
-    def _with(self, spec_type: type, **fields: Any) -> IntoTable:
+    def _with(self, spec_type: type[_IntoTableSpec], **fields: Any) -> IntoTable:
         new = _clone_slots(self, IntoTable, IntoTable.__slots__)
         object.__setattr__(new, "_spec", self._build_spec(spec_type, **fields))
         return new
 
-    def _to_spec(self) -> Any:
+    def _to_spec(self) -> _IntoTableSpec:
         return self._spec
 
     def __repr__(self) -> str:

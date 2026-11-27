@@ -279,9 +279,9 @@ class ETLErrorCode(IssueCode):
     MODEL_COLUMN_UNKNOWN = (
         "MODEL_COLUMN_UNKNOWN",
         Template(
-            "{component}: {role} names column {column!r}, which model {model} does not "
+            "{component}: {role} names column {field!r}, which model {model} does not "
             "declare for table {table!r}. Use one of {known}, or add the field to {model}.",
-            field="{column}",
+            field="{field}",
         ),
     )
     MODEL_KEY_NOT_IN_FRAME = (
@@ -289,7 +289,7 @@ class ETLErrorCode(IssueCode):
         Template(
             "{component}: model {model} (table {table!r}) {reason}, so its key cannot come "
             "from the frame and no default keys exist. Pass keys=(...) naming columns the "
-            "frame carries; frame-supplied surrogate keys arrive with spec 024.",
+            "frame carries; surrogate keys supplied by the frame are not supported yet.",
             field="{field}",
         ),
     )
@@ -298,16 +298,16 @@ class ETLErrorCode(IssueCode):
         Template(
             "{component}: model {model} (table {table!r}) is written with schema={mode}, "
             "but a model target only allows STRICT. Use schema=SchemaMode.STRICT; EVOLVE and "
-            "OVERWRITE arrive with spec 023b.",
-            field="schema",
+            "OVERWRITE are not supported on a model target yet.",
+            field="{field}",
         ),
     )
     MODEL_BOUNDARY_NOT_TEMPORAL = (
         "MODEL_BOUNDARY_NOT_TEMPORAL",
         Template(
             "{component}: model {model} (table {table!r}) declares valid_from column "
-            "{column!r} with a type that holds no dates. Declare it as a date or a datetime.",
-            field="{column}",
+            "{field!r} with a type that holds no dates. Declare it as a date or a datetime.",
+            field="{field}",
         ),
     )
     MODEL_DATE_TYPE_MISMATCH = (
@@ -316,7 +316,7 @@ class ETLErrorCode(IssueCode):
             "{component}: IntoHistory date_type={declared!r} contradicts model {model} "
             "(table {table!r}), whose {column!r} column holds {actual!r} values. Drop "
             "date_type= to follow the model, or change the column type.",
-            field="date_type",
+            field="{field}",
         ),
     )
 

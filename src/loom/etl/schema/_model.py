@@ -1,15 +1,16 @@
 """Translation of a model, or any annotated class, to the frame types of the lake.
 
 Core inference settles each field's column type once; this module owns the
-lake rules: what Delta can store, and what it refuses.
+lake rules: what Delta can store, and what it refuses. Every annotation goes
+through it, so a model, a msgspec struct, a dataclass and a plain annotated class
+with the same annotations give the same schema.
 """
 
 from __future__ import annotations
 
 from collections.abc import Iterable, Mapping
 from dataclasses import dataclass, replace
-from functools import cached_property
-from typing import Any, Final, get_origin
+from typing import Any, Final, TypeAlias, cast, get_origin
 
 from loom.core.errors import InvalidType, InvalidValue
 from loom.core.model.class_store import stored_on_class
@@ -17,6 +18,7 @@ from loom.core.model.inference import (
     Annotation,
     JsonShape,
     ListShape,
+    Opaque,
     ResolvedField,
     StructShape,
 )
@@ -49,13 +51,30 @@ _SIMPLE_TYPES: Final[Mapping[ColumnKind, LoomDtype]] = {
     ColumnKind.DATE: LoomDtype.DATE,
 }
 
-_REFUSED_KINDS: Final[Mapping[ColumnKind, tuple[str, str]]] = {
-    ColumnKind.TIME: ("is a Time, which Delta has no type for", "store it as a Text or a DateTime"),
-    ColumnKind.POSTGRES_TSVECTOR: (
+
+@dataclass(frozen=True, slots=True)
+class _UnstorableKind:
+    """Why the lake has no type for a kind of column, and what to store instead."""
+
+    problem: str
+    fix: str
+
+
+_UNSTORABLE_KINDS: Final[Mapping[ColumnKind, _UnstorableKind]] = {
+    ColumnKind.TIME: _UnstorableKind(
+        "is a Time, which Delta has no type for", "store it as a Text or a DateTime"
+    ),
+    ColumnKind.POSTGRES_TSVECTOR: _UnstorableKind(
         "is a tsvector, a search index with no lake type",
         "store the text in a Text column and index it in Postgres",
     ),
 }
+
+SchemaContract: TypeAlias = tuple[ColumnSchema, ...] | type[Any]
+"""Contract accepted by ``with_schema``: a column-schema tuple or an annotated class."""
+
+JsonContract: TypeAlias = FrameType | type[Any]
+"""Contract accepted by ``parse_json``: a :data:`FrameType`, an annotated class or ``list[X]``."""
 
 
 class LakeRefusal(InvalidValue):
@@ -88,11 +107,11 @@ class LakeTranslator:
 
     def schema_of(self, contract: type) -> tuple[ColumnSchema, ...]:
         """The columns of an annotated class, named by field name."""
-        return tuple(ColumnSchema(f.name, self.frame_type(f)) for f in self._fields_of(contract))
+        return tuple(ColumnSchema(f.name, self.frame_type(f)) for f in self.fields_of(contract))
 
     def struct_of(self, contract: type) -> StructType:
         """The struct of an annotated class, its fields named by encode name."""
-        return self._struct(self._fields_of(contract))
+        return self._struct(self.fields_of(contract))
 
     @classmethod
     def annotation_type(cls, annotation: Any) -> FrameType:
@@ -156,14 +175,18 @@ class LakeTranslator:
                 "declare it with Annotated[<type>, <column type>]",
             )
         column_type = column_type.portable() or column_type
-        kind = column_type.type_name
+        kind = column_type.kind
         match kind:
             case ColumnKind.NUMERIC:
                 return self._decimal(field, column_type)
             case ColumnKind.DATETIME:
                 return DatetimeType("us", "UTC" if column_type.option("timezone", True) else None)
-            case _ if kind in _REFUSED_KINDS:
-                raise self._refusal(field, *_REFUSED_KINDS[kind])
+            case _ if kind in _UNSTORABLE_KINDS:
+                raise self._refusal(
+                    field, _UNSTORABLE_KINDS[kind].problem, _UNSTORABLE_KINDS[kind].fix
+                )
+            case ColumnKind.POSTGRES_ARRAY:
+                return self._list(field, cast(ListShape, field.shape))
             case _ if kind.is_json:
                 return self._json_shape(field)
             case _:
@@ -191,20 +214,25 @@ class LakeTranslator:
         return DecimalType(precision) if scale is None else DecimalType(precision, scale)
 
     def _json_shape(self, field: ResolvedField) -> FrameType:
-        inside = replace(self, path=(*self.path, field.name))
         shape: JsonShape | None = field.shape
         match shape:
             case StructShape(fields=fields):
-                return inside._struct(fields)
-            case ListShape(item=item):
-                return ListType(inside.frame_type(item))
-            case _:
+                return self._inside(field)._struct(fields)
+            case ListShape():
+                return self._list(field, shape)
+            case Opaque() | None:
                 return LoomDtype.UTF8
+
+    def _list(self, field: ResolvedField, shape: ListShape) -> ListType:
+        return ListType(self._inside(field).frame_type(shape.item))
+
+    def _inside(self, field: ResolvedField) -> LakeTranslator:
+        return replace(self, path=(*self.path, field.name))
 
     def _struct(self, fields: Iterable[ResolvedField]) -> StructType:
         return StructType(tuple(StructField(f.encode_name, self.frame_type(f)) for f in fields))
 
-    def _fields_of(self, contract: type) -> tuple[ResolvedField, ...]:
+    def fields_of(self, contract: type) -> tuple[ResolvedField, ...]:
         try:
             columns = get_column_fields(contract)
         except (TypeError, NameError) as exc:
@@ -217,13 +245,29 @@ class LakeTranslator:
         return tuple(info.resolved for info in columns.values())
 
 
-@dataclass(frozen=True)
+@dataclass(frozen=True, slots=True)
 class ModelTable:
-    """A model as a lake table: its logical name and the frame type of each column."""
+    """A model as a lake table: its logical name and the frame type of each column.
+
+    Args:
+        model: The model the table is translated from.
+        name: The logical table name, the model's ``__tablename__``.
+        schema: The columns, in declaration order.
+        json_text_columns: The JSON columns the lake stores as text, which are encoded
+            and decoded by hand.
+        column_types: The frame type of each column, by column name.
+        nested_columns: The columns stored as a struct or a list, which JSON text is
+            decoded into.
+        struct_type: The columns as one struct, to translate to an engine schema in one step.
+    """
 
     model: type
     name: str
     schema: tuple[ColumnSchema, ...]
+    json_text_columns: frozenset[str]
+    column_types: Mapping[str, FrameType]
+    nested_columns: tuple[ColumnSchema, ...]
+    struct_type: StructType
 
     @staticmethod
     @stored_on_class("__loom_model_table__")
@@ -234,41 +278,45 @@ class ModelTable:
             InvalidType: *model* declares no ``__tablename__``.
             LakeRefusal: A column has a type the lake refuses.
         """
-        schema = LakeTranslator(model.__name__).schema_of(model)
-        return ModelTable(model, get_table_name(model), schema)
+        translator = LakeTranslator(model.__name__)
+        schema = translator.schema_of(model)
+        return ModelTable(
+            model=model,
+            name=get_table_name(model),
+            schema=schema,
+            json_text_columns=frozenset(
+                field.name for field in translator.fields_of(model) if field.stores_json_text
+            ),
+            column_types={column.name: column.dtype for column in schema},
+            nested_columns=tuple(
+                column for column in schema if isinstance(column.dtype, StructType | ListType)
+            ),
+            struct_type=StructType.of_columns(schema),
+        )
 
-    @cached_property
+    @property
     def column_names(self) -> tuple[str, ...]:
         """The names of the columns, in declaration order."""
-        return tuple(column.name for column in self.schema)
-
-    @cached_property
-    def struct_type(self) -> StructType:
-        """The columns as one struct, to translate to an engine schema in one step."""
-        return StructType.of_columns(self.schema)
-
-    @cached_property
-    def column_types(self) -> Mapping[str, FrameType]:
-        """The frame type of each column, by column name."""
-        return {column.name: column.dtype for column in self.schema}
-
-    @cached_property
-    def json_columns(self) -> tuple[ColumnSchema, ...]:
-        """The columns stored as a struct or a list, which JSON text is decoded into."""
-        return tuple(
-            column for column in self.schema if isinstance(column.dtype, StructType | ListType)
-        )
-
-    @cached_property
-    def json_text_columns(self) -> frozenset[str]:
-        """The JSON columns the lake stores as text, which are encoded and decoded by hand."""
-        fields = get_column_fields(self.model)
-        return frozenset(
-            column.name
-            for column in self.schema
-            if fields[column.name].is_json and column.dtype is LoomDtype.UTF8
-        )
+        return tuple(self.column_types)
 
     def unknown_columns(self, names: Iterable[str]) -> tuple[str, ...]:
         """The *names* that are not columns of the model, in the order given."""
         return tuple(name for name in names if name not in self.column_types)
+
+
+def resolve_schema(contract: SchemaContract) -> tuple[ColumnSchema, ...]:
+    """Convert a schema contract to a ``tuple[ColumnSchema, ...]``.
+
+    Used by ``FromTable.with_schema`` and ``FromFile.with_schema``, so callers can pass
+    either an explicit tuple or an annotated class.
+
+    Raises:
+        InvalidType: If *contract* is not a supported schema contract form.
+    """
+    if isinstance(contract, tuple):
+        return contract
+    if isinstance(contract, type):
+        return LakeTranslator(contract.__name__).schema_of(contract)
+    raise InvalidType(
+        f"Expected tuple[ColumnSchema, ...] or an annotated class, got {type(contract).__name__!r}."
+    )

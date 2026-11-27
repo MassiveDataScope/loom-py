@@ -2,8 +2,14 @@
 
 from __future__ import annotations
 
-from ._contract import JsonContract, SchemaContract, resolve_schema
-from ._model import LakeRefusal, LakeTranslator, ModelTable
+from ._model import (
+    JsonContract,
+    LakeRefusal,
+    LakeTranslator,
+    ModelTable,
+    SchemaContract,
+    resolve_schema,
+)
 from ._schema import (
     ArrayType,
     CategoricalType,

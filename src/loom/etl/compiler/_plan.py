@@ -11,7 +11,8 @@ from dataclasses import dataclass
 from decimal import Decimal
 from typing import Any
 
-from loom.etl.declarative.source import SourceSpec
+from loom.etl.declarative._declared_table import ModelBoundSpec
+from loom.etl.declarative.source import FileSourceSpec, SourceSpec, TableSourceSpec
 from loom.etl.declarative.target import TargetSpec
 
 
@@ -96,6 +97,23 @@ class StepPlan:
     streaming: bool = False
     config_bindings: tuple[ConfigValueBinding, ...] = ()
     agent_bindings: tuple[AgentBinding, ...] = ()
+
+    @property
+    def declared_json_columns(self) -> tuple[str, ...]:
+        """The JSON columns the step decodes, each with its type: sources first, then the target."""
+        declared = [
+            f"{binding.alias}.{json_column.column} as {json_column.frame_type}"
+            for binding in self.source_bindings
+            if isinstance(binding.spec, TableSourceSpec | FileSourceSpec)
+            for json_column in binding.spec.json_columns
+        ]
+        target = self.target_binding.spec
+        if isinstance(target, ModelBoundSpec) and target.model_table is not None:
+            declared.extend(
+                f"target {target.table_ref.ref}.{column.name} as {column.dtype}"
+                for column in target.model_table.nested_columns
+            )
+        return tuple(declared)
 
 
 @dataclass(frozen=True)

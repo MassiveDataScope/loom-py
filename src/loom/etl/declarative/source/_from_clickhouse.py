@@ -8,7 +8,7 @@ from loom.core.errors import InvalidValue
 from loom.core.routing import LogicalRef
 from loom.etl.declarative.expr._refs import TableRef
 from loom.etl.declarative.source._specs import ClickHouseSourceSpec
-from loom.etl.schema._contract import SchemaContract, resolve_schema
+from loom.etl.schema._model import SchemaContract, resolve_schema
 from loom.etl.schema._schema import ColumnSchema
 
 

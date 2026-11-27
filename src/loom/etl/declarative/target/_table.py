@@ -15,7 +15,6 @@ from loom.core.schema import SchemaMode
 from loom.etl.declarative._declared_table import ModelBoundSpec
 from loom.etl.declarative.expr._predicate import PredicateNode
 from loom.etl.declarative.expr._predicate_dialect import columns_in
-from loom.etl.declarative.expr._refs import TableRef
 
 
 @dataclass(frozen=True)
@@ -31,7 +30,6 @@ class AppendSpec(ModelBoundSpec):
                      accept the flag but still materialise the frame.
     """
 
-    table_ref: TableRef
     schema_mode: SchemaMode = SchemaMode.STRICT
     streaming: bool = False
 
@@ -53,7 +51,6 @@ class ReplaceSpec(ModelBoundSpec):
                      writing a frame with no rows.
     """
 
-    table_ref: TableRef
     schema_mode: SchemaMode = SchemaMode.STRICT
     streaming: bool = False
     allow_empty: bool = True
@@ -76,7 +73,6 @@ class ReplacePartitionsSpec(ModelBoundSpec):
                         the spool, bounding peak memory.
     """
 
-    table_ref: TableRef
     partition_cols: tuple[str, ...]
     schema_mode: SchemaMode = SchemaMode.STRICT
     streaming: bool = False
@@ -110,7 +106,6 @@ class ReplaceWhereSpec(ModelBoundSpec):
                            accept the flag but still materialise the frame.
     """
 
-    table_ref: TableRef
     replace_predicate: PredicateNode
     schema_mode: SchemaMode = SchemaMode.STRICT
     streaming: bool = False
@@ -153,7 +148,6 @@ class UpsertSpec(ModelBoundSpec):
                         and does not appear in the update or insert maps.
     """
 
-    table_ref: TableRef
     upsert_keys: tuple[str, ...]
     schema_mode: SchemaMode = SchemaMode.STRICT
     partition_cols: tuple[str, ...] = field(default_factory=tuple)
@@ -201,7 +195,6 @@ class UpdateSpec(ModelBoundSpec):
                         Mutually exclusive with *exclude*.
     """
 
-    table_ref: TableRef
     keys: tuple[str, ...]
     schema_mode: SchemaMode = SchemaMode.STRICT
     partition_cols: tuple[str, ...] = field(default_factory=tuple)

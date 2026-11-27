@@ -7,9 +7,8 @@ from dataclasses import dataclass, field
 from typing import TypeAlias
 
 from loom.core.model import BaseModel
-from loom.core.model.introspection import ModelKeys, get_column_fields, get_table_name
+from loom.core.model.introspection import ModelKeys, get_table_name
 from loom.core.routing import LogicalRef
-from loom.etl.declarative._history_date_type import HistoryDateType
 from loom.etl.declarative.expr._refs import TableRef
 from loom.etl.schema import ModelTable
 
@@ -54,23 +53,18 @@ class DeclaredTable:
             return declared
         return ModelKeys.of(self.model).frame_supplied if self.model is not None else ()
 
-    def boundary_type(self, column: str) -> HistoryDateType | None:
-        """The history date type of model *column*, ``None`` when it is not a temporal column."""
-        if self.model is None:
-            return None
-        info = get_column_fields(self.model).get(column)
-        return HistoryDateType.of_kind(None if info is None else info.kind)
-
 
 @dataclass(frozen=True)
 class ModelBoundSpec:
-    """What every table spec shares: the model its target was declared with, if any.
+    """What every table spec shares: the table it names, and the model it was declared with.
 
     Args:
+        table_ref: Logical table reference.
         model: The model the target named, ``None`` for a plain reference. The compiler
             translates it to lake types and refuses what the lake cannot store.
     """
 
+    table_ref: TableRef = field(kw_only=True)
     model: type[BaseModel] | None = field(default=None, kw_only=True)
 
     @property
