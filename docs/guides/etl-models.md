@@ -86,6 +86,13 @@ means names.
 | `IntoHistory(CustomerTierHistory, keys=(CustomerTierHistory.c.customer_id,))` | `date_type` comes from the model's `valid_from` (`Date` is `"date"`, `DateTime` is `"timestamp"`); modes and the other arguments stay on `IntoHistory` |
 | `FromTable("raw.orders").with_schema(Order)` | any table source can take a model as its schema, and keeps its own table name |
 
+`with_schema(Model)` on a table named by string switches that source to model mode:
+the model is translated and its columns are checked at compile time, as for
+`FromTable(Model)`. Passing anything other than a model (a tuple of `ColumnSchema`, a
+struct, a dataclass) keeps the plain cast-only behaviour. A model used this way still
+needs `__tablename__` and resolvable annotations; otherwise compilation fails with
+`MODEL_COLUMN_TYPE_REFUSED`.
+
 `IntoHistory` needs the model to declare the named `valid_from` / `valid_to`
 (and `deleted_at` under `delete_policy="soft_delete"`). An explicit `date_type`
 that contradicts the model fails at compile time. Only `schema=STRICT` is
@@ -166,7 +173,7 @@ A model JSON column that arrives as JSON text is decoded on write with the
 model's struct, vectorised on both engines (Polars `str.json_decode`, Spark
 `from_json`), never per row in Python. Decoding is strict: malformed JSON or a
 value that does not fit the declared shape fails with an `InvalidValue` naming
-the source, the column and the expected type.
+the source or the target, the column and the expected type.
 
 Documents whose shape varies opt in per column:
 
@@ -180,7 +187,9 @@ snapshots = FromTable("raw.snapshots").parse_json(
 
 A model column is decoded with the model's struct, so documents whose shape varies are
 read with `parse_json(..., on_mismatch=JsonMismatch.NULL)` on the source column.
-`JsonMismatch.NULL` re-serialises strings, and turns a mismatch or malformed
+Fixtures rarely cover every shape of a document store's documents, so a variable
+Mongo collection should read its JSON columns with `JsonMismatch.NULL` from the start,
+rather than meet a strict failure in production. `JsonMismatch.NULL` re-serialises strings, and turns a mismatch or malformed
 JSON into null. On Polars it runs a tolerant normaliser in Python per row, so
 the cost applies to that column only; on Spark it is `from_json` in `PERMISSIVE`
 mode, with no per-row Python.
