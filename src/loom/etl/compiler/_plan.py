@@ -107,7 +107,7 @@ class StepPlan:
     def fallible_json_columns(self) -> tuple[str, ...]:
         """The JSON columns that can refuse a document, each as ``owner.column as type``.
 
-        A source column fails only with
+        A target column is prefixed with ``target``. A source column fails only with
         :attr:`~loom.etl.declarative.source.JsonMismatch.FAIL`; a model target
         decodes its nested columns with a strict reader, so each can fail.
         """
@@ -121,7 +121,7 @@ class StepPlan:
         target = self.target_binding.spec
         if isinstance(target, ModelBoundSpec) and target.model_table is not None:
             fallible.extend(
-                f"{target.table_ref.ref}.{column.name} as {column.dtype}"
+                f"target {target.table_ref.ref}.{column.name} as {column.dtype}"
                 for column in target.model_table.nested_columns
             )
         return tuple(fallible)
