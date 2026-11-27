@@ -48,6 +48,12 @@ class _OwnJsonFailure(ETLStep[NoParams]):
         raise pl.exceptions.ComputeError("error deserializing JSON: json parsing error")
 
 
+class _OwnJsonFailureOverTolerantColumn(_OwnJsonFailure):
+    customers: FromTable = FromTable("raw.customers").parse_json(  # type: ignore[assignment]
+        "buyer", Buyer, on_mismatch=JsonMismatch.NULL
+    )
+
+
 def _run(engine: ModelEngine, step: type[ETLStep[Any]]) -> None:
     ETLExecutor(engine.reader, engine.writer).run_step(ETLCompiler().compile_step(step), NoParams())
 
@@ -70,13 +76,18 @@ class TestJsonDecodeFailure:
         with pytest.raises(InvalidValue, match=r"customers\.buyer as StructType"):
             _run(engine, _DecodeBuyer)
 
-    def test_a_step_declaring_no_json_column_keeps_the_failure_of_its_own_code(
-        self, polars_engine: PolarsEngine
+    @pytest.mark.parametrize(
+        "step",
+        [_OwnJsonFailure, _OwnJsonFailureOverTolerantColumn],
+        ids=["no-json-column", "only-null-mode-column"],
+    )
+    def test_a_step_with_no_json_column_that_can_fail_keeps_the_failure_of_its_own_code(
+        self, polars_engine: PolarsEngine, step: type[ETLStep[Any]]
     ) -> None:
         _seed_customers(polars_engine, "{}")
 
         with pytest.raises(pl.exceptions.ComputeError):
-            _run(polars_engine, _OwnJsonFailure)
+            _run(polars_engine, step)
 
     @pytest.mark.parametrize(("error", "recognised"), _RECOGNISED.values(), ids=list(_RECOGNISED))
     def test_polars_recognises_only_a_json_document_refusal(

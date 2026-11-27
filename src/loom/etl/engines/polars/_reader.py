@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import logging
 from collections.abc import Callable, Iterable, Mapping
-from typing import TYPE_CHECKING, Any, Final
+from typing import TYPE_CHECKING, Any
 
 from loom.core.errors import InvalidType, InvalidUse
 
@@ -35,28 +35,16 @@ from loom.etl.storage.routing import PathRouteResolver, PathTarget, TableRouteRe
 
 from ._dtype import frame_type_to_polars
 from ._frame import FrameT
+from ._json_failure import is_json_decode_failure
 from ._predicate import predicate_to_polars
 from ._tolerant_json import TolerantJson
 
 _log = logging.getLogger(__name__)
 
-_JSON_REFUSAL: Final = "error deserializing JSON"
-
-
 _TEXT_PREPARATION: Mapping[JsonMismatch, Callable[[pl.Expr, FrameType], pl.Expr]] = {
     JsonMismatch.FAIL: lambda column, frame_type: column,
     JsonMismatch.NULL: lambda column, frame_type: TolerantJson(frame_type).normalise(column),
 }
-
-
-def is_json_decode_failure(error: Exception) -> bool:
-    """Whether *error* is Polars refusing a JSON document while decoding a column.
-
-    ``str.json_decode`` reports a malformed document and one that does not match the
-    declared type with the same ``ComputeError`` message prefix; any other
-    ``ComputeError``, such as a Parquet or Delta writer failure, is not one.
-    """
-    return isinstance(error, pl.exceptions.ComputeError) and str(error).startswith(_JSON_REFUSAL)
 
 
 def decode_json_columns(frame: FrameT, json_columns: Iterable[JsonColumnSpec]) -> FrameT:

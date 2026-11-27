@@ -284,7 +284,7 @@ class ETLExecutor:
             try:
                 self._execute_and_write(plan, params, ctx, frames, values)
             except Exception as error:
-                if plan.declared_json_columns and self._is_json_decode_failure(error):
+                if plan.fallible_json_columns and self._is_json_decode_failure(error):
                     raise self._json_decode_error(plan) from error
                 raise
 
@@ -326,13 +326,10 @@ class ETLExecutor:
 
     @staticmethod
     def _json_decode_error(plan: StepPlan) -> InvalidValue:
-        declared = ", ".join(
-            f"{column.owner}.{column.name} as {column.frame_type}"
-            for column in plan.declared_json_columns
-        )
+        declared = ", ".join(plan.fallible_json_columns)
         return InvalidValue(
             f"Step {plan.step_type.__name__!r} failed to decode a JSON column: a document is "
-            f"malformed or does not match its declared type. Declared JSON columns: "
+            f"malformed or does not match its declared type. Columns that can refuse a document: "
             f"{declared}. "
             "If the documents vary, read the column with "
             "parse_json(..., on_mismatch=JsonMismatch.NULL), or declare the field as JsonStr "

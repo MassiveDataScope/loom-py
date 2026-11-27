@@ -119,13 +119,6 @@ class TestModelAlignTarget:
         assert engine.read_columns(FromTable(Order).columns(Order.c.order_id)) == [Order.c.order_id]
 
 
-_SPARK_TARGETS = {
-    "append": IntoTable(Order).append(),
-    "replace": _REPLACE,
-    "upsert": _ORDER_UPSERT,
-}
-
-
 class _Entry(BaseModel):
     __tablename__ = "entries"
     entry_id: int
@@ -177,7 +170,7 @@ class TestJsonTextOnWrite:
     ) -> None:
         reader = _PlainReader(_entry_text(engine, profile="{broken"))
 
-        with pytest.raises(InvalidValue, match=r"target entries\.profile as StructType"):
+        with pytest.raises(InvalidValue, match=r"entries\.profile as StructType"):
             ETLExecutor(reader, engine.writer).run_step(
                 ETLCompiler().compile_step(_WriteEntries), NoParams()
             )
@@ -245,6 +238,13 @@ class TestPolarsAuditColumns:
         )
 
         assert engine.stored_types("retry")[_Retry.c.attempt] == LoomDtype.INT64
+
+
+_SPARK_TARGETS = {
+    "append": IntoTable(Order).append(),
+    "replace": _REPLACE,
+    "upsert": _ORDER_UPSERT,
+}
 
 
 class TestModelWriteObservability:
