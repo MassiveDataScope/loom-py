@@ -21,7 +21,6 @@ from loom.etl.declarative.target._table import (
     ReplacePartitionsSpec,
     UpdateSpec,
     UpsertSpec,
-    upsert_delete_flag_conflict,
 )
 from loom.etl.engines._merge import (
     SOURCE_ALIAS,
@@ -138,7 +137,7 @@ def _require_delete_flag(frame: pl.LazyFrame, spec: UpsertSpec, flag: str) -> No
     """
     if not flag.strip():
         raise UpsertDeleteFlagError(flag, "must name a source column")
-    conflict = upsert_delete_flag_conflict(spec)
+    conflict = spec.delete_flag_conflict
     if conflict is not None:
         raise UpsertDeleteFlagError(
             flag,

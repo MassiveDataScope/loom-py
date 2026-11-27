@@ -24,7 +24,7 @@ from loom.etl.declarative.expr._predicate import PredicateNode
 from loom.etl.declarative.source import FileSourceSpec
 from loom.etl.declarative.target import TargetSpec
 from loom.etl.declarative.target._file import FileSpec
-from loom.etl.declarative.target._table import UpdateSpec, UpsertSpec, upsert_delete_flag_conflict
+from loom.etl.declarative.target._table import UpdateSpec, UpsertSpec
 from loom.etl.engines._path_template import extract_template_fields
 from loom.etl.event import EtlEvent, EtlKey
 from loom.etl.pipeline._step_client import ClientStep
@@ -642,7 +642,7 @@ def _check_upsert_delete_flag(step_type: type[Any], spec: object, method: str) -
     """Raise when ``delete_flag`` names a key, partition, exclude, or include column."""
     if not isinstance(spec, UpsertSpec):
         return
-    conflict = upsert_delete_flag_conflict(spec)
+    conflict = spec.delete_flag_conflict
     if conflict is None:
         return
     raise ETLCompilationError.from_issue(

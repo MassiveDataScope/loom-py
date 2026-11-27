@@ -144,6 +144,15 @@ class ReplaceWhereSpec(ModelBoundSpec):
         return {"replace_where": columns_in(self.replace_predicate)}
 
 
+def _merge_roles(spec: UpsertSpec | UpdateSpec) -> Mapping[str, tuple[str, ...]]:
+    return {
+        "keys": spec.upsert_keys,
+        "partition_cols": spec.partition_cols,
+        "exclude": spec.upsert_exclude,
+        "include": spec.upsert_include,
+    }
+
+
 @dataclass(frozen=True)
 class UpsertSpec(ModelBoundSpec):
     """Merge rows into a Delta table using explicit merge keys (UPSERT).
@@ -178,32 +187,18 @@ class UpsertSpec(ModelBoundSpec):
     @property
     def declared_columns(self) -> Mapping[str, tuple[str, ...]]:
         """The model columns this spec names, by the argument that names them."""
-        return {
-            "keys": self.upsert_keys,
-            "partition_cols": self.partition_cols,
-            "exclude": self.upsert_exclude,
-            "include": self.upsert_include,
-        }
+        return _merge_roles(self)
 
+    @property
+    def delete_flag_conflict(self) -> str | None:
+        """The option ``delete_flag`` also names, ``None`` when it is unset or usable.
 
-def upsert_delete_flag_conflict(spec: UpsertSpec) -> str | None:
-    """Return the upsert option ``delete_flag`` names, or ``None`` when it is usable.
-
-    The option is ``keys``, ``partition_cols``, ``exclude``, or ``include``.
-    ``None`` when ``delete_flag`` is unset or names none of those options.
-    """
-    flag = spec.delete_flag
-    if flag is None:
-        return None
-    if flag in spec.upsert_keys:
-        return "keys"
-    if flag in spec.partition_cols:
-        return "partition_cols"
-    if flag in spec.upsert_exclude:
-        return "exclude"
-    if flag in spec.upsert_include:
-        return "include"
-    return None
+        The option is ``keys``, ``partition_cols``, ``exclude`` or ``include``.
+        """
+        return next(
+            (role for role, names in self.declared_columns.items() if self.delete_flag in names),
+            None,
+        )
 
 
 @dataclass(frozen=True)
@@ -239,12 +234,7 @@ class UpdateSpec(ModelBoundSpec):
     @property
     def declared_columns(self) -> Mapping[str, tuple[str, ...]]:
         """The model columns this spec names, by the argument that names them."""
-        return {
-            "keys": self.keys,
-            "partition_cols": self.partition_cols,
-            "exclude": self.exclude,
-            "include": self.include,
-        }
+        return _merge_roles(self)
 
     @property
     def upsert_keys(self) -> tuple[str, ...]:
