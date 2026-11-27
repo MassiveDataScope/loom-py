@@ -71,10 +71,12 @@ class TestHistorifyResultTypes:
         self, tmp_path: Path
     ) -> None:
         writer = PolarsTargetWriter(str(tmp_path), missing_table_policy=MissingTablePolicy.CREATE)
-        narrow = pl.LazyFrame({"player_id": [1], "team_id": [10]}).cast({"team_id": pl.Int32})
-        wide = pl.LazyFrame({"player_id": [1], "team_id": [11]})
+        narrow = pl.LazyFrame(
+            {"player_id": [1], "team_id": [10]}, schema_overrides={"team_id": pl.Int32}
+        )
         writer.write(narrow, _snapshot_spec(), RunDateParams(date(2026, 1, 1)))
 
+        wide = pl.LazyFrame({"player_id": [1], "team_id": [11]})
         writer.write(wide, _snapshot_spec(), RunDateParams(date(2026, 1, 2)))
 
         stored = pl.scan_delta(str(tmp_path / "dim_players")).collect_schema()

@@ -186,16 +186,6 @@ class Pending(BaseModel):
     when: NotDefinedYet  # noqa: F821
 
 
-@pytest.fixture
-def define_missing_type(monkeypatch: pytest.MonkeyPatch) -> Callable[[], None]:
-    """Define the type ``Pending`` annotates but this module has not defined yet."""
-
-    def define() -> None:
-        monkeypatch.setitem(globals(), "NotDefinedYet", Annotated[str, Text])
-
-    return define
-
-
 _SOURCES_BEFORE_COMPILE = {
     "from-table": lambda: FromTable(Pending),
     "from-table-where": lambda: FromTable(Pending).where(col(Pending.c.pending_id) == "a"),
@@ -252,11 +242,11 @@ class TestModelDeclaration:
     def test_a_source_builder_waits_for_the_annotations_of_its_model_to_resolve(
         self,
         build: Callable[[], Any],
-        define_missing_type: Callable[[], None],
+        monkeypatch: pytest.MonkeyPatch,
         compile_source: CompileDeclaration,
     ) -> None:
         source = build()
-        define_missing_type()
+        monkeypatch.setitem(globals(), "NotDefinedYet", Annotated[str, Text])
 
         plan = compile_source(source)
 
@@ -268,11 +258,11 @@ class TestModelDeclaration:
     def test_a_target_builder_waits_for_the_annotations_of_its_model_to_resolve(
         self,
         build: Callable[[], Any],
-        define_missing_type: Callable[[], None],
+        monkeypatch: pytest.MonkeyPatch,
         compile_target: CompileDeclaration,
     ) -> None:
         target = build()
-        define_missing_type()
+        monkeypatch.setitem(globals(), "NotDefinedYet", Annotated[str, Text])
 
         plan = compile_target(target)
 
