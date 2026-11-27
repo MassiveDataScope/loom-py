@@ -14,7 +14,7 @@ from loom.core.model import BaseModel, BusinessKey, ColumnField, Field
 from loom.core.model.types import DateTime, Text
 from loom.core.routing import LogicalRef
 from loom.core.schema import SchemaMode
-from loom.etl import FromTable, IntoHistory, IntoTable, col
+from loom.etl import Format, FromFile, FromTable, IntoHistory, IntoTable, col
 from loom.etl.compiler import ETLCompilationError, ETLErrorCode
 from loom.etl.declarative.expr._refs import TableRef
 from loom.etl.declarative.target._history import HistoryDateType
@@ -187,15 +187,19 @@ class Pending(BaseModel):
 
 
 _SOURCES_BEFORE_COMPILE = {
-    "from-table": lambda: FromTable(Pending),
-    "from-table-where": lambda: FromTable(Pending).where(col(Pending.c.pending_id) == "a"),
+    "from-table": FromTable(Pending),
+    "from-table-where": FromTable(Pending).where(col(Pending.c.pending_id) == "a"),
+    "from-file-with-model-schema": FromFile("s3://raw/p.csv", format=Format.CSV).with_schema(
+        Pending
+    ),
 }
 _TARGETS_BEFORE_COMPILE = {
-    "replace": lambda: IntoTable(Pending).replace(),
-    "upsert": lambda: IntoTable(Pending).upsert(),
-    "update": lambda: IntoTable(Pending).update(include=(Pending.c.valid_to,)),
-    "history": lambda: IntoHistory(Pending, keys=(Pending.c.pending_id,), effective_date="d"),
+    "replace": IntoTable(Pending).replace(),
+    "upsert": IntoTable(Pending).upsert(),
+    "update": IntoTable(Pending).update(include=(Pending.c.valid_to,)),
+    "history": IntoHistory(Pending, keys=(Pending.c.pending_id,), effective_date="d"),
 }
+NotDefinedYet = Annotated[str, Text]
 
 
 _CONSISTENT_TARGETS = {
@@ -237,36 +241,24 @@ class TestModelDeclaration:
         assert history._to_spec().date_type is expected
 
     @pytest.mark.parametrize(
-        "build", _SOURCES_BEFORE_COMPILE.values(), ids=list(_SOURCES_BEFORE_COMPILE)
+        "source", _SOURCES_BEFORE_COMPILE.values(), ids=list(_SOURCES_BEFORE_COMPILE)
     )
-    def test_a_source_builder_waits_for_the_annotations_of_its_model_to_resolve(
-        self,
-        build: Callable[[], Any],
-        monkeypatch: pytest.MonkeyPatch,
-        compile_source: CompileDeclaration,
+    def test_a_source_declared_before_its_annotations_are_defined_compiles(
+        self, source: Any, compile_source: CompileDeclaration
     ) -> None:
-        source = build()
-        monkeypatch.setitem(globals(), "NotDefinedYet", Annotated[str, Text])
-
         plan = compile_source(source)
 
-        assert plan.source_bindings[0].spec.model_table.column_names[-1] == "when"
+        assert plan.source_bindings[0].spec.read_schema[-1].name == "when"
 
     @pytest.mark.parametrize(
-        "build", _TARGETS_BEFORE_COMPILE.values(), ids=list(_TARGETS_BEFORE_COMPILE)
+        "target", _TARGETS_BEFORE_COMPILE.values(), ids=list(_TARGETS_BEFORE_COMPILE)
     )
-    def test_a_target_builder_waits_for_the_annotations_of_its_model_to_resolve(
-        self,
-        build: Callable[[], Any],
-        monkeypatch: pytest.MonkeyPatch,
-        compile_target: CompileDeclaration,
+    def test_a_target_declared_before_its_annotations_are_defined_compiles(
+        self, target: Any, compile_target: CompileDeclaration
     ) -> None:
-        target = build()
-        monkeypatch.setitem(globals(), "NotDefinedYet", Annotated[str, Text])
-
         plan = compile_target(target)
 
-        assert plan.target_binding.spec.model_table.name == "pending"
+        assert plan.target_binding.spec.model_table.column_names[-1] == "when"
 
     @pytest.mark.parametrize("merge", [IntoTable.upsert, IntoTable.update])
     def test_a_model_target_refuses_explicitly_empty_keys(
