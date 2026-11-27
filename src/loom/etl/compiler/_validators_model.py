@@ -42,14 +42,14 @@ class ModelCheck:
 
     Args:
         step_type: The step class being compiled, named in every message.
-        model: The model the spec was declared with.
-        spec: The source or target spec.
+        spec: The source or target spec, declared with a model.
     """
 
-    def __init__(self, step_type: type[Any], model: type, spec: _ModelDeclaring) -> None:
+    def __init__(self, step_type: type[Any], spec: _ModelDeclaring) -> None:
+        assert spec.model is not None
         self._step_type = step_type
         self._spec = spec
-        self._model = model
+        self._model = spec.model
         self._table_ref = spec.table_ref.ref
 
     def run(self) -> None:
@@ -65,20 +65,11 @@ class ModelCheck:
     def _translated(self) -> ModelTable:
         try:
             return ModelTable.from_model(self._model)
-        except LakeRefusal as refusal:
+        except (LakeRefusal, InvalidType) as refusal:
+            field = refusal.field if isinstance(refusal, LakeRefusal) else "model"
             raise self._refusal(
-                ETLErrorCode.MODEL_COLUMN_TYPE_REFUSED,
-                refusal.field,
-                field=refusal.field,
-                reason=str(refusal),
+                ETLErrorCode.MODEL_COLUMN_TYPE_REFUSED, field, field=field, reason=str(refusal)
             ) from refusal
-        except InvalidType as unresolvable:
-            raise self._refusal(
-                ETLErrorCode.MODEL_COLUMN_TYPE_REFUSED,
-                "model",
-                field="model",
-                reason=str(unresolvable),
-            ) from unresolvable
 
     def _check_declared_columns(self, table: ModelTable) -> None:
         for role, names in self._spec.declared_columns.items():
@@ -116,8 +107,8 @@ class ModelCheck:
 class ModelTargetCheck(ModelCheck):
     """What a model target must satisfy beyond its columns: schema mode, keys and history."""
 
-    def __init__(self, step_type: type[Any], model: type, spec: TableSpec) -> None:
-        super().__init__(step_type, model, spec)
+    def __init__(self, step_type: type[Any], spec: TableSpec) -> None:
+        super().__init__(step_type, spec)
         self._target = spec
 
     def _check_target(self) -> None:
@@ -170,10 +161,10 @@ def validate_model_sources(step_type: type[Any], sources: Iterable[Any]) -> None
     """Validate every table source declared with a model; any other source is skipped."""
     for spec in sources:
         if isinstance(spec, TableSourceSpec) and spec.model is not None:
-            ModelCheck(step_type, spec.model, spec).run()
+            ModelCheck(step_type, spec).run()
 
 
 def validate_model_target(step_type: type[Any], spec: TargetSpec) -> None:
     """Validate a target declared with a model; any other target is skipped."""
     if isinstance(spec, TableSpec) and spec.model is not None:
-        ModelTargetCheck(step_type, spec.model, spec).run()
+        ModelTargetCheck(step_type, spec).run()

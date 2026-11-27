@@ -155,6 +155,7 @@ class LakeTranslator:
                 f"has no column type ({field.reason})",
                 "declare it with Annotated[<type>, <column type>]",
             )
+        column_type = column_type.portable() or column_type
         kind = column_type.type_name
         match kind:
             case ColumnKind.NUMERIC:
@@ -166,10 +167,7 @@ class LakeTranslator:
             case _ if kind.is_json:
                 return self._json_shape(field)
             case _:
-                portable = column_type.portable()
-                if portable is None or portable == column_type:
-                    return _SIMPLE_TYPES[kind]
-                return self.frame_type(replace(field, column_type=portable))
+                return _SIMPLE_TYPES[kind]
 
     def _refusal(self, field: ResolvedField, problem: str, fix: str) -> LakeRefusal:
         path = ".".join((*self.path, field.name))
