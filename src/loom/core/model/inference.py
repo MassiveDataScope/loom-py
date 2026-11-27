@@ -197,23 +197,13 @@ class Annotation:
     @property
     def origin_type(self) -> type[Any]:
         """The class the annotation stands for, ``object`` when it is not one."""
-        origin = getattr(self.hint, "__origin__", None)
-        if origin is not None:
-            args = getattr(self.hint, "__args__", ())
-            if args:
-                value = args[0]
-                if isinstance(value, type):
-                    return value
-                return object
-        raw = self.without_optional
-        origin = get_origin(raw)
-        if origin is not None:
-            if isinstance(origin, type):
-                return origin
-            return object
-        if isinstance(raw, type):
-            return raw
-        return object
+        args = getattr(self.hint, "__args__", ())
+        if getattr(self.hint, "__origin__", None) is not None and args:
+            candidate = args[0]
+        else:
+            raw = self.without_optional
+            candidate = get_origin(raw) or raw
+        return candidate if isinstance(candidate, type) else object
 
     @property
     def resolved(self) -> ResolvedField:
