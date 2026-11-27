@@ -5,7 +5,7 @@ from __future__ import annotations
 import contextlib
 import logging
 from collections.abc import Sequence
-from typing import Any, Literal
+from typing import Any, Literal, cast
 
 import polars as pl
 from deltalake import CommitProperties, DeltaTable, WriterProperties, write_deltalake
@@ -309,13 +309,9 @@ class PolarsTargetWriter(_WritePolicy[pl.LazyFrame, pl.DataFrame, PolarsPhysical
         mode: SchemaMode,
     ) -> pl.LazyFrame:
         """Align frame schema with existing."""
-        schema = existing_schema.schema if existing_schema is not None else None
-        return apply_schema_polars(
-            frame,
-            schema,
-            mode,
-            decodes_json_text=existing_schema is not None and existing_schema.decodes_json_text,
-        )
+        if existing_schema is None:
+            return apply_schema_polars(frame, None, mode)
+        return existing_schema.align(frame, mode)
 
     def _align_result(
         self,
@@ -324,13 +320,11 @@ class PolarsTargetWriter(_WritePolicy[pl.LazyFrame, pl.DataFrame, PolarsPhysical
         mode: SchemaMode,
     ) -> pl.DataFrame:
         """Align a collected frame, eagerly."""
-        return apply_schema_polars(
-            result, schema.schema, mode, decodes_json_text=schema.decodes_json_text
-        )
+        return schema.align(result, mode)
 
     def _physical_of(self, schema: StructType) -> PolarsPhysicalSchema:
         """The Polars schema of the lake *schema*."""
-        return PolarsPhysicalSchema.of_lake(schema)
+        return PolarsPhysicalSchema.of_model(schema)
 
     def _row_count_if_cheap(self, frame: pl.DataFrame) -> int | None:
         """Rows in the collected frame."""
@@ -851,4 +845,5 @@ def _partition_filter(
 
 def _polars_lineage_schema(record: LineageRecord) -> pl.Schema:
     columns = get_lineage_schema(type(record))
-    return PolarsPhysicalSchema.of_lake(StructType.of_columns(columns)).schema
+    polars_struct = cast(pl.Struct, frame_type_to_polars(StructType.of_columns(columns)))
+    return pl.Schema(polars_struct.to_schema())
