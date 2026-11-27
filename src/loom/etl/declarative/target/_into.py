@@ -84,7 +84,7 @@ class IntoTable:
 
     def __init__(self, ref: TableDeclaration) -> None:
         self._table = DeclaredTable.from_declaration(ref)
-        self._spec: Any = ReplaceSpec(table_ref=self._table.ref, model=self._table.model)
+        self._spec: Any = self._build_spec(ReplaceSpec)
 
     def append(
         self,
@@ -105,14 +105,7 @@ class IntoTable:
         Returns:
             New ``IntoTable`` with APPEND mode.
         """
-        return self._with(
-            AppendSpec(
-                table_ref=self._table.ref,
-                model=self._table.model,
-                schema_mode=schema,
-                streaming=streaming,
-            )
-        )
+        return self._with(AppendSpec, schema_mode=schema, streaming=streaming)
 
     def replace(
         self,
@@ -151,13 +144,10 @@ class IntoTable:
             target = IntoTable("silver.dim_dealer").replace(allow_empty=False)
         """
         return self._with(
-            ReplaceSpec(
-                table_ref=self._table.ref,
-                model=self._table.model,
-                schema_mode=schema,
-                streaming=streaming,
-                allow_empty=allow_empty,
-            )
+            ReplaceSpec,
+            schema_mode=schema,
+            streaming=streaming,
+            allow_empty=allow_empty,
         )
 
     def replace_partitions(
@@ -199,13 +189,10 @@ class IntoTable:
                 "replace_partitions: at least one partition column name is required."
             )
         return self._with(
-            ReplacePartitionsSpec(
-                table_ref=self._table.ref,
-                model=self._table.model,
-                partition_cols=cols,
-                schema_mode=schema,
-                streaming=streaming,
-            )
+            ReplacePartitionsSpec,
+            partition_cols=cols,
+            schema_mode=schema,
+            streaming=streaming,
         )
 
     def replace_matching(
@@ -279,14 +266,11 @@ class IntoTable:
                 "replace_physical_partitions: at least one partition column name is required."
             )
         return self._with(
-            ReplacePartitionsSpec(
-                table_ref=self._table.ref,
-                model=self._table.model,
-                partition_cols=cols,
-                schema_mode=schema,
-                streaming=streaming,
-                require_physical=True,
-            )
+            ReplacePartitionsSpec,
+            partition_cols=cols,
+            schema_mode=schema,
+            streaming=streaming,
+            require_physical=True,
         )
 
     def replace_partition(
@@ -330,12 +314,9 @@ class IntoTable:
             raise InvalidValue("replace_partition: at least one column=value pair is required.")
         predicate = _build_eq_predicate(partition)
         return self._with(
-            ReplaceWhereSpec(
-                table_ref=self._table.ref,
-                model=self._table.model,
-                replace_predicate=predicate,
-                schema_mode=schema,
-            )
+            ReplaceWhereSpec,
+            replace_predicate=predicate,
+            schema_mode=schema,
         )
 
     def replace_where(
@@ -368,13 +349,10 @@ class IntoTable:
             )
         """
         return self._with(
-            ReplaceWhereSpec(
-                table_ref=self._table.ref,
-                model=self._table.model,
-                replace_predicate=predicate,
-                schema_mode=schema,
-                streaming=streaming,
-            )
+            ReplaceWhereSpec,
+            replace_predicate=predicate,
+            schema_mode=schema,
+            streaming=streaming,
         )
 
     def upsert(
@@ -455,16 +433,13 @@ class IntoTable:
         if delete_flag is not None and not delete_flag.strip():
             raise UpsertDeleteFlagError(delete_flag, "must name a source column")
         return self._with(
-            UpsertSpec(
-                table_ref=self._table.ref,
-                model=self._table.model,
-                upsert_keys=self._table.merge_keys(keys),
-                partition_cols=partition_cols,
-                upsert_exclude=exclude,
-                upsert_include=include,
-                schema_mode=schema,
-                delete_flag=delete_flag,
-            )
+            UpsertSpec,
+            upsert_keys=self._table.merge_keys(keys),
+            partition_cols=partition_cols,
+            upsert_exclude=exclude,
+            upsert_include=include,
+            schema_mode=schema,
+            delete_flag=delete_flag,
         )
 
     def update(
@@ -519,20 +494,20 @@ class IntoTable:
             )
         """
         return self._with(
-            UpdateSpec(
-                table_ref=self._table.ref,
-                model=self._table.model,
-                keys=self._table.merge_keys(keys),
-                partition_cols=partition_cols,
-                exclude=exclude,
-                include=include,
-                schema_mode=schema,
-            )
+            UpdateSpec,
+            keys=self._table.merge_keys(keys),
+            partition_cols=partition_cols,
+            exclude=exclude,
+            include=include,
+            schema_mode=schema,
         )
 
-    def _with(self, spec: Any) -> IntoTable:
+    def _build_spec(self, spec_type: type, **fields: Any) -> Any:
+        return spec_type(table_ref=self._table.ref, model=self._table.model, **fields)
+
+    def _with(self, spec_type: type, **fields: Any) -> IntoTable:
         new = _clone_slots(self, IntoTable, IntoTable.__slots__)
-        object.__setattr__(new, "_spec", spec)
+        object.__setattr__(new, "_spec", self._build_spec(spec_type, **fields))
         return new
 
     def _to_spec(self) -> Any:
