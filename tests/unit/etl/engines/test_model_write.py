@@ -11,7 +11,10 @@ from typing import Any, Protocol
 
 import polars as pl
 import pytest
+from sqlalchemy import MetaData
 
+from loom.core.errors import InvalidValue
+from loom.core.model import BaseModel
 from loom.etl.declarative.expr import params as p
 from loom.etl.declarative.expr._refs import TableRef
 from loom.etl.declarative.target import TableSpec
@@ -25,16 +28,20 @@ from loom.etl.declarative.target._table import (
 )
 from loom.etl.engines.polars import PolarsSourceReader, PolarsTargetWriter, polars_to_frame_type
 from loom.etl.event import EtlEvent, EtlKey
+from loom.etl.lineage._records import WriteContext
 from loom.etl.ports.contracts import TargetWriter
 from loom.etl.schema import FrameType, ModelTable
 from loom.etl.schema._model import LakeTranslator
-from loom.etl.storage._config import AuditConfig, MissingTablePolicy
+from loom.etl.storage._config import AuditConfig, CustomColumnDef, MissingTablePolicy
+from loom.stores.sqlalchemy.schema import compile_model
 from tests.helpers.loggers import CapturedLog
 from tests.unit.etl.engines.doubles import RunDateParams
 from tests.unit.etl.engines.frame_types import (
     LAKE_ROWS,
+    CamelEntity,
     Order,
     Rate,
+    SubEntity,
     probe_model,
 )
 
@@ -215,6 +222,58 @@ class TestModelAlignTarget:
         assert len(CapturedLog(caplog).named(EtlEvent.MODEL_SCHEMA_APPLIED)) == 1
 
 
+class _Entry(BaseModel):
+    __tablename__ = "entries"
+    entry_id: int
+    profile: SubEntity
+    visit: CamelEntity
+    tags: list[str]
+
+
+def _entry_text(engine: _Engine, profile: str = '{"street": "Main"}') -> Any:
+    return engine.frame(
+        {
+            "entry_id": [1],
+            "profile": [profile],
+            "visit": ['{"zipCode": "28001", "seenAt": "2026-01-05T00:00:00Z"}'],
+            "tags": ['["a", "b"]'],
+        }
+    )
+
+
+class TestJsonTextOnWrite:
+    @pytest.fixture(autouse=True)
+    def no_python_per_row(self, engine: _Engine, monkeypatch: pytest.MonkeyPatch) -> None:
+        def refuse(*args: Any, **kwargs: Any) -> Any:
+            raise AssertionError("JSON text was decoded by Python per row")
+
+        monkeypatch.setattr(pl.Expr, "map_elements", refuse)
+        if isinstance(engine, _SparkEngine):
+            from pyspark.sql import functions
+
+            monkeypatch.setattr(functions, "udf", refuse)
+
+    def test_json_text_is_decoded_to_the_model_struct_and_list(self, engine: _Engine) -> None:
+        spec = AppendSpec(table_ref=TableRef("entries"), model=_Entry)
+
+        engine.writer.write(_entry_text(engine), spec, None)
+
+        (row,) = engine.stored("entries")
+        assert (row["profile"]["street"], row["visit"]["zipCode"], row["tags"]) == (
+            "Main",
+            "28001",
+            ["a", "b"],
+        )
+
+    def test_malformed_json_text_fails_as_a_decode_failure(self, engine: _Engine) -> None:
+        spec = AppendSpec(table_ref=TableRef("entries"), model=_Entry)
+
+        with pytest.raises(Exception) as failed:
+            engine.writer.write(_entry_text(engine, profile="{broken"), spec, None)
+
+        assert engine.is_json_decode_failure(failed.value)
+
+
 class TestPolarsDeleteFlag:
     def test_the_delete_flag_survives_until_used_and_is_not_written(self, tmp_path: Path) -> None:
         engine = _PolarsEngine(tmp_path)
@@ -249,6 +308,49 @@ class TestLakeTypeRoundTrip:
         written.writer.write(written.frame({"unrelated": [1]}), spec, None)
 
         assert _SparkEngine(spark, tmp_path).stored_types("probes") == {"value": expected}
+
+
+class TestPolarsAuditColumns:
+    @pytest.mark.parametrize(
+        "write_ctx",
+        [
+            WriteContext(run_id="r1", step="Load", attempt=1, process_run_id="p1"),
+            WriteContext(run_id="r1", step="Load", attempt=2, process_run_id=None),
+        ],
+        ids=["in-a-process", "outside-a-process"],
+    )
+    def test_a_model_target_keeps_the_audit_columns_a_string_target_keeps(
+        self, tmp_path: Path, write_ctx: WriteContext
+    ) -> None:
+        audit = AuditConfig(enabled=True, custom=(CustomColumnDef(name="region", value="eu"),))
+        engine = _PolarsEngine(tmp_path, audit)
+
+        engine.writer.write(_orders(engine, "o1"), _spec(AppendSpec), None, write_ctx=write_ctx)
+        engine.writer.write(
+            _orders(engine, "o1"),
+            AppendSpec(table_ref=TableRef("sales.plain")),
+            None,
+            write_ctx=write_ctx,
+        )
+
+        stamped = {
+            name: dtype
+            for name, dtype in engine.stored_types("sales.plain").items()
+            if name not in (*_ORDER.column_names, "noise")
+        }
+        assert stamped.keys() >= {"_loom_run_id", "_loom_step", "_loom_attempt", "region"}
+        assert engine.stored_types("sales.order") == {**_ORDER.column_types, **stamped}
+
+
+class TestDottedTableName:
+    def test_a_dotted_model_is_a_lake_table_and_no_sql_table(self, tmp_path: Path) -> None:
+        engine = _PolarsEngine(tmp_path)
+
+        engine.writer.write(_orders(engine, "o1"), _spec(AppendSpec), None)
+
+        assert [row["order_id"] for row in engine.stored("sales.order")] == ["o1"]
+        with pytest.raises(InvalidValue, match=r"Order.*'sales\.order' is dotted.*storage\.tables"):
+            compile_model(Order, metadata=MetaData())
 
 
 class TestModelWriteObservability:

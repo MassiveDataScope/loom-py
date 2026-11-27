@@ -35,26 +35,33 @@ class PolarsPhysicalSchema:
     Args:
         schema: Native Polars schema for write-time alignment.
         partition_columns: Ordered partition columns.
+        decodes_json_text: Whether a frame column of JSON text is decoded into the struct or
+            list the schema declares, as it is for a model's schema.
     """
 
     schema: pl.Schema
     partition_columns: tuple[str, ...] = ()
+    decodes_json_text: bool = False
 
 
 def apply_schema_polars(
     frame: PolarsFrameT,
     schema: pl.Schema | None,
     mode: SchemaMode,
+    *,
+    decodes_json_text: bool = False,
 ) -> PolarsFrameT:
     from loom.etl.engines._schema_aligner import SchemaAlignmentPolicy
 
     if mode is not SchemaMode.OVERWRITE and schema is not None:
-        refuse_lossy_casts(frame.collect_schema(), schema)
-    policy = SchemaAlignmentPolicy(PolarsSchemaAligner[PolarsFrameT]())
+        refuse_lossy_casts(frame.collect_schema(), schema, decodes_json_text=decodes_json_text)
+    policy = SchemaAlignmentPolicy(PolarsSchemaAligner[PolarsFrameT](decodes_json_text))
     return policy.align(frame, schema, mode)
 
 
-def refuse_lossy_casts(frame_schema: pl.Schema, table_schema: pl.Schema) -> None:
+def refuse_lossy_casts(
+    frame_schema: pl.Schema, table_schema: pl.Schema, *, decodes_json_text: bool = False
+) -> None:
     """Refuse a frame column whose cast to the table's type would lose its values.
 
     A ``Struct`` cast to ``String`` becomes Polars' display text (``{1.0}``
@@ -62,7 +69,9 @@ def refuse_lossy_casts(frame_schema: pl.Schema, table_schema: pl.Schema) -> None
     nulls each value; a ``List`` cast to ``String`` and a ``String`` aligned
     to a ``Struct`` fail inside Polars without naming the table's type. None
     of them is applied, at any depth of a ``Struct`` or ``List``. The check is
-    by dtype, so an all-null ``String`` column is refused for a ``List`` too.
+    by dtype, so an all-null ``String`` column is refused for a ``List`` too. With
+    *decodes_json_text* a top-level ``String`` column is JSON text, decoded rather than cast,
+    so it is not refused.
     The Spark writer does not refuse these casts: it writes a ``Struct`` or
     ``List`` into a ``String`` column as text (``{1.0}``, ``[1]``).
 
@@ -71,7 +80,12 @@ def refuse_lossy_casts(frame_schema: pl.Schema, table_schema: pl.Schema) -> None
     """
     for name, table_dtype in table_schema.items():
         frame_dtype = frame_schema.get(name)
-        if frame_dtype is not None and _is_lossy(frame_dtype, table_dtype):
+        is_json_text = (
+            decodes_json_text
+            and frame_dtype == pl.String
+            and isinstance(table_dtype, pl.Struct | pl.List)
+        )
+        if frame_dtype is not None and not is_json_text and _is_lossy(frame_dtype, table_dtype):
             raise SchemaError(
                 f"column {name!r} is {frame_dtype} in the frame and {table_dtype} in the "
                 "table; casting one to the other loses its values. Rewrite the table with "

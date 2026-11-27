@@ -31,6 +31,7 @@ from loom.core.connections import (
 from loom.core.model import LoomFrozenStruct
 from loom.core.model.redaction import Dsn, RedactedMap, Secret, reveal_for_driver
 from loom.etl._uri import CLOUD_SCHEMES
+from loom.etl.schema import ColumnSchema, LoomDtype
 from loom.etl.storage._locator import MappingLocator, PrefixLocator, TableLocation, TableLocator
 
 STORAGE_KEYED_COLLECTIONS: Final = ("storage.tables", "storage.files", "storage.profiles")
@@ -263,6 +264,17 @@ class AuditConfig(LoomFrozenStruct, frozen=True, forbid_unknown_fields=True):
     enabled: bool = False
     prefix: str = "_loom_"
     custom: tuple[CustomColumnDef, ...] = ()
+
+    @property
+    def columns(self) -> tuple[ColumnSchema, ...]:
+        """The columns a write can stamp, with the types they are stored as."""
+        standard = (
+            ColumnSchema(f"{self.prefix}run_id", LoomDtype.UTF8),
+            ColumnSchema(f"{self.prefix}step", LoomDtype.UTF8),
+            ColumnSchema(f"{self.prefix}attempt", LoomDtype.INT32),
+            ColumnSchema(f"{self.prefix}process_run_id", LoomDtype.UTF8),
+        )
+        return standard + tuple(ColumnSchema(c.name, LoomDtype.UTF8) for c in self.custom)
 
 
 class MaintenanceVacuumConfig(LoomFrozenStruct, frozen=True, forbid_unknown_fields=True):

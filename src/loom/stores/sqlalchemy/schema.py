@@ -261,6 +261,7 @@ def _compile_model(
         return comp.compiled[struct_cls]
 
     table_name = get_table_name(struct_cls)
+    _refuse_dotted_table_name(struct_cls, table_name)
     column_fields = get_column_fields(struct_cls)
     _refuse_undeclared_column_types(struct_cls, column_fields)
     scopes = scope_columns(struct_cls)
@@ -342,6 +343,20 @@ def _audited(struct_cls: type, table: Any) -> AuditedTable:
         )
     except ValueError as exc:
         raise ConfigError(str(exc)) from exc
+
+
+def _refuse_dotted_table_name(struct_cls: type, table_name: str) -> None:
+    """Refuse a dotted ``__tablename__``: a lake reference, never a SQL table name.
+
+    Raises:
+        InvalidValue: Naming the model and the fix.
+    """
+    if "." in table_name:
+        raise InvalidValue(
+            f"{struct_cls.__name__}: __tablename__ {table_name!r} is dotted, which names a lake "
+            "table and not a SQL table; use a simple __tablename__ and route the lake table "
+            "with an entry in storage.tables"
+        )
 
 
 def _refuse_undeclared_column_types(

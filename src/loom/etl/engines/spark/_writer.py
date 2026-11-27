@@ -134,7 +134,12 @@ class SparkTargetWriter(_WritePolicy[DataFrame, DataFrame, SparkPhysicalSchema])
         if existing_schema is None or mode is SchemaMode.OVERWRITE:
             return frame
 
-        return apply_schema_spark(frame, existing_schema.schema, mode)
+        return apply_schema_spark(
+            frame,
+            existing_schema.schema,
+            mode,
+            decodes_json_text=existing_schema.decodes_json_text,
+        )
 
     def _align_result(
         self,
@@ -148,7 +153,7 @@ class SparkTargetWriter(_WritePolicy[DataFrame, DataFrame, SparkPhysicalSchema])
     def _physical_of(self, schema: StructType) -> SparkPhysicalSchema:
         """The Spark schema of the lake *schema*."""
         spark_schema = frame_type_to_spark(schema)
-        return SparkPhysicalSchema(schema=cast(T.StructType, spark_schema))
+        return SparkPhysicalSchema(schema=cast(T.StructType, spark_schema), decodes_json_text=True)
 
     def _materialize_for_write(self, frame: DataFrame, streaming: bool) -> DataFrame:
         """Return Spark frame unchanged (already materialized/eager)."""

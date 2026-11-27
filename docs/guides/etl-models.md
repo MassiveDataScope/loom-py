@@ -81,18 +81,21 @@ means names.
 
 | Declaration | With a model |
 |---|---|
-| `FromTable(Order)` | `FromTable("order").with_schema(Order)`: model columns are cast, extra table columns pass through |
+| `FromTable(Order)` | `FromTable("order").with_schema(Order)`: both carry the model, model columns are cast, extra table columns pass through |
 | `IntoTable(CustomerTotal)` | table name and write schema from the model |
 | `IntoHistory(CustomerTierHistory, keys=(CustomerTierHistory.c.customer_id,))` | `date_type` comes from the model's `valid_from` (`Date` is `"date"`, `DateTime` is `"timestamp"`); modes and the other arguments stay on `IntoHistory` |
-| `FromTable("raw.orders").with_schema(Order)` | any source can take a model as its schema |
+| `FromTable("raw.orders").with_schema(Order)` | any table source can take a model as its schema, and keeps its own table name |
 
 `IntoHistory` needs the model to declare the named `valid_from` / `valid_to`
 (and `deleted_at` under `delete_policy="soft_delete"`). An explicit `date_type`
 that contradicts the model fails at compile time. Only `schema=STRICT` is
 available for a model.
 
-A column named in a declaration that the model lacks fails at compile time and
-the error names the model.
+A declaration only names the model; the compiler translates it. A column named in a
+declaration that the model lacks fails at compile time and the error names the
+model: the keys, `include`, `exclude`, `track` and partition columns of a target, its
+`replace_where` predicate, and a model source's `columns(...)`, `where(...)` predicate and
+`parse_json(...)` columns.
 
 ## Upsert and update keys
 
@@ -131,7 +134,8 @@ One row per kind. The lake unit for time is microseconds.
 | `Numeric(p, s)`, p up to 38 | decimal(p,s) | Decimal(p,s) | DecimalType(p,s) |
 | dialect types | the row of their portable counterpart | | |
 
-Refused at compile time, naming model and field:
+Refused at compile time with `ETLCompilationError` code `MODEL_COLUMN_TYPE_REFUSED` (and
+one `loom.etl.model_refused` log), naming model, table, field and fix:
 
 - `Time`: Delta has no time type.
 - `Numeric()` unbounded, and `Numeric` with precision above 38; also a nested
@@ -174,6 +178,8 @@ snapshots = FromTable("raw.snapshots").parse_json(
 )
 ```
 
+A model column is decoded with the model's struct, so documents whose shape varies are
+read with `parse_json(..., on_mismatch=JsonMismatch.NULL)` on the source column.
 `JsonMismatch.NULL` re-serialises strings, and turns a mismatch or malformed
 JSON into null. On Polars it runs a tolerant normaliser in Python per row, so
 the cost applies to that column only; on Spark it is `from_json` in `PERMISSIVE`
@@ -183,8 +189,9 @@ mode, with no per-row Python.
 
 A write casts the frame to the model's lake schema, and that is all:
 `replace`, `append`, `upsert`, `update`, `replace_partitions` and historify share
-it. Input-only columns (`delete_flag`, `delete_marker`) and the boundary columns
-historify computes are kept. If the existing table's physical schema disagrees
+it. Input-only columns (`delete_flag`, `delete_marker`), the boundary columns
+historify computes and the audit columns a Polars write stamps (`audit.enabled`) are
+kept, with the types the stamp gives them. If the existing table's physical schema disagrees
 with the model the writer fails as it did before. Drift detection, exact-column
 rules, creation rules and schema evolution come later, in 023b.
 
@@ -235,6 +242,10 @@ What changes for an existing pipeline when it moves to this release:
 - The SQL store refuses a field whose type is undeclared, where it used to store
   it as JSON.
 - `JsonStr` is `Text`.
+- `annotation_to_frame_type` and `with_schema` refuse with `InvalidValue`, not `TypeError`. A
+  string annotation, an unresolved forward reference such as a raw `__annotations__` value under
+  `from __future__ import annotations`, is refused: pass resolved hints from
+  `typing.get_type_hints(cls)`.
 - `TableRef.c` and `ColumnRef` are removed: use `Model.c.<field>`.
 - ETL error classes follow core's categories: `SchemaError`,
   `EmptyReplaceError`, the historify conflicts and other validation errors are

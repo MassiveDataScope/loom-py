@@ -334,8 +334,9 @@ class ETLExecutor:
         return InvalidValue(
             f"Step {plan.step_type.__name__!r} failed to decode a JSON column: a document is "
             f"malformed or does not match its declared type. Declared JSON columns: {declared}. "
-            "Declare the field as JsonStr and decode it explicitly in the step if the "
-            "documents vary."
+            "If the documents vary, read the column with "
+            "parse_json(..., on_mismatch=JsonMismatch.NULL), or declare the field as JsonStr "
+            "and decode it explicitly in the step."
         )
 
     def _resolve_config_values(self, plan: StepPlan) -> dict[str, Any]:

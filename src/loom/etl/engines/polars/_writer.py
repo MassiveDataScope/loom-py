@@ -43,7 +43,7 @@ from loom.etl.engines.polars._schema import (
 )
 from loom.etl.event import EtlEvent, EtlKey
 from loom.etl.lineage._records import LineageRecord, WriteContext, get_lineage_schema
-from loom.etl.schema._schema import SchemaError, StructType
+from loom.etl.schema._schema import ColumnSchema, SchemaError, StructType
 from loom.etl.storage import (
     MissingTablePolicy,
     PathRouteResolver,
@@ -310,7 +310,12 @@ class PolarsTargetWriter(_WritePolicy[pl.LazyFrame, pl.DataFrame, PolarsPhysical
     ) -> pl.LazyFrame:
         """Align frame schema with existing."""
         schema = existing_schema.schema if existing_schema is not None else None
-        return apply_schema_polars(frame, schema, mode)
+        return apply_schema_polars(
+            frame,
+            schema,
+            mode,
+            decodes_json_text=existing_schema is not None and existing_schema.decodes_json_text,
+        )
 
     def _align_result(
         self,
@@ -319,11 +324,15 @@ class PolarsTargetWriter(_WritePolicy[pl.LazyFrame, pl.DataFrame, PolarsPhysical
         mode: SchemaMode,
     ) -> pl.DataFrame:
         """Align a collected frame, eagerly."""
-        return apply_schema_polars(result, schema.schema, mode)
+        return apply_schema_polars(
+            result, schema.schema, mode, decodes_json_text=schema.decodes_json_text
+        )
 
     def _physical_of(self, schema: StructType) -> PolarsPhysicalSchema:
         """The Polars schema of the lake *schema*."""
-        return PolarsPhysicalSchema(schema=frame_type_to_polars_schema(schema))
+        return PolarsPhysicalSchema(
+            schema=frame_type_to_polars_schema(schema), decodes_json_text=True
+        )
 
     def _row_count_if_cheap(self, frame: pl.DataFrame) -> int | None:
         """Rows in the collected frame."""
@@ -357,7 +366,7 @@ class PolarsTargetWriter(_WritePolicy[pl.LazyFrame, pl.DataFrame, PolarsPhysical
 
         if spec.require_physical:
             self._require_physical_partitions(target, spec.partition_cols)
-        aligned = self._align(frame, self._contract_schema(existing, spec), spec.schema_mode)
+        aligned = self._align(frame, self._contract_schema(existing, spec, frame), spec.schema_mode)
         _check_null_dtype_columns_lazy(aligned)
         self._streaming_replace_partitions(aligned, target, spec)
 
@@ -607,9 +616,10 @@ class PolarsTargetWriter(_WritePolicy[pl.LazyFrame, pl.DataFrame, PolarsPhysical
             return
         _require_flag_not_in_target(flag, existing)
         source = frame.collect()
+        flagless = source.drop(flag).lazy()
         aligned = self._materialize_checked(
             self._align(
-                source.drop(flag).lazy(), self._contract_schema(existing, spec), spec.schema_mode
+                flagless, self._contract_schema(existing, spec, flagless), spec.schema_mode
             ),
             target,
             streaming=False,
@@ -765,6 +775,11 @@ class PolarsTargetWriter(_WritePolicy[pl.LazyFrame, pl.DataFrame, PolarsPhysical
             is_alias=False,
             write_options=spec.write_options,
         )
+
+    def _stamped_columns(self, frame: pl.LazyFrame) -> tuple[ColumnSchema, ...]:
+        """The audit columns *frame* carries, so a model schema keeps them."""
+        carried = set(frame.collect_schema().names())
+        return tuple(column for column in self._audit_config.columns if column.name in carried)
 
     def _apply_audit_columns(
         self,

@@ -33,7 +33,7 @@ from loom.etl.declarative.target import (
 from loom.etl.declarative.target._history import HistorifyRepairReport, HistorifySpec
 from loom.etl.engines._historify import HistorifyOps, scd2_transform
 from loom.etl.ports.contracts import TargetWriter
-from loom.etl.schema._schema import SchemaNotFoundError, StructType
+from loom.etl.schema._schema import ColumnSchema, SchemaNotFoundError, StructType
 from loom.etl.storage._config import AuditConfig, MissingTablePolicy
 from loom.etl.storage.routing import ResolvedTarget, TableRouteResolver
 
@@ -243,7 +243,7 @@ class _WritePolicy(TargetWriter, Generic[InputFrameT, WriteFrameT, PhysicalSchem
             return None
         if require_physical_partitions is not None:
             self._require_physical_partitions(target, require_physical_partitions)
-        aligned = self._align(frame, self._contract_schema(existing, spec), spec.schema_mode)
+        aligned = self._align(frame, self._contract_schema(existing, spec, frame), spec.schema_mode)
         return _PreparedWrite(
             frame=self._materialize_checked(aligned, target, streaming, allow_empty=allow_empty),
             existing_schema=existing,
@@ -273,7 +273,7 @@ class _WritePolicy(TargetWriter, Generic[InputFrameT, WriteFrameT, PhysicalSchem
             schema_mode=spec.schema_mode,
             missing_table_policy=self._missing_table_policy,
         )
-        schema = self._contract_schema(None, spec)
+        schema = self._contract_schema(None, spec, frame)
         if schema is not None:
             frame = self._align(frame, schema, spec.schema_mode)
         materialized = self._materialize_checked(frame, target, streaming, allow_empty=allow_empty)
@@ -461,7 +461,7 @@ class _WritePolicy(TargetWriter, Generic[InputFrameT, WriteFrameT, PhysicalSchem
                 "update() never inserts, so it cannot create the table — "
                 "create it first with append/replace/upsert."
             )
-        aligned = self._align(frame, self._contract_schema(existing, spec), spec.schema_mode)
+        aligned = self._align(frame, self._contract_schema(existing, spec, frame), spec.schema_mode)
         materialized = self._materialize_checked(aligned, target, streaming=False)
         self._update(
             materialized,
@@ -515,7 +515,7 @@ class _WritePolicy(TargetWriter, Generic[InputFrameT, WriteFrameT, PhysicalSchem
             self._historify_ops(), materialized, existing, spec, params_instance
         )
         del existing
-        schema = self._contract_schema(None, spec)
+        schema = self._contract_schema(None, spec, frame)
         if schema is not None:
             result = self._align_result(result, schema, spec.schema_mode)
         if report is not None:
@@ -633,11 +633,25 @@ class _WritePolicy(TargetWriter, Generic[InputFrameT, WriteFrameT, PhysicalSchem
         """Translate the lake *schema* to the engine's physical schema."""
 
     def _contract_schema(
-        self, existing: PhysicalSchemaT | None, spec: TableSpec
+        self, existing: PhysicalSchemaT | None, spec: TableSpec, frame: InputFrameT
     ) -> PhysicalSchemaT | None:
-        """The schema a write aligns to: the model's lake schema, else *existing*."""
+        """The schema a write aligns to: the model's lake schema plus the stamped audit columns.
+
+        A write without a model aligns to *existing*.
+        """
         model = spec.model_table
-        return existing if model is None else self._physical_of(model.struct_type)
+        if model is None:
+            return existing
+        columns = (*model.schema, *self._stamped_columns(frame))
+        return self._physical_of(StructType.of_columns(columns))
+
+    def _stamped_columns(self, frame: InputFrameT) -> tuple[ColumnSchema, ...]:
+        """The columns :meth:`_apply_audit_columns` stamped on *frame*, with their types.
+
+        None by default, as no audit column is stamped.
+        """
+        _ = frame
+        return ()
 
     def _log_model_schema(self, spec: TargetSpec) -> None:
         """Log the columns of the model a table write applies, once per write."""
