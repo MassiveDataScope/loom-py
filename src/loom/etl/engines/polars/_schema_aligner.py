@@ -32,13 +32,16 @@ class PolarsSchemaAligner(Generic[PolarsFrameT]):
     ) -> tuple[str, pl.Expr]:
         """Cast a column; JSON text becomes the struct or list its model declares."""
         column = pl.col(name)
-        if (
-            self._decodes_json_text
-            and source == pl.String
-            and isinstance(dtype, pl.Struct | pl.List)
-        ):
+        if self._decodes_json_text and self.is_json_text(source, dtype):
             return name, column.str.json_decode(dtype)
         return name, self._cast_expr(column, dtype)
+
+    @staticmethod
+    def is_json_text(
+        source: pl.DataType | _DataTypeClass, dtype: pl.DataType | _DataTypeClass
+    ) -> bool:
+        """Whether a column of type *source* is JSON text for the struct or list *dtype*."""
+        return source == pl.String and isinstance(dtype, pl.Struct | pl.List)
 
     def _cast_expr(self, expr: pl.Expr, dtype: pl.DataType | _DataTypeClass) -> pl.Expr:
         if isinstance(dtype, pl.Struct):

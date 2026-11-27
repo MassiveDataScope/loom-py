@@ -52,6 +52,10 @@ class Clocked(BaseModel):
     opens_at: time
 
 
+class Nameless(BaseModel):
+    nameless_id: Annotated[int, Field(primary_key=True)]
+
+
 class Undated(BaseModel):
     __tablename__ = "undated"
     undated_id: Annotated[str, Field(primary_key=True)]
@@ -186,6 +190,11 @@ _SOURCE_REFUSALS = {
         FromTable("wh.clocked").with_schema(Clocked),
         ETLErrorCode.MODEL_COLUMN_TYPE_REFUSED,
         "opens_at",
+    ),
+    "model-without-table-name": (
+        FromTable("wh.nameless").with_schema(Nameless),
+        ETLErrorCode.MODEL_COLUMN_TYPE_REFUSED,
+        "model",
     ),
 }
 _DATE_TYPES = {

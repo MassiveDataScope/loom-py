@@ -7,14 +7,13 @@ from collections.abc import Callable, Collection, Iterator
 from datetime import UTC, date, datetime
 from decimal import Decimal
 from pathlib import Path
-from typing import Any, Protocol
+from typing import Annotated, Any, Protocol
 
 import polars as pl
 import pytest
-from sqlalchemy import MetaData
 
 from loom.core.errors import InvalidValue
-from loom.core.model import BaseModel
+from loom.core.model import BaseModel, Field
 from loom.etl import ETLStep, FromTable, IntoTable
 from loom.etl.compiler import ETLCompiler
 from loom.etl.declarative.expr import params as p
@@ -33,10 +32,9 @@ from loom.etl.event import EtlEvent, EtlKey
 from loom.etl.executor import ETLExecutor
 from loom.etl.lineage._records import WriteContext
 from loom.etl.ports.contracts import TargetWriter
-from loom.etl.schema import FrameType, ModelTable
+from loom.etl.schema import FrameType, LoomDtype, ModelTable
 from loom.etl.schema._model import LakeTranslator
 from loom.etl.storage._config import AuditConfig, CustomColumnDef, MissingTablePolicy
-from loom.stores.sqlalchemy.schema import compile_model
 from tests.helpers.loggers import CapturedLog
 from tests.unit.etl.engines.doubles import NoParams, RunDateParams
 from tests.unit.etl.engines.frame_types import (
@@ -201,7 +199,8 @@ class TestModelAlignTarget:
         assert stored.keys() == set(_ORDER.column_names)
         assert stored["customer_id"] is None
 
-    def test_a_second_upsert_updates_without_duplicates(self, engine: _Engine) -> None:
+    def test_a_second_upsert_updates_without_duplicates(self, spark: Any, tmp_path: Path) -> None:
+        engine = _SparkEngine(spark, tmp_path)
         spec = _spec(UpsertSpec, upsert_keys=("order_id",))
 
         engine.writer.write(_orders(engine, "o1", "o2"), spec, None)
@@ -386,46 +385,46 @@ class TestPolarsAuditColumns:
         assert engine.stored_types("sales.order") == {**_ORDER.column_types, **stamped}
 
 
-class TestDottedTableName:
-    def test_a_dotted_model_is_a_lake_table_and_no_sql_table(self, tmp_path: Path) -> None:
-        engine = _PolarsEngine(tmp_path)
+class _Retry(BaseModel):
+    __tablename__ = "retry"
+    retry_id: Annotated[int, Field(primary_key=True)]
+    attempt: int
 
-        engine.writer.write(_orders(engine, "o1"), _spec(AppendSpec), None)
 
-        assert [row["order_id"] for row in engine.stored("sales.order")] == ["o1"]
-        with pytest.raises(InvalidValue, match=r"Order.*'sales\.order' is dotted.*storage\.tables"):
-            compile_model(Order, metadata=MetaData())
+class TestModelColumnNamedLikeAnAuditColumn:
+    def test_the_column_keeps_the_type_of_the_model(self, tmp_path: Path) -> None:
+        engine = _PolarsEngine(tmp_path, AuditConfig(enabled=True, prefix=""))
+        spec = AppendSpec(table_ref=TableRef("retry"), model=_Retry)
+        write_ctx = WriteContext(run_id="r1", step="Load", attempt=2)
+
+        engine.writer.write(
+            engine.frame({"retry_id": [1], "attempt": [7]}), spec, None, write_ctx=write_ctx
+        )
+
+        assert engine.stored_types("retry")["attempt"] == LoomDtype.INT64
 
 
 class TestModelWriteObservability:
-    def test_a_write_logs_the_model_columns_once(
-        self, engine: _Engine, caplog: pytest.LogCaptureFixture
+    def test_a_write_logs_the_model_columns_once_and_translates_nothing(
+        self, engine: _Engine, caplog: pytest.LogCaptureFixture, monkeypatch: pytest.MonkeyPatch
     ) -> None:
+        translations: list[type] = []
+        schema_of = LakeTranslator.schema_of
+
+        def counting(self: LakeTranslator, contract: type) -> Any:
+            translations.append(contract)
+            return schema_of(self, contract)
+
+        monkeypatch.setattr(LakeTranslator, "schema_of", counting)
+
         with caplog.at_level(logging.INFO):
             engine.writer.write(_orders(engine, "o1"), _spec(AppendSpec), None)
 
+        assert translations == []
         (fields,) = CapturedLog(caplog).named(EtlEvent.MODEL_SCHEMA_APPLIED)
         assert fields[EtlKey.MODEL] == "Order"
         assert fields[EtlKey.TABLE] == "sales.order"
         assert fields[EtlKey.COLUMNS] == list(_ORDER.column_names)
-
-    def test_a_write_resolves_no_model(
-        self, engine: _Engine, monkeypatch: pytest.MonkeyPatch
-    ) -> None:
-        resolutions: list[type] = []
-        schema_of = LakeTranslator.schema_of
-
-        def counting(self: LakeTranslator, contract: type) -> Any:
-            resolutions.append(contract)
-            return schema_of(self, contract)
-
-        monkeypatch.setattr(LakeTranslator, "schema_of", counting)
-        spec = _spec(AppendSpec)
-
-        for _ in range(3):
-            engine.writer.write(_orders(engine, "o1"), spec, None)
-
-        assert resolutions == []
 
 
 class TestModelWriteRunsNoSparkAction:

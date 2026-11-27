@@ -80,12 +80,11 @@ def refuse_lossy_casts(
     """
     for name, table_dtype in table_schema.items():
         frame_dtype = frame_schema.get(name)
-        is_json_text = (
-            decodes_json_text
-            and frame_dtype == pl.String
-            and isinstance(table_dtype, pl.Struct | pl.List)
-        )
-        if frame_dtype is not None and not is_json_text and _is_lossy(frame_dtype, table_dtype):
+        if frame_dtype is None:
+            continue
+        if decodes_json_text and PolarsSchemaAligner.is_json_text(frame_dtype, table_dtype):
+            continue
+        if _is_lossy(frame_dtype, table_dtype):
             raise SchemaError(
                 f"column {name!r} is {frame_dtype} in the frame and {table_dtype} in the "
                 "table; casting one to the other loses its values. Rewrite the table with "

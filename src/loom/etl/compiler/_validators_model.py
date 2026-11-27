@@ -6,6 +6,7 @@ import logging
 from collections.abc import Iterable, Mapping
 from typing import Any, Protocol
 
+from loom.core.errors import InvalidType
 from loom.core.schema import SchemaMode
 from loom.etl.compiler._errors import ETLCompilationError, ETLErrorCode
 from loom.etl.declarative._declared_table import DeclaredTable
@@ -70,6 +71,13 @@ class ModelCheck:
                 field=refusal.field,
                 reason=str(refusal),
             ) from refusal
+        except InvalidType as unresolvable:
+            raise self._refusal(
+                ETLErrorCode.MODEL_COLUMN_TYPE_REFUSED,
+                "model",
+                field="model",
+                reason=str(unresolvable),
+            ) from unresolvable
 
     def _check_declared_columns(self, table: ModelTable) -> None:
         for role, names in self._spec.declared_columns.items():

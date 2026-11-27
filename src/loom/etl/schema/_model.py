@@ -190,7 +190,7 @@ class FrameKey:
 
     model: type
 
-    @cached_property
+    @property
     def problem(self) -> KeyProblem | None:
         """Why the key cannot come from a frame, ``None`` when it can.
 

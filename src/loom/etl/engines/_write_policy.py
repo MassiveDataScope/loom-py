@@ -642,7 +642,12 @@ class _WritePolicy(TargetWriter, Generic[InputFrameT, WriteFrameT, PhysicalSchem
         model = spec.model_table
         if model is None:
             return existing
-        columns = (*model.schema, *self._stamped_columns(frame))
+        stamped = tuple(
+            column
+            for column in self._stamped_columns(frame)
+            if column.name not in model.column_types
+        )
+        columns = (*model.schema, *stamped)
         return self._physical_of(StructType.of_columns(columns))
 
     def _stamped_columns(self, frame: InputFrameT) -> tuple[ColumnSchema, ...]:

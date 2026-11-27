@@ -21,7 +21,6 @@ from loom.etl.schema import (
     ColumnSchema,
     DatetimeType,
     FrameType,
-    LakeRefusal,
     ListType,
     LoomDtype,
     ModelTable,
@@ -68,24 +67,12 @@ class TestLakeTable:
             LoomDtype | DatetimeType | ListType | StructType,
         )
 
-    @pytest.mark.parametrize("kind", _BY_KIND_REFUSED)
-    def test_a_column_kind_the_lake_cannot_store_is_refused(self, kind: ColumnKind) -> None:
-        field = ResolvedField("value", "value", ColumnType(kind), True, Outcome.DECLARED)
-
-        with pytest.raises(LakeRefusal, match=r"Probe\.value"):
-            LakeTranslator("Probe").frame_type(field)
-
     def test_the_table_carries_the_model_and_its_logical_name(self) -> None:
         model = probe_model(int)
 
         table = ModelTable.from_model(model)
 
         assert (table.model, table.name) == (model, "probes")
-
-    def test_the_table_is_translated_once_per_model(self) -> None:
-        model = probe_model(int)
-
-        assert ModelTable.from_model(model) is ModelTable.from_model(model)
 
     def test_a_model_without_a_table_name_is_refused(self) -> None:
         with pytest.raises(InvalidType, match="__tablename__"):

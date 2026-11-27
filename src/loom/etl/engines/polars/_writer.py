@@ -56,7 +56,7 @@ from loom.etl.storage._config import AuditConfig
 from loom.etl.storage._file_locator import FileLocator
 from loom.etl.storage._locator import TableLocator, _as_locator
 
-from ._dtype import frame_type_to_polars_schema
+from ._dtype import frame_type_to_polars, frame_type_to_polars_schema
 from ._file_writer import PolarsFileWriter
 from ._streaming import partition_rows_from_spool, spool_lazy_to_arrow_reader
 
@@ -803,42 +803,17 @@ class PolarsTargetWriter(_WritePolicy[pl.LazyFrame, pl.DataFrame, PolarsPhysical
         Returns:
             Frame with audit columns appended, or the original frame unchanged.
         """
-        if not audit.enabled or write_ctx is None:
+        if write_ctx is None:
             return frame
-        prefix = audit.prefix
-        cols: list[pl.Expr] = [
-            pl.lit(write_ctx.run_id).alias(f"{prefix}run_id"),
-            pl.lit(write_ctx.step).alias(f"{prefix}step"),
-            pl.lit(write_ctx.attempt).cast(pl.Int32).alias(f"{prefix}attempt"),
-        ]
-        if write_ctx.process_run_id is not None:
-            cols.append(pl.lit(write_ctx.process_run_id).alias(f"{prefix}process_run_id"))
-        for col_def in audit.custom:
-            cols.append(_resolve_custom_column(col_def, params_instance))
-        return frame.with_columns(cols)
+        return frame.with_columns(
+            [
+                pl.lit(value, dtype=frame_type_to_polars(column.dtype)).alias(column.name)
+                for column, value in audit.stamps(write_ctx, params_instance)
+            ]
+        )
 
 
 __all__ = ["PolarsTargetWriter"]
-
-
-def _resolve_custom_column(col_def: Any, params_instance: Any) -> pl.Expr:
-    """Build a Polars literal expression for one custom audit column definition.
-
-    Args:
-        col_def:         :class:`~loom.etl.storage._config.CustomColumnDef` instance.
-        params_instance: Concrete params object; used when ``from_param`` is set.
-
-    Returns:
-        A ``pl.lit(value).alias(name)`` expression ready for ``with_columns``.
-
-    Raises:
-        AttributeError: When ``from_param`` is set but the attribute is missing
-                        from ``params_instance``.
-    """
-    if col_def.value is not None:
-        return pl.lit(str(col_def.value)).alias(col_def.name)
-    val = str(getattr(params_instance, col_def.from_param))
-    return pl.lit(val).alias(col_def.name)
 
 
 def _partition_filter(
