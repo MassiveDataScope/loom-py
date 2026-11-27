@@ -511,6 +511,7 @@ class _WritePolicy(TargetWriter, Generic[InputFrameT, WriteFrameT, PhysicalSchem
             HistorifyDateCollisionError:    Same-date ties in LOG mode.
             HistorifyTemporalConflictError: Future-open records detected.
         """
+        physical = self._physical_schema(target)
         existing = self._read_existing_data(target, frame, spec)
         create = existing is None
         if create:
@@ -524,7 +525,7 @@ class _WritePolicy(TargetWriter, Generic[InputFrameT, WriteFrameT, PhysicalSchem
             self._historify_ops(), materialized, existing, spec, params_instance
         )
         del existing
-        result = self._align(result, None, spec)
+        result = self._align(result, physical, spec)
         if report is not None:
             _log.warning(
                 EtlEvent.HISTORIFY_RERUN_REQUIRED,
@@ -623,16 +624,16 @@ class _WritePolicy(TargetWriter, Generic[InputFrameT, WriteFrameT, PhysicalSchem
         A spec with a model aligns to the model's lake schema plus the audit columns the
         frame carries; any other spec aligns to the *existing* table's schema.
         """
-        model = spec.model_table
-        if model is None:
+        model_table = spec.model_table
+        if model_table is None:
             schema = existing
         else:
             stamped = tuple(
                 column
                 for column in self._stamped_columns(frame)
-                if column.name not in model.column_types
+                if column.name not in model_table.column_types
             )
-            schema = self._physical_of(StructType.of_columns((*model.schema, *stamped)))
+            schema = self._physical_of(StructType.of_columns((*model_table.schema, *stamped)))
         if schema is None:
             return frame
         return cast(FrameT, schema.align(frame, spec.schema_mode))
@@ -650,15 +651,15 @@ class _WritePolicy(TargetWriter, Generic[InputFrameT, WriteFrameT, PhysicalSchem
 
     def _log_model_schema(self, spec: TableSpec) -> None:
         """Log the columns of the model a table write applies, once per write."""
-        model = spec.model_table
-        if model is None:
+        model_table = spec.model_table
+        if model_table is None:
             return
         _log.info(
             EtlEvent.MODEL_SCHEMA_APPLIED,
             extra={
-                EtlKey.MODEL: model.model.__name__,
-                EtlKey.TABLE: model.name,
-                EtlKey.COLUMNS: list(model.column_names),
+                EtlKey.MODEL: model_table.model.__name__,
+                EtlKey.TABLE: model_table.name,
+                EtlKey.COLUMNS: list(model_table.column_names),
             },
         )
 
