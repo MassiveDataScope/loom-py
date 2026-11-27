@@ -14,7 +14,8 @@ from dataclasses import dataclass, field
 from loom.core.model import BaseModel
 from loom.core.schema import SchemaMode
 from loom.etl.declarative.expr._predicate import PredicateNode
-from loom.etl.declarative.expr._refs import TableRef, columns_in
+from loom.etl.declarative.expr._predicate_dialect import columns_in
+from loom.etl.declarative.expr._refs import TableRef
 from loom.etl.schema import ModelTable
 
 

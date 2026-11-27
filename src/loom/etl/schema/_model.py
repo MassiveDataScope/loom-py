@@ -9,21 +9,18 @@ from __future__ import annotations
 from collections.abc import Iterable, Mapping
 from dataclasses import dataclass, replace
 from functools import cached_property
-from typing import Final
+from typing import Any, Final, get_origin
 
 from loom.core.errors import InvalidType, InvalidValue
 from loom.core.model.class_store import stored_on_class
 from loom.core.model.inference import (
+    Annotation,
     JsonShape,
     ListShape,
     ResolvedField,
     StructShape,
 )
-from loom.core.model.introspection import (
-    ModelKeys,
-    get_column_fields,
-    get_table_name,
-)
+from loom.core.model.introspection import get_column_fields, get_table_name
 from loom.core.model.types import ColumnKind, ColumnType
 from loom.etl.schema._schema import (
     ColumnSchema,
@@ -96,6 +93,53 @@ class LakeTranslator:
     def struct_of(self, contract: type) -> StructType:
         """The struct of an annotated class, its fields named by encode name."""
         return self._struct(self._fields_of(contract))
+
+    @classmethod
+    def annotation_type(cls, annotation: Any) -> FrameType:
+        """The frame type a Python annotation declares; ``X | None`` maps as ``X``.
+
+        Args:
+            annotation: A scalar type, ``list[X]``, a record (msgspec struct or
+                dataclass, mapped to a struct) or a frame type (returned as-is).
+
+        Raises:
+            LakeRefusal: The lake has no type for *annotation*, or it is an unresolved
+                string annotation such as a raw ``__annotations__`` value under
+                ``from __future__ import annotations``.
+
+        Example::
+
+            >>> LakeTranslator.annotation_type(list[int] | None)
+            ListType(inner=<LoomDtype.INT64: 'Int64'>)
+        """
+        if isinstance(annotation, FrameType):
+            return annotation
+        if isinstance(annotation, str):
+            raise LakeRefusal(
+                f"annotation.value is an unresolved string annotation {annotation!r}; "
+                "pass the resolved hint, e.g. typing.get_type_hints(cls)[name].",
+                "value",
+            )
+        return cls("annotation").frame_type(Annotation(annotation).resolved)
+
+    @classmethod
+    def json_type(cls, contract: Any) -> FrameType:
+        """The frame type a JSON column decodes into.
+
+        Args:
+            contract: A frame type (returned as-is), an annotated class (a struct)
+                or a ``list[X]`` alias (a list).
+
+        Raises:
+            InvalidType: *contract* is none of those.
+        """
+        if isinstance(contract, FrameType):
+            return contract
+        if get_origin(contract) is list:
+            return cls.annotation_type(contract)
+        if isinstance(contract, type):
+            return cls(contract.__name__).struct_of(contract)
+        raise InvalidType("Expected a FrameType, an annotated class, or list[...] generic.")
 
     def frame_type(self, field: ResolvedField) -> FrameType:
         """The lake type of *field*.
@@ -173,41 +217,6 @@ class LakeTranslator:
                 "Add field annotations or pass an explicit tuple[ColumnSchema, ...] instead."
             )
         return tuple(info.resolved for info in columns.values())
-
-
-@dataclass(frozen=True, slots=True)
-class KeyProblem:
-    """Why a model's conflict key cannot come from a frame: the field and the reason."""
-
-    field: str
-    reason: str
-
-
-@dataclass(frozen=True)
-class FrameKey:
-    """The conflict key of a model, and whether a frame can supply it."""
-
-    model: type
-
-    @property
-    def problem(self) -> KeyProblem | None:
-        """Why the key cannot come from a frame, ``None`` when it can.
-
-        A business key always comes from the frame. A primary key does not when the
-        store fills it: autoincrement, derived from a business key, or server default.
-        """
-        if not ModelKeys.of(self.model).conflict:
-            return KeyProblem("keys", "declares neither a business key nor a primary key")
-        filled = ModelKeys.of(self.model).store_filled
-        if not filled:
-            return None
-        name, fill = next(iter(filled.items()))
-        return KeyProblem(name, f"primary key {name!r} is {fill}")
-
-    @property
-    def columns(self) -> tuple[str, ...]:
-        """The conflict key of the model when the frame can supply it, else ``()``."""
-        return ModelKeys.of(self.model).conflict if self.problem is None else ()
 
 
 @dataclass(frozen=True)

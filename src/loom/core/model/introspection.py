@@ -366,6 +366,11 @@ class ModelKeys:
     conflict: tuple[str, ...]
     store_filled: Mapping[str, KeyFill]
 
+    @property
+    def frame_supplied(self) -> tuple[str, ...]:
+        """The conflict key when a frame can supply it, else ``()``."""
+        return () if self.store_filled else self.conflict
+
     @staticmethod
     @stored_on_class("__loom_model_keys__")
     def of(cls: type) -> ModelKeys:

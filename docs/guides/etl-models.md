@@ -251,7 +251,7 @@ What changes for an existing pipeline when it moves to this release:
 - The SQL store refuses a field whose type is undeclared, where it used to store
   it as JSON.
 - `JsonStr` is `Text`.
-- `annotation_to_frame_type` and `with_schema` refuse with `InvalidValue`, not `TypeError`. A
+- `LakeTranslator.annotation_type` and `with_schema` refuse with `InvalidValue`, not `TypeError`. A
   string annotation, an unresolved forward reference such as a raw `__annotations__` value under
   `from __future__ import annotations`, is refused: pass resolved hints from
   `typing.get_type_hints(cls)`.

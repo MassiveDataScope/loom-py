@@ -54,8 +54,39 @@ class PredicateDialect(Protocol[T]):
 
 
 def fold_predicate(node: PredicateNode, params_instance: Any, dialect: PredicateDialect[T]) -> T:
-    """Fold a predicate AST using a backend-specific dialect."""
+    """Fold a predicate AST using a backend-specific dialect.
+
+    With ``params_instance=None`` the params are not resolved: a params reference
+    reaches the dialect as the :class:`ParamExpr` itself, and a params list as ``()``.
+    """
     return _fold(node, params_instance, dialect)
+
+
+class _ColumnNames:
+    """Dialect whose fold result is the column names a predicate refers to."""
+
+    def column(self, name: str) -> tuple[str, ...]:
+        return (name,)
+
+    def literal(self, value: Any) -> tuple[str, ...]:
+        return ()
+
+    def eq(self, left: tuple[str, ...], right: tuple[str, ...]) -> tuple[str, ...]:
+        return left + right
+
+    ne = gt = ge = lt = le = and_ = or_ = eq
+
+    def in_(self, ref: tuple[str, ...], values: tuple[Any, ...]) -> tuple[str, ...]:
+        return ref
+
+    def not_(self, operand: tuple[str, ...]) -> tuple[str, ...]:
+        return operand
+
+
+def columns_in(*predicates: PredicateNode) -> tuple[str, ...]:
+    """The columns the predicates refer to, in order of appearance, once each."""
+    names = (name for node in predicates for name in fold_predicate(node, None, _ColumnNames()))
+    return tuple(dict.fromkeys(names))
 
 
 @singledispatch
@@ -66,9 +97,15 @@ def _fold(node: object, params_instance: Any, dialect: PredicateDialect[T]) -> T
 def _term(value: Any, params_instance: Any, dialect: PredicateDialect[T]) -> T:
     if isinstance(value, UnboundColumnRef):
         return dialect.column(value.name)
-    if isinstance(value, ParamExpr):
+    if isinstance(value, ParamExpr) and params_instance is not None:
         return dialect.literal(resolve_param_expr(value, params_instance))
     return dialect.literal(value)
+
+
+def _in_values(values: Any, params_instance: Any) -> tuple[Any, ...]:
+    if not isinstance(values, ParamExpr):
+        return tuple(values)
+    return () if params_instance is None else tuple(resolve_param_expr(values, params_instance))
 
 
 def _binary(
@@ -127,12 +164,7 @@ def _(node: LePred, params_instance: Any, dialect: PredicateDialect[T]) -> T:
 
 @_fold.register(InPred)
 def _(node: InPred, params_instance: Any, dialect: PredicateDialect[T]) -> T:
-    raw_values = (
-        resolve_param_expr(node.values, params_instance)
-        if isinstance(node.values, ParamExpr)
-        else node.values
-    )
-    values = tuple(raw_values)
+    values = _in_values(node.values, params_instance)
     ref = _term(node.ref, params_instance, dialect)
     return dialect.in_(ref, values)
 
@@ -158,4 +190,4 @@ def _(node: NotPred, params_instance: Any, dialect: PredicateDialect[T]) -> T:
     return dialect.not_(_fold(node.operand, params_instance, dialect))
 
 
-__all__ = ["PredicateDialect", "fold_predicate"]
+__all__ = ["PredicateDialect", "columns_in", "fold_predicate"]

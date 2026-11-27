@@ -53,12 +53,8 @@ from loom.etl.declarative.source._specs import (
     TableSourceSpec,
     TempSourceSpec,
 )
-from loom.etl.schema._contract import (
-    JsonContract,
-    SchemaContract,
-    resolve_json_type,
-    resolve_schema,
-)
+from loom.etl.schema._contract import JsonContract, SchemaContract, resolve_schema
+from loom.etl.schema._model import LakeTranslator
 from loom.etl.schema._schema import ColumnSchema
 
 ParamsT = TypeVar("ParamsT")
@@ -195,7 +191,7 @@ class FromTable:
             events = FromTable("raw.events").parse_json("payload", Payload)
             events = FromTable("raw.events").parse_json("tags", list[str])
         """
-        frame_type = resolve_json_type(contract)
+        frame_type = LakeTranslator.json_type(contract)
         spec = JsonColumnSpec(column=column, frame_type=frame_type, on_mismatch=on_mismatch)
         new = _clone_slots(self, FromTable, FromTable.__slots__)
         object.__setattr__(new, "_json_columns", self._json_columns + (spec,))
@@ -400,7 +396,7 @@ class FromFile:
         Returns:
             New ``FromFile`` with the JSON decode applied at read time.
         """
-        frame_type = resolve_json_type(contract)
+        frame_type = LakeTranslator.json_type(contract)
         spec = JsonColumnSpec(column=column, frame_type=frame_type, on_mismatch=on_mismatch)
         new = _clone_slots(self, FromFile, FromFile.__slots__)
         object.__setattr__(new, "_json_columns", self._json_columns + (spec,))

@@ -7,7 +7,7 @@ from datetime import date, datetime
 
 import msgspec
 
-from loom.etl.schema import annotation_to_frame_type, resolve_schema
+from loom.etl.schema import LakeTranslator, resolve_schema
 
 
 class _Line(msgspec.Struct):
@@ -27,4 +27,4 @@ class TestAnnotationToFrameType:
         by_name = {column.name: column.dtype for column in resolve_schema(_Order)}
 
         for name, annotation in typing.get_type_hints(_Order).items():
-            assert annotation_to_frame_type(annotation) == by_name[name]
+            assert LakeTranslator.annotation_type(annotation) == by_name[name]

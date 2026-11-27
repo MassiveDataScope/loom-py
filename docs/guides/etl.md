@@ -1480,6 +1480,6 @@ available in the companion repository:
 The ETL API reference is generated from public docstrings:
 
 - [ETL API reference](../reference/api/etl)
-- Schema types: `loom.etl.schema.annotation_to_frame_type(ann)` returns the `FrameType` a
+- Schema types: `loom.etl.schema.LakeTranslator.annotation_type(ann)` returns the `FrameType` a
   contract field annotation declares, and `loom.etl.engines.polars` converts it with
   `frame_type_to_polars` and back with `polars_to_frame_type`.

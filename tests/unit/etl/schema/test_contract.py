@@ -11,11 +11,8 @@ import pytest
 
 from loom.core.errors import InvalidType, InvalidValue
 from loom.core.model import BaseModel
-from loom.etl.schema._contract import (
-    annotation_to_frame_type,
-    resolve_json_type,
-    resolve_schema,
-)
+from loom.etl.schema._contract import resolve_schema
+from loom.etl.schema._model import LakeTranslator
 from loom.etl.schema._schema import (
     ColumnSchema,
     DatetimeType,
@@ -136,7 +133,7 @@ class TestResolveSchema:
         with pytest.raises(
             InvalidValue, match=r"unresolved string annotation 'str'.*get_type_hints"
         ):
-            annotation_to_frame_type("str")
+            LakeTranslator.annotation_type("str")
 
 
 class TestResolveJsonType:
@@ -150,7 +147,7 @@ class TestResolveJsonType:
         ],
     )
     def test_passthrough_frame_types(self, contract: Any) -> None:
-        assert resolve_json_type(contract) == contract
+        assert LakeTranslator.json_type(contract) == contract
 
     @pytest.mark.parametrize(
         "contract,expected",
@@ -181,14 +178,14 @@ class TestResolveJsonType:
         ],
     )
     def test_resolve_json_type_contracts(self, contract: Any, expected: Any) -> None:
-        assert resolve_json_type(contract) == expected
+        assert LakeTranslator.json_type(contract) == expected
 
     def test_resolve_json_type_unknown_raises(self) -> None:
         with pytest.raises(TypeError, match="annotated class"):
-            resolve_json_type(42)
+            LakeTranslator.json_type(42)
 
 
 class TestAnnotationConversion:
     def test_annotation_to_frame_type_unknown_raises(self) -> None:
         with pytest.raises(InvalidValue, match="not a record"):
-            annotation_to_frame_type(object)
+            LakeTranslator.annotation_type(object)

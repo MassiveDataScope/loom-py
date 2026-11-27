@@ -6,11 +6,10 @@ from dataclasses import dataclass
 from typing import TypeAlias
 
 from loom.core.model import BaseModel
-from loom.core.model.introspection import get_column_fields, get_table_name
+from loom.core.model.introspection import ModelKeys, get_column_fields, get_table_name
 from loom.core.routing import LogicalRef
 from loom.etl.declarative._history_date_type import HistoryDateType
 from loom.etl.declarative.expr._refs import TableRef
-from loom.etl.schema import FrameKey
 
 TableDeclaration: TypeAlias = str | LogicalRef | TableRef | type[BaseModel]
 """What a builder accepts to name a table: a reference, or a model that names its own."""
@@ -51,7 +50,7 @@ class DeclaredTable:
         """
         if declared:
             return declared
-        return FrameKey(self.model).columns if self.model is not None else ()
+        return ModelKeys.of(self.model).frame_supplied if self.model is not None else ()
 
     def boundary_type(self, column: str) -> HistoryDateType | None:
         """The history date type of model *column*, ``None`` when it is not a temporal column."""

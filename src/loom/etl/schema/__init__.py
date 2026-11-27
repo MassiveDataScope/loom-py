@@ -2,14 +2,8 @@
 
 from __future__ import annotations
 
-from ._contract import (
-    JsonContract,
-    SchemaContract,
-    annotation_to_frame_type,
-    resolve_json_type,
-    resolve_schema,
-)
-from ._model import FrameKey, KeyProblem, LakeRefusal, ModelTable
+from ._contract import JsonContract, SchemaContract, resolve_schema
+from ._model import LakeRefusal, LakeTranslator, ModelTable
 from ._schema import (
     ArrayType,
     CategoricalType,
@@ -31,8 +25,6 @@ __all__ = [
     "SchemaContract",
     "JsonContract",
     "resolve_schema",
-    "resolve_json_type",
-    "annotation_to_frame_type",
     "ColumnSchema",
     "LoomDtype",
     "FrameType",
@@ -48,7 +40,6 @@ __all__ = [
     "CategoricalType",
     "EnumType",
     "ModelTable",
-    "FrameKey",
-    "KeyProblem",
     "LakeRefusal",
+    "LakeTranslator",
 ]

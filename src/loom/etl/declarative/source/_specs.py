@@ -18,7 +18,8 @@ from loom.core.errors import InvalidValue
 from loom.core.model import BaseModel
 from loom.etl.declarative._format import Format
 from loom.etl.declarative._read_options import ReadOptions
-from loom.etl.declarative.expr._refs import TableRef, columns_in
+from loom.etl.declarative.expr._predicate_dialect import columns_in
+from loom.etl.declarative.expr._refs import TableRef
 from loom.etl.schema import ModelTable
 from loom.etl.schema._schema import ColumnSchema, FrameType
 
@@ -138,7 +139,7 @@ class TableSourceSpec:
         """The model columns this source names, by the call that names them."""
         return {
             "columns": self.columns,
-            "where": columns_in(self.predicates),
+            "where": columns_in(*self.predicates),
             "parse_json": tuple(spec.column for spec in self.json_columns),
         }
 

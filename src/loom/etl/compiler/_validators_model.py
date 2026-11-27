@@ -7,6 +7,7 @@ from collections.abc import Iterable, Mapping
 from typing import Any, Protocol
 
 from loom.core.errors import InvalidType
+from loom.core.model.introspection import ModelKeys
 from loom.core.schema import SchemaMode
 from loom.etl.compiler._errors import ETLCompilationError, ETLErrorCode
 from loom.etl.declarative._declared_table import DeclaredTable
@@ -20,7 +21,7 @@ from loom.etl.declarative.target import (
     UpsertSpec,
 )
 from loom.etl.event import EtlEvent, EtlKey
-from loom.etl.schema import FrameKey, LakeRefusal, ModelTable
+from loom.etl.schema import LakeRefusal, ModelTable
 
 _log = logging.getLogger(__name__)
 
@@ -134,14 +135,15 @@ class ModelTargetCheck(ModelCheck):
     def _check_merge_keys(self) -> None:
         if not isinstance(self._target, UpsertSpec | UpdateSpec) or self._target.upsert_keys:
             return
-        problem = FrameKey(self._model).problem
-        if problem is not None:
-            raise self._refusal(
-                ETLErrorCode.MODEL_KEY_NOT_IN_FRAME,
-                problem.field,
-                field=problem.field,
-                reason=problem.reason,
-            )
+        keys = ModelKeys.of(self._model)
+        if keys.frame_supplied:
+            return
+        if not keys.conflict:
+            field, reason = "keys", "declares neither a business key nor a primary key"
+        else:
+            field, fill = next(iter(keys.store_filled.items()))
+            reason = f"primary key {field!r} is {fill}"
+        raise self._refusal(ETLErrorCode.MODEL_KEY_NOT_IN_FRAME, field, field=field, reason=reason)
 
     def _check_history_date_type(self) -> None:
         spec = self._target
