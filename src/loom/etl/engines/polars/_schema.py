@@ -7,7 +7,7 @@ import logging
 import re
 from collections.abc import Callable, Mapping, Sequence
 from dataclasses import dataclass
-from typing import TypeGuard
+from typing import TypeGuard, cast
 
 import polars as pl
 from deltalake import DeltaTable
@@ -16,8 +16,9 @@ from polars.datatypes import DataTypeClass
 
 from loom.core.errors import InvalidType, InvalidValue
 from loom.etl.declarative.target import SchemaMode
+from loom.etl.engines.polars._dtype import frame_type_to_polars
 from loom.etl.engines.polars._schema_aligner import PolarsFrameT, PolarsSchemaAligner
-from loom.etl.schema._schema import SchemaError
+from loom.etl.schema._schema import SchemaError, StructType
 
 _log = logging.getLogger(__name__)
 
@@ -42,6 +43,12 @@ class PolarsPhysicalSchema:
     schema: pl.Schema
     partition_columns: tuple[str, ...] = ()
     decodes_json_text: bool = False
+
+    @classmethod
+    def of_lake(cls, struct: StructType) -> PolarsPhysicalSchema:
+        """The physical schema of a lake *struct*: its fields in order, JSON text decoded."""
+        polars_struct = cast(pl.Struct, frame_type_to_polars(struct))
+        return cls(schema=pl.Schema(polars_struct.to_schema()), decodes_json_text=True)
 
 
 def apply_schema_polars(

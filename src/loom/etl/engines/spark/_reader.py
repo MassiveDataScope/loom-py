@@ -46,14 +46,6 @@ _FROM_JSON_MODE: Mapping[JsonMismatch, str] = {
 }
 
 
-def _error_class_of(java_error: Any) -> str:
-    """The Spark error class of a JVM exception, ``""`` when it is not a Spark error."""
-    for getter in _ERROR_CLASS_GETTERS:
-        with suppress(Py4JError):
-            return str(getattr(java_error, getter)() or "")
-    return ""
-
-
 class SparkSourceReader(SourceReader):
     """Spark source reader - reads Delta tables and files directly."""
 
@@ -78,6 +70,14 @@ class SparkSourceReader(SourceReader):
         self._resolver = resolver
         self._file_locator = file_locator
 
+    @staticmethod
+    def _error_class_of(java_error: Any) -> str:
+        """The Spark error class of a JVM exception, ``""`` when it is not a Spark error."""
+        for getter in _ERROR_CLASS_GETTERS:
+            with suppress(Py4JError):
+                return str(getattr(java_error, getter)() or "")
+        return ""
+
     def is_json_decode_failure(self, error: Exception) -> bool:
         """Whether *error* is a FAILFAST ``from_json`` rejecting a malformed document.
 
@@ -86,7 +86,7 @@ class SparkSourceReader(SourceReader):
         """
         java_error = getattr(error, "java_exception", None)
         while java_error is not None:
-            if _error_class_of(java_error).startswith(_MALFORMED_RECORD):
+            if self._error_class_of(java_error).startswith(_MALFORMED_RECORD):
                 return True
             java_error = java_error.getCause()
         return False
