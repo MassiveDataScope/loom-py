@@ -131,11 +131,19 @@ class _SparkEngine:
         return self._spark.read.format("delta").load(_table_path(self._root, ref))
 
 
-@pytest.fixture(params=["polars", "spark"])
-def engine(request: pytest.FixtureRequest, tmp_path: Path) -> _Engine:
-    if request.param == "polars":
-        return _PolarsEngine(tmp_path)
-    return _SparkEngine(request.getfixturevalue("spark"), tmp_path)
+@pytest.fixture
+def polars_engine(tmp_path: Path) -> _PolarsEngine:
+    return _PolarsEngine(tmp_path)
+
+
+@pytest.fixture
+def spark_engine(spark: Any, tmp_path: Path) -> _SparkEngine:
+    return _SparkEngine(spark, tmp_path)
+
+
+@pytest.fixture(params=["polars_engine", "spark_engine"])
+def engine(request: pytest.FixtureRequest) -> _Engine:
+    return request.getfixturevalue(request.param)
 
 
 def _spec(factory: Callable[..., TableSpec], ref: str = "sales.order", **fields: Any) -> TableSpec:
@@ -178,39 +186,34 @@ _ORDER_WRITES = {
 class TestModelAlignTarget:
     @pytest.mark.parametrize("path", _ORDER_WRITES)
     def test_every_path_writes_the_model_types_on_create_and_on_an_existing_table(
-        self, engine: _Engine, path: str
+        self, polars_engine: _PolarsEngine, path: str
     ) -> None:
         spec_factory, creating_factory = _ORDER_WRITES[path]
         creating = (creating_factory or spec_factory)()
 
-        engine.writer.write(_orders(engine, "o1"), creating, None)
-        engine.writer.write(_orders(engine, "o1"), spec_factory(), None)
+        polars_engine.writer.write(_orders(polars_engine, "o1"), creating, None)
+        polars_engine.writer.write(_orders(polars_engine, "o1"), spec_factory(), None)
 
-        assert engine.stored_types("sales.order") == _ORDER.column_types
+        assert polars_engine.stored_types("sales.order") == _ORDER.column_types
 
     def test_a_column_the_frame_lacks_is_null_filled_and_an_extra_one_dropped(
-        self, engine: _Engine
+        self, polars_engine: _PolarsEngine
     ) -> None:
-        frame = _orders(engine, "o1").drop("customer_id")
+        frame = _orders(polars_engine, "o1").drop("customer_id")
 
-        engine.writer.write(frame, _spec(AppendSpec), None)
+        polars_engine.writer.write(frame, _spec(AppendSpec), None)
 
-        (stored,) = engine.stored("sales.order")
+        (stored,) = polars_engine.stored("sales.order")
         assert stored.keys() == set(_ORDER.column_names)
         assert stored["customer_id"] is None
 
-    def test_a_second_upsert_updates_without_duplicates(self, spark: Any, tmp_path: Path) -> None:
-        engine = _SparkEngine(spark, tmp_path)
+    def test_a_second_upsert_updates_without_duplicates(self, engine: _Engine) -> None:
         spec = _spec(UpsertSpec, upsert_keys=("order_id",))
 
         engine.writer.write(_orders(engine, "o1", "o2"), spec, None)
         engine.writer.write(_orders(engine, "o2", "o3"), spec, None)
 
-        assert sorted(row["order_id"] for row in engine.stored("sales.order")) == [
-            "o1",
-            "o2",
-            "o3",
-        ]
+        assert sorted(row["order_id"] for row in engine.stored("sales.order")) == ["o1", "o2", "o3"]
 
     def test_a_historify_result_is_cast_to_the_model_and_logged_once(
         self, engine: _Engine, caplog: pytest.LogCaptureFixture
@@ -318,14 +321,15 @@ class TestProjectedModelSource:
 
 
 class TestPolarsDeleteFlag:
-    def test_the_delete_flag_survives_until_used_and_is_not_written(self, tmp_path: Path) -> None:
-        engine = _PolarsEngine(tmp_path)
+    def test_the_delete_flag_survives_until_used_and_is_not_written(
+        self, polars_engine: _PolarsEngine
+    ) -> None:
         spec = _spec(UpsertSpec, upsert_keys=("order_id",), delete_flag="is_void")
 
-        engine.writer.write(_orders(engine, "o1", "o2", void=()), spec, None)
-        engine.writer.write(_orders(engine, "o1", "o2", void=("o1",)), spec, None)
+        polars_engine.writer.write(_orders(polars_engine, "o1", "o2", void=()), spec, None)
+        polars_engine.writer.write(_orders(polars_engine, "o1", "o2", void=("o1",)), spec, None)
 
-        (stored,) = engine.stored("sales.order")
+        (stored,) = polars_engine.stored("sales.order")
         assert stored["order_id"] == "o2"
         assert "is_void" not in stored
 
@@ -343,14 +347,17 @@ class TestLakeTypeRoundTrip:
 
     @pytest.mark.parametrize(("annotation", "expected"), LAKE_ROWS.values(), ids=list(LAKE_ROWS))
     def test_spark_reads_a_polars_table_with_the_same_types(
-        self, spark: Any, tmp_path: Path, annotation: Any, expected: FrameType
+        self,
+        polars_engine: _PolarsEngine,
+        spark_engine: _SparkEngine,
+        annotation: Any,
+        expected: FrameType,
     ) -> None:
         spec = AppendSpec(table_ref=TableRef("probes"), model=probe_model(annotation))
-        written = _PolarsEngine(tmp_path)
 
-        written.writer.write(written.frame({"unrelated": [1]}), spec, None)
+        polars_engine.writer.write(polars_engine.frame({"unrelated": [1]}), spec, None)
 
-        assert _SparkEngine(spark, tmp_path).stored_types("probes") == {"value": expected}
+        assert spark_engine.stored_types("probes") == {"value": expected}
 
 
 class TestPolarsAuditColumns:
@@ -429,7 +436,9 @@ class TestModelWriteObservability:
 
 class TestModelWriteRunsNoSparkAction:
     @pytest.fixture
-    def actions_refused(self, spark: Any, monkeypatch: pytest.MonkeyPatch) -> Iterator[None]:
+    def actions_refused(
+        self, spark_engine: _SparkEngine, monkeypatch: pytest.MonkeyPatch
+    ) -> Iterator[None]:
         from pyspark.sql import DataFrame
 
         def refuse(*args: Any, **kwargs: Any) -> Any:
@@ -440,10 +449,9 @@ class TestModelWriteRunsNoSparkAction:
         yield
 
     def test_create_replace_and_upsert_run_no_action(
-        self, spark: Any, tmp_path: Path, actions_refused: None
+        self, spark_engine: _SparkEngine, actions_refused: None
     ) -> None:
-        engine = _SparkEngine(spark, tmp_path)
-        frame = _orders(engine, "o1")
+        frame = _orders(spark_engine, "o1")
 
-        for factory in (_spec(AppendSpec), _spec(ReplaceSpec), _ORDER_WRITES["upsert"][0]()):
-            engine.writer.write(frame, factory, None)
+        for spec in (_spec(AppendSpec), _spec(ReplaceSpec), _ORDER_WRITES["upsert"][0]()):
+            spark_engine.writer.write(frame, spec, None)

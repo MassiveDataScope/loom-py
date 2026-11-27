@@ -111,34 +111,48 @@ def scalars() -> dict[str, ResolvedField]:
     return {field.name: field for field in Record(_Scalars).resolve()}
 
 
-class TestInferredColumnTypes:
-    @pytest.mark.parametrize(
-        ("name", "expected"),
-        [
-            ("count", BigInteger),
-            ("name", String()),
-            ("moment", DateTime(tz=True)),
-            ("day", Date),
-            ("ref", Uuid),
-            ("note", String()),
-            ("unset", BigInteger),
-            ("payload", Text),
-            ("address", JSON),
-            ("parcels", JSON),
-            ("extras", JSON),
-            ("tags", JSON),
-        ],
-    )
-    def test_a_python_type_follows_its_rule(
-        self, scalars: dict[str, ResolvedField], name: str, expected: ColumnType
-    ) -> None:
-        assert (scalars[name].column_type, scalars[name].outcome) == (expected, Outcome.INFERRED)
+_INFERRED, _DECLARED, _UNDECLARED = Outcome.INFERRED, Outcome.DECLARED, Outcome.UNDECLARED
+_SCALAR_RULES = {
+    "count": (BigInteger, _INFERRED, None),
+    "name": (String(), _INFERRED, None),
+    "moment": (DateTime(tz=True), _INFERRED, None),
+    "day": (Date, _INFERRED, None),
+    "ref": (Uuid, _INFERRED, None),
+    "note": (String(), _INFERRED, None),
+    "unset": (BigInteger, _INFERRED, None),
+    "payload": (Text, _INFERRED, None),
+    "address": (JSON, _INFERRED, None),
+    "parcels": (JSON, _INFERRED, None),
+    "extras": (JSON, _INFERRED, None),
+    "tags": (JSON, _INFERRED, None),
+    "declared": (Integer, _DECLARED, None),
+    "amount": (None, _UNDECLARED, "a Decimal"),
+    "span": (None, _UNDECLARED, "a timedelta"),
+    "tone": (None, _UNDECLARED, "a plain Enum"),
+    "mode": (None, _UNDECLARED, "a Literal"),
+    "anything": (None, _UNDECLARED, "Any"),
+    "mixed": (None, _UNDECLARED, "a union of types that are not all JSON"),
+    "money": (None, _UNDECLARED, "_Money, a class that is not a record"),
+}
 
-    def test_a_declared_marker_wins(self, scalars: dict[str, ResolvedField]) -> None:
-        assert (scalars["declared"].column_type, scalars["declared"].outcome) == (
-            Integer,
-            Outcome.DECLARED,
-        )
+
+class TestColumnTypes:
+    @pytest.mark.parametrize(
+        ("name", "column_type", "outcome", "reason"),
+        [(name, *rule) for name, rule in _SCALAR_RULES.items()],
+        ids=list(_SCALAR_RULES),
+    )
+    def test_a_field_follows_its_rule_or_is_undeclared_with_its_reason(
+        self,
+        scalars: dict[str, ResolvedField],
+        name: str,
+        column_type: ColumnType | None,
+        outcome: Outcome,
+        reason: str | None,
+    ) -> None:
+        field = scalars[name]
+
+        assert (field.column_type, field.outcome, field.reason) == (column_type, outcome, reason)
 
     def test_a_column_field_type_wins_over_the_annotation(self) -> None:
         class Reading(msgspec.Struct):
@@ -152,29 +166,6 @@ class TestInferredColumnTypes:
 
 
 class TestUndeclaredFields:
-    @pytest.mark.parametrize(
-        ("name", "reason"),
-        [
-            ("amount", "a Decimal"),
-            ("span", "a timedelta"),
-            ("tone", "a plain Enum"),
-            ("mode", "a Literal"),
-            ("anything", "Any"),
-            ("mixed", "a union of types that are not all JSON"),
-            ("money", "_Money, a class that is not a record"),
-        ],
-    )
-    def test_a_type_with_no_column_is_undeclared_with_its_reason(
-        self, scalars: dict[str, ResolvedField], name: str, reason: str
-    ) -> None:
-        field = scalars[name]
-
-        assert (field.outcome, field.reason, field.column_type) == (
-            Outcome.UNDECLARED,
-            reason,
-            None,
-        )
-
     def test_a_foreign_class_whose_hints_cannot_resolve_is_not_a_record(self) -> None:
         (item,) = Record(_HoldsForeign).resolve()
 
