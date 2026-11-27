@@ -19,11 +19,11 @@ from loom.etl.engines._historify._common import log_run_cols, prev_period_value
 
 
 def _history_boundary_dtype_sql(spec: HistorifySpec) -> str:
-    return "date" if spec.date_type is HistoryDateType.DATE else "timestamp"
+    return "date" if spec.resolved_date_type is HistoryDateType.DATE else "timestamp"
 
 
 def _next_period(col: Column, spec: HistorifySpec) -> Column:
-    if spec.date_type is HistoryDateType.DATE:
+    if spec.resolved_date_type is HistoryDateType.DATE:
         return F.date_add(col, 1)
     return col + F.expr("INTERVAL 1 MICROSECOND")
 
@@ -176,7 +176,7 @@ class SparkHistorifyOps:
         window = Window.partitionBy(entity_key).orderBy(eff_col)
         next_date = F.lead(eff_col).over(window)
 
-        if spec.date_type is HistoryDateType.DATE:
+        if spec.resolved_date_type is HistoryDateType.DATE:
             valid_to_expr = F.date_sub(next_date, 1)
         else:
             valid_to_expr = next_date - F.expr("INTERVAL 1 MICROSECOND")
@@ -283,7 +283,7 @@ class SparkHistorifyOps:
         eff_col: str,
         spec: HistorifySpec,
     ) -> None:
-        if spec.date_type is not HistoryDateType.DATE:
+        if spec.resolved_date_type is not HistoryDateType.DATE:
             return
         combo_key = keys + [eff_col]
         n_rows = frame.count()

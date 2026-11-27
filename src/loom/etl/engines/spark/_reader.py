@@ -4,10 +4,8 @@ from __future__ import annotations
 
 import logging
 from collections.abc import Callable, Mapping
-from contextlib import suppress
-from typing import Any, Final
+from typing import Any
 
-from py4j.protocol import Py4JError
 from pyspark.sql import DataFrame, SparkSession
 from pyspark.sql import functions as F
 
@@ -24,6 +22,7 @@ from loom.etl.engines._format_registry import resolve_format_handler
 from loom.etl.engines._path_template import resolve_file_uri
 from loom.etl.engines._predicate import predicate_to_sql
 from loom.etl.engines.spark._dtype import frame_type_to_spark
+from loom.etl.engines.spark._json_failure import is_json_decode_failure
 from loom.etl.ports.contracts import SourceReader
 from loom.etl.schema._schema import ColumnSchema
 from loom.etl.storage._file_locator import FileLocator
@@ -36,9 +35,6 @@ from loom.etl.storage.routing import (
 )
 
 _log = logging.getLogger(__name__)
-
-_MALFORMED_RECORD: Final = "MALFORMED_RECORD_IN_PARSING"
-_ERROR_CLASS_GETTERS: Final = ("getCondition", "getErrorClass")
 
 _FROM_JSON_MODE: Mapping[JsonMismatch, str] = {
     JsonMismatch.FAIL: "FAILFAST",
@@ -70,26 +66,9 @@ class SparkSourceReader(SourceReader):
         self._resolver = resolver
         self._file_locator = file_locator
 
-    @staticmethod
-    def _error_class_of(java_error: Any) -> str:
-        """The Spark error class of a JVM exception, ``""`` when it is not a Spark error."""
-        for getter in _ERROR_CLASS_GETTERS:
-            with suppress(Py4JError):
-                return str(getattr(java_error, getter)() or "")
-        return ""
-
     def is_json_decode_failure(self, error: Exception) -> bool:
-        """Whether *error* is a FAILFAST ``from_json`` rejecting a malformed document.
-
-        Spark reports it as the error class ``MALFORMED_RECORD_IN_PARSING`` on a
-        cause of the JVM exception that PySpark carries.
-        """
-        java_error = getattr(error, "java_exception", None)
-        while java_error is not None:
-            if self._error_class_of(java_error).startswith(_MALFORMED_RECORD):
-                return True
-            java_error = java_error.getCause()
-        return False
+        """Whether *error* is a FAILFAST ``from_json`` rejecting a malformed document."""
+        return is_json_decode_failure(error)
 
     def read(self, spec: SourceSpec, params_instance: Any, /) -> DataFrame:
         """Read source spec and return DataFrame."""

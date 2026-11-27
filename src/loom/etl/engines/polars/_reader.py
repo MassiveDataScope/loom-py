@@ -35,6 +35,7 @@ from loom.etl.storage.routing import PathRouteResolver, PathTarget, TableRouteRe
 
 from ._dtype import frame_type_to_polars
 from ._frame import FrameT
+from ._json_failure import is_json_decode_failure
 from ._predicate import predicate_to_polars
 from ._tolerant_json import TolerantJson
 
@@ -111,7 +112,7 @@ class PolarsSourceReader(SourceReader):
 
     def is_json_decode_failure(self, error: Exception) -> bool:
         """Whether *error* is Polars refusing a JSON document while decoding a column."""
-        return isinstance(error, pl.exceptions.ComputeError) and "error deserializing" in str(error)
+        return is_json_decode_failure(error)
 
     def read(self, spec: SourceSpec, params_instance: Any, /) -> pl.LazyFrame:
         """Read source spec and return lazy frame."""

@@ -202,7 +202,7 @@ it. Input-only columns (`delete_flag`, `delete_marker`), the boundary columns
 historify computes and the audit columns a Polars write stamps (`audit.enabled`) are
 kept, with the types the stamp gives them. If the existing table's physical schema disagrees
 with the model the writer fails as it did before. Drift detection, exact-column
-rules, creation rules and schema evolution come later, in 023b.
+rules, creation rules and schema evolution are not supported yet.
 
 ## Testing from the model
 

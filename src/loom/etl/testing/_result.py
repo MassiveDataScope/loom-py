@@ -13,7 +13,7 @@ from loom.etl.declarative.target._table import UpsertSpec
 from loom.etl.declarative.target._temp import TempFanInSpec, TempSpec
 from loom.etl.engines.polars._writer import _require_boolean_flag_column
 from loom.etl.schema._schema import LoomDtype
-from loom.etl.testing._model_rows import ModelRows
+from loom.etl.testing._model_rows import ModelRows, RowDifference
 
 ModelT = TypeVar("ModelT")
 
@@ -182,10 +182,11 @@ class StepResult:
             )
         (model,) = models
         actual = self.rows(model)
-        missing, unexpected = ModelRows.differences(instances, actual)
-        if missing or unexpected:
+        difference = RowDifference.between(instances, actual)
+        if not difference.is_empty:
             raise AssertionError(
-                f"{model.__name__} rows differ.\nmissing: {missing}\nunexpected: {unexpected}"
+                f"{model.__name__} rows differ.\nmissing: {difference.missing}"
+                f"\nunexpected: {difference.unexpected}"
             )
 
     def assert_count(self, n: int) -> None:

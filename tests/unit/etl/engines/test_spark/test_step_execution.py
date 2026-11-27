@@ -11,7 +11,6 @@ import pytest
 from pyspark.sql import DataFrame, SparkSession
 from pyspark.sql import functions as F
 
-from loom.core.errors import InvalidValue
 from loom.core.observability.observability import Observability
 from loom.etl import (
     ETLStep,
@@ -37,7 +36,7 @@ from loom.etl.schema._schema import ColumnSchema, LoomDtype, SchemaNotFoundError
 from loom.etl.storage._config import MissingTablePolicy
 from loom.etl.testing import RecordingRunObserver
 from tests.unit.etl.engines.doubles import NoParams
-from tests.unit.etl.engines.frame_types import Buyer
+from tests.unit.etl.models import Buyer
 
 from .conftest import SparkSourceReader, SparkTargetWriter, spark_table_path
 
@@ -56,14 +55,6 @@ class SparkPassThroughStep(ETLStep[NoParams]):
 
     def execute(self, params: NoParams, *, events: DataFrame) -> DataFrame:  # type: ignore[override]
         return events
-
-
-class SparkDecodeBuyerStep(ETLStep[NoParams]):
-    customers: FromTable = FromTable("raw.customers").parse_json("buyer", Buyer)  # type: ignore[assignment]
-    target = IntoTable("staging.customers").replace(schema=SchemaMode.OVERWRITE)
-
-    def execute(self, params: NoParams, *, customers: DataFrame) -> DataFrame:  # type: ignore[override]
-        return customers
 
 
 class SparkAppendStep(ETLStep[NoParams]):
@@ -354,23 +345,6 @@ class TestRunStepContracts:
 
 
 class TestJsonDecodeFailure:
-    @pytest.mark.parametrize(
-        "document", ["not json", "[1, 2]"], ids=["malformed", "shape-mismatch"]
-    )
-    def test_a_document_that_does_not_decode_names_the_declared_column(
-        self,
-        spark: SparkSession,
-        seed_spark_table: Callable[[str | TableRef, DataFrame], Path],
-        spark_reader: SparkSourceReader,
-        spark_writer: SparkTargetWriter,
-        document: str,
-    ) -> None:
-        seed_spark_table("raw.customers", spark.createDataFrame([(document,)], ["buyer"]))
-        plan = ETLCompiler().compile_step(SparkDecodeBuyerStep)
-
-        with pytest.raises(InvalidValue, match=r"customers\.buyer as StructType"):
-            ETLExecutor(spark_reader, spark_writer).run_step(plan, NoParams())
-
     def test_null_mode_tolerates_a_document_that_fails_in_strict_mode(
         self,
         spark: SparkSession,
@@ -431,6 +405,7 @@ class TestSparkReaderWriterTypeGuards:
         with pytest.raises(ValueError, match="skip_rows"):
             spark_reader.read(read_spec, None)
 
+    @pytest.mark.usefixtures("no_python_per_row")
     def test_unified_reader_parses_json_string_column_from_json_file(
         self,
         spark_reader: SparkSourceReader,
@@ -448,12 +423,10 @@ class TestSparkReaderWriterTypeGuards:
             .parse_json("payload", _PayloadContract)
             ._to_spec("events")
         )
-        frame = spark_reader.read(spec, None).orderBy("event_id")
-        result = frame.collect()
+        result = spark_reader.read(spec, None).orderBy("event_id").collect()
 
         assert [row["payload"]["store"] for row in result] == ["es", "uk"]
         assert [row["payload"]["itemCount"] for row in result] == [2, 1]
-        assert "Python" not in frame._jdf.queryExecution().toString()
         assert [row["payload"]["amount"] for row in result] == pytest.approx([10.0, 7.5])
 
     def test_unified_components_reject_xlsx_without_plugin(

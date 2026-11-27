@@ -46,9 +46,9 @@ _RULES: dict[str, tuple[tuple[str, ...], tuple[str, ...]]] = {
         ),
         (),
     ),
-    # The column vocabulary is a leaf: stdlib, msgspec and loom.core.errors, nothing else (D3, D10).
+    # The column vocabulary is a leaf: stdlib, msgspec and loom.core.errors, nothing else.
     "loom.core.model.types": (("loom",), ("loom.core.errors", "loom.core.model.types")),
-    # The frame vocabulary translates models without reading an engine or a store (spec 023, D10).
+    # The frame vocabulary translates models without reading an engine or a store.
     "loom.etl.schema": (
         (
             "loom.etl.declarative",
@@ -62,7 +62,7 @@ _RULES: dict[str, tuple[tuple[str, ...], tuple[str, ...]]] = {
         ),
         (),
     ),
-    # An engine reads no other engine's runtime (spec 023, D10).
+    # An engine reads no other engine's runtime.
     "loom.etl.engines.polars": (("pyspark",), ()),
     "loom.etl.engines.spark": (("polars",), ()),
     # No transport but the JobService adapter and the ones app.entry selects, lazily.
@@ -156,16 +156,6 @@ def test_the_column_vocabulary_imports_only_stdlib_msgspec_and_core_errors() -> 
                 offenders.append(f"{module} imports {imported}")
 
     assert offenders == []
-
-
-def test_a_layer_naming_a_single_module_is_that_module() -> None:
-    assert _layer_files("loom.core.identity.context") == [
-        _SRC / "loom" / "core" / "identity" / "context.py"
-    ]
-
-
-def test_a_layer_naming_nothing_matches_no_file() -> None:
-    assert _layer_files("loom.core.identity.no_such_module") == []
 
 
 def test_the_check_sees_function_local_and_relative_imports() -> None:

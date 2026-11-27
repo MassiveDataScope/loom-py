@@ -27,10 +27,12 @@ class _RowColumn:
     is_json_text: bool
 
     @classmethod
-    def of(cls, column: ColumnSchema, *, stores_json: bool) -> _RowColumn:
-        is_text = column.dtype is LoomDtype.UTF8
+    def of(cls, column: ColumnSchema, table: ModelTable) -> _RowColumn:
         return cls(
-            column.name, frame_type_to_polars(column.dtype), is_text, stores_json and is_text
+            column.name,
+            frame_type_to_polars(column.dtype),
+            column.dtype is LoomDtype.UTF8,
+            column.name in table.json_text_columns,
         )
 
     def to_lake(self, value: Any) -> Any:
@@ -52,7 +54,55 @@ class ModelSeed:
     """The rows to seed for one model: its table and the row tuples in column order."""
 
     table: ModelTable
-    values: list[tuple[Any, ...]]
+    values: tuple[tuple[Any, ...], ...]
+
+
+@dataclass(frozen=True, slots=True)
+class RowDifference:
+    """The rows two lists of model instances do not share, compared as a multiset by value.
+
+    Args:
+        missing: The expected instances the actual rows lack.
+        unexpected: The actual instances that were not expected.
+    """
+
+    missing: list[Any]
+    unexpected: list[Any]
+
+    @classmethod
+    def between(cls, expected: Sequence[Any], actual: Sequence[Any]) -> RowDifference:
+        """The difference between *expected* and *actual* instances, in any order."""
+        wanted = [cls._hashable(row) for row in expected]
+        found = [cls._hashable(row) for row in actual]
+        rows = dict(zip([*found, *wanted], [*actual, *expected], strict=True))
+        missing = (Counter(wanted) - Counter(found)).elements()
+        unexpected = (Counter(found) - Counter(wanted)).elements()
+        return cls([rows[key] for key in missing], [rows[key] for key in unexpected])
+
+    @property
+    def is_empty(self) -> bool:
+        """Whether the rows are the same."""
+        return not (self.missing or self.unexpected)
+
+    @staticmethod
+    def _hashable(value: Any) -> Any:
+        """A hashable stand-in for *value* that is equal exactly when the values are."""
+        match value:
+            case msgspec.Struct():
+                return (
+                    type(value),
+                    tuple(RowDifference._hashable(item) for item in msgspec.structs.astuple(value)),
+                )
+            case list() | tuple():
+                return tuple(RowDifference._hashable(item) for item in value)
+            case dict():
+                return frozenset(
+                    (key, RowDifference._hashable(item)) for key, item in value.items()
+                )
+            case set() | frozenset():
+                return frozenset(RowDifference._hashable(item) for item in value)
+            case _:
+                return value
 
 
 class ModelRows:
@@ -70,10 +120,7 @@ class ModelRows:
 
     def __init__(self, model: type) -> None:
         self.table = ModelTable.from_model(model)
-        self._columns = tuple(
-            _RowColumn.of(column, stores_json=column.name in self.table.json_text_columns)
-            for column in self.table.schema
-        )
+        self._columns = tuple(_RowColumn.of(column, self.table) for column in self.table.schema)
 
     @classmethod
     def seeds_of(cls, instances: Iterable[Any]) -> list[ModelSeed]:
@@ -91,30 +138,17 @@ class ModelRows:
             seeds.append(ModelSeed(model_rows.table, model_rows.seed_values(rows)))
         return seeds
 
-    @staticmethod
-    def differences(expected: Sequence[Any], actual: Sequence[Any]) -> tuple[list[Any], list[Any]]:
-        """The *expected* instances *actual* lacks and the *actual* ones not expected.
-
-        Rows are compared as a multiset, by value, in any order.
-        """
-        wanted = [ModelRows._frozen(row) for row in expected]
-        found = [ModelRows._frozen(row) for row in actual]
-        rows = dict(zip([*found, *wanted], [*actual, *expected], strict=True))
-        missing = (Counter(wanted) - Counter(found)).elements()
-        unexpected = (Counter(found) - Counter(wanted)).elements()
-        return [rows[key] for key in missing], [rows[key] for key in unexpected]
-
-    def seed_values(self, instances: list[Any]) -> list[tuple[Any, ...]]:
+    def seed_values(self, instances: list[Any]) -> tuple[tuple[Any, ...], ...]:
         """The row tuples of *instances*, in column order.
 
         Raises:
             InvalidValue: Two instances share a conflict key.
         """
         self._require_distinct_keys(instances)
-        return [
+        return tuple(
             tuple(column.to_lake(getattr(instance, column.name)) for column in self._columns)
             for instance in instances
-        ]
+        )
 
     def instances_in(self, frame: pl.DataFrame) -> list[Any]:
         """The instances of the rows of *frame*, cast to the lake types of the model.
@@ -155,21 +189,3 @@ class ModelRows:
                 f"seed_rows: {self.table.model.__name__} repeats the key {named}; "
                 f"give each row its own {list(key)}, because make() repeats what it generates."
             )
-
-    @staticmethod
-    def _frozen(value: Any) -> Any:
-        """A hashable stand-in for *value* that is equal exactly when the values are."""
-        match value:
-            case msgspec.Struct():
-                return (
-                    type(value),
-                    tuple(ModelRows._frozen(item) for item in msgspec.structs.astuple(value)),
-                )
-            case list() | tuple():
-                return tuple(ModelRows._frozen(item) for item in value)
-            case dict():
-                return frozenset((key, ModelRows._frozen(item)) for key, item in value.items())
-            case set() | frozenset():
-                return frozenset(ModelRows._frozen(item) for item in value)
-            case _:
-                return value

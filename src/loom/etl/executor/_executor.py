@@ -54,8 +54,7 @@ from loom.etl.compiler._plan import (
     ProcessStepNode,
     StepPlan,
 )
-from loom.etl.declarative._declared_table import ModelBoundSpec
-from loom.etl.declarative.source import FileSourceSpec, TableSourceSpec, TempSourceSpec
+from loom.etl.declarative.source import TempSourceSpec
 from loom.etl.declarative.target._client import ClientSpec
 from loom.etl.declarative.target._temp import TempFanInSpec, TempSpec
 from loom.etl.event import EtlEvent, EtlKey
@@ -67,7 +66,7 @@ from loom.etl.ports._config_values import resolve_config_value
 from loom.etl.ports.contracts import (
     AgentBatchRunner,
     ClientCommandExecutor,
-    JsonDecodeFailureReader,
+    JsonDecodeFailureRecognizer,
     SourceReader,
     SQLExecutor,
     StreamingSourceReader,
@@ -320,28 +319,17 @@ class ETLExecutor:
         )
 
     def _is_json_decode_failure(self, error: Exception) -> bool:
-        return isinstance(self._reader, JsonDecodeFailureReader) and (
-            self._reader.is_json_decode_failure(error)
+        return any(
+            isinstance(port, JsonDecodeFailureRecognizer) and port.is_json_decode_failure(error)
+            for port in (self._reader, self._writer)
         )
 
     @staticmethod
     def _json_decode_error(plan: StepPlan) -> InvalidValue:
-        declared = [
-            f"{binding.alias}.{json_column.column} as {json_column.frame_type}"
-            for binding in plan.source_bindings
-            if isinstance(binding.spec, (TableSourceSpec, FileSourceSpec))
-            for json_column in binding.spec.json_columns
-        ]
-        target = plan.target_binding.spec
-        if isinstance(target, ModelBoundSpec) and target.model_table is not None:
-            declared.extend(
-                f"target {target.table_ref.ref}.{column.name} as {column.dtype}"
-                for column in target.model_table.json_columns
-            )
         return InvalidValue(
             f"Step {plan.step_type.__name__!r} failed to decode a JSON column: a document is "
             f"malformed or does not match its declared type. Declared JSON columns: "
-            f"{', '.join(declared)}. "
+            f"{', '.join(plan.declared_json_columns)}. "
             "If the documents vary, read the column with "
             "parse_json(..., on_mismatch=JsonMismatch.NULL), or declare the field as JsonStr "
             "and decode it explicitly in the step."

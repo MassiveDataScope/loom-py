@@ -10,15 +10,7 @@ from pyspark.sql import types as T
 
 
 class SparkSchemaAligner:
-    """Aligns a DataFrame.
-
-    Args:
-        decodes_json_text: Whether a text column is decoded into the struct or array the
-            schema declares for it, instead of cast.
-    """
-
-    def __init__(self, decodes_json_text: bool = False) -> None:
-        self._decodes_json_text = decodes_json_text
+    """Aligns a DataFrame."""
 
     def column_types(self, frame: DataFrame) -> dict[str, Any]:
         return {f.name: f.dataType for f in frame.schema.fields}
@@ -27,14 +19,14 @@ class SparkSchemaAligner:
         return [(f.name, f.dataType) for f in schema.fields]
 
     def cast_column(self, name: str, dtype: T.DataType, source: T.DataType) -> tuple[str, Column]:
-        """Cast a column; JSON text becomes the struct or array its model declares."""
-        if (
-            self._decodes_json_text
-            and isinstance(source, T.StringType)
-            and isinstance(dtype, T.StructType | T.ArrayType)
-        ):
+        """Cast a column; JSON text becomes the struct or array the schema declares for it."""
+        if self.decodes_json_text(source, dtype):
             return name, F.from_json(F.col(name), dtype, {"mode": "FAILFAST"})
         return name, self._cast_col(name, dtype)
+
+    def decodes_json_text(self, source: T.DataType, dtype: T.DataType) -> bool:
+        """Whether a column of type *source* is cast to *dtype* by decoding it; never by default."""
+        return False
 
     def _cast_col(self, col_ref: str, dtype: T.DataType) -> Column:
         if isinstance(dtype, T.StructType):
@@ -55,3 +47,11 @@ class SparkSchemaAligner:
 
     def select_columns(self, frame: DataFrame, names: list[str]) -> DataFrame:
         return frame.select(names)
+
+
+class SparkModelSchemaAligner(SparkSchemaAligner):
+    """Aligns to a model's schema, where a text column is JSON for a struct or array field."""
+
+    def decodes_json_text(self, source: T.DataType, dtype: T.DataType) -> bool:
+        """Whether a column of type *source* is JSON text for the struct or array *dtype*."""
+        return isinstance(source, T.StringType) and isinstance(dtype, T.StructType | T.ArrayType)

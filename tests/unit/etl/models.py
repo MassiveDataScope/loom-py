@@ -82,7 +82,7 @@ _ZIP = StructField("zip_code", LoomDtype.UTF8)
 LAKE_ROWS = {
     "string": (Annotated[str, String(20)], LoomDtype.UTF8),
     "text": (Annotated[str, Text], LoomDtype.UTF8),
-    "json-str": (JsonStr, LoomDtype.UTF8),
+    "json_str": (JsonStr, LoomDtype.UTF8),
     "uuid": (UUID, LoomDtype.UTF8),
     "tiny": (Annotated[int, TinyInteger], LoomDtype.INT8),
     "small": (Annotated[int, SmallInteger], LoomDtype.INT16),
@@ -93,13 +93,13 @@ LAKE_ROWS = {
     "bool": (bool, LoomDtype.BOOLEAN),
     "bytes": (bytes, LoomDtype.BINARY),
     "date": (date, LoomDtype.DATE),
-    "datetime-tz": (datetime, DatetimeType("us", "UTC")),
-    "datetime-naive": (Annotated[datetime, DateTime(tz=False)], DatetimeType("us", None)),
-    "numeric-scale-0": (Annotated[Decimal, Numeric(precision=12)], DecimalType(12)),
+    "datetime_tz": (datetime, DatetimeType("us", "UTC")),
+    "datetime_naive": (Annotated[datetime, DateTime(tz=False)], DatetimeType("us", None)),
+    "numeric_scale_0": (Annotated[Decimal, Numeric(precision=12)], DecimalType(12)),
     "numeric": (Annotated[Decimal, Numeric(precision=38, scale=4)], DecimalType(38, 4)),
-    "json-opaque": (dict[str, Any], LoomDtype.UTF8),
-    "json-struct": (SubEntity, StructType((_STREET, _ZIP))),
-    "json-struct-camel": (
+    "json_opaque": (dict[str, Any], LoomDtype.UTF8),
+    "json_struct": (SubEntity, StructType((_STREET, _ZIP))),
+    "json_struct_camel": (
         CamelEntity,
         StructType(
             (
@@ -108,16 +108,17 @@ LAKE_ROWS = {
             )
         ),
     ),
-    "json-list-str": (list[str], ListType(LoomDtype.UTF8)),
-    "json-list-struct": (list[SubEntity], ListType(StructType((_STREET, _ZIP)))),
+    "json_list_str": (list[str], ListType(LoomDtype.UTF8)),
+    "json_list_struct": (list[SubEntity], ListType(StructType((_STREET, _ZIP)))),
     "jsonb": (Annotated[dict[str, Any], Postgres.JSONB], LoomDtype.UTF8),
-    "postgres-uuid": (Annotated[UUID, Postgres.UUID], LoomDtype.UTF8),
-    "postgres-inet": (Annotated[str, Postgres.INET], LoomDtype.UTF8),
-    "postgres-array": (Annotated[list[str], Postgres.ARRAY(String())], ListType(LoomDtype.UTF8)),
+    "postgres_uuid": (Annotated[UUID, Postgres.UUID], LoomDtype.UTF8),
+    "postgres_inet": (Annotated[str, Postgres.INET], LoomDtype.UTF8),
+    "postgres_array": (Annotated[list[str], Postgres.ARRAY(String())], ListType(LoomDtype.UTF8)),
 }
+LAKE_TYPES = {name: frame_type for name, (_, frame_type) in LAKE_ROWS.items()}
 LAKE_FRAME_TYPES = {
-    **{name: frame_type for name, (_, frame_type) in LAKE_ROWS.items()},
-    "struct-nested-decimal": StructType(
+    **LAKE_TYPES,
+    "struct_nested_decimal": StructType(
         (
             StructField("id", LoomDtype.INT64),
             StructField("tags", ListType(DecimalType(18, 2))),
@@ -126,10 +127,7 @@ LAKE_FRAME_TYPES = {
 }
 
 
-LAKE_COLUMNS = {name.replace("-", "_"): row for name, row in LAKE_ROWS.items()}
-
-
 def lake_model() -> type[BaseModel]:
     """A model with one column per lake row."""
-    annotations = {name: annotation for name, (annotation, _) in LAKE_COLUMNS.items()}
+    annotations = {name: annotation for name, (annotation, _) in LAKE_ROWS.items()}
     return type("Lake", (BaseModel,), {"__tablename__": "lake", "__annotations__": annotations})

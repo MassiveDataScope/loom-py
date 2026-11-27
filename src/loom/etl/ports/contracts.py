@@ -136,12 +136,12 @@ class StreamingSourceReader(Protocol):
 
 
 @runtime_checkable
-class JsonDecodeFailureReader(Protocol):
+class JsonDecodeFailureRecognizer(Protocol):
     """Optional capability protocol for recognising a failed JSON column decode.
 
-    A decode that is strict fails when the frame is consumed, far from the
-    source that declared it. A reader that decodes JSON columns strictly
-    exposes this check so the executor can name the declared columns.
+    A decode that is strict fails when the frame is consumed, in the reader that
+    declared it or in the writer that decodes model JSON text. Either exposes this
+    check so the executor can name the declared columns.
     """
 
     def is_json_decode_failure(self, error: Exception) -> bool:
@@ -333,7 +333,7 @@ __all__ = [
     "AgentIssueKind",
     "TableDiscovery",
     "SourceReader",
-    "JsonDecodeFailureReader",
+    "JsonDecodeFailureRecognizer",
     "StreamingSourceReader",
     "SQLExecutor",
     "TargetWriter",

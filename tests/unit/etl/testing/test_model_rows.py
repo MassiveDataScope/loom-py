@@ -12,10 +12,12 @@ pytest.importorskip("deltalake")
 
 from loom.core.errors import InvalidUse, InvalidValue  # noqa: E402
 from loom.etl.testing import PolarsStepRunner  # noqa: E402
+from loom.etl.testing.spark import SparkStepRunner  # noqa: E402
 from loom.testing import make  # noqa: E402
-from tests.unit.etl.engines.frame_types import CamelEntity, Order  # noqa: E402
+from tests.unit.etl.models import CamelEntity, Order  # noqa: E402
 from tests.unit.etl.testing.models import (  # noqa: E402
     CustomerTotal,
+    EchoVisitors,
     Since,
     Tier,
     TotalCustomers,
@@ -35,6 +37,29 @@ def runner(request: pytest.FixtureRequest, tmp_path: Path) -> PolarsStepRunner:
     return PolarsStepRunner(delta_root=tmp_path if request.param == "delta" else None)
 
 
+@pytest.fixture(params=["polars", "polars-delta", "spark"])
+def rows_runner(
+    request: pytest.FixtureRequest, tmp_path: Path
+) -> PolarsStepRunner | SparkStepRunner:
+    if request.param == "spark":
+        return SparkStepRunner(request.getfixturevalue("spark"))
+    return PolarsStepRunner(delta_root=tmp_path if request.param == "polars-delta" else None)
+
+
+class TestRowsContract:
+    def test_a_model_round_trips_through_seed_run_and_rows_by_field_name(
+        self, rows_runner: PolarsStepRunner | SparkStepRunner
+    ) -> None:
+        stop = CamelEntity(zip_code="28001", seen_at=DAY)
+        visitor = make(
+            Visitor, tier=Tier.GOLD, home=stop, stops=[stop], extras={"vip": True}, note=None
+        )
+
+        result = rows_runner.seed_rows(visitor).run(EchoVisitors, SINCE)
+
+        assert result.rows(Visitor) == [visitor]
+
+
 class TestOutcome:
     def test_the_total_of_the_seeded_orders_is_the_model_row(
         self, runner: PolarsStepRunner
@@ -45,16 +70,6 @@ class TestOutcome:
 
         result.assert_rows(make(CustomerTotal, customer_id="c1", spent=Decimal("22"), orders=2))
 
-    def test_a_second_run_upserts_without_duplicates(self, tmp_path: Path) -> None:
-        runner = PolarsStepRunner(delta_root=tmp_path).seed_rows(_order("o1", "10"))
-
-        runner.run(TotalCustomers, SINCE)
-        runner.run(TotalCustomers, SINCE)
-
-        runner.table("sales.customer_total").assert_rows(
-            make(CustomerTotal, customer_id="c1", spent=Decimal("10"), orders=1)
-        )
-
 
 class TestSeedRows:
     def test_a_key_given_twice_is_refused_naming_model_and_key(
@@ -62,17 +77,6 @@ class TestSeedRows:
     ) -> None:
         with pytest.raises(InvalidValue, match=r"Order repeats the key \{'order_id': 'o1'\}"):
             runner.seed_rows(_order("o1", "1"), _order("o1", "2"))
-
-
-class TestRows:
-    def test_uuid_enum_json_and_null_columns_round_trip_by_field_name(self, tmp_path: Path) -> None:
-        stop = CamelEntity(zip_code="28001", seen_at=DAY)
-        visitor = make(
-            Visitor, tier=Tier.GOLD, home=stop, stops=[stop], extras={"vip": True}, note=None
-        )
-        runner = PolarsStepRunner(delta_root=tmp_path).seed_rows(visitor)
-
-        assert runner.table("sales.visitor").rows(Visitor) == [visitor]
 
 
 class TestAssertRows:

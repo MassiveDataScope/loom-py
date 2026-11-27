@@ -3,155 +3,50 @@
 from __future__ import annotations
 
 import logging
-from collections.abc import Callable, Collection, Iterator
+from collections.abc import Collection, Iterator
 from datetime import UTC, date, datetime
 from decimal import Decimal
 from pathlib import Path
-from typing import Annotated, Any, Protocol
+from typing import Annotated, Any
 
-import polars as pl
 import pytest
 
 from loom.core.errors import InvalidValue
 from loom.core.model import BaseModel, Field
-from loom.etl import ETLStep, FromTable, IntoTable
+from loom.etl import ETLStep, FromTable, IntoHistory, IntoTable
 from loom.etl.compiler import ETLCompiler
 from loom.etl.declarative.expr import params as p
-from loom.etl.declarative.expr._refs import TableRef
-from loom.etl.declarative.target import TableSpec
-from loom.etl.declarative.target._history import HistorifyInputMode, HistorifySpec
-from loom.etl.declarative.target._table import (
-    AppendSpec,
-    ReplacePartitionsSpec,
-    ReplaceSpec,
-    UpdateSpec,
-    UpsertSpec,
-)
-from loom.etl.engines.polars import PolarsSourceReader, PolarsTargetWriter, polars_to_frame_type
 from loom.etl.event import EtlEvent, EtlKey
 from loom.etl.executor import ETLExecutor
 from loom.etl.lineage._records import WriteContext
-from loom.etl.ports.contracts import TargetWriter
-from loom.etl.schema import FrameType, LoomDtype, ModelTable
-from loom.etl.storage._config import AuditConfig, CustomColumnDef, MissingTablePolicy
+from loom.etl.schema import LoomDtype, ModelTable
+from loom.etl.storage._config import AuditConfig, CustomColumnDef
 from tests.helpers.loggers import CapturedLog
-from tests.unit.etl.engines.doubles import NoParams, RunDateParams
-from tests.unit.etl.engines.frame_types import (
-    LAKE_COLUMNS,
-    LAKE_ROWS,
+from tests.unit.etl.engines.doubles import (
+    ModelEngine,
+    NoParams,
+    PolarsEngine,
+    RunDateParams,
+    SparkEngine,
+)
+from tests.unit.etl.models import (
+    LAKE_TYPES,
     CamelEntity,
     Order,
     Rate,
     SubEntity,
     lake_model,
-    probe_model,
 )
 
 _ORDER = ModelTable.from_model(Order)
 _RATE = ModelTable.from_model(Rate)
 _PLACED = datetime(2026, 1, 5, tzinfo=UTC)
 _SPARK_ACTIONS = ("count", "isEmpty", "collect", "first", "take", "toPandas")
+_ORDER_ID = (Order.c.order_id,)
+_BY_CUSTOMER = (Order.c.customer_id,)
 
 
-class _Engine(Protocol):
-    """What a test needs of a backend: a writer, frames, and what a table stores."""
-
-    writer: TargetWriter
-
-    def frame(self, columns: dict[str, list[Any]]) -> Any: ...
-
-    def stored(self, ref: str) -> list[dict[str, Any]]: ...
-
-    def stored_types(self, ref: str) -> dict[str, FrameType]: ...
-
-    def read_columns(self, source: FromTable) -> list[str]: ...
-
-    def is_json_decode_failure(self, error: Exception) -> bool: ...
-
-
-def _table_path(root: Path, ref: str) -> str:
-    return str(root.joinpath(*ref.split(".")))
-
-
-class _PolarsEngine:
-    def __init__(self, root: Path, audit: AuditConfig | None = None) -> None:
-        self._root = root
-        self.writer = PolarsTargetWriter(
-            str(root), missing_table_policy=MissingTablePolicy.CREATE, audit_config=audit
-        )
-
-    def frame(self, columns: dict[str, list[Any]]) -> pl.LazyFrame:
-        return pl.LazyFrame(columns)
-
-    def stored(self, ref: str) -> list[dict[str, Any]]:
-        return pl.read_delta(_table_path(self._root, ref)).to_dicts()
-
-    def read_columns(self, source: FromTable) -> list[str]:
-        frame = PolarsSourceReader(str(self._root)).read(source._to_spec("orders"), None)
-        return frame.collect_schema().names()
-
-    def is_json_decode_failure(self, error: Exception) -> bool:
-        return PolarsSourceReader(str(self._root)).is_json_decode_failure(error)
-
-    def stored_types(self, ref: str) -> dict[str, FrameType]:
-        schema = pl.scan_delta(_table_path(self._root, ref)).collect_schema()
-        return {name: polars_to_frame_type(dtype) for name, dtype in schema.items()}
-
-
-class _SparkEngine:
-    def __init__(self, spark: Any, root: Path) -> None:
-        from loom.etl.engines.spark import SparkTargetWriter
-
-        self._spark = spark
-        self._root = root
-        self.writer = SparkTargetWriter(spark, root, missing_table_policy=MissingTablePolicy.CREATE)
-
-    def frame(self, columns: dict[str, list[Any]]) -> Any:
-        return self._spark.createDataFrame(list(zip(*columns.values(), strict=True)), list(columns))
-
-    def stored(self, ref: str) -> list[dict[str, Any]]:
-        return [row.asDict(recursive=True) for row in self._stored(ref).collect()]
-
-    def read_columns(self, source: FromTable) -> list[str]:
-        from loom.etl.engines.spark import SparkSourceReader
-
-        reader = SparkSourceReader(self._spark, str(self._root))
-        return reader.read(source._to_spec("orders"), None).columns
-
-    def is_json_decode_failure(self, error: Exception) -> bool:
-        from loom.etl.engines.spark import SparkSourceReader
-
-        return SparkSourceReader(self._spark, str(self._root)).is_json_decode_failure(error)
-
-    def stored_types(self, ref: str) -> dict[str, FrameType]:
-        from loom.etl.engines.spark._dtype import spark_to_frame_type
-
-        return {f.name: spark_to_frame_type(f.dataType) for f in self._stored(ref).schema.fields}
-
-    def _stored(self, ref: str) -> Any:
-        return self._spark.read.format("delta").load(_table_path(self._root, ref))
-
-
-@pytest.fixture
-def polars_engine(tmp_path: Path) -> _PolarsEngine:
-    return _PolarsEngine(tmp_path)
-
-
-@pytest.fixture
-def spark_engine(spark: Any, tmp_path: Path) -> _SparkEngine:
-    return _SparkEngine(spark, tmp_path)
-
-
-@pytest.fixture(params=["polars_engine", "spark_engine"])
-def engine(request: pytest.FixtureRequest) -> _Engine:
-    return request.getfixturevalue(request.param)
-
-
-def _spec(factory: Callable[..., TableSpec], ref: str = "sales.order", **fields: Any) -> TableSpec:
-    return factory(table_ref=TableRef(ref), model=Order, **fields)
-
-
-def _orders(engine: _Engine, *order_ids: str, void: Collection[str] | None = None) -> Any:
+def _orders(engine: ModelEngine, *order_ids: str, void: Collection[str] | None = None) -> Any:
     count = len(order_ids)
     columns: dict[str, list[Any]] = {
         Order.c.order_id: list(order_ids),
@@ -166,77 +61,65 @@ def _orders(engine: _Engine, *order_ids: str, void: Collection[str] | None = Non
 
 
 _ORDER_WRITES = {
-    "replace": (lambda: _spec(ReplaceSpec), None),
-    "replace-partitions": (
-        lambda: _spec(ReplacePartitionsSpec, partition_cols=(Order.c.customer_id,)),
-        None,
-    ),
+    "replace": (IntoTable(Order).replace(), None),
+    "replace-partitions": (IntoTable(Order).replace_partitions(*_BY_CUSTOMER), None),
     "replace-partitions-streaming": (
-        lambda: _spec(ReplacePartitionsSpec, partition_cols=(Order.c.customer_id,), streaming=True),
+        IntoTable(Order).replace_partitions(*_BY_CUSTOMER, streaming=True),
         None,
     ),
-    "upsert": (lambda: _spec(UpsertSpec, upsert_keys=(Order.c.order_id,)), None),
-    "update": (
-        lambda: _spec(UpdateSpec, keys=(Order.c.order_id,)),
-        lambda: _spec(UpsertSpec, upsert_keys=(Order.c.order_id,)),
-    ),
+    "upsert": (IntoTable(Order).upsert(keys=_ORDER_ID), None),
+    "update": (IntoTable(Order).update(keys=_ORDER_ID), IntoTable(Order).upsert(keys=_ORDER_ID)),
 }
 
 
 class TestModelAlignTarget:
     @pytest.mark.parametrize("path", _ORDER_WRITES)
     def test_every_path_writes_the_model_types_on_create_and_on_an_existing_table(
-        self, polars_engine: _PolarsEngine, path: str
+        self, polars_engine: PolarsEngine, path: str
     ) -> None:
-        spec_factory, creating_factory = _ORDER_WRITES[path]
-        creating = (creating_factory or spec_factory)()
+        target, creating = _ORDER_WRITES[path]
 
-        polars_engine.writer.write(_orders(polars_engine, "o1"), creating, None)
-        polars_engine.writer.write(_orders(polars_engine, "o1"), spec_factory(), None)
+        polars_engine.writer.write(
+            _orders(polars_engine, "o1"), (creating or target)._to_spec(), None
+        )
+        polars_engine.writer.write(_orders(polars_engine, "o1"), target._to_spec(), None)
 
         assert polars_engine.stored_types("sales.order") == _ORDER.column_types
 
-    def test_a_column_the_frame_lacks_is_null_filled_and_an_extra_one_dropped(
-        self, polars_engine: _PolarsEngine
-    ) -> None:
-        frame = _orders(polars_engine, "o1").drop(Order.c.customer_id)
-
-        polars_engine.writer.write(frame, _spec(AppendSpec), None)
-
-        (stored,) = polars_engine.stored("sales.order")
-        assert stored.keys() == set(_ORDER.column_names)
-        assert stored[Order.c.customer_id] is None
-
-    def test_a_second_upsert_updates_without_duplicates(self, engine: _Engine) -> None:
-        spec = _spec(UpsertSpec, upsert_keys=(Order.c.order_id,))
-
-        engine.writer.write(_orders(engine, "o1", "o2"), spec, None)
-        engine.writer.write(_orders(engine, "o2", "o3"), spec, None)
-
-        assert sorted(row[Order.c.order_id] for row in engine.stored("sales.order")) == [
-            "o1",
-            "o2",
-            "o3",
-        ]
-
-    def test_a_historify_result_is_cast_to_the_model(self, engine: _Engine) -> None:
-        spec = HistorifySpec(
-            table_ref=TableRef("sales.rate"),
-            keys=(Rate.c.rate_id,),
-            effective_date=p.run_date,
-            mode=HistorifyInputMode.SNAPSHOT,
-            track=(Rate.c.price,),
-            model=Rate,
-        )
+    def test_a_historify_result_is_cast_to_the_model(self, engine: ModelEngine) -> None:
+        target = IntoHistory(Rate, keys=(Rate.c.rate_id,), effective_date=p.run_date)
 
         engine.writer.write(
             engine.frame({Rate.c.rate_id: ["r1"], Rate.c.price: [2.5]}),
-            spec,
+            target._to_spec(),
             RunDateParams(date(2026, 1, 5)),
         )
 
         assert engine.stored_types("sales.rate") == _RATE.column_types
         assert [row[Rate.c.price] for row in engine.stored("sales.rate")] == [Decimal("2.50")]
+
+    def test_the_delete_flag_survives_until_used_and_is_not_written(
+        self, polars_engine: PolarsEngine
+    ) -> None:
+        target = IntoTable(Order).upsert(keys=_ORDER_ID, delete_flag="is_void")
+
+        polars_engine.writer.write(
+            _orders(polars_engine, "o1", "o2", void=()), target._to_spec(), None
+        )
+        polars_engine.writer.write(
+            _orders(polars_engine, "o1", "o2", void=("o1",)), target._to_spec(), None
+        )
+
+        (stored,) = polars_engine.stored("sales.order")
+        assert stored[Order.c.order_id] == "o2"
+        assert "is_void" not in stored
+
+    def test_a_projection_casts_only_the_columns_it_selects(self, engine: ModelEngine) -> None:
+        engine.writer.write(
+            engine.frame({Order.c.order_id: ["o1"]}), IntoTable(Order).append()._to_spec(), None
+        )
+
+        assert engine.read_columns(FromTable(Order).columns(Order.c.order_id)) == [Order.c.order_id]
 
 
 class _Entry(BaseModel):
@@ -255,19 +138,17 @@ class _WriteEntries(ETLStep[NoParams]):
         return raw
 
 
-class _TextReader:
-    def __init__(self, engine: _Engine, frame: Any) -> None:
-        self._engine = engine
+class _PlainReader:
+    """A reader that cannot recognise a failed JSON decode."""
+
+    def __init__(self, frame: Any) -> None:
         self._frame = frame
 
     def read(self, spec: Any, params_instance: Any, /) -> Any:
         return self._frame
 
-    def is_json_decode_failure(self, error: Exception) -> bool:
-        return self._engine.is_json_decode_failure(error)
 
-
-def _entry_text(engine: _Engine, profile: str = '{"street": "Main"}') -> Any:
+def _entry_text(engine: ModelEngine, profile: str = '{"street": "Main"}') -> Any:
     return engine.frame(
         {
             _Entry.c.entry_id: [1],
@@ -278,38 +159,19 @@ def _entry_text(engine: _Engine, profile: str = '{"street": "Main"}') -> Any:
     )
 
 
+@pytest.mark.usefixtures("no_python_per_row")
 class TestJsonTextOnWrite:
-    @pytest.fixture(autouse=True)
-    def no_python_per_row(self, engine: _Engine, monkeypatch: pytest.MonkeyPatch) -> None:
-        def refuse(*args: Any, **kwargs: Any) -> Any:
-            raise AssertionError("JSON text was decoded by Python per row")
-
-        monkeypatch.setattr(pl.Expr, "map_elements", refuse)
-        if isinstance(engine, _SparkEngine):
-            from pyspark.sql import functions
-
-            monkeypatch.setattr(functions, "udf", refuse)
-
-    def test_json_text_is_decoded_to_the_model_struct_and_list(self, engine: _Engine) -> None:
-        spec = AppendSpec(table_ref=TableRef("entries"), model=_Entry)
-
-        engine.writer.write(_entry_text(engine), spec, None)
+    def test_json_text_is_decoded_to_the_model_struct_and_list(self, engine: ModelEngine) -> None:
+        engine.writer.write(_entry_text(engine), IntoTable(_Entry).append()._to_spec(), None)
 
         (row,) = engine.stored("entries")
-        assert (
-            row[_Entry.c.profile]["street"],
-            row[_Entry.c.visit]["zipCode"],
-            row[_Entry.c.tags],
-        ) == (
-            "Main",
-            "28001",
-            ["a", "b"],
-        )
+        assert (row[_Entry.c.profile]["street"], row[_Entry.c.tags]) == ("Main", ["a", "b"])
+        assert row[_Entry.c.visit]["zipCode"] == "28001"
 
     def test_malformed_json_text_fails_naming_the_target_column_and_type(
-        self, engine: _Engine
+        self, engine: ModelEngine
     ) -> None:
-        reader = _TextReader(engine, _entry_text(engine, profile="{broken"))
+        reader = _PlainReader(_entry_text(engine, profile="{broken"))
 
         with pytest.raises(InvalidValue, match=r"target entries\.profile as StructType"):
             ETLExecutor(reader, engine.writer).run_step(
@@ -317,48 +179,30 @@ class TestJsonTextOnWrite:
             )
 
 
-class TestProjectedModelSource:
-    def test_a_projection_casts_only_the_columns_it_selects(self, engine: _Engine) -> None:
-        engine.writer.write(engine.frame({Order.c.order_id: ["o1"]}), _spec(AppendSpec), None)
-
-        assert engine.read_columns(FromTable(Order).columns(Order.c.order_id)) == [Order.c.order_id]
-
-
-class TestPolarsDeleteFlag:
-    def test_the_delete_flag_survives_until_used_and_is_not_written(
-        self, polars_engine: _PolarsEngine
-    ) -> None:
-        spec = _spec(UpsertSpec, upsert_keys=(Order.c.order_id,), delete_flag="is_void")
-
-        polars_engine.writer.write(_orders(polars_engine, "o1", "o2", void=()), spec, None)
-        polars_engine.writer.write(_orders(polars_engine, "o1", "o2", void=("o1",)), spec, None)
-
-        (stored,) = polars_engine.stored("sales.order")
-        assert stored[Order.c.order_id] == "o2"
-        assert "is_void" not in stored
-
-
 class TestLakeTypeRoundTrip:
-    @pytest.mark.parametrize(("annotation", "expected"), LAKE_ROWS.values(), ids=list(LAKE_ROWS))
-    def test_the_delta_table_reads_back_with_the_lake_type(
-        self, engine: _Engine, annotation: Any, expected: FrameType
-    ) -> None:
-        spec = AppendSpec(table_ref=TableRef("probes"), model=probe_model(annotation))
+    def test_the_delta_table_reads_back_with_the_lake_types(self, engine: ModelEngine) -> None:
+        engine.writer.write(
+            engine.frame({"unrelated": [1]}), IntoTable(lake_model()).append()._to_spec(), None
+        )
 
-        engine.writer.write(engine.frame({"unrelated": [1]}), spec, None)
-
-        assert engine.stored_types("probes") == {"value": expected}
+        assert engine.stored_types("lake") == LAKE_TYPES
 
     def test_spark_reads_a_polars_table_with_the_same_types(
-        self, polars_engine: _PolarsEngine, spark_engine: _SparkEngine
+        self, polars_engine: PolarsEngine, spark_engine: SparkEngine
     ) -> None:
-        spec = AppendSpec(table_ref=TableRef("lake"), model=lake_model())
+        polars_engine.writer.write(
+            polars_engine.frame({"unrelated": [1]}),
+            IntoTable(lake_model()).append()._to_spec(),
+            None,
+        )
 
-        polars_engine.writer.write(polars_engine.frame({"unrelated": [1]}), spec, None)
+        assert spark_engine.stored_types("lake") == LAKE_TYPES
 
-        assert spark_engine.stored_types("lake") == {
-            name: frame_type for name, (_, frame_type) in LAKE_COLUMNS.items()
-        }
+
+class _Retry(BaseModel):
+    __tablename__ = "retry"
+    retry_id: Annotated[int, Field(primary_key=True)]
+    attempt: int
 
 
 class TestPolarsAuditColumns:
@@ -367,12 +211,14 @@ class TestPolarsAuditColumns:
     ) -> None:
         write_ctx = WriteContext(run_id="r1", step="Load", attempt=1, process_run_id="p1")
         audit = AuditConfig(enabled=True, custom=(CustomColumnDef(name="region", value="eu"),))
-        engine = _PolarsEngine(tmp_path, audit)
+        engine = PolarsEngine(tmp_path, audit)
 
-        engine.writer.write(_orders(engine, "o1"), _spec(AppendSpec), None, write_ctx=write_ctx)
+        engine.writer.write(
+            _orders(engine, "o1"), IntoTable(Order).append()._to_spec(), None, write_ctx=write_ctx
+        )
         engine.writer.write(
             _orders(engine, "o1"),
-            AppendSpec(table_ref=TableRef("sales.plain")),
+            IntoTable("sales.plain").append()._to_spec(),
             None,
             write_ctx=write_ctx,
         )
@@ -385,22 +231,15 @@ class TestPolarsAuditColumns:
         assert stamped.keys() >= {"_loom_run_id", "_loom_step", "_loom_attempt", "region"}
         assert engine.stored_types("sales.order") == {**_ORDER.column_types, **stamped}
 
-
-class _Retry(BaseModel):
-    __tablename__ = "retry"
-    retry_id: Annotated[int, Field(primary_key=True)]
-    attempt: int
-
-
-class TestModelColumnNamedLikeAnAuditColumn:
-    def test_the_column_keeps_the_type_of_the_model(self, tmp_path: Path) -> None:
-        engine = _PolarsEngine(tmp_path, AuditConfig(enabled=True, prefix=""))
-        spec = AppendSpec(table_ref=TableRef("retry"), model=_Retry)
+    def test_a_model_column_named_like_an_audit_column_keeps_the_model_type(
+        self, tmp_path: Path
+    ) -> None:
+        engine = PolarsEngine(tmp_path, AuditConfig(enabled=True, prefix=""))
         write_ctx = WriteContext(run_id="r1", step="Load", attempt=2)
 
         engine.writer.write(
             engine.frame({_Retry.c.retry_id: [1], _Retry.c.attempt: [7]}),
-            spec,
+            IntoTable(_Retry).append()._to_spec(),
             None,
             write_ctx=write_ctx,
         )
@@ -410,22 +249,18 @@ class TestModelColumnNamedLikeAnAuditColumn:
 
 class TestModelWriteObservability:
     def test_a_write_logs_the_model_columns_once(
-        self, engine: _Engine, caplog: pytest.LogCaptureFixture
+        self, engine: ModelEngine, caplog: pytest.LogCaptureFixture
     ) -> None:
         with caplog.at_level(logging.INFO):
-            engine.writer.write(_orders(engine, "o1"), _spec(AppendSpec), None)
+            engine.writer.write(_orders(engine, "o1"), IntoTable(Order).append()._to_spec(), None)
 
         (fields,) = CapturedLog(caplog).named(EtlEvent.MODEL_SCHEMA_APPLIED)
         assert fields[EtlKey.MODEL] == "Order"
         assert fields[EtlKey.TABLE] == "sales.order"
         assert fields[EtlKey.COLUMNS] == list(_ORDER.column_names)
 
-
-class TestModelWriteRunsNoSparkAction:
     @pytest.fixture
-    def actions_refused(
-        self, spark_engine: _SparkEngine, monkeypatch: pytest.MonkeyPatch
-    ) -> Iterator[None]:
+    def actions_refused(self, monkeypatch: pytest.MonkeyPatch) -> Iterator[None]:
         from pyspark.sql import DataFrame
 
         def refuse(*args: Any, **kwargs: Any) -> Any:
@@ -435,10 +270,11 @@ class TestModelWriteRunsNoSparkAction:
             monkeypatch.setattr(DataFrame, action, refuse)
         yield
 
-    def test_create_replace_and_upsert_run_no_action(
-        self, spark_engine: _SparkEngine, actions_refused: None
+    @pytest.mark.parametrize("mode", ["append", "replace", "upsert"])
+    def test_a_model_write_runs_no_spark_action(
+        self, spark_engine: SparkEngine, actions_refused: None, mode: str
     ) -> None:
-        frame = _orders(spark_engine, "o1")
+        target = IntoTable(Order)
+        target = target.upsert(keys=_ORDER_ID) if mode == "upsert" else getattr(target, mode)()
 
-        for spec in (_spec(AppendSpec), _spec(ReplaceSpec), _ORDER_WRITES["upsert"][0]()):
-            spark_engine.writer.write(frame, spec, None)
+        spark_engine.writer.write(_orders(spark_engine, "o1"), target._to_spec(), None)

@@ -11,7 +11,7 @@ import polars as pl
 from loom.etl.schema._schema import ArrayType, FrameType, ListType, LoomDtype, StructType
 
 
-@dataclass(frozen=True)
+@dataclass(frozen=True, slots=True)
 class TolerantJson:
     """Rewrites JSON text so ``str.json_decode`` of *frame_type* always succeeds.
 

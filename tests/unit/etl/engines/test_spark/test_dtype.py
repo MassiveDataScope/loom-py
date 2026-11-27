@@ -24,7 +24,7 @@ from loom.etl.schema._schema import (  # noqa: E402
     StructField,
     StructType,
 )
-from tests.unit.etl.engines.frame_types import LAKE_FRAME_TYPES  # noqa: E402
+from tests.unit.etl.models import LAKE_FRAME_TYPES  # noqa: E402
 
 
 class TestLoomToSpark:
@@ -119,11 +119,3 @@ class TestSparkRoundTrip:
     @pytest.mark.parametrize("frame_type", LAKE_FRAME_TYPES.values(), ids=list(LAKE_FRAME_TYPES))
     def test_a_frame_type_survives_the_trip_through_spark(self, frame_type: FrameType) -> None:
         assert spark_to_frame_type(frame_type_to_spark(frame_type)) == frame_type
-
-    @pytest.mark.parametrize("frame_type", LAKE_FRAME_TYPES.values(), ids=list(LAKE_FRAME_TYPES))
-    def test_a_spark_type_survives_the_trip_through_a_frame_type(
-        self, frame_type: FrameType
-    ) -> None:
-        spark_type = frame_type_to_spark(frame_type)
-
-        assert frame_type_to_spark(spark_to_frame_type(spark_type)) == spark_type

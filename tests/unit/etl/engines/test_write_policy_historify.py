@@ -23,6 +23,7 @@ import pytest
 from loom.core.errors import InternalError
 from loom.core.schema import SchemaMode
 from loom.etl import col
+from loom.etl.declarative._declared_table import ModelBoundSpec
 from loom.etl.declarative.expr._params import params
 from loom.etl.declarative.expr._refs import TableRef
 from loom.etl.declarative.target._history import (
@@ -43,12 +44,12 @@ from loom.etl.declarative.target._temp import TempSpec
 from loom.etl.engines import _write_policy
 from loom.etl.engines._write_policy import _WritePolicy
 from loom.etl.event import EtlEvent, EtlKey
-from loom.etl.schema import ColumnSchema
 from loom.etl.schema._schema import SchemaError, SchemaNotFoundError
 from loom.etl.storage._config import MissingTablePolicy
 from loom.etl.storage.routing import ResolvedTarget
 from loom.testing import make
 from tests.helpers.loggers import CapturedLog
+from tests.unit.etl.engines.doubles import PassthroughSchema, PassthroughSchemaWriter
 
 # ---------------------------------------------------------------------------
 # Minimal concrete _WritePolicy for testing dispatch
@@ -79,7 +80,9 @@ def fake_scd2_transform(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setattr(_write_policy, "scd2_transform", _fake_scd2_transform)
 
 
-class _StubWritePolicy(_WritePolicy[list[int], list[int], dict[str, Any]]):
+class _StubWritePolicy(
+    PassthroughSchemaWriter, _WritePolicy[list[int], list[int], PassthroughSchema]
+):
     """Minimal concrete subclass for testing dispatch logic only."""
 
     def __init__(
@@ -98,21 +101,8 @@ class _StubWritePolicy(_WritePolicy[list[int], list[int], dict[str, Any]]):
         self.replace_calls: list[tuple[Any, ...]] = []
         self.replace_partitions_calls: list[tuple[Any, ...]] = []
 
-    def _physical_schema(self, target: ResolvedTarget) -> dict[str, Any] | None:
-        return {"col": "type"} if self._schema_exists else None
-
-    def _align(
-        self, frame: list[int], existing: dict[str, Any] | None, mode: SchemaMode
-    ) -> list[int]:
-        return frame
-
-    def _align_result(
-        self, result: list[int], schema: dict[str, Any], mode: SchemaMode
-    ) -> list[int]:
-        return result
-
-    def _physical_of(self, columns: tuple[ColumnSchema, ...]) -> dict[str, Any]:
-        return {column.name: column.dtype for column in columns}
+    def _physical_schema(self, target: ResolvedTarget) -> PassthroughSchema | None:
+        return PassthroughSchema() if self._schema_exists else None
 
     def _materialize_for_write(self, frame: list[int], streaming: bool) -> list[int]:
         return list(frame)  # return a copy so we can track it
@@ -465,7 +455,7 @@ class TestWriteModeRouting:
 
     def test_a_spec_that_is_not_a_table_write_mode_raises(self) -> None:
         writer = _StubWritePolicy(schema_exists=True)
-        spec = MagicMock(model_table=None)
+        spec = ModelBoundSpec(table_ref=TableRef("t"))
         with pytest.raises(InternalError, match="Unsupported target spec"):
             writer.write([1], spec, None)
 

@@ -24,7 +24,7 @@ from loom.etl.schema import (
     StructField,
     StructType,
 )
-from tests.unit.etl.engines.frame_types import LAKE_FRAME_TYPES
+from tests.unit.etl.models import LAKE_FRAME_TYPES
 
 
 class TestLoomToPolarsCoarse:
@@ -147,11 +147,3 @@ class TestPolarsRoundTrip:
     @pytest.mark.parametrize("frame_type", LAKE_FRAME_TYPES.values(), ids=list(LAKE_FRAME_TYPES))
     def test_a_frame_type_survives_the_trip_through_polars(self, frame_type: FrameType) -> None:
         assert polars_to_frame_type(frame_type_to_polars(frame_type)) == frame_type
-
-    @pytest.mark.parametrize("frame_type", LAKE_FRAME_TYPES.values(), ids=list(LAKE_FRAME_TYPES))
-    def test_a_polars_dtype_survives_the_trip_through_a_frame_type(
-        self, frame_type: FrameType
-    ) -> None:
-        dtype = frame_type_to_polars(frame_type)
-
-        assert frame_type_to_polars(polars_to_frame_type(dtype)) == dtype

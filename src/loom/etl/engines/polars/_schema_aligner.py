@@ -11,15 +11,7 @@ PolarsFrameT = TypeVar("PolarsFrameT", pl.LazyFrame, pl.DataFrame)
 
 
 class PolarsSchemaAligner(Generic[PolarsFrameT]):
-    """Aligns a lazy or an eager frame; the aligner is the frame type it was built for.
-
-    Args:
-        decodes_json_text: Whether a text column is decoded into the struct or list the
-            schema declares for it, instead of cast.
-    """
-
-    def __init__(self, decodes_json_text: bool = False) -> None:
-        self._decodes_json_text = decodes_json_text
+    """Aligns a lazy or an eager frame; the aligner is the frame type it was built for."""
 
     def column_types(self, frame: PolarsFrameT) -> dict[str, Any]:
         return dict(frame.collect_schema())
@@ -30,18 +22,17 @@ class PolarsSchemaAligner(Generic[PolarsFrameT]):
     def cast_column(
         self, name: str, dtype: pl.DataType | _DataTypeClass, source: pl.DataType | _DataTypeClass
     ) -> tuple[str, pl.Expr]:
-        """Cast a column; JSON text becomes the struct or list its model declares."""
+        """Cast a column; JSON text becomes the struct or list the schema declares for it."""
         column = pl.col(name)
-        if self._decodes_json_text and self.is_json_text(source, dtype):
+        if self.decodes_json_text(source, dtype):
             return name, column.str.json_decode(dtype)
         return name, self._cast_expr(column, dtype)
 
-    @staticmethod
-    def is_json_text(
-        source: pl.DataType | _DataTypeClass, dtype: pl.DataType | _DataTypeClass
+    def decodes_json_text(
+        self, source: pl.DataType | _DataTypeClass, dtype: pl.DataType | _DataTypeClass
     ) -> bool:
-        """Whether a column of type *source* is JSON text for the struct or list *dtype*."""
-        return source == pl.String and isinstance(dtype, pl.Struct | pl.List)
+        """Whether a column of type *source* is cast to *dtype* by decoding it; never by default."""
+        return False
 
     def _cast_expr(self, expr: pl.Expr, dtype: pl.DataType | _DataTypeClass) -> pl.Expr:
         if isinstance(dtype, pl.Struct):
@@ -60,3 +51,13 @@ class PolarsSchemaAligner(Generic[PolarsFrameT]):
 
     def select_columns(self, frame: PolarsFrameT, names: list[str]) -> PolarsFrameT:
         return frame.select(names)
+
+
+class PolarsModelSchemaAligner(PolarsSchemaAligner[PolarsFrameT]):
+    """Aligns to a model's schema, where a text column is JSON for a struct or list field."""
+
+    def decodes_json_text(
+        self, source: pl.DataType | _DataTypeClass, dtype: pl.DataType | _DataTypeClass
+    ) -> bool:
+        """Whether a column of type *source* is JSON text for the struct or list *dtype*."""
+        return source == pl.String and isinstance(dtype, pl.Struct | pl.List)

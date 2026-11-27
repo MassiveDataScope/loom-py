@@ -1,4 +1,4 @@
-"""Models, and the Outcome step of spec 023, for the runner tests written from models."""
+"""Models and steps for the runner tests written from models."""
 
 from __future__ import annotations
 
@@ -13,7 +13,7 @@ import polars as pl
 from loom.core.model import BaseModel, Field
 from loom.core.model.types import Numeric
 from loom.etl import ETLParams, ETLStep, FromTable, IntoTable, col, params
-from tests.unit.etl.engines.frame_types import CamelEntity, Order
+from tests.unit.etl.models import CamelEntity, Order
 
 
 class CustomerTotal(BaseModel):
@@ -50,3 +50,11 @@ class TotalCustomers(ETLStep[Since]):
             pl.col(Order.c.amount).sum().alias(CustomerTotal.c.spent),
             pl.len().cast(pl.Int32).alias(CustomerTotal.c.orders),
         )
+
+
+class EchoVisitors(ETLStep[Since]):
+    visitors = FromTable(Visitor)
+    target = IntoTable(Visitor).replace()
+
+    def execute(self, params: Since, *, visitors: Any) -> Any:  # type: ignore[override]
+        return visitors

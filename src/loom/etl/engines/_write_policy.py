@@ -10,7 +10,7 @@ from __future__ import annotations
 import logging
 from abc import abstractmethod
 from dataclasses import dataclass
-from typing import TYPE_CHECKING, Any, Generic, TypeVar
+from typing import TYPE_CHECKING, Any, Generic, Protocol, TypeVar, cast
 
 from loom.core.errors import InternalError, InvalidValue
 from loom.etl.declarative.target import (
@@ -46,7 +46,18 @@ _log = logging.getLogger(__name__)
 
 InputFrameT = TypeVar("InputFrameT")
 WriteFrameT = TypeVar("WriteFrameT")
-PhysicalSchemaT = TypeVar("PhysicalSchemaT")
+FrameT = TypeVar("FrameT")
+
+
+class PhysicalSchema(Protocol):
+    """The schema of a table as an engine reads and writes it, which a frame aligns to."""
+
+    def align(self, frame: Any, mode: SchemaMode) -> Any:
+        """Align *frame* with this schema under *mode*."""
+        ...
+
+
+PhysicalSchemaT = TypeVar("PhysicalSchemaT", bound=PhysicalSchema)
 
 
 @dataclass(frozen=True, slots=True)
@@ -243,7 +254,7 @@ class _WritePolicy(TargetWriter, Generic[InputFrameT, WriteFrameT, PhysicalSchem
             return None
         if require_physical_partitions is not None:
             self._require_physical_partitions(target, require_physical_partitions)
-        aligned = self._align(frame, self._contract_schema(existing, spec, frame), spec.schema_mode)
+        aligned = self._align(frame, existing, spec)
         return _PreparedWrite(
             frame=self._materialize_checked(aligned, target, streaming, allow_empty=allow_empty),
             existing_schema=existing,
@@ -273,9 +284,7 @@ class _WritePolicy(TargetWriter, Generic[InputFrameT, WriteFrameT, PhysicalSchem
             schema_mode=spec.schema_mode,
             missing_table_policy=self._missing_table_policy,
         )
-        schema = self._contract_schema(None, spec, frame)
-        if schema is not None:
-            frame = self._align(frame, schema, spec.schema_mode)
+        frame = self._align(frame, None, spec)
         materialized = self._materialize_checked(frame, target, streaming, allow_empty=allow_empty)
         try:
             self._create(
@@ -461,7 +470,7 @@ class _WritePolicy(TargetWriter, Generic[InputFrameT, WriteFrameT, PhysicalSchem
                 "update() never inserts, so it cannot create the table — "
                 "create it first with append/replace/upsert."
             )
-        aligned = self._align(frame, self._contract_schema(existing, spec, frame), spec.schema_mode)
+        aligned = self._align(frame, existing, spec)
         materialized = self._materialize_checked(aligned, target, streaming=False)
         self._update(
             materialized,
@@ -515,9 +524,7 @@ class _WritePolicy(TargetWriter, Generic[InputFrameT, WriteFrameT, PhysicalSchem
             self._historify_ops(), materialized, existing, spec, params_instance
         )
         del existing
-        schema = self._contract_schema(None, spec, frame)
-        if schema is not None:
-            result = self._align_result(result, schema, spec.schema_mode)
+        result = self._align(result, None, spec)
         if report is not None:
             _log.warning(
                 EtlEvent.HISTORIFY_RERUN_REQUIRED,
@@ -610,52 +617,35 @@ class _WritePolicy(TargetWriter, Generic[InputFrameT, WriteFrameT, PhysicalSchem
             ``None`` when the target table does not yet exist.
         """
 
-    @abstractmethod
-    def _align(
-        self,
-        frame: InputFrameT,
-        existing_schema: PhysicalSchemaT | None,
-        mode: SchemaMode,
-    ) -> InputFrameT:
-        """Align frame schema with existing."""
+    def _align(self, frame: FrameT, existing: PhysicalSchemaT | None, spec: TableSpec) -> FrameT:
+        """Align *frame* with the schema the write targets, leaving it as is when there is none.
 
-    @abstractmethod
-    def _align_result(
-        self,
-        result: WriteFrameT,
-        schema: PhysicalSchemaT,
-        mode: SchemaMode,
-    ) -> WriteFrameT:
-        """Align a materialised frame, such as a historify result, with *schema*."""
+        A spec with a model aligns to the model's lake schema plus the audit columns the
+        frame carries; any other spec aligns to the *existing* table's schema.
+        """
+        model = spec.model_table
+        if model is None:
+            schema = existing
+        else:
+            stamped = tuple(
+                column
+                for column in self._stamped_columns(frame)
+                if column.name not in model.column_types
+            )
+            schema = self._physical_of(StructType.of_columns((*model.schema, *stamped)))
+        if schema is None:
+            return frame
+        return cast(FrameT, schema.align(frame, spec.schema_mode))
 
     @abstractmethod
     def _physical_of(self, schema: StructType) -> PhysicalSchemaT:
         """Translate the lake *schema* to the engine's physical schema."""
 
-    def _contract_schema(
-        self, existing: PhysicalSchemaT | None, spec: TableSpec, frame: InputFrameT
-    ) -> PhysicalSchemaT | None:
-        """The schema a write aligns to: the model's lake schema plus the stamped audit columns.
-
-        A write without a model aligns to *existing*.
-        """
-        model = spec.model_table
-        if model is None:
-            return existing
-        stamped = tuple(
-            column
-            for column in self._stamped_columns(frame)
-            if column.name not in model.column_types
-        )
-        columns = (*model.schema, *stamped)
-        return self._physical_of(StructType.of_columns(columns))
-
-    def _stamped_columns(self, frame: InputFrameT) -> tuple[ColumnSchema, ...]:
+    def _stamped_columns(self, frame: Any) -> tuple[ColumnSchema, ...]:
         """The columns :meth:`_apply_audit_columns` stamped on *frame*, with their types.
 
         None by default, as no audit column is stamped.
         """
-        _ = frame
         return ()
 
     def _log_model_schema(self, spec: TableSpec) -> None:

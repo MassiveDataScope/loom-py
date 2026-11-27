@@ -39,7 +39,8 @@ from loom.etl.engines._predicate import predicate_to_sql
 from loom.etl.engines._write_policy import _WritePolicy
 from loom.etl.engines.spark._dtype import frame_type_to_spark
 from loom.etl.engines.spark._historify import SparkHistorifyOps
-from loom.etl.engines.spark._schema import SparkPhysicalSchema, apply_schema_spark
+from loom.etl.engines.spark._json_failure import is_json_decode_failure
+from loom.etl.engines.spark._schema import SparkPhysicalSchema
 from loom.etl.event import EtlEvent
 from loom.etl.lineage._records import LineageRecord, get_lineage_schema
 from loom.etl.schema._schema import StructType
@@ -97,6 +98,10 @@ class SparkTargetWriter(_WritePolicy[DataFrame, DataFrame, SparkPhysicalSchema])
         spec = AppendSpec(table_ref=table_ref, schema_mode=SchemaMode.EVOLVE)
         self.write(frame, spec, params_instance, streaming=streaming)
 
+    def is_json_decode_failure(self, error: Exception) -> bool:
+        """Whether *error* is the engine refusing a JSON document while decoding a column."""
+        return is_json_decode_failure(error)
+
     def to_frame(self, records: Sequence[LineageRecord], /) -> DataFrame:
         """Convert lineage records into a Spark DataFrame."""
         if not records:
@@ -124,36 +129,9 @@ class SparkTargetWriter(_WritePolicy[DataFrame, DataFrame, SparkPhysicalSchema])
         except AnalysisException:
             return None
 
-    def _align(
-        self,
-        frame: DataFrame,
-        existing_schema: SparkPhysicalSchema | None,
-        mode: SchemaMode,
-    ) -> DataFrame:
-        """Align frame schema with existing."""
-        if existing_schema is None or mode is SchemaMode.OVERWRITE:
-            return frame
-
-        return apply_schema_spark(
-            frame,
-            existing_schema.schema,
-            mode,
-            decodes_json_text=existing_schema.decodes_json_text,
-        )
-
-    def _align_result(
-        self,
-        result: DataFrame,
-        schema: SparkPhysicalSchema,
-        mode: SchemaMode,
-    ) -> DataFrame:
-        """Align a Spark frame, which is lazy like any other."""
-        return self._align(result, schema, mode)
-
     def _physical_of(self, schema: StructType) -> SparkPhysicalSchema:
         """The Spark schema of the lake *schema*."""
-        spark_schema = frame_type_to_spark(schema)
-        return SparkPhysicalSchema(schema=cast(T.StructType, spark_schema), decodes_json_text=True)
+        return SparkPhysicalSchema.of_model(schema)
 
     def _materialize_for_write(self, frame: DataFrame, streaming: bool) -> DataFrame:
         """Return Spark frame unchanged (already materialized/eager)."""

@@ -77,12 +77,8 @@ class TestDecodeJsonColumns:
 
         assert decoded["payload"].to_list()[0] == {"event_type": "click", "user_id": 7}
 
-    def test_decodes_without_python_per_row(self, monkeypatch: pytest.MonkeyPatch) -> None:
-        def refuse(*_: object, **__: object) -> None:
-            raise AssertionError("map_elements runs Python per row")
-
-        monkeypatch.setattr(pl.Expr, "map_elements", refuse)
-
+    @pytest.mark.usefixtures("no_python_per_row")
+    def test_decodes_without_python_per_row(self) -> None:
         decoded = decode_json_columns(_raw(), _EVENTS.json_columns)
 
         assert decoded["payload"].to_list()[0] == {"event_type": "click", "user_id": 7}

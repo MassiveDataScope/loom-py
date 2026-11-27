@@ -4,8 +4,17 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 from datetime import date
+from pathlib import Path
+from typing import Any, Protocol
 
-from loom.etl import ETLParams
+import polars as pl
+
+from loom.etl import ETLParams, FromTable
+from loom.etl.declarative.target import SchemaMode
+from loom.etl.engines.polars import PolarsSourceReader, PolarsTargetWriter, polars_to_frame_type
+from loom.etl.ports.contracts import SourceReader, TargetWriter
+from loom.etl.schema import FrameType, StructType
+from loom.etl.storage._config import AuditConfig, MissingTablePolicy
 
 
 @dataclass
@@ -15,3 +24,85 @@ class RunDateParams:
 
 class NoParams(ETLParams):
     pass
+
+
+class PassthroughSchema:
+    """A physical schema that leaves every frame as it is."""
+
+    def align(self, frame: Any, mode: SchemaMode) -> Any:
+        return frame
+
+
+class PassthroughSchemaWriter:
+    """Mixin of a stub write policy whose physical schemas align nothing."""
+
+    def _physical_of(self, schema: StructType) -> PassthroughSchema:
+        return PassthroughSchema()
+
+
+class ModelEngine(Protocol):
+    """What a test needs of a backend: a reader, a writer, frames, and what a table stores."""
+
+    reader: SourceReader
+    writer: TargetWriter
+
+    def frame(self, columns: dict[str, list[Any]]) -> Any: ...
+
+    def stored(self, ref: str) -> list[dict[str, Any]]: ...
+
+    def stored_types(self, ref: str) -> dict[str, FrameType]: ...
+
+    def read_columns(self, source: FromTable) -> list[str]: ...
+
+
+def table_path(root: Path, ref: str) -> str:
+    return str(root.joinpath(*ref.split(".")))
+
+
+class PolarsEngine:
+    def __init__(self, root: Path, audit: AuditConfig | None = None) -> None:
+        self._root = root
+        self.reader = PolarsSourceReader(str(root))
+        self.writer = PolarsTargetWriter(
+            str(root), missing_table_policy=MissingTablePolicy.CREATE, audit_config=audit
+        )
+
+    def frame(self, columns: dict[str, list[Any]]) -> pl.LazyFrame:
+        return pl.LazyFrame(columns)
+
+    def stored(self, ref: str) -> list[dict[str, Any]]:
+        return pl.read_delta(table_path(self._root, ref)).to_dicts()
+
+    def read_columns(self, source: FromTable) -> list[str]:
+        return self.reader.read(source._to_spec("orders"), None).collect_schema().names()
+
+    def stored_types(self, ref: str) -> dict[str, FrameType]:
+        schema = pl.scan_delta(table_path(self._root, ref)).collect_schema()
+        return {name: polars_to_frame_type(dtype) for name, dtype in schema.items()}
+
+
+class SparkEngine:
+    def __init__(self, spark: Any, root: Path) -> None:
+        from loom.etl.engines.spark import SparkSourceReader, SparkTargetWriter
+
+        self._spark = spark
+        self._root = root
+        self.reader = SparkSourceReader(spark, str(root))
+        self.writer = SparkTargetWriter(spark, root, missing_table_policy=MissingTablePolicy.CREATE)
+
+    def frame(self, columns: dict[str, list[Any]]) -> Any:
+        return self._spark.createDataFrame(list(zip(*columns.values(), strict=True)), list(columns))
+
+    def stored(self, ref: str) -> list[dict[str, Any]]:
+        return [row.asDict(recursive=True) for row in self._stored(ref).collect()]
+
+    def read_columns(self, source: FromTable) -> list[str]:
+        return self.reader.read(source._to_spec("orders"), None).columns
+
+    def stored_types(self, ref: str) -> dict[str, FrameType]:
+        from loom.etl.engines.spark._dtype import spark_to_frame_type
+
+        return {f.name: spark_to_frame_type(f.dataType) for f in self._stored(ref).schema.fields}
+
+    def _stored(self, ref: str) -> Any:
+        return self._spark.read.format("delta").load(table_path(self._root, ref))

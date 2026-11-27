@@ -267,7 +267,7 @@ class SparkStepRunner:
 
         for seed in ModelRows.seeds_of(instances):
             self._seeds[seed.table.name] = (
-                seed.values,
+                list(seed.values),
                 frame_type_to_spark(seed.table.struct_type),
             )
         return self
@@ -431,34 +431,51 @@ class _UtcInstants:
 
     @classmethod
     def _converter(cls, spark_type: Any) -> Callable[[Any], Any] | None:
-        kind = spark_type.typeName()
-        if kind == "timestamp":
-            return lambda value: None if value is None else value.astimezone(UTC)
-        if kind == "struct":
-            fields = {field.name: cls._converter(field.dataType) for field in spark_type.fields}
-            if not any(fields.values()):
+        match spark_type.typeName():
+            case "timestamp":
+                return cls._instant
+            case "struct":
+                return cls._struct(spark_type)
+            case "array":
+                return cls._array(spark_type)
+            case "map":
+                return cls._map(spark_type)
+            case _:
                 return None
-            return lambda value: (
-                None
-                if value is None
-                else {
-                    name: value[name] if convert is None else convert(value[name])
-                    for name, convert in fields.items()
-                }
-            )
-        if kind == "array":
-            element = cls._converter(spark_type.elementType)
-            if element is None:
-                return None
-            return lambda value: None if value is None else [element(item) for item in value]
-        if kind == "map":
-            entry = cls._converter(spark_type.valueType)
-            if entry is None:
-                return None
-            return lambda value: (
-                None if value is None else {key: entry(item) for key, item in value.items()}
-            )
-        return None
+
+    @staticmethod
+    def _instant(value: Any) -> Any:
+        return None if value is None else value.astimezone(UTC)
+
+    @classmethod
+    def _struct(cls, spark_type: Any) -> Callable[[Any], Any] | None:
+        fields = {field.name: cls._converter(field.dataType) for field in spark_type.fields}
+        if not any(fields.values()):
+            return None
+        return lambda value: (
+            None
+            if value is None
+            else {
+                name: value[name] if convert is None else convert(value[name])
+                for name, convert in fields.items()
+            }
+        )
+
+    @classmethod
+    def _array(cls, spark_type: Any) -> Callable[[Any], Any] | None:
+        element = cls._converter(spark_type.elementType)
+        if element is None:
+            return None
+        return lambda value: None if value is None else [element(item) for item in value]
+
+    @classmethod
+    def _map(cls, spark_type: Any) -> Callable[[Any], Any] | None:
+        entry = cls._converter(spark_type.valueType)
+        if entry is None:
+            return None
+        return lambda value: (
+            None if value is None else {key: entry(item) for key, item in value.items()}
+        )
 
 
 def _spark_frame_to_polars(frame: Any) -> pl.DataFrame:
