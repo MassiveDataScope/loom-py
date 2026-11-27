@@ -15,6 +15,8 @@ from sqlalchemy import MetaData
 
 from loom.core.errors import InvalidValue
 from loom.core.model import BaseModel
+from loom.etl import ETLStep, FromTable, IntoTable
+from loom.etl.compiler import ETLCompiler
 from loom.etl.declarative.expr import params as p
 from loom.etl.declarative.expr._refs import TableRef
 from loom.etl.declarative.target import TableSpec
@@ -28,6 +30,7 @@ from loom.etl.declarative.target._table import (
 )
 from loom.etl.engines.polars import PolarsSourceReader, PolarsTargetWriter, polars_to_frame_type
 from loom.etl.event import EtlEvent, EtlKey
+from loom.etl.executor import ETLExecutor
 from loom.etl.lineage._records import WriteContext
 from loom.etl.ports.contracts import TargetWriter
 from loom.etl.schema import FrameType, ModelTable
@@ -35,7 +38,7 @@ from loom.etl.schema._model import LakeTranslator
 from loom.etl.storage._config import AuditConfig, CustomColumnDef, MissingTablePolicy
 from loom.stores.sqlalchemy.schema import compile_model
 from tests.helpers.loggers import CapturedLog
-from tests.unit.etl.engines.doubles import RunDateParams
+from tests.unit.etl.engines.doubles import NoParams, RunDateParams
 from tests.unit.etl.engines.frame_types import (
     LAKE_ROWS,
     CamelEntity,
@@ -62,6 +65,8 @@ class _Engine(Protocol):
 
     def stored_types(self, ref: str) -> dict[str, FrameType]: ...
 
+    def read_columns(self, source: FromTable) -> list[str]: ...
+
     def is_json_decode_failure(self, error: Exception) -> bool: ...
 
 
@@ -81,6 +86,10 @@ class _PolarsEngine:
 
     def stored(self, ref: str) -> list[dict[str, Any]]:
         return pl.read_delta(_table_path(self._root, ref)).to_dicts()
+
+    def read_columns(self, source: FromTable) -> list[str]:
+        frame = PolarsSourceReader(str(self._root)).read(source._to_spec("orders"), None)
+        return frame.collect_schema().names()
 
     def is_json_decode_failure(self, error: Exception) -> bool:
         return PolarsSourceReader(str(self._root)).is_json_decode_failure(error)
@@ -103,6 +112,12 @@ class _SparkEngine:
 
     def stored(self, ref: str) -> list[dict[str, Any]]:
         return [row.asDict(recursive=True) for row in self._stored(ref).collect()]
+
+    def read_columns(self, source: FromTable) -> list[str]:
+        from loom.etl.engines.spark import SparkSourceReader
+
+        reader = SparkSourceReader(self._spark, str(self._root))
+        return reader.read(source._to_spec("orders"), None).columns
 
     def is_json_decode_failure(self, error: Exception) -> bool:
         from loom.etl.engines.spark import SparkSourceReader
@@ -230,6 +245,26 @@ class _Entry(BaseModel):
     tags: list[str]
 
 
+class _WriteEntries(ETLStep[NoParams]):
+    raw: FromTable = FromTable("raw.entries")  # type: ignore[assignment]
+    target = IntoTable(_Entry).append()
+
+    def execute(self, params: NoParams, *, raw: Any) -> Any:  # type: ignore[override]
+        return raw
+
+
+class _TextReader:
+    def __init__(self, engine: _Engine, frame: Any) -> None:
+        self._engine = engine
+        self._frame = frame
+
+    def read(self, spec: Any, params_instance: Any, /) -> Any:
+        return self._frame
+
+    def is_json_decode_failure(self, error: Exception) -> bool:
+        return self._engine.is_json_decode_failure(error)
+
+
 def _entry_text(engine: _Engine, profile: str = '{"street": "Main"}') -> Any:
     return engine.frame(
         {
@@ -265,13 +300,22 @@ class TestJsonTextOnWrite:
             ["a", "b"],
         )
 
-    def test_malformed_json_text_fails_as_a_decode_failure(self, engine: _Engine) -> None:
-        spec = AppendSpec(table_ref=TableRef("entries"), model=_Entry)
+    def test_malformed_json_text_fails_naming_the_target_column_and_type(
+        self, engine: _Engine
+    ) -> None:
+        reader = _TextReader(engine, _entry_text(engine, profile="{broken"))
 
-        with pytest.raises(Exception) as failed:
-            engine.writer.write(_entry_text(engine, profile="{broken"), spec, None)
+        with pytest.raises(InvalidValue, match=r"target entries\.profile as StructType"):
+            ETLExecutor(reader, engine.writer).run_step(
+                ETLCompiler().compile_step(_WriteEntries), NoParams()
+            )
 
-        assert engine.is_json_decode_failure(failed.value)
+
+class TestProjectedModelSource:
+    def test_a_projection_casts_only_the_columns_it_selects(self, engine: _Engine) -> None:
+        engine.writer.write(engine.frame({"order_id": ["o1"]}), _spec(AppendSpec), None)
+
+        assert engine.read_columns(FromTable(Order).columns("order_id")) == ["order_id"]
 
 
 class TestPolarsDeleteFlag:

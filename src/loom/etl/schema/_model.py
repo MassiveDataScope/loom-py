@@ -244,6 +244,13 @@ class ModelTable:
         """The frame type of each column, by column name."""
         return {column.name: column.dtype for column in self.schema}
 
+    @cached_property
+    def json_columns(self) -> tuple[ColumnSchema, ...]:
+        """The columns stored as a struct or a list, which JSON text is decoded into."""
+        return tuple(
+            column for column in self.schema if isinstance(column.dtype, StructType | ListType)
+        )
+
     def unknown_columns(self, names: Iterable[str]) -> tuple[str, ...]:
         """The *names* that are not columns of the model, in the order given."""
         return tuple(name for name in names if name not in self.column_types)

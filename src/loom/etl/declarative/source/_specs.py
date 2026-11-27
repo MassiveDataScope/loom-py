@@ -126,8 +126,12 @@ class TableSourceSpec:
 
     @property
     def read_schema(self) -> tuple[ColumnSchema, ...]:
-        """The schema applied at read time: the model's lake schema, else the declared one."""
-        return self.schema if self.model is None else ModelTable.from_model(self.model).schema
+        """The schema applied at read time: the model's lake schema, else the declared one.
+
+        Only the columns left after the ``columns`` projection are cast.
+        """
+        schema = self.schema if self.model is None else ModelTable.from_model(self.model).schema
+        return _projected(schema, self.columns)
 
     @property
     def declared_columns(self) -> Mapping[str, tuple[str, ...]]:
@@ -147,6 +151,14 @@ class TableSourceSpec:
     def format(self) -> Format:
         """I/O format — always :attr:`Format.DELTA` for table sources."""
         return Format.DELTA
+
+
+def _projected(
+    schema: tuple[ColumnSchema, ...], columns: tuple[str, ...]
+) -> tuple[ColumnSchema, ...]:
+    if not columns:
+        return schema
+    return tuple(column for column in schema if column.name in columns)
 
 
 @dataclass(frozen=True)
@@ -183,8 +195,8 @@ class FileSourceSpec:
 
     @property
     def read_schema(self) -> tuple[ColumnSchema, ...]:
-        """The schema applied at read time: the declared one."""
-        return self.schema
+        """The schema applied at read time: the declared one, limited to the projected columns."""
+        return _projected(self.schema, self.columns)
 
     @property
     def kind(self) -> SourceKind:
