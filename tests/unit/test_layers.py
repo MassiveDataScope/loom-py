@@ -10,6 +10,7 @@ run time, catching what a module pulls in transitively:
 from __future__ import annotations
 
 import ast
+import sys
 from functools import cache
 from pathlib import Path
 
@@ -45,7 +46,7 @@ _RULES: dict[str, tuple[tuple[str, ...], tuple[str, ...]]] = {
         ),
         (),
     ),
-    # The column vocabulary is a leaf: it reads no model module and encodes nothing (spec 023, D3).
+    # The column vocabulary is a leaf: stdlib, msgspec and loom.core.errors, nothing else (D3, D10).
     "loom.core.model.types": (("loom",), ("loom.core.errors", "loom.core.model.types")),
     # The frame vocabulary translates models without reading an engine or a store (spec 023, D10).
     "loom.etl.schema": (
@@ -61,6 +62,9 @@ _RULES: dict[str, tuple[tuple[str, ...], tuple[str, ...]]] = {
         ),
         (),
     ),
+    # An engine reads no other engine's runtime (spec 023, D10).
+    "loom.etl.engines.polars": (("pyspark",), ()),
+    "loom.etl.engines.spark": (("polars",), ()),
     # No transport but the JobService adapter and the ones app.entry selects, lazily.
     "loom.composition": (
         ("fastapi", "starlette", "celery", "loom.rest", "loom.celery", "loom.serverless"),
@@ -136,6 +140,19 @@ def test_a_layer_imports_nothing_outside_it(
             if any(_within(imported, banned) for banned in forbidden) and not any(
                 _within(imported, kept) for kept in allowed
             ):
+                offenders.append(f"{module} imports {imported}")
+
+    assert offenders == []
+
+
+def test_the_column_vocabulary_imports_only_stdlib_msgspec_and_core_errors() -> None:
+    kept = ("msgspec", "loom.core.errors", "loom.core.model.types")
+    offenders = []
+    for path in _layer_files("loom.core.model.types"):
+        module, package = _module_of(path)
+        for imported in sorted(imported_modules(parsed(path), package=package)):
+            outside = imported.split(".")[0] not in sys.stdlib_module_names
+            if outside and not any(_within(imported, name) for name in kept):
                 offenders.append(f"{module} imports {imported}")
 
     assert offenders == []

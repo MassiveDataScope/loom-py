@@ -414,57 +414,59 @@ def _pick_jar(jar_dir: Path, prefix: str, expected_version: str | None) -> Path 
     return candidates[-1]
 
 
-def _utc_instants(spark_type: Any) -> Callable[[Any], Any] | None:
-    """A converter reading every ``TimestampType`` leaf of *spark_type* as an aware UTC datetime.
+class _UtcInstants:
+    """Reads the values of one Spark column with every ``TimestampType`` leaf as a UTC instant.
 
     PySpark returns a ``TimestampType`` value as a naive datetime in the process
     zone; ``TimestampNTZType`` values are wall-clock and stay naive. The Spark
-    schema tells the two apart at every depth of structs, lists and maps.
-    The converter keeps ``None``; the result is ``None`` when the type holds no
-    timestamp, so its values need no conversion.
+    schema tells the two apart at every depth of structs, lists and maps. A column
+    whose type holds no timestamp is read as it is, and ``None`` stays ``None``.
     """
-    kind = spark_type.typeName()
-    if kind == "timestamp":
-        return lambda value: None if value is None else value.astimezone(UTC)
-    if kind == "struct":
-        fields = {field.name: _utc_instants(field.dataType) for field in spark_type.fields}
-        if not any(fields.values()):
-            return None
-        return lambda value: (
-            None
-            if value is None
-            else {
-                name: value[name] if convert is None else convert(value[name])
-                for name, convert in fields.items()
-            }
-        )
-    if kind == "array":
-        element = _utc_instants(spark_type.elementType)
-        if element is None:
-            return None
-        return lambda value: None if value is None else [element(item) for item in value]
-    if kind == "map":
-        entry = _utc_instants(spark_type.valueType)
-        if entry is None:
-            return None
-        return lambda value: (
-            None if value is None else {key: entry(item) for key, item in value.items()}
-        )
-    return None
 
+    def __init__(self, spark_type: Any) -> None:
+        self._convert = self._converter(spark_type)
 
-def _unchanged(value: Any) -> Any:
-    return value
+    def __call__(self, value: Any) -> Any:
+        return value if self._convert is None else self._convert(value)
+
+    @classmethod
+    def _converter(cls, spark_type: Any) -> Callable[[Any], Any] | None:
+        kind = spark_type.typeName()
+        if kind == "timestamp":
+            return lambda value: None if value is None else value.astimezone(UTC)
+        if kind == "struct":
+            fields = {field.name: cls._converter(field.dataType) for field in spark_type.fields}
+            if not any(fields.values()):
+                return None
+            return lambda value: (
+                None
+                if value is None
+                else {
+                    name: value[name] if convert is None else convert(value[name])
+                    for name, convert in fields.items()
+                }
+            )
+        if kind == "array":
+            element = cls._converter(spark_type.elementType)
+            if element is None:
+                return None
+            return lambda value: None if value is None else [element(item) for item in value]
+        if kind == "map":
+            entry = cls._converter(spark_type.valueType)
+            if entry is None:
+                return None
+            return lambda value: (
+                None if value is None else {key: entry(item) for key, item in value.items()}
+            )
+        return None
 
 
 def _spark_frame_to_polars(frame: Any) -> pl.DataFrame:
     import polars as pl
 
-    converters = {
-        field.name: _utc_instants(field.dataType) or _unchanged for field in frame.schema.fields
-    }
+    readers = {field.name: _UtcInstants(field.dataType) for field in frame.schema.fields}
     records = [
-        {name: converters[name](value) for name, value in row.asDict().items()}
+        {name: readers[name](value) for name, value in row.asDict().items()}
         for row in frame.collect()
     ]
     if not records:
