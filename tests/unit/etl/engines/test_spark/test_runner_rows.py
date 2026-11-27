@@ -11,8 +11,8 @@ from pyspark.sql import functions as F
 from loom.etl import ETLStep, FromTable, IntoTable
 from loom.etl.testing.spark import SparkStepRunner
 from loom.testing import make
-from tests.unit.etl.engines.frame_types import Order
-from tests.unit.etl.testing.models import CustomerTotal, Since, Stop, Tier, Visitor
+from tests.unit.etl.engines.frame_types import CamelEntity, Order
+from tests.unit.etl.testing.models import CustomerTotal, Since, Tier, Visitor
 
 DAY = datetime(2026, 1, 2, tzinfo=UTC)
 
@@ -54,7 +54,7 @@ class TestSparkSeedRows:
     def test_struct_uuid_and_enum_columns_come_back_as_the_seeded_instance(
         self, step_runner: SparkStepRunner
     ) -> None:
-        stop = Stop(zip_code="28001", seen_at=DAY)
+        stop = CamelEntity(zip_code="28001", seen_at=DAY)
         visitor = make(Visitor, tier=Tier.GOLD, home=stop, stops=[stop], extras={"a": 1}, note=None)
 
         result = step_runner.seed_rows(visitor).run(SparkEchoVisitors, Since(since=DAY))

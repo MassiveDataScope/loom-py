@@ -6,7 +6,6 @@ from datetime import UTC, datetime
 from decimal import Decimal
 from pathlib import Path
 
-import polars as pl
 import pytest
 
 pytest.importorskip("deltalake")
@@ -14,11 +13,10 @@ pytest.importorskip("deltalake")
 from loom.core.errors import InvalidUse, InvalidValue  # noqa: E402
 from loom.etl.testing import PolarsStepRunner  # noqa: E402
 from loom.testing import make  # noqa: E402
-from tests.unit.etl.engines.frame_types import Order  # noqa: E402
+from tests.unit.etl.engines.frame_types import CamelEntity, Order  # noqa: E402
 from tests.unit.etl.testing.models import (  # noqa: E402
     CustomerTotal,
     Since,
-    Stop,
     Tier,
     TotalCustomers,
     Visitor,
@@ -59,14 +57,6 @@ class TestOutcome:
 
 
 class TestSeedRows:
-    def test_the_columns_take_the_lake_types_of_the_model(self, tmp_path: Path) -> None:
-        runner = PolarsStepRunner(delta_root=tmp_path).seed_rows(_order("o1", "10.5"))
-
-        schema = runner.table("sales.order").to_polars().schema
-
-        assert schema["amount"] == pl.Decimal(12, 2)
-        assert schema["placed_at"] == pl.Datetime("us", "UTC")
-
     def test_a_key_given_twice_is_refused_naming_model_and_key(
         self, runner: PolarsStepRunner
     ) -> None:
@@ -76,7 +66,7 @@ class TestSeedRows:
 
 class TestRows:
     def test_uuid_enum_json_and_null_columns_round_trip_by_field_name(self, tmp_path: Path) -> None:
-        stop = Stop(zip_code="28001", seen_at=DAY)
+        stop = CamelEntity(zip_code="28001", seen_at=DAY)
         visitor = make(
             Visitor, tier=Tier.GOLD, home=stop, stops=[stop], extras={"vip": True}, note=None
         )

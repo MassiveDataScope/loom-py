@@ -26,7 +26,7 @@ from loom.etl.schema import (
     ModelTable,
     StructType,
 )
-from loom.etl.schema._model import LakeTranslator
+from loom.etl.schema._model import _REFUSED_KINDS, LakeTranslator
 from tests.unit.etl.engines.frame_types import LAKE_ROWS, Priced, probe_model
 
 _REFUSALS = {
@@ -41,7 +41,7 @@ _REFUSALS = {
 }
 
 
-_BY_KIND_REFUSED = (ColumnKind.TIME, ColumnKind.POSTGRES_TSVECTOR, ColumnKind.NUMERIC)
+_BY_KIND_REFUSED = (*_REFUSED_KINDS, ColumnKind.NUMERIC)
 
 
 class TestLakeTable:

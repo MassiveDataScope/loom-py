@@ -32,33 +32,6 @@ from loom.etl.schema import (
     StructType,
 )
 
-_SCALARS = (
-    LoomDtype.INT8,
-    LoomDtype.INT16,
-    LoomDtype.INT32,
-    LoomDtype.INT64,
-    LoomDtype.FLOAT64,
-    LoomDtype.BOOLEAN,
-    LoomDtype.UTF8,
-    LoomDtype.BINARY,
-    LoomDtype.DATE,
-)
-LAKE_FRAME_TYPES = {
-    **{str(scalar): scalar for scalar in _SCALARS},
-    "decimal-scale-0": DecimalType(10),
-    "decimal": DecimalType(38, 4),
-    "datetime-utc": DatetimeType("us", "UTC"),
-    "datetime-naive": DatetimeType("us", None),
-    "list": ListType(LoomDtype.UTF8),
-    "struct": StructType(
-        (
-            StructField("id", LoomDtype.INT64),
-            StructField("seen", DatetimeType("us", None)),
-            StructField("tags", ListType(DecimalType(18, 2))),
-        )
-    ),
-}
-
 
 class Buyer(msgspec.Struct):
     name: str
@@ -142,3 +115,21 @@ LAKE_ROWS = {
     "postgres-inet": (Annotated[str, Postgres.INET], LoomDtype.UTF8),
     "postgres-array": (Annotated[list[str], Postgres.ARRAY(String())], ListType(LoomDtype.UTF8)),
 }
+LAKE_FRAME_TYPES = {
+    **{name: frame_type for name, (_, frame_type) in LAKE_ROWS.items()},
+    "struct-nested-decimal": StructType(
+        (
+            StructField("id", LoomDtype.INT64),
+            StructField("tags", ListType(DecimalType(18, 2))),
+        )
+    ),
+}
+
+
+LAKE_COLUMNS = {name.replace("-", "_"): row for name, row in LAKE_ROWS.items()}
+
+
+def lake_model() -> type[BaseModel]:
+    """A model with one column per lake row."""
+    annotations = {name: annotation for name, (annotation, _) in LAKE_COLUMNS.items()}
+    return type("Lake", (BaseModel,), {"__tablename__": "lake", "__annotations__": annotations})

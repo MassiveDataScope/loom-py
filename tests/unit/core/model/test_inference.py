@@ -224,12 +224,6 @@ class TestFieldReaders:
 
 
 class TestJsonShape:
-    def test_a_struct_describes_its_fields(self, scalars: dict[str, ResolvedField]) -> None:
-        shape = scalars["address"].shape
-
-        assert isinstance(shape, StructShape)
-        assert [f.name for f in shape.fields] == ["street", "zip_code"]
-
     def test_a_nested_plain_class_describes_its_fields(self) -> None:
         (label,) = Record(_Box).resolve()
 

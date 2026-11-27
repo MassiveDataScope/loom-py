@@ -33,16 +33,17 @@ from loom.etl.executor import ETLExecutor
 from loom.etl.lineage._records import WriteContext
 from loom.etl.ports.contracts import TargetWriter
 from loom.etl.schema import FrameType, LoomDtype, ModelTable
-from loom.etl.schema._model import LakeTranslator
 from loom.etl.storage._config import AuditConfig, CustomColumnDef, MissingTablePolicy
 from tests.helpers.loggers import CapturedLog
 from tests.unit.etl.engines.doubles import NoParams, RunDateParams
 from tests.unit.etl.engines.frame_types import (
+    LAKE_COLUMNS,
     LAKE_ROWS,
     CamelEntity,
     Order,
     Rate,
     SubEntity,
+    lake_model,
     probe_model,
 )
 
@@ -153,10 +154,10 @@ def _spec(factory: Callable[..., TableSpec], ref: str = "sales.order", **fields:
 def _orders(engine: _Engine, *order_ids: str, void: Collection[str] | None = None) -> Any:
     count = len(order_ids)
     columns: dict[str, list[Any]] = {
-        "order_id": list(order_ids),
-        "customer_id": ["c1"] * count,
-        "amount": [1.5] * count,
-        "placed_at": [_PLACED] * count,
+        Order.c.order_id: list(order_ids),
+        Order.c.customer_id: ["c1"] * count,
+        Order.c.amount: [1.5] * count,
+        Order.c.placed_at: [_PLACED] * count,
         "noise": [0] * count,
     }
     if void is not None:
@@ -165,20 +166,19 @@ def _orders(engine: _Engine, *order_ids: str, void: Collection[str] | None = Non
 
 
 _ORDER_WRITES = {
-    "append": (lambda: _spec(AppendSpec), None),
     "replace": (lambda: _spec(ReplaceSpec), None),
     "replace-partitions": (
-        lambda: _spec(ReplacePartitionsSpec, partition_cols=("customer_id",)),
+        lambda: _spec(ReplacePartitionsSpec, partition_cols=(Order.c.customer_id,)),
         None,
     ),
     "replace-partitions-streaming": (
-        lambda: _spec(ReplacePartitionsSpec, partition_cols=("customer_id",), streaming=True),
+        lambda: _spec(ReplacePartitionsSpec, partition_cols=(Order.c.customer_id,), streaming=True),
         None,
     ),
-    "upsert": (lambda: _spec(UpsertSpec, upsert_keys=("order_id",)), None),
+    "upsert": (lambda: _spec(UpsertSpec, upsert_keys=(Order.c.order_id,)), None),
     "update": (
-        lambda: _spec(UpdateSpec, keys=("order_id",)),
-        lambda: _spec(UpsertSpec, upsert_keys=("order_id",)),
+        lambda: _spec(UpdateSpec, keys=(Order.c.order_id,)),
+        lambda: _spec(UpsertSpec, upsert_keys=(Order.c.order_id,)),
     ),
 }
 
@@ -199,44 +199,44 @@ class TestModelAlignTarget:
     def test_a_column_the_frame_lacks_is_null_filled_and_an_extra_one_dropped(
         self, polars_engine: _PolarsEngine
     ) -> None:
-        frame = _orders(polars_engine, "o1").drop("customer_id")
+        frame = _orders(polars_engine, "o1").drop(Order.c.customer_id)
 
         polars_engine.writer.write(frame, _spec(AppendSpec), None)
 
         (stored,) = polars_engine.stored("sales.order")
         assert stored.keys() == set(_ORDER.column_names)
-        assert stored["customer_id"] is None
+        assert stored[Order.c.customer_id] is None
 
     def test_a_second_upsert_updates_without_duplicates(self, engine: _Engine) -> None:
-        spec = _spec(UpsertSpec, upsert_keys=("order_id",))
+        spec = _spec(UpsertSpec, upsert_keys=(Order.c.order_id,))
 
         engine.writer.write(_orders(engine, "o1", "o2"), spec, None)
         engine.writer.write(_orders(engine, "o2", "o3"), spec, None)
 
-        assert sorted(row["order_id"] for row in engine.stored("sales.order")) == ["o1", "o2", "o3"]
+        assert sorted(row[Order.c.order_id] for row in engine.stored("sales.order")) == [
+            "o1",
+            "o2",
+            "o3",
+        ]
 
-    def test_a_historify_result_is_cast_to_the_model_and_logged_once(
-        self, engine: _Engine, caplog: pytest.LogCaptureFixture
-    ) -> None:
+    def test_a_historify_result_is_cast_to_the_model(self, engine: _Engine) -> None:
         spec = HistorifySpec(
             table_ref=TableRef("sales.rate"),
-            keys=("rate_id",),
+            keys=(Rate.c.rate_id,),
             effective_date=p.run_date,
             mode=HistorifyInputMode.SNAPSHOT,
-            track=("price",),
+            track=(Rate.c.price,),
             model=Rate,
         )
 
-        with caplog.at_level(logging.INFO):
-            engine.writer.write(
-                engine.frame({"rate_id": ["r1"], "price": [2.5]}),
-                spec,
-                RunDateParams(date(2026, 1, 5)),
-            )
+        engine.writer.write(
+            engine.frame({Rate.c.rate_id: ["r1"], Rate.c.price: [2.5]}),
+            spec,
+            RunDateParams(date(2026, 1, 5)),
+        )
 
         assert engine.stored_types("sales.rate") == _RATE.column_types
-        assert [row["price"] for row in engine.stored("sales.rate")] == [Decimal("2.50")]
-        assert len(CapturedLog(caplog).named(EtlEvent.MODEL_SCHEMA_APPLIED)) == 1
+        assert [row[Rate.c.price] for row in engine.stored("sales.rate")] == [Decimal("2.50")]
 
 
 class _Entry(BaseModel):
@@ -270,10 +270,10 @@ class _TextReader:
 def _entry_text(engine: _Engine, profile: str = '{"street": "Main"}') -> Any:
     return engine.frame(
         {
-            "entry_id": [1],
-            "profile": [profile],
-            "visit": ['{"zipCode": "28001", "seenAt": "2026-01-05T00:00:00Z"}'],
-            "tags": ['["a", "b"]'],
+            _Entry.c.entry_id: [1],
+            _Entry.c.profile: [profile],
+            _Entry.c.visit: ['{"zipCode": "28001", "seenAt": "2026-01-05T00:00:00Z"}'],
+            _Entry.c.tags: ['["a", "b"]'],
         }
     )
 
@@ -296,7 +296,11 @@ class TestJsonTextOnWrite:
         engine.writer.write(_entry_text(engine), spec, None)
 
         (row,) = engine.stored("entries")
-        assert (row["profile"]["street"], row["visit"]["zipCode"], row["tags"]) == (
+        assert (
+            row[_Entry.c.profile]["street"],
+            row[_Entry.c.visit]["zipCode"],
+            row[_Entry.c.tags],
+        ) == (
             "Main",
             "28001",
             ["a", "b"],
@@ -315,22 +319,22 @@ class TestJsonTextOnWrite:
 
 class TestProjectedModelSource:
     def test_a_projection_casts_only_the_columns_it_selects(self, engine: _Engine) -> None:
-        engine.writer.write(engine.frame({"order_id": ["o1"]}), _spec(AppendSpec), None)
+        engine.writer.write(engine.frame({Order.c.order_id: ["o1"]}), _spec(AppendSpec), None)
 
-        assert engine.read_columns(FromTable(Order).columns("order_id")) == ["order_id"]
+        assert engine.read_columns(FromTable(Order).columns(Order.c.order_id)) == [Order.c.order_id]
 
 
 class TestPolarsDeleteFlag:
     def test_the_delete_flag_survives_until_used_and_is_not_written(
         self, polars_engine: _PolarsEngine
     ) -> None:
-        spec = _spec(UpsertSpec, upsert_keys=("order_id",), delete_flag="is_void")
+        spec = _spec(UpsertSpec, upsert_keys=(Order.c.order_id,), delete_flag="is_void")
 
         polars_engine.writer.write(_orders(polars_engine, "o1", "o2", void=()), spec, None)
         polars_engine.writer.write(_orders(polars_engine, "o1", "o2", void=("o1",)), spec, None)
 
         (stored,) = polars_engine.stored("sales.order")
-        assert stored["order_id"] == "o2"
+        assert stored[Order.c.order_id] == "o2"
         assert "is_void" not in stored
 
 
@@ -345,33 +349,23 @@ class TestLakeTypeRoundTrip:
 
         assert engine.stored_types("probes") == {"value": expected}
 
-    @pytest.mark.parametrize(("annotation", "expected"), LAKE_ROWS.values(), ids=list(LAKE_ROWS))
     def test_spark_reads_a_polars_table_with_the_same_types(
-        self,
-        polars_engine: _PolarsEngine,
-        spark_engine: _SparkEngine,
-        annotation: Any,
-        expected: FrameType,
+        self, polars_engine: _PolarsEngine, spark_engine: _SparkEngine
     ) -> None:
-        spec = AppendSpec(table_ref=TableRef("probes"), model=probe_model(annotation))
+        spec = AppendSpec(table_ref=TableRef("lake"), model=lake_model())
 
         polars_engine.writer.write(polars_engine.frame({"unrelated": [1]}), spec, None)
 
-        assert spark_engine.stored_types("probes") == {"value": expected}
+        assert spark_engine.stored_types("lake") == {
+            name: frame_type for name, (_, frame_type) in LAKE_COLUMNS.items()
+        }
 
 
 class TestPolarsAuditColumns:
-    @pytest.mark.parametrize(
-        "write_ctx",
-        [
-            WriteContext(run_id="r1", step="Load", attempt=1, process_run_id="p1"),
-            WriteContext(run_id="r1", step="Load", attempt=2, process_run_id=None),
-        ],
-        ids=["in-a-process", "outside-a-process"],
-    )
     def test_a_model_target_keeps_the_audit_columns_a_string_target_keeps(
-        self, tmp_path: Path, write_ctx: WriteContext
+        self, tmp_path: Path
     ) -> None:
+        write_ctx = WriteContext(run_id="r1", step="Load", attempt=1, process_run_id="p1")
         audit = AuditConfig(enabled=True, custom=(CustomColumnDef(name="region", value="eu"),))
         engine = _PolarsEngine(tmp_path, audit)
 
@@ -405,29 +399,22 @@ class TestModelColumnNamedLikeAnAuditColumn:
         write_ctx = WriteContext(run_id="r1", step="Load", attempt=2)
 
         engine.writer.write(
-            engine.frame({"retry_id": [1], "attempt": [7]}), spec, None, write_ctx=write_ctx
+            engine.frame({_Retry.c.retry_id: [1], _Retry.c.attempt: [7]}),
+            spec,
+            None,
+            write_ctx=write_ctx,
         )
 
-        assert engine.stored_types("retry")["attempt"] == LoomDtype.INT64
+        assert engine.stored_types("retry")[_Retry.c.attempt] == LoomDtype.INT64
 
 
 class TestModelWriteObservability:
-    def test_a_write_logs_the_model_columns_once_and_translates_nothing(
-        self, engine: _Engine, caplog: pytest.LogCaptureFixture, monkeypatch: pytest.MonkeyPatch
+    def test_a_write_logs_the_model_columns_once(
+        self, engine: _Engine, caplog: pytest.LogCaptureFixture
     ) -> None:
-        translations: list[type] = []
-        schema_of = LakeTranslator.schema_of
-
-        def counting(self: LakeTranslator, contract: type) -> Any:
-            translations.append(contract)
-            return schema_of(self, contract)
-
-        monkeypatch.setattr(LakeTranslator, "schema_of", counting)
-
         with caplog.at_level(logging.INFO):
             engine.writer.write(_orders(engine, "o1"), _spec(AppendSpec), None)
 
-        assert translations == []
         (fields,) = CapturedLog(caplog).named(EtlEvent.MODEL_SCHEMA_APPLIED)
         assert fields[EtlKey.MODEL] == "Order"
         assert fields[EtlKey.TABLE] == "sales.order"

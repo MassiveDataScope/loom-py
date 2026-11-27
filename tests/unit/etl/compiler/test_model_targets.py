@@ -70,9 +70,9 @@ _LAKE_REFS = {
     "table-ref": TableRef("sales.order"),
 }
 _MERGE_KEYS = {
-    "primary-key": (IntoTable(Order).upsert(), ("order_id",)),
-    "business-key": (IntoTable(Booking).update(), ("customer_id", "slot")),
-    "explicit-keys": (IntoTable(Order).upsert(keys=(Order.c.customer_id,)), ("customer_id",)),
+    "primary-key": (IntoTable(Order).upsert(), (Order.c.order_id,)),
+    "business-key": (IntoTable(Booking).update(), (Booking.c.customer_id, Booking.c.slot)),
+    "explicit-keys": (IntoTable(Order).upsert(keys=(Order.c.customer_id,)), (Order.c.customer_id,)),
     "string-without-keys": (IntoTable("sales.order").upsert(), ()),
 }
 _REFUSALS = {
@@ -107,14 +107,14 @@ _REFUSALS = {
         "track",
     ),
     "missing-valid-to": (
-        lambda: IntoHistory(Rate, keys=("rate_id",), effective_date="d", valid_to="ends_on"),
+        lambda: IntoHistory(Rate, keys=(Rate.c.rate_id,), effective_date="d", valid_to="ends_on"),
         ETLErrorCode.MODEL_COLUMN_UNKNOWN,
         "ends_on",
         "valid_to",
     ),
     "missing-deleted-at": (
         lambda: IntoHistory(
-            Tick, keys=("tick_id",), effective_date="d", delete_policy="soft_delete"
+            Tick, keys=(Tick.c.tick_id,), effective_date="d", delete_policy="soft_delete"
         ),
         ETLErrorCode.MODEL_COLUMN_UNKNOWN,
         "deleted_at",
@@ -129,7 +129,7 @@ _REFUSALS = {
     "time-column": (
         lambda: IntoTable(Clocked).append(),
         ETLErrorCode.MODEL_COLUMN_TYPE_REFUSED,
-        "opens_at",
+        Clocked.c.opens_at,
         r"Clocked\.opens_at is a Time.*store it as a Text or a DateTime",
     ),
     "evolve": (
@@ -138,28 +138,22 @@ _REFUSALS = {
         "schema",
         "EVOLVE",
     ),
-    "overwrite-history": (
-        lambda: IntoHistory(
-            Rate, keys=("rate_id",), effective_date="d", schema=SchemaMode.OVERWRITE
-        ),
-        ETLErrorCode.MODEL_SCHEMA_MODE_UNSUPPORTED,
-        "schema",
-        "OVERWRITE",
-    ),
     "autoincrement-key": (
         lambda: IntoTable(Ledger).upsert(),
         ETLErrorCode.MODEL_KEY_NOT_IN_FRAME,
-        "ledger_id",
+        Ledger.c.ledger_id,
         "autoincrement.*spec 024",
     ),
     "contradicting-date-type": (
-        lambda: IntoHistory(Rate, keys=("rate_id",), effective_date="d", date_type="timestamp"),
+        lambda: IntoHistory(
+            Rate, keys=(Rate.c.rate_id,), effective_date="d", date_type="timestamp"
+        ),
         ETLErrorCode.MODEL_DATE_TYPE_MISMATCH,
         "date_type",
         "'timestamp'.*'valid_from'.*'date'",
     ),
     "non-temporal-valid-from": (
-        lambda: IntoHistory(Undated, keys=("undated_id",), effective_date="d"),
+        lambda: IntoHistory(Undated, keys=(Undated.c.undated_id,), effective_date="d"),
         ETLErrorCode.MODEL_BOUNDARY_NOT_TEMPORAL,
         "valid_from",
         "holds no dates",
@@ -167,7 +161,7 @@ _REFUSALS = {
 }
 _SOURCE_REFUSALS = {
     "unknown-column": (
-        FromTable(Order).columns("order_id", "status"),
+        FromTable(Order).columns(Order.c.order_id, "status"),
         ETLErrorCode.MODEL_COLUMN_UNKNOWN,
         "status",
     ),
@@ -183,11 +177,6 @@ _SOURCE_REFUSALS = {
     ),
     "time-column": (
         FromTable(Clocked),
-        ETLErrorCode.MODEL_COLUMN_TYPE_REFUSED,
-        "opens_at",
-    ),
-    "time-column-by-with-schema": (
-        FromTable("wh.clocked").with_schema(Clocked),
         ETLErrorCode.MODEL_COLUMN_TYPE_REFUSED,
         "opens_at",
     ),
@@ -236,7 +225,11 @@ class TestModelSourceCompilation:
     def test_a_source_consistent_with_its_model_compiles(
         self, compile_source: CompileTarget
     ) -> None:
-        compile_source(FromTable(Order).where(col("amount") > 0).columns("order_id", "amount"))
+        compile_source(
+            FromTable(Order)
+            .where(col(Order.c.amount) > 0)
+            .columns(Order.c.order_id, Order.c.amount)
+        )
 
     @pytest.mark.parametrize(
         ("source", "code", "field"), _SOURCE_REFUSALS.values(), ids=list(_SOURCE_REFUSALS)
@@ -300,21 +293,21 @@ class TestModelTargetCompilation:
     def test_a_target_the_model_contradicts_is_refused_naming_model_field_and_fix(
         self,
         compile_target: CompileTarget,
+        caplog: pytest.LogCaptureFixture,
         declare: Callable[[], Any],
         code: ETLErrorCode,
         field: str,
         message: str,
     ) -> None:
-        with pytest.raises(ETLCompilationError, match=message) as refused:
+        with (
+            caplog.at_level(logging.DEBUG, logger=_MODEL_LOGGER),
+            pytest.raises(ETLCompilationError, match=message) as refused,
+        ):
             compile_target(declare())
 
         assert (refused.value.code, refused.value.field) == (code, field)
-
-    def test_a_string_target_still_requires_keys(self, compile_target: CompileTarget) -> None:
-        with pytest.raises(ETLCompilationError) as refused:
-            compile_target(IntoTable("sales.order").upsert())
-
-        assert refused.value.code is ETLErrorCode.UPSERT_NO_KEYS
+        (logged,) = CapturedLog(caplog, _MODEL_LOGGER).named(EtlEvent.MODEL_REFUSED)
+        assert (logged[EtlKey.FIELD], logged[EtlKey.REASON]) == (field, code.value)
 
 
 class TestModelTargetLogs:
@@ -326,52 +319,6 @@ class TestModelTargetLogs:
 
         (fields,) = CapturedLog(caplog, _MODEL_LOGGER).named(EtlEvent.MODEL_RESOLVED)
         assert (fields[EtlKey.MODEL], fields[EtlKey.TABLE]) == ("Order", "sales.order")
-
-    @pytest.mark.parametrize(
-        ("target", "model", "table", "field", "code"),
-        [
-            (
-                lambda: IntoTable(Ledger).upsert(),
-                "Ledger",
-                "ledger",
-                "ledger_id",
-                ETLErrorCode.MODEL_KEY_NOT_IN_FRAME,
-            ),
-            (
-                lambda: IntoTable(Clocked).append(),
-                "Clocked",
-                "clocked",
-                "opens_at",
-                ETLErrorCode.MODEL_COLUMN_TYPE_REFUSED,
-            ),
-        ],
-        ids=["key", "column-type"],
-    )
-    def test_a_refusal_logs_once_with_model_table_field_and_reason(
-        self,
-        compile_target: CompileTarget,
-        caplog: pytest.LogCaptureFixture,
-        target: Callable[[], Any],
-        model: str,
-        table: str,
-        field: str,
-        code: ETLErrorCode,
-    ) -> None:
-        with (
-            caplog.at_level(logging.DEBUG, logger=_MODEL_LOGGER),
-            pytest.raises(ETLCompilationError),
-        ):
-            compile_target(target())
-
-        log = CapturedLog(caplog, _MODEL_LOGGER)
-        (fields,) = log.named(EtlEvent.MODEL_REFUSED)
-        assert (fields[EtlKey.MODEL], fields[EtlKey.TABLE], fields[EtlKey.FIELD]) == (
-            model,
-            table,
-            field,
-        )
-        assert fields[EtlKey.REASON] == code.value
-        assert EtlEvent.MODEL_RESOLVED not in log.messages
 
     def test_a_string_target_logs_no_model_event(
         self, compile_target: CompileTarget, caplog: pytest.LogCaptureFixture

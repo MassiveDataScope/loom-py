@@ -8,13 +8,12 @@ from enum import StrEnum
 from typing import Annotated, Any
 from uuid import UUID
 
-import msgspec
 import polars as pl
 
 from loom.core.model import BaseModel, Field
 from loom.core.model.types import Numeric
 from loom.etl import ETLParams, ETLStep, FromTable, IntoTable, col, params
-from tests.unit.etl.engines.frame_types import Order
+from tests.unit.etl.engines.frame_types import CamelEntity, Order
 
 
 class CustomerTotal(BaseModel):
@@ -28,17 +27,12 @@ class Tier(StrEnum):
     GOLD = "gold"
 
 
-class Stop(msgspec.Struct, rename="camel"):
-    zip_code: str
-    seen_at: datetime
-
-
 class Visitor(BaseModel):
     __tablename__ = "sales.visitor"
     visitor_id: Annotated[UUID, Field(primary_key=True)]
     tier: Tier
-    home: Stop
-    stops: list[Stop]
+    home: CamelEntity
+    stops: list[CamelEntity]
     extras: dict[str, Any]
     note: str | None
 
