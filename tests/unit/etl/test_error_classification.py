@@ -40,77 +40,48 @@ async def _never_invoked(delivery: object) -> None:
 _RUNNER = JobRunner(_never_invoked, redelivery=Redelivery.DELAYED)
 
 
+_CLASSIFIED = {
+    "SchemaError": (SchemaError("orders"), (True, None, True)),
+    "EmptyReplaceError": (EmptyReplaceError("orders"), (True, None, True)),
+    "UpsertDeleteFlagError": (UpsertDeleteFlagError("deleted", "is missing"), (True, None, True)),
+    "InvalidStageError": (InvalidStageError(frozenset({"LoadOrders"})), (True, None, True)),
+    "HistorifyKeyConflictError": (HistorifyKeyConflictError("order_id"), (True, None, True)),
+    "HistorifyDateCollisionError": (HistorifyDateCollisionError("order_id"), (True, None, True)),
+    "HistorifyDeleteMarkerError": (
+        HistorifyDeleteMarkerError("deleted", "is missing"),
+        (True, None, True),
+    ),
+    "HistorifyTemporalConflictError": (
+        HistorifyTemporalConflictError(date(2024, 1, 5), date(2024, 1, 1)),
+        (True, ErrorCode.CONFLICT, False),
+    ),
+    "UnsupportedUpsertDeleteFlagError": (
+        UnsupportedUpsertDeleteFlagError("FileWriter", "deleted"),
+        (True, None, True),
+    ),
+    "UnsupportedFormatError": (
+        UnsupportedFormatError(Format.XLSX, ()),
+        (True, ErrorCode.UNSUPPORTED_FORMAT, False),
+    ),
+    "SchemaNotFoundError": (SchemaNotFoundError("orders"), (False, None, True)),
+    "MaintenanceError": (MaintenanceError([]), (False, ErrorCode.SYSTEM_ERROR, True)),
+    "CheckpointCleanupError": (
+        CheckpointCleanupError("orders"),
+        (False, ErrorCode.SYSTEM_ERROR, True),
+    ),
+    "ETLCompilationError": (
+        ETLCompilationError(ETLErrorCode.MISSING_TARGET, "LoadOrders", "no target"),
+        (False, ETLErrorCode.MISSING_TARGET, True),
+    ),
+    "ConfigValueError": (
+        ConfigValueError("orders.limit", int, ConfigValueFailure.MISSING),
+        (False, None, True),
+    ),
+}
+
+
 class TestEtlErrorClassification:
-    @pytest.mark.parametrize(
-        ("error", "expected"),
-        [
-            pytest.param(SchemaError("orders"), (True, None, True), id="SchemaError"),
-            pytest.param(EmptyReplaceError("orders"), (True, None, True), id="EmptyReplaceError"),
-            pytest.param(
-                UpsertDeleteFlagError("deleted", "is missing"),
-                (True, None, True),
-                id="UpsertDeleteFlagError",
-            ),
-            pytest.param(
-                InvalidStageError(frozenset({"LoadOrders"})),
-                (True, None, True),
-                id="InvalidStageError",
-            ),
-            pytest.param(
-                HistorifyKeyConflictError("order_id"),
-                (True, None, True),
-                id="HistorifyKeyConflictError",
-            ),
-            pytest.param(
-                HistorifyDateCollisionError("order_id"),
-                (True, None, True),
-                id="HistorifyDateCollisionError",
-            ),
-            pytest.param(
-                HistorifyDeleteMarkerError("deleted", "is missing"),
-                (True, None, True),
-                id="HistorifyDeleteMarkerError",
-            ),
-            pytest.param(
-                HistorifyTemporalConflictError(date(2024, 1, 5), date(2024, 1, 1)),
-                (True, ErrorCode.CONFLICT, False),
-                id="HistorifyTemporalConflictError",
-            ),
-            pytest.param(
-                UnsupportedUpsertDeleteFlagError("FileWriter", "deleted"),
-                (True, None, True),
-                id="UnsupportedUpsertDeleteFlagError",
-            ),
-            pytest.param(
-                UnsupportedFormatError(Format.XLSX, ()),
-                (True, ErrorCode.UNSUPPORTED_FORMAT, False),
-                id="UnsupportedFormatError",
-            ),
-            pytest.param(
-                SchemaNotFoundError("orders"), (False, None, True), id="SchemaNotFoundError"
-            ),
-            pytest.param(
-                MaintenanceError([]),
-                (False, ErrorCode.SYSTEM_ERROR, True),
-                id="MaintenanceError",
-            ),
-            pytest.param(
-                CheckpointCleanupError("orders"),
-                (False, ErrorCode.SYSTEM_ERROR, True),
-                id="CheckpointCleanupError",
-            ),
-            pytest.param(
-                ETLCompilationError(ETLErrorCode.MISSING_TARGET, "LoadOrders", "no target"),
-                (False, ETLErrorCode.MISSING_TARGET, True),
-                id="ETLCompilationError",
-            ),
-            pytest.param(
-                ConfigValueError("orders.limit", int, ConfigValueFailure.MISSING),
-                (False, None, True),
-                id="ConfigValueError",
-            ),
-        ],
-    )
+    @pytest.mark.parametrize(("error", "expected"), _CLASSIFIED.values(), ids=list(_CLASSIFIED))
     def test_error_keeps_its_value_error_base_code_and_retryability(
         self, error: Exception, expected: tuple[bool, object, bool]
     ) -> None:
