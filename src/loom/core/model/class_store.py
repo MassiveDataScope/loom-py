@@ -3,13 +3,13 @@
 from __future__ import annotations
 
 from collections.abc import Callable
+from contextlib import suppress
 from functools import wraps
 from typing import Any, TypeVar, cast
 
 ClassFunction = TypeVar("ClassFunction", bound=Callable[[type], Any])
 
 _ABSENT: Any = object()
-_IMMUTABLE_TYPE_FLAG = 1 << 8
 
 
 def stored_on_class(attribute: str) -> Callable[[ClassFunction], ClassFunction]:
@@ -18,7 +18,8 @@ def stored_on_class(attribute: str) -> Callable[[ClassFunction], ClassFunction]:
     A cache keyed by class keeps every class it has seen alive; the value stored on
     the class lives and dies with it, so classes built at run time can be collected.
     A parent's stored value is never read for a subclass. A class that refuses new
-    attributes, as a builtin, recomputes the value on each call.
+    attributes, as a builtin or a class whose metaclass freezes it, recomputes the
+    value on each call.
     """
 
     def memoise(compute: ClassFunction) -> ClassFunction:
@@ -27,7 +28,7 @@ def stored_on_class(attribute: str) -> Callable[[ClassFunction], ClassFunction]:
             value = cls.__dict__.get(attribute, _ABSENT)
             if value is _ABSENT:
                 value = compute(cls)
-                if not cls.__flags__ & _IMMUTABLE_TYPE_FLAG:
+                with suppress(TypeError, AttributeError):
                     setattr(cls, attribute, value)
             return value
 

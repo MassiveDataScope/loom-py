@@ -217,6 +217,18 @@ class TestFieldReaders:
 
         assert alive() is None
 
+    def test_a_class_whose_metaclass_refuses_attributes_still_resolves(self) -> None:
+        class Frozen(type):
+            def __setattr__(cls, name: str, value: object) -> None:
+                raise TypeError("class attributes are frozen")
+
+        class Record(metaclass=Frozen):
+            code: str
+
+        (field,) = resolve_fields(Record)
+
+        assert (field.name, field.column_type) == ("code", String())
+
     def test_a_field_that_admits_none_is_nullable(self, scalars: dict[str, ResolvedField]) -> None:
         assert (scalars["note"].nullable, scalars["count"].nullable) == (True, False)
 
