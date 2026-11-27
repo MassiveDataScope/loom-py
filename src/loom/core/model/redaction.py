@@ -16,7 +16,7 @@ from typing import Any, Generic, TypeVar, get_origin
 import msgspec
 
 from loom.core.errors import InvalidType, InvalidValue
-from loom.core.model.inference import union_inner_args
+from loom.core.model.inference import Annotation
 
 T = TypeVar("T")
 
@@ -328,7 +328,7 @@ def _redacted_fields(
 
 
 def _redaction_kind(annotation: Any) -> type[Any] | None:
-    for option in union_inner_args(annotation) or (annotation,):
+    for option in Annotation(annotation).inner_args or (annotation,):
         origin = get_origin(option) or option
         if origin is Secret:
             return Secret

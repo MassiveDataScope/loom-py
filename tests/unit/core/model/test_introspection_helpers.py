@@ -21,7 +21,7 @@ from loom.core.model import (
     Postgres,
     RelationField,
 )
-from loom.core.model.inference import union_inner_args
+from loom.core.model.inference import Annotation
 from loom.core.model.introspection import (
     extract_model_from_hint,
     generic_type_arg,
@@ -94,19 +94,19 @@ class TestResolveTypeHints:
 
 class TestUnionInnerArgs:
     def test_drops_none_from_a_pep604_union(self) -> None:
-        assert union_inner_args(int | None) == (int,)
+        assert Annotation(int | None).inner_args == (int,)
 
     def test_drops_unset_type_from_a_pep604_union(self) -> None:
-        assert union_inner_args(AcmeNote | msgspec.UnsetType) == (AcmeNote,)
+        assert Annotation(AcmeNote | msgspec.UnsetType).inner_args == (AcmeNote,)
 
     def test_normalises_the_typing_union_form(self) -> None:
         # The legacy spelling is the point of this test, so it stays verbatim.
         hint = typing.Union[int, str]  # noqa: UP007
 
-        assert union_inner_args(hint) == (int, str)
+        assert Annotation(hint).inner_args == (int, str)
 
     def test_returns_none_for_a_non_union_annotation(self) -> None:
-        assert union_inner_args(list[int]) is None
+        assert Annotation(list[int]).inner_args is None
 
 
 class TestExtractModelFromHint:

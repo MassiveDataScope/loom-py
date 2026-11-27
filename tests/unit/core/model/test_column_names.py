@@ -5,7 +5,7 @@ import pickle
 import pytest
 
 from loom.core.errors import InvalidType
-from loom.core.model import BaseModel, BusinessKey, ColumnField, RelationField, conflict_key_of
+from loom.core.model import BaseModel, BusinessKey, ColumnField, ModelKeys, RelationField
 from loom.core.model.enums import Cardinality
 from loom.core.model.types import Integer, Text
 from loom.testing import make
@@ -91,7 +91,7 @@ class TestColumnNames:
 
 class TestConflictKey:
     def test_it_is_the_business_key_when_declared(self) -> None:
-        assert conflict_key_of(Keyed) == ("customer_id", "placed_on")
+        assert ModelKeys.of(Keyed).conflict == ("customer_id", "placed_on")
 
     def test_it_is_the_primary_key_otherwise(self) -> None:
-        assert conflict_key_of(Order) == ("id",)
+        assert ModelKeys.of(Order).conflict == ("id",)

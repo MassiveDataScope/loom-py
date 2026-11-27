@@ -11,15 +11,7 @@ from loom.core.errors import InvalidType, InvalidValue
 from loom.core.model.class_store import stored_on_class
 from loom.core.model.enums import KeyFill
 from loom.core.model.field import ColumnFieldSpec, Field
-from loom.core.model.inference import (
-    FieldSource,
-    ResolvedField,
-    field_declaration,
-    origin_type,
-    read_fields,
-    resolve_fields,
-    union_inner_args,
-)
+from loom.core.model.inference import Annotation, FieldSource, Record, ResolvedField
 from loom.core.model.keys import (
     BusinessKey,
     DerivedKey,
@@ -94,10 +86,10 @@ def get_column_fields(cls: type) -> dict[str, ColumnFieldInfo]:
 def _column_fields(cls: type) -> Mapping[str, ColumnFieldInfo]:
     declared = _collect_inherited_dict_metadata(cls, "__loom_columns__")
     non_columns = set(get_relations(cls)) | set(get_projections(cls))
-    resolved = {field.name: field for field in resolve_fields(cls, declared, exclude=non_columns)}
+    resolved = {field.name: field for field in Record(cls).resolve(declared, exclude=non_columns)}
     return {
         source.name: _column_field_info(source, resolved[source.name], declared.get(source.name))
-        for source in read_fields(cls)
+        for source in Record(cls).fields
         if source.name in resolved
     }
 
@@ -105,11 +97,11 @@ def _column_fields(cls: type) -> Mapping[str, ColumnFieldInfo]:
 def _column_field_info(
     source: FieldSource, resolved: ResolvedField, declared: ColumnFieldSpec | None
 ) -> ColumnFieldInfo:
-    _, field = field_declaration(source.annotation, declared)
+    _, field = source.declaration(declared)
     field = _with_nullable(_with_struct_default(field, source.default), resolved)
     return ColumnFieldInfo(
         name=source.name,
-        python_type=origin_type(source.annotation),
+        python_type=Annotation(source.annotation).origin_type,
         resolved=resolved,
         field=field,
     )
@@ -194,7 +186,7 @@ def _first_union_match(
     """Return the first non-``None`` result of *resolve* over *members*.
 
     Args:
-        members: Union members, as returned by :func:`union_inner_args`.
+        members: Union members, as returned by :attr:`Annotation.inner_args`.
         resolve: Walker applied to each member.
 
     Returns:
@@ -220,7 +212,7 @@ def extract_model_from_hint(hint: Any) -> type | None:
     Returns:
         The wrapped class, or ``None`` when the annotation wraps no class.
     """
-    union_args = union_inner_args(hint)
+    union_args = Annotation(hint).inner_args
     if union_args is not None:
         return _first_union_match(union_args, extract_model_from_hint)
 
@@ -246,7 +238,7 @@ def list_element_type(annotation: Any) -> type | None:
     Returns:
         The list element class, or ``None`` when absent or not a class.
     """
-    union_args = union_inner_args(annotation)
+    union_args = Annotation(annotation).inner_args
     if union_args is not None:
         return _first_union_match(union_args, list_element_type)
 
@@ -360,30 +352,31 @@ def declared_unique(cls: type) -> tuple[tuple[str, ...], ...]:
     return (*declared, key.fields)
 
 
-@stored_on_class("__loom_conflict_key__")
-def conflict_key_of(cls: type) -> tuple[str, ...]:
-    """The columns that identify a duplicate row: the business key, else the primary key.
+@dataclass(frozen=True, slots=True)
+class ModelKeys:
+    """The columns that identify a duplicate row of a model, and which of them the store fills.
 
-    Pure: an undeclared key gives the primary key, and a model without one gives ``()``.
+    ``conflict`` is the business key, else the primary key; an undeclared key gives
+    the primary key, and a model without one gives ``()``. ``store_filled`` are the
+    conflict-key columns a frame cannot supply: a business key always comes from the
+    frame, so it gives ``{}``, while a primary key comes from the store when it is
+    autoincrement, derived from a business key, or filled by a server default.
     """
-    key = business_key_of(cls)
-    if key is not None:
-        return key.fields
-    return tuple(name for name, info in get_column_fields(cls).items() if info.field.primary_key)
 
+    conflict: tuple[str, ...]
+    store_filled: Mapping[str, KeyFill]
 
-def store_filled_key_columns(cls: type) -> dict[str, KeyFill]:
-    """The conflict-key columns the store fills, so a frame cannot supply them.
-
-    A business key always comes from the frame, so it gives ``{}``. A primary key
-    comes from the store when it is autoincrement, derived from a business key, or
-    filled by a server default.
-    """
-    if business_key_of(cls) is not None:
-        return {}
-    columns = get_column_fields(cls)
-    fills = ((name, columns[name].field.key_fill) for name in conflict_key_of(cls))
-    return {name: fill for name, fill in fills if fill is not None}
+    @staticmethod
+    @stored_on_class("__loom_model_keys__")
+    def of(cls: type) -> ModelKeys:
+        """The keys of *cls*, derived once from its declared columns."""
+        key = business_key_of(cls)
+        columns = get_column_fields(cls)
+        if key is not None:
+            return ModelKeys(key.fields, {})
+        conflict = tuple(name for name, info in columns.items() if info.field.primary_key)
+        fills = ((name, columns[name].field.key_fill) for name in conflict)
+        return ModelKeys(conflict, {name: fill for name, fill in fills if fill is not None})
 
 
 @stored_on_class("__loom_business_key__")

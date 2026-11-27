@@ -12,7 +12,7 @@ import polars as pl
 
 from loom.core.errors import InvalidValue
 from loom.core.model.convert import to_column_value, to_struct
-from loom.core.model.introspection import conflict_key_of, get_column_fields
+from loom.core.model.introspection import ModelKeys, get_column_fields
 from loom.etl.engines.polars._dtype import frame_type_to_polars
 from loom.etl.schema import ColumnSchema, LoomDtype, ModelTable
 
@@ -98,8 +98,8 @@ class ModelRows:
 
         Rows are compared as a multiset, by value, in any order.
         """
-        wanted = [_frozen(row) for row in expected]
-        found = [_frozen(row) for row in actual]
+        wanted = [ModelRows._frozen(row) for row in expected]
+        found = [ModelRows._frozen(row) for row in actual]
         rows = dict(zip([*found, *wanted], [*actual, *expected], strict=True))
         missing = (Counter(wanted) - Counter(found)).elements()
         unexpected = (Counter(found) - Counter(wanted)).elements()
@@ -145,7 +145,7 @@ class ModelRows:
         ]
 
     def _require_distinct_keys(self, instances: list[Any]) -> None:
-        key = conflict_key_of(self.table.model)
+        key = ModelKeys.of(self.table.model).conflict
         if not key:
             return
         seen = Counter(tuple(getattr(instance, name) for name in key) for instance in instances)
@@ -157,17 +157,20 @@ class ModelRows:
                 f"give each row its own {list(key)}, because make() repeats what it generates."
             )
 
-
-def _frozen(value: Any) -> Any:
-    """A hashable stand-in for *value* that is equal exactly when the values are."""
-    match value:
-        case msgspec.Struct():
-            return (type(value), tuple(_frozen(item) for item in msgspec.structs.astuple(value)))
-        case list() | tuple():
-            return tuple(_frozen(item) for item in value)
-        case dict():
-            return frozenset((key, _frozen(item)) for key, item in value.items())
-        case set() | frozenset():
-            return frozenset(_frozen(item) for item in value)
-        case _:
-            return value
+    @staticmethod
+    def _frozen(value: Any) -> Any:
+        """A hashable stand-in for *value* that is equal exactly when the values are."""
+        match value:
+            case msgspec.Struct():
+                return (
+                    type(value),
+                    tuple(ModelRows._frozen(item) for item in msgspec.structs.astuple(value)),
+                )
+            case list() | tuple():
+                return tuple(ModelRows._frozen(item) for item in value)
+            case dict():
+                return frozenset((key, ModelRows._frozen(item)) for key, item in value.items())
+            case set() | frozenset():
+                return frozenset(ModelRows._frozen(item) for item in value)
+            case _:
+                return value

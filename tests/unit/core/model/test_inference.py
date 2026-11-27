@@ -19,10 +19,9 @@ from loom.core.model.inference import (
     ListShape,
     Opaque,
     Outcome,
+    Record,
     ResolvedField,
     StructShape,
-    read_fields,
-    resolve_fields,
 )
 from loom.core.model.types import (
     JSON,
@@ -109,7 +108,7 @@ class _Scalars(msgspec.Struct):
 
 @pytest.fixture(scope="module")
 def scalars() -> dict[str, ResolvedField]:
-    return {field.name: field for field in resolve_fields(_Scalars)}
+    return {field.name: field for field in Record(_Scalars).resolve()}
 
 
 class TestInferredColumnTypes:
@@ -147,7 +146,7 @@ class TestInferredColumnTypes:
 
         declared = {"value": ColumnFieldSpec(Numeric(precision=9, scale=3))}
 
-        (value,) = resolve_fields(Reading, declared)
+        (value,) = Record(Reading).resolve(declared)
 
         assert value.column_type == Numeric(precision=9, scale=3)
 
@@ -177,7 +176,7 @@ class TestUndeclaredFields:
         )
 
     def test_a_foreign_class_whose_hints_cannot_resolve_is_not_a_record(self) -> None:
-        (item,) = resolve_fields(_HoldsForeign)
+        (item,) = Record(_HoldsForeign).resolve()
 
         assert (item.outcome, item.column_type, "__loom_fields__" in vars(_Foreign)) == (
             Outcome.UNDECLARED,
@@ -192,7 +191,7 @@ class TestFieldReaders:
         class Customer(msgspec.Struct, rename="camel"):
             given_name: str
 
-        (field,) = resolve_fields(Customer)
+        (field,) = Record(Customer).resolve()
 
         assert (field.name, field.encode_name) == ("given_name", "givenName")
 
@@ -202,7 +201,7 @@ class TestFieldReaders:
             registry: ClassVar[dict[str, str]]
 
         names = [
-            (f.name, f.encode_name) for f in (*resolve_fields(_Parcel), *resolve_fields(Plain))
+            (f.name, f.encode_name) for f in (*Record(_Parcel).resolve(), *Record(Plain).resolve())
         ]
 
         assert names == [("weight", "weight"), ("label", "label"), ("code", "code")]
@@ -211,7 +210,7 @@ class TestFieldReaders:
         built = msgspec.defstruct("Built", [("code", str)])
         alive = weakref.ref(built)
 
-        read_fields(built)
+        _ = Record(built).fields
         del built
         gc.collect()
 
@@ -222,10 +221,10 @@ class TestFieldReaders:
             def __setattr__(cls, name: str, value: object) -> None:
                 raise TypeError("class attributes are frozen")
 
-        class Record(metaclass=Frozen):
+        class Sealed(metaclass=Frozen):
             code: str
 
-        (field,) = resolve_fields(Record)
+        (field,) = Record(Sealed).resolve()
 
         assert (field.name, field.column_type) == ("code", String())
 
@@ -241,11 +240,11 @@ class TestJsonShape:
         assert [f.name for f in shape.fields] == ["street", "zip_code"]
 
     def test_a_nested_plain_class_describes_its_fields(self) -> None:
-        (label,) = resolve_fields(_Box)
+        (label,) = Record(_Box).resolve()
 
         assert (label.column_type, label.shape) == (
             JSON,
-            StructShape(resolve_fields(_Label)),
+            StructShape(Record(_Label).resolve()),
         )
 
     def test_a_list_describes_its_item(self, scalars: dict[str, ResolvedField]) -> None:
@@ -258,13 +257,13 @@ class TestJsonShape:
         class Basket(msgspec.Struct):
             labels: list[str]
 
-        (labels,) = resolve_fields(Basket)
+        (labels,) = Record(Basket).resolve()
 
         assert isinstance(labels.shape, ListShape)
         assert labels.shape.item.column_type == String()
 
     def test_a_class_met_again_becomes_opaque(self) -> None:
-        (_, children) = resolve_fields(_Tree)
+        (_, children) = Record(_Tree).resolve()
 
         assert isinstance(children.shape, ListShape)
         assert children.shape.item.shape == Opaque()
@@ -279,7 +278,7 @@ class TestJsonShape:
         class Device(msgspec.Struct):
             marks: Annotated[list[int], Postgres.ARRAY(Integer)]
 
-        (marks,) = resolve_fields(Device)
+        (marks,) = Record(Device).resolve()
 
         assert isinstance(marks.shape, ListShape)
         assert marks.shape.item.column_type == Integer

@@ -34,7 +34,7 @@ import typing
 from typing import Any, TypeAlias
 
 from loom.core.errors import InvalidType
-from loom.core.model.inference import resolve_annotation
+from loom.core.model.inference import Annotation
 from loom.etl.schema._model import LakeRefusal, LakeTranslator
 from loom.etl.schema._schema import (
     ArrayType,
@@ -149,4 +149,4 @@ def annotation_to_frame_type(ann: Any) -> FrameType:
             "pass the resolved hint, e.g. typing.get_type_hints(cls)[name].",
             "value",
         )
-    return LakeTranslator("annotation").frame_type(resolve_annotation(ann))
+    return LakeTranslator("annotation").frame_type(Annotation(ann).resolved)

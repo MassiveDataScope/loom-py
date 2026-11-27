@@ -18,9 +18,9 @@ from loom.core.model.field import (
 )
 from loom.core.model.introspection import (
     ColumnFieldInfo,
+    ModelKeys,
     PartialUnique,
     business_key_of,
-    conflict_key_of,
     declared_checks,
     declared_indexes,
     declared_partial_unique,
@@ -81,8 +81,8 @@ __all__ = [
     "DerivedKey",
     "KeyHash",
     "KeyMismatch",
+    "ModelKeys",
     "business_key_of",
-    "conflict_key_of",
     "derived_key_of",
     "verify_keys",
     "READ_WRITE",
@@ -128,6 +128,7 @@ __all__ = [
     "ProjectionField",
     "LoomStructMeta",
     "LoomType",
+    "ModelKeys",
     "Numeric",
     "OnDelete",
     "OnUpdate",

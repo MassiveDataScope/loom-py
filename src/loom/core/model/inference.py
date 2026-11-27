@@ -106,145 +106,195 @@ class FieldSource:
     annotation: Any
     default: Any
 
+    def declaration(
+        self, declared: ColumnFieldSpec | None = None
+    ) -> tuple[ColumnType | None, Field]:
+        """The column type and ``Field`` this field declares, before any inference.
 
-def _union_members(hint: Any) -> tuple[Any, ...] | None:
-    """Return the members of a Union annotation, normalising ``X | Y`` and ``Union[X, Y]``.
+        A ``ColumnField`` supplies the ``Field``, and its column type wins over the
+        one in ``Annotated``; without one, ``Annotated`` supplies both.
+        """
+        column_type: ColumnType | None = None
+        field = Field()
+        _, metadata = Annotation(self.annotation).column_base
+        for entry in metadata:
+            if isinstance(entry, ColumnType):
+                column_type = entry
+            elif isinstance(entry, Field):
+                field = entry
+        if declared is None:
+            return column_type, field
+        return declared.column_type or column_type, declared.field
 
-    Returns:
-        The declared union members, or ``None`` when *hint* is not a Union.
-    """
-    if isinstance(hint, UnionType):
-        return hint.__args__
-    if getattr(hint, "__origin__", None) is Union:
-        return getattr(hint, "__args__", ())
-    return None
 
+@dataclass(frozen=True, slots=True)
+class Annotation:
+    """One type annotation, asked what it admits and what it stands for."""
 
-def union_inner_args(hint: Any) -> tuple[Any, ...] | None:
-    """Return the non-``None``, non-``UnsetType`` members of a Union annotation.
+    hint: Any
 
-    Returns:
-        The meaningful union members, or ``None`` when *hint* is not a Union.
-    """
-    members = _union_members(hint)
-    if members is None:
+    @property
+    def members(self) -> tuple[Any, ...] | None:
+        """The members of a Union, normalising ``X | Y`` and ``Union[X, Y]``, else ``None``."""
+        if isinstance(self.hint, UnionType):
+            return self.hint.__args__
+        if getattr(self.hint, "__origin__", None) is Union:
+            return getattr(self.hint, "__args__", ())
         return None
-    return tuple(a for a in members if a is not type(None) and a is not msgspec.UnsetType)
 
+    @property
+    def inner_args(self) -> tuple[Any, ...] | None:
+        """The non-``None``, non-``UnsetType`` members of a Union; ``None`` if not one."""
+        members = self.members
+        if members is None:
+            return None
+        return tuple(a for a in members if a is not type(None) and a is not msgspec.UnsetType)
 
-def _unwrap_optional(annotation: Any) -> Any:
-    """Return the single type of a union once ``None`` and ``UnsetType`` are dropped.
+    @property
+    def without_optional(self) -> Any:
+        """The single type of a union once ``None`` and ``UnsetType`` are dropped.
 
-    ``UNSET`` means "not provided", not another type, so ``X | UnsetType``
-    and ``X | None | UnsetType`` unwrap to ``X``; whether ``None`` is admitted
-    is decided apart, by :func:`_admits_none`.
-    """
-    args = union_inner_args(annotation)
-    if args is None:
-        return annotation
-    if len(args) == 1:
-        return args[0]
-    return annotation
+        ``UNSET`` means "not provided", not another type, so ``X | UnsetType``
+        and ``X | None | UnsetType`` unwrap to ``X``; whether ``None`` is admitted
+        is decided apart, by :attr:`admits_none`.
+        """
+        args = self.inner_args
+        if args is not None and len(args) == 1:
+            return args[0]
+        return self.hint
 
+    @property
+    def admits_none(self) -> bool:
+        """Whether the annotation accepts ``None``, through ``Annotated``, ``Literal``, unions."""
+        origin = get_origin(self.hint)
+        if origin is Annotated:
+            return Annotation(get_args(self.hint)[0]).admits_none
+        if origin is Literal:
+            return None in get_args(self.hint)
+        members = self.members
+        if members is None:
+            return self.hint is type(None)
+        return any(Annotation(member).admits_none for member in members)
 
-def _admits_none(annotation: Any) -> bool:
-    """Whether ``annotation`` accepts ``None``, through ``Annotated``, ``Literal`` and unions."""
-    origin = get_origin(annotation)
-    if origin is Annotated:
-        return _admits_none(get_args(annotation)[0])
-    if origin is Literal:
-        return None in get_args(annotation)
-    members = _union_members(annotation)
-    if members is None:
-        return annotation is type(None)
-    return any(_admits_none(member) for member in members)
+    @property
+    def column_base(self) -> tuple[Any, tuple[Any, ...]]:
+        """Strip ``Optional`` and ``Annotated`` layers, in either order.
 
+        Returns:
+            The inner annotation and the metadata of the ``Annotated`` layers.
+        """
+        annotation = self.hint
+        metadata: tuple[Any, ...] = ()
+        while True:
+            unwrapped = Annotation(annotation).without_optional
+            if get_origin(unwrapped) is Annotated:
+                metadata += unwrapped.__metadata__
+                unwrapped = get_args(unwrapped)[0]
+            if unwrapped is annotation:
+                return annotation, metadata
+            annotation = unwrapped
 
-def _column_base(annotation: Any) -> tuple[Any, tuple[Any, ...]]:
-    """Strip ``Optional`` and ``Annotated`` layers, in either order.
-
-    Returns:
-        The inner annotation and the metadata of the ``Annotated`` layers.
-    """
-    metadata: tuple[Any, ...] = ()
-    while True:
-        unwrapped = _unwrap_optional(annotation)
-        if get_origin(unwrapped) is Annotated:
-            metadata += unwrapped.__metadata__
-            unwrapped = get_args(unwrapped)[0]
-        if unwrapped is annotation:
-            return annotation, metadata
-        annotation = unwrapped
-
-
-def origin_type(annotation: Any) -> type[Any]:
-    """Return the class an annotation stands for, ``object`` when it is not one."""
-    origin = getattr(annotation, "__origin__", None)
-    if origin is not None:
-        args = getattr(annotation, "__args__", ())
-        if args:
-            value = args[0]
-            if isinstance(value, type):
-                return value
+    @property
+    def origin_type(self) -> type[Any]:
+        """The class the annotation stands for, ``object`` when it is not one."""
+        origin = getattr(self.hint, "__origin__", None)
+        if origin is not None:
+            args = getattr(self.hint, "__args__", ())
+            if args:
+                value = args[0]
+                if isinstance(value, type):
+                    return value
+                return object
+        raw = self.without_optional
+        origin = get_origin(raw)
+        if origin is not None:
+            if isinstance(origin, type):
+                return origin
             return object
-    raw = _unwrap_optional(annotation)
-    origin = get_origin(raw)
-    if origin is not None:
-        if isinstance(origin, type):
-            return origin
+        if isinstance(raw, type):
+            return raw
         return object
-    if isinstance(raw, type):
-        return raw
-    return object
+
+    @property
+    def resolved(self) -> ResolvedField:
+        """The column type of this bare annotation, as a field named ``value``.
+
+        Like :meth:`Record.resolve`, it never raises on an annotation it cannot map.
+        """
+        source = FieldSource("value", "value", self.hint, msgspec.NODEFAULT)
+        return _Resolver(frozenset()).resolve(source)
 
 
-def field_declaration(
-    annotation: Any, declared: ColumnFieldSpec | None = None
-) -> tuple[ColumnType | None, Field]:
-    """The column type and ``Field`` a field declares, before any inference.
+@dataclass(frozen=True, slots=True)
+class Record:
+    """A class whose annotated fields are columns or JSON members."""
 
-    A ``ColumnField`` supplies the ``Field``, and its column type wins over the
-    one in ``Annotated``; without one, ``Annotated`` supplies both.
-    """
-    column_type: ColumnType | None = None
-    field = Field()
-    _, metadata = _column_base(annotation)
-    for entry in metadata:
-        if isinstance(entry, ColumnType):
-            column_type = entry
-        elif isinstance(entry, Field):
-            field = entry
-    if declared is None:
-        return column_type, field
-    return declared.column_type or column_type, declared.field
+    cls: Any
 
+    @staticmethod
+    @stored_on_class("__loom_fields__")
+    def _read(cls: type) -> tuple[FieldSource, ...]:
+        """The annotated fields of *cls*, read once per class.
 
-def _struct_sources(cls: type) -> tuple[FieldSource, ...]:
-    return tuple(
-        FieldSource(info.name, info.encode_name, info.type, info.default)
-        for info in msgspec.structs.fields(cls)
-    )
+        A msgspec struct reads ``msgspec.structs.fields``, which keeps ``Annotated``
+        and ``encode_name``; any other annotated class reads its type hints without
+        ``ClassVar``, and its encode name is its name.
+        """
+        if issubclass(cls, msgspec.Struct):
+            return tuple(
+                FieldSource(info.name, info.encode_name, info.type, info.default)
+                for info in msgspec.structs.fields(cls)
+            )
+        hints = get_type_hints(cls, include_extras=True)
+        return tuple(
+            FieldSource(name, name, annotation, msgspec.NODEFAULT)
+            for name, annotation in hints.items()
+            if annotation is not ClassVar and get_origin(annotation) is not ClassVar
+        )
 
+    @property
+    def fields(self) -> tuple[FieldSource, ...]:
+        """The annotated fields; an annotation naming something unimportable raises."""
+        return self._read(self.cls)
 
-def _hinted_sources(cls: type) -> tuple[FieldSource, ...]:
-    hints = get_type_hints(cls, include_extras=True)
-    return tuple(
-        FieldSource(name, name, annotation, msgspec.NODEFAULT)
-        for name, annotation in hints.items()
-        if annotation is not ClassVar and get_origin(annotation) is not ClassVar
-    )
+    @property
+    def is_readable(self) -> bool:
+        """Whether its annotations could be read, so its fields can be listed."""
+        try:
+            self._read(self.cls)
+        except (NameError, TypeError):
+            return False
+        return True
 
+    @property
+    def is_record(self) -> bool:
+        """Whether it is a class with at least one readable annotated field."""
+        return isinstance(self.cls, type) and self.is_readable and bool(self.fields)
 
-@stored_on_class("__loom_fields__")
-def read_fields(cls: type) -> tuple[FieldSource, ...]:
-    """The annotated fields of *cls*, read once per class.
+    def resolve(
+        self,
+        declared: Mapping[str, ColumnFieldSpec] | None = None,
+        *,
+        exclude: Collection[str] = (),
+    ) -> tuple[ResolvedField, ...]:
+        """Resolve the column type of every annotated field, in declaration order.
 
-    A msgspec struct reads ``msgspec.structs.fields``, which keeps ``Annotated``
-    and ``encode_name``; any other annotated class reads its type hints without
-    ``ClassVar``, and its encode name is its name.
-    """
-    reader = _struct_sources if issubclass(cls, msgspec.Struct) else _hinted_sources
-    return reader(cls)
+        Declared markers win over inference. It never raises on an annotation it
+        cannot map: the field comes back undeclared with its reason. Only an
+        annotation naming something that cannot be imported fails, as it does for
+        ``typing.get_type_hints``.
+
+        Args:
+            declared: ``ColumnField`` declarations by field name.
+            exclude: Field names that are not columns, such as relations.
+        """
+        declared = declared or {}
+        resolver = _Resolver(frozenset({self.cls}))
+        return tuple(
+            resolver.resolve(source, declared.get(source.name))
+            for source in self.fields
+            if source.name not in exclude
+        )
 
 
 @dataclass(frozen=True, slots=True)
@@ -270,23 +320,6 @@ _RULES: Final[Mapping[type, ColumnType | _Undeclared]] = {
 _CONTAINERS: Final = (list, tuple, set, frozenset, dict)
 
 
-def _record_fields(cls: type) -> tuple[FieldSource, ...] | None:
-    try:
-        return read_fields(cls)
-    except (NameError, TypeError):
-        return None
-
-
-def _is_record(cls: Any) -> bool:
-    return isinstance(cls, type) and bool(_record_fields(cls))
-
-
-def _scalar_rule(cls: type) -> ColumnType | _Undeclared | None:
-    if not issubclass(cls, Enum):
-        return _RULES.get(cls)
-    return next((_RULES[mixin] for mixin in cls.__mro__ if mixin in _RULES), None)
-
-
 @dataclass(frozen=True, slots=True)
 class _Resolver:
     """Resolves fields below the classes already being expanded in ``path``.
@@ -300,8 +333,8 @@ class _Resolver:
     def resolve(
         self, source: FieldSource, declared: ColumnFieldSpec | None = None
     ) -> ResolvedField:
-        annotated_type, field = field_declaration(source.annotation, declared)
-        base, metadata = _column_base(source.annotation)
+        annotated_type, field = source.declaration(declared)
+        base, metadata = Annotation(source.annotation).column_base
         if annotated_type is not None:
             return self._settled(source, base, annotated_type, Outcome.DECLARED)
         found = self._infer(base, metadata)
@@ -323,7 +356,7 @@ class _Resolver:
             name=source.name,
             encode_name=source.encode_name,
             column_type=column_type,
-            nullable=_admits_none(source.annotation),
+            nullable=Annotation(source.annotation).admits_none,
             outcome=outcome,
             reason=reason,
             shape=None if column_type is None else self._shape(column_type, base),
@@ -334,25 +367,31 @@ class _Resolver:
             return Text
         if base is Any or get_origin(base) is Literal:
             return _Undeclared("Any" if base is Any else "a Literal")
-        members = union_inner_args(base)
+        members = Annotation(base).inner_args
         if members is not None:
             return self._infer_union(members)
         cls = get_origin(base) or base
         if not isinstance(cls, type):
             return _Undeclared(f"the annotation {base!r}")
-        rule = _scalar_rule(cls)
+        rule = self._scalar_rule(cls)
         if rule is not None:
             return rule
         if issubclass(cls, Enum):
             return _Undeclared("a plain Enum")
-        if issubclass(cls, _CONTAINERS) or _is_record(cls) or is_typeddict(cls):
+        if issubclass(cls, _CONTAINERS) or Record(cls).is_record or is_typeddict(cls):
             return JSON
-        if _record_fields(cls) is None:
+        if not Record(cls).is_readable:
             return _Undeclared(f"{cls.__name__}, a class whose annotations could not be resolved")
         return _Undeclared(f"{cls.__name__}, a class that is not a record")
 
+    @staticmethod
+    def _scalar_rule(cls: type) -> ColumnType | _Undeclared | None:
+        if not issubclass(cls, Enum):
+            return _RULES.get(cls)
+        return next((_RULES[mixin] for mixin in cls.__mro__ if mixin in _RULES), None)
+
     def _infer_union(self, members: tuple[Any, ...]) -> ColumnType | _Undeclared:
-        found = {self._infer(*_column_base(member)) for member in members}
+        found = {self._infer(*Annotation(member).column_base) for member in members}
         if found == {JSON}:
             return JSON
         return _Undeclared("a union of types that are not all JSON")
@@ -365,53 +404,17 @@ class _Resolver:
         return self._annotation_shape(base)
 
     def _annotation_shape(self, base: Any) -> JsonShape:
-        if union_inner_args(base) is not None:
+        if Annotation(base).inner_args is not None:
             return Opaque()
         origin = get_origin(base)
         if origin is list and get_args(base):
             item = FieldSource("item", "item", get_args(base)[0], msgspec.NODEFAULT)
             return ListShape(self.resolve(item))
-        if _is_record(base) and base not in self.path:
+        if Record(base).is_record and base not in self.path:
             below = _Resolver(self.path | {base})
-            return StructShape(tuple(below.resolve(source) for source in read_fields(base)))
+            return StructShape(tuple(below.resolve(source) for source in Record(base).fields))
         return Opaque()
 
     @staticmethod
     def _declared_item(item: ColumnType) -> ResolvedField:
         return ResolvedField("item", "item", item, nullable=True, outcome=Outcome.DECLARED)
-
-
-def resolve_fields(
-    cls: type,
-    declared: Mapping[str, ColumnFieldSpec] | None = None,
-    *,
-    exclude: Collection[str] = (),
-) -> tuple[ResolvedField, ...]:
-    """Resolve the column type of every annotated field of *cls*, in declaration order.
-
-    Declared markers win over inference. It never raises on an annotation it
-    cannot map: the field comes back undeclared with its reason. Only an
-    annotation naming something that cannot be imported fails, as it does for
-    ``typing.get_type_hints``.
-
-    Args:
-        cls: A msgspec struct, dataclass or plain annotated class.
-        declared: ``ColumnField`` declarations by field name.
-        exclude: Field names that are not columns, such as relations.
-    """
-    declared = declared or {}
-    resolver = _Resolver(frozenset({cls}))
-    return tuple(
-        resolver.resolve(source, declared.get(source.name))
-        for source in read_fields(cls)
-        if source.name not in exclude
-    )
-
-
-def resolve_annotation(annotation: Any) -> ResolvedField:
-    """Resolve the column type of one bare annotation, as a field named ``value``.
-
-    Like :func:`resolve_fields`, it never raises on an annotation it cannot map.
-    """
-    source = FieldSource("value", "value", annotation, msgspec.NODEFAULT)
-    return _Resolver(frozenset()).resolve(source)

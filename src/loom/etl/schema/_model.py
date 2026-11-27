@@ -20,10 +20,9 @@ from loom.core.model.inference import (
     StructShape,
 )
 from loom.core.model.introspection import (
-    conflict_key_of,
+    ModelKeys,
     get_column_fields,
     get_table_name,
-    store_filled_key_columns,
 )
 from loom.core.model.types import ColumnKind, ColumnType
 from loom.etl.schema._schema import (
@@ -197,9 +196,9 @@ class FrameKey:
         A business key always comes from the frame. A primary key does not when the
         store fills it: autoincrement, derived from a business key, or server default.
         """
-        if not conflict_key_of(self.model):
+        if not ModelKeys.of(self.model).conflict:
             return KeyProblem("keys", "declares neither a business key nor a primary key")
-        filled = store_filled_key_columns(self.model)
+        filled = ModelKeys.of(self.model).store_filled
         if not filled:
             return None
         name, fill = next(iter(filled.items()))
@@ -208,7 +207,7 @@ class FrameKey:
     @property
     def columns(self) -> tuple[str, ...]:
         """The conflict key of the model when the frame can supply it, else ``()``."""
-        return conflict_key_of(self.model) if self.problem is None else ()
+        return ModelKeys.of(self.model).conflict if self.problem is None else ()
 
 
 @dataclass(frozen=True)
@@ -219,15 +218,17 @@ class ModelTable:
     name: str
     schema: tuple[ColumnSchema, ...]
 
-    @classmethod
-    def from_model(cls, model: type) -> ModelTable:
+    @staticmethod
+    @stored_on_class("__loom_model_table__")
+    def from_model(model: type) -> ModelTable:
         """The lake table of *model*, translated once per class.
 
         Raises:
             InvalidType: *model* declares no ``__tablename__``.
             LakeRefusal: A column has a type the lake refuses.
         """
-        return _lake_table(model)
+        schema = LakeTranslator(model.__name__).schema_of(model)
+        return ModelTable(model, get_table_name(model), schema)
 
     @cached_property
     def column_names(self) -> tuple[str, ...]:
@@ -254,8 +255,3 @@ class ModelTable:
     def unknown_columns(self, names: Iterable[str]) -> tuple[str, ...]:
         """The *names* that are not columns of the model, in the order given."""
         return tuple(name for name in names if name not in self.column_types)
-
-
-@stored_on_class("__loom_model_table__")
-def _lake_table(model: type) -> ModelTable:
-    return ModelTable(model, get_table_name(model), LakeTranslator(model.__name__).schema_of(model))
