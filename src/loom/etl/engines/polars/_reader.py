@@ -72,7 +72,7 @@ def decode_json_columns(frame: FrameT, json_columns: Iterable[JsonColumnSpec]) -
         decoded = decode_json_columns(raw_frame, events.json_columns)
     """
     exprs = [
-        JsonDecoder(jc.frame_type, jc.on_mismatch).decode(pl.col(jc.column).cast(pl.String))
+        JsonDecoder.of(jc.frame_type, jc.on_mismatch).decode(pl.col(jc.column).cast(pl.String))
         for jc in json_columns
     ]
     if not exprs:

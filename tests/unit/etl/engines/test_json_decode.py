@@ -18,15 +18,15 @@ from loom.etl.schema import JsonRefusal
 from tests.unit.etl.engines.doubles import ModelEngine, NoParams, PolarsEngine, SparkEngine
 from tests.unit.etl.engines.json_readings import (
     COMMON_FITS,
-    COMMON_MISFITS,
+    COMMON_UNFITS,
     NAME,
     POLARS_FITS,
-    POLARS_MISFITS,
+    POLARS_UNFITS,
     SIBLING,
     SPARK_FITS,
-    SPARK_MISFITS,
+    SPARK_UNFITS,
     Fit,
-    Misfit,
+    Unfit,
     probe,
     probe_document,
 )
@@ -34,9 +34,9 @@ from tests.unit.etl.models import Buyer
 
 _NAMED = r"JSON column.*buyer"
 _POLARS_FITS = [*COMMON_FITS, *POLARS_FITS]
-_POLARS_MISFITS = [*COMMON_MISFITS, *POLARS_MISFITS]
+_POLARS_UNFITS = [*COMMON_UNFITS, *POLARS_UNFITS]
 _SPARK_FITS = [*COMMON_FITS, *SPARK_FITS]
-_SPARK_MISFITS = [*COMMON_MISFITS, *SPARK_MISFITS]
+_SPARK_UNFITS = [*COMMON_UNFITS, *SPARK_UNFITS]
 
 
 def _seed_customers(engine: ModelEngine, *documents: str) -> None:
@@ -47,7 +47,7 @@ def _seed_customers(engine: ModelEngine, *documents: str) -> None:
     )
 
 
-def _seeded(engine: ModelEngine, rows: Sequence[Fit | Misfit]) -> ModelEngine:
+def _seeded(engine: ModelEngine, rows: Sequence[Fit | Unfit]) -> ModelEngine:
     engine.writer.write(
         engine.frame(
             {"reading": [row.name for row in rows], "buyer": [probe_document(r) for r in rows]}
@@ -61,18 +61,18 @@ def _seeded(engine: ModelEngine, rows: Sequence[Fit | Misfit]) -> ModelEngine:
 @pytest.fixture(scope="module")
 def seeded_polars(tmp_path_factory: pytest.TempPathFactory) -> ModelEngine:
     """A Polars engine whose ``raw.readings`` holds the document of every Polars row."""
-    rows = [*_POLARS_FITS, *_POLARS_MISFITS]
+    rows = [*_POLARS_FITS, *_POLARS_UNFITS]
     return _seeded(PolarsEngine(tmp_path_factory.mktemp("polars")), rows)
 
 
 @pytest.fixture(scope="module")
 def seeded_spark(spark: Any, tmp_path_factory: pytest.TempPathFactory) -> ModelEngine:
     """A Spark engine whose ``raw.readings`` holds the document of every Spark row."""
-    rows = [*_SPARK_FITS, *_SPARK_MISFITS]
+    rows = [*_SPARK_FITS, *_SPARK_UNFITS]
     return _seeded(SparkEngine(spark, tmp_path_factory.mktemp("spark")), rows)
 
 
-def _source(row: Fit | Misfit, on_mismatch: JsonMismatch) -> FromTable:
+def _source(row: Fit | Unfit, on_mismatch: JsonMismatch) -> FromTable:
     return (
         FromTable("raw.readings")
         .where(col("reading") == row.name)
@@ -80,12 +80,12 @@ def _source(row: Fit | Misfit, on_mismatch: JsonMismatch) -> FromTable:
     )
 
 
-def _read(engine: ModelEngine, row: Fit | Misfit, on_mismatch: JsonMismatch) -> Any:
+def _read(engine: ModelEngine, row: Fit | Unfit, on_mismatch: JsonMismatch) -> Any:
     (read,) = engine.rows(engine.reader.read(_source(row, on_mismatch)._to_spec("readings"), None))
     return read["buyer"]
 
 
-def _decode(engine: ModelEngine, row: Fit | Misfit) -> None:
+def _decode(engine: ModelEngine, row: Fit | Unfit) -> None:
     class _Decode(ETLStep[NoParams]):
         readings: FromTable = _source(row, JsonMismatch.FAIL)  # type: ignore[assignment]
         target = IntoTable("staging.readings").replace()
@@ -108,15 +108,15 @@ class TestPolarsReadings:
     ) -> None:
         assert _read(seeded_polars, row, policy) == {"v": row.value, "w": SIBLING}
 
-    @pytest.mark.parametrize("row", _POLARS_MISFITS, ids=NAME)
+    @pytest.mark.parametrize("row", _POLARS_UNFITS, ids=NAME)
     def test_null_policy_nulls_the_misfit_and_keeps_its_sibling(
-        self, seeded_polars: ModelEngine, row: Misfit
+        self, seeded_polars: ModelEngine, row: Unfit
     ) -> None:
         assert _read(seeded_polars, row, JsonMismatch.NULL) == {"v": row.null, "w": SIBLING}
 
-    @pytest.mark.parametrize("row", _POLARS_MISFITS, ids=NAME)
+    @pytest.mark.parametrize("row", _POLARS_UNFITS, ids=NAME)
     def test_fail_policy_refuses_naming_the_path_the_rule_and_the_column(
-        self, seeded_polars: ModelEngine, row: Misfit
+        self, seeded_polars: ModelEngine, row: Unfit
     ) -> None:
         with pytest.raises(
             JsonRefusal, match=re.escape(f"{row.path} expected {row.rule}, in JSON column buyer")
@@ -132,13 +132,13 @@ class TestSparkReadings:
     ) -> None:
         assert _read(seeded_spark, row, policy) == {"v": row.value, "w": SIBLING}
 
-    @pytest.mark.parametrize("row", _SPARK_MISFITS, ids=NAME)
-    def test_null_policy_nulls_the_misfit(self, seeded_spark: ModelEngine, row: Misfit) -> None:
+    @pytest.mark.parametrize("row", _SPARK_UNFITS, ids=NAME)
+    def test_null_policy_nulls_the_misfit(self, seeded_spark: ModelEngine, row: Unfit) -> None:
         assert _read(seeded_spark, row, JsonMismatch.NULL) == {"v": row.null, "w": SIBLING}
 
-    @pytest.mark.parametrize("row", _SPARK_MISFITS, ids=NAME)
+    @pytest.mark.parametrize("row", _SPARK_UNFITS, ids=NAME)
     def test_fail_policy_refuses_naming_the_column(
-        self, seeded_spark: ModelEngine, row: Misfit
+        self, seeded_spark: ModelEngine, row: Unfit
     ) -> None:
         with pytest.raises(InvalidValue, match=_NAMED):
             _decode(seeded_spark, row)

@@ -1,4 +1,4 @@
-"""Unit tests for JSON column decoding with decode_json_columns."""
+"""JSON column decoding with decode_json_columns: shapes, whole documents, batches and empties."""
 
 from __future__ import annotations
 
@@ -7,8 +7,9 @@ import pytest
 
 from loom.etl.declarative.source import JsonColumnSpec, JsonMismatch
 from loom.etl.engines.polars import decode_json_columns, frame_type_to_polars
-from loom.etl.schema import FrameType, ListType, LoomDtype, StructField, StructType
+from loom.etl.schema import FrameType, JsonRefusal, ListType, LoomDtype, StructField, StructType
 
+_PAIR = StructType((StructField("v", LoomDtype.INT64), StructField("w", LoomDtype.INT64)))
 _ORDER = StructType(
     (StructField("order_id", LoomDtype.INT64), StructField("amount", LoomDtype.FLOAT64))
 )
@@ -16,8 +17,6 @@ _EVENT = StructType((StructField("kind", LoomDtype.UTF8), StructField("count", L
 _POINT = StructType((StructField("lat", LoomDtype.FLOAT64), StructField("lon", LoomDtype.FLOAT64)))
 _PLACE = StructType((StructField("name", LoomDtype.UTF8), StructField("point", _POINT)))
 _SHAPES = {
-    "struct": (_ORDER, '{"order_id": 10, "amount": 99.5}', {"order_id": 10, "amount": 99.5}),
-    "list-of-primitives": (ListType(LoomDtype.UTF8), '["a", "b"]', ["a", "b"]),
     "list-of-structs": (
         ListType(_EVENT),
         '[{"kind": "click", "count": 3}]',
@@ -28,13 +27,18 @@ _SHAPES = {
         '{"name": "HQ", "point": {"lat": 40.5, "lon": -74.0}}',
         {"name": "HQ", "point": {"lat": 40.5, "lon": -74.0}},
     ),
-    "json-null": (_ORDER, "null", None),
 }
 
 
-def _decoded(frame_type: FrameType, texts: pl.Series) -> pl.Series:
-    column = JsonColumnSpec(column="payload", frame_type=frame_type)
+def _decoded(
+    frame_type: FrameType, texts: pl.Series, on_mismatch: JsonMismatch = JsonMismatch.FAIL
+) -> pl.Series:
+    column = JsonColumnSpec("payload", frame_type, on_mismatch)
     return decode_json_columns(texts.alias("payload").to_frame(), (column,))["payload"]
+
+
+def _documents(*documents: str | None) -> pl.Series:
+    return pl.Series(documents, dtype=pl.String)
 
 
 class TestDecodeJsonColumnShapes:
@@ -49,58 +53,29 @@ class TestDecodeJsonColumnShapes:
         assert (decoded.dtype, decoded.to_list()) == (frame_type_to_polars(frame_type), [expected])
 
 
+_TEXT_FIELD = StructType((StructField("s", LoomDtype.UTF8),))
+_TOO_DEEP = "[" * 100_000 + "]" * 100_000
+_NULLED = {
+    "object-under-nested-str": (_TEXT_FIELD, '{"s": {"page": "/home"}}', {"s": '{"page":"/home"}'}),
+    "lone-surrogate-nested-nulls-only-its-field": (
+        _TEXT_FIELD,
+        '{"s": {"a": "\\ud800"}}',
+        {"s": None},
+    ),
+    "nesting-too-deep": (ListType(LoomDtype.UTF8), _TOO_DEEP, None),
+}
+
+
 class TestNullPolicyDecoding:
     @pytest.mark.parametrize(
-        ("frame_type", "document", "expected"),
-        [
-            (LoomDtype.UTF8, '{"source": "web"}', '{"source":"web"}'),
-            (
-                StructType(
-                    (StructField("name", LoomDtype.UTF8), StructField("meta", LoomDtype.UTF8))
-                ),
-                '{"name": "a", "meta": {"page": "/home"}}',
-                {"name": "a", "meta": '{"page":"/home"}'},
-            ),
-            (
-                ListType(
-                    StructType(
-                        (StructField("key", LoomDtype.UTF8), StructField("val", LoomDtype.UTF8))
-                    )
-                ),
-                '[{"key": "k", "val": {"x": 1}}]',
-                [{"key": "k", "val": '{"x":1}'}],
-            ),
-            (StructType((StructField("user_id", LoomDtype.INT64),)), "[1, 2, 3]", None),
-            (StructType((StructField("user_id", LoomDtype.INT64),)), "not json", None),
-            (ListType(LoomDtype.UTF8), '"single"', None),
-            (StructType((StructField("s", LoomDtype.UTF8),)), '{"s": "\\ud800"}', {"s": None}),
-            (
-                StructType((StructField("s", LoomDtype.UTF8),)),
-                '{"s": {"a": "\\ud800"}}',
-                {"s": None},
-            ),
-            (ListType(LoomDtype.UTF8), "[" * 100_000 + "]" * 100_000, None),
-        ],
-        ids=[
-            "object-under-str",
-            "object-under-nested-str",
-            "object-under-str-in-list-item",
-            "array-for-struct",
-            "malformed",
-            "scalar-for-list",
-            "lone-surrogate-nulls-only-its-field",
-            "lone-surrogate-nested-nulls-only-its-field",
-            "nesting-too-deep",
-        ],
+        ("frame_type", "document", "expected"), _NULLED.values(), ids=list(_NULLED)
     )
     def test_a_mismatched_document_decodes_to_text_or_null(
         self, frame_type: FrameType, document: str, expected: object
     ) -> None:
-        jc = JsonColumnSpec("payload", frame_type, JsonMismatch.NULL)
+        decoded = _decoded(frame_type, _documents(document), JsonMismatch.NULL)
 
-        result = decode_json_columns(pl.DataFrame({"payload": [document]}), (jc,))
-
-        assert result["payload"].to_list() == [expected]
+        assert decoded.to_list() == [expected]
 
 
 _NO_TEXT = {
@@ -117,3 +92,48 @@ class TestNullColumnTypeSafety:
         self, frame_type: FrameType, texts: pl.Series
     ) -> None:
         assert _decoded(frame_type, texts).dtype == frame_type_to_polars(frame_type)
+
+
+class TestWholeDocuments:
+    @pytest.mark.parametrize("document", ["not json", "[1]", "null", None], ids=str)
+    def test_null_policy_nulls_a_document_that_is_not_an_object(self, document: str | None) -> None:
+        decoded = _decoded(_PAIR, _documents(document), JsonMismatch.NULL)
+
+        assert decoded.to_list() == [None]
+
+    @pytest.mark.parametrize(
+        ("document", "rule"),
+        [("not json", "a JSON document"), ("[1]", "an object")],
+        ids=["not-json", "not-an-object"],
+    )
+    def test_fail_policy_refuses_a_document_naming_the_root(self, document: str, rule: str) -> None:
+        with pytest.raises(JsonRefusal, match=rf"\$ expected {rule}, in JSON column payload"):
+            _decoded(_PAIR, _documents(document))
+
+    @pytest.mark.parametrize("on_mismatch", list(JsonMismatch), ids=lambda mode: mode.name)
+    def test_a_null_document_is_null_under_both_policies(self, on_mismatch: JsonMismatch) -> None:
+        assert _decoded(_PAIR, _documents("null", None), on_mismatch).to_list() == [None, None]
+
+    def test_a_document_without_a_field_leaves_it_null(self) -> None:
+        assert _decoded(_PAIR, _documents('{"w": 2}')).to_list() == [{"v": None, "w": 2}]
+
+    def test_a_document_drops_a_field_the_type_does_not_declare(self) -> None:
+        assert _decoded(_PAIR, _documents('{"v": 1, "w": 2, "extra": 3}')).to_list() == [
+            {"v": 1, "w": 2}
+        ]
+
+
+class TestBatches:
+    def test_a_bad_row_among_many_is_nulled_alone(self) -> None:
+        good = '{"v": 1, "w": 9}'
+        documents = _documents(*[good] * 10_000, '{"v": "x", "w": 9}', *[good] * 10_000)
+
+        rows = _decoded(_PAIR, documents, JsonMismatch.NULL).to_list()
+
+        assert rows.count({"v": None, "w": 9}) == 1
+
+    @pytest.mark.parametrize("on_mismatch", list(JsonMismatch), ids=lambda mode: mode.name)
+    def test_an_empty_column_decodes_to_the_declared_type(self, on_mismatch: JsonMismatch) -> None:
+        assert _decoded(_PAIR, _documents(), on_mismatch).dtype == pl.Struct(
+            {"v": pl.Int64, "w": pl.Int64}
+        )

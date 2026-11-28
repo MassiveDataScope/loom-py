@@ -19,7 +19,7 @@ from loom.etl.declarative.expr import params as p
 from loom.etl.event import EtlEvent, EtlKey
 from loom.etl.executor import ETLExecutor
 from loom.etl.lineage._records import WriteContext
-from loom.etl.schema import LoomDtype, ModelTable
+from loom.etl.schema import JsonRefusal, LoomDtype, ModelTable
 from loom.etl.storage._config import AuditConfig, CustomColumnDef
 from tests.helpers.loggers import CapturedLog
 from tests.unit.etl.engines.doubles import (
@@ -177,11 +177,25 @@ class TestJsonTextOnWrite:
         (row,) = engine.stored("entries")
         assert row[_Entry.c.visit]["seenAt"] == _PLACED
 
-    def test_malformed_json_text_fails_naming_the_target_column(self, engine: ModelEngine) -> None:
-        reader = _PlainReader(_entry_text(engine, profile="{broken"))
+    def test_polars_refuses_malformed_json_text_naming_the_target_column(
+        self, polars_engine: PolarsEngine
+    ) -> None:
+        reader = _PlainReader(_entry_text(polars_engine, profile="{broken"))
 
-        with pytest.raises(InvalidValue, match=r"JSON column.*profile|profile as StructType"):
-            ETLExecutor(reader, engine.writer).run_step(
+        with pytest.raises(
+            JsonRefusal, match=r"\$ expected a JSON document, in JSON column profile"
+        ):
+            ETLExecutor(reader, polars_engine.writer).run_step(
+                ETLCompiler().compile_step(_WriteEntries), NoParams()
+            )
+
+    def test_spark_refuses_malformed_json_text_naming_the_target_column(
+        self, spark_engine: SparkEngine
+    ) -> None:
+        reader = _PlainReader(_entry_text(spark_engine, profile="{broken"))
+
+        with pytest.raises(InvalidValue, match=r"entries\.profile as StructType"):
+            ETLExecutor(reader, spark_engine.writer).run_step(
                 ETLCompiler().compile_step(_WriteEntries), NoParams()
             )
 

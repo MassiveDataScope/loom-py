@@ -35,7 +35,9 @@ class PolarsSchemaAligner(Generic[PolarsFrameT]):
         """
         column = pl.col(name)
         if self.is_json_text_target(source, dtype):
-            return name, JsonDecoder(polars_to_frame_type(dtype), JsonMismatch.FAIL).decode(column)
+            return name, JsonDecoder.of(polars_to_frame_type(dtype), JsonMismatch.FAIL).decode(
+                column
+            )
         return name, self._cast_expr(column, dtype)
 
     def is_json_text_target(

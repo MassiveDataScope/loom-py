@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import re
 from datetime import UTC, date, datetime
 from decimal import Decimal
 
@@ -19,7 +20,6 @@ from loom.etl.schema import (
     StructType,
 )
 
-_INSTANT = datetime(2026, 11, 28, 10, tzinfo=UTC)
 _ORDER = StructType(
     (StructField("placed", LoomDtype.DATE), StructField("quantity", LoomDtype.INT8))
 )
@@ -48,20 +48,21 @@ class TestJsonFit:
     def test_fail_policy_refuses_with_the_path_and_the_rule_of_the_value(self) -> None:
         fit = JsonFit.of(_ORDER, JsonMismatch.FAIL)
 
-        with pytest.raises(JsonRefusal) as refused:
+        with pytest.raises(
+            JsonRefusal, match=re.escape("$.quantity expected an integer from -128 to 127")
+        ):
             fit.document('{"placed": "2026-11-28", "quantity": 300}')
-
-        assert (refused.value.path, refused.value.rule) == (
-            "$.quantity",
-            "an integer from -128 to 127",
-        )
 
     @pytest.mark.parametrize(
         ("frame_type", "document", "expected"),
         [
             (DecimalType(10, 2), '"12.5"', Decimal("12.50")),
-            (DatetimeType("us", "UTC"), '"2026-11-28T12:00:00+02:00"', _INSTANT),
-            (DatetimeType("us"), '"2026-11-28T12:00:00+02:00"', _INSTANT.replace(tzinfo=None)),
+            (
+                DatetimeType("us", "UTC"),
+                '"2026-11-28T12:00:00+02:00"',
+                datetime(2026, 11, 28, 10, tzinfo=UTC),
+            ),
+            (DatetimeType("us"), '"2026-11-28T12:00:00+02:00"', datetime(2026, 11, 28, 10)),
         ],
         ids=["decimal", "zoned-instant", "naive-instant"],
     )
