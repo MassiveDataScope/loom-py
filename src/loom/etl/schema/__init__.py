@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+from ._json_fit import JsonFit, JsonLeafUnsupported, JsonMismatch, JsonRefusal
 from ._model import (
     JsonContract,
     LakeRefusal,
@@ -28,6 +29,10 @@ from ._schema import (
 )
 
 __all__ = [
+    "JsonFit",
+    "JsonLeafUnsupported",
+    "JsonMismatch",
+    "JsonRefusal",
     "SchemaContract",
     "JsonContract",
     "resolve_schema",

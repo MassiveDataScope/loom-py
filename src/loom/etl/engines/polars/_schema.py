@@ -69,15 +69,11 @@ class PolarsPhysicalSchema:
     def _refuse_lossy_casts(self, frame_schema: pl.Schema) -> None:
         """Refuse a frame column whose cast to the table's type would lose its values.
 
-        A ``Struct`` cast to ``String`` becomes Polars' display text (``{1.0}``
-        for a ``Float64`` field) and a ``String`` cast to a ``List`` wraps or
-        nulls each value; a ``List`` cast to ``String`` and a ``String`` aligned
-        to a ``Struct`` fail inside Polars without naming the table's type. None
-        of them is applied, at any depth of a ``Struct`` or ``List``. The check is
-        by dtype, so an all-null ``String`` column is refused for a ``List`` too. A
-        top-level ``String`` column the aligner decodes as JSON text is not refused.
-        The Spark writer does not refuse these casts: it writes a ``Struct`` or
-        ``List`` into a ``String`` column as text (``{1.0}``, ``[1]``).
+        Refused, at any depth of a ``Struct`` or ``List``: a ``Struct`` or ``List``
+        cast to ``String``, and a ``String`` cast to a ``Struct`` or ``List``. The
+        check is by dtype, so an all-null ``String`` column is refused for a ``List``
+        too. A top-level ``String`` column the aligner decodes as JSON text is not
+        refused.
 
         Raises:
             SchemaError: Naming the first such column and both types.

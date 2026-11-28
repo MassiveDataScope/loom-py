@@ -276,6 +276,15 @@ class ETLErrorCode(IssueCode):
             field="{field}",
         ),
     )
+    JSON_LEAF_UNSUPPORTED = (
+        "JSON_LEAF_UNSUPPORTED",
+        Template(
+            "{component}: {where} declares {leaf!r} at {path}, which JSON text cannot hold. "
+            "Declare it as a string, a number, a boolean, a date, a timestamp, a decimal, "
+            "an enum, or a struct, list or array of them.",
+            field="{path}",
+        ),
+    )
     MODEL_COLUMN_UNKNOWN = (
         "MODEL_COLUMN_UNKNOWN",
         Template(

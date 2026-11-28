@@ -49,7 +49,7 @@ class TestDecodeJsonColumnShapes:
         assert (decoded.dtype, decoded.to_list()) == (frame_type_to_polars(frame_type), [expected])
 
 
-class TestTolerantJsonDecoding:
+class TestNullPolicyDecoding:
     @pytest.mark.parametrize(
         ("frame_type", "document", "expected"),
         [

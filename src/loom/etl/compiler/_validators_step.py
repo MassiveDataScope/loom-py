@@ -18,6 +18,7 @@ from loom.etl.compiler._plan import (
     SourceBinding,
     TargetBinding,
 )
+from loom.etl.compiler._validators_json import validate_json_shapes
 from loom.etl.compiler._validators_model import validate_model_sources, validate_model_target
 from loom.etl.declarative.expr._params import ParamExpr
 from loom.etl.declarative.expr._predicate import PredicateNode
@@ -119,6 +120,11 @@ def validate_step(ctx: StepCompilationContext) -> None:
     )
     validate_model_sources(ctx.step_type, (binding.spec for binding in ctx.source_bindings))
     validate_model_target(ctx.step_type, ctx.target_binding.spec)
+    validate_json_shapes(
+        ctx.step_type,
+        (binding.spec for binding in ctx.source_bindings),
+        ctx.target_binding.spec,
+    )
     validate_upsert_spec(ctx.step_type, ctx.target_binding.spec)
     validate_historify_spec(ctx.step_type, ctx.target_binding.spec)
     validate_param_exprs(ctx.step_type, ctx.params_type, ctx.source_bindings, ctx.target_binding)

@@ -35,7 +35,6 @@ from loom.etl.engines._path_template import resolve_file_uri
 from loom.etl.engines._predicate import predicate_to_sql
 from loom.etl.engines._write_policy import _WritePolicy
 from loom.etl.engines.polars._historify import PolarsHistorifyOps
-from loom.etl.engines.polars._json_failure import is_json_decode_failure
 from loom.etl.engines.polars._schema import (
     PolarsPhysicalSchema,
     read_delta_physical_schema,
@@ -278,10 +277,6 @@ class PolarsTargetWriter(_WritePolicy[pl.LazyFrame, pl.DataFrame, PolarsPhysical
         """Append frame to table, creating it on first write (``RecordFrameTargetWriter``)."""
         spec = AppendSpec(table_ref=table_ref, schema_mode=SchemaMode.EVOLVE)
         self.write(frame, spec, params_instance, streaming=streaming)
-
-    def is_json_decode_failure(self, error: Exception) -> bool:
-        """Whether *error* is the engine refusing a JSON document while decoding a column."""
-        return is_json_decode_failure(error)
 
     def to_frame(self, records: Sequence[LineageRecord], /) -> pl.LazyFrame:
         """Convert lineage records into a Polars LazyFrame."""

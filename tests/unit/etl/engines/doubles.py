@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
-from datetime import UTC, date, datetime
+from datetime import UTC, date
 from pathlib import Path
 from typing import Any, Protocol
 
@@ -62,15 +62,19 @@ def table_path(root: Path, ref: str) -> str:
     return str(root.joinpath(*ref.split(".")))
 
 
-def _with_instants_in_utc(value: Any) -> Any:
-    """*value* with each datetime read by PySpark as local wall time turned into its UTC instant."""
-    match value:
-        case datetime():
+def _with_instants_in_utc(value: Any, dtype: Any) -> Any:
+    """*value* of Spark type *dtype* with every ``timestamp`` in it turned into UTC."""
+    from pyspark.sql import types as T
+
+    if value is None:
+        return None
+    match dtype:
+        case T.TimestampType():
             return value.astimezone(UTC)
-        case dict():
-            return {name: _with_instants_in_utc(item) for name, item in value.items()}
-        case list():
-            return [_with_instants_in_utc(item) for item in value]
+        case T.StructType():
+            return {f.name: _with_instants_in_utc(value[f.name], f.dataType) for f in dtype.fields}
+        case T.ArrayType():
+            return [_with_instants_in_utc(item, dtype.elementType) for item in value]
         case _:
             return value
 
@@ -120,8 +124,11 @@ class SparkEngine:
 
     def stored(self, ref: str) -> list[dict[str, Any]]:
         """The rows of table *ref*."""
-        rows = [row.asDict(recursive=True) for row in self._stored(ref).collect()]
-        return [_with_instants_in_utc(row) for row in rows]
+        frame = self._stored(ref)
+        return [
+            _with_instants_in_utc(row.asDict(recursive=True), frame.schema)
+            for row in frame.collect()
+        ]
 
     def read_columns(self, source: FromTable) -> list[str]:
         """The column names *source* reads."""

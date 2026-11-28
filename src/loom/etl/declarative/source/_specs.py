@@ -20,6 +20,7 @@ from loom.etl.declarative._format import Format
 from loom.etl.declarative._read_options import ReadOptions
 from loom.etl.declarative.expr._predicate_dialect import columns_in
 from loom.etl.declarative.expr._refs import TableRef
+from loom.etl.schema._json_fit import JsonMismatch
 from loom.etl.schema._schema import ColumnSchema, FrameType
 
 if TYPE_CHECKING:
@@ -56,19 +57,6 @@ class SourceKind(StrEnum):
     CLICKHOUSE = "clickhouse"
     MONGO = "mongo"
     DYNAMODB = "dynamodb"
-
-
-class JsonMismatch(StrEnum):
-    """What a JSON column does with a document that does not match its declared type.
-
-    ``FAIL`` decodes natively and fails the run. ``NULL`` tolerates the
-    mismatch: malformed JSON, or an object where a list is declared (and the
-    reverse), becomes null, and an object or array under a ``str`` field is kept
-    as JSON text. On Polars, ``NULL`` runs Python per row on that column only.
-    """
-
-    FAIL = "fail"
-    NULL = "null"
 
 
 @dataclass(frozen=True)

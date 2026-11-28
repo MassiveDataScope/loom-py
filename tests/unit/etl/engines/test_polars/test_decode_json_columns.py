@@ -7,7 +7,6 @@ from pathlib import Path
 
 import msgspec
 import polars as pl
-import pytest
 from deltalake import write_deltalake
 from polars.testing import assert_frame_equal
 
@@ -74,12 +73,6 @@ class TestDecodeJsonColumns:
             "payload", AcmePayload
         )
         decoded = decode_json_columns(_raw().select("payload"), source.json_columns)
-
-        assert decoded["payload"].to_list()[0] == {"event_type": "click", "user_id": 7}
-
-    @pytest.mark.usefixtures("no_python_per_row")
-    def test_decodes_without_python_per_row(self) -> None:
-        decoded = decode_json_columns(_raw(), _EVENTS.json_columns)
 
         assert decoded["payload"].to_list()[0] == {"event_type": "click", "user_id": 7}
 

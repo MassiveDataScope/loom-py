@@ -39,13 +39,13 @@ from loom.etl.declarative.source._specs import (
     ExtraFieldsMode,
     FileSourceSpec,
     JsonColumnSpec,
-    JsonMismatch,
     MongoSourceSpec,
     SourceKind,
     SourceSpec,
     TableSourceSpec,
     TempSourceSpec,
 )
+from loom.etl.schema._json_fit import JsonMismatch
 
 __all__ = [
     "FromTable",

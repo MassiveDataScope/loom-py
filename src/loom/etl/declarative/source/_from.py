@@ -48,11 +48,11 @@ from loom.etl.declarative.source._from_mongo import FromMongo
 from loom.etl.declarative.source._specs import (
     FileSourceSpec,
     JsonColumnSpec,
-    JsonMismatch,
     SourceSpec,
     TableSourceSpec,
     TempSourceSpec,
 )
+from loom.etl.schema._json_fit import JsonMismatch
 from loom.etl.schema._model import JsonContract, LakeTranslator, SchemaContract, resolve_schema
 from loom.etl.schema._schema import ColumnSchema
 
@@ -161,8 +161,7 @@ class FromTable:
     ) -> FromTable:
         """Return a new ``FromTable`` that decodes *column* from JSON at read time.
 
-        The string column *column* is decoded into a structured type using the
-        Polars ``str.json_decode`` expression (or Spark ``from_json``).
+        The string column *column* is decoded into the type *contract* declares.
 
         Args:
             column:   Name of the string column that contains the JSON payload.
@@ -176,15 +175,11 @@ class FromTable:
                       * ``list[SomeClass]`` — converted to
                         :class:`~loom.etl.schema.ListType`.
 
-            on_mismatch: ``JsonMismatch.FAIL`` (default) decodes natively and
-                      fails the run on a malformed document or one that does not
-                      match *contract*. ``JsonMismatch.NULL`` tolerates it: malformed
-                      JSON and a struct or list mismatch become null, and an object
-                      or array under a ``str`` field is kept as JSON text. On Polars
-                      ``NULL`` runs Python per row on that column only; on Spark it
-                      maps to ``from_json`` ``PERMISSIVE``, which nulls the
-                      mismatched field, and decodes malformed JSON or a non-object
-                      to a struct of nulls rather than a null struct.
+            on_mismatch: ``JsonMismatch.FAIL`` (default) fails the run on a
+                      malformed document or a value that does not fit *contract*.
+                      ``JsonMismatch.NULL`` nulls the value that does not fit and
+                      keeps its siblings; an object or array under a ``str`` field is
+                      kept as JSON text.
 
         Returns:
             New ``FromTable`` with the JSON decode applied at read time.
@@ -385,8 +380,7 @@ class FromFile:
     ) -> FromFile:
         """Return a new ``FromFile`` that decodes *column* from JSON at read time.
 
-        The string column *column* is decoded into a structured type using the
-        Polars ``str.json_decode`` expression (or Spark ``from_json``).
+        The string column *column* is decoded into the type *contract* declares.
 
         Args:
             column:   Name of the string column that contains the JSON payload.

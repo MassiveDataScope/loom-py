@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 import logging
-from collections.abc import Callable, Iterable, Mapping
+from collections.abc import Callable, Iterable
 from typing import TYPE_CHECKING, Any
 
 from loom.core.errors import InvalidType, InvalidUse
@@ -22,32 +22,22 @@ from loom.etl.declarative.source._specs import (
     ClickHouseSourceSpec,
     DynamoDBSourceSpec,
     JsonColumnSpec,
-    JsonMismatch,
     MongoSourceSpec,
 )
 from loom.etl.engines._format_registry import resolve_format_handler
 from loom.etl.engines._path_template import resolve_file_uri
 from loom.etl.ports.contracts import SourceReader
-from loom.etl.schema._schema import ColumnSchema, FrameType
+from loom.etl.schema._schema import ColumnSchema
 from loom.etl.storage._file_locator import FileLocator
 from loom.etl.storage._locator import TableLocator, _as_locator
 from loom.etl.storage.routing import PathRouteResolver, PathTarget, TableRouteResolver
 
 from ._dtype import frame_type_to_polars
 from ._frame import FrameT
-from ._json_failure import is_json_decode_failure
-from ._json_text import JsonTextDecoder
+from ._json_decoder import JsonDecoder
 from ._predicate import predicate_to_polars
-from ._tolerant_json import TolerantJson
 
 _log = logging.getLogger(__name__)
-
-_JSON_DECODING: Mapping[JsonMismatch, Callable[[pl.Expr, FrameType], pl.Expr]] = {
-    JsonMismatch.FAIL: lambda column, frame_type: JsonTextDecoder.refusing().decode(
-        column, frame_type_to_polars(frame_type)
-    ),
-    JsonMismatch.NULL: lambda column, frame_type: TolerantJson(frame_type).decode(column),
-}
 
 
 def decode_json_columns(frame: FrameT, json_columns: Iterable[JsonColumnSpec]) -> FrameT:
@@ -57,11 +47,10 @@ def decode_json_columns(frame: FrameT, json_columns: Iterable[JsonColumnSpec]) -
     value decoded into its declared :class:`~loom.etl.schema.FrameType`. A null or
     JSON ``null`` value decodes to null.
 
-    With :attr:`~loom.etl.declarative.source.JsonMismatch.FAIL` the decode is
-    native, with no Python per row, and a value that is not JSON of the declared
-    type raises. With ``NULL`` every row is normalised in Python and a field that
-    does not match its declared type becomes null. Other columns pass through
-    unchanged.
+    With :attr:`~loom.etl.declarative.source.JsonMismatch.FAIL` a value that does
+    not fit its declared type raises :class:`~loom.etl.schema.JsonRefusal` when the
+    frame is consumed. With ``NULL`` it becomes null and its siblings are kept.
+    Other columns pass through unchanged.
 
     Use it to reproduce in a test what a step receives from a source declared
     with ``parse_json``.
@@ -83,7 +72,7 @@ def decode_json_columns(frame: FrameT, json_columns: Iterable[JsonColumnSpec]) -
         decoded = decode_json_columns(raw_frame, events.json_columns)
     """
     exprs = [
-        _JSON_DECODING[jc.on_mismatch](pl.col(jc.column).cast(pl.String), jc.frame_type)
+        JsonDecoder(jc.frame_type, jc.on_mismatch).decode(pl.col(jc.column).cast(pl.String))
         for jc in json_columns
     ]
     if not exprs:
@@ -110,10 +99,6 @@ class PolarsSourceReader(SourceReader):
         self._mongo_reader: MongoSourceReader | None = mongo_reader
         self._clickhouse_reader: ClickHouseSourceReader | None = clickhouse_reader
         self._dynamodb_reader: DynamoDBSourceReader | None = dynamodb_reader
-
-    def is_json_decode_failure(self, error: Exception) -> bool:
-        """Whether *error* is Polars refusing a JSON document while decoding a column."""
-        return is_json_decode_failure(error)
 
     def read(self, spec: SourceSpec, params_instance: Any, /) -> pl.LazyFrame:
         """Read source spec and return lazy frame."""

@@ -7,7 +7,10 @@ from typing import Any, Generic, TypeVar
 import polars as pl
 from polars.datatypes import DataTypeClass as _DataTypeClass
 
-from ._json_text import JsonTextDecoder
+from loom.etl.schema._json_fit import JsonMismatch
+
+from ._dtype import polars_to_frame_type
+from ._json_decoder import JsonDecoder
 
 PolarsFrameT = TypeVar("PolarsFrameT", pl.LazyFrame, pl.DataFrame)
 
@@ -24,10 +27,15 @@ class PolarsSchemaAligner(Generic[PolarsFrameT]):
     def cast_column(
         self, name: str, dtype: pl.DataType | _DataTypeClass, source: pl.DataType | _DataTypeClass
     ) -> tuple[str, pl.Expr]:
-        """Cast a column; JSON text becomes the struct or list the schema declares for it."""
+        """Cast a column; JSON text becomes the struct or list the schema declares for it.
+
+        Raises:
+            JsonRefusal: When the frame is consumed, a value in JSON text does not fit the
+                type the schema declares for it.
+        """
         column = pl.col(name)
         if self.is_json_text_target(source, dtype):
-            return name, JsonTextDecoder.refusing().decode(column, dtype)
+            return name, JsonDecoder(polars_to_frame_type(dtype), JsonMismatch.FAIL).decode(column)
         return name, self._cast_expr(column, dtype)
 
     def is_json_text_target(

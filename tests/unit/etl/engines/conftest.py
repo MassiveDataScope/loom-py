@@ -2,11 +2,9 @@
 
 from __future__ import annotations
 
-import importlib.util
 from pathlib import Path
-from typing import TYPE_CHECKING, Any
+from typing import TYPE_CHECKING
 
-import polars as pl
 import pytest
 
 from tests.unit.etl.engines.doubles import ModelEngine, PolarsEngine, SparkEngine
@@ -28,18 +26,3 @@ def spark_engine(spark: SparkSession, tmp_path: Path) -> SparkEngine:
 @pytest.fixture(params=["polars_engine", "spark_engine"])
 def engine(request: pytest.FixtureRequest) -> ModelEngine:
     return request.getfixturevalue(request.param)
-
-
-@pytest.fixture
-def no_python_per_row(monkeypatch: pytest.MonkeyPatch) -> None:
-    """Make a FAIL-mode decode that runs Python per row fail, on Polars and on Spark."""
-
-    def refuse(*args: Any, **kwargs: Any) -> Any:
-        raise AssertionError("a column was decoded by Python per row")
-
-    monkeypatch.setattr(pl.Expr, "map_elements", refuse)
-    monkeypatch.setattr(pl.Expr, "map_batches", refuse)
-    if importlib.util.find_spec("pyspark") is not None:
-        from pyspark.sql import functions
-
-        monkeypatch.setattr(functions, "udf", refuse)

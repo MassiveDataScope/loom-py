@@ -170,16 +170,30 @@ both null. Renaming a sub-entity field is schema evolution.
 ### Reading JSON
 
 A model JSON column that arrives as JSON text is decoded on write with the
-model's struct, vectorised on both engines (Polars `str.json_decode`, Spark
-`from_json`), never per row in Python. Decoding is strict: malformed JSON or a
-value that does not fit the declared shape fails with an `InvalidValue` naming
-the source or the target, the column and the expected type.
+model's struct. Every value is fitted to its declared type by one rule per leaf
+type, and a value that does not fit follows the column's policy.
 
-Dates and timestamps are read from ISO 8601 text on both engines. Text with no
-offset is UTC and an offset is converted to the instant it denotes. A `Date`
-field keeps the date part of datetime text, and a number under it is a
-mismatch. A fixed-width array of another width is a
-mismatch on Polars.
+| Declared type | A value fits when it is |
+|---|---|
+| `Int8` ... `Int64`, `UInt8` ... `UInt64` | a JSON integer, not a boolean, within the type's range |
+| `Float32`, `Float64` | a finite JSON number within the type's range |
+| `Boolean` | `true` or `false` |
+| `Utf8` | any value: a string as it is, anything else as its JSON text |
+| `Date` | `YYYY-MM-DD`, or a valid ISO datetime of which the date part is kept |
+| `Datetime` | a valid ISO datetime, or a date at midnight; no offset is UTC and an offset is converted to the instant it denotes |
+| `Decimal(p, s)` | a JSON number or numeric text that fits `p` digits after rounding half up to `s` |
+| `Enum` | one of its members |
+| `Array(n)` | a JSON array of exactly `n` fitting items |
+| `Struct`, `List` | an object or an array whose values fit; an absent field is null |
+
+`JsonMismatch.FAIL` (the default, and the only policy of a model write) raises an
+`InvalidValue` naming the column, the path of the value and the rule it broke.
+`JsonMismatch.NULL` nulls the value and keeps its siblings; a document that is not
+JSON, or whose top level does not fit, is null.
+
+Leaf types JSON text cannot hold (`Binary`, `Time`, `Duration`, `Null`,
+`Categorical`) are refused at compile time with an `ETLCompilationError` naming the
+field and the type.
 
 Documents whose shape varies opt in per column:
 
@@ -191,14 +205,24 @@ snapshots = FromTable("raw.snapshots").parse_json(
 )
 ```
 
-A model column is decoded with the model's struct, so documents whose shape varies are
-read with `parse_json(..., on_mismatch=JsonMismatch.NULL)` on the source column.
 Fixtures rarely cover every shape of a document store's documents, so a variable
-Mongo collection should read its JSON columns with `JsonMismatch.NULL` from the start,
-rather than meet a strict failure in production. `JsonMismatch.NULL` re-serialises strings, and turns a mismatch or malformed
-JSON into null. On Polars it runs a tolerant normaliser in Python per row, so
-the cost applies to that column only; on Spark it is `from_json` in `PERMISSIVE`
-mode, with no per-row Python.
+Mongo collection should read its JSON columns with `JsonMismatch.NULL` from the start.
+
+Polars fits every document in Python, in chunks, on that column only; Spark reads
+the column with `from_json`, in `FAILFAST` or `PERMISSIVE` mode. The engines
+differ in these values, which the Polars rule table refuses or nulls:
+
+| Value | Polars | Spark |
+|---|---|---|
+| `NaN`, `Infinity`, or a number beyond `Float32` | refused or null | kept |
+| a negative number under an unsigned type | refused or null | kept |
+| a date with a suffix that is not a time, or an invalid time | refused or null | the date part is kept |
+| a number under a timestamp | refused or null | read as epoch seconds |
+| an offset under a naive timestamp | UTC wall time | refused or null |
+| numeric text with thousands separators under a decimal | refused or null | read |
+| an element of a list that does not fit | that element is null | the list is null |
+| malformed JSON, or a non-object under a struct | null | a struct of nulls under `NULL` |
+| an `Enum` member, an array width | checked | no such type |
 
 ## What a write does
 
@@ -252,8 +276,8 @@ What changes for an existing pipeline when it moves to this release:
 - Spark writes a tz-less datetime as `timestamp_ntz`, as Polars already did.
 - Spark decimals keep their declared precision and scale; a decimal with no
   scale was read as scale 0.
-- JSON decoding is strict. A pipeline that relied on tolerant decoding sets
-  `on_mismatch=JsonMismatch.NULL` on the column.
+- JSON decoding is strict: a value that does not fit its declared type raises. A pipeline
+  that relied on tolerant decoding sets `on_mismatch=JsonMismatch.NULL` on the column.
 - The SQL store refuses a field whose type is undeclared, where it used to store
   it as JSON.
 - `JsonStr` is `Text`.

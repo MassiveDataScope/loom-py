@@ -405,7 +405,6 @@ class TestSparkReaderWriterTypeGuards:
         with pytest.raises(ValueError, match="skip_rows"):
             spark_reader.read(read_spec, None)
 
-    @pytest.mark.usefixtures("no_python_per_row")
     def test_unified_reader_parses_json_string_column_from_json_file(
         self,
         spark_reader: SparkSourceReader,

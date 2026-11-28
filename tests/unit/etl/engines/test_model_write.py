@@ -160,7 +160,6 @@ def _entry_text(
     )
 
 
-@pytest.mark.usefixtures("no_python_per_row")
 class TestJsonTextOnWrite:
     def test_json_text_is_decoded_to_the_model_struct_and_list(self, engine: ModelEngine) -> None:
         engine.writer.write(_entry_text(engine), IntoTable(_Entry).append()._to_spec(), None)
@@ -183,7 +182,7 @@ class TestJsonTextOnWrite:
     ) -> None:
         reader = _PlainReader(_entry_text(engine, profile="{broken"))
 
-        with pytest.raises(InvalidValue, match=r"entries\.profile as StructType"):
+        with pytest.raises(InvalidValue, match=r"profile as StructType"):
             ETLExecutor(reader, engine.writer).run_step(
                 ETLCompiler().compile_step(_WriteEntries), NoParams()
             )
