@@ -82,7 +82,18 @@ class TestJsonLeafTypes:
             ETLErrorCode.JSON_LEAF_UNSUPPORTED,
             path,
         )
-        assert "orders.payload" in str(refused.value)
+
+    def test_the_refusal_says_which_column_declares_which_leaf_where(
+        self, compile_source: CompileDeclaration
+    ) -> None:
+        source = FromTable("raw.orders").parse_json("payload", _in_struct(LoomDtype.BINARY))
+
+        with pytest.raises(ETLCompilationError) as refused:
+            compile_source(source)
+
+        assert "orders.payload declares <LoomDtype.BINARY: 'Binary'> at $.v, which" in str(
+            refused.value
+        )
 
     def test_a_model_column_stored_as_a_struct_with_an_unsupported_leaf_is_refused(
         self, compile_target: CompileDeclaration

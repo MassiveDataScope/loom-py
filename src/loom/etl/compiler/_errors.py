@@ -279,7 +279,7 @@ class ETLErrorCode(IssueCode):
     JSON_LEAF_UNSUPPORTED = (
         "JSON_LEAF_UNSUPPORTED",
         Template(
-            "{component}: {where} declares {leaf!r} at {path}, which no JSON rule reads. "
+            "{component}: {where} declares {reason}. "
             "Declare the leaf with a type a JSON value can hold (a list, array or struct "
             "needs its inner type or fields), or read the column as text and decode it "
             "in the step.",

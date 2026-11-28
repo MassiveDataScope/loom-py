@@ -89,37 +89,38 @@ class DeclaredJsonColumn:
         where: Owner and column, such as ``orders.payload``; a target column is prefixed
             with ``target``.
         frame_type: The type the column is decoded into.
-        can_refuse: Whether a document that does not fit the type fails the run: a
-            source column under :attr:`~loom.etl.declarative.source.JsonMismatch.FAIL`,
-            or any nested column of a model target, which is decoded strictly.
+        can_refuse: Whether a document that does not fit the type fails the run.
     """
 
     where: str
     frame_type: FrameType
     can_refuse: bool
 
+    @classmethod
+    def of_step(
+        cls, source_bindings: tuple[SourceBinding, ...], target_binding: TargetBinding
+    ) -> tuple[DeclaredJsonColumn, ...]:
+        """The JSON columns the sources parse and the model target stores nested."""
+        declared = [
+            cls(
+                f"{binding.alias}.{json_column.column}",
+                json_column.frame_type,
+                json_column.on_mismatch is JsonMismatch.FAIL,
+            )
+            for binding in source_bindings
+            if isinstance(binding.spec, TableSourceSpec | FileSourceSpec)
+            for json_column in binding.spec.json_columns
+        ]
+        target = target_binding.spec
+        if isinstance(target, ModelBoundSpec) and target.model_table is not None:
+            declared.extend(
+                cls(f"target {target.table_ref.ref}.{column.name}", column.dtype, True)
+                for column in target.model_table.nested_columns
+            )
+        return tuple(declared)
 
-def declared_json_columns(
-    source_bindings: tuple[SourceBinding, ...], target_binding: TargetBinding
-) -> tuple[DeclaredJsonColumn, ...]:
-    """The JSON columns the sources parse and the model target stores nested."""
-    declared = [
-        DeclaredJsonColumn(
-            f"{binding.alias}.{json_column.column}",
-            json_column.frame_type,
-            json_column.on_mismatch is JsonMismatch.FAIL,
-        )
-        for binding in source_bindings
-        if isinstance(binding.spec, TableSourceSpec | FileSourceSpec)
-        for json_column in binding.spec.json_columns
-    ]
-    target = target_binding.spec
-    if isinstance(target, ModelBoundSpec) and target.model_table is not None:
-        declared.extend(
-            DeclaredJsonColumn(f"target {target.table_ref.ref}.{column.name}", column.dtype, True)
-            for column in target.model_table.nested_columns
-        )
-    return tuple(declared)
+    def __str__(self) -> str:
+        return f"{self.where} as {self.frame_type}"
 
 
 @dataclass(frozen=True)
@@ -149,8 +150,8 @@ class StepPlan:
     def fallible_json_columns(self) -> tuple[str, ...]:
         """The JSON columns that can refuse a document, each as ``owner.column as type``."""
         return tuple(
-            f"{declared.where} as {declared.frame_type}"
-            for declared in declared_json_columns(self.source_bindings, self.target_binding)
+            str(declared)
+            for declared in DeclaredJsonColumn.of_step(self.source_bindings, self.target_binding)
             if declared.can_refuse
         )
 
