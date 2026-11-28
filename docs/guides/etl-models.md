@@ -175,6 +175,12 @@ model's struct, vectorised on both engines (Polars `str.json_decode`, Spark
 value that does not fit the declared shape fails with an `InvalidValue` naming
 the source or the target, the column and the expected type.
 
+Dates and timestamps are read from ISO 8601 text on both engines. Text with no
+offset is UTC and an offset is converted to the instant it denotes. A `Date`
+field keeps the date part of datetime text, and a number under it is a
+mismatch. A fixed-width array of another width is a
+mismatch on Polars.
+
 Documents whose shape varies opt in per column:
 
 ```python

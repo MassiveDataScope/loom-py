@@ -54,17 +54,14 @@ def decode_json_columns(frame: FrameT, json_columns: Iterable[JsonColumnSpec]) -
     """Decode JSON string columns the way :class:`PolarsSourceReader` does at read time.
 
     Each column named in *json_columns* holds JSON text and is replaced by the
-    value decoded into its declared :class:`~loom.etl.schema.FrameType` by
-    ``str.json_decode`` over the column cast to text, a native expression with
-    no Python per row. A null or JSON ``null`` value decodes to null; with
-    :attr:`~loom.etl.declarative.source.JsonMismatch.FAIL` a value that is not
-    JSON of the declared type raises :exc:`polars.exceptions.ComputeError`.
-    A date is read from ``YYYY-MM-DD`` and a timestamp from ISO text where
-    text without an offset is UTC; invalid text raises with ``FAIL`` and is
-    null with ``NULL``, and a number is never a date or a timestamp.
-    With ``NULL`` a value that is not JSON of the declared type is nulled
-    field by field instead, in Python per row and only for a batch Polars
-    refuses. Other columns pass through unchanged.
+    value decoded into its declared :class:`~loom.etl.schema.FrameType`. A null or
+    JSON ``null`` value decodes to null.
+
+    With :attr:`~loom.etl.declarative.source.JsonMismatch.FAIL` the decode is
+    native, with no Python per row, and a value that is not JSON of the declared
+    type raises. With ``NULL`` every row is normalised in Python and a field that
+    does not match its declared type becomes null. Other columns pass through
+    unchanged.
 
     Use it to reproduce in a test what a step receives from a source declared
     with ``parse_json``.
