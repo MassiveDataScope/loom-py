@@ -30,8 +30,8 @@ from loom.etl.storage._config import AuditConfig, CustomColumnDef, MissingTableP
 from loom.etl.storage._locator import MappingLocator, TableLocation
 from tests.helpers.loggers import CapturedLog
 from tests.unit.etl.doubles import RunDateETLParams
+from tests.unit.etl.engines.doubles import table_path
 
-from .conftest import table_path
 from .doubles import read_delta_table, seed_delta_table
 
 

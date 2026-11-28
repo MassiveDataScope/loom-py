@@ -24,8 +24,8 @@ from loom.etl.event import EtlEvent
 from loom.etl.schema._schema import SchemaNotFoundError
 from loom.etl.storage._config import MissingTablePolicy
 from tests.helpers.loggers import CapturedLog
+from tests.unit.etl.engines.doubles import table_path
 
-from .conftest import table_path
 from .doubles import make_polars_writer
 
 _FLAG = "_deleted"

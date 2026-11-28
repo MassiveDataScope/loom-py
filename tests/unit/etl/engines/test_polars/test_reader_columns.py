@@ -15,8 +15,7 @@ from loom.etl.declarative._format import Format
 from loom.etl.declarative.expr._refs import TableRef
 from loom.etl.declarative.source import FileSourceSpec, FromFile, FromTable, TableSourceSpec
 from loom.etl.engines.polars import PolarsSourceReader
-
-from .conftest import table_path
+from tests.unit.etl.engines.doubles import table_path
 
 # ---------------------------------------------------------------------------
 # Helpers

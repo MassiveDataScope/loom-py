@@ -22,9 +22,9 @@ from loom.etl.executor import ETLExecutor
 from loom.etl.lineage._records import EventName, RunStatus
 from loom.etl.schema._schema import LoomDtype
 from loom.etl.testing import RecordingRunObserver
-from tests.unit.etl.engines.doubles import NoParams
+from tests.unit.etl.engines.doubles import NoParams, table_path
 
-from .conftest import MinimalPolarsSourceReader, MinimalPolarsTargetWriter, table_path
+from .conftest import MinimalPolarsSourceReader, MinimalPolarsTargetWriter
 
 
 def _read_delta(root: Path, ref: str) -> pl.DataFrame:

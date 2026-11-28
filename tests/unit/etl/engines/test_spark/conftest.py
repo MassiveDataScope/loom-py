@@ -21,6 +21,7 @@ from pyspark.sql import DataFrame, SparkSession  # noqa: E402
 from loom.etl.declarative.expr._refs import TableRef  # noqa: E402
 from loom.etl.engines.spark import SparkSourceReader, SparkTargetWriter  # noqa: E402
 from loom.etl.testing.spark import SparkStepRunner  # noqa: E402
+from tests.unit.etl.engines.doubles import table_path
 
 
 @pytest.fixture
@@ -50,11 +51,6 @@ def spark_writer(
     return SparkTargetWriter(spark, spark_root)
 
 
-def spark_table_path(root: Path, ref: TableRef) -> Path:
-    """Resolve a TableRef to a filesystem path under root."""
-    return root.joinpath(*ref.ref.split("."))
-
-
 @pytest.fixture
 def seed_spark_table(
     spark: SparkSession,
@@ -69,7 +65,7 @@ def seed_spark_table(
 
     def _seed(ref: str | TableRef, data: DataFrame) -> Path:
         table_ref = TableRef(ref) if isinstance(ref, str) else ref
-        path = spark_table_path(spark_root, table_ref)
+        path = table_path(spark_root, table_ref)
         path.mkdir(parents=True, exist_ok=True)
         data.write.format("delta").mode("overwrite").save(str(path))
         return path
