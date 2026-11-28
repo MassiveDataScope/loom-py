@@ -21,6 +21,7 @@ from loom.etl.compiler._plan import (
 from loom.etl.compiler._validators import (
     StepCompilationContext,
     validate_execute_signature,
+    validate_merge_spec,
     validate_param_exprs,
     validate_params_compat,
     validate_plan_catalog,
@@ -28,7 +29,6 @@ from loom.etl.compiler._validators import (
     validate_process_catalog,
     validate_step,
     validate_step_catalog,
-    validate_upsert_spec,
 )
 
 __all__ = [
@@ -59,5 +59,5 @@ __all__ = [
     "validate_process_catalog",
     "validate_step",
     "validate_step_catalog",
-    "validate_upsert_spec",
+    "validate_merge_spec",
 ]

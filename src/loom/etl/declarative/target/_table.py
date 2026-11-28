@@ -10,6 +10,7 @@ from __future__ import annotations
 
 from collections.abc import Mapping
 from dataclasses import dataclass, field
+from typing import ClassVar
 
 from loom.core.model.introspection import ModelKeys
 from loom.core.schema import SchemaMode
@@ -134,16 +135,17 @@ class MergeSpec(ModelBoundSpec):
         schema_mode:    Schema evolution strategy.
 
     Attributes:
-        delete_flag: The source column whose true rows delete their match; only an
-            upsert sets it, so it is ``None`` here.
+        method: The ``Into`` method that declares this spec, as error messages name it.
+        delete_flag: ``None`` unless the spec deletes matched rows.
     """
 
+    method: ClassVar[str]
     declared_keys: tuple[str, ...] | None = None
     partition_cols: tuple[str, ...] = field(default_factory=tuple)
     exclude: tuple[str, ...] = field(default_factory=tuple)
     include: tuple[str, ...] = field(default_factory=tuple)
     schema_mode: SchemaMode = SchemaMode.STRICT
-    delete_flag: str | None = field(default=None, init=False)
+    delete_flag: str | None = field(default=None, init=False, repr=False)
 
     @property
     def keys(self) -> tuple[str, ...]:
@@ -167,6 +169,36 @@ class MergeSpec(ModelBoundSpec):
             "include": self.include,
         }
 
+    @property
+    def delete_flag_conflict(self) -> str | None:
+        """The option ``delete_flag`` also names, ``None`` when it is unset or usable.
+
+        The option is ``keys``, ``partition_cols``, ``exclude`` or ``include``.
+        """
+        if self.delete_flag is None:
+            return None
+        return next(
+            (role for role, names in self.declared_columns.items() if self.delete_flag in names),
+            None,
+        )
+
+    @property
+    def is_no_op(self) -> bool:
+        """Whether the write can change no row whatever the source holds."""
+        return False
+
+    def update_columns(self, df_columns: tuple[str, ...]) -> tuple[str, ...]:
+        """The columns ``UPDATE SET`` writes on match, in order.
+
+        Match columns are never updated; ``include`` keeps only its own columns,
+        ``exclude`` drops its columns from *df_columns*.
+        """
+        match_columns = self.match_columns
+        if self.include:
+            return tuple(column for column in self.include if column not in match_columns)
+        excluded = match_columns | frozenset(self.exclude)
+        return tuple(column for column in df_columns if column not in excluded)
+
 
 @dataclass(frozen=True)
 class UpsertSpec(MergeSpec):
@@ -181,20 +213,17 @@ class UpsertSpec(MergeSpec):
                      and does not appear in the update or insert maps.
     """
 
+    method: ClassVar[str] = "upsert"
     delete_flag: str | None = None
-
-    @property
-    def delete_flag_conflict(self) -> str | None:
-        """The option ``delete_flag`` also names, ``None`` when it is unset or usable.
-
-        The option is ``keys``, ``partition_cols``, ``exclude`` or ``include``.
-        """
-        return next(
-            (role for role, names in self.declared_columns.items() if self.delete_flag in names),
-            None,
-        )
 
 
 @dataclass(frozen=True)
 class UpdateSpec(MergeSpec):
     """Merge rows into a Delta table updating matches only; unmatched source rows are ignored."""
+
+    method: ClassVar[str] = "update"
+
+    @property
+    def is_no_op(self) -> bool:
+        """Whether ``include`` names only match columns, so ``UPDATE SET`` writes nothing."""
+        return bool(self.include) and not self.update_columns(())

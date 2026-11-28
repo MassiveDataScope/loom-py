@@ -79,7 +79,7 @@ def _build_join_clause(
     return _SQL_AND.join(f"{target_alias}.{col} = {source_alias}.{col}" for col in all_cols)
 
 
-def _build_upsert_predicate(
+def _build_merge_predicate(
     combos: list[dict[str, Any]],
     spec: MergeSpec,
     target_alias: str,
@@ -105,29 +105,6 @@ def _build_upsert_predicate(
         return join_clause
     partition_filter = _build_partition_predicate(combos, spec.partition_cols, alias=target_alias)
     return f"({partition_filter}) AND ({join_clause})"
-
-
-def _build_upsert_update_cols(
-    df_columns: tuple[str, ...],
-    spec: MergeSpec,
-) -> tuple[str, ...]:
-    """Compute the columns to update on MATCH, respecting exclude/include.
-
-    The spec's ``match_columns`` are never updated. If ``include`` is set, only
-    those columns are updated; if ``exclude`` is set, those columns are skipped.
-
-    Args:
-        df_columns: Column names from the source frame, in original order.
-        spec:       Target merge spec.
-
-    Returns:
-        Ordered tuple of column names to appear in UPDATE SET.
-    """
-    match_columns = spec.match_columns
-    if spec.include:
-        return tuple(c for c in spec.include if c not in match_columns)
-    excluded = match_columns | frozenset(spec.exclude)
-    return tuple(c for c in df_columns if c not in excluded)
 
 
 def _build_update_set(
@@ -193,8 +170,8 @@ def _build_merge_plan(
     """
     delete_flag = spec.delete_flag
     columns = _without_delete_flag(df_columns, delete_flag)
-    predicate = _build_upsert_predicate(combos, spec, target_alias, source_alias)
-    update_cols = _build_upsert_update_cols(columns, spec)
+    predicate = _build_merge_predicate(combos, spec, target_alias, source_alias)
+    update_cols = spec.update_columns(columns)
     update_set = _build_update_set(update_cols, source_alias)
     insert_values = _build_insert_values(columns, source_alias)
     if delete_flag is None:

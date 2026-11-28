@@ -14,10 +14,10 @@ from loom.etl.compiler._validators_step import (
     StepCompilationContext,
     validate_execute_signature,
     validate_historify_spec,
+    validate_merge_spec,
     validate_param_exprs,
     validate_params_compat,
     validate_step,
-    validate_upsert_spec,
 )
 
 __all__ = [
@@ -31,5 +31,5 @@ __all__ = [
     "validate_process_catalog",
     "validate_step",
     "validate_step_catalog",
-    "validate_upsert_spec",
+    "validate_merge_spec",
 ]

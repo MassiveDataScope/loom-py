@@ -54,10 +54,10 @@ class TestValidateStep:
             assert agent_bindings == ctx.agent_bindings
             calls.append("signature")
 
-        def _validate_upsert(step_type: type[Any], spec: Any) -> None:
+        def _validate_merge(step_type: type[Any], spec: Any) -> None:
             assert step_type is ctx.step_type
             assert spec is ctx.target_binding.spec
-            calls.append("upsert")
+            calls.append("merge")
 
         def _validate_historify(step_type: type[Any], spec: Any) -> None:
             assert step_type is ctx.step_type
@@ -91,14 +91,14 @@ class TestValidateStep:
             calls.append("files")
 
         monkeypatch.setattr(step_validator, "validate_execute_signature", _validate_signature)
-        monkeypatch.setattr(step_validator, "validate_upsert_spec", _validate_upsert)
+        monkeypatch.setattr(step_validator, "validate_merge_spec", _validate_merge)
         monkeypatch.setattr(step_validator, "validate_historify_spec", _validate_historify)
         monkeypatch.setattr(step_validator, "validate_param_exprs", _validate_params)
         monkeypatch.setattr(step_validator, "validate_file_path_templates", _validate_files)
 
         validate_step(ctx)
 
-        assert calls == ["signature", "upsert", "historify", "params", "files"]
+        assert calls == ["signature", "merge", "historify", "params", "files"]
 
     def test_validate_step_has_one_implementation(self) -> None:
         assert _validators.validate_step is step_validator.validate_step

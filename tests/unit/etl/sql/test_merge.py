@@ -14,10 +14,9 @@ from loom.etl.engines._merge import (
     _build_insert_values,
     _build_join_clause,
     _build_merge_plan,
+    _build_merge_predicate,
     _build_partition_predicate,
     _build_update_set,
-    _build_upsert_predicate,
-    _build_upsert_update_cols,
     _MergePlan,
 )
 from loom.etl.engines._predicate import sql_literal
@@ -128,7 +127,7 @@ class TestPartitionFiltering:
         assert _build_partition_predicate(rows, partition_cols, alias="t") == expected
 
 
-class TestUpsertPredicate:
+class TestMergePredicate:
     @pytest.mark.parametrize(
         "keys,partition_cols,combos,expected",
         [
@@ -143,7 +142,7 @@ class TestUpsertPredicate:
             (("id",), ("year",), [], "t.id = s.id AND t.year = s.year"),
         ],
     )
-    def test_build_upsert_predicate(
+    def test_build_merge_predicate(
         self,
         keys: tuple[str, ...],
         partition_cols: tuple[str, ...],
@@ -151,10 +150,10 @@ class TestUpsertPredicate:
         expected: str,
     ) -> None:
         spec = _upsert_spec(keys=keys, partition_cols=partition_cols)
-        assert _build_upsert_predicate(combos, spec, TARGET_ALIAS, SOURCE_ALIAS) == expected
+        assert _build_merge_predicate(combos, spec, TARGET_ALIAS, SOURCE_ALIAS) == expected
 
 
-class TestUpsertUpdateCols:
+class TestUpdateColumns:
     @pytest.mark.parametrize(
         "spec,columns,expected",
         [
@@ -181,13 +180,13 @@ class TestUpsertUpdateCols:
             ),
         ],
     )
-    def test_build_upsert_update_cols(
+    def test_update_columns(
         self,
         spec: UpsertSpec,
         columns: tuple[str, ...],
         expected: tuple[str, ...],
     ) -> None:
-        assert _build_upsert_update_cols(columns, spec) == expected
+        assert spec.update_columns(columns) == expected
 
 
 class TestInsertAndUpdateMaps:

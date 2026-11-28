@@ -9,7 +9,7 @@ import pytest
 from loom.etl import ETLStep, IntoTable
 from loom.etl.compiler import ETLCompilationError
 from loom.etl.compiler._errors import ETLErrorCode
-from loom.etl.compiler._validators import validate_upsert_spec
+from loom.etl.compiler._validators import validate_merge_spec
 from tests.unit.etl.engines.doubles import NoParams
 
 
@@ -32,7 +32,7 @@ class _AppendStep(ETLStep[NoParams]):
 
 class TestNonUpsertSpecSkipped:
     def test_non_upsert_spec_skipped(self) -> None:
-        validate_upsert_spec(_AppendStep, _spec(_AppendStep))
+        validate_merge_spec(_AppendStep, _spec(_AppendStep))
 
 
 # ---------------------------------------------------------------------------
@@ -49,7 +49,7 @@ class IdValidUpsert(ETLStep[NoParams]):
 
 class TestValidUpsert:
     def test_valid_upsert_passes(self) -> None:
-        validate_upsert_spec(IdValidUpsert, _spec(IdValidUpsert))
+        validate_merge_spec(IdValidUpsert, _spec(IdValidUpsert))
 
 
 class IdUpsertExcludingCreatedAt(ETLStep[NoParams]):
@@ -61,7 +61,7 @@ class IdUpsertExcludingCreatedAt(ETLStep[NoParams]):
 
 class TestValidUpsertWithExclude:
     def test_valid_upsert_with_exclude_passes(self) -> None:
-        validate_upsert_spec(IdUpsertExcludingCreatedAt, _spec(IdUpsertExcludingCreatedAt))
+        validate_merge_spec(IdUpsertExcludingCreatedAt, _spec(IdUpsertExcludingCreatedAt))
 
 
 class IdUpsertIncludingAmount(ETLStep[NoParams]):
@@ -73,7 +73,7 @@ class IdUpsertIncludingAmount(ETLStep[NoParams]):
 
 class TestValidUpsertWithInclude:
     def test_valid_upsert_with_include_passes(self) -> None:
-        validate_upsert_spec(IdUpsertIncludingAmount, _spec(IdUpsertIncludingAmount))
+        validate_merge_spec(IdUpsertIncludingAmount, _spec(IdUpsertIncludingAmount))
 
 
 # ---------------------------------------------------------------------------
@@ -92,7 +92,7 @@ class TestEmptyUpsertKeys:
     def test_empty_keys_raises(self) -> None:
         spec = _spec(_NoKeys)
         with pytest.raises(ETLCompilationError, match="at least one key"):
-            validate_upsert_spec(_NoKeys, spec)
+            validate_merge_spec(_NoKeys, spec)
 
 
 # ---------------------------------------------------------------------------
@@ -111,7 +111,7 @@ class TestUpsertExcludeAndInclude:
     def test_exclude_and_include_raises(self) -> None:
         spec = _spec(_BothExcludeInclude)
         with pytest.raises(ETLCompilationError, match="mutually exclusive"):
-            validate_upsert_spec(_BothExcludeInclude, spec)
+            validate_merge_spec(_BothExcludeInclude, spec)
 
 
 # ---------------------------------------------------------------------------
@@ -130,7 +130,7 @@ class TestUpsertExcludeOverlapsKey:
     def test_exclude_overlaps_key_raises(self) -> None:
         spec = _spec(_ExcludeOverlapsKey)
         with pytest.raises(ETLCompilationError, match="id"):
-            validate_upsert_spec(_ExcludeOverlapsKey, spec)
+            validate_merge_spec(_ExcludeOverlapsKey, spec)
 
 
 # ---------------------------------------------------------------------------
@@ -147,7 +147,7 @@ class _ValidUpdate(ETLStep[NoParams]):
 
 class TestValidUpdate:
     def test_valid_update_passes(self) -> None:
-        validate_upsert_spec(_ValidUpdate, _spec(_ValidUpdate))
+        validate_merge_spec(_ValidUpdate, _spec(_ValidUpdate))
 
 
 class _UpdateNoKeys(ETLStep[NoParams]):
@@ -163,7 +163,7 @@ class TestUpdateEmptyKeys:
         with pytest.raises(
             ETLCompilationError, match=r"update\(\) requires at least one key"
         ) as exc_info:
-            validate_upsert_spec(_UpdateNoKeys, spec)
+            validate_merge_spec(_UpdateNoKeys, spec)
 
         assert exc_info.value.code is ETLErrorCode.UPSERT_NO_KEYS
 
@@ -181,7 +181,7 @@ class TestUpdateExcludeAndInclude:
         with pytest.raises(
             ETLCompilationError, match=r"update\(\) exclude= and include="
         ) as exc_info:
-            validate_upsert_spec(_UpdateBothExcludeInclude, spec)
+            validate_merge_spec(_UpdateBothExcludeInclude, spec)
 
         assert exc_info.value.code is ETLErrorCode.UPSERT_EXCLUDE_INCLUDE_CONFLICT
 
@@ -199,7 +199,7 @@ class TestUpdateIncludeAbsorbed:
     def test_update_include_absorbed_by_keys_and_partitions_raises(self) -> None:
         spec = _spec(_UpdateIncludeAbsorbed)
         with pytest.raises(ETLCompilationError, match="guaranteed no-op") as exc_info:
-            validate_upsert_spec(_UpdateIncludeAbsorbed, spec)
+            validate_merge_spec(_UpdateIncludeAbsorbed, spec)
 
         assert exc_info.value.code is ETLErrorCode.UPDATE_EMPTY_UPDATE_SET
 
@@ -213,7 +213,7 @@ class _UpdateIncludeWithRealColumn(ETLStep[NoParams]):
 
 class TestUpdateIncludeWithRealColumn:
     def test_update_include_with_one_real_column_passes(self) -> None:
-        validate_upsert_spec(_UpdateIncludeWithRealColumn, _spec(_UpdateIncludeWithRealColumn))
+        validate_merge_spec(_UpdateIncludeWithRealColumn, _spec(_UpdateIncludeWithRealColumn))
 
 
 class _UpsertIncludeAbsorbed(ETLStep[NoParams]):
@@ -226,7 +226,7 @@ class _UpsertIncludeAbsorbed(ETLStep[NoParams]):
 
 class TestUpsertIncludeAbsorbed:
     def test_upsert_include_absorbed_is_not_flagged(self) -> None:
-        validate_upsert_spec(_UpsertIncludeAbsorbed, _spec(_UpsertIncludeAbsorbed))
+        validate_merge_spec(_UpsertIncludeAbsorbed, _spec(_UpsertIncludeAbsorbed))
 
 
 class _UpsertWithDeleteFlag(ETLStep[NoParams]):
@@ -238,7 +238,7 @@ class _UpsertWithDeleteFlag(ETLStep[NoParams]):
 
 class TestUpsertDeleteFlag:
     def test_upsert_delete_flag_passes(self) -> None:
-        validate_upsert_spec(_UpsertWithDeleteFlag, _spec(_UpsertWithDeleteFlag))
+        validate_merge_spec(_UpsertWithDeleteFlag, _spec(_UpsertWithDeleteFlag))
 
 
 class _DeleteFlagIsKey(ETLStep[NoParams]):
@@ -251,7 +251,7 @@ class _DeleteFlagIsKey(ETLStep[NoParams]):
 class TestDeleteFlagEqualToKey:
     def test_upsert_delete_flag_equal_to_a_key_raises(self) -> None:
         with pytest.raises(ETLCompilationError, match="conflicts with keys") as exc_info:
-            validate_upsert_spec(_DeleteFlagIsKey, _spec(_DeleteFlagIsKey))
+            validate_merge_spec(_DeleteFlagIsKey, _spec(_DeleteFlagIsKey))
 
         assert exc_info.value.code is ETLErrorCode.UPSERT_DELETE_FLAG_CONFLICT
 
@@ -266,7 +266,7 @@ class _DeleteFlagInExclude(ETLStep[NoParams]):
 class TestDeleteFlagInExclude:
     def test_upsert_delete_flag_in_exclude_raises(self) -> None:
         with pytest.raises(ETLCompilationError, match="conflicts with exclude") as exc_info:
-            validate_upsert_spec(_DeleteFlagInExclude, _spec(_DeleteFlagInExclude))
+            validate_merge_spec(_DeleteFlagInExclude, _spec(_DeleteFlagInExclude))
 
         assert exc_info.value.code is ETLErrorCode.UPSERT_DELETE_FLAG_CONFLICT
 
@@ -281,7 +281,7 @@ class _DeleteFlagInInclude(ETLStep[NoParams]):
 class TestDeleteFlagInInclude:
     def test_upsert_delete_flag_in_include_raises(self) -> None:
         with pytest.raises(ETLCompilationError, match="conflicts with include") as exc_info:
-            validate_upsert_spec(_DeleteFlagInInclude, _spec(_DeleteFlagInInclude))
+            validate_merge_spec(_DeleteFlagInInclude, _spec(_DeleteFlagInInclude))
 
         assert exc_info.value.code is ETLErrorCode.UPSERT_DELETE_FLAG_CONFLICT
 
@@ -298,6 +298,6 @@ class _DeleteFlagInPartition(ETLStep[NoParams]):
 class TestDeleteFlagInPartition:
     def test_upsert_delete_flag_in_partition_cols_raises(self) -> None:
         with pytest.raises(ETLCompilationError, match="conflicts with partition_cols") as exc_info:
-            validate_upsert_spec(_DeleteFlagInPartition, _spec(_DeleteFlagInPartition))
+            validate_merge_spec(_DeleteFlagInPartition, _spec(_DeleteFlagInPartition))
 
         assert exc_info.value.code is ETLErrorCode.UPSERT_DELETE_FLAG_CONFLICT
