@@ -84,8 +84,14 @@ NANOS_EARLIEST = datetime(1677, 9, 21, 0, 12, 43, 145225)
 NANOS_LATEST = datetime(2262, 4, 11, 23, 47, 16, 854775)
 FLOAT32_MAXIMUM = 3.4028234663852886e38
 NAIVE_INSTANT = datetime(2026, 11, 28, 10)
-LONG_INTEGER = "1" + "0" * 500
 HUGE_INTEGER = "1" + "0" * 5000
+LEVEL = EnumType(("low", "high"))
+TEXT_AND_FLOAT = StructType((StructField("s", LoomDtype.UTF8), StructField("f", LoomDtype.FLOAT64)))
+DAY_RECORD = StructType((StructField("d", LoomDtype.INT64),))
+ARRAY_OF_RECORDS = ArrayType(DAY_RECORD, 1)
+ARRAY_OF_LEVELS = ArrayType(StructType((StructField("e", LEVEL),)), 1)
+TEXT_FIELD = StructType((StructField("s", LoomDtype.UTF8),))
+NESTED_ARRAY = StructType((StructField("q", ARRAY_OF_RECORDS),))
 PAIR = StructType((StructField("a", LoomDtype.INT64), StructField("b", LoomDtype.INT64)))
 INT_RULE = "an integer from -9223372036854775808 to 9223372036854775807"
 SMALL_DECIMAL_RULE = "a decimal of 4 digits, 2 after the point"
@@ -96,7 +102,6 @@ FLOAT64_RULE = "a finite number of at most 1.7976931348623157e+308"
 FLOAT32_RULE = "a finite number of at most 3.4028235677973362e+38"
 HELD_RULE = "an instant its timestamp type holds"
 TEXT_RULE = "a JSON value whose text is UTF-8"
-LEVEL = EnumType(("low", "high"))
 AT = StructType((StructField("at", UTC_TYPE),))
 
 COMMON_FITS = [
@@ -144,7 +149,8 @@ COMMON_UNFITS = [
     Unfit("int-from-float", LoomDtype.INT64, "1.5", INT_RULE),
     Unfit("int-from-bool", LoomDtype.INT64, "true", INT_RULE),
     Unfit("int-from-string", LoomDtype.INT64, '"oops"', INT_RULE),
-    Unfit("int-beyond-500-digits", LoomDtype.INT64, LONG_INTEGER, INT_RULE),
+    Unfit("int64-above-its-maximum", LoomDtype.INT64, "9223372036854775808", INT_RULE),
+    Unfit("int64-below-its-minimum", LoomDtype.INT64, "-9223372036854775809", INT_RULE),
     Unfit("float-from-string", LoomDtype.FLOAT64, '"oops"', FLOAT64_RULE),
     Unfit("bool-from-number", LoomDtype.BOOLEAN, "1", "a boolean"),
     Unfit("decimal-beyond-its-precision", PRICE, "100000000", DECIMAL_RULE),
@@ -186,10 +192,20 @@ POLARS_FITS = [
     ),
     Fit("enum-member", LEVEL, '"low"', "low"),
     Fit("array-of-dates", ArrayType(LoomDtype.DATE, 2), '["2026-11-28", "2026-11-28"]', [DAY, DAY]),
+    Fit("null-array-of-structs", ARRAY_OF_LEVELS, "null", None),
+    Fit("struct-without-its-array-of-structs", NESTED_ARRAY, "{}", {"q": None}),
+    Fit("struct-with-a-null-array-of-structs", NESTED_ARRAY, '{"q": null}', {"q": None}),
+    Fit("list-of-structs", ListType(DAY_RECORD), '[{"d": 1}]', [{"d": 1}]),
     Fit("instant-in-a-struct", AT, '{"at": "2026-11-28 10:00:00"}', {"at": INSTANT}),
 ]
 
 POLARS_UNFITS = [
+    Unfit(
+        "uint64-above-its-maximum",
+        LoomDtype.UINT64,
+        "18446744073709551616",
+        "an integer from 0 to 18446744073709551615",
+    ),
     Unfit("uint8-above-its-maximum", LoomDtype.UINT8, "256", "an integer from 0 to 255"),
     Unfit("int8-above-its-maximum", LoomDtype.INT8, "128", "an integer from -128 to 127"),
     Unfit("unsigned-negative", LoomDtype.UINT8, "-1", "an integer from 0 to 255"),
@@ -224,8 +240,27 @@ POLARS_UNFITS = [
     Unfit("nanosecond-instant-after-its-latest", NANOS, '"2262-04-11T23:47:16.854776Z"', HELD_RULE),
     Unfit("enum-unknown-member", LEVEL, '"medium"', "a member of the enum"),
     Unfit("enum-from-number", LEVEL, "1", "a member of the enum"),
+    Unfit(
+        "array-of-structs-too-short", ArrayType(DAY_RECORD, 2), '[{"d": 1}]', "an array of 2 items"
+    ),
     Unfit("array-too-short", ArrayType(LoomDtype.DATE, 2), '["2026-11-28"]', "an array of 2 items"),
     Unfit("array-too-long", ArrayType(LoomDtype.INT64, 2), "[1, 2, 3]", "an array of 2 items"),
+    Unfit(
+        "str-from-a-nested-lone-surrogate",
+        TEXT_FIELD,
+        '{"s": {"a": "\\ud800"}}',
+        TEXT_RULE,
+        {"s": None},
+        "$.v.s",
+    ),
+    Unfit(
+        "str-reads-minus-zero-beside-a-non-json-constant",
+        TEXT_AND_FLOAT,
+        '{"s": -0, "f": NaN}',
+        FLOAT64_RULE,
+        {"s": "0", "f": None},
+        "$.v.f",
+    ),
     Unfit("list-element", ListType(LoomDtype.INT64), '[1, "x"]', INT_RULE, [1, None], "$.v[]"),
     Unfit("struct-field", PAIR, '{"a": 1, "b": "x"}', INT_RULE, {"a": 1, "b": None}, "$.v.b"),
 ]
