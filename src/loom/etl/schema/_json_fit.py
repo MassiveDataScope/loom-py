@@ -87,6 +87,15 @@ class JsonMismatch(StrEnum):
     FAIL = "fail"
     NULL = "null"
 
+    def refuse(self, path: str, expected: str) -> None:
+        """Refuse the misfit at *path* under ``FAIL``; under ``NULL`` let it fit to null.
+
+        Raises:
+            JsonRefusal: Under ``FAIL``, naming *path* and what its rule *expected*.
+        """
+        if self is JsonMismatch.FAIL:
+            raise JsonRefusal(f"{path} expected {expected}") from None
+
 
 class Rule(Protocol):
     """What a leaf of the document holds."""
@@ -349,18 +358,22 @@ class _Node(ABC):
                 assert_never(frame_type)
         return _Leaf(path, rule)
 
-    def fit(self, value: Any, refusals: list[JsonRefusal]) -> Any:
-        """The fitted form of *value*; a misfit adds its refusal to *refusals* and fits to null."""
+    def fit(self, value: Any, on_mismatch: JsonMismatch) -> Any:
+        """The fitted form of *value*; a misfit fits to null unless *on_mismatch* refuses it.
+
+        Raises:
+            JsonRefusal: Under :attr:`JsonMismatch.FAIL`, at the first misfit in walk order.
+        """
         if value is None:
             return None
         try:
-            return self._fitted(value, refusals)
+            return self._fitted(value, on_mismatch)
         except Misfit as misfit:
-            refusals.append(JsonRefusal(f"{self.path} expected {misfit.expected}"))
+            on_mismatch.refuse(self.path, misfit.expected)
             return None
 
     @abstractmethod
-    def _fitted(self, value: Any, refusals: list[JsonRefusal]) -> Any:
+    def _fitted(self, value: Any, on_mismatch: JsonMismatch) -> Any:
         """The fitted form of the value that is not null.
 
         Raises:
@@ -372,7 +385,7 @@ class _Node(ABC):
 class _Leaf(_Node):
     rule: Rule
 
-    def _fitted(self, value: Any, refusals: list[JsonRefusal]) -> Any:
+    def _fitted(self, value: Any, on_mismatch: JsonMismatch) -> Any:
         return self.rule.fit(value)
 
 
@@ -380,10 +393,10 @@ class _Leaf(_Node):
 class _Fields(_Node):
     children: tuple[tuple[str, _Node], ...]
 
-    def _fitted(self, value: Any, refusals: list[JsonRefusal]) -> Any:
+    def _fitted(self, value: Any, on_mismatch: JsonMismatch) -> Any:
         if type(value) is not dict:
             raise Misfit("an object")
-        return {name: child.fit(value.get(name), refusals) for name, child in self.children}
+        return {name: child.fit(value.get(name), on_mismatch) for name, child in self.children}
 
 
 @dataclass(frozen=True, slots=True)
@@ -391,12 +404,12 @@ class _Items(_Node):
     item: _Node
     width: int | None
 
-    def _fitted(self, value: Any, refusals: list[JsonRefusal]) -> Any:
+    def _fitted(self, value: Any, on_mismatch: JsonMismatch) -> Any:
         if type(value) is not list:
             raise Misfit("an array")
         if self.width is not None and len(value) != self.width:
             raise Misfit(f"an array of {self.width} items")
-        return [self.item.fit(item, refusals) for item in value]
+        return [self.item.fit(item, on_mismatch) for item in value]
 
 
 @dataclass(frozen=True, slots=True)
@@ -433,17 +446,12 @@ class JsonFit:
         """
         if text is None:
             return None
-        refusals: list[JsonRefusal] = []
         try:
             parsed = self._parsed(text)
         except (ValueError, RecursionError):
-            refusals.append(JsonRefusal("$ expected a JSON document"))
-            fitted = None
-        else:
-            fitted = self.root.fit(parsed, refusals)
-        if refusals and self.on_mismatch is JsonMismatch.FAIL:
-            raise refusals[0]
-        return fitted
+            self.on_mismatch.refuse("$", "a JSON document")
+            return None
+        return self.root.fit(parsed, self.on_mismatch)
 
     def _parsed(self, text: str) -> Any:
         try:
