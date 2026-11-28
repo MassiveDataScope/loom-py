@@ -10,6 +10,7 @@ from dataclasses import dataclass
 from decimal import Decimal
 from typing import Any, Final
 
+import msgspec
 import polars as pl
 
 from loom.etl.schema._schema import (
@@ -26,7 +27,10 @@ from ._dtype import frame_type_to_polars
 from ._json_failure import is_json_decode_failure
 from ._json_text import JsonTextDecoder
 
+_CHUNK_ROWS: Final = 8_192
 _DECIMAL_TEXT: Final = re.compile(r"-?[0-9]+(\.[0-9]+)?([eE][+-]?[0-9]+)?")
+_DECODER: Final = msgspec.json.Decoder()
+_ENCODER: Final = msgspec.json.Encoder()
 
 
 def _integer_or_none(value: Any) -> int | None:
@@ -47,7 +51,7 @@ def _text_or_none(value: Any) -> str | None:
 
 
 def _text_of(value: Any) -> str:
-    return value if isinstance(value, str) else json.dumps(value, ensure_ascii=False)
+    return value if isinstance(value, str) else _ENCODER.encode(value).decode()
 
 
 def _decimal_or_none(value: Any, decimal: DecimalType) -> Any:
@@ -56,6 +60,13 @@ def _decimal_or_none(value: Any, decimal: DecimalType) -> Any:
         return None
     integer_digits = decimal.precision - decimal.scale
     return value if abs(Decimal(text)) < Decimal(10) ** integer_digits else None
+
+
+def _parsed(document: str) -> Any:
+    try:
+        return _DECODER.decode(document)
+    except msgspec.DecodeError:
+        return json.loads(document, parse_constant=lambda _: None)
 
 
 def _decoded(documents: pl.Series, dtype: pl.DataType) -> pl.Series:
@@ -103,9 +114,11 @@ class TolerantJson:
     type is nulled and its siblings kept, as Spark ``from_json`` in
     ``PERMISSIVE`` mode does; any other JSON value under a ``str`` field becomes
     its JSON text, and ``NaN`` and ``Infinity`` become null. The normalised
-    batch is then decoded by Polars. Should Polars still refuse a row, only that
-    row becomes null, so the normalisation drives parity and the decode is
-    guaranteed by Polars. Malformed JSON becomes a null row.
+    text is then decoded by Polars, in chunks of :data:`_CHUNK_ROWS` rows so the
+    memory held does not depend on the batch size. Should Polars still refuse a
+    row, only that row becomes null. Any failure normalising a row, such as
+    malformed JSON, nesting too deep to read or text Polars cannot hold, makes
+    that row null.
 
     Dates and timestamps are read from ISO text as :class:`JsonTextDecoder`
     does, and invalid text is null. A number under a timestamp field is null
@@ -128,7 +141,14 @@ class TolerantJson:
 
     def _decode_batch(self, batch: pl.Series) -> pl.Series:
         dtype = frame_type_to_polars(self.frame_type)
-        normalised = pl.Series(batch.name, [self._text(d) for d in batch], dtype=pl.String)
+        offsets = range(0, max(len(batch), 1), _CHUNK_ROWS)
+        return pl.concat(
+            [self._decode_chunk(batch.slice(offset, _CHUNK_ROWS), dtype) for offset in offsets]
+        )
+
+    def _decode_chunk(self, chunk: pl.Series, dtype: pl.DataType) -> pl.Series:
+        encoded = pl.Series(chunk.name, [self._encoded(d) for d in chunk], dtype=pl.Binary)
+        normalised = encoded.cast(pl.String)
         decoded = _decoded_or_none(normalised, dtype)
         if decoded is not None:
             return decoded
@@ -136,17 +156,15 @@ class TolerantJson:
             text if text is None or _decoded_or_none(pl.Series([text]), dtype) is not None else None
             for text in normalised
         ]
-        return _decoded(pl.Series(batch.name, accepted, dtype=pl.String), dtype)
+        return _decoded(pl.Series(chunk.name, accepted, dtype=pl.String), dtype)
 
-    def _text(self, document: str | None) -> str | None:
+    def _encoded(self, document: str | None) -> bytes | None:
         if document is None:
             return None
         try:
-            parsed = json.loads(document, parse_constant=lambda _: None)
-        except ValueError:
+            return _ENCODER.encode(self._coerce(self.frame_type, _parsed(document)))
+        except Exception:  # noqa: BLE001
             return None
-        coerced = self._coerce(self.frame_type, parsed)
-        return None if coerced is None else json.dumps(coerced, ensure_ascii=False)
 
     def _coerce(self, frame_type: FrameType, value: Any) -> Any:
         if value is None:

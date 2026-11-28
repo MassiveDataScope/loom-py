@@ -189,13 +189,13 @@ class TestTolerantJsonDecoding:
     @pytest.mark.parametrize(
         ("frame_type", "document", "expected"),
         [
-            (LoomDtype.UTF8, '{"source": "web"}', '{"source": "web"}'),
+            (LoomDtype.UTF8, '{"source": "web"}', '{"source":"web"}'),
             (
                 StructType(
                     (StructField("name", LoomDtype.UTF8), StructField("meta", LoomDtype.UTF8))
                 ),
                 '{"name": "a", "meta": {"page": "/home"}}',
-                {"name": "a", "meta": '{"page": "/home"}'},
+                {"name": "a", "meta": '{"page":"/home"}'},
             ),
             (
                 ListType(
@@ -204,11 +204,14 @@ class TestTolerantJsonDecoding:
                     )
                 ),
                 '[{"key": "k", "val": {"x": 1}}]',
-                [{"key": "k", "val": '{"x": 1}'}],
+                [{"key": "k", "val": '{"x":1}'}],
             ),
             (StructType((StructField("user_id", LoomDtype.INT64),)), "[1, 2, 3]", None),
             (StructType((StructField("user_id", LoomDtype.INT64),)), "not json", None),
             (ListType(LoomDtype.UTF8), '"single"', None),
+            (StructType((StructField("s", LoomDtype.UTF8),)), '{"s": "\\ud800"}', None),
+            (StructType((StructField("s", LoomDtype.UTF8),)), '{"s": {"a": "\\ud800"}}', None),
+            (ListType(LoomDtype.UTF8), "[" * 100_000 + "]" * 100_000, None),
         ],
         ids=[
             "object-under-str",
@@ -217,6 +220,9 @@ class TestTolerantJsonDecoding:
             "array-for-struct",
             "malformed",
             "scalar-for-list",
+            "lone-surrogate-under-str",
+            "lone-surrogate-nested-under-str",
+            "nesting-too-deep",
         ],
     )
     def test_a_mismatched_document_decodes_to_text_or_null(
