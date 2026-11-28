@@ -36,14 +36,15 @@ from loom.etl.storage.routing import PathRouteResolver, PathTarget, TableRouteRe
 from ._dtype import frame_type_to_polars
 from ._frame import FrameT
 from ._json_failure import is_json_decode_failure
+from ._json_text import JsonTextDecoder
 from ._predicate import predicate_to_polars
 from ._tolerant_json import TolerantJson
 
 _log = logging.getLogger(__name__)
 
 _JSON_DECODING: Mapping[JsonMismatch, Callable[[pl.Expr, FrameType], pl.Expr]] = {
-    JsonMismatch.FAIL: lambda column, frame_type: column.str.json_decode(
-        frame_type_to_polars(frame_type)
+    JsonMismatch.FAIL: lambda column, frame_type: JsonTextDecoder.refusing().decode(
+        column, frame_type_to_polars(frame_type)
     ),
     JsonMismatch.NULL: lambda column, frame_type: TolerantJson(frame_type).decode(column),
 }
@@ -58,6 +59,9 @@ def decode_json_columns(frame: FrameT, json_columns: Iterable[JsonColumnSpec]) -
     no Python per row. A null or JSON ``null`` value decodes to null; with
     :attr:`~loom.etl.declarative.source.JsonMismatch.FAIL` a value that is not
     JSON of the declared type raises :exc:`polars.exceptions.ComputeError`.
+    A date is read from ``YYYY-MM-DD`` and a timestamp from ISO text where
+    text without an offset is UTC; invalid text raises with ``FAIL`` and is
+    null with ``NULL``, and a number is never a date or a timestamp.
     With ``NULL`` a value that is not JSON of the declared type is nulled
     field by field instead, in Python per row and only for a batch Polars
     refuses. Other columns pass through unchanged.

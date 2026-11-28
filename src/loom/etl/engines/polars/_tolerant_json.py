@@ -7,7 +7,6 @@ import math
 import re
 from collections.abc import Callable, Mapping
 from dataclasses import dataclass
-from datetime import date, datetime
 from decimal import Decimal
 from typing import Any, Final
 
@@ -25,8 +24,8 @@ from loom.etl.schema._schema import (
 
 from ._dtype import frame_type_to_polars
 from ._json_failure import is_json_decode_failure
+from ._json_text import JsonTextDecoder
 
-_EPOCH: Final = date(1970, 1, 1)
 _DECIMAL_TEXT: Final = re.compile(r"-?[0-9]+(\.[0-9]+)?([eE][+-]?[0-9]+)?")
 
 
@@ -51,13 +50,6 @@ def _text_of(value: Any) -> str:
     return value if isinstance(value, str) else json.dumps(value, ensure_ascii=False)
 
 
-def _epoch_days_or_none(value: Any) -> int | None:
-    try:
-        return (datetime.fromisoformat(value).date() - _EPOCH).days
-    except (TypeError, ValueError):
-        return None
-
-
 def _decimal_or_none(value: Any, decimal: DecimalType) -> Any:
     text = str(value)
     if not _DECIMAL_TEXT.fullmatch(text):
@@ -66,9 +58,14 @@ def _decimal_or_none(value: Any, decimal: DecimalType) -> Any:
     return value if abs(Decimal(text)) < Decimal(10) ** integer_digits else None
 
 
+def _decoded(documents: pl.Series, dtype: pl.DataType) -> pl.Series:
+    column = JsonTextDecoder.nulling().decode(pl.first(), dtype)
+    return documents.to_frame().select(column).to_series()
+
+
 def _decoded_or_none(documents: pl.Series, dtype: pl.DataType) -> pl.Series | None:
     try:
-        return documents.str.json_decode(dtype)
+        return _decoded(documents, dtype)
     except pl.exceptions.ComputeError as error:
         if is_json_decode_failure(error):
             return None
@@ -92,7 +89,7 @@ _SCALAR_READERS: Final[Mapping[FrameType, Callable[[Any], Any]]] = {
     **dict.fromkeys((LoomDtype.FLOAT32, LoomDtype.FLOAT64), _number_or_none),
     LoomDtype.BOOLEAN: _bool_or_none,
     LoomDtype.UTF8: _text_of,
-    LoomDtype.DATE: _epoch_days_or_none,
+    LoomDtype.DATE: _text_or_none,
     LoomDtype.DATETIME: _text_or_none,
 }
 
@@ -110,9 +107,9 @@ class TolerantJson:
     row becomes null, so the normalisation drives parity and the decode is
     guaranteed by Polars. Malformed JSON becomes a null row.
 
-    A date is read from an ISO string, as Spark does. A number under a
-    timestamp field is null here, where Spark reads it as epoch seconds for a
-    timezone-aware field.
+    Dates and timestamps are read from ISO text as :class:`JsonTextDecoder`
+    does, and invalid text is null. A number under a timestamp field is null
+    here, where Spark reads it as epoch seconds for a timezone-aware field.
 
     Args:
         frame_type: Type the column is decoded into; struct field names are the
@@ -139,7 +136,7 @@ class TolerantJson:
             text if text is None or _decoded_or_none(pl.Series([text]), dtype) is not None else None
             for text in normalised
         ]
-        return pl.Series(batch.name, accepted, dtype=pl.String).str.json_decode(dtype)
+        return _decoded(pl.Series(batch.name, accepted, dtype=pl.String), dtype)
 
     def _text(self, document: str | None) -> str | None:
         if document is None:

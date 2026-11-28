@@ -145,12 +145,16 @@ class _PlainReader:
         return self._frame
 
 
-def _entry_text(engine: ModelEngine, profile: str = '{"street": "Main"}') -> Any:
+def _entry_text(
+    engine: ModelEngine,
+    profile: str = '{"street": "Main"}',
+    visit: str = '{"zipCode": "28001", "seenAt": "2026-01-05T00:00:00Z"}',
+) -> Any:
     return engine.frame(
         {
             _Entry.c.entry_id: [1],
             _Entry.c.profile: [profile],
-            _Entry.c.visit: ['{"zipCode": "28001", "seenAt": "2026-01-05T00:00:00Z"}'],
+            _Entry.c.visit: [visit],
             _Entry.c.tags: ['["a", "b"]'],
         }
     )
@@ -164,6 +168,16 @@ class TestJsonTextOnWrite:
         (row,) = engine.stored("entries")
         assert (row[_Entry.c.profile]["street"], row[_Entry.c.tags]) == ("Main", ["a", "b"])
         assert row[_Entry.c.visit]["zipCode"] == "28001"
+
+    @pytest.mark.usefixtures("session_in_utc")
+    def test_json_text_reads_a_timestamp_without_offset_as_utc(self, engine: ModelEngine) -> None:
+        visit = '{"zipCode": "28001", "seenAt": "2026-01-05 00:00:00"}'
+        engine.writer.write(
+            _entry_text(engine, visit=visit), IntoTable(_Entry).append()._to_spec(), None
+        )
+
+        (row,) = engine.stored("entries")
+        assert row[_Entry.c.visit]["seenAt"].astimezone(UTC) == _PLACED
 
     def test_malformed_json_text_fails_naming_the_target_column_and_type(
         self, engine: ModelEngine

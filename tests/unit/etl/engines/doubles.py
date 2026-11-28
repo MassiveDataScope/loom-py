@@ -96,14 +96,14 @@ class SparkEngine:
     def __init__(self, spark: Any, root: Path) -> None:
         from loom.etl.engines.spark import SparkSourceReader, SparkTargetWriter
 
-        self._spark = spark
+        self.spark = spark
         self._root = root
         self.reader = SparkSourceReader(spark, str(root))
         self.writer = SparkTargetWriter(spark, root, missing_table_policy=MissingTablePolicy.CREATE)
 
     def frame(self, columns: dict[str, list[Any]]) -> Any:
         """A DataFrame of *columns*."""
-        return self._spark.createDataFrame(list(zip(*columns.values(), strict=True)), list(columns))
+        return self.spark.createDataFrame(list(zip(*columns.values(), strict=True)), list(columns))
 
     def stored(self, ref: str) -> list[dict[str, Any]]:
         """The rows of table *ref*."""
@@ -121,4 +121,4 @@ class SparkEngine:
 
     def _stored(self, ref: str) -> Any:
         """The Delta table *ref* as a DataFrame."""
-        return self._spark.read.format("delta").load(table_path(self._root, ref))
+        return self.spark.read.format("delta").load(table_path(self._root, ref))

@@ -7,6 +7,8 @@ from typing import Any, Generic, TypeVar
 import polars as pl
 from polars.datatypes import DataTypeClass as _DataTypeClass
 
+from ._json_text import JsonTextDecoder
+
 PolarsFrameT = TypeVar("PolarsFrameT", pl.LazyFrame, pl.DataFrame)
 
 
@@ -25,7 +27,7 @@ class PolarsSchemaAligner(Generic[PolarsFrameT]):
         """Cast a column; JSON text becomes the struct or list the schema declares for it."""
         column = pl.col(name)
         if self.is_json_text_target(source, dtype):
-            return name, column.str.json_decode(dtype)
+            return name, JsonTextDecoder.refusing().decode(column, dtype)
         return name, self._cast_expr(column, dtype)
 
     def is_json_text_target(

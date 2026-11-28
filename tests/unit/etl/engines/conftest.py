@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import importlib.util
+from collections.abc import Iterator
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
@@ -28,6 +29,18 @@ def spark_engine(spark: SparkSession, tmp_path: Path) -> SparkEngine:
 @pytest.fixture(params=["polars_engine", "spark_engine"])
 def engine(request: pytest.FixtureRequest) -> ModelEngine:
     return request.getfixturevalue(request.param)
+
+
+@pytest.fixture
+def session_in_utc(engine: ModelEngine) -> Iterator[None]:
+    """Pin the Spark session time zone to UTC, as loom runs it; Polars has no session zone."""
+    if not isinstance(engine, SparkEngine):
+        yield
+        return
+    previous = engine.spark.conf.get("spark.sql.session.timeZone")
+    engine.spark.conf.set("spark.sql.session.timeZone", "UTC")
+    yield
+    engine.spark.conf.set("spark.sql.session.timeZone", previous)
 
 
 @pytest.fixture
