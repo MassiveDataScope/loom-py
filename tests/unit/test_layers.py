@@ -10,6 +10,7 @@ run time, catching what a module pulls in transitively:
 from __future__ import annotations
 
 import ast
+import sys
 from functools import cache
 from pathlib import Path
 
@@ -34,10 +35,36 @@ _RULES: dict[str, tuple[tuple[str, ...], tuple[str, ...]]] = {
             "loom.jobs",
             "loom.stores",
             "loom.connections",
+            "loom.etl",
+            "loom.streaming",
             "sqlalchemy",
+            "polars",
+            "pyspark",
+            "deltalake",
+            "pyarrow",
+            "adbc_driver_manager",
         ),
         (),
     ),
+    # The column vocabulary is a leaf: stdlib, msgspec and loom.core.errors, nothing else.
+    "loom.core.model.types": (("loom",), ("loom.core.errors", "loom.core.model.types")),
+    # The frame vocabulary translates models without reading an engine or a store.
+    "loom.etl.schema": (
+        (
+            "loom.etl.declarative",
+            "loom.etl.engines",
+            "loom.etl.compiler",
+            "loom.stores",
+            "sqlalchemy",
+            "polars",
+            "pyspark",
+            "deltalake",
+        ),
+        (),
+    ),
+    # An engine reads no other engine's runtime.
+    "loom.etl.engines.polars": (("pyspark",), ()),
+    "loom.etl.engines.spark": (("polars",), ()),
     # No transport but the JobService adapter and the ones app.entry selects, lazily.
     "loom.composition": (
         ("fastapi", "starlette", "celery", "loom.rest", "loom.celery", "loom.serverless"),
@@ -90,19 +117,42 @@ def _within(module: str, package: str) -> bool:
     return module == package or module.startswith(package + ".")
 
 
+def _layer_files(layer: str) -> list[Path]:
+    """The source files of *layer*, a package or a single module."""
+    location = _SRC / Path(*layer.split("."))
+    if location.is_dir():
+        return sorted(location.rglob("*.py"))
+    return [location.with_suffix(".py")] if location.with_suffix(".py").is_file() else []
+
+
 @pytest.mark.parametrize(("layer", "rule"), _RULES.items(), ids=list(_RULES))
 def test_a_layer_imports_nothing_outside_it(
     layer: str, rule: tuple[tuple[str, ...], tuple[str, ...]]
 ) -> None:
     forbidden, allowed = rule
     offenders = []
-    for path in sorted((_SRC / Path(*layer.split("."))).rglob("*.py")):
+    files = _layer_files(layer)
+    assert files, f"{layer} matches no source file"
+    for path in files:
         module, package = _module_of(path)
         tree = parsed(path)
         for imported in sorted(imported_modules(tree, package=package)):
             if any(_within(imported, banned) for banned in forbidden) and not any(
                 _within(imported, kept) for kept in allowed
             ):
+                offenders.append(f"{module} imports {imported}")
+
+    assert offenders == []
+
+
+def test_the_column_vocabulary_imports_only_stdlib_msgspec_and_core_errors() -> None:
+    kept = ("msgspec", "loom.core.errors", "loom.core.model.types")
+    offenders = []
+    for path in _layer_files("loom.core.model.types"):
+        module, package = _module_of(path)
+        for imported in sorted(imported_modules(parsed(path), package=package)):
+            outside = imported.split(".")[0] not in sys.stdlib_module_names
+            if outside and not any(_within(imported, name) for name in kept):
                 offenders.append(f"{module} imports {imported}")
 
     assert offenders == []

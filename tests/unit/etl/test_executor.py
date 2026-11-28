@@ -10,7 +10,9 @@ import pytest
 
 from loom.core.observability.observability import Observability
 from loom.etl import ETLPipeline, ETLProcess, ETLStep, FromTable, IntoTable
+from loom.etl.checkpoint import CheckpointCleanupError, CheckpointStore
 from loom.etl.compiler import ETLCompiler
+from loom.etl.event import EtlEvent
 from loom.etl.executor import ETLExecutor, ThreadDispatcher
 from loom.etl.lineage._records import (
     EventName as LineageEventName,
@@ -77,6 +79,11 @@ class OrdersCustomersParallelProcess(ETLProcess[RunDateIgnoredParams]):
     steps = [[OrdersStagingAStep, CustomersStagingBStep]]
 
 
+class FailingCleaner:
+    def delete_tree(self, path: str) -> None:
+        raise CheckpointCleanupError(path)
+
+
 class PipelineSeq(ETLPipeline[RunDateIgnoredParams]):
     processes = [OrdersCustomersProcess]
 
@@ -101,6 +108,7 @@ def executor_factory() -> ExecutorFactory:
         frames: dict[str, Any] | None = None,
         observer: RecordingRunObserver | None = None,
         dispatcher: Any = None,
+        checkpoint_store: CheckpointStore | None = None,
     ) -> tuple[ETLExecutor, InMemoryTargetWriter, RecordingRunObserver]:
         writer = InMemoryTargetWriter()
         run_observer = observer or RecordingRunObserver()
@@ -110,6 +118,7 @@ def executor_factory() -> ExecutorFactory:
             writer,
             observability=Observability([run_observer]),
             dispatcher=dispatcher,
+            checkpoint_store=checkpoint_store,
         )
         return executor, writer, run_observer
 
@@ -355,6 +364,21 @@ class TestRunPipeline:
         with pytest.raises(ValueError):
             executor.run_pipeline(plan, params)
         assert observer.pipeline_statuses == [LineageRunStatus.FAILED]
+
+    def test_run_pipeline_logs_instead_of_raising_when_temp_cleanup_fails(
+        self,
+        compiler: ETLCompiler,
+        params: RunDateIgnoredParams,
+        executor_factory: ExecutorFactory,
+        caplog: pytest.LogCaptureFixture,
+    ) -> None:
+        plan = compiler.compile(PipelineSeq)
+        store = CheckpointStore("memory://temps", cleaner=FailingCleaner())
+        executor, _, _ = executor_factory(checkpoint_store=store)
+
+        executor.run_pipeline(plan, params)
+
+        assert EtlEvent.CHECKPOINT_RUN_CLEANUP_FAILED in caplog.messages
 
 
 class TestFlush:

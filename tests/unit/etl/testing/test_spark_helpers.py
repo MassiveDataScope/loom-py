@@ -4,6 +4,7 @@ from __future__ import annotations
 
 from importlib.metadata import PackageNotFoundError
 from pathlib import Path
+from types import SimpleNamespace
 from typing import Any, cast
 
 import pytest
@@ -54,17 +55,30 @@ class TestSparkDeltaJarResolution:
         assert all(path.exists() for path in jars)
 
 
+class _PlainType:
+    @staticmethod
+    def typeName() -> str:
+        return "long"
+
+
+def _plain_schema(columns: list[str]) -> SimpleNamespace:
+    return SimpleNamespace(
+        fields=[SimpleNamespace(name=name, dataType=_PlainType()) for name in columns]
+    )
+
+
 class TestSparkFrameConversionsAndStubs:
     def test_spark_frame_to_polars_handles_empty_and_rows(self) -> None:
         class _Row:
             def __init__(self, data: dict[str, Any]) -> None:
                 self._data = data
 
-            def __getitem__(self, key: str) -> Any:
-                return self._data[key]
+            def asDict(self) -> dict[str, Any]:
+                return self._data
 
         class _Frame:
             columns = ["id", "amount"]
+            schema = _plain_schema(["id", "amount"])
 
             def collect(self) -> list[_Row]:
                 return [_Row({"id": 1, "amount": 10.0}), _Row({"id": 2, "amount": 20.0})]
@@ -74,6 +88,7 @@ class TestSparkFrameConversionsAndStubs:
 
         class _EmptyFrame:
             columns = ["id"]
+            schema = _plain_schema(["id"])
 
             def collect(self) -> list[Any]:
                 return []
@@ -104,13 +119,14 @@ class TestSparkStepRunner:
                     def __init__(self, d: dict[str, Any]) -> None:
                         self._d = d
 
-                    def __getitem__(self, key: str) -> Any:
-                        return self._d[key]
+                    def asDict(self) -> dict[str, Any]:
+                        return self._d
 
                 class _Frame:
                     def __init__(self, records: list[dict[str, Any]]) -> None:
                         self.columns = list(records[0].keys()) if records else list(columns)
                         self._records = records
+                        self.schema = _plain_schema(self.columns)
 
                     def collect(self) -> list[Any]:
                         return [_Row(rec) for rec in self._records]
@@ -177,10 +193,11 @@ class TestSparkStepRunner:
         class _Frame:
             def __init__(self, token: str) -> None:
                 self.columns = ["token"]
+                self.schema = _plain_schema(self.columns)
                 self._token = token
 
-            def collect(self) -> list[dict[str, str]]:
-                return [{"token": self._token}]
+            def collect(self) -> list[Any]:
+                return [type("_Row", (), {"asDict": lambda _: {"token": self._token}})()]
 
         class _Step(ETLStep[_Params]):
             api_token = FromConfig("respondio.api_token")

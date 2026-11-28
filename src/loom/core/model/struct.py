@@ -105,8 +105,10 @@ class LoomStruct(msgspec.Struct):
 class LoomFrozenStruct(msgspec.Struct, frozen=True, metaclass=_RedactingStructMeta):
     """Base immutable struct for Loom value contracts.
 
-    Use this for configuration, DSL declarations, wire envelopes, and other
-    value objects that should not expose mutable assignment after creation.
+    Use this for objects that cross a process boundary and are open
+    contracts: configuration, wire envelopes and other decoded or encoded
+    values. An object that only lives in memory, such as a spec, a plan or
+    an internal value object, is a frozen slotted dataclass instead.
     A secret, address or redacted-mapping field must already hold that type:
     a frozen struct cannot wrap a plain value after it is built. The check
     runs before the struct's own ``__post_init__``.

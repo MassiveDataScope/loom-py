@@ -9,7 +9,7 @@ from __future__ import annotations
 from collections.abc import Callable, Iterable
 from typing import Any
 
-from loom.core.errors import InvalidType
+from loom.core.errors import InvalidType, InvalidValue
 from loom.etl.compiler._plan import (
     ParallelProcessGroup,
     ParallelStepGroup,
@@ -23,7 +23,7 @@ from loom.etl.compiler._plan import (
 )
 
 
-class InvalidStageError(ValueError):
+class InvalidStageError(InvalidValue):
     """Raised when a selection names a step or process absent from the compiled plan.
 
     Args:

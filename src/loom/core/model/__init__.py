@@ -11,7 +11,6 @@ from loom.core.model.base import BaseModel, LoomStructMeta
 from loom.core.model.enums import Cardinality, OnDelete, OnUpdate, ServerDefault, ServerOnUpdate
 from loom.core.model.field import (
     ColumnField,
-    ColumnType,
     CreatedAtField,
     Field,
     ScopedField,
@@ -19,6 +18,7 @@ from loom.core.model.field import (
 )
 from loom.core.model.introspection import (
     ColumnFieldInfo,
+    ModelKeys,
     PartialUnique,
     business_key_of,
     declared_checks,
@@ -54,18 +54,22 @@ from loom.core.model.types import (
     BigInteger,
     Boolean,
     Bytes,
+    ColumnKind,
+    ColumnType,
     Date,
     DateTime,
     Float,
     Integer,
     JsonStr,
     Numeric,
+    Postgres,
+    SmallInteger,
     String,
     Text,
     Time,
+    TinyInteger,
     Uuid,
 )
-from loom.core.model.types_postgres import Postgres
 
 __all__ = [
     "Audited",
@@ -77,6 +81,7 @@ __all__ = [
     "DerivedKey",
     "KeyHash",
     "KeyMismatch",
+    "ModelKeys",
     "business_key_of",
     "derived_key_of",
     "verify_keys",
@@ -106,6 +111,7 @@ __all__ = [
     "Bytes",
     "Cardinality",
     "ColumnFieldInfo",
+    "ColumnKind",
     "ColumnField",
     "ScopedField",
     "ColumnType",
@@ -117,9 +123,12 @@ __all__ = [
     "JSON",
     "JsonStr",
     "Postgres",
+    "SmallInteger",
+    "TinyInteger",
     "ProjectionField",
     "LoomStructMeta",
     "LoomType",
+    "ModelKeys",
     "Numeric",
     "OnDelete",
     "OnUpdate",

@@ -1,6 +1,6 @@
-"""LoomType ↔ Polars DataType conversion utilities.
+"""FrameType ↔ Polars DataType conversion utilities.
 
-Internal module — import ``loom_type_to_polars`` and ``polars_to_loom_type``
+Internal module — import ``frame_type_to_polars`` and ``polars_to_frame_type``
 from :mod:`loom.etl.engines.polars`.
 
 Two conversion layers
@@ -8,16 +8,16 @@ Two conversion layers
 
 ``polars_to_loom`` / ``loom_to_polars``
     Coarse, class-level mapping.  Works only for primitive
-    :class:`~loom.etl._schema.LoomDtype` values.  Structural types
+    :class:`~loom.etl.schema.LoomDtype` values.  Structural types
     (``LIST``, ``STRUCT``, etc.) are recognised but ``loom_to_polars``
     raises :exc:`TypeError` for them because the inner type is unknown.
 
-``polars_to_loom_type`` / ``loom_type_to_polars``
+``polars_to_frame_type`` / ``frame_type_to_polars``
     Full recursive conversion.  Handles arbitrarily nested complex types
     such as ``List[Struct[...]]``, ``Struct[List[...]]``,
     ``Decimal(18,4)``, ``Datetime("us","UTC")``, etc.  These are the
     functions that :mod:`loom.etl.engines.polars._schema` and the reader
-    use when working with rich :data:`~loom.etl._schema.LoomType` column
+    use when working with rich :data:`~loom.etl.schema.FrameType` column
     definitions.
 """
 
@@ -36,9 +36,9 @@ from loom.etl.schema._schema import (
     DecimalType,
     DurationType,
     EnumType,
+    FrameType,
     ListType,
     LoomDtype,
-    LoomType,
     StructField,
     StructType,
 )
@@ -54,7 +54,6 @@ _LOOM_TO_POLARS: dict[LoomDtype, type[pl.DataType]] = {
     LoomDtype.UINT64: pl.UInt64,
     LoomDtype.FLOAT32: pl.Float32,
     LoomDtype.FLOAT64: pl.Float64,
-    LoomDtype.DECIMAL: pl.Float64,
     LoomDtype.UTF8: pl.String,
     LoomDtype.BINARY: pl.Binary,
     LoomDtype.BOOLEAN: pl.Boolean,
@@ -76,7 +75,6 @@ _POLARS_TO_LOOM: dict[type[pl.DataType], LoomDtype] = {
     pl.UInt64: LoomDtype.UINT64,
     pl.Float32: LoomDtype.FLOAT32,
     pl.Float64: LoomDtype.FLOAT64,
-    pl.Decimal: LoomDtype.DECIMAL,
     pl.String: LoomDtype.UTF8,
     pl.Binary: LoomDtype.BINARY,
     pl.Boolean: LoomDtype.BOOLEAN,
@@ -104,7 +102,7 @@ _STRUCTURAL_DTYPES: frozenset[LoomDtype] = frozenset(
 
 
 def loom_to_polars(dtype: LoomDtype) -> type[pl.DataType]:
-    """Return the Polars DataType *class* for a primitive :class:`~loom.etl._schema.LoomDtype`.
+    """Return the Polars DataType *class* for a primitive :class:`~loom.etl.schema.LoomDtype`.
 
     Args:
         dtype: Canonical Loom dtype.
@@ -115,63 +113,62 @@ def loom_to_polars(dtype: LoomDtype) -> type[pl.DataType]:
     Raises:
         InvalidType: If *dtype* is a structural type (``LIST``, ``ARRAY``,
                    ``STRUCT``, ``CATEGORICAL``, ``ENUM``).  Use
-                   :func:`loom_type_to_polars` with :class:`~loom.etl._schema.ListType`,
-                   :class:`~loom.etl._schema.StructType`, etc. instead.
+                   :func:`frame_type_to_polars` with :class:`~loom.etl.schema.ListType`,
+                   :class:`~loom.etl.schema.StructType`, etc. instead.
         KeyError:  If *dtype* has no Polars equivalent.
     """
     if dtype in _STRUCTURAL_DTYPES:
         raise InvalidType(
             f"LoomDtype.{dtype} is a structural type with unknown inner structure. "
-            "Use the rich LoomType classes (ListType, StructType, ArrayType, …) "
-            "together with loom_type_to_polars() to obtain a concrete Polars type."
+            "Use the rich FrameType classes (ListType, StructType, ArrayType, …) "
+            "together with frame_type_to_polars() to obtain a concrete Polars type."
         )
     return _LOOM_TO_POLARS[dtype]
 
 
 def polars_to_loom(dtype: pl.DataType) -> LoomDtype:
-    """Return the coarse :class:`~loom.etl._schema.LoomDtype` for a Polars DataType.
+    """Return the coarse :class:`~loom.etl.schema.LoomDtype` for a Polars DataType.
 
     Returns a class-level mapping only.  Complex parametrisation (inner types,
     precision, timezone) is discarded.  For full structural conversion use
-    :func:`polars_to_loom_type`.
+    :func:`polars_to_frame_type`.
 
     Args:
         dtype: Polars DataType instance.
 
     Returns:
-        Canonical Loom dtype, or :attr:`~loom.etl._schema.LoomDtype.NULL` when
+        Canonical Loom dtype, or :attr:`~loom.etl.schema.LoomDtype.NULL` when
         no mapping exists.
     """
     return _POLARS_TO_LOOM.get(type(dtype), LoomDtype.NULL)
 
 
-def polars_to_loom_type(dtype: pl.DataType | DataTypeClass) -> LoomType:
-    """Recursively convert a Polars DataType to its :data:`~loom.etl._schema.LoomType`.
+def polars_to_frame_type(dtype: pl.DataType | DataTypeClass) -> FrameType:
+    """Recursively convert a Polars DataType to its :data:`~loom.etl.schema.FrameType`.
 
     Handles arbitrarily nested types — ``List[Struct[...]]``,
     ``Struct[List[...]]``, ``Decimal(18,4)``, ``Datetime("ns","UTC")``, etc.
 
-    For primitive types the result is the corresponding :class:`~loom.etl._schema.LoomDtype`
-    member (which is part of the :data:`~loom.etl._schema.LoomType` union).
+    For primitive types the result is the corresponding :class:`~loom.etl.schema.LoomDtype`
+    member (which is part of the :data:`~loom.etl.schema.FrameType` union).
 
     Args:
         dtype: Polars DataType instance.
 
     Returns:
-        Matching :data:`~loom.etl._schema.LoomType` value.
+        Matching :data:`~loom.etl.schema.FrameType` value.
     """
     if isinstance(dtype, pl.List):
-        return ListType(inner=polars_to_loom_type(dtype.inner))
+        return ListType(inner=polars_to_frame_type(dtype.inner))
     if isinstance(dtype, pl.Array):
-        return ArrayType(inner=polars_to_loom_type(dtype.inner), width=dtype.size)
+        return ArrayType(inner=polars_to_frame_type(dtype.inner), width=dtype.size)
     if isinstance(dtype, pl.Struct):
         fields = tuple(
-            StructField(name=f.name, dtype=polars_to_loom_type(f.dtype)) for f in dtype.fields
+            StructField(name=f.name, dtype=polars_to_frame_type(f.dtype)) for f in dtype.fields
         )
         return StructType(fields=fields)
     if isinstance(dtype, pl.Decimal):
-        scale = dtype.scale if dtype.scale is not None else 0
-        return DecimalType(precision=dtype.precision, scale=scale)
+        return DecimalType(precision=dtype.precision, scale=dtype.scale)
     if isinstance(dtype, pl.Datetime):
         return DatetimeType(time_unit=dtype.time_unit, time_zone=dtype.time_zone)
     if isinstance(dtype, pl.Duration):
@@ -185,48 +182,48 @@ def polars_to_loom_type(dtype: pl.DataType | DataTypeClass) -> LoomType:
     return _POLARS_TO_LOOM.get(type(dtype), LoomDtype.NULL)
 
 
-def loom_type_to_polars(lt: LoomType) -> pl.DataType:
-    """Recursively convert a :data:`~loom.etl._schema.LoomType` to a concrete Polars DataType.
+def frame_type_to_polars(lt: FrameType) -> pl.DataType:
+    """Recursively convert a :data:`~loom.etl.schema.FrameType` to a concrete Polars DataType.
 
     Returns an *instance* (not a class) so it can be used directly in
     ``pl.col(...).cast(...)`` and ``pl.lit(None).cast(...)``.
 
     Args:
-        lt: Any :data:`~loom.etl._schema.LoomType` value.
+        lt: Any :data:`~loom.etl.schema.FrameType` value.
 
     Returns:
         Concrete Polars DataType instance.
 
     Raises:
-        InvalidType: If *lt* is a coarse structural :class:`~loom.etl._schema.LoomDtype`
+        InvalidType: If *lt* is a coarse structural :class:`~loom.etl.schema.LoomDtype`
                    (e.g. ``LoomDtype.LIST``) whose inner type is unknown.
-                   Use :class:`~loom.etl._schema.ListType`,
-                   :class:`~loom.etl._schema.StructType`, etc. instead.
+                   Use :class:`~loom.etl.schema.ListType`,
+                   :class:`~loom.etl.schema.StructType`, etc. instead.
     """
     if isinstance(lt, LoomDtype):
         return _loom_primitive_to_polars(lt)
     if isinstance(lt, (DatetimeType, DurationType)):
         return _loom_temporal_to_polars(lt)
     if isinstance(lt, ListType):
-        return pl.List(loom_type_to_polars(lt.inner))
+        return pl.List(frame_type_to_polars(lt.inner))
     if isinstance(lt, ArrayType):
-        return pl.Array(loom_type_to_polars(lt.inner), lt.width)
+        return pl.Array(frame_type_to_polars(lt.inner), lt.width)
     if isinstance(lt, StructType):
-        return pl.Struct([pl.Field(f.name, loom_type_to_polars(f.dtype)) for f in lt.fields])
+        return pl.Struct([pl.Field(f.name, frame_type_to_polars(f.dtype)) for f in lt.fields])
     if isinstance(lt, DecimalType):
-        return pl.Decimal(lt.precision, lt.scale if lt.scale is not None else 0)
+        return pl.Decimal(lt.precision, lt.scale)
     if isinstance(lt, CategoricalType):
         return pl.Categorical()
     if isinstance(lt, EnumType):
         return pl.Enum(list(lt.categories))
-    raise InvalidType(f"Unknown LoomType: {type(lt).__qualname__}")
+    raise InvalidType(f"Unknown FrameType: {type(lt).__qualname__}")
 
 
 def _loom_primitive_to_polars(lt: LoomDtype) -> pl.DataType:
     if lt in _STRUCTURAL_DTYPES:
         raise InvalidType(
             f"LoomDtype.{lt} is a coarse structural type without inner-type information. "
-            "Use the rich LoomType classes (ListType, StructType, ArrayType, …) "
+            "Use the rich FrameType classes (ListType, StructType, ArrayType, …) "
             "to define complex column types."
         )
     return _LOOM_TO_POLARS[lt]()

@@ -8,10 +8,10 @@ from pyspark.sql import DataFrame, SparkSession
 from pyspark.sql import functions as F
 from pyspark.sql import types as T
 
+from loom.core.errors import InvalidUse
 from loom.etl import ETLParams, ETLStep, FromTable, IntoTable
 from loom.etl.declarative.target import SchemaMode
 from loom.etl.engines.spark._schema import apply_schema_spark
-from loom.etl.schema import SchemaNotFoundError
 from loom.etl.testing import ETLScenario
 
 _ID_AMOUNT_SCHEMA = T.StructType(
@@ -28,11 +28,11 @@ def _snapshot(df: DataFrame) -> tuple[T.StructType, list[dict[str, object]]]:
 
 class TestApplySchema:
     @pytest.mark.parametrize("mode", [SchemaMode.STRICT, SchemaMode.EVOLVE])
-    def test_raises_schema_not_found_when_schema_is_none(
+    def test_raises_invalid_use_when_schema_is_none(
         self, mode: SchemaMode, spark: SparkSession
     ) -> None:
         frame = spark.createDataFrame([(1, 1.0)], ["id", "amount"])
-        with pytest.raises(SchemaNotFoundError):
+        with pytest.raises(InvalidUse, match="No table schema to align"):
             apply_schema_spark(frame, None, mode)
 
     def test_overwrite_passthrough_identity(self, spark: SparkSession) -> None:

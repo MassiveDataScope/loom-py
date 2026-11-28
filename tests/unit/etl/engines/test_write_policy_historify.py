@@ -23,6 +23,7 @@ import pytest
 from loom.core.errors import InternalError
 from loom.core.schema import SchemaMode
 from loom.etl import col
+from loom.etl.declarative._declared_table import ModelBoundSpec
 from loom.etl.declarative.expr._params import params
 from loom.etl.declarative.expr._refs import TableRef
 from loom.etl.declarative.target._history import (
@@ -48,6 +49,7 @@ from loom.etl.storage._config import MissingTablePolicy
 from loom.etl.storage.routing import ResolvedTarget
 from loom.testing import make
 from tests.helpers.loggers import CapturedLog
+from tests.unit.etl.engines.doubles import PassthroughSchema, PassthroughSchemaWriter
 
 # ---------------------------------------------------------------------------
 # Minimal concrete _WritePolicy for testing dispatch
@@ -78,7 +80,9 @@ def fake_scd2_transform(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setattr(_write_policy, "scd2_transform", _fake_scd2_transform)
 
 
-class _StubWritePolicy(_WritePolicy[list[int], list[int], dict[str, Any]]):
+class _StubWritePolicy(
+    PassthroughSchemaWriter, _WritePolicy[list[int], list[int], PassthroughSchema]
+):
     """Minimal concrete subclass for testing dispatch logic only."""
 
     def __init__(
@@ -97,13 +101,8 @@ class _StubWritePolicy(_WritePolicy[list[int], list[int], dict[str, Any]]):
         self.replace_calls: list[tuple[Any, ...]] = []
         self.replace_partitions_calls: list[tuple[Any, ...]] = []
 
-    def _physical_schema(self, target: ResolvedTarget) -> dict[str, Any] | None:
-        return {"col": "type"} if self._schema_exists else None
-
-    def _align(
-        self, frame: list[int], existing: dict[str, Any] | None, mode: SchemaMode
-    ) -> list[int]:
-        return frame
+    def _physical_schema(self, target: ResolvedTarget) -> PassthroughSchema | None:
+        return PassthroughSchema() if self._schema_exists else None
 
     def _materialize_for_write(self, frame: list[int], streaming: bool) -> list[int]:
         return list(frame)  # return a copy so we can track it
@@ -354,6 +353,23 @@ class _Existing:
     """Weak-referenceable stand-in for the existing target frame."""
 
 
+_ALIGNED = 0
+
+
+class _MarkingSchema(PassthroughSchema):
+    """A physical schema whose alignment appends the ``_ALIGNED`` marker to the frame."""
+
+    def align(self, frame: Any, mode: SchemaMode) -> Any:
+        return [*frame, _ALIGNED]
+
+
+class _MarkingWriter(_StubWritePolicy):
+    """A write policy whose existing table has a :class:`_MarkingSchema`."""
+
+    def _physical_schema(self, target: ResolvedTarget) -> PassthroughSchema | None:
+        return _MarkingSchema() if self._schema_exists else None
+
+
 class TestHistorifyResultWrite:
     def test_first_run_creates_table_with_partition_scope(self, fake_scd2_transform: None) -> None:
         writer = _StubWritePolicy(
@@ -367,6 +383,15 @@ class TestHistorifyResultWrite:
         writer = _StubWritePolicy(schema_exists=True)
         writer.write([1], _spec(), None)
         assert writer.replace_calls == [([1, -1], SchemaMode.STRICT)]
+
+    def test_the_result_is_aligned_to_the_physical_schema_of_the_existing_table(
+        self, fake_scd2_transform: None
+    ) -> None:
+        writer = _MarkingWriter(schema_exists=True)
+
+        writer.write([1], _spec(), None)
+
+        assert writer.replace_calls == [([1, -1, _ALIGNED], SchemaMode.STRICT)]
 
     def test_existing_table_with_partition_scope_replaces_partitions(
         self, fake_scd2_transform: None
@@ -423,8 +448,8 @@ _WRITE_MODES: tuple[tuple[Any, str], ...] = (
         ),
         "_replace_where",
     ),
-    (UpsertSpec(table_ref=_TABLE_REF, upsert_keys=("player_id",)), "_upsert"),
-    (UpdateSpec(table_ref=_TABLE_REF, keys=("player_id",)), "_update"),
+    (UpsertSpec(table_ref=_TABLE_REF, declared_keys=("player_id",)), "_upsert"),
+    (UpdateSpec(table_ref=_TABLE_REF, declared_keys=("player_id",)), "_update"),
     (_spec(), "_historify_ops"),
 )
 
@@ -456,7 +481,7 @@ class TestWriteModeRouting:
 
     def test_a_spec_that_is_not_a_table_write_mode_raises(self) -> None:
         writer = _StubWritePolicy(schema_exists=True)
-        spec = MagicMock()
+        spec = ModelBoundSpec(table_ref=TableRef("t"))
         with pytest.raises(InternalError, match="Unsupported target spec"):
             writer.write([1], spec, None)
 

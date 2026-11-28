@@ -9,15 +9,19 @@ compiler and executor; they are never constructed directly in user code.
 
 from __future__ import annotations
 
+from collections.abc import Mapping
 from dataclasses import dataclass, field
 from enum import StrEnum
 from typing import TYPE_CHECKING, Any
 
 from loom.core.errors import InvalidValue
+from loom.etl.declarative._declared_table import ModelBoundSpec
 from loom.etl.declarative._format import Format
 from loom.etl.declarative._read_options import ReadOptions
+from loom.etl.declarative.expr._predicate_dialect import columns_in
 from loom.etl.declarative.expr._refs import TableRef
-from loom.etl.schema._schema import ColumnSchema, LoomType
+from loom.etl.schema._json_fit import JsonMismatch
+from loom.etl.schema._schema import ColumnSchema, FrameType
 
 if TYPE_CHECKING:
     from loom.core.expr.nodes import ExprNode
@@ -65,15 +69,17 @@ class JsonColumnSpec:
 
     Args:
         column:    Name of the string column that holds the JSON payload.
-        loom_type: Target :data:`~loom.etl._schema.LoomType` to decode into.
+        frame_type: Target :data:`~loom.etl.schema.FrameType` to decode into.
+        on_mismatch: Whether a document that does not match fails or becomes null.
     """
 
     column: str
-    loom_type: LoomType
+    frame_type: FrameType
+    on_mismatch: JsonMismatch = JsonMismatch.FAIL
 
 
 @dataclass(frozen=True)
-class TableSourceSpec:
+class TableSourceSpec(ModelBoundSpec):
     """Normalized internal representation of a Delta table ETL source.
 
     Produced by :meth:`~loom.etl.declarative.source.FromTable._to_spec`.
@@ -90,17 +96,38 @@ class TableSourceSpec:
                       Parquet row-group scanner, reducing I/O.
         schema:       Optional user-declared schema applied at read time via
                       ``with_columns(cast(...))``; casts each declared column to
-                      its :class:`~loom.etl._schema.LoomDtype`.  Extra columns
+                      its :class:`~loom.etl.schema.LoomDtype`.  Extra columns
                       in the source pass through untouched.
         json_columns: JSON decode specs applied at read time.
+        model:        The model the source was declared with, ``None`` otherwise.
+                      It gives the read schema; the compiler translates it and
+                      checks the columns the source names against it.
     """
 
     alias: str
-    table_ref: TableRef
     predicates: tuple[Any, ...] = field(default_factory=tuple)
     columns: tuple[str, ...] = field(default_factory=tuple)
     schema: tuple[ColumnSchema, ...] = field(default_factory=tuple)
     json_columns: tuple[JsonColumnSpec, ...] = field(default_factory=tuple)
+
+    @property
+    def read_schema(self) -> tuple[ColumnSchema, ...]:
+        """The schema applied at read time: the model's lake schema, else the declared one.
+
+        Only the columns left after the ``columns`` projection are cast.
+        """
+        table = self.model_table
+        schema = self.schema if table is None else table.schema
+        return _projected(schema, self.columns)
+
+    @property
+    def declared_columns(self) -> Mapping[str, tuple[str, ...]]:
+        """The model columns this source names, by the call that names them."""
+        return {
+            "columns": self.columns,
+            "where": columns_in(*self.predicates),
+            "parse_json": tuple(spec.column for spec in self.json_columns),
+        }
 
     @property
     def kind(self) -> SourceKind:
@@ -111,6 +138,14 @@ class TableSourceSpec:
     def format(self) -> Format:
         """I/O format — always :attr:`Format.DELTA` for table sources."""
         return Format.DELTA
+
+
+def _projected(
+    schema: tuple[ColumnSchema, ...], columns: tuple[str, ...]
+) -> tuple[ColumnSchema, ...]:
+    if not columns:
+        return schema
+    return tuple(column for column in schema if column.name in columns)
 
 
 @dataclass(frozen=True)
@@ -144,6 +179,11 @@ class FileSourceSpec:
     columns: tuple[str, ...] = field(default_factory=tuple)
     schema: tuple[ColumnSchema, ...] = field(default_factory=tuple)
     json_columns: tuple[JsonColumnSpec, ...] = field(default_factory=tuple)
+
+    @property
+    def read_schema(self) -> tuple[ColumnSchema, ...]:
+        """The schema applied at read time: the declared one, limited to the projected columns."""
+        return _projected(self.schema, self.columns)
 
     @property
     def kind(self) -> SourceKind:
@@ -188,6 +228,11 @@ class ClickHouseSourceSpec:
     schema: tuple[ColumnSchema, ...] = field(default_factory=tuple)
     distinct: bool = False
     allow_full_scan: bool = False
+
+    @property
+    def read_schema(self) -> tuple[ColumnSchema, ...]:
+        """The schema applied at read time: the declared one, limited to the projected columns."""
+        return _projected(self.schema, self.columns)
 
     @property
     def kind(self) -> SourceKind:

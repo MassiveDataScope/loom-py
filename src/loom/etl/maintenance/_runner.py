@@ -18,19 +18,11 @@ if TYPE_CHECKING:
 from loom.etl.declarative.expr._refs import TableRef
 from loom.etl.event import EtlEvent, EtlKey
 from loom.etl.maintenance._builder import _expand_for_schemas
+from loom.etl.maintenance._errors import MaintenanceError
 from loom.etl.maintenance._ops import CompactSpec, MaintenanceSpec, VacuumSpec, ZOrderSpec
 from loom.etl.maintenance._protocol import TableMaintenanceResult
 
 _log = logging.getLogger(__name__)
-
-
-class MaintenanceError(Exception):
-    """Raised by :meth:`MaintenanceReport.raise_if_errors` when any table failed."""
-
-    def __init__(self, failed: list[TableMaintenanceResult]) -> None:
-        self.failed = failed
-        refs = [r.table_ref for r in failed]
-        super().__init__(f"Maintenance failed for {len(failed)} table(s): {refs}")
 
 
 @dataclass

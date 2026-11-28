@@ -18,7 +18,7 @@ from loom.etl.declarative.target import TargetSpec
 from loom.etl.declarative.target._table import ReplaceWhereSpec
 from loom.etl.declarative.target._temp import TempFanInSpec, TempSpec
 from loom.etl.engines._predicate import predicate_to_sql
-from loom.etl.engines.polars._dtype import loom_type_to_polars
+from loom.etl.engines.polars._dtype import frame_type_to_polars
 from loom.etl.engines.polars._reader import (
     _apply_source_schema,
     _finalize_source_frame,
@@ -28,14 +28,15 @@ from loom.etl.engines.polars._writer import _check_null_dtype_columns_lazy
 from loom.etl.executor import ETLExecutor
 from loom.etl.lineage._records import RunContext
 from loom.etl.ports.contracts import SourceReader, TargetWriter
-from loom.etl.schema._schema import ColumnSchema, LoomType, SchemaError
+from loom.etl.schema._schema import ColumnSchema, FrameType, SchemaError
 from loom.etl.testing._delta import _DeltaRoot
+from loom.etl.testing._model_rows import ModelRows
 from loom.etl.testing._result import StepResult
 
 if TYPE_CHECKING:
     from loom.etl.testing._scenario import ETLScenario
 
-SeedSchema = Mapping[str, LoomType]
+SeedSchema = Mapping[str, FrameType]
 """Loom types of some or all seeded columns."""
 
 TempData: TypeAlias = "Sequence[tuple[Any, ...]] | pl.DataFrame | pl.LazyFrame"
@@ -115,7 +116,7 @@ def _build_lazy_frame(
     _require_known_columns(columns, schema)
     declared = schema or {}
     frame_schema = [
-        (name, loom_type_to_polars(declared[name]) if name in declared else None)
+        (name, frame_type_to_polars(declared[name]) if name in declared else None)
         for name in columns
     ]
     return pl.DataFrame(
@@ -244,6 +245,32 @@ class PolarsStepRunner:
             self._delta.seed(ref, frame)
         else:
             self._tables[ref] = frame
+        return self
+
+    def seed_rows(self, *instances: Any) -> PolarsStepRunner:
+        """Seed the table of each model with its instances, typed by the model.
+
+        Instances are grouped by model class and written under the model's
+        ``__tablename__`` with the model's lake types, never inferred ones, so
+        an empty or all-null column keeps its type.  A model seeded twice is
+        replaced, as :meth:`seed` replaces a table.
+
+        Args:
+            *instances: Model instances, usually built with ``loom.testing.make``.
+
+        Returns:
+            ``self`` for fluent chaining.
+
+        Raises:
+            InvalidValue: When two instances of a model share a conflict key.
+        """
+        for seed in ModelRows.seeds_of(instances):
+            self.seed(
+                seed.table.name,
+                seed.values,
+                seed.table.column_names,
+                schema=seed.table.column_types,
+            )
         return self
 
     def seed_temp(

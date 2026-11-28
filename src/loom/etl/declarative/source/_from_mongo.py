@@ -9,7 +9,7 @@ from typing import Any
 from loom.core.errors import InvalidValue
 from loom.core.expr.nodes import AndExpr, ExprNode
 from loom.etl.declarative.source._specs import ExtraFieldsMode, MongoSourceSpec
-from loom.etl.schema._contract import SchemaContract, resolve_schema
+from loom.etl.schema._model import SchemaContract, resolve_schema
 from loom.etl.schema._schema import ColumnSchema
 
 _COLLECTION_RE = re.compile(r"^[a-zA-Z0-9_\-]+$")

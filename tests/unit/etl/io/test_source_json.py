@@ -70,19 +70,19 @@ class TestParseJsonContracts:
             ),
         ],
     )
-    def test_parse_json_resolves_expected_loom_type(
+    def test_parse_json_resolves_expected_frame_type(
         self,
         source_factory: Callable[[], FromTable | FromFile],
         expected: StructType | ListType,
     ) -> None:
         spec = source_factory()._to_spec("events")
         assert len(spec.json_columns) == 1
-        assert spec.json_columns[0].loom_type == expected
+        assert spec.json_columns[0].frame_type == expected
 
-    def test_from_table_parse_json_with_loom_type_passthrough(self) -> None:
-        loom_type = StructType(fields=(StructField("x", LoomDtype.INT64),))
-        spec = FromTable("raw.t").parse_json("col", loom_type)._to_spec("t")
-        assert spec.json_columns[0].loom_type is loom_type
+    def test_from_table_parse_json_with_frame_type_passthrough(self) -> None:
+        frame_type = StructType(fields=(StructField("x", LoomDtype.INT64),))
+        spec = FromTable("raw.t").parse_json("col", frame_type)._to_spec("t")
+        assert spec.json_columns[0].frame_type is frame_type
 
 
 class TestParseJsonState:
@@ -226,11 +226,11 @@ class TestWithSchema:
 
 class TestJsonColumnSpec:
     def test_json_column_spec_is_frozen(self) -> None:
-        spec = JsonColumnSpec(column="col", loom_type=LoomDtype.UTF8)
+        spec = JsonColumnSpec(column="col", frame_type=LoomDtype.UTF8)
         with pytest.raises((dataclasses.FrozenInstanceError, AttributeError)):
             spec.column = "other"  # type: ignore[misc]
 
     def test_json_column_spec_equality(self) -> None:
-        a = JsonColumnSpec(column="x", loom_type=LoomDtype.INT64)
-        b = JsonColumnSpec(column="x", loom_type=LoomDtype.INT64)
+        a = JsonColumnSpec(column="x", frame_type=LoomDtype.INT64)
+        b = JsonColumnSpec(column="x", frame_type=LoomDtype.INT64)
         assert a == b

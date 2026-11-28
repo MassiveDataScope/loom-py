@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 import logging
-from collections.abc import Callable
+from collections.abc import Callable, Mapping
 from typing import Any
 
 from pyspark.sql import DataFrame, SparkSession
@@ -12,11 +12,17 @@ from pyspark.sql import functions as F
 from loom.core.errors import InvalidType, InvalidValue
 from loom.etl.declarative._format import Format
 from loom.etl.declarative._read_options import CsvReadOptions, JsonReadOptions
-from loom.etl.declarative.source import FileSourceSpec, SourceSpec, TableSourceSpec
+from loom.etl.declarative.source import (
+    FileSourceSpec,
+    JsonMismatch,
+    SourceSpec,
+    TableSourceSpec,
+)
 from loom.etl.engines._format_registry import resolve_format_handler
 from loom.etl.engines._path_template import resolve_file_uri
 from loom.etl.engines._predicate import predicate_to_sql
-from loom.etl.engines.spark._dtype import loom_type_to_spark
+from loom.etl.engines.spark._dtype import frame_type_to_spark
+from loom.etl.engines.spark._json_failure import is_json_decode_failure
 from loom.etl.ports.contracts import SourceReader
 from loom.etl.schema._schema import ColumnSchema
 from loom.etl.storage._file_locator import FileLocator
@@ -29,6 +35,11 @@ from loom.etl.storage.routing import (
 )
 
 _log = logging.getLogger(__name__)
+
+_FROM_JSON_OPTIONS: Mapping[JsonMismatch, Mapping[str, str]] = {
+    JsonMismatch.FAIL: {"mode": "FAILFAST", "timeZone": "UTC"},
+    JsonMismatch.NULL: {"mode": "PERMISSIVE", "timeZone": "UTC"},
+}
 
 
 class SparkSourceReader(SourceReader):
@@ -54,6 +65,10 @@ class SparkSourceReader(SourceReader):
 
         self._resolver = resolver
         self._file_locator = file_locator
+
+    def is_json_decode_failure(self, error: Exception) -> bool:
+        """Whether *error* is a FAILFAST ``from_json`` rejecting a document."""
+        return is_json_decode_failure(error)
 
     def read(self, spec: SourceSpec, params_instance: Any, /) -> DataFrame:
         """Read source spec and return DataFrame."""
@@ -110,8 +125,8 @@ class SparkSourceReader(SourceReader):
         """Apply post-read transformations: columns, schema, json decode."""
         if spec.columns:
             df = df.select(list(spec.columns))
-        if spec.schema:
-            df = self._apply_source_schema(df, spec.schema)
+        if spec.read_schema:
+            df = self._apply_source_schema(df, spec.read_schema)
         if spec.json_columns:
             df = self._apply_json_decode(df, spec.json_columns)
         return df
@@ -162,7 +177,7 @@ class SparkSourceReader(SourceReader):
             return df
 
         for col in schema:
-            df = df.withColumn(col.name, F.col(col.name).cast(loom_type_to_spark(col.dtype)))
+            df = df.withColumn(col.name, F.col(col.name).cast(frame_type_to_spark(col.dtype)))
         return df
 
     def _apply_json_decode(self, df: DataFrame, json_columns: tuple[Any, ...]) -> DataFrame:
@@ -171,8 +186,12 @@ class SparkSourceReader(SourceReader):
             return df
 
         for jc in json_columns:
-            schema_ddl = loom_type_to_spark(jc.loom_type).simpleString()
-            df = df.withColumn(jc.column, F.from_json(F.col(jc.column), schema_ddl))
+            decoded = F.from_json(
+                F.col(jc.column),
+                frame_type_to_spark(jc.frame_type),
+                dict(_FROM_JSON_OPTIONS[jc.on_mismatch]),
+            )
+            df = df.withColumn(jc.column, decoded)
         return df
 
 

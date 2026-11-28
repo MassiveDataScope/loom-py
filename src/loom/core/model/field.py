@@ -6,27 +6,11 @@ from typing import Any, Literal, cast
 
 import msgspec
 
-from loom.core.model.enums import OnDelete, ServerDefault, ServerOnUpdate
+from loom.core.model.enums import KeyFill, OnDelete, ServerDefault, ServerOnUpdate
 from loom.core.model.keys import KeyHash
+from loom.core.model.types import ColumnType
 
 Reach = Literal["read", "write", "both"]
-
-
-@dataclass(frozen=True, slots=True)
-class ColumnType:
-    """Backend column type descriptor stored inside ``Annotated[...]``.
-
-    It is hashable, as ``Annotated`` metadata must be: the keyword options are
-    held as ``(name, value)`` pairs.
-    """
-
-    type_name: str
-    args: tuple[Any, ...] = ()
-    kwargs: tuple[tuple[str, Any], ...] = ()
-
-    def option(self, name: str, default: Any = None) -> Any:
-        """Return the keyword option *name*, or *default* when it is not set."""
-        return dict(self.kwargs).get(name, default)
 
 
 @dataclass(frozen=True, slots=True)
@@ -53,6 +37,17 @@ class Field:
     on: Reach = "both"
     elevable: bool = False
     derived: KeyHash | None = None
+
+    @property
+    def key_fill(self) -> KeyFill | None:
+        """How the store fills this column when it is a key, ``None`` when the frame supplies it."""
+        if self.autoincrement:
+            return KeyFill.AUTOINCREMENT
+        if self.derived is not None:
+            return KeyFill.DERIVED
+        if self.server_default is not None:
+            return KeyFill.SERVER_DEFAULT
+        return None
 
 
 @dataclass(frozen=True, slots=True)

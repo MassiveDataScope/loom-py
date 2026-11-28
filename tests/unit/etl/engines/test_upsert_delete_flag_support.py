@@ -15,9 +15,12 @@ from loom.etl.declarative.target._table import UpsertSpec
 from loom.etl.engines._write_policy import _WritePolicy
 from loom.etl.storage._config import MissingTablePolicy
 from loom.etl.storage.routing import ResolvedTarget
+from tests.unit.etl.engines.doubles import PassthroughSchema, PassthroughSchemaWriter
 
 
-class _UnsupportedWriter(_WritePolicy[list[int], list[int], dict[str, Any]]):
+class _UnsupportedWriter(
+    PassthroughSchemaWriter, _WritePolicy[list[int], list[int], PassthroughSchema]
+):
     """Concrete writer that leaves delete_flag to the base policy."""
 
     def __init__(self) -> None:
@@ -25,13 +28,8 @@ class _UnsupportedWriter(_WritePolicy[list[int], list[int], dict[str, Any]]):
         resolver.resolve.return_value = MagicMock(spec=ResolvedTarget)
         super().__init__(resolver=resolver, missing_table_policy=MissingTablePolicy.SCHEMA_MODE)
 
-    def _physical_schema(self, target: ResolvedTarget) -> dict[str, Any] | None:
-        return {"id": "int"}
-
-    def _align(
-        self, frame: list[int], existing: dict[str, Any] | None, mode: SchemaMode
-    ) -> list[int]:
-        return frame
+    def _physical_schema(self, target: ResolvedTarget) -> PassthroughSchema | None:
+        return PassthroughSchema()
 
     def _materialize_for_write(self, frame: list[int], streaming: bool) -> list[int]:
         return list(frame)
@@ -121,7 +119,7 @@ class TestWritePolicyUpsertDeleteFlag:
         writer = _UnsupportedWriter()
         spec = UpsertSpec(
             table_ref=TableRef("test.orders"),
-            upsert_keys=("id",),
+            declared_keys=("id",),
             delete_flag="_deleted",
         )
         with pytest.raises(

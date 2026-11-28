@@ -62,9 +62,9 @@ class TestModelIntrospection:
         fields = get_column_fields(AcmeModelProduct)
         assert set(fields.keys()) == {"id", "name", "price", "active"}
         assert fields["id"].field.primary_key is True
-        assert fields["name"].column_type.type_name == "String"
+        assert fields["name"].column_type.kind == "String"
         assert fields["name"].column_type.args == (120,)
-        assert fields["price"].column_type.type_name == "Float"
+        assert fields["price"].column_type.kind == "Float"
 
     def test_id_attribute_and_table_name(self) -> None:
         assert get_id_attribute(AcmeModelProduct) == "id"

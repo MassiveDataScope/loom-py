@@ -11,6 +11,7 @@ from sqlalchemy import MetaData
 from sqlalchemy.dialects import postgresql
 from sqlalchemy.schema import CreateTable
 
+from loom.core.errors import InvalidValue
 from loom.core.model import (
     BaseModel,
     Cardinality,
@@ -260,6 +261,20 @@ class TestCompileModel:
 
         assert "day DATE NOT NULL" in ddl
         assert "starts_at TIME WITHOUT TIME ZONE NOT NULL" in ddl
+
+
+class TestDottedTableName:
+    def test_a_dotted_model_names_a_lake_table_and_is_no_sql_table(self) -> None:
+        dotted = type(
+            "Dotted",
+            (BaseModel,),
+            {"__tablename__": "sales.order", "__annotations__": {"id": int}},
+        )
+
+        with pytest.raises(
+            InvalidValue, match=r"Dotted.*'sales\.order' is dotted.*storage\.tables"
+        ):
+            compile_model(dotted, metadata=MetaData())
 
 
 class TestCompileAll:

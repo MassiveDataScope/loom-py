@@ -14,10 +14,6 @@ from loom.etl.event import EtlEvent, EtlKey
 _log = logging.getLogger(__name__)
 
 
-class CheckpointCleanupError(RuntimeError):
-    """Raised when a checkpoint tree cannot be deleted."""
-
-
 @runtime_checkable
 class TempCleaner(Protocol):
     """Protocol for deleting checkpoint trees."""

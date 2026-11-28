@@ -46,7 +46,7 @@ class TestTableVariants:
         assert spec.replace_predicate is _PRED
 
     def test_upsert_keys_and_defaults(self) -> None:
-        spec = UpsertSpec(table_ref=_REF, upsert_keys=("id",))
+        spec = UpsertSpec(table_ref=_REF, declared_keys=("id",))
         assert spec.upsert_keys == ("id",)
         assert spec.partition_cols == ()
         assert spec.upsert_exclude == ()
@@ -54,22 +54,22 @@ class TestTableVariants:
         assert spec.delete_flag is None
 
     def test_update_keys_and_defaults(self) -> None:
-        spec = UpdateSpec(table_ref=_REF, keys=("id",))
+        spec = UpdateSpec(table_ref=_REF, declared_keys=("id",))
         assert spec.keys == ("id",)
         assert spec.partition_cols == ()
         assert spec.exclude == ()
         assert spec.include == ()
 
     def test_update_aliases_satisfy_merge_protocol(self) -> None:
-        spec = UpdateSpec(table_ref=_REF, keys=("id",), exclude=("created_at",))
+        spec = UpdateSpec(table_ref=_REF, declared_keys=("id",), exclude=("created_at",))
         assert spec.upsert_keys == spec.keys
         assert spec.upsert_exclude == spec.exclude
         assert spec.upsert_include == spec.include
 
     def test_upsert_include_exclude(self) -> None:
-        spec = UpsertSpec(table_ref=_REF, upsert_keys=("id",), upsert_exclude=("created_at",))
+        spec = UpsertSpec(table_ref=_REF, declared_keys=("id",), upsert_exclude=("created_at",))
         assert spec.upsert_exclude == ("created_at",)
-        spec2 = UpsertSpec(table_ref=_REF, upsert_keys=("id",), upsert_include=("status",))
+        spec2 = UpsertSpec(table_ref=_REF, declared_keys=("id",), upsert_include=("status",))
         assert spec2.upsert_include == ("status",)
 
     @pytest.mark.parametrize(
@@ -79,8 +79,8 @@ class TestTableVariants:
             ReplaceSpec(table_ref=_REF),
             ReplacePartitionsSpec(table_ref=_REF, partition_cols=("year",)),
             ReplaceWhereSpec(table_ref=_REF, replace_predicate=_PRED),
-            UpsertSpec(table_ref=_REF, upsert_keys=("id",)),
-            UpdateSpec(table_ref=_REF, keys=("id",)),
+            UpsertSpec(table_ref=_REF, declared_keys=("id",)),
+            UpdateSpec(table_ref=_REF, declared_keys=("id",)),
         ],
     )
     def test_table_variants_are_frozen(self, spec: object) -> None:
@@ -94,8 +94,8 @@ class TestTableVariants:
             ReplaceSpec(table_ref=_REF),
             ReplacePartitionsSpec(table_ref=_REF, partition_cols=("year",)),
             ReplaceWhereSpec(table_ref=_REF, replace_predicate=_PRED),
-            UpsertSpec(table_ref=_REF, upsert_keys=("id",)),
-            UpdateSpec(table_ref=_REF, keys=("id",)),
+            UpsertSpec(table_ref=_REF, declared_keys=("id",)),
+            UpdateSpec(table_ref=_REF, declared_keys=("id",)),
             FileSpec(path="s3://bucket/out.csv", format=Format.CSV),
             TempSpec(temp_name="normalized", temp_scope=CheckpointScope.RUN),
             TempFanInSpec(temp_name="parts", temp_scope=CheckpointScope.RUN),

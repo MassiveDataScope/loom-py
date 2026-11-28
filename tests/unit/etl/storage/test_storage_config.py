@@ -382,6 +382,9 @@ class TestAuditConfig:
         assert cfg.prefix == "_loom_"
         assert cfg.custom == ()
 
+    def test_a_disabled_audit_stamps_no_column(self) -> None:
+        assert AuditConfig(custom=(CustomColumnDef(name="env", value="prod"),)).columns == ()
+
     def test_audit_config_enabled(self) -> None:
         cfg = AuditConfig(enabled=True)
         assert cfg.enabled is True

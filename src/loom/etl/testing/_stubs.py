@@ -25,7 +25,7 @@ class InMemoryCatalog:
     Accepts two optional seed dictionaries:
 
     * ``tables``  — column name tuples (for quick existence + column checks)
-    * ``schemas`` — full :class:`~loom.etl._schema.ColumnSchema` tuples
+    * ``schemas`` — full :class:`~loom.etl.schema.ColumnSchema` tuples
                     (for type-aware writer tests)
 
     When ``schemas`` is provided, ``columns`` and ``exists`` are also derived

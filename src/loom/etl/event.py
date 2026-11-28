@@ -28,6 +28,9 @@ class EtlEvent(LogEvent):
     HISTORIFY_SCOPE_MISSING = "loom.etl.historify_scope_missing"
     HISTORIFY_RERUN_UNSCOPED = "loom.etl.historify_rerun_unscoped"
     HISTORIFY_TRACK_INFERRED = "loom.etl.historify_track_inferred"
+    MODEL_RESOLVED = "loom.etl.model_resolved"
+    MODEL_REFUSED = "loom.etl.model_refused"
+    MODEL_SCHEMA_APPLIED = "loom.etl.model_schema_applied"
 
     YAML_LOADED = "loom.etl.yaml_loaded"
     PLAN_FILTERED = "loom.etl.plan_filtered"
@@ -94,6 +97,9 @@ class EtlKey(LogKey):
     OPTION_KEYS = "loom.etl.option_keys", ValueKind.ARRAY
 
     TABLE = "loom.etl.table"
+    MODEL = "loom.etl.model"
+    FIELD = "loom.etl.field"
+    REASON = "loom.etl.reason"
     URI = "loom.etl.uri"
     MODE = "loom.etl.mode"
     KIND = "loom.etl.kind"

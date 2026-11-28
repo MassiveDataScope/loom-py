@@ -37,11 +37,13 @@ from loom.etl.engines._merge import (
 from loom.etl.engines._path_template import resolve_file_uri
 from loom.etl.engines._predicate import predicate_to_sql
 from loom.etl.engines._write_policy import _WritePolicy
-from loom.etl.engines.spark._dtype import loom_type_to_spark
+from loom.etl.engines.spark._dtype import frame_type_to_spark
 from loom.etl.engines.spark._historify import SparkHistorifyOps
-from loom.etl.engines.spark._schema import SparkPhysicalSchema, apply_schema_spark
+from loom.etl.engines.spark._json_failure import is_json_decode_failure
+from loom.etl.engines.spark._schema import SparkPhysicalSchema
 from loom.etl.event import EtlEvent
 from loom.etl.lineage._records import LineageRecord, get_lineage_schema
+from loom.etl.schema._schema import StructType
 from loom.etl.storage._config import MissingTablePolicy
 from loom.etl.storage._file_locator import FileLocator
 from loom.etl.storage._locator import TableLocator, _as_locator
@@ -96,6 +98,10 @@ class SparkTargetWriter(_WritePolicy[DataFrame, DataFrame, SparkPhysicalSchema])
         spec = AppendSpec(table_ref=table_ref, schema_mode=SchemaMode.EVOLVE)
         self.write(frame, spec, params_instance, streaming=streaming)
 
+    def is_json_decode_failure(self, error: Exception) -> bool:
+        """Whether *error* is the engine refusing a JSON document while decoding a column."""
+        return is_json_decode_failure(error)
+
     def to_frame(self, records: Sequence[LineageRecord], /) -> DataFrame:
         """Convert lineage records into a Spark DataFrame."""
         if not records:
@@ -123,17 +129,9 @@ class SparkTargetWriter(_WritePolicy[DataFrame, DataFrame, SparkPhysicalSchema])
         except AnalysisException:
             return None
 
-    def _align(
-        self,
-        frame: DataFrame,
-        existing_schema: SparkPhysicalSchema | None,
-        mode: SchemaMode,
-    ) -> DataFrame:
-        """Align frame schema with existing."""
-        if existing_schema is None or mode is SchemaMode.OVERWRITE:
-            return frame
-
-        return apply_schema_spark(frame, existing_schema.schema, mode)
+    def _physical_of(self, schema: StructType) -> SparkPhysicalSchema:
+        """The Spark schema of the lake *schema*."""
+        return SparkPhysicalSchema.of_model(schema)
 
     def _materialize_for_write(self, frame: DataFrame, streaming: bool) -> DataFrame:
         """Return Spark frame unchanged (already materialized/eager)."""
@@ -553,5 +551,5 @@ def _sql_literal(value: Any) -> str:
 def _spark_record_schema(record: LineageRecord) -> T.StructType:
     cols = get_lineage_schema(type(record))
     return T.StructType(
-        [T.StructField(c.name, loom_type_to_spark(c.dtype), c.nullable) for c in cols]
+        [T.StructField(c.name, frame_type_to_spark(c.dtype), c.nullable) for c in cols]
     )

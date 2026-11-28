@@ -157,7 +157,7 @@ class TestGoldenVectors:
                 {
                     "a": 1,
                     "b": True,
-                    "c": Decimal("1.10"),
+                    "amount": Decimal("1.10"),
                     "d": datetime(2026, 1, 2, 3, 4, 5, 6, tzinfo=_ISO_PLUS_TWO),
                     "e": date(2026, 1, 2),
                     "f": UUID("A0EEBC99-9C0B-4EF8-BB6D-6BB9BD380A11"),

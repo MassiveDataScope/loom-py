@@ -19,7 +19,7 @@ from bson.decimal128 import Decimal128
 
 from loom.etl.declarative.expr import col
 from loom.etl.declarative.source._specs import MongoSourceSpec
-from loom.etl.engines.polars._dtype import loom_type_to_polars
+from loom.etl.engines.polars._dtype import frame_type_to_polars
 from loom.etl.event import EtlEvent, EtlKey, SchemaDrift
 from loom.etl.io.sources._mongo import MongoSourceReader
 from loom.etl.io.sources._mongo_batch import (
@@ -28,7 +28,7 @@ from loom.etl.io.sources._mongo_batch import (
     _canonicalize_batch,
 )
 from loom.etl.io.sources._mongo_bson import normalize_bson_doc
-from loom.etl.schema._contract import resolve_schema
+from loom.etl.schema import resolve_schema
 from loom.etl.schema._schema import ColumnSchema, ListType, LoomDtype, StructField, StructType
 from tests.helpers.loggers import CapturedLog
 
@@ -645,7 +645,7 @@ class TestSchemaGuidedCoercion:
 
     def test_canonicalize_batch_reorders_nested_structs_without_ordered_dict(self) -> None:
         schema = resolve_schema(ArchiveEnvelope)
-        declared = {"bundle": loom_type_to_polars(schema[0].dtype)}
+        declared = {"bundle": frame_type_to_polars(schema[0].dtype)}
         batch = [
             {
                 "bundle": {

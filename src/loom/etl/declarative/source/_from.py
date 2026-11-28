@@ -35,8 +35,9 @@ from __future__ import annotations
 
 from typing import Any, Generic, TypeVar
 
-from loom.core.errors import InvalidType, InvalidValue
-from loom.core.routing import LogicalRef
+from loom.core.errors import InvalidType, InvalidUse, InvalidValue
+from loom.core.model import BaseModel
+from loom.etl.declarative._declared_table import DeclaredTable, TableDeclaration
 from loom.etl.declarative._format import Format
 from loom.etl.declarative._read_options import ReadOptions
 from loom.etl.declarative._utils import _clone_slots
@@ -51,12 +52,8 @@ from loom.etl.declarative.source._specs import (
     TableSourceSpec,
     TempSourceSpec,
 )
-from loom.etl.schema._contract import (
-    JsonContract,
-    SchemaContract,
-    resolve_json_type,
-    resolve_schema,
-)
+from loom.etl.schema._json_fit import JsonMismatch
+from loom.etl.schema._model import JsonContract, LakeTranslator, SchemaContract, resolve_schema
 from loom.etl.schema._schema import ColumnSchema
 
 ParamsT = TypeVar("ParamsT")
@@ -67,11 +64,13 @@ _SourceEntry = "FromTable | FromFile | FromTemp | FromMongo | FromClickHouse"
 class FromTable:
     """Declare a Delta table as an ETL source.
 
-    Accepts a dotted logical reference or an explicit :class:`~loom.etl.TableRef`.
+    Accepts a dotted logical reference, an explicit :class:`~loom.etl.TableRef` or a
+    model, which names its table with ``__tablename__`` and gives the source its
+    schema: ``FromTable(Order)`` is ``FromTable("order").with_schema(Order)``.
     Predicates are added via :meth:`where` using the standard operator DSL.
 
     Args:
-        ref: Logical table reference — ``str`` or :class:`~loom.etl.TableRef`.
+        ref: Logical table reference — ``str`` or :class:`~loom.etl.TableRef` — or a model.
 
     Example::
 
@@ -81,10 +80,12 @@ class FromTable:
         )
     """
 
-    __slots__ = ("_ref", "_predicates", "_schema", "_columns", "_json_columns")
+    __slots__ = ("_ref", "_model", "_predicates", "_schema", "_columns", "_json_columns")
 
-    def __init__(self, ref: str | LogicalRef | TableRef) -> None:
-        self._ref: TableRef = ref if isinstance(ref, TableRef) else TableRef(ref)
+    def __init__(self, ref: TableDeclaration) -> None:
+        declared = DeclaredTable.from_declaration(ref)
+        self._ref: TableRef = declared.ref
+        self._model: type[BaseModel] | None = declared.model
         self._predicates: tuple[PredicateNode, ...] = ()
         self._schema: tuple[ColumnSchema, ...] = ()
         self._columns: tuple[str, ...] = ()
@@ -120,6 +121,9 @@ class FromTable:
         Returns:
             New ``FromTable`` with the schema applied at read time.
 
+        Raises:
+            InvalidUse: The source was declared with a model and *schema* is not a model.
+
         Example::
 
             orders = FromTable("raw.orders").with_schema((
@@ -134,27 +138,49 @@ class FromTable:
 
             orders = FromTable("raw.orders").with_schema(OrderRow)
         """
+        schema_is_model = isinstance(schema, type) and issubclass(schema, BaseModel)
+        if self._model is not None and not schema_is_model:
+            raise InvalidUse(
+                f"FromTable({self._model.__name__}) takes its schema from the model, and "
+                "with_schema would drop it. Declare FromTable with the table reference to "
+                "read it with another schema."
+            )
         new = _clone_slots(self, FromTable, FromTable.__slots__)
-        object.__setattr__(new, "_schema", resolve_schema(schema))
+        if schema_is_model:
+            object.__setattr__(new, "_model", schema)
+        else:
+            object.__setattr__(new, "_schema", resolve_schema(schema))
         return new
 
-    def parse_json(self, column: str, contract: JsonContract) -> FromTable:
+    def parse_json(
+        self,
+        column: str,
+        contract: JsonContract,
+        *,
+        on_mismatch: JsonMismatch = JsonMismatch.FAIL,
+    ) -> FromTable:
         """Return a new ``FromTable`` that decodes *column* from JSON at read time.
 
-        The string column *column* is decoded into a structured type using the
-        Polars ``str.json_decode`` expression (or Spark ``from_json``).
+        The string column *column* is decoded into the type *contract* declares.
+        Undeclared struct fields are ignored whatever they hold.
 
         Args:
             column:   Name of the string column that contains the JSON payload.
             contract: Target type for the decoded column.  Accepted forms:
 
-                      * Any :data:`~loom.etl._schema.LoomType` instance
+                      * Any :data:`~loom.etl.schema.FrameType` instance
                         (e.g. ``StructType(...)``, ``ListType(...)``).
                       * An annotated class (``msgspec.Struct``, ``dataclass``,
                         or plain Python class) — converted to
-                        :class:`~loom.etl._schema.StructType`.
+                        :class:`~loom.etl.schema.StructType`.
                       * ``list[SomeClass]`` — converted to
-                        :class:`~loom.etl._schema.ListType`.
+                        :class:`~loom.etl.schema.ListType`.
+
+            on_mismatch: ``JsonMismatch.FAIL`` (default) fails the run on a
+                      malformed document or a value that does not fit *contract*.
+                      ``JsonMismatch.NULL`` nulls the value that does not fit and
+                      keeps its siblings; an object or array under a ``str`` field is
+                      kept as JSON text.
 
         Returns:
             New ``FromTable`` with the JSON decode applied at read time.
@@ -168,8 +194,8 @@ class FromTable:
             events = FromTable("raw.events").parse_json("payload", Payload)
             events = FromTable("raw.events").parse_json("tags", list[str])
         """
-        loom_type = resolve_json_type(contract)
-        spec = JsonColumnSpec(column=column, loom_type=loom_type)
+        frame_type = LakeTranslator.json_type(contract)
+        spec = JsonColumnSpec(column=column, frame_type=frame_type, on_mismatch=on_mismatch)
         new = _clone_slots(self, FromTable, FromTable.__slots__)
         object.__setattr__(new, "_json_columns", self._json_columns + (spec,))
         return new
@@ -178,7 +204,7 @@ class FromTable:
         """Return a new ``FromTable`` with the given predicates added.
 
         Args:
-            *predicates: One or more :data:`~loom.etl._predicate.PredicateNode`
+            *predicates: One or more :data:`~loom.etl.declarative.expr.PredicateNode`
                 expressions built with the column / param operator DSL.
 
         Returns:
@@ -228,6 +254,7 @@ class FromTable:
             columns=self._columns,
             schema=self._schema,
             json_columns=self._json_columns,
+            model=self._model,
         )
 
     def __repr__(self) -> str:
@@ -262,7 +289,7 @@ class FromFile:
     def __init__(self, path: str, *, format: Format) -> None:
         self._path = path
         self._format = format
-        self._schema: tuple[ColumnSchema, ...] = ()
+        self._schema: SchemaContract = ()
         self._read_options: ReadOptions | None = None
         self._columns: tuple[str, ...] = ()
         self._json_columns: tuple[JsonColumnSpec, ...] = ()
@@ -342,30 +369,38 @@ class FromFile:
             )
         """
         new = _clone_slots(self, FromFile, FromFile.__slots__)
-        object.__setattr__(new, "_schema", resolve_schema(schema))
+        object.__setattr__(new, "_schema", schema)
         return new
 
-    def parse_json(self, column: str, contract: JsonContract) -> FromFile:
+    def parse_json(
+        self,
+        column: str,
+        contract: JsonContract,
+        *,
+        on_mismatch: JsonMismatch = JsonMismatch.FAIL,
+    ) -> FromFile:
         """Return a new ``FromFile`` that decodes *column* from JSON at read time.
 
-        The string column *column* is decoded into a structured type using the
-        Polars ``str.json_decode`` expression (or Spark ``from_json``).
+        The string column *column* is decoded into the type *contract* declares.
+        Undeclared struct fields are ignored whatever they hold.
 
         Args:
             column:   Name of the string column that contains the JSON payload.
             contract: Target type for the decoded column.  Accepted forms:
 
-                      * Any :data:`~loom.etl._schema.LoomType` instance.
+                      * Any :data:`~loom.etl.schema.FrameType` instance.
                       * An annotated class — converted to
-                        :class:`~loom.etl._schema.StructType`.
+                        :class:`~loom.etl.schema.StructType`.
                       * ``list[SomeClass]`` — converted to
-                        :class:`~loom.etl._schema.ListType`.
+                        :class:`~loom.etl.schema.ListType`.
+
+            on_mismatch: As for :meth:`FromTable.parse_json`.
 
         Returns:
             New ``FromFile`` with the JSON decode applied at read time.
         """
-        loom_type = resolve_json_type(contract)
-        spec = JsonColumnSpec(column=column, loom_type=loom_type)
+        frame_type = LakeTranslator.json_type(contract)
+        spec = JsonColumnSpec(column=column, frame_type=frame_type, on_mismatch=on_mismatch)
         new = _clone_slots(self, FromFile, FromFile.__slots__)
         object.__setattr__(new, "_json_columns", self._json_columns + (spec,))
         return new
@@ -424,7 +459,7 @@ class FromFile:
             path=self._path,
             format=self._format,
             is_alias=self._is_alias,
-            schema=self._schema,
+            schema=resolve_schema(self._schema),
             read_options=self._read_options,
             columns=self._columns,
             json_columns=self._json_columns,

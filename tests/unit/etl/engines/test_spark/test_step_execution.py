@@ -6,6 +6,7 @@ from collections.abc import Callable
 from dataclasses import dataclass
 from pathlib import Path
 
+import msgspec
 import pytest
 from pyspark.sql import DataFrame, SparkSession
 from pyspark.sql import functions as F
@@ -18,6 +19,7 @@ from loom.etl import (
     FromTable,
     IntoFile,
     IntoTable,
+    JsonMismatch,
     UnsupportedFormatError,
 )
 from loom.etl.compiler import ETLCompiler
@@ -27,13 +29,14 @@ from loom.etl.declarative.source import FileSourceSpec
 from loom.etl.declarative.target import SchemaMode
 from loom.etl.declarative.target._file import FileSpec
 from loom.etl.declarative.target._table import ReplacePartitionsSpec
-from loom.etl.engines.spark._dtype import spark_to_loom
+from loom.etl.engines.spark._dtype import spark_to_frame_type
 from loom.etl.executor import ETLExecutor
 from loom.etl.lineage._records import EventName, RunStatus
 from loom.etl.schema._schema import ColumnSchema, LoomDtype, SchemaNotFoundError
 from loom.etl.storage._config import MissingTablePolicy
 from loom.etl.testing import RecordingRunObserver
 from tests.unit.etl.engines.doubles import NoParams
+from tests.unit.etl.models import Buyer
 
 from .conftest import SparkSourceReader, SparkTargetWriter, spark_table_path
 
@@ -62,10 +65,10 @@ class SparkAppendStep(ETLStep[NoParams]):
         return deltas
 
 
-class _PayloadContract:
+class _PayloadContract(msgspec.Struct, rename="camel"):
     store: str
     amount: float
-    items: int
+    item_count: int
 
 
 @dataclass(frozen=True)
@@ -307,9 +310,9 @@ class TestRunStepContracts:
 
         fields = _read(spark, spark_root, "raw.orders").schema.fields
         assert fields[0].name == "id"
-        assert spark_to_loom(fields[0].dataType) is LoomDtype.INT64
+        assert spark_to_frame_type(fields[0].dataType) is LoomDtype.INT64
         assert fields[1].name == "amount"
-        assert spark_to_loom(fields[1].dataType) is LoomDtype.FLOAT64
+        assert spark_to_frame_type(fields[1].dataType) is LoomDtype.FLOAT64
 
     def test_run_step_supports_csv_reporting_target(
         self,
@@ -339,6 +342,26 @@ class TestRunStepContracts:
         out = spark.read.option("header", "true").csv(str(report_path)).orderBy("id").collect()
         assert [row["id"] for row in out] == ["1", "2"]
         assert [float(row["amount"]) for row in out] == pytest.approx([10.0, 20.0])
+
+
+class TestJsonDecodeFailure:
+    def test_null_mode_tolerates_a_document_that_fails_in_strict_mode(
+        self,
+        spark: SparkSession,
+        seed_spark_table: Callable[[str | TableRef, DataFrame], Path],
+        spark_reader: SparkSourceReader,
+    ) -> None:
+        seed_spark_table(
+            "raw.customers",
+            spark.createDataFrame([('{"name": {"first": "Ada"}}',), ("not json",)], ["buyer"]),
+        )
+        source = FromTable("raw.customers").parse_json(
+            "buyer", Buyer, on_mismatch=JsonMismatch.NULL
+        )
+
+        rows = spark_reader.read(source._to_spec("customers"), None).collect()
+
+        assert sorted(row["buyer"]["name"] or "" for row in rows) == ["", '{"first":"Ada"}']
 
 
 class TestSparkReaderWriterTypeGuards:
@@ -389,8 +412,8 @@ class TestSparkReaderWriterTypeGuards:
     ) -> None:
         source_path = tmp_path / "events.json"
         source_path.write_text(
-            '{"event_id":1,"payload":"{\\"store\\":\\"es\\",\\"amount\\":10.0,\\"items\\":2}"}\n'
-            '{"event_id":2,"payload":"{\\"store\\":\\"uk\\",\\"amount\\":7.5,\\"items\\":1}"}\n',
+            '{"event_id":1,"payload":"{\\"store\\":\\"es\\",\\"amount\\":10.0,\\"itemCount\\":2}"}\n'
+            '{"event_id":2,"payload":"{\\"store\\":\\"uk\\",\\"amount\\":7.5,\\"itemCount\\":1}"}\n',
             encoding="utf-8",
         )
 
@@ -402,7 +425,7 @@ class TestSparkReaderWriterTypeGuards:
         result = spark_reader.read(spec, None).orderBy("event_id").collect()
 
         assert [row["payload"]["store"] for row in result] == ["es", "uk"]
-        assert [row["payload"]["items"] for row in result] == [2, 1]
+        assert [row["payload"]["itemCount"] for row in result] == [2, 1]
         assert [row["payload"]["amount"] for row in result] == pytest.approx([10.0, 7.5])
 
     def test_unified_components_reject_xlsx_without_plugin(

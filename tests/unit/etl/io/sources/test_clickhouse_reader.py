@@ -72,6 +72,25 @@ class TestClickHouseReaderArrowPath:
         assert result["id"].to_list() == [1]
         assert result["amount"].to_list() == [1.0]
 
+    def test_casts_only_the_selected_columns_of_a_wider_schema(self) -> None:
+        client = _FakeArrowClient(pa.table({"id": ["1"]}))
+        spec = (
+            FromClickHouse("analytics.cdc_events")
+            .columns("id")
+            .with_schema(
+                (
+                    ColumnSchema("id", LoomDtype.INT64),
+                    ColumnSchema("amount", LoomDtype.FLOAT64),
+                )
+            )
+            .unbounded()
+            ._to_spec("events")
+        )
+
+        result = ClickHouseSourceReader(client=client).read(spec, object()).collect()
+
+        assert result.schema == {"id": pl.Int64}
+
     def test_quotes_datetime_predicates_in_query(self) -> None:
         table = pa.table({"id": ["1"]})
         client = _FakeArrowClient(table)

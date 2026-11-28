@@ -74,6 +74,7 @@ from loom.etl.declarative import (
     IntoHistory,
     IntoTable,
     IntoTemp,
+    JsonMismatch,
     JsonReadOptions,
     JsonWriteOptions,
     ParquetReadOptions,
@@ -87,6 +88,7 @@ from loom.etl.declarative import (
     WithAgent,
     WriteOptions,
 )
+from loom.etl.declarative.expr import TableRef, col
 from loom.etl.declarative.target._client import IntoClient
 from loom.etl.executor import AgentMapper
 from loom.etl.io import (
@@ -137,15 +139,13 @@ from loom.etl.schema import (
     DecimalType,
     DurationType,
     EnumType,
+    FrameType,
     ListType,
     LoomDtype,
-    LoomType,
     SchemaError,
     SchemaNotFoundError,
     StructField,
     StructType,
-    TableRef,
-    col,
 )
 from loom.etl.storage import (
     CatalogConnection,
@@ -254,9 +254,10 @@ __all__ = [
     "LineageConfig",
     "OtelConfig",
     "SchemaMode",
+    "JsonMismatch",
     "ColumnSchema",
     "LoomDtype",
-    "LoomType",
+    "FrameType",
     "SchemaNotFoundError",
     "SchemaError",
     "UnsupportedFormatError",

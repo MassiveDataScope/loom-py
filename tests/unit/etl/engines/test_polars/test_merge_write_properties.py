@@ -70,8 +70,8 @@ class TestMergeWriteProperties:
     @pytest.mark.parametrize(
         "spec",
         [
-            pytest.param(UpsertSpec(table_ref=TableRef(_REF), upsert_keys=("id",)), id="upsert"),
-            pytest.param(UpdateSpec(table_ref=TableRef(_REF), keys=("id",)), id="update"),
+            pytest.param(UpsertSpec(table_ref=TableRef(_REF), declared_keys=("id",)), id="upsert"),
+            pytest.param(UpdateSpec(table_ref=TableRef(_REF), declared_keys=("id",)), id="update"),
         ],
     )
     def test_merge_writes_parquet_and_commit_with_route_settings(

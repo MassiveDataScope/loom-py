@@ -52,8 +52,11 @@ equality including inner types.
 
 from __future__ import annotations
 
+from collections.abc import Iterable
 from dataclasses import dataclass
 from enum import StrEnum
+
+from loom.core.errors import InvalidType, InvalidUse, InvalidValue
 
 
 class LoomDtype(StrEnum):
@@ -82,7 +85,6 @@ class LoomDtype(StrEnum):
 
     FLOAT32 = "Float32"
     FLOAT64 = "Float64"
-    DECIMAL = "Decimal"
 
     UTF8 = "Utf8"
     BINARY = "Binary"
@@ -109,7 +111,7 @@ class ListType:
 
     Args:
         inner: Element type.  May itself be a :class:`StructType`,
-               :class:`ListType`, or any other :data:`LoomType`.
+               :class:`ListType`, or any other :data:`FrameType`.
 
     Example::
 
@@ -117,7 +119,7 @@ class ListType:
         ListType(inner=StructType(fields=(StructField("x", LoomDtype.INT64),)))
     """
 
-    inner: LoomType
+    inner: FrameType
 
 
 @dataclass(frozen=True)
@@ -126,15 +128,22 @@ class ArrayType:
 
     Args:
         inner: Element type.
-        width: Fixed number of elements per row.
+        width: Fixed number of elements per row, at least 1.
+
+    Raises:
+        InvalidType: *width* is less than 1.
 
     Example::
 
         ArrayType(inner=LoomDtype.FLOAT64, width=3)
     """
 
-    inner: LoomType
+    inner: FrameType
     width: int
+
+    def __post_init__(self) -> None:
+        if self.width < 1:
+            raise InvalidType(f"ArrayType width must be at least 1, got {self.width}")
 
 
 @dataclass(frozen=True)
@@ -143,12 +152,12 @@ class StructField:
 
     Args:
         name:     Field name.
-        dtype:    Field type — any :data:`LoomType`.
+        dtype:    Field type — any :data:`FrameType`.
         nullable: Whether the field accepts nulls.  Defaults to ``True``.
     """
 
     name: str
-    dtype: LoomType
+    dtype: FrameType
     nullable: bool = True
 
 
@@ -169,22 +178,27 @@ class StructType:
 
     fields: tuple[StructField, ...]
 
+    @classmethod
+    def of_columns(cls, columns: Iterable[ColumnSchema]) -> StructType:
+        """The struct whose fields are *columns*, in order, with their nullability."""
+        return cls(tuple(StructField(c.name, c.dtype, c.nullable) for c in columns))
+
 
 @dataclass(frozen=True)
 class DecimalType:
     """Fixed-precision decimal column.
 
     Args:
-        precision: Total number of significant digits (``None`` = backend default).
-        scale:     Number of digits after the decimal point (``None`` = backend default).
+        precision: Total number of significant digits.
+        scale:     Number of digits after the decimal point; ``0`` when not given.
 
     Example::
 
         DecimalType(precision=18, scale=4)
     """
 
-    precision: int | None = None
-    scale: int | None = None
+    precision: int
+    scale: int = 0
 
 
 @dataclass(frozen=True)
@@ -249,7 +263,7 @@ class EnumType:
 #:
 #: Use :class:`LoomDtype` for primitive types.  Use the structural
 #: classes for complex, nested, or parametrised types.
-LoomType = (
+FrameType = (
     LoomDtype
     | ListType
     | ArrayType
@@ -262,7 +276,7 @@ LoomType = (
 )
 
 
-class SchemaNotFoundError(Exception):
+class SchemaNotFoundError(InvalidUse):
     """Raised when a table's schema is needed but the table does not exist.
 
     * A write that may create its table (append, replace, replace_partitions,
@@ -272,12 +286,10 @@ class SchemaNotFoundError(Exception):
       :attr:`~loom.core.schema.SchemaMode.OVERWRITE`.  With ``"error"`` it
       always raises.
     * An update raises it for a missing table under every policy.
-    * ``apply_schema_polars`` and ``apply_schema_spark`` raise it when given
-      no schema under ``SchemaMode.STRICT`` or ``SchemaMode.EVOLVE``.
     """
 
 
-class SchemaError(Exception):
+class SchemaError(InvalidValue):
     """Raised when a frame is incompatible with the registered table schema."""
 
 
@@ -290,7 +302,7 @@ class ColumnSchema:
 
     Args:
         name:     Column name.
-        dtype:    Column type — any :data:`LoomType`.  Use :class:`LoomDtype`
+        dtype:    Column type — any :data:`FrameType`.  Use :class:`LoomDtype`
                   for simple scalars; use the structural classes
                   (:class:`ListType`, :class:`StructType`, :class:`DatetimeType`,
                   etc.) for complex or parametrised columns.
@@ -310,5 +322,5 @@ class ColumnSchema:
     """
 
     name: str
-    dtype: LoomType
+    dtype: FrameType
     nullable: bool = True

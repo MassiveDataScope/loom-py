@@ -481,6 +481,7 @@ exclude = [
 [[tool.mypy.overrides]]
 module = [
     "pyspark.*",
+    "py4j.*",
     "delta.*",
     "findspark",
     "fsspec.*",

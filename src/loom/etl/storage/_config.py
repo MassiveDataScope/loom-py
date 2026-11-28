@@ -15,6 +15,7 @@ from urllib.parse import urlparse
 from loom.core.config import ConfigError
 
 if TYPE_CHECKING:
+    from loom.etl.lineage._records import WriteContext
     from loom.etl.storage._file_locator import MappingFileLocator
 
 import msgspec
@@ -31,6 +32,7 @@ from loom.core.connections import (
 from loom.core.model import LoomFrozenStruct
 from loom.core.model.redaction import Dsn, RedactedMap, Secret, reveal_for_driver
 from loom.etl._uri import CLOUD_SCHEMES
+from loom.etl.schema import ColumnSchema, LoomDtype
 from loom.etl.storage._locator import MappingLocator, PrefixLocator, TableLocation, TableLocator
 
 STORAGE_KEYED_COLLECTIONS: Final = ("storage.tables", "storage.files", "storage.profiles")
@@ -227,6 +229,14 @@ class FileRoute(LoomFrozenStruct, frozen=True, forbid_unknown_fields=True):
         self.path.validate(context=f"{context}.path")
 
 
+_STANDARD_AUDIT_COLUMNS: Final = (
+    ("run_id", LoomDtype.UTF8),
+    ("step", LoomDtype.UTF8),
+    ("attempt", LoomDtype.INT32),
+    ("process_run_id", LoomDtype.UTF8),
+)
+
+
 class CustomColumnDef(LoomFrozenStruct, frozen=True, forbid_unknown_fields=True):
     """Definition of one custom audit column injected at write time.
 
@@ -242,6 +252,12 @@ class CustomColumnDef(LoomFrozenStruct, frozen=True, forbid_unknown_fields=True)
     name: str
     value: str | None = None
     from_param: str | None = None
+
+    def value_of(self, params_instance: Any) -> str:
+        """The literal value, else the string of the params attribute named by ``from_param``."""
+        if self.value is not None:
+            return self.value
+        return str(getattr(params_instance, cast(str, self.from_param)))
 
 
 class AuditConfig(LoomFrozenStruct, frozen=True, forbid_unknown_fields=True):
@@ -263,6 +279,30 @@ class AuditConfig(LoomFrozenStruct, frozen=True, forbid_unknown_fields=True):
     enabled: bool = False
     prefix: str = "_loom_"
     custom: tuple[CustomColumnDef, ...] = ()
+
+    @property
+    def columns(self) -> tuple[ColumnSchema, ...]:
+        """The columns a write stamps with the types they are stored as; none when disabled."""
+        if not self.enabled:
+            return ()
+        standard = tuple(
+            ColumnSchema(f"{self.prefix}{name}", dtype) for name, dtype in _STANDARD_AUDIT_COLUMNS
+        )
+        return standard + tuple(ColumnSchema(c.name, LoomDtype.UTF8) for c in self.custom)
+
+    def stamps(
+        self, write_ctx: WriteContext, params_instance: Any
+    ) -> tuple[tuple[ColumnSchema, str | int], ...]:
+        """Each column a write stamps with its value; ``process_run_id`` only when it is set."""
+        values = {
+            f"{self.prefix}{name}": getattr(write_ctx, name) for name, _ in _STANDARD_AUDIT_COLUMNS
+        }
+        values.update({c.name: c.value_of(params_instance) for c in self.custom})
+        return tuple(
+            (column, values[column.name])
+            for column in self.columns
+            if values[column.name] is not None
+        )
 
 
 class MaintenanceVacuumConfig(LoomFrozenStruct, frozen=True, forbid_unknown_fields=True):

@@ -25,6 +25,7 @@ Spec types (internal — compiler and executor only):
 * :class:`SourceKind`  — physical kind enum
 * :class:`ExtraFieldsMode` — handling of fields the schema does not cover
 * :class:`JsonColumnSpec`
+* :class:`JsonMismatch` — what ``parse_json`` does with a document that does not match
 """
 
 from loom.etl.declarative.source._from import FromFile, FromTable, FromTemp, Sources, SourceSet
@@ -44,6 +45,7 @@ from loom.etl.declarative.source._specs import (
     TableSourceSpec,
     TempSourceSpec,
 )
+from loom.etl.schema._json_fit import JsonMismatch
 
 __all__ = [
     "FromTable",
@@ -66,4 +68,5 @@ __all__ = [
     "DynamoDBSourceSpec",
     "ClickHouseSourceSpec",
     "JsonColumnSpec",
+    "JsonMismatch",
 ]

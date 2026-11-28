@@ -5,7 +5,7 @@ from __future__ import annotations
 import contextlib
 import logging
 from collections.abc import Sequence
-from typing import Any, Literal
+from typing import Any, Literal, cast
 
 import polars as pl
 from deltalake import CommitProperties, DeltaTable, WriterProperties, write_deltalake
@@ -21,7 +21,6 @@ from loom.etl.declarative.target._table import (
     ReplacePartitionsSpec,
     UpdateSpec,
     UpsertSpec,
-    upsert_delete_flag_conflict,
 )
 from loom.etl.engines._merge import (
     SOURCE_ALIAS,
@@ -38,12 +37,11 @@ from loom.etl.engines._write_policy import _WritePolicy
 from loom.etl.engines.polars._historify import PolarsHistorifyOps
 from loom.etl.engines.polars._schema import (
     PolarsPhysicalSchema,
-    apply_schema_polars,
     read_delta_physical_schema,
 )
 from loom.etl.event import EtlEvent, EtlKey
 from loom.etl.lineage._records import LineageRecord, WriteContext, get_lineage_schema
-from loom.etl.schema._schema import SchemaError
+from loom.etl.schema._schema import ColumnSchema, SchemaError, StructType
 from loom.etl.storage import (
     MissingTablePolicy,
     PathRouteResolver,
@@ -56,7 +54,7 @@ from loom.etl.storage._config import AuditConfig
 from loom.etl.storage._file_locator import FileLocator
 from loom.etl.storage._locator import TableLocator, _as_locator
 
-from ._dtype import loom_type_to_polars
+from ._dtype import frame_type_to_polars
 from ._file_writer import PolarsFileWriter
 from ._streaming import partition_rows_from_spool, spool_lazy_to_arrow_reader
 
@@ -138,7 +136,7 @@ def _require_delete_flag(frame: pl.LazyFrame, spec: UpsertSpec, flag: str) -> No
     """
     if not flag.strip():
         raise UpsertDeleteFlagError(flag, "must name a source column")
-    conflict = upsert_delete_flag_conflict(spec)
+    conflict = spec.delete_flag_conflict
     if conflict is not None:
         raise UpsertDeleteFlagError(
             flag,
@@ -302,15 +300,9 @@ class PolarsTargetWriter(_WritePolicy[pl.LazyFrame, pl.DataFrame, PolarsPhysical
         )
         return physical
 
-    def _align(
-        self,
-        frame: pl.LazyFrame,
-        existing_schema: PolarsPhysicalSchema | None,
-        mode: SchemaMode,
-    ) -> pl.LazyFrame:
-        """Align frame schema with existing."""
-        schema = existing_schema.schema if existing_schema is not None else None
-        return apply_schema_polars(frame, schema, mode)
+    def _physical_of(self, schema: StructType) -> PolarsPhysicalSchema:
+        """The Polars schema of the lake *schema*."""
+        return PolarsPhysicalSchema.of_model(schema)
 
     def _row_count_if_cheap(self, frame: pl.DataFrame) -> int | None:
         """Rows in the collected frame."""
@@ -344,7 +336,7 @@ class PolarsTargetWriter(_WritePolicy[pl.LazyFrame, pl.DataFrame, PolarsPhysical
 
         if spec.require_physical:
             self._require_physical_partitions(target, spec.partition_cols)
-        aligned = self._align(frame, existing, spec.schema_mode)
+        aligned = self._align(frame, existing, spec)
         _check_null_dtype_columns_lazy(aligned)
         self._streaming_replace_partitions(aligned, target, spec)
 
@@ -587,15 +579,16 @@ class PolarsTargetWriter(_WritePolicy[pl.LazyFrame, pl.DataFrame, PolarsPhysical
             self._create_missing(
                 frame.filter(~pl.col(flag).fill_null(False)).drop(flag),
                 target,
-                schema_mode=spec.schema_mode,
+                spec=spec,
                 streaming=False,
                 partition_cols=spec.partition_cols,
             )
             return
         _require_flag_not_in_target(flag, existing)
         source = frame.collect()
+        flagless = source.drop(flag).lazy()
         aligned = self._materialize_checked(
-            self._align(source.drop(flag).lazy(), existing, spec.schema_mode),
+            self._align(flagless, existing, spec),
             target,
             streaming=False,
         )
@@ -751,6 +744,11 @@ class PolarsTargetWriter(_WritePolicy[pl.LazyFrame, pl.DataFrame, PolarsPhysical
             write_options=spec.write_options,
         )
 
+    def _stamped_columns(self, frame: pl.LazyFrame | pl.DataFrame) -> tuple[ColumnSchema, ...]:
+        """The audit columns *frame* carries, so a model schema keeps them."""
+        carried = set(frame.collect_schema().names())
+        return tuple(column for column in self._audit_config.columns if column.name in carried)
+
     def _apply_audit_columns(
         self,
         frame: pl.LazyFrame,
@@ -773,42 +771,17 @@ class PolarsTargetWriter(_WritePolicy[pl.LazyFrame, pl.DataFrame, PolarsPhysical
         Returns:
             Frame with audit columns appended, or the original frame unchanged.
         """
-        if not audit.enabled or write_ctx is None:
+        if write_ctx is None:
             return frame
-        prefix = audit.prefix
-        cols: list[pl.Expr] = [
-            pl.lit(write_ctx.run_id).alias(f"{prefix}run_id"),
-            pl.lit(write_ctx.step).alias(f"{prefix}step"),
-            pl.lit(write_ctx.attempt).cast(pl.Int32).alias(f"{prefix}attempt"),
-        ]
-        if write_ctx.process_run_id is not None:
-            cols.append(pl.lit(write_ctx.process_run_id).alias(f"{prefix}process_run_id"))
-        for col_def in audit.custom:
-            cols.append(_resolve_custom_column(col_def, params_instance))
-        return frame.with_columns(cols)
+        return frame.with_columns(
+            [
+                pl.lit(value, dtype=frame_type_to_polars(column.dtype)).alias(column.name)
+                for column, value in audit.stamps(write_ctx, params_instance)
+            ]
+        )
 
 
 __all__ = ["PolarsTargetWriter"]
-
-
-def _resolve_custom_column(col_def: Any, params_instance: Any) -> pl.Expr:
-    """Build a Polars literal expression for one custom audit column definition.
-
-    Args:
-        col_def:         :class:`~loom.etl.storage._config.CustomColumnDef` instance.
-        params_instance: Concrete params object; used when ``from_param`` is set.
-
-    Returns:
-        A ``pl.lit(value).alias(name)`` expression ready for ``with_columns``.
-
-    Raises:
-        AttributeError: When ``from_param`` is set but the attribute is missing
-                        from ``params_instance``.
-    """
-    if col_def.value is not None:
-        return pl.lit(str(col_def.value)).alias(col_def.name)
-    val = str(getattr(params_instance, col_def.from_param))
-    return pl.lit(val).alias(col_def.name)
 
 
 def _partition_filter(
@@ -847,5 +820,6 @@ def _partition_filter(
 
 
 def _polars_lineage_schema(record: LineageRecord) -> pl.Schema:
-    cols = get_lineage_schema(type(record))
-    return pl.Schema({c.name: loom_type_to_polars(c.dtype) for c in cols})
+    columns = get_lineage_schema(type(record))
+    polars_struct = cast(pl.Struct, frame_type_to_polars(StructType.of_columns(columns)))
+    return pl.Schema(polars_struct.to_schema())

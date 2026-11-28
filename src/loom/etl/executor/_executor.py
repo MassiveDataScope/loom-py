@@ -37,7 +37,7 @@ from collections.abc import Callable
 from typing import Any
 
 from loom.core.config import ConfigContext
-from loom.core.errors import InvalidType, InvalidUse
+from loom.core.errors import InvalidType, InvalidUse, InvalidValue
 from loom.core.log_names import LogField
 from loom.core.observability.event import Scope
 from loom.core.observability.observability import Observability
@@ -66,6 +66,7 @@ from loom.etl.ports._config_values import resolve_config_value
 from loom.etl.ports.contracts import (
     AgentBatchRunner,
     ClientCommandExecutor,
+    JsonDecodeFailureRecognizer,
     SourceReader,
     SQLExecutor,
     StreamingSourceReader,
@@ -280,27 +281,60 @@ class ETLExecutor:
                 b.alias: self._read_source(b.spec, params, ctx, streaming=plan.streaming)
                 for b in plan.source_bindings
             }
-            step = plan.step_type()
-            if isinstance(step, StepSQL):
-                query = _render_sql_query(step, params)
-                sql_reader = self._require_sql_executor(step)
-                result = sql_reader.execute_sql(frames, query)
-            else:
-                result = step.execute(params, **frames, **values)
-            write_ctx = WriteContext(
-                run_id=ctx.run_id,
-                step=plan.step_type.__name__,
-                attempt=ctx.attempt,
-                process_run_id=ctx.process_run_id,
-            )
-            self._write_target(
-                result,
-                plan.target_binding.spec,
-                params,
-                ctx,
-                streaming=plan.streaming,
-                write_ctx=write_ctx,
-            )
+            try:
+                self._execute_and_write(plan, params, ctx, frames, values)
+            except Exception as error:
+                if plan.fallible_json_columns and self._is_json_decode_failure(error):
+                    raise self._json_decode_error(plan) from error
+                raise
+
+    def _execute_and_write(
+        self,
+        plan: StepPlan,
+        params: Any,
+        ctx: RunContext,
+        frames: dict[str, Any],
+        values: dict[str, Any],
+    ) -> None:
+        step = plan.step_type()
+        if isinstance(step, StepSQL):
+            query = _render_sql_query(step, params)
+            sql_reader = self._require_sql_executor(step)
+            result = sql_reader.execute_sql(frames, query)
+        else:
+            result = step.execute(params, **frames, **values)
+        write_ctx = WriteContext(
+            run_id=ctx.run_id,
+            step=plan.step_type.__name__,
+            attempt=ctx.attempt,
+            process_run_id=ctx.process_run_id,
+        )
+        self._write_target(
+            result,
+            plan.target_binding.spec,
+            params,
+            ctx,
+            streaming=plan.streaming,
+            write_ctx=write_ctx,
+        )
+
+    def _is_json_decode_failure(self, error: Exception) -> bool:
+        return any(
+            isinstance(port, JsonDecodeFailureRecognizer) and port.is_json_decode_failure(error)
+            for port in (self._reader, self._writer)
+        )
+
+    @staticmethod
+    def _json_decode_error(plan: StepPlan) -> InvalidValue:
+        declared = ", ".join(plan.fallible_json_columns)
+        return InvalidValue(
+            f"Step {plan.step_type.__name__!r} failed to decode a JSON column: a document is "
+            f"malformed or does not match its declared type. Columns that can refuse a document: "
+            f"{declared}. "
+            "If the documents vary, read the column with "
+            "parse_json(..., on_mismatch=JsonMismatch.NULL), or declare the field as JsonStr "
+            "and decode it explicitly in the step."
+        )
 
     def _resolve_config_values(self, plan: StepPlan) -> dict[str, Any]:
         """Resolve the plan's ``FromConfig`` values, keyed by ``execute()`` keyword."""

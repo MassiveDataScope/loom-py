@@ -41,18 +41,4 @@ class DeletePolicy(StrEnum):
     SOFT_DELETE = "soft_delete"
 
 
-class HistoryDateType(StrEnum):
-    """Column type used for ``valid_from`` / ``valid_to`` boundary columns.
-
-    Values:
-
-    * ``DATE`` — calendar date precision. Suitable for daily SCD2 pipelines.
-    * ``TIMESTAMP`` — microsecond precision. Use for event-driven or sub-daily
-      update patterns.
-    """
-
-    DATE = "date"
-    TIMESTAMP = "timestamp"
-
-
-__all__ = ["HistorifyInputMode", "DeletePolicy", "HistoryDateType"]
+__all__ = ["HistorifyInputMode", "DeletePolicy"]

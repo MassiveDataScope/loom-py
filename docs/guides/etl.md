@@ -3,6 +3,9 @@
 `loom.etl` is a declarative ETL subsystem with compile-time validation,
 backend-agnostic declarations, and a single runtime entrypoint (`ETLRunner`).
 
+Declare tables as loom models instead of strings with
+[Loom models as ETL tables](etl-models.md).
+
 ## Install
 
 Choose one backend:
@@ -1477,6 +1480,6 @@ available in the companion repository:
 The ETL API reference is generated from public docstrings:
 
 - [ETL API reference](../reference/api/etl)
-- Schema types: `loom.etl.schema.annotation_to_loom_type(ann)` returns the `LoomType` a
+- Schema types: `loom.etl.schema.LakeTranslator.annotation_type(ann)` returns the `FrameType` a
   contract field annotation declares, and `loom.etl.engines.polars` converts it with
-  `loom_type_to_polars` and back with `polars_to_loom_type`.
+  `frame_type_to_polars` and back with `polars_to_frame_type`.

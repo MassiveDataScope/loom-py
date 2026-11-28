@@ -41,6 +41,7 @@ from loom.core.model.introspection import (
     get_column_fields,
     get_table_name,
 )
+from loom.core.model.types import ColumnKind
 from loom.core.stores.repository import (
     BulkCreatable,
     Countable,
@@ -236,7 +237,8 @@ class MongoRepository(
         self._naive_datetime_fields = frozenset(
             name
             for name, info in column_fields.items()
-            if info.column_type.type_name == "DateTime"
+            if info.kind is ColumnKind.DATETIME
+            and info.column_type is not None
             and info.column_type.option("timezone") is False
         )
         self._stamps = ServerStamps.of(model)

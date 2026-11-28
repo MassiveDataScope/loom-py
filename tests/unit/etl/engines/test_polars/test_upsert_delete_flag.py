@@ -44,7 +44,7 @@ def _spec(
 ) -> UpsertSpec:
     return UpsertSpec(
         table_ref=TableRef(ref),
-        upsert_keys=keys,
+        declared_keys=keys,
         partition_cols=partition_cols,
         upsert_exclude=exclude,
         upsert_include=include,

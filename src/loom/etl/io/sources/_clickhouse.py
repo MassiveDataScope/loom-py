@@ -24,7 +24,7 @@ except ImportError:
 from loom.core.connections import ClickHouseConnection
 from loom.etl.declarative.expr._predicate_dialect import PredicateDialect, fold_predicate
 from loom.etl.declarative.source._specs import ClickHouseSourceSpec
-from loom.etl.engines.polars._dtype import loom_type_to_polars
+from loom.etl.engines.polars._dtype import frame_type_to_polars
 from loom.etl.event import EtlEvent, EtlKey
 from loom.etl.io._clickhouse_connection import open_client, resolve_connection
 from loom.etl.ports.contracts import ClientCommandExecutor, SourceReader
@@ -148,9 +148,7 @@ class ClickHouseSourceReader(SourceReader, ClientCommandExecutor):
                 LogField.DURATION_MS: elapsed_ms(started),
             },
         )
-        if spec.schema:
-            frame = self._apply_source_schema(frame, spec.schema)
-        return frame
+        return self._apply_source_schema(frame, spec.read_schema)
 
     def read_streaming(self, spec: Any, params_instance: Any, /) -> pl.LazyFrame:
         """Stream the ClickHouse query result through a temporary IPC file.
@@ -188,9 +186,7 @@ class ClickHouseSourceReader(SourceReader, ClientCommandExecutor):
                 LogField.DURATION_MS: elapsed_ms(started),
             },
         )
-        if spec.schema:
-            frame = self._apply_source_schema(frame, spec.schema)
-        return frame
+        return self._apply_source_schema(frame, spec.read_schema)
 
     def command(self, fn: Callable[[Any], None]) -> None:
         """Obtain the ClickHouse client and invoke *fn* with it.
@@ -309,7 +305,7 @@ class ClickHouseSourceReader(SourceReader, ClientCommandExecutor):
     def _apply_source_schema(frame: pl.LazyFrame, schema: tuple[ColumnSchema, ...]) -> pl.LazyFrame:
         if not schema:
             return frame
-        exprs = [pl.col(col.name).cast(loom_type_to_polars(col.dtype)) for col in schema]
+        exprs = [pl.col(col.name).cast(frame_type_to_polars(col.dtype)) for col in schema]
         return frame.with_columns(exprs)
 
 

@@ -11,8 +11,15 @@ from dataclasses import dataclass
 from decimal import Decimal
 from typing import Any
 
-from loom.etl.declarative.source import SourceSpec
+from loom.etl.declarative._declared_table import ModelBoundSpec
+from loom.etl.declarative.source import (
+    FileSourceSpec,
+    JsonMismatch,
+    SourceSpec,
+    TableSourceSpec,
+)
 from loom.etl.declarative.target import TargetSpec
+from loom.etl.schema import FrameType
 
 
 @dataclass(frozen=True)
@@ -75,6 +82,48 @@ class TargetBinding:
 
 
 @dataclass(frozen=True)
+class DeclaredJsonColumn:
+    """A column the step reads as JSON text, with the type it declares.
+
+    Args:
+        where: Owner and column, such as ``orders.payload``; a target column is prefixed
+            with ``target``.
+        frame_type: The type the column is decoded into.
+        can_refuse: Whether a document that does not fit the type fails the run.
+    """
+
+    where: str
+    frame_type: FrameType
+    can_refuse: bool
+
+    @classmethod
+    def of_step(
+        cls, source_bindings: tuple[SourceBinding, ...], target_binding: TargetBinding
+    ) -> tuple[DeclaredJsonColumn, ...]:
+        """The JSON columns the sources parse and the model target stores nested."""
+        declared = [
+            cls(
+                f"{binding.alias}.{json_column.column}",
+                json_column.frame_type,
+                json_column.on_mismatch is JsonMismatch.FAIL,
+            )
+            for binding in source_bindings
+            if isinstance(binding.spec, TableSourceSpec | FileSourceSpec)
+            for json_column in binding.spec.json_columns
+        ]
+        target = target_binding.spec
+        if isinstance(target, ModelBoundSpec) and target.model_table is not None:
+            declared.extend(
+                cls(f"target {target.table_ref.ref}.{column.name}", column.dtype, True)
+                for column in target.model_table.nested_columns
+            )
+        return tuple(declared)
+
+    def __str__(self) -> str:
+        return f"{self.where} as {self.frame_type}"
+
+
+@dataclass(frozen=True)
 class StepPlan:
     """Compiled plan for a single :class:`~loom.etl.ETLStep`.
 
@@ -96,6 +145,15 @@ class StepPlan:
     streaming: bool = False
     config_bindings: tuple[ConfigValueBinding, ...] = ()
     agent_bindings: tuple[AgentBinding, ...] = ()
+
+    @property
+    def fallible_json_columns(self) -> tuple[str, ...]:
+        """The JSON columns that can refuse a document, each as ``owner.column as type``."""
+        return tuple(
+            str(declared)
+            for declared in DeclaredJsonColumn.of_step(self.source_bindings, self.target_binding)
+            if declared.can_refuse
+        )
 
 
 @dataclass(frozen=True)

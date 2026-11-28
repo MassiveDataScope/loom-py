@@ -31,7 +31,7 @@ def _upsert_spec(
 ) -> UpsertSpec:
     return UpsertSpec(
         table_ref=TableRef("test.table"),
-        upsert_keys=keys,
+        declared_keys=keys,
         partition_cols=partition_cols,
         upsert_exclude=exclude,
         upsert_include=include,
@@ -243,7 +243,7 @@ class TestMergePlanDeleteFlag:
         """A delete flag stays out of the column maps and gates every MERGE action."""
         spec = UpsertSpec(
             table_ref=TableRef("test.table"),
-            upsert_keys=("id",),
+            declared_keys=("id",),
             delete_flag="_deleted",
         )
         plan = _build_merge_plan(

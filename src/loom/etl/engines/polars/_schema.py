@@ -6,8 +6,8 @@ import json
 import logging
 import re
 from collections.abc import Callable, Mapping, Sequence
-from dataclasses import dataclass
-from typing import TypeGuard
+from dataclasses import dataclass, field
+from typing import Any, TypeGuard, cast
 
 import polars as pl
 from deltalake import DeltaTable
@@ -16,7 +16,14 @@ from polars.datatypes import DataTypeClass
 
 from loom.core.errors import InvalidType, InvalidValue
 from loom.etl.declarative.target import SchemaMode
-from loom.etl.schema._schema import SchemaError
+from loom.etl.engines._schema_aligner import SchemaAlignmentPolicy
+from loom.etl.engines.polars._dtype import frame_type_to_polars
+from loom.etl.engines.polars._schema_aligner import (
+    PolarsFrameT,
+    PolarsModelSchemaAligner,
+    PolarsSchemaAligner,
+)
+from loom.etl.schema._schema import SchemaError, StructType
 
 _log = logging.getLogger(__name__)
 
@@ -34,49 +41,64 @@ class PolarsPhysicalSchema:
     Args:
         schema: Native Polars schema for write-time alignment.
         partition_columns: Ordered partition columns.
+        aligner: How a frame column is cast to the schema's type.
     """
 
     schema: pl.Schema
     partition_columns: tuple[str, ...] = ()
+    aligner: PolarsSchemaAligner[Any] = field(default_factory=PolarsSchemaAligner)
+
+    @classmethod
+    def of_model(cls, struct: StructType) -> PolarsPhysicalSchema:
+        """The physical schema of a model's *struct*: its fields in order, JSON text decoded."""
+        polars_struct = cast(pl.Struct, frame_type_to_polars(struct))
+        return cls(schema=pl.Schema(polars_struct.to_schema()), aligner=PolarsModelSchemaAligner())
+
+    def align(self, frame: PolarsFrameT, mode: SchemaMode) -> PolarsFrameT:
+        """Align *frame* with this schema under *mode*, refusing casts that lose values.
+
+        Raises:
+            SchemaError: A column's cast to the table's type would lose its values.
+        """
+        if mode is not SchemaMode.OVERWRITE:
+            self._refuse_lossy_casts(frame.collect_schema())
+        return cast(
+            PolarsFrameT, SchemaAlignmentPolicy(self.aligner).align(frame, self.schema, mode)
+        )
+
+    def _refuse_lossy_casts(self, frame_schema: pl.Schema) -> None:
+        """Refuse a frame column whose cast to the table's type would lose its values.
+
+        Refused, at any depth of a ``Struct`` or ``List``: a ``Struct`` or ``List``
+        cast to ``String``, and a ``String`` cast to a ``Struct`` or ``List``. The
+        check is by dtype, so an all-null ``String`` column is refused for a ``List``
+        too. A top-level ``String`` column the aligner decodes as JSON text is not
+        refused.
+
+        Raises:
+            SchemaError: Naming the first such column and both types.
+        """
+        for name, table_dtype in self.schema.items():
+            frame_dtype = frame_schema.get(name)
+            if frame_dtype is None:
+                continue
+            if self.aligner.is_json_text_target(frame_dtype, table_dtype):
+                continue
+            if _is_lossy(frame_dtype, table_dtype):
+                raise SchemaError(
+                    f"column {name!r} is {frame_dtype} in the frame and {table_dtype} in the "
+                    "table; casting one to the other loses its values. Rewrite the table with "
+                    "SchemaMode.OVERWRITE to change the column's type."
+                )
 
 
 def apply_schema_polars(
-    frame: pl.LazyFrame,
-    schema: pl.Schema | None,
-    mode: SchemaMode,
-) -> pl.LazyFrame:
-    from loom.etl.engines._schema_aligner import SchemaAlignmentPolicy
-    from loom.etl.engines.polars._schema_aligner import PolarsSchemaAligner
-
-    if mode is not SchemaMode.OVERWRITE and schema is not None:
-        refuse_lossy_casts(frame.collect_schema(), schema)
-    policy = SchemaAlignmentPolicy(PolarsSchemaAligner())
-    return policy.align(frame, schema, mode)
-
-
-def refuse_lossy_casts(frame_schema: pl.Schema, table_schema: pl.Schema) -> None:
-    """Refuse a frame column whose cast to the table's type would lose its values.
-
-    A ``Struct`` cast to ``String`` becomes Polars' display text (``{1.0}``
-    for a ``Float64`` field) and a ``String`` cast to a ``List`` wraps or
-    nulls each value; a ``List`` cast to ``String`` and a ``String`` aligned
-    to a ``Struct`` fail inside Polars without naming the table's type. None
-    of them is applied, at any depth of a ``Struct`` or ``List``. The check is
-    by dtype, so an all-null ``String`` column is refused for a ``List`` too.
-    The Spark writer does not refuse these casts: it writes a ``Struct`` or
-    ``List`` into a ``String`` column as text (``{1.0}``, ``[1]``).
-
-    Raises:
-        SchemaError: Naming the first such column and both types.
-    """
-    for name, table_dtype in table_schema.items():
-        frame_dtype = frame_schema.get(name)
-        if frame_dtype is not None and _is_lossy(frame_dtype, table_dtype):
-            raise SchemaError(
-                f"column {name!r} is {frame_dtype} in the frame and {table_dtype} in the "
-                "table; casting one to the other loses its values. Rewrite the table with "
-                "SchemaMode.OVERWRITE to change the column's type."
-            )
+    frame: PolarsFrameT, schema: pl.Schema | None, mode: SchemaMode
+) -> PolarsFrameT:
+    """Align *frame* with a plain *schema*; ``None`` is a table with no schema."""
+    if schema is not None:
+        return PolarsPhysicalSchema(schema).align(frame, mode)
+    return SchemaAlignmentPolicy(PolarsSchemaAligner[PolarsFrameT]()).align(frame, None, mode)
 
 
 def _is_lossy(source: pl.DataType | DataTypeClass, target: pl.DataType | DataTypeClass) -> bool:
