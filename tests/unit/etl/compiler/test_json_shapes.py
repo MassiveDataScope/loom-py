@@ -20,7 +20,7 @@ from loom.etl.schema import (
     StructField,
     StructType,
 )
-from tests.unit.etl.compiler.probes import CompileDeclaration
+from tests.unit.etl.compiler.probes import compile_source, compile_target
 from tests.unit.etl.models import probe_model
 
 
@@ -71,7 +71,7 @@ _SUPPORTED = {
 class TestJsonLeafTypes:
     @pytest.mark.parametrize(("frame_type", "path"), _UNSUPPORTED.values(), ids=list(_UNSUPPORTED))
     def test_a_parse_json_type_with_an_unsupported_leaf_is_refused_naming_its_path(
-        self, compile_source: CompileDeclaration, frame_type: FrameType, path: str
+        self, frame_type: FrameType, path: str
     ) -> None:
         source = FromTable("raw.orders").parse_json("payload", frame_type)
 
@@ -83,9 +83,7 @@ class TestJsonLeafTypes:
             path,
         )
 
-    def test_the_refusal_says_which_column_declares_which_leaf_where(
-        self, compile_source: CompileDeclaration
-    ) -> None:
+    def test_the_refusal_says_which_column_declares_which_leaf_where(self) -> None:
         source = FromTable("raw.orders").parse_json("payload", _in_struct(LoomDtype.BINARY))
 
         with pytest.raises(ETLCompilationError) as refused:
@@ -93,9 +91,7 @@ class TestJsonLeafTypes:
 
         assert "orders.payload declares Binary at $.v, which" in str(refused.value)
 
-    def test_a_model_column_stored_as_a_struct_with_an_unsupported_leaf_is_refused(
-        self, compile_target: CompileDeclaration
-    ) -> None:
+    def test_a_model_column_stored_as_a_struct_with_an_unsupported_leaf_is_refused(self) -> None:
         target = IntoTable(probe_model(Sealed)).append()
 
         with pytest.raises(ETLCompilationError) as refused:
@@ -107,9 +103,7 @@ class TestJsonLeafTypes:
         )
 
     @pytest.mark.parametrize("frame_type", _SUPPORTED.values(), ids=list(_SUPPORTED))
-    def test_a_parse_json_type_with_a_supported_leaf_compiles(
-        self, compile_source: CompileDeclaration, frame_type: FrameType
-    ) -> None:
+    def test_a_parse_json_type_with_a_supported_leaf_compiles(self, frame_type: FrameType) -> None:
         plan = compile_source(FromTable("raw.orders").parse_json("payload", frame_type))
 
         assert plan.fallible_json_columns
