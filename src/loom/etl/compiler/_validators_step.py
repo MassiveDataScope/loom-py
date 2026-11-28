@@ -647,8 +647,7 @@ def _check_update_include_not_absorbed(step_type: type[Any], spec: MergeSpec) ->
     """
     if not spec.include:
         return
-    always_excluded = frozenset(spec.keys) | frozenset(spec.partition_cols)
-    if frozenset(spec.include) <= always_excluded:
+    if frozenset(spec.include) <= spec.match_columns:
         raise ETLCompilationError.from_issue(
             ETLErrorCode.UPDATE_EMPTY_UPDATE_SET.issue(
                 component=step_type, include=str(sorted(spec.include))

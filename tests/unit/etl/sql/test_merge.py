@@ -28,6 +28,7 @@ def _upsert_spec(
     partition_cols: tuple[str, ...] = (),
     exclude: tuple[str, ...] = (),
     include: tuple[str, ...] = (),
+    delete_flag: str | None = None,
 ) -> UpsertSpec:
     return UpsertSpec(
         table_ref=TableRef("test.table"),
@@ -35,6 +36,7 @@ def _upsert_spec(
         partition_cols=partition_cols,
         exclude=exclude,
         include=include,
+        delete_flag=delete_flag,
     )
 
 
@@ -243,11 +245,10 @@ class TestMergePlanDeleteFlag:
         """A delete flag stays out of the column maps and gates every MERGE action."""
         plan = _build_merge_plan(
             combos=[],
-            spec=_upsert_spec(keys=("id",)),
+            spec=_upsert_spec(keys=("id",), delete_flag="_deleted"),
             df_columns=("id", "name", "_deleted"),
             target_alias=TARGET_ALIAS,
             source_alias=SOURCE_ALIAS,
-            delete_flag="_deleted",
         )
 
         assert plan.predicate == "t.id = s.id"

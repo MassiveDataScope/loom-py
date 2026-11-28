@@ -5,7 +5,7 @@ from __future__ import annotations
 import contextlib
 import logging
 from collections.abc import Sequence
-from typing import Any, Literal, cast
+from typing import Any, Literal
 
 import polars as pl
 from deltalake import CommitProperties, DeltaTable, WriterProperties, write_deltalake
@@ -290,7 +290,8 @@ class PolarsTargetWriter(_WritePolicy[pl.LazyFrame, pl.DataFrame, PolarsPhysical
                 "PolarsTargetWriter.to_frame requires homogeneous record types per batch."
             )
         rows = [record.to_row() for record in records]
-        return pl.from_dicts(rows, schema=_polars_lineage_schema(first)).lazy()
+        lineage = StructType.of_columns(get_lineage_schema(record_type))
+        return pl.from_dicts(rows, schema=PolarsPhysicalSchema.of_model(lineage).schema).lazy()
 
     def _physical_schema(self, target: ResolvedTarget) -> PolarsPhysicalSchema | None:
         """Read physical schema from Delta log."""
@@ -549,9 +550,7 @@ class PolarsTargetWriter(_WritePolicy[pl.LazyFrame, pl.DataFrame, PolarsPhysical
     ) -> None:
         """Merge frame into target using Delta MERGE (update + insert)."""
         _ = existing_schema
-        merger, plan, location = self._matched_update_merger(
-            frame, target, spec, mode="upsert", delete_flag=spec.delete_flag
-        )
+        merger, plan, location = self._matched_update_merger(frame, target, spec, mode="upsert")
         if plan.not_matched_insert_predicate is None:
             merger.when_not_matched_insert(updates=plan.insert_values).execute()
         else:
@@ -624,7 +623,6 @@ class PolarsTargetWriter(_WritePolicy[pl.LazyFrame, pl.DataFrame, PolarsPhysical
         spec: MergeSpec,
         *,
         mode: str,
-        delete_flag: str | None = None,
     ) -> tuple[TableMerger, _MergePlan, TableLocation]:
         """Build the Delta MERGE up to the shared ``when_matched_update`` clause.
 
@@ -637,7 +635,6 @@ class PolarsTargetWriter(_WritePolicy[pl.LazyFrame, pl.DataFrame, PolarsPhysical
             target: Resolved path target.
             spec:   Upsert or update spec.
             mode:   Write-mode label for logging.
-            delete_flag: Source column whose true rows delete their match.
 
         Returns:
             Tuple of the prepared merger, the merge plan, and the target
@@ -658,7 +655,6 @@ class PolarsTargetWriter(_WritePolicy[pl.LazyFrame, pl.DataFrame, PolarsPhysical
             df_columns=tuple(frame.columns),
             target_alias=TARGET_ALIAS,
             source_alias=SOURCE_ALIAS,
-            delete_flag=delete_flag,
         )
 
         dt = DeltaTable(location.uri, storage_options=location.storage_options or {})
@@ -823,9 +819,3 @@ def _partition_filter(
     for expr in exprs[1:]:
         result = result | expr
     return result
-
-
-def _polars_lineage_schema(record: LineageRecord) -> pl.Schema:
-    columns = get_lineage_schema(type(record))
-    polars_struct = cast(pl.Struct, frame_type_to_polars(StructType.of_columns(columns)))
-    return pl.Schema(polars_struct.to_schema())

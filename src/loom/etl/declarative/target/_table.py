@@ -132,6 +132,10 @@ class MergeSpec(ModelBoundSpec):
         include:        Explicit allow-list for ``UPDATE SET``.
                         Mutually exclusive with *exclude*.
         schema_mode:    Schema evolution strategy.
+
+    Attributes:
+        delete_flag: The source column whose true rows delete their match; only an
+            upsert sets it, so it is ``None`` here.
     """
 
     declared_keys: tuple[str, ...] | None = None
@@ -139,6 +143,7 @@ class MergeSpec(ModelBoundSpec):
     exclude: tuple[str, ...] = field(default_factory=tuple)
     include: tuple[str, ...] = field(default_factory=tuple)
     schema_mode: SchemaMode = SchemaMode.STRICT
+    delete_flag: str | None = field(default=None, init=False)
 
     @property
     def keys(self) -> tuple[str, ...]:
@@ -146,6 +151,11 @@ class MergeSpec(ModelBoundSpec):
         if self.declared_keys is not None:
             return self.declared_keys
         return ModelKeys.of(self.model).frame_supplied if self.model is not None else ()
+
+    @property
+    def match_columns(self) -> frozenset[str]:
+        """The keys and partition columns of the MERGE ON, never in ``UPDATE SET``."""
+        return frozenset(self.keys) | frozenset(self.partition_cols)
 
     @property
     def declared_columns(self) -> Mapping[str, tuple[str, ...]]:

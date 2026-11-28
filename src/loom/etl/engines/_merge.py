@@ -113,12 +113,8 @@ def _build_upsert_update_cols(
 ) -> tuple[str, ...]:
     """Compute the columns to update on MATCH, respecting exclude/include.
 
-    Keys and partition columns are always excluded from UPDATE SET — updating
-    them would invalidate the match condition.
-
-    If ``include`` is set, only those columns are updated (minus the
-    always-excluded set).  If ``exclude`` is set, those additional
-    columns are skipped.  The two options are mutually exclusive.
+    The spec's ``match_columns`` are never updated. If ``include`` is set, only
+    those columns are updated; if ``exclude`` is set, those columns are skipped.
 
     Args:
         df_columns: Column names from the source frame, in original order.
@@ -127,10 +123,10 @@ def _build_upsert_update_cols(
     Returns:
         Ordered tuple of column names to appear in UPDATE SET.
     """
-    always_excluded = frozenset(spec.keys) | frozenset(spec.partition_cols)
+    match_columns = spec.match_columns
     if spec.include:
-        return tuple(c for c in spec.include if c not in always_excluded)
-    excluded = always_excluded | frozenset(spec.exclude)
+        return tuple(c for c in spec.include if c not in match_columns)
+    excluded = match_columns | frozenset(spec.exclude)
     return tuple(c for c in df_columns if c not in excluded)
 
 
@@ -190,12 +186,12 @@ def _build_merge_plan(
     df_columns: tuple[str, ...],
     target_alias: str,
     source_alias: str,
-    delete_flag: str | None = None,
 ) -> _MergePlan:
     """Build predicate and column maps required by Delta MERGE.
 
-    A *delete_flag* adds the matched-delete clause and guards update and insert.
+    The spec's ``delete_flag`` adds the matched-delete clause and guards update and insert.
     """
+    delete_flag = spec.delete_flag
     columns = _without_delete_flag(df_columns, delete_flag)
     predicate = _build_upsert_predicate(combos, spec, target_alias, source_alias)
     update_cols = _build_upsert_update_cols(columns, spec)
