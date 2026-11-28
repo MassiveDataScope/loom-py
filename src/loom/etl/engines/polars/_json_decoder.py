@@ -63,9 +63,7 @@ class JsonDecoder:
         return column.map_batches(self._series, return_dtype=self.dtype, is_elementwise=True)
 
     def _series(self, batch: pl.Series) -> pl.Series:
-        if len(batch) <= _CHUNK_ROWS:
-            return self._chunk(batch)
-        offsets = range(0, len(batch), _CHUNK_ROWS)
+        offsets = range(0, max(len(batch), 1), _CHUNK_ROWS)
         return pl.concat([self._chunk(batch.slice(offset, _CHUNK_ROWS)) for offset in offsets])
 
     def _chunk(self, batch: pl.Series) -> pl.Series:

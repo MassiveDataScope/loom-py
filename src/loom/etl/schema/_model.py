@@ -1,15 +1,10 @@
-"""Translation of a model, or any annotated class, to the frame types of the lake.
-
-Core inference settles each field's column type once; this module owns the
-lake rules: what Delta can store, and what it refuses. Every annotation goes
-through it, so a model, a msgspec struct, a dataclass and a plain annotated class
-with the same annotations give the same schema.
-"""
+"""Translation of a model, or any annotated class, to the frame types of the lake."""
 
 from __future__ import annotations
 
 from collections.abc import Iterable, Mapping
 from dataclasses import dataclass, replace
+from functools import cached_property
 from typing import Any, Final, TypeAlias, cast, get_origin
 
 from loom.core.errors import InvalidType, InvalidValue
@@ -107,7 +102,11 @@ class LakeTranslator:
 
     def schema_of(self, contract: type) -> tuple[ColumnSchema, ...]:
         """The columns of an annotated class, named by field name."""
-        return tuple(ColumnSchema(f.name, self.frame_type(f)) for f in self.fields_of(contract))
+        return self.columns(self.fields_of(contract))
+
+    def columns(self, fields: Iterable[ResolvedField]) -> tuple[ColumnSchema, ...]:
+        """The columns of resolved *fields*, named by field name."""
+        return tuple(ColumnSchema(f.name, self.frame_type(f)) for f in fields)
 
     def struct_of(self, contract: type) -> StructType:
         """The struct of an annotated class, its fields named by encode name."""
@@ -244,7 +243,7 @@ class LakeTranslator:
         return tuple(info.resolved for info in columns.values())
 
 
-@dataclass(frozen=True, slots=True)
+@dataclass(frozen=True)
 class ModelTable:
     """A model as a lake table: its logical name and the frame type of each column.
 
@@ -254,19 +253,12 @@ class ModelTable:
         schema: The columns, in declaration order.
         json_text_columns: The JSON columns the lake stores as text, which are encoded
             and decoded by hand.
-        column_types: The frame type of each column, by column name.
-        nested_columns: The columns stored as a struct or a list, which JSON text is
-            decoded into.
-        struct_type: The columns as one struct, to translate to an engine schema in one step.
     """
 
     model: type
     name: str
     schema: tuple[ColumnSchema, ...]
     json_text_columns: frozenset[str]
-    column_types: Mapping[str, FrameType]
-    nested_columns: tuple[ColumnSchema, ...]
-    struct_type: StructType
 
     @staticmethod
     @stored_on_class("__loom_model_table__")
@@ -278,20 +270,30 @@ class ModelTable:
             LakeRefusal: A column has a type the lake refuses.
         """
         translator = LakeTranslator(model.__name__)
-        schema = translator.schema_of(model)
+        fields = translator.fields_of(model)
         return ModelTable(
             model=model,
             name=get_table_name(model),
-            schema=schema,
-            json_text_columns=frozenset(
-                field.name for field in translator.fields_of(model) if field.stores_json_text
-            ),
-            column_types={column.name: column.dtype for column in schema},
-            nested_columns=tuple(
-                column for column in schema if isinstance(column.dtype, StructType | ListType)
-            ),
-            struct_type=StructType.of_columns(schema),
+            schema=translator.columns(fields),
+            json_text_columns=frozenset(field.name for field in fields if field.stores_json_text),
         )
+
+    @cached_property
+    def column_types(self) -> Mapping[str, FrameType]:
+        """The frame type of each column, by column name."""
+        return {column.name: column.dtype for column in self.schema}
+
+    @cached_property
+    def nested_columns(self) -> tuple[ColumnSchema, ...]:
+        """The columns stored as a struct or a list, which JSON text is decoded into."""
+        return tuple(
+            column for column in self.schema if isinstance(column.dtype, StructType | ListType)
+        )
+
+    @cached_property
+    def struct_type(self) -> StructType:
+        """The columns as one struct, to translate to an engine schema in one step."""
+        return StructType.of_columns(self.schema)
 
     @property
     def column_names(self) -> tuple[str, ...]:

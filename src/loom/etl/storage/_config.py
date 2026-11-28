@@ -294,14 +294,16 @@ class AuditConfig(LoomFrozenStruct, frozen=True, forbid_unknown_fields=True):
         self, write_ctx: WriteContext, params_instance: Any
     ) -> tuple[tuple[ColumnSchema, str | int], ...]:
         """Each column a write stamps with its value; ``process_run_id`` only when it is set."""
-        values = {
-            f"{self.prefix}{name}": getattr(write_ctx, name) for name, _ in _STANDARD_AUDIT_COLUMNS
-        }
-        values.update({c.name: c.value_of(params_instance) for c in self.custom})
+        if not self.enabled:
+            return ()
+        values = (
+            *(getattr(write_ctx, name) for name, _ in _STANDARD_AUDIT_COLUMNS),
+            *(c.value_of(params_instance) for c in self.custom),
+        )
         return tuple(
-            (column, values[column.name])
-            for column in self.columns
-            if values[column.name] is not None
+            (column, value)
+            for column, value in zip(self.columns, values, strict=True)
+            if value is not None
         )
 
 
