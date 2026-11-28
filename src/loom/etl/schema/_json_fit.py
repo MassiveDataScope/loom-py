@@ -405,6 +405,7 @@ class JsonFit:
 
     A document becomes the structure of its type: every struct a dict holding exactly its
     declared fields, every list a list and every leaf the Python value its rule returns.
+    Undeclared struct fields are ignored whatever they hold.
 
     Args:
         on_mismatch: What a value that does not fit does.
@@ -450,7 +451,7 @@ class JsonFit:
         except msgspec.DecodeError:
             return json.loads(
                 text,
-                parse_int=lambda text: msgspec.Raw("0" if text == "-0" else text),
+                parse_int=lambda digits: msgspec.Raw("0" if digits == "-0" else digits),
                 parse_float=msgspec.Raw,
                 parse_constant=lambda _token: _NON_JSON,
             )

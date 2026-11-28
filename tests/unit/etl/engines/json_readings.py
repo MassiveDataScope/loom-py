@@ -86,12 +86,10 @@ FLOAT32_MAXIMUM = 3.4028234663852886e38
 NAIVE_INSTANT = datetime(2026, 11, 28, 10)
 HUGE_INTEGER = "1" + "0" * 5000
 LEVEL = EnumType(("low", "high"))
-TEXT_AND_FLOAT = StructType((StructField("s", LoomDtype.UTF8), StructField("f", LoomDtype.FLOAT64)))
 DAY_RECORD = StructType((StructField("d", LoomDtype.INT64),))
-ARRAY_OF_RECORDS = ArrayType(DAY_RECORD, 1)
 ARRAY_OF_LEVELS = ArrayType(StructType((StructField("e", LEVEL),)), 1)
 TEXT_FIELD = StructType((StructField("s", LoomDtype.UTF8),))
-NESTED_ARRAY = StructType((StructField("q", ARRAY_OF_RECORDS),))
+NESTED_ARRAY = StructType((StructField("q", ArrayType(DAY_RECORD, 1)),))
 PAIR = StructType((StructField("a", LoomDtype.INT64), StructField("b", LoomDtype.INT64)))
 INT_RULE = "an integer from -9223372036854775808 to 9223372036854775807"
 SMALL_DECIMAL_RULE = "a decimal of 4 digits, 2 after the point"
@@ -197,6 +195,7 @@ POLARS_FITS = [
     Fit("struct-with-a-null-array-of-structs", NESTED_ARRAY, '{"q": null}', {"q": None}),
     Fit("list-of-structs", ListType(DAY_RECORD), '[{"d": 1}]', [{"d": 1}]),
     Fit("instant-in-a-struct", AT, '{"at": "2026-11-28 10:00:00"}', {"at": INSTANT}),
+    Fit("str-of-minus-zero-dropping-undeclared-nan", TEXT_FIELD, '{"s": -0, "x": NaN}', {"s": "0"}),
 ]
 
 POLARS_UNFITS = [
@@ -252,14 +251,6 @@ POLARS_UNFITS = [
         TEXT_RULE,
         {"s": None},
         "$.v.s",
-    ),
-    Unfit(
-        "str-reads-minus-zero-beside-a-non-json-constant",
-        TEXT_AND_FLOAT,
-        '{"s": -0, "f": NaN}',
-        FLOAT64_RULE,
-        {"s": "0", "f": None},
-        "$.v.f",
     ),
     Unfit("list-element", ListType(LoomDtype.INT64), '[1, "x"]', INT_RULE, [1, None], "$.v[]"),
     Unfit("struct-field", PAIR, '{"a": 1, "b": "x"}', INT_RULE, {"a": 1, "b": None}, "$.v.b"),

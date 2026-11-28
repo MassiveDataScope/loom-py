@@ -162,6 +162,7 @@ class FromTable:
         """Return a new ``FromTable`` that decodes *column* from JSON at read time.
 
         The string column *column* is decoded into the type *contract* declares.
+        Undeclared struct fields are ignored whatever they hold.
 
         Args:
             column:   Name of the string column that contains the JSON payload.
@@ -381,6 +382,7 @@ class FromFile:
         """Return a new ``FromFile`` that decodes *column* from JSON at read time.
 
         The string column *column* is decoded into the type *contract* declares.
+        Undeclared struct fields are ignored whatever they hold.
 
         Args:
             column:   Name of the string column that contains the JSON payload.

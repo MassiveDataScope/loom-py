@@ -16,6 +16,7 @@ from loom.etl.schema import (
     StructField,
     StructType,
 )
+from tests.unit.etl.engines.json_readings import ARRAY_OF_LEVELS
 
 _PAIR = StructType((StructField("v", LoomDtype.INT64), StructField("w", LoomDtype.INT64)))
 
@@ -52,9 +53,9 @@ class TestNullColumnTypeSafety:
 
 
 class TestUnsupportedLeaf:
-    def test_a_coarse_leaf_no_json_rule_reads_is_named_before_the_dtype_conversion(self) -> None:
+    def test_a_leaf_no_json_rule_reads_is_refused_naming_its_path(self) -> None:
         with pytest.raises(JsonLeafUnsupported, match=r"at \$"):
-            _decoded(LoomDtype.DURATION, _documents("1"))
+            _decoded(LoomDtype.LIST, _documents("[1]"))
 
 
 class TestWholeDocuments:
@@ -63,7 +64,7 @@ class TestWholeDocuments:
         ["not json", "[1]", _TOO_DEEP],
         ids=["not-json", "not-an-object", "nesting-too-deep"],
     )
-    def test_null_policy_nulls_a_document_that_is_not_an_object(self, document: str) -> None:
+    def test_null_policy_nulls_a_document_unreadable_as_an_object(self, document: str) -> None:
         decoded = _decoded(_PAIR, _documents(document), JsonMismatch.NULL)
 
         assert decoded.to_list() == [None]
@@ -99,6 +100,11 @@ _BAD = '{"v": "x", "w": 9}'
 
 
 class TestBatches:
+    def test_a_valued_array_of_structs_beside_a_null_row_reads_both(self) -> None:
+        rows = _decoded(ARRAY_OF_LEVELS, _documents('[{"e": "low"}]', None)).to_list()
+
+        assert rows == [[{"e": "low"}], None]
+
     def test_a_bad_row_among_many_is_nulled_alone(self) -> None:
         documents = _documents(*[_GOOD] * 10_000, _BAD, *[_GOOD] * 10_000)
 

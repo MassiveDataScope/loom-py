@@ -18,12 +18,12 @@ _CHUNK_ROWS: Final = 8_192
 def _build_type(arrow_type: pa.DataType) -> pa.DataType:
     """*arrow_type* with every dictionary a plain value and every large list a list."""
     if pa.types.is_dictionary(arrow_type):
-        return _build_type(arrow_type.value_type)
+        return arrow_type.value_type
     if pa.types.is_struct(arrow_type):
         return pa.struct([field.with_type(_build_type(field.type)) for field in arrow_type])
     if pa.types.is_fixed_size_list(arrow_type):
         return pa.list_(_build_type(arrow_type.value_type), arrow_type.list_size)
-    if pa.types.is_list(arrow_type) or pa.types.is_large_list(arrow_type):
+    if pa.types.is_large_list(arrow_type):
         return pa.list_(_build_type(arrow_type.value_type))
     return arrow_type
 
