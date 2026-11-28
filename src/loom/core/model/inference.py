@@ -273,6 +273,33 @@ class AnnotatedClass:
         """Whether it is a class with at least one readable annotated field."""
         return isinstance(self.target, type) and self.is_readable and bool(self.fields)
 
+    @property
+    def column_type(self) -> ColumnType | _Undeclared:
+        """The column type a field annotated with this class infers, else why it has none."""
+        rule = self._scalar_rule(self.target)
+        if rule is not None:
+            return rule
+        if issubclass(self.target, _CONTAINERS) or self.is_record or is_typeddict(self.target):
+            return JSON
+        if not self.is_readable:
+            return _Undeclared(
+                f"{self.target.__name__}, a class whose annotations could not be resolved"
+            )
+        return _Undeclared(f"{self.target.__name__}, a class that is not a record")
+
+    @staticmethod
+    def _scalar_rule(scalar: type) -> ColumnType | _Undeclared | None:
+        if not issubclass(scalar, Enum):
+            return _SCALAR_COLUMN_TYPES.get(scalar)
+        return next(
+            (
+                _SCALAR_COLUMN_TYPES[mixin]
+                for mixin in scalar.__mro__
+                if mixin in _SCALAR_COLUMN_TYPES
+            ),
+            None,
+        )
+
     def resolve(
         self,
         declared: Mapping[str, ColumnFieldSpec] | None = None,
@@ -317,6 +344,7 @@ _SCALAR_COLUMN_TYPES: Final[Mapping[type, ColumnType | _Undeclared]] = {
     UUID: Uuid,
     Decimal: _Undeclared("a Decimal"),
     timedelta: _Undeclared("a timedelta"),
+    Enum: _Undeclared("a plain Enum"),
 }
 
 _CONTAINERS: Final = (list, tuple, set, frozenset, dict)
@@ -367,37 +395,17 @@ class _Resolver:
         base = column_base.annotation
         if any(isinstance(entry, JsonMarker) for entry in column_base.metadata):
             return Text
-        if base is Any or get_origin(base) is Literal:
-            return _Undeclared("Any" if base is Any else "a Literal")
+        if base is Any:
+            return _Undeclared("Any")
+        if get_origin(base) is Literal:
+            return _Undeclared("a Literal")
         members = Annotation(base).inner_args
         if members is not None:
             return self._infer_union(members)
         cls = get_origin(base) or base
         if not isinstance(cls, type):
             return _Undeclared(f"the annotation {base!r}")
-        rule = self._scalar_rule(cls)
-        if rule is not None:
-            return rule
-        if issubclass(cls, Enum):
-            return _Undeclared("a plain Enum")
-        if issubclass(cls, _CONTAINERS) or AnnotatedClass(cls).is_record or is_typeddict(cls):
-            return JSON
-        if not AnnotatedClass(cls).is_readable:
-            return _Undeclared(f"{cls.__name__}, a class whose annotations could not be resolved")
-        return _Undeclared(f"{cls.__name__}, a class that is not a record")
-
-    @staticmethod
-    def _scalar_rule(scalar: type) -> ColumnType | _Undeclared | None:
-        if not issubclass(scalar, Enum):
-            return _SCALAR_COLUMN_TYPES.get(scalar)
-        return next(
-            (
-                _SCALAR_COLUMN_TYPES[mixin]
-                for mixin in scalar.__mro__
-                if mixin in _SCALAR_COLUMN_TYPES
-            ),
-            None,
-        )
+        return AnnotatedClass(cls).column_type
 
     def _infer_union(self, members: tuple[Any, ...]) -> ColumnType | _Undeclared:
         found = {self._infer(Annotation(member).column_base) for member in members}
