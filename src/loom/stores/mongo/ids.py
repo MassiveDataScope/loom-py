@@ -131,7 +131,7 @@ def _reject_autoincrement(model: type, info: ColumnFieldInfo) -> None:
     if not info.field.autoincrement:
         return
     raise ConfigError(
-        f"{model.__qualname__}.{info.name} declares autoincrement=True, which the "
+        f"{model.__qualname__}.{info.resolved.name} declares autoincrement=True, which the "
         "mongo backend cannot serve; declare server_default=ServerDefault.UUID4 "
         "or opt in to ObjectId ids."
     )
@@ -141,8 +141,9 @@ def _reject_unmintable_annotation(model: type, info: ColumnFieldInfo) -> None:
     if info.python_type in _GENERATED_KEY_TYPES:
         return
     raise ConfigError(
-        f"{model.__qualname__}.{info.name} is annotated {info.python_type.__name__}, which "
-        "cannot hold the id the mongo backend generates; annotate the key as str or UUID."
+        f"{model.__qualname__}.{info.resolved.name} is annotated "
+        f"{info.python_type.__name__}, which cannot hold the id the mongo backend generates; "
+        "annotate the key as str or UUID."
     )
 
 

@@ -98,7 +98,7 @@ class ModelCheck:
             field, reason = "keys", "declares neither a business key nor a primary key"
         else:
             field, fill = next(iter(keys.store_filled.items()))
-            reason = f"primary key {field!r} is {fill.description}"
+            reason = f"primary key {field!r} is {fill}"
         raise self._refusal(ETLErrorCode.MODEL_KEY_NOT_IN_FRAME, field, reason=reason)
 
     def _check_history_date_type(self, spec: TableSpec) -> None:

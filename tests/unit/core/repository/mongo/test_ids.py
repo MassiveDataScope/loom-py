@@ -33,7 +33,7 @@ class _IntKey(BaseModel):
 class TestMongoGeneratedIds:
     @pytest.mark.parametrize("model", [_TextKey, _UuidKey])
     def test_a_str_or_uuid_key_left_unset_until_generated_is_accepted(self, model: type) -> None:
-        assert validate_id_field(model).name == "id"
+        assert validate_id_field(model).resolved.name == "id"
 
     def test_an_int_key_left_unset_is_still_refused(self) -> None:
         with pytest.raises(ConfigError, match="annotated int"):
