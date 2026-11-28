@@ -25,6 +25,7 @@ from loom.etl.declarative.target import TargetSpec  # noqa: E402
 from loom.etl.declarative.target._table import ReplaceSpec  # noqa: E402
 from loom.etl.schema._schema import ColumnSchema, LoomDtype  # noqa: E402
 from loom.etl.testing import InMemoryCatalog  # noqa: E402
+from tests.unit.etl.engines.doubles import table_path  # noqa: E402
 
 _POLARS_TO_LOOM: dict[type, LoomDtype] = {
     pl.Int8: LoomDtype.INT8,
@@ -46,14 +47,6 @@ _POLARS_TO_LOOM: dict[type, LoomDtype] = {
 
 def _polars_dtype_to_loom(dtype: pl.DataType) -> LoomDtype:
     return _POLARS_TO_LOOM.get(type(dtype), LoomDtype.NULL)
-
-
-def table_path(root: Path, ref: TableRef) -> Path:
-    """Resolve a ``TableRef`` to a filesystem path under *root*.
-
-    ``"raw.orders"`` → ``root/raw/orders``.
-    """
-    return root.joinpath(*ref.ref.split("."))
 
 
 @pytest.fixture

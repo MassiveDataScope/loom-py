@@ -10,8 +10,7 @@ from deltalake import write_deltalake
 from loom.etl.declarative.expr._refs import TableRef
 from loom.etl.engines.polars import PolarsTargetWriter
 from loom.etl.storage._config import MissingTablePolicy
-
-from .conftest import table_path
+from tests.unit.etl.engines.doubles import table_path
 
 
 def read_delta_table(root: Path, ref: str) -> pl.DataFrame:

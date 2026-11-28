@@ -10,7 +10,9 @@ from __future__ import annotations
 
 from collections.abc import Mapping
 from dataclasses import dataclass, field
+from typing import ClassVar
 
+from loom.core.model.introspection import ModelKeys
 from loom.core.schema import SchemaMode
 from loom.etl.declarative._declared_table import ModelBoundSpec
 from loom.etl.declarative.expr._predicate import PredicateNode
@@ -116,55 +118,56 @@ class ReplaceWhereSpec(ModelBoundSpec):
         return {"replace_where": columns_in(self.replace_predicate)}
 
 
-def _merge_roles(spec: UpsertSpec | UpdateSpec) -> Mapping[str, tuple[str, ...]]:
-    return {
-        "keys": spec.upsert_keys,
-        "partition_cols": spec.partition_cols,
-        "exclude": spec.upsert_exclude,
-        "include": spec.upsert_include,
-    }
-
-
 @dataclass(frozen=True)
-class UpsertSpec(ModelBoundSpec):
-    """Merge rows into a Delta table using explicit merge keys (UPSERT).
+class MergeSpec(ModelBoundSpec):
+    """What every Delta MERGE spec shares: the keys it matches on and the columns it updates.
 
     Args:
         table_ref:      Logical table reference.
         declared_keys:  Columns that uniquely identify a row (MERGE ON); ``None``
-                        follows the model's conflict key at compile time.
-        schema_mode:    Schema evolution strategy.
+                        follows the model's conflict key, ``()`` stays empty.
         partition_cols: Partition columns added to the MERGE ON predicate
-                        for file-level pruning.  Strongly recommended for
-                        large tables.
-        upsert_exclude: Columns excluded from ``UPDATE SET`` on match.
-                        Mutually exclusive with *upsert_include*.
-        upsert_include: Explicit allow-list for ``UPDATE SET``.
-                        Mutually exclusive with *upsert_exclude*.
-        delete_flag:    Optional boolean source column. Rows where it is true
-                        delete the matched target row and are not inserted
-                        when unmatched. A false or null value keeps the normal
-                        update or insert; null is read as false. The column is
-                        removed before schema alignment, so it is not written
-                        and does not appear in the update or insert maps.
+                        for file-level pruning.
+        exclude:        Columns excluded from ``UPDATE SET`` on match.
+                        Mutually exclusive with *include*.
+        include:        Explicit allow-list for ``UPDATE SET``.
+                        Mutually exclusive with *exclude*.
+        schema_mode:    Schema evolution strategy.
+
+    Attributes:
+        method: The ``Into`` method that declares this spec, as error messages name it.
+        delete_flag: ``None`` unless the spec deletes matched rows.
     """
 
+    method: ClassVar[str]
     declared_keys: tuple[str, ...] | None = None
-    schema_mode: SchemaMode = SchemaMode.STRICT
     partition_cols: tuple[str, ...] = field(default_factory=tuple)
-    upsert_exclude: tuple[str, ...] = field(default_factory=tuple)
-    upsert_include: tuple[str, ...] = field(default_factory=tuple)
-    delete_flag: str | None = None
+    exclude: tuple[str, ...] = field(default_factory=tuple)
+    include: tuple[str, ...] = field(default_factory=tuple)
+    schema_mode: SchemaMode = SchemaMode.STRICT
+    delete_flag: str | None = field(default=None, init=False, repr=False)
+
+    @property
+    def keys(self) -> tuple[str, ...]:
+        """The merge keys: declared, else the model's the frame can supply, else ``()``."""
+        if self.declared_keys is not None:
+            return self.declared_keys
+        return ModelKeys.of(self.model).frame_supplied if self.model is not None else ()
+
+    @property
+    def match_columns(self) -> frozenset[str]:
+        """The keys and partition columns of the MERGE ON, never in ``UPDATE SET``."""
+        return frozenset(self.keys) | frozenset(self.partition_cols)
 
     @property
     def declared_columns(self) -> Mapping[str, tuple[str, ...]]:
         """The model columns this spec names, by the argument that names them."""
-        return _merge_roles(self)
-
-    @property
-    def upsert_keys(self) -> tuple[str, ...]:
-        """The merge keys: declared, else the model's conflict key."""
-        return self._declared_or_model_keys(self.declared_keys)
+        return {
+            "keys": self.keys,
+            "partition_cols": self.partition_cols,
+            "exclude": self.exclude,
+            "include": self.include,
+        }
 
     @property
     def delete_flag_conflict(self) -> str | None:
@@ -172,68 +175,55 @@ class UpsertSpec(ModelBoundSpec):
 
         The option is ``keys``, ``partition_cols``, ``exclude`` or ``include``.
         """
+        if self.delete_flag is None:
+            return None
         return next(
             (role for role, names in self.declared_columns.items() if self.delete_flag in names),
             None,
         )
 
+    @property
+    def is_no_op(self) -> bool:
+        """Whether the write can change no row whatever the source holds."""
+        return False
+
+    def update_columns(self, df_columns: tuple[str, ...]) -> tuple[str, ...]:
+        """The columns ``UPDATE SET`` writes on match, in order.
+
+        Match columns are never updated; ``include`` keeps only its own columns,
+        ``exclude`` drops its columns from *df_columns*.
+        """
+        match_columns = self.match_columns
+        if self.include:
+            return tuple(column for column in self.include if column not in match_columns)
+        excluded = match_columns | frozenset(self.exclude)
+        return tuple(column for column in df_columns if column not in excluded)
+
 
 @dataclass(frozen=True)
-class UpdateSpec(ModelBoundSpec):
-    """Merge rows into a Delta table updating matches only (matched-only MERGE).
-
-    Same MERGE machinery as :class:`UpsertSpec`, minus the insert branch:
-    source rows without a matching target row are silently ignored, so the
-    write can never grow the table.  The ``upsert_*`` read-only aliases
-    satisfy the shared merge-plan protocol without leaking upsert vocabulary
-    into the public field names.
+class UpsertSpec(MergeSpec):
+    """Merge rows into a Delta table, updating matches and inserting the rest (UPSERT).
 
     Args:
-        table_ref:      Logical table reference.
-        declared_keys:  Columns that uniquely identify a row (MERGE ON); ``None``
-                        follows the model's conflict key at compile time.
-        schema_mode:    Schema evolution strategy.
-        partition_cols: Partition columns added to the MERGE ON predicate
-                        for file-level pruning.  Strongly recommended for
-                        large tables.
-        exclude:        Columns excluded from ``UPDATE SET`` on match.
-                        Mutually exclusive with *include*.
-        include:        Explicit allow-list for ``UPDATE SET``.
-                        Mutually exclusive with *exclude*.
+        delete_flag: Optional boolean source column. Rows where it is true
+                     delete the matched target row and are not inserted
+                     when unmatched. A false or null value keeps the normal
+                     update or insert; null is read as false. The column is
+                     removed before schema alignment, so it is not written
+                     and does not appear in the update or insert maps.
     """
 
-    declared_keys: tuple[str, ...] | None = None
-    schema_mode: SchemaMode = SchemaMode.STRICT
-    partition_cols: tuple[str, ...] = field(default_factory=tuple)
-    exclude: tuple[str, ...] = field(default_factory=tuple)
-    include: tuple[str, ...] = field(default_factory=tuple)
+    method: ClassVar[str] = "upsert"
+    delete_flag: str | None = None
+
+
+@dataclass(frozen=True)
+class UpdateSpec(MergeSpec):
+    """Merge rows into a Delta table updating matches only; unmatched source rows are ignored."""
+
+    method: ClassVar[str] = "update"
 
     @property
-    def declared_columns(self) -> Mapping[str, tuple[str, ...]]:
-        """The model columns this spec names, by the argument that names them."""
-        return _merge_roles(self)
-
-    @property
-    def keys(self) -> tuple[str, ...]:
-        """The merge keys: declared, else the model's conflict key."""
-        return self._declared_or_model_keys(self.declared_keys)
-
-    @property
-    def upsert_keys(self) -> tuple[str, ...]:
-        """Merge-protocol alias for :attr:`keys`."""
-        return self.keys
-
-    @property
-    def upsert_exclude(self) -> tuple[str, ...]:
-        """Merge-protocol alias for :attr:`exclude`."""
-        return self.exclude
-
-    @property
-    def upsert_include(self) -> tuple[str, ...]:
-        """Merge-protocol alias for :attr:`include`."""
-        return self.include
-
-    @property
-    def delete_flag(self) -> None:
-        """Merge-protocol field: an update never deletes, so it has no delete flag."""
-        return None
+    def is_no_op(self) -> bool:
+        """Whether ``include`` names only match columns, so ``UPDATE SET`` writes nothing."""
+        return bool(self.include) and not self.update_columns(())

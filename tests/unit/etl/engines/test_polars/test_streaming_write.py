@@ -21,8 +21,7 @@ from loom.etl.declarative.target import (
 from loom.etl.engines.polars import _writer as writer_mod
 from loom.etl.engines.polars._writer import PolarsTargetWriter
 from loom.etl.storage._config import MissingTablePolicy
-
-from .conftest import table_path
+from tests.unit.etl.engines.doubles import table_path
 
 
 class TestStreamingSpecField:

@@ -8,6 +8,9 @@ from pyspark.sql import Column, DataFrame
 from pyspark.sql import functions as F
 from pyspark.sql import types as T
 
+from loom.etl.declarative.source import JsonMismatch
+from loom.etl.engines.spark._json_failure import FROM_JSON_OPTIONS
+
 
 class SparkSchemaAligner:
     """Aligns a DataFrame."""
@@ -21,7 +24,8 @@ class SparkSchemaAligner:
     def cast_column(self, name: str, dtype: T.DataType, source: T.DataType) -> tuple[str, Column]:
         """Cast a column; JSON text becomes the struct or array the schema declares for it."""
         if self.is_json_text_target(source, dtype):
-            return name, F.from_json(F.col(name), dtype, {"mode": "FAILFAST", "timeZone": "UTC"})
+            options = dict(FROM_JSON_OPTIONS[JsonMismatch.FAIL])
+            return name, F.from_json(F.col(name), dtype, options)
         return name, self._cast_col(name, dtype)
 
     def is_json_text_target(self, source: T.DataType, dtype: T.DataType) -> bool:

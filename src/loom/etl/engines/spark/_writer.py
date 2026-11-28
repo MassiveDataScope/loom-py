@@ -24,7 +24,7 @@ from loom.etl.declarative._write_options import (
 from loom.etl.declarative.target import SchemaMode, UnsupportedUpsertDeleteFlagError
 from loom.etl.declarative.target._file import FileSpec
 from loom.etl.declarative.target._history import HistorifySpec
-from loom.etl.declarative.target._table import AppendSpec, UpdateSpec, UpsertSpec
+from loom.etl.declarative.target._table import AppendSpec, MergeSpec, UpdateSpec, UpsertSpec
 from loom.etl.engines._format_registry import resolve_format_handler, write_options_or_default
 from loom.etl.engines._merge import (
     SOURCE_ALIAS,
@@ -319,7 +319,7 @@ class SparkTargetWriter(_WritePolicy[DataFrame, DataFrame, SparkPhysicalSchema])
         self,
         frame: DataFrame,
         target: ResolvedTarget,
-        spec: UpsertSpec | UpdateSpec,
+        spec: MergeSpec,
     ) -> tuple[DeltaMergeBuilder, _MergePlan]:
         """Build the Delta MERGE up to the shared ``whenMatchedUpdate`` clause.
 

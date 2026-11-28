@@ -342,12 +342,6 @@ def _refuse_undeclared_column_types(
 ) -> None:
     """Refuse a field whose column type is neither declared nor inferred.
 
-    loom infers no SQL type from the values of an enum or a ``Literal``, nor a
-    precision and scale for a ``Decimal``: Postgres rounds a value to the
-    declared scale and refuses one past the declared precision. A class that
-    is not a record has no column either; the fix is to declare the column or
-    to store a type loom infers and convert it in the domain.
-
     Raises:
         InvalidValue: Naming the model, the field, why no type is inferred and
             how to declare one.

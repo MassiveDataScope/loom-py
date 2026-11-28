@@ -18,8 +18,8 @@ from loom.etl.declarative.target._table import UpdateSpec
 from loom.etl.engines.polars import PolarsTargetWriter
 from loom.etl.schema._schema import SchemaNotFoundError
 from loom.etl.storage._config import MissingTablePolicy
+from tests.unit.etl.engines.doubles import table_path
 
-from .conftest import table_path
 from .doubles import read_delta_table, seed_delta_table
 
 # ---------------------------------------------------------------------------

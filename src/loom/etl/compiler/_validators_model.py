@@ -12,13 +12,8 @@ from loom.core.schema import SchemaMode
 from loom.etl.compiler._errors import ETLCompilationError, ETLErrorCode
 from loom.etl.declarative._declared_table import ModelBoundSpec
 from loom.etl.declarative.source import SourceSpec, TableSourceSpec
-from loom.etl.declarative.target import (
-    HistorifySpec,
-    TableSpec,
-    TargetSpec,
-    UpdateSpec,
-    UpsertSpec,
-)
+from loom.etl.declarative.target import HistorifySpec, TableSpec, TargetSpec
+from loom.etl.declarative.target._table import MergeSpec
 from loom.etl.event import EtlEvent, EtlKey
 from loom.etl.schema import LakeRefusal, ModelTable
 
@@ -92,7 +87,7 @@ class ModelCheck:
             )
 
     def _check_merge_keys(self, spec: TableSpec) -> None:
-        if not isinstance(spec, UpsertSpec | UpdateSpec):
+        if not isinstance(spec, MergeSpec):
             return
         if spec.declared_keys is not None:
             return
@@ -103,7 +98,7 @@ class ModelCheck:
             field, reason = "keys", "declares neither a business key nor a primary key"
         else:
             field, fill = next(iter(keys.store_filled.items()))
-            reason = f"primary key {field!r} is {fill.description}"
+            reason = f"primary key {field!r} is {fill}"
         raise self._refusal(ETLErrorCode.MODEL_KEY_NOT_IN_FRAME, field, reason=reason)
 
     def _check_history_date_type(self, spec: TableSpec) -> None:

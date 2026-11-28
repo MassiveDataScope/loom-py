@@ -97,7 +97,7 @@ class ResolvedField:
     @property
     def stores_json_text(self) -> bool:
         """Whether the field is JSON whose structure is not described, so it is kept as text."""
-        return isinstance(self.shape, Opaque) and self.column_type is not None
+        return isinstance(self.shape, Opaque)
 
 
 @dataclass(frozen=True, slots=True)
@@ -168,12 +168,7 @@ class Annotation:
 
     @property
     def without_optional(self) -> Any:
-        """The single type of a union once ``None`` and ``UnsetType`` are dropped.
-
-        ``UNSET`` means "not provided", not another type, so ``X | UnsetType``
-        and ``X | None | UnsetType`` unwrap to ``X``; whether ``None`` is admitted
-        is decided apart, by :attr:`admits_none`.
-        """
+        """The single type of a union once ``None`` and ``UnsetType`` are dropped, else the hint."""
         args = self.inner_args
         if args is not None and len(args) == 1:
             return args[0]
@@ -273,6 +268,35 @@ class AnnotatedClass:
         """Whether it is a class with at least one readable annotated field."""
         return isinstance(self.target, type) and self.is_readable and bool(self.fields)
 
+    @property
+    def column_type(self) -> ColumnType | _Undeclared:
+        """The column type a field annotated with this class infers, else why it has none."""
+        if not isinstance(self.target, type):
+            return _Undeclared(f"the annotation {self.target!r}")
+        rule = self._scalar_rule(self.target)
+        if rule is not None:
+            return rule
+        if issubclass(self.target, _CONTAINERS) or self.is_record or is_typeddict(self.target):
+            return JSON
+        if not self.is_readable:
+            return _Undeclared(
+                f"{self.target.__name__}, a class whose annotations could not be resolved"
+            )
+        return _Undeclared(f"{self.target.__name__}, a class that is not a record")
+
+    @staticmethod
+    def _scalar_rule(scalar: type) -> ColumnType | _Undeclared | None:
+        if not issubclass(scalar, Enum):
+            return _SCALAR_COLUMN_TYPES.get(scalar)
+        return next(
+            (
+                _SCALAR_COLUMN_TYPES[mixin]
+                for mixin in scalar.__mro__
+                if mixin in _SCALAR_COLUMN_TYPES
+            ),
+            None,
+        )
+
     def resolve(
         self,
         declared: Mapping[str, ColumnFieldSpec] | None = None,
@@ -291,12 +315,15 @@ class AnnotatedClass:
             exclude: Field names that are not columns, such as relations.
         """
         declared = declared or {}
-        resolver = _Resolver(frozenset({self.target}))
         return tuple(
-            resolver.resolve(source, declared.get(source.name))
+            self.resolve_field(source, source.declaration(declared.get(source.name)))
             for source in self.fields
             if source.name not in exclude
         )
+
+    def resolve_field(self, source: FieldSource, declaration: FieldDeclaration) -> ResolvedField:
+        """The column type of *source*, one of these fields, under its *declaration*."""
+        return _Resolver(frozenset({self.target})).resolve(source, declaration)
 
 
 @dataclass(frozen=True, slots=True)
@@ -317,6 +344,7 @@ _SCALAR_COLUMN_TYPES: Final[Mapping[type, ColumnType | _Undeclared]] = {
     UUID: Uuid,
     Decimal: _Undeclared("a Decimal"),
     timedelta: _Undeclared("a timedelta"),
+    Enum: _Undeclared("a plain Enum"),
 }
 
 _CONTAINERS: Final = (list, tuple, set, frozenset, dict)
@@ -333,9 +361,10 @@ class _Resolver:
     path: frozenset[type]
 
     def resolve(
-        self, source: FieldSource, declared: ColumnFieldSpec | None = None
+        self, source: FieldSource, declaration: FieldDeclaration | None = None
     ) -> ResolvedField:
-        declaration = source.declaration(declared)
+        if declaration is None:
+            declaration = source.declaration()
         column_base = Annotation(source.annotation).column_base
         base = column_base.annotation
         if declaration.column_type is not None:
@@ -367,37 +396,14 @@ class _Resolver:
         base = column_base.annotation
         if any(isinstance(entry, JsonMarker) for entry in column_base.metadata):
             return Text
-        if base is Any or get_origin(base) is Literal:
-            return _Undeclared("Any" if base is Any else "a Literal")
+        if base is Any:
+            return _Undeclared("Any")
+        if get_origin(base) is Literal:
+            return _Undeclared("a Literal")
         members = Annotation(base).inner_args
         if members is not None:
             return self._infer_union(members)
-        cls = get_origin(base) or base
-        if not isinstance(cls, type):
-            return _Undeclared(f"the annotation {base!r}")
-        rule = self._scalar_rule(cls)
-        if rule is not None:
-            return rule
-        if issubclass(cls, Enum):
-            return _Undeclared("a plain Enum")
-        if issubclass(cls, _CONTAINERS) or AnnotatedClass(cls).is_record or is_typeddict(cls):
-            return JSON
-        if not AnnotatedClass(cls).is_readable:
-            return _Undeclared(f"{cls.__name__}, a class whose annotations could not be resolved")
-        return _Undeclared(f"{cls.__name__}, a class that is not a record")
-
-    @staticmethod
-    def _scalar_rule(scalar: type) -> ColumnType | _Undeclared | None:
-        if not issubclass(scalar, Enum):
-            return _SCALAR_COLUMN_TYPES.get(scalar)
-        return next(
-            (
-                _SCALAR_COLUMN_TYPES[mixin]
-                for mixin in scalar.__mro__
-                if mixin in _SCALAR_COLUMN_TYPES
-            ),
-            None,
-        )
+        return AnnotatedClass(get_origin(base) or base).column_type
 
     def _infer_union(self, members: tuple[Any, ...]) -> ColumnType | _Undeclared:
         found = {self._infer(Annotation(member).column_base) for member in members}
@@ -407,7 +413,7 @@ class _Resolver:
 
     def _shape(self, column_type: ColumnType, base: Any) -> JsonShape | None:
         if column_type.kind is ColumnKind.POSTGRES_ARRAY:
-            return ListShape(self._declared_item(column_type.args[0]))
+            return ListShape(ResolvedField("item", "item", column_type.args[0], nullable=True))
         if column_type.portable() != JSON:
             return None
         return self._annotation_shape(base)
@@ -425,7 +431,3 @@ class _Resolver:
                 tuple(below.resolve(source) for source in AnnotatedClass(base).fields)
             )
         return Opaque()
-
-    @staticmethod
-    def _declared_item(item: ColumnType) -> ResolvedField:
-        return ResolvedField("item", "item", item, nullable=True)

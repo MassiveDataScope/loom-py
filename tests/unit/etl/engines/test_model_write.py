@@ -61,20 +61,23 @@ def _orders(engine: ModelEngine, *order_ids: str, void: Collection[str] | None =
 
 
 _REPLACE = IntoTable(Order).replace()
+_ORDER_UPSERT = IntoTable(Order).upsert(keys=_ORDER_ID)
 _REPLACE_PARTITIONS = IntoTable(Order).replace_partitions(*_BY_CUSTOMER)
 _REPLACE_PARTITIONS_STREAMING = IntoTable(Order).replace_partitions(*_BY_CUSTOMER, streaming=True)
-_ORDER_UPSERT = IntoTable(Order).upsert(keys=_ORDER_ID)
-_ORDER_WRITES = {
-    "replace": (_REPLACE, _REPLACE),
-    "replace-partitions": (_REPLACE_PARTITIONS, _REPLACE_PARTITIONS),
-    "replace-partitions-streaming": (_REPLACE_PARTITIONS_STREAMING, _REPLACE_PARTITIONS_STREAMING),
-    "upsert": (_ORDER_UPSERT, _ORDER_UPSERT),
-    "update": (IntoTable(Order).update(keys=_ORDER_ID), _ORDER_UPSERT),
-}
 
 
 class TestModelAlignTarget:
-    @pytest.mark.parametrize(("target", "seeding"), _ORDER_WRITES.values(), ids=list(_ORDER_WRITES))
+    @pytest.mark.parametrize(
+        ("target", "seeding"),
+        [
+            (_REPLACE, _REPLACE),
+            (_REPLACE_PARTITIONS, _REPLACE_PARTITIONS),
+            (_REPLACE_PARTITIONS_STREAMING, _REPLACE_PARTITIONS_STREAMING),
+            (_ORDER_UPSERT, _ORDER_UPSERT),
+            (IntoTable(Order).update(keys=_ORDER_ID), _ORDER_UPSERT),
+        ],
+        ids=["replace", "replace-partitions", "replace-partitions-streaming", "upsert", "update"],
+    )
     def test_every_path_writes_the_model_types_on_create_and_on_an_existing_table(
         self, polars_engine: PolarsEngine, target: IntoTable, seeding: IntoTable
     ) -> None:

@@ -14,8 +14,7 @@ from loom.etl.declarative.expr._refs import TableRef
 from loom.etl.engines.polars import PolarsTargetWriter
 from loom.etl.schema import SchemaError
 from loom.etl.storage._config import MissingTablePolicy
-
-from .conftest import table_path
+from tests.unit.etl.engines.doubles import table_path
 
 _REF = TableRef("silver.dim_dealer")
 _EMPTY = pl.DataFrame({"id": [], "name": []}, schema={"id": pl.Int64, "name": pl.String})

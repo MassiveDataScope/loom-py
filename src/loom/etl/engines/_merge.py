@@ -25,36 +25,15 @@ from __future__ import annotations
 import logging
 from collections.abc import Iterable, Mapping
 from dataclasses import dataclass
-from typing import Any, Protocol
+from typing import Any
 
+from loom.etl.declarative.target._table import MergeSpec
 from loom.etl.engines._predicate import sql_literal
 from loom.etl.event import EtlEvent, EtlKey
 
 _log = logging.getLogger(__name__)
 
 TARGET_ALIAS = "t"
-
-
-class _UpsertLike(Protocol):
-    """Structural protocol satisfied by the merge specs (``UpsertSpec``, ``UpdateSpec``).
-
-    Declared as read-only properties so frozen dataclasses satisfy it.
-    """
-
-    @property
-    def upsert_keys(self) -> tuple[str, ...]: ...
-
-    @property
-    def partition_cols(self) -> tuple[str, ...]: ...
-
-    @property
-    def upsert_exclude(self) -> tuple[str, ...]: ...
-
-    @property
-    def upsert_include(self) -> tuple[str, ...]: ...
-
-    @property
-    def delete_flag(self) -> str | None: ...
 
 
 SOURCE_ALIAS = "s"
@@ -80,15 +59,15 @@ class _MergePlan:
 
 
 def _build_join_clause(
-    upsert_keys: tuple[str, ...],
+    keys: tuple[str, ...],
     partition_cols: tuple[str, ...],
     target_alias: str,
     source_alias: str,
 ) -> str:
-    """Build the equality join clause from upsert keys and partition columns.
+    """Build the equality join clause from merge keys and partition columns.
 
     Args:
-        upsert_keys:    Columns that uniquely identify a row.
+        keys:           Columns that uniquely identify a row.
         partition_cols: Partition columns (joined on as well).
         target_alias:   Alias for the target table in the MERGE statement.
         source_alias:   Alias for the source frame in the MERGE statement.
@@ -96,13 +75,13 @@ def _build_join_clause(
     Returns:
         SQL string, e.g. ``t.id = s.id AND t.year = s.year``
     """
-    all_cols = (*upsert_keys, *partition_cols)
+    all_cols = (*keys, *partition_cols)
     return _SQL_AND.join(f"{target_alias}.{col} = {source_alias}.{col}" for col in all_cols)
 
 
-def _build_upsert_predicate(
+def _build_merge_predicate(
     combos: list[dict[str, Any]],
-    spec: _UpsertLike,
+    spec: MergeSpec,
     target_alias: str,
     source_alias: str,
 ) -> str:
@@ -114,48 +93,18 @@ def _build_upsert_predicate(
     Args:
         combos:       Distinct partition value combinations from the source frame.
                       Pass an empty list when no partition columns are declared.
-        spec:         Target spec carrying ``upsert_keys`` and ``partition_cols``.
+        spec:         Target spec carrying ``keys`` and ``partition_cols``.
         target_alias: Target table alias.
         source_alias: Source frame alias.
 
     Returns:
         SQL predicate string for the MERGE ON clause.
     """
-    join_clause = _build_join_clause(
-        spec.upsert_keys, spec.partition_cols, target_alias, source_alias
-    )
+    join_clause = _build_join_clause(spec.keys, spec.partition_cols, target_alias, source_alias)
     if not combos or not spec.partition_cols:
         return join_clause
     partition_filter = _build_partition_predicate(combos, spec.partition_cols, alias=target_alias)
     return f"({partition_filter}) AND ({join_clause})"
-
-
-def _build_upsert_update_cols(
-    df_columns: tuple[str, ...],
-    spec: _UpsertLike,
-) -> tuple[str, ...]:
-    """Compute the columns to update on MATCH, respecting exclude/include.
-
-    Keys and partition columns are always excluded from UPDATE SET — updating
-    them would invalidate the match condition.
-
-    If ``upsert_include`` is set, only those columns are updated (minus the
-    always-excluded set).  If ``upsert_exclude`` is set, those additional
-    columns are skipped.  The two options are mutually exclusive.
-
-    Args:
-        df_columns: Column names from the source frame, in original order.
-        spec:       Target spec carrying ``upsert_keys``, ``partition_cols``,
-                    ``upsert_exclude``, and ``upsert_include``.
-
-    Returns:
-        Ordered tuple of column names to appear in UPDATE SET.
-    """
-    always_excluded = frozenset(spec.upsert_keys) | frozenset(spec.partition_cols)
-    if spec.upsert_include:
-        return tuple(c for c in spec.upsert_include if c not in always_excluded)
-    excluded = always_excluded | frozenset(spec.upsert_exclude)
-    return tuple(c for c in df_columns if c not in excluded)
 
 
 def _build_update_set(
@@ -210,25 +159,28 @@ def _delete_flag_predicates(flag: str, source_alias: str) -> tuple[str, str]:
 def _build_merge_plan(
     *,
     combos: list[dict[str, Any]],
-    spec: _UpsertLike,
+    spec: MergeSpec,
     df_columns: tuple[str, ...],
     target_alias: str,
     source_alias: str,
 ) -> _MergePlan:
-    """Build predicate and column maps required by Delta MERGE."""
-    flag = spec.delete_flag
-    columns = _without_delete_flag(df_columns, flag)
-    predicate = _build_upsert_predicate(combos, spec, target_alias, source_alias)
-    update_cols = _build_upsert_update_cols(columns, spec)
+    """Build predicate and column maps required by Delta MERGE.
+
+    The spec's ``delete_flag`` adds the matched-delete clause and guards update and insert.
+    """
+    delete_flag = spec.delete_flag
+    columns = _without_delete_flag(df_columns, delete_flag)
+    predicate = _build_merge_predicate(combos, spec, target_alias, source_alias)
+    update_cols = spec.update_columns(columns)
     update_set = _build_update_set(update_cols, source_alias)
     insert_values = _build_insert_values(columns, source_alias)
-    if flag is None:
+    if delete_flag is None:
         return _MergePlan(
             predicate=predicate,
             update_set=update_set,
             insert_values=insert_values,
         )
-    delete_predicate, keep_predicate = _delete_flag_predicates(flag, source_alias)
+    delete_predicate, keep_predicate = _delete_flag_predicates(delete_flag, source_alias)
     return _MergePlan(
         predicate=predicate,
         update_set=update_set,

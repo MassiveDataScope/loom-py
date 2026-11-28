@@ -12,8 +12,7 @@ from polars.testing import assert_frame_equal
 
 from loom.etl import Format, FromFile, FromTable
 from loom.etl.engines.polars import PolarsSourceReader, decode_json_columns
-
-from .conftest import table_path
+from tests.unit.etl.engines.doubles import table_path
 
 
 class AcmePayload(msgspec.Struct):

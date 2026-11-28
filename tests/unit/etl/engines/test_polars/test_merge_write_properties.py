@@ -17,8 +17,7 @@ from loom.etl.declarative.expr._refs import TableRef
 from loom.etl.declarative.target._table import UpdateSpec, UpsertSpec
 from loom.etl.engines.polars import PolarsTargetWriter
 from loom.etl.storage import PrefixLocator
-
-from .conftest import table_path
+from tests.unit.etl.engines.doubles import table_path
 
 _REF = "test.orders"
 _MAX_ROW_GROUP = 2

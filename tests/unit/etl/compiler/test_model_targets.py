@@ -21,7 +21,7 @@ from loom.etl.declarative.target._history import HistoryDateType
 from loom.etl.event import EtlEvent, EtlKey
 from loom.etl.schema import ColumnSchema, LoomDtype
 from tests.helpers.loggers import CapturedLog
-from tests.unit.etl.compiler.probes import CompileDeclaration
+from tests.unit.etl.compiler.probes import compile_source, compile_target
 from tests.unit.etl.models import Order, Rate
 
 
@@ -77,66 +77,62 @@ _MERGE_KEYS = {
     "string-without-keys": (IntoTable("sales.order").upsert(), ()),
 }
 _UNKNOWN_COLUMNS = {
-    "unknown-key": (lambda: IntoTable(Order).upsert(keys=("order_ref",)), "order_ref", "keys"),
-    "unknown-include": (lambda: IntoTable(Order).update(include=("status",)), "status", "include"),
-    "unknown-exclude": (lambda: IntoTable(Order).upsert(exclude=("status",)), "status", "exclude"),
+    "unknown-key": (IntoTable(Order).upsert(keys=("order_ref",)), "order_ref", "keys"),
+    "unknown-include": (IntoTable(Order).update(include=("status",)), "status", "include"),
+    "unknown-exclude": (IntoTable(Order).upsert(exclude=("status",)), "status", "exclude"),
     "unknown-partition": (
-        lambda: IntoTable(Order).replace_partitions("status"),
+        IntoTable(Order).replace_partitions("status"),
         "status",
         "partition_cols",
     ),
     "unknown-track": (
-        lambda: IntoHistory(Rate, keys=(Rate.c.rate_id,), track=("tier",), effective_date="d"),
+        IntoHistory(Rate, keys=(Rate.c.rate_id,), track=("tier",), effective_date="d"),
         "tier",
         "track",
     ),
     "missing-valid-to": (
-        lambda: IntoHistory(Rate, keys=(Rate.c.rate_id,), effective_date="d", valid_to="ends_on"),
+        IntoHistory(Rate, keys=(Rate.c.rate_id,), effective_date="d", valid_to="ends_on"),
         "ends_on",
         "valid_to",
     ),
     "missing-deleted-at": (
-        lambda: IntoHistory(
-            Tick, keys=(Tick.c.tick_id,), effective_date="d", delete_policy="soft_delete"
-        ),
+        IntoHistory(Tick, keys=(Tick.c.tick_id,), effective_date="d", delete_policy="soft_delete"),
         "deleted_at",
         "deleted_at",
     ),
     "unknown-replace-where": (
-        lambda: IntoTable(Order).replace_where(col("status") == "open"),
+        IntoTable(Order).replace_where(col("status") == "open"),
         "status",
         "replace_where",
     ),
 }
 _REFUSALS = {
     "time-column": (
-        lambda: IntoTable(Clocked).append(),
+        IntoTable(Clocked).append(),
         ETLErrorCode.MODEL_COLUMN_TYPE_REFUSED,
         Clocked.c.opens_at,
         r"Clocked\.opens_at is a Time.*store it as a Text or a DateTime",
     ),
     "evolve": (
-        lambda: IntoTable(Order).append(schema=SchemaMode.EVOLVE),
+        IntoTable(Order).append(schema=SchemaMode.EVOLVE),
         ETLErrorCode.MODEL_SCHEMA_MODE_UNSUPPORTED,
         "schema",
         "EVOLVE.*only allows STRICT",
     ),
     "autoincrement-key": (
-        lambda: IntoTable(Ledger).upsert(),
+        IntoTable(Ledger).upsert(),
         ETLErrorCode.MODEL_KEY_NOT_IN_FRAME,
         Ledger.c.ledger_id,
         "autoincrement.*not supported yet",
     ),
     "contradicting-date-type": (
-        lambda: IntoHistory(
-            Rate, keys=(Rate.c.rate_id,), effective_date="d", date_type="timestamp"
-        ),
+        IntoHistory(Rate, keys=(Rate.c.rate_id,), effective_date="d", date_type="timestamp"),
         ETLErrorCode.MODEL_DATE_TYPE_MISMATCH,
         "date_type",
         "'timestamp'.*'valid_from'.*'date'",
     ),
     "non-temporal-valid-from": (
-        lambda: IntoHistory(Undated, keys=(Undated.c.undated_id,), effective_date="d"),
+        IntoHistory(Undated, keys=(Undated.c.undated_id,), effective_date="d"),
         ETLErrorCode.MODEL_BOUNDARY_NOT_TEMPORAL,
         "valid_from",
         "holds no dates",
@@ -203,15 +199,13 @@ NotDefinedYet = Annotated[str, Text]
 
 
 _CONSISTENT_TARGETS = {
-    "upsert-primary-key": lambda: IntoTable(Order).upsert(),
-    "update-include": lambda: IntoTable(Order).update(include=(Order.c.amount,)),
-    "upsert-business-key": lambda: IntoTable(Booking).upsert(),
-    "upsert-explicit-keys": lambda: IntoTable(Ledger).upsert(keys=(Ledger.c.memo,)),
-    "replace-partitions": lambda: IntoTable(Order).replace_partitions(Order.c.customer_id),
-    "history-date": lambda: IntoHistory(Rate, keys=(Rate.c.rate_id,), effective_date="d"),
-    "history-datetime": lambda: IntoHistory(
-        Tick, keys=(Tick.c.tick_id,), effective_date="d", track=()
-    ),
+    "upsert-primary-key": IntoTable(Order).upsert(),
+    "update-include": IntoTable(Order).update(include=(Order.c.amount,)),
+    "upsert-business-key": IntoTable(Booking).upsert(),
+    "upsert-explicit-keys": IntoTable(Ledger).upsert(keys=(Ledger.c.memo,)),
+    "replace-partitions": IntoTable(Order).replace_partitions(Order.c.customer_id),
+    "history-date": IntoHistory(Rate, keys=(Rate.c.rate_id,), effective_date="d"),
+    "history-datetime": IntoHistory(Tick, keys=(Tick.c.tick_id,), effective_date="d", track=()),
 }
 
 
@@ -228,7 +222,7 @@ class TestModelDeclaration:
     def test_merge_keys_default_to_the_conflict_key_of_a_model(
         self, target: IntoTable, keys: tuple[str, ...]
     ) -> None:
-        assert target._to_spec().upsert_keys == keys
+        assert target._to_spec().keys == keys
 
     @pytest.mark.parametrize(
         ("target", "date_type", "expected"), _DATE_TYPES.values(), ids=list(_DATE_TYPES)
@@ -244,7 +238,7 @@ class TestModelDeclaration:
         "source", _SOURCES_BEFORE_COMPILE.values(), ids=list(_SOURCES_BEFORE_COMPILE)
     )
     def test_a_source_declared_before_its_annotations_are_defined_compiles(
-        self, source: Any, compile_source: CompileDeclaration
+        self, source: Any
     ) -> None:
         plan = compile_source(source)
 
@@ -254,7 +248,7 @@ class TestModelDeclaration:
         "target", _TARGETS_BEFORE_COMPILE.values(), ids=list(_TARGETS_BEFORE_COMPILE)
     )
     def test_a_target_declared_before_its_annotations_are_defined_compiles(
-        self, target: Any, compile_target: CompileDeclaration
+        self, target: Any
     ) -> None:
         plan = compile_target(target)
 
@@ -262,7 +256,7 @@ class TestModelDeclaration:
 
     @pytest.mark.parametrize("merge", [IntoTable.upsert, IntoTable.update])
     def test_a_model_target_refuses_explicitly_empty_keys(
-        self, compile_target: CompileDeclaration, merge: Callable[..., IntoTable]
+        self, merge: Callable[..., IntoTable]
     ) -> None:
         with pytest.raises(ETLCompilationError) as refused:
             compile_target(merge(IntoTable(Order), keys=()))
@@ -275,9 +269,7 @@ class TestModelDeclaration:
 
 
 class TestModelSourceCompilation:
-    def test_a_source_consistent_with_its_model_compiles(
-        self, compile_source: CompileDeclaration
-    ) -> None:
+    def test_a_source_consistent_with_its_model_compiles(self) -> None:
         compile_source(
             FromTable(Order)
             .where(col(Order.c.amount) > 0)
@@ -288,7 +280,7 @@ class TestModelSourceCompilation:
         ("source", "code", "field"), _SOURCE_REFUSALS.values(), ids=list(_SOURCE_REFUSALS)
     )
     def test_a_source_the_model_contradicts_is_refused_naming_the_field(
-        self, compile_source: CompileDeclaration, source: FromTable, code: ETLErrorCode, field: str
+        self, source: FromTable, code: ETLErrorCode, field: str
     ) -> None:
         with pytest.raises(ETLCompilationError) as refused:
             compile_source(source)
@@ -297,20 +289,18 @@ class TestModelSourceCompilation:
 
 
 class TestModelTargetCompilation:
-    @pytest.mark.parametrize("declare", _CONSISTENT_TARGETS.values(), ids=list(_CONSISTENT_TARGETS))
-    def test_a_target_consistent_with_its_model_compiles(
-        self, compile_target: CompileDeclaration, declare: Callable[[], Any]
-    ) -> None:
-        compile_target(declare())
+    @pytest.mark.parametrize("target", _CONSISTENT_TARGETS.values(), ids=list(_CONSISTENT_TARGETS))
+    def test_a_target_consistent_with_its_model_compiles(self, target: Any) -> None:
+        compile_target(target)
 
     @pytest.mark.parametrize(
-        ("declare", "field", "role"), _UNKNOWN_COLUMNS.values(), ids=list(_UNKNOWN_COLUMNS)
+        ("target", "field", "role"), _UNKNOWN_COLUMNS.values(), ids=list(_UNKNOWN_COLUMNS)
     )
     def test_a_target_naming_a_column_the_model_lacks_is_refused_naming_the_role(
-        self, compile_target: CompileDeclaration, declare: Callable[[], Any], field: str, role: str
+        self, target: Any, field: str, role: str
     ) -> None:
         with pytest.raises(ETLCompilationError, match=rf"{role} names column {field!r}") as refused:
-            compile_target(declare())
+            compile_target(target)
 
         assert (refused.value.code, refused.value.field) == (
             ETLErrorCode.MODEL_COLUMN_UNKNOWN,
@@ -318,25 +308,24 @@ class TestModelTargetCompilation:
         )
 
     @pytest.mark.parametrize(
-        ("declare", "code", "field", "message"), _REFUSALS.values(), ids=list(_REFUSALS)
+        ("target", "code", "field", "message"), _REFUSALS.values(), ids=list(_REFUSALS)
     )
     def test_a_target_the_model_contradicts_is_refused_naming_the_field_and_the_fix(
         self,
-        compile_target: CompileDeclaration,
-        declare: Callable[[], Any],
+        target: Any,
         code: ETLErrorCode,
         field: str,
         message: str,
     ) -> None:
         with pytest.raises(ETLCompilationError, match=message) as refused:
-            compile_target(declare())
+            compile_target(target)
 
         assert (refused.value.code, refused.value.field) == (code, field)
 
 
 class TestModelTargetLogs:
     def test_a_resolved_model_logs_once_with_model_and_table(
-        self, compile_target: CompileDeclaration, caplog: pytest.LogCaptureFixture
+        self, caplog: pytest.LogCaptureFixture
     ) -> None:
         with caplog.at_level(logging.DEBUG, logger=_MODEL_LOGGER):
             compile_target(IntoTable(Order).upsert())
@@ -345,7 +334,7 @@ class TestModelTargetLogs:
         assert (fields[EtlKey.MODEL], fields[EtlKey.TABLE]) == ("Order", "sales.order")
 
     def test_a_refused_model_logs_the_blamed_field_and_code_once(
-        self, compile_target: CompileDeclaration, caplog: pytest.LogCaptureFixture
+        self, caplog: pytest.LogCaptureFixture
     ) -> None:
         with (
             caplog.at_level(logging.DEBUG, logger=_MODEL_LOGGER),
@@ -359,9 +348,7 @@ class TestModelTargetLogs:
             ETLErrorCode.MODEL_COLUMN_UNKNOWN.value,
         )
 
-    def test_a_string_target_logs_no_model_event(
-        self, compile_target: CompileDeclaration, caplog: pytest.LogCaptureFixture
-    ) -> None:
+    def test_a_string_target_logs_no_model_event(self, caplog: pytest.LogCaptureFixture) -> None:
         with caplog.at_level(logging.DEBUG, logger=_MODEL_LOGGER):
             compile_target(IntoTable("sales.order").upsert(keys=("order_id",)))
 

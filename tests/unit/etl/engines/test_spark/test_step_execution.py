@@ -35,10 +35,10 @@ from loom.etl.lineage._records import EventName, RunStatus
 from loom.etl.schema._schema import ColumnSchema, LoomDtype, SchemaNotFoundError
 from loom.etl.storage._config import MissingTablePolicy
 from loom.etl.testing import RecordingRunObserver
-from tests.unit.etl.engines.doubles import NoParams
+from tests.unit.etl.engines.doubles import NoParams, table_path
 from tests.unit.etl.models import Buyer
 
-from .conftest import SparkSourceReader, SparkTargetWriter, spark_table_path
+from .conftest import SparkSourceReader, SparkTargetWriter
 
 
 class SparkDoubleAmountStep(ETLStep[NoParams]):
@@ -84,7 +84,7 @@ class CountScenario:
 
 
 def _read(spark: SparkSession, root: Path, ref: str) -> DataFrame:
-    path = spark_table_path(root, TableRef(ref))
+    path = table_path(root, TableRef(ref))
     return spark.read.format("delta").load(str(path))
 
 
@@ -103,7 +103,7 @@ class TestSparkWriterFirstWrite:
         frame = spark.createDataFrame([(2024, 99.0)], ["year", "v"])
         spark_writer.write(frame, spec, None)
 
-        path = spark_table_path(spark_root, TableRef("staging.partitioned"))
+        path = table_path(spark_root, TableRef("staging.partitioned"))
         detail = spark.sql(f"DESCRIBE DETAIL delta.`{path}`").collect()[0].asDict()
         assert detail["partitionColumns"] == ["year"]
 
@@ -118,7 +118,7 @@ class TestSparkWriterFirstWrite:
         frame = spark.createDataFrame([(1, 10.0)], ["id", "v"])
         spark_writer.append(frame, TableRef("staging.append_first"), None)
 
-        path = spark_table_path(spark_root, TableRef("staging.append_first"))
+        path = table_path(spark_root, TableRef("staging.append_first"))
         assert spark.read.format("delta").load(str(path)).count() == 1
 
     def test_writer_append_first_write_requires_create_policy(

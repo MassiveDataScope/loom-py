@@ -25,7 +25,7 @@ from loom.etl.declarative.expr._predicate import PredicateNode
 from loom.etl.declarative.source import FileSourceSpec
 from loom.etl.declarative.target import TargetSpec
 from loom.etl.declarative.target._file import FileSpec
-from loom.etl.declarative.target._table import UpdateSpec, UpsertSpec
+from loom.etl.declarative.target._table import MergeSpec
 from loom.etl.engines._path_template import extract_template_fields
 from loom.etl.event import EtlEvent, EtlKey
 from loom.etl.pipeline._step_client import ClientStep
@@ -50,22 +50,6 @@ class _UnaryPredicateLike(Protocol):
 
 class _ReplaceWhereSpecLike(Protocol):
     replace_predicate: PredicateNode
-
-
-class _UpsertSpecLike(Protocol):
-    """Merge-shaped spec — satisfied by ``UpsertSpec`` fields and ``UpdateSpec`` aliases."""
-
-    @property
-    def upsert_keys(self) -> tuple[str, ...]: ...
-
-    @property
-    def partition_cols(self) -> tuple[str, ...]: ...
-
-    @property
-    def upsert_exclude(self) -> tuple[str, ...]: ...
-
-    @property
-    def upsert_include(self) -> tuple[str, ...]: ...
 
 
 class _HistorifySpecLike(Protocol):
@@ -110,7 +94,7 @@ class StepCompilationContext:
 
 
 def validate_step(ctx: StepCompilationContext) -> None:
-    """Validate signature, models, upsert, history, param expressions, then file paths."""
+    """Validate signature, models, merge, history, param expressions, then file paths."""
     validate_execute_signature(
         ctx.step_type,
         ctx.params_type,
@@ -121,7 +105,7 @@ def validate_step(ctx: StepCompilationContext) -> None:
     validate_model_sources(ctx.step_type, (binding.spec for binding in ctx.source_bindings))
     validate_model_target(ctx.step_type, ctx.target_binding.spec)
     validate_json_shapes(ctx.step_type, ctx.source_bindings, ctx.target_binding)
-    validate_upsert_spec(ctx.step_type, ctx.target_binding.spec)
+    validate_merge_spec(ctx.step_type, ctx.target_binding.spec)
     validate_historify_spec(ctx.step_type, ctx.target_binding.spec)
     validate_param_exprs(ctx.step_type, ctx.params_type, ctx.source_bindings, ctx.target_binding)
     validate_file_path_templates(
@@ -461,22 +445,19 @@ def _is_historify_like(spec: object) -> bool:
     )
 
 
-def validate_upsert_spec(step_type: type[Any], spec: TargetSpec) -> None:
-    """Validate UPSERT/UPDATE merge constraints at compile time.
+def validate_merge_spec(step_type: type[Any], spec: TargetSpec) -> None:
+    """Validate the merge constraints of an upsert or update spec; other specs pass.
 
-    :class:`~loom.etl.declarative.target.UpdateSpec` mirrors the upsert merge fields, so the
-    same checks apply — only the builder method named in the error changes.
+    Raises:
+        ETLCompilationError: The keys, exclude, include or delete flag break a merge rule.
     """
-    if not _is_upsert_like(spec):
+    if not isinstance(spec, MergeSpec):
         return
-    method = "update" if isinstance(spec, UpdateSpec) else "upsert"
-    upsert_spec = cast(_UpsertSpecLike, spec)
-    _check_upsert_keys_non_empty(step_type, upsert_spec, method)
-    _check_upsert_exclude_include_exclusive(step_type, upsert_spec, method)
-    _check_upsert_exclude_keys_disjoint(step_type, upsert_spec, method)
-    _check_upsert_delete_flag(step_type, spec, method)
-    if method == "update":
-        _check_update_include_not_absorbed(step_type, upsert_spec)
+    _check_merge_keys_non_empty(step_type, spec)
+    _check_merge_exclude_include_exclusive(step_type, spec)
+    _check_merge_exclude_keys_disjoint(step_type, spec)
+    _check_merge_delete_flag(step_type, spec)
+    _check_merge_writes_something(step_type, spec)
 
 
 def validate_historify_spec(step_type: type[Any], spec: TargetSpec) -> None:
@@ -612,74 +593,55 @@ def _warn_historify_track_none(step_type: type[Any], spec: _HistorifySpecLike) -
         _log.warning(EtlEvent.HISTORIFY_TRACK_INFERRED, extra={EtlKey.STEP: step_type.__qualname__})
 
 
-def _check_upsert_keys_non_empty(step_type: type[Any], spec: _UpsertSpecLike, method: str) -> None:
-    if not spec.upsert_keys:
+def _check_merge_keys_non_empty(step_type: type[Any], spec: MergeSpec) -> None:
+    if not spec.keys:
         raise ETLCompilationError.from_issue(
-            ETLErrorCode.UPSERT_NO_KEYS.issue(component=step_type, method=method)
+            ETLErrorCode.UPSERT_NO_KEYS.issue(component=step_type, method=spec.method)
         )
 
 
-def _check_upsert_exclude_include_exclusive(
-    step_type: type[Any], spec: _UpsertSpecLike, method: str
-) -> None:
-    if spec.upsert_exclude and spec.upsert_include:
+def _check_merge_exclude_include_exclusive(step_type: type[Any], spec: MergeSpec) -> None:
+    if spec.exclude and spec.include:
         raise ETLCompilationError.from_issue(
-            ETLErrorCode.UPSERT_EXCLUDE_INCLUDE_CONFLICT.issue(component=step_type, method=method)
-        )
-
-
-def _check_upsert_exclude_keys_disjoint(
-    step_type: type[Any], spec: _UpsertSpecLike, method: str
-) -> None:
-    overlap = frozenset(spec.upsert_exclude) & frozenset(spec.upsert_keys)
-    if overlap:
-        raise ETLCompilationError.from_issue(
-            ETLErrorCode.UPSERT_KEY_IN_EXCLUDE.issue(
-                component=step_type, overlap=str(sorted(overlap)), method=method
+            ETLErrorCode.UPSERT_EXCLUDE_INCLUDE_CONFLICT.issue(
+                component=step_type, method=spec.method
             )
         )
 
 
-def _check_upsert_delete_flag(step_type: type[Any], spec: object, method: str) -> None:
+def _check_merge_exclude_keys_disjoint(step_type: type[Any], spec: MergeSpec) -> None:
+    overlap = frozenset(spec.exclude) & frozenset(spec.keys)
+    if overlap:
+        raise ETLCompilationError.from_issue(
+            ETLErrorCode.UPSERT_KEY_IN_EXCLUDE.issue(
+                component=step_type, overlap=str(sorted(overlap)), method=spec.method
+            )
+        )
+
+
+def _check_merge_delete_flag(step_type: type[Any], spec: MergeSpec) -> None:
     """Raise when ``delete_flag`` names a key, partition, exclude, or include column."""
-    if not isinstance(spec, UpsertSpec):
-        return
     conflict = spec.delete_flag_conflict
     if conflict is None:
         return
     raise ETLCompilationError.from_issue(
         ETLErrorCode.UPSERT_DELETE_FLAG_CONFLICT.issue(
             component=step_type,
-            method=method,
+            method=spec.method,
             delete_flag=spec.delete_flag,
             conflict=conflict,
         )
     )
 
 
-def _check_update_include_not_absorbed(step_type: type[Any], spec: _UpsertSpecLike) -> None:
-    """Raise when update() include= cannot produce a single UPDATE SET column.
-
-    Keys and partition columns are always excluded from UPDATE SET, and
-    update() never inserts — so an include list fully absorbed by them makes
-    the whole write a guaranteed no-op: a green pipeline that repairs nothing.
-    """
-    if not spec.upsert_include:
-        return
-    always_excluded = frozenset(spec.upsert_keys) | frozenset(spec.partition_cols)
-    if frozenset(spec.upsert_include) <= always_excluded:
+def _check_merge_writes_something(step_type: type[Any], spec: MergeSpec) -> None:
+    """Raise when the spec can change no row."""
+    if spec.is_no_op:
         raise ETLCompilationError.from_issue(
             ETLErrorCode.UPDATE_EMPTY_UPDATE_SET.issue(
-                component=step_type, include=str(sorted(spec.upsert_include))
+                component=step_type, include=str(sorted(spec.include))
             )
         )
-
-
-def _is_upsert_like(spec: object) -> bool:
-    keys = getattr(spec, "upsert_keys", None)
-    exclude = getattr(spec, "upsert_exclude", None)
-    include = getattr(spec, "upsert_include", None)
-    return isinstance(keys, tuple) and isinstance(exclude, tuple) and isinstance(include, tuple)
 
 
 __all__ = [
@@ -689,5 +651,5 @@ __all__ = [
     "validate_param_exprs",
     "validate_params_compat",
     "validate_step",
-    "validate_upsert_spec",
+    "validate_merge_spec",
 ]

@@ -49,22 +49,21 @@ class ColumnFieldInfo:
     ``None`` while the field is undeclared.
     """
 
-    name: str
     python_type: type
     resolved: ResolvedField
     field: Field
 
     @classmethod
     def from_source(
-        cls, source: FieldSource, resolved: ResolvedField, declared: ColumnFieldSpec | None
+        cls, annotated: AnnotatedClass, source: FieldSource, declared: ColumnFieldSpec | None
     ) -> ColumnFieldInfo:
-        """The column info of *source*, its ``Field`` completed from the annotation and default."""
-        field = source.declaration(declared).field
+        """The column info of *source*, a field of *annotated*, its ``Field`` completed."""
+        declaration = source.declaration(declared)
+        resolved = annotated.resolve_field(source, declaration)
         return cls(
-            name=source.name,
             python_type=Annotation(source.annotation).origin_type,
             resolved=resolved,
-            field=_with_nullable(_with_struct_default(field, source.default), resolved),
+            field=_with_nullable(_with_struct_default(declaration.field, source.default), resolved),
         )
 
     @property
@@ -104,15 +103,11 @@ def get_column_fields(cls: type) -> dict[str, ColumnFieldInfo]:
 def _column_fields(cls: type) -> Mapping[str, ColumnFieldInfo]:
     declared = _collect_inherited_dict_metadata(cls, "__loom_columns__")
     non_columns = set(get_relations(cls)) | set(get_projections(cls))
-    resolved = {
-        field.name: field for field in AnnotatedClass(cls).resolve(declared, exclude=non_columns)
-    }
+    annotated = AnnotatedClass(cls)
     return {
-        source.name: ColumnFieldInfo.from_source(
-            source, resolved[source.name], declared.get(source.name)
-        )
-        for source in AnnotatedClass(cls).fields
-        if source.name in resolved
+        source.name: ColumnFieldInfo.from_source(annotated, source, declared.get(source.name))
+        for source in annotated.fields
+        if source.name not in non_columns
     }
 
 

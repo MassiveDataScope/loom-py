@@ -16,8 +16,7 @@ from loom.etl.declarative.source import TableSourceSpec
 from loom.etl.engines._predicate import predicate_to_polars
 from loom.etl.engines.polars import PolarsSourceReader
 from tests.unit.etl.doubles import RunDateETLParams
-
-from .conftest import table_path
+from tests.unit.etl.engines.doubles import table_path
 
 _PARAMS = RunDateETLParams(run_date=date(2024, 3, 15))
 

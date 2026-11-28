@@ -17,8 +17,7 @@ from loom.etl.declarative.target import SchemaMode
 from loom.etl.engines.spark import SparkTargetWriter
 from loom.etl.storage._config import MissingTablePolicy
 from loom.etl.storage.routing import ResolvedTarget
-
-from .conftest import spark_table_path
+from tests.unit.etl.engines.doubles import table_path
 
 _REF = TableRef("silver.dim_dealer")
 _SCHEMA = "id BIGINT, name STRING"
@@ -112,7 +111,7 @@ class TestReplaceAllowEmptyOnAMissingTable:
         with pytest.raises(EmptyReplaceError, match="silver.dim_dealer"):
             writer.write(spark.createDataFrame([], _SCHEMA), spec, None)
 
-        assert not spark_table_path(spark_root, _REF).exists()
+        assert not table_path(spark_root, _REF).exists()
 
 
 class TestStreamingReplaceAllowEmpty:
@@ -148,7 +147,7 @@ class TestStreamingReplaceAllowEmpty:
         with pytest.raises(ValueError, match="streaming DataFrame"):
             writer.write(stream, spec, None)
 
-        assert not spark_table_path(spark_root, _REF).exists()
+        assert not table_path(spark_root, _REF).exists()
 
 
 class _PinnedRdds:
@@ -253,7 +252,7 @@ class TestPinnedRowsAreReleased:
 
         assert len(pins.ids) == 1
         assert pins.still_kept() == set()
-        assert _rows(spark, spark_table_path(spark_root, _REF)) == [(3, "c")]
+        assert _rows(spark, table_path(spark_root, _REF)) == [(3, "c")]
 
 
 _RELEASE_FAILED = "release failed"

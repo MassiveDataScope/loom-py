@@ -5,7 +5,7 @@ from __future__ import annotations
 import contextlib
 import logging
 from collections.abc import Sequence
-from typing import Any, Literal, cast
+from typing import Any, Literal
 
 import polars as pl
 from deltalake import CommitProperties, DeltaTable, WriterProperties, write_deltalake
@@ -18,6 +18,7 @@ from loom.etl.declarative.target._file import FileSpec
 from loom.etl.declarative.target._history import HistorifySpec
 from loom.etl.declarative.target._table import (
     AppendSpec,
+    MergeSpec,
     ReplacePartitionsSpec,
     UpdateSpec,
     UpsertSpec,
@@ -289,7 +290,8 @@ class PolarsTargetWriter(_WritePolicy[pl.LazyFrame, pl.DataFrame, PolarsPhysical
                 "PolarsTargetWriter.to_frame requires homogeneous record types per batch."
             )
         rows = [record.to_row() for record in records]
-        return pl.from_dicts(rows, schema=_polars_lineage_schema(first)).lazy()
+        lineage = StructType.of_columns(get_lineage_schema(record_type))
+        return pl.from_dicts(rows, schema=PolarsPhysicalSchema.of_model(lineage).schema).lazy()
 
     def _physical_schema(self, target: ResolvedTarget) -> PolarsPhysicalSchema | None:
         """Read physical schema from Delta log."""
@@ -618,7 +620,7 @@ class PolarsTargetWriter(_WritePolicy[pl.LazyFrame, pl.DataFrame, PolarsPhysical
         self,
         frame: pl.DataFrame,
         target: ResolvedTarget,
-        spec: UpsertSpec | UpdateSpec,
+        spec: MergeSpec,
         *,
         mode: str,
     ) -> tuple[TableMerger, _MergePlan, TableLocation]:
@@ -631,7 +633,7 @@ class PolarsTargetWriter(_WritePolicy[pl.LazyFrame, pl.DataFrame, PolarsPhysical
         Args:
             frame:  Materialised source frame.
             target: Resolved path target.
-            spec:   Upsert or update spec (identical merge fields).
+            spec:   Upsert or update spec.
             mode:   Write-mode label for logging.
 
         Returns:
@@ -817,9 +819,3 @@ def _partition_filter(
     for expr in exprs[1:]:
         result = result | expr
     return result
-
-
-def _polars_lineage_schema(record: LineageRecord) -> pl.Schema:
-    columns = get_lineage_schema(type(record))
-    polars_struct = cast(pl.Struct, frame_type_to_polars(StructType.of_columns(columns)))
-    return pl.Schema(polars_struct.to_schema())

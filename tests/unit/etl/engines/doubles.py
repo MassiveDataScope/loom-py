@@ -3,13 +3,13 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
-from datetime import UTC, date
+from datetime import date
 from pathlib import Path
 from typing import Any, Protocol
 
 import polars as pl
 
-from loom.etl import ETLParams, FromTable
+from loom.etl import ETLParams, FromTable, TableRef
 from loom.etl.declarative.target import SchemaMode
 from loom.etl.engines.polars import PolarsSourceReader, PolarsTargetWriter, polars_to_frame_type
 from loom.etl.ports.contracts import SourceReader, TargetWriter
@@ -59,26 +59,9 @@ class ModelEngine(Protocol):
     def read_columns(self, source: FromTable) -> list[str]: ...
 
 
-def table_path(root: Path, ref: str) -> str:
-    """The Delta path of table *ref* under *root*."""
-    return str(root.joinpath(*ref.split(".")))
-
-
-def _with_instants_in_utc(value: Any, dtype: Any) -> Any:
-    """*value* of Spark type *dtype* with every ``timestamp`` in it turned into UTC."""
-    from pyspark.sql import types as T
-
-    if value is None:
-        return None
-    match dtype:
-        case T.TimestampType():
-            return value.astimezone(UTC)
-        case T.StructType():
-            return {f.name: _with_instants_in_utc(value[f.name], f.dataType) for f in dtype.fields}
-        case T.ArrayType():
-            return [_with_instants_in_utc(item, dtype.elementType) for item in value]
-        case _:
-            return value
+def table_path(root: Path, ref: TableRef) -> Path:
+    """The Delta path of table *ref* under *root*: ``raw.orders`` is ``root/raw/orders``."""
+    return root.joinpath(*ref.ref.split("."))
 
 
 class PolarsEngine:
@@ -101,7 +84,7 @@ class PolarsEngine:
 
     def stored(self, ref: str) -> list[dict[str, Any]]:
         """The rows of table *ref*."""
-        return pl.read_delta(table_path(self._root, ref)).to_dicts()
+        return pl.read_delta(table_path(self._root, TableRef(ref))).to_dicts()
 
     def read_columns(self, source: FromTable) -> list[str]:
         """The column names *source* reads."""
@@ -109,7 +92,7 @@ class PolarsEngine:
 
     def stored_types(self, ref: str) -> dict[str, FrameType]:
         """The lake type of each column of table *ref*."""
-        schema = pl.scan_delta(table_path(self._root, ref)).collect_schema()
+        schema = pl.scan_delta(table_path(self._root, TableRef(ref))).collect_schema()
         return {name: polars_to_frame_type(dtype) for name, dtype in schema.items()}
 
 
@@ -129,11 +112,10 @@ class SparkEngine:
         return self._spark.createDataFrame(list(zip(*columns.values(), strict=True)), list(columns))
 
     def rows(self, frame: Any) -> list[dict[str, Any]]:
-        """The rows of *frame*."""
-        return [
-            _with_instants_in_utc(row.asDict(recursive=True), frame.schema)
-            for row in frame.collect()
-        ]
+        """The rows of *frame*, every ``timestamp`` in them a UTC instant."""
+        from loom.etl.testing.spark import rows_in_utc
+
+        return rows_in_utc(frame)
 
     def stored(self, ref: str) -> list[dict[str, Any]]:
         """The rows of table *ref*."""
@@ -151,4 +133,4 @@ class SparkEngine:
 
     def _stored(self, ref: str) -> Any:
         """The Delta table *ref* as a DataFrame."""
-        return self._spark.read.format("delta").load(table_path(self._root, ref))
+        return self._spark.read.format("delta").load(str(table_path(self._root, TableRef(ref))))
