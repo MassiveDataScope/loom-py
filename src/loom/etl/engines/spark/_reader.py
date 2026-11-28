@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import logging
 from collections.abc import Callable, Mapping
-from typing import Any
+from typing import Any, Final
 
 from pyspark.sql import DataFrame, SparkSession
 from pyspark.sql import functions as F
@@ -36,7 +36,7 @@ from loom.etl.storage.routing import (
 
 _log = logging.getLogger(__name__)
 
-_FROM_JSON_OPTIONS: Mapping[JsonMismatch, Mapping[str, str]] = {
+FROM_JSON_OPTIONS: Final[Mapping[JsonMismatch, Mapping[str, str]]] = {
     JsonMismatch.FAIL: {"mode": "FAILFAST", "timeZone": "UTC"},
     JsonMismatch.NULL: {"mode": "PERMISSIVE", "timeZone": "UTC"},
 }
@@ -189,7 +189,7 @@ class SparkSourceReader(SourceReader):
             decoded = F.from_json(
                 F.col(jc.column),
                 frame_type_to_spark(jc.frame_type),
-                dict(_FROM_JSON_OPTIONS[jc.on_mismatch]),
+                dict(FROM_JSON_OPTIONS[jc.on_mismatch]),
             )
             df = df.withColumn(jc.column, decoded)
         return df
