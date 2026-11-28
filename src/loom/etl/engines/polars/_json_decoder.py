@@ -6,12 +6,26 @@ from dataclasses import dataclass
 from typing import Final
 
 import polars as pl
+import pyarrow as pa
 
 from loom.etl.schema import FrameType, JsonFit, JsonMismatch, JsonRefusal
 
 from ._dtype import frame_type_to_polars
 
 _CHUNK_ROWS: Final = 8_192
+
+
+def _buildable(arrow_type: pa.DataType) -> pa.DataType:
+    """*arrow_type* with every dictionary a plain value and every large list a list."""
+    if pa.types.is_dictionary(arrow_type):
+        return arrow_type.value_type
+    if pa.types.is_struct(arrow_type):
+        return pa.struct([field.with_type(_buildable(field.type)) for field in arrow_type])
+    if pa.types.is_fixed_size_list(arrow_type):
+        return pa.list_(_buildable(arrow_type.value_type), arrow_type.list_size)
+    if pa.types.is_large_list(arrow_type):
+        return pa.list_(_buildable(arrow_type.value_type))
+    return arrow_type
 
 
 @dataclass(frozen=True, slots=True)
@@ -21,10 +35,12 @@ class JsonDecoder:
     Args:
         fit: How each document is fitted to the type.
         dtype: The Polars dtype of the decoded column.
+        arrow_type: The Arrow type the fitted values are built as.
     """
 
     fit: JsonFit
     dtype: pl.DataType
+    arrow_type: pa.DataType
 
     @classmethod
     def of(cls, frame_type: FrameType, on_mismatch: JsonMismatch) -> JsonDecoder:
@@ -33,7 +49,9 @@ class JsonDecoder:
         Raises:
             JsonLeafUnsupported: A leaf of *frame_type* has no JSON rule.
         """
-        return cls(JsonFit.of(frame_type, on_mismatch), frame_type_to_polars(frame_type))
+        dtype = frame_type_to_polars(frame_type)
+        arrow_type = _buildable(pl.Series(dtype=dtype).to_arrow().type)
+        return cls(JsonFit.of(frame_type, on_mismatch), dtype, arrow_type)
 
     def decode(self, column: pl.Expr) -> pl.Expr:
         """Return *column*, JSON text, decoded into the dtype of this decoder.
@@ -53,4 +71,4 @@ class JsonDecoder:
             documents = [self.fit.document(text) for text in batch]
         except JsonRefusal as refusal:
             raise JsonRefusal(f"{refusal}, in JSON column {batch.name}") from refusal
-        return pl.Series(batch.name, documents, dtype=self.dtype, strict=True)
+        return pl.Series(batch.name, pa.array(documents, type=self.arrow_type)).cast(self.dtype)
