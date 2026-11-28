@@ -7,7 +7,7 @@ name to either a catalog reference or a physical Delta path.
 
 from __future__ import annotations
 
-from collections.abc import Mapping
+from collections.abc import Callable, Mapping
 from enum import StrEnum
 from typing import TYPE_CHECKING, Any, Final, Literal, cast
 from urllib.parse import urlparse
@@ -283,28 +283,37 @@ class AuditConfig(LoomFrozenStruct, frozen=True, forbid_unknown_fields=True):
     @property
     def columns(self) -> tuple[ColumnSchema, ...]:
         """The columns a write stamps with the types they are stored as; none when disabled."""
-        if not self.enabled:
-            return ()
-        standard = tuple(
-            ColumnSchema(f"{self.prefix}{name}", dtype) for name, dtype in _STANDARD_AUDIT_COLUMNS
-        )
-        return standard + tuple(ColumnSchema(c.name, LoomDtype.UTF8) for c in self.custom)
+        return tuple(column for column, _ in self._readers)
 
     def stamps(
         self, write_ctx: WriteContext, params_instance: Any
     ) -> tuple[tuple[ColumnSchema, str | int], ...]:
         """Each column a write stamps with its value; ``process_run_id`` only when it is set."""
+        stamped = ((column, read(write_ctx, params_instance)) for column, read in self._readers)
+        return tuple((column, value) for column, value in stamped if value is not None)
+
+    @property
+    def _readers(
+        self,
+    ) -> tuple[tuple[ColumnSchema, Callable[[WriteContext, Any], str | int | None]], ...]:
+        """Each stamped column with what reads its value from the write and the params."""
         if not self.enabled:
             return ()
-        values = (
-            *(getattr(write_ctx, name) for name, _ in _STANDARD_AUDIT_COLUMNS),
-            *(c.value_of(params_instance) for c in self.custom),
+        standard = tuple(
+            (
+                ColumnSchema(f"{self.prefix}{name}", dtype),
+                lambda write_ctx, _params, name=name: getattr(write_ctx, name),
+            )
+            for name, dtype in _STANDARD_AUDIT_COLUMNS
         )
-        return tuple(
-            (column, value)
-            for column, value in zip(self.columns, values, strict=True)
-            if value is not None
+        custom = tuple(
+            (
+                ColumnSchema(column.name, LoomDtype.UTF8),
+                lambda _write_ctx, params, column=column: column.value_of(params),
+            )
+            for column in self.custom
         )
+        return standard + custom
 
 
 class MaintenanceVacuumConfig(LoomFrozenStruct, frozen=True, forbid_unknown_fields=True):

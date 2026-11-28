@@ -87,8 +87,8 @@ class JsonMismatch(StrEnum):
     FAIL = "fail"
     NULL = "null"
 
-    def refuse(self, path: str, expected: str) -> None:
-        """Refuse the misfit at *path* under ``FAIL``; under ``NULL`` let it fit to null.
+    def on_misfit(self, path: str, expected: str) -> None:
+        """Raise for the misfit at *path* under ``FAIL``; under ``NULL`` let it fit to null.
 
         Raises:
             JsonRefusal: Under ``FAIL``, naming *path* and what its rule *expected*.
@@ -369,7 +369,7 @@ class _Node(ABC):
         try:
             return self._fitted(value, on_mismatch)
         except Misfit as misfit:
-            on_mismatch.refuse(self.path, misfit.expected)
+            on_mismatch.on_misfit(self.path, misfit.expected)
             return None
 
     @abstractmethod
@@ -449,7 +449,7 @@ class JsonFit:
         try:
             parsed = self._parsed(text)
         except (ValueError, RecursionError):
-            self.on_mismatch.refuse("$", "a JSON document")
+            self.on_mismatch.on_misfit("$", "a JSON document")
             return None
         return self.root.fit(parsed, self.on_mismatch)
 

@@ -3,8 +3,8 @@
 from __future__ import annotations
 
 import logging
-from collections.abc import Callable, Mapping
-from typing import Any, Final
+from collections.abc import Callable
+from typing import Any
 
 from pyspark.sql import DataFrame, SparkSession
 from pyspark.sql import functions as F
@@ -14,7 +14,6 @@ from loom.etl.declarative._format import Format
 from loom.etl.declarative._read_options import CsvReadOptions, JsonReadOptions
 from loom.etl.declarative.source import (
     FileSourceSpec,
-    JsonMismatch,
     SourceSpec,
     TableSourceSpec,
 )
@@ -22,7 +21,7 @@ from loom.etl.engines._format_registry import resolve_format_handler
 from loom.etl.engines._path_template import resolve_file_uri
 from loom.etl.engines._predicate import predicate_to_sql
 from loom.etl.engines.spark._dtype import frame_type_to_spark
-from loom.etl.engines.spark._json_failure import is_json_decode_failure
+from loom.etl.engines.spark._json_failure import FROM_JSON_OPTIONS, is_json_decode_failure
 from loom.etl.ports.contracts import SourceReader
 from loom.etl.schema._schema import ColumnSchema
 from loom.etl.storage._file_locator import FileLocator
@@ -35,11 +34,6 @@ from loom.etl.storage.routing import (
 )
 
 _log = logging.getLogger(__name__)
-
-FROM_JSON_OPTIONS: Final[Mapping[JsonMismatch, Mapping[str, str]]] = {
-    JsonMismatch.FAIL: {"mode": "FAILFAST", "timeZone": "UTC"},
-    JsonMismatch.NULL: {"mode": "PERMISSIVE", "timeZone": "UTC"},
-}
 
 
 class SparkSourceReader(SourceReader):

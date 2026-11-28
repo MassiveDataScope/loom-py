@@ -271,6 +271,8 @@ class AnnotatedClass:
     @property
     def column_type(self) -> ColumnType | _Undeclared:
         """The column type a field annotated with this class infers, else why it has none."""
+        if not isinstance(self.target, type):
+            return _Undeclared(f"the annotation {self.target!r}")
         rule = self._scalar_rule(self.target)
         if rule is not None:
             return rule
@@ -401,10 +403,7 @@ class _Resolver:
         members = Annotation(base).inner_args
         if members is not None:
             return self._infer_union(members)
-        cls = get_origin(base) or base
-        if not isinstance(cls, type):
-            return _Undeclared(f"the annotation {base!r}")
-        return AnnotatedClass(cls).column_type
+        return AnnotatedClass(get_origin(base) or base).column_type
 
     def _infer_union(self, members: tuple[Any, ...]) -> ColumnType | _Undeclared:
         found = {self._infer(Annotation(member).column_base) for member in members}

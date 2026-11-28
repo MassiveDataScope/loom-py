@@ -9,7 +9,7 @@ from pyspark.sql import functions as F
 from pyspark.sql import types as T
 
 from loom.etl.declarative.source import JsonMismatch
-from loom.etl.engines.spark._reader import FROM_JSON_OPTIONS
+from loom.etl.engines.spark._json_failure import FROM_JSON_OPTIONS
 
 
 class SparkSchemaAligner:

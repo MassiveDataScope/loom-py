@@ -79,6 +79,9 @@ class TestColumnTypes:
 
         assert (field.column_type, field.reason) == (None, reason)
 
+    def test_an_annotation_that_is_not_a_class_is_undeclared(self) -> None:
+        assert AnnotatedClass(list[int]).column_type.reason == "the annotation list[int]"
+
     def test_a_column_field_type_wins_over_the_annotation(self) -> None:
         class Reading(msgspec.Struct):
             value: Annotated[float, Float]

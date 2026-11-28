@@ -1,11 +1,19 @@
-"""Recognition of a FAILFAST ``from_json`` rejecting a document."""
+"""The ``from_json`` options of each JSON mismatch policy and recognition of a FAILFAST refusal."""
 
 from __future__ import annotations
 
+from collections.abc import Mapping
 from contextlib import suppress
 from typing import Any, Final
 
 from py4j.protocol import Py4JError
+
+from loom.etl.declarative.source import JsonMismatch
+
+FROM_JSON_OPTIONS: Final[Mapping[JsonMismatch, Mapping[str, str]]] = {
+    JsonMismatch.FAIL: {"mode": "FAILFAST", "timeZone": "UTC"},
+    JsonMismatch.NULL: {"mode": "PERMISSIVE", "timeZone": "UTC"},
+}
 
 _REFUSAL_CLASS: Final = "MALFORMED_RECORD_IN_PARSING"
 _ERROR_CLASS_GETTERS: Final = ("getCondition", "getErrorClass")
