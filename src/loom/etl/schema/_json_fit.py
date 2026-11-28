@@ -39,8 +39,7 @@ _NON_JSON: Final = object()
 _FLOAT32_MAXIMUM: Final = math.nextafter((2.0 - 2.0**-24) * 2.0**127, 0.0)
 _EPOCH: Final = datetime(1970, 1, 1, tzinfo=UTC)
 _MICROSECOND: Final = timedelta(microseconds=1)
-_TICKS_PER_SECOND: Final = {"ms": 10**3, "us": 10**6, "ns": 10**9}
-_INT64_TICKS: Final = 2**63
+_MICROSECOND_REACH: Final = {"ms": 2**63 * 10**3, "us": 2**63, "ns": 2**63 // 10**3}
 _DECIMAL_TEXT: Final = re.compile(r"[+-]?(?:[0-9]+\.?[0-9]*|\.[0-9]+)(?:[eE][+-]?[0-9]+)?")
 _ISO_TEXT: Final = re.compile(
     r"[0-9]{4}-(?:0[1-9]|1[0-2])-(?:0[1-9]|[12][0-9]|3[01])"
@@ -53,7 +52,7 @@ _ISO_TEXT: Final = re.compile(
 class JsonRefusal(InvalidValue):
     """A JSON value that does not fit its declared type, under :attr:`JsonMismatch.FAIL`.
 
-    The message names the path of the value, the rule it broke and the column, never the value.
+    The message names the path of the value and the rule it broke, never the value.
     """
 
 
@@ -62,13 +61,11 @@ class JsonLeafUnsupported(InvalidType):
 
     Attributes:
         path: Path of the leaf below the root of the declared type.
-        leaf: The type with no rule.
     """
 
     def __init__(self, path: str, leaf: FrameType) -> None:
-        super().__init__(f"{leaf!r} at {path}, which no JSON rule reads")
+        super().__init__(f"{leaf} at {path}, which no JSON rule reads")
         self.path = path
-        self.leaf = leaf
 
 
 class Misfit(Exception):
@@ -174,7 +171,7 @@ class Text:
                     return bytes(value).decode()
                 case _:
                     return _ENCODER.encode(value).decode()
-        except (ValueError, TypeError, msgspec.EncodeError):
+        except (ValueError, TypeError, RecursionError, msgspec.EncodeError):
             raise Misfit("a JSON value whose text is UTF-8") from None
 
 
@@ -224,8 +221,7 @@ class IsoInstant(_IsoText):
     @classmethod
     def of(cls, frame_type: DatetimeType) -> IsoInstant:
         """The instants a signed 64-bit count of the time units of *frame_type* holds."""
-        reach = _INT64_TICKS * 10**6 // _TICKS_PER_SECOND[frame_type.time_unit]
-        return cls(frame_type.time_zone is not None, reach)
+        return cls(frame_type.time_zone is not None, _MICROSECOND_REACH[frame_type.time_unit])
 
     def fit(self, value: Any) -> datetime:
         """The UTC instant of *value*."""
@@ -343,7 +339,7 @@ class _Node(ABC):
                 rule: Rule = Member(frozenset(categories))
             case DecimalType(precision=precision, scale=scale):
                 rule = Decimal.of(precision, scale)
-            case DatetimeType(time_unit=unit) if unit in _TICKS_PER_SECOND:
+            case DatetimeType(time_unit=unit) if unit in _MICROSECOND_REACH:
                 rule = IsoInstant.of(frame_type)
             case LoomDtype() if frame_type in _LEAF_RULES:
                 rule = _LEAF_RULES[frame_type]
@@ -454,7 +450,7 @@ class JsonFit:
         except msgspec.DecodeError:
             return json.loads(
                 text,
-                parse_int=msgspec.Raw,
+                parse_int=lambda text: msgspec.Raw("0" if text == "-0" else text),
                 parse_float=msgspec.Raw,
                 parse_constant=lambda _token: _NON_JSON,
             )

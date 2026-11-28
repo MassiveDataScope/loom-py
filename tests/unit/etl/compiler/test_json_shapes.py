@@ -91,9 +91,7 @@ class TestJsonLeafTypes:
         with pytest.raises(ETLCompilationError) as refused:
             compile_source(source)
 
-        assert "orders.payload declares <LoomDtype.BINARY: 'Binary'> at $.v, which" in str(
-            refused.value
-        )
+        assert "orders.payload declares Binary at $.v, which" in str(refused.value)
 
     def test_a_model_column_stored_as_a_struct_with_an_unsupported_leaf_is_refused(
         self, compile_target: CompileDeclaration

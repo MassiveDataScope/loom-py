@@ -12,7 +12,7 @@ from loom.etl.schema import JsonFit, JsonLeafUnsupported, JsonMismatch
 def validate_json_shapes(
     step_type: type[Any], source_bindings: tuple[SourceBinding, ...], target_binding: TargetBinding
 ) -> None:
-    """Raise when a JSON shape the step declares has a leaf type JSON text cannot hold.
+    """Raise when a JSON shape the step declares has a leaf type no JSON rule reads.
 
     Checks each ``parse_json`` type of a source and each nested column of a model target.
 
