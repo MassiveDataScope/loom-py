@@ -185,27 +185,14 @@ _INVALID_TEMPORAL = {
 }
 
 
-def _in_utc(value: Any) -> Any:
-    match value:
-        case datetime():
-            return value.astimezone(UTC)
-        case dict():
-            return {name: _in_utc(item) for name, item in value.items()}
-        case list():
-            return [_in_utc(item) for item in value]
-        case _:
-            return value
-
-
 def _decode_probe(
     engine: ModelEngine, annotation: Any, document: str, on_mismatch: JsonMismatch
 ) -> Any:
     probe = msgspec.defstruct("Probe", [("v", annotation | None)])
     (decoded,) = _decode(engine, probe, on_mismatch, f'{{"v": {document}}}')
-    return _in_utc(decoded["v"])
+    return decoded["v"]
 
 
-@pytest.mark.usefixtures("session_in_utc")
 class TestTemporalText:
     @pytest.mark.parametrize("on_mismatch", list(JsonMismatch), ids=lambda mode: mode.name)
     @pytest.mark.parametrize(

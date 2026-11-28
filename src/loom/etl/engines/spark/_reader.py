@@ -36,9 +36,9 @@ from loom.etl.storage.routing import (
 
 _log = logging.getLogger(__name__)
 
-_FROM_JSON_MODE: Mapping[JsonMismatch, str] = {
-    JsonMismatch.FAIL: "FAILFAST",
-    JsonMismatch.NULL: "PERMISSIVE",
+_FROM_JSON_OPTIONS: Mapping[JsonMismatch, Mapping[str, str]] = {
+    JsonMismatch.FAIL: {"mode": "FAILFAST", "timeZone": "UTC"},
+    JsonMismatch.NULL: {"mode": "PERMISSIVE", "timeZone": "UTC"},
 }
 
 
@@ -67,7 +67,7 @@ class SparkSourceReader(SourceReader):
         self._file_locator = file_locator
 
     def is_json_decode_failure(self, error: Exception) -> bool:
-        """Whether *error* is a FAILFAST ``from_json`` rejecting a malformed document."""
+        """Whether *error* is a FAILFAST ``from_json`` rejecting a document."""
         return is_json_decode_failure(error)
 
     def read(self, spec: SourceSpec, params_instance: Any, /) -> DataFrame:
@@ -189,7 +189,7 @@ class SparkSourceReader(SourceReader):
             decoded = F.from_json(
                 F.col(jc.column),
                 frame_type_to_spark(jc.frame_type),
-                {"mode": _FROM_JSON_MODE[jc.on_mismatch]},
+                dict(_FROM_JSON_OPTIONS[jc.on_mismatch]),
             )
             df = df.withColumn(jc.column, decoded)
         return df

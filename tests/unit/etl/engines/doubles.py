@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
-from datetime import date
+from datetime import UTC, date, datetime
 from pathlib import Path
 from typing import Any, Protocol
 
@@ -62,6 +62,19 @@ def table_path(root: Path, ref: str) -> str:
     return str(root.joinpath(*ref.split(".")))
 
 
+def _with_instants_in_utc(value: Any) -> Any:
+    """*value* with each datetime read by PySpark as local wall time turned into its UTC instant."""
+    match value:
+        case datetime():
+            return value.astimezone(UTC)
+        case dict():
+            return {name: _with_instants_in_utc(item) for name, item in value.items()}
+        case list():
+            return [_with_instants_in_utc(item) for item in value]
+        case _:
+            return value
+
+
 class PolarsEngine:
     """A Polars reader and writer on one Delta root, with the helpers a model test reads it by."""
 
@@ -96,18 +109,19 @@ class SparkEngine:
     def __init__(self, spark: Any, root: Path) -> None:
         from loom.etl.engines.spark import SparkSourceReader, SparkTargetWriter
 
-        self.spark = spark
+        self._spark = spark
         self._root = root
         self.reader = SparkSourceReader(spark, str(root))
         self.writer = SparkTargetWriter(spark, root, missing_table_policy=MissingTablePolicy.CREATE)
 
     def frame(self, columns: dict[str, list[Any]]) -> Any:
         """A DataFrame of *columns*."""
-        return self.spark.createDataFrame(list(zip(*columns.values(), strict=True)), list(columns))
+        return self._spark.createDataFrame(list(zip(*columns.values(), strict=True)), list(columns))
 
     def stored(self, ref: str) -> list[dict[str, Any]]:
         """The rows of table *ref*."""
-        return [row.asDict(recursive=True) for row in self._stored(ref).collect()]
+        rows = [row.asDict(recursive=True) for row in self._stored(ref).collect()]
+        return [_with_instants_in_utc(row) for row in rows]
 
     def read_columns(self, source: FromTable) -> list[str]:
         """The column names *source* reads."""
@@ -121,4 +135,4 @@ class SparkEngine:
 
     def _stored(self, ref: str) -> Any:
         """The Delta table *ref* as a DataFrame."""
-        return self.spark.read.format("delta").load(table_path(self._root, ref))
+        return self._spark.read.format("delta").load(table_path(self._root, ref))

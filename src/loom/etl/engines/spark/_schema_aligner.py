@@ -21,7 +21,7 @@ class SparkSchemaAligner:
     def cast_column(self, name: str, dtype: T.DataType, source: T.DataType) -> tuple[str, Column]:
         """Cast a column; JSON text becomes the struct or array the schema declares for it."""
         if self.is_json_text_target(source, dtype):
-            return name, F.from_json(F.col(name), dtype, {"mode": "FAILFAST"})
+            return name, F.from_json(F.col(name), dtype, {"mode": "FAILFAST", "timeZone": "UTC"})
         return name, self._cast_col(name, dtype)
 
     def is_json_text_target(self, source: T.DataType, dtype: T.DataType) -> bool:

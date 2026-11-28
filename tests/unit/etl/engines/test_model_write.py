@@ -169,7 +169,6 @@ class TestJsonTextOnWrite:
         assert (row[_Entry.c.profile]["street"], row[_Entry.c.tags]) == ("Main", ["a", "b"])
         assert row[_Entry.c.visit]["zipCode"] == "28001"
 
-    @pytest.mark.usefixtures("session_in_utc")
     def test_json_text_reads_a_timestamp_without_offset_as_utc(self, engine: ModelEngine) -> None:
         visit = '{"zipCode": "28001", "seenAt": "2026-01-05 00:00:00"}'
         engine.writer.write(
@@ -177,7 +176,7 @@ class TestJsonTextOnWrite:
         )
 
         (row,) = engine.stored("entries")
-        assert row[_Entry.c.visit]["seenAt"].astimezone(UTC) == _PLACED
+        assert row[_Entry.c.visit]["seenAt"] == _PLACED
 
     def test_malformed_json_text_fails_naming_the_target_column_and_type(
         self, engine: ModelEngine
