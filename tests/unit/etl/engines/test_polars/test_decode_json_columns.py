@@ -12,7 +12,6 @@ from deltalake import write_deltalake
 from polars.testing import assert_frame_equal
 
 from loom.etl import Format, FromFile, FromTable
-from loom.etl.declarative.source import JsonMismatch
 from loom.etl.engines.polars import PolarsSourceReader, decode_json_columns
 
 from .conftest import table_path
@@ -81,16 +80,6 @@ class TestDecodeJsonColumns:
     @pytest.mark.usefixtures("no_python_per_row")
     def test_decodes_without_python_per_row(self) -> None:
         decoded = decode_json_columns(_raw(), _EVENTS.json_columns)
-
-        assert decoded["payload"].to_list()[0] == {"event_type": "click", "user_id": 7}
-
-    @pytest.mark.usefixtures("no_python_per_row")
-    def test_decodes_a_clean_null_mode_column_without_python_per_row(self) -> None:
-        tolerant = FromTable("raw.events").parse_json(
-            "payload", AcmePayload, on_mismatch=JsonMismatch.NULL
-        )
-
-        decoded = decode_json_columns(_raw().lazy(), tolerant.json_columns).collect()
 
         assert decoded["payload"].to_list()[0] == {"event_type": "click", "user_id": 7}
 

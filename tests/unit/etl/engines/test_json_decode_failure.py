@@ -130,14 +130,22 @@ class TestNullModeDecoding:
     @pytest.mark.parametrize(
         ("annotation", "value", "expected"), _FIELD_READ.values(), ids=list(_FIELD_READ)
     )
-    def test_a_batch_with_a_refused_document_nulls_a_wrongly_typed_field_and_keeps_its_siblings(
+    def test_a_wrongly_typed_field_is_nulled_and_its_siblings_are_kept(
         self, engine: ModelEngine, annotation: Any, value: str, expected: object
     ) -> None:
         probe = msgspec.defstruct("Probe", [("v", annotation | None), ("w", int)])
 
-        buyers = _decode_in_null_mode(engine, probe, f'{{"v": {value}, "w": 9}}', "not json")
+        buyers = _decode_in_null_mode(engine, probe, f'{{"v": {value}, "w": 9}}')
 
-        assert {"v": expected, "w": 9} in buyers
+        assert buyers == [{"v": expected, "w": 9}]
+
+    def test_a_document_decodes_as_alone_beside_a_refused_one(self, engine: ModelEngine) -> None:
+        probe = msgspec.defstruct("Probe", [("v", int | None), ("w", int)])
+        document = '{"v": 1.5, "w": 9}'
+
+        buyers = _decode_in_null_mode(engine, probe, document, "not json")
+
+        assert {"v": None, "w": 9} in buyers
 
     @pytest.mark.parametrize("value", _NON_FINITE)
     def test_a_non_finite_number_never_raises_and_keeps_its_siblings(

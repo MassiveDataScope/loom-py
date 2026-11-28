@@ -219,14 +219,14 @@ class TestTolerantJsonDecoding:
             "scalar-for-list",
         ],
     )
-    def test_a_mismatched_document_beside_a_refused_one_decodes_to_text_or_null(
+    def test_a_mismatched_document_decodes_to_text_or_null(
         self, frame_type: FrameType, document: str, expected: object
     ) -> None:
         jc = JsonColumnSpec("payload", frame_type, JsonMismatch.NULL)
 
-        result = decode_json_columns(pl.DataFrame({"payload": [document, "not json"]}), (jc,))
+        result = decode_json_columns(pl.DataFrame({"payload": [document]}), (jc,))
 
-        assert result["payload"].to_list() == [expected, None]
+        assert result["payload"].to_list() == [expected]
 
 
 # ---------------------------------------------------------------------------

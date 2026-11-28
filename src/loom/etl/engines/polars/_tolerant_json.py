@@ -101,17 +101,14 @@ _SCALAR_READERS: Final[Mapping[FrameType, Callable[[Any], Any]]] = {
 class TolerantJson:
     """Decodes JSON text into *frame_type* without ever raising on a mismatch.
 
-    The column is first decoded natively by Polars, with no Python per row.
-    Only a batch Polars refuses falls back to Python, per row: each field whose
-    JSON type is wrong for its declared type is nulled and its siblings kept,
-    as Spark ``from_json`` in ``PERMISSIVE`` mode does; any other JSON value
-    under a ``str`` field becomes its JSON text, and ``NaN`` and ``Infinity``
-    become null. A row Polars still refuses after that, and malformed JSON,
-    become a null value for that row, so the normalisation only drives parity
-    with Spark and is not what guarantees the decode.
-
-    A batch Polars decodes natively keeps what Polars coerces, such as a float
-    under an integer field or a boolean under a number, which Spark nulls.
+    Every row is normalised in Python, so the result of a row never depends on
+    the rows around it: each field whose JSON type is wrong for its declared
+    type is nulled and its siblings kept, as Spark ``from_json`` in
+    ``PERMISSIVE`` mode does; any other JSON value under a ``str`` field becomes
+    its JSON text, and ``NaN`` and ``Infinity`` become null. The normalised
+    batch is then decoded by Polars. Should Polars still refuse a row, only that
+    row becomes null, so the normalisation drives parity and the decode is
+    guaranteed by Polars. Malformed JSON becomes a null row.
 
     A date is read from an ISO string, as Spark does. A number under a
     timestamp field is null here, where Spark reads it as epoch seconds for a
@@ -134,9 +131,6 @@ class TolerantJson:
 
     def _decode_batch(self, batch: pl.Series) -> pl.Series:
         dtype = frame_type_to_polars(self.frame_type)
-        decoded = _decoded_or_none(batch, dtype)
-        if decoded is not None:
-            return decoded
         normalised = pl.Series(batch.name, [self._text(d) for d in batch], dtype=pl.String)
         decoded = _decoded_or_none(normalised, dtype)
         if decoded is not None:
