@@ -10,7 +10,10 @@ from loom.etl.compiler import ETLCompilationError, ETLErrorCode
 from loom.etl.schema import (
     ArrayType,
     CategoricalType,
+    DatetimeType,
+    DecimalType,
     DurationType,
+    EnumType,
     FrameType,
     ListType,
     LoomDtype,
@@ -38,10 +41,30 @@ _UNSUPPORTED = {
     "categorical": (LoomDtype.CATEGORICAL, "$"),
     "categorical-type": (CategoricalType(), "$"),
     "coarse-list": (LoomDtype.LIST, "$"),
+    "coarse-array": (LoomDtype.ARRAY, "$"),
+    "coarse-struct": (LoomDtype.STRUCT, "$"),
+    "coarse-enum": (LoomDtype.ENUM, "$"),
+    "datetime-with-unknown-unit": (DatetimeType("s"), "$"),
     "binary-in-a-struct": (_in_struct(LoomDtype.BINARY), "$.v"),
     "time-in-a-list": (ListType(LoomDtype.TIME), "$[]"),
     "duration-in-an-array": (ArrayType(DurationType(), 2), "$[]"),
     "binary-deep": (ListType(_in_struct(LoomDtype.BINARY)), "$[].v"),
+}
+
+
+_SUPPORTED = {
+    "integer": LoomDtype.INT64,
+    "float": LoomDtype.FLOAT32,
+    "boolean": LoomDtype.BOOLEAN,
+    "string": LoomDtype.UTF8,
+    "date": LoomDtype.DATE,
+    "coarse-datetime": LoomDtype.DATETIME,
+    "timestamp": DatetimeType("ns", "UTC"),
+    "decimal": DecimalType(10, 2),
+    "enum": EnumType(("low", "high")),
+    "list-of-dates": ListType(LoomDtype.DATE),
+    "array-of-floats": ArrayType(LoomDtype.FLOAT64, 2),
+    "struct": _in_struct(LoomDtype.INT8),
 }
 
 
@@ -74,16 +97,10 @@ class TestJsonLeafTypes:
             "$.data",
         )
 
-    def test_every_supported_leaf_compiles(self, compile_source: CompileDeclaration) -> None:
-        supported = StructType(
-            (
-                StructField("n", LoomDtype.INT64),
-                StructField("t", LoomDtype.UTF8),
-                StructField("d", ListType(LoomDtype.DATE)),
-                StructField("p", ArrayType(LoomDtype.FLOAT64, 2)),
-            )
-        )
-
-        plan = compile_source(FromTable("raw.orders").parse_json("payload", supported))
+    @pytest.mark.parametrize("frame_type", _SUPPORTED.values(), ids=list(_SUPPORTED))
+    def test_a_parse_json_type_with_a_supported_leaf_compiles(
+        self, compile_source: CompileDeclaration, frame_type: FrameType
+    ) -> None:
+        plan = compile_source(FromTable("raw.orders").parse_json("payload", frame_type))
 
         assert plan.fallible_json_columns

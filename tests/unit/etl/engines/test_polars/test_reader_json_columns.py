@@ -73,8 +73,12 @@ class TestNullPolicyDecoding:
             (StructType((StructField("user_id", LoomDtype.INT64),)), "[1, 2, 3]", None),
             (StructType((StructField("user_id", LoomDtype.INT64),)), "not json", None),
             (ListType(LoomDtype.UTF8), '"single"', None),
-            (StructType((StructField("s", LoomDtype.UTF8),)), '{"s": "\\ud800"}', None),
-            (StructType((StructField("s", LoomDtype.UTF8),)), '{"s": {"a": "\\ud800"}}', None),
+            (StructType((StructField("s", LoomDtype.UTF8),)), '{"s": "\\ud800"}', {"s": None}),
+            (
+                StructType((StructField("s", LoomDtype.UTF8),)),
+                '{"s": {"a": "\\ud800"}}',
+                {"s": None},
+            ),
             (ListType(LoomDtype.UTF8), "[" * 100_000 + "]" * 100_000, None),
         ],
         ids=[
@@ -84,8 +88,8 @@ class TestNullPolicyDecoding:
             "array-for-struct",
             "malformed",
             "scalar-for-list",
-            "lone-surrogate-under-str",
-            "lone-surrogate-nested-under-str",
+            "lone-surrogate-nulls-only-its-field",
+            "lone-surrogate-nested-nulls-only-its-field",
             "nesting-too-deep",
         ],
     )

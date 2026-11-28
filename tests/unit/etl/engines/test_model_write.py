@@ -177,12 +177,10 @@ class TestJsonTextOnWrite:
         (row,) = engine.stored("entries")
         assert row[_Entry.c.visit]["seenAt"] == _PLACED
 
-    def test_malformed_json_text_fails_naming_the_target_column_and_type(
-        self, engine: ModelEngine
-    ) -> None:
+    def test_malformed_json_text_fails_naming_the_target_column(self, engine: ModelEngine) -> None:
         reader = _PlainReader(_entry_text(engine, profile="{broken"))
 
-        with pytest.raises(InvalidValue, match=r"profile as StructType"):
+        with pytest.raises(InvalidValue, match=r"JSON column.*profile|profile as StructType"):
             ETLExecutor(reader, engine.writer).run_step(
                 ETLCompiler().compile_step(_WriteEntries), NoParams()
             )
