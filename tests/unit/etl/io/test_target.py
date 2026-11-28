@@ -97,7 +97,7 @@ class TestIntoTableModes:
         assert getattr(spec, "partition_cols", ()) == expected_partitions
         assert (getattr(spec, "replace_predicate", None) is not None) is expect_predicate
         if isinstance(spec, (UpsertSpec, UpdateSpec)):
-            assert spec.upsert_keys == ("order_id",)
+            assert spec.keys == ("order_id",)
 
     def test_replace_physical_partitions_sets_the_flag(self) -> None:
         spec = IntoTable("staging.orders").replace_physical_partitions("year")._to_spec()
@@ -202,10 +202,10 @@ class TestIntoTableModes:
             ._to_spec()
         )
         assert isinstance(spec, UpsertSpec)
-        assert spec.upsert_keys == ("order_id",)
+        assert spec.keys == ("order_id",)
         assert spec.partition_cols == ("year", "month")
-        assert spec.upsert_exclude == ("created_at",)
-        assert spec.upsert_include == ("status",)
+        assert spec.exclude == ("created_at",)
+        assert spec.include == ("status",)
 
     def test_upsert_propagates_delete_flag(self) -> None:
         spec = IntoTable("staging.orders").upsert(keys=("id",), delete_flag="_deleted")._to_spec()

@@ -7,7 +7,7 @@ from dataclasses import dataclass, field
 from typing import TypeAlias
 
 from loom.core.model import BaseModel
-from loom.core.model.introspection import ModelKeys, get_table_name
+from loom.core.model.introspection import get_table_name
 from loom.core.routing import LogicalRef
 from loom.etl.declarative.expr._refs import TableRef
 from loom.etl.schema import ModelTable
@@ -67,12 +67,3 @@ class ModelBoundSpec:
     def declared_columns(self) -> Mapping[str, tuple[str, ...]]:
         """The model columns this spec names, by the argument that names them."""
         return {}
-
-    def _declared_or_model_keys(self, declared: tuple[str, ...] | None) -> tuple[str, ...]:
-        """The keys declared, else the model's the frame can supply, else ``()`` for a reference.
-
-        ``None`` is not declared; ``()`` is declared empty and stays empty.
-        """
-        if declared is not None:
-            return declared
-        return ModelKeys.of(self.model).frame_supplied if self.model is not None else ()

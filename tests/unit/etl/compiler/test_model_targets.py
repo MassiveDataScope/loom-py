@@ -228,7 +228,7 @@ class TestModelDeclaration:
     def test_merge_keys_default_to_the_conflict_key_of_a_model(
         self, target: IntoTable, keys: tuple[str, ...]
     ) -> None:
-        assert target._to_spec().upsert_keys == keys
+        assert target._to_spec().keys == keys
 
     @pytest.mark.parametrize(
         ("target", "date_type", "expected"), _DATE_TYPES.values(), ids=list(_DATE_TYPES)

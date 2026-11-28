@@ -90,21 +90,21 @@ class TestCompileUpsertSpecs:
         [
             (
                 OrdersValidUpsert,
-                lambda spec: spec.upsert_keys == ("order_id",),
+                lambda spec: spec.keys == ("order_id",),
             ),
             (
                 _UpsertWithPartitions,
                 lambda spec: (
-                    spec.upsert_keys == ("order_id",) and spec.partition_cols == ("year", "month")
+                    spec.keys == ("order_id",) and spec.partition_cols == ("year", "month")
                 ),
             ),
             (
                 OrdersUpsertExcludingCreatedAt,
-                lambda spec: spec.upsert_exclude == ("created_at",),
+                lambda spec: spec.exclude == ("created_at",),
             ),
             (
                 OrdersUpsertIncludingStatus,
-                lambda spec: spec.upsert_include == ("status", "updated_at"),
+                lambda spec: spec.include == ("status", "updated_at"),
             ),
         ],
     )

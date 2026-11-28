@@ -18,6 +18,7 @@ from loom.etl.declarative.target._file import FileSpec
 from loom.etl.declarative.target._history import HistorifySpec
 from loom.etl.declarative.target._table import (
     AppendSpec,
+    MergeSpec,
     ReplacePartitionsSpec,
     UpdateSpec,
     UpsertSpec,
@@ -548,7 +549,9 @@ class PolarsTargetWriter(_WritePolicy[pl.LazyFrame, pl.DataFrame, PolarsPhysical
     ) -> None:
         """Merge frame into target using Delta MERGE (update + insert)."""
         _ = existing_schema
-        merger, plan, location = self._matched_update_merger(frame, target, spec, mode="upsert")
+        merger, plan, location = self._matched_update_merger(
+            frame, target, spec, mode="upsert", delete_flag=spec.delete_flag
+        )
         if plan.not_matched_insert_predicate is None:
             merger.when_not_matched_insert(updates=plan.insert_values).execute()
         else:
@@ -618,9 +621,10 @@ class PolarsTargetWriter(_WritePolicy[pl.LazyFrame, pl.DataFrame, PolarsPhysical
         self,
         frame: pl.DataFrame,
         target: ResolvedTarget,
-        spec: UpsertSpec | UpdateSpec,
+        spec: MergeSpec,
         *,
         mode: str,
+        delete_flag: str | None = None,
     ) -> tuple[TableMerger, _MergePlan, TableLocation]:
         """Build the Delta MERGE up to the shared ``when_matched_update`` clause.
 
@@ -631,8 +635,9 @@ class PolarsTargetWriter(_WritePolicy[pl.LazyFrame, pl.DataFrame, PolarsPhysical
         Args:
             frame:  Materialised source frame.
             target: Resolved path target.
-            spec:   Upsert or update spec (identical merge fields).
+            spec:   Upsert or update spec.
             mode:   Write-mode label for logging.
+            delete_flag: Source column whose true rows delete their match.
 
         Returns:
             Tuple of the prepared merger, the merge plan, and the target
@@ -653,6 +658,7 @@ class PolarsTargetWriter(_WritePolicy[pl.LazyFrame, pl.DataFrame, PolarsPhysical
             df_columns=tuple(frame.columns),
             target_alias=TARGET_ALIAS,
             source_alias=SOURCE_ALIAS,
+            delete_flag=delete_flag,
         )
 
         dt = DeltaTable(location.uri, storage_options=location.storage_options or {})

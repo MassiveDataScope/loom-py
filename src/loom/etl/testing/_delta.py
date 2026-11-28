@@ -10,7 +10,7 @@ import polars as pl
 from loom.etl.declarative.expr._refs import TableRef
 from loom.etl.declarative.source import TableSourceSpec
 from loom.etl.declarative.target import SchemaMode, TargetSpec
-from loom.etl.declarative.target._table import ReplaceSpec, UpdateSpec, UpsertSpec
+from loom.etl.declarative.target._table import MergeSpec, ReplaceSpec
 from loom.etl.engines.polars import PolarsSourceReader, PolarsTargetWriter
 from loom.etl.engines.polars._writer import _last_commit, _open_delta_table
 from loom.etl.storage import MissingTablePolicy, PrefixLocator
@@ -63,7 +63,7 @@ class _DeltaRoot:
         """
         self.last_merge = None
         table = None
-        if isinstance(spec, (UpsertSpec, UpdateSpec)):
+        if isinstance(spec, MergeSpec):
             table = _open_delta_table(self._locator.locate(spec.table_ref))
         version_before = None if table is None else table.version()
         self.writer.write(frame, spec, params_instance, streaming=streaming, write_ctx=write_ctx)

@@ -441,8 +441,8 @@ class IntoTable:
             UpsertSpec,
             declared_keys=keys,
             partition_cols=partition_cols,
-            upsert_exclude=exclude,
-            upsert_include=include,
+            exclude=exclude,
+            include=include,
             schema_mode=schema,
             delete_flag=delete_flag,
         )

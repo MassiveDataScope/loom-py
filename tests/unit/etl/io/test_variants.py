@@ -47,10 +47,10 @@ class TestTableVariants:
 
     def test_upsert_keys_and_defaults(self) -> None:
         spec = UpsertSpec(table_ref=_REF, declared_keys=("id",))
-        assert spec.upsert_keys == ("id",)
+        assert spec.keys == ("id",)
         assert spec.partition_cols == ()
-        assert spec.upsert_exclude == ()
-        assert spec.upsert_include == ()
+        assert spec.exclude == ()
+        assert spec.include == ()
         assert spec.delete_flag is None
 
     def test_update_keys_and_defaults(self) -> None:
@@ -60,17 +60,11 @@ class TestTableVariants:
         assert spec.exclude == ()
         assert spec.include == ()
 
-    def test_update_aliases_satisfy_merge_protocol(self) -> None:
-        spec = UpdateSpec(table_ref=_REF, declared_keys=("id",), exclude=("created_at",))
-        assert spec.upsert_keys == spec.keys
-        assert spec.upsert_exclude == spec.exclude
-        assert spec.upsert_include == spec.include
-
     def test_upsert_include_exclude(self) -> None:
-        spec = UpsertSpec(table_ref=_REF, declared_keys=("id",), upsert_exclude=("created_at",))
-        assert spec.upsert_exclude == ("created_at",)
-        spec2 = UpsertSpec(table_ref=_REF, declared_keys=("id",), upsert_include=("status",))
-        assert spec2.upsert_include == ("status",)
+        spec = UpsertSpec(table_ref=_REF, declared_keys=("id",), exclude=("created_at",))
+        assert spec.exclude == ("created_at",)
+        spec2 = UpsertSpec(table_ref=_REF, declared_keys=("id",), include=("status",))
+        assert spec2.include == ("status",)
 
     @pytest.mark.parametrize(
         "spec",

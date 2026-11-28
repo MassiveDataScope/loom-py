@@ -12,13 +12,8 @@ from loom.core.schema import SchemaMode
 from loom.etl.compiler._errors import ETLCompilationError, ETLErrorCode
 from loom.etl.declarative._declared_table import ModelBoundSpec
 from loom.etl.declarative.source import SourceSpec, TableSourceSpec
-from loom.etl.declarative.target import (
-    HistorifySpec,
-    TableSpec,
-    TargetSpec,
-    UpdateSpec,
-    UpsertSpec,
-)
+from loom.etl.declarative.target import HistorifySpec, TableSpec, TargetSpec
+from loom.etl.declarative.target._table import MergeSpec
 from loom.etl.event import EtlEvent, EtlKey
 from loom.etl.schema import LakeRefusal, ModelTable
 
@@ -92,7 +87,7 @@ class ModelCheck:
             )
 
     def _check_merge_keys(self, spec: TableSpec) -> None:
-        if not isinstance(spec, UpsertSpec | UpdateSpec):
+        if not isinstance(spec, MergeSpec):
             return
         if spec.declared_keys is not None:
             return
