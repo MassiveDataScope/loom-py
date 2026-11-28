@@ -14,7 +14,7 @@ import pytest
 from pytest import approx
 
 from loom.core.errors import InvalidValue
-from loom.etl import ETLStep, FromTable, IntoTable
+from loom.etl import ETLStep, FromTable, IntoTable, col
 from loom.etl.compiler import ETLCompiler
 from loom.etl.declarative.source import JsonMismatch
 from loom.etl.executor import ETLExecutor
@@ -27,7 +27,7 @@ from loom.etl.schema import (
     StructField,
     StructType,
 )
-from tests.unit.etl.engines.doubles import ModelEngine, NoParams, PolarsEngine
+from tests.unit.etl.engines.doubles import ModelEngine, NoParams, PolarsEngine, SparkEngine
 from tests.unit.etl.models import Buyer
 
 _POLARS = "polars_engine"
@@ -163,7 +163,7 @@ _READINGS = {
 
 def _params(readings: Iterable[tuple[str, Reading]]) -> list[Any]:
     return [
-        pytest.param(engine, reading, id=f"{name}-{engine.removesuffix('_engine')}")
+        pytest.param(engine, name, reading, id=f"{name}-{engine.removesuffix('_engine')}")
         for name, reading in readings
         for engine in reading.engines
     ]
@@ -190,13 +190,43 @@ def _seed_customers(engine: ModelEngine, *documents: str) -> None:
     )
 
 
-def _step_decoding(contract: FrameType | type) -> type[ETLStep[NoParams]]:
-    class _Decode(ETLStep[NoParams]):
-        customers: FromTable = FromTable("raw.customers").parse_json("buyer", contract)  # type: ignore[assignment]
-        target = IntoTable("staging.customers").replace()
+def _seeded(engine: ModelEngine, kind: str) -> ModelEngine:
+    names = [name for name, reading in _READINGS.items() if kind in reading.engines]
+    engine.writer.write(
+        engine.frame({"reading": names, "buyer": [_document(_READINGS[name]) for name in names]}),
+        IntoTable("raw.readings").append()._to_spec(),
+        None,
+    )
+    return engine
 
-        def execute(self, params: NoParams, *, customers: object) -> object:  # type: ignore[override]
-            return customers
+
+@pytest.fixture(scope="module")
+def seeded_polars_engine(tmp_path_factory: pytest.TempPathFactory) -> ModelEngine:
+    """A Polars engine whose ``raw.readings`` holds the document of every reading it applies to."""
+    return _seeded(PolarsEngine(tmp_path_factory.mktemp("polars")), _POLARS)
+
+
+@pytest.fixture(scope="module")
+def seeded_spark_engine(spark: Any, tmp_path_factory: pytest.TempPathFactory) -> ModelEngine:
+    """A Spark engine whose ``raw.readings`` holds the document of every reading it applies to."""
+    return _seeded(SparkEngine(spark, tmp_path_factory.mktemp("spark")), _SPARK)
+
+
+def _reading_source(name: str, reading: Reading, on_mismatch: JsonMismatch) -> FromTable:
+    return (
+        FromTable("raw.readings")
+        .where(col("reading") == name)
+        .parse_json("buyer", _probe(reading.frame_type), on_mismatch=on_mismatch)
+    )
+
+
+def _step_decoding(name: str, reading: Reading) -> type[ETLStep[NoParams]]:
+    class _Decode(ETLStep[NoParams]):
+        readings: FromTable = _reading_source(name, reading, JsonMismatch.FAIL)  # type: ignore[assignment]
+        target = IntoTable("staging.readings").replace()
+
+        def execute(self, params: NoParams, *, readings: object) -> object:  # type: ignore[override]
+            return readings
 
     return _Decode
 
@@ -205,47 +235,41 @@ def _run(engine: ModelEngine, step: type[ETLStep[Any]]) -> None:
     ETLExecutor(engine.reader, engine.writer).run_step(ETLCompiler().compile_step(step), NoParams())
 
 
-def decode(
-    engine: ModelEngine, contract: FrameType, on_mismatch: JsonMismatch, *documents: str
-) -> list[Any]:
-    """The rows *documents* decode to under *contract*, read and written back by *engine*."""
-    _seed_customers(engine, *documents)
-    source = FromTable("raw.customers").parse_json("buyer", contract, on_mismatch=on_mismatch)
-    decoded = engine.reader.read(source._to_spec("customers"), None)
-    engine.writer.write(decoded, IntoTable("staging.customers").replace()._to_spec(), None)
-    return [row["buyer"] for row in engine.stored("staging.customers")]
+def _read(engine: ModelEngine, name: str, reading: Reading, on_mismatch: JsonMismatch) -> Any:
+    source = _reading_source(name, reading, on_mismatch)
+    (row,) = engine.rows(engine.reader.read(source._to_spec("readings"), None))
+    return row["buyer"]
 
 
 class TestJsonFitParity:
-    @pytest.mark.parametrize(("engine_name", "reading"), _ALL)
+    @pytest.mark.parametrize(("engine_name", "name", "reading"), _ALL)
     def test_null_policy_gives_the_value_and_keeps_its_sibling(
-        self, request: pytest.FixtureRequest, engine_name: str, reading: Reading
+        self, request: pytest.FixtureRequest, engine_name: str, name: str, reading: Reading
     ) -> None:
-        engine: ModelEngine = request.getfixturevalue(engine_name)
+        engine = request.getfixturevalue(f"seeded_{engine_name}")
 
-        (buyer,) = decode(engine, _probe(reading.frame_type), JsonMismatch.NULL, _document(reading))
+        buyer = _read(engine, name, reading, JsonMismatch.NULL)
 
         assert buyer == {"v": reading.null, "w": 9}
 
-    @pytest.mark.parametrize(("engine_name", "reading"), _FITTING)
+    @pytest.mark.parametrize(("engine_name", "name", "reading"), _FITTING)
     def test_fail_policy_reads_what_fits(
-        self, request: pytest.FixtureRequest, engine_name: str, reading: Reading
+        self, request: pytest.FixtureRequest, engine_name: str, name: str, reading: Reading
     ) -> None:
-        engine: ModelEngine = request.getfixturevalue(engine_name)
+        engine = request.getfixturevalue(f"seeded_{engine_name}")
 
-        (buyer,) = decode(engine, _probe(reading.frame_type), JsonMismatch.FAIL, _document(reading))
+        buyer = _read(engine, name, reading, JsonMismatch.FAIL)
 
         assert buyer == {"v": reading.fail, "w": 9}
 
-    @pytest.mark.parametrize(("engine_name", "reading"), _REFUSED)
+    @pytest.mark.parametrize(("engine_name", "name", "reading"), _REFUSED)
     def test_fail_policy_refuses_naming_the_column(
-        self, request: pytest.FixtureRequest, engine_name: str, reading: Reading
+        self, request: pytest.FixtureRequest, engine_name: str, name: str, reading: Reading
     ) -> None:
-        engine: ModelEngine = request.getfixturevalue(engine_name)
-        _seed_customers(engine, _document(reading))
+        engine = request.getfixturevalue(f"seeded_{engine_name}")
 
         with pytest.raises(InvalidValue, match=_NAMED):
-            _run(engine, _step_decoding(_probe(reading.frame_type)))
+            _run(engine, _step_decoding(name, reading))
 
 
 class _OwnJsonFailure(ETLStep[NoParams]):
@@ -260,6 +284,14 @@ class _OwnJsonFailureOverDecodedColumn(_OwnJsonFailure):
     customers: FromTable = FromTable("raw.customers").parse_json("buyer", Buyer)  # type: ignore[assignment]
 
 
+class _DecodeBuyers(ETLStep[NoParams]):
+    customers: FromTable = FromTable("raw.customers").parse_json("buyer", Buyer)  # type: ignore[assignment]
+    target = IntoTable("staging.customers").replace()
+
+    def execute(self, params: NoParams, *, customers: object) -> object:  # type: ignore[override]
+        return customers
+
+
 class TestJsonDecodeFailure:
     @pytest.mark.parametrize(
         "document", ["not json", "[1, 2]"], ids=["malformed", "shape-mismatch"]
@@ -270,7 +302,7 @@ class TestJsonDecodeFailure:
         _seed_customers(engine, document)
 
         with pytest.raises(InvalidValue, match=_NAMED):
-            _run(engine, _step_decoding(Buyer))
+            _run(engine, _DecodeBuyers)
 
     @pytest.mark.parametrize(
         "step",

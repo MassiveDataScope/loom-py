@@ -50,6 +50,8 @@ class ModelEngine(Protocol):
 
     def frame(self, columns: dict[str, list[Any]]) -> Any: ...
 
+    def rows(self, frame: Any) -> list[dict[str, Any]]: ...
+
     def stored(self, ref: str) -> list[dict[str, Any]]: ...
 
     def stored_types(self, ref: str) -> dict[str, FrameType]: ...
@@ -93,6 +95,10 @@ class PolarsEngine:
         """A lazy frame of *columns*."""
         return pl.LazyFrame(columns)
 
+    def rows(self, frame: pl.LazyFrame) -> list[dict[str, Any]]:
+        """The rows of *frame*."""
+        return frame.collect().to_dicts()
+
     def stored(self, ref: str) -> list[dict[str, Any]]:
         """The rows of table *ref*."""
         return pl.read_delta(table_path(self._root, ref)).to_dicts()
@@ -122,13 +128,16 @@ class SparkEngine:
         """A DataFrame of *columns*."""
         return self._spark.createDataFrame(list(zip(*columns.values(), strict=True)), list(columns))
 
-    def stored(self, ref: str) -> list[dict[str, Any]]:
-        """The rows of table *ref*."""
-        frame = self._stored(ref)
+    def rows(self, frame: Any) -> list[dict[str, Any]]:
+        """The rows of *frame*."""
         return [
             _with_instants_in_utc(row.asDict(recursive=True), frame.schema)
             for row in frame.collect()
         ]
+
+    def stored(self, ref: str) -> list[dict[str, Any]]:
+        """The rows of table *ref*."""
+        return self.rows(self._stored(ref))
 
     def read_columns(self, source: FromTable) -> list[str]:
         """The column names *source* reads."""
