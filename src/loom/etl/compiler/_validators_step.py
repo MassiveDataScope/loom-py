@@ -120,11 +120,7 @@ def validate_step(ctx: StepCompilationContext) -> None:
     )
     validate_model_sources(ctx.step_type, (binding.spec for binding in ctx.source_bindings))
     validate_model_target(ctx.step_type, ctx.target_binding.spec)
-    validate_json_shapes(
-        ctx.step_type,
-        (binding.spec for binding in ctx.source_bindings),
-        ctx.target_binding.spec,
-    )
+    validate_json_shapes(ctx.step_type, ctx.source_bindings, ctx.target_binding)
     validate_upsert_spec(ctx.step_type, ctx.target_binding.spec)
     validate_historify_spec(ctx.step_type, ctx.target_binding.spec)
     validate_param_exprs(ctx.step_type, ctx.params_type, ctx.source_bindings, ctx.target_binding)
