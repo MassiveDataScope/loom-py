@@ -6,6 +6,7 @@ from collections.abc import Callable
 
 import pytest
 
+from loom.core.errors import InvalidType
 from loom.etl.declarative.expr._refs import TableRef
 from loom.etl.declarative.target import IntoTable, SchemaMode
 from loom.etl.declarative.target._table import (
@@ -14,7 +15,7 @@ from loom.etl.declarative.target._table import (
     ReplaceSpec,
     UpsertSpec,
 )
-from loom.etl.schema._schema import ColumnSchema, LoomDtype
+from loom.etl.schema._schema import ArrayType, ColumnSchema, LoomDtype
 from loom.etl.testing import InMemoryCatalog
 
 ORDERS_SCHEMA = (
@@ -58,6 +59,13 @@ class TestLoomDtype:
     )
     def test_expected_members_present(self, member: str) -> None:
         assert hasattr(LoomDtype, member)
+
+
+class TestArrayType:
+    @pytest.mark.parametrize("width", [0, -1], ids=["zero", "negative"])
+    def test_a_width_below_one_is_refused(self, width: int) -> None:
+        with pytest.raises(InvalidType, match="width must be at least 1"):
+            ArrayType(LoomDtype.INT64, width)
 
 
 class TestColumnSchema:

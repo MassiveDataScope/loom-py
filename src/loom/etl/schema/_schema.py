@@ -56,7 +56,7 @@ from collections.abc import Iterable
 from dataclasses import dataclass
 from enum import StrEnum
 
-from loom.core.errors import InvalidUse, InvalidValue
+from loom.core.errors import InvalidType, InvalidUse, InvalidValue
 
 
 class LoomDtype(StrEnum):
@@ -128,7 +128,10 @@ class ArrayType:
 
     Args:
         inner: Element type.
-        width: Fixed number of elements per row.
+        width: Fixed number of elements per row, at least 1.
+
+    Raises:
+        InvalidType: *width* is less than 1.
 
     Example::
 
@@ -137,6 +140,10 @@ class ArrayType:
 
     inner: FrameType
     width: int
+
+    def __post_init__(self) -> None:
+        if self.width < 1:
+            raise InvalidType(f"ArrayType width must be at least 1, got {self.width}")
 
 
 @dataclass(frozen=True)
