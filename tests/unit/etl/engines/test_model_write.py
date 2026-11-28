@@ -62,25 +62,25 @@ def _orders(engine: ModelEngine, *order_ids: str, void: Collection[str] | None =
 
 _REPLACE = IntoTable(Order).replace()
 _ORDER_UPSERT = IntoTable(Order).upsert(keys=_ORDER_ID)
-_ORDER_WRITES = {
-    "replace": _REPLACE,
-    "replace-partitions": IntoTable(Order).replace_partitions(*_BY_CUSTOMER),
-    "replace-partitions-streaming": IntoTable(Order).replace_partitions(
-        *_BY_CUSTOMER, streaming=True
-    ),
-    "upsert": _ORDER_UPSERT,
-    "update": IntoTable(Order).update(keys=_ORDER_ID),
-}
-_SEEDED_BY = {"update": _ORDER_UPSERT}
+_REPLACE_PARTITIONS = IntoTable(Order).replace_partitions(*_BY_CUSTOMER)
+_REPLACE_PARTITIONS_STREAMING = IntoTable(Order).replace_partitions(*_BY_CUSTOMER, streaming=True)
 
 
 class TestModelAlignTarget:
-    @pytest.mark.parametrize("write", list(_ORDER_WRITES))
+    @pytest.mark.parametrize(
+        ("target", "seeding"),
+        [
+            (_REPLACE, _REPLACE),
+            (_REPLACE_PARTITIONS, _REPLACE_PARTITIONS),
+            (_REPLACE_PARTITIONS_STREAMING, _REPLACE_PARTITIONS_STREAMING),
+            (_ORDER_UPSERT, _ORDER_UPSERT),
+            (IntoTable(Order).update(keys=_ORDER_ID), _ORDER_UPSERT),
+        ],
+        ids=["replace", "replace-partitions", "replace-partitions-streaming", "upsert", "update"],
+    )
     def test_every_path_writes_the_model_types_on_create_and_on_an_existing_table(
-        self, polars_engine: PolarsEngine, write: str
+        self, polars_engine: PolarsEngine, target: IntoTable, seeding: IntoTable
     ) -> None:
-        target = _ORDER_WRITES[write]
-        seeding = _SEEDED_BY.get(write, target)
         polars_engine.writer.write(_orders(polars_engine, "o1"), seeding._to_spec(), None)
         polars_engine.writer.write(_orders(polars_engine, "o1"), target._to_spec(), None)
 

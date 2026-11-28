@@ -113,13 +113,9 @@ class SparkEngine:
 
     def rows(self, frame: Any) -> list[dict[str, Any]]:
         """The rows of *frame*, every ``timestamp`` in them a UTC instant."""
-        from loom.etl.testing.spark import _UtcInstants
+        from loom.etl.testing.spark import rows_in_utc
 
-        readers = {field.name: _UtcInstants(field.dataType) for field in frame.schema.fields}
-        return [
-            {name: readers[name](value) for name, value in row.asDict(recursive=True).items()}
-            for row in frame.collect()
-        ]
+        return rows_in_utc(frame)
 
     def stored(self, ref: str) -> list[dict[str, Any]]:
         """The rows of table *ref*."""

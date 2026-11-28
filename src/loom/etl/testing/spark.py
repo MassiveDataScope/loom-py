@@ -478,14 +478,19 @@ class _UtcInstants:
         )
 
 
+def rows_in_utc(frame: Any) -> list[dict[str, Any]]:
+    """The rows of the Spark *frame* as dicts, every ``TimestampType`` value a UTC instant."""
+    readers = {field.name: _UtcInstants(field.dataType) for field in frame.schema.fields}
+    return [
+        {name: readers[name](value) for name, value in row.asDict(recursive=True).items()}
+        for row in frame.collect()
+    ]
+
+
 def _spark_frame_to_polars(frame: Any) -> pl.DataFrame:
     import polars as pl
 
-    readers = {field.name: _UtcInstants(field.dataType) for field in frame.schema.fields}
-    records = [
-        {name: readers[name](value) for name, value in row.asDict().items()}
-        for row in frame.collect()
-    ]
+    records = rows_in_utc(frame)
     if not records:
         return pl.DataFrame({column: [] for column in frame.columns})
     return pl.DataFrame(records)

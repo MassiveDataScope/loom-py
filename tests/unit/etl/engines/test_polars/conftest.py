@@ -25,7 +25,7 @@ from loom.etl.declarative.target import TargetSpec  # noqa: E402
 from loom.etl.declarative.target._table import ReplaceSpec  # noqa: E402
 from loom.etl.schema._schema import ColumnSchema, LoomDtype  # noqa: E402
 from loom.etl.testing import InMemoryCatalog  # noqa: E402
-from tests.unit.etl.engines.doubles import table_path
+from tests.unit.etl.engines.doubles import table_path  # noqa: E402
 
 _POLARS_TO_LOOM: dict[type, LoomDtype] = {
     pl.Int8: LoomDtype.INT8,
